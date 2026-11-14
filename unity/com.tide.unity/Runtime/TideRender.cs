@@ -80,6 +80,7 @@ namespace Tide
         sealed class Target
         {
             public RenderTexture[] colors;
+            public RenderTargetIdentifier[] colorIds; // What a pass on several colors hands Unity, filled as it begins
             public RenderTexture depth;
             public RenderTexture resolved; // A multisampled one's depth, one sample a pixel, once asked for
             public RenderTexture cube; // A cube face's: the cube, and which face
@@ -161,13 +162,16 @@ namespace Tide
         readonly HashSet<uint> srgbRefused = new HashSet<uint>();
         readonly Dictionary<uint, Target> targets = new Dictionary<uint, Target>();
         readonly Dictionary<uint, Pipeline> pipelines = new Dictionary<uint, Pipeline>();
-        readonly List<(UnityEngine.Object thing, int frame)> doomed = new List<(UnityEngine.Object, int)>();
+        readonly List<(UnityEngine.Object thing, int frame, bool again)> doomed = new List<(UnityEngine.Object, int, bool)>();
         readonly List<(GraphicsBuffer buffer, int frame, bool again)> doomedBuffers = new List<(GraphicsBuffer, int, bool)>();
         // Buffers a rename let go of, once no camera's commands read them: the next rename of a buffer that size takes
         // one, so a buffer written after a draw read it, each frame, goes round a few buffers rather than making one a
         // frame. One nothing took for a while is released.
         readonly List<(GraphicsBuffer buffer, int since)> spares = new List<(GraphicsBuffer, int)>();
         const int MaxSpares = 64;
+        // Images likewise: a target drawn into, or an image a kernel writes, after a draw read it, each frame
+        readonly List<(RenderTexture texture, int since)> spareImages = new List<(RenderTexture, int)>();
+        const int MaxSpareImages = 32;
         readonly HashSet<ulong> missing = new HashSet<ulong>(); // Shaders said once not to be there
         Dictionary<ulong, ulong> webKeys; // A WGSL's key to its shader's, for a program with no SPIR-V (web-keys.txt)
         readonly Recording frame = new Recording();
@@ -400,15 +404,23 @@ namespace Tide
         {
             // Each list is in the order things were let go of, so what's due is at its start
             var due = 0;
+            var now = Time.frameCount;
             for (; due < doomed.Count && doomed[due].frame <= frame; due++)
             {
                 var thing = doomed[due].thing;
-                if (thing is RenderTexture rt) rt.Release();
+                if (thing is RenderTexture rt)
+                {
+                    if (doomed[due].again && frame != int.MaxValue && rt != null && spareImages.Count < MaxSpareImages)
+                    {
+                        spareImages.Add((rt, now));
+                        continue;
+                    }
+                    rt.Release();
+                }
                 if (thing != null) DestroyImmediate(thing);
             }
             if (due > 0) doomed.RemoveRange(0, due);
             due = 0;
-            var now = Time.frameCount;
             for (; due < doomedBuffers.Count && doomedBuffers[due].frame <= frame; due++)
             {
                 var d = doomedBuffers[due];
@@ -425,7 +437,54 @@ namespace Tide
                     spares[i] = spares[spares.Count - 1];
                     spares.RemoveAt(spares.Count - 1);
                 }
+                for (var i = spareImages.Count - 1; i >= 0; i--)
+                {
+                    if (frame != int.MaxValue && now - spareImages[i].since < 600) continue;
+                    var spare = spareImages[i].texture;
+                    if (spare != null)
+                    {
+                        spare.Release();
+                        DestroyImmediate(spare);
+                    }
+                    spareImages[i] = spareImages[spareImages.Count - 1];
+                    spareImages.RemoveAt(spareImages.Count - 1);
+                }
             }
+        }
+
+        // An image like `from` for a rename to copy it into: one a rename let go of, else a new one, or null where
+        // none can be made.
+        RenderTexture Renamed(RenderTexture from)
+        {
+            var like = from.descriptor;
+            for (var i = spareImages.Count - 1; i >= 0; i--)
+            {
+                var spare = spareImages[i].texture;
+                if (spare != null)
+                {
+                    // Compared a member at a time: a struct's own Equals boxes both
+                    var its = spare.descriptor;
+                    if (its.width != like.width || its.height != like.height || its.volumeDepth != like.volumeDepth
+                        || its.msaaSamples != like.msaaSamples || its.dimension != like.dimension
+                        || its.graphicsFormat != like.graphicsFormat || its.depthStencilFormat != like.depthStencilFormat
+                        || its.mipCount != like.mipCount || its.flags != like.flags) continue;
+                }
+                spareImages[i] = spareImages[spareImages.Count - 1];
+                spareImages.RemoveAt(spareImages.Count - 1);
+                if (spare == null) continue; // Unity destroyed it
+                if (spare.IsCreated() || spare.Create()) return spare;
+                DestroyImmediate(spare);
+            }
+            RenderTexture next = null;
+            try
+            {
+                next = new RenderTexture(like) { hideFlags = HideFlags.HideAndDontSave };
+                if (next.Create()) return next;
+                DestroyImmediate(next);
+            }
+            catch (OutOfMemoryException) { Doom(next); }
+            catch (UnityException) { Doom(next); }
+            return null;
         }
 
         // A buffer like `from` for a rename to copy it into: one a rename let go of, else a new one. `from` is let go.
@@ -445,7 +504,7 @@ namespace Tide
 
         void Doom(UnityEngine.Object thing)
         {
-            if (thing != null) doomed.Add((thing, Time.frameCount));
+            if (thing != null) doomed.Add((thing, Time.frameCount, false));
         }
 
         void Doom(GraphicsBuffer buffer)
@@ -1361,7 +1420,7 @@ namespace Tide
                 var pixelFormat = AttachmentPixelFormat((int)held);
                 var rt = new RenderTexture(width, height, AttachmentFormat((int)held), GraphicsFormat.None)
                 {
-                    antiAliasing = samples, useMipMap = samples == 1 && (held <= 2 || held == 10), autoGenerateMips = false,
+                    antiAliasing = samples, useMipMap = samples == 1 && (held <= 6 || held == 10), autoGenerateMips = false, // Colors and the number formats every device blends
                     enableRandomWrite = samples == 1 && WritableImage(pixelFormat), hideFlags = HideFlags.HideAndDontSave,
                 };
                 rt.Create();
@@ -1704,19 +1763,10 @@ namespace Tide
             var used = image.used == Time.frameCount;
             foreach (var alias in images.Values) if (alias.texture == texture && alias.used == Time.frameCount) used = true;
             if (!used) return texture;
-            RenderTexture next = null;
-            try
-            {
-                next = new RenderTexture(texture.descriptor) { hideFlags = HideFlags.HideAndDontSave };
-                if (!next.Create())
-                {
-                    DestroyImmediate(next);
-                    VolumeUnavailable();
-                    return null;
-                }
-            }
-            catch (OutOfMemoryException) { Doom(next); VolumeUnavailable(); return null; }
-            catch (UnityException) { Doom(next); VolumeUnavailable(); return null; }
+            // One a rename let go of where there is one: a target drawn into after a draw read it, each frame, goes
+            // round a few images rather than making one a frame, as a buffer does (Renamed)
+            var next = Renamed(texture);
+            if (next == null) { VolumeUnavailable(); return null; }
             Work().CopyTexture(texture, next);
             foreach (var alias in images.Values)
             {
@@ -1736,7 +1786,7 @@ namespace Tide
                 if (target.resolved == texture) target.resolved = next;
                 if (target.layersDepth == texture) target.layersDepth = next;
             }
-            Doom(texture);
+            doomed.Add((texture, Time.frameCount, true)); // A spare, once no camera's commands read it
             return next;
         }
 
@@ -2008,6 +2058,7 @@ namespace Tide
                     int start = 0, int end = -1)
         {
             var passHeight = camera != null ? camera.pixelHeight : 1;
+            var own = true; // The pass is on the camera's own target
             if (end < 0) end = r.commands.Count;
             for (var at = start; at < end; at++)
             {
@@ -2035,7 +2086,8 @@ namespace Tide
                             else if (t.colors.Length == 1) cb.SetRenderTarget(new RenderTargetIdentifier(t.colors[0]), new RenderTargetIdentifier(t.depth));
                             else
                             {
-                                var ids = new RenderTargetIdentifier[t.colors.Length];
+                                // Kept with the target: a pass on several colors each frame makes no array a frame
+                                var ids = t.colorIds ??= new RenderTargetIdentifier[t.colors.Length];
                                 for (var i = 0; i < ids.Length; i++) ids[i] = new RenderTargetIdentifier(t.colors[i]);
                                 cb.SetRenderTarget(ids, new RenderTargetIdentifier(t.depth));
                             }
@@ -2044,13 +2096,17 @@ namespace Tide
                             cb.SetGlobalFloat(Flip, c.flipped ? -1f : 1f);
                             cb.SetGlobalFloat(Linear, 0f);
                         }
+                        own = c.target == null;
                         cb.SetGlobalFloat(Height, passHeight);
                         break;
                     case Kind.End:
                         cb.DisableScissorRect();
                         break;
                     case Kind.Scissor:
-                        cb.EnableScissorRect(new Rect(c.x, passHeight - c.y - c.height, c.width, c.height)); // Unity counts rows from the bottom
+                        // Unity counts the camera's rows from the bottom. A target's are counted as they're stored, which
+                        // is from Tide's top on every API: where Unity's rows go from the bottom (OpenGL) the pass is
+                        // drawn upside down (Begin's flipped), elsewhere a texture's first row is its top
+                        cb.EnableScissorRect(new Rect(c.x, own ? passHeight - c.y - c.height : c.y, c.width, c.height));
                         break;
                     case Kind.Mipmaps:
                         cb.GenerateMips(c.mipmapped);

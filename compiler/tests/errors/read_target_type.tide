@@ -1,0 +1,4 @@
+// expect: Read gives a grid of what a color image holds: Color, float, float2, float4 or int, not bool
+scene Main {}
+local singleton State { RenderTarget target; }
+async void Read(State state) { var pixels = await state.target.Read<bool>(); }

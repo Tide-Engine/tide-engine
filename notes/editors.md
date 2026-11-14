@@ -9,6 +9,13 @@ Linear is an ordinary attribute identifier, highlighted by the existing brackets
 
 # The language server and the editors
 
+## Reads of any target image (2026-11-14)
+
+A RenderTarget's completion offers `Read` as `Read<T>([int image]) -> Grid2<T> fails IOError` and `ReadDepth() ->
+Grid2<float> fails IOError`, each with what it reads, its exactness and its limits; signature help has both, and
+`colors`' doc names `colors.count`. Diagnostics are the compiler's. No grammar change: `Read<float>(1)` tokenizes as other generic calls. Test: lsp_render_target_formats_and_depth
+(tidels_tests 279/279).
+
 ## Numeric images and frag outputs (2026-11-14)
 
 Format completion and hover describe all seven numeric members, accepted output/clear types, storage bytes,

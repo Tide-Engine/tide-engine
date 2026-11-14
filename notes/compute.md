@@ -49,7 +49,8 @@ macOS and the optional real-GPU web lanes were not run here.
 The numeric format connection is built: public R32f/Rgba32f/R32i constructors, target provenance, volume
 allocation and byte counts reach portable r32float/rgba32float/r32sint storage bindings. Typed Raw roles on
 Texture/Texture3D fields and read-only GPU helper parameters preserve numeric Sample/exact-cell/store types,
-without alpha conversion. These roles use Point only, with no optional float32 filtering or numeric mipmaps.
+without alpha conversion. The 32-bit and integer roles use Point only; compact float roles blend (render-targets.md, top).
+A kernel's written image is checked at run time against its pipeline's format (`image_destination_fits`).
 R8/Rg8/R16f/Rg16f remain non-storage formats and are refused with guidance to use a portable writable format.
 Public compiler/golden and platform images fixtures exercise scalar, float4 and signed integer stores and
 reads; backend validation is recorded with the completed format integration in render-targets.md.

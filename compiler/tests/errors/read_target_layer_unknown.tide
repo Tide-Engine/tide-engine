@@ -1,0 +1,4 @@
+// expect: Read<float> gives a Grid2<float> of the image's own numbers, and this target's format for image 0 isn't fixed by its constructor assignments
+// A layer of an array handed in: what it holds isn't known where it's read
+scene Main {}
+async void Read(TextureArray array) { var pixels = await array.layers[0].Read<float>(); }

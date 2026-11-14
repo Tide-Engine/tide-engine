@@ -1,0 +1,5 @@
+// expect: Read(1) reads the target's color image 1, and this target was made with fewer
+scene Main {}
+local singleton State { RenderTarget target; }
+view Make(mut State state) { state.target = RenderTarget(8, 8, Format.Rgba16f); }
+async void Read(State state) { var pixels = await state.target.Read(1); }

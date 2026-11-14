@@ -181,9 +181,9 @@ expectations unchanged; new argument/CPU/volume diagnostics pass. Shader LSP tes
 381/381, docs build pass. Unity 6000.6.0f1 hidden D3D11, D3D12, Vulkan and OpenGL Core ComputeReplayTests pass 10/10 each (existing image/volume/order
 suite). Explicit levels use the already tested HLSL level-sampling helpers. NaN maps to zero through Tide's clamp;
 infinities clamp to the range, then samplers clamp to the available chain. Point/Bilinear remain level zero.
-Typed numeric texture roles now connect the new public Format members through Sample, returning their
-declared numeric type with Point only. These images have no mip chain; SampleLevel and SampleGrad are
-refused with guidance to use Sample. Metal and other machines remain CI/device coverage.
+Typed numeric texture roles connect the public Format members through Sample, returning their declared
+numeric type. R8/Rg8/R16f/Rg16f/Rgba16f roles also take SampleLevel, SampleGrad and the blending filters, with a
+mip chain made on demand; R32f/Rgba32f/R32i stay nearest (render-targets.md, top). Metal and other machines remain CI/device coverage.
 
 # Textures and how they are sampled
 

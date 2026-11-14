@@ -1,0 +1,3 @@
+// expect: a TextureArray or Cubemap holds no integer images: its role is [Raw(float)], [Raw(float2)] or [Raw(float4)]
+scene Main { }
+local singleton Images { [Raw(int)] TextureArray layers; }

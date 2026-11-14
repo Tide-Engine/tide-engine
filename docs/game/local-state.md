@@ -250,6 +250,10 @@ A local `Main` starts the program outside any match, usually in a menu:
 local scene Main { }
 ```
 
+Move between local scenes with `Scene.Switch(Lobby)`, and unload the menu as a
+match starts: it stays gone until this machine is offline again (see
+[Switching scenes](./scenes.md#switching-scenes)).
+
 `local event` declares an event of this machine's own, which local code sends and handles. A local handler is `local` before a handler, `local event(...)`, and what it takes depends on what it hears:
 
 - **Local events**, and `Spawned` and `Destroyed` of local entities: local state only.

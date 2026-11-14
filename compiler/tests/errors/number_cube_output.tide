@@ -1,0 +1,5 @@
+// expect: frag output 1 is Color, but Format.R16f takes float: change the output type or this image's format
+scene Main { }
+local singleton Images { [Raw(float)] Cubemap cube; }
+frag Paint(Vertex vertex,out Color color) { color=Color(1,0,0); }
+view Show(mut Images images) { images.cube=Cubemap(8,Format.R16f); List<Vertex> quad=[Vertex {position=float2(0)},Vertex {position=float2(1,0)},Vertex {position=float2(0,1)}]; images.cube.faces[2].Mesh(quad,[0,1,2],Paint); }

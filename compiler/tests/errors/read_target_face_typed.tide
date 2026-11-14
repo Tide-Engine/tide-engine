@@ -1,0 +1,6 @@
+// expect: Read<float> gives a Grid2<float>, but this target's image 0 is Format.Rg16f, which holds float2: write 'await target.Read<float2>()'
+// A face is read as what its cube was made to hold
+scene Main {}
+local singleton State { Cubemap cube; }
+view Make(mut State state) { state.cube = Cubemap(8, Format.Rg16f); }
+async void Read(State state) { var pixels = await state.cube.faces[0].Read<float>(); }

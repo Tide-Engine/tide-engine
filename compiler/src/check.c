@@ -6820,35 +6820,67 @@ static type check_scene_call(checker *c, expr *e)
         e->call = CALL_IS_PREPARED;
         return T_BOOL_;
     }
-    const bool load = str_eq_c(e->name, "Load");
+    // Scene.Switch(Arena) is a load that first unloads its world's scenes
+    const bool switches = str_eq_c(e->name, "Switch");
+    const bool load = switches || str_eq_c(e->name, "Load");
     const bool unload = str_eq_c(e->name, "Unload");
+    const char *const loads = switches ? "Scene.Switch" : "Scene.Load";
+    // `local Scene.Load(Menu)`: this machine's, where the code doesn't say (a function loading a prefab)
+    const bool placed = e->placement_local || (e->object && e->object->placement_local);
     if (!load && !unload) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
-        diag_error(e->at, "Scene has no '" STR_FMT "'; it has Load, Unload and IsPrepared", STR_ARG(e->name));
+        diag_error(e->at, "Scene has no '" STR_FMT "'; it has Load, Switch, Unload and IsPrepared", STR_ARG(e->name));
         if (str_eq_c(e->name, "AddPlayer") || str_eq_c(e->name, "RemovePlayer"))
             diag_note("set the scene root's Visibility group audience with Visibility.Set(group, audience)");
         suggestion s = suggest_start(e->name);
         suggest_consider_c(&s, "Load");
+        suggest_consider_c(&s, "Switch");
         suggest_consider_c(&s, "Unload");
         suggest_consider_c(&s, "IsPrepared");
         suggest_note(&s);
         return T_ERR;
     }
     const char *error = NULL;
-    if (in_routine(c) && c->method != c->prog->startup_create) error = "%s can't load or unload scenes; systems, views and event handlers do";
-    else if (c->in_input) error = "%s runs outside the simulation, so it can't load or unload scenes";
+    // A function or a method loads and unloads as the code that calls it would (check_acts); the GPU's code,
+    // an operator and Interpolate never do
+    const bool passed = inherits(c) && c->method != c->prog->startup_create;
+    if (in_routine(c) && !inherits(c) && c->method != c->prog->startup_create) {
+        error = c->method->kind == DECL_SHADER ? "%s can't load or unload scenes; systems, views and event handlers do"
+              : c->method->is_operator ? "an operator works a value out of its operands, so it can't load or unload scenes"
+              : c->method->is_interpolate ? "Interpolate blends a value between ticks, for views, so it can't load or unload scenes"
+                                          : "%s can't load or unload scenes here; systems, views and event handlers do";
+    } else if (c->in_input) error = "%s runs outside the simulation, so it can't load or unload scenes";
     if (error) {
         diag_error(e->at, error, c->method ? routines(c) : input_code(c));
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         return T_ERR;
     }
+    if (placed && unload) {
+        diag_error(e->at, "Scene.Unload takes the scene's entity, which says whose it is; remove 'local'");
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        return T_ERR;
+    }
+    if (placed && !passed && !in_async_function(c) && !local_code(c)) {
+        diag_error(e->at, "the match can't load local scenes; 'local %s' is for views, local handlers and the functions they call", loads);
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        return T_ERR;
+    }
     bool local = local_code(c);
     e->local_world = local;
+    e->switches_scene = switches;
+    if (switches && c->prog->shards) {
+        diag_error(e->at, "Scene.Switch unloads every scene of a world at once, and a sharded match's scenes are on several servers");
+        diag_note("unload each with Scene.Unload(scene), then Scene.Load the next");
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        return T_ERR;
+    }
     if (load && e->args.count) {
         decl *prefab = prefab_named(c, e->args.items[0]);
         if (prefab) {
-            if (c->loop_header || c->branch_depth || c->short_circuit_depth) diag_error(e->at, "Scene.Load prefab instances in a statement or loop body, not a condition, step or conditional expression");
-            return check_prefab_spawn(c, e, prefab, true);
+            if (c->loop_header || c->branch_depth || c->short_circuit_depth) diag_error(e->at, "%s prefab instances in a statement or loop body, not a condition, step or conditional expression", loads);
+            const type made = check_prefab_spawn(c, e, prefab, true);
+            if (reading_code(c)) reading_code(c)->loads_scenes = true;
+            return made;
         }
     }
     if (load && e->args.count > 1) refuse_arg_names(e, T_ENTITY_);
@@ -6860,15 +6892,15 @@ static type check_scene_call(checker *c, expr *e)
     if (load) {
         if (e->args.count < 1) {
             for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
-            diag_error(e->at, "Scene.Load takes a scene followed by optional root components, like 'Scene.Load(Arena { size = 30 }, Visibility { group = group })'");
+            diag_error(e->at, "%s takes a scene followed by optional root components, like '%s(Arena { size = 30 }, Visibility { group = group })'", loads, loads);
             return T_ERR;
         }
         // Like Spawn, it creates an entity, so it runs first in its statement (see Evaluation order).
         if (c->loop_header > 0) {
-            diag_error(e->at, "Scene.Load can't be in a loop's condition or a for's step");
+            diag_error(e->at, "%s can't be in a loop's condition or a for's step", loads);
             diag_note("load in the loop's body instead");
         } else if (c->branch_depth > 0 || c->short_circuit_depth > 0) {
-            diag_error(e->at, "Scene.Load can't be %s", c->branch_depth > 0 ? "inside '?:'" : c->short_circuit_side);
+            diag_error(e->at, "%s can't be %s", loads, c->branch_depth > 0 ? "inside '?:'" : c->short_circuit_side);
             diag_note("that part only runs sometimes; load in an if/else instead");
         }
         expr *arg = e->args.items[0];
@@ -6876,7 +6908,7 @@ static type check_scene_call(checker *c, expr *e)
         if (arg->kind == E_LITERAL) {
             const type t = check_literal(c, arg);
             if (t.kind == TY_COMPONENT && t.decl->is_scene) scene = t.decl;
-            else if (t.kind != TY_ERROR) diag_error(arg->at, "Scene.Load takes a scene, and '" STR_FMT "' is %s", STR_ARG(t.decl->name), decl_what(t.decl));
+            else if (t.kind != TY_ERROR) diag_error(arg->at, "%s takes a scene, and '" STR_FMT "' is %s", loads, STR_ARG(t.decl->name), decl_what(t.decl));
         } else {
             str name;
             decl *d = (arg->kind == E_NAME || arg->kind == E_MEMBER) && qualified_text(arg, &name) ? find_type(c, name, arg->at) : NULL;
@@ -6887,15 +6919,20 @@ static type check_scene_call(checker *c, expr *e)
                 arg->type_decl = d;
                 arg->type = decl_type(d);
                 if (d->kind == DECL_COMPONENT && d->is_scene) scene = d;
-                else diag_error(arg->at, "Scene.Load takes a scene, and '" STR_FMT "' is %s", STR_ARG(d->name), decl_what(d));
+                else diag_error(arg->at, "%s takes a scene, and '" STR_FMT "' is %s", loads, STR_ARG(d->name), decl_what(d));
             } else if (check_expr(c, arg).kind != TY_ERROR) {
-                diag_error(arg->at, "Scene.Load takes a scene, like 'Scene.Load(Arena)' or 'Scene.Load(Arena { size = 30 })'");
+                diag_error(arg->at, "%s takes a scene, like '%s(Arena)' or '%s(Arena { size = 30 })'", loads, loads, loads);
             }
         }
         if (!scene) return T_ERR;
         if (in_async_function(c)) { // An async function's world is the scene's
             if (!note_task_side(c, scene->is_local ? TASK_LOCAL : TASK_MATCH, arg->at)) return T_ERR;
             local = e->local_world = scene->is_local;
+        }
+        if (passed) local = e->local_world = scene->is_local; // A function's world is the scene's, and its callers answer for it
+        if (placed && !scene->is_local) {
+            diag_error(arg->at, "'" STR_FMT "' is one of the match's scenes; remove 'local', or declare it 'local scene'", STR_ARG(scene->name));
+            return T_ERR;
         }
         if (scene->is_local != local) {
             if (scene->is_local) {
@@ -6908,10 +6945,11 @@ static type check_scene_call(checker *c, expr *e)
             return T_ERR;
         }
         e->call = CALL_LOAD;
-        if (c->system) c->system->loads_scenes = true;
+        if (reading_code(c)) reading_code(c)->loads_scenes = true;
         e->type_decl = scene;
         note_text_write(c, decl_holds_text(scene), e->at, scene, true);
         e->spawn_mask = bit(scene);
+        bool text = decl_holds_text(scene);
         for (int i = 1; i < e->args.count; i++) {
             expr *value = e->args.items[i];
             decl *comp = check_component_arg(c, value, "Scene.Load root components");
@@ -6924,8 +6962,10 @@ static type check_scene_call(checker *c, expr *e)
                 diag_error(value->at, "'" STR_FMT "' appears twice; an entity has at most one of each component", STR_ARG(comp->name));
             e->spawn_mask = mask_or(e->spawn_mask, bit(comp));
             note_text_write(c, decl_holds_text(comp), value->at, comp, true);
+            text |= decl_holds_text(comp);
         }
         vec_push(c->spawns, e);
+        if (passed) note_act(c, local, e->at, switches ? (local ? "switches local scenes" : "switches scenes") : local ? "loads local scenes" : "loads scenes", true, text);
         note_spawn(c);
         return local ? (type){TY_LOCAL_ENTITY, NULL} : T_ENTITY_;
     }
@@ -6940,6 +6980,7 @@ static type check_scene_call(checker *c, expr *e)
         if (!note_task_side(c, scene.kind == TY_LOCAL_ENTITY ? TASK_LOCAL : TASK_MATCH, e->args.items[0]->at)) return T_ERR;
         local = e->local_world = scene.kind == TY_LOCAL_ENTITY;
     }
+    if (passed && (scene.kind == TY_ENTITY || scene.kind == TY_LOCAL_ENTITY)) local = e->local_world = scene.kind == TY_LOCAL_ENTITY;
     const type_kind own = local ? TY_LOCAL_ENTITY : TY_ENTITY;
     if (scene.kind != TY_ERROR && scene.kind != own) {
         if (scene.kind == TY_ENTITY && local) {
@@ -6958,6 +6999,7 @@ static type check_scene_call(checker *c, expr *e)
         return T_ERR;
     }
     e->call = CALL_UNLOAD;
+    if (passed) note_act(c, local, e->at, local ? "unloads local scenes" : "unloads scenes", false, false);
     return T_VOID_;
 }
 
@@ -8405,13 +8447,14 @@ static type check_cube_target(checker *c, expr *e)
         return T_ERR;
     }
     if (argc == 2 && e->args.items[1]->enum_member && e->args.items[1]->enum_member->number == 1) {
-        diag_error(e->args.items[1]->at, "a cube holds colors: its faces are Format.Rgba8 or Format.Rgba16f, and each has "
-                                         "depth of its own to draw with");
+        diag_error(e->args.items[1]->at, "a cube holds colors or numbers: its faces are Format.Rgba8, Rgba16f, R8, Rg8, R16f or Rg16f, "
+                                         "and each has depth of its own to draw with");
         diag_note("a cube of depth alone, for a lamp that shines every way, isn't there yet");
         return T_ERR;
     }
-    if (argc == 2 && e->args.items[1]->enum_member && e->args.items[1]->enum_member->number >= 3) {
-        diag_error(e->args.items[1]->at, "a Cubemap uses Format.Rgba8 or Format.Rgba16f: use a RenderTarget for numeric images, or a Texture3D for a numeric volume");
+    if (argc == 2 && e->args.items[1]->enum_member && e->args.items[1]->enum_member->number >= 7) {
+        diag_error(e->args.items[1]->at, "a Cubemap's faces are read through a blending sampler, which 32-bit float and integer images "
+                                         "lack on some devices: use Format.R16f, Rg16f or Rgba16f, or a RenderTarget for each image");
         return T_ERR;
     }
     e->call = CALL_BUILTIN;
@@ -8477,8 +8520,10 @@ static type check_array_target(checker *c, expr *e)
     const int argc = e->args.count;
     const type last = argc ? e->args.items[argc - 1]->type : T_ERR;
     const bool formatted = last.kind == TY_ENUM && last.decl == c->prog->format;
-    if (formatted && e->args.items[argc - 1]->enum_member && e->args.items[argc - 1]->enum_member->number >= 3) {
-        diag_error(e->args.items[argc - 1]->at, "a TextureArray uses Format.Rgba8, Rgba16f or Depth: use a RenderTarget for numeric images, or a Texture3D for a numeric volume");
+    if (formatted && e->args.items[argc - 1]->enum_member && e->args.items[argc - 1]->enum_member->number >= 7) {
+        diag_error(e->args.items[argc - 1]->at, "a TextureArray's layers are read through a blending sampler, which 32-bit float and integer "
+                                                "images lack on some devices: use Format.R16f, Rg16f or Rgba16f, a RenderTarget for each "
+                                                "image, or a Texture3D for a numeric volume");
         return T_ERR;
     }
     const int sizes = argc - (formatted ? 1 : 0); // width, height, layers[, pixelsPerUnit]
@@ -9031,7 +9076,13 @@ static type check_pixel_method(checker *c, expr *e, const bool derivative)
 static bool check_image_clear(checker *c, expr *e, type *result)
 {
     if (!str_eq_c(e->name, "Clear") || !e->args.count) return false;
+    // Each argument is checked once: the Color form's own path goes by `args_checked`, and leaves `default` and
+    // an enum's shorthand to its parameter, as it always did
+    for (int i = 0; i < e->args.count; i++) {
+        if (e->args.items[i]->kind == E_DEFAULT || e->args.items[i]->enum_shorthand) return false;
+    }
     for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+    e->args_checked = true;
     const mesh_draw draw = {.call = e, .in = reading_code(c)};
     vec_push(c->prog->mesh_draws, draw);
     if (e->args.count == 1 && e->args.items[0]->type.kind == TY_COLOR) return false;
@@ -9110,8 +9161,11 @@ static type check_method(checker *c, expr *e)
             && !(c->method && find_property(c->method->owner, e->object->name))) world = component_world(c, e->object->at);
         if (world && world->type.kind == TY_WORLD) return check_world_call(c, e, world);
     }
-    // Json.Read<LobbyInfo>(text) takes one too, which check_json_call reads
-    if (e->type_arg.len > 0 && !(names_builtin_owner(c, e->object) && str_eq_c(e->object->name, "Json"))
+    // Json.Read<LobbyInfo>(text) takes one too, which check_json_call reads, and target.Read<float>(), which is
+    // known for a render target's once its receiver is checked
+    const bool read_typed = e->type_arg.len > 0 && (str_eq_c(e->name, "Read") || str_eq_c(e->name, "ReadDepth"))
+                         && !names_builtin_owner(c, e->object) && !names_wait(c, e->object);
+    if (e->type_arg.len > 0 && !read_typed && !(names_builtin_owner(c, e->object) && str_eq_c(e->object->name, "Json"))
         && !((str_eq_c(e->name, "Set") || str_eq_c(e->name, "Reset"))
              && visibility_typed_receiver(c, e->object))) {
         diag_error(e->type_arg_at, "'" STR_FMT "' takes no type in '<>'", STR_ARG(e->name));
@@ -9186,7 +9240,7 @@ static type check_method(checker *c, expr *e)
             if (arg->is_out && builtin_takes_out(owner, e->name)) begin_out_arg(c, arg);
             else if (arg->is_out && refuse_entered_arg(c, e, arg)) continue;
             else if (arg->kind == E_LIST && builtin_list_param(owner, e->name, i, arg, &list)) check_expr_want(c, arg, list);
-            else if (arg->kind != E_DEFAULT && !arg->enum_shorthand) check_expr(c, arg);
+            else if (arg->kind != E_DEFAULT && !arg->enum_shorthand && !e->args_checked) check_expr(c, arg);
         }
         const bool gui = str_eq_c(owner, "GUI") || str_eq_c(owner, "GUILayout");
         const bool cursor = str_eq_c(owner, "Cursor");
@@ -9290,6 +9344,10 @@ static type check_method(checker *c, expr *e)
     const expr *previous_asset = c->asset_value;
     c->asset_value = e->object;
     const type obj = check_expr(c, e->object);
+    if (read_typed && obj.kind != TY_RENDER_TARGET && obj.kind != TY_ERROR) { // Left for its receiver's type, above
+        diag_error(e->type_arg_at, "'" STR_FMT "' takes no type in '<>'", STR_ARG(e->name));
+        diag_note("a render target's read does, for an image of numbers: 'await target.Read<float>()'");
+    }
     if (obj.kind == TY_STRUCT && obj.decl->task_handle) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         if (!str_eq_c(e->name, "Cancel") || e->args.count) {
@@ -9431,7 +9489,7 @@ static type check_method(checker *c, expr *e)
         return T_VOID_;
     }
     if (obj.kind == TY_TEXTURE_ARRAY) {
-        if (declared_linear(e->object)) e->object->raw_sampled = true; // Metadata and target lifetime keep the role.
+        if (declared_linear(e->object) || declared_image_type(e->object).kind != TY_COLOR) e->object->raw_sampled = true; // Metadata and target lifetime keep the role.
         const bool resize = str_eq_c(e->name, "Resize");
         if (str_eq_c(e->name, "Sample") || str_eq_c(e->name, "SampleGrad") || str_eq_c(e->name, "SampleLevel")) {
             check_sample_args(c, e, false);
@@ -9473,7 +9531,7 @@ static type check_method(checker *c, expr *e)
         return T_VOID_;
     }
     if (obj.kind == TY_CUBEMAP) {
-        if (declared_linear(e->object)) e->object->raw_sampled = true;
+        if (declared_linear(e->object) || declared_image_type(e->object).kind != TY_COLOR) e->object->raw_sampled = true;
         const bool resize = str_eq_c(e->name, "Resize");
         if (str_eq_c(e->name, "Sample") || str_eq_c(e->name, "SampleLevel")) {
             check_sample_args(c, e, true);
@@ -9509,15 +9567,60 @@ static type check_method(checker *c, expr *e)
         return T_VOID_;
     }
     if (obj.kind == TY_RENDER_TARGET) {
-        if (str_eq_c(e->name, "Read")) {
+        if (str_eq_c(e->name, "Read") || str_eq_c(e->name, "ReadDepth")) {
+            // await target.Read(), Read(image), Read<T>(), Read<T>(image) and ReadDepth(): an owned grid of one of
+            // its images, a frame or more later. The cell type is written here, and plan_shaders holds it against
+            // the formats the target was made with (check_target_read), which are known once every body is checked
+            const bool depth = str_eq_c(e->name, "ReadDepth");
             for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
-            if (e->args.count || c->awaiting != e) {
-                diag_error(e->at, "Read takes no arguments and finishes later: 'var pixels = await target.Read();' in local async code");
+            if (c->awaiting != e || e->args.count > (depth ? 0 : 1)) {
+                diag_error(e->at, depth ? "ReadDepth takes no arguments and finishes later: 'var depths = await target.ReadDepth();' "
+                                          "in local async code"
+                                        : "Read takes the color image's number, or nothing for the first, and finishes later: "
+                                          "'var pixels = await target.Read();' in local async code");
                 return T_ERR;
             }
             if (e->object->kind == E_MEMBER && e->object->c_constant && str_eq_c(e->object->member, "window")) {
                 diag_error(e->at, "the window cannot be read: draw into a RenderTarget and await target.Read()");
                 return T_ERR;
+            }
+            type cell = depth ? T_FLOAT_ : (type){TY_COLOR, NULL};
+            if (e->type_arg.len > 0) {
+                if (depth) {
+                    diag_error(e->type_arg_qual_at, "ReadDepth takes no type in '<>': a depth is a float, 'await target.ReadDepth()'");
+                    return T_ERR;
+                }
+                cell = resolve_type(c, e->type_arg_ref, PLACE_LOCAL, e->type_arg_qual_at);
+                if (cell.kind == TY_ERROR) return T_ERR;
+                if (cell.kind != TY_COLOR && cell.kind != TY_FLOAT && cell.kind != TY_FLOAT2 && cell.kind != TY_FLOAT4
+                    && cell.kind != TY_INT) {
+                    diag_error(e->type_arg_qual_at, "Read gives a grid of what a color image holds: Color, float, float2, float4 or int, "
+                                                    "not %s", type_name(cell));
+                    diag_note("'Read<float>()' reads Format.R8, R16f and R32f, 'Read<float2>()' Rg8 and Rg16f, 'Read<float4>()' "
+                              "Rgba16f and Rgba32f, 'Read<int>()' R32i, and 'Read()' a Color image");
+                    return T_ERR;
+                }
+            }
+            e->read_kind = (uint8_t)(depth ? 5 : cell.kind == TY_FLOAT ? 1 : cell.kind == TY_FLOAT2 ? 2 : cell.kind == TY_FLOAT4 ? 3
+                                     : cell.kind == TY_INT ? 4 : 0);
+            e->read_image = 0;
+            if (e->args.count) {
+                // Which image is part of the read's type, so it's a number the compiler knows
+                const expr *image = e->args.items[0];
+                if (image->type.kind == TY_ERROR) return T_ERR;
+                for (int i = 0; image->constant && i < 32; i++) image = image->constant->value;
+                if (!type_assignable(T_INT_, e->args.items[0]->type) || image->kind != E_INT) {
+                    diag_error(e->args.items[0]->at, "Read takes which color image as a constant int, counted from 0: 'await "
+                                                     "target.Read(1)' reads 'target.colors[1]'");
+                    diag_note("what a read gives depends on the image's format, so the compiler has to know which image it is");
+                    return T_ERR;
+                }
+                if (image->int_value < 0 || image->int_value >= TARGET_COLORS) {
+                    diag_error(e->args.items[0]->at, "a render target holds %d color images at the most: 'Read(0)' to 'Read(%d)'",
+                               TARGET_COLORS, TARGET_COLORS - 1);
+                    return T_ERR;
+                }
+                e->read_image = (uint8_t)image->int_value;
             }
             if (in_async_function(c)) {
                 if (!note_side(c->method, TASK_LOCAL, e->at)) return T_ERR;
@@ -9529,7 +9632,7 @@ static type check_method(checker *c, expr *e)
             if (code) code->uses_gpu_read = true;
             e->gpu = GPU_TARGET_READ;
             vec_push(c->prog->mesh_draws, ((mesh_draw){.in = reading_code(c), .call = e}));
-            return result_of(c->prog, grid_of(c->prog, (type){TY_COLOR, NULL}, 2), (type){TY_ENUM, c->prog->io_error}, false);
+            return result_of(c->prog, grid_of(c->prog, cell, 2), (type){TY_ENUM, c->prog->io_error}, false);
         }
         if (str_eq_c(e->name, "Resize") || str_eq_c(e->name, "Dispose")) {
             const bool resize = str_eq_c(e->name, "Resize");
@@ -9576,7 +9679,7 @@ static type check_method(checker *c, expr *e)
             return T_ERR;
         }
         for (int i = 0; i < e->args.count; i++) {
-            if (e->args.items[i]->kind != E_DEFAULT && !e->args.items[i]->enum_shorthand) check_expr(c, e->args.items[i]);
+            if (e->args.items[i]->kind != E_DEFAULT && !e->args.items[i]->enum_shorthand && !e->args_checked) check_expr(c, e->args.items[i]);
         }
         if (!check_frame_use(c, e->at, "Draw")) return T_ERR;
         if (old_setting(e) || !check_sprite_args(c, e)) return T_ERR;
@@ -10631,8 +10734,11 @@ static type check_member(checker *c, expr *e)
         }
         if (str_eq_c(e->object->name, "Screen") && !check_frame_use(c, e->at, "Screen")) return T_ERR;
         if (str_eq_c(e->object->name, "Draw") && str_eq_c(e->member, "window")
-            && c->awaiting && str_eq_c(c->awaiting->name, "Read") && c->awaiting->object == e) {
+            && c->awaiting && (str_eq_c(c->awaiting->name, "Read") || str_eq_c(c->awaiting->name, "ReadDepth"))
+            && c->awaiting->object == e) {
             diag_error(e->at, "the window cannot be read: draw into a RenderTarget and await target.Read()");
+            diag_note("the window's image is the display's, which no GPU hands back to a kernel: 'RenderTarget.Window()' is a "
+                      "target of its size to draw into, read, and 'Draw.Blit' to the window");
             return T_ERR;
         }
         if (builtin_draw_owner(e->object->name) && !check_frame_use(c, e->at, str_to_cstr(e->object->name))) return T_ERR;
@@ -10679,8 +10785,17 @@ static type check_member(checker *c, expr *e)
     c->device_whole_ok = e->object; // devices.gamepad reads what it names, not all of devices
     c->in_place_ok = e->object;     // state.tail reads its field where the state is
     c->member_object = e->object;
+    // target.colors.count: how many color images it holds. `colors` is otherwise read one at a time
+    const bool counts_colors = str_eq_c(e->member, "count") && e->object->kind == E_MEMBER && str_eq_c(e->object->member, "colors");
+    const expr *colors_indexed = c->colors_indexed;
+    if (counts_colors) c->colors_indexed = e->object;
     const type obj = check_expr(c, e->object);
+    if (counts_colors) c->colors_indexed = colors_indexed;
     if (obj.kind == TY_ERROR) return T_ERR;
+    if (counts_colors && obj.kind == TY_RENDER_TARGET && e->object->target_colors) {
+        if (gpu_refuses(c, e->at, "count a RenderTarget's color images", "the view owns the target")) return T_ERR;
+        return T_INT_;
+    }
 
     if (obj.kind == TY_STRUCT && obj.decl->task_handle) {
         if (!str_eq_c(e->member, "isRunning") && !str_eq_c(e->member, "isCompleted") && !str_eq_c(e->member, "isCancelled")) {
@@ -10810,7 +10925,7 @@ static type check_member(checker *c, expr *e)
         return T_ERR;
     }
     if (obj.kind == TY_TEXTURE_ARRAY || obj.kind == TY_DEPTH_TEXTURE_ARRAY) {
-        if (declared_linear(e->object)) e->object->raw_sampled = true; // Layers and depth name the original target.
+        if (declared_linear(e->object) || declared_image_type(e->object).kind != TY_COLOR) e->object->raw_sampled = true; // Layers and depth name the original target.
         const bool depths = obj.kind == TY_DEPTH_TEXTURE_ARRAY;
         const bool metadata = str_eq_c(e->member, "size") || str_eq_c(e->member, "count");
         if (gpu_code(c) && !metadata) {
@@ -10843,7 +10958,7 @@ static type check_member(checker *c, expr *e)
         return T_ERR;
     }
     if (obj.kind == TY_CUBEMAP) {
-        if (declared_linear(e->object)) e->object->raw_sampled = true; // Faces remain ordinary render destinations.
+        if (declared_linear(e->object) || declared_image_type(e->object).kind != TY_COLOR) e->object->raw_sampled = true; // Faces remain ordinary render destinations.
         if (gpu_code(c)) {
             diag_error(e->at, "a %s reads a Cubemap with 'Sample(direction)': its faces are the view's to draw into",
                        shader_word(gpu_code(c)));
@@ -11494,12 +11609,13 @@ static type check_index(checker *c, expr *e)
 {
     c->device_whole_ok = e->object; // devices.touchscreen.touches[0] reads the one it names
     c->in_place_ok = e->object;     // tail[i] reads its element where the array is
+    const expr *outer_colors = c->colors_indexed; // cube.faces[0].colors.count: the count's own, around this index
     c->colors_indexed = e->object;  // target.colors[1] reads the one it names
     const expr *previous_asset = c->asset_value;
     c->asset_value = e->object;
     const type obj = check_expr(c, e->object);
     c->asset_value = previous_asset;
-    c->colors_indexed = NULL;
+    c->colors_indexed = outer_colors;
     bool skin_handled;
     const type skin_result = check_skinned_index(c, e, obj, &skin_handled);
     if (skin_handled) return skin_result;
@@ -12141,8 +12257,9 @@ static type check_new_mesh(checker *c, expr *e, const type want)
 // Explicit mip reads share source ownership and specialization with ordinary sampling.
 static type check_sample_level(const checker *c, expr *e, const bool cube, const bool array)
 {
-    if (declared_image_type(e->object).kind != TY_COLOR) {
-        diag_error(e->at, "a typed numeric image has no mipmaps: use Sample(uv) to read its nearest pixel");
+    const type sampled = declared_image_type(e->object);
+    if (sampled.kind == TY_INT) {
+        diag_error(e->at, "an int image reads its nearest pixel: a GPU blends no integers, so it has no smaller images. Use Sample(uv)");
         return T_ERR;
     }
     const char *names = cube ? "direction, level, filter" : array ? "uv, layer, level, filter, wrap" : "uv, level, filter, wrap";
@@ -12167,7 +12284,7 @@ static type check_sample_level(const checker *c, expr *e, const bool cube, const
         return T_ERR;
     }
     e->call = CALL_GRID;
-    return (type){TY_COLOR, NULL};
+    return sampled;
 }
 
 static type check_grid_sample(const checker *c, expr *e, const type grid)
@@ -12221,8 +12338,8 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
     }
     if (str_eq_c(e->name, "SampleLevel")) return check_sample_level(c, e, false, false);
     if (gradients) {
-        if (declared_image_type(of).kind != TY_COLOR) {
-            diag_error(e->at, "a typed numeric image reads its nearest pixel: use Sample(uv) or Sample(uv, Filter.Point), without derivatives or mipmaps");
+        if (declared_image_type(of).kind == TY_INT) {
+            diag_error(e->at, "an int image reads its nearest pixel: a GPU blends no integers, so it has no smaller images. Use Sample(uv)");
             return T_ERR;
         }
         if (!order_named_args(e, "uv, dx, dy, filter, wrap", 2)) return T_ERR;
@@ -12250,7 +12367,7 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
         }
         e->call = CALL_GRID;
         e->type_decl = grid.decl;
-        return (type){TY_COLOR, NULL};
+        return declared_image_type(of);
     }
     if (!order_named_args(e, "uv, filter, wrap", 2)) return T_ERR;
     for (int i = 0; i < e->args.count; i++) {
@@ -12287,8 +12404,8 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
     e->call = CALL_GRID;
     e->type_decl = grid.decl;
     const type sampled = declared_image_type(of);
-    if (sampled.kind != TY_COLOR && e->args.count >= 2 && e->args.items[1]->enum_member->number != 0) {
-        diag_error(e->args.items[1]->at, "a typed numeric image reads its nearest pixel on every device: use Filter.Point or leave the filter out; numeric images have no mipmaps");
+    if (sampled.kind == TY_INT && e->args.count >= 2 && e->args.items[1]->enum_member->number != 0) {
+        diag_error(e->args.items[1]->at, "an int image reads its nearest pixel: a GPU blends no integers. Use Filter.Point or leave the filter out");
         return T_ERR;
     }
     return sampled;
@@ -12484,7 +12601,7 @@ static type check_array_sample(const checker *c, expr *e)
     }
     e->call = CALL_GRID;
     e->type_decl = NULL;
-    return (type){TY_COLOR, NULL};
+    return declared_image_type(e->object); // A [Raw(T)] array's numbers, as its role says
 }
 
 // depths.Sample(uv, layer) and depths.Compare(uv, layer, value): a DepthTextureArray read in a frag or a vert, as a
@@ -12583,7 +12700,7 @@ static type check_cube_sample(const checker *c, expr *e)
     }
     e->call = CALL_GRID;
     e->type_decl = NULL;
-    return (type){TY_COLOR, NULL};
+    return declared_image_type(e->object); // A [Raw(T)] cube's numbers, as its role says
 }
 
 // grid.Decode(bytes): a Grid2<Color> becomes the PNG in a List<byte>, sized
@@ -12918,6 +13035,16 @@ static type check_await(checker *c, expr *e)
     if (c->grid_loops > 0) {
         diag_error(e->at, "a task can't wait inside a foreach over a grid, which goes through its cells as they are");
         diag_note("go through them with 'for' loops, which can wait: 'for (var y = 0; y < cells.size.y; y++) { ... }'");
+        return T_ERR;
+    }
+    // A grid a task holds is the one 'is' named, from a read: it's in the scratch area, which a wait gives back
+    for (int i = 0; i < c->locals.count; i++) {
+        const stmt *const held = c->locals.items[i];
+        if (held->type.kind != TY_GRID) continue;
+        diag_error(e->at, "a task can't wait while it holds the grid '" STR_FMT "': a local's grid lasts until the task waits",
+                   STR_ARG(held->name));
+        diag_note("copy what's kept into a component or singleton first, like 'state.pixels = " STR_FMT ".Copy();', and wait "
+                  "after the code '" STR_FMT "' is in", STR_ARG(held->name), STR_ARG(held->name));
         return T_ERR;
     }
     if (t.kind == TY_ERROR) return T_ERR;
@@ -17030,9 +17157,14 @@ static void check_field_raw(const field *f, const attribute *a)
         }
     }
     if (a->args.count || a->values.count) {
-        if ((f->type.kind != TY_TEXTURE && f->type.kind != TY_TEXTURE3D) || a->args.count || a->values.count != 1
+        const bool layered = f->type.kind == TY_TEXTURE_ARRAY || f->type.kind == TY_CUBEMAP;
+        if ((f->type.kind != TY_TEXTURE && f->type.kind != TY_TEXTURE3D && !layered) || a->args.count || a->values.count != 1
             || raw_sample_type(f).kind == TY_COLOR) {
             diag_error(a->at, "Raw takes no arguments, or one numeric image type: [Raw(float)], [Raw(float2)], [Raw(float4)] or [Raw(int)] on a Texture or Texture3D field");
+            diag_note("a TextureArray or Cubemap field takes [Raw(float)], [Raw(float2)] or [Raw(float4)]");
+        } else if (layered && raw_sample_type(f).kind == TY_INT) {
+            diag_error(a->at, "a TextureArray or Cubemap holds no integer images: its role is [Raw(float)], [Raw(float2)] or [Raw(float4)]");
+            diag_note("a GPU reads layers and faces through a sampler, which blends no integers: keep an int image in a RenderTarget's Texture");
         }
     }
 }
@@ -17878,9 +18010,12 @@ static void check_signature(checker *c, decl *m)
         const bool world = names_type_as(c, p->type_name, "World") && !find_type(c, p->type_name, p->type_at);
         c->grid_param = !m->is_extern && !m->is_async && !m->is_operator && !m->is_interpolate && !m->is_audio && !m->takes_action;
         p->type = world ? (type){TY_WORLD, NULL} : method_type(c, type_ref_or_text(p->type_ref, p->type_name), p->type_qual_at, false);
-        if (p->sample_role.len && ((p->type.kind != TY_TEXTURE && p->type.kind != TY_TEXTURE3D) || p->mode != PARAM_READ
+        const bool layered_role = p->type.kind == TY_TEXTURE_ARRAY || p->type.kind == TY_CUBEMAP;
+        if (p->sample_role.len && ((p->type.kind != TY_TEXTURE && p->type.kind != TY_TEXTURE3D && !layered_role) || p->mode != PARAM_READ
             || m->is_extern || m->is_async))
-            diag_error(p->at, "[Raw(T)] qualifies a read-only Texture or Texture3D parameter of a synchronous GPU helper");
+            diag_error(p->at, "[Raw(T)] qualifies a read-only Texture, Texture3D, TextureArray or Cubemap parameter of a synchronous GPU helper");
+        else if (p->sample_role.len && layered_role && str_eq_c(p->sample_role, "int"))
+            diag_error(p->at, "a TextureArray or Cubemap holds no integer images: its role is [Raw(float)], [Raw(float2)] or [Raw(float4)]");
         c->grid_param = false;
         if (type_is_asset_collection(p->type)) {
             m->borrows_asset_collections = true;

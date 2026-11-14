@@ -1,0 +1,3 @@
+// expect: takes no [Wrap]
+scene Main { }
+local singleton Images { [Raw(float)] [Wrap(Wrap.Repeat)] Texture image; }

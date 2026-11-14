@@ -409,6 +409,11 @@ vert Moved(mut Dot dot, Shift shift)
     dot.position += shift.by;
 }
 
+frag BiasedLast(Corner3 corner, out Color color)
+{
+    color = Color.white;
+}
+
 frag ShowBox(Corner3 corner, Box box, out Color color)
 {
     color = box.color;
@@ -583,6 +588,15 @@ view Compute(mut Lists lists, mut Results results, mut Wide wide, mut WideResult
     // A run whose list the draws before it read: after them, and the draw after it sees what it wrote
     GPU.Run(Whiten, lists.dots);
     Draw.Mesh(lists.dots, [0, 1, 2, 0, 2, 3], Moved, Shift { by = float2(20, 12) });
+    // A bias is its own draws': the frame's last draw has one, and the kernels after it, the next frame's, run
+    // with none (on WebGPU it stayed, and a kernel's pipeline was made again as one that draws)
+    Draw.Depth(Depth.Only)
+    {
+        Draw.DepthBias(2, 2)
+        {
+            Draw.Mesh(face, [0, 1, 2, 0, 2, 3], float4x4.Translate(float3(-100, 0, 0)), BiasedLast);
+        }
+    }
     if (lists.read)
     {
         lists.read = false; // The host asks for each read

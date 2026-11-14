@@ -1,3 +1,56 @@
+## ScaleTests' two objects a frame, clip rects in a target, depth bias's sign (2026-11-14)
+
+**ScaleTests' two whole-frame allocations were a regression** from 8354e85fb (compute images and Texture3D,
+2026-11-14), which the test's way of running shows and a game can hit too. Since that commit a target's pass
+runs as the frame is read while the camera's own draws wait, so `Begin` on a target calls `Written` for each of
+its images: one a kept draw of this Unity frame read (`image.used == Time.frameCount`) is renamed, and the
+rename made `new RenderTexture(texture.descriptor)` every time. ScaleTests calls the runner's `Update` itself in
+the frame Unity already called it in, so the second read of the frame finds the Sample's two sampled target
+images (64x64) read by the first and renames both: two objects, two GPU textures and two copies a frame, in all
+120 measured frames (`showing` made none, as the depth thread saw). A probe counted exactly two renames a frame,
+starting at the test's first own frame. A game does the same with one read a frame whenever it draws into a
+target, or a kernel writes an image, after a camera draw of that frame sampled it. Before 8354e85fb target
+passes waited in the camera's commands with the draws, and nothing was renamed.
+
+- **Fix** (`TideRender.cs`): images a rename lets go of are spares, as buffers have been since 2026-11-10.
+  `Written` dooms the old image marked `again`; `Collect` moves it to `spareImages` once no camera's commands
+  read it (three frames), and `Renamed(RenderTexture)` takes a spare of the same descriptor (size, depth,
+  samples, dimension, both formats, mip count and creation flags, compared a member at a time: a struct's
+  `Equals` boxes) before making one. At most 32 spares, one unused for 600 frames released, all released with
+  the renderer. A frame's renames go round about four images each, which is how many were alive before, each
+  made anew. No assertion changed. The runner's median frame in the test went from 1.47 ms to 0.66 ms (D3D12).
+- **Also found by reading:** a pass on a target of several colors made a `RenderTargetIdentifier[]` each time
+  it began (older than the 2026-11-10 pass, which missed it; no Sample target has several colors). Kept with
+  the target now (`Target.colorIds`).
+- What's left in the whole frame is what the test allows: about once a second the Input Manager's joystick
+  names and the editor's look at `unity.json` (4 of 120 frames on some runs, about 30 objects each).
+
+**A clip rect in a target's pass was upside down** on every API (found making the read-back check below
+asymmetric; older than the rendering work, as no test clipped a target by rows). `Record` turned every clip
+rect to rows from the bottom, which is right for the camera's own target alone. A target's rows are counted as
+stored, from Tide's top everywhere (OpenGL's passes are drawn upside down for that), so its rect's y is Tide's.
+Tide's 2D clips drawn into a render target in Unity were mirrored top to bottom until now.
+
+**Checked, and right as they were:**
+
+- **Read-back row order.** `PixelReadKernelReturnsStraightHdrThroughBufferReads` now reads an image with a
+  green triangle placed at the top left by its corners alone (clip space) and blue clipped into the bottom
+  right 16 by 16; every pixel but the triangle's slanted edge is checked at its place from the top left.
+  The kernel's rows and geometry agreed on all four APIs; only the clip rect was wrong.
+- **Depth bias's sign.** `DepthBiasPushesAwayWherePositive`: two draws on one plane, depth tested and written,
+  in four columns (second +8: the first stays; second -8: it wins; first -8 then none: the first stays; none:
+  the second passes, being equal), in a target's pass and in the camera's own. `SetGlobalDepthBias` takes
+  Tide's sign as it is on all four APIs, Unity turning it for its own depth. Constant bias only: the fixture's
+  shader has no slope.
+- `ClipRectsCountRowsFromTheTop` pins both kinds of pass.
+
+**Runs:** Unity 6000.6.0f1, Windows, hidden batch mode with `-noAudio` and a GPU, a scratch Sample pointing at
+this checkout's package, tide installed from this checkout's mingw-release and debug trees. All PlayMode tests
+on Direct3D 11, Direct3D 12, Vulkan and OpenGL Core: 41 pass of 44 on each, the three sRGB witnesses skipped
+in the Sample's Gamma color space as before. Before the fix ScaleTests failed (0 quiet frames of 120). Not
+run: EditMode (no editor code changed), Metal, a Unity WebGPU player. Note for the next run: without a
+`-force-` flag this machine's editor picks Direct3D 12, not 11.
+
 ## [Linear] texture replay: embed ABI 24 (2026-11-14)
 
 The owner approved opt-in sRGB sampling on 2026-11-14. Static compiler roles and importer storage are in
@@ -49,7 +102,8 @@ Numeric attachment formats, typed nearest reads and the three portable numeric s
 through the existing target, pipeline, image and volume packets. No recorder opcode or embed ABI bump is
 needed. HLSL retains the WGSL numeric-output mask and bypasses the Color conversion for a numeric float4 at
 location zero. ShaderLab uses literal `Blend i One Zero` for each numeric output; the other outputs retain
-Tide's selected blend. The seven new formats have no mip chain, and typed numeric reads use the base level.
+Tide's selected blend. R8/RG8/R16F/RG16F single-sample targets have a mip chain since the blended typed reads (render-targets.md, top; not
+replayed in an editor for that change); R32F/RGBA32F/R32I have none, and their typed reads use the base level.
 R8/RG8/R16F/RG16F retain mean MSAA resolve; R32F/RGBA32F/R32I remain single-sample.
 
 For numeric shaders, ShaderLab has a second pass with literal `ColorMask 0 i` for every attachment. Replay
@@ -82,6 +136,19 @@ clear shader variants. Metal and a Unity WebGPU player require machines/build en
 The follow-up writes_depth flag keeps explicit Draw.Bounds from re-enabling geometric occlusion testing for
 frags that replace depth. Generated C and the renderer rebuild together; TideLibrary.Abi and embed.h are 23.
 No recorder opcode, shader text or replay behavior changed. Details and focused tests: shaders.md.
+
+## Pixel readback kernels for every image (2026-11-14)
+
+`await target.Read<T>(image)` and `ReadDepth()` (render-targets.md, Readback of every image) add ten renderer
+kernels beside ReadTargetPixels: number images by `textureLoad` (float, float2, float4, int), depth, a cube's face,
+an array's layer and its depth, and a face's and a layer's numbers. They record as the first did: a compute pipeline, a sampled image, the pools and
+a buffer read, so there is no new packet and no ABI change. `tide unity` writes a compute asset for each from
+`platform/src/read_pixels_wgsl.h`, which is now generated (`compiler/tests/read_target_builtin.mjs --write`) and
+compared byte for byte with what tidec writes: the first copy was only checked as a substring and had gone stale
+when kernels gained the reversed-depth preamble. Their HLSL compiles with fxc as cs_5_0 under TideWarnings
+(`tide_hlsl_shaders_valid`), and `unity_shaders_written` counts 17 computes. **Not run in Unity:** no replay
+test of the ten new kernels was added or run in an editor; the Sample's ComputeReplayTests still cover only
+the Color kernel, through a hand-keyed asset.
 
 ## Pixel readback kernel (2026-11-14)
 

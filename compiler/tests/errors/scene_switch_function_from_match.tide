@@ -1,0 +1,5 @@
+// expect: 'Back' switches local scenes, and the match can't use local state
+local scene Menu { }
+scene Main { }
+void Back() { Scene.Switch(Menu); }
+event(Spawned) Setup(with Main) { Back(); }

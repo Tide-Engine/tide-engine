@@ -73,7 +73,8 @@ Volumes can also store numbers: R32f, Rgba32f and R32i hold a float, four floats
 respectively. Declare `[Raw(float)] Texture3D density;`, `[Raw(float4)] Texture3D channels;` or
 `[Raw(int)] Texture3D ids;`, and construct the volume with the matching Format. A kernel stores that numeric
 type directly; `Sample` and exact-cell reads return it without alpha conversion. Typed numeric volumes read
-the nearest cell, with implicit or explicit `Filter.Point`, and have no mipmaps. Rgba16f can also be read
+the nearest cell, with implicit or explicit `Filter.Point`, and have no mipmaps (a 2D number image in a compact
+format blends and has them: see Number images). Rgba16f can also be read
 through a `[Raw(float4)]` field when all four channels are data. See [Number images](./shaders.md#number-images).
 
 `Grid3<Color>` and `Grid3<float>` convert to `Texture3D` where one is wanted. A float grid supplies its value

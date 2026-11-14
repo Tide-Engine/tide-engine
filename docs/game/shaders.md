@@ -196,12 +196,25 @@ frag Show(Vertex vertex, out Color color, Buffers buffers)
 }
 ```
 
-`Sample` returns exactly the role's `float`, `float2`, `float4` or `int`. Typed numeric images read the nearest
-pixel, with `Filter.Point` as the default and the only accepted filter; they have no numeric mipmaps or
-`SampleGrad`. Clamp, Repeat and Mirror still control coordinates outside the image. This avoids requiring
-optional 32-bit float filtering and keeps IDs exact. Bare `[Raw]` retains its existing four-channel behavior.
-The typed role goes on fields, including Texture3D fields, and on read-only image parameters of synchronous
-GPU helpers. A caller supplies an image with the same role:
+`Sample` returns exactly the role's `float`, `float2`, `float4` or `int`. With no filter named, a typed image
+reads its nearest pixel. Clamp, Repeat and Mirror still control coordinates outside the image.
+
+Float images in `R8`, `Rg8`, `R16f`, `Rg16f` and `Rgba16f` blend too, and have mipmaps made of what was drawn:
+
+```csharp
+float soft = images.mask.Sample(vertex.uv, Filter.Bilinear);          // Between pixels
+float wide = images.mask.SampleLevel(vertex.uv, 3);                   // A smaller image: a cheap blur
+float2 moments = images.velocity.Sample(vertex.uv, Filter.Trilinear); // Between pixels and levels
+```
+
+`Filter.Anisotropic` and `SampleGrad` work as they do for a color. `R32f` and `Rgba32f` read their nearest pixel
+on every device, because a GPU only blends 32-bit floats with an optional feature and the picture would differ
+by device: blending one is a compile error naming `R16f` or `Rgba16f`. `R32i` is always exact: a GPU blends no
+integers. Bare `[Raw]` retains its existing four-channel behavior.
+
+The typed role goes on `Texture` and `Texture3D` fields, on `TextureArray` and `Cubemap` fields (the three
+float roles, for layers and faces made with `R8`, `Rg8`, `R16f`, `Rg16f` or `Rgba16f`), and on read-only image
+parameters of synchronous GPU helpers. A caller supplies an image with the same role:
 
 ```csharp
 float Height([Raw(float)] Texture image, float2 uv)

@@ -2625,6 +2625,7 @@ static void gen_spawn(gen *g, sb *o, const expr *e)
     if (e->prefab) {
         const prefab_instance *p = e->prefab;
         const bool scene = g->has_scene && g->scene_local == e->local_world;
+        if (e->switches_scene) sb_printf(o, "(%scmd_unload_all(%s), ", world_prefix(e->local_world), e->local_world ? "tide_l" : "tide_w");
         sb_printf(o, "tide_prefab%d(%s, %s", p->index, e->local_world ? "tide_l" : "tide_w", scene ? "tide_scene" : "(tide_entity){0}");
         if (!e->local_world) sb_printf(o, ", tide_causal_next(&tide_causal, %uu)", e->causal_site);
         for (int i = 0; i < p->overrides.count; i++) {
@@ -2633,7 +2634,7 @@ static void gen_spawn(gen *g, sb *o, const expr *e)
             if (value->kind == E_LITERAL || value->bind == BIND_TYPE) gen_value(g, o, value->type_decl, value->inits.items, value->inits.count);
             else gen_expr(g, o, value);
         }
-        sb_put(o, ")");
+        sb_put(o, e->switches_scene ? "))" : ")");
         return;
     }
     if (e->call == CALL_LOAD) {
@@ -2664,6 +2665,8 @@ static void gen_spawn(gen *g, sb *o, const expr *e)
 static void gen_load(gen *g, sb *o, const expr *e)
 {
     const int a = e->spawn_archetype;
+    // Scene.Switch: the scenes loaded by its turn go first, and this one after
+    if (e->switches_scene) sb_printf(o, "(%scmd_unload_all(%s), ", world_prefix(e->local_world), e->local_world ? "tide_l" : "tide_w");
     sb_printf(o, "tide_cmd_load%d(%s, ", a, e->local_world ? "tide_l" : "tide_w");
     if (!e->local_world) sb_printf(o, "(tide_entity){tide_w->tide_identity_clock, tide_causal_next(&tide_causal, %uu)}, ", e->causal_site);
     sb_printf(o, "(tide_spawn%d){", a);
@@ -2675,7 +2678,7 @@ static void gen_load(gen *g, sb *o, const expr *e)
         if (arg->kind == E_LITERAL || arg->bind == BIND_TYPE) gen_value(g, o, arg->type_decl, arg->inits.items, arg->inits.count);
         else gen_expr(g, o, arg);
     }
-    sb_put(o, "})");
+    sb_put(o, e->switches_scene ? "}))" : "})");
 }
 
 static const char *int_op_helper(const tok_kind op)
@@ -4925,6 +4928,13 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_put(o, ")");
             break;
         }
+        if (e->object->type.kind == TY_RENDER_TARGET && e->type.kind == TY_INT && e->object->kind == E_MEMBER
+            && e->object->target_colors) { // target.colors.count
+            sb_put(o, "tide_render_target_color_count((");
+            gen_expr(g, o, e->object->object);
+            sb_put(o, ").id)");
+            break;
+        }
         if (e->object->type.kind == TY_RENDER_TARGET && e->type.kind == TY_LONG) {
             sb_put(o, "tide_render_target_content_revision(");
             gen_expr(g, o, e->object);
@@ -6311,10 +6321,11 @@ static void gen_await(gen *g, expr *e, const char *name)
         line(g, o, "tide_gpu_resume%d:;", k);
         indent(g, o);
         sb_put(o, call->gpu == GPU_TARGET_READ
-            ? "if (!tide_f->tide_gpu_ticket) tide_f->tide_gpu_ticket = (int32_t)tide_render_target_read_begin("
+            ? "if (!tide_f->tide_gpu_ticket) tide_f->tide_gpu_ticket = (int32_t)tide_render_target_read_begin_as("
             : "if (!tide_f->tide_gpu_ticket) tide_f->tide_gpu_ticket = (int32_t)tide_gpu_list_read_begin(");
         gen_expr(g, o, call->object);
-        if (call->gpu == GPU_TARGET_READ) sb_put(o, ");\n");
+        // Which image and as what (tide_target_read): the grid below is of that kind's cells
+        if (call->gpu == GPU_TARGET_READ) sb_printf(o, ", %d, %uu);\n", (int)call->read_image, (unsigned)call->read_kind);
         else sb_printf(o, ", %s);\n", call->gpu == GPU_READ_COUNT ? "true" : "false");
         line(g, o, "tide_gpu_read_result tide_read%d;", k);
         line(g, o, "if (!tide_gpu_list_read_poll((uint32_t)tide_f->tide_gpu_ticket, &tide_read%d)) {", k);
@@ -13075,6 +13086,11 @@ static void gen_command_recorders(gen *g)
             "{\n"
             "%s"
             "    %scmd_push(w, TIDE_CMD_UNLOAD, 0, scene, TIDE_COMMAND_HEAD);\n"
+            "}\n\n"
+            "// Scene.Switch: every scene loaded by this command's turn unloads (its id says so)\n"
+            "TIDE_HELPER void %scmd_unload_all(%s *w)\n"
+            "{\n"
+            "    %scmd_push(w, TIDE_CMD_UNLOAD, 1, (tide_entity){0}, TIDE_COMMAND_HEAD);\n"
             "}\n\n",
             p, world_type(local),
             // A task on another thread records into its own queue (tide/jobs.h)
@@ -13083,7 +13099,7 @@ static void gen_command_recorders(gen *g)
             p, world_type(local),
             shard ? "    if (!tide_shard_may(w, e)) return;\n" : "", p, p, world_type(local),
             shard ? "    if (!tide_shard_may(w, e)) return;\n" : "", p, p, world_type(local),
-            shard ? "    if (!tide_shard_may(w, scene)) return;\n" : "", p);
+            shard ? "    if (!tide_shard_may(w, scene)) return;\n" : "", p, p, world_type(local), p);
         if (!local) {
             sb_put(o, "// entity.Snap(): views draw it as it is, from the end of this tick\n");
             sb_printf(o, "TIDE_HELPER void tide_cmd_snap(tide_world *w, tide_entity e)\n{\n%s"
@@ -13633,6 +13649,18 @@ static void gen_apply(gen *g, const bool local)
     // Unload: nothing happens to an entity that isn't a scene.
     sb_printf(o, "TIDE_HELPER void %sapply_unload(%s *w, tide_command *c)\n{\n    (void)w;\n    (void)c;\n", p, world);
     if (scenes) {
+        // Scene.Switch's: every scene loaded by now, a table at a time, each from its last row. Unloading one
+        // only takes rows away (what its Destroyed handlers spawn waits in the queue), so the walk sees each once.
+        sb_put(o, "    if (c->id) {\n");
+        for (int a = 0; a < prog->archetypes.count; a++) {
+            if (arch_local(g, a) != local || !arch_scene(g, a)) continue;
+            const char *name = arch_name(g, a);
+            sb_printf(o, "        for (uint32_t i = w->%s.count; i-- > 0;) {\n", name);
+            sb_printf(o, "            if (i >= w->%s.count) continue;\n", name);
+            sb_printf(o, "            if (tide_row_gone(%s)) continue; // A hole\n", arch_cell(g, "w", a, 0, "tide_entity", "i", false));
+            sb_printf(o, "            %sunload(w, *%s);\n        }\n", p, arch_cell(g, "w", a, 0, "tide_entity", "i", false));
+        }
+        sb_put(o, "        return;\n    }\n");
         sb_put(o, "    switch (tide_entity_location(&w->entities, c->entity).archetype) {\n");
         for (int a = 0; a < prog->archetypes.count; a++) {
             if (arch_local(g, a) == local && arch_scene(g, a)) sb_printf(o, "    case %d:\n", a);
@@ -13742,6 +13770,12 @@ static void gen_apply(gen *g, const bool local)
         if (!local && prog->visibility_state) sb_put(o, "!w->tide_visibility_state.client && ");
         // A shard's scenes are the root's: a region holds none of its own
         if (!local && sharded(g)) sb_put(o, "!tide_shard_starting_empty && tide_shard_root(w) && ");
+        // A local startup comes back only outside a match: a menu unloaded as its match starts stays gone
+        // until this machine is offline again, with nothing asked of the session (a Start waiting its turn)
+        if (local) {
+            sb_printf(o, "w->%s.%s == TIDE_SESSION_OFFLINE && w->tide_request.kind == TIDE_REQUEST_NONE && ",
+                      type_cname(prog->session), field_cname(&prog->session->fields.items[0]));
+        }
         gen_no_scene(g, local);
         sb_put(o, ") {\n        const tide_queue_place from = tide_queue_end(&w->commands);\n");
         gen_default_start(g, o, "w", "        ", local);

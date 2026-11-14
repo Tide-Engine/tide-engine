@@ -417,6 +417,16 @@ static expr *parse_primary(parser *p)
         e->placement_local = true;
         return e;
     }
+    // `local Scene.Load(Menu)` and `local Scene.Switch(Menu)`: the mark is on `Scene`, for the call
+    if (t->kind == T_IDENT && str_eq_c(t->text, "local") && peek_at(p, 1)->kind == T_IDENT
+        && str_eq_c(peek_at(p, 1)->text, "Scene") && peek_at(p, 2)->kind == T_DOT && peek_at(p, 3)->kind == T_IDENT
+        && (str_eq_c(peek_at(p, 3)->text, "Load") || str_eq_c(peek_at(p, 3)->text, "Switch") || str_eq_c(peek_at(p, 3)->text, "Unload"))
+        && peek_at(p, 4)->kind == T_LPAREN) {
+        advance(p);
+        expr *e = parse_primary(p);
+        e->placement_local = true;
+        return e;
+    }
     switch (t->kind) {
     case T_DOT: {
         advance(p);
@@ -1364,6 +1374,7 @@ static bool at_local_decl(const parser *p)
     const token *t = peek(p);
     if (t->kind != T_IDENT) return false;
     if (str_eq_c(t->text, "local") && str_eq_c(peek_at(p, 1)->text, "Spawn") && peek_at(p, 2)->kind == T_LPAREN) return false;
+    if (str_eq_c(t->text, "local") && str_eq_c(peek_at(p, 1)->text, "Scene") && peek_at(p, 2)->kind == T_DOT) return false; // local Scene.Load(...)
     if (generic_name(t->text) && peek_at(p, 1)->kind == T_LT) {
         const int end = skip_type(p, 0);
         return end > 0 && peek_at(p, end)->kind == T_IDENT;

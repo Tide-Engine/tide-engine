@@ -824,7 +824,11 @@ Initial implementation choices, 2026-10-24, provisional:
     - **A task's singleton is the caller's own.** A task gets its components and singletons again each time it goes on, so a call that starts one passes a parameter of its own, never a copy. A function passes its own singleton parameter on, and then every call of that function passes its own too, through however many: an error at a call that passes a copy. A function's component parameter isn't passed on to a task: it may be any entity's, and the task gets the one of the entity it belongs to, so that start is written in the system, view or handler.
     - **It's the caller's in the schedule:** a system that calls a function that starts tasks runs on one thread and waits as one that starts them itself does (see Tasks). Its calls keep their order, as a function's sends do.
     - **What never does, whoever calls it,** is what never sends: a comparison, a parallel loop's step, `Sample`, `Sanitize` and `Predict`, a frag or a vert, and an `audio` declaration, each an error at the call; an operator and `Interpolate`, where the start is written.
-  - Not part of it: `Snap`, `Scene.Load` and `Scene.Unload` stay the system's, view's or handler's own to write.
+  - **Loading, switching and unloading scenes are a function's too** (built 2026-11-14, after the owner found scenes awkward to deal with; each point a pick awaiting the owner). `Scene.Load`, `Scene.Switch` and `Scene.Unload` are written in a function or a method, and the code that calls it answers for them as it does for a `Spawn`: match code for the match's scenes, a view or a local handler for this machine's.
+    - **Which world** is the scene's own for a load or a switch (`scene` or `local scene`), and the entity's for an unload (`Entity` or `LocalEntity`). A prefab has no side of its own: in a function it loads as the match's, and `local Scene.Load(Menu)` or `local Scene.Switch(Menu)` loads it as this machine's. `local` before a load in a view or a local handler says what was already so; before one in match code, before a match scene, or before `Scene.Unload`, it's an error.
+    - It's the caller's in the schedule, as a function's spawn is, and `prepare` still can't load a scene through one.
+    - An operator and `Interpolate` are refused where the call is written, as for a `Send`.
+  - Not part of it: `Snap` stays the system's, view's or handler's own to write.
   - In generated C the function is handed the world it records in, as one that takes a `World` is, and the scene its spawns join. One that does none of this generates the C it did.
 - Operators and their precedence follow C#. Comments are `//` and `/* */`.
 - Source files are UTF-8, and a byte order mark at the start is skipped. Names are ASCII: other characters only go in comments and text.
@@ -3321,6 +3325,12 @@ The owner: "these make sense, lets do all of these". `await target.Read()` in lo
 `Grid2<Color>` with `fails IOError`, by the same asynchronous rules as GPUList.Read. It never enters match code.
 It captures the frame drawn after the request, a frame or more later, and fails when the device is lost.
 Colors are straight Color values, as Sample returns, rather than multiplied by alpha.
+The grid `is` names is a local's grid, which lasts until the task next waits, so an `await` while it is in scope
+is a compile error that says to copy what's kept into a component or singleton first (Provisional, Claude,
+2026-11-14: the alternative, carrying the grid across waits as a task carries its lists, is not built).
+A target's other color images, images of numbers as their own types, its depth, a cube's faces and an array's
+layers are read too since 2026-11-14 (`Read(image)`, `Read<T>()`, `ReadDepth()`), and `target.colors.count`
+says how many images it holds: their rules are picks, under Provisional (which image a read is of, and as what).
 
 #### Depth bias (decided 2026-11-13)
 
@@ -3365,8 +3375,8 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
 
 #### Provisional: pixel readback (2026-11-14)
 
-Read takes no arguments and reads color image zero, including its resolved image for multisampling. An image
-index was considered; the first-image form keeps the basic call small, with other images left for a later API.
+`Read()` reads color image zero, including its resolved image for multisampling; the other reads are below
+(Which image and as what, 2026-11-14).
 RGBA8 preserves its stored quantization; RGBA16f preserves HDR values above one. Transparent pixels give zero.
 Grid dimensions are physical pixels, with x right and y down. A copied grid uses `.Copy()` under ordinary grid
 ownership rules; a directly awaited return is fresh. `is Grid2<Color> pixels` can unwrap this failable result.
@@ -3374,12 +3384,76 @@ There are 64 read slots shared with list reads, at most 4,000,000 pixels per ima
 pixel results. Exceeding the image/byte limit fails; occupied slots wait, as list reads do. Headless native runs
 wait at the next frame's start. Hidden fixed-size web test frames wait between WASM frames for pending mappings,
 so scripted frame counts agree without blocking the browser thread. Ordinary resizable web games remain async.
-No window, depth, cube-face or array-layer read is provided; use an ordinary color RenderTarget. Unsupported
-formats fail before binding a shader. Read accepts Rgba8/Rgba16f as Color; other numeric formats give a
-diagnostic directing the game to typed Sample or a kernel writing a GPU list. A numeric Grid2 result and a
-conversion kernel were considered; keeping this Color readback avoids an implicit conversion that loses
-integer bits. Rgba16f Read always unpremultiplies as Color; its format alone does not record a numeric role.
-Use a `[Raw(float4)]` shader read to preserve the four independent channels of a numeric Rgba16f image.
+Unsupported formats fail before binding a shader. `Read()` accepts Rgba8/Rgba16f as Color and always
+unpremultiplies; an Rgba16f image's format alone does not record a numeric role.
+
+#### Provisional: which image a read is of, and as what (2026-11-14)
+
+The owner asked that every read that can work does (2026-11-14: "make sure everything we can add or validate
+we do"). What was built, each a pick with what it was weighed against:
+
+- **`await target.Read(image)` reads color image `image`,** counted from 0 as `target.colors[image]` is. It is a
+  constant int (a literal or a `const`), from 0 to 3: the image is part of what the read gives, which the
+  compiler has to know. An index that's only known as the game runs was weighed and refused for that reason,
+  not left to fail as it runs; `target.colors[i].Read()` was weighed too, and would have made every `Texture`
+  look readable where only a target's image is.
+- **An image of numbers is read as its own type, written at the read:** `Read<float>()` for R8, R16f and R32f,
+  `Read<float2>()` for Rg8 and Rg16f, `Read<float4>()` for Rgba32f, `Read<int>()` for R32i, each giving a
+  `Grid2` of that type, `fails IOError`; `Read<Color>()` is `Read()`. R32f, Rgba32f and R32i come back bit for
+  bit, R16f and Rg16f as the half float stored, R8 and Rg8 as the stored byte over 255. Nothing is clamped,
+  multiplied by an alpha or divided by one. `Read<float4>()` also reads an Rgba16f image, as its four stored
+  numbers (what a `float4` output wrote), where `Read()` gives the same image as a Color.
+  - **How the type is known:** the game writes it, and the compiler holds it against the format the target was
+    made with, by the same record of constructor assignments that checks a numeric frag's outputs and a typed
+    clear. A mismatch is an error that names the image's format and the read that fits it. A format that isn't
+    fixed (a `RenderTarget` parameter, a field made with one format here and another there, a format that's a
+    variable) is an error for a number read, with the fix: make the target one way wherever it's assigned and
+    read the field or local it's kept in. Inferring the grid's type from the format, with nothing written, was
+    weighed: a field's formats are settled only once every body is checked, so an expression's type would
+    depend on distant assignments, and change with them silently. One `Read()` returning a tagged value was
+    weighed and refused: every use would have to ask what it got.
+  - **A Color read of a target whose formats aren't known** (`Read()` of a parameter) still compiles, as it
+    did: it's checked as it runs, and fails with `IOError` where the image isn't an Rgba8 or Rgba16f one.
+  - The engine checks every read again as it's asked and as it begins: an image the target hasn't got, a kind
+    that isn't the image's, a target disposed meanwhile, and a result of another size than its grid's cells
+    all fail the read and write nothing.
+- **`await target.ReadDepth()` gives a `Grid2<float>` of the target's depth,** in the forward terms `this.depth`
+  and `DepthTexture.Sample` use (0 near, 1 far), under reversed float storage and under the forward 24-bit
+  fallback alike: the read converts as a depth's `Sample` does. A target of depth alone is read this way, and
+  a multisampled target gives one depth a pixel, by the resolve a frag's read of it gets (A target's samples).
+  Under float storage a depth a frag wrote with `WriteDepth` comes back exactly where `1 - depth` is exact
+  (every multiple of 2^-24 is); under 24 bits, to the nearest step. `target.depth.Read()` was weighed, and
+  `Read<float>()` of a `Format.Depth` target: a method beside `ClearDepth` says what's read for every target,
+  with color beside it or not, and keeps `DepthTexture` a GPU reference with no CPU read of its own. A raw or
+  linear depth read isn't offered, as none is to a frag.
+- **A cube's face and an array's layer are read as the targets they are:** `await cube.faces[i].Read()`,
+  `await array.layers[i].Read()` and `ReadDepth()` of either, rows from the top as they were drawn. Each holds
+  one image, of the format its cube or array was made with, so an image number is an error there, and the read's
+  type is checked against that format as a target's is: `Read()` for Rgba8 and Rgba16f, `Read<float>()` for R8
+  and R16f, `Read<float2>()` for Rg8 and Rg16f, `Read<float4>()` for an Rgba16f one's stored numbers (Number
+  images as array layers and cube faces, below; they hold no R32f, Rgba32f or R32i). A face's and a layer's
+  numbers are read as all four channels and the grid keeps its type's: one kernel for faces and one for layers,
+  at four words a pixel while the read is pending, was picked over a kernel for each type. A layer past
+  the array's fails as it runs, and an asset's cube or array has no faces or layers to read. A whole cube or array in one
+  read (a `Grid3`, or six grids) was weighed: one face is the unit they're drawn in, and a whole array can pass
+  the pixel limit that a layer doesn't.
+- **`target.colors.count` is how many color images a target holds:** 0 for a target of depth alone, for a
+  default one and for a disposed one, 1 for a face or a color layer. `target.colors` is otherwise still read one at a
+  time. `target.colorCount` was weighed: `colors.count` is what a list's is called, and needs no new name.
+- **The window can't be read,** and that's a compile error as before (`Draw.window.Read()`, `ReadDepth()`). It
+  isn't the same path: a read runs a kernel that samples the image, and the window's image is the swapchain's
+  (Vulkan) or the canvas's (WebGPU), which Tide makes as an attachment only. Vulkan surfaces needn't offer
+  sampled swapchain images, a canvas texture is gone once the frame is presented, the window's format is the
+  display's (BGRA on many), and under Unity the window is Unity's camera target, which Tide never holds. Reading
+  it would mean drawing every frame of any game that might read into a target of Tide's first and copying that
+  to the display, a cost for all frames to serve one. A game that wants its frame draws into
+  `RenderTarget.Window()`, reads that, and `Draw.Blit`s it to the window.
+- **Limits are the Color read's:** 64 read slots shared with list reads, 4,000,000 pixels an image, 128 MiB of
+  outstanding results (a float or int image is 4 bytes a pixel of it, a float2 one 8, the others 16, and so is any read of a
+  face or a layer).
+- **Not there:** reading a part of an image (a rectangle); a `Texture3D`'s cells or a `Texture` asset's pixels
+  back (a kernel writing a GPU list reads either); a number read of a target whose format is only known as the
+  game runs.
 
 #### Provisional: depth bias (2026-11-14)
 
@@ -3661,7 +3735,7 @@ No new backend API or recorder packet is needed: WGSL explicit-level sampling al
   - **Texture arrays** (2026-11-05: the owner asked for them, "just cause nothing needs [it] isn't an excuse", and picked from a proposal that they are types of their own, `TextureArray` and `DepthTextureArray`; that an asset's is a glob's images or a list of paths; that one a view draws into is `TextureArray(width, height, layers, ...)`, whose `layers[i]` are targets and whose `depth` is its depth array; and that a frag reads one with `Sample(uv, layer)`, an int layer, clamped. Every rule below beyond those was picked to build it, Provisional):
     - **A type of its own, `TextureArray`,** for the same reason a `Cubemap` is one: every place a `Texture` goes reads it by a `float2`, and an array is read by a `float2` and a layer. Its depth, each layer's, is a `DepthTextureArray`. An array is one of a draw's 16 textures, however many layers it has, and each way it's read one of its samplers.
     - **An asset's is images of one size,** a glob's, as its layers in the order a glob's list has them (by path), `asset TextureArray ground = "art/ground/*.png";`, or a list of paths in its order, `asset TextureArray ground = ["art/grass.png", "art/rock.png"];`, each a file or a glob, the same file twice being two layers of one image in the pack. 1 to 256 of them; one of another size is an error that names both. `[Filter]` and `[Wrap]` say how a `Sample` that says none reads it. Its layers compress as a `Texture` asset's do (built 2026-11-05): each layer of 128 pixels or more, a power of two a side, is BC1 where every alpha is 255 and BC3 otherwise, and an array with both is BC3 throughout on the GPU (an opaque layer's BC1 blocks turned to BC3 losslessly), its smaller images prepared in the build; `[Lossless]` keeps every layer exact, and a device without BC decodes every level. A list or a map of arrays isn't there (the glob is the array's own).
-    - **`TextureArray(width, height, layers[, pixelsPerUnit][, format])` is one a view draws into:** its size is a target's (logical pixels at the display's scale, or its own pixels a unit), `layers` an int from 1 to 256 (a constant past them is an error; at run time, a line and no array), and `format` what each layer holds, `Format.Rgba8` when left out, `Format.Rgba16f`, or `Format.Depth` for depth alone, as a shadow's cascades want. One color image a layer, and one sample a pixel. It's made in local code, as a target is.
+    - **`TextureArray(width, height, layers[, pixelsPerUnit][, format])` is one a view draws into:** its size is a target's (logical pixels at the display's scale, or its own pixels a unit), `layers` an int from 1 to 256 (a constant past them is an error; at run time, a line and no array), and `format` what each layer holds, `Format.Rgba8` when left out, `Format.Rgba16f`, one of the number formats every device blends (`R8`, `Rg8`, `R16f`, `Rg16f`: Number images as array layers and cube faces, below), or `Format.Depth` for depth alone, as a shadow's cascades want. One color image a layer, and one sample a pixel. It's made in local code, as a target is.
     - **`array.layers[i]` is a `RenderTarget`,** a destination as a cube's face is: its own camera, clip and settings, drawing into layer `i` of the array's colors and of its depth. Read one at a time; one past its layers, or of an asset's array, is no destination, and draws into it are passed by. A layer can't be resized or disposed by itself: `array.Resize(width, height)` and `array.Dispose()` are the whole array's. A new or resized array is black, its depth at the far limit.
     - **`array.depth` is its `DepthTextureArray`.** `array.size` (a layer's pixels, an `int2`) and `array.count` (its layers) are read in local code, as a `Texture`'s size is, and in a frag or a vert (built 2026-11-05: the GPU's own `textureDimensions` and `textureNumLayers`); a `DepthTextureArray` has both too. Zeros for none.
     - **A `Grid3<Color>` or a `Grid3<float>` converts to a `TextureArray`** (built 2026-11-05) wherever a `Grid2` of them converts to a `Texture`: its z its layers, each `size.x` by `size.y`, 1 to 256 of them and at most 16,384 a side, or the array is none. It names the grid, as a grid's `Texture` does: what's drawn is the grid as it is then, and the GPU gets only the parts of the layers whose chunks changed. Colors are a byte a channel, floats a half each, read in `.r`. A `Grid3` of anything else where an array goes is an error that says which are.
@@ -3702,12 +3776,12 @@ No new backend API or recorder packet is needed: WGSL explicit-level sampling al
   - **A draw into a target that reads that target's depth is passed by,** with a line that says so, when it's drawn: what a frag reads comes through a field, which the compiler can't follow to a target. It's what a draw that samples its own destination's color through a field gets, where `Draw.Blit(target.color, target, frag)` is refused as it's written. So is a draw that samples the `color` of a target of depth alone, which has none.
   - A depth is 24 bits, with the 8 bits of stencil beside it, in every target and in the window.
   - A depth a frag reads is one of the draw's 16 textures, however it's read: one it both samples and compares counts once, and is read through two of its samplers (Provisional, 2026-11-05: it counted twice before).
-  - **Not there:** a `DepthTexture` as a draw's own source or a frag's own parameter; a comparison other than "isn't nearer"; writing a pixel's depth from a frag; reading a depth back into Tide; and skipping a frag that can't discard in a target of depth alone, which a backend may do some day and changes no picture.
+  - **Not there:** a `DepthTexture` as a draw's own source or a frag's own parameter; a comparison other than "isn't nearer"; and skipping a frag that can't discard in a target of depth alone, which a backend may do some day and changes no picture.
   - **Where a point of the world is in a target's image is the game's to work out,** for a frag that looks one up (a shadow map does): through the target's camera as a matrix, `target.WorldToClip()` (see The cameras as matrices, above: the projection, after z turned around, after the camera's transform undone, which a game spelled out itself until that was built); then `uv` is `(x * 0.5 + 0.5, 0.5 - y * 0.5)` of that point and its depth `z * 0.5 + 0.5`, each over `w` under a perspective.
 - **Several colors and float images** (built 2026-10-07; a format for each color image after a target's size, four at the most, `target.colors[i]`, a frag's outputs to them by their order with the rest of either dropped or left, and floats where a GPU draws into them with bytes and a line where one doesn't, are decided, above; everything here is a pick, to confirm):
   - **`Format.Rgba16f`** is the enum's third member, and the original float format: four floats of 16 bits a pixel, each any number to three digits or so (up to about 65,000, in steps of a thousandth near 1). It's the one every backend that has float images draws into, blends and reads blended between pixels, so a `Format.Rgba16f` image behaves as a `Format.Rgba8` one does but for what it keeps. It takes twice the memory. The numeric formats and their matching rules follow below.
   - **Where the formats are written:** after the size and, where it's said, the pixels per unit, `RenderTarget(width, height, pixelsPerUnit, Format.Rgba8, Format.Rgba16f)`, and after a screen's factor. A fifth is an error, and so is `Format.Depth` written among several: every target has depth, so it's said alone. A format is a value like any enum's, so one that's only known as it runs, and isn't a color's among several, is a `Format.Rgba8` image, with a line that says so.
-  - **`target.colors` is only read one at a time,** `target.colors[1]`, with an int that's any expression. It's no list: `target.colors` by itself, its `count`, and a loop over it are errors that say to read one. A literal index past 3 is an error; any other image a target hasn't got is found out when a draw samples it, which is passed by with a line that says so, as a draw that samples the color of a target of depth alone is. `Draw.window` has none, like its `color`.
+  - **`target.colors` is only read one at a time,** `target.colors[1]`, with an int that's any expression. It's no list: `target.colors` by itself and a loop over it are errors that say to read one. (`target.colors.count`, how many it holds, is read since 2026-11-14.) A literal index past 3 is an error; any other image a target hasn't got is found out when a draw samples it, which is passed by with a line that says so, as a draw that samples the color of a target of depth alone is. `Draw.window` has none, like its `color`.
   - **`target.color`, `target.colors[i]` and `target.depth` can't be assigned:** they're the target's own images. (The first and the last compiled before, to C that didn't.)
   - **What the engine draws itself has one color,** which goes into a target's first color image and leaves the others: shapes, text, 2D and 3D meshes drawn with no frag, and so the GUI's widgets, were they drawn there.
   - **A clear fills each image** with its corresponding typed value and sets depth back; numeric float values can exceed one. The existing one-Color clear still broadcasts to ordinary color targets (Numeric images and outputs, below).
@@ -3717,7 +3791,7 @@ No new backend API or recorder packet is needed: WGSL explicit-level sampling al
   - **`Draw.Blit`** replaces as many of its destination's color images as its frag has outputs, and leaves the others. Its source is one `Texture`, as ever: a frag that reads several images of a target takes the others through `Texture` fields of a singleton.
   - **A draw into a target samples none of that target's color images,** the second no more than the first, whichever of them it writes: it's passed by, with the line a draw that samples its own color gets.
   - **Every GPU Tide draws with draws into floats** since the GL backends went (2026-11-05); the decided fallback for one that couldn't (bytes, and a line on the game's output) went with them.
-  - **Not there:** reading how many images a target has; a blend for each output; a target's color image as another target's (each target owns its images).
+  - **Not there:** a blend for each output; a target's color image as another target's (each target owns its images). (How many images a target has is read since: `target.colors.count`, under Which image a read is of, above.)
 - **Numeric images and outputs** (built 2026-11-14; the output types, formats, typed reads and per-image clears are
   decided 2026-11-13 above; the following are implementation picks, Provisional):
   - **Type matching:** R8, R16f and R32f take `float`; Rg8 and Rg16f take `float2`; R32i takes `int`;
@@ -3733,12 +3807,44 @@ No new backend API or recorder packet is needed: WGSL explicit-level sampling al
     retains its earlier behavior. A synchronous GPU helper takes `[Raw(float)] Texture image` or the
     corresponding role/Texture3D parameter, read-only, and requires a caller with the same role. This preserves
     the type through helper chains without introducing a separate runtime texture type.
-  - **Portable filtering:** typed numeric reads always use the nearest pixel, with implicit `Filter.Point`
-    or an explicit Point; other filters and SampleGrad are compile errors. Wrap remains Clamp/Repeat/Mirror.
-    Typed numeric images have no mipmaps; SampleLevel is a compile error directing the game to Sample.
-    Filterable compact formats could have been given linear reads and
-    a mip chain, but one rule for numeric image roles avoids optional float32 filtering and accidental ID
-    interpolation, and keeps integer formats bit-exact. Ordinary Color and bare Raw textures keep their filters.
+  - **Portable filtering** (Provisional, 2026-11-14; it replaces that day's first rule, nearest reads only, after
+    the owner asked that everything a GPU can do be allowed: "make sure everything we can add or validate we do"):
+    a typed read that names no filter reads the nearest pixel, as before, whatever the image's own `[Filter]`
+    says. A typed float image in `R8`, `Rg8`, `R16f`, `Rg16f` or `Rgba16f` also takes `Filter.Bilinear`,
+    `Filter.Trilinear` and `Filter.Anisotropic`, `SampleLevel` and `SampleGrad`, through the GPU's own sampler,
+    and gives its role's `float`, `float2` or `float4` with no alpha work. A `SampleLevel` or `SampleGrad` that
+    names no filter reads between levels (`Filter.Trilinear`). Those five formats blend and are drawn into on
+    every backend (Vulkan 1.3's required formats, WebGPU core, Unity's), so their mipmaps are made of what was
+    drawn, when a read that uses them first needs them, as a Color target's are. Wrap remains
+    Clamp/Repeat/Mirror, the Sample's own (a `Texture` field takes no `[Wrap]`).
+    - **`R32f` and `Rgba32f` stay nearest on every device.** A GPU blends 32-bit floats only with an optional
+      feature (WebGPU's `float32-filterable`, a format feature on Vulkan). Weighed: asking for the feature and
+      blending where it's there, nearest elsewhere, which gives another picture by device and was refused for
+      that; blending four exact loads in the shader, the same picture everywhere at four reads a Sample and with
+      no mipmaps or anisotropy, which isn't built and is the owner's to ask for; and nearest only, chosen. A
+      blended read, `SampleLevel` or `SampleGrad` of one is a compile error at the draw that names `R16f` or
+      `Rgba16f`; the format is known there from the field's constructor assignments, which a typed field needs
+      fixed already.
+    - **`R32i` stays nearest:** no GPU blends integers. Any filter but Point, `SampleLevel` and `SampleGrad`
+      are errors where they're written.
+    - **A read through a blending sampler is never handed an image it can't blend,** whatever path the image
+      took to its field (a format chosen as the game runs, a `?:` of two targets, C): at run time such a read
+      gets no image, a Color read the white pixel and a typed one zeros. So is a kernel whose written field
+      holds an image of another format than its pipeline declares, or one with no storage use: its stores go
+      to a private image, with a line that says so once. Neither reaches a GPU binding of another format.
+    - **A typed read of no image is zeros,** blended or not, in a Texture, an array or a cube.
+    - Ordinary Color and bare Raw textures keep their filters.
+  - **Number images as array layers and cube faces** (Provisional, 2026-11-14): `TextureArray(width, height,
+    layers[, pixelsPerUnit], format)` and `Cubemap(size, format)` take `R8`, `Rg8`, `R16f` and `Rg16f` beside
+    their color formats. A frag's numeric output draws into `array.layers[i]` or `cube.faces[i]` and
+    `Clear(value)` fills one with a typed value, both matched to the format as a target's are. They're read
+    through `[Raw(float)]`, `[Raw(float2)]` or `[Raw(float4)]` on a `TextureArray` or `Cubemap` field or a GPU
+    helper's read-only parameter: `Sample`, `SampleLevel` and (an array's) `SampleGrad` give the role's type,
+    nearest where no filter is named, blended and between mipmaps where one is. `R32f`, `Rgba32f` and `R32i`
+    are refused there with the fix: an array's layers and a cube's faces are read through a sampler, a cube by
+    nothing else on any GPU, and those formats need a non-blending sampler binding of their own, which isn't
+    built (weighed against exact loads of an array's layer, which a cube has no counterpart of; `R16f` holds a
+    distance or a moment to three digits). `[Raw(int)]` on either is an error for the same reason.
   - **Multisampling:** R8, Rg8, R16f and Rg16f support their usual sample counts and resolve each numeric
     channel by the mean. Numeric float4 outputs into Rgba16f use its ordinary mean resolve too. R32f,
     Rgba32f and R32i require one sample, including when mixed with other images of a target. Optional float32
@@ -3762,7 +3868,7 @@ No new backend API or recorder packet is needed: WGSL explicit-level sampling al
   - **1, 2, 4 or 8.** 1 is a target that says nothing. A number that's known as the game is compiled and is none of those is an error; one that's only known as it runs is the one of those under it (5 is 4, 100 is 8, 0 is 1), with a line that says so.
   - **A device with fewer draws it with what it has,** and the engine says so once, on the game's output: the most of 8, 4 and 2 that's no more than asked and that the device has for what the target holds. WebGPU has 1 and 4 and nothing else, so there 2 is 4 (more than asked, where the other choice was no smoothing at all) and 8 is 4. Nothing lets a game ask what it got.
   - **What it's for:** each of the target's pixels keeps that many colors, depths and stencils while it's drawn into, and a triangle's edge covers some of them, so the edges of 3D meshes, and of 2D ones, are smooth. A frag still runs once for a pixel a triangle covers, not once a sample. The smooth shapes and text are smooth by themselves, and are as they were.
-  - **Its images are what its samples come to,** one value a pixel, each time drawing into it ends (a pass): `target.color` and `target.colors[i]` are textures like any target's. Color reads keep their filters; typed numeric reads use Point as specified above. What's drawn into it is kept from frame to frame, sample for sample, until it's cleared, as any target's is.
+  - **Its images are what its samples come to,** one value a pixel, each time drawing into it ends (a pass): `target.color` and `target.colors[i]` are textures like any target's. Color reads keep their filters; typed numeric reads follow Portable filtering, above. What's drawn into it is kept from frame to frame, sample for sample, until it's cleared, as any target's is.
   - **Its depth is read as any target's** (2026-10-13; the owner asked for the engine to be fixed where a game had worked around the refusal there was, and each rule is a pick, to confirm). `target.depth` of a multisampled target is one depth a pixel: one of the pixel's samples, as they are when the draw that reads it is drawn. It's made of the samples only for a target whose depth a draw reads, and again only once more was drawn into the target, so a target nothing reads the depth of has no texture for it and pays no pass. A sample picked, not their mean or their nearest: an edge is a step, as a target's with no samples is, and the depth is one a surface there really has.
   - **A target of depth alone has none:** `Format.Depth` with `samples` above 1 is an error where both are written, and where either is only known as it runs the target has one sample, with a line that says so.
   - **The window has none.** A game that wants an antialiased frame draws it into `RenderTarget.Window(samples: 4)` and brings it to the window with `Draw.Blit`. The window's own framebuffer would take a setting that's the game's and three ways to ask for it that can each be refused (GLFW's hint before the window is made, the WebGL context's `antialias`, which a browser may ignore, and an EGL config on Android), a canvas on WebGPU has no samples of its own at all, and the GUI, the stats and the smooth shapes drawn there gain nothing from it.
@@ -4972,6 +5078,7 @@ local event(Forgotten) FreeModel(Model model, mut Loaded loaded)
 - An empty scene can end with a semicolon: `scene Main;` means the same as `scene Main { }`. This also applies to `local scene Main;`; braces remain valid.
 - `local scene` declares a local one (see Local state). A scene only holds entities of its own side.
 - `Scene.Load(Arena { size = 30 })` loads a scene into the current world and returns its entity. `Scene.Unload(scene)` unloads it, destroying every entity it owns. `Spawn` of a scene is an error that says to use `Scene.Load`.
+- Scenes should be easy to move between: a menu, then a lobby, then the game, each gone once the next is up (the owner, 2026-11-14: "I imagine scenes almost as what I'm mainly doing ... menu is gone sort of thing", and of the proposals, "just allowing scenes to be more easily dealt with would be a big win"). How that's spelled is under Provisional. Declarations that only exist while a scene is loaded were offered and turned down for now ("i dont think we need" them; "i might change my mind").
 - Loading and unloading happen at the end of the tick, like `Spawn` and `Destroy`. Preparation, when declared, precedes `Spawned`; otherwise `Spawned` handlers set a scene up immediately. Its entities get `Destroyed` when it unloads (see Events).
 - **Scene preparation** (agreed 2026-11-05). A match scene may declare one `prepare(parameters) { ... }` block. Parentheses are required, including `prepare()`. Its own fields and methods are in scope, and `this` is its root entity. Explicit component and singleton parameters declare ordinary match access; root components must be supplied when the scene loads. Preparation is deterministic synchronous match code, before `Spawned`, for initial and subsequent loads. It may query, change match data and spawn; it cannot await, start async tasks, read local state or load another scene, including indirectly through helpers or sent events.
 - The whole match's ticks wait during local preparation, while the host continues networking and local presentation. Progress is game-authored component/singleton data; views read consistent observations of it. There is no inferred percentage. Entities created by preparation exist before the root's `Spawned` handlers.
@@ -4982,7 +5089,7 @@ local event(Forgotten) FreeModel(Model model, mut Loaded loaded)
 - A scene is never owned: it lives until it's unloaded, whoever loaded it.
 - Project startup selects a prefab or scene independently of its name. A prefab starts as an ordinary loaded match scene with its authored root and complete construction before root-first `Spawned`, followed by normal game systems, views, camera and input. No wrapper entity or handwritten `Main` is required. A selected ordinary scene retains its match/local placement. Without a selection, existing `scene Main` startup is unchanged.
 - `settings { startScene = Qualified.Name; }` persists that selection. `tide run/build <project> --scene Name` overrides it for that build without changing source or existing `Main` declarations (approved 2026-10-24).
-- The selected startup is also the fallback, or `Main` without a selection: when the last scene of its world unloads, it loads again, initialized as at the start. A match startup comes back in the match, a local one in local state.
+- The selected startup is also the fallback, or `Main` without a selection: when the last scene of its world unloads, it loads again, initialized as at the start. A match startup comes back in the match, a local one in local state while this machine is offline (see Provisional).
 - When startup is local, a match can't load it, so a match whose last scene unloads ends. Every machine in it goes offline with `Disconnected` and the reason `Ended` (see Sessions); local state carries on.
 - Loaded scenes share their world: the same systems, singletons and `Time`. Scenes that share nothing are separate worlds, which never communicate. Only the server creates worlds, so match code can't (see Open).
 - **Visibility:** scenes, entities and whole components use one audience mechanism at different scopes. A loaded scene root's `Visibility` group limits all entities owned by that scene, including later spawns. Scenes are public by default. `Visibility.Set(group, audience)` changes the shared live audience; a player newly included receives the scene's permitted state. Entity and component restrictions intersect the enclosing scene audience and cannot broaden it. Scene ownership and lifetime remain independent of audience groups.
@@ -5036,6 +5143,12 @@ system Collapse(Arena arena)
 - The engine loads the effective startup itself: `tide_world_init` loads a match startup, and `tide_local_init` a local one, with `TIDE_MAIN_IS_LOCAL` defined. `tide/run.h` starts without a match when startup is local. The startup root is the world's first entity.
 - The fallback waits for the end of the tick (the frame, in local state), once every change and handler has applied, so unloading one scene and loading another in the same tick never brings it back. Entities in no scene don't count. It returns at most once a tick: one that unloads itself as it loads leaves the world without a scene until the next.
 - A match that ends runs no more ticks after the one that left it without a scene. The server tells every player then, and anyone who tries to join. Only the match ends: local state carries on as it was, so whatever local scenes were loaded stay loaded.
+- **`Scene.Switch(Arena { size = 30 })`** (built 2026-11-14; the name and the rules are the agent's picks): unloads every scene loaded in its world and loads this one, returning its entity. It takes what `Scene.Load` takes (a scene or a prefab, then root components) and goes where `Scene.Load` goes, a function included.
+  - **Which scenes go:** all of the world the scene is of, the match's for a match scene and this machine's for a local one, whichever code loaded them and whatever code switches: no handle is needed, so a button in a view that runs for no entity switches as well as a system of the scene does. Entities in no scene stay, as they do through any unload.
+  - **When:** at the end of the tick or frame, in its turn among the tick's changes. Scenes loaded earlier in the same tick go with the rest, each with its `Spawned` and then its `Destroyed`; scenes loaded after it stay. The world is never without a scene in between, so the fallback doesn't load and a match doesn't end.
+  - It's `Scene.Unload` of each and one `Scene.Load`, with nothing of its own: the same `Destroyed` handlers, preparation, visibility and prediction.
+  - A sharded match refuses it, with an error that says to unload each scene and load the next: its scenes are on several servers.
+- **A local startup only comes back offline** (built 2026-11-14, the agent's pick): the fallback loads a local startup scene when no local scene is loaded, this machine is in no match (`Session.state` is `Offline`), and no `Session.Start`, `Join`, `Connect` or `Leave` of this frame waits its turn. So a menu that unloads itself as it starts or joins a match stays gone for the match, and is back the frame after this machine is offline again, whether the match ended, the player left, or joining failed. Before, it loaded again at once, under the match. A match startup's fallback is unchanged.
 
 ### Open
 
@@ -5553,6 +5666,17 @@ Packages that come with tide: a package in tide's installation, which a game opt
 
 **Open again** (the owner, 2026-10-06: "its no longer decided"): who builds a game with its mods. That a service we run does was agreed, and built as a first slice, which is on hold. It isn't decided any more, and neither is what rested on it, each marked below: where a player's build comes from, who signs it and how it's revoked, what the `mods` setting lets a game run, and a closed game's source being the service's alone. What's being weighed instead, with nothing of it agreed: a game loads a build of itself for its platform, as `tide run`'s host loads one, and that build is compiled on the player's own machine from the mods' source where the platform allows a compiler (the developer opting in to ship it), or made elsewhere and fetched where it doesn't. What stands: a mod is a package and its code is game code, every machine of a match runs the same build, `virtual` and `override`, a mod being Tide alone, the prompt being the game's, memory safety, and the sandbox on desktop. And one thing agreed since: mods are the same on every platform (below).
 
+**Agreed since** (the owner, 2026-11-14), which settles who builds on desktop. None of it is built:
+
+- On desktop, a mod is compiled on the player's machine, from its Tide source, by a compiler the game ships with. A mod never arrives compiled: nothing could check that such a library came from Tide and keeps its rules. Platforms where no compiler can run are still open.
+- There are two ways for a game to take mods, both wanted, and which is the developer's choice:
+  - **Compiled with the game.** The game ships its `.tide` files as they are, and the game and its mods build as one program. What Decided says below of one program, with the same storage, schedule and speed, is this way's.
+  - **Loaded into the game.** The game ships finished, with its declarations and none of their code. A mod is compiled by itself against those declarations and loaded into the running game as a library. This is for a game that doesn't give its source away, and its mods' code costs more than the game's (see Open, Mods loaded into a finished game).
+- A game's declarations are visible to its mods unless the developer hides them, with a marker whose name is to pick (agreed "for a first run").
+- C is unsafe for mods unless the developer says otherwise: a mod calls a function of the game's that reaches `extern` only where the developer marked it for mods. Such a function can hand a mod what the language keeps from it (a file read that takes any path). The marker's name is to pick.
+- For mods loaded into the game: their systems run one after another, in a fixed order, at the named phases' boundaries, for a first version (joining the threaded schedule later changes no mod's source), and desktop comes first, the web after.
+- A loaded mod that puts one of the game's components on one of the game's entities, in a combination the game never makes, should work rather than be an error (the owner: an error is "too limiting", said with "i could be wrong"). How is under Open.
+
 ### Decided
 
 - A mod is a package that someone other than a game's developer adds to it. It builds as packages do: its files compile with the game's, as one program, so a mod's code is game code, with the same language, storage, schedule and speed. There's no scripting layer, nothing is interpreted, and games carry no runtime for mods.
@@ -5671,6 +5795,19 @@ The sandbox:
 - The network stays open, as rooms need it. So code that got past the language's rules could still reach the network, with nothing of the machine's to send but the game's own files.
 - WebAssembly is the sandbox where the platform runs it itself: browsers. On desktop it would mean a runtime in every game, ours to write or someone else's, and mod code slower than the game's, which the first decision rules out.
 - Phones: the engine loads a build there as anywhere (see Decided: mods are the same on every platform). Apple's and Google's stores forbid native code downloaded after installing, as far as we know, and iOS itself loads only code that's signed, which is the developer's to deal with. Their own web views may run WebAssembly, so a modded game could also be its web build there.
+
+Mods loaded into a finished game (proposed 2026-11-14 after the owner agreed to the two ways above; nothing below is agreed or built, and none of it was checked against the code generator):
+
+- Where mods come from isn't the engine's: a game hands it a set of mod folders. Steam's Workshop is one source of them, through a wrapper in `packages/steam`, and a game's own folder is another. A lobby or room says which mods its match runs, by a name made of the game's version, the mods' contents sorted, and tide's version.
+- A game built to take such mods has, generated for it: a description of its storage (its archetypes and where each component's column is), so a mod's systems can query the game's components; a pointer for each `virtual` declaration, which an override replaces, a replaced system being handed whole runs of rows so its loop still vectorizes; a list of handlers for each event; and its functions that a mod may call, which are never inlined into the mod.
+- The runtime keeps a mod's own components, singletons and events inside the match world, described by their size and layout when the mod loads, so snapshots, rollback, hashes and packing cover them. A mod's component on one of the game's entities is in a table beside the game's, by entity. This is a registry of types at run time, for mods' types alone.
+- What it costs: a mod's code is slower than the game's (the tables beside, and no inlining across the boundary), and a game built to take mods pays an indirect call for each `virtual` and a check of the list on each send. A game not built for them pays nothing.
+- Questions:
+  - A combination of the game's components that the game never makes has no archetype to go in, and it's to work (above). Proposed: the runtime makes a table for it when it first appears, described as a mod's own types are, and the game's systems go through such tables after their own. Two things the engine has suggest it fits, read from the notes and not checked in the code: a system's loop is already a function of its rows' columns, shared by archetypes with the same columns (`notes/ecs.md`), so it can be called on a table made later; and sparse components already keep some combinations out of the archetypes. What it would cost a game built to take mods: each system looks at a list of such tables, empty unless a mod made one; a lookup by entity (`Has`, `Get`) has one more case; and those tables' rows are saved, hashed and packed by description, slower than generated code does it. To settle: that the tables a match has are the same on every machine and across rollback.
+  - The system's sandbox against Steam: a sandboxed game can't talk to Steam's client, so a process outside the sandbox would have to hold Steamworks for it. Not designed.
+  - Compiling a mod reads a stranger's files (the source, images, models, fonts), so it runs inside the sandbox too.
+  - Platforms where no compiler can run. An interpreter for a mod's code, against the same boundary, is the candidate: consoles and phones forbid native code downloaded later, and generally allow interpreted code. It would be much slower, and it's the opposite of "nothing is interpreted" (Decided).
+  - Weighed and not chosen: shipping the game's code as LLVM bitcode with its declarations, and linking it again with each set of mods on the player's machine. Full speed and one way through the ECS, for a link step each time the mods change.
 
 The order to do the work in, proposed:
 

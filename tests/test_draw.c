@@ -2477,6 +2477,29 @@ TIDE_TEST(draw_typed_clears_keep_float_and_integer_bits_when_appended)
     tide_render_targets_free();
 }
 
+// The number formats every device blends make cube faces and array layers; 32-bit floats and integers make none.
+TIDE_TEST(draw_number_cubes_and_arrays_hold_blendable_formats_only)
+{
+    const tide_target_format held[4] = {TIDE_TARGET_R8, TIDE_TARGET_RG8, TIDE_TARGET_R16F, TIDE_TARGET_RG16F};
+    for (uint32_t i = 0; i < 4; i++) {
+        const tide_cubemap_ref cube = tide_cubemap_make_as(8, held[i]);
+        TIDE_REQUIRE(cube.target.id != 0);
+        TIDE_CHECK(tide_render_target_formats(cube.target.id).count == 1);
+        TIDE_CHECK(tide_render_target_formats(cube.target.id).color[0] == held[i]);
+        TIDE_CHECK(tide_render_target_samples(cube.target.id) == 1);
+        const tide_texture_array_ref array = tide_texture_array_make((tide_target_size){.width = 8, .height = 4, .scale = 1.0f}, 3, held[i]);
+        TIDE_REQUIRE(array.target.id != 0 && array.layers == 3);
+        TIDE_CHECK(tide_render_target_formats(array.target.id).color[0] == held[i]);
+    }
+    const tide_target_format refused[3] = {TIDE_TARGET_R32F, TIDE_TARGET_RGBA32F, TIDE_TARGET_R32I};
+    for (uint32_t i = 0; i < 3; i++) {
+        TIDE_CHECK(tide_cubemap_make_as(8, refused[i]).target.id == 0);
+        TIDE_CHECK(tide_texture_array_make((tide_target_size){.width = 8, .height = 4, .scale = 1.0f}, 3, refused[i]).target.id == 0);
+    }
+    TIDE_CHECK(tide_render_target_formats(tide_cubemap_make_as(8, TIDE_TARGET_RGBA16F).target.id).color[0] == TIDE_TARGET_RGBA16F);
+    tide_render_targets_free();
+}
+
 TIDE_TEST(draw_numeric_tags_preserve_all_legacy_ids_without_extra_alignment)
 {
     TIDE_CHECK(TIDE_RENDER_BITS == UINT64_C(65535));

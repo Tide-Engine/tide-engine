@@ -1,0 +1,4 @@
+// expect: clear value 1 is float2, but Format.R16f takes float: give each image a clear value of its type, in order
+scene Main { }
+local singleton Images { [Raw(float)] TextureArray layers; }
+view Show(mut Images images) { images.layers=TextureArray(8,8,2,Format.R16f); images.layers.layers[0].Clear(float2(1,2)); }

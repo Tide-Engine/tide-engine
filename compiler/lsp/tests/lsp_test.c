@@ -3594,8 +3594,15 @@ TIDE_TEST(lsp_scenes)
     open_document("scene Arena { }\nscene Main { }\nevent(Spawned) Setup(with Main) { Scene.Lo$ad(Arena); }\n");
     TIDE_CHECK(has(request("textDocument/hover"), "Loads a scene and returns its entity"));
 
+    // A switch, and a function that loads as its caller would
+    open_document("scene Arena { }\nscene Main { }\nEntity Next() { return Scene.Sw$itch(Arena); }\n"
+                  "event(Spawned) Setup(with Main) { Next(); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "Unloads every scene loaded in this world"));
+
     const char *calls = complete("scene Arena { }\nscene Main { }\nevent(Spawned) Setup(with Main)\n{\n    Scene.$\n}\n");
     TIDE_CHECK(offers(calls, "Load"));
+    TIDE_CHECK(offers(calls, "Switch"));
     TIDE_CHECK(offers(calls, "Unload"));
     TIDE_CHECK(offers(calls, "IsPrepared"));
     TIDE_CHECK(!offers(calls, "AddPlayer"));
@@ -6357,6 +6364,19 @@ TIDE_TEST(lsp_render_target_formats_and_depth)
     snprintf(program, sizeof program, "%sview V(mut Lamp lamp)\n{\n    lamp.shadow = lamp.map.$\n}\n", types);
     const char *members = complete(program);
     TIDE_CHECK(offers(members, "depth") && offers(members, "color") && offers(members, "Read") && has(members, "DepthTexture"));
+    // Its reads back: an image as its own type, by its number, and its depth; and how many images it holds
+    TIDE_CHECK(offers(members, "ReadDepth") && has(members, "Read<T>([int image]) -> Grid2<T> fails IOError")
+               && has(members, "ReadDepth() -> Grid2<float> fails IOError") && has(members, "colors.count"));
+    snprintf(program, sizeof program, "%slocal singleton Saved { Grid2<float> depths; Grid2<Color> pixels; int images; }\n"
+                                      "async void Save(Lamp lamp, mut Saved saved)\n{\n"
+                                      "    if (await lamp.map.ReadDepth() is Grid2<float> depths) saved.depths = depths.Copy();\n"
+                                      "    if (await lamp.map.Read<Color>(0) is Grid2<Color> pixels) saved.pixels = pixels.Copy();\n"
+                                      "    saved.images = lamp.map.colors.count;\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    snprintf(program, sizeof program, "%sasync void Save(Lamp lamp)\n{\n    var depths = await lamp.map.ReadDepth($\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "ReadDepth() -> Grid2<float> fails IOError"));
     snprintf(program, sizeof program, "%sview V(mut Lamp lamp)\n{\n    var shadow = lamp.map.depth;\n    lamp.shadow = sha$dow;\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(request("textDocument/hover"), "DepthTexture"));
@@ -6619,8 +6639,20 @@ TIDE_TEST(lsp_numeric_images_and_outputs)
     TIDE_CHECK(has(request("textDocument/hover"), "no tint or alpha multiplication"));
     snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = Color(images.scalar.$); }\n", types);
     const char *scalar = complete(program);
-    TIDE_CHECK(offers(scalar, "Sample") && !offers(scalar, "SampleLevel") && !offers(scalar, "SampleGrad"));
-    TIDE_CHECK(has(scalar, "Filter.Point") && has(scalar, "-> float"));
+    // A float image blends and has mipmaps where its format does on every device; an int image is nearest only
+    TIDE_CHECK(offers(scalar, "Sample") && offers(scalar, "SampleLevel") && offers(scalar, "SampleGrad"));
+    TIDE_CHECK(has(scalar, "Filter.Point") && has(scalar, "-> float") && has(scalar, "Reads a mip level"));
+    snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = Color(images.scalar.Sample(vertex.uv, Filter.Bilinear) + images.scalar.SampleLevel(vertex.uv, 1), 0, 0); }\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    static const char layered[] = "scene Main { }\nlocal singleton Layered { [Raw(float)] TextureArray layers; [Raw(float2)] Cubemap cube; }\n"
+                                  "frag Show(Vertex vertex, out Color color, Layered images)\n{\n"
+                                  "    float height = images.layers.Sample(vertex.uv, 1, Filter.Bilinear);\n"
+                                  "    float2 pair = images.cube.SampleLevel(float3(vertex.uv, 1), 2);\n"
+                                  "    color = Color(height, pair.x, pair.y);\n}\n"
+                                  "view V(mut Layered images) { images.layers = TextureArray(8, 8, 2, Format.R16f); images.cube = Cubemap(8, Format.Rg16f); }\n";
+    open_document(layered);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = Color(images.scalar.Sample(vertex.uv$)); }\n", types);
     open_document(program);
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "-> float"));
@@ -6664,7 +6696,7 @@ TIDE_TEST(lsp_numeric_image_helpers)
     start();
     const char *members = complete("scene Main { }\nfloat Read([Raw(float)] Texture image, float2 uv)\n{\n"
                                    "    return image.$;\n}\n");
-    TIDE_CHECK(offers(members, "Sample") && !offers(members, "SampleGrad") && has(members, "-> float"));
+    TIDE_CHECK(offers(members, "Sample") && offers(members, "SampleGrad") && has(members, "-> float"));
     open_document("scene Main { }\nfloat Read([Raw(float)] Texture ima$ge, float2 uv)\n{\n"
                   "    return image.Sample(uv);\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));

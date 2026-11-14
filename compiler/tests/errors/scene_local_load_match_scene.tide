@@ -1,0 +1,4 @@
+// expect: 'Arena' is one of the match's scenes; remove 'local', or declare it 'local scene'
+scene Arena { }
+local scene Main { }
+view Show() { local Scene.Load(Arena); }
