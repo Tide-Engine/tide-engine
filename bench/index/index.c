@@ -2,7 +2,9 @@
 // and a search of it for the entries within a radius of a point (about 10 of
 // them) followed by the loop's own distance check on each candidate, against
 // the plain loop checking every entry. Entries are spread evenly, one per unit
-// of area or volume, in 1, 2 and 3 keys.
+// of area or volume, in 1, 2 and 3 keys. Then chunks found by their place, an
+// exact key of four whole numbers, against a search by x alone and the plain
+// loop (run_chunks).
 //
 //   bench_index [--quick]
 //
@@ -185,6 +187,114 @@ static int run(const uint32_t dims, const uint32_t n, const bool quick)
     return 0;
 }
 
+// Chunks of a world of blocks, found by their place: an int3 and a dimension, each x shared by many (a box 5 tall,
+// two dimensions). Searched by the four as one exact key (tide_index_find_exact), and by x alone as a sorted key
+// was before exact keys, each candidate checked as the loop's guard does, against the plain loop.
+typedef struct chunk {
+    int32_t x, y, z, dimension;
+} chunk;
+
+static bool chunk_is(const chunk *c, const chunk *at)
+{
+    return c->x == at->x && c->y == at->y && c->z == at->z && c->dimension == at->dimension;
+}
+
+static int run_chunks(const uint32_t n, const bool quick)
+{
+    int32_t wide = 1;
+    while ((uint32_t)(wide * wide * 10) < n) wide++;
+    chunk *chunks = malloc((size_t)n * sizeof *chunks);
+    if (!chunks) exit(1);
+    for (uint32_t i = 0; i < n; i++) {
+        const int32_t p = (int32_t)(i / 2);
+        chunks[i] = (chunk){p % wide - wide / 2, p / (wide * wide) - 2, p / wide % wide - wide / 2, (int32_t)(i % 2)};
+    }
+    tide_index *exact = tide_index_make(), *by_x = tide_index_make();
+    const uint32_t queries = quick ? 200u : 2000u;
+    uint32_t *at = malloc((size_t)queries * sizeof *at);
+    if (!at) exit(1);
+    uint64_t seed = 7;
+    for (uint32_t q = 0; q < queries; q++) at[q] = (uint32_t)(next(&seed) % n);
+    tide_index_hits h;
+    tide_index_hits_init(&h);
+    uint64_t best_exact = UINT64_MAX, best_x = UINT64_MAX;
+    for (uint32_t b = 0; b < (quick ? 1u : 50u); b++) {
+        uint64_t t0 = tide_time_now_ns();
+        tide_index_begin_exact(exact, 4, 0);
+        for (uint32_t i = 0; i < n; i++) {
+            const int64_t whole[4] = {chunks[i].x, chunks[i].y, chunks[i].z, chunks[i].dimension};
+            tide_index_add_exact(exact, whole, NULL, i);
+        }
+        tide_index_end(exact);
+        uint64_t took = tide_time_now_ns() - t0;
+        if (took < best_exact) best_exact = took;
+        t0 = tide_time_now_ns();
+        tide_index_begin(by_x, 1);
+        for (uint32_t i = 0; i < n; i++) {
+            const double x = chunks[i].x;
+            tide_index_add(by_x, &x, i);
+        }
+        tide_index_end(by_x);
+        took = tide_time_now_ns() - t0;
+        if (took < best_x) best_x = took;
+    }
+    // Each way finds what the plain loop does: the one chunk there, the same for each search
+    uint64_t sums[3] = {0, 0, 0}, checksum = 0;
+    uint32_t candidates[2] = {0, 0};
+    double ns[3] = {0, 0, 0};
+    for (uint32_t way = 0; way < 3; way++) {
+        const uint32_t times = quick ? 1u : way == 2 ? (n >= 100000 ? 1u : 5u) : 20u;
+        const uint64_t t0 = tide_time_now_ns();
+        for (uint32_t round = 0; round < times; round++) {
+            uint64_t sum = 0;
+            for (uint32_t q = 0; q < queries; q++) {
+                const chunk *c = &chunks[at[q]];
+                if (way == 2) { // Every row
+                    for (uint32_t i = 0; i < n; i++) sum += chunk_is(&chunks[i], c) ? i + 1u : 0u;
+                    continue;
+                }
+                if (way == 0) {
+                    const int64_t whole[4] = {c->x, c->y, c->z, c->dimension};
+                    tide_index_find_exact(exact, whole, NULL, NULL, &h);
+                } else {
+                    const double x = c->x;
+                    tide_index_find(by_x, &x, &x, &h);
+                }
+                if (round == 0) candidates[way] += h.count;
+                for (uint32_t k = 0; k < h.count; k++) {
+                    const uint32_t i = (uint32_t)h.items[k];
+                    sum += chunk_is(&chunks[i], c) ? i + 1u : 0u;
+                }
+            }
+            if (round == 0) sums[way] = sum;
+            checksum += sum;
+        }
+        ns[way] = (double)(tide_time_now_ns() - t0) / ((double)times * queries);
+    }
+    uint64_t expected = 0;
+    for (uint32_t q = 0; q < queries; q++) expected += at[q] + 1u;
+    const bool right = sums[0] == expected && sums[1] == expected && sums[2] == expected && candidates[0] == queries;
+    if (!right) {
+        fprintf(stderr, "bench_index: %u chunks: found %llu, %llu and %llu, not %llu (%u exact candidates for %u searches)\n",
+                n, (unsigned long long)sums[0], (unsigned long long)sums[1], (unsigned long long)sums[2],
+                (unsigned long long)expected, candidates[0], queries);
+    } else if (quick) {
+        printf("chunks, %7u entries: %.1f candidates by place, %.1f by x\n", n, (double)candidates[0] / queries,
+               (double)candidates[1] / queries);
+    } else {
+        printf("chunks, %7u entries: build %8.1f us exact, %8.1f us by x | search %7.1f ns exact, %7.1f ns by x, scan "
+               "%10.1f ns | %.1f and %.1f candidates (%llx)\n",
+               n, (double)best_exact / 1000.0, (double)best_x / 1000.0, ns[0], ns[1], ns[2],
+               (double)candidates[0] / queries, (double)candidates[1] / queries, (unsigned long long)(checksum & 0xfff));
+    }
+    free(at);
+    tide_index_hits_free(&h);
+    tide_index_free(exact);
+    tide_index_free(by_x);
+    free(chunks);
+    return right ? 0 : 1;
+}
+
 int main(int argc, char **argv)
 {
     bool quick = false;
@@ -200,6 +310,9 @@ int main(int argc, char **argv)
         for (uint32_t s = 0; s < 3; s++) {
             if (run(dims, sizes[s], quick)) return 1;
         }
+    }
+    for (uint32_t s = 0; s < 3; s++) {
+        if (run_chunks(sizes[s], quick)) return 1;
     }
     return 0;
 }

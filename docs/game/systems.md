@@ -161,6 +161,19 @@ Each boid looks at the boids near it, not at all of them. Nothing changes about 
 
 The condition can be a distance (`Math.Distance`, `DistanceSq`, `Length` or `LengthSq` of a difference, or `dx * dx + dy * dy`), a box written axis by axis, a comparison of one of the row's numbers (`b.unit.health < 10`), or an equality (`b.unit.team == myTeam`), combined with `&&`, `||` and `!`, written in the loop or in a function that returns it. Read-only locals can come first. The same goes for lists: `foreach (var wall in level.walls)`.
 
+Equalities of whole numbers are found exactly, all of them at once. A world of chunks finds one by its place, an `int3`, and its dimension:
+
+```csharp
+foreach (var row in chunks)
+{
+    if (row.chunk.at.x != at.x || row.chunk.at.y != at.y || row.chunk.at.z != at.z) continue;
+    if (row.chunk.dimension != dimension) continue;
+    found = row.entity;
+}
+```
+
+The loop visits the chunks at that place in that dimension and no others, however many share its `x`. Any of the row's `int`, `long`, `byte` and `char` numbers, enums and bools count, and an `int2`'s or `int3`'s components: a `long` a place is packed into (`row.chunk.key == key`) is found the same way. Other bounds in the same condition, like `row.chunk.heat < limit`, narrow those further.
+
 Write `indexed` before a loop that has to be indexed:
 
 ```csharp

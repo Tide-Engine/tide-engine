@@ -131,7 +131,7 @@ static void schedule_row_loops(const stmt *s, schedule_rows *w)
         const loop_index *plan = s->index;
         const decl *comp = w->p->type.decl;
         const int width = comp_width(comp), lanes = comp_lanes(comp);
-        for (int k = 0; plan && k < plan->count && k < 3; k++) {
+        for (int k = 0; plan && k < plan->count && k < INDEX_KEYS_MOST; k++) {
             const ix_query x = {.q = w->q, .selection = w->q, .row = w->q->type.decl};
             int off = -1, size = 0;
             const int b = ix_key_binding(&x, &plan->keys[k], &off, &size);

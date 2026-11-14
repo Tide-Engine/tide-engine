@@ -87,6 +87,7 @@ local singleton Drawn
     float sum;
     int glanced;
     int marked;
+    int cells;
     List<float2> marks;
 }
 
@@ -98,6 +99,50 @@ component Trail
 event Tick
 {
     float3 at;
+}
+
+// Exact keys: chunks of a world of blocks found by their place, a box 4 tall, two dimensions, so hundreds share an
+// x. Their whole numbers are an int3's components, an int, a long packed from them (past 2^53, where doubles can't
+// tell them apart), an enum, a byte, a char and a bool; `heat` is a float beside them, NaN on some
+enum Stage { Asked, Made, Gone }
+
+component Cell
+{
+    int number;
+    int3 at;
+    int dimension;
+    long key;
+    Stage stage;
+    byte kind;
+    char mark;
+    bool open;
+    float heat;
+}
+
+struct Tile
+{
+    int2 at;
+    int kind;
+}
+
+singleton Board
+{
+    List<Tile> tiles;
+}
+
+singleton Found
+{
+    int places;
+    int keys;
+    int ranged;
+    int kinds;
+    int marks;
+    int listed;
+    int helped;
+    int pinged;
+    int floats;
+    int moved;
+    long sum;
 }
 
 event Hit
@@ -135,13 +180,183 @@ event(Spawned) Setup(with Main)
         Spawn(Body { position = at, velocity = float3(Spread(i, 7) - 0.5f, Spread(i, 8) - 0.5f, 0.0f) }, Mover, Score { }, Trail { },
               Unit { team = i % 2 == 0 ? Team.Blue : Team.Green, level = i % 4, health = 5.0f, alive = true });
     }
+    // Cells: 8 wide, 4 tall and 8 deep, in two dimensions, each x shared by 64 of them
+    for (var i = 0; i < 512; i++)
+    {
+        var at = CellPlace(i / 2);
+        var d = i % 2;
+        Spawn(Cell { number = i, at = at, dimension = d, key = CellKey(at, d), stage = i % 3 == 0 ? Stage.Asked : Stage.Made,
+                     kind = byte(i % 5), mark = i % 4 == 0 ? 'a' : 'b', open = i % 6 != 0,
+                     heat = i % 17 == 0 ? zero / zero : float(i % 23) });
+    }
+}
+
+int3 CellPlace(int p)
+{
+    return int3(p % 8 - 4, p / 64 - 2, p / 8 % 8 - 4);
+}
+
+// A place and a dimension packed in a long past 2^53, so neighbours' doubles are the same
+long CellKey(int3 at, int dimension)
+{
+    return (1L << 60) + long(((at.x + 64) * 128 + at.y + 64) * 128 + at.z + 64) * 2 + dimension;
+}
+
+// Some cells move each tick, onto others' places, and some go: the index of their places is made again each tick,
+// over tables with holes
+system Shift(mut Cell cell, Time time)
+{
+    if ((cell.number * 3 + time.tick) % 401 == 0) this.Destroy();
+    if ((cell.number + time.tick) % 7 != 0) return;
+    cell.at = CellPlace((cell.number / 2 + time.tick * 13) % 256);
+    cell.key = CellKey(cell.at, cell.dimension);
+    cell.heat = cell.heat * 0.5f + 1.0f;
+    cell.stage = cell.stage == Stage.Made ? Stage.Gone : Stage.Made;
+}
+
+// ...and some come for a while, in a table of their own
+system Renew(Time time)
+{
+    if (time.tick % 3 != 0) return;
+    var i = 512 + time.tick;
+    var at = CellPlace(i % 256);
+    Spawn(Cell { number = i, at = at, dimension = i % 2, key = CellKey(at, i % 2), stage = Stage.Made, kind = byte(i % 5),
+                 mark = 'a', open = true, heat = 2.0f }, Life { ticks = 7 });
+}
+
+// Cells found by their place, by its key, and by other whole numbers, each search's finds summed in their order
+system Seek(mut Found found, Time time, query (Cell cell) cells)
+{
+    found.places = 0;
+    found.keys = 0;
+    found.ranged = 0;
+    found.kinds = 0;
+    found.marks = 0;
+    found.floats = 0;
+    for (var k = 0; k < 24; k++)
+    {
+        var at = CellPlace((k * 37 + time.tick * 11) % 256);
+        var dimension = (k + time.tick) % 2;
+        // An int3's three components and an int: one exact key
+        foreach (var row in cells)
+        {
+            if (row.cell.at.x != at.x || row.cell.at.y != at.y || row.cell.at.z != at.z) continue;
+            if (row.cell.dimension != dimension) continue;
+            found.places += 1;
+            found.sum = found.sum * 31 + row.cell.number;
+        }
+        // A long past 2^53
+        var key = CellKey(at, dimension);
+        foreach (var row in cells)
+        {
+            if (row.cell.key != key) continue;
+            found.keys += 1;
+            found.sum = found.sum * 7 + row.cell.number;
+        }
+        // Whole numbers beside bounds on a float (NaN on some rows, which pass) and on an int
+        var limit = float(k % 9) * 2.0f;
+        foreach (var row in cells)
+        {
+            if (row.cell.at.x != at.x || row.cell.dimension != dimension || row.cell.heat > limit) continue;
+            if (row.cell.at.y < at.y) continue;
+            found.ranged += 1;
+            found.sum = found.sum * 3 + row.cell.number;
+        }
+        // An enum, a byte against an int, an int3's component, and a bool in the body's last guard
+        foreach (var row in cells)
+        {
+            if (row.cell.stage != Stage.Made || row.cell.kind != k % 5 || row.cell.at.z != at.z) continue;
+            if (row.cell.open)
+            {
+                found.kinds += 1;
+                found.sum = found.sum * 5 + row.cell.number;
+            }
+        }
+        // A char
+        foreach (var row in cells)
+        {
+            if (row.cell.mark != 'a' || row.cell.at.x != at.x) continue;
+            found.marks += 1;
+        }
+        // A byte against a float, which C compares as floats: no exact key
+        foreach (var row in cells)
+        {
+            if (row.cell.kind != float(k % 5)) continue;
+            found.floats += 1;
+        }
+    }
+}
+
+// A query borrowed by a function, from a system and from a view, found by an exact key
+int CountAt(query (Cell cell) cells, int3 at, int dimension)
+{
+    mut var n = 0;
+    foreach (var row in cells)
+    {
+        if (row.cell.at.x != at.x || row.cell.at.y != at.y || row.cell.at.z != at.z || row.cell.dimension != dimension) continue;
+        n += row.cell.number + 1;
+    }
+    return n;
+}
+
+system Helped(mut Found found, Time time, query (Cell cell) cells)
+{
+    found.helped = 0;
+    for (var k = 0; k < 8; k++) found.helped += CountAt(cells, CellPlace((k * 29 + time.tick) % 256), k % 2);
+}
+
+// A parallel loop over a query's rows by an exact key
+event Poke
+{
+    int amount;
+}
+
+system Prod(Time time, query (Cell cell) cells)
+{
+    parallel (var r in cells)
+    {
+        if (r.cell.dimension != time.tick % 2 || r.cell.at.y != 0) continue;
+        r.entity.Send(Poke { amount = r.cell.number });
+    }
+}
+
+event(Poke p) Poked(mut Cell cell, mut Found found)
+{
+    cell.heat += float(p.amount % 3) * 0.25f;
+    found.pinged += 1;
+}
+
+// A list of a singleton the system only reads, by an int2's components: an index kept for the system's run
+system Tiles(mut Found found, Body body, Board board, with Mover)
+{
+    var cell = int2(int(Math.Floor(body.position.x)), int(Math.Floor(body.position.y)));
+    foreach (var t in board.tiles)
+    {
+        if (t.at.x != cell.x || t.at.y != cell.y || t.kind == 3) continue;
+        found.listed += 1;
+        found.sum = found.sum * 11 + t.kind;
+    }
+}
+
+// A view's rows by an exact key, and the borrowed query from a view
+view Glimpse(mut Drawn drawn, query (Cell cell) cells)
+{
+    drawn.cells = 0;
+    for (var k = 0; k < 8; k++) drawn.cells += CountAt(cells, CellPlace(k * 31 % 256), k % 2);
+    foreach (var row in cells)
+    {
+        if (row.cell.at.z != 1 || row.cell.stage != Stage.Made) continue;
+        drawn.cells += row.cell.number;
+    }
 }
 
 // The lists, once
-system Fill(mut Field field, mut Sparks sparks)
+system Fill(mut Field field, mut Sparks sparks, mut Board board)
 {
     if (field.made > 0) return;
     for (var i = 0; i < 500; i++) sparks.items.Add(Spark { at = float2(Spread(i, 16) * 40.0f - 20.0f, Spread(i, 17) * 4.0f) });
+    // Tiles of a 40 by 40 floor, and 300 more on places that have one already
+    for (var i = 0; i < 1900; i++) board.tiles.Add(Tile { at = int2(i * 7 % 40 - 20, i / 40 % 40 - 20), kind = i % 4 });
     field.made = 1;
     field.reach = 3.5f;
     for (var i = 0; i < 400; i++)
