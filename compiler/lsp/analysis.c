@@ -2391,6 +2391,7 @@ static const method_form texture_calls[] = {
      "when UVs change inside a loop, and for `Filter.Anisotropic` they are what a pixel covers: it reads along "
      "the longer of the two. Point and Bilinear still read the base image. Omitted filter and wrap "
      "use the texture's settings, as Sample does. Verts and CPU code cannot call SampleGrad."},
+    {"SampleLevel", "SampleLevel(float2 uv, float level, Filter filter = the texture's, Wrap wrap = the texture's) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper. Trilinear blends adjacent levels; levels clamp to the available images."},
 };
 
 static const method_form depth_calls[] = {
@@ -2419,6 +2420,7 @@ static const method_form cube_calls[] = {
      "Another side for all six faces of a cube made with `Cubemap(size)`, in pixels, and empty images."},
     {"Dispose", "Dispose()",
      "Lets a cube made with `Cubemap(size)` go, its six faces with it. Every copy of it then names no cube."},
+    {"SampleLevel", "SampleLevel(float3 direction, float level, Filter filter = Filter.Bilinear) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper. Trilinear blends adjacent levels; levels clamp to the available images."},
 };
 
 static const method_form volume_calls[] = {
@@ -2445,6 +2447,7 @@ static const method_form array_calls[] = {
     {"Dispose", "Dispose()",
      "Lets an array made with `TextureArray(width, height, layers)` go, its layers and depth with it. Every copy of "
      "it then names no array."},
+    {"SampleLevel", "SampleLevel(float2 uv, int layer, float level, Filter filter = the array's, Wrap wrap = the array's) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper. Trilinear blends adjacent levels; levels clamp to the available images."},
 };
 
 static const method_form depth_array_calls[] = {
@@ -7487,7 +7490,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
     }
     if (t.kind == TY_CUBEMAP) { // A frag reads it; a view draws into its faces, resizes it and lets it go
         static const char *const snippets[] = {"Sample($1)", "Resize($1)", "Dispose()"};
-        for (size_t i = samples ? 0 : 1; i < (gpu ? 1 : sizeof cube_calls / sizeof cube_calls[0]); i++) {
+        for (size_t i = samples ? 0 : 1; i < (gpu ? 1 : sizeof cube_calls / sizeof cube_calls[0] - 1); i++) {
             sb detail = {0};
             format_method(&cube_calls[i], t, &detail);
             item(c, cube_calls[i].name, CK_METHOD, detail.data, cube_calls[i].doc, snippets[i]);
@@ -7498,6 +7501,11 @@ static void list_members(completion *c, const type t, const bool edges, const sc
                  "`faces[5]`, in the order +x, -x, +y, -y, +z, -z. A face is what a camera at the cube's middle sees "
                  "along that axis with a field of view of 90: +y is up for the four around, and for the one above "
                  "and the one below, -z and +z.", "faces[$1]");
+        }
+        if (samples) {
+            const method_form *form = &cube_calls[sizeof cube_calls / sizeof cube_calls[0] - 1];
+            sb detail = {0}; format_method(form, t, &detail);
+            item(c, form->name, CK_METHOD, detail.data, form->doc, "SampleLevel($1, $2)");
         }
         return;
     }
@@ -7514,7 +7522,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
     }
     if (t.kind == TY_TEXTURE_ARRAY) { // A frag reads it; a view draws into its layers, resizes it and lets it go
         static const char *const snippets[] = {"Sample($1, $2)", "SampleGrad($1, $2, $3, $4)", "Resize($1, $2)", "Dispose()"};
-        for (size_t i = samples ? 0 : 2; i < (gpu ? 2 : sizeof array_calls / sizeof array_calls[0]); i++) {
+        for (size_t i = samples ? 0 : 2; i < (gpu ? 2 : sizeof array_calls / sizeof array_calls[0] - 1); i++) {
             if (i == 1 && is_shader(sc->decl) && !sc->decl->is_frag) continue; // SampleGrad: a frag's
             sb detail = {0};
             format_method(&array_calls[i], t, &detail);
@@ -7525,6 +7533,11 @@ static void list_members(completion *c, const type t, const bool edges, const sc
             item(c, "depth", CK_PROPERTY, "DepthTextureArray", TEXTURE_ARRAY_DEPTH_DOC, NULL);
             item(c, "size", CK_PROPERTY, "int2", TEXTURE_ARRAY_SIZE_DOC, NULL);
             item(c, "count", CK_PROPERTY, "int", TEXTURE_ARRAY_COUNT_DOC, NULL);
+        }
+        if (samples) {
+            const method_form *form = &array_calls[sizeof array_calls / sizeof array_calls[0] - 1];
+            sb detail = {0}; format_method(form, t, &detail);
+            item(c, form->name, CK_METHOD, detail.data, form->doc, "SampleLevel($1, $2, $3)");
         }
         return;
     }
@@ -7561,7 +7574,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
                 if (gradients && is_shader(sc->decl) && !sc->decl->is_frag) continue;
                 sb detail = {0};
                 format_method(sample, t, &detail);
-                item(c, sample->name, CK_METHOD, detail.data, sample->doc, gradients ? "SampleGrad($1, $2, $3)" : "Sample($1)");
+                item(c, sample->name, CK_METHOD, detail.data, sample->doc, gradients ? "SampleGrad($1, $2, $3)" : strcmp(sample->name, "SampleLevel") == 0 ? "SampleLevel($1, $2)" : "Sample($1)");
             }
         } else {
             const method_form *sample = find_form(grid_calls, sizeof grid_calls / sizeof grid_calls[0], str_from("Sample"));

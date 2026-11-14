@@ -6411,14 +6411,14 @@ TIDE_TEST(lsp_textures_in_functions)
     TIDE_CHECK(has(reads, "DepthTexture.Compare(float2 uv, float value) -> float"));
     snprintf(program, sizeof program, "%sColor Tile(Texture image, float2 uv)\n{\n    return image.$\n}\n", types);
     const char *texture_reads = complete(program);
-    TIDE_CHECK(offers(texture_reads, "Sample") && offers(texture_reads, "SampleGrad") && offers(texture_reads, "size"));
+    TIDE_CHECK(offers(texture_reads, "Sample") && offers(texture_reads, "SampleGrad") && offers(texture_reads, "SampleLevel") && offers(texture_reads, "size"));
     TIDE_CHECK(has(texture_reads, "Texture.SampleGrad(float2 uv, float2 dx, float2 dy, Filter filter = the texture's, Wrap wrap = the texture's) -> Color"));
     TIDE_CHECK(has(texture_reads, "SampleGrad($1, $2, $3)"));
     snprintf(program, sizeof program, "%sfrag Gradient(Vertex3 vertex, out Color color, Lamp lamp) { color = lamp.image.$ }\n", types);
     TIDE_CHECK(offers(complete(program), "SampleGrad"));
     snprintf(program, sizeof program, "%svert Warp(mut Vertex3 vertex, Lamp lamp) { vertex.color = lamp.image.$ }\n", types);
     const char *vertex_reads = complete(program);
-    TIDE_CHECK(offers(vertex_reads, "Sample") && !offers(vertex_reads, "SampleGrad"));
+    TIDE_CHECK(offers(vertex_reads, "Sample") && offers(vertex_reads, "SampleLevel") && !offers(vertex_reads, "SampleGrad"));
     snprintf(program, sizeof program, "%sfrag Gradient(Vertex3 vertex, out Color color, Lamp lamp)\n{\n"
                                       "    color = lamp.image.SampleGrad(vertex.uv, float2(0.01, 0), $float2(0, 0.01));\n}\n", types);
     open_document(program);

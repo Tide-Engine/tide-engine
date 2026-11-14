@@ -1,0 +1,4 @@
+// expect: SampleLevel takes float2 uv
+scene Main {}
+local singleton Art { Texture image; Texture3D volume; }
+frag Read(Vertex vertex, out Color color, Texture source) { color = source.SampleLevel(vertex.uv); }

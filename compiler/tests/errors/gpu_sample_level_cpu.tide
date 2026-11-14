@@ -1,0 +1,4 @@
+// expect: Sample reads a Texture on the GPU
+scene Main {}
+local singleton Art { Texture image; Texture3D volume; }
+view Show(Art art) { var color = art.image.SampleLevel(float2(0), 1); Draw.Clear(color); }

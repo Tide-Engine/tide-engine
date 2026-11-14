@@ -1,0 +1,14 @@
+scene Main { }
+local singleton Art { Texture image; Cubemap cube; TextureArray array; List<Vertex> corners; GPUList<Color> samples; }
+Color Read(Texture source, float2 uv, float level) { return source.SampleLevel(uv, level, .Trilinear); }
+Color Forward(Texture source, float2 uv) { return Read(source, uv, 1.5); }
+frag Levels(Vertex vertex, out Color color, Art art) {
+    color = art.image.SampleLevel(level: 1.5, uv: vertex.uv, filter: .Trilinear, wrap: .Repeat);
+    color += art.cube.SampleLevel(float3(vertex.uv, 1), 2.5, .Trilinear);
+    color += art.array.SampleLevel(vertex.uv, 1, 2.5, .Trilinear, .Mirror);
+    color += Forward(art.image, vertex.uv);
+}
+vert VertexLevel(mut Vertex vertex, Art art) { vertex.color = art.image.SampleLevel(vertex.uv, 1, .Trilinear); }
+[Group(1)]
+compute KernelLevel(Art art) { art.samples[this.at.x] = Forward(art.image, float2(0.5)); }
+view Show(Art art) { GPU.Run(KernelLevel, art.samples); Draw.Mesh(art.corners, [0, 1, 2], VertexLevel, Levels); }

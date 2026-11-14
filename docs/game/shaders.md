@@ -1490,3 +1490,12 @@ Kernels run everywhere Tide draws: Vulkan (desktop and Android), WebGPU, and Uni
 `tide shaders` prints each shader Tide writes for the game, as WGSL (which Vulkan's SPIR-V and Unity's HLSL are translated from): one for each combination of vertex struct, instance data, vert and frag a mesh draw uses, and each kernel's WGSL.
 
 [Shipping builds](../tools/cli.md#run-and-build) shorten identifiers derived from your function, type, field, parameter and local names. Shader entry points and renderer bindings retain their names; expressions and layouts are unchanged. The private `game.names` build map records the shortened identifiers by stage. With a custom compiler pipeline, `tidec --shaders --strip-names` shows the shortened form; `--spirv` and `--hlsl` also accept `--strip-names`.
+
+## Choosing a mip level
+
+`source.SampleLevel(uv, level, Filter.Trilinear)` reads a level you choose, including from a vert, kernel or GPU
+helper. Level 0 is the original image, level 1 halves its dimensions, and 1.5 blends levels 1 and 2. Levels clamp
+to the available images. Use Trilinear to read the mip chain; Point and Bilinear read the original image.
+A cubemap takes a direction: `sky.SampleLevel(direction, 2, Filter.Trilinear)`. An array takes its layer first:
+`images.SampleLevel(uv, layer, 2, Filter.Trilinear)`. Texture3D has no mipmaps; use its Sample method.
+Drawing into a selected mip level is not available.

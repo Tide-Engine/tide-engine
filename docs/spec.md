@@ -2961,7 +2961,18 @@ mut void Enter(Stance next)
   - Each field that something snaps gets a hidden int counting its snaps, after the type's fields, which `Snap()` increments (wrapping). Views blend the field only between two ticks with the same count. The counter is ordinary match data: snapshots, rollback, packing, the match hash, host migration and hot reload carry it, and it changes the type's layout, and so the match's compatibility, only in a game that snaps that field. It costs nothing for fields never snapped and next to nothing in network bytes, as it rarely changes.
   - `verified` views and view queries follow the same rule over their own endpoints.
 
-#### Provisional correction smoothing
+#### Provisional: explicit mip level (2026-11-14)
+
+NaN levels become zero; negative infinity clamps to zero and positive infinity to the last image.
+Level zero is the original image, one halves each dimension, and fractional levels blend with Trilinear or
+Anisotropic. Point and Bilinear retain their base-image sampler contract. Levels clamp to 0..31 and the sampler's
+available chain; an image with no smaller images reads level zero. TextureArray uses
+`SampleLevel(uv, layer, level[, filter[, wrap]])`: layer precedes level to keep Sample's argument order.
+Chosen over level-before-layer, which would make a positional float level look like the existing integer layer.
+Cubemaps have no Wrap, as faces continue into one another. Drawing into a chosen mip level is not provided.
+No new backend API or recorder packet is needed: WGSL explicit-level sampling already translates to SPIR-V and HLSL.
+
+### Provisional correction smoothing
 
 **Provisional.** `[Position]` and `[Rotation]` describe how a match field is presented when prediction is corrected. The names and contract may change as games test them.
 
@@ -3263,6 +3274,12 @@ view Sparks(Spark spark, Hud hud)
 Owner: "these make sense, lets do all of these". A struct a vert hands its frag may
 hold ints and int vectors, carried unblended from the triangle's first corner. A float
 field stays blended, and all read fields count toward the existing 15 carried values.
+
+#### Explicit mip level (decided 2026-11-13)
+
+The owner: "these make sense, lets do all of these". `Texture.SampleLevel(uv, level[, filter[, wrap]])`
+reads a float mip level the game chooses. `Cubemap.SampleLevel(direction, level[, filter])` reads a direction.
+These calls run in frags, verts, kernels and their GPU helpers. Texture3D has no mipmaps: use Sample there.
 
 #### Triangle side (decided 2026-11-13)
 

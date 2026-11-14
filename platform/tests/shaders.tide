@@ -5293,3 +5293,26 @@ view FlatCorners(Art art)
     Draw.Mesh(corners, [1, 2, 0], float4x4.Translate(Cell(1, 0)), FlatMarks, FlatRead);
     Draw.Mesh(corners, [2, 0, 1], float4x4.Translate(Cell(2, 0)), FlatMarks, FlatRead);
 }
+
+local singleton LevelsState { RenderTarget target; Cubemap cube; Texture image; bool made; float level; bool cubeRead; }
+frag ReadLevel(Vertex vertex, out Color color, LevelsState state) {
+    if (state.cubeRead) color = state.cube.SampleLevel(float3(1, 0, 0), state.level, .Trilinear);
+    else color = state.image.SampleLevel(float2(0.5), state.level, .Trilinear);
+}
+[After(FlatCorners)]
+view ExplicitLevels(Art art, mut LevelsState state) {
+    if (art.targetPass != 30) return;
+    if (!state.made) { state.target = RenderTarget(8, 8, 1); state.cube = Cubemap(8); state.made = true; }
+    state.target.SetScreen(); state.target.Clear(Color.black);
+    state.target.Rect(float2(4), float2(2), Color.red);
+    for (int i = 0; i < 6; i++) {
+        state.cube.faces[i].SetScreen(); state.cube.faces[i].Clear(Color.black);
+        state.cube.faces[i].Rect(float2(4), float2(2), Color.red);
+    }
+    state.image = state.target.color;
+    Draw.SetScreen(); Draw.SetClip(); Draw.Clear(Color.black);
+    for (int i = 0; i < 6; i++) {
+        state.level = float(i % 3); state.cubeRead = i >= 3;
+        Draw.Transform(float2(i * 32, 0)) { List<Vertex> quad = [Vertex {}, Vertex { position = float2(16, 0) }, Vertex { position = float2(16) }, Vertex { position = float2(0, 16) }]; Draw.Mesh(quad, art.faces, ReadLevel); }
+    }
+}

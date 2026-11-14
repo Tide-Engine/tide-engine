@@ -1,0 +1,4 @@
+// expect: a Texture3D has no mipmaps
+scene Main {}
+local singleton Art { Texture image; Texture3D volume; }
+frag Read(Vertex vertex, out Color color, Art art) { color = art.volume.SampleLevel(float3(0), 1); }

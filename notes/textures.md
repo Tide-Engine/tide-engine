@@ -1,3 +1,21 @@
+# Explicit mip reads (2026-11-14)
+
+Owner-approved 2026-11-13, "these make sense, lets do all of these": SampleLevel on Texture, Cubemap and
+TextureArray. Public rules and picks are in spec.md; the user example is game/shaders.md. The checker shares
+existing source ownership validation. Function sampling metadata retains explicit-level reads separately from
+implicit and gradient reads through helper chains, so helpers neither demand derivatives nor mask ordinary
+Sample diagnostics. WGSL uses the existing textureSampleLevel path and existing sampler bindings; no GPU API,
+recorder packet, gpu_none operation or generated C descriptor changes. No-use shader goldens stay unchanged.
+
+Validation: native ASan Vulkan and web-debug SwiftShader WebGPU platform shader fixtures pin texture/cube levels
+0, 1 and 2, including prewarming and device recreation. All 186 WGSL golden/SPIR-V/FXC tests pass, existing
+expectations unchanged; new argument/CPU/volume diagnostics pass. Shader LSP tests 11/11, shared editor grammar
+381/381, docs build pass. Unity 6000.6.0f1 hidden D3D11, D3D12, Vulkan and OpenGL Core ComputeReplayTests pass 10/10 each (existing image/volume/order
+suite). Explicit levels use the already tested HLSL level-sampling helpers. NaN maps to zero through Tide's clamp;
+infinities clamp to the range, then samplers clamp to the available chain. Point/Bilinear remain level zero.
+The public numeric Format members were not on dev at this merge: connect typed numeric SampleLevel with their
+typed sampling implementation when those arrive. Metal and other machines remain CI/device coverage.
+
 # Textures and how they are sampled
 
 ## Texture3D volumes (2026-11-14)
@@ -121,7 +139,7 @@ a shallow angle), `docs/game/shaders.md` (Textures).
   Input.dispatchMouseEvent`), as it had at 10:32 the same day before this change (`Runtime.evaluate`, in
   render3d-materials): `docs/tests/examples.mjs` gave every DevTools command but a screenshot 20 seconds, and now
   gives each the screenshot's 120.
-- **Not built:** a level a game picks, a player's quality setting for it, asking the device's most from Tide;
+- **Not built:** a player's quality setting for it, asking the device's most from Tide;
   Linux and macOS are CI's.
 
 ## Texture arrays: built (2026-11-05)

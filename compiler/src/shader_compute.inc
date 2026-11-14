@@ -363,7 +363,7 @@ static int image_slot(emit *em, const expr *image, const bool write, const loc a
     const shader_read read = image->type.kind == TY_TEXTURE3D ? READ_VOLUME : READ_COLOR;
     if (em->code != em->root && (own >= 0 || of)) {
         if (em->checking) {
-            note_function_sample(em->code, own, of, read, 0, 0, false, at, write);
+            note_function_sample(em->code, own, of, read, 0, 0, false, at, write, false);
         }
         if (!of) return -1;
     }

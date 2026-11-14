@@ -1949,6 +1949,26 @@ static void run_flat_corner_checks(const char *when)
     }
 }
 
+static void run_level_checks(const char *when)
+{
+    local.Art.targetPass = 30;
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    local.Art.targetPass = 0;
+    tide_float2 points[6]; uint32_t got[6];
+    for (int i = 0; i < 6; i++) points[i] = tide_f2(8.5f + 32.0f * (float)i, 8.5f);
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, 6, got);
+    const int red[] = {255, 64, 16};
+    for (int i = 0; i < 6; i++) {
+        const bool good = abs((int)(got[i] >> 24) - red[i % 3]) <= 1 && (got[i] & 0xFFFFFFu) == 255u;
+        printf("%s: explicit mip %d of %s%s (0x%08X)\n", good ? "ok" : "FAIL", i % 3,
+               i < 3 ? "texture" : "cube", when, (unsigned)got[i]);
+        if (!good) failures++;
+    }
+}
+
 // Every shader of the game's made before anything draws with it (tide_platform_prewarm), as a host has them made
 // as a game starts: the ways the checks above drew it, after a build's first frame let go of the pipelines it didn't
 // draw with (the list forgot). Every check after that draws with what was made, and makes no pipeline.
@@ -1992,6 +2012,7 @@ static void run_prewarmed_checks(void)
     run_prepass_checks(when);
     run_triangle_side_checks(when);
     run_flat_corner_checks(when);
+    run_level_checks(when);
     const uint32_t after = tide_platform_shader_pipelines();
     printf("%s: and every check drew with what was made, making no pipeline (%u)\n", after == made ? "ok" : "FAIL",
            (unsigned)after);
@@ -2028,6 +2049,7 @@ static void run_again(const int roll, const char *when)
     run_prepass_checks(when);
     run_triangle_side_checks(when);
     run_flat_corner_checks(when);
+    run_level_checks(when);
 }
 #endif
 
@@ -2106,6 +2128,7 @@ static int frame(void *user, const float seconds)
     run_prepass_checks("");
     run_triangle_side_checks("");
     run_flat_corner_checks("");
+    run_level_checks("");
     run_prepass_checks(", again");
     run_prewarmed_checks();
 #ifdef __wasm__

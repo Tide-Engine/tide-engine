@@ -3602,13 +3602,14 @@ static int known_filter(const expr *e)
     const expr *of = e->object;
     if (of->type.kind == TY_DEPTH_TEXTURE || of->type.kind == TY_DEPTH_TEXTURE_ARRAY) return 0;
     if (of->type.kind == TY_TEXTURE_ARRAY) { // After its uv and its layer
-        const int at = str_eq_c(e->name, "SampleGrad") ? 4 : 2;
+        const int at = str_eq_c(e->name, "SampleGrad") ? 4 : str_eq_c(e->name, "SampleLevel") ? 3 : 2;
         if (e->args.count > at && e->args.items[at]->enum_member) return (int)e->args.items[at]->enum_member->number;
         int filter, wrap;
         declared_sampling(of, &filter, &wrap);
         return filter == 0 || filter == 2 || filter == 3 ? filter : 1;
     }
-    if (e->args.count >= 2) return e->args.items[1]->enum_member ? (int)e->args.items[1]->enum_member->number : 1;
+    const int at = str_eq_c(e->name, "SampleLevel") ? 2 : 1;
+    if (e->args.count > at) return e->args.items[at]->enum_member ? (int)e->args.items[at]->enum_member->number : 1;
     if (of->type.kind == TY_CUBEMAP) return 1; // A cube that says none is read blended
     if (of->bind != BIND_ASSET && of->type.kind == TY_TEXTURE) return -1;
     int filter, wrap;
@@ -3696,7 +3697,7 @@ static bool liftable(const emit *em, const expr *e, const int depth)
                                                                     && e->object->bind != BIND_PARAM && e->object->bind != BIND_CONST);
         if (e->call == CALL_GRID) { // A texture read at its own pixels asks nothing of the pixels around
             if (e->object->type.kind == TY_TEXTURE_ARRAY || e->object->type.kind == TY_DEPTH_TEXTURE_ARRAY) {
-                if (known_filter(e) >= 2 && !str_eq_c(e->name, "SampleGrad")) return false; // It'd ask how fast its uv changes
+                if (known_filter(e) >= 2 && !str_eq_c(e->name, "SampleGrad") && !str_eq_c(e->name, "SampleLevel")) return false; // It'd ask how fast its uv changes
                 for (int i = 0; i < e->args.count; i++) {
                     if (!e->args.items[i]->enum_member && !liftable(em, e->args.items[i], depth + 1)) return false;
                 }
@@ -3913,17 +3914,17 @@ static void refuse_texture(emit *em, const expr *e)
 // Notes on a function being checked that it samples its parameter `param`,
 // or with -1 the asset `asset` names, as the Sample at `at` says.
 static void note_function_sample(decl *fn, const int param, const expr *asset, const shader_read read, const int filter,
-                                 const int wrap, const bool gradients, const loc at, const bool write)
+                                 const int wrap, const bool gradients, const loc at, const bool write, const bool explicit_level)
 {
     for (int i = 0; i < fn->gpu_samples.count; i++) {
         const function_sample *s = &fn->gpu_samples.items[i];
         if (s->param == param && (param >= 0 || s->asset->constant == asset->constant) && s->read == read && s->filter == filter
-            && s->wrap == wrap && s->gradients == gradients && s->write == write) {
+            && s->wrap == wrap && s->gradients == gradients && s->write == write && s->explicit_level == explicit_level) {
             return;
         }
     }
     const function_sample sample = {.param = param, .asset = param >= 0 ? NULL : asset, .read = read, .filter = filter,
-                                    .wrap = wrap, .gradients = gradients, .at = at, .write = write};
+                                    .wrap = wrap, .gradients = gradients, .at = at, .write = write, .explicit_level = explicit_level};
     vec_push(fn->gpu_samples, sample);
 }
 
@@ -3932,7 +3933,7 @@ static void ex_texture_size(emit *em, const expr *e)
     int own;
     const expr *of = texture_of(em, e->object, &own);
     if (em->code != em->root && (own >= 0 || of)) {
-        if (em->checking) note_function_sample(em->code, own, of, READ_SIZE, 0, 0, false, e->at, false);
+        if (em->checking) note_function_sample(em->code, own, of, READ_SIZE, 0, 0, false, e->at, false, false);
         if (em->checking) { sb_printf(em->o, "%s(0)", ty(em, e->type)); return; }
     }
     if (!of) {
@@ -3982,7 +3983,7 @@ static void pass_samples(emit *em, decl *fn, const expr *call, const given *spec
         const expr *of = s.param < 0 ? s.asset : arg ? spec[s.param].sampled : NULL;
         const int mine = arg ? own[s.param] : -1;
         if (em->code != em->root && (mine >= 0 || of)) {
-            note_function_sample(em->code, mine, of, s.read, s.filter, s.wrap, s.gradients, s.at, s.write);
+            note_function_sample(em->code, mine, of, s.read, s.filter, s.wrap, s.gradients, s.at, s.write, s.explicit_level);
             continue;
         }
         if (!of) { // A grid with no name a Sample could go by: one that isn't a grid was refused where it's passed
@@ -3998,7 +3999,7 @@ static void pass_samples(emit *em, decl *fn, const expr *call, const given *spec
                          STR_ARG(em->root->name), STR_ARG(fn->name));
             continue;
         }
-        if (s.gradients || !em->root->is_frag || (how.read != READ_COLOR && how.read != READ_CUBE && how.read != READ_ARRAY)) continue;
+        if (s.explicit_level || s.gradients || !em->root->is_frag || (how.read != READ_COLOR && how.read != READ_CUBE && how.read != READ_ARRAY)) continue;
         const char *where = how.read == READ_CUBE ? "direction" : "uv";
         const char *what = how.read == READ_CUBE ? "cube" : "texture";
         if (how.filter >= 2) {
@@ -4038,7 +4039,7 @@ static void pass_samples(emit *em, decl *fn, const expr *call, const given *spec
 static void ex_cube_sample(emit *em, const expr *e, const expr *of, const sampling how)
 {
     const int filter = how.filter;
-    const bool lifts = em->root->is_frag && em->code == em->root && !em->lifting && filter >= 2;
+    const bool lifts = !str_eq_c(e->name, "SampleLevel") && em->root->is_frag && em->code == em->root && !em->lifting && filter >= 2;
     const bool grad = lifts && liftable(em, e->args.items[0], 0);
     if (lifts && !grad && em->checking) {
         refuse(em, e->args.items[0]->at, has_roll(e->args.items[0], 0)
@@ -4086,7 +4087,14 @@ static void ex_cube_sample(emit *em, const expr *e, const expr *of, const sampli
     }
     sb_printf(em->o, "textureSampleLevel(pixels%d, sampler%d, ", way_texture(em, slot), way_sampler(em, slot));
     ex_as(em, e->args.items[0], way);
-    sb_put(em->o, straight ? ", 0.0))" : ", 0.0)");
+    if (str_eq_c(e->name, "SampleLevel")) {
+        need(em, family_helper(FAMILY_CLAMP, 1));
+        sb_put(em->o, ", tide_clamp1(");
+        ex_as(em, e->args.items[1], (type){TY_FLOAT, NULL});
+        sb_put(em->o, straight ? ", 0.0, 31.0)))" : ", 0.0, 31.0))");
+    } else {
+        sb_put(em->o, straight ? ", 0.0))" : ", 0.0)");
+    }
 }
 
 // An array's layer, after a Sample's uv: its argument `at` (none where it's -1), held to the layers the array has,
@@ -4105,6 +4113,7 @@ static void put_layer(emit *em, const expr *e, const int at, const int slot)
 static void ex_sample(emit *em, const expr *e)
 {
     const bool gradients = str_eq_c(e->name, "SampleGrad");
+    const bool level = str_eq_c(e->name, "SampleLevel");
     if (gradients && !em->root->is_frag) {
         refuse(em, e->at, "SampleGrad reads a Texture with UV derivatives per destination pixel: use it in a frag or a function a frag calls");
         put_zero(em, e->type);
@@ -4122,14 +4131,14 @@ static void ex_sample(emit *em, const expr *e)
     const shader_read base = base_read(read);
     const int layer_at = arrayed ? (gradients ? 3 : 1) : -1;
     // What the Sample says of how it reads: -1 for what it leaves to its texture
-    const int filter_at = (gradients ? 3 : 1) + (arrayed ? 1 : 0);
+    const int filter_at = (gradients ? 3 : level ? 2 : 1) + (arrayed ? 1 : 0);
     const int said_filter = (cube || base == READ_COLOR) && e->args.count > filter_at ? (int)e->args.items[filter_at]->enum_member->number : -1;
     const int said_wrap = base == READ_COLOR && e->args.count > filter_at + 1 ? (int)e->args.items[filter_at + 1]->enum_member->number : -1;
     const expr *of = e->object;
     if (em->code != em->root) { // A function's: its own parameter's, which each call names, or an asset's
         int own;
         of = texture_of(em, e->object, &own);
-        if (em->checking && (own >= 0 || of)) note_function_sample(em->code, own, of, read, said_filter, said_wrap, gradients, e->at, false);
+        if (em->checking && (own >= 0 || of)) note_function_sample(em->code, own, of, read, said_filter, said_wrap, gradients, e->at, false, level);
         if (!of) {
             if (own < 0) refuse_texture(em, e->object);
             if (!em->checking) { // Nothing named it: refused as it was checked
@@ -4142,6 +4151,7 @@ static void ex_sample(emit *em, const expr *e)
                 ex_as(em, e->args.items[1], (type){volume ? TY_FLOAT3 : TY_FLOAT2, NULL});
                 ex_as(em, e->args.items[2], (type){volume ? TY_FLOAT3 : TY_FLOAT2, NULL});
             }
+            if (level) ex_as(em, e->args.items[arrayed ? 2 : 1], (type){TY_FLOAT, NULL});
             if (arrayed) ex_as(em, e->args.items[layer_at], (type){TY_INT, NULL});
             if (base == READ_COMPARE) ex_as(em, e->args.items[arrayed ? 2 : 1], (type){TY_FLOAT, NULL});
             return;
@@ -4163,7 +4173,7 @@ static void ex_sample(emit *em, const expr *e)
     // is an error where the Sample says Trilinear, and reads the texture's own pixels where a Texture might.
     // A vert has no pixels to compare: it reads the texture's own. So does a function, whose uv is its
     // call's (pass_samples).
-    const bool lifts = !gradients && base == READ_COLOR && em->root->is_frag && em->code == em->root && !em->lifting
+    const bool lifts = !level && !gradients && base == READ_COLOR && em->root->is_frag && em->code == em->root && !em->lifting
                     && (filter >= 2 || (!filter_said && em->prog->names_trilinear));
     const bool grad = lifts && liftable(em, e->args.items[0], 0);
     if (lifts && !grad && filter >= 2 && em->checking) {
@@ -4244,7 +4254,7 @@ static void ex_sample(emit *em, const expr *e)
         sb_printf(em->o, ", tide_dx%d, tide_dy%d)%s", at, at, straight ? ")" : "");
         return;
     }
-    if (em->lifting && em->root->is_frag && base == READ_COLOR && (filter >= 2 || (!filter_said && em->prog->names_trilinear))) {
+    if (!level && em->lifting && em->root->is_frag && base == READ_COLOR && (filter >= 2 || (!filter_said && em->prog->names_trilinear))) {
         // Worked out as the frag starts (ex_derivative), outside any branch: the GPU picks its smaller images itself
         sb_printf(em->o, "textureSample(pixels%d, sampler%d, ", way_texture(em, slot), way_sampler(em, slot));
         ex_as(em, e->args.items[0], (type){volume ? TY_FLOAT3 : TY_FLOAT2, NULL});
@@ -4256,7 +4266,14 @@ static void ex_sample(emit *em, const expr *e)
     ex_as(em, e->args.items[0], (type){volume ? TY_FLOAT3 : TY_FLOAT2, NULL});
     put_layer(em, e, layer_at, slot);
     // A depth is one number, which WGSL reads at a level that's an int
-    sb_put(em->o, straight ? ", 0.0))" : base == READ_COLOR ? ", 0.0)" : ", 0)");
+    if (level) {
+        need(em, family_helper(FAMILY_CLAMP, 1));
+        sb_put(em->o, ", tide_clamp1(");
+        ex_as(em, e->args.items[arrayed ? 2 : 1], (type){TY_FLOAT, NULL});
+        sb_put(em->o, straight ? ", 0.0, 31.0)))" : ", 0.0, 31.0))");
+    } else {
+        sb_put(em->o, straight ? ", 0.0))" : base == READ_COLOR ? ", 0.0)" : ", 0)");
+    }
 }
 
 // this.Ddx(v), this.Ddy(v) and this.Fwidth(v), in a frag: a GPU says how fast
@@ -4529,7 +4546,7 @@ static void ex_call(emit *em, const expr *e)
         diag_note("work it out on the CPU, in the view, and keep the result in a component or a singleton the code reads");
         return;
     case CALL_GRID:
-        if (str_eq_c(e->name, "Sample") || str_eq_c(e->name, "SampleGrad")
+        if (str_eq_c(e->name, "Sample") || str_eq_c(e->name, "SampleGrad") || str_eq_c(e->name, "SampleLevel")
             || (str_eq_c(e->name, "Compare") && (e->object->type.kind == TY_DEPTH_TEXTURE || e->object->type.kind == TY_DEPTH_TEXTURE_ARRAY))) {
             ex_sample(em, e);
             return;
@@ -5200,7 +5217,7 @@ typedef VEC(expr *) step_list;
 static bool needs_operand_order(const expr *e)
 {
     if (!e) return false;
-    if (e->kind == E_SWITCH || (e->call == CALL_GRID && str_eq_c(e->name, "SampleGrad"))
+    if (e->kind == E_SWITCH || (e->call == CALL_GRID && (str_eq_c(e->name, "SampleGrad") || str_eq_c(e->name, "SampleLevel")))
         || needs_operand_order(e->object) || needs_operand_order(e->cond)
         || needs_operand_order(e->lhs) || needs_operand_order(e->rhs)) return true;
     for (int i = 0; i < e->args.count; i++) if (needs_operand_order(e->args.items[i])) return true;
@@ -5382,7 +5399,7 @@ static void st_steps(emit *em, const stmt *s, expr *e, const bool sometimes, ste
         st_steps(em, s, arg, sometimes, made);
         const bool writable = arg->is_out || (e->method && i < e->method->params.count && e->method->params.items[i].mode == PARAM_MUT)
                            || (e->arg_mut & (1u << (i < 32 ? i : 31)));
-        const bool sampling_metadata = e->call == CALL_GRID && str_eq_c(e->name, "SampleGrad") && i >= 3;
+        const bool sampling_metadata = e->call == CALL_GRID && (str_eq_c(e->name, "SampleGrad") ? i >= 3 : str_eq_c(e->name, "SampleLevel") && i >= (e->object->type.kind == TY_TEXTURE_ARRAY ? 3 : 2));
         if (ordering && !writable && !sampling_metadata) keep_switch_operand(em, arg, made);
     }
     for (int i = 0; i < e->inits.count; i++) {

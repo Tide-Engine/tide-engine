@@ -531,6 +531,7 @@ typedef struct function_sample {
     const struct expr *asset; // ...whose name this is, where the function samples it
     shader_read read;
     int filter, wrap;         // As the Sample says them: -1 for what it leaves to the texture
+    bool explicit_level;     // SampleLevel does not ask for derivatives
     bool gradients;          // SampleGrad supplies its derivatives, including through helper chains
     loc at;                   // The Sample
     bool warned, refused;     // That it can't read between a texture's smaller images there was said, once each way

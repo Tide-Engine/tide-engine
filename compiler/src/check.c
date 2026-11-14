@@ -8481,7 +8481,8 @@ static decl *named_enum(const checker *c, const expr *e);
 // shader binding is checked separately from the ordinary signature table.
 static void check_sample_args(checker *c, expr *e, const bool cube)
 {
-    const int filter_at = str_eq_c(e->name, "SampleGrad") ? 3 : 1;
+    const int filter_at = (str_eq_c(e->name, "SampleGrad") ? 3 : str_eq_c(e->name, "SampleLevel") ? 2 : 1)
+                        + (e->object->type.kind == TY_TEXTURE_ARRAY ? 1 : 0);
     for (int i = 0; i < e->args.count; i++) {
         expr *arg = e->args.items[i];
         if (!arg->enum_shorthand) { check_expr(c, arg); continue; }
@@ -9125,7 +9126,7 @@ static type check_method(checker *c, expr *e)
     if (obj.kind == TY_MAP || obj.kind == TY_SET) return check_map_method(c, e, obj);
     if (obj.kind == TY_GRID) return check_grid_method(c, e, obj);
     if (obj.kind == TY_TEXTURE) {
-        if (str_eq_c(e->name, "Sample") || str_eq_c(e->name, "SampleGrad")) {
+        if (str_eq_c(e->name, "Sample") || str_eq_c(e->name, "SampleGrad") || str_eq_c(e->name, "SampleLevel")) {
             check_sample_args(c, e, false);
             return check_grid_sample(c, e, obj);
         }
@@ -9159,6 +9160,10 @@ static type check_method(checker *c, expr *e)
         const bool resize = str_eq_c(e->name, "Resize"), dispose = str_eq_c(e->name, "Dispose");
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         if (!resize && !dispose) {
+            if (str_eq_c(e->name, "SampleLevel")) {
+                diag_error(e->at, "a Texture3D has no mipmaps: use Sample(uvw, Filter.Point) or Sample(uvw, Filter.Bilinear)");
+                return T_ERR;
+            }
             diag_error(e->at, "a Texture3D has Sample(uvw[, filter[, wrap]]), Resize(int3) and Dispose(), not '" STR_FMT "'", STR_ARG(e->name));
             return T_ERR;
         }
@@ -9177,7 +9182,7 @@ static type check_method(checker *c, expr *e)
     }
     if (obj.kind == TY_TEXTURE_ARRAY) {
         const bool resize = str_eq_c(e->name, "Resize");
-        if (str_eq_c(e->name, "Sample") || str_eq_c(e->name, "SampleGrad")) {
+        if (str_eq_c(e->name, "Sample") || str_eq_c(e->name, "SampleGrad") || str_eq_c(e->name, "SampleLevel")) {
             check_sample_args(c, e, false);
             e->object->raw_sampled = true; // A [Raw] array is read here as its numbers (check_raw_uses)
             return check_array_sample(c, e);
@@ -9218,7 +9223,7 @@ static type check_method(checker *c, expr *e)
     }
     if (obj.kind == TY_CUBEMAP) {
         const bool resize = str_eq_c(e->name, "Resize");
-        if (str_eq_c(e->name, "Sample")) {
+        if (str_eq_c(e->name, "Sample") || str_eq_c(e->name, "SampleLevel")) {
             check_sample_args(c, e, true);
             e->object->raw_sampled = true; // A [Raw] cube is read here as its numbers (check_raw_uses)
             return check_cube_sample(c, e);
@@ -11846,6 +11851,34 @@ static type check_new_mesh(checker *c, expr *e, const type want)
 // wrap are written there: the GPU is told all three before any pixel runs.
 // A function they call samples too: a texture or a grid that's a parameter of
 // its own, which its call names, or an asset (function_samples).
+// Explicit mip reads share source ownership and specialization with ordinary sampling.
+static type check_sample_level(const checker *c, expr *e, const bool cube, const bool array)
+{
+    const char *names = cube ? "direction, level, filter" : array ? "uv, layer, level, filter, wrap" : "uv, level, filter, wrap";
+    const int level = array ? 2 : 1;
+    if (!order_named_args(e, names, level + 1)) return T_ERR;
+    bool fits = e->args.count >= level + 1 && e->args.count <= level + (cube ? 2 : 3);
+    for (int i = 0; i < e->args.count; i++) if (e->args.items[i]->type.kind == TY_ERROR) return T_ERR;
+    if (fits) fits = e->args.items[0]->type.kind == (cube ? TY_FLOAT3 : TY_FLOAT2)
+                 && type_assignable(T_FLOAT_, e->args.items[level]->type);
+    if (fits && array) fits = type_assignable(T_INT_, e->args.items[1]->type);
+    for (int i = level + 1; fits && i < e->args.count; i++) {
+        fits = e->args.items[i]->type.kind == TY_ENUM
+            && e->args.items[i]->type.decl == (i == level + 1 ? c->prog->filter : c->prog->wrap)
+            && e->args.items[i]->enum_member;
+    }
+    if (!fits) {
+        diag_error(e->at, "SampleLevel takes %s, a float level, then a fixed Filter%s: use '%s'",
+                   cube ? "a float3 direction" : array ? "float2 uv and an int layer" : "float2 uv",
+                   cube ? "" : " and Wrap", cube ? "source.SampleLevel(direction, level, Filter.Trilinear)"
+                   : array ? "source.SampleLevel(uv, layer, level, Filter.Trilinear)"
+                           : "source.SampleLevel(uv, level, Filter.Trilinear)");
+        return T_ERR;
+    }
+    e->call = CALL_GRID;
+    return (type){TY_COLOR, NULL};
+}
+
 static type check_grid_sample(const checker *c, expr *e, const type grid)
 {
     const decl *shader = gpu_code(c);
@@ -11895,6 +11928,7 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
                    "%s in a component or singleton", grid.kind == TY_TEXTURE ? "Texture" : "grid");
         return T_ERR;
     }
+    if (str_eq_c(e->name, "SampleLevel")) return check_sample_level(c, e, false, false);
     if (gradients) {
         if (!order_named_args(e, "uv, dx, dy, filter, wrap", 2)) return T_ERR;
         for (int i = 0; i < e->args.count; i++) {
@@ -12107,6 +12141,7 @@ static type check_array_sample(const checker *c, expr *e)
                            "TextureArray in a component or singleton");
         return T_ERR;
     }
+    if (str_eq_c(e->name, "SampleLevel")) return check_sample_level(c, e, false, true);
     if (!order_named_args(e, grad ? "uv, dx, dy, layer, filter, wrap" : "uv, layer, filter, wrap", grad ? 4 : 2)) return T_ERR;
     for (int i = 0; i < e->args.count; i++) {
         if (e->args.items[i]->type.kind == TY_ERROR) return T_ERR; // Said already
@@ -12217,6 +12252,7 @@ static type check_cube_sample(const checker *c, expr *e)
                            "Cubemap in a component or singleton");
         return T_ERR;
     }
+    if (str_eq_c(e->name, "SampleLevel")) return check_sample_level(c, e, true, false);
     if (!order_named_args(e, "direction, filter", 1)) return T_ERR;
     for (int i = 0; i < e->args.count; i++) {
         if (e->args.items[i]->type.kind == TY_ERROR) return T_ERR; // Said already
@@ -14904,7 +14940,7 @@ static bool stands_alone(const expr *e)
         || called->io_operation
         || (call == CALL_LIST && !str_eq_c(called->name, "Contains") && !str_eq_c(called->name, "IndexOf"))
         || (call == CALL_MAP && !str_eq_c(called->name, "Has") && !str_eq_c(called->name, "Get"))
-        || (call == CALL_GRID && !str_eq_c(called->name, "Sample") && !str_eq_c(called->name, "SampleGrad"))
+        || (call == CALL_GRID && !str_eq_c(called->name, "Sample") && !str_eq_c(called->name, "SampleGrad") && !str_eq_c(called->name, "SampleLevel"))
         || (call == CALL_WORLD && (str_eq_c(called->name, "Set") || str_eq_c(called->name, "TryGet")))
         || (call == CALL_BUILTIN && called->type.kind == TY_VOID) // Debug.Log and Debug.Assert
         || (call == CALL_JSON && called->arg_out) // int.TryParse(text, out value): the variable is the number, or 0
