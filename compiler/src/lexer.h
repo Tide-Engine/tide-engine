@@ -165,8 +165,9 @@ const lex_symbol *lex_symbols_read(int *count);
 // `*value` (NULL for none), 0 when it isn't, as `#if` would read it there (the
 // file's own #define and #undef first, then the build's, which is noted as a
 // condition's read is). -1 for a TIDE_ name that's no version of tide, which
-// nothing can define.
-int lex_read_symbol(str name, int file, const char **value);
+// nothing can define. `*own` (when it's asked for) says the answer is the
+// file's own #define's or #undef's.
+int lex_read_symbol(str name, int file, const char **value, bool *own);
 
 const char *tok_kind_name(tok_kind kind);
 

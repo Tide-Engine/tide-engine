@@ -543,8 +543,12 @@ static int command_main(const int argc, char **argv)
         free(defines);
         return 2;
     }
-    // DEBUG is every build's but --release's
-    if (!opts.release) defines[opts.define_count++] = "DEBUG";
+    // DEBUG is every build's but --release's, unless the command line said it already: --define DEBUG=3 keeps its value
+    bool debug_said = false;
+    for (int i = 0; i < opts.define_count; i++) {
+        debug_said |= lex_define_name_length(defines[i]) == 5 && strncmp(defines[i], "DEBUG", 5) == 0;
+    }
+    if (!opts.release && !debug_said) defines[opts.define_count++] = "DEBUG";
     // The game's tide.packages reads them too: its #if lines say which packages this build has
     packages_set_symbols(defines, opts.define_count);
     if (server_args && !opts.server) {

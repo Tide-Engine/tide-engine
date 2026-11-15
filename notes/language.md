@@ -320,7 +320,8 @@ three army sizes by `#if ARMY_50 / #elif ARMY_BIG / #else`); each is now one lin
   `lex_symbols_reset` clears them), so `lex_read_symbol(name, file, &value)` answers as `#if` would in that file:
   the file's own, then tide's versions, then the build's (noted). -1 for a `TIDE_` name that's no version.
   `cond_equality` refuses a number, text, `'`, `-` or `.` after `==`/`!=` with a note pointing at `define`.
-- **Checker** (`check_symbol_call`, just before `check_call`, which sends `defined`/`define` there first): the
+- **Checker** (`check_symbol_call`, just before `check_call`, which sends `defined`/`define` there once nothing in
+  scope has the name, below): the
   call becomes the literal it reads as (`check_has`'s way), so `fold_int`, `is_constant` (which also takes the
   unchecked calls), array sizes and `switch` cases see a literal. `defined` → `E_BOOL`, its args dropped.
   `define`: the default is `is_constant` (with a check that a member chain's root isn't a local, a parameter or a
@@ -348,10 +349,52 @@ three army sizes by `#if ARMY_50 / #elif ARMY_BIG / #else`); each is now one lin
   `lsp_directives`, and the CLI's `tide_cli_build_report` (C gets `-D BATTLE_TEST=7`, the header says it, another
   value is another identity, the later of two wins, a bad value's error and fix, `--define =7` refused) and
   `tide_cli_packages` (`--define STEAM=480` takes the `#if STEAM` branch).
+- **Review fixes (2026-11-15):**
+  - *Shadowing.* `check_call` takes `c->define_want` first (so no later call sees it) and sends `defined`/`define`
+    to `check_symbol_call(c, e, want)` only after callable locals, parameters and fields, an `Action` parameter,
+    the type's own methods and a preparation owner's: a method `define` called with an implicit `this` was read
+    as the build's symbol before. As `Spawn`. `is_builtin_name` still refuses them for types, functions and
+    constants. LSP: both are in rename's `reserved[]`, offered in completion and in `call_forms` signature help
+    (`DEFINED_DOC`, `DEFINE_DOC`).
+  - *Type.* The value reads as `want` only when `type_assignable(want, default)` (so a long's int default reads a
+    long; `type_is_numeric` has no long), otherwise as the default's own type, so where it goes takes or refuses
+    the literal as it would the default, in every build. A byte `want` with an int default (one that fit no byte:
+    `check_expr_want` would have made it a byte) is replaced by the default itself, as the byte rule in
+    `check_expr_want_any` would otherwise take a small value and refuse the big default. `check_construct` gives
+    a `define` argument of a vector (dim > 1), `Color` or `quaternion` the part's type as `want` (not `int(x)`'s
+    conversions). Elsewhere (`?:`, arithmetic, `Math`) the default decides, and `define_literal`'s `by_default`
+    note says to write `1.0` (a decimal value) or `5L` (a whole one past an int).
+  - *Where a bare symbol came from.* `lex_read_symbol` gained `bool *own` (the file's `#define`/`#undef`
+    answered); the no-value note says to take that `#define` away, or to give the build's a value or read it with
+    `defined`. `define` of a `TIDE_` or `PACKAGE_` name is an error in every build (they never have a value).
+  - *Floats* that round to zero in their type (`define_nonzero`) are refused: C refuses `1e-50f`.
+  - *`#if` and values.* `cond_reader` keeps the valued build symbol its last operand was (`valued`, `value`;
+    parentheses clear it); `cond_equality` refuses `==`/`!=` beside one, `read_condition` gives a leftover `<`,
+    `>` or `=` the value note (`cond_value_note`), and `cond_primary` refuses `defined(` with a note to write the
+    name alone. `packages.c`'s conditions say the same (`condition.valued`, `condition_end`).
+  - *DEBUG with a value.* `main.c` adds its `DEBUG` only when the command line named none, so `--define DEBUG=3`
+    keeps its value in a debug build (C got two `-D` before, and the lexer the later, valueless one); the
+    reload player's build drops `DEBUG` by name, value or not; `tide_add_game` adds `--define DEBUG` only when
+    `DEFINES` has no `DEBUG`, and `<target>_schedule` now passes `${defines}`.
+  - *Tests:* `e2e/defines` (`MANY=5000000000` into a long, `SPOT_X=0.5`/`RED=0.25` as a `float3`'s and a
+    `Color`'s parts, `#if SIDE` for a valued symbol, a struct's own `define` method), fixtures
+    `define_default_fits(_plain)` (the same three errors with and without `// define:` lines),
+    `define_int_default_decimal/long`, `define_value_underflow`, `define_no_value(_build)`, `define_tide_symbol`,
+    `define_hidden_by_func`, `directive_compare_symbol_value`, `directive_compare_order`, `directive_defined_call`;
+    `compiler/tests/shaders/defines.tide` (a frag's `define`/`defined` as WGSL literals; `expect_schedule.cmake`
+    now reads `// define: <S>` lines too, so the `tidec_spirv_`/`tidec_hlsl_` runs build it with its defaults);
+    `tidec_lexer` (`own`); `lsp_directives` (completion, a method `define` with no diagnostic, rename refused);
+    `tide_cli_build_report` (`tide schedule --define DEBUG=3` reads 3, a plain debug schedule gives the no-value
+    error); `tide_cli_packages` (`#if STEAM == 480`, `== DEMO` beside a valued STEAM, `> 400`, `defined(STEAM)`).
 - **Not built / gaps:** a file's `#define NAME value` (a file's symbols stay valueless: a value there is a
-  `const`); `#if` reading values; `char` and vector values; a settings or `tide.packages` place to list defines.
-  On Windows a value outside ASCII given on a command line arrives in the console's code page, not UTF-8, and is
-  refused with the "has to be UTF-8" note (seen through CMake's command); `tide` and tidec read narrow `argv`.
+  `const`); `#if` reading values; `char` and vector values; a settings or `tide.packages` place to list defines;
+  whether `#if A == B` between symbols with no values should be refused too (it compares their being defined, as
+  C#'s does) — all Open in spec.md. On Windows a value outside ASCII given on a command line arrives in the
+  console's code page, not UTF-8, and is refused with the "has to be UTF-8" note, which says so on Windows (seen
+  through CMake's command); `tide` and tidec read narrow `argv`. A text value passes to handwritten C as tokens,
+  so an apostrophe warns in every C file (`docs/tools/cli.md` says so). Source float literals that overflow or
+  round to zero in a float (`1e50`, `1e-50`) still reach C as `1e50f`, which clang refuses under `-Werror`: the
+  parser checks only a double's overflow (a gap of literals, not of defines).
 
 ## Vectors, colors, quaternions, sets and maps by a number in JSON (2026-11-14)
 
@@ -361,7 +404,7 @@ catalog only because JSON refused vectors. Sets as arrays and maps by a byte, an
 of the same code for about 80 generated-C lines, so they're built too; a map by a `char` is not (Open).
 
 - **Checker** (`check.c`, the JSON block): `json_holds` takes the eleven vector kinds, a set whose key `json_key`
-  allows (string, char, int, long, enum; a set has no byte key), a map whose key it allows (string, byte, int,
+  allows (string, char, byte, int, long, enum), a map whose key it allows (string, byte, int,
   long, enum), and `TY_ERROR` (said where it's declared, so no second "JSON has nothing for <error>").
   `json_takes` takes a struct, a list, a set or any map as `T`. `mark_json` gives a vector no declaration: the
   program keeps a bit per kind (`program.json_vector_reads/writes`, `1 << kind`, a `_Static_assert` that each
@@ -380,7 +423,7 @@ of the same code for about 80 generated-C lines, so they're built too; a map by 
   every game): the new loops emit nothing without a bit or a marked set, and a map by text writes the same text.
 - **Tests:** `compiler/tests/e2e/json_vectors` (46 checks: every kind, defaults and `null` numbers, NaN as `null`
   back to the default's number, wrong lengths, non-arrays, ints that aren't whole or don't fit, vectors in lists,
-  maps, arrays and a `T?`, sets of int/string/enum/char with repeats, maps by int/long/byte/enum and an enum
+  maps, arrays and a `T?`, sets of int/string/enum/char/byte with repeats, maps by int/long/byte/enum and an enum
   `: byte`, keys that aren't numbers or members, roots that are a list, a set and maps; in C, the bits of 0.1,
   -0, 0.70710677 and 0.30000000000000004, the written text, and `JSON_VECTORS_HASH`, shared by native sanitize
   and web-debug). `compiler/tests/safety/json` gained `shapes` (131,073 numbers for a vector and a color, a set
