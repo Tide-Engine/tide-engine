@@ -112,6 +112,83 @@ static void gen_client_hierarchy_codec(gen *g)
                  "        return true;\n    }\n"
                  "    if (!tide_map%d_has(w->tide_visibility_state.anchors, e)) return false;\n"
                  "    *anchor = tide_map%d_get(w->tide_visibility_state.anchors, e);\n    return true;\n}\n\n", anchors, anchors);
+    // The recipient's hierarchy, apart from its entities' records, so that a record, a row's hash and a repair of
+    // one entity are its own alone: what a recipient may know of the links (a parent it may see, siblings it may see)
+    // and an anchor where its parent is hidden depend on other entities. The entities that have links or an anchor
+    // are those in the two maps, few in a world of chunks; the section lists the visible ones whose links or anchor
+    // say anything, by their identities, so a server's and a recipient's are alike byte for byte.
+    const int nodes = prog->hierarchy[0]->fields.items[0].type.decl->index;
+    sb_put(o, "TIDE_HELPER int tide_client_entity_order(const void *a_, const void *b_)\n{\n"
+              "    const tide_entity *a = a_, *b = b_;\n"
+              "    if (a->birth != b->birth) return a->birth < b->birth ? -1 : 1;\n"
+              "    return a->lineage < b->lineage ? -1 : a->lineage > b->lineage ? 1 : 0;\n}\n\n");
+    sb_printf(o, "// The entities that have links or an anchor, in the order of their identities, each once: to free()\n"
+                 "TIDE_HELPER tide_entity *tide_client_hierarchy_keys(const tide_world *w, uint32_t *count)\n{\n"
+                 "    const tide_map nodes = w->tide_hierarchy.nodes, anchors = w->tide_visibility_state.anchors;\n"
+                 "    const uint64_t most = (uint64_t)tide_map_entries(nodes) + (uint64_t)tide_map_entries(anchors);\n"
+                 "    if (most > SIZE_MAX / sizeof(tide_entity) - 1u) tide_out_of_memory();\n"
+                 "    tide_entity *keys = malloc(((size_t)most + 1u) * sizeof *keys);\n    if (!keys) tide_out_of_memory();\n"
+                 "    uint32_t n = 0;\n"
+                 "    for (int32_t i = 0; i < tide_map_entries(nodes); i++) {\n"
+                 "        const tide_map%d_entry *entry = tide_map_entry(nodes, i, &tide_map%d_kind);\n"
+                 "        if (tide_map_live(entry)) keys[n++] = entry->key;\n    }\n"
+                 "    for (int32_t i = 0; i < tide_map_entries(anchors); i++) {\n"
+                 "        const tide_map%d_entry *entry = tide_map_entry(anchors, i, &tide_map%d_kind);\n"
+                 "        if (tide_map_live(entry)) keys[n++] = entry->key;\n    }\n"
+                 "    qsort(keys, n, sizeof *keys, tide_client_entity_order);\n"
+                 "    uint32_t kept = 0;\n"
+                 "    for (uint32_t i = 0; i < n; i++) {\n"
+                 "        if (kept && tide_entity_equal(keys[kept - 1u], keys[i])) continue;\n        keys[kept++] = keys[i];\n    }\n"
+                 "    *count = kept;\n    return keys;\n}\n\n", nodes, nodes, anchors, anchors);
+    sb_put(o, "TIDE_HELPER void tide_client_put_hierarchy_of(tide_writer *out, const tide_world *w, const tide_player_id recipient,\n"
+              "                                             const tide_entity *keys, const uint32_t count)\n{\n"
+              "    tide_writer items = {.grows = true};\n    uint32_t written = 0;\n"
+              "    for (uint32_t i = 0; i < count; i++) {\n"
+              "        const tide_entity e = keys[i];\n"
+              "        if (!tide_entity_alive(&w->entities, e) || !tide_visibility_entity(w, e, recipient)) continue;\n"
+              "        const tide_hierarchy_node node = tide_client_hierarchy_node(w, e, recipient);\n"
+              "        tide_visibility_anchor anchor = {0};\n"
+              "        const bool anchored = tide_client_hierarchy_anchor(w, e, recipient, &anchor);\n"
+              "        if (!anchored && tide_entity_is_null(node.parent) && tide_entity_is_null(node.first)\n"
+              "            && tide_entity_is_null(node.next) && tide_entity_is_null(node.previous)) continue;\n"
+              "        tide_write_u64(&items, e.birth);\n        tide_write_u64(&items, e.lineage);\n"
+              "        tide_write_bytes(&items, &node, sizeof node);\n"
+              "        tide_write_u8(&items, anchored ? 1u : 0u);\n"
+              "        if (anchored) tide_write_bytes(&items, &anchor, sizeof anchor);\n"
+              "        written++;\n    }\n"
+              "    if (items.overflow) tide_out_of_memory();\n"
+              "    tide_write_varint(out, written);\n    if (items.size) tide_write_bytes(out, items.data, items.size);\n"
+              "    free(items.data);\n}\n\n"
+              "TIDE_HELPER void tide_client_put_hierarchy(tide_writer *out, const tide_world *w, const tide_player_id recipient)\n{\n"
+              "    uint32_t count;\n    tide_entity *keys = tide_client_hierarchy_keys(w, &count);\n"
+              "    tide_client_put_hierarchy_of(out, w, recipient, keys, count);\n    free(keys);\n}\n\n");
+    // ...and a recipient's world taking it: its links and anchors are the section's and nothing else's
+    sb_printf(o, "TIDE_HELPER bool tide_client_take_hierarchy(tide_world *next, tide_reader *in)\n{\n"
+                 "    tide_map%d_clear(&next->tide_hierarchy.nodes, TIDE_IN_MATCH);\n"
+                 "    tide_map%d_clear(&next->tide_visibility_state.anchors, TIDE_IN_MATCH);\n"
+                 "    const uint32_t count = tide_read_varint(in);\n"
+                 "    if (in->failed || count > (in->size - in->at) / (16u + sizeof(tide_hierarchy_node) + 1u)) return false;\n"
+                 "    tide_entity last = {0};\n"
+                 "    for (uint32_t i = 0; i < count; i++) {\n"
+                 "        tide_entity e;\n        e.birth = tide_read_u64(in);\n        e.lineage = tide_read_u64(in);\n"
+                 "        const uint8_t *bytes = tide_read_bytes(in, sizeof(tide_hierarchy_node));\n"
+                 "        if (!bytes) return false;\n"
+                 "        tide_hierarchy_node node = {0};\n        memcpy(&node, bytes, sizeof node);\n"
+                 "        const uint8_t anchored = tide_read_u8(in);\n"
+                 "        // Each once, in their order, of the world's entities; an anchor only for one with no parent\n"
+                 "        if (in->failed || anchored > 1u || !tide_entity_alive(&next->entities, e)\n"
+                 "            || (i && tide_client_entity_order(&last, &e) >= 0) || (anchored && !tide_entity_is_null(node.parent))) return false;\n"
+                 "        last = e;\n"
+                 "        tide_hierarchy_put(next, e, node);\n"
+                 "        if (!anchored) continue;\n"
+                 "        const uint8_t *value = tide_read_bytes(in, sizeof(tide_visibility_anchor));\n"
+                 "        if (!value) return false;\n"
+                 "        tide_visibility_anchor anchor = {0};\n        memcpy(&anchor, value, sizeof anchor);\n"
+                 "        if (!tide_matrix_finite(anchor.matrix) || !tide_is_finite_f(anchor.rotation.value.x)\n"
+                 "            || !tide_is_finite_f(anchor.rotation.value.y) || !tide_is_finite_f(anchor.rotation.value.z)\n"
+                 "            || !tide_is_finite_f(anchor.rotation.value.w)) return false;\n"
+                 "        tide_map%d_set(&next->tide_visibility_state.anchors, e, anchor, TIDE_IN_MATCH);\n    }\n"
+                 "    return !in->failed;\n}\n\n", nodes, anchors, anchors);
     sb_put(o,
               "TIDE_HELPER size_t tide_client_entity_number(const tide_world *w, tide_entity e, const size_t *offsets)\n{\n"
               "    const tide_location loc = tide_entity_location(&w->entities, e);\n"
@@ -910,6 +987,7 @@ static void gen_client_hashes(gen *g)
         }
         sb_put(o, "                sums[i * 2u] += tide_client_mix(h);\n                sums[i * 2u + 1u]++;\n            }\n        }\n    }\n");
     }
+    if (prog->hierarchy[0]) sb_put(o, "    uint32_t hierarchy_count;\n    tide_entity *hierarchy_keys = tide_client_hierarchy_keys(w, &hierarchy_count);\n");
     sb_put(o, "    for (uint32_t i = 0; i < count; i++) {\n        const tide_player_id recipient = recipients[i];\n"
               "        // A player asked for twice has its first's\n"
               "        const int32_t p = tide_player_index(recipient);\n"
@@ -930,7 +1008,15 @@ static void gen_client_hashes(gen *g)
                   "            inputs += tide_client_mix(h + 0x94d049bb133111ebull * (slot + 1u));\n        }\n"
                   "        out[i] = tide_client_mix(out[i] ^ inputs);\n");
     }
+    if (prog->hierarchy[0]) {
+        sb_put(o, "        // Its links and anchors, as the section a projection and a repair carry\n"
+                  "        scratch.size = 0;\n"
+                  "        tide_client_put_hierarchy_of(&scratch, w, recipient, hierarchy_keys, hierarchy_count);\n"
+                  "        if (scratch.overflow) tide_out_of_memory();\n"
+                  "        out[i] = tide_client_mix(out[i] ^ (tide_hash(scratch.data, scratch.size) + 0x2545f4914f6cdd1dull));\n");
+    }
     sb_put(o, "    }\n");
+    if (prog->hierarchy[0]) sb_put(o, "    free(hierarchy_keys);\n");
     for (int a = 0; a < prog->archetypes.count && !heapy; a++) {
         if (arch_local(g, a)) continue;
         sb_printf(o, "    free(audience%d);\n    free(has%d);\n", a, a);
@@ -1253,24 +1339,11 @@ static void gen_client_state(gen *g)
             if (comp_sparse(g, c)) sb_put(o, "                }\n");
             sb_put(o, "            }\n");
         }
-        if (prog->hierarchy[0]) {
-            sb_put(o, "            const tide_hierarchy_node node = tide_client_hierarchy_node(w, e, recipient);\n"
-                      "            tide_write_bytes(&out, &node, sizeof node);\n"
-                      "            tide_visibility_anchor anchor = {0};\n"
-                      "            const bool anchored = tide_client_hierarchy_anchor(w, e, recipient, &anchor);\n"
-                      "            tide_write_u8(&out, anchored ? 1u : 0u);\n"
-                      "            if (anchored) tide_write_bytes(&out, &anchor, sizeof anchor);\n");
-        }
         sb_put(o, "        }\n    }\n");
     }
+    if (prog->hierarchy[0]) sb_put(o, "    tide_client_put_hierarchy(&out, w, recipient);\n");
     sb_put(o, "    if (out.overflow) tide_out_of_memory();\n    *size = out.size;\n    return out.data;\n}\n\n");
-    if (prog->hierarchy[0]) {
-        sb_put(o, "static uint64_t tide_game_client_hash(const void *world, tide_player_id recipient)\n{\n"
-                  "    uint32_t size;\n    uint8_t *bytes = tide_game_client_state(world, recipient, &size);\n"
-                  "    const uint64_t hash = tide_hash(bytes, size);\n    free(bytes);\n    return hash;\n}\n\n");
-    } else {
-        gen_client_hashes(g);
-    }
+    gen_client_hashes(g);
 
     sb_put(o, "TIDE_HELPER bool tide_client_reserve_entity(tide_entities *entities, tide_entity e, uint64_t *budget)\n{\n"
               "    if (tide_entity_is_null(e) || !e.birth) return false;\n"
@@ -1300,28 +1373,10 @@ static void gen_client_state(gen *g)
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a)) continue;
         gen_client_load_rows(g, &codec, a);
-        if (prog->hierarchy[0]) {
-            sb_put(o, "            const uint8_t *bytes = tide_read_bytes(&in, sizeof(tide_hierarchy_node));\n"
-                      "            if (!bytes) goto invalid;\n"
-                      "            tide_hierarchy_node node = {0};\n            memcpy(&node, bytes, sizeof node);\n"
-                      "            tide_hierarchy_put(next, e, node);\n"
-                      "            const uint8_t anchored = tide_read_u8(&in);\n"
-                      "            if (anchored > 1u || (anchored && !tide_entity_is_null(node.parent))) goto invalid;\n"
-                      "            if (anchored) {\n"
-                      "                const uint8_t *value = tide_read_bytes(&in, sizeof(tide_visibility_anchor));\n"
-                      "                if (!value) goto invalid;\n"
-                      "                tide_visibility_anchor anchor = {0};\n"
-                      "                memcpy(&anchor, value, sizeof anchor);\n"
-                      "                if (!tide_matrix_finite(anchor.matrix) || !tide_is_finite_f(anchor.rotation.value.x)\n"
-                      "                    || !tide_is_finite_f(anchor.rotation.value.y) || !tide_is_finite_f(anchor.rotation.value.z)\n"
-                      "                    || !tide_is_finite_f(anchor.rotation.value.w)) goto invalid;\n");
-            sb_printf(o, "                tide_map%d_set(&next->tide_visibility_state.anchors, e, anchor, TIDE_IN_MATCH);\n            }\n",
-                      prog->visibility_state->fields.items[3].type.decl->index);
-        }
         sb_put(o, "        }\n    }\n");
     }
     if (sharded(g)) sb_put(o, "    if (!tide_shard_words_valid(next)) goto invalid;\n");
-    if (prog->hierarchy[0]) sb_put(o, "    if (!tide_client_hierarchy_valid(next)) goto invalid;\n");
+    if (prog->hierarchy[0]) sb_put(o, "    if (!tide_client_take_hierarchy(next, &in) || !tide_client_hierarchy_valid(next)) goto invalid;\n");
     sb_put(o, "    if (in.failed || in.at != in.size) goto invalid;\n"
               "    next->entities.free_head = 0; // Unseen slots are reserved, not available for prediction.\n"
               "    tide_world_free(w);\n    *w = *next;\n    free(next);\n    tide_text_use(&w->heap, NULL);\n    return true;\n"

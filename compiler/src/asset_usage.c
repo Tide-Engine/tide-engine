@@ -185,7 +185,8 @@ static void recipient_state_schema(asset_usage *w)
     // 3: [Native] fields 0 in projections, a client's hidden spawns left out (2026-11-04)
     ctext(w, "Tide recipient logical state schema 4");
     // Projection hashes of singletons as trees, a container's hash kept while its pages are (2026-11-04)
-    if (prog->visibility_state && !prog->hierarchy[0]) ctext(w, "singleton and entity tree hashes 2");
+    if (prog->visibility_state) ctext(w, "singleton and entity tree hashes 2");
+    if (prog->visibility_state && prog->hierarchy[0]) ctext(w, "recipient hierarchy section 1");
     for (int i = 0; i < prog->singletons.count; i++) {
         decl *d = prog->singletons.items[i];
         if (d->is_local || d == prog->visibility_state || d == prog->hierarchy[0] || d == prog->task_slots[0]) continue;

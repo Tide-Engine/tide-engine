@@ -112,6 +112,16 @@ tide_e2e_test(properties)
 tide_e2e_test(transforms) # Shared component placement, checked parenting and hierarchy state
 tide_e2e_test(visibility_groups) # Shared audiences, whole-component restrictions and scene inheritance
 tide_e2e_test(visibility_projection SOURCES e2e/visibility_projection.tide e2e/visibility_projection_c.c)
+# A game with transform hierarchies hashes its rows as any does, and its links and anchors as one section: the same
+# hashes with every one worked out twice (from what's kept and from the rows), and with nothing kept between them
+foreach(variant checked memo_off)
+    tide_add_game(tidec_e2e_visibility_projection_${variant} SOURCES e2e/visibility_projection.tide e2e/visibility_projection_c.c
+        NAME game HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/visibility_projection_test.c")
+    target_include_directories(tidec_e2e_visibility_projection_${variant} PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    add_test(NAME tidec_e2e_visibility_projection_${variant} COMMAND tidec_e2e_visibility_projection_${variant})
+endforeach()
+target_compile_definitions(tidec_e2e_visibility_projection_checked PRIVATE TIDE_CLIENT_SPANS_CHECK)
+target_compile_definitions(tidec_e2e_visibility_projection_memo_off PRIVATE TIDE_CLIENT_MEMO_OFF)
 tide_e2e_test(visibility_lists) # A projection's lists read back in runs, the heap as element by element left it
 tide_e2e_test(stable_main)
 

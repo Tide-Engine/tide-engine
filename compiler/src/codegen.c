@@ -27230,11 +27230,12 @@ static void gen_game_api(gen *g)
         sb_put(o, "    .stored = tide_game_stored,\n");
     }
     if (prog->visibility_state) {
-        if (!prog->hierarchy[0]) sb_put(o, "    .reload_client_state = tide_game_reload_client_state,\n"
-                                          "    .client_hashes = tide_game_client_hashes,\n"
-                                          "    .client_changes = tide_game_client_changes,\n"
-                                          "    .client_changes_base = tide_game_client_changes_base,\n"
-                                          "    .apply_client_changes = tide_game_apply_client_changes,\n");
+        // (A projection over the one before it reads its rows' links where they are: not a hierarchy's section)
+        if (!prog->hierarchy[0]) sb_put(o, "    .reload_client_state = tide_game_reload_client_state,\n");
+        sb_put(o, "    .client_hashes = tide_game_client_hashes,\n"
+                  "    .client_changes = tide_game_client_changes,\n"
+                  "    .client_changes_base = tide_game_client_changes_base,\n"
+                  "    .apply_client_changes = tide_game_apply_client_changes,\n");
         if (prog->input) sb_put(o, "    .filter_client_input = tide_game_filter_client_input,\n"
                                   "    .filter_client_inputs = tide_game_filter_client_inputs,\n"
                                   "    .client_input_masks = tide_game_client_input_masks,\n");

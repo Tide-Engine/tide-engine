@@ -53,7 +53,7 @@ TIDE_TEST(visibility_projection_omits_secrets_and_uses_normal_component_presence
     TIDE_CHECK(tide_get_Secret(&client, server.Control.card).code == 0);
     const uint64_t permitted_hash = tide_game_api.client_hash(&server, tide_player_from_index(1));
     if (permitted_hash != UINT64_C(0xcffd9f5fd8c1e270)) printf("    permitted hash 0x%016llx\n", (unsigned long long)permitted_hash);
-    TIDE_CHECK(permitted_hash == UINT64_C(0xcffd9f5fd8c1e270));
+    TIDE_CHECK(permitted_hash == UINT64_C(0xfb96027f537cbbbd));
     TIDE_CHECK(tide_game_api.client_hash(&server, tide_player_from_index(1)) == tide_game_api.client_hash(&client, tide_player_from_index(1)));
     visibility_present_rows = visibility_absent_rows = 0;
     tide_world_tick(&client);
@@ -274,6 +274,85 @@ TIDE_TEST(visibility_projection_preserves_exact_affine_placement_at_hidden_bound
         tide_world_free(&client);
         tide_world_free(&server);
     }
+}
+
+// A repair of what changed (tide_game.client_changes), in a game with transform hierarchies: the links and anchors
+// a recipient has come as one section, whole, so changes to them alone (a parent hidden, its children anchored; a
+// child detached) repair as surely as changes to records, and the world comes out as a whole projection's load would
+static bool repaired_by_changes(const tide_world *base, const tide_world *server, const tide_world *client, tide_world *out)
+{
+    const tide_player_id recipient = tide_player_from_index(0);
+    uint32_t plan_size = 0, now_size = 0, was_size = 0, changed = 0, again_size = 0;
+    uint8_t *now = NULL, *was = NULL;
+    uint8_t *plan = tide_game_api.client_changes(server, base, server, recipient, &plan_size, &now, &now_size, &was, &was_size, &changed);
+    uint8_t *again = plan ? tide_game_api.client_changes_base(client, recipient, plan, plan_size, &again_size) : NULL;
+    // The recipient makes `was` again from the world it confirmed, byte for byte
+    bool ok = plan && again && again_size == was_size && !memcmp(again, was, was_size);
+    tide_world_copy(out, client);
+    ok = ok && tide_game_api.apply_client_changes(out, plan, plan_size, now, now_size, was, was_size);
+    ok = ok && tide_game_api.client_hash(out, recipient) == tide_game_api.client_hash(server, recipient);
+    // ...and the world is the one a whole projection loads, hash and links alike
+    uint32_t size;
+    uint8_t *bytes = project(server, 0, &size);
+    tide_world whole = {0};
+    ok = ok && tide_game_api.load_client_state(&whole, bytes, size);
+    ok = ok && tide_game_api.client_hash(&whole, recipient) == tide_game_api.client_hash(out, recipient);
+    uint32_t from_out = 0;
+    uint8_t *again_bytes = ok ? project(out, 0, &from_out) : NULL;
+    ok = ok && from_out == size && !memcmp(again_bytes, bytes, size);
+    free(again_bytes);
+    free(bytes);
+    tide_world_free(&whole);
+    free(plan);
+    free(now);
+    free(was);
+    free(again);
+    return ok;
+}
+
+TIDE_TEST(visibility_projection_repairs_links_and_anchors_by_changes)
+{
+    tide_world server = {0}, base = {0}, client = {0}, repaired = {0};
+    tide_world_init(&server, 0.1f);
+    tide_world_tick(&server);
+    uint32_t size;
+    uint8_t *bytes = project(&server, 0, &size);
+    TIDE_REQUIRE(tide_game_api.load_client_state(&client, bytes, size));
+    free(bytes);
+    // The root hidden from the recipient: it goes, and its children it has become roots with anchors
+    tide_world_copy(&base, &server);
+    server.Placement.hideRoot = true;
+    tide_world_tick(&server);
+    TIDE_CHECK(repaired_by_changes(&base, &server, &client, &repaired));
+    TIDE_CHECK(!tide_entity_alive(&repaired.entities, repaired.Control.root));
+    TIDE_CHECK(tide_map_count(repaired.tide_visibility_state.anchors) == 2);
+    // The first child detached: only its links and its anchor change, no record of any entity
+    tide_world_free(&client);
+    tide_world_copy(&client, &repaired);
+    tide_world_free(&base);
+    tide_world_copy(&base, &server);
+    server.Placement.detachFirst = true;
+    tide_world_tick(&server);
+    tide_world_free(&repaired);
+    TIDE_CHECK(repaired_by_changes(&base, &server, &client, &repaired));
+    TIDE_CHECK(tide_map_count(repaired.tide_visibility_state.anchors) == 1);
+    // ...and the hidden root moved: the child still under it keeps its record and gets another anchor
+    tide_world_free(&client);
+    tide_world_copy(&client, &repaired);
+    tide_world_free(&base);
+    tide_world_copy(&base, &server);
+    Transform root = tide_get_Transform(&server, server.Control.root);
+    root.localPosition = tide_f3(40, -3, 9);
+    tide_set_Transform(&server, server.Control.root, root);
+    tide_world_tick(&server);
+    TIDE_CHECK(tide_game_api.client_hash(&client, tide_player_from_index(0)) != tide_game_api.client_hash(&server, tide_player_from_index(0)));
+    tide_world_free(&repaired);
+    TIDE_CHECK(repaired_by_changes(&base, &server, &client, &repaired)); // The anchor as the whole projection has it
+    TIDE_CHECK(tide_map_count(repaired.tide_visibility_state.anchors) == 1);
+    tide_world_free(&repaired);
+    tide_world_free(&client);
+    tide_world_free(&base);
+    tide_world_free(&server);
 }
 
 TIDE_TEST(visibility_projection_omits_boundary_placement_when_leaf_transform_is_hidden)

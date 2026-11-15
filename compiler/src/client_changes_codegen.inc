@@ -2,8 +2,9 @@
 // entity (tide_game.client_changes), and a recipient's world taking it
 // (apply_client_changes): a repair that costs what changed, not what the
 // recipient has. A world of chunks sends the chunks that came into sight, not
-// its projection again. Included by codegen.c after client_state_codegen.inc;
-// games with transform hierarchies have none, and repair as before.
+// its projection again. Included by codegen.c after client_state_codegen.inc.
+// A game with transform hierarchies sends its recipient's links and anchors as
+// one section after the records, whole each time (tide_client_put_hierarchy).
 //
 // Three byte strings. The plan names the entities whose permitted values differ
 // (by their projection hashes, kept from the tick's own: tide_client_hv) or that
@@ -81,7 +82,7 @@ static void gen_client_take_row(gen *g, const client_codec *codec, const int a)
 static void gen_client_changes(gen *g)
 {
     const program *prog = g->prog;
-    if (!prog->visibility_state || prog->hierarchy[0]) return;
+    if (!prog->visibility_state) return;
     sb *o = &g->c;
     client_codec codec = g->value_codec;
     const bool heapy = client_hash_heapy(g);
@@ -265,11 +266,15 @@ static void gen_client_changes(gen *g)
               "    tide_client_put_shared(&nw, w, recipient);\n"
               "    for (uint32_t i = 0; i < ln.count; i++) {\n        if (!kind[i]) continue;\n        const uint32_t at = nw.size;\n"
               "        tide_client_put_record(&nw, w, ln.items[i].e, ln.items[i].archetype, ln.items[i].row, recipient);\n"
-              "        if (kind[i] == 1u) changed += nw.size - at;\n    }\n"
+              "        if (kind[i] == 1u) changed += nw.size - at;\n    }\n");
+    if (prog->hierarchy[0]) sb_put(o, "    tide_client_put_hierarchy(&nw, w, recipient);\n");
+    sb_put(o, ""
               "    tide_text_use((tide_heaps *)&b->heap, NULL);\n"
               "    tide_client_put_shared(&ws, b, recipient);\n"
               "    for (uint32_t i = 0; i < ln.count; i++) {\n        if (kind[i] != 1u) continue;\n        const tide_client_seen *h = &lb.items[match[i]];\n"
-              "        tide_client_put_record(&ws, b, h->e, h->archetype, h->row, recipient);\n    }\n"
+              "        tide_client_put_record(&ws, b, h->e, h->archetype, h->row, recipient);\n    }\n");
+    if (prog->hierarchy[0]) sb_put(o, "    tide_client_put_hierarchy(&ws, b, recipient);\n");
+    sb_put(o, ""
               "    tide_text_use((tide_heaps *)&w->heap, NULL);\n"
               "    free(table);\n    free(left);\n    free(kind);\n    free(match);\n    free(ln.items);\n    free(lb.items);\n"
               "    if (plan.overflow || nw.overflow || ws.overflow) tide_out_of_memory();\n"
@@ -292,7 +297,9 @@ static void gen_client_changes(gen *g)
               "        const tide_location loc = tide_entity_location(&w->entities, e);\n"
               "        if (!tide_entity_alive(&w->entities, e) || loc.archetype == TIDE_ARCHETYPE_NONE || !tide_visibility_entity(w, e, recipient)) {\n"
               "            free(ws.data);\n            return NULL;\n        }\n"
-              "        tide_client_put_record(&ws, w, e, loc.archetype, loc.row, recipient);\n    }\n"
+              "        tide_client_put_record(&ws, w, e, loc.archetype, loc.row, recipient);\n    }\n");
+    if (prog->hierarchy[0]) sb_put(o, "    tide_client_put_hierarchy(&ws, w, recipient);\n");
+    sb_put(o, ""
               "    if (ws.overflow) tide_out_of_memory();\n    *size = ws.size;\n"
               "    if (!ws.data) ws.data = calloc(1, 1);\n    return ws.data;\n}\n\n");
 
@@ -367,8 +374,11 @@ static void gen_client_changes(gen *g)
         gen_client_take_row(g, &codec, a);
         sb_put(o, "            break;\n        }\n");
     }
-    sb_put(o, "        default: goto invalid;\n        }\n    }\n"
-              "    if (in.failed || in.at != in.size) goto invalid;\n"
+    sb_printf(o, "        default: goto invalid;\n        }\n    }\n"
+                 "    if (in.failed%s) goto invalid;\n"
+                 "    const uint32_t hierarchy_from = in.at; // Its links and anchors, taken once the entities are all there\n"
+                 "    (void)hierarchy_from;\n", prog->hierarchy[0] ? "" : " || in.at != in.size");
+    sb_put(o, ""
               "    const uint32_t gone = tide_read_varint(&p);\n"
               "    if (p.failed || gone > (p.size - p.at) / 16u) goto invalid;\n"
               "    for (uint32_t i = 0; i < gone; i++) {\n"
@@ -387,6 +397,11 @@ static void gen_client_changes(gen *g)
             sb_printf(o, "        const tide_entity e = *%s;\n", arch_cell(g, "next", a, 0, "tide_entity", "row", false));
             sb_put(o, "        if (!tide_row_gone(&e) && tide_visibility_client_hidden(next, e)) tide_client_drop(next, e);\n    }\n");
         }
+    }
+    if (prog->hierarchy[0]) {
+        sb_put(o, "    {\n        tide_reader links = {now, now_size, hierarchy_from, false};\n"
+                  "        if (!tide_client_take_hierarchy(next, &links) || links.at != links.size || !tide_client_hierarchy_valid(next)) goto invalid;\n"
+                  "    }\n");
     }
     sb_put(o, "    tide_heaps_flush(&next->heap);\n");
     if (sharded(g)) sb_put(o, "    if (!tide_shard_words_valid(next)) goto invalid;\n");

@@ -1164,7 +1164,9 @@ A container's hash is a function of its value alone, so the server and a client
 build; it's only a different function of the same values, a 64-bit hash of
 hashes (`singleton tree hashes` is in the simulation identity). Text stays inline.
 Singletons holding nothing in the heap, entities, inputs and commands hash as
-they did; games with transform hierarchies still hash `client_state`'s bytes.
+they did. Games with transform hierarchies hashed `client_state`'s bytes until
+2026-11-15; they now hash as the others do, with each recipient's links and
+anchors as one section (notes/voxels.md, section 1).
 
 What makes it cheap: a container of 256 bytes or more keeps its hash in a memo,
 by its handle and codec, with every heap page its value was read from (its own
@@ -2165,8 +2167,8 @@ and grew with the square of the players):
   components gets another, computed once and kept for the next recipient with
   the same mask. The sum doesn't depend on row order, which a client's tables,
   missing hidden rows, needn't share with the server's. Games with transform
-  hierarchies keep hashing `client_state`'s bytes, as each recipient's cut links
-  and anchors differ. A transfer's check is now the hash of the bytes the
+  hierarchies kept hashing `client_state`'s bytes, as each recipient's cut links
+  and anchors differ, until 2026-11-15: those go as one section now (notes/voxels.md). A transfer's check is now the hash of the bytes the
   loaded world encodes to again (it compared `client_hash`, which was the same
   hash). `recipient logical state schema 2` is in the simulation identity
   (with `singleton tree hashes` after it since 2026-11-04, above).
