@@ -2446,7 +2446,7 @@ static const method_form texture_calls[] = {
      "when UVs change inside a loop, and for `Filter.Anisotropic` they are what a pixel covers: it reads along "
      "the longer of the two. Point and Bilinear still read the base image. Omitted filter and wrap "
      "use the texture's settings, as Sample does. Verts and CPU code cannot call SampleGrad."},
-    {"SampleLevel", "SampleLevel(float2 uv, float level, Filter filter = Filter.Trilinear, Wrap wrap = the texture's) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper, between the two levels nearest it (Trilinear, which a filter left out is). Levels clamp to the available images; `Filter.Point` and `Filter.Bilinear` read level 0."},
+    {"SampleLevel", "SampleLevel(float2 uv, float level, Filter filter = Filter.Trilinear, Wrap wrap = the texture's) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper, between the two levels nearest it (Trilinear, which a filter left out is). Levels clamp to the available images; `Filter.Point` and `Filter.Bilinear` read level 0, and a level written 0 reads it as `Filter.Bilinear` does, with no smaller images made."},
 };
 
 static const method_form depth_calls[] = {
@@ -2475,7 +2475,7 @@ static const method_form cube_calls[] = {
      "Another side for all six faces of a cube made with `Cubemap(size)`, in pixels, and empty images."},
     {"Dispose", "Dispose()",
      "Lets a cube made with `Cubemap(size)` go, its six faces with it. Every copy of it then names no cube."},
-    {"SampleLevel", "SampleLevel(float3 direction, float level, Filter filter = Filter.Trilinear) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper, between the two levels nearest it (Trilinear, which a filter left out is): a blurred reflection's roughness. Levels clamp to the available images; `Filter.Point` and `Filter.Bilinear` read level 0."},
+    {"SampleLevel", "SampleLevel(float3 direction, float level, Filter filter = Filter.Trilinear) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper, between the two levels nearest it (Trilinear, which a filter left out is): a blurred reflection's roughness. Levels clamp to the available images; `Filter.Point` and `Filter.Bilinear` read level 0, and a level written 0 reads it as `Filter.Bilinear` does, with no smaller images made."},
 };
 
 static const method_form depth_cube_calls[] = {
@@ -2514,7 +2514,7 @@ static const method_form array_calls[] = {
     {"Dispose", "Dispose()",
      "Lets an array made with `TextureArray(width, height, layers)` go, its layers and depth with it. Every copy of "
      "it then names no array."},
-    {"SampleLevel", "SampleLevel(float2 uv, int layer, float level, Filter filter = Filter.Trilinear, Wrap wrap = the array's) -> Color", "Reads an explicit mip level of a layer in a frag, vert, kernel or GPU helper, between the two levels nearest it (Trilinear, which a filter left out is). Levels clamp to the available images; `Filter.Point` and `Filter.Bilinear` read level 0."},
+    {"SampleLevel", "SampleLevel(float2 uv, int layer, float level, Filter filter = Filter.Trilinear, Wrap wrap = the array's) -> Color", "Reads an explicit mip level of a layer in a frag, vert, kernel or GPU helper, between the two levels nearest it (Trilinear, which a filter left out is). Levels clamp to the available images; `Filter.Point` and `Filter.Bilinear` read level 0, and a level written 0 reads it as `Filter.Bilinear` does, with no smaller images made."},
 };
 
 static const method_form depth_array_calls[] = {
@@ -7972,12 +7972,17 @@ static type field_image_role(const field *f)
 
 // A half-written Sample can have no expression tree yet. Recover its declared image role from the
 // receiver's field chain, so signature help and member completion do not turn numeric images into colors.
-static type numeric_receiver(const int dot, const loc at)
+// `*held` is the field it's read through, where it's one (NULL for a helper's parameter).
+static type numeric_receiver_of(const int dot, const loc at, const field **held)
 {
     const type color = {TY_COLOR, NULL};
+    *held = NULL;
     if (dot < 1 || DOC->toks[dot - 1].kind != T_IDENT) return color;
     const occurrence *o = occurrence_at(DOC->toks[dot - 1].at);
-    if (o && o->field) return field_image_role(o->field);
+    if (o && o->field) {
+        *held = o->field;
+        return field_image_role(o->field);
+    }
     if (o && o->param && o->param->sample_role.len) {
         return numeric_role(o->param->sample_role);
     }
@@ -7996,7 +8001,25 @@ static type numeric_receiver(const int dot, const loc at)
         }
         owner = member_type(owner, DOC->toks[k].text);
     }
+    *held = image;
     return image ? field_image_role(image) : color;
+}
+
+static type numeric_receiver(const int dot, const loc at)
+{
+    const field *held;
+    return numeric_receiver_of(dot, at, &held);
+}
+
+// Whether a typed field's images have smaller images to read: not where its constructor assignments fix it to R32f or
+// Rgba32f (Format 7, 8), which are loaded exactly, never blended between levels. A helper's parameter, or a field whose
+// format isn't fixed yet, may be given either, and offers them.
+static bool field_has_levels(const field *f)
+{
+    if (!f) return true;
+    const expr image = {.field = (field *)(uintptr_t)f};
+    const int format = image_target_format(&image, 0, 0);
+    return format != 7 && format != 8;
 }
 
 static void complete_members(completion *c, const int dot, const loc at, const order_completion order)
@@ -8242,7 +8265,8 @@ static void complete_members(completion *c, const int dot, const loc at, const o
     }
     // input.jump.down or input.aim.fire.down, including borrowed helper input.
     const bool edges = n >= 2 && p && p->type.kind == TY_INPUT;
-    const type numeric = numeric_receiver(dot, at);
+    const field *image = NULL;
+    const type numeric = numeric_receiver_of(dot, at, &image);
     const bool layered = t.kind == TY_TEXTURE_ARRAY || t.kind == TY_CUBEMAP;
     if ((t.kind == TY_TEXTURE || t.kind == TY_TEXTURE3D || layered) && numeric.kind != TY_COLOR) {
         const bool sample = gpu || (sc.decl && (sc.decl->gpu_only || sc.decl->kind == DECL_FUNCTION || sc.decl->kind == DECL_METHOD));
@@ -8267,14 +8291,17 @@ static void complete_members(completion *c, const int dot, const loc at, const o
                  "bits on every device. Ints are read at the nearest cell.",
                  "Sample($1)");
         }
-        if (sample && t.kind != TY_TEXTURE3D && numeric.kind != TY_INT) { // The formats every device blends have mipmaps too
+        // The formats every device blends have mipmaps too; a field its assignments fix to R32f or Rgba32f has none,
+        // so it's offered neither
+        if (sample && t.kind != TY_TEXTURE3D && numeric.kind != TY_INT && field_has_levels(image)) {
             sb level = {0};
             sb_printf(&level, "%s.SampleLevel(%s, float level, Filter filter = Filter.Trilinear%s) -> %s",
                       type_name(t), where, wrap, type_name(numeric));
             item(c, "SampleLevel", CK_METHOD, level.data,
                  "Reads a mip level of an R8, Rg8, R16f, Rg16f or Rgba16f image as its declared numeric type, between the two "
                  "levels nearest it where no filter is named: 0 is the image itself, each level after it half the size, made "
-                 "of what was drawn. R32f and Rgba32f have no mipmaps.",
+                 "of what was drawn. R32f and Rgba32f have no mipmaps: level 0, or a level read naming Filter.Point or "
+                 "Filter.Bilinear, is their image itself; any other is an error at the draw.",
                  t.kind == TY_TEXTURE_ARRAY ? "SampleLevel($1, $2, $3)" : "SampleLevel($1, $2)");
             if (t.kind != TY_CUBEMAP && !(is_shader(sc.decl) && !sc.decl->is_frag)) {
                 sb grad = {0};
@@ -13028,7 +13055,7 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
         } else if (str_eq_c(name, "Retarget")) {
             add_signature(&s, RETARGET_ATTRIBUTE_FORM, RETARGET_ATTRIBUTE_DOC);
         } else if (str_eq_c(name, "Raw")) {
-            add_signature(&s, "Raw(type)", "On Texture/Texture3D fields or read-only GPU helper parameters, float, float2, float4 or int declares the numeric Sample type; TextureArray and Cubemap fields take the float roles. Reads use the nearest cell unless a filter is named; R8, Rg8, R16f, Rg16f and Rgba16f blend and read mipmaps, int and 32-bit float images are nearest only. Bare Raw retains its existing numeric-channel role.");
+            add_signature(&s, "Raw(type)", "On Texture, Texture3D, TextureArray and Cubemap fields or read-only GPU helper parameters, float, float2, float4 or int declares the numeric Sample type. Reads use the nearest cell unless a filter is named; R8, Rg8, R16f, Rg16f and Rgba16f blend and read mipmaps; R32f and Rgba32f blend with Filter.Bilinear (four exact loads, a volume's eight) and have no mipmaps, and a cube's R32f and Rgba32f faces are nearest only; int images are nearest only. Bare Raw retains its existing numeric-channel role.");
         }
     } else if (str_eq_c(owner, "HumanoidRig") || str_eq_c(owner, "RetargetMap")) {
         const method_form *form = str_eq_c(owner, "HumanoidRig") ? &humanoid_rig_calls[0] : &retarget_map_calls[0];

@@ -3588,6 +3588,13 @@ filter the texture says: a level read through a filter that reads none would be 
 editors' two-argument `SampleLevel(uv, level)` silently was. Weighed: the texture's own filter, as `Sample`'s is (a
 cube's Bilinear), with a warning where it's known to read no levels; and an error asking for the filter; chosen the
 filter the call means. SampleGrad keeps the texture's own filter, as its gradients are how Anisotropic is reached.
+A level written as a number of 0 or less (`SampleLevel(uv, 0)`, `-1`) with no filter named reads as Bilinear
+(Provisional, Claude, 2026-11-15): Trilinear there reads the base image alone, the same pixels, and a target read so
+would otherwise have its whole chain of smaller images made again after every pass that draws into it, a
+post-process's cost every frame for nothing it reads. It's why an `R32f` or `Rgba32f` image, which has no levels,
+takes `SampleLevel(uv, 0)`: four exact loads, as `Filter.Bilinear`. Weighed: Trilinear as written, with the cost
+noted; and any level the compiler can work out to 0, which takes constant folding of every expression for a rare
+spelling. A level known only as the game runs is Trilinear, and makes the chain.
 Levels clamp to 0..31 and the sampler's
 available chain; an image with no smaller images reads level zero. TextureArray uses
 `SampleLevel(uv, layer, level[, filter[, wrap]])`: layer precedes level to keep Sample's argument order.
@@ -3945,8 +3952,11 @@ No new backend API or recorder packet is needed: WGSL explicit-level sampling al
       a format feature on Vulkan), so a `Filter.Bilinear` read of one is the four texels around the uv (a
       `Texture3D`'s eight) loaded exactly and blended in tidec's shader code by where the uv is between them, as
       the GPU's Bilinear is, with the Sample's wrap on the texels it reaches past an edge. A `Texture`, a
-      `TextureArray`'s layer and a `Texture3D` blend so; `Filter.Point` loads the nearest texel, and so does
-      `SampleLevel` or `SampleGrad` naming `Filter.Point` or `Filter.Bilinear` (level 0). Which images are of these
+      `TextureArray`'s layer and a `Texture3D` blend so; `Filter.Point` loads the nearest texel. Their one level is
+      the image itself, so a `SampleLevel` or `SampleGrad` naming `Filter.Point` loads the nearest texel and one
+      naming `Filter.Bilinear` blends the four, whatever level it asks (a GPU's sampler reads an image with no
+      smaller images so; corrected 2026-11-15, Claude: this said both load the nearest, and the code blended), and
+      so does a `SampleLevel` that names no filter at a level written `0` (Explicit mip level, below). Which images are of these
       formats tidec knows from a typed field's constructor assignments, which it needs fixed already, and from
       each texture a draw gives a frag's or vert's own typed `Texture` (a shader of its own for those): the R8 to
       Rgba16f formats keep the GPU's one sampled read. Weighed: asking for the feature and blending where it's there, nearest elsewhere,
@@ -3954,8 +3964,8 @@ No new backend API or recorder packet is needed: WGSL explicit-level sampling al
       the same bits for those too at four reads where the GPU's sampler takes one, refused for what it costs the
       formats that blend everywhere.
     - **They have no mipmaps:** `Filter.Trilinear`, `Filter.Anisotropic`, a `SampleLevel` or `SampleGrad` that
-      names neither Point nor Bilinear (or no filter, which is Trilinear), of an `R32f` or `Rgba32f` image, is a
-      compile error at the draw naming `R16f` or `Rgba16f`. Weighed: a chain made of exact means by a kernel, and an
+      names neither Point nor Bilinear (or no filter, which is Trilinear, but for a `SampleLevel` at a level written
+      `0`), of an `R32f` or `Rgba32f` image, is a compile error at the draw naming `R16f` or `Rgba16f`. Weighed: a chain made of exact means by a kernel, and an
       eight-load blend between two levels, which would read levels everywhere at about twice a Bilinear's cost and
       a chain's memory; chosen none, as the formats' purpose is numbers as they are.
     - **`R32i` stays nearest:** no GPU blends integers. Any filter but Point, `SampleLevel` and `SampleGrad`

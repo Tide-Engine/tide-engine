@@ -4485,15 +4485,18 @@ static bool function_samples(decl *fn, const expr *call, const expr *of, const t
                            "it takes%s", what,
                    !assets ? "" : reads == TY_GRID ? ", or a Grid2<Color> asset by its name" : reads == TY_CUBEMAP
                    ? ", or a Cubemap asset by its name" : ", or a Texture asset by its name");
+        // The parameter that's written instead, of the type it reads, and the field a call names
+        const bool depth = reads == TY_DEPTH_TEXTURE || reads == TY_DEPTH_TEXTURE_ARRAY || reads == TY_DEPTH_CUBEMAP;
+        const char *parameter = reads == TY_GRID ? "Grid2<Color>" : what;
+        const char *named = reads == TY_DEPTH_TEXTURE ? "shadow" : reads == TY_DEPTH_TEXTURE_ARRAY ? "cascades"
+                          : reads == TY_DEPTH_CUBEMAP ? "shadows" : reads == TY_CUBEMAP ? "sky"
+                          : reads == TY_TEXTURE_ARRAY ? "layers" : "image";
+        const char *holder = depth ? "lamp" : reads == TY_CUBEMAP ? "room" : "look";
         diag_note("the frag or vert that calls it passes the one to read, a field of a component or singleton it takes: "
-                  "'%s " STR_FMT "(%s %s, ...)', called as '" STR_FMT "(%s, ...)'",
-                  reads == TY_DEPTH_TEXTURE ? "float" : "Color", STR_ARG(fn->name),
-                  reads == TY_DEPTH_TEXTURE ? "DepthTexture" : reads == TY_CUBEMAP ? "Cubemap" : reads == TY_GRID ? "Grid2<Color>" : "Texture",
-                  reads == TY_DEPTH_TEXTURE ? "shadow" : reads == TY_CUBEMAP ? "sky" : "image", STR_ARG(fn->name),
-                  reads == TY_DEPTH_TEXTURE ? "lamp.shadow" : reads == TY_CUBEMAP ? "room.sky" : "look.image");
-        diag_note("or the function takes that component or singleton itself, and samples its field: '" STR_FMT "(lamp, ...)' "
-                  "reading 'lamp.%s'; a plain struct carries no texture to the GPU", STR_ARG(fn->name),
-                  reads == TY_DEPTH_TEXTURE ? "shadow" : reads == TY_CUBEMAP ? "sky" : "image");
+                  "'%s " STR_FMT "(%s %s, ...)', called as '" STR_FMT "(%s.%s, ...)'", depth ? "float" : "Color",
+                  STR_ARG(fn->name), parameter, named, STR_ARG(fn->name), holder, named);
+        diag_note("or the function takes that component or singleton itself, and samples its field: '" STR_FMT "(%s, ...)' "
+                  "reading '%s.%s'; a plain struct carries no texture to the GPU", STR_ARG(fn->name), holder, holder, named);
         return false;
     }
     fn->gpu_sampling = true;
@@ -12005,6 +12008,8 @@ static type check_member(checker *c, expr *e)
         if (!depths && str_eq_c(e->member, "depth")) {
             if (e->object->bind == BIND_ASSET) {
                 diag_error(e->at, "an asset's TextureArray is the pack's images, which nothing draws into: it has no depth");
+                diag_note("make an array of depth alone, 'TextureArray(width, height, layers, Format.Depth)', draw into its "
+                          "layers, and read its 'depth'");
                 return T_ERR;
             }
             return (type){TY_DEPTH_TEXTURE_ARRAY, NULL};
@@ -12036,6 +12041,7 @@ static type check_member(checker *c, expr *e)
         if (str_eq_c(e->member, "depth")) { // A depth cube's six faces of depth, Cubemap(size, Format.Depth)
             if (e->object->bind == BIND_ASSET) {
                 diag_error(e->at, "an asset's Cubemap is the pack's images, which nothing draws into: it has no depth");
+                diag_note("make a cube of depth alone, 'Cubemap(size, Format.Depth)', draw into its faces, and read its 'depth'");
                 return T_ERR;
             }
             return (type){TY_DEPTH_CUBEMAP, NULL};
@@ -13374,7 +13380,8 @@ static type check_sample_level(const checker *c, expr *e, const bool cube, const
 {
     const type sampled = declared_image_type(e->object);
     if (sampled.kind == TY_INT) {
-        diag_error(e->at, "an int image reads its nearest pixel: a GPU blends no integers, so it has no smaller images. Use Sample(uv)");
+        diag_error(e->at, "an int %s reads its nearest pixel: a GPU blends no integers, so it has no smaller images. Use %s",
+                   cube ? "cube" : array ? "array" : "image", cube ? "Sample(direction)" : array ? "Sample(uv, layer)" : "Sample(uv)");
         return T_ERR;
     }
     const char *names = cube ? "direction, level, filter" : array ? "uv, layer, level, filter, wrap" : "uv, level, filter, wrap";

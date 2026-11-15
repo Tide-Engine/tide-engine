@@ -1,0 +1,6 @@
+// expect: an asset's Cubemap is the pack's images, which nothing draws into: it has no depth
+// expect: make a cube of depth alone, 'Cubemap(size, Format.Depth)', draw into its faces, and read its 'depth'
+scene Main { }
+asset Cubemap sky = "../e2e/cubes/sky/*.png";
+local singleton Lamp { DepthCubemap shadows; }
+view Show(mut Lamp lamp) { lamp.shadows = sky.depth; }

@@ -237,8 +237,11 @@ acquires Color conversion or blending. Coverage requires a first Color output, w
 read-only GPU helper parameters. Bare Raw keeps its existing filtered float4 behavior. Typed reads use nearest
 textureLoad, including wrapped normalized coordinates and guarded exact volume cells, with compatible float or
 integer bindings and typed zero fallbacks. Since later that day float roles in R8/Rg8/R16f/Rg16f/Rgba16f blend and read
-mipmaps through READ_NUMBER_BLEND, and typed arrays and cubes exist (render-targets.md, top); int and 32-bit float
-roles still reject filtered/gradient/mipmap reads with a fix.
+mipmaps through READ_NUMBER_BLEND, and typed arrays and cubes exist (render-targets.md, top). Corrected 2026-11-15:
+R32f/Rgba32f roles take Filter.Bilinear too, as four (a volume's eight) exact loads blended in the shader, on a
+Texture, a TextureArray layer and a Texture3D, and SampleLevel/SampleGrad naming Point or Bilinear (or SampleLevel at a
+level written 0) read their one level so; what reads smaller images of them (Trilinear, Anisotropic, a level or
+gradients naming neither) and a 32-bit cube blended are refused at the draw with the fix; int roles stay nearest.
 Constructor provenance validates output/attachment compatibility at draws, clear count/types, sampling roles,
 storage formats, single-sample 32-bit attachments and unsupported cube/array formats. Errors name the format's
 accepted type. Rgba16f deliberately permits Color or float4; the declared read role selects interpretation.

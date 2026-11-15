@@ -4370,13 +4370,17 @@ uint32_t tide_platform_prewarm_waiting(void)
 // takes a pass of its own. A depth's far one, a cube's dark one, an array's white one, a typed image's zeros and a
 // list's nothing.
 // An array of one pixel of zeros, of floats or of ints: what a typed array's or a cube's 32-bit numbers loaded from its
-// layers read for none (TIDE_GPU_READ_NUMBER_ARRAY, _INT_ARRAY). Drawn-into arrays start at zero on every backend.
+// layers read for none (TIDE_GPU_READ_NUMBER_ARRAY, _INT_ARRAY). An array of a format (array_of), which is zeros until
+// written on every backend, Unity's replay too, which writes its pixels as it makes it; not one drawn into, which a
+// replay makes as a render texture whose pixels are undefined until a pass clears them, and a clear is black, not zeros.
+// It needs no pass, so it's made wherever it's first wanted.
 static tide_gpu_id layers_fallback(const bool ints)
 {
     tide_gpu_id *none = ints ? &gpu_state.int_layers : &gpu_state.number_layers;
-    if (!*none) {
-        *none = made_array(tide_gpu_target_with(TIDE_GPU_TARGET_DEPTH, ints ? TIDE_GPU_COLOR_R32I : TIDE_GPU_COLOR_RGBA32F),
-                           1, 1, 1, NULL);
+    if (!*none && gpu->array_of) {
+        const tide_gpu_format format = ints ? TIDE_GPU_R32I : TIDE_GPU_RGBA32F;
+        *none = gpu->array_of(format, 1, 1, 1);
+        if (*none) hold(held(&held_textures, &held_texture_count, *none), format_bytes(format));
     }
     return *none;
 }
