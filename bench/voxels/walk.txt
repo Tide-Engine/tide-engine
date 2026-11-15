@@ -1,6 +1,7 @@
 # voxels_walk (bench/CMakeLists.txt): two players walk apart for 45 seconds, the second digging what's ahead of
 # it, so chunks go behind both, on the hosting machine (destroyed) and the other (hidden), and the faces of the
-# chunks beside them are made again (play.tide's Leaving).
+# chunks beside them are made again (play.tide's Leaving). play.tide's own check logs a line where a chunk's faces
+# stay made from a neighbour's side that has changed since.
 1 key w down
 1 key space down
 1 player 2 key s down
