@@ -72,10 +72,15 @@ There are no volume mipmaps, so Trilinear, Anisotropic and SampleLevel are unava
 Volumes can also store numbers: R32f, Rgba32f and R32i hold a float, four floats or a signed integer per cell,
 respectively. Declare `[Raw(float)] Texture3D density;`, `[Raw(float4)] Texture3D channels;` or
 `[Raw(int)] Texture3D ids;`, and construct the volume with the matching Format. A kernel stores that numeric
-type directly; `Sample` and exact-cell reads return it without alpha conversion. Typed numeric volumes read
-the nearest cell, with implicit or explicit `Filter.Point`, and have no mipmaps (a 2D number image in a compact
-format blends and has them: see Number images). Rgba16f can also be read
-through a `[Raw(float4)]` field when all four channels are data. See [Number images](./shaders.md#number-images).
+type directly; `Sample` and exact-cell reads return it without alpha conversion. A typed volume reads its
+nearest cell where `Sample` names no filter, and with `Filter.Bilinear` blends its eight cells around: an Rgba16f
+volume (all four channels as data, through `[Raw(float4)]`) and a `Grid3<float>` through the GPU's own filtering,
+an R32f or Rgba32f volume as its eight cells loaded exactly and blended in the shader, the same bits on every
+device. An int volume reads its nearest cell only. See [Number images](./shaders.md#number-images).
+
+```tide
+float4 fog = cloud.channels.Sample(uvw, Filter.Bilinear); // [Raw(float4)] Texture3D of Rgba16f: four numbers, blended
+```
 
 `Grid3<Color>` and `Grid3<float>` convert to `Texture3D` where one is wanted. A float grid supplies its value
 as red, with green and blue zero and alpha one. Changes upload only the changed regions, as a two-dimensional
@@ -225,6 +230,31 @@ frag Slope(Corner corner, out Color color, Land land)
 - The numbers are the grid's own, not clamped to 0 to 1: a cell that's 40 reads as 40, and one that's -3 as -3.
 - The GPU's copy is a float of 16 bits a cell, which every device Tide draws on can blend between cells. That's about three digits, up to 65504 either way: a bigger number reads as that, and a cell that's NaN as 0. The grid itself keeps its 32 bits for the code that reads it.
 - Drawn with no frag, it's red: the vertex's color times `(r, 0, 0, 1)`. It's a frag that makes something of the number.
+
+### Grids of other numbers
+
+A grid of pairs, of four numbers, of ints or of bytes is a texture of its numbers too, read through the [typed role](./shaders.md#number-images) of what it holds: a `Grid2<float2>` is a `[Raw(float2)] Texture`, a `Grid2<float4>` a `[Raw(float4)] Texture`, and a `Grid2<int>` or a `Grid2<byte>` a `[Raw(int)] Texture`. A frag samples one by its name, or through a field or a helper of its role, and gets the cells' numbers as they are:
+
+```csharp
+local singleton Wind
+{
+    Grid2<float2> flow = Grid2(128, 128); // Written by the CPU, a few cells a frame
+    Grid2<int> zones = Grid2(128, 128);
+    [Raw(float2)] Texture kept;
+}
+
+frag Drift(Corner corner, out Color color, Wind wind)
+{
+    float2 push = wind.flow.Sample(corner.uv, Filter.Bilinear); // Blended between cells
+    int zone = wind.zones.Sample(corner.uv);                     // The nearest cell's, exactly
+    color = Color(0.5 + push.x, 0.5 + push.y, zone == 3 ? 1 : 0);
+}
+```
+
+- **Where a role takes it.** A grid of numbers goes into a field of its role (`wind.kept = wind.flow;`), to a helper's parameter of its role (`float2 Push([Raw(float2)] Texture flow, float2 uv)`), and as the source a draw or a `Draw.Blit` gives a frag whose `Texture` has its role. A plain `Texture`, a local, a return and a draw with no frag would read it as colors, so they're errors that say which role takes it.
+- **On the GPU,** pairs and fours are 16-bit floats (two or four a cell), which every device blends and makes smaller images of, as a `Grid2<float>`'s cells are; ints and bytes are a 32-bit int a cell, read at the nearest cell, a byte as its 0 to 255. A float past what a half holds reads as 65504 or -65504.
+- **What changed is what's sent,** as for a grid of colors: a cell written this frame sends that much, not the grid.
+- Grids of other cells (bools, longs, structs) and `Grid3`s of numbers aren't textures; read their cells by place, `grid[x, y]`.
 
 ### Past the edges
 

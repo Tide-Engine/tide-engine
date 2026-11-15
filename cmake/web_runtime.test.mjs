@@ -298,9 +298,10 @@ test('WebGPU uploads use bounded views of large WASM heaps and only copy when sh
 });
 
 const numericReadBindings = {
-    READ_NUMBER: 9, READ_INT: 10, READ_NUMBER_VOLUME: 11, READ_INT_VOLUME: 12,
+    READ_NUMBER: 9, READ_INT: 10, READ_NUMBER_VOLUME: 11, READ_INT_VOLUME: 12, READ_NUMBER_ARRAY: 13, READ_INT_ARRAY: 14,
     numericVolume: read => read === 11 || read === 12,
-    integerImage: read => read === 10 || read === 12,
+    numericArray: read => read === 13 || read === 14,
+    integerImage: read => read === 10 || read === 12 || read === 14,
 };
 
 test('WebGPU preserves every read kind in high texture slots and builds matching layouts', async () => {
@@ -687,16 +688,17 @@ test('WebGPU numeric image layouts use loads without optional filtering or sampl
         let building;
         const backend = { ${source.slice(begin, end)} };
         ${source.slice(layoutBegin, layoutEnd)}
-        backend.gpu_pipeline_begin(0, 0, 16, 4, 0, 0, 0, 0, 0, 0, 1, 0, 0);
-        [9, 10, 11, 12].forEach((read, slot) => backend.gpu_pipeline_image_read(slot, read));
+        backend.gpu_pipeline_begin(0, 0, 16, 6, 0, 0, 0, 0, 0, 0, 1, 0, 0);
+        [9, 10, 11, 12, 13, 14].forEach((read, slot) => backend.gpu_pipeline_image_read(slot, read));
         backend.gpu_pipeline_numbers(5);
         layoutFor(building.reads, building.samplers);
         return building.numericOutputs;
     })()`, sandbox);
     assert.equal(result, 5);
-    assert.equal(entries.length, 5, 'one uniform and four images, no sampler');
+    assert.equal(entries.length, 7, 'one uniform and six images, no sampler');
     assert.deepEqual(Array.from(entries.filter(e => e.texture), e => [e.texture.sampleType, e.texture.viewDimension]),
-        [['unfilterable-float', undefined], ['sint', undefined], ['unfilterable-float', '3d'], ['sint', '3d']]);
+        [['unfilterable-float', undefined], ['sint', undefined], ['unfilterable-float', '3d'], ['sint', '3d'],
+         ['unfilterable-float', '2d-array'], ['sint', '2d-array']]);
 });
 
 test('WebGPU numeric uploaded textures retain their format and row byte count', async () => {

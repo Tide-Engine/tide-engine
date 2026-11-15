@@ -1,5 +1,34 @@
 # Compute on the GPU
 
+## A dropped task's read is let go of at once; a target's read uses no pool (2026-11-14)
+
+A list's read (and a target's) whose task ends while it waits, cancelled, with its owner, at a world's free, is
+forgotten then (`tide_forget_gpu_<frame>`, render-targets.md top section): before, nothing but the await's end
+forgot a ticket, so a dropped read held one of the 64 slots, and a target's its bytes against the pending limit, for
+600 frames (`TIDE_GPU_READ_KEPT_FRAMES`, kept as the backstop for C that never forgets). A target's read and a
+Texture3D's no longer take a range of a pool: their bands are buffers of their own (`pixel_reads` in compute.inc), so
+no GPU list's pool grows for a read, and a read of any size fits a device's bound-buffer limit. Spec: GPU lists'
+reads bullet, and Reads of any size, of parts and of volumes.
+
+## Kernels read images as frags do (2026-11-14)
+
+What a kernel reads where it's given no image (the far depth, the dark cube, the white and zero arrays, made for
+kernels too by `make_read_fallbacks`), disposed and depth-alone images, the smaller images `run_compute` now has made
+for SampleLevel and Trilinear reads, and a pass on a target after a run counting as drawn again: render-targets.md,
+Kernels read every kind of image (where the fixture `tide_platform_kernel_reads` is described). `run_compute` passes
+by a run with any image it couldn't bind on every backend now, not only where `texture_status` says so. On Android the
+fixture is the app `tide_platform_kernel_reads_app`, registered as the others below are and not run here (CI's).
+
+## On Android (2026-11-14)
+
+`compute.c`, `kernels.tide`, `images.tide` and `cull.tide` (with `TIDE_GPU_CULLING=decide` too) run as apps in CI's
+Android job, on the emulator's lavapipe, which has no push descriptors: kernels' image and volume stores, Texture3D,
+number frag outputs, typed `[Raw(T)]` reads and the culling's kernels through descriptor sets, from Tide's generated
+code (`tide_platform_compute_app`, `_kernels_app`, `_images_app`, `_cull_app`, `_cull_app_decided`). All passed on
+this machine's emulator, compute's and the culling's through a lost device too: `notes/android-and-mingw.md`, Every
+window fixture an app.
+What the validation records below call not run on Android was so then.
+
 ## Kernels write images and volumes (2026-11-14)
 
 Owner-approved 2026-11-13: "these make sense, lets do all of these" (the image stores, Texture3D and Grid3

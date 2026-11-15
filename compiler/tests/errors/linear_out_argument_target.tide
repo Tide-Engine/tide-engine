@@ -1,4 +1,4 @@
-// expect: this [Linear] source's format is not fixed by its constructor assignments
+// expect: [Linear] cannot read R32i: this format has no sRGB counterpart
 scene Main { }
 local singleton Art { RenderTarget rt; [Linear] Texture lit; }
 void Make(out RenderTarget t) { t = RenderTarget(64, 64, Format.R32i); }

@@ -1,3 +1,0 @@
-// expect: a TextureArray's layers are read through a blending sampler, which 32-bit float and integer images lack on some devices
-scene Main { }
-view Show() { var array=TextureArray(8,8,2,Format.R32i); array.Dispose(); }

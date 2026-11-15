@@ -104,7 +104,7 @@ An async function's world comes from what it does: changing the match (spawning 
 
 ## What a task keeps
 
-While a task waits, it keeps its locals and its parameters, copied. Its **components and singletons** it gets again each time it goes on, as they are then, so it sees what changed while it waited. They have to be the caller's own, its parameters:
+While a task waits, it keeps its locals and its parameters, copied: text, lists and grids too, a grid a `target.Read()` gave and one of an asset's among them. Its **components and singletons** it gets again each time it goes on, as they are then, so it sees what changed while it waited. They have to be the caller's own, its parameters:
 
 ```csharp
 async void Dash(mut Body body)
@@ -133,7 +133,7 @@ Immediate nested awaits can share a private frame. A kept handle identifies a se
 
 ## Cancellation and lifetime
 
-`build.Cancel()` cancels that operation and ends every task awaiting it. Cancellation ends an awaiting continuation without inventing a success value or a declared error. Cancelling one awaiting task preserves a shared build for its other consumers.
+`build.Cancel()` cancels that operation and ends every task awaiting it. Cancellation ends an awaiting continuation without inventing a success value or a declared error. Cancelling one awaiting task preserves a shared build for its other consumers. A task that ends while it waits, cancelled or with its owner, lets go of what it waited for at once: a file's or a fetch's, and a GPU read's, whose slot and pixels go free for the next read.
 
 `isRunning` is true while an operation is queued, running or waiting. `isCompleted` includes cancellation; `isCancelled` also describes default or stale handles. Cancelling a completed or stale handle has no effect. Old handles never refer to a newer operation that reused its storage. Equality compares operation identity.
 

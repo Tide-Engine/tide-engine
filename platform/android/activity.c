@@ -31,6 +31,7 @@
 #include <android/native_activity.h>
 #include <android/native_window.h>
 #include <dlfcn.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <jni.h>
 #include <pthread.h>
@@ -251,21 +252,72 @@ const char *tide_android_cache_path(void)
     return cache;
 }
 
-// One of the intent's strings into `text`: false where it has none.
+// One of the intent's strings into `text`: false where it has none. One longer than `text` keeps its whole words
+// that fit, saying so: a word cut short would be another argument, or a setting with another value.
 static bool intent_string(JNIEnv *env, jobject intent, jmethodID get_extra, const char *name, char *text, const size_t size)
 {
     jstring key = (*env)->NewStringUTF(env, name);
     jstring value = get_extra ? (jstring)(*env)->CallObjectMethod(env, intent, get_extra, key) : NULL;
     if (!value) return false;
     const char *chars = (*env)->GetStringUTFChars(env, value, NULL);
-    snprintf(text, size, "%s", chars ? chars : "");
+    const char *const from = chars ? chars : "";
+    snprintf(text, size, "%s", from);
+    if (strlen(from) >= size) {
+        if (from[size - 1u] != ' ') { // The last word was cut
+            char *const space = strrchr(text, ' ');
+            if (space) *space = '\0';
+            else text[0] = '\0';
+        }
+        printf("tide: the intent's %s is longer than %zu bytes; the words past that are left out\n", name, size - 1u);
+    }
     if (chars) (*env)->ReleaseStringUTFChars(env, value, chars);
     return true;
 }
 
+// Whether the app was built to be debugged (ApplicationInfo.FLAG_DEBUGGABLE): `tide run --android`'s and the
+// tests' apps, never one built to ship.
+static bool debuggable(JNIEnv *env, const jobject activity, const jclass activity_class)
+{
+    const jmethodID get_info =
+        (*env)->GetMethodID(env, activity_class, "getApplicationInfo", "()Landroid/content/pm/ApplicationInfo;");
+    const jobject info = get_info ? (*env)->CallObjectMethod(env, activity, get_info) : NULL;
+    const jfieldID flags = info ? (*env)->GetFieldID(env, (*env)->GetObjectClass(env, info), "flags", "I") : NULL;
+    const bool is = flags && ((*env)->GetIntField(env, info, flags) & 2) != 0;
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        return false;
+    }
+    return is;
+}
+
+// The intent's "tide.env", a debuggable app's: Tide's settings, NAME=value words apart (as cmake/run_android.mjs
+// gives a test's), into the environment before main, as a program run from a shell has them there. A name that isn't
+// TIDE_ and capitals, digits and underscores is left out. Each is said, `setting: NAME=value` for one set, so whoever
+// started the app can tell they were taken: run_android.mjs fails a run whose app didn't say each of its own.
+static void intent_env(char *text)
+{
+    char *rest = NULL;
+    for (char *word = strtok_r(text, " ", &rest); word; word = strtok_r(NULL, " ", &rest)) {
+        char *const equals = strchr(word, '=');
+        bool named = equals && equals - word > 5 && strncmp(word, "TIDE_", 5) == 0;
+        for (const char *c = word + 5; named && c < equals; c++) {
+            named = (*c >= 'A' && *c <= 'Z') || (*c >= '0' && *c <= '9') || *c == '_';
+        }
+        if (!named) {
+            printf("tide: the setting '%s' is left out: a setting is TIDE_NAME=value, the name capitals, digits and "
+                   "underscores\n", word);
+            continue;
+        }
+        *equals = '\0';
+        if (setenv(word, equals + 1, 1) == 0) printf("setting: %s=%s\n", word, equals + 1);
+        else printf("tide: the setting %s couldn't be set (%s)\n", word, strerror(errno));
+    }
+}
+
 // What the app was started with, for main: the intent's "tide.args", words
 // apart (as `tide run --android` gives --host, --join or --connect), into
-// `argv` after the program's name. Returns how many arguments that makes.
+// `argv` after the program's name, and its "tide.env" (intent_env). Returns
+// how many arguments that makes.
 static int intent_args(char *text, const size_t size, char **argv, const int max)
 {
     static char name[] = "tide";
@@ -287,6 +339,12 @@ static int intent_args(char *text, const size_t size, char **argv, const int max
             for (char *word = strtok_r(text, " ", &rest); word && argc < max - 1; word = strtok_r(NULL, " ", &rest)) {
                 argv[argc++] = word;
             }
+        }
+        static char settings[1024];
+        if (intent_string(env, intent, get_extra, "tide.env", settings, sizeof settings)) {
+            if (debuggable(env, activity, activity_class)) intent_env(settings);
+            else printf("tide: the settings this app was started with (the intent's tide.env) are left out: an app built "
+                        "to ship takes none\n");
         }
     }
     if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
@@ -925,7 +983,8 @@ void tide_window_pixel_size(int *width, int *height)
 
 void tide_window_present(void)
 {
-    if (app.vulkan) tide_gpu_vk_present();
+    // The match goes on while the frame's fence is waited for (tide_platform_update_while_waiting), as on desktop
+    if (app.vulkan) tide_gpu_vk_present_updating(tide_window_update_while_waiting);
     poll_looper(0);
 }
 

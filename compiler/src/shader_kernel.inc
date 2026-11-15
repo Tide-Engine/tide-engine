@@ -204,11 +204,34 @@ static void write_kernel(program *prog, shader *sh)
 }
 
 // A kernel's shader: one for each kernel that a GPU.Run names, as it reads what it reads whatever runs it.
+// The format of image `color` of a target, cube or array expression (Format's member number), or of a Texture or
+// Texture3D's image: -1 unknown or ambiguous, -2 no such image, -3 no image at all (default), -6 a float grid's.
+// A field's is every origin's (field.image_assignments), and an `out` or `mut` argument's place what the callee
+// assigns its parameter (expr.image_place).
+static int origins_target_format(const expr *first, const image_origins *origins, const int color, const int depth)
+{
+    int found = -3;
+    for (int i = -1; i < origins->count; i++) {
+        const expr *origin = i < 0 ? first : origins->items[i];
+        if (!origin) continue;
+        const int got = image_target_format(origin, color, depth + 1);
+        if (got == -3) continue;
+        if (got < 0 && got != -2) return got;
+        if (found != -3 && found != got) return -1;
+        found = got;
+    }
+    return found;
+}
+
 int image_target_format(const expr *e, const int color, const int depth)
 {
     if (!e || depth > 32) return -1;
-    if (e->type.kind == TY_GRID && e->type.decl)
-        return e->type.decl->fields.items[0].type.kind == TY_FLOAT ? -6 : 0;
+    if (e->image_place) return e->param ? origins_target_format(NULL, &e->param->image_assignments, color, depth) : -1;
+    if (e->type.kind == TY_GRID && e->type.decl) { // A grid's image: R16f read as Color or float, RGBA8, or one of numbers
+        const type numbers = type_number_grid_role(e->type);
+        return numbers.kind == TY_FLOAT2 ? 6 : numbers.kind == TY_FLOAT4 ? 2 : numbers.kind == TY_INT ? 9
+             : e->type.decl->fields.items[0].type.kind == TY_FLOAT ? -6 : 0;
+    }
     if (e->kind == E_DEFAULT) return -3;
     if (e->kind == E_NAME && e->bind == BIND_LOCAL && e->local && !e->local->assigned)
         return image_target_format(e->local->value, color, depth + 1);
@@ -218,6 +241,9 @@ int image_target_format(const expr *e, const int color, const int depth)
     }
     if (e->kind == E_MEMBER && e->object && e->object->type.kind == TY_RENDER_TARGET && str_eq_c(e->member, "color"))
         return image_target_format(e->object, 0, depth + 1);
+    // A cube's depth is the cube's: Format.Depth where it holds depth to read
+    if (e->kind == E_MEMBER && e->object && e->object->type.kind == TY_CUBEMAP && str_eq_c(e->member, "depth"))
+        return image_target_format(e->object, 0, depth + 1);
     if (e->kind == E_INDEX && e->object && e->object->kind == E_MEMBER && e->object->target_colors) {
         // A cube's face and an array's layer hold the one image their cube or array does
         if (e->object->object && (e->object->object->type.kind == TY_CUBEMAP || e->object->object->type.kind == TY_TEXTURE_ARRAY))
@@ -225,20 +251,7 @@ int image_target_format(const expr *e, const int color, const int depth)
         if (e->lhs->kind != E_INT || e->lhs->int_value < 0 || e->lhs->int_value > 3) return -1;
         return image_target_format(e->object->object, (int)e->lhs->int_value, depth + 1);
     }
-    if (e->field) {
-        int found = -3;
-        const field *f = e->field;
-        for (int i = -1; i < f->image_assignments.count; i++) {
-            const expr *origin = i < 0 ? f->default_value : f->image_assignments.items[i];
-            if (!origin) continue;
-            const int got = image_target_format(origin, color, depth + 1);
-            if (got == -3) continue;
-            if (got < 0 && got != -2) return got;
-            if (found != -3 && found != got) return -1;
-            found = got;
-        }
-        return found;
-    }
+    if (e->field) return origins_target_format(e->field->default_value, &e->field->image_assignments, color, depth);
     if (e->call == CALL_BUILTIN && e->resource_operation && e->c_callee
         && (e->type.kind == TY_RENDER_TARGET || e->type.kind == TY_TEXTURE3D || e->type.kind == TY_CUBEMAP
             || e->type.kind == TY_TEXTURE_ARRAY)) {
@@ -274,6 +287,11 @@ static const char *image_format_types(const int format)
 static bool numeric_image_origin(const expr *e, const int depth)
 {
     if (!e || depth > 32) return false;
+    if (e->image_place) {
+        for (int i = 0; e->param && i < e->param->image_assignments.count; i++)
+            if (numeric_image_origin(e->param->image_assignments.items[i], depth + 1)) return true;
+        return false;
+    }
     if (e->kind == E_NAME && e->bind == BIND_LOCAL && e->local)
         return numeric_image_origin(e->local->value, depth + 1);
     if (e->kind == E_CONDITIONAL)
@@ -347,6 +365,7 @@ static void check_target_read(program *prog, const expr *call)
     const int kind = call->read_kind, image = call->read_image;
     if (kind > 4) return; // ReadDepth: every target has depth
     const expr *target = call->object;
+    const char *grid = call->read_volume ? "Grid3" : "Grid2", *what = call->read_volume ? "volume" : "target";
     if (target->kind == E_INDEX && target->object && target->object->kind == E_MEMBER && target->object->target_colors
         && target->object->object && target->object->object->type.kind != TY_RENDER_TARGET) {
         // cube.faces[i], array.layers[i]: one image, of the format its cube or array was made with
@@ -371,10 +390,18 @@ static void check_target_read(program *prog, const expr *call)
     }
     if (format < 0) {
         if (kind == 0) return;
+        if (call->read_volume) {
+            diag_error(call->at, "%s gives a Grid3<%s> of the volume's own numbers, and this volume's format isn't fixed by its "
+                                 "constructor assignments", reads[kind], cells[kind]);
+            diag_note("make the volume one way wherever it's assigned, 'Texture3D(int3(32), Format.R32f)', and read the field "
+                      "or local it's kept in; a Texture3D parameter's format isn't known here");
+            return;
+        }
         diag_error(call->at, "%s gives a Grid2<%s> of the image's own numbers, and this target's format for image %d isn't fixed "
                              "by its constructor assignments", reads[kind], cells[kind], image);
         diag_note("make the target one way wherever it's assigned, with a Format for each image, 'RenderTarget(width, height, "
-                  "Format.R32f)', and read the field or local it's kept in; a RenderTarget parameter's format isn't known here");
+                  "Format.R32f)', there or in a function it's handed to as 'out' or 'mut', and read the field or local it's "
+                  "kept in; a RenderTarget parameter's format, and that of one C makes, isn't known here");
         return;
     }
     const bool fits = kind == 0 ? format == 0 || format == 2 : kind == 1 ? format == 3 || format == 5 || format == 7
@@ -384,20 +411,46 @@ static void check_target_read(program *prog, const expr *call)
                    : format == 8 ? 3 : 4;
     char index[16] = "";
     if (image) snprintf(index, sizeof index, "%d", image);
-    diag_error(call->at, "%s gives a Grid2<%s>, but this target's image %d is Format." STR_FMT ", which holds %s: write 'await "
-                         "target.%s(%s)'", reads[kind], cells[kind], image, STR_ARG(prog->format->members.items[format].name),
-               format == 2 ? "Color or float4" : cells[want], reads[want], index);
+    if (call->read_volume) {
+        diag_error(call->at, "%s gives a %s<%s>, but this volume is Format." STR_FMT ", which holds %s: write 'await "
+                             "volume.%s()'", reads[kind], grid, cells[kind], STR_ARG(prog->format->members.items[format].name),
+                   format == 2 ? "Color or float4" : cells[want], reads[want]);
+    } else {
+        diag_error(call->at, "%s gives a %s<%s>, but this %s's image %d is Format." STR_FMT ", which holds %s: write 'await "
+                             "target.%s(%s)'", reads[kind], grid, cells[kind], what, image,
+                   STR_ARG(prog->format->members.items[format].name), format == 2 ? "Color or float4" : cells[want], reads[want],
+                   index);
+    }
     if (format == 2) diag_note("'Read<float4>(%s)' gives an Rgba16f image's four numbers as stored; 'Read(%s)' gives them as a "
                                "Color, its alpha undone", index, index);
 }
 
 // A storage texture's format is part of its GPU declaration. Follow all resource assignments rather than choosing
 // the first constructor reached: a different format on another path must be diagnosed before any backend runs.
+static int image_origin_format(const expr *e, int color, int depth);
+
+static int origins_storage_format(const expr *first, const image_origins *origins, const int color, const int depth)
+{
+    int found = -3;
+    for (int i = -1; i < origins->count; i++) {
+        const expr *origin = i < 0 ? first : origins->items[i];
+        if (!origin) continue;
+        const int got = image_origin_format(origin, color, depth + 1);
+        if (got == -3) continue;
+        if (got < 0) return got;
+        if (found != -3 && found != got) return -1;
+        found = got;
+    }
+    return found;
+}
+
 static int image_origin_format(const expr *e, const int color, const int depth)
 {
     if (!e || depth > 32) return -1;
+    if (e->image_place) return e->param ? origins_storage_format(NULL, &e->param->image_assignments, color, depth) : -1;
     if (e->type.kind == TY_GRID && e->type.decl && e->type.decl->dims == 3)
         return e->type.decl->fields.items[0].type.kind == TY_FLOAT ? -6 : -5;
+    if (e->type.kind == TY_GRID) return -7; // A Grid2's Texture, of any cells: the CPU's cells, sampled
     if (e->kind == E_DEFAULT) return -3; // No image: not another format
     if (e->kind == E_NAME && e->bind == BIND_LOCAL && e->local && !e->local->assigned)
         return image_origin_format(e->local->value, color, depth + 1);
@@ -411,20 +464,7 @@ static int image_origin_format(const expr *e, const int color, const int depth)
         if (e->lhs->kind != E_INT || e->lhs->int_value < 0 || e->lhs->int_value > 3) return -1;
         return image_origin_format(e->object->object, (int)e->lhs->int_value, depth + 1);
     }
-    if (e->field) {
-        int found = -3;
-        const field *f = e->field;
-        for (int i = -1; i < f->image_assignments.count; i++) {
-            const expr *origin = i < 0 ? f->default_value : f->image_assignments.items[i];
-            if (!origin) continue;
-            const int got = image_origin_format(origin, color, depth + 1);
-            if (got == -3) continue;
-            if (got < 0) return got;
-            if (found != -3 && found != got) return -1;
-            found = got;
-        }
-        return found;
-    }
+    if (e->field) return origins_storage_format(e->field->default_value, &e->field->image_assignments, color, depth);
     if (e->call == CALL_BUILTIN && e->resource_operation && e->c_callee
         && (e->type.kind == TY_RENDER_TARGET || e->type.kind == TY_TEXTURE3D)) {
         if (e->type.kind == TY_RENDER_TARGET && e->target_samples) {
@@ -489,6 +529,8 @@ static shader *plan_kernel(program *prog, const expr *call, decl *k)
                        ? "a Grid3<float> converts to a sampled R16f volume, which core WebGPU cannot store into: create a Texture3D with Format.Rgba16f and fill it with a kernel"
                        : format == -5
                        ? "a grid-backed volume is a sampled view of CPU data: create an owned Texture3D and fill it with a kernel instead"
+                       : format == -7
+                       ? "a grid's Texture is a sampled view of its CPU cells, which the CPU's next change would replace: write a RenderTarget's color image with a fixed Format instead, and sample that"
                        : format == -2
                        ? (prog->format->members.count > 3
                           ? "this image's format isn't a portable storage format: write into Format.Rgba8, Rgba16f, R32f, Rgba32f or R32i instead; depth, BGRA, byte/half-float one-channel and two-channel images aren't core storage formats"

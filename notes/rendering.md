@@ -28,7 +28,9 @@ frames (no copy), then `[Linear]` for frames (one copy, its bytes decoded, and e
 more held on Vulkan and WebGPU), in several passes of a frame with other targets drawn between (still one), drawn
 into again (one more), drawn and read twice in a frame (two), resized (one), the three refused formats, and
 disposal. Vulkan with the validation layer, WebGPU on the web-debug page, both depth fallbacks. Pass 33 of the
-shader fixture covers the cube's and the array's copies as before. Not run: Unity, Android, Linux, macOS.
+shader fixture covers the cube's and the array's copies as before. Android: `tide_platform_targets_app` and its 24-bit
+depth fallback, in CI's Android job (`notes/android-and-mingw.md`, Every window fixture an app). Not run: Unity, Linux,
+macOS.
 
 ## [Linear] sampled images (2026-11-14)
 
@@ -60,7 +62,7 @@ these changes require the parent's final compilation/unit check. No other-device
 ## Numeric image rendering (2026-11-14)
 
 The language feature above the attachment groundwork is complete (render-targets.md, shaders.md). Numeric
-read kinds 9–12 are unfiltered float/int 2D/3D bindings with compatible zero fallbacks; storage volume and
+read kinds 9â€“12 are unfiltered float/int 2D/3D bindings with compatible zero fallbacks; storage volume and
 2D formats reuse the existing portable storage API. Shader numeric_outputs selects replace blending per
 attachment; output_types guards dynamically supplied incompatible targets before pipeline creation.
 The internal RESET_ALONE depth mode resets depth with every color write disabled. Sixteen static clear
@@ -187,6 +189,11 @@ driver at every start, and past `CACHE_MOST` (256 MiB, which the owner's file wa
   has an `outgrown` run: a whole file a run would read, with the size set under it, is read as 0 bytes, and the
   run after reads the file that was written over it. Passing under ASan on Windows with `tide_platform_prewarm`,
   `_loading` and `_draw`.
+- Since 2026-11-14 the size set is one byte under the driver's data in the last run's file, and the test asks the
+  driver whether it keeps pipelines at all (`tide_gpu_vk_pipeline_cache_keeps`, gpu_vk.h: a compute pipeline that
+  does nothing, compiled into an empty cache of its own): where it does, a file must hold more than the two headers
+  and a warm run read more than the driver's header; the Android emulator's keeps its header alone, and its files
+  are the headers exactly (`notes/android-and-mingw.md`, Every window fixture an app).
 - The fallback folder's file (`%TEMP%/dev.tide.game/pipelines.vulkan`, which games with no name yet shared) is no
   longer read by the standard host; what's there is the owner's to delete.
 
@@ -784,9 +791,9 @@ results and stale callback cancellation. Report/schema coverage is recorded
 in standard-host.md. Other OSes and Android were not run locally.
 
 
-## Match updates during desktop Vulkan frame waits (2026-11-03)
+## Match updates during Vulkan frame waits (2026-11-03; Android 2026-11-14)
 
-The desktop's `tide_gpu_vk_present_updating` polls the next frame slot's fence
+A window's `tide_gpu_vk_present_updating` (desktop's, and Android's since 2026-11-14) polls the next frame slot's fence
 after submission and presentation. If it is still pending, the platform may
 run the host's match-only callback between timed waits. The callback receives
 elapsed time since the render frame began and returns its next update delay
@@ -798,8 +805,13 @@ indefinite wait.
 `tide_platform_update_while_waiting` is optional and active only after the
 frame callback returns `TIDE_KEEP_RUNNING`, during presentation. It must not
 poll input/events, render, reload, or change GPU/window resources. Desktop
-GLFW supplies it; Android retains `tide_gpu_vk_present` without an updater,
-and OpenGL/web are unchanged. Headless runs never call the host updater, so
+GLFW supplies it, and since 2026-11-14 Android's activity too (Claude's pick,
+Provisional: it presented without an updater, so a phone's match waited out
+every GPU-bound frame's fence; `tide_platform_gpu_wait_app` found it,
+`notes/android-and-mingw.md`, Every window fixture an app; the public comment
+in `tide/platform.h`, `gpu_vk.h` and `window.h` say so since 2026-11-14 too,
+and `docs/spec.md` has it under Sessions, Provisional); the web is unchanged.
+Headless runs never call the host updater, so
 their made-up time and scripted frame boundaries remain unchanged.
 
 Two frame slots remain in flight. Fence completion still precedes garbage
