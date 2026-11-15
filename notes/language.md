@@ -89,6 +89,12 @@ snapshot of match components, `gen_entity_copies`), so the match doesn't change.
 changes, says so and leaves refusing it to the owner. Overrides needed nothing: `place_overrides` puts an override in
 its virtual's place before any body is checked, so a call's `match_write` is the override's.
 
+**Added after review**: `task_grid_params_of_a_local_task_whose_entity_goes` (a fifth case): the chunk at x = 0 is
+destroyed (`Drop`) while its `Look` waits with its copy of the neighbour's grid; the task ends at the next frame's
+task pass and the other chunk's goes on to the same result, so the sanitizers see that release in CI (the voxels
+mesher's commonest end). Still not tested: a match task with grid parameters started from a per-entity system split
+across threads, at several thread counts, and one crossing shards.
+
 Found on the way, not fixed: a Tide condition whose bitwise part can't equal the constant it's compared with,
 `((h + f) & 31) == 99`, compiles to C that clang refuses under `-Werror` (`-Wtautological-bitwise-compare`), so a game
 with it doesn't build. tidec should fold or refuse it with a message of its own.

@@ -178,6 +178,12 @@ singleton Ground
 {
     bool made;
     bool dig;    // The test sets it while the views' tasks wait: the chunk at x = 1 changes, which they don't see
+    bool drop;   // ...or the chunk at x = 0 goes, and its task, with the grid it was handed, with it
+}
+
+system Drop(Chunk chunk, Ground ground)
+{
+    if (ground.drop && chunk.at.x == 0) this.Destroy();
 }
 
 system Make(mut Ground ground)

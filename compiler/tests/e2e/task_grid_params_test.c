@@ -257,3 +257,27 @@ TIDE_TEST(task_grid_params_from_a_view_that_indexes_its_chunks)
     TIDE_CHECK(c.seen == 0);
     finish_local();
 }
+
+// A chunk that goes while its local task waits with the neighbour's grid it was handed: the task ends at the next
+// frame's task pass, its frame and its copy of the grid let go of with it (the sanitizers' leak and use checks), and
+// the other chunk's task goes on as before. The voxels mesher's commonest end: a chunk leaves while its faces are made
+TIDE_TEST(task_grid_params_of_a_local_task_whose_entity_goes)
+{
+    start_local();
+    tide_world_tick(&w);
+    const tide_entity first = chunk_at(0), second = chunk_at(1);
+    TIDE_REQUIRE(!tide_entity_is_null(first) && !tide_entity_is_null(second));
+    frame(); // Both Looks wait a frame, each with its own copy of its neighbour's grid
+    TIDE_CHECK(local.tide_tasks_function_Look.count == 2);
+    w.Ground.drop = true;
+    tide_world_tick(&w);
+    w.Ground.drop = false;
+    TIDE_CHECK(!tide_entity_alive(&w.entities, first) && tide_entity_alive(&w.entities, second));
+    frame();
+    TIDE_CHECK(local.tide_tasks_function_Look.count <= 1);
+    for (int k = 0; k < 8 && local.tide_tasks_function_Look.count; k++) frame();
+    TIDE_CHECK(local.tide_tasks_function_Look.count == 0);
+    const Chunk_local b = tide_get_Chunk_local(&local, second);
+    TIDE_CHECK(b.asked == 1 && b.seen == 256 * (5 * 100 + 3) + 3 * 10000);
+    finish_local();
+}
