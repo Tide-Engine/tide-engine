@@ -230,3 +230,13 @@ restores it, returning false on failure. Without the callbacks, the service
 saves the generated world packing as an exact-release checkpoint, with no
 cross-release compatibility promise. The host adds reconnect metadata outside
 the world's bytes, and a save is at most 8 MiB including it.
+
+A managed match's `Storage` is kept by the service, not in files: the reactor
+gives its server a `tide_storage_host` (`tide_server_desc.store`, from
+`tide/storage.h`) that hands each tick's requests to the service, which answers
+loads and listings later, by their numbers, with `tide_server_store_answer`.
+The server gives the answers to ticks in the order they were asked, as it does
+a provider's files'. A C host of its own that keeps a store elsewhere (a
+database, a service) can do the same; the answer is checked against what was
+asked before anything of it is kept. See
+[the match's store](../multiplayer/hosting.md#the-match-s-store).

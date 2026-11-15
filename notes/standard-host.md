@@ -1,5 +1,18 @@
 # The standard host: runs with no window, the stats, debug views
 
+## A managed match's store (2026-11-15)
+
+- `managed_run.h` gives every server it makes (`init`, `restore`, a shard's) the hosting service's store when the
+  service offered one (`tide_managed_store(1)` before the server is made): each tick's requests go to the service as
+  bytes it takes after each call (`tide_managed_store_requests`, in `tide_managed_bytes()`, now outside the sharded
+  part), and its answers come back by id before an update (`tide_managed_stored`), checked by `tide_storage_answer`.
+  ABI stays 1, as the calls are new exports and no new import: a service older than them runs the module as before,
+  keeping nothing. A restore drops what the server it replaces never handed over (the start of the instance it
+  recovers in). A shard's start is bound to a store of its own and handed over as `tide_server_desc.asked`.
+- `TIDE_MANAGED_TEST` builds the header natively for a test's fake host (`TIDE_MANAGED_IMPORT`/`TIDE_MANAGED_EXPORT`
+  empty, the game's weak hooks static pointers): `tidec_e2e_managed_store`. The rest, with its tests and a wasm build
+  of the fixture run under the services' worker, is in notes/voxels.md, section 3e.
+
 ## A run with no window keeps the server's store without the files' thread (2026-11-15)
 
 - A run with no window promises that nothing about it is timed (Rendering and platform, below), but since the server's

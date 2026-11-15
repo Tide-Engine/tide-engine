@@ -3,28 +3,158 @@
 // Include once, after the generated game header, in a WASM reactor. One
 // instance owns one match. The trusted service owns routing and admission.
 #include "tide/hosting.h"
+#include "tide/storage.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 
-#ifndef __wasm__
+#if defined(TIDE_MANAGED_TEST)
+// A native test's fake host (compiler/tests/e2e/managed_store_test.c): the
+// host's imports are the test's functions, and the module's exports ones it calls
+#define TIDE_MANAGED_EXPORT(name)
+#define TIDE_MANAGED_IMPORT(name)
+#elif defined(__wasm__)
+#define TIDE_MANAGED_EXPORT(name) __attribute__((export_name(#name)))
+#define TIDE_MANAGED_IMPORT(name) __attribute__((import_module("tide_host"), import_name(#name)))
+#else
 #error "managed_run.h is for sandboxed WASM server builds"
 #endif
-#define TIDE_MANAGED_EXPORT(name) __attribute__((export_name(#name)))
-__attribute__((import_module("tide_host"), import_name("send")))
-extern void tide_managed_send(uint32_t peer, const void *data, uint32_t size);
-__attribute__((import_module("tide_host"), import_name("entropy")))
-extern uint64_t tide_managed_entropy(void);
+TIDE_MANAGED_IMPORT(send) extern void tide_managed_send(uint32_t peer, const void *data, uint32_t size);
+TIDE_MANAGED_IMPORT(entropy) extern uint64_t tide_managed_entropy(void);
+#ifdef TIDE_MANAGED_TEST
+// The test's to set: a native link has no weak symbol every system resolves
+static void (*tide_server_entry)(tide_hosting_desc *host);
+static uint32_t (*tide_managed_write_save)(const void *world, uint8_t *out, uint32_t capacity);
+static bool (*tide_managed_read_save)(void *world, const uint8_t *data, uint32_t size);
+#else
 extern void tide_server_entry(tide_hosting_desc *host) __attribute__((weak));
 // Optional game-owned durable payload. Both callbacks must be supplied together.
 // The default is an exact-release world checkpoint, with no upgrade guarantee.
 extern uint32_t tide_managed_write_save(const void *world, uint8_t *out, uint32_t capacity) __attribute__((weak));
 extern bool tide_managed_read_save(void *world, const uint8_t *data, uint32_t size) __attribute__((weak));
+#endif
 
 static tide_server *tide_managed_server;
 static tide_server_desc tide_managed_description;
 static double tide_managed_now;
 static bool tide_managed_ended;
+static uint8_t *tide_managed_out;
+
+// Bytes the module gives the host, there until the next call that gives any
+TIDE_MANAGED_EXPORT(tide_managed_bytes) const uint8_t *tide_managed_bytes(void) { return tide_managed_out; }
+
+static uint32_t tide_managed_give(uint8_t *bytes, const uint32_t size)
+{
+    free(tide_managed_out);
+    tide_managed_out = bytes;
+    return bytes ? size : 0u;
+}
+
+// ---------------------------------------------------------------------------
+// The server's store (Storage in match code: tide/storage.h), kept by a host
+// that offers one (tide_managed_store). What the match asks goes to the host as
+// bytes it takes after each call (tide_managed_store_requests), and the host
+// answers loads and listings whenever it has read them, before an update
+// (tide_managed_stored): input to the match, given to ticks in the order they
+// were asked, as a standard host's files are. A host that offers none, as one
+// older than the store, leaves the match keeping nothing: saves go nowhere and
+// every load finds nothing.
+
+static bool tide_managed_keeps;     // The host offered its store
+static bool tide_managed_dropping;  // A server a restore replaced stops: what it never handed over is nobody's
+static tide_writer tide_managed_asked = {.grows = true}; // Requests the host hasn't taken, after their count
+static uint32_t tide_managed_asked_count;
+// Ids, which name a load or a listing to the host: its server's number on from `base`, the ids of the servers before
+static uint64_t tide_managed_id_base, tide_managed_id_last;
+
+static void tide_managed_keep(void *user, const tide_storage *requests, const uint64_t number)
+{
+    (void)user;
+    if (tide_managed_dropping) return;
+    tide_writer *w = &tide_managed_asked;
+    if (!w->size) tide_write_u32(w, 0u); // The count, written as the host takes them
+    uint64_t answered = 0;
+    for (uint32_t i = 0; i < requests->count; i++) {
+        const tide_storage_request *r = &requests->items[i];
+        uint64_t id = 0;
+        if (r->kind == TIDE_STORAGE_LOAD || r->kind == TIDE_STORAGE_LIST) {
+            id = tide_managed_id_base + number + answered++ + 1u;
+            if (id > tide_managed_id_last) tide_managed_id_last = id;
+        }
+        tide_write_u8(w, (uint8_t)r->kind);
+        tide_write_u64(w, id);
+        tide_write_u16(w, (uint16_t)r->key_size);
+        if (r->key_size) tide_write_bytes(w, requests->bytes + r->key, r->key_size); // A tick that lists "" has no bytes
+        tide_write_u32(w, r->data_size);
+        if (r->data_size) tide_write_bytes(w, requests->bytes + r->data, r->data_size);
+        tide_managed_asked_count++;
+    }
+    if (w->overflow) tide_out_of_memory();
+}
+
+static const tide_storage_host tide_managed_store_host = {.keep = tide_managed_keep};
+
+static const tide_storage_host *tide_managed_store_of(void)
+{
+    return tide_managed_keeps ? &tide_managed_store_host : NULL;
+}
+
+// A server was made, which asks nothing until its first tick ends: its loads and listings' ids go on from the last one
+// given, so the answer to one of a server it replaced names none of its
+static void tide_managed_store_began(void)
+{
+    tide_managed_id_base = tide_managed_id_last;
+}
+
+// The host keeps the match's store, and speaks `version` of these calls (this
+// module's is 1). Before the call that makes the match's server
+// (tide_managed_init, or a shard's). The version the module speaks with it, or
+// 0: version 0, or a server made already, which keeps nothing.
+TIDE_MANAGED_EXPORT(tide_managed_store) uint32_t tide_managed_store(const uint32_t version)
+{
+    if (!version || tide_managed_server) return 0;
+    tide_managed_keeps = true;
+    return 1;
+}
+
+// What the match asked of the store since the host last took it, in
+// tide_managed_bytes(): u32 the count, then each request's u8 kind (1 save, 2
+// load, 3 delete, 4 list), u64 its id (a load's or a listing's, which its
+// answer names; 0 for a save or a delete), u16 and its key (a listing's
+// prefix: 0 to 256 bytes, the others' 1 to 256), u32 and its data (a save's
+// value, at most 32 MiB; the key a listing goes on after, at most 256 bytes;
+// nothing for the others), little-endian. In the order the match asked them,
+// which the host carries them out in. Its size, 0 for nothing asked.
+TIDE_MANAGED_EXPORT(tide_managed_store_requests) uint32_t tide_managed_store_requests(void)
+{
+    if (!tide_managed_asked_count) return tide_managed_give(NULL, 0);
+    tide_writer *w = &tide_managed_asked;
+    for (uint32_t k = 0; k < 4u; k++) w->data[k] = (uint8_t)(tide_managed_asked_count >> (8u * k));
+    const uint32_t size = tide_managed_give(w->data, w->size);
+    *w = (tide_writer){.grows = true};
+    tide_managed_asked_count = 0;
+    return size;
+}
+
+// The host's answer to the load or listing with this id: its outcome (0
+// nothing kept under the key, a load's alone; 1 found; 2 couldn't be read or
+// listed), and `size` bytes at `data`: a found load's value, or a listing's
+// keys, each a varint (7 bits a byte, the lowest first) of its size and its
+// bytes, sorted by their bytes, past the request's `after`, starting with its
+// prefix, 1,024 at the most; `more` 1 where keys past the last were left out,
+// with 1,024 given. 1 where it's taken, to go to a tick once the answers asked
+// before it are in. 0, with nothing changed, for an id the module never gave,
+// gave a server since replaced or has the answer of, and an answer that isn't
+// one (tide_storage_answer). Between other calls, as many as the host has.
+TIDE_MANAGED_EXPORT(tide_managed_stored)
+uint32_t tide_managed_stored(const double id, const uint32_t outcome, const uint8_t *data, const uint32_t size,
+                             const uint32_t more)
+{
+    if (!tide_managed_server || !tide_managed_keeps || more > 1u || !(id >= 1.0 && id <= 9007199254740992.0)) return 0;
+    const uint64_t n = (uint64_t)id;
+    if ((double)n != id || n <= tide_managed_id_base || n > tide_managed_id_last) return 0;
+    return tide_server_store_answer(tide_managed_server, n - tide_managed_id_base - 1u, outcome, data, size, more != 0);
+}
 static struct {
     uint32_t peer, size;
     uint8_t data[TIDE_NET_MTU];
@@ -54,6 +184,8 @@ static void tide_managed_transport_close(void *self) { (void)self; }
 static void tide_managed_transport_end(void *self) { (void)self; tide_managed_ended = true; }
 static double tide_managed_clock(void *self) { (void)self; return tide_managed_now; }
 
+// The calls every host makes. The store's (tide_managed_store and those after it) are more of ABI 1, each version
+// of theirs offered by the host: a host older than them runs the module as it ran one without them.
 TIDE_MANAGED_EXPORT(tide_managed_abi) uint32_t tide_managed_abi(void) { return 1; }
 TIDE_MANAGED_EXPORT(tide_managed_alloc) void *tide_managed_alloc(const uint32_t size) { return malloc(size); }
 TIDE_MANAGED_EXPORT(tide_managed_free) void tide_managed_free(void *p) { free(p); }
@@ -91,6 +223,7 @@ uint32_t tide_managed_init(const double now, const uint32_t seed, const uint8_t 
     d->game = &tide_game_api;
     d->jobs = NULL;
     d->entropy = tide_managed_entropy;
+    d->store = tide_managed_store_of(); // The host's, where it keeps one, in place of any io the start named
     d->transports[0] = (tide_transport){0};
     d->transports[1] = (tide_transport){.send = tide_managed_transport_send, .receive = tide_managed_transport_receive,
         .close = tide_managed_transport_close, .end = tide_managed_transport_end,
@@ -98,6 +231,7 @@ uint32_t tide_managed_init(const double now, const uint32_t seed, const uint8_t 
     tide_managed_now = now;
     tide_managed_server = tide_server_create(d, now);
     d->start = NULL; // The callback's start value need not survive creation.
+    if (tide_managed_server) tide_managed_store_began();
     return tide_managed_server != NULL;
 }
 
@@ -202,13 +336,19 @@ uint32_t tide_managed_restore(const uint8_t *data, const uint32_t size, const do
         d.wait_for_first = !checkpoint->started;
         d.dt = checkpoint->dt;
         tide_managed_now = now;
+        // Its waiting tasks ask the store again (tide_game.stored_again), with its first tick's requests
         restored = tide_server_create(&d, now);
     }
     free(checkpoint);
     if (tide_game_api.free_world) tide_game_api.free_world(world);
     free(world);
     if (!restored) return 0;
+    tide_managed_store_began();
+    // What the server it replaces asked and never handed over (its start's, before the checkpoint's world took its
+    // place) is nobody's: its start's saves would be written over what the match kept
+    tide_managed_dropping = true;
     tide_server_destroy(tide_managed_server);
+    tide_managed_dropping = false;
     tide_managed_server = restored;
     tide_managed_first = tide_managed_count = 0;
     tide_managed_ended = false;
@@ -236,16 +376,6 @@ static uint32_t tide_managed_ticks_before; // Its ticks before this server's fir
 static void *tide_managed_staged;          // A world being made from a checkpoint and its records
 static uint32_t tide_managed_staged_next;
 static tide_shard_coordinator *tide_managed_coordinator;
-static uint8_t *tide_managed_out;
-
-TIDE_MANAGED_EXPORT(tide_managed_bytes) const uint8_t *tide_managed_bytes(void) { return tide_managed_out; }
-
-static uint32_t tide_managed_give(uint8_t *bytes, const uint32_t size)
-{
-    free(tide_managed_out);
-    tide_managed_out = bytes;
-    return bytes ? size : 0u;
-}
 
 static void tide_managed_record(void *user, const uint32_t tick, const uint8_t *record, const uint32_t size)
 {
@@ -276,7 +406,7 @@ static bool tide_managed_shard_assets(const uint8_t *pack, const uint32_t pack_s
 
 // A shard's server from `world`, and its agent
 static uint32_t tide_managed_shard_serve(const double now, const uint32_t seed, const uint32_t shard, const void *world,
-                                         const bool fresh)
+                                         const bool fresh, tide_storage *asked)
 {
     tide_server_desc *d = &tide_managed_description;
     *d = (tide_server_desc){.seed = seed};
@@ -284,6 +414,8 @@ static uint32_t tide_managed_shard_serve(const double now, const uint32_t seed, 
     d->world = world;
     d->closed = shard != TIDE_SHARD_ROOT; // Players join the world at the root, and a region takes those it's told of
     d->entropy = tide_managed_entropy;
+    d->store = tide_managed_store_of(); // Every shard of the world keeps the one store the host has for it
+    d->asked = asked;
     d->transports[1] = (tide_transport){.send = tide_managed_transport_send, .receive = tide_managed_transport_receive,
         .close = tide_managed_transport_close, .end = tide_managed_transport_end,
         .clock = tide_managed_clock, .arrived = tide_managed_clock};
@@ -291,7 +423,9 @@ static uint32_t tide_managed_shard_serve(const double now, const uint32_t seed, 
     tide_managed_now = now;
     tide_managed_server = tide_server_create(d, now);
     d->world = NULL;
+    d->asked = NULL;
     if (!tide_managed_server) return 0;
+    tide_managed_store_began();
     tide_managed_agent = tide_shard_agent_create(&tide_game_api, tide_managed_server, shard, tide_managed_ticks_before, fresh);
     return tide_managed_agent != NULL;
 }
@@ -310,9 +444,14 @@ uint32_t tide_managed_shard_new(const double now, const uint32_t seed, const uin
     void *world = calloc(1, tide_game_api.world_size);
     if (!world) return 0;
     const float dt = 1.0f / (float)(tide_game_api.tick_rate ? tide_game_api.tick_rate : 60u);
+    // What the start asks of the store (its Spawned handlers' saves and loads) is the server's first tick's to hand over
+    tide_storage asked = {0};
+    if (tide_game_api.stored) tide_storage_bind(world, &asked);
     tide_game_api.shards->start(world, dt, shard == TIDE_SHARD_ROOT ? chosen.start : NULL, seed, tick, config, config_size);
+    if (tide_game_api.stored) tide_storage_unbind(world);
     tide_managed_ticks_before = 0;
-    const uint32_t made = tide_managed_shard_serve(now, seed, shard, world, false);
+    const uint32_t made = tide_managed_shard_serve(now, seed, shard, world, false, &asked);
+    tide_storage_free(&asked);
     if (tide_game_api.free_world) tide_game_api.free_world(world);
     free(world);
     return made;
@@ -354,7 +493,7 @@ uint32_t tide_managed_shard_begin(const double now, const uint32_t seed, const u
 {
     if (!tide_managed_staged) return 0;
     tide_managed_ticks_before = tide_managed_staged_next;
-    const uint32_t made = tide_managed_shard_serve(now, seed, shard, tide_managed_staged, true);
+    const uint32_t made = tide_managed_shard_serve(now, seed, shard, tide_managed_staged, true, NULL);
     if (tide_game_api.free_world) tide_game_api.free_world(tide_managed_staged);
     free(tide_managed_staged);
     tide_managed_staged = NULL;

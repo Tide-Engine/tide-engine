@@ -176,32 +176,68 @@ uint32_t tide_storage_key(const char *path, uint32_t path_size, char *out, uint3
 void tide_storage_serve(tide_storage *store, const tide_io *io, uint64_t *next,
                         void (*answer)(void *user, uint8_t *message, uint32_t size), void *user);
 
+// A host that keeps a server's store itself, in place of a provider's files:
+// a managed match's service (tide/managed_run.h), which reads and writes
+// storage of its own while the match goes on. A line with one hands each batch
+// of requests to `keep` as it's sent, and the host carries them out in that
+// order, after the batches before: a load or a listing after a save of its key
+// finds what was saved. Its loads and listings are numbered from `number` in
+// the order they come (only they count), and the host answers each once, later
+// and in any order, with tide_storage_answer; the line gives the answers to
+// ticks in the order they were asked, as a provider's. What `keep` is given is
+// the line's again once it returns. A batch sent with `answers` false (a server
+// that stops) hands it its saves and deletes alone.
+typedef struct tide_storage_host {
+    void *user;
+    void (*keep)(void *user, const tide_storage *requests, uint64_t number);
+} tide_storage_host;
+
 // A server's requests on their way: each tick's handed over once it has ended
 // (tide_storage_send), carried out on the provider's own thread where it has
-// one (tide_io.post) and on this one at once where it hasn't, and their
-// answers taken once they're ready, in the order they were asked
-// (tide_storage_receive). Only the thread that sends touches the line; the
-// provider's thread touches only the batch it carries out.
+// one (tide_io.post) and on this one at once where it hasn't, or by the host
+// that keeps the store (`host`), and their answers taken once they're ready, in
+// the order they were asked (tide_storage_receive). Only the thread that sends
+// touches the line; the provider's thread touches only the batch it carries out.
 typedef struct tide_storage_batch tide_storage_batch;
 typedef struct tide_storage_line {
     tide_storage_batch *first, *last; // On their way, oldest first
     uint64_t next;                    // The number the next answer has
+    const tide_storage_host *host;    // Where the store is kept, in place of the provider's files, or NULL
 } tide_storage_line;
 
 // Hands `store`'s requests over, after everything handed over before, leaving
-// it empty. With `answers` false nobody will take what loads and listings
-// find, which aren't carried out: a server that stops still saves and deletes.
+// it empty: to the line's host where it has one, and else to `io`'s files.
+// With `answers` false nobody will take what loads and listings find, which
+// aren't carried out: a server that stops still saves and deletes.
 void tide_storage_send(tide_storage_line *line, tide_storage *store, const tide_io *io, bool answers);
+// The line's host's answer (tide_storage_host) to the load or listing numbered
+// `number`: how it came out (TIDE_STORED_FOUND, MISSING for a load that found
+// nothing, FAILED), `size` bytes at `data`, a found load's value or a
+// listing's keys (as tide_stored has them: each a varint of its size and its
+// bytes), and whether a listing left keys past its last out (`more`, which a
+// page of TIDE_STORAGE_LIST_MOST keys alone has). Checked against what was
+// asked before anything is kept: false, and nothing changed, for a number
+// nothing waits for (never asked, answered already, or forgotten), an outcome
+// the request can't have, a value past TIDE_STORAGE_VALUE_MOST or bytes beside
+// a load that found nothing, or keys that aren't the request's answer: any
+// beside FAILED, more than TIDE_STORAGE_LIST_MOST, one that isn't 1 to
+// TIDE_STORAGE_KEY_MOST bytes of UTF-8, doesn't start with the prefix or
+// doesn't come after `after` and the key before it, or bytes after the last.
+// On the thread that sends.
+bool tide_storage_answer(tide_storage_line *line, uint64_t number, uint32_t outcome, const uint8_t *data, uint32_t size,
+                         bool more);
 // The answers that are ready, in order, each through `answer` (a message, which
 // it takes to free), up to the first batch still being carried out: how many.
 uint32_t tide_storage_receive(tide_storage_line *line, void (*answer)(void *user, uint8_t *message, uint32_t size),
                               void *user);
-// The answers on their way are nobody's (a rewind): dropped as they're ready.
-// What their batches save and delete is still done.
+// The answers on their way are nobody's (a rewind): dropped as they're ready,
+// and a host's refused as they come. What their batches save and delete is
+// still done.
 void tide_storage_forget(tide_storage_line *line);
 // Returns once everything handed over is carried out (tide_io.settle for each
 // batch still on its way: not what others posted after it), and frees it,
-// answers and all: a server that stops loses nothing it saved.
+// answers and all: a server that stops loses nothing it saved. A host's
+// batches are its own once handed over, and aren't waited for.
 void tide_storage_finish(tide_storage_line *line);
 // Batches handed over and not yet received.
 uint32_t tide_storage_waiting(const tide_storage_line *line);

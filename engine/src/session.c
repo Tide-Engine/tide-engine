@@ -3553,6 +3553,7 @@ tide_server *tide_server_create(const tide_server_desc *desc, const double now)
     if (!s) return NULL;
     s->desc = *desc;
     s->game = desc->game;
+    s->stored.host = desc->store; // The host's own store, where it keeps one, in place of io's files
     const tide_game *g = s->game;
     if (s->desc.tick_rate == 0) s->desc.tick_rate = g->tick_rate ? g->tick_rate : 60u;
     s->w = windows_for(s->desc.tick_rate);
@@ -3875,6 +3876,14 @@ const void *tide_server_world(const tide_server *s)
 {
     land((tide_server *)(uintptr_t)s); // As it is after the tick that's running, if one is
     return s->world;
+}
+
+bool tide_server_store_answer(tide_server *s, const uint64_t number, const uint32_t outcome, const uint8_t *data,
+                              const uint32_t size, const bool more)
+{
+    if (!s || !s->stored.host) return false;
+    land(s); // The line is the thread's that ends ticks
+    return tide_storage_answer(&s->stored, number, outcome, data, size, more);
 }
 
 uint32_t tide_server_tick(const tide_server *s)
