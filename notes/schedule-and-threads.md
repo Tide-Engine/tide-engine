@@ -245,7 +245,7 @@ tick. `row_heaps_time` now prints each system's time from the jobs' profile, and
 (`alone`), as `row_grids_time` does.
 
 Gaps:
-- **One thread costs more than with shares** (above), and a match hosted on one thread pays it. Not tried: a run's
+- **One thread costs more than with shares** (above), and a match hosted on one thread pays it. The owner took keeping runs by identity for every such system (2026-11-15), not limiting them to costly rows or grids. Not tried: a run's
   rows in table order (a table sorted by run), or blocks of a run's rows together in fewer pages.
 - **Rows go together about one at a time** on the pool and over 1024 keys (above).
 - Web, Windows ASan and the other platforms: CI's (4).
