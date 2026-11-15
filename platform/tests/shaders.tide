@@ -1435,6 +1435,7 @@ event(Spawned) Setup(with Main)
     Spawn(Lamp { pos = Cell(2, 3), at = Spot(2, 6), glow = Color.blue });
     Spawn(Tagged { shades = [Color.red] });
     Spawn(Tagged { which = 1, shades = [Color.red, Color(0, 0, 1)] });
+    Spawn(Coated { lift = 1, shade = 0.5 });
 }
 
 view Start(mut Art art, mut Probe probe)
@@ -5555,6 +5556,49 @@ frag ReadHeld(Vertex vertex, out Color color, Sources sources, Picked picked)
     color = picked.which == 0 ? HeldOf(sources, float2(0.25)) : picked.which == 1 ? sources.HeldAt(float2(0.75)) : HeldOn(sources, float2(0.25, 0.75));
 }
 
+// Two textures a draw over a list of instances gives
+vert Spread(mut Vertex vertex, Speck speck)
+{
+    vertex.position += speck.offset;
+}
+
+frag TwoOver(Vertex vertex, out Color color, Speck speck, Texture first, Texture second)
+{
+    color = Color(first.Sample(float2(0.5), .Point).r * speck.tint.r, second.Sample(float2(0.5), .Point).g * speck.tint.g, 0);
+}
+
+// A component's texture, local, and its plain fields, read by one function from a draw's vert and its frag: each
+// stage reads the fields where it has them (the vertex's attributes, and what the vertex stage passes on)
+component Coated
+{
+    float lift;
+    float shade;
+    local Texture coat;
+}
+
+float CoatLift(Coated coated) { return coated.lift * coated.coat.Sample(float2(0.5), .Point).g; }
+Color CoatShade(Coated coated) { return coated.coat.Sample(float2(0.5), .Point) * coated.shade; }
+
+vert Risen(mut Vertex vertex, Coated coated)
+{
+    vertex.position.x += CoatLift(coated) * 32;
+}
+
+frag Coating(Vertex vertex, out Color color, Coated coated)
+{
+    color = Color(CoatLift(coated), CoatShade(coated).g, 0);
+}
+
+[After(GivenTextures)]
+view GivenComponents(Art art, Sources sources, mut Coated coated)
+{
+    if (art.targetPass != 34) return;
+    coated.coat = sources.greens;
+    List<Vertex> quad = [Vertex {}, Vertex { position = float2(16, 0) }, Vertex { position = float2(16) }, Vertex { position = float2(0, 16) }];
+    // Moved from the fifth cell of the second row to the sixth, where its frag reads the same
+    Draw.Transform(float2(128, 32)) { Draw.Mesh(quad, art.faces, Risen, Coating); }
+}
+
 [After(LinearSampling)]
 view GivenTextures(Art art, mut Sources sources)
 {
@@ -5591,4 +5635,6 @@ view GivenTextures(Art art, mut Sources sources)
     Draw.Transform(float2(32, 32)) { Draw.Mesh(quad, art.faces, ReadHeld, Picked { which = 0 }); }
     Draw.Transform(float2(64, 32)) { Draw.Mesh(quad, art.faces, ReadHeld, Picked { which = 1 }); }
     Draw.Transform(float2(96, 32)) { Draw.Mesh(quad, art.faces, ReadHeld, Picked { which = 2 }); }
+    List<Speck> specks = [Speck { tint = Color.white }, Speck { offset = float2(32, 0), tint = Color.red }];
+    Draw.Transform(float2(192, 32)) { Draw.Instanced(quad, art.faces, specks, sources.reds, sources.greens, Spread, TwoOver); }
 }

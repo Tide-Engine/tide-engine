@@ -1902,6 +1902,24 @@ TIDE_TEST(lsp_shaders_signature_help)
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":6"));
     open_document(IN_VIEW("Draw.Mesh(models.crate, models.faces, float4x4.identity, Sha$de);"));
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":7"));
+    // A draw's second texture is a texture again, and its filter and its wrap its own, before the vert and the frag
+    open_document(IN_VIEW("Draw.Mesh(models.crate, models.faces, float4x4.identity, models.wood, models.wo$od);"));
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":3"));
+    open_document(IN_VIEW("Draw.Mesh(models.crate, models.faces, float4x4.identity, models.wood, Filter.Point, models.wo$od);"));
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":3"));
+    open_document(IN_VIEW("Draw.Mesh(models.crate, models.faces, float4x4.identity, models.wood, Filter.Point, Wrap.Repeat, "
+                          "models.wo$od);"));
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":3"));
+    open_document(IN_VIEW("Draw.Mesh(models.crate, models.faces, float4x4.identity, models.wood, models.wood, Filter.Po$int);"));
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":4"));
+    open_document(IN_VIEW("Draw.Mesh(models.crate, models.faces, float4x4.identity, models.wood, models.wood, Filter.Point, "
+                          "Wrap.Rep$eat);"));
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":5"));
+    open_document(IN_VIEW("Draw.Mesh(models.crate, models.faces, float4x4.identity, models.wood, models.wood, models.wood, "
+                          "Sha$de);"));
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":7"));
+    open_document(IN_VIEW("Draw.Instanced(models.crate, models.faces, [float4x4.identity], models.wood, models.wo$od);"));
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":3"));
 #undef IN_VIEW
 
     open_document(SHADER_TYPES "frag Shade(BoxVertex vertex, out Color color, Models models)\n{\n"
@@ -6303,7 +6321,24 @@ TIDE_TEST(lsp_render_targets_texture_members_and_blit)
                                       "view V(Buffers buffers)\n{\n    Draw.Blit(buffers.scene.color, $\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "RenderTarget destination"));
-    TIDE_CHECK(has(last_sent(), "\"activeParameter\":1"));
+    TIDE_CHECK(has(last_sent(), "[, Texture textures...]") && has(last_sent(), "\"activeParameter\":2"));
+    // Several textures before the destination: a texture after the source is one of them, and what follows them the
+    // destination, then its blend and its frag, by what each is
+    snprintf(program, sizeof program, "%sview V(Buffers buffers)\n{\n    Draw.Blit(buffers.scene.color, buffers.scratch.color$\n}\n",
+             types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":1"));
+    snprintf(program, sizeof program, "%sview V(Buffers buffers)\n{\n    Draw.Blit(buffers.scene.color, buffers.scratch.color, $\n}\n",
+             types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":2"));
+    snprintf(program, sizeof program, "%sview V(Buffers buffers)\n{\n    Draw.Blit(buffers.scene.color, buffers.scratch.color, "
+                                      "Draw.window, Blend.Add, $\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":4"));
+    snprintf(program, sizeof program, "%sview V(Buffers buffers)\n{\n    Draw.Blit(buffers.scene.color, Draw.window, $\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":3"));
     snprintf(program, sizeof program, "%sview V(Buffers buffers)\n{\n    buffers.scene.Cl$ear(Color.black);\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(request("textDocument/hover"), "RenderTarget.Clear"));
@@ -6474,7 +6509,8 @@ TIDE_TEST(lsp_textures_in_functions)
 
     snprintf(program, sizeof program, "%sfloat Sunlit(Depth$Texture depth, float3 at) { return depth.Compare(at.xy, at.z); }\n", types);
     open_document(program);
-    TIDE_CHECK(has(request("textDocument/hover"), "reads the depth its call names"));
+    const char *depth_hover = request("textDocument/hover");
+    TIDE_CHECK(has(depth_hover, "reads the depth its call names") && has(depth_hover, "and reads `lamp.shadow`"));
     snprintf(program, sizeof program, "%sfloat Sunlit(DepthTexture depth, float3 at) { return depth.Com$pare(at.xy, at.z); }\n", types);
     open_document(program);
     TIDE_CHECK(has(request("textDocument/hover"), "A function they call compares the depth it takes"));

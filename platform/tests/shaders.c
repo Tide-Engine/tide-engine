@@ -2058,6 +2058,10 @@ static void run_given_checks(const char *when)
         {40, 40, 0, 1, 0, "a function handed a singleton samples its texture"},
         {72, 40, 0, 1, 0, "and so does the singleton's method"},
         {104, 40, 0, 1, 0, "and a function handed it passes its texture on to one that takes a Texture"},
+        {136, 40, 0, 0, 0, "a function a vert hands a component reads its field and its local texture: it moves the mesh"},
+        {168, 40, 1, 0.5f, 0, "and the same function from the frag reads them as the frag has them"},
+        {200, 40, 1, 1, 0, "an instanced draw's two textures, for its first instance"},
+        {232, 40, 1, 0, 0, "and its second"},
     };
     enum { COUNT = sizeof wanted / sizeof wanted[0] };
     local.Art.targetPass = 34;

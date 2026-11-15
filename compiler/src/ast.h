@@ -2114,6 +2114,11 @@ bool shader_reads_local(const shader *sh, const decl *d);
 int shader_given_texture(const decl *vert, const decl *frag, const param *p);
 // ...and how many textures that is: what the draw gives after its mesh's arguments.
 int shader_given_textures(const decl *vert, const decl *frag);
+// Whether code the GPU runs hands a function one of type `t` by its name, the frag's or vert's own, never as a value:
+// a struct, a singleton or a component that holds a list, or a singleton or a component that holds a texture
+// (docs/spec.md, Structs that hold lists; A function samples the textures of a singleton or a component it's handed).
+// Only such a one takes its local fields with it.
+bool shader_type_given(type t);
 
 // A tide_shader's initializer's fields for its textures, where any isn't a color read through its own sampler:
 // `.texture_reads` and `.texture_samplers`.

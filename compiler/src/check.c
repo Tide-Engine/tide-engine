@@ -4329,11 +4329,33 @@ static bool function_samples(decl *fn, const expr *call, const expr *of, const t
     const bool holder = of->kind == E_MEMBER && of->field && of->object->kind == E_NAME && of->object->bind == BIND_PARAM
                      && of->object->param->function_param
                      && (of->object->param->type.kind == TY_COMPONENT || of->object->param->type.kind == TY_SINGLETON);
-    const bool receiver = of->kind == E_NAME && of->bind == BIND_FIELD && of->field && fn->owner
-                       && (fn->owner->kind == DECL_COMPONENT || fn->owner->kind == DECL_SINGLETON);
+    const bool owned = fn->owner && (fn->owner->kind == DECL_COMPONENT || fn->owner->kind == DECL_SINGLETON);
+    const bool receiver = of->kind == E_NAME && of->bind == BIND_FIELD && of->field && owned;
     if (!own && !holder && !receiver && !(assets && of->bind == BIND_ASSET)) {
         const char *what = reads == TY_DEPTH_TEXTURE ? "DepthTexture" : reads == TY_CUBEMAP ? "Cubemap" : reads == TY_GRID ? "grid"
                          : reads == TY_TEXTURE_ARRAY ? "TextureArray" : reads == TY_DEPTH_TEXTURE_ARRAY ? "DepthTextureArray" : "Texture";
+        // A field of a struct the component or singleton holds, `stage.lamps.shadow`, or `lamps.shadow` of a method's
+        const expr *root = of;
+        while (root->kind == E_MEMBER && root->field && root->object) root = root->object;
+        const bool in_struct = of->kind == E_MEMBER && of->field && root != of && root != of->object
+                            && root->kind == E_NAME && root->bind == BIND_PARAM && root->param->function_param
+                            && (root->param->type.kind == TY_COMPONENT || root->param->type.kind == TY_SINGLETON);
+        const bool in_own_struct = of->kind == E_MEMBER && of->field && root == of->object && root->kind == E_NAME
+                                && root->bind == BIND_FIELD && root->field && owned;
+        if (in_struct || in_own_struct) {
+            const decl *holds = in_struct ? root->param->type.decl : fn->owner;
+            diag_error(of->at, "a function samples a %s that's a field of the component or singleton it takes, and '" STR_FMT
+                               "' is a field of a struct '" STR_FMT "' holds, which it doesn't yet", what, STR_ARG(of->member),
+                       STR_ARG(holds->name));
+            if (in_struct) {
+                diag_note("make '" STR_FMT "' a field of '" STR_FMT "' itself, and sample it as '" STR_FMT "." STR_FMT "'",
+                          STR_ARG(of->member), STR_ARG(holds->name), STR_ARG(root->name), STR_ARG(of->member));
+            } else {
+                diag_note("make '" STR_FMT "' a field of '" STR_FMT "' itself, and sample it by its name", STR_ARG(of->member),
+                          STR_ARG(holds->name));
+            }
+            return false;
+        }
         diag_error(of->at, "a function samples a %s it takes as a parameter of its own, or a field of a component or singleton "
                            "it takes%s", what,
                    !assets ? "" : reads == TY_GRID ? ", or a Grid2<Color> asset by its name" : reads == TY_CUBEMAP
@@ -7378,8 +7400,8 @@ static void note_mesh_forms(const expr *e)
         return;
     }
     diag_note("%s.Mesh(vertices, indices) draws a 2D mesh, and %s.Mesh(vertices, indices, transform) a 3D one, by its "
-              "vertices' position, the lists the CPU's or a kernel's GPU lists; then come a texture, its filter and its wrap, or "
-              "a vert and a frag by name, and after those a struct of values they read", on, on);
+              "vertices' position, the lists the CPU's or a kernel's GPU lists; then come textures, each with its filter and its "
+              "wrap, or a vert and a frag by name, and after those a struct of values they read", on, on);
 }
 
 // Whether a vert writes a struct of this type for its frag: `out FromLamp lamp`.
@@ -7514,8 +7536,9 @@ static const char *given_texture_names(const decl *vert, const decl *frag)
 // A draw that gives `given` textures to a vert and a frag that take `wanted`: said at the draw.
 static void say_given_textures(const expr *e, const char *draw_name, const int given, const int wanted)
 {
-    const char *who = e->vert && e->frag && shader_given_textures(e->vert, NULL) && shader_given_textures(NULL, e->frag)
-                    ? "its vert and frag take" : e->frag ? "its frag takes" : "its vert takes";
+    // Whose they are: the stages that take any
+    const bool vert = e->vert && shader_given_textures(e->vert, NULL), frag = e->frag && shader_given_textures(NULL, e->frag);
+    const char *who = vert && frag ? "its vert and frag take" : vert ? "its vert takes" : "its frag takes";
     diag_error(e->at, "this draw gives %d texture%s, and %s %d: %s", given, given == 1 ? "" : "s", who, wanted,
                given_texture_names(e->vert, e->frag));
     if (e->blit) {
@@ -7570,7 +7593,7 @@ static bool check_values_taken(const expr *e)
 static type check_blit(checker *c, expr *e)
 {
     e->blit = true;
-    // Draw.Blit(source, destination[, blend], frag[, values])
+    // Draw.Blit(source[, textures...], destination[, blend], frag[, values])
     int count = e->args.count;
     decl *frag = count >= 3 ? named_shader(c, e->args.items[count - 1]) : NULL;
     expr *values = NULL;
@@ -7589,6 +7612,21 @@ static type check_blit(checker *c, expr *e)
         sources++;
     if (sources == 0) sources = 1; // A source that's no texture, said below
     const int destination = sources; // ...then where it goes, and how
+    for (int i = 1; i < last; i++) { // A filter or a wrap among them, as a mesh's textures have: a blit's frag says those
+        const type t = e->args.items[i]->type;
+        if (t.kind != TY_ENUM || (t.decl != c->prog->filter && t.decl != c->prog->wrap)) continue;
+        diag_error(e->args.items[i]->at, "a blit takes no %s: its frag's Sample says how it reads each texture",
+                   t.decl == c->prog->filter ? "filter" : "wrap");
+        diag_note("like 'source.Sample(vertex.uv, Filter.Point, Wrap.Repeat)' in the frag");
+        return T_ERR;
+    }
+    for (int i = destination; i + 1 < last; i++) { // A target where a texture goes, before the destination
+        const expr *arg = e->args.items[i];
+        if (arg->type.kind != TY_RENDER_TARGET || e->args.items[i + 1]->type.kind != TY_RENDER_TARGET) continue;
+        diag_error(arg->at, "a blit's textures go before its destination, and this is a RenderTarget, not a Texture");
+        diag_note("a target's color image is its Texture, 'target.color', and its others 'target.colors[1]'");
+        return T_ERR;
+    }
     if (count != destination + 2 && count != destination + 3) {
         diag_error(e->at, "Blit takes an explicit source texture, destination target and frag: 'Draw.Blit(source, destination, Blur)'");
         diag_note("and how it goes over the destination, before the frag: 'Draw.Blit(source, destination, Blend.Add, Blur)'; "
@@ -7665,7 +7703,7 @@ static type check_blit(checker *c, expr *e)
     return T_VOID_;
 }
 
-// Draw.Mesh(vertices, indices[, transform][, texture[, filter[, wrap]]][, vert][, frag][, values]).
+// Draw.Mesh(vertices, indices[, transform][, texture[, filter[, wrap]]...][, vert][, frag][, values]).
 // Whether the mesh is 2D or 3D is its vertices' to say, by their position: a
 // float2's goes through the 2D camera, a float3's takes a transform and goes
 // through the 3D one. A List<Vertex> or a List<Vertex3> with no vert and no
@@ -23688,6 +23726,15 @@ static void check_local_field_calls(const checker *c)
                 diag_error(site->call->at, "'" STR_FMT "' uses the local fields of '" STR_FMT "', and a task can't yet",
                            STR_ARG(to->name), STR_ARG(d->name));
                 diag_note("call it from a view, and keep what the task needs in local state of its own");
+            } else if (from->kind == DECL_SHADER && !shader_type_given(q->type)) {
+                // A frag or vert hands on its view's local fields with what it's given by its name: one that holds
+                // no texture and no list goes to a function as a value of its match fields
+                diag_error(site->call->at, "'" STR_FMT "' uses the local fields of '" STR_FMT "', and a frag or vert hands a "
+                           "function those only with a %s that holds a texture or a list", STR_ARG(to->name),
+                           STR_ARG(d->name), q->type.kind == TY_SINGLETON ? "singleton" : "component");
+                diag_note_at(q->local_use_at, "it does on line %d", q->local_use_at.line);
+                diag_note("anything else goes to the function as a value of its match fields: read the local field in "
+                          "the %s and pass what it holds", shader_word(from));
             } else if (from->kind != DECL_SYSTEM && from->kind != DECL_FUNCTION
                        && from->kind != DECL_SHADER // A frag or vert reads its view's local fields, and hands them on
                        && !(from->kind == DECL_METHOD && row_binding(arg))) {

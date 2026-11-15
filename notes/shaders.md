@@ -27,6 +27,17 @@ and not marked. A vert's and a frag's same-named Texture with different `[Raw(T)
 convert): DepthTexture/TextureArray/Cubemap/Texture3D parameters stay errors that point at fields, which
 functions now take whole (below). LSP: draw labels say `[, texture[, filter[, wrap]]...]`, MESH_TEXTURE and
 BLIT_DOC describe the order; `lsp_shaders_signature_help`'s label offsets moved by those three characters.
+`say_given_textures` names whose the textures are by the stages that take any ("its vert takes" for a draw whose
+frag takes none). `BLIT_FORM` is `Draw.Blit(Texture source[, Texture textures...], RenderTarget destination[,
+Blend blend], frag shader[, values])`, and `blit_signature_help` (beside `mesh_signature_help`) picks the active
+parameter by what each argument is: a texture after the source is `textures...`, what follows them the destination,
+an empty argument the first it can be. `mesh_signature_help` takes a texture after a texture, its filter or its
+wrap (before the vert) as the texture again, so the next filter and wrap are its own; it went on to `filter` and
+`wrap` before. The Texture, DepthTexture, Cubemap, TextureArray and DepthTextureArray hovers say a function may
+take the component or singleton that holds one, and Texture's that a draw gives a frag's and vert's in order.
+check_blit says a Filter or Wrap among a blit's arguments is no blit's ("its frag's Sample says how it reads each
+texture"), and a RenderTarget followed by another where its textures go that a target's Texture is `target.color`;
+both fell to the generic shape error or the Blend error before.
 
 **Textures of what's given.** `holds_data` (shader.c) is true for a component or singleton with a sampled field
 (main or local part), so such a parameter is "given" as one that holds a list: no WGSL parameter, reads by type and
@@ -39,10 +50,34 @@ with param -1 and `asset` = that member (`same_named` dedupes by field); `pass_s
 call of another method of the same type, then notes it on the calling function or samples it in the root as a
 frag's own field. `sample_slot` returns 0 while checking in a function for anything but an asset (it used param
 indices of the root). `asset_usage.c` queues only `BIND_ASSET` names from `gpu_samples`. check.c's
-`function_samples` accepts `holder` (param field) and `receiver` (method field of a component/singleton);
-`check_local_field_calls` lets a frag or vert hand a function local fields (DECL_SHADER callers were refused,
-though the shader side already passed `given_local_reads`). `held_word` makes the messages say "holds a texture"
-where the type holds no list.
+`function_samples` accepts `holder` (param field) and `receiver` (method field of a component/singleton), and
+says a texture of a struct the singleton holds (`stage.lamps.shadow`, `lamps.shadow` in a method) isn't sampled in
+a function yet, with a note to make it a field of the singleton. `check_local_field_calls` lets a frag or vert hand
+a function local fields where the type is given (`shader_type_given`, holds_data exported in ast.h): a type that
+holds no texture and no list still goes as a WGSL value of its main fields, which has no local ones, so that stays
+an error at the call ("a frag or vert hands a function those only with a singleton that holds a texture or a list",
+`gpu_given_local_value`); lifting it there wrote WGSL reading a member the struct didn't have. `held_word` makes the
+messages say "holds a texture" where the type holds no list.
+
+**A function is written for each stage that writes it differently** (`need_function`, 2026-11-14, a review
+finding). A given struct's plain field is `put_bound` by its type and field, and a component's is the vertex's
+instance attributes (`tide_nK`) in the vertex stage and the flat varyings (`tide_fK`) in the fragment stage, which
+share one WGSL module. A function was written once, for whichever stage reached it first, so a frag calling a
+function a vert also called read the vertex stage's private globals, which the fragment never sets: zeros (and FXC
+folding a pixel to a constant, X4008). This was so for a component that holds a list before; making a component that
+holds a texture given made it reach a match component with only a `local Texture`, which had gone as a value and
+read right. Now `shader_function` keeps the stage, the text written after the name and the suffix it's named with:
+a stage that needs a function another stage wrote writes it again (its locals numbered from where the other's were,
+`temps`, so the same code is the same text), uses the other's where the text is the same, and otherwise writes it
+as `<name><suffix>_8f` (`_8` is a code `name_of` never makes). `need_function` returns the suffix its callers write.
+No existing golden changed: no function there differed by stage.
+
+**A copy of a given type with no list** (`ex_name`): a function's given parameter named whole, of a type whose
+main fields are GPU words (`type_words`: its textures are all `local` fields), is a value built of `put_bound` of
+each field, as the frag's own is, noting each field read; so `Coated copy = coated;` works in a function as `var
+kept = painted;` did in a frag, and as both did before the change. One with a main-part texture or a list is still
+refused, in both. Passing such a copy where a function takes the type is refused (`refuse_given`): it was a value
+before, and is the one regression left (below).
 
 Tests: shader goldens `given_textures` (three textures with per-texture filter/wrap into a target, a helper given
 two, vert sharing one and adding a Raw one, a vert alone drawing with its first, a blit of two with and without a
@@ -63,11 +98,36 @@ the Shadow singleton; the readout's lower right through one): native ASan Vulkan
 the device loss/recreation rerun on the web. Every existing shader golden, error/warning fixture, the listed e2e
 tests and LSP 279/279 pass unchanged but the two LSP edits above.
 
+After review: shader golden `given_struct_reads` (a handed singleton's `SampleLevel`, `SampleGrad`, array layer,
+volume, `Grid2<Color>` and `Grid2<float>` fields, a kernel helper's store into its volume; a component's plain field
+and local texture read by one function from a vert and a frag, `tf_Lift_40` and `tf_Lift_40_8f`, a function that
+reads none of it written once, and a copy of the component in a function), with spirv-val and FXC; errors
+`gpu_given_local_value` (singleton, frag) and `_vert` (component, vert), `texture_mesh_vert_count`,
+`gpu_given_texture_in_struct` and `_in_own_struct`, `gpu_given_texture_trilinear` and `_declared`; warning
+`gpu_given_texture_trilinear_carried`; `tide_platform_shaders` pass 34 grew a `Coated` entity whose `CoatLift`, from
+`Risen` and `Coating`, moves the quad a cell and gives the frag (1, 0.5, 0) (zeros in the frag before the fix), and
+an `Instanced` draw of two textures over two instances; `lsp_render_targets_texture_members_and_blit` checks the
+blit's active parameter for a second texture, the destination after two, a blend and a frag. Then errors
+`texture_blit_filter`, `texture_blit_target` and `gpu_given_texture_local_copy` (the copy passed on, below);
+`lsp_shaders_signature_help` checks a mesh draw's second texture, a filter and a wrap after it and a frag after
+three, and an Instanced draw's second texture; `lsp_textures_in_functions` the DepthTexture hover. Run here: the shader,
+error and warning fixtures above, `tidels_tests` and `tide_platform_shaders` (native ASan Vulkan); the web build
+and every other suite are the Build workflow's.
+
 Not built: DepthTexture/TextureArray/Cubemap/Texture3D as draw arguments; a texture of a struct a singleton holds
-(`stage.lamps.shadow`); a texture in a draw's values struct (argued against in the spec). No generated-C or WGSL
-identity run over every game's sources was made; the goldens and tests above are the evidence. A game whose GPU
-function took a match component or singleton with only `local` textures (a value before: its main part had no
-texture) now gets it given, which changes that function's WGSL, not its result.
+(`stage.lamps.shadow`: an error that says so); a texture in a draw's values struct (argued against in the spec); a
+`[Linear]` image as a draw's texture (an error, as it was; a `[Linear] Texture` frag parameter is in the spec's
+Views and drawing Open list); a function reading the local plain fields of a component or singleton that holds no
+texture and no list, from a frag or vert (an error, as before). That last makes a rule hang on how the type goes to
+the GPU (a `local Texture` added to the type lifts it), which a reviewer flagged; making it the same for every type
+is the owner's to pick, so it's in the same Open list with the three ways it could go (the type by its name once a
+GPU function reads its local fields, every type with local fields by its name, or a value that carries them). No generated-C or WGSL identity run over every game's sources was made; the goldens
+and tests above are the evidence. Changes for existing games: a GPU function taking a match component or singleton
+with only `local` textures (a value before: its main part had no texture) now gets it given, which changes that
+function's WGSL, not its result (one a vert and a frag of one draw both call is written for each stage); a function
+reading a component that holds a list from both stages of one draw now reads the frag's fields right where it read
+zeros (a fix); and a frag that passes a copy of a local-texture component (`var kept = painted; Gloss(kept)`) to a
+function that takes it is now an error that says to pass the frag's own name, where it compiled before.
 
 ## Linear-light image sources (2026-11-14)
 
@@ -1247,7 +1307,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 - Numeric `BoneTransform { }` and `default` work in shaders: zero position, identity rotation and unit scale, represented by ordinary typed default expressions rather than C-only placeholders. `compiler/tests/shaders/bone_transform_defaults` pins GLSL/WGSL, and the custom vert in `platform/tests/skinned.tide` checks their values on all three backends.
 - `compiler/tests/shaders/skinned` pins both languages for plain, textured, custom-vert/frag, explicit clip placement and render-target draws, beside an ordinary Mesh using the same V. `skinned_attribute_limit` pins a base in the last spare int lane at 16 attributes and a fully occupied layout's zero-base fallback; its E2E also checks user int words, distinct instance bases, automatic batching and individual fallback captures. The rest and borrow E2Es prepare before inspecting captured matrices, including independent poses merged into one run. `tide_platform_skinned` checks twelve pixels for eight influences per vertex, normals/tangents/default vertex fields visible in a custom vert, independent pose captures, explicit placement and matching color/depth passes, twice to check retained resources. No GPU result enters simulation state. Different poses can share an automatic instance run when their shader, mesh, atlas page, other textures, uniforms and draw settings match; no new explicit skinned-instance syntax was added.
 
-- A game's code runs on the GPU as `frag` (once for each pixel) and `vert` (once for each vertex), declarations like views, which a `Draw.Mesh`, or a target's `Mesh`, names after its other arguments, for 2D and 3D meshes of any vertex struct with a `position` (`docs/spec.md`, Views and drawing; `docs/game/shaders.md`). Their signature says what they read and the engine supplies it: the vertex first, a frag's pixel as `out Color`, components of the entity the calling view runs for, singletons, and the built-in `Instance`. Manual instancing can also supply one read-only ordinary struct from its list, a draw one read-only `Texture`, its explicit source, and a draw one more read-only struct, its values, written after the vert and the frag (below). No individual plain value parameters, no return value (decided: ECS style).
+- A game's code runs on the GPU as `frag` (once for each pixel) and `vert` (once for each vertex), declarations like views, which a `Draw.Mesh`, or a target's `Mesh`, names after its other arguments, for 2D and 3D meshes of any vertex struct with a `position` (`docs/spec.md`, Views and drawing; `docs/game/shaders.md`). Their signature says what they read and the engine supplies it: the vertex first, a frag's pixel as `out Color`, components of the entity the calling view runs for, singletons, and the built-in `Instance`. Manual instancing can also supply one read-only ordinary struct from its list, a draw read-only `Texture` parameters, in order (top of this file: Several textures a draw gives), and a draw one more read-only struct, its values, written after the vert and the frag (below). No individual plain value parameters, no return value (decided: ECS style).
   - **A frag's `this` is the pixel it runs for** (agreed 2026-10-07), as a system's is its entity. It needs no parameter: `this.world` is its `float3` place on the mesh in the world, `this.position` its `float2` place in the destination's logical pixels from the top left, and `this.depth` its `float` depth from 0 at the near side to 1 at the far side. The fields are read-only. `this.Discard()` leaves the pixel undrawn, writing no color, depth or stencil, and ends the frag there, with nothing owed to its `out` parameters. A vert has no pixel yet: its `this` is its vertex as the engine would place it (below: A vert puts its vertex itself). Ordinary helper functions inherit none, so take any coordinates they need as values. The old built-in `Pixel pixel` parameter is an error that says to remove it and use `this`; a game's own type named `Pixel` is still its own.
   - **What a frag and a vert write is `out`** (agreed 2026-10-07, built the same day; `docs/spec.md`, Views and drawing, Code the GPU runs, with the picks under Provisional there): a frag's color is `out Color color` (the owner's idea, now that `out` is a keyword), and a vert hands its frag a struct of its own, `vert Place(mut Corner corner, out FromLamp lamp, Sun sun)` and `frag Look(Corner corner, FromLamp lamp, out Color color)`, which the GPU blends across the triangle, so what a vert works out needs no field in every vertex of the mesh. A vert's vertex stays `mut`. What's built, and what code relies on:
     - **The parser lets `out` through for these two alone** (`parse_query_params` in `compiler/src/parser.c`, by `d->kind == DECL_SHADER`): `param.is_out` with `mode` `PARAM_MUT`, as a function's. A system's, a view's and a handler's `out` is the error it was. `param.mode_word` is the `mut` or `out` token as written, which the checker hands `suggest_replacement` for the quick fixes (`mut` to `out`, and `out` to `mut` on a vert's vertex).

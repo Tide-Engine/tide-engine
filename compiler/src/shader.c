@@ -121,9 +121,16 @@ typedef struct element_alias {
     int first, count; // The parts of it the local holds
 } element_alias;
 
+// A function written, for what it's given (`suffix`) in a stage: what was written after its name, and the suffix
+// that name has, which is `suffix` and, where its code in this stage isn't what it was in the other, the stage's
+// (need_function). Its locals were numbered from `temps`.
 typedef struct shader_function {
     const decl *fn;
     const char *suffix;
+    int stage;
+    int temps;
+    const char *text;
+    const char *named;
 } shader_function;
 
 typedef struct emit {
@@ -146,7 +153,7 @@ typedef struct emit {
     int lifting; // Writing one of those: a local is written as what it was declared as
     // The structs the code names, each after the ones it holds
     VEC(const decl *) structs;
-    VEC(shader_function) done; // The functions written, callees first, each for the lists and grids it's called with
+    VEC(shader_function) done; // The functions written, callees first, each for the lists and grids it's called with, by stage
     sb functions;
     bool helpers[H_COUNT];
     // A draw's textures, up to SHADER_TEXTURES
@@ -176,7 +183,7 @@ static void ex_as(emit *em, const expr *e, type want);
 static bool is_whole_variable(const expr *e);
 static bool is_pointer(const param *p);
 static void st(emit *em, const stmt *s);
-static void need_function(emit *em, decl *fn, loc at, const given *spec, const char *suffix);
+static const char *need_function(emit *em, decl *fn, loc at, const given *spec, const char *suffix);
 static bool is_const(const expr *e);
 static bool is_sampled(type t);
 static const field *field_called(const decl *d, const char *name);
@@ -2159,6 +2166,11 @@ static bool holds_data(const type t)
     return false;
 }
 
+bool shader_type_given(const type t)
+{
+    return holds_data(t);
+}
+
 // What such a type holds, for a message: "a list", or "a texture" for one with textures alone.
 static const char *held_word(const type t)
 {
@@ -2903,6 +2915,24 @@ static void ex_name(emit *em, const expr *e)
             return;
         }
         if (em->checking && em->code == em->root) em->root->params.items[param_index(em->root, p)].whole = true;
+        int floats = 0, ints = 0;
+        if (holds_data(p->type) && type_words(p->type, &floats, &ints)) {
+            // A component or singleton whose textures are all local fields: a value of its other fields, as the
+            // frag's own is (Textures of what's given), which has no textures and goes nowhere it does
+            if (!type_fits(em, p->type, e->at)) return;
+            sb_printf(em->o, "%s(", ty(em, p->type));
+            bool first = true;
+            for (int i = 0; i < p->type.decl->fields.count; i++) {
+                const field *f = &p->type.decl->fields.items[i];
+                if (f->hidden) continue;
+                note_given_field(em, e, f, false);
+                if (!first) sb_put(em->o, ", ");
+                first = false;
+                put_bound(em, p->type.decl, f, f->type);
+            }
+            sb_put(em->o, ")");
+            return;
+        }
         if (holds_data(p->type)) { // A function's struct that holds a list: it's its caller's, read by its fields
             refuse(em, e->at, "'" STR_FMT "' holds %s, so code the GPU runs reads it by its fields or passes it on by its "
                               "name: it's not a value to keep or pick", STR_ARG(e->name), held_word(p->type));
@@ -4827,7 +4857,7 @@ static void ex_user_call(emit *em, const expr *e)
         }
         sb_printf(&suffix, "%s%d", suffix.data ? "x" : "_4", number < 0 ? 0 : number);
     }
-    need_function(em, fn, e->at, spec, suffix.data ? suffix.data : "");
+    const char *named = need_function(em, fn, e->at, spec, suffix.data ? suffix.data : ""); // This stage's
     // What the function reads of the elements of a list it takes, the code that hands it the list reads
     for (int i = 0; em->checking && i < fn->params.count; i++) {
         const bool *read = fn->params.items[i].gpu_leaves;
@@ -4857,7 +4887,7 @@ static void ex_user_call(emit *em, const expr *e)
         }
     }
     const bool statement = em->statement == e;
-    sb_printf(em->o, "%s%s(", function_name(fn), suffix.data ? suffix.data : "");
+    sb_printf(em->o, "%s%s(", function_name(fn), named);
     bool first = true;
     if (method && !given) {
         const expr *receiver = e->kind == E_METHOD ? e->object : NULL;
@@ -6200,10 +6230,17 @@ static void st_one(emit *em, const stmt *s, bool outs_ready)
 // ---------------------------------------------------------------------------
 // Functions
 
-// A function or method the code calls: written before its caller, once.
+// A function or method the code calls: written before its caller, once for
+// what it's given, and for each stage whose code of it differs: a function
+// that reads a component it's given reads its fields from the instance's
+// attributes in the vertex stage and from what the vertex stage passes on in
+// the fragment stage (put_bound), and both stages are one module. So a stage
+// that needs a function another stage had written writes it again, and where
+// that's the same, it's the one; where it isn't, it's another, its name ending
+// in "_8" and its stage's letter. Says the suffix its calls are written with.
 // While checking, its body is checked once, whichever frag or vert reaches it
 // first, and a function that reaches itself is refused.
-static void need_function(emit *em, decl *fn, const loc at, const given *spec, const char *suffix)
+static const char *need_function(emit *em, decl *fn, const loc at, const given *spec, const char *suffix)
 {
     if (em->checking && fn->gpu_state >= 2) { // What it reads of assets by their names, its caller reads
         for (int i = 0; i < fn->gpu_data.count; i++) note_asset(em, fn->gpu_data.items[i]);
@@ -6212,15 +6249,23 @@ static void need_function(emit *em, decl *fn, const loc at, const given *spec, c
         if (fn->gpu_state == 1) {
             refuse(em, at, "'" STR_FMT "' calls itself, and the GPU has no recursion", STR_ARG(fn->name));
             diag_note("write it as a loop that counts: 'for (int i = 0; i < 8; i++) { ... }'");
-            return;
+            return suffix;
         }
         if (fn->gpu_state == 3) em->failed = true;
-        if (fn->gpu_state != 0) return;
+        if (fn->gpu_state != 0) return suffix;
     }
+    int other = -1; // Written for another stage: this one's is written, and compared with that
     for (int i = 0; i < em->done.count; i++) {
-        if (em->done.items[i].fn == fn && !strcmp(em->done.items[i].suffix, suffix)) return;
+        const shader_function *done = &em->done.items[i];
+        if (done->fn != fn || strcmp(done->suffix, suffix)) continue;
+        if (em->checking || done->stage == em->stage) return done->named ? done->named : suffix;
+        if (done->text) other = i;
     }
-    const shader_function written = {fn, suffix};
+    // Its locals are numbered as the other stage's were, so the same code is the same text
+    const int temps = em->temps;
+    if (other >= 0) em->temps = em->done.items[other].temps;
+    const int written_at = em->done.count;
+    const shader_function written = {fn, suffix, em->stage, em->temps, NULL, NULL};
     vec_push(em->done, written);
     const char *why = fn->is_extern        ? "it's C, which runs on the CPU"
                       : fn->is_async       ? "it's a task, which the CPU runs between ticks"
@@ -6230,7 +6275,8 @@ static void need_function(emit *em, decl *fn, const loc at, const given *spec, c
                                            : NULL;
     if (why) {
         refuse(em, at, "the GPU can't run '" STR_FMT "': %s", STR_ARG(fn->name), why);
-        return;
+        em->temps = temps > em->temps ? temps : em->temps;
+        return suffix;
     }
     // Its body, with what it calls before it
     sb body = {0};
@@ -6262,8 +6308,7 @@ static void need_function(emit *em, decl *fn, const loc at, const given *spec, c
     em->o = &head;
     const bool value = fn->return_type.kind != TY_VOID && fn->return_type.kind != TY_ERROR;
     if (value && !type_fits(em, fn->return_type, fn->at)) em->failed = true;
-    sb_printf(&head, "fn %s%s(", function_name(fn), suffix);
-    bool first = true;
+    bool first = true; // Its name and the '(' go before this, once it's known which it is
     if (method && given_self(fn)) { // Its receiver holds a list: it's handed nothing for it (Structs that hold lists)
         if (fn->is_mut_method) {
             refuse(em, fn->at, "'" STR_FMT "' changes the '" STR_FMT "' it's called on, and code the GPU runs only reads one that "
@@ -6326,13 +6371,31 @@ static void need_function(emit *em, decl *fn, const loc at, const given *spec, c
     em->defuse = defuse;
     em->statement = statement;
     em->failed = failed || bad;
-    sb_put(&em->functions, head.data);
-    if (em->grads.data) sb_put(&em->functions, em->grads.data); // What its Samples ask as it starts
+    sb text = {0};
+    sb_put(&text, head.data);
+    if (em->grads.data) sb_put(&text, em->grads.data); // What its Samples ask as it starts
     em->grads = grads;
     em->grad_count = grad_count;
     em->hoisted.count = hoisted;
-    if (body.data) sb_put(&em->functions, body.data);
-    sb_put(&em->functions, "}\n\n");
+    if (body.data) sb_put(&text, body.data);
+    sb_put(&text, "}\n\n");
+    // Its locals are its own: they're numbered from where the caller's were, and its caller's go on past both
+    em->temps = temps > em->temps ? temps : em->temps;
+    const char *named = suffix;
+    if (other >= 0 && !strcmp(em->done.items[other].text, text.data)) {
+        named = em->done.items[other].named; // The same in this stage as in the other: the one
+    } else {
+        if (other >= 0) { // ...and another where it isn't
+            sb stage = {0};
+            sb_printf(&stage, "%s_8%c", suffix, em->stage == STAGE_FRAG ? 'f' : 'v');
+            named = stage.data;
+        }
+        sb_printf(&em->functions, "fn %s%s(", function_name(fn), named);
+        sb_put(&em->functions, text.data);
+    }
+    em->done.items[written_at].text = text.data;
+    em->done.items[written_at].named = named;
+    return named;
 }
 
 // ---------------------------------------------------------------------------

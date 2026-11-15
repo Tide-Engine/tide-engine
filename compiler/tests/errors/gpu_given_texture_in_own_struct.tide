@@ -1,0 +1,17 @@
+// expect: a function samples a Texture that's a field of the component or singleton it takes, and 'image' is a field of a struct 'Stage' holds, which it doesn't yet
+// expect: make 'image' a field of 'Stage' itself, and sample it by its name
+// ...and the same in a method of the singleton
+scene Main { }
+struct Look { Texture image; }
+local singleton Stage
+{
+    Look look;
+    List<Vertex3> mesh;
+
+    Color Seen(float2 uv) { return look.image.Sample(uv); }
+}
+frag Shade(Vertex3 vertex, out Color color, Stage stage)
+{
+    color = stage.Seen(vertex.uv);
+}
+view Show(Stage stage) { Draw.Mesh(stage.mesh, [0, 1, 2], float4x4.identity, Shade); }

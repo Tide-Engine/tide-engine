@@ -433,7 +433,7 @@ After the vertex, and what each writes (a frag's color, the structs a vert hands
 - A [`local` field](./local-state.md) of the match's component or singleton is read like any other: `box.highlight`, which a view set for the entity under the mouse.
 - With [`Draw.Instanced`](#instances-from-a-list), an ordinary struct parameter takes the current item of the instance list. It is read-only too. (A frag's struct of a type its draw's vert writes is [the vert's](#from-a-vert-to-its-frag) instead.)
 - An ordinary struct parameter also takes [the values a draw gives](#values-for-one-draw) after its vert and frag: `Draw.Blit(source, destination, Blur, BlurStep { along = float2(1, 0) })`.
-- A read-only `Texture` parameter receives the explicit image passed to `Draw.Mesh`, `Draw.Instanced`, a target's `Mesh` or `Instanced`, or [`Draw.Blit`](./render-targets.md#post-processing). Each stage takes at most one; when both stages take it, they receive the same source. `source.Sample(vertex.uv[, Filter.Point[, Wrap.Repeat]])` uses the same top-left UVs as grid sampling. Local component and singleton `Texture` fields can be sampled too.
+- Read-only `Texture` parameters receive the explicit images passed to `Draw.Mesh`, `Draw.Instanced`, a target's `Mesh` or `Instanced`, or [`Draw.Blit`](./render-targets.md#post-processing), in order: the frag's first, then the vert's own, and a vert's and a frag's of one name are the one image (see [Several textures](#several-textures)). `source.Sample(vertex.uv[, Filter.Point[, Wrap.Repeat]])` uses the same top-left UVs as grid sampling. Local component and singleton `Texture` fields can be sampled too.
 
 The view needn't take them itself. It has to run for entities that have the components, so `with Box` is enough, and it's an error at the mesh draw when it doesn't:
 
@@ -785,17 +785,20 @@ frag Lit(PartVertex vertex, out Color color, Texture colour, Texture normal, Tex
     color = colour.Sample(vertex.uv) * look.tint * Math.Saturate(n.z) * (1 - orms.g);
 }
 
-view Parts(Kit kit, Look look)
+view Parts(Kit kit)
 {
-    kit.target.Mesh(kit.barrel, kit.transform, kit.metalColour, kit.metalNormal, kit.metalOrm, Lit, look);
-    kit.target.Mesh(kit.stock, kit.transform, kit.woodColour, kit.woodNormal, Filter.Point, kit.woodOrm, Lit, look);
+    kit.target.Mesh(kit.barrel, kit.transform, kit.metalColour, kit.metalNormal, kit.metalOrm, Lit, Look { tint = kit.metal });
+    kit.target.Mesh(kit.stock, kit.transform, kit.woodColour, kit.woodNormal, Filter.Point, kit.woodOrm, Lit, Look { tint = kit.wood });
 }
 ```
+
+`Look` is a struct, `struct Look { Color tint; }`, given as [the draw's values](#values-for-one-draw) after the frag.
 
 - **In the frag's order.** The first texture after the mesh's arguments (a 3D mesh's transform, an `Instanced` draw's list) is the frag's first `Texture` parameter, and so on. Every draw form takes them so: `Mesh`, `Instanced`, `SkinnedMesh` and a target's own, over the CPU's lists or a GPU list's.
 - **A filter and a wrap go after the texture they're for**, and are that texture's alone for this draw: above, the wood's normal map is read at its nearest pixels, and its colour and ORM as they say. A texture with nothing after it is read as it says itself, or as the frag's `Sample` says.
 - **A vert takes them too.** Its `Texture` parameters are the draw's as well: one of the same name as a frag's is that one texture, and one of its own comes after all of the frag's. `vert Raise(mut PartVertex vertex, Texture normal, Texture height)` drawn with `Lit` takes `colour, normal, orm, height`. With no frag, the first texture is what the mesh's pixels are drawn with.
-- **A blit gives them before its destination**: `Draw.Blit(source, lut, Draw.window, Grade)` for `frag Grade(Vertex vertex, out Color color, Texture source, Texture lut)`.
+- **A blit gives them before its destination**: `Draw.Blit(source, lut, Draw.window, Grade)` for `frag Grade(Vertex vertex, out Color color, Texture source, Texture lut)`. It takes no filter or wrap; its frag's `Sample` says those.
+- **A [`[Linear]`](#linear-light-color) image isn't one of them**: a draw's textures are read as they're stored, so a `[Linear]` asset or field given to a draw is an error. Keep a material's albedo in a `[Linear]` field of a component or singleton the frag takes, or that a [function it calls is handed](#in-a-function), and give the draw the unmarked normal and ORM maps.
 - **Each is a texture of the draw's own**, among the 16 it reads, with samplers of its own where its `Sample` leaves the filter or wrap to the texture. A draw that gives fewer or more textures than its frag and vert take is an error that names the ones they take, in order.
 
 `Filter.Trilinear` reads between the texture's smaller copies too, so it's smooth where the texture ends up [smaller than it is](./meshes-and-textures.md#drawn-smaller):
@@ -909,8 +912,9 @@ frag Ground(Corner corner, out Color color, Stage stage)
 ```
 
 - **What the frag or vert was given, by its name**: its own component or singleton parameter, or a function's parameter that stands for one, as for [what holds a list](#passing-on-what-holds-a-list). Nothing is passed for it while it runs: each texture of it is the shader's, by its type and its field, and the function is written once however many calls it has.
-- **Everything a function does with its own `Texture` it does with a field**: `Sample` with or without a filter and a wrap, a depth's `Compare`, a cube's and an array's reads, `.size`, and passing `stage.shadow` on to a function that takes a `DepthTexture`. A method of the singleton samples its fields by their names, `sky.Sample(way)`, and calls its other methods on the same one. A component's textures are each entity's, as a frag reads them. Local fields work the same.
-- **It's still a name, not a value**: a copy of the singleton in a local, `var kept = stage;`, is an error, as it is for one that holds a list. A plain struct carries no texture to the GPU, so a function that samples a struct's field is an error that says to take the component or singleton, or the texture itself.
+- **Everything a function does with its own `Texture` it does with a field**: `Sample`, `SampleLevel` and `SampleGrad` with or without a filter and a wrap, a depth's `Compare`, a cube's, an array's and a volume's reads, `.size`, a kernel helper's store into an image, and passing `stage.shadow` on to a function that takes a `DepthTexture`. A method of the singleton samples its fields by their names, `sky.Sample(way)`, and calls its other methods on the same one. A component's textures and fields are each entity's, as a frag reads them, from its vert and from its frag alike.
+- **Local fields go with it.** A frag or vert hands such a function the local fields of the match's component or singleton it reads, as a view hands its own functions. One that holds no texture and no list goes to a function as a value of its match fields, as it did, so a function that reads its local fields is an error there: read the local field in the frag and pass what it holds.
+- **It's still a name, not a value**: a copy of the singleton in a local, `var kept = stage;`, is an error, as it is for one that holds a list. One whose textures are all `local` fields of a match component or singleton is a value of its other fields, as before, in a frag and in a function alike: the copy has none of its textures, and goes nowhere the one it was made of goes. A plain struct carries no texture to the GPU, so a function that samples a struct's field is an error that says to take the component or singleton, or the texture itself; and a texture in a struct the singleton holds, `stage.lamps.shadow`, isn't sampled in a function yet.
 - **It's the GPU's alone**, as any function that samples is: a view that calls `Sunlit` is an error.
 
 ### Textures that are numbers
@@ -1423,7 +1427,7 @@ view GrassField(Foliage foliage, Models models)
 - For a 2D mesh, the instance list holds an ordinary struct and a vert places its vertices, as `Place` does above. A field named `transform` is ordinary data there; the engine doesn't apply it, and `Instance.transform` remains identity.
 - Components still come from the calling view's entity, and singletons are shared by the draw. The list items don't have to be entities and don't add any.
 - Only the instance fields the shaders read are sent, beside the 3D transform. Unread fields take no GPU space. The fields that are read follow the same GPU type and attribute limits as components.
-- Textures, filters, wraps, verts and frags go after the instance list, in the same order as `Mesh`: `Draw.Instanced(vertices, indices, instances[, texture[, filter[, wrap]]][, vert][, frag])`. A frag can sample fields of its parameters, or receive an explicit `Texture` through its read-only `Texture` parameter.
+- Textures, filters, wraps, verts and frags go after the instance list, in the same order as `Mesh`: `Draw.Instanced(vertices, indices, instances[, texture[, filter[, wrap]]...][, vert][, frag])`. A frag can sample fields of its parameters, or receive the draw's explicit textures through its read-only `Texture` parameters, in order (see [Several textures](#several-textures)).
 - An empty instance list draws nothing. Items draw in list order, in one instanced draw; adjacent compatible calls can join the same run.
 
 Every mote below is an item of a list, and none is an entity. A vert places the quad's four corners for each, with that mote's own center, size and phase, and a frag makes a soft dot of it in its tint. The slider changes how many the list holds: they're one draw either way.

@@ -1799,12 +1799,12 @@ static const char *builtin_type_doc(const type_kind kind)
     case TY_LOCAL_ENTITY: return "A handle to an entity of the local world: this machine's own, which only local code holds.";
     case TY_PLAYER: return "A player, independent of connections. `PlayerID(0)` names a player by index.";
     case TY_COLOR: return "A color: r, g, b and a from 0 to 1. Its constructor takes numbers and vectors totaling 3 or 4 channels, in order: `Color(uv.xy, 0)` or `Color(rgb)` has alpha 1; `Color(rgb, a)` or `Color(rgba)` supplies it. Ints and int vectors widen to floats.";
-    case TY_TEXTURE: return "A local image reference, sampled on the GPU with `Sample(uv[, filter[, wrap]])`. A Blit supplies its source to a read-only Texture shader parameter. A function a frag or vert calls takes one as a parameter, and samples the texture its call names.";
-    case TY_DEPTH_TEXTURE: return "A local reference to a render target's depth, `target.depth`, which a frag or vert reads where it's a field of a component or singleton it takes: `Sample(uv)` gives how far the nearest thing drawn there is, 0 at the near plane to 1 at the far limit, and `Compare(uv, value)` how much of what's stored around there isn't nearer than `value`, 0 to 1, as a shadow wants. A function they call takes one as a parameter, `float Lit(DepthTexture shadow, float3 at)`, and reads the depth its call names, `Lit(lamp.shadow, at)`.";
-    case TY_CUBEMAP: return "A local reference to a cube of six images, which a frag or vert reads by a direction from its middle, `Sample(direction)`, where it's an asset by its name or a field of a component or singleton it takes; a function they call takes one as a parameter, and reads the cube its call names. An asset's is six files a glob matches, named for their faces: `asset Cubemap sky = \"art/sky_??.png\";`. `Cubemap(size)` is one a view draws into, a face at a time: `cube.faces[0]` to `cube.faces[5]` are RenderTargets, in the order +x, -x, +y, -y, +z, -z.";
+    case TY_TEXTURE: return "A local image reference, sampled on the GPU with `Sample(uv[, filter[, wrap]])`. A frag's or vert's read-only Texture parameters receive the textures a draw gives after its mesh's arguments, or a Blit's source and those after it, in order: the frag's first, then the vert's own. A function a frag or vert calls takes one as a parameter, and samples the texture its call names, or takes the component or singleton that holds one, and samples its field: `Tint(look, uv)` reading `look.albedo`.";
+    case TY_DEPTH_TEXTURE: return "A local reference to a render target's depth, `target.depth`, which a frag or vert reads where it's a field of a component or singleton it takes: `Sample(uv)` gives how far the nearest thing drawn there is, 0 at the near plane to 1 at the far limit, and `Compare(uv, value)` how much of what's stored around there isn't nearer than `value`, 0 to 1, as a shadow wants. A function they call takes one as a parameter, `float Lit(DepthTexture shadow, float3 at)`, and reads the depth its call names, `Lit(lamp.shadow, at)`, or takes the component or singleton that holds it, `float Lit(Lamp lamp, float3 at)`, and reads `lamp.shadow`.";
+    case TY_CUBEMAP: return "A local reference to a cube of six images, which a frag or vert reads by a direction from its middle, `Sample(direction)`, where it's an asset by its name or a field of a component or singleton it takes; a function they call takes one as a parameter, and reads the cube its call names, or takes the component or singleton that holds it, and reads its field (`stage.sky`). An asset's is six files a glob matches, named for their faces: `asset Cubemap sky = \"art/sky_??.png\";`. `Cubemap(size)` is one a view draws into, a face at a time: `cube.faces[0]` to `cube.faces[5]` are RenderTargets, in the order +x, -x, +y, -y, +z, -z.";
     case TY_TEXTURE3D: return "A machine-local volume. Create Texture3D(int3 size[, Format format]), Sample(float3 uvw[, Filter[, Wrap]]) in GPU code, or read an exact cell with [int3]. Kernels write cells without mut; writes outside the volume go nowhere. Size is in texels; Resize(int3), Dispose() and contentRevision follow render targets. No mipmaps or slice drawing.";
-    case TY_TEXTURE_ARRAY: return "A local reference to layers of images of one size, which a frag or vert reads by a uv and a layer, `Sample(uv, layer)`, where it's an asset by its name or a field of a component or singleton it takes; a function they call takes one as a parameter, and reads the array its call names. The layer is an int of any expression, and one past the layers reads the nearest. An asset's is the files a glob matches, in path order, or a list of paths, in its order: `asset TextureArray ground = \"art/ground/*.png\";`. `TextureArray(width, height, layers)` is one a view draws into, a layer at a time: `array.layers[0]` is a RenderTarget, and `array.depth` each layer's depth. On the CPU, `array.size` is a layer's pixels and `array.count` how many layers it has.";
-    case TY_DEPTH_TEXTURE_ARRAY: return "A local reference to a TextureArray's depth, `array.depth`, each layer's, which a frag or vert reads where it's a field of a component or singleton it takes: `Sample(uv, layer)` gives how far the nearest thing drawn there is, 0 at the near plane to 1 at the far limit, and `Compare(uv, layer, value)` how much of what's stored around there isn't nearer than `value`, 0 to 1, as a shadow's cascades want. A function they call takes one as a parameter, and reads the depths its call names. On the CPU, `size` is a layer's pixels and `count` how many layers it has.";
+    case TY_TEXTURE_ARRAY: return "A local reference to layers of images of one size, which a frag or vert reads by a uv and a layer, `Sample(uv, layer)`, where it's an asset by its name or a field of a component or singleton it takes; a function they call takes one as a parameter, and reads the array its call names, or takes the component or singleton that holds it, and reads its field. The layer is an int of any expression, and one past the layers reads the nearest. An asset's is the files a glob matches, in path order, or a list of paths, in its order: `asset TextureArray ground = \"art/ground/*.png\";`. `TextureArray(width, height, layers)` is one a view draws into, a layer at a time: `array.layers[0]` is a RenderTarget, and `array.depth` each layer's depth. On the CPU, `array.size` is a layer's pixels and `array.count` how many layers it has.";
+    case TY_DEPTH_TEXTURE_ARRAY: return "A local reference to a TextureArray's depth, `array.depth`, each layer's, which a frag or vert reads where it's a field of a component or singleton it takes: `Sample(uv, layer)` gives how far the nearest thing drawn there is, 0 at the near plane to 1 at the far limit, and `Compare(uv, layer, value)` how much of what's stored around there isn't nearer than `value`, 0 to 1, as a shadow's cascades want. A function they call takes one as a parameter, and reads the depths its call names, or takes the component or singleton that holds it, and reads its field. On the CPU, `size` is a layer's pixels and `count` how many layers it has.";
     case TY_RENDER_TARGET: return "A local drawing destination. `RenderTarget(width, height)` is one of that size in logical pixels, like the window's, at the display's full resolution; `RenderTarget(width, height, 1)` has exactly that many pixels, whatever the display; `RenderTarget.Window()` is always the window's size. `samples: 4`, after everything else, draws each of its pixels with that many samples, which smooths the edges of the triangles drawn into it. Each says last what it holds when that isn't one color image: `Format.Depth` is depth alone, and a format for each makes several, `RenderTarget(width, height, Format.Rgba8, Format.Rgba16f)`, which a frag's Color, float, float2, float4 or int outputs go to in order. Numeric outputs must fit their Format and replace the stored value without tint or alpha multiplication. Drawing into one is as drawing into the window. Copies share the image; `Resize(width, height)` discards its contents and `Dispose()` releases it. Color and depth persist across frames. `target.color` is its Texture, `target.colors[1]` its second color image's, and `target.depth` its DepthTexture; `Draw.window` is the window destination.";
     case TY_RECT: return "A rectangle on the screen, for the GUI: x and y from the top left, y down, then width and height.";
     case TY_MESH: return "An asset's mesh: `asset Mesh<Corner> tree = \"art/tree.glb\";` is a glTF, FBX or OBJ file as vertices of the struct in its `<>`, which the file fills by its fields' names (`position`, `normal`, `uv`, `uv2`, `color`, `tangent`). `Draw.Mesh(tree, transform, ...)` and `Draw.Instanced(tree, instances, ...)` draw it; `tree.vertices` and `tree.indices` are its lists, read-only, which any code reads. Fields, lists, arrays, maps, parameters and results keep its stable asset ID; geometry stays shared and resolves on access. `Mesh(vertices, indices)` makes one of the game's own lists, a copy nothing changes after, which goes everywhere an asset's does.";
@@ -2506,7 +2506,7 @@ static const method_form target_calls[] = {
     {"ReadDepth", "ReadDepth() -> Grid2<float> fails IOError", "Await in local async code for an owned copy of the target's depth, a frame or more later: 0 at the near plane and 1 at the far one, as `this.depth` and `DepthTexture.Sample` give it, whatever the device stores. One depth a pixel for a multisampled target. Also for a target of depth alone, a cube's face and an array's layer. At most 4,000,000 pixels; device loss fails."},
 };
 
-#define BLIT_FORM "Draw.Blit(Texture source, RenderTarget destination[, Blend blend], frag shader[, values])"
+#define BLIT_FORM "Draw.Blit(Texture source[, Texture textures...], RenderTarget destination[, Blend blend], frag shader[, values])"
 #define BLIT_DOC "Runs the frag over the whole destination, supplying its Texture parameter from source. A frag that takes several is given them in its order, before the destination: `Draw.Blit(source, lut, destination, Grade)`. No setting changes it: not the camera, the clip, the transform, the tint nor Draw.Blend. It replaces the destination's color, or goes over it as `blend` says (`Blend.Add`), and preserves depth. Source cannot be destination.color. A struct's value after the frag is this blit's values, which the frag reads through a parameter of its type: `Draw.Blit(source, destination, Blur, BlurStep { along = float2(1, 0) })`."
 
 // What Draw.Mesh takes beside the built-in signatures' lists of Vertex and
@@ -12714,11 +12714,23 @@ static void mesh_signature_help(const int open, const int commas, const loc at, 
     const int count = (whole ? 8 : instanced || three_d ? 9 : 8) + (three_d ? 1 : 0); // A 3D mesh's lod: last
     const int fixed = skinned || whole ? 2 : instanced || three_d ? 3 : 2; // The lists or the Mesh, and a 3D mesh's transform or the instances
 
+    // Where the texture is, and the vert after its filter and its wrap: a draw gives several textures, each with its
+    // own filter and wrap, so another texture before the vert is the texture again
+    int texture = 0, vert = 0;
+    for (int k = 0; k < count; k++) {
+        if (order[k] == MESH_TEXTURE) texture = k;
+        if (order[k] == MESH_VERT) vert = k;
+    }
     int active = 0;
     int next = 0; // The first parameter the next argument can be
     for (int a = 0; a <= commas && a < args.count; a++) {
         active = next < count ? next : count - 1;
         const int kind = a < fixed ? order[active] : mesh_argument(&sc, args.first[a], args.last[a]);
+        if (kind == MESH_TEXTURE && next > texture && next <= vert) {
+            active = texture;
+            next = texture + 1;
+            continue;
+        }
         for (int k = next; k < count; k++) {
             if (order[k] != kind) continue;
             active = k;
@@ -12755,6 +12767,71 @@ static void mesh_signature_help(const int open, const int commas, const loc at, 
     jb_printf(out, "],\"activeSignature\":0,\"activeParameter\":%d}", active);
 }
 
+// Draw.Blit's parameters, as BLIT_FORM names them, and what each takes.
+enum { BLIT_SOURCE, BLIT_TEXTURES, BLIT_DESTINATION, BLIT_BLEND, BLIT_FRAG, BLIT_VALUES, BLIT_PARAMS };
+static const struct {
+    const char *name;
+    const char *doc;
+} blit_params[BLIT_PARAMS] = {
+    [BLIT_SOURCE] = {"Texture source", "The frag's first `Texture` parameter: a render target's color, an asset, or a "
+                                       "`Grid2<Color>` or `Grid2<float>`, which is one here. Never the destination's own color."},
+    [BLIT_TEXTURES] = {"Texture textures...", "The frag's other `Texture` parameters, in its order, before the destination: "
+                                              "`Draw.Blit(source, lut, destination, Grade)`."},
+    [BLIT_DESTINATION] = {"RenderTarget destination", "Where the frag's pixels go: a render target, or `Draw.window`."},
+    [BLIT_BLEND] = {"Blend blend", "How the pixels go over the destination, `Blend.Add`: they replace it where the blit "
+                                   "leaves this out."},
+    [BLIT_FRAG] = {"frag shader", "A frag on `Vertex`, the destination's full quad, by name."},
+    [BLIT_VALUES] = {"values", "A struct's value, after the frag, which reads it through a read-only parameter of its type: "
+                               "this blit's own."},
+};
+
+// Whether the parentheses opened at token `open` are Draw.Blit's.
+static bool opens_blit(const int open)
+{
+    const token *toks = DOC->toks;
+    return open >= 3 && toks[open - 1].kind == T_IDENT && str_eq_c(toks[open - 1].text, "Blit") && toks[open - 2].kind == T_DOT
+        && toks[open - 3].kind == T_IDENT && str_eq_c(toks[open - 3].text, "Draw");
+}
+
+// Signature help in Draw.Blit's parentheses, opened at token `open`, with `commas` before the cursor: its source, the
+// textures after it, its destination, how it goes over it, its frag and its values, by what each argument is, as
+// several textures and a blend can be there or not. An argument that isn't written yet is the first it can be after
+// what's before it: the destination after a texture.
+static void blit_signature_help(const int open, const int commas, const loc at, jbuf *out)
+{
+    const scope sc = scope_at(at);
+    call_args args;
+    call_arguments(open, &args);
+    int active = BLIT_SOURCE;
+    int next = BLIT_SOURCE; // The first parameter the next argument can be
+    for (int a = 0; a <= commas && a < args.count; a++) {
+        const int first = args.first[a], last = args.last[a];
+        const int kind = mesh_argument(&sc, first, last);
+        const type t = first <= last && DOC->toks[first].kind == T_IDENT ? names_type(&sc, first, last) : (type){0};
+        if (next == BLIT_SOURCE) active = BLIT_SOURCE;
+        else if (kind == MESH_TEXTURE && next <= BLIT_TEXTURES) active = BLIT_TEXTURES;
+        else if (kind == MESH_FRAG) active = BLIT_FRAG;
+        else if (kind == MESH_VALUES) active = BLIT_VALUES;
+        else if (t.kind == TY_ENUM && t.decl == A.prog->blend) active = BLIT_BLEND;
+        else active = next < BLIT_DESTINATION ? BLIT_DESTINATION : next < BLIT_PARAMS ? next : BLIT_PARAMS - 1;
+        next = active == BLIT_TEXTURES ? BLIT_TEXTURES : active + 1;
+    }
+    jb_put(out, "{\"signatures\":[{\"label\":");
+    jb_string(out, BLIT_FORM);
+    jb_put(out, ",\"documentation\":{\"kind\":\"markdown\",\"value\":");
+    jb_string(out, BLIT_DOC);
+    jb_put(out, "},\"parameters\":[");
+    for (int i = 0; i < BLIT_PARAMS; i++) {
+        const char *found = strstr(BLIT_FORM, blit_params[i].name);
+        const int start = found ? (int)(found - BLIT_FORM) : 0;
+        jb_printf(out, "%s{\"label\":[%d,%d],\"documentation\":{\"kind\":\"markdown\",\"value\":", i ? "," : "", start,
+                  start + (int)strlen(blit_params[i].name));
+        jb_string(out, blit_params[i].doc);
+        jb_put(out, "}}");
+    }
+    jb_printf(out, "]}],\"activeSignature\":0,\"activeParameter\":%d}", active);
+}
+
 void analysis_signature_help(const int line, const int character, jbuf *out)
 {
     const arena_mark temporary = arena_checkpoint();
@@ -12774,6 +12851,10 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
     }
     if (opens_mesh_draw(open)) {
         mesh_signature_help(open, commas, at, out);
+        goto done;
+    }
+    if (opens_blit(open)) {
+        blit_signature_help(open, commas, at, out);
         goto done;
     }
     const str name = DOC->toks[callee].text;
