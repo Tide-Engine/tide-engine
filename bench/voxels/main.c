@@ -5,8 +5,10 @@
 // behind it. It digs and builds some of the time (`builders` of each hundred
 // bots do), and every `hop` seconds goes to the next dimension. With `tower`,
 // each flies straight out a way of its own for that many seconds and then
-// climbs, building a tower: what each builds is far from the others, who see
-// it in their far regions.
+// climbs, building a tower, all in the first dimension: what each builds is far
+// from the others, who see it in their far regions. With `audit`, the server
+// checks its far regions against its chunks every that many ticks (Audit in
+// voxels.tide), and the run fails on what it finds wrong.
 
 #include <stdio.h>
 #include <string.h>
@@ -28,7 +30,13 @@ typedef struct kept {
 
 static kept *store;
 static uint32_t store_room, store_count;
-static uint64_t store_bytes, store_writes, store_reads, store_found, store_far_found;
+static uint64_t store_bytes, store_writes, store_reads, store_found, store_far_found, store_forgot;
+// --forget: chunks' saves aren't kept (far regions' are), as a server that stopped before it saved its chunks
+// would have lost them
+static bool forget_chunks;
+// --audit: the far regions' checks ran (Streamer.audits) and found nothing wrong, or the run fails
+static uint32_t audit_every;
+static bool audit_failed;
 
 static uint32_t path_hash(const char *path)
 {
@@ -77,6 +85,10 @@ static tide_io_error store_write(void *user, const char *path, const uint8_t *da
 {
     (void)user;
     (void)append;
+    if (forget_chunks && strncmp(path, "saved/chunks/", 13) == 0) {
+        store_forgot++;
+        return TIDE_IO_NONE;
+    }
     if ((store_count + 1u) * 2u > store_room) {
         const uint32_t room = store_room ? store_room * 2u : 1024u, had = store_room;
         kept *was = store;
@@ -161,10 +173,15 @@ static bench_flag flags[] = {
     {"keep", "ticks between saves of a chunk players changed, while it's held", 600, 90, 0, 1},
     {"linger", "ticks a chunk or a far region nobody has stays before it goes", 120, 5, 0, 0},
     {"builders", "bots of each hundred that dig and build", 100, 100, 0, 0},
-    {"tower", "seconds a bot flies straight out, each its own way, before it climbs building a tower; 0 never", 0, 0, 0, 0},
+    {"tower", "seconds a bot flies straight out, each its own way, before it climbs building a tower (in its first "
+              "dimension: no hops); 0 never", 0, 0, 0, 0},
     {"far", "far regions (8 by 8 chunks) a player has around theirs, sideways", 6, 1, 0, 1},
     {"pace", "far columns a dimension's changes are sent in each time, at most", 64, 64, 0, 1},
     {"gap", "ticks between sendings of a dimension's far changes; 0 every tick", 30, 30, 0, 0},
+    {"audit", "ticks between checks that the far regions say what the chunks the server has do, and are the right "
+              "players'; the run fails on what they find; 0 never", 0, 60, 0, 0},
+    {"forget", "1: the store keeps no chunk's save, and keeps the far regions', as a server that stopped before it "
+               "saved its chunks would have", 0, 0, 0, 0},
 };
 
 static uint32_t mix(uint32_t x)
@@ -189,19 +206,22 @@ static void make_world(const bench_flag *f, void *world, const float dt)
     w->Worlds.far = (int32_t)f[9].value;
     w->Worlds.pace = (int32_t)f[10].value;
     w->Worlds.gap = (int32_t)f[11].value;
+    w->Worlds.audit = (int32_t)f[12].value;
+    audit_every = f[12].value;
+    forget_chunks = f[13].value != 0;
 }
 
 static void sample(const bench_flag *f, const uint32_t bot, const uint32_t tick, void *input)
 {
     Controls *c = input;
     c->fly = true;
-    const uint32_t hop = f[3].value * 60u;
+    const uint32_t tower = f[8].value * 60u;
+    const uint32_t hop = tower ? 0u : f[3].value * 60u;
     c->hops = hop ? (int32_t)((tick + mix(bot) % hop) / hop) : 0;
     if (mix(bot * 7919u + 1u) % 100u < f[4].value) return;
     const bool builds = mix(bot * 104729u + 3u) % 100u < f[7].value;
     // A direction along the ground for five seconds, from a table: no platform's sines
     static const float ways[8][2] = {{1, 0}, {0.7f, 0.7f}, {0, 1}, {-0.7f, 0.7f}, {-1, 0}, {-0.7f, -0.7f}, {0, -1}, {0.7f, -0.7f}};
-    const uint32_t tower = f[8].value * 60u;
     if (tower) {
         // Out along a way of its own (eight bots, eight ways), then straight up, a plank above it each cell it rises:
         // a tower whose top changes twelve times a second (it flies 12 cells a second), far from the others'
@@ -235,10 +255,15 @@ static void describe(const void *world)
 {
     const tide_world *w = world;
     uint32_t chunks = 0, edited = 0, avatars = 0, regions = 0, sent = 0, far = 0;
-    uint64_t edits = 0, sendings = 0;
+    uint64_t edits = 0, sendings = 0, audits = 0, wrong = 0;
     EACH(w, e)
     {
         avatars += tide_has_Avatar(w, e);
+        if (tide_has_Streamer(w, e)) {
+            const Streamer streamer = tide_get_Streamer(w, e);
+            audits += (uint64_t)streamer.audits;
+            wrong += (uint64_t)streamer.wrong;
+        }
         if (tide_has_Far(w, e)) {
             regions++;
             const int32_t version = tide_get_Far(w, e).version;
@@ -258,6 +283,14 @@ static void describe(const void *world)
     printf("  the store: %u chunks and far regions saved in %llu bytes (%llu saves); %llu loads, %llu of them found\n",
            store_count, (unsigned long long)store_bytes, (unsigned long long)store_writes, (unsigned long long)store_reads,
            (unsigned long long)store_found);
+    if (forget_chunks) printf("  chunks' saves forgotten (--forget): %llu\n", (unsigned long long)store_forgot);
+    if (!audit_every) return;
+    printf("  far checks every %u ticks (--audit): %llu, %llu wrong\n", audit_every, (unsigned long long)audits,
+           (unsigned long long)wrong);
+    if (!audits || wrong) {
+        fprintf(stderr, "voxels: the far regions' checks %s\n", audits ? "found what's wrong above" : "never ran");
+        audit_failed = true;
+    }
 }
 
 static uint32_t tick_of(const void *world)
@@ -281,5 +314,6 @@ int main(int argc, char **argv)
         .tick_of = tick_of,
         .io = &store_io,
     };
-    return bench_main(&desc, argc, argv);
+    const int code = bench_main(&desc, argc, argv);
+    return code ? code : audit_failed ? 1 : 0;
 }

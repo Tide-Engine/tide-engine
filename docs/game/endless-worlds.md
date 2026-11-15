@@ -188,6 +188,8 @@ local worker Built Faces(Grid3<Block> blocks, List<Block> east, List<Block> west
 
 The sides are lists, not grids, because a task can't take a grid. Each chunk's mesh gives back its own six sides, which this machine keeps in a local singleton's map by the chunk's place; the next chunk's faces are made with them. When a chunk's side changes, comes or goes, the neighbour it faces has its faces made again: at once for a block changed at the edge, and once its other neighbours have stopped coming for a chunk that came or went, since a view's worth of chunks comes over many frames and the faces between them are hidden ones. A chunk of sky has sides of air, and its coming changes nobody's faces. In `bench/voxels` this draws fewer than a third of the triangles it did, with the same picture.
 
+Two things keep that picture whole. A block dug at a chunk's edge uncovers a face of the neighbour's, which only the neighbour's new mesh has: the chunk keeps its own new mesh aside until the neighbour's is made, and the two show in the same frame, rather than a hole into the neighbour for a frame or two. And a chunk's sides go from the map as its local fields do, in a `local event(Forgotten)` handler, which keeps its place in a local field, as the match's fields are gone by then. `Forgotten` comes whichever way the chunk leaves this machine: hidden from its player, or destroyed, which is the only way on the hosting machine, whose views see the whole match.
+
 ### What players built far off
 
 Past the chunks a player has, the ground can be drawn from the dimension's seed: every machine has the seed, so the same hills the server would make are drawn there with nothing sent for them. What players built is sent as **far regions**: an entity for each 8 by 8 chunk columns, with a summary of each column of 8 by 8 cells that players changed, its highest block and how high it is.
@@ -222,7 +224,7 @@ event(Change change) Note(Chunk chunk, mut Seen seen, query (Far far, Summary su
 }
 ```
 
-What changed goes to players at a pace, so building doesn't flood anyone. Every half second each dimension sends the regions that changed, in the order they did, 64 columns at most in all: a player far off gets at most two corrections a second of it, however much is built.
+What changed goes to players at a pace, so building doesn't flood anyone. A region whose columns changed goes into its dimension's line once (`queued`), and every half second each dimension sends the regions in its line, in the order they changed, 64 columns at most in all: a player far off gets at most two corrections a second of it, however much is built.
 
 ```csharp
 system Publish(mut Streamer streamer, Worlds worlds, Time time, mut World world)
@@ -233,10 +235,22 @@ system Publish(mut Streamer streamer, Worlds worlds, Time time, mut World world)
     {
         var region = streamer.line[0];
         mut var done = true;
-        world.Edit<Summary>(region, summary), world.Edit<Far>(region, far)
+        world.Edit<Summary>(region, summary), world.Edit<Far>(region, far), world.Edit<Seen>(region, seen)
         {
-            budget -= Follow(far.columns, summary.columns, budget, out var all);   // Far.columns, a step nearer
+            // Far.columns, a step nearer the server's own: `all` once they're alike
+            var changes = Follow(far.columns, summary.columns, budget, out var all);
+            budget -= changes;
+            if (changes > 0) far.version += 1;
             done = all;
+            if (all) summary.queued = false;    // Into the line again at its next change
+            // Shown once it has columns; hidden once it has none left to send, not while a removal has used
+            // the last of the budget before an addition
+            var shown = far.columns.count > 0 || (seen.shown && !all);
+            if (shown != seen.shown)
+            {
+                seen.shown = shown;
+                Visibility.Set(seen.group, shown ? seen.audience : Audience.None);
+            }
         }
         if (!done) break;
         streamer.line.RemoveAt(0);
@@ -244,7 +258,7 @@ system Publish(mut Streamer streamer, Worlds worlds, Time time, mut World world)
 }
 ```
 
-A far region comes and goes as chunks do, a while after nobody is within its distance, and is kept in the server's store: `Storage.Save($"far/{dimension}/{at.x}_{at.y}", Json.Write(summary.columns).ToBytes())`, read back with `Json.Read<List<Column>>(loaded.bytes)`. A player's machine draws a column where a far region it has gives one, in place of the seed's square, with walls down to the seed's ground around it, and the seed's ground everywhere else.
+A far region comes and goes as chunks do, a while after nobody is within its distance, and is kept in the server's store: `Storage.Save($"far/{dimension}/{at.x}_{at.y}", Json.Write(summary.columns).ToBytes())`, read back with `Json.Read<List<Column>>(loaded.bytes)`. It's saved apart from its chunks, so a server that stops between the two saves can leave a region with a build its chunk didn't keep: a region read back looks again at the chunks the server has, and a chunk made from the seed tells its region what it has where the region has a column, so what the region says comes back to what the chunks have. A player's machine draws a column where a far region it has gives one, in place of the seed's square, with walls down to the seed's ground around it, and the seed's ground everywhere else; where the player's own chunks are, it draws only what's above or below them.
 
 ## What it costs
 

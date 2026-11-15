@@ -1,0 +1,9 @@
+# voxels_walk (bench/CMakeLists.txt): two players walk apart for 45 seconds, the second digging what's ahead of
+# it, so chunks go behind both, on the hosting machine (destroyed) and the other (hidden). play.tide's own check
+# logs a line where a chunk's sides outlive it.
+1 key w down
+1 key space down
+1 player 2 key s down
+1 player 2 key space down
+1 player 2 button left down
+2700 quit
