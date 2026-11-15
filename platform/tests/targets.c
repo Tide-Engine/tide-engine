@@ -19,6 +19,8 @@
 
 #ifdef __wasm__
 #include "tide_web.h"
+#else
+#include "gpu_vk.h" // For the levels a Vulkan array is made with
 #endif
 
 enum { WIDTH = 4, HEIGHT = 6 };
@@ -560,6 +562,35 @@ static uint64_t held_with_target(const int width, const int height)
         render_expect(expected, "a frame without the disposed target");
     }
     return held;
+}
+
+// An array drawn into of 32-bit numbers (R32f, Rgba32f, R32i: a TextureArray's layers, or a cube of them, six
+// layers) has one level on Vulkan, as on WebGPU: it's loaded, never blended, so nothing makes or reads a smaller
+// image of it, and room for them would be a third more memory than the renderer counts. An array of bytes has room
+// for its whole chain (every device blits Rgba8). WebGPU's levels are tide.js's, which make one for these too.
+static void check_array_levels(void)
+{
+#ifndef __wasm__
+    const tide_gpu *gpu = tide_window_gpu();
+    if (gpu != &tide_gpu_vulkan) return;
+    static const tide_gpu_color loaded[] = {TIDE_GPU_COLOR_R32F, TIDE_GPU_COLOR_RGBA32F, TIDE_GPU_COLOR_R32I};
+    for (size_t i = 0; i < sizeof loaded / sizeof loaded[0]; i++) {
+        const tide_gpu_id array = gpu->array(tide_gpu_target_with(TIDE_GPU_TARGET_DEPTH, loaded[i]), 16, 16, 6, NULL);
+        const uint32_t levels = tide_gpu_vk_texture_levels(array);
+        if (!array || levels != 1u) {
+            fprintf(stderr, "an array of 32-bit numbers (color %u) has %u levels, where it's loaded at its first alone\n",
+                    (unsigned)loaded[i], (unsigned)levels);
+            failures++;
+        }
+        if (array) gpu->texture_free(array);
+    }
+    const tide_gpu_id bytes = gpu->array(TIDE_GPU_TARGET_COLOR, 16, 16, 2, NULL);
+    if (!bytes || tide_gpu_vk_texture_levels(bytes) != 5u) {
+        fprintf(stderr, "an array of bytes has %u levels, not its chain's 5\n", (unsigned)tide_gpu_vk_texture_levels(bytes));
+        failures++;
+    }
+    if (bytes) gpu->texture_free(bytes);
+#endif
 }
 
 // The count grows by a target's bytes (4 of color and 4 of depth a pixel) as
@@ -3413,6 +3444,8 @@ static int frame(void *user, const float seconds)
     check_cubes();
     check_cubes(); // Its pipelines and its cubes are made again
     checked("the backend's cubes");
+    check_array_levels();
+    checked("the backend's arrays of 32-bit numbers");
     check_gpu_memory();
     checked("the renderer's count of what it has on the GPU");
     if (failures) return 1;

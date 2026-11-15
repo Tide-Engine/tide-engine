@@ -1,0 +1,8 @@
+// expect: 'PACKAGE_EXTRA' is tide's to define, with no value, and define reads the value a '--define NAME=value' gives
+// expect: read whether the game builds with that package: 'defined(PACKAGE_EXTRA)'
+// expect: 'TIDE_0_1_OR_NEWER' is tide's to define, with no value, and define reads the value a '--define NAME=value' gives
+// expect: read whether this tide is that version or newer: 'defined(TIDE_0_1_OR_NEWER)'
+const int EXTRA = define(PACKAGE_EXTRA, 0); // In every build, the package's there or not
+const int NEW = define(TIDE_0_1_OR_NEWER, 0);
+singleton Built { int extra = EXTRA; int newer = NEW; }
+scene Main { }

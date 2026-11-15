@@ -188,8 +188,15 @@ try {
     const unnamed = await run([...definedArgs, "--define", "=7"]);
     assert.equal(unnamed.code, 2, unnamed.said);
     assert.match(unnamed.said, /--define ARMY_SIDE=500/);
-    put(join(defined, "game.tide"), "scene Main { }\n");
     delete env.TIDE_TEST_BUILD_DEFINE;
+    // DEBUG given a value keeps it in a debug build, where tide defines DEBUG itself, with none
+    put(join(defined, "game.tide"), "scene Main { }\nconst int LEVEL = define(DEBUG, 0);\nsingleton Army { int level = LEVEL; }\n");
+    const debugValued = await run(["schedule", defined, "--define", "DEBUG=3"]);
+    assert.equal(debugValued.code, 0, debugValued.said);
+    const debugBare = await run(["schedule", defined]);
+    assert.notEqual(debugBare.code, 0);
+    assert.match(debugBare.said, /'DEBUG' is defined with no value, and 'define\(DEBUG, \.\.\.\)' reads an int here/);
+    put(join(defined, "game.tide"), "scene Main { }\n");
 
     // Large generated code is in parts, as many as its size takes, and its data's, with ThinLTO compilation and a
     // cached link.

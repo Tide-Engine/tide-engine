@@ -305,6 +305,10 @@ twin, made the way the shaders' and readback's are: `tide_add_game(... HOST
     which a singleTask activity takes as coming back); another word stops the
     app and fails. The rotation settings as they were are put back as the run
     ends, whatever happened (`settings delete` for one that was never set).
+- **Correction (2026-11-15):** the test counted swapchains in all (2, 3, 4, 5), and CI's
+  emulator once turned the screen in two sizes, a swapchain at each (run
+  43705400689: "made 2 times (3)", every later count one over). It now counts
+  how many more each step made, and a turn may make one or two.
 - **`tide_platform_swapchain_app`**, `swapchain.c` on Android: GLFW's resizes
   are the screen turned to landscape and back (the window 2400 by 1080, then
   1080 by 2400, a swapchain made for each), the device lost as a frame is

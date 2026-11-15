@@ -177,23 +177,38 @@ static void none_buffer_copy(const tide_gpu_id from, const size_t from_offset, c
     (void)from, (void)from_offset, (void)to, (void)to_offset, (void)size;
 }
 
-// Reads back give zeros, at once: each token keeps the size it was asked for
+// Reads back give zeros, at once: each token keeps the size it was asked for until it's polled, and none begins while
+// every place has one waiting (gpu.h's 0, which the renderer asks again next frame), so no token is ever another
+// read's, of another size, however many a frame begins (a target's read is a read for each of its bands)
 enum { READS = 256 };
-static size_t read_sizes[READS];
-static uint32_t next_read;
+static struct none_read { uint32_t token; size_t size; } reads[READS];
+static uint32_t next_token;
+
+static struct none_read *read_of(const uint32_t token)
+{
+    for (uint32_t i = 0; token && i < READS; i++) if (reads[i].token == token) return &reads[i];
+    return NULL;
+}
 
 static uint32_t none_buffer_read(const tide_gpu_id buffer, const size_t offset, const size_t size)
 {
     (void)buffer, (void)offset;
-    next_read = next_read % READS + 1;
-    read_sizes[next_read - 1] = size;
-    return next_read;
+    struct none_read *r = NULL;
+    for (uint32_t i = 0; !r && i < READS; i++) if (!reads[i].token) r = &reads[i];
+    if (!r) return 0;
+    do {
+        if (++next_token == 0) next_token = 1;
+    } while (read_of(next_token));
+    *r = (struct none_read){next_token, size};
+    return next_token;
 }
 
 static int none_buffer_read_done(const uint32_t token, void *data)
 {
-    if (token == 0 || token > READS) return -1;
-    memset(data, 0, read_sizes[token - 1]);
+    struct none_read *r = read_of(token);
+    if (!r) return -1;
+    memset(data, 0, r->size);
+    *r = (struct none_read){0};
     return 1;
 }
 

@@ -1,0 +1,4 @@
+// expect: a Texture3D's Read takes nothing, or a box of it: its first cell and how many cells along each axis, int3s, and finishes later
+scene Main {}
+local singleton Fog { Texture3D volume; }
+view Show(Fog fog) { fog.volume.Read(); }

@@ -95,8 +95,13 @@ local singleton MoreState
     [Raw(float4)] Texture3D wides;
     RenderTarget tenth;  // Depth alone, a frag's 0.1: a depth that 1 - depth rounds
     RenderTarget uhd;    // 3840 by 2160, a 4K window's: 127 MiB of Colors, in four bands
+    RenderTarget five;   // 5120 by 2880, a 5K window's: 225 MiB of Colors, in eight bands (on desktop: fiveK)
+    bool fiveK; bool fiveMade;
     bool started; bool moreStarted; bool lose; bool lostStarted; bool again; bool againStarted;
+    bool crowd; bool crowdStarted; // Reads while the host holds a result near what reads may hold together
 }
+// A volume nothing writes or draws with, of its own so no kernel binds it: made for its read
+local singleton Blank { [Raw(float)] Texture3D cells; }
 local singleton MoreResult
 {
     Grid2<Color> big; Grid2<Color> corner; Grid2<float> floats;
@@ -106,6 +111,9 @@ local singleton MoreResult
     int2 uhdSize; Color uhdFirst; Color uhdLast; Color uhdSeam; Color uhdAfter; // Its last pixel, a band's last row's and the next's
     bool outsideFailed; bool emptyFailed; bool done; bool failed;
     bool lostFailed; bool lostDone; Grid2<int> again; Grid2<Color> againColor; bool againDone;
+    Grid3<float> blank; bool boxEmptyFailed; bool boxOutsideFailed;
+    int2 fiveSize; Color fiveFirst; Color fiveLast; Color fiveSeam; Color fiveAfter;
+    bool crowdFailed; int crowdOne; bool crowdDone;
 }
 [Group(2, 2, 2)]
 compute FillVolumes(MoreState more)
@@ -115,7 +123,7 @@ compute FillVolumes(MoreState more)
     more.ids[this.at] = -(this.at.x + 10 * this.at.y + 100 * this.at.z) - 7;
     more.wides[this.at] = float4(this.at.x, this.at.y, this.at.z, 1000000);
 }
-async void ReadMore(CopyState state, MoreState more, mut MoreResult result)
+async void ReadMore(CopyState state, MoreState more, Blank blank, mut MoreResult result)
 {
     if (await more.big.Read() is Grid2<Color> big) result.big = big.Copy(); else result.failed = true;
     if (await more.big.Read(int2(2000, 1900), int2(200, 200)) is Grid2<Color> corner) result.corner = corner.Copy(); else result.failed = true;
@@ -145,7 +153,33 @@ async void ReadMore(CopyState state, MoreState more, mut MoreResult result)
         result.uhdAfter = uhd[3839, 546];
     }
     else result.failed = true;
+    // A volume nothing wrote reads zeros: it's made for the read (and on WebGPU, made a frame later, read once it is)
+    if (await blank.cells.Read<float>() is Grid3<float> zeros) result.blank = zeros.Copy(); else result.failed = true;
+    // A box of nothing, and a box past the volume, fail
+    if (await more.numbers.Read<float>(int3(0), int3(2, 2, 0)) is Grid3<float> flat) result.failed = true; else result.boxEmptyFailed = true;
+    if (await more.numbers.Read<float>(int3(3, 0, 0), int3(1, 1, 1)) is Grid3<float> past) result.failed = true; else result.boxOutsideFailed = true;
+    // A 5K window's image whole, where the host asks for it (desktop): eight bands, a band's last row and the next's
+    if (more.fiveK)
+    {
+        if (await more.five.Read() is Grid2<Color> five)
+        {
+            result.fiveSize = five.size;
+            result.fiveFirst = five[0, 0];
+            result.fiveLast = five[5119, 2879];
+            result.fiveSeam = five[5119, 408];
+            result.fiveAfter = five[5119, 409];
+        }
+        else result.failed = true;
+    }
     result.done = true;
+}
+// Reads as the host holds a result of 504 MiB, as reads not let go of yet would: what reads hold together is 512 MiB
+// at the most, so a 2100x2000 R32f image's 16 MiB more fails, and a pixel's reads
+async void ReadCrowded(CopyState state, MoreState more, mut MoreResult result)
+{
+    if (await more.floats.Read<float>() is Grid2<float> floats) result.failed = true; else result.crowdFailed = true;
+    if (await state.several.Read<int>(3, int2(1, 0), int2(1, 1)) is Grid2<int> one) result.crowdOne = one[0, 0]; else result.failed = true;
+    result.crowdDone = true;
 }
 // The device goes as this read is on its way back: it fails, and nothing more
 async void ReadLost(CopyState state, mut MoreResult result)
@@ -161,7 +195,7 @@ async void ReadAgain(CopyState state, MoreState more, mut MoreResult result)
     result.againDone = true;
 }
 frag TenthCard(Vertex3 vertex, out Color color) { color = vertex.color; this.WriteDepth(0.1); }
-view PaintMore(CopyState state, mut MoreState more, mut MoreResult result, CopyResult copy)
+view PaintMore(CopyState state, mut MoreState more, mut Blank blank, mut MoreResult result, CopyResult copy)
 {
     if (!more.started)
     {
@@ -173,7 +207,20 @@ view PaintMore(CopyState state, mut MoreState more, mut MoreResult result, CopyR
         more.wides = Texture3D(int3(3, 2, 2), Format.Rgba32f);
         more.tenth = RenderTarget(2, 2, 1, Format.Depth);
         more.uhd = RenderTarget(3840, 2160, 1);
+        blank.cells = Texture3D(int3(4, 3, 2), Format.R32f);
         more.started = true;
+    }
+    if (more.fiveK && !more.fiveMade)
+    {
+        more.fiveMade = true;
+        more.five = RenderTarget(5120, 2880, 1);
+    }
+    if (more.fiveMade)
+    {
+        more.five.SetScreen(); more.five.SetBlend(.Replace);
+        more.five.Clear(Color(0.2, 0.4, 0.6, 1));
+        more.five.Rect(float2(5110, 2870), float2(20, 20), Color.white);
+        more.five.Rect(float2(5110, 408.5), float2(20, 1), Color.green);
     }
     more.big.SetScreen(); more.big.SetBlend(.Replace);
     more.big.Clear(Color(0.2, 0.4, 0.6, 1));
@@ -192,7 +239,8 @@ view PaintMore(CopyState state, mut MoreState more, mut MoreResult result, CopyR
     more.tenth.SetCamera(float4x4.identity, float4x4.Ortho(2, 2, 0, 1));
     more.tenth.SetCull(.None); more.tenth.SetDepth(.ReadWrite);
     more.tenth.Mesh(card, [0,1,2,0,2,3], float4x4.identity, TenthCard);
-    if (copy.done && !more.moreStarted) { more.moreStarted = true; ReadMore(state, more, result); }
+    if (copy.done && !more.moreStarted) { more.moreStarted = true; ReadMore(state, more, blank, result); }
+    if (more.crowd && !more.crowdStarted) { more.crowdStarted = true; ReadCrowded(state, more, result); }
     if (more.lose && !more.lostStarted) { more.lostStarted = true; ReadLost(state, result); }
     if (more.again && !more.againStarted) { more.againStarted = true; ReadAgain(state, more, result); }
 }

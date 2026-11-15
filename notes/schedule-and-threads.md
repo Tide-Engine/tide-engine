@@ -363,7 +363,7 @@ Tests:
   over a `Grid3` field, one that spawns: no one-thread line; HEAD's tidec says one for each).
 - Pins moved, as each of those games' systems now puts its entities' blocks in their own runs' heaps:
   `rows` `0xf265ccfec6132a0b`, `CHARS_HASH` 7239718306326553534, `JSON_HASH` 4274344058269490730,
-  `OPTIONAL_FIELDS_HASH` 9457763508960445269, `bench_gallery` tick 272 `0xc8e6ab383a684a0a` (the same on 1, 4 and
+  `OPTIONAL_FIELDS_HASH` 9457763508960445269 (14864352149542646336 merged with dev's task frames that keep no dead temporaries, 2026-11-15, native and wasm alike), `bench_gallery` tick 272 `0xc8e6ab383a684a0a` (the same on 1, 4 and
   12 threads). The three small ones moved for a world of one or a few entities: with shares, `min(32, count)` runs
   put a lone entity in run 0, whose handles are the bits they were; by identity it's in any run.
 

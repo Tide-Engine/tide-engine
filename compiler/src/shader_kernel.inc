@@ -359,6 +359,40 @@ static void check_image_clear(program *prog, const expr *call)
         diag_error(call->at, "this target holds %d images: give Clear exactly one value for each image, in order", count);
 }
 
+// Whether a Texture3D expression is a Grid3's wherever it's assigned, as image_target_format follows its origins: 1
+// it is, 0 it's a volume the GPU made, -1 unknown or both, -3 no volume at all (default).
+static int volume_grid_origin(const expr *e, int depth);
+
+static int origins_volume_grid(const expr *first, const image_origins *origins, const int depth)
+{
+    int found = -3;
+    for (int i = -1; i < origins->count; i++) {
+        const expr *origin = i < 0 ? first : origins->items[i];
+        if (!origin) continue;
+        const int got = volume_grid_origin(origin, depth + 1);
+        if (got == -3) continue;
+        if (got < 0 || (found != -3 && found != got)) return -1;
+        found = got;
+    }
+    return found;
+}
+
+static int volume_grid_origin(const expr *e, const int depth)
+{
+    if (!e || depth > 32) return -1;
+    if (e->image_place) return e->param ? origins_volume_grid(NULL, &e->param->image_assignments, depth) : -1;
+    if (e->type.kind == TY_GRID) return 1;
+    if (e->kind == E_DEFAULT) return -3;
+    if (e->kind == E_NAME && e->bind == BIND_LOCAL && e->local && !e->local->assigned) return volume_grid_origin(e->local->value, depth + 1);
+    if (e->kind == E_CONDITIONAL) {
+        const int a = volume_grid_origin(e->lhs, depth + 1), b = volume_grid_origin(e->rhs, depth + 1);
+        return a == -3 ? b : b == -3 ? a : a == b ? a : -1;
+    }
+    if (e->field) return origins_volume_grid(e->field->default_value, &e->field->image_assignments, depth);
+    if (e->call == CALL_BUILTIN && e->resource_operation && e->type.kind == TY_TEXTURE3D) return 0;
+    return -1;
+}
+
 // await target.Read<T>(image): the cell type written there against the format the target's image was made with. A
 // Color read of a target whose formats aren't known here (a parameter, a target made two ways) is checked as it
 // runs, and fails there; a number read's format has to be known, as its grid's type is the image's own.
@@ -390,6 +424,13 @@ static void check_target_read(program *prog, const expr *call)
             diag_error(call->at, "Read(%d) reads the target's color image %d, and this target was made with fewer: its images "
                                  "are counted from 0, in the order of the formats it was made with", image, image);
         }
+        return;
+    }
+    if (call->read_volume && volume_grid_origin(target, 0) == 1) {
+        // A volume made of a Grid3 is the grid's cells, sampled: the GPU has a copy of what the CPU has
+        diag_error(call->at, "this volume is made from a Grid3, whose cells the CPU has already: read the grid itself, not "
+                             "the volume");
+        diag_note("Read gives back a volume the GPU made, 'Texture3D(int3(32), Format.R32f)', that kernels write");
         return;
     }
     if (format < 0) {

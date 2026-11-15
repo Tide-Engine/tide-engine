@@ -2347,11 +2347,21 @@ static const method_form session_calls[] = {
     "shortly after a click or a key, as when a button is pressed. Pasting needs no call: Ctrl+V types what's on the " \
     "clipboard into the text field that has the focus."
 
+// The build's symbols read by code, as constants (the language's, in no table of the engine's).
+#define DEFINED_DOC                                                                                                    \
+    "Whether the symbol is defined here, as `#if NAME` reads it: the file's own `#define`, the build's `--define`, "  \
+    "`DEBUG`, a package's `PACKAGE_<NAME>` or a version of tide. A constant bool."
+#define DEFINE_DOC                                                                                                     \
+    "The value the build's `--define NAME=value` gives the symbol, or `default`, a constant, when it gives none. It "  \
+    "reads as the default's type, or as the type of where it goes when the default converts to that: a bool, byte, " \
+    "int, long, float, double, string or an enum's member. Editors know no command line, so here it's the default."
+
 // Json's calls and string's own: in no table of the engine's, as they take and give types of the game's.
 #define JSON_READ_DOC                                                                                                  \
     "Reads JSON as a `T`: a struct, a `List<T>`, a `Set<T>` or a `Map<K, T>` of what JSON holds (bool, the "           \
     "integers, float, double, char, string, enums by their member's name, vectors, quaternions and colors as arrays "  \
-    "of their numbers, structs, lists, sets and arrays as arrays, and maps by text, an int or an enum). A field's key " \
+    "of their numbers, structs, lists, sets and arrays as arrays, and maps by text, a byte, an int, a long or an "     \
+    "enum). A field's key "                                                                                            \
     "is its name, or what `[Json(\"key\")]` before it says. A key the JSON leaves out keeps its field's default, and " \
     "so does a `null`; a key no field has is skipped. Nothing, unwrapped with `??` or `is`, when the text isn't JSON, " \
     "a value isn't its field's kind, a vector has the wrong number of numbers, or a number doesn't fit its field. The " \
@@ -2464,7 +2474,7 @@ static const method_form texture_calls[] = {
      "when UVs change inside a loop, and for `Filter.Anisotropic` they are what a pixel covers: it reads along "
      "the longer of the two. Point and Bilinear still read the base image. Omitted filter and wrap "
      "use the texture's settings, as Sample does. Verts and CPU code cannot call SampleGrad."},
-    {"SampleLevel", "SampleLevel(float2 uv, float level, Filter filter = Filter.Trilinear, Wrap wrap = the texture's) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper, between the two levels nearest it (Trilinear, which a filter left out is). Levels clamp to the available images; `Filter.Point` and `Filter.Bilinear` read level 0."},
+    {"SampleLevel", "SampleLevel(float2 uv, float level, Filter filter = Filter.Trilinear, Wrap wrap = the texture's) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper, between the two levels nearest it (Trilinear, which a filter left out is). Levels clamp to the available images; `Filter.Point` and `Filter.Bilinear` read level 0, and a level written 0 reads it as `Filter.Bilinear` does, with no smaller images made."},
 };
 
 static const method_form depth_calls[] = {
@@ -2493,7 +2503,7 @@ static const method_form cube_calls[] = {
      "Another side for all six faces of a cube made with `Cubemap(size)`, in pixels, and empty images."},
     {"Dispose", "Dispose()",
      "Lets a cube made with `Cubemap(size)` go, its six faces with it. Every copy of it then names no cube."},
-    {"SampleLevel", "SampleLevel(float3 direction, float level, Filter filter = Filter.Trilinear) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper, between the two levels nearest it (Trilinear, which a filter left out is): a blurred reflection's roughness. Levels clamp to the available images; `Filter.Point` and `Filter.Bilinear` read level 0."},
+    {"SampleLevel", "SampleLevel(float3 direction, float level, Filter filter = Filter.Trilinear) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper, between the two levels nearest it (Trilinear, which a filter left out is): a blurred reflection's roughness. Levels clamp to the available images; `Filter.Point` and `Filter.Bilinear` read level 0, and a level written 0 reads it as `Filter.Bilinear` does, with no smaller images made."},
 };
 
 static const method_form depth_cube_calls[] = {
@@ -2511,7 +2521,7 @@ static const method_form volume_calls[] = {
     {"Sample", "Sample(float3 uvw, Filter filter = the role's, Wrap wrap = Wrap.Clamp) -> Color", "Reads a volume in GPU code. Color volumes blend all three axes. A typed Raw volume returns its declared float, float2, float4 or int, at the nearest cell where no filter is named; `Filter.Bilinear` blends a float volume's eight cells around (through the GPU's sampler for Rgba16f and a Grid3<float>, loaded exactly and blended in the shader for R32f and Rgba32f). Int volumes read the nearest cell. Volumes have no mipmaps."},
     {"Resize", "Resize(int3 size)", "Changes the volume size in texels, discarding contents. Copies share the resource."},
     {"Dispose", "Dispose()", "Releases this volume and leaves all references empty."},
-    {"Read", "Read<T>([int3 from, int3 size]) -> Grid3<T> fails IOError", "Await in local async code for an owned copy of the volume's cells, a frame or more later, as a render target's image is read: without `<T>` a `Grid3<Color>` of an Rgba8 or Rgba16f volume, `Read<float>()` for R32f, `Read<float4>()` for Rgba32f (and an Rgba16f volume's numbers), `Read<int>()` for R32i, bit for bit. A box of it: its first cell and how many along each axis, `Read(int3(0), int3(8))`, clamped to the volume. The volume's format must be fixed where it's made; device loss fails."},
+    {"Read", "Read<T>([int3 from, int3 size]) -> Grid3<T> fails IOError", "Await in local async code for an owned copy of the volume's cells, a frame or more later, as a render target's image is read: without `<T>` a `Grid3<Color>` of an Rgba8 or Rgba16f volume, `Read<float>()` for R32f, `Read<float4>()` for Rgba32f (and an Rgba16f volume's numbers), `Read<int>()` for R32i, bit for bit. A box of it: its first cell and how many along each axis, `Read(int3(0), int3(8))`, clamped to the volume. The volume's format must be fixed where it's made, as `Texture3D(int3(32), Format.R32f)`; a volume made from a Grid3 isn't read back (read the grid); device loss fails."},
 };
 
 static const method_form array_calls[] = {
@@ -2532,7 +2542,7 @@ static const method_form array_calls[] = {
     {"Dispose", "Dispose()",
      "Lets an array made with `TextureArray(width, height, layers)` go, its layers and depth with it. Every copy of "
      "it then names no array."},
-    {"SampleLevel", "SampleLevel(float2 uv, int layer, float level, Filter filter = Filter.Trilinear, Wrap wrap = the array's) -> Color", "Reads an explicit mip level of a layer in a frag, vert, kernel or GPU helper, between the two levels nearest it (Trilinear, which a filter left out is). Levels clamp to the available images; `Filter.Point` and `Filter.Bilinear` read level 0."},
+    {"SampleLevel", "SampleLevel(float2 uv, int layer, float level, Filter filter = Filter.Trilinear, Wrap wrap = the array's) -> Color", "Reads an explicit mip level of a layer in a frag, vert, kernel or GPU helper, between the two levels nearest it (Trilinear, which a filter left out is). Levels clamp to the available images; `Filter.Point` and `Filter.Bilinear` read level 0, and a level written 0 reads it as `Filter.Bilinear` does, with no smaller images made."},
 };
 
 static const method_form depth_array_calls[] = {
@@ -8007,12 +8017,17 @@ static type field_image_role(const field *f)
 
 // A half-written Sample can have no expression tree yet. Recover its declared image role from the
 // receiver's field chain, so signature help and member completion do not turn numeric images into colors.
-static type numeric_receiver(const int dot, const loc at)
+// `*held` is the field it's read through, where it's one (NULL for a helper's parameter).
+static type numeric_receiver_of(const int dot, const loc at, const field **held)
 {
     const type color = {TY_COLOR, NULL};
+    *held = NULL;
     if (dot < 1 || DOC->toks[dot - 1].kind != T_IDENT) return color;
     const occurrence *o = occurrence_at(DOC->toks[dot - 1].at);
-    if (o && o->field) return field_image_role(o->field);
+    if (o && o->field) {
+        *held = o->field;
+        return field_image_role(o->field);
+    }
     if (o && o->param && o->param->sample_role.len) {
         return numeric_role(o->param->sample_role);
     }
@@ -8031,7 +8046,25 @@ static type numeric_receiver(const int dot, const loc at)
         }
         owner = member_type(owner, DOC->toks[k].text);
     }
+    *held = image;
     return image ? field_image_role(image) : color;
+}
+
+static type numeric_receiver(const int dot, const loc at)
+{
+    const field *held;
+    return numeric_receiver_of(dot, at, &held);
+}
+
+// Whether a typed field's images have smaller images to read: not where its constructor assignments fix it to R32f or
+// Rgba32f (Format 7, 8), which are loaded exactly, never blended between levels. A helper's parameter, or a field whose
+// format isn't fixed yet, may be given either, and offers them.
+static bool field_has_levels(const field *f)
+{
+    if (!f) return true;
+    const expr image = {.field = (field *)(uintptr_t)f};
+    const int format = image_target_format(&image, 0, 0);
+    return format != 7 && format != 8;
 }
 
 static void complete_members(completion *c, const int dot, const loc at, const order_completion order)
@@ -8302,7 +8335,8 @@ static void complete_members(completion *c, const int dot, const loc at, const o
     }
     // input.jump.down or input.aim.fire.down, including borrowed helper input.
     const bool edges = n >= 2 && p && p->type.kind == TY_INPUT;
-    const type numeric = numeric_receiver(dot, at);
+    const field *image = NULL;
+    const type numeric = numeric_receiver_of(dot, at, &image);
     const bool layered = t.kind == TY_TEXTURE_ARRAY || t.kind == TY_CUBEMAP;
     if ((t.kind == TY_TEXTURE || t.kind == TY_TEXTURE3D || layered) && numeric.kind != TY_COLOR) {
         const bool sample = gpu || (sc.decl && (sc.decl->gpu_only || sc.decl->kind == DECL_FUNCTION || sc.decl->kind == DECL_METHOD));
@@ -8327,14 +8361,17 @@ static void complete_members(completion *c, const int dot, const loc at, const o
                  "bits on every device. Ints are read at the nearest cell.",
                  "Sample($1)");
         }
-        if (sample && t.kind != TY_TEXTURE3D && numeric.kind != TY_INT) { // The formats every device blends have mipmaps too
+        // The formats every device blends have mipmaps too; a field its assignments fix to R32f or Rgba32f has none,
+        // so it's offered neither
+        if (sample && t.kind != TY_TEXTURE3D && numeric.kind != TY_INT && field_has_levels(image)) {
             sb level = {0};
             sb_printf(&level, "%s.SampleLevel(%s, float level, Filter filter = Filter.Trilinear%s) -> %s",
                       type_name(t), where, wrap, type_name(numeric));
             item(c, "SampleLevel", CK_METHOD, level.data,
                  "Reads a mip level of an R8, Rg8, R16f, Rg16f or Rgba16f image as its declared numeric type, between the two "
                  "levels nearest it where no filter is named: 0 is the image itself, each level after it half the size, made "
-                 "of what was drawn. R32f and Rgba32f have no mipmaps.",
+                 "of what was drawn. R32f and Rgba32f have no mipmaps: level 0, or a level read naming Filter.Point or "
+                 "Filter.Bilinear, is their image itself; any other is an error at the draw.",
                  t.kind == TY_TEXTURE_ARRAY ? "SampleLevel($1, $2, $3)" : "SampleLevel($1, $2)");
             if (t.kind != TY_CUBEMAP && !(is_shader(sc.decl) && !sc.decl->is_frag)) {
                 sb grad = {0};
@@ -9070,6 +9107,8 @@ static void complete_expression(completion *c, const loc at, const bool statemen
     complete_value_types(c, !statement ? VT_VALUES : local_code ? VT_LOCALS | VT_LOCAL_ENTITY : VT_LOCALS);
     complete_structs(c);
     item(c, "Math", CK_MODULE, "Math functions and constants", NULL, NULL);
+    item(c, "defined", CK_FUNCTION, "defined(NAME) -> bool", DEFINED_DOC, "defined($1)");
+    item(c, "define", CK_FUNCTION, "define(NAME, default)", DEFINE_DOC, "define($1, $2)");
     complete_namespaces(c, false);
     // What views draw with, which the functions they call can use too.
     if (view || (routine && sc.decl->kind == DECL_FUNCTION)) {
@@ -11424,7 +11463,7 @@ static const char *check_new_name(const occurrence *target, const str name)
                                            "GUI", "GUILayout", "Screen", "Cursor", "Frame", "Anchor", "Action", "Session", "SessionState", "Clipboard",
                                            "Vertex", "Vertex3", "Shape", "GUITheme", "GUIControl", "Filter", "Wrap", "Font", "Blend", "Depth", "Cull", "Format", "StencilTest", "StencilOp", "Draw", "DrawList", "Random",
                                            "DisconnectReason", "Connected", "Disconnected", "Wait", "File", "Directory", "Path", "Application", "Storage", "IOError", "Json", "List", "Map", "Set", "Grid2", "Grid3",
-                                           "string", "Sample", "Sanitize", "Predict"};
+                                           "string", "Sample", "Sanitize", "Predict", "define", "defined"};
     static char message[160];
 
     if (name.len == 0 || !(isalpha((unsigned char)name.ptr[0]) || name.ptr[0] == '_')) return "Names start with a letter.";
@@ -12444,6 +12483,8 @@ static const struct {
     {"Random", {"Random(long seed)"}, RANDOM_SEEDED_DOC},
     {"Spawn", {"Spawn(components...)"}, "Creates an entity with these components. It's added at the end of the tick."},
     {"Send", {"Send(event)"}, "Sends an event to the whole world, handled at the end of the tick."},
+    {"defined", {"defined(NAME) -> bool"}, DEFINED_DOC},
+    {"define", {"define(NAME, default)"}, DEFINE_DOC},
     {"Grid2", {"Grid2(int width = 0, int height = 0)"}, GRID_SIZE_DOC},
     {"Grid3", {"Grid3(int width = 0, int height = 0, int depth = 0)"}, GRID_SIZE_DOC},
 };
@@ -13091,7 +13132,7 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
         } else if (str_eq_c(name, "Retarget")) {
             add_signature(&s, RETARGET_ATTRIBUTE_FORM, RETARGET_ATTRIBUTE_DOC);
         } else if (str_eq_c(name, "Raw")) {
-            add_signature(&s, "Raw(type)", "On Texture/Texture3D fields or read-only GPU helper parameters, float, float2, float4 or int declares the numeric Sample type; TextureArray and Cubemap fields take the float roles. Reads use the nearest cell unless a filter is named; R8, Rg8, R16f, Rg16f and Rgba16f blend and read mipmaps, int and 32-bit float images are nearest only. Bare Raw retains its existing numeric-channel role.");
+            add_signature(&s, "Raw(type)", "On Texture, Texture3D, TextureArray and Cubemap fields or read-only GPU helper parameters, float, float2, float4 or int declares the numeric Sample type. Reads use the nearest cell unless a filter is named; R8, Rg8, R16f, Rg16f and Rgba16f blend and read mipmaps; R32f and Rgba32f blend with Filter.Bilinear (four exact loads, a volume's eight) and have no mipmaps, and a cube's R32f and Rgba32f faces are nearest only; int images are nearest only. Bare Raw retains its existing numeric-channel role.");
         }
     } else if (str_eq_c(owner, "HumanoidRig") || str_eq_c(owner, "RetargetMap")) {
         const method_form *form = str_eq_c(owner, "HumanoidRig") ? &humanoid_rig_calls[0] : &retarget_map_calls[0];

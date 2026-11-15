@@ -26,6 +26,13 @@ The formatter sees ordinary call tokens and leaves them as written. `lsp_directi
 `Json.Read`/`Json.Write` hover text names vectors, sets and numbered maps (the JSON note in `notes/language.md`).
 No grammar change: both are plain identifiers before `(`.
 
+Review fixes (2026-11-15): both names are in `check_new_name`'s `reserved[]` (rename) (tidec refuses them for types,
+functions and constants), completion offers `defined` and `define` where a value goes (`DEFINED_DOC`,
+`DEFINE_DOC`, beside `Math`), and `call_forms` gives their signature help. A method of the name hides the
+built-in as in tidec (`check_call`), so it has no diagnostic. `lsp_directives` checks all three. `tide.packages`
+conditions (`packages.c`) refuse a value compared (`#if STEAM == 480`, `> 400`), `==` beside a symbol the
+build gave a value, and `defined(STEAM)`, as the lexer's do; `tide_cli_packages` checks them.
+
 ## Linear image annotation (2026-11-14)
 
 Attribute completion offers Linear before asset and field declarations; attribute hover describes sRGB
@@ -54,7 +61,7 @@ Ordinary enum-member typo fixes cover the new format names.
 
 Raw attribute completion/signature help describes the four numeric role arguments. Fields and read-only
 Texture/Texture3D helper parameters carry their role into Sample hover, member completion and signature help;
-they return the numeric type and show Point as the default. Numeric members of the blendable formats offer SampleLevel/SampleGrad, on TextureArray and Cubemap roles too, with snippets that name the level (2026-11-14, render-targets.md).
+they return the numeric type and show Point as the default. Numeric float members offer SampleLevel/SampleGrad, on TextureArray and Cubemap roles too, with snippets that name the level (2026-11-14, render-targets.md), except a field whose constructor assignments fix it to R32f or Rgba32f (ield_has_levels, image_target_format of the field: those have no levels; 2026-11-15, corrected: this said only the blendable formats were offered, and every float role was). A helper's parameter or a field with no fixed format may be given either and offers them; the draw's error names the fix. [Raw(type)]'s signature help says arrays and cubes take every role and R32f/Rgba32f blend with Bilinear (it still said float roles and nearest only).
 Volume sampling signatures identify Texture3D and float3 coordinates. Clear completion, hover and signature
 help describe one to four positional image values and float clears past one, alongside the legacy broadcast.
 

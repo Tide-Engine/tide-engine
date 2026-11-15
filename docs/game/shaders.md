@@ -210,8 +210,10 @@ float2 moments = images.velocity.Sample(vertex.uv, Filter.Trilinear); // Between
 `Filter.Anisotropic` and `SampleGrad` work as they do for a color. `R32f` and `Rgba32f` blend too, with
 `Filter.Bilinear`: a GPU only blends 32-bit floats with an optional feature, so tidec loads the four pixels
 around the uv exactly and blends them in the shader, and the picture is the same bits on every device. They
-have no mipmaps, so `Filter.Trilinear`, `Filter.Anisotropic`, `SampleLevel` and `SampleGrad` on one are a
-compile error naming `R16f` or `Rgba16f`. `R32i` is always exact: a GPU blends no integers. Bare `[Raw]`
+have no mipmaps, so `Filter.Trilinear`, `Filter.Anisotropic`, and a `SampleLevel` or `SampleGrad` that reads
+between levels, on one are a compile error naming `R16f` or `Rgba16f`. Their one level is the image itself: a
+`SampleLevel` or `SampleGrad` naming `Filter.Point` reads its nearest pixel, one naming `Filter.Bilinear` blends
+the four, and `SampleLevel(uv, 0)` blends them too. `R32i` is always exact: a GPU blends no integers. Bare `[Raw]`
 retains its existing four-channel behavior.
 
 ```csharp
@@ -1693,7 +1695,7 @@ compute Average(Glow glow)
 ```
 
 - **The smaller images are made of what was last drawn into the image,** before the run, as they are for a draw that reads them: a target's colors, a multisampled target's too, an array's layers and a cube's faces. A target drawn into again after the run, or written by a kernel, has them made again for the next read.
-- **A `Texture`'s own filter decides,** as in a frag: one that carries `Filter.Bilinear` (a target's color does) reads its own pixels at any level, so name `Filter.Trilinear` in the `SampleLevel`. A typed read that names no filter reads between levels.
+- **The `SampleLevel` decides,** as in a frag: one that names no filter reads between levels, whatever filter the `Texture` carries (a target's color carries `Filter.Bilinear`), typed reads too; one that names `Filter.Point` or `Filter.Bilinear`, and one at a level written `0`, read the image's own pixels.
 - **What it isn't given reads as in a frag:** a depth the far limit (and `Compare` gives 1), a cube black, an array and a texture white, and a typed image zeros. So does an image that was disposed, an image a target hasn't got, and the colors of an image of depth alone. A `TextureArray` or a target made with `Format.Depth` and read as colors is an error where the compiler can see it: read its depth through a `DepthTextureArray` or `DepthTexture` field instead.
 
 ### Writing images
@@ -1751,10 +1753,13 @@ Kernels run everywhere Tide draws: Vulkan (desktop and Android), WebGPU, and Uni
 is the original image, level 1 halves its dimensions, and 1.5 blends levels 1 and 2. Levels clamp to the
 available images. A SampleLevel that names no filter reads between levels (`Filter.Trilinear`), on a color
 texture, a cube, an array and a number image alike; naming `Filter.Point` or `Filter.Bilinear` reads the original
-image. A cubemap takes a direction: `sky.SampleLevel(direction, roughness * 5)` for a blurred reflection. An array
+image. A level written as `0` (or less) reads the original image blended, as `Filter.Bilinear` does, which is what
+reading between levels gives there: so `frame.SampleLevel(uv, 0)` of a target drawn every frame costs no chain of
+smaller images, where a level the game works out as it runs has the chain made after each frame's drawing. A cubemap takes a direction: `sky.SampleLevel(direction, roughness * 5)` for a blurred reflection. An array
 takes its layer first: `images.SampleLevel(uv, layer, 2)`. Texture3D has no mipmaps; use its Sample method.
 Number images in R8, Rg8, R16f, Rg16f and Rgba16f take SampleLevel and SampleGrad as colors do; R32f, Rgba32f
-and R32i have no mipmaps, and read with `Sample(uv)` (an R32f or Rgba32f one blended with `Filter.Bilinear`).
+and R32i have no mipmaps, and read with `Sample(uv)` (an R32f or Rgba32f one blended with `Filter.Bilinear`, or
+with `SampleLevel(uv, 0)`).
 Drawing into a selected mip level is not available.
 
 ## Writing a pixel's depth

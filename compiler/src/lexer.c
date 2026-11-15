@@ -287,7 +287,18 @@ typedef struct cond_reader {
     const lexer *lx;
     bool ok;
     const void *own; // The file's #defines and #undefs so far (file_symbols)
+    // The build's symbol the last operand read was, when the build gave it a value, and that value: what an `==`
+    // beside it can't compare
+    str valued;
+    const char *value;
 } cond_reader;
+
+// What a condition that reads a value is told to do instead.
+static void cond_value_note(void)
+{
+    diag_note("read the value in code, as a constant with a default: 'const int SIDE = define(SIDE, 500);', then "
+              "'if (SIDE == 3)'; for a choice of code, define a symbol for each, '#if SIDE_3'");
+}
 
 static loc cond_here(const cond_reader *c)
 {
@@ -475,15 +486,19 @@ typedef struct file_symbol {
 
 typedef VEC(file_symbol) file_symbols;
 
-int lex_read_symbol(const str name, const int file, const char **value)
+int lex_read_symbol(const str name, const int file, const char **value, bool *own)
 {
     *value = NULL;
+    if (own) *own = false;
     int v[3];
     if (version_symbol(name, v)) return tide_version_at_least(v[0], v[1], v[2]) ? 1 : 0;
     if (name.len >= 5 && memcmp(name.ptr, "TIDE_", 5) == 0) return -1;
     for (int i = kept_symbols.count - 1; i >= 0; i--) {
         const kept_symbol *k = &kept_symbols.items[i];
-        if (k->file == file && str_eq(k->name, name)) return k->defined ? 1 : 0;
+        if (k->file == file && str_eq(k->name, name)) {
+            if (own) *own = true;
+            return k->defined ? 1 : 0;
+        }
     }
     return read_build_symbol(name, value) ? 1 : 0;
 }
@@ -493,6 +508,8 @@ static bool cond_or(cond_reader *c);
 static bool cond_primary(cond_reader *c)
 {
     cond_space(c);
+    c->valued = (str){NULL, 0};
+    c->value = NULL;
     if (c->p >= c->end) {
         if (c->ok) {
             diag_error(cond_here(c), "a condition is missing here");
@@ -516,6 +533,8 @@ static bool cond_primary(cond_reader *c)
             diag_error(open, "this '(' is missing its ')'");
             c->ok = false;
         }
+        c->valued = (str){NULL, 0}; // What's in parentheses is a condition, no symbol
+        c->value = NULL;
         return value;
     }
     if (is_ident_start(*c->p)) {
@@ -523,6 +542,23 @@ static bool cond_primary(cond_reader *c)
         const char *start = c->p;
         while (c->p < c->end && is_ident_char(*c->p)) c->p++;
         const str name = {start, (int)(c->p - start)};
+        const char *after = c->p;
+        while (after < c->end && (*after == ' ' || *after == '\t')) after++;
+        if (str_eq_c(name, "defined") && after < c->end && *after == '(') { // C's spelling, and code's
+            if (c->ok) {
+                const char *inner = after + 1;
+                while (inner < c->end && (*inner == ' ' || *inner == '\t')) inner++;
+                int len = 0;
+                while (inner + len < c->end && is_ident_char(inner[len])) len++;
+                const str symbol = len ? (str){inner, len} : str_from("DEBUG");
+                diag_error(at, "'#if' reads a symbol by its name alone: '#if " STR_FMT "'", STR_ARG(symbol));
+                diag_note("'defined(" STR_FMT ")' is code's, a constant: 'const bool HAS = defined(" STR_FMT ");'",
+                          STR_ARG(symbol), STR_ARG(symbol));
+            }
+            c->ok = false;
+            c->p = c->end;
+            return false;
+        }
         if (str_eq_c(name, "true")) return true;
         if (str_eq_c(name, "false")) return false;
         int v[3];
@@ -540,7 +576,13 @@ static bool cond_primary(cond_reader *c)
         for (int i = own ? own->count - 1 : -1; i >= 0; i--) {
             if (str_eq(own->items[i].name, name)) return own->items[i].defined;
         }
-        return read_build_symbol(name, NULL);
+        const char *value = NULL;
+        const bool defined = read_build_symbol(name, &value);
+        if (value) {
+            c->valued = name;
+            c->value = value;
+        }
+        return defined;
     }
     if (c->ok) {
         diag_error(cond_here(c), "'%c' can't go in a condition", *c->p);
@@ -552,29 +594,47 @@ static bool cond_primary(cond_reader *c)
 }
 
 // == and !=, both sides read whatever the first says, as with && and ||. They
-// compare whether symbols are defined: a symbol's value is code's to read.
+// compare whether symbols are defined: a symbol's value is code's to read, so
+// one beside a symbol the build gave a value is an error, as #if ARMY == Huge
+// with --define ARMY=Huge would quietly compare two symbols' being defined.
 static bool cond_equality(cond_reader *c)
 {
     bool value = cond_primary(c);
+    str valued = c->valued;
+    const char *valued_value = c->value;
     for (;;) {
         cond_space(c);
         const bool eq = c->p + 1 < c->end && c->p[0] == '=' && c->p[1] == '=';
         const bool ne = c->p + 1 < c->end && c->p[0] == '!' && c->p[1] == '=';
         if (!eq && !ne) return value;
+        const loc op = cond_here(c);
         c->p += 2;
         cond_space(c);
         if (c->p < c->end && (isdigit((unsigned char)*c->p) || *c->p == '"' || *c->p == '\'' || *c->p == '-' || *c->p == '.')) {
             if (c->ok) {
                 diag_error(cond_here(c), "a condition compares whether symbols are defined, not their values: '#if' can't read "
                                          "what a '--define NAME=value' gave");
-                diag_note("read the value in code, as a constant with a default: 'const int SIDE = define(SIDE, 500);', then "
-                          "'if (SIDE == 3)'; for a choice of code, define a symbol for each, '#if SIDE_3'");
+                cond_value_note();
             }
             c->ok = false;
             c->p = c->end;
             return false;
         }
         const bool other = cond_primary(c);
+        if (!valued.len) {
+            valued = c->valued;
+            valued_value = c->value;
+        }
+        if (valued.len) {
+            if (c->ok) {
+                diag_error(op, "a condition compares whether symbols are defined, not their values: the build gives '" STR_FMT
+                               "' the value '%s', which '#if' can't read", STR_ARG(valued), valued_value);
+                cond_value_note();
+            }
+            c->ok = false;
+            c->p = c->end;
+            return false;
+        }
         value = eq ? value == other : value != other;
     }
 }
@@ -609,7 +669,13 @@ static bool read_condition(cond_reader *c)
     const bool value = cond_or(c);
     cond_space(c);
     if (c->p < c->end && c->ok) {
-        diag_error(cond_here(c), "the condition ends before '%.*s'", (int)(c->end - c->p), c->p);
+        if (*c->p == '<' || *c->p == '>' || *c->p == '=') { // #if SIDE > 3, #if SIDE = 3: a value compared
+            diag_error(cond_here(c), "a condition reads whether symbols are defined, not their values: '#if' can't compare "
+                                     "what a '--define NAME=value' gave");
+            cond_value_note();
+        } else {
+            diag_error(cond_here(c), "the condition ends before '%.*s'", (int)(c->end - c->p), c->p);
+        }
         c->ok = false;
     }
     return value;
@@ -684,7 +750,7 @@ static bool directive(lexer *lx, cond_stack *conds, lex_spans *spans, file_symbo
     const char *after;
     const str word = directive_word(lx->p, text_end, &after);
     add_span(spans, at.line, at.line, true);
-    cond_reader c = {after, text_end, lx, true, own};
+    cond_reader c = {after, text_end, lx, true, own, {NULL, 0}, NULL};
     cond *top = conds->count > 0 ? &conds->items[conds->count - 1] : NULL;
     bool skip = false;
     bool ok = true;

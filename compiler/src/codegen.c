@@ -6183,13 +6183,26 @@ static const char *task_slot_for(gen *g, const char *local, const type t)
     return name.data;
 }
 
+// Whether `t` is a list of grids or a map of them: an asset's, or a hidden value of one in a task (a foreach's
+// computed container, a switch's result), never a named local's. Its grids are the pack's.
+static bool holds_grids(const type t)
+{
+    if (t.kind == TY_LIST) return list_elem(t.decl).kind == TY_GRID;
+    return t.kind == TY_MAP && !t.decl->is_set && t.decl->fields.items[1].type.kind == TY_GRID;
+}
+
 // Puts `value`, C of type `t`, in the frame's place `slot` (C, like
 // tide_f->x): text, lists and grids as the world's own, `where` the task's
 // world. A grid the task took back from its frame and left as it was stays the
-// frame's (tide_grid_carry).
+// frame's (tide_grid_carry), and so does a list or a map of grids, each of whose
+// grids is a copy of the frame's own (tide_list%d_carry).
 static void gen_spill(gen *g, const char *slot, const char *value, const type t, const char *where)
 {
     sb *o = &g->c;
+    if (holds_grids(t)) {
+        line(g, o, "tide_%s%d_carry(&%s, %s, %s);", t.kind == TY_LIST ? "list" : "map", t.decl->index, slot, value, where);
+        return;
+    }
     switch (t.kind) {
     case TY_STRING: line(g, o, "tide_text_set(&%s, %s, %s);", slot, value, where); return;
     case TY_GRID: line(g, o, "tide_grid_carry(&%s, %s, &%s, %s);", slot, value, grid_shape_name(t.decl), where); return;
@@ -6229,10 +6242,15 @@ static void gen_spill(gen *g, const char *slot, const char *value, const type t,
 
 // Takes the value in the frame's place `slot` back into C local `local`, of
 // type `t`. Lists come back as copies, so the task changes its own; a grid as
-// the frame's, which a write first copies (tide_grid_mine, place_where).
+// the frame's, which a write first copies (tide_grid_mine, place_where), and a
+// list or a map of grids as the frame's too, which nothing writes.
 static void gen_reload(gen *g, const char *local, const char *slot, const type t)
 {
     sb *o = &g->c;
+    if (holds_grids(t)) {
+        line(g, o, "%s = %s;", local, slot);
+        return;
+    }
     switch (t.kind) {
     case TY_STRING: line(g, o, "%s = tide_text_view(%s);", local, slot); return;
     case TY_LIST: line(g, o, "%s = tide_list%d_copy(%s);", local, t.decl->index, slot); return;
@@ -6288,6 +6306,18 @@ static void task_pop(gen *g, const int mark)
     if (g->task) g->task->live.count = mark;
 }
 
+// The locals from mark `from` to mark `to` dead, those declared after them still live: a statement's temporaries
+// once it has read them. A slot of one that held a grid is let go of at the next wait (gen_spill_live).
+static void task_forget(gen *g, const int from, int to)
+{
+    if (!g->task) return;
+    if (to > g->task->live.count) to = g->task->live.count;
+    if (to <= from) return;
+    const int n = to - from;
+    for (int i = to; i < g->task->live.count; i++) g->task->live.items[i - n] = g->task->live.items[i];
+    g->task->live.count -= n;
+}
+
 // Before the task waits: its C locals go in its frame.
 typedef struct task_ref_outer { const decl *decl; const struct task_ref_outer *previous; } task_ref_outer;
 
@@ -6304,10 +6334,11 @@ static bool task_value_handles(const type t, const task_ref_outer *outer)
     return false;
 }
 
-// Whether a frame's slot of type `t` holds a grid: a grid's, or a T?'s or a failable call's result's whose value is one.
+// Whether a frame's slot of type `t` holds a grid: a grid's, a list's or a map's of them, or a T?'s or a failable
+// call's result's whose value is one.
 static bool slot_holds_grid(const type t)
 {
-    if (t.kind == TY_GRID) return true;
+    if (t.kind == TY_GRID || holds_grids(t)) return true;
     return (t.kind == TY_OPTIONAL || t.kind == TY_FAILABLE) && t.decl && t.decl->fields.items[0].type.kind == TY_GRID;
 }
 
@@ -8010,6 +8041,10 @@ static const expr *foreach_place(gen *g, const expr *e)
 static const char *foreach_value(gen *g, expr *e)
 {
     if (is_place(e) && !e->kept) return expr_text(g, foreach_place(g, e));
+    // A task's loop over an asset reads it where it is each round, as nothing but a pack loaded again changes one: a
+    // copy kept in the frame as the task waits would copy each of its grids there (tide_list%d_carry), and go on
+    // through the pack it was taken from after tide run loads another
+    if (g->task && e->bind == BIND_ASSET && !e->asset_reference && !e->hoisted) return expr_text(g, e);
     // A computed container has no live place: evaluate and own its value once.
     const char *value = made_up(g, "container");
     indent(g, &g->c);
@@ -8691,6 +8726,9 @@ static void gen_stmt_now(gen *g, const stmt *s)
         g->indent++;
         declare_bindings(g, s->cond);
     }
+    // What hoisting puts before the statement, its temporaries: live while the statement is worked out (an earlier
+    // await's value waits in its frame while a later one waits), dead once it has read them (task_forget)
+    const int temps_from = task_mark(g);
     switch (s->kind) {
     case S_VAR: hoist_spawns(g, s->value); break;
     case S_EXPR:
@@ -8713,6 +8751,7 @@ static void gen_stmt_now(gen *g, const stmt *s)
     case S_FOREACH: hoist_spawns(g, s->value); break; // A foreach's list is made once, before it
     default: break;
     }
+    const int temps_to = task_mark(g);
 
     switch (s->kind) {
     case S_BLOCK: {
@@ -8730,6 +8769,7 @@ static void gen_stmt_now(gen *g, const stmt *s)
         // A condition already in parentheses, like (a == b), gets no second
         // pair: clang warns about `if ((x == 1))` when x can be assigned.
         const char *cond = condition_text(g, s->cond);
+        task_forget(g, temps_from, temps_to); // Its body has the names `is` gave, not the condition's temporaries
         indent(g, o);
         if (wrapped_in_parens(cond)) sb_printf(o, "if %s {\n", cond);
         else sb_printf(o, "if (%s) {\n", cond);
@@ -8760,6 +8800,7 @@ static void gen_stmt_now(gen *g, const stmt *s)
         sb_put(o, "switch (");
         gen_expr(g, o, s->cond);
         sb_put(o, ") {\n");
+        task_forget(g, temps_from, temps_to);
         for (int i = 0; i < s->cases.count; i++) {
             const switch_case *section = &s->cases.items[i];
             for (int k = 0; k < section->labels.count; k++) {
@@ -9404,6 +9445,9 @@ static void gen_stmt_now(gen *g, const stmt *s)
         }
         break;
     }
+    // A declaration's, an assignment's or a call's temporaries are done with: a wait after it carries the local it
+    // declared, not the value that local was made of again
+    if (s->kind == S_VAR || s->kind == S_EXPR || s->kind == S_ASSIGN) task_forget(g, temps_from, temps_to);
 }
 
 // ---------------------------------------------------------------------------
@@ -11490,6 +11534,58 @@ static void gen_array_heap_helpers(gen *g, const bool bodies)
     }
 }
 
+// A list or a map of grids going into a task's frame as it waits (gen_spill): a hidden value of an asset's, which
+// names the pack's grids, and the pack can be loaded again while the task waits (tide run does as a file is saved),
+// or a copy in the scratch area. The frame's list or map is its world's, and each grid in it a copy of its own there
+// (tide_grid_carry), so nothing in the frame names the pack or the scratch area after the wait; the one the task took
+// back from its frame and left as it was stays, and nothing ((tide_list){0}) lets go of what the frame held.
+static void gen_grid_container_carries(gen *g)
+{
+    if (!g->tasks.count) return;
+    sb *o = &g->c;
+    for (int k = 0; k < g->prog->lists.count; k++) {
+        const type e = list_elem(g->prog->lists.items[k]);
+        if (e.kind != TY_GRID) continue;
+        const char *shape = grid_shape_name(e.decl);
+        sb_printf(o, "TIDE_HELPER void tide_list%d_carry(tide_list *to, const tide_list value, const uint32_t where)\n{\n"
+                     "    if (value.at && value.at == to->at) return;\n"
+                     "    for (int32_t i = 0; i < tide_list_count(*to); i++) {\n"
+                     "        tide_grid held = *(const tide_grid *)tide_list_at(*to, i, sizeof(tide_grid));\n"
+                     "        tide_grid_release(&held, &%s, where);\n    }\n"
+                     "    tide_list_release(to, where);\n"
+                     "    if (!value.at) return;\n"
+                     "    tide_list_set(to, value, sizeof(tide_grid), where);\n"
+                     "    tide_list_prepare(to, sizeof(tide_grid), where);\n"
+                     "    for (int32_t i = 0; i < tide_list_count(*to); i++) {\n"
+                     "        tide_grid made = {0}; // Made before the element is found again: making it can move the heap\n"
+                     "        tide_grid_carry(&made, *(const tide_grid *)tide_list_at(*to, i, sizeof(tide_grid)), &%s, where);\n"
+                     "        *(tide_grid *)tide_list_at_mut(*to, i, sizeof(tide_grid)) = made;\n    }\n}\n\n",
+                  k, shape, shape);
+    }
+    for (int k = 0; k < g->prog->maps.count; k++) {
+        const decl *m = g->prog->maps.items[k];
+        if (m->is_set || m->fields.items[1].type.kind != TY_GRID) continue;
+        const char *shape = grid_shape_name(m->fields.items[1].type.decl);
+        // Its entries stay where they are, dead ones too, so a loop's place in it (tide_map_next) is the same place
+        sb_printf(o, "TIDE_HELPER void tide_map%d_carry(tide_map *to, const tide_map value, const uint32_t where)\n{\n"
+                     "    if (value.entries.at && value.entries.at == to->entries.at) return;\n"
+                     "    for (int32_t i = 0; i < tide_map_entries(*to); i++) {\n"
+                     "        tide_grid held = ((const tide_map%d_entry *)tide_map_entry(*to, i, &tide_map%d_kind))->value;\n"
+                     "        tide_grid_release(&held, &%s, where);\n    }\n"
+                     "    tide_map%d_release(to, where);\n"
+                     "    *to = (tide_map){0};\n"
+                     "    if (!value.entries.at) return;\n"
+                     "    tide_map%d_assign(to, value, where);\n"
+                     "    tide_list_prepare(&to->entries, sizeof(tide_map%d_entry), where);\n"
+                     "    for (int32_t i = 0; i < tide_map_entries(*to); i++) {\n"
+                     "        const tide_map%d_entry *e = tide_map_entry(*to, i, &tide_map%d_kind);\n"
+                     "        tide_grid made = {0};\n"
+                     "        if (tide_map_live(e)) tide_grid_carry(&made, e->value, &%s, where);\n"
+                     "        ((tide_map%d_entry *)tide_map_entry_mut(*to, i, &tide_map%d_kind))->value = made;\n    }\n}\n\n",
+                  k, k, k, shape, k, k, k, k, k, shape, k, k);
+    }
+}
+
 static void gen_text_helpers(gen *g)
 {
     const program *prog = g->prog;
@@ -11625,6 +11721,7 @@ static void gen_text_helpers(gen *g)
     gen_list_helpers(g, true);
     gen_map_helpers(g, true);
     gen_array_heap_helpers(g, true);
+    gen_grid_container_carries(g);
     // A spawn's values, as they go into the command queue or are dropped.
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (!prog->spawn_target.items[a]) continue;
@@ -19176,7 +19273,10 @@ static void gen_frame_release(gen *g, const decl *frame)
         const field *f = &frame->fields.items[i];
         const char *fc = field_cname(f);
         const type t = f->type;
-        if (t.kind == TY_STRING) sb_printf(o, "    tide_text_release(&v->%s, where);\n", fc);
+        if (holds_grids(t)) { // ...and the grids of a list or a map of them, each the frame's own copy
+            sb_printf(o, "    tide_%s%d_carry(&v->%s, (%s){0}, where);\n", t.kind == TY_LIST ? "list" : "map", t.decl->index, fc,
+                      t.kind == TY_LIST ? "tide_list" : "tide_map");
+        } else if (t.kind == TY_STRING) sb_printf(o, "    tide_text_release(&v->%s, where);\n", fc);
         else if (t.kind == TY_LIST) sb_printf(o, "    tide_list%d_release(&v->%s, where);\n", t.decl->index, fc);
         else if (t.kind == TY_MAP || t.kind == TY_SET) sb_printf(o, "    tide_map%d_release(&v->%s, where);\n", t.decl->index, fc);
         else if (t.kind == TY_GRID) sb_printf(o, "    tide_grid_release(&v->%s, &%s, where);\n", fc, grid_shape_name(t.decl));

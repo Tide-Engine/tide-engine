@@ -2923,6 +2923,19 @@ static bool negated_literal(const expr *e)
     return e->lhs->kind == E_INT && e->lhs->type.kind != TY_LONG && int_literal(e->lhs) <= 2147483647ll;
 }
 
+// Whether a SampleLevel's level is written as the base image itself: a number of 0 or less (a GPU reads a level
+// below 0 as 0), so the read between two levels there is the base image's blend alone, and no smaller images are
+// needed for it.
+static bool base_level(const expr *level)
+{
+    if (negated_literal(level)) return true; // -0, -1, -0.5: none above 0
+    if (level->kind == E_INT) return int_literal(level) <= 0;
+    if (level->kind != E_FLOAT || level->is_degrees) return false;
+    char text[64];
+    snprintf(text, sizeof text, STR_FMT, STR_ARG(level->text));
+    return strtod(text, NULL) <= 0.0;
+}
+
 // Whether a mut argument can be handed over as it is in WGSL, which takes a
 // pointer to a whole variable: a local, or a parameter that's one already.
 static bool is_whole_variable(const expr *e)
@@ -4754,7 +4767,8 @@ static const char *need_index_wrap(emit *em, const int dims, const int wrap)
 // around it (a volume's eight) blended in the shader by where the uv is between them, as the GPU's Bilinear is, the
 // same bits on every device. The wrap is the Sample's: the uv is brought into the image first, and the texels a blend
 // reaches past an edge are the edge's, the other side's or mirrored. An array's layer is held to the layers it has;
-// a cube's six faces are its layers, the face and the uv on it worked out from the direction (need_cube_face). A
+// a cube's six faces are its layers, the face and the uv on it worked out from the direction (need_cube_face), the
+// face held to the layers too (no load past an image's last, which only a robust device defines). A
 // Sample written for a sampler (typed_through_sampler: a 32-bit image's, loaded exactly here) gives all four
 // channels, which ex_sample narrows to its role's.
 static void ex_numeric_sample(emit *em, const expr *e, const expr *of, const sampling how)
@@ -4777,7 +4791,9 @@ static void ex_numeric_sample(emit *em, const expr *e, const expr *of, const sam
         sb *o = &em->functions;
         sb_printf(o, "fn %s(uv: vec%df%s) -> %s {\n", name, cube ? 3 : dims, layered && !cube ? ", layer: i32" : "", ty(em, value));
         if (cube) {
-            sb_put(o, "    let tide_face = tide_cube_face(uv);\n    let tide_uv = tide_face.xy;\n    let tide_layer = i32(tide_face.z);\n");
+            // Held to the layers the image has: a cube of six, or what's bound for none, one layer of zeros
+            sb_printf(o, "    let tide_face = tide_cube_face(uv);\n    let tide_uv = tide_face.xy;\n"
+                         "    let tide_layer = min(i32(tide_face.z), i32(textureNumLayers(pixels%d)) - 1);\n", slot);
         } else {
             if (wrap == 1) sb_put(o, "    let tide_uv = uv - floor(uv);\n");
             else if (wrap == 2) sb_put(o, "    let tide_m = uv - 2.0 * floor(uv * 0.5);\n    let tide_uv = min(tide_m, 2.0 - tide_m);\n");
@@ -4934,9 +4950,13 @@ static void ex_sample_read(emit *em, const expr *e)
     // What the Sample says of how it reads: -1 for what it leaves to its texture
     const int filter_at = (gradients ? 3 : level ? 2 : 1) + (arrayed || held.kind == TY_TEXTURE_ARRAY ? 1 : 0);
     // A typed image's level or gradients that name no filter read between its smaller images, and so does any
-    // image's SampleLevel: a level read through a filter that reads none would be the base image's
+    // image's SampleLevel: a level read through a filter that reads none would be the base image's. A level written
+    // as 0 (or less) is the base image itself, where that's Bilinear's read: no smaller images are made for it, which
+    // for a target drawn every frame would be a chain made every frame (base_level)
+    const bool unnamed_level = (sampled && (level || gradients)) || (level && (cube || base == READ_COLOR));
+    const int level_at = held.kind == TY_TEXTURE_ARRAY ? 2 : 1;
     const int said_filter = (cube || base == READ_COLOR) && e->args.count > filter_at ? (int)e->args.items[filter_at]->enum_member->number
-                          : (sampled && (level || gradients)) || (level && (cube || base == READ_COLOR)) ? 2 : -1;
+                          : unnamed_level ? (level && base_level(e->args.items[level_at]) ? 1 : 2) : -1;
     const int said_wrap = (base == READ_COLOR || number) && e->args.count > filter_at + 1 ? (int)e->args.items[filter_at + 1]->enum_member->number : -1;
     const expr *of = e->object;
     if (em->code != em->root) { // A function's: its own parameter's, which each call names, or an asset's
@@ -7810,9 +7830,12 @@ static bool refuse_blended_numbers(const program *prog, const expr *call, const 
         diag_note("no GPU blends 32-bit floats on every device, so tidec loads a cube of them exactly: the face and the "
                   "pixel nearest the direction, which can't be blended across a face's edge the same way everywhere");
     } else {
+        // How it's read at its own pixels, as the image is: an array's at a layer
+        const type_kind held = t->field ? t->field->type.kind : TY_TEXTURE;
         diag_error(call->at, "image '" STR_FMT "' is read between its smaller images, and Format." STR_FMT " has none: read it "
-                   "with Sample(uv) or Filter.Bilinear, or draw the numbers into Format.%s",
-                   STR_ARG(name), STR_ARG(called), format == 7 ? "R16f" : "Rgba16f");
+                   "with %s or Filter.Bilinear, or draw the numbers into Format.%s", STR_ARG(name), STR_ARG(called),
+                   held == TY_TEXTURE_ARRAY ? "Sample(uv, layer)" : held == TY_TEXTURE3D ? "Sample(uvw)" : "Sample(uv)",
+                   format == 7 ? "R16f" : "Rgba16f");
         diag_note("no GPU blends 32-bit floats on every device, so tidec loads them exactly, the nearest pixel or the four "
                   "around blended in the shader, the same everywhere; Trilinear, Anisotropic, SampleLevel and SampleGrad "
                   "read smaller images, which R8, Rg8, R16f, Rg16f and Rgba16f have on every GPU");

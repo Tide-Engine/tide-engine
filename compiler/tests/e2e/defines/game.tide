@@ -41,6 +41,12 @@ const int WITH_EXTRA = Extra.BONUS;
 const int WITH_EXTRA = 0;
 #endif
 
+#if SIDE
+const int SIDE_HERE = 1; // A symbol the build gave a value is defined to #if
+#else
+const int SIDE_HERE = 0;
+#endif
+
 #if PACKAGE_BOX2D
 using Box2D; // A package the game doesn't build with: nothing here is read
 const int WITH_BOX2D = 1;
@@ -73,6 +79,17 @@ const string EMPTY = define(EMPTY, "x");    // --define EMPTY=
 const bool QUICK = define(WIDE, false);     // A symbol with no value read as a bool is true
 const bool SLOW = define(SLOW, true);       // --define SLOW=false
 const Army ARMY = define(ARMY, Army.Small); // --define ARMY=Huge
+const long MANY = define(MANY, 5);          // --define MANY=5000000000, read as the long this is
+const float3 SPOT = float3(define(SPOT_X, 0), 1, 0); // --define SPOT_X=0.5, read as a vector's float
+const Color TINT = Color(define(RED, 1), 0, 0);      // --define RED=0.25
+
+// A method of the name is called, not the build's: it hides define as one hides Spawn
+struct Shadowed
+{
+    int x;
+    int define(int a, int b) { return a * b; }
+    int Get() { return define(x, 3); }
+}
 
 singleton Picked
 {
@@ -93,8 +110,13 @@ singleton Picked
     bool quick = QUICK;
     bool slow = SLOW;
     Army army = ARMY;
+    long many = MANY;
+    float3 spot = SPOT;
+    Color tint = TINT;
+    int sideHere = SIDE_HERE;
     int[2] sizes = [define(SIDE, 0), define(UNSET_SIDE, 2)];
     int inCode;
+    int shadowed;
     int own = OWN;
     int fastHere = FAST_HERE;
     int fromBuild = FROM_BUILD;
@@ -114,4 +136,5 @@ scene Main { }
 system Count(mut Picked picked)
 {
     if (defined(SIDE) && !defined(NEVER_DEFINED)) picked.inCode = define(SIDE, 1) * 2 + define(UNSET_SIDE, 0);
+    picked.shadowed = Shadowed { x = 4 }.Get();
 }

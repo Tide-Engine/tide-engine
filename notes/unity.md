@@ -8,6 +8,12 @@ render-targets.md (top) built 32-bit array layers and cube faces, typed array lo
 `Texture2DArray` they are, and `EmptyRead` giving a zero RGBA32F / R32_SInt Tex2DArray for them (it gives `white`
 now; the engine binds its own recorded fallbacks, so it isn't reached); the catalogue's new ReadTargetLayerInts and
 changed ReadTargetLayerNumbers (a load now), which `tide unity` writes. Their HLSL compiles under fxc.
+Corrected 2026-11-15 (review): the fallback the engine binds for those kinds was a drawn-into ARRAY packet, which
+`MakeArray` makes as a `RenderTexture` nothing clears, so a typed 32-bit array or cube with no image read undefined
+values on Unity. It's an `ARRAY_OF` of RGBA32F or R32I now, 1x1x1, which `MakeArrayOf` makes of zeros it writes
+(platform.c `layers_fallback`; pinned by embed.c `embed_render_number_layers_fallback_is_zeros`). The shader also
+holds a 32-bit cube's face to the layers bound (`min(face, textureNumLayers - 1)`), so a fallback of one layer is
+never read past on Metal, where an out-of-range load is undefined.
 
 ## Banded reads, parts and volumes: embed ABI 26 (2026-11-14, not run in Unity)
 

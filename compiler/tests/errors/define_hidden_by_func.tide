@@ -1,0 +1,3 @@
+// expect: unknown name 'DEBUG'
+int Apply(Func<int, int> defined) { return defined(DEBUG); } // The parameter's called, which takes a value
+scene Main { }

@@ -652,13 +652,14 @@ if(NOT TIDE_ANDROID)
         tide_web_page(tide_platform_targets SHELL web/test_shell.html)
         tide_add_web_test(tide_platform_targets TARGET tide_platform_targets PIXELS EXPECT "renderer: WebGPU")
     else()
+        target_include_directories(tide_platform_targets PRIVATE third_party) # Vulkan's headers, for src/gpu_vk.h
         add_test(NAME tide_platform_targets COMMAND tide_platform_targets)
         tide_gpu_test(tide_platform_targets)
     endif()
 else()
     # As the draw checks, an app.
     add_library(tide_platform_targets_app SHARED tests/targets.c)
-    target_include_directories(tide_platform_targets_app PRIVATE src)
+    target_include_directories(tide_platform_targets_app PRIVATE src third_party)
     target_link_libraries(tide_platform_targets_app PRIVATE tide_platform)
     tide_platform_spirv_of(tide_platform_targets_app)
     tide_android_app(tide_platform_targets_app LABEL "Tide targets")
@@ -1205,6 +1206,12 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     target_include_directories(tide_platform_cursor_rules PRIVATE "${PROJECT_SOURCE_DIR}/tests" desktop)
     target_link_libraries(tide_platform_cursor_rules PRIVATE tide)
     add_test(NAME tide_platform_cursor_rules COMMAND tide_platform_cursor_rules)
+    # The web's GPU that draws nothing (src/gpu_none.c), built natively too, where the sanitizers see its read backs.
+    # No window or GPU.
+    add_executable(tide_platform_gpu_none tests/gpu_none.c src/gpu_none.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tide_platform_gpu_none PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)
+    target_link_libraries(tide_platform_gpu_none PRIVATE tide)
+    add_test(NAME tide_platform_gpu_none COMMAND tide_platform_gpu_none)
 endif()
 
 # On Android, those of them a window's program runs as an app: the loading screen, the waits for a frame's fence,
