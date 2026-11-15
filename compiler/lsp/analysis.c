@@ -2329,11 +2329,21 @@ static const method_form session_calls[] = {
     "shortly after a click or a key, as when a button is pressed. Pasting needs no call: Ctrl+V types what's on the " \
     "clipboard into the text field that has the focus."
 
+// The build's symbols read by code, as constants (the language's, in no table of the engine's).
+#define DEFINED_DOC                                                                                                    \
+    "Whether the symbol is defined here, as `#if NAME` reads it: the file's own `#define`, the build's `--define`, "  \
+    "`DEBUG`, a package's `PACKAGE_<NAME>` or a version of tide. A constant bool."
+#define DEFINE_DOC                                                                                                     \
+    "The value the build's `--define NAME=value` gives the symbol, or `default`, a constant, when it gives none. It "  \
+    "reads as the default's type, or as the type of where it goes when the default converts to that: a bool, byte, " \
+    "int, long, float, double, string or an enum's member. Editors know no command line, so here it's the default."
+
 // Json's calls and string's own: in no table of the engine's, as they take and give types of the game's.
 #define JSON_READ_DOC                                                                                                  \
     "Reads JSON as a `T`: a struct, a `List<T>`, a `Set<T>` or a `Map<K, T>` of what JSON holds (bool, the "           \
     "integers, float, double, char, string, enums by their member's name, vectors, quaternions and colors as arrays "  \
-    "of their numbers, structs, lists, sets and arrays as arrays, and maps by text, an int or an enum). A field's key " \
+    "of their numbers, structs, lists, sets and arrays as arrays, and maps by text, a byte, an int, a long or an "     \
+    "enum). A field's key "                                                                                            \
     "is its name, or what `[Json(\"key\")]` before it says. A key the JSON leaves out keeps its field's default, and " \
     "so does a `null`; a key no field has is skipped. Nothing, unwrapped with `??` or `is`, when the text isn't JSON, " \
     "a value isn't its field's kind, a vector has the wrong number of numbers, or a number doesn't fit its field. The " \
@@ -9000,6 +9010,8 @@ static void complete_expression(completion *c, const loc at, const bool statemen
     complete_value_types(c, !statement ? VT_VALUES : local_code ? VT_LOCALS | VT_LOCAL_ENTITY : VT_LOCALS);
     complete_structs(c);
     item(c, "Math", CK_MODULE, "Math functions and constants", NULL, NULL);
+    item(c, "defined", CK_FUNCTION, "defined(NAME) -> bool", DEFINED_DOC, "defined($1)");
+    item(c, "define", CK_FUNCTION, "define(NAME, default)", DEFINE_DOC, "define($1, $2)");
     complete_namespaces(c, false);
     // What views draw with, which the functions they call can use too.
     if (view || (routine && sc.decl->kind == DECL_FUNCTION)) {
@@ -11354,7 +11366,7 @@ static const char *check_new_name(const occurrence *target, const str name)
                                            "GUI", "GUILayout", "Screen", "Cursor", "Frame", "Anchor", "Action", "Session", "SessionState", "Clipboard",
                                            "Vertex", "Vertex3", "Shape", "GUITheme", "GUIControl", "Filter", "Wrap", "Font", "Blend", "Depth", "Cull", "Format", "StencilTest", "StencilOp", "Draw", "DrawList", "Random",
                                            "DisconnectReason", "Connected", "Disconnected", "Wait", "File", "Directory", "Path", "Application", "Storage", "IOError", "Json", "List", "Map", "Set", "Grid2", "Grid3",
-                                           "string", "Sample", "Sanitize", "Predict"};
+                                           "string", "Sample", "Sanitize", "Predict", "define", "defined"};
     static char message[160];
 
     if (name.len == 0 || !(isalpha((unsigned char)name.ptr[0]) || name.ptr[0] == '_')) return "Names start with a letter.";
@@ -12374,6 +12386,8 @@ static const struct {
     {"Random", {"Random(long seed)"}, RANDOM_SEEDED_DOC},
     {"Spawn", {"Spawn(components...)"}, "Creates an entity with these components. It's added at the end of the tick."},
     {"Send", {"Send(event)"}, "Sends an event to the whole world, handled at the end of the tick."},
+    {"defined", {"defined(NAME) -> bool"}, DEFINED_DOC},
+    {"define", {"define(NAME, default)"}, DEFINE_DOC},
     {"Grid2", {"Grid2(int width = 0, int height = 0)"}, GRID_SIZE_DOC},
     {"Grid3", {"Grid3(int width = 0, int height = 0, int depth = 0)"}, GRID_SIZE_DOC},
 };

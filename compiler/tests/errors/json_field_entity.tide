@@ -1,5 +1,5 @@
 // expect: JSON has nothing for Entity, which 'Lobby.owner' holds
-// expect: JSON holds bool, the integers, float, double, char, string, enums, vectors, quaternions and colors, structs of these, List<T>, Set<T>, arrays and maps by a string, an int or an enum
+// expect: JSON holds bool, the integers, float, double, char, string, enums, vectors, quaternions and colors, structs of these, List<T>, Set<T>, arrays and maps by a string, a byte, an int, a long or an enum
 scene Main { }
 struct Info { string id; int players; }
 singleton Seen { string text; int count; }

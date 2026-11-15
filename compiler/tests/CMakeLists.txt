@@ -703,7 +703,8 @@ tide_e2e_test(crlf) # Windows line endings, kept by .gitattributes
 tide_e2e_test(directives) # #if and the rest: what other versions of tide read is left out
 # #define and #undef, and the build's symbols: --define's, DEBUG, and PACKAGE_<NAME> for each of its packages
 tide_e2e_test(defines SOURCES e2e/defines/game.tide PACKAGES Extra e2e/defines/Extra/extra.tide DEFINES FAST WIDE SIDE=50
-    BIG=-9223372036854775808 SMALL=255 SCALE=-2.5 FAR=0.1 "TITLE=Two \"words\", a \\ and a tab:\t." EMPTY= SLOW=false ARMY=Huge)
+    BIG=-9223372036854775808 SMALL=255 SCALE=-2.5 FAR=0.1 "TITLE=Two \"words\", a \\ and a tab:\t." EMPTY= SLOW=false ARMY=Huge
+    MANY=5000000000 SPOT_X=0.5 RED=0.25)
 target_compile_definitions(tidec_e2e_defines PRIVATE DEFINES_DEBUG=$<IF:$<CONFIG:Debug>,1,0>)
 tide_e2e_test(multi_file SOURCES e2e/multi_file/a_physics.tide e2e/multi_file/b_main.tide
     e2e/multi_file/c_combat.tide e2e/multi_file/d_items.tide)

@@ -1,0 +1,6 @@
+// expect: the build gives 'TINY' the value '1e-50', and 'define(TINY, ...)' reads a float here
+// expect: give a number a float holds, in decimal: '--define TINY=2.5' or '--define TINY=-1e3'
+// define: TINY=1e-50
+const float TINY = define(TINY, 1.0); // It would be 0 as a float, which C refuses as a literal
+singleton Look { float tiny = TINY; }
+scene Main { }
