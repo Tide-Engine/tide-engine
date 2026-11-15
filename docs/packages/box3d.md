@@ -444,14 +444,12 @@ component Fresh { }
 system Settle(Body body, mut World world, with Fresh)
 {
     if (body.id == 0) return; // Spawned this tick: its body is made in the next
-    mut var lulled = body;
-    lulled.asleep = true;
-    world.Set<Body>(this, lulled);
+    world.Edit<Body>(this, lulled) { lulled.asleep = true; }
     this.Remove(Fresh);
 }
 ```
 
-It reads `Body` and puts the few it changes back through the [`World`](../game/systems.md#other-entities-the-world), as it runs for none of them in nearly every tick: a system that takes every crate's `Body` as `mut` has them all looked over in every tick.
+It reads `Body` and changes the few it puts to sleep through the [`World`](../game/systems.md#other-entities-the-world), as it runs for none of them in nearly every tick: a system that takes every crate's `Body` as `mut` has them all looked over in every tick. Beside the read-only `body`, the Edit of `this` changes the stored `Body`, and `body` keeps the value it was read with, as a `Set` would.
 
 A world where everything is asleep and nothing was written isn't stepped at all (see [What it costs](#what-it-costs)), and a body that's put to sleep costs what one that fell asleep does: nothing.
 
@@ -644,9 +642,10 @@ event(Burst burst) Blast(Physics physics, mut World world)
     if (!physics.Overlap(Sphere { radius = 3 }, burst.at, quaternion.identity, out var near)) return;
     foreach (var entity in near)
     {
-        if (!world.TryGet<Body>(entity, out mut var body)) continue;
-        body.impulse = Math.Normalize(body.position - burst.at) * 4000;
-        world.Set<Body>(entity, body);
+        world.Edit<Body>(entity, body) // An entity with no Body skips the block
+        {
+            body.impulse = Math.Normalize(body.position - burst.at) * 4000;
+        }
     }
 }
 ```

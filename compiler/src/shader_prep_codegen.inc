@@ -54,7 +54,7 @@ static void shader_prep_expr(shader_prep_walk *w, const expr *e)
     if (e->resource_operation || e->io_operation || e->web_fetch || e->storage_flush || e->task_start_value
         || e->kind == E_AWAIT || e->kind == E_LIST || e->kind == E_INTERP) { w->safe = false; return; }
     switch (e->call) {
-    case CALL_NONE: case CALL_CONSTRUCT: case CALL_ENUM_COUNT:
+    case CALL_NONE: case CALL_CONSTRUCT: case CALL_ENUM_COUNT: case CALL_ENUM_VALUES:
     case CALL_METHOD: case CALL_FUNCTION: case CALL_TRANSFORM: case CALL_SNAP:
         break;
     case CALL_DRAW:

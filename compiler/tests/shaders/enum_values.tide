@@ -1,0 +1,38 @@
+// An enum's values in order (< <= > >=, by their numbers) and every member of one (Values()) in code the GPU runs
+enum Direction { North, East = 10, South }
+enum Tone : byte { Light, Mid, Dark }
+scene Main { }
+local singleton Geometry { List<Vertex3> vertices; List<int> indices; }
+
+struct Look
+{
+    Direction facing;
+    Tone tone;
+}
+
+int After(Direction from)
+{
+    mut int n = 0;
+    foreach (var d in Direction.Values())
+    {
+        if (d > from) n++;
+    }
+    return n;
+}
+
+vert Lift(mut Vertex3 vertex, Look look)
+{
+    if (look.facing >= .East) vertex.position.y += After(look.facing);
+}
+
+frag Shade(Vertex3 vertex, out Color color, Look look)
+{
+    Direction[3] all = Direction.Values();
+    bool dark = look.tone > Tone.Mid || Tone(int(look.tone) + 255) <= .Light;
+    color = dark && all[2] == Direction.South ? Color.black : Color(float(After(look.facing)), 0, 0, 1);
+}
+
+view Show(Geometry geometry)
+{
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, Lift, Shade, Look { facing = .East, tone = .Dark });
+}

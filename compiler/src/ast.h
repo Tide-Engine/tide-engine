@@ -372,6 +372,9 @@ typedef struct param {
     bool placement_local; // `local Component value`: access to machine-local storage of a shared component type
     loc placement_at;
     bool function_param; // A method's or function's: a copy, or with mut, the caller's variable itself
+    // `world.Edit<Party>(id, party) { ... }`'s `party`: the Edit call. A `mut` component of the entity it names, in
+    // scope in the block alone, as the code's own `mut` parameter is for its entity; not one of the code's params
+    const struct expr *edit;
     // `out Health health`, a function's or method's, as C#'s: the call makes the caller's variable, which starts
     // unassigned in the code and is assigned on every path that returns. Its mode is PARAM_MUT, as for everything
     // else it's a variable the call changes, by address. An extern function's `out List<byte> image` is a list C
@@ -472,6 +475,7 @@ typedef struct world_use {
     loc write_at; // ...and the first Set
     bool query_read; // A query parameter also reads this component's candidate rows
     bool through_world; // Some World call names it
+    bool write_edits;   // The first Set is an Edit, for what's said of it
 } world_use;
 
 typedef struct system_wait {
@@ -738,6 +742,7 @@ typedef struct decl {
     bool tried_previous;  // ...or world.TryGetPrevious of it
     bool tried;           // Components: some code calls world.TryGet of it, so generated C has its helper
     bool world_set_used;  // Components: World.Set needs the owned-value/active-binding helper
+    bool world_edit_used; // Components: world.Edit needs its helper, which finds an active binding or loads the row
 
     // Events
     bool world_event;        // Built-in events the engine sends to the world, never to an entity
@@ -908,6 +913,11 @@ typedef struct decl {
     struct decl *build_fn;    // An asset or a constant: the function that makes its value, or NULL
     struct decl *build_owner; // That function: the asset or constant it makes
     struct build_value *built; // An asset or a constant: what its code made, once it has run (build_code.h)
+    // A list constant written out, `const List<int> QUAD = [0, 1, 2];`, directly or through the constant it names: its
+    // [a, b, c], whose elements C and the GPU read where it's indexed (no list is made for `QUAD[i]` or `QUAD.count`),
+    // and the array type of as many (`int[3]`; TY_ERROR for an empty list), which they index it as.
+    struct expr *list_literal;
+    type list_array;
     // Purity (compiler/src/purity.c, docs/spec.md, Pure functions): a function or method with code is pure when
     // its result comes from its arguments alone and running it leaves nothing changed. Worked out once every
     // body is checked (infer_purity); `impure_why` says the first thing that keeps it from being pure
@@ -1158,6 +1168,7 @@ typedef enum builtin_call {
     CALL_JSON,      // Json.Read<T>(text), Json.Write(value), string.FromBytes(bytes) and int.TryParse(text, out value):
                     // calls c_callee with its arguments as values, text a tide_str, and an `out` one by address
     CALL_VISIBILITY, // Shared audience groups and typed whole-component restrictions.
+    CALL_ENUM_VALUES, // Enum.Values(): an array of every declared member, in declaration order; its type is that array
 } builtin_call;
 
 enum { VISIBILITY_RECEIVER = 1, VISIBILITY_MUT = 2, VISIBILITY_WORLD = 4, VISIBILITY_COMPONENT = 8 };
@@ -1347,6 +1358,9 @@ struct expr {
     bool placement_local; // `local Spawn(...)`: explicit machine-local placement; on `Scene`, `local Scene.Load(...)`
     bool switches_scene;  // CALL_LOAD: Scene.Switch, which unloads its world's scenes first
     struct stmt *compare[2]; // CALL_LIST Sort: the two elements its block compares, as read-only locals of the block
+    // CALL_WORLD Edit, `world.Edit<Party>(id, party) { ... }`: the block's binding, the entity's component itself, as a
+    // `mut` component parameter is (param.edit), which the block's end puts back (gen_world_edit)
+    struct param *edit_binding;
     struct stmt *step;    // E_STEP: the assignment it makes, `lhs += 1`, which is all of it when it's a statement
     bool postfix;         // ...written after its variable: the value is what the variable held before
     const char *hoisted;  // Spawns, and calls, units and operators that keep their order: the temporary codegen ran it into, before the statement
@@ -1803,6 +1817,8 @@ typedef struct program {
     decl *io_error;      // The built-in IOError enum, shared with tide/io.h
     VEC(struct expr *) io_calls; // Checked filesystem calls, for result adapters in generated C
     VEC(json_root) json_roots; // The types Json.Read and Json.Write are called with: generated C has their functions
+    uint64_t json_vector_reads;  // The vectors, quaternions and colors Json.Read reads, a bit for each type's kind (1 << TY_FLOAT3): each has a reader
+    uint64_t json_vector_writes; // ...and the ones Json.Write writes, each with a writer
     bool from_bytes;     // string.FromBytes(bytes) is called: its adapter goes in the generated C
     type from_bytes_result; // ...and what it gives: string?
     bool decodes;        // grid.Decode(bytes) is called: its adapter and tide/png.h go in the generated C

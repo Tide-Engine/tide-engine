@@ -1,0 +1,5 @@
+// expect: operator '<' can't be used with Color and Color
+// expect: a Color has no order: compare the channels you mean, like 'a.r < b.r'
+singleton Marks { Color a; Color b; bool darker; }
+scene Main { }
+system Check(mut Marks marks) { marks.darker = marks.a < marks.b; }

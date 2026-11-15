@@ -27,13 +27,16 @@ int main(int argc, char **argv)
     }
     if (!output) return 0; // The fake host, or a compiler discovery probe
     const char *symbol = sys_env("TIDE_TEST_BUILD_DEFINE");
-    if (source && symbol) {
+    if (source && symbol) { // "on" for -D BATTLE_TEST, "off" for none, anything else for -D BATTLE_TEST=<it>
+        const bool valued = strcmp(symbol, "on") != 0 && strcmp(symbol, "off") != 0;
+        char expected[64];
+        snprintf(expected, sizeof expected, "BATTLE_TEST%s%s", valued ? "=" : "", valued ? symbol : "");
         bool found = false;
         for (int i = 1; i + 1 < argc; i++) {
-            if (strcmp(argv[i], "-D") == 0 && strcmp(argv[i + 1], "BATTLE_TEST") == 0) found = true;
+            if (strcmp(argv[i], "-D") == 0 && strcmp(argv[i + 1], expected) == 0) found = true;
         }
         const bool authored = strncmp(path_base(source), "custom.", 7) == 0;
-        if (found != (authored && strcmp(symbol, "on") == 0)) return 10;
+        if (found != (authored && strcmp(symbol, "off") != 0)) return 10;
     }
     const char *events = sys_env("TIDE_TEST_BUILD_EVENTS");
     if (!events) return 2;

@@ -1,0 +1,50 @@
+// Array and list constants in code the GPU runs: their values written where they're read, as an array<T, N>,
+// indexed by tide_el (the element type's zero past either end), counted, and gone through with foreach
+enum Kind { Ash, Birch, Cedar }
+
+struct Spot
+{
+    float2 at;
+    Kind kind = Kind.Birch;
+}
+
+const float[4] SIZES = [1.5, 2, 2.5, 4];
+const List<int> QUAD = [0, 1, 2, 0, 2, 3];
+const List<float3> CORNERS = [float3(0, 0, 0), float3(1, 0, 0), float3(1, 1, 0)];
+const Spot[2] SPOTS = [Spot { at = float2(1, 2) }, Spot { at = float2(-3, 4), kind = .Cedar }];
+const List<Kind> KINDS = [Kind.Cedar, Kind.Ash];
+const Kind[3] ALL = Kind.Values();
+const int LAST = QUAD[QUAD.count - 1];
+
+scene Main { }
+local singleton Geometry { List<Vertex3> vertices; List<int> indices; }
+
+struct Look
+{
+    int corner;
+    Kind kind;
+}
+
+float Size(Kind kind)
+{
+    return SIZES[int(kind) + 1];
+}
+
+vert Lift(mut Vertex3 vertex, Look look)
+{
+    vertex.position += CORNERS[look.corner % CORNERS.count] * Size(KINDS[look.corner]);
+}
+
+frag Shade(Vertex3 vertex, out Color color, Look look)
+{
+    mut float sum = 0;
+    foreach (var corner in CORNERS) sum += corner.x;
+    foreach (var kind in ALL) sum += SIZES[int(kind)];
+    Spot spot = SPOTS[look.corner];
+    color = Color(sum, float(QUAD[look.corner] + LAST), spot.at.x + float(int(spot.kind)), float(QUAD.count));
+}
+
+view Show(Geometry geometry)
+{
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, Lift, Shade, Look { corner = 1, kind = .Cedar });
+}

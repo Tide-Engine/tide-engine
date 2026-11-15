@@ -10,7 +10,7 @@ static void usage(void)
 {
     fprintf(stderr,
             "usage: tidec <file.tide>... -o <output-dir> [--name <name>] [--no-line] [--visualizers] [--layout] [--embed]\n"
-            "             [--split-plumbing] [--split-code] [--define <SYMBOL>]...\n"
+            "             [--split-plumbing] [--split-code] [--define <SYMBOL>[=<value>]]...\n"
             "       tidec <file.tide>... --schedule [--name <name>] [--measured <profile.json>]\n"
             "       tidec <file.tide>... --shaders\n"
             "       tidec <file.tide>... --outline\n"
@@ -25,10 +25,12 @@ static void usage(void)
             "  --package <P>  the files after it are package P's, to the next --package;\n"
             "                 a line of a list can say it too. Packages' files compile\n"
             "                 first, in the order the packages are named\n"
-            "  --define <S>   a symbol every file's #if conditions read as defined, like DEBUG;\n"
+            "  --define <S>   a symbol every file's #if conditions read as defined, like DEBUG,\n"
+            "                 or S=value, which code reads with define(S, default) too;\n"
             "                 a line of a list can say it too. PACKAGE_<NAME> is defined for\n"
             "                 each package named\n"
-            "  --name <name>  base name of the generated files (default: the first file's name)\n"
+            "  --name <name>  base name of the generated files (default: the first file's name)\n");
+    fprintf(stderr,
             "  --scene <name> start directly in this qualified prefab or scene, overriding settings.startScene\n"
             "  --no-line      don't map generated code back to .tide lines for debuggers\n"
             "  --visualizers  also write <name>.natvis and <name>_lldb.py, how debuggers show the game's values\n"
@@ -96,8 +98,9 @@ static char *overlay_text(const char *path)
 
 static bool add_define(const char *name)
 {
-    if (!lex_symbol_ok(name)) {
-        fprintf(stderr, "tidec: --define takes a symbol's name, like `--define FAST`, and '%s' isn't one%s\n", name,
+    if (!lex_define_ok(name)) {
+        fprintf(stderr, "tidec: --define takes a symbol's name, like `--define FAST`, or a name and a value, like `--define SIDE=500`, "
+                        "and '%.*s' isn't a name%s\n", lex_define_name_length(name), name,
                 strncmp(name, "TIDE_", 5) == 0 || strncmp(name, "PACKAGE_", 8) == 0
                     ? ": symbols that start with TIDE_ and PACKAGE_ are tide's to say"
                     : "");

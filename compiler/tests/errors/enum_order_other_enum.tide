@@ -1,0 +1,7 @@
+// expect: operator '<' can't be used with Phase and Weapon
+// expect: an enum's values compare with values of the same enum; to compare two enums' numbers, write 'int(a) < int(b)'
+enum Phase { Warmup, Playing }
+enum Weapon { Sword, Bow }
+singleton Match { Phase phase; Weapon weapon; bool early; }
+scene Main { }
+system S(mut Match match) { match.early = match.phase < match.weapon; }

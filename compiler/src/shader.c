@@ -2702,6 +2702,68 @@ static int need_pick(emit *em, const type t)
 }
 
 // array[i]: its element, or while an assignment's target is written, the place itself.
+// A list constant written out (`const List<int> QUAD = [0, 1, 2];`), when `e` names one: the GPU reads it as the
+// array of its values (decl.list_array), written where it's read as any constant is. NULL otherwise.
+static const decl *listed_constant(const expr *e)
+{
+    if ((e->kind != E_NAME && e->kind != E_MEMBER) || e->bind != BIND_CONST) return NULL;
+    const decl *k = e->constant;
+    return k && !k->build_fn && k->list_literal && e->type.kind == TY_LIST ? k : NULL;
+}
+
+// The longest list constant the GPU takes: as long as an array can be
+#define SHADER_LISTED_MOST 4096
+
+// A list constant's values as the array the GPU reads, or false (said) where it has none to read.
+static bool put_listed(emit *em, const decl *k, const loc at)
+{
+    if (k->list_array.kind != TY_ARRAY) {
+        refuse(em, at, "'" STR_FMT "' is an empty list: code the GPU runs reads its elements, and it has none",
+               STR_ARG(k->name));
+        return false;
+    }
+    if (k->list_literal->args.count > SHADER_LISTED_MOST) {
+        refuse(em, at, "'" STR_FMT "' has %d values, and code the GPU runs reads a list constant of %d at most",
+               STR_ARG(k->name), k->list_literal->args.count, SHADER_LISTED_MOST);
+        return false;
+    }
+    if (!type_fits(em, k->list_array, at)) return false;
+    const type element = k->list_array.decl->fields.items[0].type;
+    sb_printf(em->o, "%s(", ty(em, k->list_array));
+    for (int i = 0; i < k->list_literal->args.count; i++) {
+        if (i) sb_put(em->o, ", ");
+        ex_as(em, k->list_literal->args.items[i], element);
+    }
+    sb_put(em->o, ")");
+    return true;
+}
+
+// A list constant read whole, which code the GPU runs has no list to hold
+static void refuse_whole_list(emit *em, const expr *e)
+{
+    const decl *k = e->constant;
+    if (k->build_fn) {
+        refuse(em, e->at, "'" STR_FMT "' is made by build code, and code the GPU runs can't read it yet: pass its values to "
+                          "the draw in its values struct", STR_ARG(k->name));
+        return;
+    }
+    refuse(em, e->at, "code the GPU runs reads a list constant by its elements and count, '" STR_FMT "[i]' and '" STR_FMT
+                      ".count', or goes through it with foreach: it makes no list to pass on", STR_ARG(k->name), STR_ARG(k->name));
+}
+
+static void ex_listed_index(emit *em, const decl *k, const expr *e)
+{
+    if (k->list_array.kind != TY_ARRAY || k->list_literal->args.count > SHADER_LISTED_MOST) {
+        put_listed(em, k, e->at);
+        return;
+    }
+    sb_printf(em->o, "tide_el%d(", need_array(em, k->list_array.decl));
+    if (!put_listed(em, k, e->at)) return;
+    sb_put(em->o, ", ");
+    ex_as(em, e->lhs, (type){TY_INT, NULL});
+    sb_put(em->o, ")");
+}
+
 static void ex_array_index(emit *em, const expr *e)
 {
     const type array = e->object->type;
@@ -2923,6 +2985,10 @@ static void ex_name(emit *em, const expr *e)
         sb_printf(em->o, ".%s", field_name(e->field));
         return;
     case BIND_CONST:
+        if (e->constant->return_type.kind == TY_LIST) {
+            refuse_whole_list(em, e);
+            return;
+        }
         ex_as(em, e->constant->value, e->constant->return_type);
         return;
     default:
@@ -3034,7 +3100,15 @@ static void ex_member(emit *em, const expr *e)
         put_int(em, e->object->type.decl->array_length);
         return;
     }
+    if (listed_constant(e->object) && str_eq_c(e->member, "count")) { // How many a list constant was written with
+        put_int(em, listed_constant(e->object)->list_literal->args.count);
+        return;
+    }
     if (e->constant) {
+        if (e->constant->return_type.kind == TY_LIST) {
+            refuse_whole_list(em, e);
+            return;
+        }
         ex_as(em, e->constant->value, e->constant->return_type);
         return;
     }
@@ -3227,6 +3301,15 @@ static void put_binary(emit *em, const tok_kind op, const expr *l, const expr *r
         ex(em, l);
         sb_printf(em->o, " %s ", op_text(op));
         ex(em, r);
+    } else if ((op == T_EQ || op == T_NE) && (type_dim(lt) >= 2 || lt.kind == TY_COLOR)) {
+        // Two vectors or colors: one bool of every component, where WGSL's == gives a bool for each. An int vector
+        // beside a float one is a float vector, as for + and -
+        const bool floats = type_is_float_based(lt) || type_is_float_based(rt);
+        sb_put(em->o, op == T_EQ ? "all(" : "any(");
+        ex_as(em, l, floats ? as_float(lt) : lt);
+        sb_printf(em->o, " %s ", op_text(op));
+        ex_as(em, r, floats ? as_float(rt) : rt);
+        sb_put(em->o, ")");
     } else if (op == T_EQ || op == T_NE || op == T_LT || op == T_LE || op == T_GT || op == T_GE) {
         // Numbers compare as floats when either is one
         const bool floats = lt.kind == TY_FLOAT || rt.kind == TY_FLOAT;
@@ -4903,7 +4986,9 @@ static void ex_user_call(emit *em, const expr *e)
         if (takes_data(p)) {
             spec[i].data = data_unknown(p->type);
             if (arg && !data_of(em, arg, &spec[i].data)) {
-                type_fits(em, arg->type, arg->at);
+                if ((arg->kind == E_NAME || arg->kind == E_MEMBER) && arg->bind == BIND_CONST && arg->type.kind == TY_LIST)
+                    refuse_whole_list(em, arg); // A list constant: read by its elements, where it's named
+                else type_fits(em, arg->type, arg->at);
                 named = false;
             }
             number = spec[i].data.texture;
@@ -5025,6 +5110,15 @@ static void ex_call(emit *em, const expr *e)
     switch (e->call) {
     case CALL_ENUM_COUNT:
         sb_printf(em->o, "%lld", (long long)e->int_value);
+        return;
+    case CALL_ENUM_VALUES: // Every member's number, in declaration order, as an array of ints
+        if (!type_fits(em, e->type, e->at)) return;
+        sb_printf(em->o, "%s(", ty(em, e->type));
+        for (int i = 0; i < e->type_decl->members.count; i++) {
+            if (i) sb_put(em->o, ", ");
+            put_int(em, (long long)e->type_decl->members.items[i].number);
+        }
+        sb_put(em->o, ")");
         return;
     case CALL_SKINNED:
         refuse(em, e->at, "skeleton lookup and animation sampling run on the CPU, before Draw.SkinnedMesh");
@@ -5248,6 +5342,10 @@ static void ex(emit *em, const expr *e)
         refuse(em, e->at, "text is the CPU's: code the GPU runs has none");
         return;
     case E_INDEX: {
+        if (listed_constant(e->object)) { // QUAD[i] of a list constant: an element of its values, as an array's
+            ex_listed_index(em, listed_constant(e->object), e);
+            return;
+        }
         data_ref data;
         const bool named = data_of(em, e->object, &data);
         if (named && data.map) { // map[key]: its value, or zeros, as an entry past the end reads
@@ -5992,15 +6090,21 @@ static void st_loop(emit *em, const stmt *s)
 static void st_foreach(emit *em, const stmt *s, const data_ref *list)
 {
     const int k = em->temps++;
-    if (!list) { // An array: each of its elements, by its place
-        const type array = s->value->type, element = array.decl->fields.items[0].type;
+    if (!list) { // An array, or a list constant's values as one: each of its elements, by its place
+        const decl *listed = listed_constant(s->value);
+        if (listed && (listed->list_array.kind != TY_ARRAY || listed->list_literal->args.count > SHADER_LISTED_MOST)) {
+            put_listed(em, listed, s->value->at); // Says why
+            return;
+        }
+        const type array = listed ? listed->list_array : s->value->type, element = array.decl->fields.items[0].type;
         if (!type_fits(em, array, s->value->at)) return;
         const int reader = need_array(em, array.decl);
         sb_printf(em->o, "for (var tide_k%d: i32 = 0; tide_k%d < %d; tide_k%d++) {\n", k, k, array.decl->array_length, k);
         em->indent++;
         line(em);
         sb_printf(em->o, "var %s: %s = tide_el%d(", local_name(s->name), ty(em, element), reader);
-        ex(em, s->value);
+        if (listed) put_listed(em, listed, s->value->at);
+        else ex(em, s->value);
         sb_printf(em->o, ", tide_k%d);\n", k);
     } else {
         const int texture = list->texture;
@@ -6257,6 +6361,10 @@ static void st_one(emit *em, const stmt *s, bool outs_ready)
         break;
     case S_FOREACH: {
         data_ref data;
+        if (s->value && listed_constant(s->value)) { // A list constant: its values, as an array's
+            st_foreach(em, s, NULL);
+            break;
+        }
         if (s->value && (s->value->type.kind == TY_LIST || s->value->type.kind == TY_MAP || s->value->type.kind == TY_SET)) {
             if (data_of(em, s->value, &data)) st_foreach(em, s, &data);
             else type_fits(em, s->value->type, s->value->at);

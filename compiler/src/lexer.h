@@ -129,28 +129,44 @@ typedef VEC(lex_span) lex_spans;
 token *lex_all_spans(const source *src, lex_spans *spans);
 
 // The symbols a build defines for every file it lexes, beside tide's versions
-// and each file's own #defines: named on the command line (`--define FAST`),
-// DEBUG, and PACKAGE_<NAME> for each package the game builds with. Reset
-// before a game's files are lexed, then defined. Names are kept, not copied.
+// and each file's own #defines: named on the command line (`--define FAST`,
+// or with a value, `--define ARMY_SIDE=500`), DEBUG, and PACKAGE_<NAME> for
+// each package the game builds with. Reset before a game's files are lexed,
+// then defined. What's given is kept, not copied. A name defined again takes
+// the later value.
 void lex_symbols_reset(void);
-void lex_define(const char *name);
+void lex_define(const char *spec); // "NAME" or "NAME=value"
 void lex_define_package(const char *package); // PACKAGE_BOX2D for "Box2D"
 
 // Whether a name can be defined: an identifier that isn't a condition's own
 // word or tide's to say (TIDE_..., PACKAGE_...).
 bool lex_symbol_ok(const char *name);
+// Whether `spec` is what a command line's --define takes: a name lex_symbol_ok
+// takes, then nothing, or `=` and its value (any text, none too).
+bool lex_define_ok(const char *spec);
+// How many bytes of `spec` are its name: up to its `=`, or all of it.
+int lex_define_name_length(const char *spec);
 // A plain Tide identifier, excluding keyword and generated-code names.
 bool lex_identifier_ok(str name);
 
-// Each of the build's symbols a condition read since the reset, defined or
-// not, in order of their names: what the files read differently in another
-// build.
+// Each of the build's symbols a condition or code read since the reset,
+// defined or not, in order of their names, with the value a build gave it
+// (NULL for none): what the files read differently in another build.
 typedef struct lex_symbol {
     const char *name;
     bool defined;
+    const char *value;
 } lex_symbol;
 
 const lex_symbol *lex_symbols_read(int *count);
+
+// What code reads of symbol `name` (`defined(NAME)`, `define(NAME, default)`)
+// in the file `file` (a loc's): 1 when it's defined, with its value in
+// `*value` (NULL for none), 0 when it isn't, as `#if` would read it there (the
+// file's own #define and #undef first, then the build's, which is noted as a
+// condition's read is). -1 for a TIDE_ name that's no version of tide, which
+// nothing can define.
+int lex_read_symbol(str name, int file, const char **value);
 
 const char *tok_kind_name(tok_kind kind);
 

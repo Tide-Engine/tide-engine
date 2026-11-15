@@ -1,0 +1,31 @@
+// == and != on vectors and colors in code the GPU runs: one bool, all() and any() of WGSL's comparison
+scene Main { }
+local singleton Geometry { List<Vertex3> vertices; List<int> indices; }
+
+struct Look
+{
+    int2 cell;
+    Color tint;
+}
+
+bool SameCell(int2 a, float2 b)
+{
+    return a == b; // An int vector beside a float one is a float vector
+}
+
+vert Lift(mut Vertex3 vertex, Look look)
+{
+    if (look.cell != int2(0, 0)) vertex.position.y += 1;
+}
+
+frag Shade(Vertex3 vertex, out Color color, Look look)
+{
+    bool same = vertex.uv == float2(0.5) && int3(look.cell, 1) != int3(0, 0, 1);
+    color = same || SameCell(look.cell, vertex.uv) ? look.tint : Color.black;
+    if (look.tint == Color.white && vertex.color != look.tint) color = Color.red;
+}
+
+view Show(Geometry geometry)
+{
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, Lift, Shade, Look { cell = int2(1, 2), tint = Color.white });
+}

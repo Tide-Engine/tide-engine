@@ -1,0 +1,7 @@
+// expect: this entity's Health is the system's parameter 'health' already
+component Health { int value; }
+scene Main { }
+system Hurt(mut Health health, mut World world)
+{
+    world.Edit<Health>(this, mine) { mine.value -= 1; }
+}

@@ -1,3 +1,20 @@
+## Array and list constants, and Enum.Values() (2026-11-14)
+
+An array constant was already an array value in WGSL (its literal, inline, as every constant is). A list constant
+written out is now read the same way: `QUAD[i]` is `tide_el<n>(array<T, N>(...), i)` (`ex_listed_index`, through the
+array reader `need_array` makes for `decl.list_array`), `QUAD.count` is N, `foreach` goes through `st_foreach`'s array
+path. `Enum.Values()` is `array<i32, N>(numbers)`. No uniform, binding or translator change. A list constant read whole
+(`refuse_whole_list`, from BIND_CONST names, members and a function's list argument), an empty one, or one over 4096
+values is refused with what to write. Goldens `constant_tables` and `enum_values` (spirv-val and FXC too);
+`platform/tests/shaders.tide` compares them with CPU values. Rules: language.md, same date.
+
+## Vector and color equality (2026-11-14)
+
+`put_binary` writes `==`/`!=` of two vectors or two colors as `all(a == b)` / `any(a != b)`, an int vector converted
+to float beside a float one, so a condition gets one bool, as on the CPU. No new helper or binding; the translators'
+existing `all`/`any` carry it. `shaders/vector_equality` pins a vert, a frag and a helper (golden, spirv-val, FXC);
+`platform/tests/shaders.tide` checks it against CPU values. Rules: language.md, same date.
+
 ## Exact loads, cube face math and depth cubes in shader.c (2026-11-14)
 
 Where a typed read can't go through a sampler the same way everywhere, tidec writes the read itself: R32f/Rgba32f

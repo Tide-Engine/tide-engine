@@ -1,0 +1,5 @@
+// expect: operator '==' can't be used with Color and float4
+// expect: a Color compares with another Color, every channel and alpha
+singleton Marks { Color a; float4 b; bool same; }
+scene Main { }
+system Check(mut Marks marks) { marks.same = marks.a == marks.b; }

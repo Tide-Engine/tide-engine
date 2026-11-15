@@ -533,6 +533,7 @@ file(WRITE "${game}/tide.packages" "# if this were a directive, it would say so
 # No symbol but DEBUG: the #else's. A symbol the command line names: its branch. --release has no DEBUG.
 tide("${game}" ARGS schedule . EXPECT "Ours.Poll" WITHOUT "Steam.Poll" "Extra.Poll")
 tide("${game}" ARGS schedule . --define STEAM EXPECT "Steam.Poll" WITHOUT "Ours.Poll" "Extra.Poll")
+tide("${game}" ARGS schedule . --define STEAM=480 EXPECT "Steam.Poll" WITHOUT "Ours.Poll" "Extra.Poll") # With a value, defined
 tide("${game}" ARGS schedule . --define DEMO EXPECT "Ours.Poll" WITHOUT "Steam.Poll" "Extra.Poll")
 tide("${game}" ARGS schedule . --release --define DEMO EXPECT "Extra.Poll" WITHOUT "Steam.Poll" "Ours.Poll")
 tide("${game}" ARGS schedule . --release --define DEMO --define STEAM EXPECT "Steam.Poll" WITHOUT "Ours.Poll" "Extra.Poll")
