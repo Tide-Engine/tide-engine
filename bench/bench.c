@@ -308,6 +308,38 @@ static bool timed_load_client_state(void *world, const uint8_t *data, const uint
     return ok;
 }
 
+// A repair that says only what changed for a player (tide_game.client_changes): working it out is the server's
+// packing, and making its base again and applying it a client's unpacking
+static uint8_t *timed_client_changes(const void *world, const void *base, const void *lineage, const tide_player_id recipient,
+                                     uint32_t *plan_size, uint8_t **now, uint32_t *now_size, uint8_t **was, uint32_t *was_size,
+                                     uint32_t *changed_size)
+{
+    const uint64_t start = tide_time_now_ns();
+    uint8_t *plan = real->client_changes(world, base, lineage, recipient, plan_size, now, now_size, was, was_size, changed_size);
+    current->pack_ms += since(start);
+    current->packs++;
+    return plan;
+}
+
+static uint8_t *timed_client_changes_base(const void *world, const tide_player_id recipient, const uint8_t *plan,
+                                          const uint32_t plan_size, uint32_t *size)
+{
+    const uint64_t start = tide_time_now_ns();
+    uint8_t *was = real->client_changes_base(world, recipient, plan, plan_size, size);
+    current->unpack_ms += since(start);
+    return was;
+}
+
+static bool timed_apply_client_changes(void *world, const uint8_t *plan, const uint32_t plan_size, const uint8_t *now,
+                                       const uint32_t now_size, const uint8_t *was, const uint32_t was_size)
+{
+    const uint64_t start = tide_time_now_ns();
+    const bool ok = real->apply_client_changes(world, plan, plan_size, now, now_size, was, was_size);
+    current->unpack_ms += since(start);
+    current->unpacks++;
+    return ok;
+}
+
 // --diverge: what the server says the traced bot's world is, by tick, and
 // the ticks the bot's machine went otherwise
 #define SAID 512u
@@ -526,6 +558,13 @@ static void add_samples(samples *to, const samples *from)
     for (uint32_t i = 0; i < from->count; i++) add_sample(to, from->ms[i]);
 }
 
+static double sum_of(const samples *s)
+{
+    double sum = 0.0;
+    for (uint32_t i = 0; i < s->count; i++) sum += s->ms[i];
+    return sum;
+}
+
 static int compare_floats(const void *a, const void *b)
 {
     const float x = *(const float *)a;
@@ -632,6 +671,7 @@ typedef struct side {
     double simulate_ms, hash_ms, snapshot_ms, pack_ms, unpack_ms;
     double ticks, hashes, snapshots, packs, unpacks; // Calls
     double sent;                                     // Bytes
+    double update_ms;                                // All of its updates
 } side;
 
 // A shard, as the run ends
@@ -749,6 +789,7 @@ static void collect(results *r, machine *bots_machines, const uint32_t bots, con
         r->shards = rows;
         r->shards[r->shard_count++] = row;
     }
+    r->server.update_ms = (sum_of(&all_steady) + sum_of(&all_joining)) / (r->played > 0.0 ? r->played : 1.0);
     r->server.update = timing_of(&all_steady);
     r->server.update_joining = timing_of(&all_joining);
     r->pack_ms = packs ? pack_ms / (double)packs : 0.0;
@@ -811,6 +852,7 @@ static void collect(results *r, machine *bots_machines, const uint32_t bots, con
         }
     }
     r->client = side_of(&sum, seconds);
+    r->client.update_ms = (sum_of(&steady) + sum_of(&joining)) / (seconds > 0.0 ? seconds : 1.0);
     r->client.update = timing_of(&steady);
     r->client.update_joining = timing_of(&joining);
     r->replays = advanced ? (double)sum.ticks / (double)advanced : 0.0;
@@ -912,6 +954,14 @@ static void print_results(const results *r, const uint32_t bots, const bool held
         printf("  clients ran %.1f ticks for each one played: the rest ran again, after a guess went wrong\n", r->replays);
     }
     if (r->sharded) print_shards(r);
+    // What the parts above leave of an update: sending and receiving, the repairs a server works out for each
+    // player, its store, the session's own bookkeeping
+    if (!r->sharded) {
+        const side *s = &r->server, *c = &r->client;
+        printf("  updates in all, ms per second: server %.2f (%.2f outside those parts), a client %.2f (%.2f)\n", s->update_ms,
+               s->update_ms - s->simulate_ms - s->hash_ms - s->snapshot_ms - s->pack_ms - s->unpack_ms, c->update_ms,
+               c->update_ms - c->simulate_ms - c->hash_ms - c->snapshot_ms - c->pack_ms - c->unpack_ms);
+    }
 
     printf("\n");
     print_bytes(r->sharded ? "  sent per second: shards " : "  sent per second: server ", r->server.sent);
@@ -940,7 +990,8 @@ static void print_results(const results *r, const uint32_t bots, const bool held
         printf("\n");
     }
     if (r->pack_ms > 0.0) {
-        printf("  the server packed the world %.0f times, %.2f ms each", r->server.packs * r->played, r->pack_ms);
+        printf("  the server packed the world, or what changed of it for a player, %.0f times, %.2f ms each",
+               r->server.packs * r->played, r->pack_ms);
         if (r->caught_up.count) printf("; clients were %u ticks behind it at most, once in", r->max_lag);
         printf("\n");
     }
@@ -1289,6 +1340,9 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
     if (real->load_client_state) timed.load_client_state = timed_load_client_state;
     if (real->client_hash) timed.client_hash = timed_client_hash;
     if (real->client_hashes) timed.client_hashes = timed_client_hashes;
+    if (real->client_changes) timed.client_changes = timed_client_changes;
+    if (real->client_changes_base) timed.client_changes_base = timed_client_changes_base;
+    if (real->apply_client_changes) timed.apply_client_changes = timed_apply_client_changes;
 
     const tide_jobs *jobs = jobs_for(o.threads);
     diverging = o.diverge ? d : NULL;
@@ -1498,6 +1552,10 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
                 m->seen_late = s.late_ticks;
                 m->seen_world = s.world_bytes;
                 m->seen_resyncs = s.resyncs;
+            }
+            if (in && d->watch) {
+                const void *world = tide_client_view(home).current;
+                if (world) d->watch(d->flags, m->bot, world);
             }
             if (in && m->caught_up == 0.0 && lag <= CAUGHT_UP) m->caught_up = now;
             if (m->caught_up > 0.0 && lag > m->max_lag) m->max_lag = lag;
