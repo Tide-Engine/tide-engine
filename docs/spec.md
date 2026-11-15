@@ -3669,7 +3669,8 @@ A level written as a number of 0 or less (`SampleLevel(uv, 0)`, `-1`) with no fi
 (Provisional, Claude, 2026-11-15): Trilinear there reads the base image alone, the same pixels, and a target read so
 would otherwise have its whole chain of smaller images made again after every pass that draws into it, a
 post-process's cost every frame for nothing it reads. It's why an `R32f` or `Rgba32f` image, which has no levels,
-takes `SampleLevel(uv, 0)`: four exact loads, as `Filter.Bilinear`. Weighed: Trilinear as written, with the cost
+takes `SampleLevel(uv, 0)`: four exact loads, as `Filter.Bilinear`. A cube's `R32f` or `Rgba32f` faces are read
+only at their nearest pixel, so a cube's `SampleLevel` takes them only naming `Filter.Point`, at level 0 too. Weighed: Trilinear as written, with the cost
 noted; and any level the compiler can work out to 0, which takes constant folding of every expression for a rare
 spelling. A level known only as the game runs is Trilinear, and makes the chain.
 Levels clamp to 0..31 and the sampler's

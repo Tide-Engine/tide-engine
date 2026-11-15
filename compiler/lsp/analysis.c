@@ -3085,6 +3085,14 @@ static bool numeric_read_named(const type image, const str name)
 // What a [Raw(T)] image's read does, by the image's kind and the call, as the checker and shader.c have it
 static const char *numeric_read_doc(const type image, const str name)
 {
+    if (str_eq_c(name, "SampleLevel") && image.kind == TY_CUBEMAP) {
+        return "Reads a mip level of a cube towards `direction` as its declared numeric type, without alpha conversion, "
+               "between the two levels nearest it where no filter is named: 0 is the faces themselves, each level after "
+               "it half the size. R8, Rg8, R16f, Rg16f and Rgba16f faces have mipmaps. R32f and Rgba32f faces have none "
+               "and are read only at their nearest pixel: name Filter.Point, which reads the faces themselves at any "
+               "level; with no filter (even at level 0) or another filter it is an error at the draw. An int cube has no "
+               "levels: use Sample.";
+    }
     if (str_eq_c(name, "SampleLevel")) {
         return "Reads a mip level as the image's declared numeric type, without alpha conversion, between the two levels "
                "nearest it where no filter is named: 0 is the image itself, each level after it half the size. R8, Rg8, "
@@ -3101,13 +3109,14 @@ static const char *numeric_read_doc(const type image, const str name)
     switch (image.kind) {
     case TY_TEXTURE3D:
         return "Reads a volume's declared numeric type, without alpha conversion: the nearest cell where no filter is named, "
-               "or blended across all three axes with Filter.Bilinear, through the GPU's sampler for R8, Rg8, R16f, Rg16f, "
-               "Rgba16f and a Grid3<float>, and as the eight nearest cells loaded exactly and blended in the shader for "
-               "R32f and Rgba32f. A volume has no mipmaps, and an int volume reads its nearest cell.";
+               "or blended across all three axes with Filter.Bilinear, through the GPU's sampler for Rgba16f and a "
+               "Grid3<float>, and as the eight nearest cells loaded exactly and blended in the shader for R32f and "
+               "Rgba32f. A volume has no mipmaps, and an R32i volume reads its nearest cell.";
     case TY_CUBEMAP:
         return "Reads a cube's declared numeric type towards `direction`, without alpha conversion: the nearest pixel where "
                "no filter is named. R8, Rg8, R16f, Rg16f and Rgba16f faces also blend and read mipmaps through the GPU's "
-               "sampler; R32f, Rgba32f and R32i faces are read at their nearest pixel, and a filter on them is an error.";
+               "sampler; R32f, Rgba32f and R32i faces are read at their nearest pixel, and a filter other than Filter.Point "
+               "on them is an error.";
     case TY_TEXTURE_ARRAY:
         return "Reads layer `layer` as its declared numeric type, without alpha conversion: the nearest pixel where no "
                "filter is named. R8, Rg8, R16f, Rg16f and Rgba16f layers also blend and read mipmaps through the GPU's "

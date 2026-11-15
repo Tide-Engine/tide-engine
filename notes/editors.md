@@ -21,6 +21,15 @@ SampleGrad), signature help on a cube Sample, hover on a helper's typed array pa
 completion in a frag. `lsp_texture_arrays` now expects a depth array's `size` and `count` in a frag.
 `lsp_shaders_hover` checks the `this` text.
 
+Correction after review (2026-11-15): `numeric_read_doc` first gave every kind one SampleLevel text, which
+told a cube that `SampleLevel(direction, 0)` and Filter.Bilinear read its R32f/Rgba32f faces, both refused
+at the draw; a cube's SampleLevel now has its own text (name Filter.Point, even at level 0), and its Sample
+text says a filter other than Point is the error. The typed volume Sample text named R8, Rg8, R16f and Rg16f,
+which a Texture3D can't be made with; it now names Rgba16f and Grid3<float> for the sampler and R32f and
+Rgba32f for the eight loads. Every claim was probed with tidec. `lsp_numeric_images_and_outputs` now pins
+the 2D level-0 sentence, a 32-bit cube's SampleLevel hover and signature help and its Sample hover, and a
+typed volume's Sample hover (no R8/R16f/Rg16f).
+
 Grammars: Vim and Emacs now treat `compute` and `cached` as keywords (Emacs gets `worker` too), as the
 TextMate grammars already did. `tools/tide-vim/test/editor.vim` and the Emacs ERT test check `compute`.
 DepthCubemap needs no grammar change: like DepthTexture, it's a capitalized type name.

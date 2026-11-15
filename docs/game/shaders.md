@@ -213,7 +213,8 @@ around the uv exactly and blends them in the shader, and the picture is the same
 have no mipmaps, so `Filter.Trilinear`, `Filter.Anisotropic`, and a `SampleLevel` or `SampleGrad` that reads
 between levels, on one are a compile error naming `R16f` or `Rgba16f`. Their one level is the image itself: a
 `SampleLevel` or `SampleGrad` naming `Filter.Point` reads its nearest pixel, one naming `Filter.Bilinear` blends
-the four, and `SampleLevel(uv, 0)` blends them too. `R32i` is always exact: a GPU blends no integers. Bare `[Raw]`
+the four, and `SampleLevel(uv, 0)` blends them too. A cube's `R32f` and `Rgba32f` faces are only read at their
+nearest pixel: its `SampleLevel` names `Filter.Point`, even at level 0. `R32i` is always exact: a GPU blends no integers. Bare `[Raw]`
 retains its existing four-channel behavior.
 
 ```csharp

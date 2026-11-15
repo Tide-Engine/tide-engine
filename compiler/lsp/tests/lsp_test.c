@@ -6788,6 +6788,35 @@ TIDE_TEST(lsp_numeric_images_and_outputs)
     const char *level = request("textDocument/hover");
     TIDE_CHECK(has(level, "Texture.SampleLevel(float2 uv, float level, Filter filter = Filter.Trilinear, Wrap wrap = Wrap.Clamp) -> float"));
     TIDE_CHECK(has(level, "R32f and Rgba32f have none"));
+    TIDE_CHECK(has(level, "A level written 0 with no filter reads the image itself as Filter.Bilinear does"));
+    // A cube's 32-bit faces read only through Filter.Point: no level 0 or Bilinear promise, which the checker refuses
+    {
+        static const char cube32[] = "scene Main { }\nlocal singleton Cubes { [Raw(float)] Cubemap cube; }\n"
+                                     "frag Show(Vertex vertex, out Color color, Cubes images) { color = Color(images.cube.Sample$Level(float3(vertex.uv, 1), 0, Filter.Point), 0, 0); }\n"
+                                     "view V(mut Cubes images) { images.cube = Cubemap(8, Format.R32f); }\n";
+        open_document(cube32);
+        const char *cube_level = request("textDocument/hover");
+        TIDE_CHECK(has(cube_level, "Cubemap.SampleLevel(float3 direction, float level, Filter filter = Filter.Trilinear) -> float"));
+        TIDE_CHECK(has(cube_level, "name Filter.Point") && has(cube_level, "even at level 0"));
+        TIDE_CHECK(!has(cube_level, "Filter.Bilinear") && !has(cube_level, "A level written 0"));
+        char signed_cube[1024];
+        snprintf(signed_cube, sizeof signed_cube, "scene Main { }\nlocal singleton Cubes { [Raw(float)] Cubemap cube; }\n"
+                 "frag Show(Vertex vertex, out Color color, Cubes images) { color = Color(images.cube.SampleLevel(float3(vertex.uv, 1), $), 0, 0); }\n");
+        open_document(signed_cube);
+        const char *cube_sign = request("textDocument/signatureHelp");
+        TIDE_CHECK(has(cube_sign, "name Filter.Point") && !has(cube_sign, "A level written 0"));
+        snprintf(signed_cube, sizeof signed_cube, "scene Main { }\nlocal singleton Cubes { [Raw(float)] Cubemap cube; }\n"
+                 "frag Show(Vertex vertex, out Color color, Cubes images) { color = Color(images.cube.Sa$mple(float3(vertex.uv, 1)), 0, 0); }\n");
+        open_document(signed_cube);
+        TIDE_CHECK(has(request("textDocument/hover"), "a filter other than Filter.Point on them is an error"));
+    }
+    // A typed volume's Sample names only the formats a Texture3D can have
+    snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = Color(float(images.ids.Sam$ple(float3(vertex.uv, 0))), 0, 0); }\n", types);
+    open_document(program);
+    const char *volume_read = request("textDocument/hover");
+    TIDE_CHECK(has(volume_read, "Texture3D.Sample(float3 uvw, Filter filter = Filter.Point, Wrap wrap = Wrap.Clamp) -> int"));
+    TIDE_CHECK(has(volume_read, "sampler for Rgba16f and a Grid3<float>") && has(volume_read, "R32f and Rgba32f"));
+    TIDE_CHECK(!has(volume_read, "R8") && !has(volume_read, "Rg16f") && !has(volume_read, "R16f"));
     snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = Color(images.scalar.SampleLevel(vertex.uv, $), 0, 0); }\n", types);
     open_document(program);
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "Texture.SampleLevel(float2 uv, float level, Filter filter = Filter.Trilinear, Wrap wrap = Wrap.Clamp) -> float"));
