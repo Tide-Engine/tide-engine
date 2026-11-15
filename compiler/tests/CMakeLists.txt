@@ -168,7 +168,8 @@ foreach(variant checked memo_off)
     target_include_directories(tidec_e2e_visibility_pieces_${variant} PRIVATE "${PROJECT_SOURCE_DIR}/tests")
     add_test(NAME tidec_e2e_visibility_pieces_${variant} COMMAND tidec_e2e_visibility_pieces_${variant})
 endforeach()
-target_compile_definitions(tidec_e2e_visibility_pieces_checked PRIVATE TIDE_CLIENT_SPANS_CHECK)
+# (and every piece's pages made once each by a sort, as a piece's past 512 of them are)
+target_compile_definitions(tidec_e2e_visibility_pieces_checked PRIVATE TIDE_CLIENT_SPANS_CHECK TIDE_CLIENT_ONCE_MOST=4u)
 target_compile_definitions(tidec_e2e_visibility_pieces_memo_off PRIVATE TIDE_CLIENT_MEMO_OFF)
 tide_e2e_test(shards) # One world split across shards: moving, ghosts, waiting on borders, checkpoints and splits
 tide_e2e_test(shards_players) # A player's machine following their avatar from shard to shard

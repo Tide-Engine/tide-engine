@@ -2,7 +2,9 @@
 // every player's projection hash from what the last tick's check kept is the
 // one a copy of the world hashes to with nothing kept, and a repair by what
 // changed is the same, byte for byte, from what the tick's check kept as from
-// the rows themselves (read before the check, which keeps them).
+// the rows themselves (read before the check, which keeps them). The _checked
+// variant also makes every piece's pages once each by sorting them, as a piece
+// past TIDE_CLIENT_ONCE_MOST of them is.
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -10,17 +12,19 @@
 #include <string.h>
 
 #include "game.h"
+#include "tide/time.h"
 #include "tide_test.h"
 
 #define PLAYERS 4u
 // Every check's projection hashes, hashed together, and the world's hash at the end: the same on every platform and
 // build, memo on, memo off and with every hash worked out twice (the _checked and _memo_off variants pin them too)
-#define PROJECTIONS UINT64_C(0x1a126f2f5372bcb9)
-#define WORLD UINT64_C(0x81b2108f888cafd7)
+#define PROJECTIONS UINT64_C(0x230be0b68a6e203a)
+#define WORLD UINT64_C(0x2bc19948b77f769a)
 
 // The changes a tick can be asked for (visibility_pieces.tide, Control.step), in the order they're made, each of a
 // cell of its own in a piece of its own (and 12 on, which has the same player and policy, with the noise). A cell
-// goes to player id % 4; its Secret is denied that player but where id % 3 is 2
+// goes to player id % 4; its Secret is denied that player but where id % 3 is 2. An even card's Face is denied
+// everyone from the start, an odd one's isn't restricted
 static const struct {
     int step;
     int target;
@@ -33,10 +37,17 @@ static const struct {
     {12, 1876, "a lane"},
     {13, 2361, "a cell's Visibility, another group"},
     {15, 2556, "a policy, gone"},
+    {17, 1370, "a policy where there was none"},
+    {18, 1370, "...then another, where it is"},
+    {19, 100, "a card's policy, where it is (nothing else of it in the heap)"},
+    {20, 165, "a card's policy where there was none"},
+    {21, 165, "...then another, where it is"},
+    {23, 100, "a bag's list, where it is, its page the bags' before it"},
     {8, 1973, "a component gained: another table"},
     {9, 1973, "...and lost"},
     {10, 2070, "a cell's group, gone"},
     {2, 0, "the zone's group's audience"},
+    {22, 0, "a rover, into the zone's scene in its row"},
     {16, 0, "the other group's audience, which the cell given it goes by"},
     {3, 0, "the zone's root, another group"},
     {11, 0, "a cell, new"},
@@ -153,4 +164,34 @@ TIDE_TEST(visibility_pieces_pass_over_only_what_is_as_it_was)
     TIDE_CHECK(projections == PROJECTIONS && at_end == WORLD);
     tide_world_free(&base);
     tide_world_free(&world);
+}
+
+// What the tick's check costs (no check of the times: they're the machine's): with nothing changing, with a lane of
+// every cell's Cell changing each tick (a component holding grids and lists), and with every cell's Secret's
+TIDE_TEST(visibility_pieces_measure)
+{
+    static tide_world measured;
+    static const struct {
+        int step;
+        const char *what;
+    } RUNS[] = {{0, "nothing changing"}, {30, "every cell's Cell"}, {31, "every cell's Secret"}};
+    tide_world_init(&measured, 1.0f);
+    uint64_t out[PLAYERS];
+    for (int i = 0; i < 4; i++) {
+        tide_world_tick(&measured);
+        hashes(&measured, out);
+    }
+    const int ticks = 60;
+    for (size_t r = 0; r < sizeof RUNS / sizeof RUNS[0]; r++) {
+        measured.Control.step = RUNS[r].step;
+        uint64_t took = 0;
+        for (int i = 0; i < ticks; i++) {
+            tide_world_tick(&measured);
+            const uint64_t start = tide_time_now_ns();
+            hashes(&measured, out);
+            took += tide_time_now_ns() - start;
+        }
+        printf("    %-22s %8.1f us a check, %d players\n", RUNS[r].what, (double)took / 1000.0 / ticks, (int)PLAYERS);
+    }
+    tide_world_free(&measured);
 }
