@@ -1,5 +1,26 @@
 # Netcode: sessions, prediction, commands
 
+## Projections over heaps per owner (2026-11-14, later)
+
+A game with visibility has a heap for each owner and runs (schedule-and-threads.md, top section), so what's generated
+for players reads a value wherever its handle says (`client_state_codegen.inc`, `client_spans_codegen.inc`,
+`client_changes_codegen.inc`; no session or runtime change):
+
+- **A heap page is named by its heap and its place**: `tide_client_place(heap, first)`, a `where`'s id and run (as
+  `tide_heaps_of` takes them) above 32 bits and the page's first place below. `tide_client_hasher` holds the world's
+  `tide_heaps`; `tide_client_reach_block(hs, heap, block)` takes the heap a block is in (a list's chunks and a grid's
+  are in their block's, `tide_client_heap_of(handle)`); `tide_client_place_hash` gives a place's page size and hash,
+  or false where no page starts there or the heap or run was never made (none is made: `tide_client_heap` reads
+  `tide_heaps.all`, `tide_heap_slots` and `tide_heap.runs`, where `tide_heaps_of` would allocate). The memo's entries
+  (`tide_client_page`: place, size, hash), a table chunk's kept heap pages, a row's own pages and the groups'
+  directory's digest all use places, so a page of one heap never stands for another's page at the same place.
+- **Values go where their owner's code would make them**: a projection's load, a reload, a repair's records and
+  singletons, and the releases of what they replace say `decl_where(owner)` (`TIDE_WHERE_RUN(TIDE_IN_MATCH, id)` for
+  an owner in runs, run 0 outside them), not `TIDE_IN_MATCH`.
+- **What's sent and hashed is unchanged**: the projection hashes are of values (no pin moved), and the bytes sent and
+  repaired by `bench_voxels` are the same byte for byte. A player's machine runs the same systems in runs on its own
+  heaps; its projection hashes as the server's (`tidec_e2e_visibility_runs`).
+
 ## The host's tick beside its frame (2026-11-12)
 
 A session whose host asks (`tide_session_desc.alongside`, the `ticksAlongsideViews` setting) runs the last tick

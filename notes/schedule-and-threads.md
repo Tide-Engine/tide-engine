@@ -1,5 +1,130 @@
 # The schedule and the tick on threads
 
+## Heaps per owner and runs in games that hide state (2026-11-14, later)
+
+The task: in a game with state visibility (`prog->visibility_state`), owners holding heap data get heaps of their own
+and runs, as in every other game, so a per-entity system that writes its own rows' grids goes across threads. The case:
+`bench/voxels`' `Generate`, which makes each new chunk's `Grid3<Block>` from its seed. Before, `assign_heaps` kept every
+owner of such a game in the match's heap 0 (`const bool one = prog->shards || prog->visibility_state`), as the code
+for players read containers through heap 0 only. Shards still keep one heap (out of scope).
+
+What was built (compiler only: no runtime function is new or changed; my picks, Provisional in `docs/spec.md`, State
+visibility):
+
+- **`assign_heaps`**: `one` is `prog->shards` alone. `tidec --schedule` no longer says "the match hides state from
+  players".
+- **What players get reads each value wherever its handle says** (`client_state_codegen.inc`, `client_spans_codegen.inc`,
+  `client_changes_codegen.inc`; netcode.md, top section, has the page identities). The hasher holds the world's
+  `tide_heaps`, not heap 0; every page it reaches is named by its heap (a `where`'s id and run) and its first place
+  (`tide_client_place`), and the memo, the table chunks' and rows' kept pages compare those. Loads, reloads, repairs
+  and drops make and release a value in its owner's heap (`decl_where`), as the owner's own code would.
+- **`Visibility.Set(group, audience)` in a system's rows** (`visibility_match` in `visibility_check.inc`,
+  `VISIBILITY_LOGGED`, `decl.sets_groups`, `decl.match_heap_written`, `system_logs_groups` in `parallel.c`): the
+  directory of groups is in the match's own heap, which has no runs, so a system setting a group's audience kept its
+  rows in order however its owners' heaps were. `Generate` ends with `Visibility.Set(seen.group, seen.audience)`. Where
+  a per-entity system's own code (not a parallel loop's step, a block handed to a function, a handler or a view) calls
+  `Set`, and nothing else of it changes heap 0, `heap_keeps_order` lets it go in runs: on threads each row logs the
+  set (`tide_visibility_set_group_logged`: its entity, the group, the audience, through `tide_gather_push`, the
+  gathering systems' per-task log) and `tide_done_<System>` sets them (`tide_visibility_set_logged`), merging the
+  tasks' logs by entity, so they're set in the entities' order. Each task's log is in its rows' key order, and an
+  entity's rows are one task's. With one piece (`tide_task_gather` NULL) each is set where it is. Why it's the same:
+  nothing of a system reads a group's audience back (Tide code can only `CreateGroup`, `Set`, `DestroyGroup`), and
+  `Set` on a client does nothing, as before. `CreateGroup`/`DestroyGroup` in a system, `Set` through a function or in
+  a handler, and `Visibility` values' own `Set<T>` keep the old rule. The schedule says it: `across threads: the
+  visibility groups' audiences its entities set are set after them, in their order`.
+- A heap-runs system whose owners include heap 0 for this (a NULL owner) joins heap 0's runs too
+  (`gen_heap_runs_join`, which no longer reads `heap_id` through a NULL owner) and doesn't mark the NULL owner
+  `heap_runs`.
+
+`tidec --schedule bench/voxels/voxels.tide`, `Generate`, before:
+
+    stage 2  Generate  (per entity)
+             writes Chunk, Seen
+             on one thread: it changes the text, lists or grids of Chunk, which are in the match's one heap and go in the order its entities do (voxels.tide:288)
+             after Setup: both change text, lists or grids kept in one heap, those of the match's tasks, Chunk, Visibility, Streamer and Worlds
+
+after:
+
+    stage 2  Generate  (per entity)
+             writes Chunk, Seen
+             across threads: the visibility groups' audiences its entities set are set after them, in their order
+             after Setup: both change text, lists or grids kept in one heap, those of the match's tasks and Visibility
+
+`Idle` stays on one thread (`Visibility.DestroyGroup` and `Storage.Save` change heap 0), as it was; `Move` and the
+handlers are as they were.
+
+Tests (release, Windows; the owner had heavy suites go to CI for this task, so only what changed ran here):
+- `tidec_e2e_visibility_runs` (`compiler/tests/e2e/visibility_runs.tide`, `visibility_runs_test.c`), and the same game
+  and test built with `TIDE_CLIENT_SPANS_CHECK` (`_checked`, every projection hash worked out twice) and with
+  `TIDE_CLIENT_MEMO_OFF` (`_memo_off`): 40 chunks a tick, each a `Grid3` of two chunks, a list and text, a group each
+  but every fifth pair, which share one; `Generate` fills them and sets their groups, `Shift` hands chunks and groups to
+  other players every third tick (a pair's two rows set their one group in one tick), `Grow` changes cells, the grid's
+  second chunk, the list and the text on every machine, `Leave` destroys them. Checked: Chunk's and Streams' values
+  are in their own heaps, more than half of Chunk's in a run's past the first; on a pool that's one thread saying it has
+  eight and five times on the platform's, the world's hash and bytes, which players see each chunk and every player's
+  projection hash (all at once and one by one) are one thread's every tick, a snapshot sharing pages; a shared group
+  ends with the later entity's audience in the entities' order; a player's world loaded from its projection, repaired
+  every tick by what changed (`client_changes`, `client_changes_base` byte-equal to the server's `was`,
+  `apply_client_changes`) and loaded whole hashes as the server says, its values in its owners' heaps, and its own run
+  of a tick on threads (Grow in runs) is the server's projection once nothing comes or goes. Pinned, the same in all
+  three builds: the projections' hashes over 14 ticks (`0x7f45a59834dbf7e9`) and the world's (`0x6d0c8e3114ee5268`).
+  `TIDE_VISIBILITY_RUNS_TIME` times it (below).
+- **Mutations**: merging the logs in reverse entity order fails the shared-group test and the pool's every tick;
+  leaving the heap out of a page's place (`tide_client_place` returning the first place alone) makes
+  `bench_voxels_checked` and `tidec_e2e_visibility_runs_checked` stop at their first kept hash.
+- `bench_voxels`, `bench_voxels_checked`, and a throwaway memo-off build of it: `--quick` on 1 and 12 threads, the same
+  hash (`0x0ae17b8a639f1fe3`) and the same bytes sent and repaired as before the change. The full run's hash is the
+  same on 1 and 12 threads (`0xc4712e7e3e4a1539`).
+- Pins: `bench_voxels`/`_checked` `--expect` `0x0ae800b4105e3290` to `0x0ae17b8a639f1fe3`, and
+  `visibility_lists`' `LOADED_WORLD_HASH` `0xfceec78bc1ff1776` to `0x3cc784a2895668f1`: world hashes, which cover each
+  heap's pages, and the values are in other heaps now. The pinned projection hashes (`visibility_projection`,
+  `visibility_hash_memo`, `_off`) didn't move: they're values, wherever they are. Web agreement on the moved pins is
+  CI's (not run here).
+- Ran (79): every e2e game that uses visibility (`visibility_*`, `scene_preparation_visibility`, `task_visibility`,
+  `shards_visibility`, `net_alone_seen`, `event_containers`, `ownership_events`, `double`, `prefabs`, `scenes*`,
+  `players*`, `stable_async`, `stable_entities`), `earth_tests`, `bench_earth*`, `bench_voxels*`, the schedule goldens
+  (none moved: no golden hides state), the visibility error fixtures and the language server's tests. Not run here
+  (CI's): `tide_tests` (no engine file changed), sanitize (Windows ASan, `TIDE_HEAP_CHECKS`), web, other platforms.
+
+Measured (release, Windows, 12 threads, on a machine other work shared; BelowNormal priority, before and after
+alternating, one run at a time; "before" is the base commit's `bench_voxels`):
+
+| `bench_voxels`, 8 bots, 30 s (median of 4) | before | after |
+|---|---|---|
+| Server update, median / p99 | 1.38 / 10.12 ms | 1.40 / 8.22 ms |
+| Server simulate | 29.8 ms a second | 26.6 |
+| Server hash / snapshot | 50.7 / 1.53 ms a second | 49.6 / 2.71 |
+| A client, simulate | 18.5 ms a second | 20.8 |
+| Sent to each bot; repairs | 22.3 KB a second; 17.5 | the same, byte for byte |
+
+On one thread (two rounds each) the server simulates 27.7/26.6 ms a second before and 28.6/29.4 after, a client
+13.9/13.3 and 13.5/14.1. `Generate` alone, from `visibility_runs_time` (the test game, 396 chunks, 40 made a tick, the
+same build on one thread and the pool, three rounds): 1.32-1.58 ms a tick to 0.34-0.44, the tick with the world and
+four projections hashed 4.2-5.1 ms to 2.8-3.8; `Shift` (which logs its group sets) 0.11-0.15 to 0.06-0.08.
+
+What it says: chunks are made on every core, which shows as about a tenth off the server's simulating and a fifth off
+its update's p99 in a run where chunks are made in bursts as bots move and hop; the median update is the rest of the
+tick. Two costs came with it:
+- **Snapshots** cost about 1.2 ms a second more on the server: a tick's new blocks are in several heaps' pages (and
+  Chunk's 32 runs'), each a page table to copy and pages to write apart, where one heap had them.
+- **A client's tick on threads** costs about 15 µs more (none on one thread). `Generate` runs on a client for no row
+  (its chunks have no `Seen`), but in runs it goes out in 24 pieces every tick, where in order it was one task: tidec
+  reckons each row at its whole body's cost (`tide_tasks_Generate`), and measured time only ever raises the reckoning
+  (`work_of` in `engine/src/jobs.c`), so a guarded system that does nothing still looks worth every thread. The
+  server pays the same on ticks with nothing to make.
+
+Gaps:
+- **Pieces for a guarded system with nothing to do** (above). Fixes, not built: a system with marks
+  (`rows_live`) reckoning only the rows its guard lets through, or pieces taken from measured time where it's less
+  than the reckoning. Both are the runtime's cost model for every game.
+- **Only `Visibility.Set` in a system's own code is logged.** `CreateGroup` (it numbers the group from a counter in the
+  directory, read back by the next) and `DestroyGroup` keep a system's rows in order, as do a `Set` through a function
+  (it reaches the system as a heap-0 write through the function's `heap_owners`) and a `Visibility` value's `Set<T>`
+  (its overrides map is the builtin `Visibility` component's, which stays in heap 0). `bench/voxels`' `Idle`
+  (`DestroyGroup`, `Storage.Save`) is on one thread.
+- **Shards keep one heap** (`shard_*.inc` pack and read heap 0).
+- Not run here: sanitize, web, Linux, macOS, MinGW, Android (CI's).
+
 ## A system's own rows' grids across threads, and runs by identity (2026-11-14)
 
 A gap an endless voxel world needs (`notes/voxels.md` on `t3/minecraft-scale-world-readiness`, Gaps;
@@ -9,7 +134,8 @@ thread, as grids weren't in the heap in runs (below, 2026-11-13) that text and l
 across threads, the world bit-identical to one thread's (hash, heaps as packed and hashed, snapshots, deltas).
 Games with hidden state or shards keep one heap (`check.c`: `const bool one = prog->shards ||
 prog->visibility_state`) and were left as they are, so `bench/voxels`' own `Generate` (a game with visibility) still
-runs on one thread; a game without either is what changed.
+runs on one thread; a game without either is what changed. (Correction, later the same day: games with hidden state
+have heaps per owner and runs too, and `Generate` goes across threads: the top section.)
 
 Built, in two parts; both are internal (nothing a game's code can observe), my picks, written Provisional in
 `docs/spec.md` (Grids):
@@ -151,7 +277,8 @@ Gaps:
   made and only a directory that grows moves; every reader of a record's block (grid.c, mesh.c, the generated value
   codec, task trace, embed, worker capture and blend copies) would find the chunk's heap by it.
 - **Games with hidden state or shards keep one heap**, so their grid systems (`bench/voxels`' `Generate`) stay on one
-  thread, as their text and lists do (`client_state_codegen.inc` and `shard_*.inc` pack and read one heap).
+  thread, as their text and lists do (`client_state_codegen.inc` and `shard_*.inc` pack and read one heap). (Hidden
+  state: closed later the same day, the top section. Shards: still.)
 - **A move copies what the grid has**, once each time an entity's grid is first given a chunk in a run its heap isn't
   (after a spawn, which owns its values outside runs; after a system of the other kind).
 - Windows' debugger views (natvis) don't find a block in a run's heap past the first (debugging.md), grids' chunks
@@ -549,6 +676,7 @@ and the rest is the `Set` question the owner was asked the same morning (queue i
 Gaps:
 - **Grids** (above; built 2026-11-14, the top section).
 - **Owners in the match's one heap**: what C can write, and every owner of a game with shards or hidden state.
+  (Hidden state: no longer, 2026-11-14, the top section.)
 - **A run's heap costs memory**: a page for each run that ever allocated, for each owner (32 runs: half a
   megabyte an owner at most), and 208 bytes each in a full pack. Blocks freed in one run's heap are only handed
   out again by that run.
@@ -1051,7 +1179,7 @@ Gaps, what still keeps code off threads, in the order the measurements above giv
 - **Owners C can write share one heap**, so Box3D's and Box2D's systems wait for every other such system over it
   (they wait for each other over their singleton anyway). C would have to say an owner's `where`
   (`TIDE_WHERE_<Type>` is in the header) and the compiler be told that it does.
-- **Games with shards or hidden state keep one heap**: `shard_*.inc` and `client_state_codegen.inc` pack, hash and
+- **Games with shards or hidden state keep one heap** (hidden state: no longer, 2026-11-14, the top section): `shard_*.inc` and `client_state_codegen.inc` pack, hash and
   read one (`hs->heap`).
 - **The local world has one heap.** Views run one after another, so nothing waits over it yet; automatic parallel
   views (the plan of 2026-11-04, stages 1 to 3, unbuilt) would want local owners' heaps too.

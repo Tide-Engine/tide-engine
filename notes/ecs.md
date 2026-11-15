@@ -1,5 +1,14 @@
 # ECS and simulation state
 
+## Heaps per owner in games that hide state (2026-11-14, later)
+
+A game with state visibility no longer keeps every owner in the match's heap 0 (`assign_heaps`: only shards do): its
+components' and singletons' text, lists, maps, sets and grids are in their own heaps and runs as in any game. What
+reads values for players (projections, their tree hashes and memo, the table chunks' and rows' kept pages, repairs)
+names a heap page by its heap's id and run and its place there, and loads each value into its owner's heap
+(`decl_where`). Design, tests, measurements and gaps: schedule-and-threads.md, top section; the page identities:
+netcode.md, top section.
+
 ## Grids in runs, and runs by identity (2026-11-14)
 
 A grid's directory and chunks are in one heap, its handle's, which for an owner changed in runs is the heap of the

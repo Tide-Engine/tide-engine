@@ -68,9 +68,10 @@ static void gen_client_take_row(gen *g, const client_codec *codec, const int a)
             sb_printf(o, "                %s = present;\n", presence_cell(g, "next", a, c, "row", true));
             sb_put(o, "                if (present) {\n");
         }
+        // Into its owner's heap, as its own code would make it (decl_where)
         sb_printf(o, "                %s value = {0};\n", type_cname(d));
-        sb_printf(o, "                if (!tide_client_get%d(&in, &value, TIDE_IN_MATCH, 0, &budget)) goto invalid;\n",
-                  client_codec_id(codec, (type){TY_COMPONENT, (decl *)d}));
+        sb_printf(o, "                if (!tide_client_get%d(&in, &value, %s, 0, &budget)) goto invalid;\n",
+                  client_codec_id(codec, (type){TY_COMPONENT, (decl *)d}), decl_where(d));
         sb_printf(o, "                %s;\n", comp_put(g, "next", a, c, "row", "value"));
         if (comp_sparse(g, c)) sb_put(o, "                }\n");
         sb_put(o, "            }\n");
@@ -221,13 +222,13 @@ static void gen_client_changes(gen *g)
                   "    tide_client_memo *memo = tide_client_memo_for(lineage);\n"
                   "    tide_client_hasher hasher = {.out = {.grows = true}, .memo = memo};\n    tide_client_hasher *hs = &hasher;\n"
                   "    tide_text_use((tide_heaps *)&b->heap, NULL);\n"
-                  "    hs->heap = tide_heaps_of((tide_heaps *)(uintptr_t)&b->heap, 0u);\n    tide_client_see(b, recipient, hs, &lb);\n"
+                  "    hs->heaps = (tide_heaps *)(uintptr_t)&b->heap;\n    tide_client_see(b, recipient, hs, &lb);\n"
                   "    tide_text_use((tide_heaps *)&w->heap, NULL);\n"
-                  "    hs->heap = tide_heaps_of((tide_heaps *)(uintptr_t)&w->heap, 0u);\n"
+                  "    hs->heaps = (tide_heaps *)(uintptr_t)&w->heap;\n"
                   "    // The world the match ticks, as its tick's check left it: what it kept of each row\n"
                   "    if (w == lineage && memo && memo->world == lineage && memo->rows && memo->rows->any) tide_client_see_kept(w, recipient, memo->rows, hs, &ln);\n"
                   "    else tide_client_see(w, recipient, hs, &ln);\n"
-                  "    tide_client_memo_done(memo, hs->heap);\n    free(hs->out.data);\n    free(hs->reach);\n");
+                  "    tide_client_memo_done(memo, hs->heaps);\n    free(hs->out.data);\n    free(hs->reach);\n");
     } else {
         sb_put(o, "    tide_writer scratch = {.grows = true};\n"
                   "    tide_text_use((tide_heaps *)&b->heap, NULL);\n    tide_client_see(b, recipient, &scratch, &lb);\n"
@@ -339,8 +340,8 @@ static void gen_client_changes(gen *g)
         if (decl_has_text(d)) gen_client_release(g, d, place, "            ");
         sb_printf(o, "            memset(&next->%s, 0, sizeof next->%s);\n"
                      "            tide_reader one = {now, in.at, from, false};\n"
-                     "            if (!tide_client_get%d(&one, &next->%s, TIDE_IN_MATCH, 0, &budget) || one.at != in.at) goto invalid;\n"
-                     "        }\n    }\n", name, name, id, name);
+                     "            if (!tide_client_get%d(&one, &next->%s, %s, 0, &budget) || one.at != in.at) goto invalid;\n"
+                     "        }\n    }\n", name, name, id, name, decl_where(d));
     }
     if (prog->input) {
         const int input = client_codec_id(&codec, (type){TY_INPUT, prog->input});

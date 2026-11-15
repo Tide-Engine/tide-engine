@@ -4356,6 +4356,19 @@ static uint64_t visibility_key(const decl *component)
 
 static void gen_visibility_call(gen *g, sb *o, const expr *e)
 {
+    // A group's audience a system in runs sets: logged where its rows are on threads, for its `done` to set in its
+    // entities' order (system_logs_groups, tide_visibility_set_logged)
+    const bool logged = (e->visibility_operation & VISIBILITY_LOGGED) && g->code && g->code->per_entity && !g->code->is_handler
+                     && !g->comparing && system_logs_groups(g->code) && system_heap_runs(g->code);
+    if (logged) {
+        sb_put(o, "tide_visibility_set_group_logged(tide_w, tide_this, ");
+        for (int i = 0; i < e->args.count; i++) {
+            if (i) sb_put(o, ", ");
+            gen_as(g, o, e->args.items[i], e->arg_want.items[i]);
+        }
+        sb_put(o, ")");
+        return;
+    }
     sb_printf(o, "%s(", e->c_callee);
     bool comma = false;
     if (e->visibility_operation & VISIBILITY_WORLD) { sb_put(o, "tide_w"); comma = true; }
@@ -21588,7 +21601,9 @@ static void gen_heap_runs_join(gen *g, const decl *sys)
 {
     bool done[TIDE_HEAP_IDS] = {false};
     for (int i = 0; i < sys->heap_owners.count; i++) {
-        const uint32_t id = sys->heap_owners.items[i]->heap_id;
+        // (NULL: the match's own heap, whose visibility groups its rows log: system_logs_groups)
+        const decl *owner = sys->heap_owners.items[i];
+        const uint32_t id = owner ? owner->heap_id : 0u;
         if (done[id]) continue;
         done[id] = true;
         sb_printf(&g->c, "    tide_heap_runs_join(tide_heaps_of(&tide_w->heap, %uu));\n", id);
@@ -22346,6 +22361,8 @@ static void gen_system_run(gen *g, const decl *sys)
             }
             // What its runs kept of each other's heaps goes back (tide/heap.h, A heap in runs)
             if (done && system_heap_runs(sys)) gen_heap_runs_join(g, sys);
+            // The visibility groups' audiences its rows set, in their order (visibility_codegen.inc)
+            if (done && system_heap_runs(sys) && system_logs_groups(sys)) sb_put(o, "    tide_visibility_set_logged(tide_w);\n");
             // What its runs logged for its singleton, in their order (gather_codegen.inc)
             if (done && sys->gathers) sb_printf(o, "    tide_replay_%s(tide_w);\n", name);
             sb_put(o, "    (void)tide_w;\n}\n\n");

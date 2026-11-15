@@ -119,16 +119,26 @@ static bool queued_stmt(const stmt *s)
     return false;
 }
 
+// Whether all a system changes of the match's own heap is visibility groups' audiences its own code sets, which its
+// rows log in runs (visibility_match in visibility_check.inc)
+bool system_logs_groups(const decl *sys)
+{
+    return sys->sets_groups && !sys->match_heap_written;
+}
+
 // What keeps a system that changes text, lists or grids from doing it in runs
 // (tide/heap.h, A heap in runs), each run's blocks in a heap of its own: an
-// owner in the match's one heap (C can write it, or the game has shards or
-// hidden state), which has no runs. NULL when nothing does. (A grid moves
-// whole into the heap of the run that adds a chunk to it: tide/grid.h.)
+// owner in the match's one heap (C can write it, or the game has shards),
+// which has no runs. NULL when nothing does. (A grid moves whole into the
+// heap of the run that adds a chunk to it: tide/grid.h.) The match's own heap
+// doesn't, where all the system changes of it is the visibility groups'
+// audiences it sets: its rows log them (system_logs_groups).
 static const decl *heap_keeps_order(const decl *sys)
 {
     static const decl match_heap = {0}; // The match's own, when no owner is named
     for (int i = 0; i < sys->heap_owners.count; i++) {
         const decl *owner = sys->heap_owners.items[i];
+        if (!owner && system_logs_groups(sys)) continue;
         if (!owner || !owner->heap_id) return owner ? owner : &match_heap;
     }
     return sys->heap_owners.count ? NULL : &match_heap;
@@ -784,6 +794,14 @@ static void put_gathers(sb *out, const decl *sys)
     sb_put(out, " is changed after them, in their order\n");
 }
 
+// A system in runs whose rows set visibility groups' audiences (system_logs_groups): they're set after its rows, in
+// their order
+static void put_logged_groups(sb *out, const decl *sys)
+{
+    if (!system_logs_groups(sys) || !system_heap_runs(sys)) return;
+    sb_put(out, "         across threads: the visibility groups' audiences its entities set are set after them, in their order\n");
+}
+
 // What a system reads or writes beyond its outer entity, through World or queries.
 static void put_world_access(sb *out, const decl *sys, const bool writes)
 {
@@ -861,6 +879,7 @@ void print_schedule(const program *prog, const char *game, sb *out)
         if (sys->preparation_reads) sb_put(out, "         reads scene readiness\n");
         put_one_thread(out, sys);
         put_gathers(out, sys);
+        put_logged_groups(out, sys);
         for (int k = 0; k < sys->waits.count; k++) {
             const system_wait *w = &sys->waits.items[k];
             sb_put(out, "         after ");
@@ -903,7 +922,6 @@ void print_schedule(const program *prog, const char *game, sb *out)
                 sb_put(out, "         ");
                 put_decl_name(out, owner, "", NULL);
                 sb_printf(out, ": %s\n", prog->shards ? "the match is split across servers"
-                                       : prog->visibility_state ? "the match hides state from players"
                                        : owner->c_written ? "C can write it"
                                        : owner->is_scene ? "it's a scene's"
                                        : "it's the engine's own");

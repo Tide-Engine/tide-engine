@@ -1,3 +1,13 @@
+## Heaps per owner in games that hide state (2026-11-14, later)
+
+No runtime function is new or changed (schedule-and-threads.md, top section). Generated code for players now reads
+`tide_heaps.all`, `tide_heap_slots` and `tide_heap.runs` directly (`tide_client_heap`, so a read never makes a heap),
+besides `tide_heap.pages` and `page` as before, and a system in runs whose rows set groups' audiences logs them with
+`tide_gather_push` and reads them back with `tide_gathered` in its `done` (the gathering systems' per-task logs, tag
+1); with one piece it calls `tide_heap_run_enter(0)`/`tide_heap_run_leave` around the set, as cached functions do.
+If the owner takes heap.c or jobs.c over: those fields' meaning, and a `done` seeing its own tasks' logs for a system
+that doesn't gather, are what that code relies on.
+
 ## Grids in runs (2026-11-14)
 
 Mine, under the grids, heap and jobs maintenance below (schedule-and-threads.md, top section). No new runtime
