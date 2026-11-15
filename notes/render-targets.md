@@ -15,6 +15,8 @@ of any size, of parts and of volumes). Users: game/render-targets.md, game/tasks
   await t.Read()` and an `is` name were each carried with the await's temporary: two heap copies of a 4K read. Now
   `task_forget` ends a statement's temporaries after an S_VAR, S_EXPR or S_ASSIGN and after an S_IF's or S_SWITCH's
   condition (not a foreach's, whose loop reads its container, nor a loop's condition, which has its own rounds).
+  A match task's frame then holds no dead temporary at a later wait, so `tidec_e2e_optional_fields`' pinned world
+  hash changed, to 14134961438823363422 on every platform CI ran (an intentional result change).
 - **gpu_none's read tokens** (memory-safety.md top): a 256-token ring that wrapped under more band reads than that in
   one frame; now a table that refuses a token while every place waits.
 - **Volume read refusals** (`check.c` Texture3D Read; `check_target_read`): `Read<float2>` is refused at the type (no

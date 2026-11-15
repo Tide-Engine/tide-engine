@@ -544,7 +544,7 @@ target_compile_definitions(tidec_e2e_json PRIVATE JSON_HASH=11445927822352450642
 tide_e2e_test(json_vectors) # ...vectors, quaternions and colors as arrays, sets as arrays, and maps by a number or an enum
 target_compile_definitions(tidec_e2e_json_vectors PRIVATE JSON_VECTORS_CHECKS=46 JSON_VECTORS_HASH=11481368449994237363ull)
 tide_e2e_test(optional_fields) # T? fields: in structs, components, singletons, scenes, events, commands and the input
-target_compile_definitions(tidec_e2e_optional_fields PRIVATE OPTIONAL_FIELDS_HASH=17632594201705351794ull)
+target_compile_definitions(tidec_e2e_optional_fields PRIVATE OPTIONAL_FIELDS_HASH=14134961438823363422ull)
 tide_e2e_test(grids SOURCES e2e/grids.tide e2e/grids_c.c) # Grids
 tide_e2e_test(grid_values) # Grids code owns: locals, mut parameters, returns and Copy
 tide_e2e_test(parallel) # Parallel loops over grids and lists
