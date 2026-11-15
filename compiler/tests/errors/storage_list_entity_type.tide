@@ -1,0 +1,5 @@
+// expect: Storage.List takes its entity as Entity, not int
+scene Main { }
+singleton Seen { int keys; }
+system Ask() { Storage.List("chunks/", "chunks/9", 3); }
+event(Listed listed) Count(mut Seen seen) { seen.keys += listed.keys.count; }

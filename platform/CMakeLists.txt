@@ -399,6 +399,17 @@ else()
     set_tests_properties(tide_platform_host_wait PROPERTIES TIMEOUT 60)
 endif()
 
+# A run with no window carries the server's store out as each tick ends, so it repeats. Desktop only, as runs with no
+# window are: a page's files have no thread of their own anyway
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+    tide_add_game(tide_platform_store_headless SOURCES tests/store_headless.tide NAME game
+        HOST tests/store_headless.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tide_platform_store_headless PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)
+    target_link_libraries(tide_platform_store_headless PRIVATE tide_platform)
+    add_test(NAME tide_platform_store_headless COMMAND tide_platform_store_headless)
+    set_tests_properties(tide_platform_store_headless PROPERTIES TIMEOUT 60)
+endif()
+
 # Ticks beside the frame (tide_session_desc.alongside) through the standard host, on the pool's own leading
 # thread: what frames show and hear against ticks in the update. Desktop: the web's pool has no leading thread yet.
 if(NOT TIDE_WEB)

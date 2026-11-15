@@ -1570,9 +1570,10 @@ void analysis_run(const analysis_file *given, const int given_count)
     const analysis_file *files = given;
     int count = given_count;
     // ...and so are fills', for as long as it shows one
-    bool web = false, fills = false, baked = false, stored = false;
+    bool web = false, fills = false, baked = false;
+    unsigned stored = 0;
     for (int i = 0; i < given_count && !web; i++) web = web_prelude_wanted(given[i].text, given[i].len);
-    for (int i = 0; i < given_count && !stored; i++) stored = storage_prelude_wanted(given[i].text, given[i].len);
+    for (int i = 0; i < given_count; i++) stored |= storage_prelude_wanted(given[i].text, given[i].len);
     if (given_count > 0) {
         const char **texts = arena_alloc(sizeof(char *) * (size_t)given_count);
         size_t *lens = arena_alloc(sizeof(size_t) * (size_t)given_count);
@@ -1594,7 +1595,7 @@ void analysis_run(const analysis_file *given, const int given_count)
         }
         if (stored) {
             analysis_file prelude = {"tide:///storage.tide", STORAGE_PRELUDE_PATH, NULL, 0, NULL};
-            prelude.text = storage_prelude(&prelude.len);
+            prelude.text = storage_prelude(stored, &prelude.len);
             all[count++] = prelude;
         }
         if (fills) {
@@ -2241,6 +2242,34 @@ static const method_form storage_calls[] = {
     {"Load", "Storage.Load(string key, Entity entity)",
      "Asks for what is kept under the key, answered by a `Loaded` event to the entity in a later tick."},
     {"Delete", "Storage.Delete(string key)", "Asks the machine that runs the match to forget what it keeps under the key."},
+    {"List", "Storage.List(string prefix)",
+     "Asks for the keys the machine that runs the match keeps that start with the prefix. Its answer is a `Listed` event "
+     "in a later tick: the keys, sorted by their bytes, 1,024 at the most, whether there are `more` past the last, and "
+     "whether listing them `failed`."},
+    {"List", "Storage.List(string prefix, string after)",
+     "Asks for the keys that start with the prefix and come after `after`: the last key of the answer before, to go on "
+     "from it. Answered by a `Listed` event in a later tick."},
+    {"List", "Storage.List(string prefix, Entity entity)",
+     "Asks for the keys that start with the prefix, answered by a `Listed` event to the entity in a later tick."},
+    {"List", "Storage.List(string prefix, string after, Entity entity)",
+     "Asks for the keys that start with the prefix and come after `after`, answered by a `Listed` event to the entity "
+     "in a later tick."},
+};
+// ...and what a match task awaits of it, the answer its value: the task goes on in the tick the answer is given to,
+// on every machine
+static const method_form storage_awaited_calls[] = {
+    {"Load", "await Storage.Load(string key) -> List<byte> fails IOError",
+     "Waits, in a match task, for what the machine that runs the match keeps under the key: its bytes, or "
+     "`IOError.NotFound` where nothing is kept there and `IOError.Failed` where what's kept couldn't be read. The task "
+     "goes on in the tick the answer is given to, on every machine. A key that's empty or past 256 bytes fails at once "
+     "with `IOError.InvalidPath`."},
+    {"List", "await Storage.List(string prefix) -> StorageKeys fails IOError",
+     "Waits, in a match task, for the keys that start with the prefix: a `StorageKeys`, whose `keys` are sorted by their "
+     "bytes, 1,024 at the most, and whose `more` says whether there are keys past the last. Fails with `IOError.Failed` "
+     "where the store couldn't be listed, and at once with `IOError.InvalidPath` for a prefix past 256 bytes."},
+    {"List", "await Storage.List(string prefix, string after) -> StorageKeys fails IOError",
+     "Waits, in a match task, for the keys that start with the prefix and come after `after`: the last key of the page "
+     "before, to go on from it. Either past 256 bytes fails at once with `IOError.InvalidPath`."},
 };
 static const method_form audience_calls[] = {
     {"Add", "Add(PlayerID player)", "Adds a player to this writable audience value."},
@@ -4127,10 +4156,11 @@ static void describe(const occurrence *o, sb *out)
                                                          "match's seconds."
                       : str_eq_c(o->name, "File") || str_eq_c(o->name, "Directory") ? "\n\nThis machine's filesystem, accessible from local code and its helpers. Fallible operations use IOError."
                       : str_eq_c(o->name, "Application") ? "\n\nPersistent save and temporary cache directories, selected by the game's stable appId, the game's title, and Quit, which ends the program after the frame."
-                      : str_eq_c(o->name, "Storage") ? "\n\nThe server's store: match code saves, loads and deletes bytes under "
-                                                       "keys on the machine that runs the match, and a load's answer is a "
-                                                       "`Loaded` event. Local async code awaits `Storage.Flush()` to confirm "
-                                                       "that preceding changes reached persistent storage."
+                      : str_eq_c(o->name, "Storage") ? "\n\nThe server's store: match code saves, loads, deletes and lists bytes "
+                                                       "under keys on the machine that runs the match, and a load's answer is "
+                                                       "a `Loaded` event, a listing's a `Listed` event. Local async code awaits "
+                                                       "`Storage.Flush()` to confirm that preceding changes reached persistent "
+                                                       "storage."
                       : str_eq_c(o->name, "Web") ? "\n\nThis machine's network: `await Web.Fetch(url)` gives a URL's bytes, from local code, failing with IOError."
                       : str_eq_c(o->name, "Json") ? "\n\nJSON to and from the game's own structs: `Json.Read<T>(json)` gives a `T?`, and `Json.Write(value)` its text. The same on every machine."
                       : str_eq_c(o->name, "Path") ? "\n\nPure lexical path operations, without accessing the filesystem."
@@ -4173,12 +4203,26 @@ static void describe(const occurrence *o, sb *out)
             break;
         }
         if (o->call == CALL_VISIBILITY && str_eq_c(o->owner, "Storage")) {
-            // Load's two forms: the one with as many arguments as the call, which the hover's occurrence doesn't keep
-            for (size_t i = 0; i < sizeof storage_calls / sizeof storage_calls[0]; i++) {
-                if (!str_eq_c(o->name, storage_calls[i].name)) continue;
-                code_block(out, storage_calls[i].form);
-                sb_printf(out, "\n\n%s", storage_calls[i].doc);
-                if (str_eq_c(o->name, "Load")) break;
+            // Load's and List's forms, every one, as the hover's occurrence doesn't keep how many arguments the call
+            // has, and the first's words: an awaited one's (its value is the answer) before the others where it's
+            // awaited, after them where it isn't
+            const char *doc = NULL;
+            sb forms = {0};
+            const bool awaited = o->type.kind == TY_FAILABLE;
+            for (int pass = 0; pass < 2; pass++) {
+                const bool waits = awaited ? pass == 0 : pass == 1;
+                const method_form *calls = waits ? storage_awaited_calls : storage_calls;
+                const size_t count = waits ? sizeof storage_awaited_calls / sizeof storage_awaited_calls[0]
+                                           : sizeof storage_calls / sizeof storage_calls[0];
+                for (size_t i = 0; i < count; i++) {
+                    if (!str_eq_c(o->name, calls[i].name)) continue;
+                    sb_printf(&forms, "%s%s", forms.len ? "\n" : "", calls[i].form);
+                    if (!doc) doc = calls[i].doc;
+                }
+            }
+            if (doc) {
+                code_block(out, forms.data);
+                sb_printf(out, "\n\n%s", doc);
             }
         } else if (o->call == CALL_VISIBILITY || str_eq_c(o->owner, "Audience")) {
             if (o->kind == OCC_CONSTANT) {
@@ -8366,6 +8410,24 @@ static void complete_members(completion *c, const int dot, const loc at, const o
             // The server's store from match code and the functions it calls; Flush from local async code and functions
             const bool routine = sc.decl && sc.decl->kind == DECL_FUNCTION;
             const bool match = sc.decl && sc.decl->kind == DECL_SYSTEM && !sc.decl->is_local && !sc.decl->is_view;
+            // `await Storage.`: in a match task, the load and the listing whose answer is the task's value
+            const int before = ids[n - 1] - 1;
+            if (before >= 0 && DOC->toks[before].kind == T_AWAIT) {
+                if (!sc.in_input && sc.decl && sc.decl->is_async && !sc.decl->is_local && !sc.decl->is_view
+                    && sc.decl->task_side != TASK_LOCAL) {
+                    for (size_t i = 0; i < sizeof storage_awaited_calls / sizeof storage_awaited_calls[0]; i++) {
+                        if (i && strcmp(storage_awaited_calls[i].name, storage_awaited_calls[i - 1].name) == 0) continue;
+                        item(c, storage_awaited_calls[i].name, CK_FUNCTION, storage_awaited_calls[i].form,
+                             storage_awaited_calls[i].doc,
+                             strcmp(storage_awaited_calls[i].name, "Load") == 0 ? "Load(${1:key})" : "List(${1:prefix})");
+                    }
+                }
+                if (sc.decl && sc.decl->is_async && (routine || sc.decl->is_view || sc.decl->is_local)) {
+                    builtin_visit v = {c, false};
+                    builtin_list_members(base, add_builtin_member, &v); // Flush
+                }
+                return;
+            }
             if (!sc.in_input && (routine || match)) {
                 for (size_t i = 0; i < sizeof storage_calls / sizeof storage_calls[0]; i++) {
                     if (i && strcmp(storage_calls[i].name, storage_calls[i - 1].name) == 0) continue; // Load's second form
@@ -12812,9 +12874,14 @@ static int call_param_names(const expr *call, str *names, const int max)
     label_list list = {0};
     switch (call->call) {
     case CALL_VISIBILITY: {
-        if (call->visibility_operation & VISIBILITY_STORAGE) { // Storage.Save(key, bytes), Storage.Load(key, entity)
+        if (call->visibility_operation & VISIBILITY_STORAGE) { // Storage.Save(key, bytes), Load(key, entity), List(prefix, after, entity)
+            const bool list = str_eq_c(call->name, "List");
+            // A listing's second argument is `after` unless it's the entity, as the checker read it
+            const bool after = list && (call->args.count == 3 || (call->args.count == 2 && call->arg_want.count == 2
+                                                                  && call->arg_want.items[1].kind == TY_STRING));
             for (; count < call->args.count && count < max; count++) {
-                names[count] = str_from(count == 0 ? "key" : str_eq_c(call->name, "Save") ? "bytes" : "entity");
+                names[count] = str_from(count == 0 ? (list ? "prefix" : "key") : str_eq_c(call->name, "Save") ? "bytes"
+                                        : list && count == 1 && after ? "after" : "entity");
             }
             return count;
         }
@@ -13215,6 +13282,9 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
     } else if (str_eq_c(owner, "Storage") && !str_eq_c(name, "Flush")) { // Flush is a builtin, below
         for (size_t i = 0; i < sizeof storage_calls / sizeof storage_calls[0]; i++) {
             if (str_eq_c(name, storage_calls[i].name)) add_signature(&s, storage_calls[i].form, storage_calls[i].doc);
+        }
+        for (size_t i = 0; i < sizeof storage_awaited_calls / sizeof storage_awaited_calls[0]; i++) { // ...and awaited
+            if (str_eq_c(name, storage_awaited_calls[i].name)) add_signature(&s, storage_awaited_calls[i].form, storage_awaited_calls[i].doc);
         }
     } else if (str_eq_c(owner, "Audience") || str_eq_c(owner, "Visibility")) {
         const bool audience = str_eq_c(owner, "Audience");

@@ -13132,6 +13132,89 @@ TIDE_TEST(lsp_grid_bytes_completes_hovers_and_checks)
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "FromBytes(List<byte> bytes)"));
 }
 
+// The server's store in match code: completion offers its calls, List among them; hover shows each form of a call
+// and Listed's fields; signature help has each form; a listing's arguments are named as the checker read them
+TIDE_TEST(lsp_storage_completes_hovers_and_names_listings)
+{
+    start();
+    const char *completion = complete("scene Main { }\nsystem S()\n{\n    Storage.$\n}\n");
+    TIDE_CHECK(offers(completion, "List") && offers(completion, "Load") && offers(completion, "Save") && offers(completion, "Delete")
+               && has(completion, "Storage.List(string prefix)"));
+    completion = complete("scene Main { }\nview V()\n{\n    Storage.$\n}\n"); // Local code: not the store's
+    TIDE_CHECK(!offers(completion, "List") && !offers(completion, "Save"));
+    open_document("scene Main { }\nsingleton Seen { int keys; }\n"
+                  "system S() { Storage.Li$st(\"chunks/\", \"chunks/9\"); }\n"
+                  "event(Listed listed) Count(mut Seen seen) { seen.keys += listed.keys.count; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "Storage.List(string prefix)") && has(hover, "Storage.List(string prefix, string after, Entity entity)")
+               && has(hover, "Listed"));
+    const char *hints = request_at("file:///test.tide", "textDocument/inlayHint", 0, 0,
+                                   "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":10,\"character\":0}}");
+    TIDE_CHECK(has(hints, "\"label\":\"prefix:\"") && has(hints, "\"label\":\"after:\"") && !has(hints, "\"label\":\"key:\""));
+    open_document("scene Main { }\ncomponent Shelf { int keys; }\n"
+                  "system S(Shelf shelf) { if (shelf.keys == 0) Storage.List(\"chunks/\", $this); }\n"
+                  "event(Listed listed) Count(mut Shelf shelf) { shelf.keys += listed.keys.count; }\n");
+    TIDE_CHECK(!has(last_sent(), "\"severity\":1")); // (Warned that nothing spawns a Shelf)
+    const char *help = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(help, "Storage.List(string prefix, Entity entity)") && has(help, "Storage.List(string prefix, string after)"));
+    open_document("scene Main { }\nsingleton Seen { int keys; }\nsystem S() { Storage.List(\"\"); }\n"
+                  "event(List$ed listed) Count(mut Seen seen) { seen.keys += listed.keys.count; }\n");
+    hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "List<string> keys") && has(hover, "bool more"));
+    // A program that never lists has no Listed
+    open_document("scene Main { }\nsingleton Seen { int keys; }\nsystem S() { Storage.Load(\"k\"); }\n"
+                  "event(Listed listed) Count(mut Seen seen) { seen.keys += 1; }\n");
+    TIDE_CHECK(has(last_sent(), "\"severity\":1"));
+}
+
+// What a match task awaits of the store: after `await`, the load and the listing whose answers are its values, their
+// forms on hover first, and StorageKeys' fields
+TIDE_TEST(lsp_storage_awaited_completes_and_hovers)
+{
+    start();
+    const char *completion = complete("scene Main { }\nsingleton Seen { int n; }\n"
+                                      "async void Fill(mut Seen seen)\n{\n    var got = await Storage.$\n}\n");
+    TIDE_CHECK(offers(completion, "Load") && offers(completion, "List") && !offers(completion, "Save")
+               && !offers(completion, "Delete") && has(completion, "List<byte> fails IOError")
+               && has(completion, "StorageKeys fails IOError"));
+    completion = complete("scene Main { }\nevent Ask { }\nsingleton Seen { int n; }\n"
+                          "async event(Ask ask) Fill(mut Seen seen)\n{\n    var got = await Storage.$\n}\n");
+    TIDE_CHECK(offers(completion, "Load") && offers(completion, "List"));
+    // A local task's: the store isn't this machine's
+    completion = complete("scene Main { }\nlocal singleton Menu { int n; }\n"
+                          "async void Fill(mut Menu menu)\n{\n    var got = await Storage.$\n}\n");
+    TIDE_CHECK(!offers(completion, "Load") && !offers(completion, "List"));
+    open_document("scene Main { }\nsingleton Seen { int n; }\n"
+                  "async void Fill(mut Seen seen)\n{\n"
+                  "    if (await Storage.Lo$ad(\"chunk\") is List<byte> bytes) seen.n = bytes.count;\n}\n"
+                  "system S(mut Seen seen) { if (seen.n == 0) Fill(seen); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "await Storage.Load(string key) -> List<byte> fails IOError") && has(hover, "IOError.NotFound")
+               && has(hover, "IOError.InvalidPath") && has(hover, "Storage.Load(string key, Entity entity)"));
+    TIDE_CHECK(strstr(hover, "await Storage.Load") < strstr(hover, "Storage.Load(string key, Entity entity)"));
+    open_document("scene Main { }\nsingleton Seen { int n; }\n"
+                  "async void Count(mut Seen seen)\n{\n"
+                  "    var page = await Storage.List(\"chunks/\") ?? default;\n"
+                  "    seen.n = page.ke$ys.count;\n}\n"
+                  "system S(mut Seen seen) { if (seen.n == 0) Count(seen); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "List<string>"));
+    open_document("scene Main { }\nsingleton Seen { int n; }\n"
+                  "async void Count(mut Seen seen)\n{\n"
+                  "    var page = await Storage.List(\"chunks/\", $\"chunks/9\") ?? default;\n"
+                  "    seen.n = page.keys.count;\n}\n"
+                  "system S(mut Seen seen) { if (seen.n == 0) Count(seen); }\n");
+    const char *help = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(help, "await Storage.List(string prefix, string after) -> StorageKeys fails IOError"));
+    // Without await, the plain forms: a statement asks for an event
+    completion = complete("scene Main { }\nsingleton Seen { int n; }\n"
+                          "async void Fill(mut Seen seen)\n{\n    Storage.$\n}\n");
+    TIDE_CHECK(offers(completion, "Save") && offers(completion, "Load") && has(completion, "Storage.Load(string key)"));
+}
+
 TIDE_TEST(lsp_humanoid_retargeting_completion_and_calibration_help)
 {
     start();

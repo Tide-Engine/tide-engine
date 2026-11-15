@@ -1,0 +1,10 @@
+// expect: this expression doesn't produce a value
+// expect: without 'await', Storage.Load is answered by a Loaded event; a match task has the answer as its value by awaiting it: 'var bytes = await Storage.Load(key);'
+scene Main { }
+singleton Seen { int bytes; }
+async void Fill(mut Seen seen)
+{
+    var asked = Storage.Load("chunk");
+    seen.bytes = 1;
+}
+system Ask(mut Seen seen) { if (seen.bytes == 0) Fill(seen); }

@@ -2743,25 +2743,62 @@ bool web_prelude_wanted(const char *text, const size_t len)
         || has_text(text, len, "IOError.TimedOut");
 }
 
-// What a load of the server's store comes back as (STORAGE_PRELUDE_PATH)
-static const char storage_prelude_text[] =
-    "// What Storage.Load asked the server's store for, as it comes back in a later\n"
-    "// tick: sent to the entity the load named, or to the world. `found` is false,\n"
-    "// and `bytes` empty, where the store has nothing under the key. `failed` is\n"
-    "// true where what's under it couldn't be read: not the same as nothing there,\n"
-    "// so a game doesn't make it afresh and save over it.\n"
-    "event Loaded\n"
-    "{\n"
-    "    string key;\n"
-    "    List<byte> bytes;\n"
-    "    bool found;\n"
-    "    bool failed;\n"
-    "}\n";
+// What a load of the server's store comes back as, and a listing of its keys, as an event and as what an awaited
+// listing gives (STORAGE_PRELUDE_PATH)
+#define STORAGE_LOADED_TEXT                                                                                            \
+    "// What Storage.Load asked the server's store for, as it comes back in a later\n"                                \
+    "// tick: sent to the entity the load named, or to the world. `found` is false,\n"                                \
+    "// and `bytes` empty, where the store has nothing under the key. `failed` is\n"                                  \
+    "// true where what's under it couldn't be read: not the same as nothing there,\n"                                \
+    "// so a game doesn't make it afresh and save over it.\n"                                                         \
+    "event Loaded\n"                                                                                                  \
+    "{\n"                                                                                                             \
+    "    string key;\n"                                                                                               \
+    "    List<byte> bytes;\n"                                                                                         \
+    "    bool found;\n"                                                                                               \
+    "    bool failed;\n"                                                                                              \
+    "}\n"
+#define STORAGE_LISTED_TEXT                                                                                            \
+    "// What Storage.List found in the server's store, as it comes back in a later\n"                                 \
+    "// tick: sent to the entity the listing named, or to the world. `keys` are the\n"                                \
+    "// keys that start with `prefix`, past `after` where the listing went on after\n"                                \
+    "// one, sorted by their bytes: 1,024 at the most, and `more` is true where there\n"                              \
+    "// are keys past the last, which a listing after it has. `failed` is true where\n"                               \
+    "// the store couldn't be listed, and `keys` is then empty.\n"                                                    \
+    "event Listed\n"                                                                                                  \
+    "{\n"                                                                                                             \
+    "    string prefix;\n"                                                                                            \
+    "    string after;\n"                                                                                             \
+    "    List<string> keys;\n"                                                                                        \
+    "    bool more;\n"                                                                                                \
+    "    bool failed;\n"                                                                                              \
+    "}\n"                                                                                                             \
+    "\n"                                                                                                              \
+    "// What `await Storage.List(prefix)` gives a match task: the keys, as a Listed\n"                                \
+    "// event has them, and whether there are `more` past the last, which\n"                                          \
+    "// `await Storage.List(prefix, keys[keys.count - 1])` goes on with.\n"                                           \
+    "struct StorageKeys\n"                                                                                            \
+    "{\n"                                                                                                             \
+    "    List<string> keys;\n"                                                                                        \
+    "    bool more;\n"                                                                                                \
+    "}\n"
 
-const char *storage_prelude(size_t *len)
+static const char storage_loaded_text[] = STORAGE_LOADED_TEXT;
+static const char storage_listed_text[] = STORAGE_LISTED_TEXT;
+static const char storage_both_text[] = STORAGE_LOADED_TEXT "\n" STORAGE_LISTED_TEXT;
+
+const char *storage_prelude(const unsigned wanted, size_t *len)
 {
-    *len = sizeof storage_prelude_text - 1;
-    return storage_prelude_text;
+    if ((wanted & STORAGE_PRELUDE_LOADED) && (wanted & STORAGE_PRELUDE_LISTED)) {
+        *len = sizeof storage_both_text - 1;
+        return storage_both_text;
+    }
+    if (wanted & STORAGE_PRELUDE_LISTED) {
+        *len = sizeof storage_listed_text - 1;
+        return storage_listed_text;
+    }
+    *len = sizeof storage_loaded_text - 1;
+    return storage_loaded_text;
 }
 
 static bool word_char(const char ch)
@@ -2769,10 +2806,11 @@ static bool word_char(const char ch)
     return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_';
 }
 
-// Whether the words `Storage`, `.` and `Load` follow each other in code, with
+// Which of the words `Load` and `List` follow `Storage` and `.` in code, with
 // spaces or line breaks between them if any, and not in a comment
-bool storage_prelude_wanted(const char *text, const size_t len)
+unsigned storage_prelude_wanted(const char *text, const size_t len)
 {
+    unsigned wanted = 0;
     for (size_t i = 0; i < len; i++) {
         if (text[i] == '/' && i + 1 < len && text[i + 1] == '/') {
             while (i < len && text[i] != '\n') i++;
@@ -2789,9 +2827,11 @@ bool storage_prelude_wanted(const char *text, const size_t len)
         if (at >= len || text[at] != '.') continue;
         at++;
         while (at < len && (text[at] == ' ' || text[at] == '\t' || text[at] == '\r' || text[at] == '\n')) at++;
-        if (len - at >= 4 && memcmp(text + at, "Load", 4) == 0 && (len - at == 4 || !word_char(text[at + 4]))) return true;
+        if (len - at < 4 || (len - at > 4 && word_char(text[at + 4]))) continue;
+        if (memcmp(text + at, "Load", 4) == 0) wanted |= STORAGE_PRELUDE_LOADED;
+        if (memcmp(text + at, "List", 4) == 0) wanted |= STORAGE_PRELUDE_LISTED;
     }
-    return false;
+    return wanted;
 }
 
 // Whether `name` (`n` bytes) is declared somewhere in the texts as a fill

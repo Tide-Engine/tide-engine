@@ -1,0 +1,6 @@
+// expect: 'Count' needs the entity a Listed is sent to, and this Storage.List names none
+// expect: name the entity its answer is for: 'Storage.List(prefix, entity)' or 'Storage.List(prefix, after, entity)'
+scene Main { }
+component Shelf { int keys; }
+system Ask() { Storage.List("chunks/", "chunks/1"); }
+event(Listed listed) Count(mut Shelf shelf) { shelf.keys += listed.keys.count; }

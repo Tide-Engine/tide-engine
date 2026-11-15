@@ -871,6 +871,7 @@ typedef struct decl {
     loc io_at;
     bool io_network;      // ...and what it first reaches is the network (Web.Fetch), for the message
     bool uses_fetch;      // Awaits Web.Fetch itself: its task's frame keeps the fetch's ticket
+    unsigned awaits_store; // Awaits Storage.Load (1) or Storage.List (2) itself: its frame keeps the request and answer
     bool uses_gpu_read;   // Awaits a GPU list's Read or ReadCount itself: its task's frame keeps the read's ticket
     bool frame_time;      // Reads Frame.dt, directly or through helpers: this machine's local state has it
     loc frame_time_at;
@@ -1413,6 +1414,7 @@ struct expr {
     bool storage_flush;      // Storage.Flush, awaited through a provider completion ticket
     bool web_fetch;          // Web.Fetch, awaited the same way: its body is the task's value
     bool web_request;        // ...and a WebRequest's Send, with web_fetch: its object is the request, its value a WebResponse
+    bool storage_await;      // Storage.Load(key) or Storage.List(prefix[, after]) awaited by a match task: its answer is the value
     int gpu;                 // What it does with a GPU list or a kernel (gpu_op), or 0
     bool gpu_instances;      // Draw.Instanced over a GPUList: drawn indirect, its instances read on the GPU
     bool gpu_vertices;       // A mesh draw over a GPUList of vertices: each read on the GPU by its index (shader.vertex_storage)
@@ -1798,10 +1800,14 @@ typedef struct program {
     decl *prepared_players;
     decl *preparation_order;
     bool uses_prepared;
-    bool uses_storage;   // Match code uses the server's store (Storage.Save, Load or Delete), first at storage_at
+    bool uses_storage;   // Match code uses the server's store (Storage.Save, Load, Delete or List), first at storage_at
     loc storage_at;
     bool bare_load;      // ...and some Storage.Load names no entity, at bare_load_at
     loc bare_load_at;
+    bool bare_list;      // ...and some Storage.List names no entity, at bare_list_at
+    loc bare_list_at;
+    type stored_load;    // What an awaited Storage.Load gives (List<byte> fails IOError), where one is awaited
+    type stored_list;    // ...and an awaited Storage.List (StorageKeys fails IOError)
     decl *destroyed;
     decl *shown;          // Local availability transitions of match entities/components
     decl *hidden;

@@ -1,3 +1,17 @@
+## The file provider's own thread, for the server's store (2026-11-15)
+
+- `tide_io` gained `post(user, work, context)` and `settle(user)` (`tide/io.h`): work run on a thread of the
+  provider's own, after everything posted before it, and a wait for all of it. The native provider
+  (`platform/src/io.c`: `backend_post`, `post_worker`, `backend_settle`) starts one thread for the process at the first
+  post, beside the flush worker, with a lock and two condition variables of its own; its other calls were already
+  safe from several threads (the dirty paths are under `io_lock`). `tide_platform_io_init` settles it before it
+  switches apps, as the work uses the provider's folders. The web's provider has none: a page's files are its own
+  thread's JS. Only the server's store posts (notes/voxels.md, section 3a); local code's `File`, `Directory` and
+  `Storage.Flush` are as they were.
+- The store lists a folder a level at a time (`list` with `recursive` false, files then folders), never recursively:
+  the native provider's paths join the resolved folder and each name, which says nothing of where the folder asked for
+  ends (notes/voxels.md, section 3b).
+
 ## The pack says which images are [Linear]; marked import without a pow a channel (2026-11-14)
 
 - `TIDE_PACK_LINEAR` (0x80000000 in `tide_pack_entry.extra`) is set in a Texture's, a Cubemap's and a

@@ -83,8 +83,10 @@ Systems and views can't wait, as they run again every tick or frame: they start 
 | `await Wait.Ticks(n)` | `n` of the match's ticks. Match code only. |
 | `await Wait.Frames(n)` | `n` of this machine's frames. Local code only. |
 | `await Wait.Seconds(s)` | `s` seconds: in the match, the nearest whole number of ticks (at least one), the same on every machine; in local code, this machine's time. |
+| `await Storage.Load(key)` | What the [server's store](./files.md#waiting-for-the-answer-in-a-task) keeps under the key, as a `List<byte>`, failing with `IOError`. Match code only: the task goes on in the tick the answer is given to, on every machine. |
+| `await Storage.List(prefix)`, `(prefix, after)` | The store's keys that start with the prefix, a page of them, as a `StorageKeys`, failing with `IOError`. Match code only. |
 
-A wait of 0, or less, doesn't wait at all.
+A wait of 0, or less, doesn't wait at all. The store's two have no handle to keep: without `await`, they're answered by a `Loaded` or `Listed` event.
 
 For now:
 

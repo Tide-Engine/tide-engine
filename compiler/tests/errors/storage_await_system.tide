@@ -1,0 +1,9 @@
+// expect: 'await' waits, and only async functions and handlers can
+// expect: a system runs again every tick; to wait, start a task
+scene Main { }
+singleton Seen { int bytes; }
+system Ask(mut Seen seen)
+{
+    var got = await Storage.Load("chunk") ?? [];
+    seen.bytes = got.count;
+}

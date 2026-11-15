@@ -1,5 +1,16 @@
 # Benchmarks
 
+## The server's store as files (2026-11-15)
+
+A benchmark of a game that uses the store (`bench_voxels`) takes `--files <folder>`: the server's store is the
+platform's own files in the folder's `saved/` (`tide_platform_io_init("dev.tide.bench", folder)`, emptied as the run
+starts), carried out on the provider's own thread as the standard hosts do. `--files-here <folder>` is the same with
+the provider's `post` and `settle` taken out, so each tick's requests are carried out as the tick ends, as they were
+before 2026-11-15. Without either, the game's own (`bench_desc.io`: voxels' in memory, whose counts the report
+prints; with files they're 0). The numbers they gave are in notes/voxels.md, section 3a. What a game's start asks of the
+store as `make_world` runs it is bound to a `tide_storage` of the bench's and handed to the server
+(`tide_server_desc.asked`, 2026-11-15): voxels' start asks nothing, and its pin is the same.
+
 ## Grids in runs, and runs by identity (2026-11-14)
 
 What a per-entity system that changes its rows' grids, or text and lists while queueing nothing, gains on threads:

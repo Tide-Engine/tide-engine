@@ -1,5 +1,21 @@
 # The standard host: runs with no window, the stats, debug views
 
+## A run with no window keeps the server's store without the files' thread (2026-11-15)
+
+- A run with no window promises that nothing about it is timed (Rendering and platform, below), but since the server's
+  store moved off the tick's thread (notes/voxels.md, section 3a) a game that loads or lists had its answers reach
+  whichever tick was running as the provider's thread finished: world hashes, captures and `--players` runs could
+  differ from run to run. Found in review; no test ran such a game with no window.
+- `tide_run_bind_io` hands a run with no window's sessions `tide_run_store_here`, a copy of the platform's provider
+  with `post` and `settle` NULL, so the server carries each tick's requests out as the tick ends and every answer
+  reaches the next tick, as before 2026-11-15. The copy is written again only where the provider changed, as a reload
+  binds again while a server may read it. The game's local files (`set_io`) keep the provider as it is. A window's run
+  and `tide_serve` keep the thread: they have clocks.
+- `tide_platform_store_headless` (`platform/tests/store_headless.c`, `store_headless.tide`, desktop, no GPU): the real
+  host with the embedded platform, `tide_run_headless` set as the flags set it and `--data-dir`'s folder given, 400
+  values of 2,000 bytes saved in tick 1 and loaded in tick 3: no `post` on the store, the first answer in tick 4 and
+  all 400 found. With the thread the first came in tick 5 or later.
+
 ## Ticks beside the frame, and a hidden run's frame rate (2026-11-12)
 
 - Each frame, before the session's update, `tide_run_frame` asks the session for ticks beside the frame where

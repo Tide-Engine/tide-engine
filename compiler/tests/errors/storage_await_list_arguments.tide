@@ -1,0 +1,9 @@
+// expect: an awaited Storage.List takes the prefix of the keys it lists, and the key to go on after if any: 'var page = await Storage.List(prefix);' or 'await Storage.List(prefix, after)'
+scene Main { }
+singleton Seen { int keys; }
+async void Count(mut Seen seen)
+{
+    var page = await Storage.List() ?? default;
+    seen.keys = page.keys.count;
+}
+system Ask(mut Seen seen) { if (seen.keys == 0) Count(seen); }

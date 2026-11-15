@@ -54,7 +54,62 @@ A grid's `ToBytes()` and its type's `FromBytes(bytes)` turn it into a `List<byte
 
 `Storage.Save(key, bytes)` keeps a `List<byte>` under a key, replacing what was there. `Storage.Load(key)` asks for it back: the answer is a `Loaded` event in a later tick, with the `key`, the `bytes`, whether it was `found`, and whether reading it `failed` (something is kept there that couldn't be read, which a game shouldn't make afresh and save over), sent to the entity the load names (`Storage.Load(key, entity)`) or to the world. `Storage.Delete(key)` forgets it.
 
-The answer usually comes the next tick, and its handlers run after that tick's systems. In a match that doesn't hide state, an answer of more than about 1 KiB goes to every player first, as a big command does, so it can take longer, and the answers after it wait for it.
+`Storage.List(prefix)` asks for the keys that start with a prefix: the answer is a `Listed` event in a later tick, with the `keys` sorted by their bytes, 1,024 at the most, whether there are `more` past the last, and whether listing them `failed`. To go on, list again after the last key, `Storage.List(prefix, after)`. Like a load, a listing goes to the entity it names, `Storage.List(prefix, entity)` or `Storage.List(prefix, after, entity)`, or to the world:
+
+```csharp
+// Every chunk dimension 0 has saved, a page at a time
+Storage.List("chunks/0/", this);
+
+event(Listed listed) Count(mut Atlas atlas)
+{
+    if (listed.failed) return;
+    atlas.saved += listed.keys.count;
+    if (listed.more) Storage.List(listed.prefix, listed.keys[listed.keys.count - 1], this);
+}
+```
+
+A listing has only keys a save made: other files in the folder (a half-written save the server stopped in, a file someone put there) are left out.
+
+### Waiting for the answer in a task
+
+A match [task](./tasks.md) can wait for a load or a listing instead, and have the answer as a value: `await Storage.Load(key)` gives the `List<byte>` kept under the key, and `await Storage.List(prefix)` or `await Storage.List(prefix, after)` a `StorageKeys`, its `keys` and whether there are `more`. Each fails with an `IOError`: `NotFound` where nothing is kept under the key, `Failed` where something is kept that couldn't be read, or the keys couldn't be listed, and `InvalidPath` at once, in the tick it's awaited, for a key the store can't keep: an empty one, or one longer than 256 bytes (a listing's prefix or `after` longer than that too).
+
+```csharp
+// A chunk's blocks, once the store has answered
+async void Fill(mut Chunk chunk, string key)
+{
+    var saved = await Storage.Load(key);
+    if (saved is List<byte> bytes && Grid3<Block>.FromBytes(bytes) is Grid3<Block> blocks) chunk.blocks = blocks.Copy();
+    else if (saved is IOError.NotFound) chunk.stage = Stage.Missing; // Never saved: made from the seed
+    // Anything else was kept but couldn't be read: not made afresh over it
+}
+
+// Every key under a prefix, a page at a time
+async void Survey(mut Atlas atlas, string prefix)
+{
+    mut var after = "";
+    mut var going = true;
+    while (going)
+    {
+        var page = await Storage.List(prefix, after);
+        if (page is StorageKeys keys)
+        {
+            atlas.saved += keys.keys.count;
+            going = keys.more;
+            if (going) after = keys.keys[keys.keys.count - 1];
+        }
+        else going = false;
+    }
+}
+```
+
+The answer is the same as a `Loaded`'s or a `Listed`'s, and comes the same way: in a later tick, the same one on every machine, which the task goes on at the end of with the other tasks whose time has come. An awaited load names no entity, as its answer is the task's; without `await`, `Storage.Load(key)` is answered by a `Loaded` event, in a task too. Two tasks that await one key are answered apart.
+
+What a task waits for is kept in it, so a snapshot, a joining player and a rewind keep it too. A task that ends before its answer comes (its entity was destroyed, or it was cancelled) is gone, and its answer changes nothing. Rewinding the match drops the answers on their way, and the tasks the rewound match has waiting ask again. Only match tasks wait for the store: local code keeps this machine's files with `File`.
+
+The answer comes once the files have been read, usually the next tick or the one after, and its handlers run after that tick's systems. In a match that doesn't hide state, an answer of more than about 1 KiB goes to every player first, as a big command does, so it can take longer, and the answers after it wait for it. The answers come in the order they were asked, and what a tick asks is carried out after what the ticks before it asked: a load after a save of its key, in the same tick or a later one, finds what was saved.
+
+The standard hosts read and write the files on a thread of their own, so a tick never waits for the disk; a page keeps them on its own thread, between ticks. A [run with no window](../tools/cli.md#without-a-window) (`--frames`, `--capture`, `--script`) reads and writes them as each tick ends instead, so every answer comes the tick after it was asked and the run goes the same every time. A server that stops cleanly writes what it was asked to save first.
 
 Only the server asks: a player's machine that runs the same tick saves and loads nothing. With the standard hosts, each key is a file in `saved/` in the game's persistent data folder, on the machine that runs the match: the hosting player's, or a dedicated server's (the same folder, named for the game's `appId` or, without one, for the game). A key is any text up to 256 bytes, with `/` for folders, and a value up to 32 MiB. Any key is a file of its own on every system: in its file's name, everything but small letters, digits, `-`, `_` and the dots of its last part is written out as `%XX`, and so is the first letter of a Windows device's name (`con`, `nul`). A save is written whole beside the old file and then moved over it, so a server that stops mid-save keeps one or the other. Every match a server hosts shares the folder, so a game with several worlds puts the world's name in its keys. A match that uses the store can't change hands (`hostMigration`): what it keeps is on the hosting machine.
 

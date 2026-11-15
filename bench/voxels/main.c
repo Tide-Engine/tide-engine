@@ -101,7 +101,52 @@ static tide_io_error store_write(void *user, const char *path, const uint8_t *da
     return TIDE_IO_NONE;
 }
 
-static const tide_io store_io = {.exists = store_exists, .create = store_create, .read = store_read, .write = store_write};
+// A folder's files or folders, one level, as a provider gives them (Storage.List walks them): what's kept under
+// `path`, a file each, and the first folder of each path that goes deeper, once. Folders are only names here, so
+// one nothing is in isn't there.
+static tide_io_error store_list(void *user, const char *path, const bool directories, const bool recursive,
+                                const tide_io_entry_fn entry, void *entry_user)
+{
+    (void)user;
+    (void)recursive;
+    const size_t n = strlen(path);
+    char **given = NULL;
+    uint32_t given_count = 0, given_room = 0;
+    bool any = false;
+    for (uint32_t i = 0; i < store_room; i++) {
+        const char *p = store[i].path;
+        if (!p || strncmp(p, path, n) != 0 || p[n] != '/') continue;
+        any = true;
+        const char *slash = strchr(p + n + 1, '/');
+        if (!directories) {
+            if (!slash) entry(entry_user, p);
+            continue;
+        }
+        if (!slash) continue;
+        const size_t size = (size_t)(slash - p);
+        bool seen = false;
+        for (uint32_t k = 0; k < given_count && !seen; k++) seen = strlen(given[k]) == size && memcmp(given[k], p, size) == 0;
+        if (seen) continue;
+        if (given_count == given_room) {
+            given_room = given_room ? given_room * 2u : 16u;
+            char **grown = realloc(given, given_room * sizeof *given);
+            if (!grown) break;
+            given = grown;
+        }
+        char *folder = malloc(size + 1u);
+        if (!folder) break;
+        memcpy(folder, p, size);
+        folder[size] = '\0';
+        given[given_count++] = folder;
+        entry(entry_user, folder);
+    }
+    for (uint32_t k = 0; k < given_count; k++) free(given[k]);
+    free(given);
+    return any ? TIDE_IO_NONE : TIDE_IO_NOT_FOUND;
+}
+
+static const tide_io store_io = {.exists = store_exists, .create = store_create, .read = store_read, .write = store_write,
+                                 .list = store_list};
 
 static bench_flag flags[] = {
     {"near", "chunks a player has around them, sideways", 6, 2, 0, 1},

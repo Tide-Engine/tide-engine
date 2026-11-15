@@ -1,0 +1,10 @@
+// expect: an awaited load's bytes are the task's, so it names no entity: 'var bytes = await Storage.Load(key);'
+// expect: without 'await', 'Storage.Load(key, entity);' sends the entity a Loaded event instead
+scene Main { }
+component Chunk { int bytes; }
+async void Fill(mut Chunk chunk, Entity at)
+{
+    var got = await Storage.Load("chunk", at) ?? [];
+    chunk.bytes = got.count;
+}
+system Ask(mut Chunk chunk) { if (chunk.bytes == 0) Fill(chunk, this); }

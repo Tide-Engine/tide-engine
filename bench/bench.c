@@ -11,6 +11,7 @@
 #include "tide/platform.h"
 #include "tide/shard_client.h"
 #include "tide/shards.h"
+#include "tide/storage.h"
 #include "tide/time.h"
 
 #define FRAME (1.0 / 60.0) // Made-up seconds between updates
@@ -1121,6 +1122,11 @@ static void usage(const bench_desc *d)
     }
     printf("  --expect <hash>     the server's world's hash at the end; fails on another\n");
     printf("  --save <label>      adds the results to bench/results/%s.jsonl (see bench/compare.mjs)\n", d->name);
+    if (d->game->stored) {
+        printf("  --files <folder>    keeps the server's store as files in the folder's saved/ (emptied first), as the\n"
+               "                      standard hosts do: carried out on the files' own thread\n");
+        printf("  --files-here <folder> the same, carried out as each tick ends, on the server's thread\n");
+    }
     for (uint32_t i = 0; i < d->flag_count; i++) {
         printf("  --%-17s %s (%u)\n", d->flags[i].name, d->flags[i].help, d->flags[i].full);
     }
@@ -1137,6 +1143,10 @@ static bool read_number(const char *text, uint32_t *out)
     *out = (uint32_t)number;
     return true;
 }
+
+// --files and --files-here: the platform's own files in a folder, for the server's store
+static const char *files_folder;
+static bool files_here;
 
 // The options from the command line, over a full run's or --quick's.
 static bool parse(const bench_desc *d, const int argc, char **argv, bench_options *o, const char **save)
@@ -1166,6 +1176,9 @@ static bool parse(const bench_desc *d, const int argc, char **argv, bench_option
         bool known = true;
         if (strcmp(arg, "--save") == 0) {
             *save = value;
+        } else if ((strcmp(arg, "--files") == 0 || strcmp(arg, "--files-here") == 0) && d->game->stored) {
+            files_folder = value;
+            files_here = strcmp(arg, "--files-here") == 0;
         } else if (strcmp(arg, "--expect") == 0) {
             errno = 0;
             o->expect = strtoull(value, &end, 0);
@@ -1338,16 +1351,37 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
         current = h;
         void *first = calloc(1, real->world_size);
         if (!first) out_of_memory();
+        // What its start asks of the store (Spawned handlers) goes to the server, as a start the server ran would
+        tide_storage asked = {0};
+        if (real->stored) tide_storage_bind(first, &asked);
         d->make_world(d->flags, first, (float)FRAME);
+        if (real->stored) tide_storage_unbind(first);
+        // The store: the game's own, or the platform's files in a folder, on their own thread or (--files-here) not
+        static tide_io files_io;
+        const tide_io *io = d->io;
+        if (files_folder) {
+            const tide_io *platform = tide_platform_io_init("dev.tide.bench", files_folder);
+            if (!platform || !platform->persistent_data_path || !platform->persistent_data_path[0]) {
+                fprintf(stderr, "%s: --files: the folder %s can't be used\n", d->name, files_folder);
+                return 1;
+            }
+            (void)platform->remove(platform->user, "saved", true, true); // Every run starts with nothing kept
+            files_io = *platform;
+            if (files_here) files_io.post = NULL;
+            if (files_here) files_io.settle = NULL;
+            io = &files_io;
+        }
         const tide_server_desc server_desc = {
             .game = &timed,
             .dt = (float)FRAME,
             .transports = {count(h, wire_endpoint(the_net, &h->port))},
             .jobs = jobs,
             .world = first,
-            .io = d->io,
+            .io = io,
+            .asked = &asked,
         };
         h->server = tide_server_create(&server_desc, 0.0);
+        tide_storage_free(&asked);
         if (real->free_world) real->free_world(first); // The server has its own copy
         free(first);
     }

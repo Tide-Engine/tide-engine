@@ -1046,6 +1046,10 @@ static inline void tide_run_debug_views(void)
 // Where the matches this machine hosts keep their store (Storage.Save and Load in match code): the game's own
 // files, once they're named (tide_run_bind_io), for a game whose match code uses it
 static const tide_io *tide_run_store;
+// ...in a run with no window, those files with no thread of their own: its sessions have no clock, so a run repeats,
+// and an answer read on the provider's thread would reach whichever tick was running as the disk finished. Carried
+// out as each tick ends instead, its answers go to the next tick, every run
+static tide_io tide_run_store_here;
 
 // A session for tide_run_game, in no match yet. Its matches tick at the game's
 // rate unless the host said otherwise.
@@ -1121,6 +1125,14 @@ static inline void tide_run_bind_io(const tide_host_game *game, void *local)
     // ...and the matches this machine runs keep their store there (Storage.Save in match code), whichever build first
     // uses it: a session made now hands its servers this provider, which stays the same across reloads
     tide_run_store = io;
+    if (io && tide_run_headless) {
+        tide_io here = *io;
+        here.post = NULL;
+        here.settle = NULL;
+        // Written only where it changed: a reload binds again while the server may read it
+        if (memcmp(&here, &tide_run_store_here, sizeof here) != 0) tide_run_store_here = here;
+        tide_run_store = &tide_run_store_here;
+    }
     free(player_directory);
 }
 

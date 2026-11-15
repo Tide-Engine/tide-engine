@@ -1,3 +1,45 @@
+## The server's store: review fixes (2026-11-15, after review)
+
+All agent-maintained (notes/voxels.md, sections 3, 3a and 3d). New at the generated-C boundary:
+`tide_storage_takes(kind, key, after)` (tide/storage.h, `static inline`), which an awaited load or listing calls after
+`tide_storage_ask` to fail at once with `IOError.InvalidPath` where the store refuses its key; it keeps the bounds
+`tide_storage_ask` keeps, and the two must stay the same (a request the store refuses that the check took would wait
+for ever). `tide_storage_ask` now takes no save or delete addressed to a task and no kind that isn't one. Hosts:
+`tide_io.settle` takes a `context` (the work posted with it, or NULL for everything posted before), which
+`tide_storage_finish` and a batch that couldn't be queued use to wait for their own line; `tide_server_desc.asked` (the
+requests a start the host ran itself asked, taken into the server's), which `shards.c` and the bench pass. The standard
+host gives a run with no window's sessions its files with no `post` or `settle`. No layout, hash, snapshot or wire
+change; `bench_voxels`' pin is unchanged.
+
+## The server's store: tasks that await it (2026-11-15, later)
+
+For `await Storage.Load(key)` and `await Storage.List(prefix[, after])` (notes/voxels.md, section 3d). The store's
+runtime is unchanged; generated code asks with `TIDE_STORAGE_TO_TASK` and a target of its own (the operation's identity:
+the identity clock and a cause), and its `tide_game.stored` now takes such answers, putting each into the waiting task's
+frame and returning false where none waits. New at the boundary, both agent-maintained: `tide_game.stored_again(world)`
+(tide/session.h), generated for a game whose tasks await the store, which the server (session.c) calls with its store
+bound after `tide_session_rewind` and after making a server from a given world (`tide_server_desc.world`), so a waiting
+task asks again what its frame keeps; and session.c's `dispatch_injected` binds the store around the messages it takes
+before a tick (`tide_storage_bind`/`unbind`), so a sharded game's task that arrives with its entity asks again on its new
+shard (generated `tide_shard_take_tasks`). No layout, hash, snapshot or wire change; `bench_voxels`' pin is unchanged.
+If the owner takes session.c over: those three calls, and that `stored` can return false for an answer it took and
+dropped, are what the generated side relies on.
+
+## The server's store: listings, its own thread, answers for tasks (2026-11-15)
+
+The store's runtime (`tide/storage.h`, `engine/src/storage.c`) is agent-maintained, as is the file provider
+(`platform/src/io.c`). Generated C now calls `tide_storage_ask(world, kind, key, bytes, after, to, target)` (two
+parameters more than before: a listing's `after` and whom the answer is for, `TIDE_STORAGE_TO_EVENT` or
+`TIDE_STORAGE_TO_TASK`) from its eight `tide_storage_*` helpers, and its `tide_game.stored` reads an answer with
+`tide_stored_read` into a `tide_stored` (where it took four out-parameters) and makes the event's values with the new
+`tide_stored_text`, `tide_stored_bytes` and `tide_stored_keys` (where it made the bytes' scratch block itself).
+`tide_stored_next_key`, `tide_storage_key`, the line (`tide_storage_line`, `_send`, `_receive`, `_forget`, `_finish`,
+`_waiting`) and `tide_io.post`/`settle` are the engine's and hosts'. `TIDE_STORED_MESSAGE`'s bytes changed (a kind and
+whom it's for after its first byte), which no wire version marks: an engine of other sources has another simulation
+identity (`TIDE_SIMULATION_RUNTIME` hashes them all), so no player of the old one joins. No layout,
+hash or snapshot change; `bench_voxels`' pinned hash is unchanged. Contracts and tests: notes/voxels.md, sections 3a to
+3c.
+
 ## Heaps per owner in games that hide state (2026-11-14, later)
 
 No runtime function is new or changed (schedule-and-threads.md, top section). Generated code for players now reads

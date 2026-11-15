@@ -1,3 +1,47 @@
+## The server's store: listings and answers (2026-11-15)
+
+`Storage.List` takes a prefix and a key to go on after from match code, a provider lists names anyone could have put in
+`saved/`, and every machine reads the answers out of frames (notes/voxels.md, section 3b). What keeps it safe:
+
+- **Game values are bounded before they're kept**: a key 1 to 256 bytes, a prefix and an `after` 0 to 256
+  (`tide_storage_ask`, which refuses and logs past them, and a size given with no bytes), a value
+  `TIDE_STORAGE_VALUE_MOST`. Requests copy them; nothing points into the world.
+- **Names from the disk are untrusted**: a name past `TIDE_STORAGE_PATH_MOST` is dropped as it's listed (`name_entry`), a
+  path is built only where it fits the walk's buffer (`walk`'s checks before each `memcpy`), and `tide_storage_key`
+  decodes into a 256-byte key, refusing a `%` without two capital hex digits inside the name, more than 256 bytes, and
+  anything that isn't UTF-8 or isn't the path the key would be written at. A hashed key's file is read whole and used only
+  at 1 to 256 bytes of UTF-8 whose path is that file's. The walk goes into a folder only where `<folder>/a.bin` is a key's
+  file, so each level adds two bytes or more to a key of 256 at most: 128 levels at most, symlinked loops too.
+- **Kept keys are fixed slots**: 1,025 of 256 bytes and their 16-bit sizes, each `memcpy` of a size already bounded.
+- **Answers are read checking every byte** (`tide_stored_read`): its kind, whom it's for and its outcome among theirs; a key
+  1 to 256 bytes (a prefix and an `after` 0 to 256) of UTF-8; a load's value only where it was found, at most
+  `TIDE_STORAGE_VALUE_MOST`; a listing's count at most 1,024 and each key walked to its end, nothing after the last;
+  `tide_stored_next_key` reads them the same way again. The generated code reads nothing but what it gives.
+- **The provider's thread touches its batch alone**: the requests it was handed, which nothing else changes, and its
+  answers, which the server reads only after the batch's `done` with acquire (released after the last of them).
+- **An answer for a task goes into a frame of its own kind only** (2026-11-15, `await Storage.Load` and `List`,
+  notes/voxels.md section 3d): `tide_stored_give` builds the value from what `tide_stored_read` checked (`tide_stored_bytes`,
+  `tide_stored_keys`), then puts it only into a frame whose `tide_stored_op` is the answer's target, which still waits
+  and waits for that kind (`tide_stored_waits_*`), through the frame's own typed spills into the match's heap. A target no
+  frame has (made up, an ended task's, one already answered) changes nothing, and a load's answer never lands in a frame
+  that waits for a listing, or the other way: a frame has the fields of the kinds its function awaits alone. The frame's
+  request is the game's key and `after`, bounded by `tide_storage_ask` as any request's, asked again from the frame by
+  `tide_stored_ask_*`.
+
+- **No pointer arithmetic on a store with no bytes** (2026-11-15, after review): a tick whose only requests are listings of
+  every key from the first (`Storage.List("")`) leaves the batch's `bytes` NULL, as nothing was copied; `serve` and
+  `list_keys` took its prefix and `after` as `bytes + 0` and the walk compared them with `memcmp(..., NULL, 0)`, which the
+  Linux and macOS sanitize builds (`-fsanitize=undefined`, no recovery) stop on. An empty key or `after` is `""` there now
+  (`storage_lists_every_key_from_a_tick_with_no_bytes`; Windows has no UBSan, so CI's sanitize runs are what catch it).
+- **A frame's request is asked again only as what generated code asks** (2026-11-15, after review): `tide_stored_ask_*`
+  asks only the kinds its function awaits, and `tide_storage_ask` takes no save or delete for a task, nor a kind that isn't
+  one, so a frame read from a checkpoint or another shard can't turn into a save over a key or a delete.
+
+Tests: `storage_answers_that_arent_are_refused` (an answer cut at every byte, a key that isn't UTF-8, more keys than it has,
+no such kind), `storage_asks_nothing_for_a_task_but_loads_and_listings`, `storage_paths_give_their_keys_back` (19 strays, the longest path there is), the listings in
+`tidec_e2e_storage`; `storage_await_answer_for_no_task_changes_nothing` (a load's and a listing's answer for a target no
+task has: refused, the world's hash the same) in `tidec_e2e_storage_await`. Sanitizer runs are CI's for this change.
+
 ## Grids from bytes (2026-11-14)
 
 `Grid3<T>.FromBytes(bytes)` reads bytes anyone could have sent (a command, a file, a store's value) into a grid in the
