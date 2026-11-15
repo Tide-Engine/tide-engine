@@ -1,5 +1,5 @@
 // expect: JSON has nothing for Set<Entity>, which 'Picks.taken' holds
-// expect: a set JSON holds is an array of strings, chars, ints, longs or enums: keep these in a List<T>
+// expect: a set JSON holds is an array of strings, chars, bytes, ints, longs or enums: keep these in a List<T>
 scene Main { }
 struct Info { string id; int players; }
 singleton Seen { string text; int count; }

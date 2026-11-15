@@ -56,7 +56,7 @@ A struct is an object, and each field is a key: the field's name, or what `[Json
 | `Color` | An array of `[r, g, b, a]`, or `[r, g, b]`, which reads with alpha 1 |
 | A struct | An object |
 | `List<T>` and `T[N]` | An array |
-| `Set<T>` of strings, chars, ints, longs or enums | An array of its keys |
+| `Set<T>` of strings, chars, bytes, ints, longs or enums | An array of its keys |
 | `Map<string, T>` | An object, a key for each entry |
 | `Map<K, T>` by a `byte`, an `int`, a `long` or an enum | An object whose keys are the number's digits, `"12"` and `"-3"`, or the member's name, `"Ranked"` |
 

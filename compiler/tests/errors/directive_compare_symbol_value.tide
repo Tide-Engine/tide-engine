@@ -1,0 +1,8 @@
+// expect: a condition compares whether symbols are defined, not their values: the build gives 'START' the value 'Hard', which '#if' can't read
+// expect: read the value in code, as a constant with a default: 'const int SIDE = define(SIDE, 500);', then 'if (SIDE == 3)'
+// define: START=Hard
+enum Difficulty { Easy, Normal, Hard }
+#if START == Hard
+const int HARD = 1;
+#endif
+scene Main { }

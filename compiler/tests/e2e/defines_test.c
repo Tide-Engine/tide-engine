@@ -36,9 +36,13 @@ TIDE_TEST(defines_are_read_by_code_with_their_values)
     TIDE_CHECK(p->scale == -2.5f && p->distance == 0.1);
     TIDE_CHECK(is(tide_text_read(&world.heap, p->title), "Two \"words\", a \\ and a tab:\t.") && is(tide_text_read(&world.heap, p->empty), ""));
     TIDE_CHECK(p->quick && !p->slow && p->army == Army_Huge);
+    TIDE_CHECK(p->many == 5000000000LL); // An int default where a long goes reads a long
+    TIDE_CHECK(p->spot.x == 0.5f && p->spot.y == 1.0f && p->tint.r == 0.25f && p->tint.a == 1.0f); // A vector's part, a float
+    TIDE_CHECK(p->sideHere == 1); // #if SIDE, which the build gave a value
     TIDE_CHECK(p->sizes.at[0] == 50 && p->sizes.at[1] == 2);
     TIDE_CHECK(!p->localInExtra && p->sideInExtra == 50);
     tide_world_tick(&world);
     TIDE_CHECK(world.Picked.inCode == 100);
+    TIDE_CHECK(world.Picked.shadowed == 12); // The struct's own define(x, 3), not the build's
     tide_world_free(&world);
 }

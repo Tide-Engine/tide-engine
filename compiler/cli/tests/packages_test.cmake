@@ -569,6 +569,22 @@ file(WRITE "${game}/tide.packages" "#if STEAM &&\n../conditions-steam\n#endif\n"
 tide("${game}" ARGS schedule . FAILS EXPECT "tide.packages:1: error: a condition is missing")
 file(WRITE "${game}/tide.packages" "#if STEAM DEMO\n../conditions-steam\n#endif\n")
 tide("${game}" ARGS schedule . FAILS EXPECT "tide.packages:1: error: the condition ends before 'DEMO'")
+# A value is code's to read, never a condition's: compared, compared beside a symbol given one, or as C reads it
+file(WRITE "${game}/tide.packages" "#if STEAM == 480\n../conditions-steam\n#endif\n")
+tide("${game}" ARGS schedule . --define STEAM=480 FAILS
+    EXPECT "tide.packages:1: error: a condition reads whether symbols are defined, not values: it can't compare '480'")
+file(WRITE "${game}/tide.packages" "#if STEAM == DEMO\n../conditions-steam\n#endif\n")
+tide("${game}" ARGS schedule . --define STEAM=480 FAILS
+    EXPECT "tide.packages:1: error: the build gives 'STEAM' a value, and a condition reads only whether a symbol is defined")
+# With no values, the two are compared as ever: both defined, or not
+tide("${game}" ARGS schedule . --define STEAM WITHOUT "Steam.Poll")
+tide("${game}" ARGS schedule . --define STEAM --define DEMO EXPECT "Steam.Poll")
+file(WRITE "${game}/tide.packages" "#if STEAM > 400\n../conditions-steam\n#endif\n")
+tide("${game}" ARGS schedule . FAILS
+    EXPECT "tide.packages:1: error: a condition reads whether symbols are defined, not values: it can't compare '> 400'")
+file(WRITE "${game}/tide.packages" "#if defined(STEAM)\n../conditions-steam\n#endif\n")
+tide("${game}" ARGS schedule . FAILS
+    EXPECT "tide.packages:1: error: a condition reads a symbol by its name alone: '#if STEAM', not 'defined(STEAM)'")
 file(WRITE "${game}/tide.packages" "#if PACKAGE_OURS\n../conditions-steam\n#endif\n../conditions-ours\n")
 tide("${game}" ARGS schedule . FAILS
     EXPECT "tide.packages:1: error: 'PACKAGE_OURS' is a symbol this file's packages make, so no line of it depends on one")
