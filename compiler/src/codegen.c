@@ -14091,6 +14091,9 @@ static void gen_command_recorders(gen *g)
         sb_put(o, "// Server lifecycle journals route event-time permitted state to each player's log.\n"
                   "static TIDE_THREAD_LOCAL tide_event_log *tide_client_listening;\n"
                   "static TIDE_THREAD_LOCAL int32_t tide_client_recipient __attribute__((unused)) = -1;\n\n");
+        // ...and with local handlers, the whole match's to the server's own player's, which sees all of it
+        if (program_hears(prog)) sb_put(o, "// The log of the server's own player, which hears the whole match: NULL where nobody takes it.\n"
+                                         "static TIDE_THREAD_LOCAL tide_event_log *tide_client_all;\n\n");
     }
 
     // A handler that rolls with Random makes its generator from which of the tick's runs of handlers it is,
@@ -15253,10 +15256,12 @@ static void gen_hear(gen *g)
         sb_put(o, "static void tide_client_destroyed(tide_world *w, tide_entity target)\n{\n"
                   "    tide_heard *r;\n");
         if (program_hears(prog)) {
-            if (journals_clients(prog)) sb_put(o, "    if (!tide_client_listening && tide_listening) {\n");
-            else sb_put(o, "    if (tide_listening) {\n");
-            sb_put(o, "        r = tide_event_log_push(tide_listening, sizeof *r, TIDE_HEARD_BUILD);\n"
-                      "        r->event = TIDE_HEARD_DESTROYED_CAUSE;\n        r->target = target;\n"
+            // A server journaling for its players records the cause for its own player too, which sees the whole
+            // match: a destruction it saw is no concealment
+            const char *whole = journals_clients(prog) ? "whole" : "tide_listening";
+            if (journals_clients(prog)) sb_put(o, "    tide_event_log *const whole = tide_client_listening ? tide_client_all : tide_listening;\n");
+            sb_printf(o, "    if (%s) {\n        r = tide_event_log_push(%s, sizeof *r, TIDE_HEARD_BUILD);\n", whole, whole);
+            sb_put(o, "        r->event = TIDE_HEARD_DESTROYED_CAUSE;\n        r->target = target;\n"
                       "        r->born = tide_entity_born(&w->entities, target);\n"
                       "        r->tick = (uint32_t)w->Time.tick;\n    }\n");
         }
@@ -15311,8 +15316,11 @@ static void gen_hear(gen *g)
                 sb_put(o, "            memcpy(tide_client_rows_wanted[player], tide_rows_wanted, sizeof tide_rows_wanted);\n"
                           "            memcpy(tide_rows_wanted, saved_rows, sizeof tide_rows_wanted);\n");
             }
-            sb_put(o, "        }\n        tide_client_recipient = -1;\n"
-                      "        tide_client_listening = logs;\n        tide_listening = saved;\n        return;\n    }\n");
+            // ...and the whole match's, as it is, for the server's own player
+            sb_printf(o, "        }\n        tide_client_recipient = -1;\n"
+                         "        tide_listening = tide_client_all;\n"
+                         "        if (tide_listening) tide_hear_%s(w, target, event);\n"
+                         "        tide_client_listening = logs;\n        tide_listening = saved;\n        return;\n    }\n", name);
         }
         sb_put(o, "    const tide_location loc = tide_entity_location(&w->entities, target);\n");
         sb_put(o, "    if (!tide_entity_is_null(target) && loc.archetype == TIDE_ARCHETYPE_NONE) return; // Gone by its turn\n");
@@ -25450,9 +25458,10 @@ static void gen_api(gen *g)
     // (tide/profile.h): the systems' part of the tick, and what follows them
     sb_put(o, "    tide_profile *tide_p = jobs ? jobs->profile : NULL;\n"
               "    const uint64_t tide_began = tide_profile_now(tide_p);\n");
-    // What Changed<...> handlers watch, as the tick begins. A server journaling for its players records none: their
-    // changes are of their own worlds, as their own custom events are
-    const char *watching = journals_clients(prog) ? "tide_listening && !tide_client_listening" : "tide_listening";
+    // What Changed<...> handlers watch, as the tick begins. A server journaling for its players records none for them:
+    // their changes are of their own worlds, as their own custom events are. It does for its own player, whose log
+    // has the whole match's (tide_client_all)
+    const char *watching = journals_clients(prog) ? "tide_listening && (!tide_client_listening || tide_client_all)" : "tide_listening";
     if (program_watches(prog)) sb_printf(o, "    const bool tide_watching = %s;\n    if (tide_watching) tide_changes_begin(w);\n", watching);
     if (prog->match_devices) sb_put(o, "    tide_device_edges(w);\n");
     if (rows_cache_count(g)) sb_put(o, "    tide_rows_cache_prepare(w); // Serial: publish immutable plans before worker dispatch\n");
@@ -25506,9 +25515,11 @@ static void gen_api(gen *g)
                   "        tide_event_log_clear(&logs[player]);\n        logs[player].build = TIDE_HEARD_BUILD;\n    }\n");
         if (g->heard_rows.count) sb_put(o, "    memset(tide_client_rows_wanted, 0, sizeof tide_client_rows_wanted);\n");
         sb_put(o, "    tide_event_log ignored = {0};\n"
-                  "    tide_client_listening = logs;\n"
-                  "    tide_world_tick_events(w, jobs, all ? all : &ignored);\n"
+                  "    tide_client_listening = logs;\n");
+        if (program_hears(prog)) sb_put(o, "    tide_client_all = all;\n");
+        sb_put(o, "    tide_world_tick_events(w, jobs, all ? all : &ignored);\n"
                   "    tide_client_listening = NULL;\n");
+        if (program_hears(prog)) sb_put(o, "    tide_client_all = NULL;\n");
         if (g->heard_rows.count) {
             sb_put(o, "    for (uint32_t player = 0; player < TIDE_GAME_PLAYERS; player++) {\n"
                       "        tide_client_recipient = (int32_t)player;\n"
@@ -27729,7 +27740,9 @@ static void gen_game_api(gen *g)
         if (journals_clients(prog)) {
             sb_put(o, "    if (logs) {\n        for (uint32_t player = 0; player < TIDE_GAME_PLAYERS; player++) {\n"
                       "            tide_event_log_clear(&logs[player]); logs[player].build = TIDE_HEARD_BUILD;\n        }\n"
-                      "        tide_client_listening = logs;\n    }\n");
+                      "        tide_client_listening = logs;\n");
+            if (program_hears(prog)) sb_put(o, "        tide_client_all = events;\n");
+            sb_put(o, "    }\n");
             if (g->heard_rows.count) sb_put(o, "    if (logs) memset(tide_client_rows_wanted, 0, sizeof tide_client_rows_wanted);\n");
         }
         if (program_hears(prog)) sb_put(o, "    tide_event_log *previous = tide_listening; tide_listening = events;\n"
@@ -27745,6 +27758,7 @@ static void gen_game_api(gen *g)
         if (program_hears(prog)) sb_put(o, "    if (events) __atomic_sub_fetch(&tide_listeners, 1u, __ATOMIC_RELAXED);\n"
                                          "    tide_listening = previous;\n");
         if (journals_clients(prog)) sb_put(o, "    tide_client_listening = NULL;\n");
+        if (journals_clients(prog) && program_hears(prog)) sb_put(o, "    tide_client_all = NULL;\n");
         sb_put(o, "}\n\n");
     }
     if (program_hears(prog)) {

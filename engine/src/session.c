@@ -2797,6 +2797,7 @@ static void store_client_frame(tide_server *s, connection *c, const void *before
 // slot order, the queued commands, then the systems. Clients do the same.
 static void journal_tick(tide_server *s, uint32_t tick, const uint8_t *frame, uint32_t size, private_journal *journal);
 static tide_event_log *mirror_hearing(tide_server *s, uint32_t tick);
+static bool heard_here(const tide_server *s);
 static void mirror_tick(tide_server *s, uint32_t tick, bool heard);
 static tide_client *mirrored(const tide_server *s, uint32_t tick);
 
@@ -2927,6 +2928,9 @@ static void tick_begin(tide_server *s, ticking *t)
     // What this machine's own player's local handlers hear of the tick, the whole match's
     tide_event_log *heard = mirror_hearing(s, tick);
     if (heard) tide_event_log_take(heard, &s->preparation_events);
+    // What a scene's preparation sent waits for a player here that's behind, or not loaded yet, to be level: it's
+    // nobody's on a server with none, or whose host doesn't take what's heard
+    else if (!heard_here(s)) tide_event_log_clear(&s->preparation_events);
     t->size = w.size;
     t->journals = journals;
     t->heard = heard;
@@ -5353,6 +5357,16 @@ static tide_event_log *mirror_hearing(tide_server *s, const uint32_t tick)
     return c && s->game->tick_events ? tide_hearing_begin(&c->hearing, tick) : NULL;
 }
 
+// Whether this machine has a player of its own whose local handlers hear what
+// the server's ticks send (its host takes them: tide_session_events), level
+// with the server or not (mirror_hearing). A dedicated server, or a shard, has
+// none.
+static bool heard_here(const tide_server *s)
+{
+    const tide_client *c = s->twin;
+    return c && c->mirror == s && c->game == s->game && s->game->tick_events && c->desc.events && c->desc.events->taken;
+}
+
 static void skip_inputs(tide_client *c, uint32_t tick);
 
 // After the server ran `tick`: its own player's world is the server's, shared
@@ -6372,7 +6386,10 @@ static void play(tide_client *c)
     const int64_t due = due_tick(c);
     while (!c->need_snapshot && !c->receiving && !c->repair_tick) {
         if (c->game->client_state && c->game->prepare_pending && c->game->prepare_pending(world_at(c, c->verified))) {
-            if (c->heard_tick > c->verified) c->repair_tick = c->heard_tick;
+            // ...so it asks for the server's world after the tick it can't run, once the server ran it: the server
+            // answers a repair of the endpoint just past what the client confirmed, and one it had heard of by
+            // then could be ticks later, asked for in vain from then on
+            if (c->heard_tick > c->verified) c->repair_tick = c->verified + 1u;
             return; // A permitted partial world cannot reproduce hidden preparation inputs.
         }
         const bool preparing = c->preparation != NULL
