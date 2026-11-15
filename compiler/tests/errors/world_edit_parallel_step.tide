@@ -1,0 +1,10 @@
+// expect: 'other' is the component an Edit's block changes, which a parallel loop's step can't take
+component Health { int value; Entity target; List<int> marks; }
+scene Main { }
+system Hurt(mut Health health, mut World world)
+{
+    world.Edit<Health>(health.target, other)
+    {
+        parallel (var i in health.marks) { health.marks[i] = other.value; }
+    }
+}

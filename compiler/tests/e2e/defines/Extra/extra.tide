@@ -15,3 +15,6 @@ const int LOCAL_THERE = 1;
 #else
 const int LOCAL_THERE = 0;
 #endif
+
+const bool SAYS_LOCAL = defined(LOCAL); // The game's file's own #define isn't this file's
+const int SIDE_THERE = define(SIDE, 0); // ...and the build's value is every file's

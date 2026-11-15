@@ -455,15 +455,21 @@ static int command_main(const int argc, char **argv)
         else if (strcmp(a, "--debug-views") == 0) opts.debug_views = true;
         else if (strcmp(a, "--define") == 0) {
             const char *name = left >= 1 ? argv[++i] : "";
-            if (!lex_symbol_ok(name)) {
-                fprintf(stderr, "tide: --define takes a symbol for the game's #if lines, like `--define FAST`%s\n",
+            if (!lex_define_ok(name)) {
+                fprintf(stderr, "tide: --define takes a symbol for the game's #if lines, like `--define FAST`, or one with a value "
+                                "its code reads with define(NAME, default), like `--define ARMY_SIDE=500`%s\n",
                         strncmp(name, "TIDE_", 5) == 0 || strncmp(name, "PACKAGE_", 8) == 0
                             ? ": TIDE_ and PACKAGE_ prefixes are reserved by Tide; choose a different symbol"
                             : "");
                 free(defines);
                 return 2;
             }
-            defines[opts.define_count++] = name;
+            // A name said again says its value again: the later one, once, so C's -D says it once too
+            const int length = lex_define_name_length(name);
+            int same = 0;
+            while (same < opts.define_count && !(lex_define_name_length(defines[same]) == length && strncmp(defines[same], name, (size_t)length) == 0)) same++;
+            if (same < opts.define_count) defines[same] = name;
+            else defines[opts.define_count++] = name;
         } else if ((build || run) && strcmp(a, "--scene") == 0) {
             if (!left || !argv[i + 1][0] || argv[i + 1][0] == '-' || opts.scene) {
                 fputs("tide: --scene takes one qualified prefab or scene name, like --scene Levels.Start\n", stderr);

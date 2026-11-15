@@ -4307,6 +4307,20 @@ TIDE_TEST(lsp_directives)
     TIDE_CHECK(!has(branches, "\"startLine\":0"));
     open_document("scene Main { }\n#define LATE\n");
     TIDE_CHECK(has(sent[0], "comes after code"));
+
+    // Code reads symbols too: defined(NAME), and define(NAME, default), which editors read as its default (a command
+    // line's value they can't know), with no diagnostic; the formatter leaves the calls as they're written
+    static const char read[] = "#define MINE\n"
+                               "scene Main { }\n"
+                               "const bool PREPASS = !defined(NO_PREPASS);\n"
+                               "const bool OURS = defined(MINE) && defined(DEBUG);\n"
+                               "const int ARMY_SIDE = define(ARMY_SIDE, 500);\n"
+                               "singleton Army { int side = ARMY_SIDE; bool prepass = PREPASS; bool ours = OURS; }\n";
+    open_document(read);
+    TIDE_CHECK(has(sent[0], "\"diagnostics\":[]"));
+    TIDE_CHECK(has(format_reply(read), "\"result\":[]"));
+    open_document("scene Main { }\nconst int SIDE = define(SIDE);\n");
+    TIDE_CHECK(has(sent[0], "define takes a symbol's name and the value it has when the build gives it none"));
 }
 
 TIDE_TEST(lsp_folding)
@@ -8616,7 +8630,7 @@ TIDE_TEST(lsp_world)
     open_document(WORLD_GAME "system Heal(Healer healer, mut World world)\n{\n"
                              "    if (world.Has<Health>(healer.patient)) return;\n}\n"
                              "system Idle(Healer healer, World world)\n{\n    if (healer.patient == this) return;\n}\n");
-    TIDE_CHECK(has(last_sent(), "'world' is declared mut but never calls Set") && has(last_sent(), "'world' is never used"));
+    TIDE_CHECK(has(last_sent(), "'world' is declared mut but never calls Set or Edit") && has(last_sent(), "'world' is never used"));
     TIDE_CHECK(count(last_sent(), "\"tags\":[1]") == 2);
     const char *remove_mut = actions_at(5);
     TIDE_CHECK(has(remove_mut, "Remove 'mut' from 'world'") && has(remove_mut, "\"newText\":\"\""));
@@ -10145,6 +10159,45 @@ TIDE_TEST(lsp_functions_send_and_spawn)
     TIDE_CHECK(has(last_sent(), "a view can't change the match, and 'Soon' starts 'Later', a task that changes the match"));
 #undef LATER
 #undef ACTS
+}
+
+TIDE_TEST(lsp_world_edit)
+{
+    start();
+    open_document(WORLD_FUNCTION "system Heal(Healer healer, mut World world)\n{\n"
+                                 "    world.Edit<Health>(healer.patient, health) { health.value += 1; }\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(hover_at(10, 11), "Edit<Health>(Entity entity, name) { ... }")); // The name is new: no type of its own
+    TIDE_CHECK(has(hover_at(10, 11), "`name` is new, declared by the call"));
+    TIDE_CHECK(has(hover_at(10, 11), "is put back on the entity as the block ends"));
+    TIDE_CHECK(has(hover_at(10, 50), "Health health")); // The block's name: the entity's component
+    const char *members = complete(WORLD_FUNCTION "system Heal(Healer healer, mut World world) { world.$ }\n");
+    TIDE_CHECK(offers(members, "Edit"));
+    TIDE_CHECK(has(members, "Edit<${1:Component}>(${2:entity}, ${3:name})"));
+    // In its block, the name's fields
+    TIDE_CHECK(offers(complete(WORLD_FUNCTION "system Heal(Healer healer, mut World world)\n{\n"
+                                              "    world.Edit<Health>(healer.patient, health) { health.$ }\n}\n"), "value"));
+    // The formatter leaves an Edit as it's written: a call, its <>, and its block's braces on lines of their own
+    TIDE_CHECK(has(format_reply(WORLD_FUNCTION "system Heal(Healer healer, mut World world)\n{\n"
+                                               "    world.Edit<Health>(healer.patient, health)\n    {\n"
+                                               "        health.value += 1;\n    }\n}\n"), "\"result\":[]"));
+    // ...and Edits listed with commas, a call a line
+    TIDE_CHECK(has(format_reply(WORLD_FUNCTION "system Heal(Healer healer, mut World world)\n{\n"
+                                               "    world.Edit<Health>(healer.patient, health),\n"
+                                               "    world.Edit<Health>(this, own)\n    {\n"
+                                               "        health.value += own.value;\n    }\n}\n"), "\"result\":[]"));
+}
+
+TIDE_TEST(lsp_command_ownership)
+{
+    start();
+    open_document("component Name { string value; }\ncommand SetName { string text; }\nscene Main { }\n"
+                  "command(SetName set) Rename(mut Name name, with ownership) { name.value = set.text; }\n"
+                  "event(Spawned) Setup(with Main) { Spawn(Name, Owner { player = PlayerID(0) }); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(hover_at(3, 49), "the entities the player who sent the command owns"));
+    TIDE_CHECK(offers(complete("component Name { string value; }\ncommand SetName { string text; }\nscene Main { }\n"
+                               "command(SetName set) Rename(mut Name name, with $) { }\n"), "ownership"));
 }
 
 TIDE_TEST(lsp_world_in_functions)

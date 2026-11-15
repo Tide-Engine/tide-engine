@@ -1,0 +1,6 @@
+// expect: the build gives 'SCALE' the value '1e39', and 'define(SCALE, ...)' reads a float here
+// expect: give a number a float holds, in decimal: '--define SCALE=2.5' or '--define SCALE=-1e3'
+// define: SCALE=1e39
+const float SCALE = define(SCALE, 1); // Where a float goes, an int default reads its value as a float
+singleton Look { float scale = SCALE; }
+scene Main { }

@@ -113,6 +113,240 @@ Owner approved the recommendation ("go with your recommendations"); every rule i
   which now also get the three unused-unless-called `index_of`/`contains`/`remove` helpers.
 - Gaps: no `==` on arrays or structs (unchanged); no folding of int vector equality for compile-time choices.
 
+## world.Edit, and `with ownership` on command handlers (2026-11-14)
+
+The owner approved both on 2026-11-14 ("go with your recommendations"), from Mount & Rifle's campaign (79
+`world.Set<` calls, 25 `mut var x = found;` re-copies, one-field wrappers like AddMoney that exist to hold a
+Get/Set pair, and 35 command handlers opening with `if (sender != owner.player) return;`) and bannerlord-duel
+(150 Gets, 75 Sets). Everything below the two approvals is my pick, Provisional in spec.md (The World;
+Commands, Provisional).
+
+**`world.Edit<T>(entity, name) { ... }`**
+
+- **Syntax.** A World call that takes a block, the binding a bare name in the argument list, as
+  `items.Sort(a, b) { ... }` names its elements: the one block call that already declared names. Not
+  `mut var party` (the parser refuses `mut` at a call: "only 'out' is written at a call"), not `out mut var
+  party` (out says the call only gives the variable a value), not a new statement keyword (the task asked for
+  the block-call shape, and stacking with commas then works for free: `world.Edit<A>(a, x), world.Edit<B>(b,
+  y) { }`). `<T>` is required, as for Get/Set/TryGet. No `else` form and no bool result: a block call is a
+  statement, and an else would be a second block every one of the ~120 walkers of `expr.block` (check.c,
+  codegen.c, purity.c, indexing.c, the lane analyses, the language server) would have to learn; `Has` before
+  it says the same.
+- **Checker** (`check_world_call` with `edit`, `edit_allowed`, `edit_conflict`, `check_edit_block` in
+  check.c). The binding is a synthetic `param` (NEW, never in any decl's `params`) with `mode = PARAM_MUT`,
+  the component's type and `param.edit` = the call; `expr.edit_binding` points at it. `find_param` looks in
+  `checker.edits` (a stack of `edit_scope`: binding, call, and the `parallel`/`compare` in force as the Edit
+  began) before the code's params, so the name resolves as BIND_PARAM, "already declared" covers it, and
+  every rule for a `mut` component parameter applies: writes, `mut` arguments, methods with `this`
+  (`component_binding` takes it as attached), heap/C lends (`world_place`). The block is checked by
+  `check_edit_block`, never by check_stmt's generic call-block branch (S_EXPR skips an Edit by name and
+  World object; error paths check it through `check_world_args`), with no `block_depth` (it's ordinary code
+  that runs once: queries, Sorts and loops inside are fine). Effects as a Set: `world->written`,
+  `note_world_use(..., true)`, `note_text_write`, `stands_alone`/`call_acts`, indexing.c's world_sets.
+  Refusals: no block or not a statement; second argument not a bare name; read-only World; a view's match
+  component; inside a parallel step or a comparison; `await` inside (check_await, as `edits.count`); the
+  binding read from a parallel step or comparison started inside the block (check_name, by the scope's
+  recorded parallel/compare; lambdas already refuse capturing a component); the binding handed to a task's
+  component parameter (task_ref: "own" excludes it); `Edit<T>(this, ...)` where the code takes T as a `mut`
+  parameter, or in T's own method (beside a read-only T it's allowed, and is what a Set is there: the read
+  parameter's copy, lists too, is the system's `keeps_read_copy`, as `world_sets_component` is true);
+  Get/TryGet/Set/Edit of T inside the block whose handle is the Edit's as written (`same_handle_written`:
+  `this`, one read-only local or parameter, or the same fields of one; GetPrevious is exempt). Warnings, once
+  every body is checked (`warn_unused_edits`, over `checker.edit_bindings`, as a function's `mut` parameter
+  being written is known only then): a binding nothing names ("never used, so the Edit changes nothing"),
+  and one only read ("never changed, so the Edit only reads it", pointing at TryGet: the Edit still counts
+  as a write of every entity's T). `world->written` stays set for a read-only Edit, so the `mut World`
+  warning comes after the TryGet change, not beside the Edit's.
+- **Wrong calls say one thing** (`check_world_args`, `edit_shaped`): a World call that's wrong already (no
+  `<T>`, an unknown or non-component type, the wrong world, a misspelled method, a refused Edit) and reads
+  as an Edit (a block, a bare name second that's new) checks its block through `check_edit_block(c, e,
+  NULL)` with a binding of `T_ERR`, after its own error: uses of the name resolve quietly, `check_name`'s
+  parallel/comparison refusal and `edit_conflict` skip an error binding, and only the call's error is said.
+  A refused `World` parameter (an async function's) makes any call on it quiet the same way.
+  `tests/edit_errors_alone.cmake` pins each path's first and only error.
+- **Codegen** (`gen_world_edit`; `tide_world_edit_<C>` in gen_component_access, behind
+  `decl.world_edit_used`). The entity once into a temporary; `T *name = tide_world_edit_T(world,
+  tide_bindings, e, &row)`: the active binding tide_bound_component finds (the code's own `mut` parameter of
+  that entity, an enclosing Edit of it, through helpers), else `row` loaded from the lanes, else NULL (gone, no
+  T, another shard's) and the block is skipped. Inside the `if`, a new `tide_component_binding` for it heads
+  a block-local `tide_bindings` (shadowing the outer one), so a helper's Set or Edit of that entity finds and
+  replaces or aliases it, exactly as for a `mut` parameter; `tide_owner_entity_/world_<name>` give methods
+  their entity and world (gen_component_owner, component_owner_world). The store, `tide_store_T` (lanes that
+  differ, tide_table_scatter; preparation state kept), is pushed as a `gen_open` cleanup, so `closing()`
+  emits it before every `return`, `break`, `continue`, `try` and `fail` leaving the block, as a GUI container
+  is closed. A task's own `return`, `fail` and `try` go through `gen_task_leave`, which closes the containers
+  its code opened before `return TIDE_TASK_DONE;`, the result already spilled to the frame (before review a
+  task's `return` in an Edit skipped the store: the change was lost, and as `tide_text_set`/`tide_assign`
+  had released the stored row's old text and lists, the stored row kept released handles). The binding E_NAME is `(*name)`/`name->` (is_pointer_param), `place_where` gives the
+  component's heap, so list/text/grid writes go to its own memory with no copy; `call_operands` skips the
+  name argument. Borrowing: with lanes there's no row in memory to point at, so a copy of the lanes is
+  unavoidable; everything else is borrowed (the containers, an active binding).
+- **Semantics settled by that**: an Edit is a Get-change-Set that can't miss its Set, plus aliasing that
+  Get/Set lacked: Pay(this) through a helper changes the system's own `mut` binding (+10, +1, +100 is 111,
+  where Set would have discarded the unfinished 10); two Edits of one entity are one component. A Set of the
+  edited entity inside the block (through a helper) replaces the binding whole, as for a `mut` parameter. Get
+  and queries of it inside the block read what's stored.
+- **A read parameter's copy behind a guard** (`gen_row_copies`, `gen_row_copies_rest`): a read parameter
+  beside a World Set or Edit of its component with lists is copied (`tide_copy_T`, scratch) so the Set can't
+  change it. In a guarded system that copy was made before the guard and its scratch reset only for rows the
+  guard let through, so every skipped row's copy stayed in scratch past the tick (the Set path had it too;
+  `e2e/world_edit`'s Settle, gated by mode, found it as `tide_scratch_mark() != 0`). The copy is now made
+  after the guard, for the rows it lets through; the guard reads the gathered value, as nothing has changed
+  it yet.
+- **Schedule**: a World Set, whole component (`world_use.writes`), one thread for a per-entity system. Field
+  granularity was weighed and not built: Edit's load and store would have to touch only lane masks the lane
+  analyses compute for the binding (they're per system parameter, `code_reads(sys, i)`), and `world_use`
+  would need masks; it changes no threading (a Set keeps the system in order anyway), only which other
+  systems wait. Gap below.
+- **Editors**: `world_calls` has Edit (hover, completion with a block snippet); completion in the block
+  knows the name's type (collect_locals pushes a synthetic local for `edit_binding`).
+
+**`with ownership` on command handlers**
+
+- **Spelling**: the existing filter, not a new word. `ownership` already means "the player this code is
+  for": a view's is this machine's; a command handler's is its sender, which the connection names and every
+  machine agrees on. Match code has no machine, so there's nothing for the local meaning to be confused with
+  there; systems and event handlers still refuse it. Also the owner's word ("don't rename it").
+- **Checker** (`check_ownership`): `command` (a non-local handler of a command) passes both of its
+  refusals; `with` adds Owner to `need_mask` as for views. The sender is optional in the parser now
+  (`parse_handler`: none when `)` follows the trigger); a handler with neither a named sender nor an
+  ownership filter is an error at the check of its parameters, worded as the requirement it is ("must name
+  the player who sent its command"; a named sender that's never read is accepted, as before). Its note
+  offers `with ownership` only to a per-entity handler (`sys->per_entity`): a global one has no entity, and
+  the filter would make every global Send of it an error. Three printers that took params[1] as the
+  sender (put_override_start, the language server's two headers) check its mode.
+- **Codegen**: nothing new but `tide_me`. The dispatcher's per-entity case already ran `gen_chunk_columns`
+  and `gen_row_filter`, which filter by `tide_owner.player == tide_me`; for a command handler `tide_me` is
+  `*tide_sender` (the dispatcher's argument, `&c->sender`) instead of `tide_l->Session.player`. A dropped
+  command is a skipped case: handled, sequence consumed. Command handlers can't be async, so the task-start
+  path has no filter.
+- **Editors**: hover on `ownership` in a command handler says it's the sender's; completion offers it after
+  `with`/`without` in a command handler's parameters (`command_handler`).
+
+Tests: `e2e/world_edit` (3,000 parties in two archetypes with a sparse filter: the ring Give, by Edit,
+equals GiveTwin, the same code by Get/Set, field by field, lists and text included, every tick, in place
+and beside a snapshot, replayed, packed and unpacked, and on the platform's threads; continue/break/return
+out of the block and a function's `return p.gold`; a gone entity and one without Party skipped; the code's
+own binding through a helper and two Edits of one entity; a Bag's list grown into chunks, text and a map,
+then a Set of the same entity through a helper inside the block; a grid's cells a chunk apart; an event
+handler, an async handler before and after its wait, a command handler, and a view's Edit of a local
+component; `Self()` on the binding is the edited entity; a `try` passing an error on and a `fail` out of
+the block, with text and a list; an async handler's `return` out of the block before its wait, with 3,000
+list elements and long text, and after it, its blocks checked again a tick later; comma-listed Edits of two
+entities and of one entity twice, both changes landing, and a `return` out of the shared block; `Edit(this)`
+beside a read-only Party in a guarded system: the parameter, its list and text keep their values, Get reads
+the stored one, scratch is back to its mark), `e2e/command_ownership` (three counters, player
+0's, player 1's and nobody's; pokes and steals from both players with and without the filter and the
+sender's name: run, dropped, sequence consumed, resend refused, replay equal), `schedule/world_edit` (which
+says "it edits"), eighteen error fixtures (seventeen `world_edit_*`, `command_unnamed_sender` with its
+note), `edit_errors_alone` (eight wrong Edits and a global command handler without its sender, each with one
+error, the global one not offered `with ownership`), the warning fixture `world_edit_unused`
+(never used, only read, and the six ways a binding is changed), LSP `lsp_world_edit` (with a comma-listed
+Edit left as written by the formatter), `lsp_command_ownership`; `world_unknown_method` lists Edit.
+
+Gaps: no `else`; schedule by fields for an Edit's binding (above); Edit of the code's own entity beside a
+`mut` parameter of it is refused where knowable rather than aliased (aliasing does happen through helpers);
+the task paths of `try` and `fail` out of an Edit can't be reached yet (an async function can't take the
+World), but go through `gen_task_leave` like `return`; an Edit's binding read inside a
+parallel step or comparison is refused rather than captured; Mount & Rifle and bannerlord-duel weren't
+changed to use either (read-only references).
+
+Validation: native sanitize (Windows ASan, heap checks): the two e2e targets, world/world_set_*/
+world_functions/commands/ownership/ownership_events/handler_queries e2e, all 2,607 error, warning and
+schedule fixtures, `tidels_tests`; web-debug: the two e2e targets. Linux/macOS/MinGW/Android are CI's.
+After review (native sanitize only, at the owner's request that suites run in Actions): `e2e/world_edit`,
+`command_ownership`, `world_set_read`/`_own`/`_mut`, `row_lanes`, `view_reads`, `component_loads` and their
+codegen checks, `edit_errors_alone`, the 182 World/async/task/command/owner error and warning fixtures,
+`schedule/world_edit`, `world`, `world_functions`, `queries`, `tidels_tests`. The docs build and web runs
+are left to the Build workflow.
+
+## Symbols read by code: defined(NAME), define(NAME, default) and --define NAME=value (2026-11-14)
+
+The owner approved "a define with a value, readable as an expression" ("go with your recommendations"); the
+spelling and every rule are my picks, Provisional in spec.md (Conditional compilation). Mount & Rifle has ~300
+`#if` lines, many only to pick a constant (`#if NO_PREPASS / const bool PREPASS = false; / #else ... #endif`,
+three army sizes by `#if ARMY_50 / #elif ARMY_BIG / #else`); each is now one line.
+
+- **Lexer** (`lexer.c`, the symbols block): `build_symbols` keeps `{name, value}` (`build_symbol`; `value` NULL for
+  none), `lex_define("NAME=value")` splits at the first `=` (`lex_define_name_length`) and a name defined again
+  takes the later value. `lex_define_ok` is the command lines' check (the name as `lex_symbol_ok` takes it, any
+  value). `lex_symbol` (what `lex_symbols_read` lists) gained `value`; `read_build_symbol` records it whenever the
+  symbol has one, however it was read. A file's own `#define`/`#undef` are also kept past its lexing
+  (`kept_symbols`, by `loc.file`, the last word standing; a file lexed again first forgets its own, and
+  `lex_symbols_reset` clears them), so `lex_read_symbol(name, file, &value)` answers as `#if` would in that file:
+  the file's own, then tide's versions, then the build's (noted). -1 for a `TIDE_` name that's no version.
+  `cond_equality` refuses a number, text, `'`, `-` or `.` after `==`/`!=` with a note pointing at `define`.
+- **Checker** (`check_symbol_call`, just before `check_call`, which sends `defined`/`define` there first): the
+  call becomes the literal it reads as (`check_has`'s way), so `fold_int`, `is_constant` (which also takes the
+  unchecked calls), array sizes and `switch` cases see a literal. `defined` → `E_BOOL`, its args dropped.
+  `define`: the default is `is_constant` (with a check that a member chain's root isn't a local, a parameter or a
+  field: `army.start` reads like `Combat.MAX` until checked) and checked by `check_constant_expr`, with
+  `c->define_want` (set in `check_expr_want_any` for a `define` call) when that's a define type the default
+  converts to. Not defined: `*e = *default`. A value: `define_literal` makes an `E_INT` (with `is_long` for a
+  long; byte through the existing "int constant fits a byte" rule), an `E_FLOAT` (text as written, `d` added for a
+  double, a negative one as `E_UNARY` minus, finite by `strtof`/`strtod`), an `E_STRING` (escaped for
+  `gen_text_literal`, UTF-8 checked), an `E_BOOL`, or `.Member` shorthand for an enum, then `check_expr_want`.
+  `defined`/`define` are in `is_builtin_name`.
+- **Identity** (`gen_header`): a symbol with a value is `NAME="value"` in the symbols comment (quotes, backslashes,
+  `?` and anything outside printable ASCII escaped, so the comment's line can't end early or splice); one without
+  is `NAME=0/1` as before, so a game reading no valued symbol has the header it had.
+- **Command lines:** tidec's `add_define` and `tide`'s `--define` take `lex_define_ok`; `tide` keeps one entry per
+  name (the later), so C's `-D` is said once (`c_defines` passes `NAME=value` as clang reads it). `tide.packages`
+  conditions (`compiler/lsp/packages.c`) compare names up to `=`. CMake `DEFINES` pass `NAME=value` through to
+  tidec as they are.
+- **Tests:** `compiler/tests/e2e/defines` (now `DEFINES FAST WIDE SIDE=50 BIG=-9223372036854775808 SMALL=255
+  SCALE=-2.5 FAR=0.1 "TITLE=..." EMPTY= SLOW=false ARMY=Huge`: every type, a value's escapes, an empty one, an int
+  default read as a float, a valueless symbol as a bool, a file's own and another file's, an array field's
+  default and a system's body), `tidec_lexer` (`lexer_symbols_with_values_are_read_by_file_and_noted`), error
+  fixtures `define_value_int/range/float/bool/enum`, `define_no_value`, `define_arguments`, `defined_arguments`,
+  `define_not_constant(_call)`, `define_type`, `defined_tide`, `define_function_name` and
+  `directive_compare_value` (`expect_error.cmake` reads `// define: <S>` lines after the first as `--define`),
+  `lsp_directives`, and the CLI's `tide_cli_build_report` (C gets `-D BATTLE_TEST=7`, the header says it, another
+  value is another identity, the later of two wins, a bad value's error and fix, `--define =7` refused) and
+  `tide_cli_packages` (`--define STEAM=480` takes the `#if STEAM` branch).
+- **Not built / gaps:** a file's `#define NAME value` (a file's symbols stay valueless: a value there is a
+  `const`); `#if` reading values; `char` and vector values; a settings or `tide.packages` place to list defines.
+  On Windows a value outside ASCII given on a command line arrives in the console's code page, not UTF-8, and is
+  refused with the "has to be UTF-8" note (seen through CMake's command); `tide` and tidec read narrow `argv`.
+
+## Vectors, colors, quaternions, sets and maps by a number in JSON (2026-11-14)
+
+The owner approved arrays for vectors, colors and quaternions ("go with your recommendations"); the rules are my
+picks, Provisional in spec.md (JSON). Mount & Rifle kept float[3] fields and twin structs for its saves and gear
+catalog only because JSON refused vectors. Sets as arrays and maps by a byte, an int, a long or an enum came out
+of the same code for about 80 generated-C lines, so they're built too; a map by a `char` is not (Open).
+
+- **Checker** (`check.c`, the JSON block): `json_holds` takes the eleven vector kinds, a set whose key `json_key`
+  allows (string, char, int, long, enum; a set has no byte key), a map whose key it allows (string, byte, int,
+  long, enum), and `TY_ERROR` (said where it's declared, so no second "JSON has nothing for <error>").
+  `json_takes` takes a struct, a list, a set or any map as `T`. `mark_json` gives a vector no declaration: the
+  program keeps a bit per kind (`program.json_vector_reads/writes`, `1 << kind`, a `_Static_assert` that each
+  kind is under 64). The notes after "JSON has nothing for" say what a map's key, a set's key and a matrix can be.
+- **Codegen** (`gen_json_helpers`): `json_vector_parts` says a vector's numbers (count, C place, float/double/int),
+  `gen_json_vector` writes `tide_json_get_<C type>` (`tide_json_get_tide_float3`: no game type has a `tide_`
+  name) and its writer. The reader fills the place's numbers in turn through a table of pointers, refuses the
+  item past the count before writing it, gives false unless the count is exact (a color's 3 or 4, alpha 1.0f for
+  3), and a `null` number writes nothing. Sets are their own loop over `prog->maps` (`is_set`): an array of keys,
+  each read into a local of its stored type and added with `tide_map<n>_add(..., TIDE_IN_SCRATCH)`, written over
+  live entries. A map by a number reads its key's text with `tide_str_parse_long` and a range check (none for a
+  long), by an enum a static table of names then `tide_str_eq`, digits that fit the storage otherwise; writing
+  quotes `tide_str_add_long`'s digits or the first name a number has. No runtime function was added: everything
+  is generated over `tide/json.h` and `tide/text.h` as they were.
+- **A game with no vector, set or numbered map in JSON generates the C it did** (by construction, not diffed over
+  every game): the new loops emit nothing without a bit or a marked set, and a map by text writes the same text.
+- **Tests:** `compiler/tests/e2e/json_vectors` (46 checks: every kind, defaults and `null` numbers, NaN as `null`
+  back to the default's number, wrong lengths, non-arrays, ints that aren't whole or don't fit, vectors in lists,
+  maps, arrays and a `T?`, sets of int/string/enum/char with repeats, maps by int/long/byte/enum and an enum
+  `: byte`, keys that aren't numbers or members, roots that are a list, a set and maps; in C, the bits of 0.1,
+  -0, 0.70710677 and 0.30000000000000004, the written text, and `JSON_VECTORS_HASH`, shared by native sanitize
+  and web-debug). `compiler/tests/safety/json` gained `shapes` (131,073 numbers for a vector and a color, a set
+  of them, 2,000 keys of 1,000 numbers, a key of 131,072 digits and one of 64 letters, and 1,320 spoiled bytes of
+  a pose). Error fixtures: `json_map_key` (now `Map<char, string>`), `json_set` (now `Set<Entity>`),
+  `json_field_nested` (now `float4x4`, the matrix note), `json_set_float` (one error, no follow-up),
+  `json_field_entity`, `json_read_value`, `json_write_singleton` (their new wording). Hover docs for
+  `Json.Read`/`Json.Write` in `compiler/lsp/analysis.c`; `tidels_tests json` passes.
+- **Not built:** maps by a `char`; matrices (refused, as before); a way to say a vector's array may be short.
+
 ## Scene.Switch, scene loads in functions, local fallback offline (2026-11-14)
 
 Owner: scenes felt awkward to switch between ("I imagine scenes almost as what I'm mainly doing ... menu is
@@ -4962,7 +5196,7 @@ macOS, MinGW, Android and the sanitizers were not run here, and no workflow
 was dispatched.
 
 **Not built**: a dynamic JSON value; `T?` fields (built since: see T? fields, above);
-vectors, colors, sets and maps by an int or an enum; telling why a read gave
+vectors, colors, sets and maps by an int or an enum (built 2026-11-14, the section at the top); telling why a read gave
 nothing; indented output or leaving out defaults; `Join`, `byte.TryParse`, a
 `Parse` that fails; `TryParse` in the GUI's own number fields.
 ## AnimationCatalog and bool/out lookup, 2026-10-11
@@ -5270,7 +5504,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **A build's symbol that a condition read is in the game's hash:** `read_build_symbol` notes each, by name, with whether it was defined (`lex_symbols_read`, in order of the names), and `gen_header` writes them as a comment after `#pragma once`, only when there are any. So builds that read one differently are different games, which no session connects, and a game whose conditions read none (or only versions and their files' own) generates the header it did. A hot reload that adds the first `#if DEBUG` changes the hash once, and migrates by name.
   - **Editors:** `#define` and `#undef` lines are directive lines (`LINE_DIRECTIVE`), which the formatter leaves and the folding of `#if` branches passes by; the grammar has both words.
   - **Tests:** `compiler/tests/e2e/defines` (a file's own, `#undef` of a build's, a build's in another file, `DEBUG` by the build's configuration, a package that's there and one that isn't), `compiler/tests/errors/directive_define_*` and `directive_undef_package`, and `lsp_directives`.
-  - **Not built:** values, package versions as symbols, a place in the game's folder to list defines (so an editor knows them), `DEBUG` for a game's C.
+  - **Not built:** values (built 2026-11-14 for code, `define(NAME, default)`: the section at the top), package versions as symbols, a place in the game's folder to list defines (so an editor knows them), `DEBUG` for a game's C.
 
 - **Combined animation imports and writable names** (2026-10-11): `check_asset_decl` records resolved constant path expressions in `decl.asset_paths`; only plain `Animations` accepts a literal file list or a glob as one combined inferred catalog. `[Name("source")]` on singular `Animation` selects a unique original clip; implicit selection requires exactly one clip. The checker, codegen and editor share cleaned members and flattened source ordinals, with filename prefixes for cross-source alias collisions. Contract matching remains first-letter-only or exact `[Name]`; dynamic `Find` remains exact and ambiguity-sensitive. `Animation` retains its existing raw model data/index ABI. `Animations.data` is now a nested source-byte list; the generated private catalog adapters borrow a model blob for direct operations and wrap it only when a catalog escapes. Ordinary nested-list ownership supplies snapshots/serialization without engine changes. Inferred conversions check source ordinals before carrying indexed members to a different catalog type. See `notes/assets-and-files.md` for fixtures and validation.
 

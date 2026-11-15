@@ -1,9 +1,11 @@
 #include <ctype.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "asset_files.h"
+#include "lexer.h" // What defined(NAME) and define(NAME, default) read of the build's symbols
 #include "build_report.h"
 #include "humanoid_assets.h"
 #include "assets.h"
@@ -21,6 +23,17 @@
 
 // Semantic analysis: resolves names and types, enforces access and mutability
 // rules, and derives the archetype list from spawn, add and remove sites.
+
+// A `world.Edit<Party>(id, party) { ... }` whose block is being checked: its
+// binding is in scope there, as a parameter (find_param), and what was being
+// checked as it began, which code started inside its block can't take it into
+// (a parallel loop's step and a comparison are functions of their own in C).
+typedef struct edit_scope {
+    param *binding;
+    const expr *call;
+    const struct stmt *parallel;
+    const expr *compare;
+} edit_scope;
 
 typedef struct checker {
     program *prog;
@@ -68,6 +81,8 @@ typedef struct checker {
     const expr *awaiting;     // The call an `await` is checking: an async call it waits for, not a task it starts
     const expr *statement_call; // The call a statement makes: an async one starts a task
     int block_depth;          // Inside a block written after a call, which runs where the function runs it
+    VEC(edit_scope) edits;    // world.Edit blocks being checked, innermost last
+    VEC(param *) edit_bindings; // Every Edit's name, for what's said of its use once every body is checked
     VEC(struct task_call) task_calls; // Calls of async functions: awaited, or starting tasks
     const stmt *parallel;     // Checking a parallel loop's step: the loop
     int grid_loops;           // Foreach loops over grids being checked, which go through cells without waiting
@@ -90,6 +105,7 @@ typedef struct checker {
     bool grid_param;         // Resolving a function's parameter, which can be a grid: one code the GPU runs passes it
     bool assets_constant;    // ...a field's default, where an asset's name is read as a constant is
     decl *generic;           // The instantiation of a generic function being checked: its type parameters' names are types
+    type define_want;        // Where a define(NAME, default) about to be checked goes: the type its value reads as
 } checker;
 
 // A call of an async function: awaited, its frame part of the caller's, or
@@ -837,6 +853,9 @@ static param *find_param(const checker *c, const str name)
 {
     if (!c->system) return NULL; // Field defaults are checked outside any system.
     if (c->in_sanitize) return NULL; // Sample's parameters aren't Sanitize's
+    for (int i = c->edits.count - 1; i >= 0; i--) { // An Edit's binding, in its block
+        if (str_eq(c->edits.items[i].binding->name, name)) return c->edits.items[i].binding;
+    }
     for (int i = 0; i < c->system->params.count; i++) {
         param *p = &c->system->params.items[i];
         if (p->name.len > 0 && str_eq(p->name, name)) return p;
@@ -3186,7 +3205,9 @@ static type check_expr_want_any(checker *c, expr *e, const type stored, const bo
         null_error(e, want);
         return e->type = T_ERR;
     }
+    if (!checked && e->kind == E_CALL && str_eq_c(e->name, "define")) c->define_want = inner; // const float S = define(S, 1)
     const type t = checked ? e->type : check_expr_any(c, e);
+    c->define_want = (type){0}; // Taken by that define, and by nothing after it
     if (inner.kind == TY_STRUCT && inner.decl->asset_ref_of && e->bind == BIND_ASSET
         && type_asset_reference_accepts(inner.decl, e->constant->return_type)) {
         e->asset_reference = true;
@@ -6235,8 +6256,15 @@ static void check_task_call(checker *c, expr *e, decl *fn)
         const param *p = &fn->params.items[i];
         const expr *arg = e->args.items[i];
         if (!p->task_ref || arg->type.kind == TY_ERROR) continue;
-        const bool own = arg->kind == E_NAME && arg->bind == BIND_PARAM && (!arg->param->function_param || arg->param->task_ref);
+        const bool own = arg->kind == E_NAME && arg->bind == BIND_PARAM && !arg->param->edit
+            && (!arg->param->function_param || arg->param->task_ref);
         if (own) continue;
+        if (arg->kind == E_NAME && arg->bind == BIND_PARAM && arg->param->edit) {
+            diag_error(arg->at, "'" STR_FMT "' gets its '" STR_FMT "' again each time it goes on, from the entity it belongs to, and '"
+                       STR_FMT "' is the component an Edit changes", STR_ARG(fn->name), STR_ARG(p->name), STR_ARG(arg->name));
+            diag_note("pass the task the values it needs, or start it from code that runs for that entity");
+            continue;
+        }
         // A function's or method's own singleton is the world's when every call of it passes its own (check_task_params)
         const bool handed = arg->kind == E_NAME && arg->bind == BIND_PARAM && inherits(c) && !awaited;
         if (handed && arg->param->type.kind == TY_SINGLETON) {
@@ -6426,8 +6454,282 @@ static type check_self_call(checker *c, expr *e, decl *m)
 
 static type check_gpu_list_make(checker *c, expr *e);
 
+// ---------------------------------------------------------------------------
+// defined(NAME) and define(NAME, default): what the build's --define, or the
+// file's own #define, says of a symbol, read by code as a constant (see
+// docs/spec.md, Conditional compilation). The call becomes the literal it
+// reads as, so it goes anywhere a constant does.
+
+static void suggest_constant(const checker *c, const expr *value);
+
+// The types define(NAME, default) gives: a value a command line's text says.
+static bool define_kind(const type t)
+{
+    return t.kind == TY_BOOL || t.kind == TY_BYTE || t.kind == TY_INT || t.kind == TY_LONG || t.kind == TY_FLOAT
+        || t.kind == TY_DOUBLE || t.kind == TY_STRING || t.kind == TY_ENUM;
+}
+
+// A whole number in decimal, with a '-' before it if it's negative, from `least` to `most`.
+static bool define_integer(const char *s, const int64_t least, const int64_t most, int64_t *out)
+{
+    const bool negative = *s == '-';
+    if (negative) s++;
+    if (!*s) return false;
+    uint64_t u = 0;
+    for (; *s; s++) {
+        if (!isdigit((unsigned char)*s)) return false;
+        const uint64_t d = (uint64_t)(*s - '0');
+        if (u > (UINT64_MAX - d) / 10u) return false;
+        u = u * 10u + d;
+    }
+    const uint64_t lowest = (uint64_t)INT64_MAX + 1u;
+    if (negative ? u > lowest : u > (uint64_t)INT64_MAX) return false;
+    const int64_t v = !negative ? (int64_t)u : u == lowest ? INT64_MIN : -(int64_t)u;
+    if (v < least || v > most) return false;
+    *out = v;
+    return true;
+}
+
+// A number as a float's or a double's text is written in decimal: digits, a point and digits, or both, after a '-'
+// if it's negative, and an exponent.
+static bool define_number(const char *s)
+{
+    if (*s == '-') s++;
+    int digits = 0;
+    for (; isdigit((unsigned char)*s); s++) digits++;
+    if (*s == '.') {
+        for (s++; isdigit((unsigned char)*s); s++) digits++;
+    }
+    if (!digits) return false;
+    if (*s == 'e' || *s == 'E') {
+        s++;
+        if (*s == '+' || *s == '-') s++;
+        if (!isdigit((unsigned char)*s)) return false;
+        while (isdigit((unsigned char)*s)) s++;
+    }
+    return *s == '\0';
+}
+
+// Text as a string literal's is written between its quotes, escapes and all, into `*out`; false for text that isn't
+// UTF-8 or has a control character other than a tab or a line break.
+static bool define_text(const char *value, str *out)
+{
+    sb b = {0};
+    for (const unsigned char *p = (const unsigned char *)value; *p;) {
+        const unsigned char ch = *p;
+        if (ch < 0x80) {
+            if (ch == '\\' || ch == '"') sb_printf(&b, "\\%c", ch);
+            else if (ch == '\n') sb_put(&b, "\\n");
+            else if (ch == '\r') sb_put(&b, "\\r");
+            else if (ch == '\t') sb_put(&b, "\\t");
+            else if (ch < ' ' || ch == 0x7F) return false;
+            else sb_putn(&b, (const char *)p, 1);
+            p++;
+            continue;
+        }
+        const int more = ch >= 0xF0 && ch < 0xF5 ? 3 : ch >= 0xE0 && ch < 0xF0 ? 2 : ch >= 0xC2 && ch < 0xE0 ? 1 : -1;
+        if (more < 0) return false;
+        uint32_t code = more == 3 ? ch & 0x07u : more == 2 ? ch & 0x0Fu : ch & 0x1Fu;
+        for (int i = 1; i <= more; i++) {
+            if ((p[i] & 0xC0u) != 0x80u) return false; // The NUL that ends it is no continuation byte either
+            code = code << 6 | (p[i] & 0x3Fu);
+        }
+        if ((more == 2 && code < 0x800u) || (more == 3 && code < 0x10000u) || code > 0x10FFFFu || (code >= 0xD800u && code < 0xE000u)) {
+            return false;
+        }
+        sb_putn(&b, (const char *)p, (size_t)more + 1u);
+        p += more + 1;
+    }
+    *out = b.data ? (str){b.data, (int)b.len} : str_from("");
+    return true;
+}
+
+// What a value of `t` is called where a define's value isn't one: "an int".
+static const char *define_kind_name(const type t)
+{
+    switch (t.kind) {
+    case TY_BOOL: return "a bool";
+    case TY_BYTE: return "a byte";
+    case TY_INT: return "an int";
+    case TY_LONG: return "a long";
+    case TY_FLOAT: return "a float";
+    case TY_DOUBLE: return "a double";
+    case TY_STRING: return "text";
+    default: {
+        sb b = {0};
+        sb_printf(&b, "a member of %s", type_name(t));
+        return b.data;
+    }
+    }
+}
+
+// The literal `value` (a --define's text) reads as, a value of `t`, checked; NULL, said, when it's no such value.
+static expr *define_literal(checker *c, const expr *e, const str name, const type t, const char *value)
+{
+    expr *lit = NEW(expr);
+    lit->at = e->at;
+    bool ok = true;
+    const char *number = value[0] == '-' ? value + 1 : value;
+    switch (t.kind) {
+    case TY_BOOL:
+        ok = strcmp(value, "true") == 0 || strcmp(value, "false") == 0;
+        lit->kind = E_BOOL;
+        lit->bool_value = ok && value[0] == 't';
+        break;
+    case TY_BYTE:
+    case TY_INT:
+    case TY_LONG: {
+        const int64_t least = t.kind == TY_BYTE ? 0 : t.kind == TY_INT ? INT32_MIN : INT64_MIN;
+        const int64_t most = t.kind == TY_BYTE ? 255 : t.kind == TY_INT ? INT32_MAX : INT64_MAX;
+        lit->kind = E_INT;
+        ok = define_integer(value, least, most, &lit->int_value);
+        lit->is_long = t.kind == TY_LONG;
+        lit->text = str_from(value);
+        break;
+    }
+    case TY_FLOAT:
+    case TY_DOUBLE: {
+        ok = define_number(value);
+        if (ok) ok = t.kind == TY_FLOAT ? isfinite(strtof(number, NULL)) : isfinite(strtod(number, NULL));
+        lit->kind = E_FLOAT;
+        sb text = {0};
+        sb_printf(&text, "%s%s", number, t.kind == TY_DOUBLE ? "d" : "");
+        lit->text = (str){text.data, (int)text.len};
+        lit->is_double = t.kind == TY_DOUBLE;
+        if (ok && value[0] == '-') { // As the source says one, -2.5: the minus an operator
+            expr *minus = NEW(expr);
+            minus->kind = E_UNARY;
+            minus->at = e->at;
+            minus->op = T_MINUS;
+            minus->lhs = lit;
+            lit = minus;
+        }
+        break;
+    }
+    case TY_STRING:
+        lit->kind = E_STRING;
+        ok = define_text(value, &lit->text);
+        break;
+    default: { // An enum: a member's name, as .Member would be
+        ok = false;
+        for (int i = 0; i < t.decl->members.count && !ok; i++) ok = str_eq_c(t.decl->members.items[i].name, value);
+        lit->kind = E_MEMBER;
+        lit->member = str_from(value);
+        lit->enum_shorthand = true;
+        lit->object = NEW(expr);
+        lit->object->kind = E_NAME;
+        lit->object->at = e->at;
+        lit->object->name = str_from("");
+        break;
+    }
+    }
+    if (!ok) {
+        diag_error(e->at, "the build gives '" STR_FMT "' the value '%s', and 'define(" STR_FMT ", ...)' reads %s here",
+                   STR_ARG(name), value, STR_ARG(name), define_kind_name(t));
+        switch (t.kind) {
+        case TY_BOOL: diag_note("give true or false: '--define " STR_FMT "=true'", STR_ARG(name)); break;
+        case TY_BYTE: diag_note("give a whole number from 0 to 255: '--define " STR_FMT "=12'", STR_ARG(name)); break;
+        case TY_INT:
+            diag_note("give a whole number from -2147483648 to 2147483647, in digits: '--define " STR_FMT "=500'", STR_ARG(name));
+            break;
+        case TY_LONG: diag_note("give a whole number a long holds, in digits: '--define " STR_FMT "=500'", STR_ARG(name)); break;
+        case TY_FLOAT:
+        case TY_DOUBLE:
+            diag_note("give a number %s holds, in decimal: '--define " STR_FMT "=2.5' or '--define " STR_FMT "=-1e3'",
+                      define_kind_name(t), STR_ARG(name), STR_ARG(name));
+            break;
+        case TY_STRING:
+            diag_note("text from the command line has to be UTF-8, with no control characters but tabs and line breaks");
+            break;
+        default: {
+            sb members = {0};
+            for (int i = 0; i < t.decl->members.count && i < 8; i++) {
+                sb_printf(&members, "%s'" STR_FMT "'", i ? ", " : "", STR_ARG(t.decl->members.items[i].name));
+            }
+            if (t.decl->members.count > 8) sb_put(&members, ", ...");
+            diag_note("give one of its members' names, as written: %s", members.data ? members.data : "it has none");
+            break;
+        }
+        }
+        return NULL;
+    }
+    check_expr_want(c, lit, t);
+    return lit;
+}
+
+static type check_symbol_call(checker *c, expr *e)
+{
+    const type want = c->define_want;
+    c->define_want = (type){0};
+    const bool valued = str_eq_c(e->name, "define");
+    if (e->args.count != (valued ? 2 : 1) || e->args.items[0]->kind != E_NAME || e->type_args.count > 0) {
+        if (valued) diag_error(e->at, "define takes a symbol's name and the value it has when the build gives it none: 'define(ARMY_SIDE, 500)'");
+        else diag_error(e->at, "defined takes one symbol's name: 'defined(DEBUG)'");
+        diag_note("a symbol is what '#if' reads: the build's '--define NAME' or '--define NAME=value', or the file's '#define NAME'");
+        return e->type = T_ERR;
+    }
+    const str name = e->args.items[0]->name;
+    const char *value = NULL;
+    const int defined = lex_read_symbol(name, e->at.file, &value);
+    if (defined < 0) {
+        diag_error(e->args.items[0]->at, "'" STR_FMT "' isn't a symbol Tide knows", STR_ARG(name));
+        diag_note("a version of tide is written like TIDE_0_3_OR_NEWER, true in tide 0.3 and newer");
+        return e->type = T_ERR;
+    }
+    if (!valued) {
+        e->kind = E_BOOL;
+        e->bool_value = defined == 1;
+        e->args.count = 0;
+        return e->type = T_BOOL_;
+    }
+    expr *const fallback = e->args.items[1];
+    // A constant, checked where only constants are in scope, as a constant's value is. army.start reads like
+    // Combat.MAX until it's checked: a chain from a local, a parameter or a field isn't one
+    const expr *root = fallback;
+    while (root->kind == E_MEMBER && root->object) root = root->object;
+    const bool variable = root->kind == E_NAME && (find_local(c, root->name) || find_param(c, root->name) || field_in_scope(c, root->name));
+    if (variable || !is_constant(c, fallback)) {
+        diag_error(fallback->at, "define's second argument is a constant, the value '" STR_FMT "' has when the build gives "
+                                 "it none: 'define(" STR_FMT ", 500)'", STR_ARG(name), STR_ARG(name));
+        suggest_constant(c, fallback);
+        return e->type = T_ERR;
+    }
+    const type given = check_constant_expr(c, fallback, define_kind(want), want);
+    if (given.kind == TY_ERROR) return e->type = T_ERR;
+    // Where a float goes, define(SCALE, 1)'s value is a float's
+    const type t = define_kind(want) && (same_type(want, given) || (type_is_numeric(want) && type_is_numeric(given))) ? want : given;
+    if (!define_kind(t)) {
+        diag_error(fallback->at, "define gives a bool, a byte, an int, a long, a float, a double, a string or an enum, "
+                                 "what a command line's text can say, and this is %s", type_name(given));
+        diag_note("read the parts it's made from, each a define of its own: 'float3(define(X, 0), define(Y, 0), 0)'");
+        return e->type = T_ERR;
+    }
+    if (defined == 0) { // Not defined: its default, as written
+        *e = *fallback;
+        return e->type;
+    }
+    if (!value) { // Defined, with no value
+        if (t.kind == TY_BOOL) {
+            e->kind = E_BOOL;
+            e->bool_value = true;
+            e->args.count = 0;
+            return e->type = T_BOOL_;
+        }
+        diag_error(e->at, "'" STR_FMT "' is defined with no value, and 'define(" STR_FMT ", ...)' reads %s here",
+                   STR_ARG(name), STR_ARG(name), define_kind_name(t));
+        diag_note("give it one, '--define " STR_FMT "=<value>'; a symbol alone, or a file's '#define', is for "
+                  "'defined(" STR_FMT ")' and '#if " STR_FMT "'", STR_ARG(name), STR_ARG(name), STR_ARG(name));
+        return e->type = T_ERR;
+    }
+    expr *lit = define_literal(c, e, name, t, value);
+    if (!lit) return e->type = T_ERR;
+    *e = *lit;
+    return e->type;
+}
+
 static type check_call(checker *c, expr *e)
 {
+    if (str_eq_c(e->name, "defined") || str_eq_c(e->name, "define")) return check_symbol_call(c, e);
     if (str_eq_c(e->name, "GPUList") && e->type_args.count && !find_local(c, e->name) && !find_param(c, e->name))
         return check_gpu_list_make(c, e);
     const stmt *call_local = find_local(c, e->name);
@@ -8208,7 +8510,7 @@ static const char *system_what(const decl *sys);
 
 // A component code reaches through its World: a use the schedule counts as
 // access to every entity's (parallel.c).
-static void note_world_use(const checker *c, decl *component, const bool writes, const loc at)
+static void note_world_use(const checker *c, decl *component, const bool writes, const bool edits, const loc at)
 {
     decl *code = c->system;
     for (int i = 0; i < code->world_uses.count; i++) {
@@ -8218,22 +8520,45 @@ static void note_world_use(const checker *c, decl *component, const bool writes,
         if (writes && !u->writes) {
             u->writes = true;
             u->write_at = at;
+            u->write_edits = edits;
         }
         return;
     }
-    const world_use u = {component, writes, at, writes ? at : (loc){0, 0, 0}, false, true};
+    const world_use u = {component, writes, at, writes ? at : (loc){0, 0, 0}, false, true, writes && edits};
     vec_push(code->world_uses, u);
 }
 
-// The arguments of a World call that's wrong already, for what's in them: an
-// `out` one is TryGet's, whatever else is wrong.
-static void check_world_args(checker *c, const expr *e)
+static void check_edit_block(checker *c, expr *e, decl *d);
+
+// Whether a World call that's wrong reads as an Edit: a block after it, and a
+// name second that's new, which its block calls the component by. An Edit's
+// is that whatever the name; a misspelled one's, a name nothing declares.
+static bool edit_shaped(const checker *c, const expr *e)
 {
-    for (int i = 0; i < e->args.count; i++) {
+    if (!e->block || e->args.count < 2 || e->args.items[1]->kind != E_NAME) return false;
+    const str name = e->args.items[1]->name;
+    return str_eq_c(e->name, "Edit") || (!e->args.items[1]->is_out && !find_local(c, name) && !find_param(c, name));
+}
+
+// The arguments of a World call that's wrong already, for what's in them: an
+// `out` one is TryGet's, whatever else is wrong. One that reads as an Edit has
+// its block checked here, its name a binding of no type, which its uses say
+// nothing more of (check_stmt leaves an Edit's block to the call). Called once
+// the call's error is said, so that's what's said first, for the arguments
+// from `from` on (those before it are checked).
+static void check_world_args(checker *c, expr *e, const int from)
+{
+    const bool edit = edit_shaped(c, e);
+    for (int i = from; i < e->args.count; i++) {
         expr *arg = e->args.items[i];
+        if (edit && i == 1) continue;
         if (arg->is_out) begin_out_arg(c, arg);
         else check_expr(c, arg);
     }
+    if (edit) check_edit_block(c, e, NULL);
+    // The rest of an Edit's that the statement leaves to the call (check_stmt, S_EXPR): a World's. A refused
+    // World's call isn't one of those, and the statement checks its block
+    else if (e->block && str_eq_c(e->name, "Edit") && e->object->type.kind == TY_WORLD) check_stmt(c, e->block);
 }
 
 static param *component_world(checker *c, const loc at)
@@ -8257,6 +8582,188 @@ static param *component_world(checker *c, const loc at)
     m->uses_owner_world = m->borrows_owner_world = m->uses_this = true;
     m->this_at = at;
     return m->owner_world;
+}
+
+// Whether two handles are one entity as they're written, whatever runs between them: `this`, a variable nothing
+// can change (a read-only local or parameter), or the same fields of one. What this can't tell may still be one.
+static bool same_handle_written(const expr *a, const expr *b)
+{
+    if (!a || !b || a->kind != b->kind) return false;
+    switch (a->kind) {
+    case E_THIS: return true;
+    case E_NAME:
+        if (a->bind != b->bind) return false;
+        if (a->bind == BIND_LOCAL) return a->local && a->local == b->local && !a->local->is_mut;
+        if (a->bind == BIND_PARAM) return a->param && a->param == b->param && a->param->mode != PARAM_MUT;
+        return false;
+    case E_MEMBER:
+        return a->field && a->field == b->field && !a->swizzle_len && !a->property && !b->property
+            && same_handle_written(a->object, b->object);
+    default: return false;
+    }
+}
+
+// A Get, TryGet, Set or Edit, inside an Edit's block, of the component that
+// Edit changes, on the entity it changes as it's written: the binding is that
+// component already, and the World's is what it was before the block. A
+// handle this can't tell is the same is one the binding's rules cover (see
+// docs/spec.md, The World). Whether it said so.
+static bool edit_conflict(const checker *c, const expr *e, const decl *d)
+{
+    if (e->args.count == 0 || str_eq_c(e->name, "Has")) return false; // It has it: the block runs
+    for (int i = c->edits.count - 1; i >= 0; i--) {
+        const edit_scope *s = &c->edits.items[i];
+        if (s->binding->type.kind == TY_ERROR) continue; // A wrong Edit's: it said so
+        if (s->call->type_decl != d || !same_handle_written(s->call->args.items[0], e->args.items[0])) continue;
+        const str name = s->binding->name;
+        if (str_eq_c(e->name, "Edit")) {
+            diag_error(e->at, "this entity's " STR_FMT " is '" STR_FMT "' already: the Edit around this one changes it",
+                       STR_ARG(d->name), STR_ARG(name));
+            diag_note("change '" STR_FMT "' here", STR_ARG(name));
+        } else if (str_eq_c(e->name, "Set")) {
+            diag_error(e->at, "the Edit around this Set changes this entity's " STR_FMT " as '" STR_FMT "'", STR_ARG(d->name),
+                       STR_ARG(name));
+            diag_note("assign it there: '" STR_FMT " = value;', which the Edit puts back as its block ends", STR_ARG(name));
+        } else {
+            diag_error(e->at, "the Edit around this " STR_FMT " changes this entity's " STR_FMT " as '" STR_FMT "', which is put back "
+                       "as its block ends: this would read it as it was before", STR_ARG(e->name), STR_ARG(d->name), STR_ARG(name));
+            diag_note("read '" STR_FMT "'", STR_ARG(name));
+        }
+        return true;
+    }
+    return false;
+}
+
+// What an Edit needs beside what every World call does: a block, a name for
+// its component, the right to change it (a `mut World`, and not a view's of the
+// match), and code that goes in order. Says what's wrong, and whether it's fine.
+static bool edit_allowed(checker *c, const expr *e, const decl *d, const param *world)
+{
+    const decl *code = c->system;
+    const bool helper = c->method != NULL;
+    const char *code_what = !helper ? system_what(code) : code->kind == DECL_FUNCTION ? "function" : "method";
+    char example[64];
+    snprintf(example, sizeof example, STR_FMT, STR_ARG(d->name));
+    example[0] = (char)tolower((unsigned char)example[0]);
+    const expr *name = e->args.items[1];
+    if (!e->block || c->statement_call != e) {
+        diag_error(e->at, "Edit changes the entity's component in a block written after it: '" STR_FMT ".Edit<" STR_FMT ">(entity, %s) "
+                   "{ ... }'", STR_ARG(world->name), STR_ARG(d->name), example);
+        diag_note("the block is where its name is the component, and what it changes is put back on the entity as the block ends");
+        return false;
+    }
+    if (name->kind != E_NAME || name->is_out) {
+        diag_error(name->at, "Edit names the component its block changes: '" STR_FMT ".Edit<" STR_FMT ">(entity, %s) { ... }'",
+                   STR_ARG(world->name), STR_ARG(d->name), example);
+        diag_note("the name is new, declared by the call: in the block it's the entity's component itself, as a 'mut' parameter is");
+        return false;
+    }
+    if (!d->is_local && !helper && code->is_view) {
+        diag_error(e->at, "a view reads the match, and 'Edit<" STR_FMT ">' would change it", STR_ARG(d->name));
+        diag_note("views draw: a system changes the match");
+        return false;
+    }
+    if (world->mode != PARAM_MUT) {
+        diag_error(e->object->at, "'" STR_FMT "' is read-only", STR_ARG(world->name));
+        diag_note("Edit changes an entity's component: declare the parameter as 'mut World " STR_FMT "' to call it",
+                  STR_ARG(world->name));
+        const fix f = {.kind = FIX_ADD_MUT, .at = e->object->at, .param = world};
+        vec_push(c->prog->fixes, f);
+        return false;
+    }
+    if (c->parallel) {
+        diag_error(e->at, "a parallel loop's steps run at once, so each changes only its own place (a grid's cell "
+                          "or block, a list's element or block), and the variables it declares");
+        diag_note("work it out in the step, or in a 'for' loop, which goes in order");
+        return false;
+    }
+    if (c->compare) {
+        diag_error(e->at, "a comparison runs again and again as the list sorts, so it changes nothing outside it");
+        diag_note("work it out before the sort, or in the variables the comparison declares");
+        return false;
+    }
+    // The code's own entity, whose component it may have already. Beside a read-only parameter of it, an Edit is
+    // what a Set is there: the stored component changes, and the parameter keeps the value it was read with
+    if (e->args.items[0]->kind == E_THIS) {
+        for (int i = 0; !helper && i < code->params.count; i++) {
+            const param *p = &code->params.items[i];
+            if (p->type.kind != TY_COMPONENT || p->type.decl != d || p->mode != PARAM_MUT) continue;
+            diag_error(e->args.items[0]->at, "this entity's " STR_FMT " is the %s's parameter '" STR_FMT "' already", STR_ARG(d->name),
+                       code_what, STR_ARG(p->name));
+            diag_note("change '" STR_FMT "' itself, which is put back as the %s ends", STR_ARG(p->name), code_what);
+            return false;
+        }
+        if (helper && c->method->owner == d) {
+            diag_error(e->args.items[0]->at, "this method is " STR_FMT "'s, so its fields are this entity's " STR_FMT " already",
+                       STR_ARG(d->name), STR_ARG(d->name));
+            diag_note("make it a 'mut' method and change its fields");
+            return false;
+        }
+    }
+    return true;
+}
+
+// An Edit's block: its name, the entity's component, is in scope there as a
+// `mut` parameter of the component's (param.edit), and nowhere else. A wrong
+// Edit's (d NULL) is checked with its name too, where it's a name, as one of
+// no type, so what's in the block is checked and its uses of the name say
+// nothing more than the call's error did. Whether the name is used and changed
+// is said once every body is checked (warn_unused_edits).
+static void check_edit_block(checker *c, expr *e, decl *d)
+{
+    if (!e->block) return;
+    expr *name = e->args.count > 1 ? e->args.items[1] : NULL;
+    if (!name || name->kind != E_NAME || (d && name->is_out)) {
+        check_stmt(c, e->block);
+        return;
+    }
+    param *binding = NEW(param);
+    binding->name = name->name;
+    binding->name_at = binding->at = name->at;
+    binding->type_name = d ? d->name : e->type_arg;
+    binding->type_at = binding->type_qual_at = e->type_arg_at;
+    binding->type = d ? decl_type(d) : T_ERR;
+    binding->mode = PARAM_MUT;
+    binding->edit = e;
+    if (d) check_reserved(name->name, name->at);
+    if (d && (find_local(c, name->name) || find_param(c, name->name))) {
+        diag_error(name->at, "'" STR_FMT "' is already declared", STR_ARG(name->name));
+        diag_note("the name an Edit gives its component is a new one, for its block");
+    }
+    name->bind = BIND_PARAM;
+    name->param = binding;
+    name->type = binding->type;
+    e->edit_binding = binding;
+    const edit_scope scope = {binding, e, c->parallel, c->compare};
+    vec_push(c->edits, scope);
+    push_scope(c);
+    check_stmt(c, e->block);
+    pop_scope(c);
+    c->edits.count--;
+    if (d && builds(c->prog)) vec_push(c->edit_bindings, binding);
+}
+
+// An Edit whose name its block never uses changes nothing, and one that only
+// reads it needs no Edit: either way it's a write of every entity's component
+// to the schedule, which makes the systems that use it wait, and keeps a
+// per-entity system on one thread. Once every body is checked, as what a
+// function changes of a binding it's handed is known then.
+static void warn_unused_edits(const checker *c)
+{
+    for (int i = 0; i < c->edit_bindings.count; i++) {
+        const param *binding = c->edit_bindings.items[i];
+        const expr *e = binding->edit;
+        if (!binding->read) {
+            diag_warning(binding->name_at, "'" STR_FMT "' is never used, so the Edit changes nothing", STR_ARG(binding->name));
+            diag_note("change it in the block, or remove the Edit");
+        } else if (!binding->written) {
+            diag_warning(binding->name_at, "'" STR_FMT "' is never changed, so the Edit only reads it", STR_ARG(binding->name));
+            const str world = e->object->kind == E_NAME ? e->object->name : str_from("world");
+            diag_note("read it with 'if (" STR_FMT ".TryGet<" STR_FMT ">(entity, out var " STR_FMT ")) { ... }': an Edit counts as "
+                      "writing every entity's " STR_FMT ", which systems that use it wait for",
+                      STR_ARG(world), STR_ARG(binding->type_name), STR_ARG(binding->name), STR_ARG(binding->type_name));
+        }
+    }
 }
 
 // world.Get<Health>(e), Has, TryGet and Set: any entity's component by handle through the World parameter. Get gives a copy, or the component's zero value
@@ -8286,7 +8793,7 @@ static type check_world_call(checker *c, expr *e, param *world)
             return T_ERR;
         }
         ensure_hierarchy(c->prog, local);
-        note_world_use(c, transform, false, e->at);
+        note_world_use(c, transform, false, false, e->at);
         e->type_decl = transform;
         e->local_world = local;
         e->call = CALL_TRANSFORM;
@@ -8300,10 +8807,10 @@ static type check_world_call(checker *c, expr *e, param *world)
     if (previous) e->name = str_from(str_eq_c(e->name, "GetPrevious") ? "Get" : str_eq_c(e->name, "HasPrevious") ? "Has" : "TryGet");
     const bool set = str_eq_c(e->name, "Set");
     const bool try_get = str_eq_c(e->name, "TryGet");
-    if (set) world->written = true;
-    if (!set && !try_get && !str_eq_c(e->name, "Get") && !str_eq_c(e->name, "Has")) {
-        check_world_args(c, e);
-        diag_error(e->at, "the World has no method '" STR_FMT "'; it has Get, Has, TryGet, Set, GetPrevious, HasPrevious, TryGetPrevious, Parent, ParentToWorld and LocalToWorld", STR_ARG(e->name));
+    const bool edit = str_eq_c(e->name, "Edit"); // world.Edit<Party>(id, party) { ... } (check_world_edit)
+    if (set || edit) world->written = true;
+    if (!set && !try_get && !edit && !str_eq_c(e->name, "Get") && !str_eq_c(e->name, "Has")) {
+        diag_error(e->at, "the World has no method '" STR_FMT "'; it has Get, Has, TryGet, Set, Edit, GetPrevious, HasPrevious, TryGetPrevious, Parent, ParentToWorld and LocalToWorld", STR_ARG(e->name));
         suggestion s = suggest_start(e->name);
         suggest_consider_c(&s, "GetPrevious");
         suggest_consider_c(&s, "TryGetPrevious");
@@ -8312,23 +8819,24 @@ static type check_world_call(checker *c, expr *e, param *world)
         suggest_consider_c(&s, "Has");
         suggest_consider_c(&s, "TryGet");
         suggest_consider_c(&s, "Set");
+        suggest_consider_c(&s, "Edit");
         suggest_consider_c(&s, "Parent");
         suggest_consider_c(&s, "LocalToWorld");
         suggest_note(&s);
+        check_world_args(c, e, 0);
         return T_ERR;
     }
-    const char *usage = set ? "(entity, value)" : try_get ? "(entity, out var value)" : "(entity)";
+    const char *usage = set ? "(entity, value)" : try_get ? "(entity, out var value)" : edit ? "(entity, health) { ... }" : "(entity)";
     if (e->type_arg.len == 0) {
-        check_world_args(c, e);
         diag_error(e->at, STR_FMT " takes the component in '<>': '" STR_FMT "." STR_FMT "<Health>%s'", STR_ARG(e->name),
                    STR_ARG(world->name), STR_ARG(e->name), usage);
+        check_world_args(c, e, 0);
         return T_ERR;
     }
     bind_alias_ref(c, e->type_arg_ref);
     decl *d = find_type(c, e->type_arg, e->type_arg_at);
     e->type_decl = d;
     if (!d || d->kind != DECL_COMPONENT) {
-        check_world_args(c, e);
         if (!d) {
             diag_error(e->type_arg_at, "unknown component '" STR_FMT "'", STR_ARG(e->type_arg));
             suggestion s = suggest_start(e->type_arg);
@@ -8343,6 +8851,7 @@ static type check_world_call(checker *c, expr *e, param *world)
                 diag_note("a %s takes a singleton as a parameter, like '" STR_FMT " name'", code_what, STR_ARG(d->name));
             }
         }
+        check_world_args(c, e, 0);
         return T_ERR;
     }
     const type handle = e->args.count > 0 ? check_expr(c, e->args.items[0]) : T_ERR;
@@ -8352,7 +8861,6 @@ static type check_world_call(checker *c, expr *e, param *world)
     // handler has no World of the match to read.
     const bool local_in_match = !helper && d->is_local && !is_local_code(code);
     if (local_in_match || (!helper && !d->is_local && code->is_handler && code->is_local)) {
-        check_world_args(c, e);
         if (local_in_match) {
             diag_error(e->type_arg_at, "'" STR_FMT "' is local, and the match can't use local state", STR_ARG(d->name));
             diag_note("local state belongs to one machine, and the match runs the same on every one");
@@ -8362,6 +8870,7 @@ static type check_world_call(checker *c, expr *e, param *world)
             diag_note("a view reads any entity's components through its World; a local handler of a match event takes the "
                       "components of the entity the event was sent to");
         }
+        check_world_args(c, e, 1); // The handle's checked
         return T_ERR;
     }
     const type_kind want = d->is_local ? TY_LOCAL_ENTITY : TY_ENTITY;
@@ -8391,16 +8900,30 @@ static type check_world_call(checker *c, expr *e, param *world)
             check_expr_want(c, arg, decl_type(d));
         }
     }
-    for (int i = set || try_get ? 2 : 1; i < e->args.count; i++) {
+    for (int i = set || try_get || edit ? 2 : 1; i < e->args.count; i++) {
         expr *arg = e->args.items[i];
         if (arg->is_out) begin_out_arg(c, arg);
         else check_expr(c, arg);
     }
-    if (e->args.count != (set || try_get ? 2 : 1)) {
+    if (e->args.count != (set || try_get || edit ? 2 : 1)) {
+        char named[96]; // An Edit's example names the component as its type does: `party` for a Party
+        snprintf(named, sizeof named, "(entity, " STR_FMT ") { ... }", STR_ARG(d->name));
+        named[9] = (char)tolower((unsigned char)named[9]);
         diag_error(e->at, set       ? STR_FMT " takes an entity's handle and its new component: '" STR_FMT "." STR_FMT "<" STR_FMT ">%s'"
                           : try_get ? STR_FMT " takes an entity's handle and the variable its component goes to: '" STR_FMT "." STR_FMT "<" STR_FMT ">%s'"
+                          : edit    ? STR_FMT " takes an entity's handle and a name for its component, which its block changes: '" STR_FMT "." STR_FMT "<" STR_FMT ">%s'"
                                     : STR_FMT " takes one entity's handle: '" STR_FMT "." STR_FMT "<" STR_FMT ">%s'",
-                   STR_ARG(e->name), STR_ARG(world->name), STR_ARG(e->name), STR_ARG(d->name), usage);
+                   STR_ARG(e->name), STR_ARG(world->name), STR_ARG(e->name), STR_ARG(d->name), edit ? named : usage);
+        if (edit) check_edit_block(c, e, NULL);
+        return T_ERR;
+    }
+    // A refused Edit's block is checked with its name of no type, which says nothing more
+    if (edit && !edit_allowed(c, e, d, world)) {
+        check_edit_block(c, e, NULL);
+        return T_ERR;
+    }
+    if (ok && !previous && edit_conflict(c, e, d)) { // (What the tick started with is no Edit's)
+        if (edit) check_edit_block(c, e, NULL);
         return T_ERR;
     }
     if (try_get) {
@@ -8482,10 +9005,13 @@ static type check_world_call(checker *c, expr *e, param *world)
         if (helper || code->is_handler) c->prog->keeps_previous_entities = true;
         return try_get || str_eq_c(e->name, "Has") ? T_BOOL_ : decl_type(d);
     }
-    if (ok) note_world_use(c, d, set, e->at);
+    // An Edit reads the entity's component and puts it back, as a Set does: through the World, any entity's
+    if (ok) note_world_use(c, d, set || edit, edit, e->at);
     if (set && builds(c->prog)) d->world_set_used = true;
-    if (set) note_text_write(c, decl_holds_text(d), e->at, d, false); // Its text and lists go into its heap
-    if (set) return T_VOID_;
+    if (edit && builds(c->prog)) d->world_edit_used = true;
+    if (set || edit) note_text_write(c, decl_holds_text(d), e->at, d, false); // Its text and lists go into its heap
+    if (edit) check_edit_block(c, e, d);
+    if (set || edit) return T_VOID_;
     return try_get || str_eq_c(e->name, "Has") ? T_BOOL_ : decl_type(d);
 }
 
@@ -8901,17 +9427,44 @@ static void check_json_attribute(const decl *d, const field *f, const attribute 
     }
 }
 
+// Whether `t` is a vector, a quaternion or a color: in JSON an array of its
+// components' numbers ([x, y, z]; a color's [r, g, b, a]).
+static bool json_vector(const type t)
+{
+    switch (t.kind) {
+    case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT2: case TY_FLOAT3: case TY_FLOAT4: case TY_DOUBLE2: case TY_DOUBLE3:
+    case TY_DOUBLE4: case TY_QUATERNION: case TY_COLOR:
+        return true;
+    default: return false;
+    }
+}
+
+// Whether a set's key, or a map's when `map`, has something in JSON: text, a
+// whole number or an enum, and for a set (an array of them) a char too. A
+// map's key is an object's, so always text: a number's digits, an enum's name.
+static bool json_key(const type t, const bool map)
+{
+    return t.kind == TY_STRING || t.kind == TY_BYTE || t.kind == TY_INT || t.kind == TY_LONG || t.kind == TY_ENUM || (!map && t.kind == TY_CHAR);
+}
+
 // Whether JSON has something for a value of type `t`, and for everything in
 // it: a bool, a number, a char or text (a string), an enum (its member's
-// name), a struct (an object), a list or an array (an array) and a map by
-// text (an object). `*why` is the type it has nothing for, and `*in` and
+// name), a vector, a quaternion or a color (an array of numbers), a struct (an
+// object), a list, a set or an array (an array) and a map by text, an int or
+// an enum (an object). `*why` is the type it has nothing for, and `*in` and
 // `*at` the struct and the field that hold it, if one does. `outer` is the
 // structs being looked into, so one with a list of itself ends.
 static bool json_holds(const type t, type *why, const decl **in, const field **at, const decl **outer, const int depth)
 {
     switch (t.kind) {
+    case TY_ERROR: // Said where it's declared: once is enough
     case TY_BOOL: case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_DOUBLE: case TY_FLOAT: case TY_STRING: case TY_ENUM:
+    case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT2: case TY_FLOAT3: case TY_FLOAT4: case TY_DOUBLE2: case TY_DOUBLE3:
+    case TY_DOUBLE4: case TY_QUATERNION: case TY_COLOR:
         return true;
+    case TY_SET: // An array of its keys
+        if (json_key(t.decl->fields.items[0].type, false)) return true;
+        break;
     case TY_STRUCT:
         // A T? field: what its value is, or `null` and a key left out for none
         if (t.decl->optional_of) return json_holds(t.decl->fields.items[0].type, why, in, at, outer, depth);
@@ -8938,7 +9491,7 @@ static bool json_holds(const type t, type *why, const decl **in, const field **a
         outer[depth] = NULL;
         return json_holds(t.decl->fields.items[0].type, why, in, at, outer, depth + 1);
     case TY_MAP:
-        if (map_key(t).kind != TY_STRING || depth == JSON_TYPE_DEPTH) break;
+        if (!json_key(map_key(t), true) || depth == JSON_TYPE_DEPTH) break;
         outer[depth] = NULL;
         return json_holds(map_value(t), why, in, at, outer, depth + 1);
     default: break;
@@ -8948,27 +9501,35 @@ static bool json_holds(const type t, type *why, const decl **in, const field **a
     return false;
 }
 
+_Static_assert(TY_INT2 < 64 && TY_INT3 < 64 && TY_INT4 < 64 && TY_FLOAT2 < 64 && TY_FLOAT3 < 64 && TY_FLOAT4 < 64 && TY_DOUBLE2 < 64
+                   && TY_DOUBLE3 < 64 && TY_DOUBLE4 < 64 && TY_QUATERNION < 64 && TY_COLOR < 64,
+               "program.json_vector_reads keeps a bit for each of these kinds");
+
 // `t` and the types in it are read, or written: codegen writes their readers, or their writers.
-static void mark_json(const type t, const bool reads)
+static void mark_json(program *prog, const type t, const bool reads)
 {
-    if (t.kind != TY_STRUCT && t.kind != TY_ENUM && t.kind != TY_LIST && t.kind != TY_ARRAY && t.kind != TY_MAP) return;
+    if (json_vector(t)) { // No declaration of its own: which ones have a reader and a writer is the program's to say
+        *(reads ? &prog->json_vector_reads : &prog->json_vector_writes) |= 1ull << t.kind;
+        return;
+    }
+    if (t.kind != TY_STRUCT && t.kind != TY_ENUM && t.kind != TY_LIST && t.kind != TY_ARRAY && t.kind != TY_MAP && t.kind != TY_SET) return;
     bool *marked = reads ? &t.decl->json_reads : &t.decl->json_writes;
     if (*marked) return;
     *marked = true;
     if (t.kind == TY_ENUM) return;
     for (int i = 0; i < t.decl->fields.count; i++) {
-        if (!t.decl->fields.items[i].hidden) mark_json(t.decl->fields.items[i].type, reads);
+        if (!t.decl->fields.items[i].hidden) mark_json(prog, t.decl->fields.items[i].type, reads);
     }
 }
 
 // Whether `call` (Json.Read or Json.Write) takes a value of type `t`: a
-// struct, a list or a map by text, of what JSON holds. Says what's in the way.
+// struct, a list, a set or a map, of what JSON holds. Says what's in the way.
 static bool json_takes(const type t, const loc at, const char *call)
 {
     if (t.kind == TY_ERROR) return false;
     const bool reads = strcmp(call, "Json.Read") == 0;
-    if (t.kind != TY_STRUCT && t.kind != TY_LIST && !(t.kind == TY_MAP && map_key(t).kind == TY_STRING)) {
-        diag_error(at, "%s %s a struct, a List<T> or a Map<string, T>, and this is %s", call, reads ? "reads" : "writes", type_name(t));
+    if (t.kind != TY_STRUCT && t.kind != TY_LIST && t.kind != TY_MAP && t.kind != TY_SET) {
+        diag_error(at, "%s %s a struct, a List<T>, a Set<T> or a Map<K, T>, and this is %s", call, reads ? "reads" : "writes", type_name(t));
         if (t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_EVENT || t.kind == TY_INPUT) {
             diag_note("copy what the JSON has of it %s a struct, which is a value of its own", reads ? "from" : "into");
         } else {
@@ -8987,9 +9548,19 @@ static bool json_takes(const type t, const loc at, const char *call)
     } else {
         diag_error(at, "JSON has nothing for %s", type_name(why));
     }
-    if (why.kind == TY_MAP) diag_note("an object's keys are text: a map JSON holds is a Map<string, T>");
-    else if (why.kind == TY_SET) diag_note("JSON has arrays: keep the keys in a List<T>");
-    else diag_note("JSON holds bool, the integers, float, char, string, enums, structs of these, List<T>, arrays and Map<string, T>");
+    if (why.kind == TY_MAP) {
+        diag_note("an object's keys are text: a map JSON holds is by a string, or by a byte, an int, a long or an enum, written as "
+                  "its digits or its member's name. Keep this one as a List<T> of structs with the key in a field");
+    } else if (why.kind == TY_SET) {
+        diag_note("a set JSON holds is an array of strings, chars, ints, longs or enums: keep these in a List<T>");
+    } else if (why.kind == TY_FLOAT2X2 || why.kind == TY_FLOAT3X3 || why.kind == TY_FLOAT4X4 || why.kind == TY_DOUBLE2X2
+               || why.kind == TY_DOUBLE3X3 || why.kind == TY_DOUBLE4X4) {
+        diag_note("a vector is an array of numbers in JSON, and a matrix has nothing: keep its columns in vector fields, or what "
+                  "it's made from (a position, a rotation and a scale)");
+    } else {
+        diag_note("JSON holds bool, the integers, float, double, char, string, enums, vectors, quaternions and colors, structs of "
+                  "these, List<T>, Set<T>, arrays and maps by a string, an int or an enum");
+    }
     return false;
 }
 
@@ -9065,7 +9636,7 @@ static type check_json_call(checker *c, expr *e)
     r->reads_text |= reads && !bytes;
     r->reads_bytes |= bytes;
     r->writes |= !reads;
-    if (builds(c->prog)) mark_json(t, reads);
+    if (builds(c->prog)) mark_json(c->prog, t, reads);
     sb callee = {0};
     sb_printf(&callee, "tide_json_%s%d", !reads ? "write" : bytes ? "read_bytes" : "read", root);
     e->call = CALL_JSON;
@@ -9304,6 +9875,10 @@ static type check_method(checker *c, expr *e)
         if (!world && str_eq_c(e->object->name, "world") && !field_in_scope(c, e->object->name)
             && !(c->method && find_property(c->method->owner, e->object->name))) world = component_world(c, e->object->at);
         if (world && world->type.kind == TY_WORLD) return check_world_call(c, e, world);
+        if (world && world->type.kind == TY_ERROR && str_eq_c(world->type_name, "World")) {
+            check_world_args(c, e, 0); // A World refused already: what's done with it says nothing more
+            return T_ERR;
+        }
     }
     // Json.Read<LobbyInfo>(text) takes one too, which check_json_call reads, and target.Read<float>(), which is
     // known for a render target's once its receiver is checked
@@ -11561,6 +12136,15 @@ static type check_name(checker *c, expr *e)
     param *p = find_param(c, e->name);
     if (!p && str_eq_c(e->name, "world") && !field_in_scope(c, e->name)
         && !(c->method && find_property(c->method->owner, e->name))) p = component_world(c, e->at);
+    for (int i = 0; p && p->edit && p->type.kind != TY_ERROR && i < c->edits.count; i++) { // (A wrong Edit's said so)
+        const edit_scope *scope = &c->edits.items[i];
+        if (scope->binding != p || (c->parallel == scope->parallel && c->compare == scope->compare)) continue;
+        // A step and a comparison are functions of their own, handed what they read of the code around them
+        diag_error(e->at, "'" STR_FMT "' is the component an Edit's block changes, which %s can't take", STR_ARG(e->name),
+                   c->compare != scope->compare ? "a comparison" : "a parallel loop's step");
+        diag_note("copy what it needs into a local before the %s", c->compare != scope->compare ? "sort" : "loop");
+        return T_ERR;
+    }
     if (p) {
         if (p->call_binding && !e->binding_object) {
             expr *object = NEW(expr);
@@ -13387,6 +13971,13 @@ static type check_await(checker *c, expr *e)
     if (c->block_depth > 0) {
         diag_error(e->at, "a task can't wait inside a block written after a call: the function runs it");
         diag_note("move the wait before or after the call, or replace the callback with ordinary async control flow");
+        return T_ERR;
+    }
+    if (c->edits.count > 0) { // The edit is put back as its block ends, in the tick it began in
+        const param *binding = c->edits.items[c->edits.count - 1].binding;
+        diag_error(e->at, "a task can't wait inside an Edit's block: '" STR_FMT "' is put back on its entity as the block ends, in "
+                   "the tick the block began in", STR_ARG(binding->name));
+        diag_note("end the Edit before the wait, and Edit the entity again after it");
         return T_ERR;
     }
     if (c->grid_loops > 0) {
@@ -15774,7 +16365,7 @@ static bool stands_alone(const expr *e)
         || (call == CALL_LIST && !str_eq_c(called->name, "Contains") && !str_eq_c(called->name, "IndexOf"))
         || (call == CALL_MAP && !str_eq_c(called->name, "Has") && !str_eq_c(called->name, "Get"))
         || (call == CALL_GRID && !str_eq_c(called->name, "Sample") && !str_eq_c(called->name, "SampleGrad") && !str_eq_c(called->name, "SampleLevel"))
-        || (call == CALL_WORLD && (str_eq_c(called->name, "Set") || str_eq_c(called->name, "TryGet")))
+        || (call == CALL_WORLD && (str_eq_c(called->name, "Set") || str_eq_c(called->name, "TryGet") || str_eq_c(called->name, "Edit")))
         || (call == CALL_BUILTIN && called->type.kind == TY_VOID) // Debug.Log and Debug.Assert
         || (call == CALL_JSON && called->arg_out) // int.TryParse(text, out value): the variable is the number, or 0
         || (call == CALL_VISIBILITY && (called->visibility_operation & VISIBILITY_MUT))
@@ -16040,6 +16631,10 @@ static void check_stmt(checker *c, stmt *s)
         }
         if (e->block && call == CALL_LIST && str_eq_c(called->name, "Sort")) {
             // A Sort's comparison: checked with the call, as code of its own (check_sort)
+        } else if (e->block && (called->edit_binding || (called->kind == E_METHOD && str_eq_c(called->name, "Edit")
+                                                          && called->object && called->object->type.kind == TY_WORLD))) {
+            // An Edit's block, or a wrong World call's that reads as one: checked with the call, with its name in
+            // scope (check_edit_block)
         } else if (e->block) {
             // The block after a call: the caller's own code, run where the function runs it.
             const bool takes = (call == CALL_GUI && (e->gui & GUI_CONTAINER)) || (call == CALL_FUNCTION && e->method->takes_action)
@@ -16141,6 +16736,8 @@ static bool is_constant(const checker *c, const expr *e)
         }
         return true;
     case E_CALL: // A built-in type's constructor, an enum's conversion, a grid's size, and a Random's seed
+        if (str_eq_c(e->name, "defined")) return true; // What the build says of a symbol, before it's checked into a literal
+        if (str_eq_c(e->name, "define")) return e->args.count == 2 && is_constant(c, e->args.items[1]);
         return (resolve_builtin_alias(c, e->name, &ignored) || is_new_grid(e) || converted_enum(c, e)
                 || find_type(c, e->name, e->at) == c->prog->random
                 || (authored_alias(c, e->name, e->at) && resolve_alias_type(c, authored_alias(c, e->name, e->at)).kind == TY_GRID))
@@ -19805,15 +20402,17 @@ static void check_ownership(const checker *c, decl *sys, param *p)
     const bool with = p->mode == PARAM_WITH;
     const char *word = with ? "with" : "without";
     p->type = (type){TY_VOID, NULL};
-    if (!is_local_code(sys)) {
+    // A command handler's player is the one who sent it, whom the connection names: the same on every machine
+    const bool command = sys->is_handler && !sys->is_local && sys->event && sys->event->is_command;
+    if (!is_local_code(sys) && !command) {
         diag_error(p->type_at, "the match runs the same on every machine, so %s can't filter by '%s ownership'",
                    sys->is_handler ? "an event handler" : "a system", word);
-        diag_note("ownership is whether this machine's player owns the entity, which views ask; for entities that have "
-                  "%s owner, write '%s Owner'", with ? "any" : "no", word);
+        diag_note("ownership is whether this machine's player owns the entity, which views ask, or a command's sender, which "
+                  "command handlers ask; for entities that have %s owner, write '%s Owner'", with ? "any" : "no", word);
         suggest_replacement(p->type_name, "Owner");
         return;
     }
-    if (!sys->is_view && (!sys->is_handler || !sys->event || sys->event->is_local || sys->event == c->prog->forgotten)) {
+    if (!command && !sys->is_view && (!sys->is_handler || !sys->event || sys->event->is_local || sys->event == c->prog->forgotten)) {
         diag_error(p->type_at, "'%s ownership' filters match entities in views and local handlers of match events", word);
         diag_note("local entities live on this machine, and no player owns them");
         return;
@@ -20598,6 +21197,20 @@ static void check_params(const checker *c, decl *sys)
         p->query_rows = !p->query_local && (sys->is_view || sys->listens);
     }
 
+    // A command handler names its sender, to check what it may do, or leaves that to `with ownership`, which runs it only
+    // for the sender's own entities (or `without ownership`, only for others')
+    if (sys->is_handler && sys->is_command && !sys->ownership
+        && (sys->params.count < 2 || sys->params.items[1].mode != PARAM_SENDER)) {
+        const param *trigger = &sys->params.items[0];
+        diag_error(sys->at, "command handler '" STR_FMT "' must name the player who sent its command, after the command",
+                   STR_ARG(sys->name));
+        diag_note("write 'command(" STR_FMT " " STR_FMT ", PlayerID sender)', and check what that player may do before acting",
+                  STR_ARG(trigger->type_name), STR_ARG(trigger->name.len ? trigger->name : str_from("value")));
+        // A per-entity handler can leave that to its filter; a global one has no entity to filter
+        if (sys->per_entity) {
+            diag_note("or take 'with ownership', which runs it only for an entity the sender owns, and leave the sender out");
+        }
+    }
     // A handler that takes components reads the entity its event is sent to,
     // so every Send of that event must name one (see check_sends).
     if (sys->is_handler && sys->event && sys->per_entity) {
@@ -20652,7 +21265,7 @@ static void warn_unused_params(checker *c, const decl *sys)
             diag_note("remove it");
             remove_param_fix(c, p);
         } else if (kind == TY_WORLD && p->mode == PARAM_MUT && !p->written) {
-            diag_warning(p->at, "'" STR_FMT "' is declared mut but never calls Set", STR_ARG(p->name));
+            diag_warning(p->at, "'" STR_FMT "' is declared mut but never calls Set or Edit", STR_ARG(p->name));
             diag_note("remove 'mut': the %s only reads through it", system_what(sys));
             const fix f = {.kind = FIX_REMOVE_MUT, .at = p->at, .param = p};
             vec_push(c->prog->fixes, f);
@@ -20715,7 +21328,7 @@ static bool call_acts(const expr *e)
         || skinned_changes_pose(e->skin_operation);
     case CALL_LIST: return !str_eq_c(e->name, "Contains") && !str_eq_c(e->name, "IndexOf");
     case CALL_MAP: return !str_eq_c(e->name, "Has") && !str_eq_c(e->name, "Get");
-    case CALL_WORLD: return str_eq_c(e->name, "Set") || str_eq_c(e->name, "TryGet");
+    case CALL_WORLD: return str_eq_c(e->name, "Set") || str_eq_c(e->name, "TryGet") || str_eq_c(e->name, "Edit");
     case CALL_VISIBILITY: return (e->visibility_operation & VISIBILITY_MUT) != 0;
     case CALL_FUNCTION:
     case CALL_METHOD: {
@@ -21833,7 +22446,7 @@ static bool is_builtin_name(const str name)
         || str_eq_c(name, "Application") || str_eq_c(name, "Storage") || str_eq_c(name, "Web") || str_eq_c(name, "Json")
         || str_eq_c(name, "Action") || str_eq_c(name, "DrawList") || str_eq_c(name, "string") || str_eq_c(name, "Debug")
         || str_eq_c(name, "Transform") || str_eq_c(name, "Visibility") || str_eq_c(name, "VisibilityGroup") || str_eq_c(name, "Audience")
-        || str_eq_c(name, "Shards");
+        || str_eq_c(name, "Shards") || str_eq_c(name, "defined") || str_eq_c(name, "define");
 }
 
 static void c_name_of(const decl *d, sb *out)
@@ -24517,7 +25130,7 @@ static void check_world_passing(checker *c)
                 }
                 if (!own) {
                     const world_use u = {theirs->component, theirs->writes, site->call->at,
-                                         theirs->writes ? site->call->at : (loc){0, 0, 0}, false, true};
+                                         theirs->writes ? site->call->at : (loc){0, 0, 0}, false, true, theirs->write_edits};
                     vec_push(site->from->world_uses, u);
                     grew = true;
                     continue;
@@ -24527,6 +25140,7 @@ static void check_world_passing(checker *c)
                 if (theirs->writes && !own->writes) {
                     own->writes = true;
                     own->write_at = site->call->at;
+                    own->write_edits = theirs->write_edits;
                 }
             }
         }
@@ -24872,7 +25486,8 @@ static void put_override_start(sb *out, const decl *v)
         sb_printf(out, "%s%s%s(%s" STR_FMT, v->is_local ? "local " : "", v->is_async ? "async " : "", v->is_command ? "command" : "event",
                   trigger->verified ? "verified " : "", STR_ARG(trigger->type_name));
         if (trigger->name.len > 0) sb_printf(out, " " STR_FMT, STR_ARG(trigger->name));
-        if (v->is_command && v->params.count > 1) sb_printf(out, ", PlayerID " STR_FMT, STR_ARG(v->params.items[1].name));
+        if (v->is_command && v->params.count > 1 && v->params.items[1].mode == PARAM_SENDER)
+            sb_printf(out, ", PlayerID " STR_FMT, STR_ARG(v->params.items[1].name));
         sb_put(out, ")");
     }
 }
@@ -25694,6 +26309,7 @@ bool check(program *prog)
         }
         warn_unused_params(&c, d);
     }
+    warn_unused_edits(&c);
     mark_c_callers(&c);
     for (int i = 0; i < prog->decls.count; i++) {
         if (prog->decls.items[i]->kind == DECL_SYSTEM || prog->decls.items[i]->is_worker)
