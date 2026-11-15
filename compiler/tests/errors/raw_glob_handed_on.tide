@@ -1,0 +1,6 @@
+// expect: 'maps' is a [Raw] glob's images: read each by its place, 'maps[i]', or with foreach, and keep it in a [Raw] field or parameter
+// expect: a function takes it as a '[Raw] List<Texture>' parameter
+[Raw] asset List<Texture> maps = "../e2e/assets/run/*.png";
+scene Main { }
+int Count(List<Texture> all) { return all.count; }
+view V() { Debug.Log(Count(maps)); }

@@ -1,4 +1,5 @@
 // expect: 'image' is [Raw], its pixels numbers and not colors to draw: it's no Texture to draw with or hand on
+// expect: A local that isn't mut keeps the role of what it's given
 local singleton Art { [Raw] Texture image; }
 scene Main { }
-view V(Art art) { var lost = art.image; _ = lost.size; }
+view V(Art art) { mut Texture lost = art.image; _ = lost.size; }

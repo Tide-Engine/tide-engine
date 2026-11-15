@@ -12121,7 +12121,7 @@ TIDE_TEST(lsp_asset_textures_and_declared_sampling)
     TIDE_CHECK(has(hover, "`[Raw] Texture` fields") && has(hover, "`.size` is readable on the CPU and GPU"));
     hover = request_at(uri_main, "textDocument/hover", 5, 19, "");
     TIDE_CHECK(has(hover, "Texture image = masks") && !has(hover, "RawTexture"));
-    snprintf(asset_code, sizeof asset_code, "%sview Escape(Art art) { var lost = art.image; _ = lost.size; }\n", raw_file);
+    snprintf(asset_code, sizeof asset_code, "%sview Escape(Art art) { mut Texture lost = art.image; _ = lost.size; }\n", raw_file);
     open_uri(uri_main, asset_code);
     TIDE_CHECK(has(last_sent(), "'image' is [Raw], its pixels numbers and not colors to draw"));
     open_uri(uri_main, "[] asset Texture masks = \"art/tile.png\";\nscene Main { }\nlocal singleton Art\n{\n    [] Texture image;\n}\n");
@@ -13607,5 +13607,7 @@ TIDE_TEST(lsp_linear_textures)
     TIDE_CHECK(has(hover, "[Linear]") && has(hover, "GPU reads return linear light"));
     TIDE_CHECK(has(hover, "Alpha stays coverage") || has(hover, "alpha stays coverage"));
     open_document("scene Main { }\nview V() { [Linear] Texture image; }\n");
-    TIDE_CHECK(has(last_sent(), "marks assets and resource fields, not parameters or locals"));
+    TIDE_CHECK(has(last_sent(), "marks assets, resource fields and the read-only image parameters of functions and frags, not a local"));
+    open_document("scene Main { }\nint2 Size([Linear] Texture image) { return image.size; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]")); // A function's read-only image parameter keeps the mark
 }

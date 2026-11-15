@@ -1,0 +1,4 @@
+// expect: an element of 'maps' is [Raw], its pixels numbers and not colors to draw: it's no Texture to draw with or hand on
+[Raw] asset List<Texture> maps = "../e2e/assets/run/*.png";
+scene Main { }
+view V() { Draw.Mesh([Vertex { }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }], [0, 1, 2], maps[0]); }

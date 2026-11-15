@@ -739,17 +739,20 @@ frag Lit(Vertex vertex, out Color color)
 
 Keep copied references in `[Linear] Texture`, `[Linear] TextureArray` or `[Linear] Cubemap`
 fields. Sample these by their field or asset name. Read-only GPU helpers can borrow their
-source with an ordinary resource parameter. An unmarked local/field/CPU parameter or a
-draw's own texture argument would lose the mark, so the compiler refuses those escapes.
-`[Raw, Linear]` is an error.
+source with an ordinary resource parameter. The mark goes on a glob's list or map too, every
+image marked (`[Linear] asset List<Texture> albedos = "art/albedo/*.png";`, read by element or
+`foreach`), through a local that isn't `mut`, a `?:` or switch whose every side is marked, a
+function's `[Linear] Texture` parameter and a frag's `[Linear] Texture` source. An unmarked
+field, `mut` local or parameter, a return, or the engine's own draw would lose the mark, so the
+compiler refuses those escapes. `[Raw, Linear]` is an error.
 
 A marked Texture field can take a `Grid2<Color>` or an RGBA8 target's `.color`; a marked
 TextureArray field can take a `Grid3<Color>` or a runtime RGBA8 array, and a marked Cubemap
 field can take a runtime RGBA8 cube. Float and single-channel formats have no sRGB form.
-The compiler follows where the target comes from, so assign it to its field directly (an
-assignment or a struct's `{ target = RenderTarget(...) }`): a target field that a function
-fills through an `out` or `mut` parameter has no format the compiler can see, and is an
-error. A marked read of an image that turns out not to be RGBA8 draws nothing and says so.
+The compiler follows where the target comes from: an assignment, a struct's `{ target =
+RenderTarget(...) }`, and what a function assigns a target it's handed as `out` or `mut`. One
+C or a built-in makes has no format the compiler can see, and is an error. A marked read of
+an image that turns out not to be RGBA8 draws nothing and says so.
 A rendered image is copied for its marked reads when it has been drawn into, not every frame.
 The mark changes only the sampled image: CPU grid cells, `Decode`, the original target
 and `target.Read()` keep their values. It does not convert a frag's output or the screen.
@@ -980,7 +983,26 @@ frag Ground(Vertex vertex, out Color color, Terrain terrain)
 - Arrays and cubes follow the same rules as `Texture`: a `[Raw] TextureArray` field takes a `[Raw]` array asset, another `[Raw] TextureArray` field or a `[Raw] Grid3<Color>`, and a `[Raw] Cubemap` field a `[Raw]` cube asset or another such field. Their `Sample` gives the numbers as they are.
 - A `[Raw] Texture` field accepts `default`, a singular `[Raw] Texture` asset, another `[Raw] Texture` field, or a `[Raw] Grid2<Color>` field or asset. A grid-backed texture still names the grid's cells, with the [same lifetime rules](./meshes-and-textures.md#a-texture-is-a-value). Assigning an ordinary color texture to a Raw field is an error.
 - A frag or a vert samples the Raw asset or field by name, directly or through a [GPU texture helper](#in-a-function). Samples preserve the channel numbers, including where alpha is zero. The Raw field declaration determines numeric sampling; there is no separate Raw texture type or runtime Raw marker carried by arbitrary `Texture` values.
-- Raw sources cannot become ordinary `Texture` fields or CPU locals, be returned as `Texture`, or be supplied directly to a draw or blit. These uses are errors. Keep the original Raw source expression when forwarding it through GPU helpers.
+- **The role goes where the compiler can see it go.** A glob's list or map takes the mark for every image (`[Raw] asset List<Texture> normals = "art/normals/*.png";`), and `normals[i]`, a `foreach`'s variable and a map entry's `value` are Raw images. A local that isn't `mut` keeps the role of what it's given, and so does a `?:` or a switch whose every side is Raw. A function takes one as a `[Raw] Texture` parameter (or a whole glob as `[Raw] List<Texture>`), whose argument must be Raw, and a frag takes one as its `[Raw] Texture` source, which a draw gives it:
+
+```csharp
+[Raw] asset List<Texture> normals = "art/normals/*.png";
+
+local singleton Material { [Raw] Texture normal; int kind; }
+
+void Use(mut Material m, [Raw] Texture normal) { m.normal = normal; }
+
+frag Copy(Vertex vertex, out Color color, [Raw] Texture source) { color = source.Sample(vertex.uv); }
+
+view Pick(mut Material m)
+{
+    var chosen = m.kind < normals.count ? normals[m.kind] : normals[0]; // Raw, as both sides are
+    Use(m, chosen);
+    Draw.Blit(normals[0], Draw.window, Copy);
+}
+```
+
+- Raw sources cannot become ordinary `Texture` fields, `mut` locals or unmarked parameters, be returned, or be drawn by the engine's own shader (a draw with no frag). These uses are errors, and so is a `?:` with a Raw side and a color side: a value has one role, never one added or dropped along the way.
 - `rawField.size` is available as ordinary texture metadata, including `int2(0)` for a default or unavailable image; pack reload follows the currently bound asset. Reading its size does not read or convert its pixels.
 - The same file can be declared twice, once `[Raw]` and once not: they're two textures. Where `[Raw]` changes nothing, as for an image with no transparency, the pack and the GPU keep one copy for both.
 - A Raw `Texture` asset is [compressed](./assets.md#gpu-compression) as a color one is, when it's big enough: BC1 or BC3, its channels as the file has them, each a little off. For numbers that must be exact, a lookup table or a flow map, add `[Lossless]`: `[Raw, Lossless] asset Texture flow = "art/flow.png";`.

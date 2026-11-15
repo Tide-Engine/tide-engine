@@ -1,3 +1,43 @@
+# [Raw] and [Linear] beyond one declaration (2026-11-14)
+
+From an audit: the marks went on one asset or a field and nowhere else, so a folder of normal maps was 40
+declarations, a `?:` of two `[Raw]` assets gave two contradictory errors, a helper couldn't take a bare `[Raw]`
+parameter, and a local lost the role. The role stays static (Provisional in spec.md, Alpha and color space, Where
+a role goes, with the run-time bit weighed and left out); no ABI, shader or reference change.
+
+- **Where it comes from.** `declared_role` (shader.c, behind `declared_raw`/`declared_linear`) adds a marked
+  glob's element (`E_INDEX` of a many-asset or of a marked `List<Texture>`/`Map<string, Texture>` parameter,
+  `texture_collection`), a `foreach` variable over one and an entry's `value`, a local that isn't mut (its
+  initializer's), a `?:` or switch whose every arm has it, and a parameter's `raw_role`/`linear_role` (parser:
+  `parse_image_role` takes bare `[Raw]` and `[Linear]`, on functions' and frags' parameters; systems' and views'
+  still refuse `[Linear]`).
+- **Uses.** `note_role_use` (check.c, after every `check_expr_any` and a switch's `check_switch_value`) makes each
+  such value a use in `raw_uses`/`linear_uses` once (`expr.role_noted`) and marks what it's made of kept: an
+  element its collection, a choice its arms (`mixed_roles` says a choice whose arms differ, once, and keeps the
+  arms quiet). `check_var` keeps a non-mut local's initializer (and lets a `[Raw]` grid in, `c->raw_value`).
+  `count`, `Has` and `foreach` keep a marked glob; `use_asset` makes a marked glob's name a use, so handing it on
+  whole is an error naming the `[Raw] List<Texture>` parameter. A typed `[Raw(T)]` field now keeps a `[Raw]` value
+  assigned to it (it took any image before, but left the value's use unkept).
+- **Parameters.** `check_param_role` (functions) and `check_shader_decl` (frags) allow the marks on read-only
+  image or texture-collection parameters and on a frag's Texture source. `check_role_argument`, from
+  `check_raw_uses`/`check_linear_uses`, holds every call's argument to the role and keeps it. A frag's marked
+  source takes a marked image from its draw (a `[Linear]` one a Color grid too); `check_mesh_draw` and `check_blit`
+  let a `[Raw]` grid through to a `[Raw]` source. Codegen captures that source with `tide_draw_texture_source_raw`
+  or `_linear`; `ex_sample_read` already skips `tide_straight` for a `[Raw]` parameter.
+- **The pack.** A marked glob's images are packed as one marked asset's (`pack_item` raw/linear, and
+  `want_textures` for the cache). A `[Linear]` glob's list entry is `TIDE_PACK_TEXTURE | TIDE_PACK_LINEAR` and a
+  map's count has the bit; `lay_textures` (pack_load.c) strips it and marks each element's place, so `pack_reads`
+  refuses an element read the other way, as for one asset. `textures_room` takes the marked list.
+- **Tests:** `tidec_e2e_marked_globs` (raw glob bytes kept at a clear pixel, a Linear map's and list's elements
+  packed for the mark, both kinds of parameter, a list parameter, locals, a `?:` and a switch, frag sources and
+  their captures); errors `raw_choice_mixed`, `linear_choice_mixed`, `raw_parameter_unmarked_argument`,
+  `linear_parameter_unmarked_argument`, `raw_parameter_mut`, `raw_parameter_escape`, `raw_glob_handed_on`,
+  `raw_glob_element_drawn`, `linear_glob_element_unmarked_field`, `raw_frag_source_unmarked`,
+  `linear_frag_source_unmarked`, `linear_frag_role_other_param`; `raw_on_list`, `linear_glob`,
+  `raw_field_escape_local`, `linear_escape_local` (now `mut` locals), `linear_on_parameter`, `linear_on_local`,
+  `raw_texture_local`, `raw_grid_local` (the local is named) changed with the rules; `lsp_test` (a `[Linear]`
+  parameter has no diagnostic).
+
 # Grids of numbers as textures (2026-11-14)
 
 From an audit (only `Grid2<Color>` and `Grid2<float>` converted, so a flow field had to be split into float grids).

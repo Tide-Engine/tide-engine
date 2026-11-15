@@ -20,6 +20,9 @@ grid-cells kinds of a grid's Texture (`TIDE_TEXTURE_CELLS_*`, `tide_texture_cell
 calls in generated C) and the texel formats `TIDE_TEXELS_HALF2`, `_HALF4`, `_INT`, with `TIDE_GPU_RG16F` in gpu.h.
 Generated C calls the first and the capture functions. No resource-reference layout change: the kind is in bits the
 reference had for its 1 or 2. Contracts and tests: textures.md (top); the Unity replay's format and ABI: unity.md.
+The same day, for `[Raw]` and `[Linear]` globs and frag sources: `TIDE_PACK_LINEAR` on a `TIDE_PACK_LIST` of
+textures' element kind and a `TIDE_PACK_TEXTURES` map's count (`lay_textures` strips it and marks each element),
+and generated C capturing a frag's marked source with `tide_draw_texture_source_raw` or `_linear`.
 
 ## [Linear] image captures (2026-11-14)
 

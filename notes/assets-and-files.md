@@ -5,9 +5,12 @@
   `codegen.c`). The loader keeps it beside the image, the cube and the array (`packed_texture.linear` and its
   two siblings, `pack_load.c`), `tide_pack_image_linear(named, &linear)` says it, and the draw list refuses an
   image stored for the other reading with one message (`pack_reads`, `engine/src/draw.c`). No other bit of
-  `extra` is read for these kinds, the pack's version is unchanged, and a glob's list or map has no mark (the
-  checker refuses `[Linear]` on one). A game's `.simulation` and pack digest move for a game with a marked
-  asset, as they do for any change to its pack.
+  `extra` is read for these kinds, the pack's version is unchanged, and a glob's list or map had no mark (the
+  checker refused `[Linear]` on one) until later that day: a marked glob's list entry has the bit beside its element
+  kind (`TIDE_PACK_TEXTURE | TIDE_PACK_LINEAR`) and a map's beside its count, each image packed for the reading
+  (`[Raw]` ones as numbers); `lay_textures` strips the bit and keeps it with each element's place (textures.md,
+  top). A game's `.simulation` and pack digest move for a game with a marked asset, as they do for any change to
+  its pack.
 - Marked import (`texture_make_linear`, `texture_compress_linear`) finds its bytes through
   `tide/transfer_bytes.h`: the same bytes as before for every input, about four times faster for a 2048 by 2048
   image through tidec. The proof, the numbers and the test that guards the tables are in notes/textures.md, top

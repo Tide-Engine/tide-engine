@@ -2448,6 +2448,14 @@ frag ReadNumbers(Vertex vertex, out Color color, Numbers numbers, Which which)
     color = Color(c.r, c.g, c.b);
 }
 
+// A [Raw] glob's image and a [Raw] grid as a frag's [Raw] source: the draw's image, read as the numbers it is
+[Raw] asset List<Texture> heroGlob = "../../compiler/tests/e2e/assets/hero.png";
+frag ReadRawSource(Vertex vertex, out Color color, Which which, [Raw] Texture source)
+{
+    Color c = source.Sample(which.read == 0 ? float2(7.5 / 8, 5.5 / 6) : float2(0.25, 0.5), Filter.Point);
+    color = Color(c.r, c.g, c.b);
+}
+
 [After(Alphas)]
 view Raws(Art art, mut Numbers numbers)
 {
@@ -2472,6 +2480,9 @@ view Raws(Art art, mut Numbers numbers)
             Draw.Mesh(tile, art.faces, ReadNumbers, Which { read = read });
         }
     }
+    var element = heroGlob[0]; // [Raw], as its glob is: the local keeps the role
+    Draw.Transform(float2(8, 48)) { Draw.Mesh(tile, art.faces, element, ReadRawSource, Which { read = 0 }); }
+    Draw.Transform(float2(48, 48)) { Draw.Mesh(tile, art.faces, numbers.kept, ReadRawSource, Which { read = 1 }); }
 }
 
 // Several colors from one frag (pass 11). A target made to hold three color

@@ -1198,6 +1198,7 @@ static void check_shared_names(const checker *c, const decl_kind kind)
 
 static type check_expr(checker *c, expr *e);
 static type check_expr_any(checker *c, expr *e);
+static void note_role_use(checker *c, expr *e, type t);
 static bool same_place(const expr *a, const expr *b);
 static bool gpu_refuses(const checker *c, loc at, const char *what, const char *instead);
 static type check_snap(checker *c, expr *e, decl *singleton);
@@ -2873,7 +2874,8 @@ static void raw_note(void)
               "A texture that's drawn, or handed to a frag as its Texture, is a color and how much of it there is: "
               "declare that one without [Raw]");
     diag_note("keep numeric images in '[Raw] Texture', '[Raw] TextureArray' or '[Raw] Cubemap' fields; they also accept [Raw] "
-              "grids of colors and other [Raw] fields of their type");
+              "grids of colors and other [Raw] fields of their type. A local that isn't mut keeps the role of what it's "
+              "given, a function takes one as a '[Raw] Texture' parameter, and a frag as a '[Raw] Texture' source");
 }
 
 // A [Raw] grid where a Texture goes: false, and said.
@@ -2936,6 +2938,42 @@ static const param *given_param(const decl *vert, const decl *frag, const int k)
     return NULL;
 }
 
+// What a use of a marked image is, as a message names it: "'masks'", "an element of 'maps'", "this choice".
+static const char *role_use_what(const expr *e)
+{
+    static char text[192];
+    const expr *named = e->kind == E_INDEX ? e->object : e;
+    str name = {0};
+    if (named->bind == BIND_ASSET && named->constant) name = named->constant->name;
+    else if (named->kind == E_NAME) name = named->name;
+    else if (named->kind == E_MEMBER && named->field) name = named->field->name;
+    if (e->kind == E_CONDITIONAL || e->kind == E_SWITCH || !name.len) snprintf(text, sizeof text, "this choice of images");
+    else if (e->kind == E_INDEX) snprintf(text, sizeof text, "an element of '" STR_FMT "'", STR_ARG(name));
+    else snprintf(text, sizeof text, "'" STR_FMT "'", STR_ARG(name));
+    return text;
+}
+
+// A call's argument to a parameter of a role ([Raw], [Linear]): it has the role (an image, or a glob's list or map of
+// them for a collection parameter), which the parameter then keeps, or it's said. `raw` picks [Raw], else [Linear].
+static void check_role_argument(const call_site *site, const param *p, expr *arg, const bool raw)
+{
+    const bool collection = texture_collection(p->type);
+    const bool has = collection ? (arg->bind == BIND_ASSET && arg->constant && arg->constant->asset_many
+                                   ? (raw ? arg->constant->sample_raw : arg->constant->sample_linear)
+                                   : arg->kind == E_NAME && arg->bind == BIND_PARAM && arg->param
+                                     && (raw ? arg->param->raw_role : arg->param->linear_role))
+                                : raw ? declared_raw(arg) : declared_linear(arg);
+    if (has) {
+        arg->raw_sampled = true;
+        return;
+    }
+    if (arg->type.kind == TY_ERROR) return;
+    const char *mark = raw ? "[Raw]" : "[Linear]";
+    diag_error(arg->at, "'" STR_FMT "' takes a %s %s for '" STR_FMT "', and this one isn't %s", STR_ARG(site->to->name), mark,
+               type_name(p->type), STR_ARG(p->name), mark);
+    diag_note("pass a %s asset, field, glob element or parameter; a role is never added along the way", mark);
+}
+
 // Every Raw Texture source must retain a static role, or only expose its size.
 static void check_raw_uses(const checker *c)
 {
@@ -2950,17 +2988,32 @@ static void check_raw_uses(const checker *c)
             if (arg->type.kind != TY_TEXTURE && arg->type.kind != TY_GRID) continue;
             const int k = given++;
             const param *to = given_param(call->vert, call->frag, k);
-            if (to && to->sample_role.len && arg->type.kind == TY_TEXTURE && (call->frag || k > 0)) arg->raw_sampled = true;
+            if (!to) continue;
+            if (to->sample_role.len) {
+                if (arg->type.kind == TY_TEXTURE && (call->frag || k > 0)) arg->raw_sampled = true;
+            } else if (to->raw_role) { // A frag's [Raw] Texture (only a frag's is): a [Raw] image, read as its numbers
+                if (declared_raw(arg)) arg->raw_sampled = true;
+                else if (arg->type.kind != TY_ERROR) {
+                    diag_error(arg->at, "this frag's Texture is [Raw], and the image this draw gives it isn't: give it a [Raw] "
+                                        "asset, field, glob element or parameter");
+                    diag_note("a role is never added along the way: drop [Raw] from the frag's '" STR_FMT "' to read colors",
+                              STR_ARG(to->name));
+                }
+            }
         }
     }
     // GPU helpers substitute the original source expression, including its Raw field marker. No runtime value
-    // carries that permission to an ordinary CPU Texture helper or a draw.
+    // carries that permission to an ordinary CPU Texture helper or a draw; a parameter marked [Raw] keeps it.
     for (int i = 0; i < c->calls.count; i++) {
         const call_site *site = &c->calls.items[i];
         const bool gpu = !site->to->is_extern && (site->from->kind == DECL_SHADER || site->from->gpu_only || site->to->gpu_only);
         for (int k = 0; k < site->call->args.count && k < site->to->params.count; k++) {
             const param *p = &site->to->params.items[k];
             expr *arg = site->call->args.items[k];
+            if (p->raw_role) {
+                check_role_argument(site, p, arg, true);
+                continue;
+            }
             if (!raw_kind(p->type) || !declared_raw(arg)) continue;
             if (gpu && p->mode == PARAM_READ && !p->is_out) arg->raw_sampled = true;
             else refuse_raw_grid(arg);
@@ -2969,8 +3022,15 @@ static void check_raw_uses(const checker *c)
     for (int i = 0; i < c->raw_uses.count; i++) {
         const expr *e = c->raw_uses.items[i];
         if (e->raw_sampled) continue;
-        diag_error(e->at, "'" STR_FMT "' is [Raw], its pixels numbers and not colors to draw: it's no %s to draw with or "
-                   "hand on", STR_ARG(e->bind == BIND_ASSET ? e->constant->name : e->field->name), raw_kind_name(e->type));
+        if (texture_collection(e->type)) {
+            diag_error(e->at, "%s is a [Raw] glob's images: read each by its place, 'maps[i]', or with foreach, and keep it "
+                       "in a [Raw] field or parameter", role_use_what(e));
+            diag_note("handed on whole it would lose its images' role; a function takes it as a '[Raw] List<Texture>' "
+                      "parameter");
+            continue;
+        }
+        diag_error(e->at, "%s is [Raw], its pixels numbers and not colors to draw: it's no %s to draw with or "
+                   "hand on", role_use_what(e), raw_kind_name(e->type));
         raw_note();
     }
 }
@@ -3112,7 +3172,11 @@ static void check_linear_uses(const checker *c)
         for (int k = 0; k < site->call->args.count && k < site->to->params.count; k++) {
             const param *p = &site->to->params.items[k];
             expr *arg = site->call->args.items[k];
-            if (!linear_kind(p->type) || !declared_linear(arg)) continue;
+            if (p->linear_role) { // A [Linear] parameter keeps the role its argument has
+                check_role_argument(site, p, arg, false);
+                continue;
+            }
+            if ((!linear_kind(p->type) && !texture_collection(p->type)) || !declared_linear(arg)) continue;
             if (p->sample_role.len) {
                 diag_error(arg->at, "a [Linear] image supplies Color, not a [Raw(T)] numeric image");
                 diag_note("borrow it with an ordinary resource parameter, or use an unmarked numeric source with the matching [Raw(T)] role");
@@ -3121,19 +3185,42 @@ static void check_linear_uses(const checker *c)
             }
         }
     }
-    // Numeric direct-source draws may consume Raw arguments above, but cannot erase a Linear role.
+    // Numeric direct-source draws may consume Raw arguments above, but cannot erase a Linear role; a frag whose
+    // source is [Linear] takes a [Linear] image, and nothing else
     for (int i = 0; i < c->prog->mesh_draws.count; i++) {
         const expr *call = c->prog->mesh_draws.items[i].call;
-        for (int a = 0; a < call->args.count; a++) {
+        int given = 0; // Each texture the draw gives, to the parameter that reads it (given_param)
+        for (int a = call->blit ? 0 : 2; a < call->args.count && call->args.items[a]->bind != BIND_SHADER; a++) {
             expr *arg = call->args.items[a];
-            if (declared_linear(arg)) arg->raw_sampled = false;
+            if (arg->type.kind != TY_TEXTURE && arg->type.kind != TY_GRID) continue;
+            const param *to = call->frag || call->vert ? given_param(call->vert, call->frag, given) : NULL;
+            given++;
+            if (!to || !to->linear_role) {
+                if (declared_linear(arg)) arg->raw_sampled = false;
+            } else if (declared_linear(arg) || (arg->type.kind == TY_GRID && !declared_raw(arg) && type_is_texture_grid(arg->type)
+                                                && arg->type.decl->fields.items[0].type.kind == TY_COLOR)) {
+                arg->raw_sampled = true; // A [Linear] frag's source: a marked image, or a grid of colors made so
+            } else if (arg->type.kind != TY_ERROR) {
+                diag_error(arg->at, "this frag's Texture is [Linear], and the image this draw gives it isn't: give it a "
+                                    "[Linear] asset, field, glob element or parameter, or a Grid2<Color>");
+                diag_note("a role is never added along the way: drop [Linear] from the frag's parameter to read the image as "
+                          "it's stored");
+            }
         }
     }
     for (int i = 0; i < c->linear_uses.count; i++) {
         const expr *e = c->linear_uses.items[i];
         if (e->raw_sampled) continue;
+        if (texture_collection(e->type)) {
+            diag_error(e->at, "%s is a [Linear] glob's images: read each by its place, 'images[i]', or with foreach, and "
+                       "keep it in a [Linear] field or parameter", role_use_what(e));
+            diag_note("handed on whole it would lose its images' role; a function takes it as a '[Linear] List<Texture>' "
+                      "parameter");
+            continue;
+        }
         diag_error(e->at, "this image is [Linear]; an unmarked value would lose its sRGB sampling role");
-        diag_note("keep it in a [Linear] field, or borrow its source in a read-only GPU helper; CPU locals, parameters and returns cannot carry [Linear]");
+        diag_note("keep it in a [Linear] field, a local that isn't mut, or a '[Linear] Texture' parameter, or borrow its "
+                  "source in a read-only GPU helper; a function's result carries no mark");
     }
 }
 
@@ -3146,10 +3233,14 @@ static type check_linear_field_value(checker *c, expr *e, const type t)
         diag_note("use a Color grid for display-encoded colors, or remove [Linear] for scalar data");
         return e->type = T_ERR;
     }
-    // Runtime image construction and target images are validated for their format separately.
-    const bool runtime = e->resource_operation || e->target_colors
-        || (e->kind == E_MEMBER && e->object && e->object->type.kind == TY_RENDER_TARGET)
-        || (e->kind == E_INDEX && e->object && e->object->kind == E_MEMBER && e->object->target_colors);
+    // Runtime image construction and target images are validated for their format separately, and so are they
+    // through a local that isn't mut (linear_source_format follows it)
+    const expr *made = e;
+    for (int k = 0; k < 16 && made->kind == E_NAME && made->bind == BIND_LOCAL && made->local && made->local->kind == S_VAR
+                    && !made->local->is_mut && !made->local->assigned && made->local->value; k++) made = made->local->value;
+    const bool runtime = made->resource_operation || made->target_colors
+        || (made->kind == E_MEMBER && made->object && made->object->type.kind == TY_RENDER_TARGET)
+        || (made->kind == E_INDEX && made->object && made->object->kind == E_MEMBER && made->object->target_colors);
     if (!declared_linear(e) && !grid && !runtime) {
         diag_error(e->at, "a [Linear] field takes a [Linear] image or a Color grid, not an unmarked image");
         diag_note("mark the source field or asset [Linear], or remove [Linear] from the destination; the mark is never silently added or removed");
@@ -3175,7 +3266,11 @@ static type check_expr_want_any(checker *c, expr *e, const type stored, const bo
         if (bound.kind != TY_VOID) return bound;
     }
     const type want = read_type(stored); // A field declared T? takes what a T? does
-    if (e->kind == E_SWITCH && !checked) return check_switch_value(c, e, read_type(want));
+    if (e->kind == E_SWITCH && !checked) {
+        const type t = check_switch_value(c, e, read_type(want));
+        note_role_use(c, e, t); // A switch of images of one role has it (declared_role)
+        return t;
+    }
     // As in C#, `default` of a T? is nothing.
     if (want.kind == TY_OPTIONAL && (e->kind == E_NULL || e->kind == E_DEFAULT)) {
         e->type = want;
@@ -3301,6 +3396,7 @@ static type check_field_value(checker *c, expr *e, const field *f)
     c->number_grid_role = saved_role;
     c->raw_value = saved;
     if (f && linear_kind(f->type) && field_is_linear(f)) return check_linear_field_value(c, e, t);
+    if (raw && raw_sample_type(f).kind != TY_COLOR && declared_raw(e)) e->raw_sampled = true; // A typed field keeps a [Raw] image's numbers
     return raw && raw_sample_type(f).kind == TY_COLOR ? check_raw_field_value(e, t) : t;
 }
 
@@ -8054,10 +8150,10 @@ static type check_blit(checker *c, expr *e)
     bool ok = true;
     for (int i = 0; i < sources; i++) {
         const expr *arg = e->args.items[i];
-        ok &= refuse_raw_grid(arg);
+        const param *reads = frag && frag->is_frag ? given_param(NULL, frag, i) : NULL;
+        if (!reads || !reads->raw_role) ok &= refuse_raw_grid(arg); // A frag's [Raw] Texture takes a [Raw] grid as it is
         if (type_number_grid_role(arg->type).kind == TY_ERROR) continue;
         // A grid of numbers, for a frag whose [Raw(T)] Texture there reads them
-        const param *reads = frag && frag->is_frag ? given_param(NULL, frag, i) : NULL;
         const type role = reads && reads->sample_role.len ? param_sample_type(reads) : (type){TY_ERROR, NULL};
         ok = refuse_number_grid(arg, arg->type, role) && ok;
     }
@@ -8407,15 +8503,16 @@ static type check_mesh_draw(checker *c, expr *e)
     }
 
     // A grid that's no texture, where a texture goes: said here, for every way the mesh is drawn. A grid of numbers
-    // is a texture of a frag or vert whose Texture parameter there (shader_given_texture) reads them by its [Raw(T)]
+    // is a texture of a frag or vert whose Texture parameter there (shader_given_texture) reads them by its [Raw(T)],
+    // and a frag's [Raw] Texture takes a [Raw] grid as it is (check_raw_uses)
     for (int i = 2, given = 0; i < count; i++) {
         const expr *arg = e->args.items[i];
-        if (!refuse_raw_grid(arg)) return T_ERR;
         const int k = arg->type.kind == TY_TEXTURE || arg->type.kind == TY_GRID ? given++ : -1; // Which texture it is
+        // With no frag, the first is what the pixels are drawn with too: colors
+        const param *reads = k >= 0 && (e->frag || k > 0) ? given_param(e->vert, e->frag, k) : NULL;
+        if ((!reads || !reads->raw_role) && !refuse_raw_grid(arg)) return T_ERR;
         if (arg->type.kind != TY_GRID || type_is_texture_grid(arg->type)) continue;
         if (type_number_grid_role(arg->type).kind != TY_ERROR) {
-            // With no frag, the first is what the pixels are drawn with too: colors
-            const param *reads = e->frag || k > 0 ? given_param(e->vert, e->frag, k) : NULL;
             const type source = reads && reads->sample_role.len ? param_sample_type(reads) : (type){TY_ERROR, NULL};
             if (!refuse_number_grid(arg, arg->type, source)) return T_ERR;
             continue;
@@ -8558,11 +8655,19 @@ static type check_mesh_draw(checker *c, expr *e)
         const param *from = &e->vert->params.items[i];
         for (int k = 1; from->type.kind == TY_TEXTURE && k < e->frag->params.count; k++) {
             const param *to = &e->frag->params.items[k];
-            if (to->type.kind != TY_TEXTURE || !str_eq(to->name, from->name) || str_eq(to->sample_role, from->sample_role)) continue;
+            // A frag's [Raw] or [Linear] (a vert's takes neither) is a role too: the one image is captured for it
+            const bool marked = to->raw_role || to->linear_role;
+            if (to->type.kind != TY_TEXTURE || !str_eq(to->name, from->name)
+                || (str_eq(to->sample_role, from->sample_role) && !marked)) continue;
             diag_error(e->at, "vert '" STR_FMT "' and frag '" STR_FMT "' take the one texture '" STR_FMT "' with two roles",
                        STR_ARG(e->vert->name), STR_ARG(e->frag->name), STR_ARG(from->name));
-            diag_note("a vert's and a frag's Texture of one name are the one the draw gives there: give both the same [Raw(T)], "
-                      "or name them apart for two textures");
+            if (marked) {
+                diag_note("the frag's is %s, which a vert's Texture can't be: name them apart for two textures",
+                          to->raw_role ? "[Raw]" : "[Linear]");
+            } else {
+                diag_note("a vert's and a frag's Texture of one name are the one the draw gives there: give both the same "
+                          "[Raw(T)], or name them apart for two textures");
+            }
             ok = false;
         }
     }
@@ -12014,7 +12119,10 @@ static type check_member(checker *c, expr *e)
         return T_ERR;
     }
     if (obj.kind == TY_MAP || obj.kind == TY_SET) {
-        if (str_eq_c(e->member, "count")) return T_INT_;
+        if (str_eq_c(e->member, "count")) {
+            e->object->raw_sampled = true; // A marked glob's map is counted, not handed on (check_raw_uses)
+            return T_INT_;
+        }
         diag_error(e->at, "a %s has 'count' and methods like %s, not '" STR_FMT "'", obj.kind == TY_SET ? "set" : "map",
                    obj.kind == TY_SET ? "Add(...)" : "Has(...)", STR_ARG(e->member));
         suggestion sg = suggest_start(e->member);
@@ -12048,6 +12156,7 @@ static type check_member(checker *c, expr *e)
     if (obj.kind == TY_GPU_LIST) return check_gpu_list_member(c, e, obj);
     if (obj.kind == TY_LIST) {
         if (str_eq_c(e->member, "count")) {
+            e->object->raw_sampled = true; // A marked glob's list is counted, not handed on (check_raw_uses)
             const decl *k = e->object->bind == BIND_CONST ? e->object->constant : NULL;
             if (k && k->list_literal) { // A list constant written out: as many as it was written with, a constant
                 sb count = {0};
@@ -12853,6 +12962,8 @@ static type check_map_method(checker *c, expr *e, const type map)
     for (int i = 0; i < (int)(sizeof methods / sizeof methods[0]); i++) {
         if (str_eq_c(e->name, methods[i].name) && !(set && methods[i].map_only) && !(!set && methods[i].set_only)) m = i;
     }
+    // Has asks of a marked glob's map and hands no image on; Get's and TryGet's values would lose their role
+    if (m == 0 && e->object) e->object->raw_sampled = true;
     if (m < 0) {
         for (int i = 0; i < e->args.count; i++) {
             expr *arg = e->args.items[i];
@@ -14197,6 +14308,84 @@ static type check_expr(checker *c, expr *e)
 // An expression of any type, failable calls' and T? values too: what `??`,
 // `is`, `!`, `try` and `var` take.
 static type check_expr_any_raw(checker *c, expr *e);
+// `[Raw]` or `[Linear]` before a parameter of `m` (a function's, a method's, or a frag's source): an image of the
+// role, or a glob's List<Texture> or Map<string, Texture> of them, read-only. Said where it can't go.
+static void check_param_role(const decl *m, param *p)
+{
+    if (!p->raw_role && !p->linear_role) return;
+    const char *mark = p->raw_role ? "[Raw]" : "[Linear]";
+    if (p->type.kind == TY_ERROR) return;
+    const bool frag = m->kind == DECL_SHADER;
+    const bool image = frag ? p->type.kind == TY_TEXTURE : p->raw_role ? raw_kind(p->type) : linear_kind(p->type);
+    if (!image && (frag || !texture_collection(p->type))) {
+        diag_error(p->role_at, "%s marks %s, and '" STR_FMT "' is %s", mark,
+                   frag ? "a frag's Texture source" : p->raw_role
+                        ? "a Texture, Texture3D, TextureArray or Cubemap parameter, or a List<Texture> or Map<string, Texture> of them"
+                        : "a Texture, TextureArray or Cubemap parameter, or a List<Texture> or Map<string, Texture> of them",
+                   STR_ARG(p->name), type_name(p->type));
+        p->raw_role = p->linear_role = false;
+    } else if (p->mode != PARAM_READ || p->is_out || m->is_extern || m->is_async) {
+        diag_error(p->role_at, "%s goes on a read-only parameter of a Tide function: one that's 'mut' or 'out', an "
+                   "extern's or an async function's can't keep the role", mark);
+        diag_note("take the image read-only and assign it where its role goes, a %s field", mark);
+        p->raw_role = p->linear_role = false;
+    } else if (p->sample_role.len) {
+        diag_error(p->role_at, "a parameter has one role: [Raw], [Linear] or [Raw(T)]");
+        p->raw_role = p->linear_role = false;
+    }
+}
+
+// A choice between images (`?:`, a switch) whose arms have different roles: said once, as the value would take one
+// role from some arms and drop another's. `raw` picks [Raw], else [Linear]. True where it was said.
+static bool mixed_roles(expr *e, const bool raw)
+{
+    expr *const arms[2] = {e->lhs, e->rhs};
+    const int count = e->kind == E_CONDITIONAL ? 2 : e->args.count;
+    int marked = 0;
+    for (int i = 0; i < count; i++) {
+        const expr *arm = e->kind == E_CONDITIONAL ? arms[i] : e->args.items[i];
+        marked += raw ? declared_raw(arm) : declared_linear(arm);
+    }
+    if (marked == 0 || marked == count) return false;
+    const char *mark = raw ? "[Raw]" : "[Linear]";
+    diag_error(e->at, "this %s picks between images of different roles: %s on some and not on the others, and a value "
+               "has one role", e->kind == E_CONDITIONAL ? "?:" : "switch", mark);
+    diag_note("give every side the same mark, or pick with if/else and assign each side where its role goes");
+    for (int i = 0; i < count; i++) (e->kind == E_CONDITIONAL ? arms[i] : e->args.items[i])->raw_sampled = true;
+    return true;
+}
+
+// An image whose role comes from what it's made of (declared_role, shader.c): an element of a marked glob, a local
+// that keeps its initializer's, a parameter of a role, a choice between images of one role. It's a use of its own,
+// which some place must keep (check_raw_uses, check_linear_uses), and it keeps what it's made of: an element its
+// collection, a choice its arms. A local's initializer is kept where it's declared (check_var).
+static void note_role_use(checker *c, expr *e, const type t)
+{
+    if (!builds(c->prog) || t.kind == TY_ERROR || e->role_noted) return;
+    const bool choice = e->kind == E_CONDITIONAL || e->kind == E_SWITCH;
+    const bool name = e->kind == E_NAME && (e->bind == BIND_LOCAL || (e->bind == BIND_PARAM && e->param
+                                            && (e->param->raw_role || e->param->linear_role)));
+    if (!choice && !name && e->kind != E_INDEX) return;
+    const bool collection = name && texture_collection(t) && e->bind == BIND_PARAM;
+    for (int role = 0; role < 2; role++) {
+        const bool raw = role == 0;
+        if (!(raw ? raw_kind(t) : linear_kind(t)) && !collection) continue;
+        if (choice && mixed_roles(e, raw)) continue;
+        const bool marked = collection ? (raw ? e->param->raw_role : e->param->linear_role)
+                                       : raw ? declared_raw(e) : declared_linear(e);
+        if (!marked) continue;
+        if (choice) {
+            if (e->kind == E_CONDITIONAL) e->lhs->raw_sampled = e->rhs->raw_sampled = true;
+            else for (int i = 0; i < e->args.count; i++) e->args.items[i]->raw_sampled = true;
+        } else if (e->kind == E_INDEX) {
+            e->object->raw_sampled = true; // The collection is read by this element
+        }
+        if (raw) vec_push(c->raw_uses, e);
+        else vec_push(c->linear_uses, e);
+        e->role_noted = true;
+    }
+}
+
 static type check_expr_any(checker *c, expr *e)
 {
     if (e->prefab_reference) return e->type;
@@ -14205,6 +14394,7 @@ static type check_expr_any(checker *c, expr *e)
     if (e->authored_unit) c->unit = e->authored_unit;
     const type result = check_expr_any_raw(c, e);
     c->unit = saved;
+    note_role_use(c, e, result);
     return result;
 }
 
@@ -16451,7 +16641,12 @@ static void check_var(checker *c, stmt *s)
             }
             value = check_list_literal(c, s->value, s->type, false);
         } else {
+            // A local that isn't mut keeps its value's [Raw] (declared_role): a [Raw] grid goes in as it goes to a
+            // [Raw] field, its role then the local's, which check_raw_uses holds its uses to
+            const expr *saved_raw = c->raw_value;
+            if (!s->is_mut && raw_kind(s->type)) c->raw_value = s->value;
             value = check_expr_want(c, s->value, s->type);
+            c->raw_value = saved_raw;
             if (s->value->kind == E_NAME && s->value->bind == BIND_TYPE) value = T_ERR;
         }
         if (!type_assignable(s->type, value)) {
@@ -16459,6 +16654,10 @@ static void check_var(checker *c, stmt *s)
             note_conversion(s->type, value);
         }
     }
+    // ...and its value is kept there, by the local, whose own uses are then the role's (note_role_use)
+    if (!s->is_mut && !s->delayed && !s->out_decl && s->value
+        && ((raw_kind(s->type) && declared_raw(s->value)) || (linear_kind(s->type) && declared_linear(s->value))))
+        s->value->raw_sampled = true;
 
     if (singleton_has_resident(s->type)) {
         diag_error(s->type_at.line ? s->type_at : s->value->at, "a local can't hold a singleton with resident state");
@@ -16699,6 +16898,8 @@ static void check_stmt(checker *c, stmt *s)
         const type list = check_expr(c, s->value);
         c->asset_value = previous_asset;
         c->query_value = NULL;
+        // A marked glob's list or map is gone through, its elements the variable's, which keeps their role
+        if (texture_collection(list)) s->value->raw_sampled = true;
         type element = T_ERR;
         if (list.kind == TY_QUERY) {
             s->query = s->value->param;
@@ -17689,8 +17890,11 @@ static type use_asset(checker *c, expr *e, decl *k)
                   "constant can", STR_ARG(k->return_type_name), STR_ARG(k->qualified));
         return T_ERR;
     }
-    if (k->sample_linear && linear_kind(k->return_type) && builds(c->prog)) vec_push(c->linear_uses, e);
-    if (k->sample_raw && raw_kind(k->return_type) && builds(c->prog)) vec_push(c->raw_uses, e);
+    // A marked glob's list or map is a use too: read by its elements (each the role's), counted, or gone through,
+    // never handed on whole, which would lose its elements' role
+    const bool marked_glob = k->asset_many && texture_collection(k->return_type);
+    if (k->sample_linear && (linear_kind(k->return_type) || marked_glob) && builds(c->prog)) vec_push(c->linear_uses, e);
+    if (k->sample_raw && (raw_kind(k->return_type) || marked_glob) && builds(c->prog)) vec_push(c->raw_uses, e);
     type t = k->return_type;
     if (t.kind == TY_MESH) return asset_reference_of(c, t, e->at, true);
     if (t.kind == TY_LIST && t.decl->fields.items[0].type.kind == TY_MESH)
@@ -17810,9 +18014,11 @@ static void check_linear_attribute(decl *d, const attribute *attr)
 {
     if (attr->args.count || attr->values.count) {
         diag_error(attr->at, "Linear takes no arguments: '[Linear]'");
-    } else if (d->kind != DECL_ASSET || !linear_kind(d->return_type) || d->asset_many) {
-        diag_error(attr->at, "[Linear] marks one Texture, TextureArray or Cubemap asset, or a field of those types");
-        diag_note("declare each image separately and sample it by name; mark a resource field for a runtime-made image");
+    } else if (d->kind != DECL_ASSET || (d->asset_many ? d->asset_kind != ASSET_TEXTURE : !linear_kind(d->return_type))) {
+        diag_error(attr->at, "[Linear] marks a Texture, TextureArray or Cubemap asset, a glob's List<Texture> or Map<string, "
+                             "Texture>, or a field of those types");
+        diag_note("a glob's grids are read cell by cell: mark the Texture field a grid of colors is assigned to; mark a "
+                  "resource field for a runtime-made image");
     } else if (d->sample_linear) {
         diag_error(attr->at, "'" STR_FMT "' already has a Linear", STR_ARG(d->name));
     } else {
@@ -17842,10 +18048,12 @@ static void check_raw_attribute(decl *d, const attribute *attr)
         diag_note("%s", usage);
         return;
     }
-    if (d->asset_many) {
-        diag_error(attr->at, "a [Raw] texture is read in a frag or a vert by its own name, which one of '" STR_FMT "' hasn't got",
-                   STR_ARG(d->name));
-        diag_note("declare each as an asset of its own: '[Raw] asset Texture masks = \"art/masks.png\";'");
+    if (d->asset_many && d->asset_kind != ASSET_TEXTURE) {
+        diag_error(attr->at, "[Raw] goes before a glob's List<Texture> or Map<string, Texture>, and '" STR_FMT "' is %s",
+                   STR_ARG(d->name), type_name(d->return_type));
+        diag_note("a glob's grids are read cell by cell; a grid becomes a texture where it's assigned to a [Raw] field, "
+                  "'[Raw] Grid2<Color> paint;'. A list of Textures, '[Raw] asset List<Texture> maps = \"art/maps/*.png\";', "
+                  "keeps each image's numbers");
         return;
     }
     if (attr->args.count || attr->values.count) {
@@ -19432,6 +19640,7 @@ static void check_signature(checker *c, decl *m)
         if (p->sample_role.len && ((p->type.kind != TY_TEXTURE && p->type.kind != TY_TEXTURE3D && !layered_role) || p->mode != PARAM_READ
             || m->is_extern || m->is_async))
             diag_error(p->at, "[Raw(T)] qualifies a read-only Texture, Texture3D, TextureArray or Cubemap parameter of a synchronous GPU helper");
+        check_param_role(m, p);
         c->grid_param = false;
         if (type_is_asset_collection(p->type)) {
             m->borrows_asset_collections = true;
@@ -20205,6 +20414,13 @@ static void check_shader_decl(const checker *c, decl *d)
         const bool plain = !t && resolve_builtin_alias(c, p->type_name, &value);
         if (p->sample_role.len && (!plain || value.kind != TY_TEXTURE))
             diag_error(p->at, "a frag or vert's [Raw(T)] role qualifies its read-only Texture source parameter");
+        if ((p->raw_role || p->linear_role) && (!plain || value.kind != TY_TEXTURE || !d->is_frag)) {
+            diag_error(p->role_at, "a frag's [Raw] or [Linear] marks its Texture source, which the draw gives it an image of "
+                                   "that role");
+            p->raw_role = p->linear_role = false;
+        } else if (p->raw_role && p->linear_role) {
+            p->linear_role = false;
+        }
 
         if (i == 0) { // The vertex
             if (!t || t->kind != DECL_STRUCT) {

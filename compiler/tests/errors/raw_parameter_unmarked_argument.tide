@@ -1,0 +1,7 @@
+// expect: 'Bind' takes a [Raw] Texture for 'normal', and this one isn't [Raw]
+// expect: a role is never added along the way
+asset Texture colors = "../e2e/assets/hero.png";
+local singleton Material { [Raw] Texture normal; }
+scene Main { }
+void Bind(mut Material m, [Raw] Texture normal) { m.normal = normal; }
+view V(mut Material m) { Bind(m, colors); }

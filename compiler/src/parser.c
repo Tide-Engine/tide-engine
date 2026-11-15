@@ -90,8 +90,10 @@ static _Noreturn void fail_at(parser *p, const token *t, const char *what)
 static void refuse_linear_placement(parser *p)
 {
     if (at(p, T_LBRACKET) && str_eq_c(peek_at(p, 1)->text, "Linear")) {
-        diag_error(peek(p)->at, "[Linear] marks assets and resource fields, not parameters or locals");
-        diag_note("keep the image in a [Linear] field; a read-only GPU helper borrows its source with an ordinary Texture parameter");
+        diag_error(peek(p)->at, "[Linear] marks assets, resource fields and the read-only image parameters of functions "
+                                "and frags, not a local or a system's, view's or handler's parameter");
+        diag_note("a local that isn't mut keeps the mark of the image it's given, with no mark of its own; a view reads a "
+                  "[Linear] image through its component's or singleton's field");
         longjmp(p->fail, 1);
     }
 }
@@ -1882,13 +1884,25 @@ static void parse_field(parser *p, decl *d)
 static void parse_query_params(parser *p, decl *d);
 
 // (Type name, ...): a method's, function's or operator's parameters.
+// An image parameter's role, before it: [Raw] or [Linear] (the role its argument has, which the parameter keeps), or
+// [Raw(float)], [Raw(float2)], [Raw(float4)] or [Raw(int)] (the numbers it's read as).
 static void parse_image_role(parser *p, param *image)
 {
     if (accept(p, T_LBRACKET)) {
-        const token *role = expect_ident(p, "Raw before a numeric image parameter");
+        const token *role = expect_ident(p, "Raw or Linear before an image parameter");
+        image->role_at = role->at;
+        if (str_eq_c(role->text, "Linear")) {
+            image->linear_role = true;
+            expect(p, T_RBRACKET, "']' after Linear: '[Linear] Texture image'");
+            return;
+        }
         if (!str_eq_c(role->text, "Raw")) {
-            diag_error(role->at, "an image parameter's role is [Raw(float)], [Raw(float2)], [Raw(float4)] or [Raw(int)]");
+            diag_error(role->at, "an image parameter's role is [Raw], [Linear], [Raw(float)], [Raw(float2)], [Raw(float4)] or [Raw(int)]");
             longjmp(p->fail, 1);
+        }
+        if (accept(p, T_RBRACKET)) {
+            image->raw_role = true;
+            return;
         }
         expect(p, T_LPAREN, "'(' and the numeric image type after Raw");
         image->sample_role = expect_ident(p, "float, float2, float4 or int")->text;
@@ -1907,10 +1921,9 @@ static void parse_routine_params(parser *p, decl *m)
     expect(p, T_LPAREN, "'('");
     if (!at(p, T_RPAREN)) {
         do {
-            refuse_linear_placement(p);
             param prm = {0};
             prm.at = peek(p)->at;
-            parse_image_role(p, &prm);
+            parse_image_role(p, &prm); // [Linear] too: the checker says where it can't go
             if ((at(p, T_MUT) || (at(p, T_IDENT) && str_eq_c(peek(p)->text, "out")))
                 && peek_at(p, 1)->kind == T_IDENT && str_eq_c(peek_at(p, 1)->text, "query")
                 && peek_at(p, 2)->kind == T_LPAREN) {
@@ -2491,7 +2504,7 @@ static void parse_query_params(parser *p, decl *d)
     expect(p, T_LPAREN, "'('");
     if (!at(p, T_RPAREN)) {
         do {
-            refuse_linear_placement(p);
+            if (d->kind != DECL_SHADER) refuse_linear_placement(p); // A frag's source takes [Linear] too
             param prm = {0};
             prm.at = peek(p)->at;
             if (d->kind == DECL_SHADER) parse_image_role(p, &prm);

@@ -1,3 +1,4 @@
-// expect: [Linear] marks assets and resource fields, not parameters or locals
+// expect: [Linear] marks assets, resource fields and the read-only image parameters of functions and frags, not a local
+// expect: a local that isn't mut keeps the mark of the image it's given
 scene Main { }
 view V() { [Linear] Texture image; }

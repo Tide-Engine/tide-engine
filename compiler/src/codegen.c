@@ -23793,8 +23793,8 @@ static void want_textures(gen *g)
             for (int k = 0; k < 6 && k < v->count; k++) want_texture(&w, &v->items[k], d->sample_raw, false, d->sample_linear);
         } else if (v->kind == ASSET_TEXTURE && !v->many) {
             want_texture(&w, &v->items[0], d->sample_raw, !d->lossless, d->sample_linear);
-        } else if (v->kind == ASSET_TEXTURE) {
-            for (int k = 0; k < v->count; k++) want_texture(&w, &v->items[k], false, !d->lossless, false);
+        } else if (v->kind == ASSET_TEXTURE) { // A glob's, each image as the declaration marks them all
+            for (int k = 0; k < v->count; k++) want_texture(&w, &v->items[k], d->sample_raw, !d->lossless, d->sample_linear);
         }
     }
     build_threads_each((uint32_t)w.list.count, TEXTURES_AT_ONCE, make_texture, &w); // The list is the arena's
@@ -24120,7 +24120,9 @@ static void build_pack(gen *g)
         if (!offsets || !keys) abort();
         for (int k = 0; k < v->count; k++) {
             uint32_t extra;
-            offsets[k] = pack_item(&b, &v->items[k], v->kind, grid, false, !d->lossless, false, &extra, prog->game_folder,
+            // A marked glob's images each as one marked asset's ([Raw]: no alpha worked in; [Linear]: the sRGB encode)
+            const bool raw = v->kind == ASSET_TEXTURE && d->sample_raw, linear = v->kind == ASSET_TEXTURE && d->sample_linear;
+            offsets[k] = pack_item(&b, &v->items[k], v->kind, grid, raw, !d->lossless, linear, &extra, prog->game_folder,
                                    k < 4 ? &stored[k] : NULL);
             if (v->is_map) { // Its key: text, as code reads one
                 uint8_t hash[32];
@@ -24136,10 +24138,13 @@ static void build_pack(gen *g)
         if (v->is_map) {
             uint64_t index;
             const uint64_t at = tide_pack_map(&b, keys, offsets, (uint32_t)v->count, &index);
-            tide_pack_name(&b, qualified, kind, at, index, (uint32_t)v->count); // TIDE_PACK_MAP, or TIDE_PACK_TEXTURES
+            // TIDE_PACK_MAP, or TIDE_PACK_TEXTURES, whose count's top bit says its images were packed for [Linear]
+            tide_pack_name(&b, qualified, kind, at, index,
+                           (uint32_t)v->count | (v->kind == ASSET_TEXTURE && d->sample_linear ? TIDE_PACK_LINEAR : 0u));
         } else {
             const uint64_t at = tide_pack_list(&b, offsets, (uint32_t)v->count);
-            tide_pack_name(&b, qualified, TIDE_PACK_LIST, at, (uint32_t)v->count, element_kind);
+            tide_pack_name(&b, qualified, TIDE_PACK_LIST, at, (uint32_t)v->count,
+                           element_kind | (v->kind == ASSET_TEXTURE && d->sample_linear ? TIDE_PACK_LINEAR : 0u));
         }
         free(offsets);
         free(keys);
@@ -27816,8 +27821,15 @@ static void gen_shader_textures(gen *g, sb *o, const shader *sh, const int s, ui
                       grid_shape_name(texture->asset->return_type.decl));
             continue;
         }
-        if (!texture->source) { // One the draw was given
-            sb_printf(o, "    tide_textures[%d] = tide_draw_texture_source(tide_draw, %s);\n", t, given_texture_name(texture->given));
+        if (!texture->source) { // One the draw was given, as the frag's Texture that reads it says (only a frag's is marked)
+            const param *source = NULL;
+            for (int p = 1; sh->frag && p < sh->frag->params.count; p++) {
+                const param *q = &sh->frag->params.items[p];
+                if (shader_given_texture(sh->vert, sh->frag, q) == texture->given) source = q;
+            }
+            sb_printf(o, "    tide_textures[%d] = tide_draw_texture_source%s(tide_draw, %s);\n", t,
+                      source && source->raw_role ? "_raw" : source && source->linear_role ? "_linear" : "",
+                      given_texture_name(texture->given));
             continue;
         }
         int b = 0;
