@@ -19,9 +19,13 @@ listing; Tasks, the note dated 2026-11-15); what was built, its runtime side, me
   answer sets the row's `wake` to the tick it's given to.
 - **`StorageKeys`** is Tide in the storage prelude, with `Listed` (`STORAGE_PRELUDE_LISTED`), so a listing that's only
   an event's adds an unused struct to its program.
+- **A key the store refuses fails at once** (2026-11-15, after review): after asking, `gen_stored_await` checks
+  `tide_storage_takes(kind, key, after)` and, where the store would refuse the request (no answer will ever come), spills
+  `{.error = IOError.InvalidPath}` into the frame's result and marks it answered, so the code after the await runs in the
+  same tick on every machine. `tide_stored_ask_*` asks again only for the kinds its function awaits.
 
-Tests: `tidec_e2e_storage_await`, `tidec_e2e_storage_await_shards`, `tidec_error_storage_await_*` (nine),
-`lsp_storage_awaited_completes_and_hovers`.
+Tests: `tidec_e2e_storage_await`, `tidec_e2e_storage_await_shards`, `tidec_e2e_storage_await_hidden`,
+`tidec_error_storage_await_*` (nine), `lsp_storage_awaited_completes_and_hovers`.
 
 ## Local tasks use local fields (2026-11-14)
 

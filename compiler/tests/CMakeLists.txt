@@ -1251,5 +1251,11 @@ if(TIDE_PLATFORM AND NOT TIDE_WEB AND NOT TIDE_ANDROID)
     target_link_libraries(tidec_e2e_storage PRIVATE tide_platform)
     target_compile_definitions(tidec_e2e_storage PRIVATE STORAGE_PLATFORM=1)
 endif()
-tide_e2e_test(storage_await) # Match tasks that await the store's loads and listings: in the same tick on every machine
+tide_e2e_test(storage_await LAYOUT) # Match tasks that await the store's loads and listings: in the same tick on every machine
+if(TIDE_PLATFORM)
+    # A hot reload's migration carries the waiting tasks over (tide_migrate_world)
+    target_link_libraries(tidec_e2e_storage_await PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_storage_await PRIVATE STORAGE_MIGRATION=1)
+endif()
 tide_e2e_test(storage_await_shards) # ...and ask again on the shard their entity crosses to while they wait
+tide_e2e_test(storage_await_hidden) # ...in a game that hides state, where the server's run of a task alone has its answer

@@ -134,14 +134,27 @@ static void run_posted(void)
     posted_count = 0;
 }
 
-static void io_settle(void *user)
+static void io_settle(void *user, const void *context) // Everything posted: at least the work it waits for
 {
     (void)user;
+    (void)context;
     run_posted();
 }
 
 static const tide_io deferred = {.exists = io_exists, .create = io_create, .read = io_read, .write = io_write,
                                  .move = io_move, .remove = io_remove, .post = io_post, .settle = io_settle};
+
+static void forget_files(void)
+{
+    for (uint32_t i = 0; i < file_count; i++) {
+        free(files[i].data);
+        free(files[i].path);
+    }
+    free(files);
+    files = NULL;
+    file_count = file_room = reads = 0;
+    posted_count = 0;
+}
 
 static tide_shards *shards;
 static double now;
@@ -216,13 +229,158 @@ TIDE_TEST(storage_await_tasks_ask_again_on_the_shard_they_cross_to)
         TIDE_CHECK(m.got[i] == i + 1 && m.tries[i] == 1); // Answered once, where the mover is
     }
     TIDE_CHECK(reads >= 16); // Asked on the left, then on the right
+    // What the root's start saved, before its server was made: carried out with its first tick's requests
+    const kept_file *started = find_file("saved/started.bin");
+    TIDE_CHECK(started != NULL && started->size == 4);
     tide_shards_destroy(shards);
     shards = NULL;
-    for (uint32_t i = 0; i < file_count; i++) {
-        free(files[i].data);
-        free(files[i].path);
+    forget_files();
+}
+
+// Until every mover's task has asked and nothing is answered: a world mid-wait
+static void until_waiting(void)
+{
+    for (int tries = 0; tries < 200; tries++) {
+        step();
+        bool asked = tide_shards_count(shards) >= 2;
+        for (uint32_t s = 0; asked && s < tide_shards_count(shards); s++) {
+            const tide_world *w = tide_shards_world(shards, s);
+            asked = !w || w->Time.tick >= 4; // Asked at 3, and none has reached the border
+        }
+        if (asked) break;
     }
-    free(files);
-    files = NULL;
-    file_count = file_room = reads = 0;
+    const movers m = gather();
+    for (int i = 0; i < 8; i++) TIDE_CHECK(m.owned[i] == 1 && m.got[i] == 0 && m.tries[i] == 0);
+    TIDE_CHECK(posted_count > 0);
+}
+
+static void until_answered(void)
+{
+    for (int frame = 0; frame < 480; frame++) {
+        step();
+        if (frame % 4 == 3) run_posted();
+    }
+    const movers m = gather();
+    for (int i = 0; i < 8; i++) TIDE_CHECK(m.owned[i] == 1 && m.got[i] == i + 1 && m.tries[i] == 1);
+}
+
+static const tide_shards_desc split_desc = {
+    .game = &tide_game_api,
+    .tick_rate = 60,
+    .io = &deferred,
+    .world = {{-40.0, -10.0, 0.0}, {40.0, 10.0, 0.0}},
+    .split = {2, 1, 1},
+};
+
+// A world taken up again from a checkpoint saved while its tasks wait: its shards' servers, made from the
+// checkpoint's worlds, ask again what each waits for, and each task is answered once
+TIDE_TEST(storage_await_shards_from_a_checkpoint_ask_again)
+{
+    now = 0;
+    shards = tide_shards_create(&split_desc, now);
+    TIDE_REQUIRE(shards != NULL);
+    until_waiting();
+    uint32_t size = 0;
+    uint8_t *saved = tide_shards_save(shards, &size);
+    TIDE_REQUIRE(saved != NULL && size > 0);
+    tide_shards_destroy(shards); // Its saves carried out; its loads' answers nobody's
+    TIDE_CHECK(posted_count == 0 && find_file("saved/mover/7.bin") != NULL);
+    const uint32_t before = reads;
+    shards = tide_shards_load(&split_desc, saved, size, now);
+    free(saved);
+    TIDE_REQUIRE(shards != NULL);
+    // The last mover is answered on the left, where the checkpoint had it, long before it crosses (which asks again
+    // on arrival anyway)
+    for (int frame = 0; frame < 12; frame++) {
+        step();
+        run_posted();
+    }
+    const movers early = gather();
+    TIDE_CHECK(early.owned[7] == 1 && early.got[7] == 8 && early.tries[7] == 1 && early.x[7] < 0.0f);
+    until_answered();
+    TIDE_CHECK(reads - before >= 8u); // Asked again where they are
+    tide_shards_destroy(shards);
+    shards = NULL;
+    forget_files();
+}
+
+// The same from a checkpoint and the journal since, in whose ticks the answers came: every shard made again as it
+// was, its tasks answered as they were, and none of them asks again
+static uint8_t **records[8];
+static uint32_t *sizes[8];
+static uint32_t record_counts[8], record_rooms[8];
+
+static void keep_record(void *user, const uint32_t shard, const uint32_t tick, const uint8_t *record, const uint32_t size)
+{
+    (void)user;
+    (void)tick;
+    if (shard >= 8u) return;
+    if (record_counts[shard] == record_rooms[shard]) {
+        record_rooms[shard] = record_rooms[shard] ? record_rooms[shard] * 2u : 256u;
+        records[shard] = realloc(records[shard], record_rooms[shard] * sizeof *records[shard]);
+        sizes[shard] = realloc(sizes[shard], record_rooms[shard] * sizeof *sizes[shard]);
+        TIDE_REQUIRE(records[shard] && sizes[shard]);
+    }
+    uint8_t *copy = malloc(size ? size : 1u);
+    TIDE_REQUIRE(copy != NULL);
+    memcpy(copy, record, size);
+    records[shard][record_counts[shard]] = copy;
+    sizes[shard][record_counts[shard]++] = size;
+}
+
+static bool give_record(void *user, const uint32_t shard, const uint32_t index, const uint8_t **record, uint32_t *size)
+{
+    (void)user;
+    if (shard >= 8u || index >= record_counts[shard]) return false;
+    *record = records[shard][index];
+    *size = sizes[shard][index];
+    return true;
+}
+
+TIDE_TEST(storage_await_shards_recovered_from_a_journal_have_their_answers)
+{
+    now = 0;
+    tide_shards_desc d = split_desc;
+    d.journal = keep_record;
+    shards = tide_shards_create(&d, now);
+    TIDE_REQUIRE(shards != NULL);
+    until_waiting();
+    uint32_t size = 0;
+    uint8_t *saved = tide_shards_save(shards, &size);
+    TIDE_REQUIRE(saved != NULL && size > 0);
+    until_answered(); // In the journal's ticks
+    const uint32_t count = tide_shards_count(shards);
+    TIDE_REQUIRE(count <= 8u);
+    uint64_t hashes[8] = {0};
+    for (uint32_t s = 0; s < count; s++) {
+        if (tide_shards_world(shards, s)) hashes[s] = tide_game_api.hash_world(tide_shards_world(shards, s));
+    }
+    tide_shards_destroy(shards);
+    TIDE_CHECK(posted_count == 0);
+    const uint32_t before = reads;
+    shards = tide_shards_recover(&d, saved, size, give_record, NULL, now);
+    free(saved);
+    TIDE_REQUIRE(shards != NULL);
+    TIDE_CHECK(tide_shards_count(shards) == count);
+    for (uint32_t s = 0; s < count; s++) {
+        if (tide_shards_world(shards, s)) TIDE_CHECK(tide_game_api.hash_world(tide_shards_world(shards, s)) == hashes[s]);
+    }
+    const movers m = gather();
+    for (int i = 0; i < 8; i++) TIDE_CHECK(m.owned[i] == 1 && m.got[i] == i + 1 && m.tries[i] == 1);
+    for (int frame = 0; frame < 60; frame++) {
+        step();
+        run_posted();
+    }
+    TIDE_CHECK(reads == before); // Nothing waits: nothing asked again
+    tide_shards_destroy(shards);
+    shards = NULL;
+    for (uint32_t s = 0; s < 8u; s++) {
+        for (uint32_t i = 0; i < record_counts[s]; i++) free(records[s][i]);
+        free(records[s]);
+        free(sizes[s]);
+        records[s] = NULL;
+        sizes[s] = NULL;
+        record_counts[s] = record_rooms[s] = 0;
+    }
+    forget_files();
 }

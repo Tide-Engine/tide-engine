@@ -183,10 +183,15 @@ typedef struct posted_work {
 
 static posted_work posted[4096];
 static uint32_t posted_count, posted_most, posted_ever;
+static uint32_t refuse_posts; // The next posts that can't be queued, as where the provider hasn't the memory
 
 static bool io_post(void *user, void (*work)(void *context), void *context)
 {
     (void)user;
+    if (refuse_posts) {
+        refuse_posts--;
+        return false;
+    }
     if (posted_count == sizeof posted / sizeof posted[0]) return false;
     posted[posted_count++] = (posted_work){work, context};
     posted_ever++;
@@ -200,9 +205,10 @@ static void run_posted(void)
     posted_count = 0;
 }
 
-static void io_settle(void *user)
+static void io_settle(void *user, const void *context) // Everything posted: at least the work it waits for
 {
     (void)user;
+    (void)context;
     run_posted();
 }
 
@@ -817,6 +823,115 @@ TIDE_TEST(storage_line_keeps_the_order_requests_were_asked_in)
     forget_files();
 }
 
+// A tick whose only requests are listings of every key from the first has no bytes at all: its prefix and `after`
+// are read as empty, not from a null pointer (UBSan's "applying zero offset to null pointer" before)
+TIDE_TEST(storage_lists_every_key_from_a_tick_with_no_bytes)
+{
+    forget_files();
+    tide_storage store = {0};
+    tide_storage_bind(&the_world, &store);
+    save_key(&store, "every/a");
+    save_key(&store, "every/b");
+    uint64_t next = 0;
+    tide_storage_serve(&store, &io, &next, take_answer, NULL);
+    tide_storage_free(&store);
+    tide_storage_bind(&the_world, &store);
+    list_keys("", "");
+    TIDE_CHECK(store.count == 1 && store.bytes == NULL);
+    forget_answers();
+    tide_storage_serve(&store, &io, &next, take_answer, NULL);
+    tide_stored answer;
+    TIDE_REQUIRE(answer_count == 1 && tide_stored_read(answers[0], answer_sizes[0], &answer));
+    TIDE_CHECK(answer.kind == TIDE_STORAGE_LIST && answer.count == 2 && answer.key_size == 0 && answer.after_size == 0);
+    // ...and on the line, which takes the tick's store as it is
+    tide_storage_free(&store);
+    tide_storage_bind(&the_world, &store);
+    list_keys("", "");
+    TIDE_CHECK(store.bytes == NULL);
+    tide_storage_line line = {0};
+    tide_storage_send(&line, &store, &io, true);
+    forget_answers();
+    TIDE_CHECK(tide_storage_receive(&line, take_answer, NULL) == 1);
+    TIDE_REQUIRE(answer_count == 1 && tide_stored_read(answers[0], answer_sizes[0], &answer));
+    TIDE_CHECK(answer.count == 2);
+    tide_storage_finish(&line);
+    forget_answers();
+    tide_storage_unbind(&the_world);
+    tide_storage_free(&store);
+    forget_files();
+}
+
+// What no generated code asks is no request: no such kind, and a save or a delete for a task (which a frame that
+// isn't one generated code made could say, from a checkpoint or another shard)
+TIDE_TEST(storage_asks_nothing_for_a_task_but_loads_and_listings)
+{
+    tide_storage store = {0};
+    tide_storage_bind(&the_world, &store);
+    const tide_list bytes = {0};
+    tide_storage_ask(&the_world, TIDE_STORAGE_SAVE, text("k"), bytes, (tide_str){0}, TIDE_STORAGE_TO_TASK, (tide_entity){1, 2});
+    tide_storage_ask(&the_world, TIDE_STORAGE_DELETE, text("k"), bytes, (tide_str){0}, TIDE_STORAGE_TO_TASK, (tide_entity){1, 2});
+    tide_storage_ask(&the_world, 0, text("k"), bytes, (tide_str){0}, TIDE_STORAGE_TO_EVENT, (tide_entity){0});
+    tide_storage_ask(&the_world, 9, text("k"), bytes, (tide_str){0}, TIDE_STORAGE_TO_TASK, (tide_entity){1, 2});
+    TIDE_CHECK(store.count == 0);
+    tide_storage_ask(&the_world, TIDE_STORAGE_LOAD, text("k"), bytes, (tide_str){0}, TIDE_STORAGE_TO_TASK, (tide_entity){1, 2});
+    tide_storage_ask(&the_world, TIDE_STORAGE_LIST, text("k"), bytes, (tide_str){0}, TIDE_STORAGE_TO_TASK, (tide_entity){1, 3});
+    tide_storage_ask(&the_world, TIDE_STORAGE_SAVE, text("k"), bytes, (tide_str){0}, TIDE_STORAGE_TO_EVENT, (tide_entity){0});
+    TIDE_CHECK(store.count == 3);
+    // What the store refuses, an awaited load or listing fails by at once (tide_storage_takes)
+    char longest[TIDE_STORAGE_KEY_MOST + 2];
+    memset(longest, 'x', sizeof longest);
+    const tide_str most = {longest, (int32_t)TIDE_STORAGE_KEY_MOST, (int32_t)TIDE_STORAGE_KEY_MOST};
+    const tide_str past = {longest, (int32_t)TIDE_STORAGE_KEY_MOST + 1, (int32_t)TIDE_STORAGE_KEY_MOST + 1};
+    TIDE_CHECK(tide_storage_takes(TIDE_STORAGE_LOAD, most, (tide_str){0}) && tide_storage_takes(TIDE_STORAGE_LIST, most, most));
+    TIDE_CHECK(tide_storage_takes(TIDE_STORAGE_LIST, (tide_str){0}, (tide_str){0}));
+    TIDE_CHECK(!tide_storage_takes(TIDE_STORAGE_LOAD, (tide_str){0}, (tide_str){0}) && !tide_storage_takes(TIDE_STORAGE_LOAD, past, (tide_str){0}));
+    TIDE_CHECK(!tide_storage_takes(TIDE_STORAGE_LIST, past, (tide_str){0}) && !tide_storage_takes(TIDE_STORAGE_LIST, text("a/"), past));
+    const uint32_t count = store.count;
+    tide_storage_ask(&the_world, TIDE_STORAGE_LOAD, past, bytes, (tide_str){0}, TIDE_STORAGE_TO_TASK, (tide_entity){1, 4});
+    tide_storage_ask(&the_world, TIDE_STORAGE_LIST, text("a/"), bytes, past, TIDE_STORAGE_TO_TASK, (tide_entity){1, 5});
+    TIDE_CHECK(store.count == count); // Refused as tide_storage_takes says
+    tide_storage_unbind(&the_world);
+    tide_storage_free(&store);
+}
+
+// A batch the provider can't queue still goes after the line's batches before it: they're carried out first, then
+// it's queued again or, where that fails too, carried out at once. Before, it was carried out at once, ahead of them
+TIDE_TEST(storage_line_a_batch_that_cant_be_queued_goes_after_those_before_it)
+{
+    forget_files();
+    tide_storage store = {0};
+    tide_storage_line line = {0};
+    tide_storage_bind(&the_world, &store);
+    save_key(&store, "q/1");
+    tide_storage_send(&line, &store, &deferred, true); // Queued, not yet carried out
+    tide_storage_ask(&the_world, TIDE_STORAGE_LOAD, text("q/1"), (tide_list){0}, (tide_str){0}, TIDE_STORAGE_TO_EVENT, (tide_entity){0});
+    refuse_posts = 1;
+    tide_storage_send(&line, &store, &deferred, true); // Can't be queued, then can
+    TIDE_CHECK(find_file("saved/q/1.bin") != NULL && posted_count == 1);
+    run_posted();
+    forget_answers();
+    TIDE_CHECK(tide_storage_receive(&line, take_answer, NULL) == 1);
+    tide_stored answer;
+    TIDE_REQUIRE(answer_count == 1 && tide_stored_read(answers[0], answer_sizes[0], &answer));
+    TIDE_CHECK(answer.outcome == TIDE_STORED_FOUND); // After the save before it
+    // ...and where it can't be queued again either: carried out here, still after the save
+    save_key(&store, "q/2");
+    tide_storage_send(&line, &store, &deferred, true);
+    tide_storage_ask(&the_world, TIDE_STORAGE_LOAD, text("q/2"), (tide_list){0}, (tide_str){0}, TIDE_STORAGE_TO_EVENT, (tide_entity){0});
+    refuse_posts = 2;
+    tide_storage_send(&line, &store, &deferred, true);
+    TIDE_CHECK(posted_count == 0 && refuse_posts == 0);
+    forget_answers();
+    TIDE_CHECK(tide_storage_receive(&line, take_answer, NULL) == 1);
+    TIDE_REQUIRE(answer_count == 1 && tide_stored_read(answers[0], answer_sizes[0], &answer));
+    TIDE_CHECK(answer.outcome == TIDE_STORED_FOUND);
+    tide_storage_finish(&line);
+    forget_answers();
+    tide_storage_unbind(&the_world);
+    tide_storage_free(&store);
+    forget_files();
+}
+
 #ifdef STORAGE_PLATFORM
 // The platform's own files, in a folder of the test's: what the standard hosts keep. Keys saved and listed from
 // real folders, files a person put there that aren't keys', and requests carried out on the provider's own thread.
@@ -880,7 +995,7 @@ TIDE_TEST(storage_lists_the_platforms_files)
         tide_storage_ask(&the_world, TIDE_STORAGE_LOAD, text(key), (tide_list){0}, (tide_str){0}, TIDE_STORAGE_TO_EVENT, (tide_entity){0});
         tide_storage_send(&line, &store, files_io, true);
     }
-    files_io->settle(files_io->user);
+    files_io->settle(files_io->user, NULL);
     forget_answers();
     uint32_t taken = 0;
     while (tide_storage_waiting(&line)) {
@@ -894,6 +1009,48 @@ TIDE_TEST(storage_lists_the_platforms_files)
     TIDE_CHECK(taken == 20);
     tide_storage_finish(&line);
     forget_answers();
+    tide_storage_unbind(&the_world);
+    tide_storage_free(&store);
+    (void)files_io->remove(files_io->user, "saved", true, true);
+}
+
+// Work another server posted after this line's batches, which takes as long as it likes: it waits for the test to
+// let it go, or 5 seconds, which only a finish that waits for it lets pass
+static uint32_t blocker_go, blocker_waited_out;
+
+static void blocker(void *context)
+{
+    (void)context;
+    const uint64_t until = tide_time_now_ns() + UINT64_C(5000000000);
+    while (!__atomic_load_n(&blocker_go, __ATOMIC_ACQUIRE)) {
+        if (tide_time_now_ns() > until) {
+            __atomic_store_n(&blocker_waited_out, 1u, __ATOMIC_RELEASE);
+            return;
+        }
+        tide_yield();
+    }
+}
+
+// A server that stops waits for its own batches on the provider's thread, not for what other servers posted after
+// them (before, it settled everything posted, and stalled the hosting loop on every match's disk work)
+TIDE_TEST(storage_finish_waits_for_its_own_batches_alone)
+{
+    const tide_io *files_io = platform_files();
+    TIDE_REQUIRE(files_io && files_io->post && files_io->settle);
+    tide_storage store = {0};
+    tide_storage_line line = {0};
+    tide_storage_bind(&the_world, &store);
+    save_key(&store, "mine/1");
+    tide_storage_send(&line, &store, files_io, true);
+    __atomic_store_n(&blocker_go, 0u, __ATOMIC_RELEASE);
+    __atomic_store_n(&blocker_waited_out, 0u, __ATOMIC_RELEASE);
+    TIDE_REQUIRE(files_io->post(files_io->user, blocker, NULL));
+    tide_storage_finish(&line);
+    TIDE_CHECK(!__atomic_load_n(&blocker_waited_out, __ATOMIC_ACQUIRE)); // Returned while the other work went on
+    __atomic_store_n(&blocker_go, 1u, __ATOMIC_RELEASE);
+    files_io->settle(files_io->user, NULL);
+    TIDE_CHECK(!__atomic_load_n(&blocker_waited_out, __ATOMIC_ACQUIRE));
+    TIDE_CHECK(files_io->exists(files_io->user, "saved/mine/1.bin", false)); // Its own batch carried out
     tide_storage_unbind(&the_world);
     tide_storage_free(&store);
     (void)files_io->remove(files_io->user, "saved", true, true);
@@ -940,7 +1097,7 @@ TIDE_TEST(storage_measure_tick_end)
                 tide_storage_line line = {0};
                 tide_storage_send(&line, &store, files_io, true);
                 after_ms[round] = (double)(tide_time_now_ns() - began) / 1e6;
-                files_io->settle(files_io->user);
+                files_io->settle(files_io->user, NULL);
                 thread_ms[round] = (double)(tide_time_now_ns() - began) / 1e6;
                 TIDE_CHECK(tide_storage_receive(&line, take_answer, NULL) == 1690u);
                 tide_storage_finish(&line);

@@ -1,7 +1,8 @@
 // Match tasks that await the store while their entities cross from one shard
 // to another (tests/e2e/storage_await_shards_test.c, on the engine's
 // orchestrator): each task asks again on the shard it arrives at, and gets its
-// answer there; the answer to the shard it left finds no task.
+// answer there; the answer to the shard it left finds no task. And what the
+// world's start saves is kept.
 
 settings
 {
@@ -23,6 +24,7 @@ scene Main { }
 event(Spawned) Setup(with Main)
 {
     for (int i = 0; i < 8; i++) Spawn(Mover { position = float2(-1.0 - i * 0.25, float(i)), velocity = float2(10, 0), id = i });
+    Storage.Save("started", Bytes(4)); // The root's start runs before its server: kept beside the world for it
 }
 
 // A value of `count` bytes

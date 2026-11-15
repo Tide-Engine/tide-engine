@@ -7,6 +7,7 @@
 #include "tide/hosting.h"
 #include "tide/shard_agent.h"
 #include "tide/shard_coordinator.h"
+#include "tide/storage.h"
 #include "tide/time.h"
 
 // See tide/shards.h. Every shard of the world in this process: each its server
@@ -95,6 +96,7 @@ static void start(tide_shards *s, const tide_shard_action *a, const double now)
 {
     void *world = tide_alloc_zeroed(1, s->game->world_size);
     uint32_t next = a->tick;
+    tide_storage asked = {0};
     if (a->world) {
         if (!s->game->unpack_world(world, a->world, a->world_size) || !replay(s, a->shard, world, &next)) {
             s->failed = true;
@@ -103,11 +105,15 @@ static void start(tide_shards *s, const tide_shard_action *a, const double now)
             return;
         }
     } else {
-        // A shard that starts later starts at the world's tick, the root's
+        // A shard that starts later starts at the world's tick, the root's. What the start asks of the store (its
+        // Spawned handlers' saves and loads) is kept beside the world, for the server to carry out with its first tick
+        if (s->game->stored) tide_storage_bind(world, &asked);
         s->api->start(world, s->dt, a->shard == TIDE_SHARD_ROOT ? s->desc.start : NULL, s->desc.seed, a->tick, a->config,
                       a->config_size);
+        if (s->game->stored) tide_storage_unbind(world);
     }
     tide_server_desc d = {0};
+    d.asked = &asked;
     d.game = s->game;
     d.tick_rate = s->tick_rate;
     d.dt = s->dt;
@@ -132,6 +138,7 @@ static void start(tide_shards *s, const tide_shard_action *a, const double now)
     h->agent = tide_shard_agent_create(s->game, h->server, a->shard, h->ticks_before, a->world != NULL);
     if (!h->agent) tide_out_of_memory();
     tide_shard_coordinator_set_match(s->coordinator, a->shard, h->match);
+    tide_storage_free(&asked); // What a host that made no server of ours left of it
     if (s->game->free_world) s->game->free_world(world);
     free(world);
 }

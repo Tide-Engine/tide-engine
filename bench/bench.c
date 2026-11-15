@@ -11,6 +11,7 @@
 #include "tide/platform.h"
 #include "tide/shard_client.h"
 #include "tide/shards.h"
+#include "tide/storage.h"
 #include "tide/time.h"
 
 #define FRAME (1.0 / 60.0) // Made-up seconds between updates
@@ -1350,7 +1351,11 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
         current = h;
         void *first = calloc(1, real->world_size);
         if (!first) out_of_memory();
+        // What its start asks of the store (Spawned handlers) goes to the server, as a start the server ran would
+        tide_storage asked = {0};
+        if (real->stored) tide_storage_bind(first, &asked);
         d->make_world(d->flags, first, (float)FRAME);
+        if (real->stored) tide_storage_unbind(first);
         // The store: the game's own, or the platform's files in a folder, on their own thread or (--files-here) not
         static tide_io files_io;
         const tide_io *io = d->io;
@@ -1373,8 +1378,10 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
             .jobs = jobs,
             .world = first,
             .io = io,
+            .asked = &asked,
         };
         h->server = tide_server_create(&server_desc, 0.0);
+        tide_storage_free(&asked);
         if (real->free_world) real->free_world(first); // The server has its own copy
         free(first);
     }

@@ -32,13 +32,26 @@ typedef enum tide_storage_kind {
 // (Loaded, Listed), sent to the request's `target`, or to the world where that's
 // the null entity. TIDE_STORAGE_TO_TASK: a match task that waits for it, and
 // `target` is 16 bytes of the game's own naming the operation it waits on,
-// given back as they were (a task handle's identity: its id in `birth`, its
-// slot in `lineage`); the engine sends no event for it.
+// given back as they were (generated code's: the operation's identity, the
+// identity clock and a cause); the engine sends no event for it. Only a load
+// or a listing is a task's.
 enum { TIDE_STORAGE_TO_EVENT = 0, TIDE_STORAGE_TO_TASK = 1 };
 
 // The most bytes a key is, and a listing's prefix and the key it goes on
 // after. A longer one is refused, and stderr says so.
 #define TIDE_STORAGE_KEY_MOST 256u
+
+// Whether the store takes a load of `key`, or a listing of the prefix `key`
+// after `after`: a key of 1 to TIDE_STORAGE_KEY_MOST bytes, a prefix and an
+// `after` of at most that many. tide_storage_ask refuses the rest (stderr
+// says why), and generated code gives an awaited load or listing it would
+// refuse its failure at once, on every machine, as nothing will answer it.
+static inline bool tide_storage_takes(const uint32_t kind, const tide_str key, const tide_str after)
+{
+    const bool list = kind == TIDE_STORAGE_LIST;
+    if (key.bytes < (list ? 0 : 1) || (uint32_t)key.bytes > TIDE_STORAGE_KEY_MOST || (key.bytes && !key.ptr)) return false;
+    return !list || (after.bytes >= 0 && (uint32_t)after.bytes <= TIDE_STORAGE_KEY_MOST && (!after.bytes || after.ptr));
+}
 // The most bytes a value saved or loaded is: a load's answer is a message a tick takes (TIDE_SHARD_MESSAGE_LIMIT).
 #define TIDE_STORAGE_VALUE_MOST (32u << 20)
 // The most keys one listing's answer has: 1,024 keys of 256 bytes at the most
@@ -75,7 +88,7 @@ void tide_storage_unbind(const void *world);
 // after (0 bytes: from the first), `key` its prefix (0 bytes: every key); `to`
 // and `target` whom a load's or a listing's answer is for. A load or a listing
 // asked twice in a tick with one key (and `after`) and one target is asked
-// once.
+// once. No such kind, or a save or delete for a task, is no request.
 void tide_storage_ask(const void *world, uint32_t kind, tide_str key, tide_list bytes, tide_str after, uint32_t to,
                       tide_entity target);
 
@@ -186,8 +199,9 @@ uint32_t tide_storage_receive(tide_storage_line *line, void (*answer)(void *user
 // The answers on their way are nobody's (a rewind): dropped as they're ready.
 // What their batches save and delete is still done.
 void tide_storage_forget(tide_storage_line *line);
-// Returns once everything handed over is carried out (tide_io.settle), and
-// frees it, answers and all: a server that stops loses nothing it saved.
+// Returns once everything handed over is carried out (tide_io.settle for each
+// batch still on its way: not what others posted after it), and frees it,
+// answers and all: a server that stops loses nothing it saved.
 void tide_storage_finish(tide_storage_line *line);
 // Batches handed over and not yet received.
 uint32_t tide_storage_waiting(const tide_storage_line *line);

@@ -2261,14 +2261,15 @@ static const method_form storage_awaited_calls[] = {
     {"Load", "await Storage.Load(string key) -> List<byte> fails IOError",
      "Waits, in a match task, for what the machine that runs the match keeps under the key: its bytes, or "
      "`IOError.NotFound` where nothing is kept there and `IOError.Failed` where what's kept couldn't be read. The task "
-     "goes on in the tick the answer is given to, on every machine."},
+     "goes on in the tick the answer is given to, on every machine. A key that's empty or past 256 bytes fails at once "
+     "with `IOError.InvalidPath`."},
     {"List", "await Storage.List(string prefix) -> StorageKeys fails IOError",
      "Waits, in a match task, for the keys that start with the prefix: a `StorageKeys`, whose `keys` are sorted by their "
      "bytes, 1,024 at the most, and whose `more` says whether there are keys past the last. Fails with `IOError.Failed` "
-     "where the store couldn't be listed."},
+     "where the store couldn't be listed, and at once with `IOError.InvalidPath` for a prefix past 256 bytes."},
     {"List", "await Storage.List(string prefix, string after) -> StorageKeys fails IOError",
      "Waits, in a match task, for the keys that start with the prefix and come after `after`: the last key of the page "
-     "before, to go on from it."},
+     "before, to go on from it. Either past 256 bytes fails at once with `IOError.InvalidPath`."},
 };
 static const method_form audience_calls[] = {
     {"Add", "Add(PlayerID player)", "Adds a player to this writable audience value."},

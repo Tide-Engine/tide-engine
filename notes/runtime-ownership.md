@@ -1,3 +1,16 @@
+## The server's store: review fixes (2026-11-15, after review)
+
+All agent-maintained (notes/voxels.md, sections 3, 3a and 3d). New at the generated-C boundary:
+`tide_storage_takes(kind, key, after)` (tide/storage.h, `static inline`), which an awaited load or listing calls after
+`tide_storage_ask` to fail at once with `IOError.InvalidPath` where the store refuses its key; it keeps the bounds
+`tide_storage_ask` keeps, and the two must stay the same (a request the store refuses that the check took would wait
+for ever). `tide_storage_ask` now takes no save or delete addressed to a task and no kind that isn't one. Hosts:
+`tide_io.settle` takes a `context` (the work posted with it, or NULL for everything posted before), which
+`tide_storage_finish` and a batch that couldn't be queued use to wait for their own line; `tide_server_desc.asked` (the
+requests a start the host ran itself asked, taken into the server's), which `shards.c` and the bench pass. The standard
+host gives a run with no window's sessions its files with no `post` or `settle`. No layout, hash, snapshot or wire
+change; `bench_voxels`' pin is unchanged.
+
 ## The server's store: tasks that await it (2026-11-15, later)
 
 For `await Storage.Load(key)` and `await Storage.List(prefix[, after])` (notes/voxels.md, section 3d). The store's

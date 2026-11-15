@@ -2,9 +2,9 @@
 // nothing, or find what can't be read; listings page after page, and one that
 // fails; a load awaited through an async function of its own, after a wait of
 // ticks and after a save the task made; a save and a load of one key in one
-// tick; and a task whose entity goes before its answer comes. Played on a host
-// with a guest: the guest's world goes as the host's does, though only the
-// host's machine has the store.
+// tick; a task whose entity goes before its answer comes; and keys the store
+// refuses, which fail at once. Played on a host with a guest: the guest's world
+// goes as the host's does, though only the host's machine has the store.
 
 settings { maxPlayers = 2; }
 
@@ -25,8 +25,11 @@ singleton Vault
     int listFailed; // Listings that couldn't be made
     int deep;       // What loads awaited through Size gave
     int deepFailed;
-    int held;       // What the task whose entity went got: never anything
+    int held;       // Answers the task whose entity went got: never any
     int handled;    // What an async handler's loads gave
+    int refused;    // Awaited loads and listings of keys the store refuses: IOError.InvalidPath
+    int refusedLate; // ...that took a tick or more to fail, which none do
+    int longest;    // A listing of a prefix of 256 bytes, the most there is: its pages
 }
 
 event Fetch { string key; }
@@ -123,14 +126,37 @@ async event(Fetch fetch) Fetched(mut Vault vault)
 }
 
 // Started for its entity, which goes in the same tick: its answer comes for a task that has ended
-async void Hold(mut Holder holder)
+async void Hold(mut Holder holder, mut Vault vault)
 {
-    if (await Storage.Load("boxes/7") is List<byte> bytes) holder.got = bytes.count;
+    var got = await Storage.Load("boxes/7");
+    vault.held += 1;
+    if (got is List<byte> bytes) holder.got = bytes.count;
 }
 
-system Keep(mut Holder holder, Time time)
+// `count` bytes of x
+string Long(int count)
 {
-    if (time.tick == 4) Hold(holder);
+    mut var made = "";
+    for (var i = 0; i < count; i++) made = $"{made}x";
+    return made;
+}
+
+// Keys, prefixes and `after`s the store refuses: nothing is asked, and each fails in the tick it's awaited, on every
+// machine. A prefix of 256 bytes is one, and asks
+async void Refused(mut Vault vault, Time time)
+{
+    var began = time.tick;
+    if (await Storage.Load("") is IOError.InvalidPath) vault.refused += 1;
+    if (await Storage.Load(Long(257)) is IOError.InvalidPath) vault.refused += 1;
+    if (await Storage.List(Long(257)) is IOError.InvalidPath) vault.refused += 1;
+    if (await Storage.List("list/", Long(300)) is IOError.InvalidPath) vault.refused += 1;
+    if (time.tick != began) vault.refusedLate += 1;
+    if (await Storage.List(Long(256)) is StorageKeys keys && keys.keys.count == 0 && !keys.more) vault.longest += 1;
+}
+
+system Keep(mut Holder holder, mut Vault vault, Time time)
+{
+    if (time.tick == 4) Hold(holder, vault);
 }
 
 system Drop(Holder holder, Time time)
@@ -164,6 +190,7 @@ system Work(mut Vault vault, Time time)
         Pages(vault, "list/");
         Pages(vault, "locked/");                     // The host's files say it can't be listed
         Deep(vault);
+        Refused(vault, time);
         Send(Fetch { key = "boxes/7" });
     }
 }

@@ -13088,7 +13088,7 @@ TIDE_TEST(lsp_storage_awaited_completes_and_hovers)
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     const char *hover = request("textDocument/hover");
     TIDE_CHECK(has(hover, "await Storage.Load(string key) -> List<byte> fails IOError") && has(hover, "IOError.NotFound")
-               && has(hover, "Storage.Load(string key, Entity entity)"));
+               && has(hover, "IOError.InvalidPath") && has(hover, "Storage.Load(string key, Entity entity)"));
     TIDE_CHECK(strstr(hover, "await Storage.Load") < strstr(hover, "Storage.Load(string key, Entity entity)"));
     open_document("scene Main { }\nsingleton Seen { int n; }\n"
                   "async void Count(mut Seen seen)\n{\n"

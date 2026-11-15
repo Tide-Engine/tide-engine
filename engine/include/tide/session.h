@@ -469,6 +469,12 @@ typedef struct tide_server_desc {
     // server. NULL: nothing is kept, so saves go nowhere and every load finds
     // nothing.
     const struct tide_io *io;
+    // With `world`: what the match's start asked of the store where the host
+    // ran the start itself, on the world it gives (a sharded world's root,
+    // tide_shards; bound to it with tide_storage_bind as it ran), carried out
+    // with the first tick's requests, before them. The server takes them,
+    // leaving it empty. NULL: none.
+    struct tide_storage *asked;
     // 64 bits nobody could guess, from the system, for the seed of the match
     // it starts (tide_game.seeded): no two matches go the same. NULL: the seed
     // is `seed`, and a run repeats exactly (tests and benchmarks). A match

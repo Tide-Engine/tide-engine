@@ -3597,6 +3597,8 @@ tide_server *tide_server_create(const tide_server_desc *desc, const double now)
     }
     if (desc->world) {
         g->copy_world(s->world, desc->world);
+        // What the host's own run of the start asked (a sharded world's root), as the server's own start's would be
+        if (desc->asked && g->stored) tide_storage_take(&s->storage, desc->asked);
         // A match it goes on with: what its tasks waited for from the store was on its way to another server, or one
         // that stopped, and is asked again with the first tick's
         if (g->stored_again) {

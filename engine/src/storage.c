@@ -108,13 +108,22 @@ void tide_storage_ask(const void *world, const uint32_t kind, const tide_str key
     // calls C does), so what it asked is changed without the lock
     if (!s) return;
     const bool list = kind == TIDE_STORAGE_LIST;
-    // A key is 1 to 256 bytes; a listing's prefix can be none, every key
+    const bool answered = kind == TIDE_STORAGE_LOAD || list;
+    // No such kind, and a save or a delete a task waits for, are no request (a frame that says so isn't one
+    // generated code made: what it asks again is a load or a listing, never a save over a key)
+    if ((!answered && kind != TIDE_STORAGE_SAVE && kind != TIDE_STORAGE_DELETE) || (!answered && to == TIDE_STORAGE_TO_TASK)) return;
+    // A key is 1 to 256 bytes; a listing's prefix can be none, every key (tide_storage_takes, which awaited ones fail by)
     if (key.bytes < (list ? 0 : 1) || (uint32_t)key.bytes > TIDE_STORAGE_KEY_MOST || (key.bytes && !key.ptr)) {
+        if (key.bytes <= 0) {
+            fprintf(stderr, "tide: Storage: a key is 1 to %u bytes, and this one is empty: nothing was %s; name what's "
+                            "kept, like a chunk's dimension and place as numbers\n",
+                    TIDE_STORAGE_KEY_MOST, kind_done(kind));
+            return;
+        }
         fprintf(stderr, "tide: Storage: a %s is %s %u bytes, and this one is %d (\"%.*s%s\"): nothing was %s; use a "
                         "shorter one, like a chunk's dimension and place as numbers\n",
                 list ? "prefix" : "key", list ? "at most" : "1 to", TIDE_STORAGE_KEY_MOST, (int)key.bytes,
-                key.bytes > 48 ? 48 : (int)(key.bytes > 0 ? key.bytes : 0), key.ptr ? key.ptr : "", key.bytes > 48 ? "..." : "",
-                kind_done(kind));
+                key.bytes > 48 ? 48 : (int)key.bytes, key.ptr ? key.ptr : "", key.bytes > 48 ? "..." : "", kind_done(kind));
         return;
     }
     const int32_t after_size = list ? after.bytes : 0;
@@ -131,7 +140,6 @@ void tide_storage_ask(const void *world, const uint32_t kind, const tide_str key
                 TIDE_STORAGE_VALUE_MOST, (int)key.bytes, key.ptr, (int)count);
         return;
     }
-    const bool answered = kind == TIDE_STORAGE_LOAD || list;
     const uint32_t whom = answered && to == TIDE_STORAGE_TO_TASK ? TIDE_STORAGE_TO_TASK : TIDE_STORAGE_TO_EVENT;
     if (answered) { // Asked once however often a tick asks
         for (uint32_t i = 0; i < s->count; i++) {
@@ -673,9 +681,11 @@ static uint32_t prefix_folder(listing *l)
 static uint8_t *list_keys(const tide_io *io, const tide_storage_request *r, const uint8_t *bytes, const uint64_t number,
                           uint32_t *message_size)
 {
+    // An empty prefix or `after` is "": a tick whose only requests are listings of every key from the first has no
+    // bytes at all, and NULL + 0 isn't a pointer C has
     tide_stored answer = {.kind = TIDE_STORAGE_LIST, .to = (uint8_t)r->to, .outcome = TIDE_STORED_FOUND, .target = r->target,
-                          .number = number, .key = (const char *)bytes + r->key, .key_size = r->key_size,
-                          .after = (const char *)bytes + r->data, .after_size = r->data_size};
+                          .number = number, .key = r->key_size ? (const char *)bytes + r->key : "", .key_size = r->key_size,
+                          .after = r->data_size ? (const char *)bytes + r->data : "", .after_size = r->data_size};
     if (!io) return tide_stored_message(&answer, message_size); // Nothing kept: no keys
     if (!io->list) {
         fprintf(stderr, "tide: Storage.List: the host's files can't be listed: its Listed says it failed\n");
@@ -771,7 +781,7 @@ static void serve(tide_storage *store, const tide_io *io, uint64_t *next, const 
     bool changed = false;
     for (uint32_t i = 0; i < store->count; i++) {
         const tide_storage_request *r = &store->items[i];
-        const char *key = (const char *)store->bytes + r->key;
+        const char *key = r->key_size ? (const char *)store->bytes + r->key : ""; // A listing's prefix can be empty
         if (r->kind == TIDE_STORAGE_LIST) {
             const uint64_t number = (*next)++;
             if (!answers) continue;
@@ -912,11 +922,21 @@ void tide_storage_send(tide_storage_line *line, tide_storage *store, const tide_
     for (uint32_t i = 0; i < b->store.count; i++) {
         line->next += b->store.items[i].kind == TIDE_STORAGE_LOAD || b->store.items[i].kind == TIDE_STORAGE_LIST;
     }
+    tide_storage_batch *before = line->last;
     if (line->last) line->last->next = b;
     else line->first = b;
     line->last = b;
     // Off this thread where the provider has one of its own, else here and now
-    if (!io || !io->post || !io->settle || !io->post(io->user, carry_out, b)) carry_out(b);
+    if (!io || !io->post || !io->settle) {
+        carry_out(b);
+        return;
+    }
+    if (io->post(io->user, carry_out, b)) return;
+    // The provider couldn't queue it (it hadn't the memory, its queue was full): this line's batches before it are
+    // carried out first, so it still goes after them (a load after their saves, a save of a key after theirs, never
+    // two of the line's writes of one file at once), then it's queued again, or carried out here
+    if (before && !__atomic_load_n(&before->done, __ATOMIC_ACQUIRE)) io->settle(io->user, before);
+    if (!io->post(io->user, carry_out, b)) carry_out(b);
 }
 
 uint32_t tide_storage_receive(tide_storage_line *line, void (*answer)(void *user, uint8_t *message, uint32_t size),
@@ -946,7 +966,8 @@ void tide_storage_forget(tide_storage_line *line)
 void tide_storage_finish(tide_storage_line *line)
 {
     for (tide_storage_batch *b = line->first; b;) {
-        if (!__atomic_load_n(&b->done, __ATOMIC_ACQUIRE)) b->io->settle(b->io->user); // Posted, so it has one
+        // Posted, so it has one: a wait for this batch, not for what other servers posted after it
+        if (!__atomic_load_n(&b->done, __ATOMIC_ACQUIRE)) b->io->settle(b->io->user, b);
         while (!__atomic_load_n(&b->done, __ATOMIC_ACQUIRE)) {
         }
         tide_memory_sync();

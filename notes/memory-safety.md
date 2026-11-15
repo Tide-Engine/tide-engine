@@ -28,8 +28,17 @@
   request is the game's key and `after`, bounded by `tide_storage_ask` as any request's, asked again from the frame by
   `tide_stored_ask_*`.
 
+- **No pointer arithmetic on a store with no bytes** (2026-11-15, after review): a tick whose only requests are listings of
+  every key from the first (`Storage.List("")`) leaves the batch's `bytes` NULL, as nothing was copied; `serve` and
+  `list_keys` took its prefix and `after` as `bytes + 0` and the walk compared them with `memcmp(..., NULL, 0)`, which the
+  Linux and macOS sanitize builds (`-fsanitize=undefined`, no recovery) stop on. An empty key or `after` is `""` there now
+  (`storage_lists_every_key_from_a_tick_with_no_bytes`; Windows has no UBSan, so CI's sanitize runs are what catch it).
+- **A frame's request is asked again only as what generated code asks** (2026-11-15, after review): `tide_stored_ask_*`
+  asks only the kinds its function awaits, and `tide_storage_ask` takes no save or delete for a task, nor a kind that isn't
+  one, so a frame read from a checkpoint or another shard can't turn into a save over a key or a delete.
+
 Tests: `storage_answers_that_arent_are_refused` (an answer cut at every byte, a key that isn't UTF-8, more keys than it has,
-no such kind), `storage_paths_give_their_keys_back` (19 strays, the longest path there is), the listings in
+no such kind), `storage_asks_nothing_for_a_task_but_loads_and_listings`, `storage_paths_give_their_keys_back` (19 strays, the longest path there is), the listings in
 `tidec_e2e_storage`; `storage_await_answer_for_no_task_changes_nothing` (a load's and a listing's answer for a target no
 task has: refused, the world's hash the same) in `tidec_e2e_storage_await`. Sanitizer runs are CI's for this change.
 

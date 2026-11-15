@@ -76,11 +76,12 @@ typedef struct tide_io {
     // A thread of the provider's own for work that calls the provider and shouldn't hold up its caller (the
     // server's store: tide/storage.h), or NULL where it has none: that work is then the caller's, where it is.
     // post queues work(context) to run on that thread after everything posted before it, and returns at once:
-    // false where it can't be queued, and the caller does it itself. settle returns once everything posted before
-    // it has returned. A provider with post has settle, and its other calls may be made on that thread while other
-    // threads make theirs.
+    // false where it can't be queued, and the caller does it itself. settle returns once the work posted with
+    // `context` has returned (at once where none is queued or running), and with NULL once everything posted before
+    // it has: a caller waits for its own work, not for what others posted after it. A provider with post has settle,
+    // and its other calls may be made on that thread while other threads make theirs.
     bool (*post)(void *user, void (*work)(void *context), void *context);
-    void (*settle)(void *user);
+    void (*settle)(void *user, const void *context);
 } tide_io;
 
 // The most a fetched body may be: a hostile server can't fill memory.

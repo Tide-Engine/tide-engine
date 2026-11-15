@@ -6,6 +6,10 @@
 #include "tide/storage.h"
 #include "tide/time.h"
 #include "tide_test.h"
+#ifdef STORAGE_MIGRATION
+#include "tide/migrate.h"
+extern const tide_layout tide_game_layout;
+#endif
 
 // Match tasks that await the server's store (`await Storage.Load(key)`, `await
 // Storage.List(prefix, after)`): the request is the task's frame's, only the
@@ -187,9 +191,10 @@ static void run_posted(void)
     posted_count = 0;
 }
 
-static void io_settle(void *user)
+static void io_settle(void *user, const void *context) // Everything posted: at least the work it waits for
 {
     (void)user;
+    (void)context;
     run_posted();
 }
 
@@ -282,9 +287,16 @@ static void check_world(const tide_world *w)
     TIDE_CHECK(v->listFailed == 1); // locked/
     // 2 bytes of deep/a, 5 of deep/b (which the task saved before it asked), deep/none not found, and deep/'s 2 keys
     TIDE_CHECK(v->deep == 2 + 5 + 200 && v->deepFailed == 1);
-    TIDE_CHECK(v->held == 0 && count_alive(w, has_holder) == 0); // Gone before its answer came
+    TIDE_CHECK(v->held == 0 && count_alive(w, has_holder) == 0); // Gone before its answer came: it never went on
     TIDE_CHECK(v->handled == 3 + 10); // boxes/7's bytes, and its one key listed
+    // An empty key, a key, a prefix and an `after` past 256 bytes: IOError.InvalidPath, in the tick they were awaited;
+    // a prefix of 256 is listed
+    TIDE_CHECK(v->refused == 4 && v->refusedLate == 0 && v->longest == 1);
 }
+
+// What a world's tasks wait for, asked again once each: the loads of every task check_world counts, then the two
+// Deep asks after its first answer
+enum { WAITING_LOADS = 8, LOADS_AFTER = 2 };
 
 // A host with `files_io` and a guest without files, over a lossy network, until both have every answer. `later`: the
 // host's files carry its requests out only every `later` frames. `join`: the frame the guest joins at, before which
@@ -398,8 +410,8 @@ TIDE_TEST(storage_await_waits_across_a_pack_and_a_rewind)
         tide_session_update(alone, t);
     }
     TIDE_REQUIRE(tide_session_rewind(alone, then));
-    const uint32_t before = reads;
     run_posted(); // What the old ticks asked is carried out now, its answers nobody's
+    const uint32_t before = reads;
     for (int frame = 0; frame < 300; frame++) {
         t += 1.0 / 60.0;
         tide_session_update(alone, t);
@@ -408,16 +420,124 @@ TIDE_TEST(storage_await_waits_across_a_pack_and_a_rewind)
     server = tide_session_server_world(alone);
     TIDE_REQUIRE(server != NULL);
     check_world(server); // Each task answered once, from what its frame kept of its request
-    TIDE_CHECK(reads > before);
+    TIDE_CHECK(reads - before == WAITING_LOADS + LOADS_AFTER); // Asked again once each, not again and again
     tide_session_destroy(alone);
     tide_game_api.free_world(then);
     free(then);
     forget_files();
 }
 
-// Hot reloading while the tasks wait: new code of the same layout, then another layout carried over by copying the
-// world. The tables swapped out are zeroed, so anything still using them would fail. The batches on their way are
-// taken by the build that runs when they're ready, and the tasks, carried over, get their answers once each
+// A match taken up again from a world its tasks wait in (tide_server_desc.world), on a server that never asked what
+// they wait for: the old one stopped, its saves carried out and its loads' answers nobody's. The new server asks again
+// what each waits for, once each, and every task gets its answer
+TIDE_TEST(storage_await_a_match_taken_up_again_asks_what_its_tasks_wait_for)
+{
+    forget_files();
+    put_locked();
+    double t = 0.0;
+    tide_session *alone = waiting(&t);
+    const tide_world *server = tide_session_server_world(alone);
+    TIDE_REQUIRE(server != NULL);
+    tide_world *kept = calloc(1, tide_game_api.world_size);
+    TIDE_REQUIRE(kept != NULL);
+    tide_game_api.copy_world(kept, server);
+    const int32_t player = tide_player_index(tide_session_status_of(alone).client.player);
+    TIDE_REQUIRE(player >= 0);
+    tide_session_destroy(alone); // Carries out what it handed over: tick 2's saves, and loads nobody takes
+    TIDE_CHECK(posted_count == 0 && find_file("saved/boxes/7.bin"));
+    const uint32_t before = reads;
+    tide_session *again = tide_session_create(&(tide_session_desc){.game = &tide_game_api, .tick_rate = 60, .sample = sample, .io = &deferred});
+    tide_player_set in_it = {0};
+    tide_players_add(&in_it, (uint32_t)player);
+    tide_session_start_from(again, kept, in_it, t);
+    for (int frame = 0; frame < 300; frame++) {
+        t += 1.0 / 60.0;
+        tide_session_update(again, t);
+        if (frame % 3 == 2) run_posted();
+    }
+    server = tide_session_server_world(again);
+    TIDE_REQUIRE(server != NULL);
+    check_world(server);
+    TIDE_CHECK(reads - before == WAITING_LOADS + LOADS_AFTER);
+    tide_session_destroy(again);
+    tide_game_api.free_world(kept);
+    free(kept);
+    forget_files();
+}
+
+// The match's journal has each answer a task took, in the tick it took it: run again from the world it was recorded
+// from, every tick makes the server's world (tide_replay checks its hash), tasks and all, with no store to ask: a
+// replayed world is bound to none
+typedef struct recording {
+    tide_world *first;
+    uint8_t **records;
+    uint32_t *sizes;
+    uint32_t count, room;
+} recording;
+
+static void record_begin(void *user, const void *world, const uint32_t tick)
+{
+    recording *r = user;
+    (void)tick;
+    if (r->first) return; // The first world it's recorded from
+    r->first = calloc(1, tide_game_api.world_size);
+    TIDE_REQUIRE(r->first != NULL);
+    tide_game_api.copy_world(r->first, world);
+}
+
+static void record_tick(void *user, const uint32_t tick, const uint8_t *record, const uint32_t size, const void *world)
+{
+    recording *r = user;
+    (void)tick;
+    (void)world;
+    if (r->count == r->room) {
+        r->room = r->room ? r->room * 2u : 256u;
+        r->records = realloc(r->records, r->room * sizeof *r->records);
+        r->sizes = realloc(r->sizes, r->room * sizeof *r->sizes);
+        TIDE_REQUIRE(r->records && r->sizes);
+    }
+    r->records[r->count] = malloc(size ? size : 1u);
+    TIDE_REQUIRE(r->records[r->count] != NULL);
+    memcpy(r->records[r->count], record, size);
+    r->sizes[r->count++] = size;
+}
+
+TIDE_TEST(storage_await_a_replay_of_the_journal_gives_tasks_their_answers)
+{
+    forget_files();
+    put_locked();
+    recording r = {0};
+    tide_session *alone = tide_session_create(&(tide_session_desc){.game = &tide_game_api, .tick_rate = 60, .sample = sample, .io = &deferred});
+    double t = 0.0;
+    tide_session_start(alone, NULL, t);
+    tide_session_record(alone, &(tide_session_recorder){.user = &r, .begin = record_begin, .tick = record_tick});
+    for (int frame = 0; frame < 300; frame++) {
+        t += 1.0 / 60.0;
+        tide_session_update(alone, t);
+        if (frame % 5 == 4) run_posted(); // Answers in ticks of their own, not the next
+    }
+    const tide_world *server = tide_session_server_world(alone);
+    TIDE_REQUIRE(server != NULL && r.first != NULL && r.count > 60);
+    check_world(server);
+    tide_world *again = r.first;
+    bool same = true;
+    for (uint32_t i = 0; i < r.count && same; i++) same = tide_replay(&tide_game_api, again, r.records[i], r.sizes[i], NULL);
+    TIDE_CHECK(same);
+    check_world(again);
+    TIDE_CHECK(tide_game_api.hash_world(again) == tide_game_api.hash_world(server));
+    tide_session_destroy(alone);
+    for (uint32_t i = 0; i < r.count; i++) free(r.records[i]);
+    free(r.records);
+    free(r.sizes);
+    tide_game_api.free_world(again);
+    free(again);
+    forget_files();
+}
+
+// Hot reloading while the tasks wait: new code of the same layout, then another layout carried over, by the
+// platform's migration where it's linked (tide_migrate_world, as a reload does) and else by copying the world. The
+// tables swapped out are zeroed, so anything still using them would fail. The batches on their way are taken by the
+// build that runs when they're ready, and the tasks, carried over, get their answers once each
 static tide_game builds[3];
 static int migrations;
 
@@ -425,8 +545,27 @@ static bool copy_over(void *user, const void *from, void *to)
 {
     (void)user;
     migrations++;
+#ifdef STORAGE_MIGRATION
+    const uint32_t size = tide_game_api.pack_world(from, NULL, 0);
+    uint8_t *bytes = malloc(size ? size : 1u);
+    void *carried = NULL;
+    uint32_t carried_size = 0;
+    tide_migration m = {0};
+    if (!bytes || tide_game_api.pack_world(from, bytes, size) != size) {
+        free(bytes);
+        return false;
+    }
+    const bool ok = tide_migrate_world(&tide_game_layout, &tide_game_layout.match, bytes, size, &tide_game_layout,
+                                       &tide_game_layout.match, &carried, &carried_size, &m);
+    TIDE_CHECK(ok && m.tasks_dropped == 0 && m.entities_dropped == 0);
+    const bool unpacked = ok && tide_game_api.unpack_world(to, carried, carried_size);
+    free(carried);
+    free(bytes);
+    return unpacked;
+#else
     tide_world_copy(to, from);
     return true;
+#endif
 }
 
 TIDE_TEST(storage_await_waits_across_a_hot_reload)

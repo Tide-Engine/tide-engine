@@ -1142,6 +1142,7 @@ typedef struct io_post {
 static struct {
     io_post *first, *last;
     uint64_t posted, finished;
+    const void *running; // The context of the work the thread is doing, or NULL
     bool started;
 } posts;
 
@@ -1178,10 +1179,12 @@ static void *post_worker(void *unused)
         io_post *item = posts.first;
         posts.first = item->next;
         if (!posts.first) posts.last = NULL;
+        posts.running = item->context;
         unlock_posts();
         item->work(item->context);
         free(item);
         lock_posts();
+        posts.running = NULL;
         posts.finished++;
         wake_for_done();
         unlock_posts();
@@ -1220,12 +1223,27 @@ static bool backend_post(void *user, void (*work)(void *context), void *context)
     return true;
 }
 
-static void backend_settle(void *user)
+// Whether work posted with `context` is queued or running, under the lock: a short list, a server's batches on
+// their way
+static bool posted_still(const void *context)
+{
+    if (posts.running == context) return true;
+    for (const io_post *item = posts.first; item; item = item->next) {
+        if (item->context == context) return true;
+    }
+    return false;
+}
+
+static void backend_settle(void *user, const void *context)
 {
     (void)user;
     lock_posts();
-    const uint64_t posted = posts.posted;
-    while (posts.finished < posted) wait_for_done();
+    if (context) {
+        while (posted_still(context)) wait_for_done();
+    } else {
+        const uint64_t posted = posts.posted;
+        while (posts.finished < posted) wait_for_done();
+    }
     unlock_posts();
 }
 
@@ -1419,7 +1437,7 @@ const tide_io *tide_platform_io_init(const char *app_id, const char *directory)
     // A host has one app at a time. Same-app hot reload never enters here. Work on the provider's thread uses its
     // folders: what was posted is done first.
 #ifndef __wasm__
-    backend_settle(&state);
+    backend_settle(&state, NULL);
 #endif
     free(state.app_id);
     free(state.persistent);

@@ -6450,6 +6450,19 @@ static void gen_stored_await(gen *g, expr *e, const char *name, const int k)
     line(g, o, "tide_text_set(&tide_f->tide_stored_after, tide_stored_after%d, TIDE_IN_MATCH);", k);
     line(g, o, "tide_storage_ask(tide_w, %s, tide_stored_key%d, (tide_list){0}, tide_stored_after%d, TIDE_STORAGE_TO_TASK, "
                "tide_f->tide_stored_op);", kind, k, k);
+    // A key (a prefix, an `after`) the store refuses is asked nothing, and the server's log says so: nothing will
+    // answer it, so it fails now, with what the task has alone, the same on every machine
+    line(g, o, "if (!tide_storage_takes(%s, tide_stored_key%d, tide_stored_after%d)) {", kind, k, k);
+    g->indent++;
+    {
+        const type t = list ? g->prog->stored_list : g->prog->stored_load;
+        sb refused = {0};
+        sb_printf(&refused, "((%s){.error = (%s)TIDE_IO_INVALID_PATH})", c_type(t), c_type((type){TY_ENUM, g->prog->io_error}));
+        gen_spill(g, list ? "tide_f->tide_stored_list" : "tide_f->tide_stored_load", refused.data, t, "TIDE_IN_MATCH");
+    }
+    line(g, o, "tide_f->tide_stored_answered = 1;");
+    g->indent--;
+    line(g, o, "}");
     g->indent--;
     line(g, o, "}");
     line(g, o, "tide_stored_resume%d:;", k);
@@ -19576,7 +19589,12 @@ static void gen_frame_stored(gen *g, const task_info *ti)
     sb_put(o, "    (void)f;\n    (void)op;\n    return false;\n}\n\n");
     sb_printf(o, "TIDE_HELPER void tide_stored_ask_%s(tide_world *w, const %s *f)\n{\n", name, name);
     if (fn->awaits_store) {
-        sb_put(o, "    if (f->tide_stored_kind && !f->tide_stored_answered && !tide_entity_is_null(f->tide_stored_op)) {\n"
+        // Only what this function awaits: a frame from elsewhere (a checkpoint, another shard) that says another kind
+        // asks nothing, never a save or a delete
+        sb_printf(o, "    const bool tide_kind = %s;\n",
+                  fn->awaits_store == 3u ? "f->tide_stored_kind == TIDE_STORAGE_LOAD || f->tide_stored_kind == TIDE_STORAGE_LIST"
+                  : fn->awaits_store == 2u ? "f->tide_stored_kind == TIDE_STORAGE_LIST" : "f->tide_stored_kind == TIDE_STORAGE_LOAD");
+        sb_put(o, "    if (tide_kind && !f->tide_stored_answered && !tide_entity_is_null(f->tide_stored_op)) {\n"
                   "        tide_storage_ask(w, (uint32_t)f->tide_stored_kind, tide_text_view(f->tide_stored_key), (tide_list){0},\n"
                   "                         tide_text_view(f->tide_stored_after), TIDE_STORAGE_TO_TASK, f->tide_stored_op);\n"
                   "        return;\n    }\n");
