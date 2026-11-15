@@ -453,6 +453,13 @@ static void gen_client_hash_helpers(gen *g)
               "    if (pick) {\n        pick->busy = true;\n        pick->call = ++tide_client_memo_calls;\n        pick->kept = 0;\n    }\n"
               "    __atomic_store_n(&tide_client_memo_lock, 0u, __ATOMIC_RELEASE);\n"
               "    return pick;\n}\n\n"
+              "// A world that goes takes its memo with it (tide_world_free): a world made where it was is another, which what\n"
+              "// was kept of the first would be wrong about\n"
+              "TIDE_HELPER void tide_client_memo_forget(const void *world)\n{\n"
+              "    while (__atomic_exchange_n(&tide_client_memo_lock, 1u, __ATOMIC_ACQUIRE)) {\n    }\n"
+              "    for (uint32_t i = 0; i < tide_client_memo_count; i++) {\n"
+              "        if (tide_client_memos[i]->world == world && !tide_client_memos[i]->busy) tide_client_memo_clear(tide_client_memos[i]);\n    }\n"
+              "    __atomic_store_n(&tide_client_memo_lock, 0u, __ATOMIC_RELEASE);\n}\n\n"
               "// Once its entries have doubled since the last time, those whose pages changed go (what they were kept for is\n"
               "// gone or another value); then the memo is free again\n"
               "TIDE_HELPER void tide_client_memo_done(tide_client_memo *m, tide_heaps *heaps);\n\n");

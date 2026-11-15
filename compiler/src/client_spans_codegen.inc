@@ -89,7 +89,8 @@ static void gen_client_span_helpers(gen *g)
                  "    int64_t *group_ids;     // ...and a copy of them, by id\n    Audience *group_audiences;\n    uint32_t group_count;\n"
                  "    int64_t *changed;       // The groups whose audience changed since the call before, by id\n"
                  "    uint32_t changed_count, changed_room;\n"
-                 "    uint32_t call;\n    bool any;\n};\n\n", archetypes > 0 ? archetypes : 1);
+                 "    uint32_t call;\n    uint32_t tick;          // The world's tick they were kept at\n    bool any;\n};\n\n",
+              archetypes > 0 ? archetypes : 1);
     sb_printf(o, "TIDE_HELPER void tide_client_kept_free(struct tide_client_kept *k)\n{\n"
                  "    for (uint32_t a = 0; a < %du; a++) {\n        tide_client_rows *r = &k->rows[a];\n"
                  "        for (uint32_t i = 0; i < r->span_room; i++) {\n"
@@ -399,7 +400,7 @@ static void gen_client_hash_rows(gen *g, int *deniable, int *parts)
               "    const bool groups_changed = !kept->any || directory != kept->directory;\n"
               "    bool everyone = again || !kept->any || hs->poisoned || roots_fresh;\n"
               "    if (groups_changed && !tide_client_groups_diff(kept, w)) everyone = true;\n"
-              "    kept->directory = directory;\n    kept->any = true;\n"
+              "    kept->directory = directory;\n    kept->any = true;\n    kept->tick = (uint32_t)w->Time.tick;\n"
               "    tide_visibility_walk walk = {0};\n    tide_map_view_none(&walk.groups);\n");
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a)) continue;

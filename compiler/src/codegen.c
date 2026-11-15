@@ -25586,13 +25586,19 @@ static void gen_bits(gen *g, const char *at, const type t, const bits_mode mode,
 // with its storage zeroed, which tide/layout.h describes (its singletons and
 // inputs), then its entity table, each of its archetypes' tables in order, its
 // queue and its heap.
+static bool client_hash_heapy(const gen *g); // client_state_codegen.inc
+
 static void gen_world_bytes(gen *g, const bool local)
 {
     const program *prog = g->prog;
     sb *o = &g->c;
     const char *world = world_type(local);
     const char *prefix = local ? "tide_local_" : "tide_world_";
+    // What the projection hashes kept for the world (client_state_codegen.inc), defined with them
+    const bool memo = !local && prog->visibility_state && client_hash_heapy(g);
+    if (memo) sb_put(o, "TIDE_HELPER void tide_client_memo_forget(const void *world);\n\n");
     sb_printf(o, "void %sfree(%s *w)\n{\n    tide_entities_free(&w->entities);\n", prefix, world);
+    if (memo) sb_put(o, "    tide_client_memo_forget(w);\n");
     if (!local && rows_cache_count(g)) sb_put(o, "    tide_rows_cache_free(w->tide_rows_cache);\n    w->tide_rows_cache = NULL;\n");
     if (g->ix_any) sb_put(o, "    tide_index_cache_free(w->tide_index_cache);\n    w->tide_index_cache = NULL;\n");
     if (!local && g->prog->keeps_previous) sb_put(o, "    tide_previous_release(w, true);\n");

@@ -278,16 +278,28 @@ TIDE_TEST(visibility_projection_preserves_exact_affine_placement_at_hidden_bound
 
 // A repair of what changed (tide_game.client_changes), in a game with transform hierarchies: the links and anchors
 // a recipient has come as one section, whole, so changes to them alone (a parent hidden, its children anchored; a
-// child detached) repair as surely as changes to records, and the world comes out as a whole projection's load would
+// child detached) repair as surely as changes to records, and the world comes out as a whole projection's load would.
+// The changes are worked out twice: before the server's tick has a check, every row read, and after it, from what
+// the check kept of each row, as a session works them out; both alike, byte for byte
 static bool repaired_by_changes(const tide_world *base, const tide_world *server, const tide_world *client, tide_world *out)
 {
     const tide_player_id recipient = tide_player_from_index(0);
     uint32_t plan_size = 0, now_size = 0, was_size = 0, changed = 0, again_size = 0;
     uint8_t *now = NULL, *was = NULL;
     uint8_t *plan = tide_game_api.client_changes(server, base, server, recipient, &plan_size, &now, &now_size, &was, &was_size, &changed);
+    (void)tide_game_api.client_hash(server, recipient); // The tick's check, which keeps what each row came to
+    uint32_t kept_plan_size = 0, kept_now_size = 0, kept_was_size = 0;
+    uint8_t *kept_now = NULL, *kept_was = NULL;
+    uint8_t *kept_plan = tide_game_api.client_changes(server, base, server, recipient, &kept_plan_size, &kept_now, &kept_now_size,
+                                                      &kept_was, &kept_was_size, &changed);
+    bool ok = plan && kept_plan && kept_plan_size == plan_size && !memcmp(kept_plan, plan, plan_size) && kept_now_size == now_size
+              && !memcmp(kept_now, now, now_size) && kept_was_size == was_size && !memcmp(kept_was, was, was_size);
+    free(kept_plan);
+    free(kept_now);
+    free(kept_was);
     uint8_t *again = plan ? tide_game_api.client_changes_base(client, recipient, plan, plan_size, &again_size) : NULL;
     // The recipient makes `was` again from the world it confirmed, byte for byte
-    bool ok = plan && again && again_size == was_size && !memcmp(again, was, was_size);
+    ok = ok && again && again_size == was_size && !memcmp(again, was, was_size);
     tide_world_copy(out, client);
     ok = ok && tide_game_api.apply_client_changes(out, plan, plan_size, now, now_size, was, was_size);
     ok = ok && tide_game_api.client_hash(out, recipient) == tide_game_api.client_hash(server, recipient);
@@ -310,6 +322,36 @@ static bool repaired_by_changes(const tide_world *base, const tide_world *server
     return ok;
 }
 
+// What the hashes kept of a world's rows is that world's alone: a world made where a freed one was, at the tick the
+// first was hashed at and with no check since, has its rows read, not told what the first one's came to. Here the
+// first world's kept rows have the root, which the second has hidden from the recipient since
+TIDE_TEST(visibility_projection_changes_forget_a_freed_worlds_rows)
+{
+    tide_world server = {0}, base = {0}, client = {0}, repaired = {0};
+    tide_world_init(&server, 0.1f);
+    tide_world_tick(&server);
+    tide_world_tick(&server);
+    (void)tide_game_api.client_hash(&server, tide_player_from_index(0));
+    const int64_t hashed_at = (int64_t)server.Time.tick;
+    tide_world_free(&server);
+    tide_world_init(&server, 0.1f);
+    tide_world_tick(&server);
+    uint32_t size;
+    uint8_t *bytes = project(&server, 0, &size);
+    TIDE_REQUIRE(tide_game_api.load_client_state(&client, bytes, size));
+    free(bytes);
+    tide_world_copy(&base, &server);
+    server.Placement.hideRoot = true;
+    tide_world_tick(&server);
+    TIDE_CHECK((int64_t)server.Time.tick == hashed_at);
+    TIDE_CHECK(repaired_by_changes(&base, &server, &client, &repaired));
+    TIDE_CHECK(!tide_entity_alive(&repaired.entities, repaired.Control.root));
+    tide_world_free(&repaired);
+    tide_world_free(&client);
+    tide_world_free(&base);
+    tide_world_free(&server);
+}
+
 TIDE_TEST(visibility_projection_repairs_links_and_anchors_by_changes)
 {
     tide_world server = {0}, base = {0}, client = {0}, repaired = {0};
@@ -319,7 +361,9 @@ TIDE_TEST(visibility_projection_repairs_links_and_anchors_by_changes)
     uint8_t *bytes = project(&server, 0, &size);
     TIDE_REQUIRE(tide_game_api.load_client_state(&client, bytes, size));
     free(bytes);
-    // The root hidden from the recipient: it goes, and its children it has become roots with anchors
+    // The root hidden from the recipient: it goes, and its children it has become roots with anchors. The tick
+    // before was checked, so what was kept of each row is the tick before's, with the root
+    (void)tide_game_api.client_hash(&server, tide_player_from_index(0));
     tide_world_copy(&base, &server);
     server.Placement.hideRoot = true;
     tide_world_tick(&server);

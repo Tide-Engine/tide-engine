@@ -226,8 +226,10 @@ static void gen_client_changes(gen *g)
                   "    hs->heaps = (tide_heaps *)(uintptr_t)&b->heap;\n    tide_client_see(b, recipient, hs, &lb);\n"
                   "    tide_text_use((tide_heaps *)&w->heap, NULL);\n"
                   "    hs->heaps = (tide_heaps *)(uintptr_t)&w->heap;\n"
-                  "    // The world the match ticks, as its tick's check left it: what it kept of each row\n"
-                  "    if (w == lineage && memo && memo->world == lineage && memo->rows && memo->rows->any) tide_client_see_kept(w, recipient, memo->rows, hs, &ln);\n"
+                  "    // The world the match ticks, as this tick's check left it: what it kept of each row. Kept at another tick\n"
+                  "    // (no check since the world last ticked), what it kept is of another world, and each row is read\n"
+                  "    if (w == lineage && memo && memo->world == lineage && memo->rows && memo->rows->any\n"
+                  "        && memo->rows->tick == (uint32_t)w->Time.tick) tide_client_see_kept(w, recipient, memo->rows, hs, &ln);\n"
                   "    else tide_client_see(w, recipient, hs, &ln);\n"
                   "    tide_client_memo_done(memo, hs->heaps);\n    free(hs->out.data);\n    free(hs->reach);\n");
     } else {
