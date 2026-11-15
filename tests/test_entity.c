@@ -393,7 +393,7 @@ TIDE_TEST(entity_ordered_cache_survives_changes_and_snapshots)
     const uint64_t hash = tide_entities_hash(3, &t);
     tide_entities_copy(&snapshot, &t);
     const tide_entity *saved = tide_entities_ordered(&snapshot, &count);
-    TIDE_CHECK(saved != first && count == 3);
+    TIDE_CHECK(saved == first && count == 3); // A copy has its source's order until either changes
     TIDE_CHECK(tide_entities_hash(3, &t) == hash);
     tide_entity_forget(&t, first[1], true);
     tide_entity_destroy(&t, first[0]);
@@ -432,7 +432,7 @@ TIDE_TEST(entity_ordered_archetypes_cache_membership_lifetime_and_snapshot)
     const uint64_t hash = tide_entities_hash(7, &t);
     tide_entities_copy(&copy, &t);
     const tide_entity *saved = tide_entities_ordered_archetypes(&copy, same, 2, &count);
-    TIDE_CHECK(saved != first && count == 2 && tide_entities_hash(7, &t) == hash);
+    TIDE_CHECK(saved == first && count == 2 && tide_entities_hash(7, &t) == hash);
     const tide_entity *all = tide_entities_ordered(&t, &count);
     tide_entity_set_location(&t, c, (tide_location){2, 30});
     TIDE_CHECK(all == tide_entities_ordered(&t, &count));
@@ -446,6 +446,71 @@ TIDE_TEST(entity_ordered_archetypes_cache_membership_lifetime_and_snapshot)
     tide_entities_settle(&t);
     tide_entities_free(&copy);
     tide_entities_free(&t);
+}
+
+// A copy of a table has the orders made of it, sorted once for both: a world copied each tick sorts its entities
+// only when some came or went. Each side's changes are its own, and an order outlives whichever table lets go first.
+TIDE_TEST(entity_orders_are_shared_with_copies_until_either_changes)
+{
+    tide_entities t = {0}, copy = {0}, other = {0};
+    tide_entity made[6];
+    for (uint32_t i = 0; i < 6; i++) {
+        made[i] = tide_entity_create_key(&t, (tide_entity){1, 60 - i * 10});
+        tide_entity_set_location(&t, made[i], (tide_location){2 + i % 2, i});
+    }
+    const uint32_t two[] = {2}, both[] = {2, 3};
+    uint32_t count, copied;
+    const uint32_t *slots, *copied_slots;
+    const tide_entity *all = tide_entities_ordered(&t, &count);
+    TIDE_REQUIRE(count == 6 && tide_entity_equal(all[0], made[5]));
+    const tide_entity *evens = tide_entities_ordered_archetypes_slots(&t, two, 1, &count, &slots);
+    TIDE_REQUIRE(count == 3 && tide_entity_equal(evens[0], made[4]) && slots[0] == 4);
+
+    // The copy has both, and makes the one its source never made
+    tide_entity_create_key(&copy, (tide_entity){9, 9}); // What it had goes
+    (void)tide_entities_ordered(&copy, &copied);
+    tide_entities_copy(&copy, &t);
+    TIDE_CHECK(tide_entities_ordered(&copy, &copied) == all && copied == 6);
+    TIDE_CHECK(tide_entities_ordered_archetypes_slots(&copy, two, 1, &copied, &copied_slots) == evens && copied == 3
+               && copied_slots == slots);
+    const tide_entity *every = tide_entities_ordered_archetypes(&copy, both, 2, &copied);
+    TIDE_CHECK(copied == 6 && every != all && tide_entity_equal(every[5], made[0]));
+    TIDE_CHECK(tide_entities_ordered_archetypes(&t, both, 2, &count) != every && count == 6);
+
+    // The copy changes: its orders are made again, its source's are as they were
+    TIDE_REQUIRE(tide_entity_destroy(&copy, made[4]));
+    const tide_entity *fewer = tide_entities_ordered_archetypes_slots(&copy, two, 1, &copied, &copied_slots);
+    TIDE_CHECK(fewer != evens && copied == 2 && tide_entity_equal(fewer[0], made[2]) && copied_slots[0] == 2);
+    TIDE_CHECK(tide_entities_ordered(&copy, &copied) != all && copied == 5);
+    TIDE_CHECK(tide_entities_ordered(&t, &count) == all && count == 6);
+    TIDE_CHECK(tide_entities_ordered_archetypes_slots(&t, two, 1, &count, &slots) == evens && count == 3);
+    tide_entities_settle(&copy);
+    TIDE_CHECK(tide_entity_equal(evens[0], made[4]) && tide_entity_equal(all[0], made[5])); // Still the source's
+
+    // The source changes: a copy made before keeps what it had, one made after has the new
+    tide_entities_copy(&other, &t);
+    const tide_entity added = tide_entity_create_key(&t, (tide_entity){1, 5});
+    tide_entity_set_location(&t, added, (tide_location){2, 6});
+    const tide_entity *more = tide_entities_ordered_archetypes_slots(&t, two, 1, &count, &slots);
+    TIDE_CHECK(more != evens && count == 4 && tide_entity_equal(more[0], added) && slots[0] == 6);
+    TIDE_CHECK(tide_entities_ordered_archetypes(&other, two, 1, &copied) == evens && copied == 3);
+    tide_entities_copy(&copy, &t);
+    TIDE_CHECK(tide_entities_ordered_archetypes(&copy, two, 1, &copied) == more && copied == 4);
+
+    // An entity that moves to another archetype changes the subsets alone
+    tide_entity_set_location(&other, made[0], (tide_location){3, 9});
+    TIDE_CHECK(tide_entities_ordered(&other, &copied) == all && copied == 6);
+    const tide_entity *moved = tide_entities_ordered_archetypes(&other, two, 1, &copied);
+    TIDE_CHECK(moved != evens && copied == 2 && tide_entity_equal(moved[0], made[4]));
+
+    // The source settles and goes: the copies' orders are theirs
+    tide_entities_settle(&t);
+    tide_entities_free(&t);
+    TIDE_CHECK(tide_entity_equal(more[0], added) && tide_entity_equal(more[3], made[0]));
+    TIDE_CHECK(tide_entities_ordered_archetypes(&copy, two, 1, &copied) == more && copied == 4);
+    TIDE_CHECK(tide_entities_ordered(&other, &copied) == all && tide_entity_equal(all[5], made[0]));
+    tide_entities_free(&copy);
+    tide_entities_free(&other);
 }
 
 // A walk in the keys' order reads each entity's place from its slot, and a slot that's no longer the key's own

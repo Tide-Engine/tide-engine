@@ -182,6 +182,10 @@ static bench_flag flags[] = {
               "players'; the run fails on what they find; 0 never", 0, 60, 0, 0},
     {"forget", "1: the store keeps no chunk's save, and keeps the far regions', as a server that stopped before it "
                "saved its chunks would have", 0, 0, 0, 0},
+    {"watch", "1: counts the chunks that come to each bot's machine and times the box of a dimension it hops into, "
+              "outside every timing; 0 for a profiler, which would see the counting", 1, 1, 0, 0},
+    {"look", "bots of each hundred that turn a little every tick, as a player's mouse does: an input that changes "
+             "every tick, which goes to every player", 0, 0, 0, 0},
 };
 
 static uint32_t mix(uint32_t x)
@@ -218,6 +222,11 @@ static void sample(const bench_flag *f, const uint32_t bot, const uint32_t tick,
     const uint32_t tower = f[8].value * 60u;
     const uint32_t hop = tower ? 0u : f[3].value * 60u;
     c->hops = hop ? (int32_t)((tick + mix(bot) % hop) / hop) : 0;
+    // A mouse: a turn of its own each tick, a few thousandths of a radian as a hand makes them
+    if (mix(bot * 31337u + 5u) % 100u < f[15].value) {
+        const uint32_t turn = mix(bot * 2246822519u ^ tick);
+        c->look = (tide_float2){(float)((int32_t)(turn & 63u) - 32) * 0.003f, (float)((int32_t)((turn >> 6) & 31u) - 16) * 0.003f};
+    }
     if (mix(bot * 7919u + 1u) % 100u < f[4].value) return;
     const bool builds = mix(bot * 104729u + 3u) % 100u < f[7].value;
     // A direction along the ground for five seconds, from a table: no platform's sines
@@ -250,6 +259,8 @@ static uint32_t held(const void *world)
     EACH(w, e) count++;
     return count;
 }
+
+static void describe_watched(void);
 
 static void describe(const void *world)
 {
@@ -284,6 +295,7 @@ static void describe(const void *world)
            store_count, (unsigned long long)store_bytes, (unsigned long long)store_writes, (unsigned long long)store_reads,
            (unsigned long long)store_found);
     if (forget_chunks) printf("  chunks' saves forgotten (--forget): %llu\n", (unsigned long long)store_forgot);
+    describe_watched();
     if (!audit_every) return;
     printf("  far checks every %u ticks (--audit): %llu, %llu wrong\n", audit_every, (unsigned long long)audits,
            (unsigned long long)wrong);
@@ -296,6 +308,146 @@ static void describe(const void *world)
 static uint32_t tick_of(const void *world)
 {
     return (uint32_t)((const tide_world *)world)->Time.tick;
+}
+
+// What a bot's machine has, frame by frame (bench_desc.watch): the chunks that come to it, and how long the box
+// of a dimension it hops into takes to be there. A chunk came where the frame before didn't have its place.
+typedef struct place {
+    uint64_t key;   // Its dimension and place, plus 1: 0 is an empty slot
+    uint32_t frame; // The last frame it was here
+} place;
+
+typedef struct watcher {
+    place *places;
+    uint32_t room, count, frame;
+    uint64_t frames, came;
+    int32_t hops;    // As its input last asked
+    int32_t from;    // The dimension it left, while the one it hopped into fills; -1 otherwise
+    uint32_t since;  // Frames since that hop
+    bool most;       // Nine tenths of the box are there
+    int32_t home;    // The dimension most of its chunks were in, last frame
+} watcher;
+
+#define WATCHED 256u
+#define FILLS 4096u
+static watcher watchers[WATCHED];
+static float fills_most[FILLS], fills_all[FILLS];
+static uint32_t fills_most_count, fills_all_count, hops_seen, hops_unfilled;
+
+static place *place_slot(const watcher *w, const uint64_t key)
+{
+    for (uint32_t i = (uint32_t)((key * 0x9e3779b97f4a7c15ull) >> 40) & (w->room - 1u);; i = (i + 1u) & (w->room - 1u)) {
+        if (!w->places[i].key || w->places[i].key == key) return &w->places[i];
+    }
+}
+
+static int32_t hops_at(const bench_flag *f, const uint32_t bot, const uint32_t tick)
+{
+    const uint32_t hop = f[8].value ? 0u : f[3].value * 60u;
+    return hop ? (int32_t)((tick + mix(bot) % hop) / hop) : 0;
+}
+
+static void watch(const bench_flag *f, const uint32_t bot, const void *world)
+{
+    if (bot >= WATCHED || !f[14].value) return;
+    const tide_world *w = world;
+    watcher *me = &watchers[bot];
+    const uint32_t frame = ++me->frame;
+    const int32_t dimensions = w->Worlds.count;
+    uint32_t in[16] = {0}, other = 0, came = 0;
+    EACH(w, e)
+    {
+        if (!tide_has_Chunk(w, e)) continue;
+        const Chunk chunk = tide_get_Chunk(w, e);
+        if (chunk.dimension >= 0 && chunk.dimension < 16) in[chunk.dimension]++;
+        other += me->from >= 0 && chunk.dimension == (me->from + 1) % dimensions;
+        if ((me->count + 1u) * 2u > me->room) {
+            const uint32_t had = me->room;
+            place *was = me->places;
+            me->room = had ? had * 2u : 4096u;
+            me->places = calloc(me->room, sizeof *me->places);
+            if (!me->places) exit(1);
+            for (uint32_t i = 0; i < had; i++) {
+                if (was[i].key) *place_slot(me, was[i].key) = was[i];
+            }
+            free(was);
+        }
+        const uint64_t key = (((uint64_t)(uint32_t)chunk.dimension << 56) ^ ((uint64_t)((uint32_t)chunk.at.x & 0xfffffu) << 32)
+                              ^ ((uint64_t)((uint32_t)chunk.at.y & 0xfffu) << 20) ^ (uint64_t)((uint32_t)chunk.at.z & 0xfffffu))
+                             + 1u;
+        place *p = place_slot(me, key);
+        if (!p->key) {
+            p->key = key;
+            me->count++;
+        }
+        came += p->frame + 1u != frame;
+        p->frame = frame;
+    }
+    me->frames++;
+    me->came += came;
+
+    // A hop: the tick this machine's input first asks for another dimension, to the frame it has the box there
+    const uint32_t near = f[0].value, tall = f[1].value;
+    const uint32_t box = (2u * near + 1u) * (2u * near + 1u) * (2u * tall + 1u);
+    const int32_t hops = hops_at(f, bot, tick_of(world));
+    if (frame == 1u) {
+        me->hops = hops;
+        me->from = -1;
+    }
+    if (hops != me->hops) {
+        if (me->from >= 0) hops_unfilled++;
+        me->hops = hops;
+        me->from = me->home;
+        me->since = 0;
+        me->most = false;
+        hops_seen++;
+        other = 0;
+    } else if (me->from >= 0) {
+        me->since++;
+        if (!me->most && other * 10u >= box * 9u) {
+            me->most = true;
+            if (fills_most_count < FILLS) fills_most[fills_most_count++] = (float)me->since;
+        }
+        if (other >= box) {
+            if (fills_all_count < FILLS) fills_all[fills_all_count++] = (float)me->since;
+            me->from = -1;
+        }
+    }
+    int32_t home = 0;
+    for (int32_t i = 1; i < 16; i++) home = in[i] > in[home] ? i : home;
+    me->home = home;
+}
+
+static int compare_fills(const void *a, const void *b)
+{
+    const float x = *(const float *)a, y = *(const float *)b;
+    return (x > y) - (x < y);
+}
+
+// After the server's own lines: what came to the bots' machines
+static void describe_watched(void)
+{
+    uint64_t frames = 0, came = 0;
+    for (uint32_t i = 0; i < WATCHED; i++) {
+        frames += watchers[i].frames;
+        came += watchers[i].came;
+        hops_unfilled += watchers[i].frames && watchers[i].from >= 0;
+    }
+    if (!frames) return;
+    const double seconds = (double)frames / 60.0;
+    const double cells = 16.0 * 16.0 * 16.0; // A Block is a byte
+    printf("  a bot's machine: %.1f chunks came to it a second, %.1f KB a second as their cells alone (%g bytes each)\n",
+           (double)came / seconds, (double)came * cells / seconds / 1e3, cells);
+    if (!hops_seen) return;
+    qsort(fills_most, fills_most_count, sizeof *fills_most, compare_fills);
+    qsort(fills_all, fills_all_count, sizeof *fills_all, compare_fills);
+    printf("  after a hop (%u of them): nine tenths of the box there in ", hops_seen);
+    if (fills_most_count) printf("%.0f ticks median, %.0f at most", fills_most[fills_most_count / 2u], fills_most[fills_most_count - 1u]);
+    else printf("-");
+    printf("; all of it in ");
+    if (fills_all_count) printf("%.0f median, %.0f at most", fills_all[fills_all_count / 2u], fills_all[fills_all_count - 1u]);
+    else printf("-");
+    printf("; %u never had it all before the next hop or the end\n", hops_unfilled);
 }
 
 int main(int argc, char **argv)
@@ -312,6 +464,7 @@ int main(int argc, char **argv)
         .describe = describe,
         .held = held,
         .tick_of = tick_of,
+        .watch = watch,
         .io = &store_io,
     };
     const int code = bench_main(&desc, argc, argv);

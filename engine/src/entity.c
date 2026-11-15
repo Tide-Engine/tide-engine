@@ -28,12 +28,21 @@ struct tide_entity_index
     tide_page *page[];
 };
 
+// An order is of the table it was made in and of every copy of that table (tide_entities_copy), until each
+// changes which entities it has: they share it, and the last to let go frees it. Nothing writes one once made.
 struct tide_entity_order
 {
-    struct tide_entity_order *next;
+    uint32_t refs; // Tables that have it as theirs or as one they retired
     uint32_t count;
     const uint32_t *slots; // A subset's (tide_entities_ordered_archetypes_slots): each key's slot, after the keys
     tide_entity keys[];
+};
+
+// One a table's change put aside: borrowed arrays stay valid until the table settles
+struct tide_entity_retired_order
+{
+    struct tide_entity_retired_order *next;
+    struct tide_entity_order *order;
 };
 
 struct tide_entity_filtered_order
@@ -44,14 +53,32 @@ struct tide_entity_filtered_order
     uint32_t archetypes[];
 };
 
+static struct tide_entity_order *order_retain(struct tide_entity_order *order)
+{
+    if (order)
+        __atomic_add_fetch(&order->refs, 1u, __ATOMIC_RELAXED);
+    return order;
+}
+static void order_release(struct tide_entity_order *order)
+{
+    if (order && __atomic_sub_fetch(&order->refs, 1u, __ATOMIC_ACQ_REL) == 0u)
+        free(order);
+}
+// The table's reference becomes its retired list's
+static void order_retire(tide_entities *t, struct tide_entity_order *order)
+{
+    struct tide_entity_retired_order *retired = tide_alloc(sizeof *retired);
+    retired->next = t->retired_order;
+    retired->order = order;
+    t->retired_order = retired;
+}
 static void filtered_invalidate(tide_entities *t)
 {
     for (struct tide_entity_filtered_order *f = t->filtered_order; f; f = f->next)
     {
         if (!f->order)
             continue;
-        f->order->next = t->retired_order;
-        t->retired_order = f->order;
+        order_retire(t, f->order);
         f->order = NULL;
     }
 }
@@ -60,7 +87,7 @@ static void filtered_free(struct tide_entity_filtered_order *f)
     while (f)
     {
         struct tide_entity_filtered_order *next = f->next;
-        free(f->order);
+        order_release(f->order);
         free(f);
         f = next;
     }
@@ -77,17 +104,17 @@ static void order_invalidate(tide_entities *t)
     filtered_invalidate(t);
     if (!t->ordered)
         return;
-    t->ordered->next = t->retired_order;
-    t->retired_order = t->ordered;
+    order_retire(t, t->ordered);
     t->ordered = NULL;
 }
-static void order_free(struct tide_entity_order *order)
+static void retired_free(struct tide_entity_retired_order *retired)
 {
-    while (order)
+    while (retired)
     {
-        struct tide_entity_order *next = order->next;
-        free(order);
-        order = next;
+        struct tide_entity_retired_order *next = retired->next;
+        order_release(retired->order);
+        free(retired);
+        retired = next;
     }
 }
 static int entity_compare_qsort(const void *a, const void *b);
@@ -105,7 +132,7 @@ const tide_entity *tide_entities_ordered(const tide_entities *entities, uint32_t
         if ((uint64_t)n * sizeof(tide_entity) > SIZE_MAX - sizeof(struct tide_entity_order))
             tide_out_of_memory();
         struct tide_entity_order *order = tide_alloc(sizeof *order + (size_t)n * sizeof(tide_entity));
-        order->next = NULL;
+        order->refs = 1u;
         order->count = n;
         order->slots = NULL;
         uint32_t out = 0;
@@ -183,7 +210,7 @@ const tide_entity *tide_entities_ordered_archetypes_slots(const tide_entities *e
         struct tide_entity_order *order = tide_alloc(sizeof *order + (size_t)selected * (size_t)each);
         ordered_slot *sorted = selected ? tide_alloc((size_t)selected * sizeof *sorted) : NULL;
         uint32_t *order_slots = (uint32_t *)(order->keys + selected);
-        order->next = NULL;
+        order->refs = 1u;
         order->count = selected;
         order->slots = order_slots;
         uint32_t out = 0;
@@ -436,7 +463,7 @@ static void make_room(tide_entities *t, uint32_t pages)
 void tide_entities_settle(tide_entities *t)
 {
     order_lock(t);
-    order_free(t->retired_order);
+    retired_free(t->retired_order);
     t->retired_order = NULL;
     order_unlock(t);
     if (t->page)
@@ -798,10 +825,29 @@ void tide_entities_copy(tide_entities *to, const tide_entities *from)
         tide_page_release(to->page[to->room + p], 1);
     }
     tide_entities_settle(to);
-    order_free(to->ordered);
-    to->ordered = NULL;
+    order_release(to->ordered);
     filtered_free(to->filtered_order);
+    // The orders made of `from` as it is are the copy's too: the same entities in the same slots. A world that's
+    // copied each tick (a predicting client's, a server's kept ticks) would otherwise sort every entity it has
+    // again for each system and query, each tick, though nothing came or went.
+    tide_entities *source = (tide_entities *)from; // Its orders are derived: see tide_entities_ordered
+    order_lock(source);
+    to->ordered = order_retain(source->ordered);
     to->filtered_order = NULL;
+    struct tide_entity_filtered_order **last = &to->filtered_order;
+    for (const struct tide_entity_filtered_order *f = source->filtered_order; f; f = f->next)
+    {
+        if (!f->order)
+            continue;
+        struct tide_entity_filtered_order *mine = tide_alloc(sizeof *mine + (size_t)f->count * sizeof *f->archetypes);
+        mine->next = NULL;
+        mine->order = order_retain(f->order);
+        mine->count = f->count;
+        memcpy(mine->archetypes, f->archetypes, (size_t)f->count * sizeof *f->archetypes);
+        *last = mine;
+        last = &mine->next;
+    }
+    order_unlock(source);
     index_free(to->index);
     index_free(to->births);
     make_room(to, from->pages);
@@ -863,7 +909,7 @@ void tide_entities_free(tide_entities *t)
         tide_page_release(t->page[t->room + p], 1);
     }
     tide_entities_settle(t);
-    order_free(t->ordered);
+    order_release(t->ordered);
     filtered_free(t->filtered_order);
     if (t->page)
         free(t->page - 1);

@@ -279,8 +279,160 @@ Game code, over the engine's new `priority:` on a local worker's call (notes/lan
 - **The same pictures and work**: `--frames 300 --capture` and the capture at the end of the script above are the same bytes before and after; 795 worker jobs in 300 frames both, 0.44 to 0.47 ms each on a worker, waiting 0.38 to 0.44 ms in the queue against 0.40 to 0.46 (`--profile`, two runs each).
 - **Not measured**: a view farther than the game's 4 chunks, a window at 60 Hz (where threads have time to spare and admission is what's left), a machine with two cores for real (affinity leaves the pool its 11 threads), and a walk (chunks come a row at a time there).
 
+## At scale (2026-11-16)
+
+Whether the game "runs and handles it" past the sizes measured above (8 bots, 845 chunks a player): the view two and three times as far, 16, 32 and 64 players, one and two threads, two cores, and a player's own frame at 1920 by 1080. Release, Windows, a 12-core Ryzen 9 7900X shared with another agent's builds, which were idle during these runs (the machine's load read 1 to 2% before each set); `bench_voxels` with its defaults but what each row says (30 s once everyone's in, 50 ms each way, 10 ms of jitter, 1% lost), three runs each and their median unless it says one run; counts and bytes are the same every run. Times are a machine's own work, one after another on one thread (bench/bench.h), so the server's are a dedicated server's and a bot's are a player's machine's without its views.
+
+What the bench gained for it (bench/README.md): the server's repairs are timed (they were in no column: a third of its update), an update's time in all and what the columns leave of it, what each bot is sent by kind of datagram, the chunks that come to a bot's machine and what their cells alone would be, how long a box takes to be there after a hop (`bench_desc.watch`, voxels' `--watch`), and bots that turn every tick as a mouse does (`--look`).
+
+### In short
+
+- **It runs.** The default (8 players, 845 chunks each) holds 60 ticks a second with room: the server's update 0.97 ms median and 5.8 ms p99, on one thread as on twelve, and held to two cores; a player's machine 0.09 ms median and 1.7 ms p99 for its ticks, and its whole frame at 1080p 0.2 ms median, 12 ms at worst. 32 players hold it barely (p99 15.7 ms); 64 don't (p99 43 to 47 ms). Twice the view holds it barely (p99 14.7 ms); three times doesn't (30 ms, and a client's verified world falls 70 ticks behind, past the 60 it predicts ahead).
+- **Chunks cost 137 to 147 bytes each as sent**, a thirtieth of their cells, whatever the view or the player count. That part of the bandwidth is not high.
+- **What is high is every player's input in every tick's frame, sent again in each datagram until it's acknowledged** (below, Bandwidth): nothing with bots, whose inputs change every five seconds; 13 to 44 KB a second to each player once all eight turn every tick as a mouse does. And a part lost from a repair of more than 64 parts has the parts after it sent twice: 2% more at the default view, 28% at twice, 40% at three times, with 1% lost.
+- **What limits players** is the server's repairs: each walks every entity the server has, for each player, four times a second, so their cost goes with players times all chunks (half the server's update at 64 players). **What limits the view** is the same walk and the loops' indexes, made again whole whenever a chunk comes or goes, and on a client the ticks it runs again while a whole view arrives.
+- **Fixed here**: a predicting client sorted every entity it has again for each system and query, every tick, because a world's copy dropped its orders: half a client's simulating (18.4 to 9.6 ms a second at the default view, 122 to 55 at three times; its update's p99 2.5 to 1.7 ms).
+
+### 1. View distance (8 bots; `--near 6`, `12`, `18 --lag 1200`)
+
+| | near 6 | near 12 | near 18 |
+|---|---|---|---|
+| Chunks a player has / the server has | 845 / 6,490 | 3,125 / 17,599 | 6,845 / 31,857 |
+| The server's world in memory | 20.2 MB | 54.9 MB | 105.3 MB |
+| The process at most (server and 8 clients) | 547 MB | 1,358 MB | 2,553 MB |
+| Server update, median / p99 / longest, ms | 0.97 / 5.80 / 14.6 | 2.63 / 14.7 / 26.4 | 5.05 / 30.5 / 57.0 |
+| Server, ms a second: simulate / hashing / repairs / snapshots / the rest | 33.2 / 9.7 / 21.8 / 1.6 / 7.2 | 86.5 / 24.4 / 67.5 / 4.0 / 13.1 | 164 / 53.4 / 142 / 8.3 / 22.3 |
+| ...in all | 73.5 | 195 | 391 |
+| A repair, each (33, 33 and 32 a second) | 0.66 ms | 2.07 ms | 4.5 ms |
+| A client's update, median / p99 / longest, ms | 0.09 / 1.66 / 8.1 | 0.28 / 4.87 / 23.7 | 0.54 / 9.58 / 56.5 |
+| A client, simulating, ms a second | 9.6 | 29.4 | 55.3 |
+| Sent to each player, KB a second | 23.4 | 72.9 | 159.7 |
+| ...repairs' parts / ticks / the rest (one run) | 18.4 / 3.2 / 1.7 | 68.1 / 3.1 / 1.8 | 155.0 / 2.9 / 1.8 |
+| ...what its machine got of worlds (each part once) | 18.0 | 53.0 | 110.7 |
+| Chunks that came to a player's machine a second | 131.7 | 385.8 | 755.3 |
+| ...as their cells alone (4,096 bytes each) | 540 KB | 1,580 KB | 3,094 KB |
+| Bytes a chunk, as got | 137 | 137 | 147 |
+| After a hop, nine tenths of the box there, ticks: median (most) | 28 (39) | 40 (79) | 62 (140) |
+| ...all of it | 32 (56) | 47 (85) | 67 (207), one never before the next hop |
+| A client's verified world behind the server's at most, ticks | 41 | 53 | 70 |
+
+- **Nothing grows faster than the chunks.** With 3.7 and 8.1 times the chunks a player (2.7 and 4.9 times the server's), the server's simulating is 2.6 and 4.9 times, its hashing 2.5 and 5.5, its repairs 3.1 and 6.5, what's sent 3.1 and 6.8, a client's simulating 3.1 and 5.8. The server's simulating is 85 ns a chunk it holds a tick at every size, though only a few dozen come or go in a tick: see What costs a chunk that's only held, below.
+- **What breaks first is the 60 Hz tick**, at three times the radius: the server's p99 30 ms. At twice it holds at p99 (14.7 ms; 14.1 to 17.1 over the three runs) with one update in a hundred near the whole frame.
+- **A whole view arriving** (a join, a hop) is the other: a client's verified world falls behind while it comes, by 41, 53 and 70 ticks. A client predicts at most a second past what it knows (`PREDICTION_SECONDS`), so past 60 ticks its player's own input waits; the bench stops a run at 60 unless `--lag` says more, and `--near 18` needs it. Two things make the wait: the store answers 64 chunks a tick (section 3: 3,125 chunks take 49 ticks, 6,845 take 107), and a stream of repairs is sent every 2, 4, 8, then 15 ticks (`repair_gap_after`), each a round trip. With no loss the same runs are 25 and 30 ticks behind at near 6 and 12 (one run each): a lost part of a repair is most of the rest.
+- **A client's longest update** (8, 24 and 57 ms) is the ticks it runs again when such a repair lands: as many ticks as it was behind, each costing what its world holds.
+
+### 2. Players (the default view; `--players 16`, `32`, and 64 with `maxPlayers = 64` in a build not kept)
+
+| | 8 | 16 | 32 | 64 (one run of each of three) |
+|---|---|---|---|---|
+| Chunks the server has | 6,490 | 7,717 | 12,669 | 17,598 |
+| The server's world in memory | 20.2 MB | 26.4 MB | 36.8 MB | 54.0 MB |
+| Server update, median / p99 / longest, ms | 0.97 / 5.80 / 14.6 | 2.03 / 9.51 / 15.6 | 3.71 / 15.7 / 31.9 | 7.0 to 7.9 / 43 to 47 / 62 to 69 |
+| Server, ms a second: simulate / hashing / repairs / snapshots / the rest | 33.2 / 9.7 / 21.8 / 1.6 / 7.2 | 52.2 / 18.5 / 50.3 / 3.6 / 13.6 | 74.7 / 31.9 / 101.8 / 5.7 / 26.2 | 111 to 124 / 56 to 67 / 234 to 264 / 10 to 12 / 53 to 58 |
+| ...in all | 73.5 | 138 | 240 | 464 to 525 |
+| Repairs a second, and each | 33, 0.66 ms | 63, 0.80 ms | 113, 0.90 ms | 201, 1.2 to 1.3 ms |
+| A client's update, median / p99 / longest, ms | 0.09 / 1.66 / 8.1 | 0.11 / 1.92 / 7.4 | 0.12 / 2.11 / 10.4 | 0.11 to 0.15 / 2.0 to 2.8 / 12 to 13 |
+| Sent to each player, KB a second | 23.4 | 23.9 | 26.6 | 29.6 |
+| After a hop, nine tenths of the box, ticks: median (most) | 28 (39) | 26 (45) | 27 (43) | 27 (55), 4 of the hops never whole |
+
+- The bots start in one place and wander 30 seconds, so more of them share more chunks: 16 bots hold 1.2 times what 8 do, 32 hold 2.0, 64 hold 2.7. Players spread over a world hold 845 each, and everything below that goes with all chunks would be that much worse: these runs are the friendly case.
+- **Per player nothing changes**: a client's update, what it's sent (23 to 30 KB a second; more players building near each other), how long a hop takes.
+- **The server's update doubles with the players**, and its repairs more than double: 21.8, 50.3, 101.8 and about 250 ms a second, a third of its update at 8 players and half at 64. A repair is worked out for one player and costs 70 to 95 ns for every entity the server has (`tide_game_client_changes`: `tide_client_see` reads every row of the world the player confirmed, working out its audience, and the world as it is from what the tick's check kept), so the repairs' cost goes with players times all entities. 32 players spread out (27,000 chunks) would be about 270 ms a second by that, and 64 (54,000) more than a second a second.
+- **32 players are the most that hold 60 Hz here** (p99 15.7 ms, 14.8 to 15.8 over three runs); 64 run, nobody's world goes wrong, and one update in a hundred takes three frames.
+- `maxPlayers` is 32 in the game: the 64 was a build with it changed, which moves the world's layout and the pinned hashes, so it isn't kept.
+
+### 3. A small machine (the default run; `--threads 1`, `2`, `4`; the process held to two cores by its affinity)
+
+| | 12 threads | 4 | 2 | 1 | two cores, 12 threads | two cores, 2 threads | two cores, 1 thread |
+|---|---|---|---|---|---|---|---|
+| Server update, median / p99 / longest, ms | 0.99 / 6.05 / 17.4 | 0.96 / 6.13 / 16.3 | 0.98 / 5.88 / 14.5 | 0.89 / 5.70 / 13.8 | 1.02 / 6.11 / 16.3 | 1.01 / 6.34 / 15.7 | 1.03 / 6.34 / 16.3 |
+| Server, simulating, ms a second | 34.3 | 33.8 | 34.4 | 30.3 | 34.7 | 35.5 | 34.3 |
+| A client's update, median / p99 / longest, ms | 0.10 / 1.73 / 8.2 | 0.08 / 1.56 / 7.6 | 0.09 / 1.55 / 7.7 | 0.06 / 1.29 / 6.8 | 0.10 / 1.77 / 9.0 | 0.09 / 1.59 / 7.9 | 0.07 / 1.43 / 8.2 |
+| A client, simulating, ms a second | 10.1 | 8.7 | 8.8 | 6.3 | 10.2 | 8.9 | 6.9 |
+
+- **A 60 Hz tick holds on one thread and on two cores**: p99 under 6.4 ms everywhere, the longest of 1,900 updates 14 to 17 ms.
+- **The tick gains nothing from threads, and loses a little**: one thread is the quickest for the server (30.3 against 34.3 ms a second) and by a third for a client (6.3 against 10.1). What a tick does here is spawn, load, repair and hash, a thread's work each; `Generate` goes across threads only on the ticks that make chunks, and a tick with nothing to make still hands it out in pieces (Gaps, A system that writes grids). A server for this game wants a fast core, not many.
+
+### 4. A player's own frame (`voxels_near4`, `8`, `12`: the version to play at 1920 by 1080 with no window, its server in the same process)
+
+`-DTIDE_VOXELS_VIEWS="4;8;12"` builds them (`VOXELS_NEAR`, and `VOXELS_MEASURE=1` for play.tide's own counts). Standing at the start for 600 frames, and walking for 1,100 with a hop at frame 500, `--profile`, three runs each (the first and last of each number below). A run with no window isn't paced: each frame is a tick, made as fast as it goes (about a millisecond), and the host has no way to hold one to 60 Hz (`--realtime` was turned down, notes/standard-host.md), so workers get a sixteenth of the time a real frame gives them and "frames" below are ticks.
+
+| | near 4 (405 chunks) | near 8 (1,445) | near 12 (3,125) |
+|---|---|---|---|
+| Frame's CPU, standing: median / p95 / longest, ms | 0.21 to 0.22 / 0.85 to 1.12 / 10.9 to 12.6 | 0.54 to 0.58 / 3.6 to 3.7 / 30.9 to 39.6 | 1.10 to 1.15 / 5.9 to 6.2 / 57.4 to 59.2 |
+| ...walking, with a hop | 0.24 / 1.6 to 1.8 / 12.3 to 21.4 | 0.62 to 0.68 / 4.2 to 5.1 / 30.2 to 34.4 | 1.63 to 1.98 / 10.9 to 11.1 / 58.2 to 61.6 |
+| Of it, walking: the match (the server's tick and this machine's), median / p95 / longest | 0.07 / 0.15 to 0.18 / 9.4 to 16.7 | 0.10 to 0.13 / 1.1 to 1.3 / 25.7 to 29.8 | 0.21 to 0.23 / 6.0 / 55.5 to 60.3 |
+| ...the views | 0.14 / 0.9 to 1.0 / 7.6 to 8.4 | 0.45 to 0.48 / 3.2 to 3.5 / 9.6 to 10.8 | 1.26 to 1.52 / 4.8 to 5.1 / 21.8 to 22.5 |
+| ...the renderer's CPU | 0.03 / 0.06 / 10.9 to 12.2 | 0.05 / 0.21 to 0.27 / 9.6 to 9.9 | 0.12 / 0.42 to 0.48 / 11.5 |
+| GPU, median / p95, ms (RTX 4080 SUPER) | 0.04 / 0.04 | 0.05 / 0.07 | 0.08 / 0.18 |
+| Triangles drawn a frame, standing (chunks in view and the far ground) | 146,000 | 278,000 | 465,000 |
+| Faces made on workers, standing: jobs, each, in all | 795, 0.43 to 0.45 ms, 0.35 s | 3,040, 0.39 to 0.40 ms, 1.2 s | 6,766, 0.38 to 0.40 ms, 2.6 to 2.7 s |
+| The process at most, standing / after the hop | 248 / 365 MB | 410 to 424 / 695 MB | 653 to 680 / 1,187 MB |
+| From the start: the 125 chunks around the player have faces / all chunks here / all have faces, frames | 9 / 9 / 12 | 19 / 25 / 33 | 34 / 51 / 73 to 76 |
+| After the hop | 12 / 8 / 16 | 28 / 24 / 62 | 57 to 62 / 50 / 140 to 143 |
+
+- **A 60 Hz player sees a steady frame**: its CPU is a fiftieth of a frame at the default view and a tenth at three times the chunks' radius, the GPU nothing. Fewer than one frame in twenty passes 16.6 ms at any size (p95 is 11 ms at most; the profile has no count of them).
+- **And a hitch as a whole view is asked for**: the longest frame is the tick a box of chunks is spawned in on the machine that hosts (the match's part of it: 9 to 17 ms for 405 chunks, 26 to 35 for 1,445, 53 to 60 for 3,125). One frame late at the default view after a hop, two at twice the radius, three or four at three times. A player of someone else's server doesn't make that tick; theirs is the bots' client row of table 1.
+- **Chunks appear at the store's pace**: 64 a tick, so a box is all there after 9, 25 and 51 frames (0.15, 0.4 and 0.85 s at 60 Hz), the ones around the player first (section 13), and has its faces 3, 8 and 25 frames after that here, where workers have a millisecond a frame; at 60 Hz the faces of a tick's 64 chunks (26 ms of workers' time, half as much again for the ones made twice) fit in the frame they come in on three workers.
+- Each chunk's faces are made 1.5 times over at these sizes (1.4 at the default: Gaps, Faces across chunk edges), and the `Chunks` view looks at every chunk the machine has each frame (0.12, 0.40 and 0.87 ms a frame standing).
+- Held to two cores (affinity), walking with the hop: the same within the runs' spread (near 4: 0.24 / 1.5 / 12.3 ms; near 12: 1.56 / 10.5 / 59.0).
+
+### 5. Bandwidth
+
+What a player is sent at the default view, 23.4 KB a second: 18.4 of repairs' parts (the chunks), 3.2 of ticks, 1.7 of what came and went for its local handlers. It sends 7.1.
+
+- **Chunks: 137 bytes each.** 131.7 chunks come to a player's machine a second (about 65 from flying at 12 cells a second, 42 from a hop every 20 s, the rest its first box, joining), which is 540 KB a second of cells; they're sent as 18.0 KB, a thirtieth. Without hops, 89.5 chunks and 12.4 KB a second (139 bytes each). At twice and three times the view, 137 and 147 bytes each. A box of mostly air and stone is mostly chunks of one block (13 bytes as `ToBytes` writes one, section 4) around a layer of ground of a few hundred, plus each chunk's record: nothing abnormal, and nothing more to take without compressing across chunks.
+- **A lost part costs more than itself in a big repair.** A repair goes in parts of 1,000 bytes, 64 an update, acknowledged by the first part missing and a mask of the 64 after it (`send_chunks`). A part lost from a longer repair holds the acknowledgement where it is, and every part past the mask, which the client has and can't say so, is sent again once it's 1.5 round trips old. With 1% lost: 18.4 KB a second of parts for 18.0 got at near 6 (2% more), 68.1 for 53.0 at near 12 (28%), 155.0 for 110.7 at near 18 (40%); with none lost, 51.8 for 53.1 at near 12. A whole box is 116 KB at the default view (116 parts), 430 KB at twice. Not changed here: holding those parts back until the mask reaches them would make a lossy join slower (each hole a round trip after the one before), and a wider mask is a protocol change.
+- **Every player's input, in every frame, again and again.** A tick's frame has the inputs that changed, for every player, whether the recipient has that player's avatar or not. While the frames a client hasn't acknowledged fit in one datagram together, all of them go in every datagram (`send_frames`: `again` is 0 while `lacking + 32 <= TIDE_NET_MTU`); once they don't, each goes once, and again after 1.5 round trips. At this round trip (133 ms) that's 8 or 9 frames a datagram. The bots' inputs change every five seconds, so the table's ticks are small: 115 bytes a datagram standing still (6.4 KB a second), with 8 players as with 32. With every bot turning every tick as a mouse does (`--look 100`):
+
+  | KB a second to each player | 8 players, flying | 8, standing | 32, flying | 32, standing |
+  |---|---|---|---|---|
+  | Ticks, bots as they are | 3.2 | 6.4 | 3.6 | 5.7 |
+  | Ticks, every bot turning every tick | 16.5 | 44.0 | 13.0 | 18.9 |
+  | All it's sent, turning | 37.4 | 46.8 | 38.4 | 21.0 |
+  | What it sends, as they are / turning | 7.1 / 11.7 | 4.9 / 8.0 | 7.2 / 11.9 | 4.9 / 8.0 |
+
+  Eight players who only look around cost each other 44 KB a second each, 790 bytes a datagram, where what's new in a tick is about 80 bytes by the same sum (eight inputs of two floats; not counted apart): the same frames eight or nine times over. With 32 the frames no longer fit a datagram together, so each goes once (385 bytes a datagram), which is why 32 players standing cost each other less than 8 do; and with repairs coming (flying) fewer ticks are sent at all (22 datagrams a second, not 56). This is the one number here that is abnormally high, and it's the one a real session would have: one run each, the bots' turns random, a hand's smoother. It's the session's way of losing no tick to a lost datagram: a frame that goes once and is lost comes 1.5 round trips late, and the others' inputs are guessed meanwhile. What would change it is the owner's to weigh: a frame sent a set number of times (twice loses one tick in ten thousand to 1% loss, for two copies rather than nine), a smaller size past which frames go once, or inputs only of the players a machine has.
+- **Far regions, repairs against first sends**: as section 10 has them (0.5 to 1 KB a second where bots build); a repair here is almost all first sends, as a client can't predict a chunk it hasn't. The server's own count of what a player's machine got and the parts it sent agree within 2% at the default view.
+
+### What costs a chunk that's only held
+
+Three things make a tick cost what the world holds rather than what changed, found with `tide_sample` and counters put in for a run (taken out again):
+
+- **A world's copy dropped its entities' orders** (fixed, below).
+- **A loop's index is made again whole when any page of its key changes** (notes/indexed-loops.md, Gaps), and each world has its own. A server's chunks come and go every tick, so `Has`, `Find` and `Firm`'s indexes of every chunk are made about twice a tick: 5.3 of its 30.7 ms a second of simulating at near 6 on one thread, 19.6 of 83.6 at near 12. A client ticks a copy of its world each tick (`world_at(c, tick + 1)`), whose indexes are the ones that slot of its ring had the last time round, older than the last repair: 1.7 made a tick, 2.3 of a client's 13.1 ms a second at near 6 before the fix below, 9.8 of 47.8 at near 12. Not changed: an index that takes in what came and went (per chunk of the table) or a copy that takes its source's indexes with it are both the compiler's and the runtime's (`index_codegen.inc`, `engine/src/index.c`), and want their own task.
+- **A repair reads every row of the server's world for one player** (section 2). The world the player confirmed has nothing kept (`tide_client_kept` is of the tick's own world), so each of its rows has its audience worked out; 0.66 ms a repair at 6,900 entities, 2.1 ms at 18,000, 4.5 ms at 32,000. Not changed: the cure is in `client_changes_codegen.inc` (what a row's audience was, kept for the worlds a server keeps, or the last repair's list kept for the next), under every game's repairs.
+- `Idle`, `Keep` and `Retry` look at every chunk each tick by design (7% of a 32-player run's samples): a line of chunks by the tick they're due would cost what's due.
+
+### What was fixed
+
+- **A copied world keeps its entities' orders** (`engine/src/entity.c`, `tide_entities_copy`). A system or query that goes through its entities in identity's order asks the table for them sorted (`tide_entities_ordered_archetypes_slots`), kept until an entity comes, goes or changes archetype. A copy threw them away, and a client ticks a copy of its world every tick: each of its ticks scanned every slot and sorted every entity for each set of archetypes its systems use, 3.8 times a tick (129,610 times in a 34 s run of 8 clients; 6.7 of each client's 13.1 ms a second of simulating at near 6 on one thread, 25.6 of 47.8 at near 12). Now an order is shared by the table it was made in and its copies (a count of holders; one a table's change puts aside stays until that table settles, as before), and each side's changes are its own. `entity_orders_are_shared_with_copies_until_either_changes` (tests/test_entity.c): a copy has its source's orders with no sort, makes the ones its source hadn't, each side's change leaves the other's, a moved entity changes the subsets alone, and an order outlives the table it came from. Measured (12 threads; before one run, after three):
+
+  | a client | near 6 | near 12 | near 18 |
+  |---|---|---|---|
+  | Simulating, ms a second | 18.4 to 9.6 | 60.5 to 29.4 | 122.2 to 55.3 |
+  | Update, median / p99 / longest, ms | 0.17 / 2.50 / 9.7 to 0.09 / 1.66 / 8.1 | 0.57 / 8.35 / 30.9 to 0.28 / 4.87 / 23.7 | 1.15 / 17.7 / 79.4 to 0.54 / 9.58 / 56.5 |
+
+  The server's simulating is as it was (it ticks its own world, whose orders it kept; it sorts once for each tick something came or went, 3.4 of 30.7 ms a second at near 6). Every world hash is the same: `bench_voxels`' pins stand, checked and counted; `tide_tests` (758), `tidec_e2e_visibility_runs`, `_pieces`, `_indexed_loops`, `_previous`, `_net` and `voxels_walk` pass.
+- **The bench says where a server's time and bytes go** (above; bench/README.md).
+
+### Tried and taken out
+
+- **A box that grows a ring of chunks a tick** from the player's own chunk (`Watch` with a `reach` for each player), so no tick spawns a whole box and the nearest are asked for first. The server's longest update was no shorter (near 6: 14.6 to 20.6 ms; near 12: 26.4 to 32.7; near 18: 57.0 to 48.8), its p99 a little longer (5.8 to 6.3, 14.7 to 16.1), its hashing more (9.7 to 10.7, 24.4 to 31.0 ms a second: more ticks in which something becomes someone's), and a hop's box later (nine tenths in 34 ticks for 28, 54 for 40, 76 for 62). The spawning isn't what the longest update is made of on a dedicated server; it wasn't taken apart further.
+
+### What's left, most telling first
+
+1. Inputs of every player, in every unacknowledged frame (section 5): 13 to 44 KB a second a player with real hands on the mice. The owner's to decide.
+2. A repair walks the whole server's world for one player (section 2): what caps players at about 32 here, fewer spread out.
+3. Loops' indexes made again whole as chunks come and go, and for every copy of a client's world (above): a fifth of a server's and a client's simulating.
+4. A whole view at once: the store's 64 answers a tick and the repairs' stream gap put a client 41 to 70 ticks behind, past what it predicts at three times the view; and a lost part of a long repair sends the parts after it twice (section 5).
+5. The tick is one thread's work (section 3).
+6. A hosting player's frame of 9 to 60 ms when a box is asked for (section 4), not taken apart.
+7. Not measured: players spread over the world (the bots start together), a window at 60 Hz (no paced run without one), a second player's machine with its views (the bots have none), real disks under these sizes (section 3a has the store's files at the default).
+
 ## Tests
 
+- `entity_orders_are_shared_with_copies_until_either_changes` (`tests/test_entity.c`, in `tide_tests`; At scale, What was fixed, 2026-11-16): a copied table has its source's orders, each side's changes its own. The two older order tests said a copy's order was another array; they say it's the same one now.
 - `voxels_walk` and `bench_voxels`, `_forgets`, `_wide`, `_checked`, `_counts` after section 13 (2026-11-15): pass, the bench's hashes where they were (priorities are this machine's, and the bench has no views).
 - `bench_voxels` (`--quick --expect`): 3 bots, 8 s, `linger` 5 (30 before 2026-11-15) and `keep` 90 ticks, `far` 1, so chunks are saved and loaded again (6 found), and far regions are made (21, 4 with columns), sent, saved (3) and loaded back (4, with what their chunks told them while they were asked for taken after: the run's three such regions were checked by a log, since taken out); the server's hash is the same on 1 thread, 4 and 12. `bench_voxels_checked`: the same with every projection hash worked out twice. Pin (2026-11-15, far regions and the shorter linger): `0x1f3c165e43a78b10` to `0x07f8d5a78a39ee59`; after review (the audit's fields and system, `Survey`, `Recheck`, `Publish`'s hiding, waiting parts one a quarter) `0x4ebcc443d78e978b`, on 1 thread, 4 and 12, checked or not. Bench flags of 2026-11-15: `builders`, `tower`, `far`, `pace`, `gap` (section 10), `audit` and `forget` (section 11); the report says how many far regions the server holds, how many have columns, how often they were sent, how many the store kept and gave back, and what the audit found. A quick run audits every 60 ticks and fails on anything wrong (section 11).
 - `bench_voxels_forgets` (`--quick --forget 1`, pin `0xa199531280421472`): the store drops every chunk's save and keeps the far regions', as a server that stopped between them; fails without `Survey` or without `Recheck` (section 8). `bench_voxels_wide` (`--quick --near 9 --far 1`, pin `0xf5f8baa91878a156`): a player's box wider than their one far region each way; fails without `FarOf` (654 wrong). Both the same on 1, 4 and 12 threads, and checked.
