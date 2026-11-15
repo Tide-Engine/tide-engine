@@ -223,7 +223,8 @@ uint32_t tide_managed_init(const double now, const uint32_t seed, const uint8_t 
     d->game = &tide_game_api;
     d->jobs = NULL;
     d->entropy = tide_managed_entropy;
-    d->store = tide_managed_store_of(); // The host's, where it keeps one, in place of any io the start named
+    // The host's store, where it keeps one, in place of any the start named (an io, or a store of the game's C)
+    if (tide_managed_keeps) d->store = tide_managed_store_of();
     d->transports[0] = (tide_transport){0};
     d->transports[1] = (tide_transport){.send = tide_managed_transport_send, .receive = tide_managed_transport_receive,
         .close = tide_managed_transport_close, .end = tide_managed_transport_end,
