@@ -367,6 +367,9 @@ typedef struct param {
     bool placement_local; // `local Component value`: access to machine-local storage of a shared component type
     loc placement_at;
     bool function_param; // A method's or function's: a copy, or with mut, the caller's variable itself
+    // `world.Edit<Party>(id, party) { ... }`'s `party`: the Edit call. A `mut` component of the entity it names, in
+    // scope in the block alone, as the code's own `mut` parameter is for its entity; not one of the code's params
+    const struct expr *edit;
     // `out Health health`, a function's or method's, as C#'s: the call makes the caller's variable, which starts
     // unassigned in the code and is assigned on every path that returns. Its mode is PARAM_MUT, as for everything
     // else it's a variable the call changes, by address. An extern function's `out List<byte> image` is a list C
@@ -467,6 +470,7 @@ typedef struct world_use {
     loc write_at; // ...and the first Set
     bool query_read; // A query parameter also reads this component's candidate rows
     bool through_world; // Some World call names it
+    bool write_edits;   // The first Set is an Edit, for what's said of it
 } world_use;
 
 typedef struct system_wait {
@@ -547,7 +551,9 @@ typedef struct shader_sample {
 // texture it's called with that way (shader.c, pass_samples).
 typedef struct function_sample {
     int param;                // Which of the function's parameters it samples: -1 for an asset...
-    const struct expr *asset; // ...whose name this is, where the function samples it
+    // ...whose name this is, where the function samples it, or a field of a component or singleton it's given, as it
+    // names it: `stage.shadow` of its parameter, or `shadow` of its receiver (shader.c, Textures of what's given)
+    const struct expr *asset;
     shader_read read;
     int filter, wrap;         // As the Sample says them: -1 for what it leaves to the texture
     bool explicit_level;     // SampleLevel does not ask for derivatives
@@ -733,6 +739,7 @@ typedef struct decl {
     bool tried_previous;  // ...or world.TryGetPrevious of it
     bool tried;           // Components: some code calls world.TryGet of it, so generated C has its helper
     bool world_set_used;  // Components: World.Set needs the owned-value/active-binding helper
+    bool world_edit_used; // Components: world.Edit needs its helper, which finds an active binding or loads the row
 
     // Events
     bool world_event;        // Built-in events the engine sends to the world, never to an entity
@@ -757,6 +764,7 @@ typedef struct decl {
     loc backing_at;
     const type_ref *backing_ref; // Authored enum backing type, including a qualified alias.
     int width;      // ...in bytes: 1 (byte), 2 (ushort) or 4 (int), once checked
+    int numbered;   // Its members' numbers: 0 not worked out yet, 1 being worked out, 2 worked out (check_enum)
 
     // Methods and functions
     struct decl *owner;       // A method's struct or component; NULL for a function
@@ -903,6 +911,11 @@ typedef struct decl {
     struct decl *build_fn;    // An asset or a constant: the function that makes its value, or NULL
     struct decl *build_owner; // That function: the asset or constant it makes
     struct build_value *built; // An asset or a constant: what its code made, once it has run (build_code.h)
+    // A list constant written out, `const List<int> QUAD = [0, 1, 2];`, directly or through the constant it names: its
+    // [a, b, c], whose elements C and the GPU read where it's indexed (no list is made for `QUAD[i]` or `QUAD.count`),
+    // and the array type of as many (`int[3]`; TY_ERROR for an empty list), which they index it as.
+    struct expr *list_literal;
+    type list_array;
     // Purity (compiler/src/purity.c, docs/spec.md, Pure functions): a function or method with code is pure when
     // its result comes from its arguments alone and running it leaves nothing changed. Worked out once every
     // body is checked (infer_purity); `impure_why` says the first thing that keeps it from being pure
@@ -1153,6 +1166,7 @@ typedef enum builtin_call {
     CALL_JSON,      // Json.Read<T>(text), Json.Write(value), string.FromBytes(bytes) and int.TryParse(text, out value):
                     // calls c_callee with its arguments as values, text a tide_str, and an `out` one by address
     CALL_VISIBILITY, // Shared audience groups and typed whole-component restrictions.
+    CALL_ENUM_VALUES, // Enum.Values(): an array of every declared member, in declaration order; its type is that array
 } builtin_call;
 
 enum { VISIBILITY_RECEIVER = 1, VISIBILITY_MUT = 2, VISIBILITY_WORLD = 4, VISIBILITY_COMPONENT = 8 };
@@ -1341,6 +1355,9 @@ struct expr {
     bool placement_local; // `local Spawn(...)`: explicit machine-local placement; on `Scene`, `local Scene.Load(...)`
     bool switches_scene;  // CALL_LOAD: Scene.Switch, which unloads its world's scenes first
     struct stmt *compare[2]; // CALL_LIST Sort: the two elements its block compares, as read-only locals of the block
+    // CALL_WORLD Edit, `world.Edit<Party>(id, party) { ... }`: the block's binding, the entity's component itself, as a
+    // `mut` component parameter is (param.edit), which the block's end puts back (gen_world_edit)
+    struct param *edit_binding;
     struct stmt *step;    // E_STEP: the assignment it makes, `lhs += 1`, which is all of it when it's a statement
     bool postfix;         // ...written after its variable: the value is what the variable held before
     const char *hoisted;  // Spawns, and calls, units and operators that keep their order: the temporary codegen ran it into, before the statement
@@ -1577,6 +1594,7 @@ typedef struct shader_texture {
     const struct decl *source;
     const field *field;
     bool direct; // Supplied explicitly by Draw.Mesh or Draw.Blit, rather than a field
+    int given;   // ...which of the draw's textures, in the order it gives them (shader_given_texture)
     const struct decl *asset; // A Grid2<Color> or Texture asset, sampled by name: neither a field nor the draw's
     // How it's read: a color, a cube, a list's numbers, or a depth (the first way it's read: READ_DEPTH or
     // READ_COMPARE, which its samplers tell apart)
@@ -1647,9 +1665,10 @@ typedef struct shader {
     int dims;            // 2 or 3: its position's
     bool textured;       // No frag, and a texture given at the draw, read as that texture says
     bool direct_texture; // The draw supplies a Texture: the one it draws with, or its shader stages' source
-    // ...and where the frag's own typed Texture is handed an image of 32-bit floats, its Format (7 R32f, 8 Rgba32f),
-    // which a blended read loads exactly; -1 otherwise
-    int source_format;
+    int given_textures;  // ...how many it supplies, in order (shader_given_textures; one at least where it does)
+    // ...and for each, where a typed Texture parameter of its vert's or frag's is handed an image of 32-bit floats,
+    // its Format (7 R32f, 8 Rgba32f), which a blended read loads exactly; -1 otherwise (direct_texture's alone)
+    VEC(int) source_formats;
     bool blit;           // A full destination overwrite with a fixed Vertex quad
     bool instanced;      // Its draw supplies a list of instances
     bool gpu_instances;  // ...a GPU list's, read from its storage slot (instance_storage), drawn indirect
@@ -2128,6 +2147,18 @@ str json_field_key(const field *f);
 // Whether a shader reads a local field of the match's component or singleton
 // `d`: its draws are handed d's local part too.
 bool shader_reads_local(const shader *sh, const decl *d);
+
+// Which of a draw's textures a frag's or vert's Texture parameter `p` is, -1 for one that's none: a draw gives its
+// frag's Texture parameters in their order, then its vert's whose names the frag's don't have. A vert's and a
+// frag's parameter of the same name are the one texture (docs/spec.md, Several textures a draw gives).
+int shader_given_texture(const decl *vert, const decl *frag, const param *p);
+// ...and how many textures that is: what the draw gives after its mesh's arguments.
+int shader_given_textures(const decl *vert, const decl *frag);
+// Whether code the GPU runs hands a function one of type `t` by its name, the frag's or vert's own, never as a value:
+// a struct, a singleton or a component that holds a list, or a singleton or a component that holds a texture
+// (docs/spec.md, Structs that hold lists; A function samples the textures of a singleton or a component it's handed).
+// Only such a one takes its local fields with it.
+bool shader_type_given(type t);
 
 // A tide_shader's initializer's fields for its textures, where any isn't a color read through its own sampler:
 // `.texture_reads` and `.texture_samplers`.

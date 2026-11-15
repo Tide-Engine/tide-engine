@@ -1,0 +1,4 @@
+// expect: 'Step.Third' is worked out from itself
+// expect: a member's value can read the members before it in its own enum, and any other enum's
+enum Step { First, Second, Third = int(Step.Values()[2]) + 7 }
+scene Main { }

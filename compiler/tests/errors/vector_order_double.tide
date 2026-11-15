@@ -1,0 +1,5 @@
+// expect: operator '>=' can't be used with double2 and float2
+// expect: vectors have no order
+singleton Marks { double2 a; float2 b; bool after; }
+scene Main { }
+system Check(mut Marks marks) { marks.after = marks.a >= marks.b; }

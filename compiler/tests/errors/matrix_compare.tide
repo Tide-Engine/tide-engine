@@ -1,0 +1,5 @@
+// expect: operator '==' can't be used with float3x3 and float3x3
+// expect: matrices compare column by column: 'a.c0 == b.c0 && a.c1 == b.c1'
+singleton Marks { float3x3 a; float3x3 b; bool same; }
+scene Main { }
+system Check(mut Marks marks) { marks.same = marks.a == marks.b; }

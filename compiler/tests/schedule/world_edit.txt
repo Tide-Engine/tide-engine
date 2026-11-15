@@ -1,0 +1,35 @@
+world_edit: 6 systems each tick, 3 stages deep; 6 can run alongside others.
+A system starts once everything it runs after is done.
+
+stage 1  Heal  (per entity)
+         reads Healer
+         writes any entity's Health, through World
+         on one thread: it edits Health through its World, on any entity (world_edit.tide:42)
+         alongside Rust, Tax, Count, Share
+stage 1  Rust  (per entity)
+         writes Armor
+         alongside Heal, Drain, Tax, Count, Share
+stage 1  Tax  (per entity)
+         writes any entity's Gold, through World
+         on one thread: it edits Gold through its World, on any entity (world_edit.tide:65)
+         alongside Heal, Drain, Rust
+
+stage 2  Drain  (per entity)
+         writes Health
+         after Heal: both write Health
+         alongside Rust, Tax, Count, Share
+stage 2  Count  (per entity)
+         reads Gold
+         after Tax: it writes Gold.value, which this reads
+         alongside Heal, Drain, Rust
+
+stage 3  Share  (per entity)
+         writes Gold
+         writes any entity's Gold, through World
+         on one thread: it edits Gold through its World, on any entity (world_edit.tide:75)
+         after Tax: both write Gold (and through Count)
+         after Count: it reads Gold.value, which this writes
+         alongside Heal, Drain, Rust
+
+Event handlers, at the end of the tick, as their events are sent:
+         Spawned: Setup

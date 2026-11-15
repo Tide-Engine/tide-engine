@@ -1,0 +1,14 @@
+// expect: 'NONE' is an empty list: code the GPU runs reads its elements, and it has none
+const List<int> NONE = [];
+scene Main { }
+local singleton Geometry { List<Vertex3> vertices; List<int> indices; }
+
+frag Shade(Vertex3 vertex, out Color color)
+{
+    color = Color(float(NONE[1]), 0, 0, 1);
+}
+
+view Show(Geometry geometry)
+{
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, Shade);
+}

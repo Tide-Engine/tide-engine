@@ -1,0 +1,80 @@
+// An Edit through the World reads and writes any entity's component, as a Set
+// does: Heal's Edit of Health makes Drain wait for it and keeps Heal on one
+// thread, and Rust, which only takes Armor, runs beside it. Tax's Edit is in a
+// function it hands its World to, which is the system's own, so Count waits for
+// Tax. Share changes its own Gold and another's in place, on one thread.
+
+component Health
+{
+    int value;
+}
+
+component Healer
+{
+    Entity patient;
+}
+
+component Armor
+{
+    int value;
+}
+
+component Gold
+{
+    int value;
+    Entity next;
+}
+
+component Taxman { }
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Health, Armor);
+    Spawn(Healer);
+    Spawn(Gold);
+    Spawn(Taxman);
+}
+
+system Heal(Healer healer, mut World world)
+{
+    world.Edit<Health>(healer.patient, health)
+    {
+        health.value += 1;
+    }
+}
+
+system Drain(mut Health health)
+{
+    health.value -= 1;
+}
+
+system Rust(mut Armor armor)
+{
+    armor.value -= 1;
+}
+
+void Pay(Entity target, mut World world)
+{
+    world.Edit<Gold>(target, gold) { gold.value += 1; }
+}
+
+system Tax(mut World world, with Taxman)
+{
+    Pay(this, world);
+}
+
+system Count(Gold gold)
+{
+    if (gold.value > 100) return;
+}
+
+system Share(mut Gold gold, mut World world)
+{
+    world.Edit<Gold>(gold.next, other)
+    {
+        other.value += 1;
+        gold.value -= 1;
+    }
+}

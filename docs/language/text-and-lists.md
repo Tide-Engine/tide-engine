@@ -175,7 +175,7 @@ system Collect(mut Inventory inventory, Pickup pickup)
 - `count`, `items[i]` to read, and `items[i] = x` or `items[i] += x` to write.
 - `Add(item)`, `Insert(index, item)`, `RemoveAt(index)` and `Clear()`.
 - `Resize(count)` makes the list `count` elements long in one go. New elements are the element type's zero, empty for text. With fewer, the rest go. A count under 0 is 0.
-- For elements that `==` compares (numbers, bools, chars, enums, text, entities and players): `Contains(item)`, `IndexOf(item)` (-1 if it's not there) and `Remove(item)`, which returns whether it found one.
+- For elements that `==` compares (numbers, bools, chars, enums, text, entities, players, vectors and colors, a vector equal when every component is): `Contains(item)`, `IndexOf(item)` (-1 if it's not there) and `Remove(item)`, which returns whether it found one.
 
 Past the end, a read gives the element type's zero and a write does nothing.
 
@@ -262,6 +262,8 @@ local singleton Menu
 An array of plain values is its holder's bytes and nothing more, so a system's loop over it runs with SIMD and an input can hold one: a fixed number of values a player sends, which `[Clamp]`, `[Min]` and `[Max]` bound element by element. An array of text or lists keeps each element's text or list where a field's would be, its holder's own, so copying the array copies them and nothing is shared. Inputs and code on the GPU take no text or lists, in arrays or anywhere.
 
 `a[i]` reads an element, or zero past the end; `a[i] = v` and `a[i] += v` write one, and do nothing past the end. `a.count` is the length, `foreach` goes through the elements (each a copy), `a = b` copies the whole array, and `a = [1, 2, 3]` sets it from a literal of exactly `count` values. Text shows one as it shows a list: `[1, 2, 3]`.
+
+An array or a list of plain values can be a constant, a table every machine has the same: `const float[4] SIZES = [1.5, 2, 2.5, 4];`, `const List<int> QUAD = [0, 1, 2, 0, 2, 3];`. Read it by index, count and `foreach` anywhere, frags and verts included; see [Tables](./basics.md#tables).
 
 Lists, arrays and map values also hold `Clip`, `Texture`, `DepthTexture`, `Cubemap`, `RenderTarget`, `Sound`, and structs holding them. These collections belong in local state, just like their elements. Copies and helper parameters follow the ordinary collection rules:
 

@@ -1,0 +1,7 @@
+// expect: a blit takes no filter: its frag's Sample says how it reads each texture
+// expect: like 'source.Sample(vertex.uv, Filter.Point, Wrap.Repeat)' in the frag
+// A filter after a blit's texture, as a mesh draw's has: the frag's Sample says it
+scene Main { }
+local singleton Image { Texture source; Texture lut; }
+frag Grade(Vertex vertex, out Color color, Texture source, Texture lut) { color = source.Sample(vertex.uv) * lut.Sample(vertex.uv); }
+view Show(Image image) { Draw.Blit(image.source, Filter.Point, image.lut, Draw.window, Grade); }

@@ -1,0 +1,10 @@
+// expect: this draw gives 1 texture, and its vert takes 2: 'height' and 'bend'
+// A draw's frag takes no texture, and its vert takes two: the message says whose they are
+scene Main { }
+local singleton Art { Texture height; List<Vertex3> mesh; }
+vert Raise(mut Vertex3 vertex, Texture height, Texture bend)
+{
+    vertex.position.y += height.SampleLevel(vertex.uv, 0).r + bend.SampleLevel(vertex.uv, 0).r;
+}
+frag Flat(Vertex3 vertex, out Color color) { color = Color.white; }
+view Show(Art art) { Draw.Mesh(art.mesh, [0, 1, 2], float4x4.identity, art.height, Raise, Flat); }

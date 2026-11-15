@@ -1,0 +1,6 @@
+// expect: 'QUAD' is a constant, so it can't change
+// expect: copy it into a 'mut var' first
+const List<int> QUAD = [0, 1, 2, 0, 2, 3];
+singleton Match { int n; }
+scene Main { }
+system Grow(mut Match match) { QUAD.Add(match.n); }

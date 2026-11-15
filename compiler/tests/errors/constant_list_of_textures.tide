@@ -1,0 +1,4 @@
+// expect: a constant list can't hold Texture: it belongs to this machine's rendering, in local state
+// expect: declare the build's images and meshes as assets
+const List<Texture> ICONS = [default, default];
+scene Main { }

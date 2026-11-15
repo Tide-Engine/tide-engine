@@ -1,0 +1,15 @@
+// expect: a Painted that holds a texture goes to code the GPU runs by its name, as the frag or vert was given it
+// expect: pass the frag's or vert's own parameter, its singleton, its component or the draw's values, or a function's parameter that stands for one
+// A copy of a component whose textures are all local is a value of its other fields, with no texture, which a
+// function that takes the component isn't handed: it was before the component's textures were sampled where it's given
+scene Main { }
+component Painted { float gloss; local Texture albedo; }
+local singleton Scenery { List<Vertex3> mesh; }
+float Gloss(Painted p) { return p.gloss; }
+frag Shade(Vertex3 vertex, out Color color, Painted painted)
+{
+    var kept = painted;
+    color = Color(Gloss(kept), 0, 0, 1);
+}
+event(Spawned) Setup(with Main) { Spawn(Painted); }
+view Show(Scenery scenery, with Painted) { Draw.Mesh(scenery.mesh, [0, 1, 2], float4x4.identity, Shade); }

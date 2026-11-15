@@ -1,0 +1,6 @@
+// expect: a list constant written out holds 4096 values at the most, all of its elements' lengths together, and this one has 5120
+// expect: build code makes a longer one, which the game reads from its pack
+const List<int[1024]> ROWS = [default, default, default, default, default];
+singleton Match { int n; }
+system Tick(mut Match m) { m.n += ROWS[m.n % 5][3] + ROWS.count; }
+scene Main { }

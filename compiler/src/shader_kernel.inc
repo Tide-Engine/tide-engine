@@ -313,7 +313,11 @@ static bool numeric_image_origin(const expr *e, const int depth)
 
 static bool check_image_outputs(program *prog, const expr *call)
 {
-    const expr *target = call->blit ? call->args.items[1] : call->targeted ? call->object : NULL;
+    // A blit's destination is after its textures, the first target among its arguments
+    const expr *target = call->targeted ? call->object : NULL;
+    for (int a = 1; call->blit && !target && a < call->args.count; a++) {
+        if (call->args.items[a]->type.kind == TY_RENDER_TARGET) target = call->args.items[a];
+    }
     const bool window = !target || (target->kind == E_MEMBER && str_eq_c(target->member, "window"));
     const int outputs = call->frag ? call->frag->outputs : 1;
     for (int i = 0; i < outputs; i++) {

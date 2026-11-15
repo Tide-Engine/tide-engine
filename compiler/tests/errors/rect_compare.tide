@@ -1,0 +1,5 @@
+// expect: operator '!=' can't be used with Rect and Rect
+// expect: compare what the rectangles are made of: 'a.position != b.position || a.size != b.size'
+singleton Marks { Rect a; Rect b; bool moved; }
+scene Main { }
+system Check(mut Marks marks) { marks.moved = marks.a != marks.b; }

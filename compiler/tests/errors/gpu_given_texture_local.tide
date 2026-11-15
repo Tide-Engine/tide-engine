@@ -1,0 +1,14 @@
+// expect: Stage holds a texture, so code the GPU runs reads its fields, or passes it to a function or calls its method, by the name the frag or vert was given it
+// expect: a Stage that holds a texture goes to code the GPU runs by its name, as the frag or vert was given it
+// A singleton that holds a texture goes to a function by its name: it's no value to keep
+scene Main { }
+local singleton Stage { RenderTarget map; DepthTexture shadow; float3 sun; }
+local singleton Scenery { List<Vertex3> mesh; }
+float3 Sunlit(Stage stage, float3 at) { return stage.sun * stage.shadow.Compare(at.xy, at.z); }
+frag Lit(Vertex3 vertex, out Color color, Stage stage)
+{
+    var kept = stage;
+    float3 lit = Sunlit(kept, vertex.position);
+    color = Color(lit.x, lit.y, lit.z, 1);
+}
+view Show(Scenery scenery) { Draw.Mesh(scenery.mesh, [0, 1, 2], float4x4.identity, Lit); }

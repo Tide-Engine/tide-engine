@@ -1,0 +1,373 @@
+// world.Edit<T>(entity, name) { ... }: another entity's component changed where it is, put back as the block ends
+
+component Party
+{
+    int index;
+    int gold;
+    int given;
+    List<int> log;
+    string name = "party";
+    Entity next;
+    Entity self;
+
+    Entity Self() { return this; }
+}
+
+// Party's twin, changed the way there was before Edit: Get, change the copy, Set
+component Twin
+{
+    int index;
+    int gold;
+    int given;
+    List<int> log;
+    string name = "party";
+    Entity next;
+}
+
+component Lonely { int value; }
+[Sparse] component Skip { }
+component Bag { int value; List<int> data = [1, 2]; string label = "initial"; Map<int, int> counts; }
+component Field { Grid2<int> cells; int marks; } // A grid: changed where it is, never copied
+component LocalValue { int value; }
+
+enum Mode { Ring, Exits, Alias, Containers, Events, Leaving, Stacked, Own, None }
+singleton Settings { Mode mode; }
+singleton Roster { List<Entity> parties; List<Entity> twins; Entity bag; Entity lonely; Entity gone; Entity field; }
+singleton Results { int ran; int failures; int bumped; int started; int ended; int spent; int refused; }
+local singleton Viewer { bool ready; LocalEntity entity; int seen; bool submit; }
+scene Main { }
+
+event(Spawned) Setup(with Main, mut Roster roster)
+{
+    for (int i = 0; i < 3000; i++)
+    {
+        mut Entity party;
+        mut Entity twin;
+        if (i % 3 == 0)
+        {
+            party = Spawn(Party { index = i });
+            twin = Spawn(Twin { index = i });
+        }
+        else
+        {
+            party = Spawn(Party { index = i }, Lonely);
+            twin = Spawn(Twin { index = i }, Lonely);
+        }
+        if (i < 2048 && i % 2 != 0) party.Add(Skip);
+        roster.parties.Add(party);
+        roster.twins.Add(twin);
+    }
+    roster.bag = Spawn(Bag);
+    roster.field = Spawn(Field);
+    roster.lonely = Spawn(Lonely);
+    roster.gone = Spawn(Party { index = -1 });
+}
+
+// Each party's next is another (the ring), and one party goes, to be Edited as gone
+system Wire(Roster roster, mut World world, Settings settings)
+{
+    if (settings.mode != Mode.None) return;
+    for (int i = 0; i < roster.parties.count; i++)
+    {
+        var next = (i * 7 + 1) % roster.parties.count;
+        world.Edit<Party>(roster.parties[i], p) { p.next = roster.parties[next]; }
+        world.Edit<Twin>(roster.twins[i], t) { t.next = roster.twins[next]; }
+    }
+    roster.gone.Destroy();
+}
+
+// The ring: each party gives to its next, which its own row reads later in the run, or read already
+system Give(mut Party party, without Skip, Settings settings, mut World world)
+{
+    if (settings.mode != Mode.Ring) return;
+    party.given += 1;
+    world.Edit<Party>(party.next, other)
+    {
+        other.gold += party.index + 1;
+        other.log.Add(party.index);
+        if (other.log.count > 4) other.log.RemoveAt(0);
+        other.name = $"from {party.index}";
+        other.self = other.Self();
+    }
+}
+
+system GiveTwin(mut Twin twin, Settings settings, mut World world)
+{
+    if (settings.mode != Mode.Ring) return;
+    if (twin.index < 2048 && twin.index % 2 != 0) return; // As Give's `without Skip`
+    twin.given += 1;
+    mut var other = world.Get<Twin>(twin.next);
+    other.gold += twin.index + 1;
+    other.log.Add(twin.index);
+    if (other.log.count > 4) other.log.RemoveAt(0);
+    other.name = $"from {twin.index}";
+    world.Set<Twin>(twin.next, other);
+}
+
+// Leaving the block: what it changed is put back first
+int Bump(Entity target, mut World world)
+{
+    world.Edit<Party>(target, p)
+    {
+        p.gold += 1000;
+        return p.gold;
+    }
+    return -1;
+}
+
+system Exits(Settings settings, Roster roster, mut World world, mut Results results)
+{
+    if (settings.mode != Mode.Exits) return;
+    for (int i = 0; i < roster.parties.count; i++)
+    {
+        world.Edit<Party>(roster.parties[i], p)
+        {
+            p.gold += 1;
+            if (i % 3 == 0) continue;
+            p.gold += 10;
+            if (i == 7) break;
+            p.gold += 100;
+        }
+    }
+    // Gone, and no Party: the block doesn't run
+    world.Edit<Party>(roster.gone, p) { p.gold++; results.ran++; }
+    world.Edit<Party>(roster.lonely, p) { p.gold++; results.ran++; }
+    results.bumped = Bump(roster.parties[1], world);
+    if (Bump(roster.lonely, world) != -1) results.failures++;
+}
+
+enum Refusal { TooRich }
+
+int Checked(int gold) fails Refusal
+{
+    if (gold > 1000) fail Refusal.TooRich;
+    return gold;
+}
+
+// Leaving the block by a try that passes an error on, and by a fail: put back first
+int Spend(Entity target, mut World world) fails Refusal
+{
+    world.Edit<Party>(target, p)
+    {
+        p.gold += 2000;
+        p.name = "spent, and long enough to need a block of the heap of its own";
+        var checked = try Checked(p.gold);
+        p.gold = -checked;
+    }
+    return 0;
+}
+
+int Refuse(Entity target, mut World world) fails Refusal
+{
+    world.Edit<Party>(target, p)
+    {
+        p.gold += 5;
+        p.log.Add(5);
+        if (p.gold > 0) fail Refusal.TooRich;
+        p.gold += 100;
+    }
+    return 0;
+}
+
+event Leave { }
+
+// A return out of the block in a task, before its first wait and after it, with text and a list that grow
+async event(Leave) LeaveEarly(Roster roster, mut World world)
+{
+    world.Edit<Party>(roster.parties[5], p)
+    {
+        p.gold += 1;
+        for (int i = 0; i < 3000; i++) p.log.Add(i);
+        p.name = "a name long enough that it needs a block of the heap of its own";
+        if (p.gold > 0) return;
+        p.gold += 100;
+    }
+    await Wait.Ticks(1);
+}
+
+async event(Leave) LeaveLate(Roster roster, mut World world)
+{
+    await Wait.Ticks(1);
+    world.Edit<Party>(roster.parties[6], p)
+    {
+        p.gold += 1;
+        p.log.Add(6);
+        p.name = "late";
+        if (p.gold > 0) return;
+        p.gold += 100;
+    }
+}
+
+system Leaving(Settings settings, Roster roster, mut World world, mut Results results)
+{
+    if (settings.mode != Mode.Leaving) return;
+    results.spent = Spend(roster.parties[9], world) ?? -1;
+    results.refused = Refuse(roster.parties[10], world) ?? -1;
+    Send(Leave);
+}
+
+// Edits listed with commas: of two entities, and of one entity twice, whose two names are one component
+void Move(Entity from, Entity to, int amount, mut World world)
+{
+    world.Edit<Party>(from, a), world.Edit<Party>(to, b)
+    {
+        a.given++; // Counted, moved or not
+        b.given++;
+        if (a.gold < amount) return;
+        a.gold -= amount;
+        b.gold += amount;
+        a.log.Add(-amount);
+        b.log.Add(amount);
+    }
+}
+
+system Stacked(Settings settings, Roster roster, mut World world)
+{
+    if (settings.mode != Mode.Stacked) return;
+    world.Edit<Party>(roster.parties[11], p) { p.gold += 100; }
+    Move(roster.parties[11], roster.parties[12], 7, world);
+    Move(roster.parties[11], roster.parties[11], 5, world);
+    Move(roster.parties[12], roster.parties[11], 1000, world); // Too little: only the counts change
+}
+
+// The code's own entity beside a read-only parameter of its component: what a Set is there. The stored
+// component changes, and the parameter keeps the value it was read with, its list too
+system Settle(Party party, Settings settings, mut World world, mut Results results)
+{
+    if (settings.mode != Mode.Own) return;
+    var gold = party.gold;
+    var logged = party.log.count;
+    var name = party.name;
+    world.Edit<Party>(this, own)
+    {
+        if (own.gold != gold) results.failures++;
+        own.gold += 3;
+        own.log.Add(gold);
+        own.name = $"settled at {own.gold}";
+    }
+    if (party.gold != gold || party.log.count != logged || party.name != name) results.failures++;
+    var stored = world.Get<Party>(this);
+    if (stored.gold != gold + 3 || stored.log.count != logged + 1 || stored.name != $"settled at {gold + 3}") results.failures++;
+}
+
+void Pay(Entity target, int amount, mut World world) { world.Edit<Party>(target, p) { p.gold += amount; } }
+
+// The code's own binding, through a helper, and two Edits of one entity, whose handles differ as written
+system Alias(mut Party party, without Skip, Settings settings, mut World world)
+{
+    if (settings.mode != Mode.Alias) return;
+    party.gold += 10;
+    Pay(this, 1, world); // This entity's: the change is party's
+    party.gold += 100;
+    var target = party.next;
+    world.Edit<Party>(party.next, a)
+    {
+        a.gold += 1;
+        world.Edit<Party>(target, b) // The same entity: b is a
+        {
+            b.gold += 2;
+            a.gold += 4;
+            b.log.Add(7);
+        }
+        a.log.Add(a.log.count);
+    }
+}
+
+void ReplaceBag(Entity target, mut World world)
+{
+    world.Set<Bag>(target, Bag { value = 20, data = [20, 21], label = "replaced" });
+}
+
+system Containers(Settings settings, Roster roster, mut World world, mut Results results)
+{
+    if (settings.mode != Mode.Containers) return;
+    world.Edit<Bag>(roster.bag, bag)
+    {
+        var had = bag.data.count;
+        for (int i = 0; i < 2100; i++) bag.data.Add(i);
+        bag.label = "edited";
+        bag.counts[3] = 4;
+        if (bag.data.count != had + 2100 || bag.data[had + 2099] != 2099 || bag.counts[3] != 4) results.failures++;
+        ReplaceBag(roster.bag, world); // A Set of the entity the Edit changes replaces the binding
+        if (bag.value != 20 || bag.data.count != 2 || bag.label != "replaced" || bag.counts.count != 0) results.failures++;
+        bag.data.Add(22);
+        bag.value++;
+    }
+    var after = world.Get<Bag>(roster.bag);
+    if (after.value != 21 || after.data.count != 3 || after.data[2] != 22 || after.label != "replaced") results.failures++;
+    world.Edit<Bag>(roster.bag, bag)
+    {
+        bag.data.Clear();
+        bag.label = "cleared";
+    }
+    // A cell a chunk apart each time: the grid gets chunks of its own as the Edit writes them
+    world.Edit<Field>(roster.field, field)
+    {
+        field.cells[field.marks * 70, 0] = field.marks + 1;
+        field.marks++;
+    }
+}
+
+system CheckField(Field field, Settings settings, mut Results results)
+{
+    if (settings.mode != Mode.Containers) return;
+    for (int i = 0; i < field.marks; i++)
+    {
+        if (field.cells[i * 70, 0] != i + 1) results.failures++;
+    }
+}
+
+event Poke { int amount; }
+event Resume { }
+command Pinch { int amount; }
+
+event(Poke poke) OnPoke(Roster roster, mut World world)
+{
+    world.Edit<Party>(roster.parties[2], p) { p.gold += poke.amount; }
+}
+
+async event(Resume) Continue(Roster roster, mut World world, mut Results results)
+{
+    world.Edit<Party>(roster.parties[3], p) { p.gold += 1; }
+    results.started++;
+    await Wait.Ticks(1);
+    world.Edit<Party>(roster.parties[3], p) { p.gold += 2; }
+    results.ended++;
+}
+
+command(Pinch pinch, PlayerID sender) OnPinch(Roster roster, mut World world)
+{
+    if (sender != PlayerID(0)) return;
+    world.Edit<Party>(roster.parties[4], p) { p.gold -= pinch.amount; }
+}
+
+view Submit(mut Viewer viewer)
+{
+    if (!viewer.submit) return;
+    viewer.submit = false;
+    Send(Pinch { amount = 3 });
+}
+
+system Ask(Settings settings)
+{
+    if (settings.mode != Mode.Events) return;
+    Send(Poke { amount = 5 });
+    Send(Resume);
+}
+
+// A local component, changed in a view
+view Make(mut Viewer viewer)
+{
+    if (viewer.ready) return;
+    viewer.ready = true;
+    viewer.entity = local Spawn(LocalValue);
+}
+
+view Advance(mut Viewer viewer, mut World world)
+{
+    world.Edit<LocalValue>(viewer.entity, v)
+    {
+        v.value += 2;
+        viewer.seen += v.value;
+    }
+}

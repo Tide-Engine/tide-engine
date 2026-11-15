@@ -2144,6 +2144,8 @@ static const char *loop_view_of(const gen *g, const expr *e)
     return NULL;
 }
 
+static const decl *listed_constant(const expr *e);
+
 // Views of the lists loop `loop` indexes and keeps the shape of, found before
 // it, in a block of their own where `block` says the loop has none. Whether
 // there are any.
@@ -2160,6 +2162,7 @@ static bool open_loop_views(gen *g, const stmt *loop, const bool block)
     for (int i = 0; i < scan.uses.count; i++) {
         const lv_use *u = &scan.uses.items[i];
         if (u->kind != LV_ELEMENT || !loop_viewed(list_elem(u->list->type.decl))) continue;
+        if (listed_constant(u->list)) continue; // A list constant's elements are read where they're written
         bool known = false;
         for (int k = 0; k < g->lv_keys.count && !known; k++) known = strcmp(g->lv_keys.items[k], u->key) == 0;
         if (known) continue; // An outer loop's, or one made here already
@@ -2857,6 +2860,7 @@ static const char *component_owner_world(gen *g, const expr *e)
     const param *p = query_component(e);
     if (!p && e->bind == BIND_PARAM) p = e->param;
     if (!p) return "NULL"; // Invalid detached use is diagnosed before generation.
+    if (p->edit) return owner_name(g, p, "world"); // An Edit's component: its world (gen_world_edit)
     if (p->query_source && p->query_source->function_param) {
         const param *q = p->query_source;
         if (q->query_local) return "tide_l";
@@ -2877,6 +2881,7 @@ static void gen_component_owner(gen *g, sb *o, const expr *e)
 {
     const param *p = query_component(e);
     if (p) sb_printf(o, "%s.entity", local_cname(g, e->object->name));
+    else if (e->bind == BIND_PARAM && e->param->edit) sb_put(o, owner_name(g, e->param, "entity")); // An Edit's entity
     else if (e->bind == BIND_PARAM && e->param->function_param && !e->param->task_ref) sb_put(o, owner_name(g, e->param, "entity"));
     else sb_put(o, "tide_this");
 }
@@ -2938,6 +2943,15 @@ static bool is_fresh(const expr *e)
     return e->kind == E_CALL || e->kind == E_METHOD || e->kind == E_LIST || e->kind == E_LITERAL || e->kind == E_DEFAULT;
 }
 
+// A list constant written out (`const List<int> QUAD = [0, 1, 2];`), when `e` names one: the constant, whose
+// literal and array type (decl.list_literal, decl.list_array) its elements are read through. NULL otherwise.
+static const decl *listed_constant(const expr *e)
+{
+    if ((e->kind != E_NAME && e->kind != E_MEMBER) || e->bind != BIND_CONST || e->hoisted) return NULL;
+    const decl *k = e->constant;
+    return k && !k->build_fn && k->list_literal && e->type.kind == TY_LIST ? k : NULL;
+}
+
 // Whether `e` names a place C can point at as it is, for a read: a variable,
 // a parameter or a field through those, or an element of a list, a map or an
 // array of those, which tide_list%d_cat, tide_map%d_at and tide_array%d_ref
@@ -2954,6 +2968,7 @@ static bool pointerable(const expr *e)
             && !e->enum_member && e->object->type.kind != TY_RENDER_TARGET && pointerable(e->object);
     case E_INDEX:
         if (e->skin_operation == SKIN_OP_POSE_INDEX) return true;
+        if (listed_constant(e->object)) return false; // Its element is a value of its own (gen_listed_element)
         if (e->object->type.kind == TY_LIST || e->object->type.kind == TY_MAP) return true;
         return e->object->type.kind == TY_ARRAY && pointerable(e->object);
     default: return false;
@@ -3369,6 +3384,22 @@ static void gen_binary(gen *g, sb *o, const tok_kind op, expr *l, expr *r, const
             sb_put(o, ", ");
             gen_as(g, o, color == l ? r : l, float_t);
         }
+        sb_put(o, ")");
+        return;
+    }
+
+    // Two vectors or colors compared: one bool, of every component. An int vector widens beside a float or a
+    // double one, as it does for + and -.
+    if ((op == T_EQ || op == T_NE) && (type_dim(lt) >= 2 || lt.kind == TY_COLOR)) {
+        type both = lt;
+        if (type_dim(lt) >= 2) {
+            both = type_is_double_based(lt) || type_is_double_based(rt) ? double_vector_type(type_dim(lt))
+                : vector_type(type_is_float_based(lt) || type_is_float_based(rt), type_dim(lt));
+        }
+        sb_printf(o, "%stide_equal_%s(", op == T_NE ? "!" : "", lt.kind == TY_COLOR ? "color" : type_suffix(both));
+        gen_as(g, o, l, both);
+        sb_put(o, ", ");
+        gen_as(g, o, r, both);
         sb_put(o, ")");
         return;
     }
@@ -4614,6 +4645,31 @@ static bool gen_gpu(gen *g, sb *o, const expr *e)
     }
 }
 
+// QUAD[i] of a list constant written out (listed_constant): the element of its values as an array C works out
+// while compiling, or the element type's zero past either end, as a list's; an empty one is that zero, the index
+// still worked out.
+static void gen_listed_element(gen *g, sb *o, const decl *k, const expr *e)
+{
+    const expr *items = k->list_literal;
+    const type element = list_elem(k->return_type.decl);
+    if (k->list_array.kind != TY_ARRAY) {
+        sb_put(o, "((void)(");
+        gen_as(g, o, e->lhs, (type){TY_INT, NULL});
+        sb_put(o, "), ");
+        gen_default(g, o, element);
+        sb_put(o, ")");
+        return;
+    }
+    sb_printf(o, "tide_array%d_get(((%s){{", k->list_array.decl->index, c_type(k->list_array));
+    for (int i = 0; i < items->args.count; i++) {
+        if (i) sb_put(o, ", ");
+        gen_as(g, o, items->args.items[i], element);
+    }
+    sb_put(o, "}}), ");
+    gen_as(g, o, e->lhs, (type){TY_INT, NULL});
+    sb_put(o, ")");
+}
+
 static void gen_expr(gen *g, sb *o, const expr *e)
 {
     if (e->gpu && !e->hoisted && gen_gpu(g, o, e)) return;
@@ -4795,6 +4851,10 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_put(o, ", ");
             gen_expr(g, o, e->lhs);
             sb_put(o, ")");
+            break;
+        }
+        if (listed_constant(e->object)) { // QUAD[i] of a list constant written out: its elements as an array, no list
+            gen_listed_element(g, o, listed_constant(e->object), e);
             break;
         }
         const char *lv = loop_view_of(g, e->object);
@@ -5222,6 +5282,11 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             gen_visibility_call(g, o, e);
         } else if (e->call == CALL_ENUM_COUNT) {
             sb_printf(o, "%lld", (long long)e->int_value);
+        } else if (e->call == CALL_ENUM_VALUES) { // Every member, in declaration order: an array C works out while compiling
+            const decl *d = e->type_decl;
+            sb_printf(o, "((%s){{", c_type(e->type));
+            for (int i = 0; i < d->members.count; i++) sb_printf(o, "%s%s", i ? ", " : "", enum_member_cname(d, &d->members.items[i]));
+            sb_put(o, "}})");
         } else if (e->call == CALL_LOAD) {
             sb_put(o, e->hoisted); // Already ran, before the statement
         } else if (e->call == CALL_IS_PREPARED) {
@@ -5412,13 +5477,13 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_printf(o, "tide_shade_%d(", sh->index);
             if (sh->blit) sb_put(o, "tide_draw");
             else gen_draw_list(g, o, e);
-            int given = 0; // The arguments before its vert and frag
+            bool blended = false; // A blit's enum is how it blends, which it always takes
             for (int i = 0; i < e->args.count && e->args.items[i]->bind != BIND_SHADER; i++) {
                 expr *arg = e->args.items[i];
-                given++;
-                // A mesh's filter and wrap went with its texture (a blit's enum is how it blends, which it always takes)
+                // A mesh's filter and wrap went with its texture
                 const bool sampling = arg->type.kind == TY_ENUM && (arg->type.decl == g->prog->filter || arg->type.decl == g->prog->wrap);
                 if (sampling && !sh->blit) continue;
+                blended |= sh->blit && arg->type.kind == TY_ENUM && arg->type.decl == g->prog->blend;
                 sb_put(o, ", ");
                 if (e->arg_want.items[i].kind == TY_TEXTURE) {
                     // The texture it's given, which says how it's sampled: as the draw says, where it does
@@ -5447,7 +5512,7 @@ static void gen_expr(gen *g, sb *o, const expr *e)
                     sb_put(o, ").transforms, false");
                 } else if (!sh->instanced) sb_put(o, ", (tide_list){0}, (tide_list){0}, true");
             }
-            if (sh->blit && given < 3) sb_put(o, ", TIDE_BLEND_REPLACE"); // In its destination's place
+            if (sh->blit && !blended) sb_put(o, ", TIDE_BLEND_REPLACE"); // In its destination's place
             if (sh->values_type) { // What it gives its vert and frag, after their names
                 sb_put(o, ", ");
                 gen_as(g, o, e->values, e->values->type);
@@ -7075,6 +7140,7 @@ static void call_operands(expr *e, operand_list *ops)
     for (int n = 0; n < e->args.count; n++) {
         const int i = arg_in_turn(e, n);
         expr *arg = e->args.items[i];
+        if (e->edit_binding && i == 1) continue; // The name an Edit gives its block: no value at the call
         operand_role role = TAKEN;
         if (m && i < m->params.count) {
             const param *p = &m->params.items[i];
@@ -7661,6 +7727,17 @@ static const char *closing(const gen *g, const int from)
     return out.len ? out.data : NULL;
 }
 
+// A task's end where its code says so (`return`, `fail`, a `try` passing an
+// error on), with its result in its frame already: the containers its own code
+// opened close first, as a function's do (an Edit's block puts its component
+// back), then the task is done.
+static void gen_task_leave(gen *g)
+{
+    const char *close = closing(g, 0);
+    if (close) line(g, &g->c, "%s", close);
+    line(g, &g->c, "return TIDE_TASK_DONE;");
+}
+
 // Leaves the function being generated with `value`, C text of its result type,
 // closing the containers its own code opened first. For `try`, which is
 // never in a copy of a function that takes an Action.
@@ -7693,7 +7770,7 @@ static void hoist_unwrap(gen *g, expr *e)
             sb error = {0};
             sb_printf(&error, "%s.error", r);
             gen_spill(g, "tide_f->tide_result_error", error.data, g->routine->fails, world_where(g->task->local));
-            line(g, o, "return TIDE_TASK_DONE;");
+            gen_task_leave(g);
         } else {
             sb leave = {0};
             sb_printf(&leave, "(%s){.error = %s.error}", c_type(g->routine->result), r);
@@ -8313,6 +8390,61 @@ static void gen_setting(gen *g, const expr *e)
     line(g, o, "}");
 }
 
+// world.Edit<Party>(id, party) { ... }: the entity's component, as its block's
+// `party`, which the block changes where it is and the block's end puts back,
+// however it's left. `party` points at the code's own `mut` binding of that
+// entity's Party where there's one (tide_bound_component: a system's own
+// parameter for `this`, an Edit around this one of the same entity, through
+// helpers too), and otherwise at a copy of its lanes, whose text and lists are
+// the stored ones, changed in their heap as a `mut` parameter's are: nothing is
+// copied but the lanes, and only the lanes that differ go back
+// (tide_table_scatter). The Edit is a binding for what follows, so a Set or an
+// Edit of that entity's Party in a helper the block calls finds it, and
+// replaces or changes it, as one finds a `mut` parameter. An entity that's gone,
+// or has no Party, skips the block. A `return`, `break` or `continue` out of
+// the block puts it back first, as a GUI container closes (closing), and so do
+// `try` and `fail`.
+static void gen_world_edit(gen *g, const expr *e)
+{
+    sb *o = &g->c;
+    const decl *d = e->type_decl;
+    const param *binding = e->edit_binding;
+    const char *name = type_cname(d);
+    const char *world = d->is_local ? "tide_l" : "tide_w";
+    const char *entity = made_up(g, "edit_entity");
+    const char *row = made_up(g, "edit_row");
+    const char *link = made_up(g, "edit_binding");
+    const char *value = local_cname(g, binding->name);
+    line(g, o, "{ // Edit<" STR_FMT ">", STR_ARG(d->name));
+    g->indent++;
+    indent(g, o);
+    sb_printf(o, "const tide_entity %s = ", entity);
+    gen_expr(g, o, e->args.items[0]);
+    sb_put(o, ";\n");
+    line(g, o, "%s %s;", name, row);
+    line(g, o, "%s *const %s = tide_world_edit_%s(%s, tide_bindings, %s, &%s);", name, value, name, world, entity, row);
+    line(g, o, "if (%s) {", value);
+    g->indent++;
+    line(g, o, "const tide_component_binding %s = {tide_bindings, %s, %s, %s, %du};", link, world, entity, value, d->index);
+    line(g, o, "const tide_component_binding *const tide_bindings = &%s;", link);
+    line(g, o, "(void)tide_bindings;");
+    // Whose it is, for a method that uses `this` or its component's `world` (gen_component_owner)
+    line(g, o, "const tide_entity %s = %s;", owner_name(g, binding, "entity"), entity);
+    line(g, o, "%s *const %s = %s;", world_type(d->is_local), owner_name(g, binding, "world"), world);
+    line(g, o, "(void)%s; (void)%s;", owner_name(g, binding, "entity"), owner_name(g, binding, "world"));
+    sb store = {0};
+    sb_printf(&store, "(void)tide_store_%s(%s, %s, %s);", name, world, entity, value);
+    const gen_open open = {.cleanup = store.data};
+    vec_push(g->containers, open);
+    gen_body_stmt(g, e->block);
+    g->containers.count--;
+    line(g, o, "%s", store.data);
+    g->indent--;
+    line(g, o, "}");
+    g->indent--;
+    line(g, o, "}");
+}
+
 // Foldout("Audio", menu.audioOpen) { ... }: a function that takes an Action is
 // copied into the call. Its parameters are locals, a mut one pointing at the
 // caller's variable, and its body runs the block where it calls `content()`.
@@ -8845,7 +8977,7 @@ static void gen_stmt_now(gen *g, const stmt *s)
                           world_where(g->task->local));
             }
             if (failable) line(g, o, "tide_f->tide_result_ok = true;");
-            line(g, o, "return TIDE_TASK_DONE;");
+            gen_task_leave(g);
             break;
         }
         // Containers the code opened close first. In copied code, return goes
@@ -8880,7 +9012,7 @@ static void gen_stmt_now(gen *g, const stmt *s)
             sb error = {0};
             gen_value_of(g, &error, s->value, g->routine->fails);
             gen_spill(g, "tide_f->tide_result_error", error.data, g->routine->fails, world_where(g->task->local));
-            line(g, o, "return TIDE_TASK_DONE;");
+            gen_task_leave(g);
             break;
         }
         const char *close = closing(g, 0);
@@ -9168,6 +9300,8 @@ static void gen_stmt_now(gen *g, const stmt *s)
             gen_block_run(g);
         } else if (s->value->call == CALL_LIST && s->value->block && str_eq_c(s->value->name, "Sort")) {
             gen_sort_call(g, s->value);
+        } else if (s->value->call == CALL_WORLD && str_eq_c(s->value->name, "Edit")) {
+            gen_world_edit(g, s->value);
         } else if (s->value->call == CALL_WORLD && str_eq_c(s->value->name, "Set")) {
             // Evaluate the entity and value in source order, with owned containers
             // copied before the replacement can release their source.
@@ -10450,8 +10584,9 @@ static void gen_list_helpers(gen *g, const bool bodies)
         const bool paths = prog->lists.items[k]->paths; // rows[i].x: read through a pointer at the element
         char held[32] = "";
         if (container) snprintf(held, sizeof held, "tide_%s%d", heap_array ? "array" : e.kind == TY_LIST ? "list" : "map", e.decl->index);
+        const bool whole = (type_dim(e) >= 2 && !matrix_dim(e)) || e.kind == TY_COLOR; // Equal in every component
         const bool compares = e.kind == TY_BYTE || e.kind == TY_CHAR || e.kind == TY_INT || e.kind == TY_LONG || e.kind == TY_FLOAT || e.kind == TY_DOUBLE || e.kind == TY_BOOL || e.kind == TY_ENUM
-                           || e.kind == TY_ENTITY || e.kind == TY_LOCAL_ENTITY || e.kind == TY_PLAYER || e.kind == TY_STRING;
+                           || e.kind == TY_ENTITY || e.kind == TY_LOCAL_ENTITY || e.kind == TY_PLAYER || e.kind == TY_STRING || whole;
         if (!bodies) {
             sb_printf(o, "// List<%s>\n", type_name(e));
             sb_printf(o, "TIDE_HELPER %s tide_list%d_get(tide_list l, int32_t i);\n", vc, k);
@@ -10613,9 +10748,12 @@ static void gen_list_helpers(gen *g, const bool bodies)
         sb_printf(o, "TIDE_HELPER void tide_list%d_release(tide_list *l, const uint32_t where)\n{\n%s    tide_list_release(l, where);\n}\n\n",
                   k, drops);
         if (compares) {
+            char equal[64];
+            snprintf(equal, sizeof equal, "tide_equal_%s(tide_list%%d_get(l, i), v)", e.kind == TY_COLOR ? "color" : type_suffix(e));
             const char *eq = e.kind == TY_STRING                                   ? "tide_str_eq(tide_list%d_get(l, i), v)"
                            : e.kind == TY_ENTITY || e.kind == TY_LOCAL_ENTITY      ? "tide_entity_equal(tide_list%d_get(l, i), v)"
                            : e.kind == TY_PLAYER                                   ? "tide_player_equal(tide_list%d_get(l, i), v)"
+                           : whole                                                 ? equal
                                                                                    : "tide_list%d_get(l, i) == v";
             sb_printf(o, "TIDE_HELPER int32_t tide_list%d_index_of(const tide_list l, const %s v)\n{\n"
                          "    for (int32_t i = 0; i < tide_list_count(l); i++) {\n        if (", k, vc);
@@ -12929,6 +13067,18 @@ static void gen_component_access(gen *g)
             if (decl_has_text(d)) sb_printf(o, "    tide_assign_%s(&row, value, %s);\n", name, decl_where(d));
             else sb_put(o, "    row = value;\n");
             sb_printf(o, "    tide_store_%s(w, e, &row);\n    if (active) *active = row;\n}\n\n", name);
+        }
+        if (d->world_edit_used) {
+            // world.Edit<Component>(e, value) { ... } (gen_world_edit): the code's own binding of the entity's,
+            // which the Edit changes itself, or a copy of its lanes in `row`; NULL when it's gone or has none
+            sb_printf(o, "TIDE_HELPER %s *tide_world_edit_%s(%s *w, const tide_component_binding *bindings, const tide_entity e,\n"
+                         "                                     %s *row)\n{\n%s"
+                         "    %s *const active = tide_bound_component(bindings, w, e, %du);\n"
+                         "    if (active) return active;\n"
+                         "    return tide_load_%s(w, e, row) ? row : NULL;\n}\n\n",
+                      name, name, w, name,
+                      !d->is_local && sharded(g) ? "    if (!tide_shard_may(w, e)) return NULL; // Another shard's waits on the border\n" : "",
+                      name, c, name);
         }
     }
 }
@@ -17311,8 +17461,11 @@ static void gen_chunk_columns(gen *g, const decl *sys, const int a, const char *
         sb_printf(o, "%sconst uint8_t *tide_pres_%s = tide_table_column(tide_t, %s, tide_c, %d);\n", pad,
                   type_cname(prog->components.items[c]), columns, arch_presence(g, a, c));
     }
-    // This machine's player, which its rows' owners are checked against: Session.player
-    if (filters_owner(g, sys, a)) {
+    // This machine's player, which its rows' owners are checked against: Session.player. A command handler's is the
+    // player who sent the command, whom its dispatcher is handed (dispatch_signature)
+    if (filters_owner(g, sys, a) && sys->event && sys->event->is_command) {
+        sb_printf(o, "%sconst tide_player_id tide_me = *tide_sender;\n", pad);
+    } else if (filters_owner(g, sys, a)) {
         sb_printf(o, "%sconst tide_player_id tide_me = tide_l->%s.%s;\n", pad, type_cname(prog->session),
                   field_cname(&prog->session->fields.items[1]));
     }
@@ -17454,20 +17607,29 @@ static void gen_row_fields(gen *g, const param *p, const int i, const char *pad)
 // changes for every row, and the rest for the rows it runs for.
 typedef enum { COPIES_ALL, COPIES_CHANGED, COPIES_READ } row_copies;
 
+// A read parameter whose stored component the code can change through its
+// World: a copy of its own, its lists too (gen_row_copies)
+static bool keeps_read_copy(const decl *sys, const param *p)
+{
+    return p->mode == PARAM_READ && world_sets_component(sys, p->type.decl) && type_has_list(p->type);
+}
+
 // For the rows a system's guard lets through (g->row_guarded): the lanes of its copies the guard's tests
-// didn't need (row_lanes_codegen.inc)
+// didn't need (row_lanes_codegen.inc), and a read parameter's own copy (keeps_read_copy)
 static void gen_row_copies_rest(gen *g, const decl *sys, const char *pad)
 {
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
         if (p->type.kind != TY_COMPONENT || (p->mode != PARAM_READ && p->mode != PARAM_MUT) || joined(sys, p)) continue;
-        const row_lanes lanes = system_row_lanes(g, sys, i, true, g->row_apart);
-        if (lane_none(&lanes.rest)) continue;
         const char *c = type_cname(p->type.decl);
-        sb value = {0}, from = {0};
-        sb_printf(&value, "tide_v%d", i);
-        sb_printf(&from, "tide_%s_%s", g->lanes_in && p->mode == PARAM_MUT ? "in" : "col", c);
-        gen_gather_lanes(&g->c, pad, p->type.decl, value.data, from.data, &lanes.rest);
+        const row_lanes lanes = system_row_lanes(g, sys, i, true, g->row_apart);
+        if (!lane_none(&lanes.rest)) {
+            sb value = {0}, from = {0};
+            sb_printf(&value, "tide_v%d", i);
+            sb_printf(&from, "tide_%s_%s", g->lanes_in && p->mode == PARAM_MUT ? "in" : "col", c);
+            gen_gather_lanes(&g->c, pad, p->type.decl, value.data, from.data, &lanes.rest);
+        }
+        if (keeps_read_copy(sys, p)) sb_printf(&g->c, "%stide_v%d = tide_copy_%s(tide_v%d);\n", pad, i, c, i);
     }
 }
 
@@ -17515,9 +17677,9 @@ static void gen_row_copies(gen *g, const decl *sys, const int a, const char *pad
                   i, g->lanes_in && p->mode == PARAM_MUT ? "in" : "col", c);
         // Set may reuse a stored container's allocation, including this row's.
         // Its read parameter keeps an ordinary value copy until it returns.
-        if (p->mode == PARAM_READ && world_sets_component(sys, p->type.decl) && type_has_list(p->type)) {
-            sb_printf(o, "%stide_v%d = tide_copy_%s(tide_v%d);\n", pad, i, c, i);
-        }
+        // Behind a guard, only for the rows it lets through (gen_row_copies_rest),
+        // as the scratch the copy takes goes back only where the system ran.
+        if (keeps_read_copy(sys, p) && !g->row_guarded) sb_printf(o, "%stide_v%d = tide_copy_%s(tide_v%d);\n", pad, i, c, i);
         const bool drawn = sys->is_view;
         if (drawn && param_blends(p)) {
             if (!p->verified && far_blends(g, p->type.decl)) {
@@ -21931,6 +22093,16 @@ static void gen_system_cached_task(gen *g, const decl *sys, const rows_set *rows
         sb_put(o, "        }\n        tide_chunk -= tide_t->chunks;\n    }\n");
     }
     sb_printf(o, "tide_fallback:\n    tide_task_%s_slow(tide_world_v, tide_task, tide_pieces);\n}\n\n", name);
+}
+
+// The name tide_shade_<n> has for the draw's texture `given`, of those it gives in order: tide_texture, then
+// tide_texture1, tide_texture2... (shader.c, Several textures a draw gives).
+static const char *given_texture_name(const int given)
+{
+    if (given <= 0) return "tide_texture";
+    sb name = {0};
+    sb_printf(&name, "tide_texture%d", given);
+    return name.data;
 }
 
 #include "shader_prep_codegen.inc"
@@ -27535,7 +27707,7 @@ static void gen_shader_textures(gen *g, sb *o, const shader *sh, const int s, ui
         const bool filter_carried = sampler->carried && (own || !sampler->filter_said);
         const bool wrap_carried = sampler->carried && (own || !sampler->wrap_said);
         sb from = {0}; // The Texture it's given: the draw's, or the field's
-        if (sampler->carried && !texture->source) sb_put(&from, "tide_texture");
+        if (sampler->carried && !texture->source) sb_put(&from, given_texture_name(texture->given));
         else if (sampler->carried) {
             int b = 0;
             while (sh->bound.items[b] != texture->source) b++;
@@ -27644,8 +27816,8 @@ static void gen_shader_textures(gen *g, sb *o, const shader *sh, const int s, ui
                       grid_shape_name(texture->asset->return_type.decl));
             continue;
         }
-        if (!texture->source) { // The one the draw was given
-            sb_printf(o, "    tide_textures[%d] = tide_draw_texture_source(tide_draw, tide_texture);\n", t);
+        if (!texture->source) { // One the draw was given
+            sb_printf(o, "    tide_textures[%d] = tide_draw_texture_source(tide_draw, %s);\n", t, given_texture_name(texture->given));
             continue;
         }
         int b = 0;
@@ -28034,7 +28206,7 @@ static void gen_shaders(gen *g)
         if (sh->gpu_instances) sb_put(o, ", tide_gpu_list tide_items");
         else if (sh->instanced) sb_put(o, ", tide_list tide_items");
         else if (sh->dims == 3) sb_put(o, ", tide_float4x4 tide_transform");
-        if (sh->direct_texture || sh->textured) sb_put(o, ", tide_texture_ref tide_texture");
+        for (int t = 0; t < sh->given_textures; t++) sb_printf(o, ", tide_texture_ref %s", given_texture_name(t));
         if (sh->skinned) {
             sb_put(o, ", tide_list tide_model_data");
             if (!sh->instanced) sb_put(o, ", tide_list tide_pose_data, tide_list tide_pose_transforms, bool tide_default_pose");
@@ -28066,7 +28238,7 @@ static void gen_shaders(gen *g)
                 sb_put(o, ")) return;\n");
             }
         }
-        if (sh->direct_texture || sh->textured) sb_put(o, "    (void)tide_texture;\n");
+        for (int t = 0; t < sh->given_textures; t++) sb_printf(o, "    (void)%s;\n", given_texture_name(t));
         if (sh->gpu_instances) {
             sb_printf(o, "    if (%s || %s) return;\n", no_vertices, no_indices);
         } else if (sh->instanced) {
@@ -28112,7 +28284,7 @@ static void gen_shaders(gen *g)
             const shader_texture *texture = &sh->sizes.items[t];
             sb from = {0};
             if (texture->asset) sb_put(&from, asset_cname(texture->asset));
-            else if (texture->direct) sb_put(&from, "tide_texture");
+            else if (texture->direct) sb_put(&from, given_texture_name(texture->given));
             else {
                 int b = 0;
                 while (sh->bound.items[b] != texture->source) b++;

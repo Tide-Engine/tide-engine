@@ -1,0 +1,63 @@
+scene Main { }
+
+// Several textures a draw gives, in its frag's order, each with the filter the
+// draw says after it; and a singleton's texture a function it's handed samples.
+
+struct Corner
+{
+    float2 position;
+    float2 uv;
+}
+
+struct Patch
+{
+    float2 offset;
+}
+
+local singleton Art
+{
+    Texture a;
+    Texture b;
+    Texture c;
+}
+
+local singleton Stage
+{
+    Texture sky;
+    float strength;
+
+    Color Above(float2 uv) { return sky.Sample(uv) * strength; }
+}
+
+Color Sunlit(Stage stage, float2 uv) { return stage.sky.Sample(uv, Filter.Point) * stage.strength + stage.Above(uv); }
+
+frag Three(Corner corner, out Color color, Texture first, Texture second, Texture third)
+{
+    color = first.Sample(corner.uv) * second.Sample(corner.uv) + third.Sample(corner.uv, Filter.Point);
+}
+
+frag Two(Vertex vertex, out Color color, Texture source, Texture lut)
+{
+    color = source.Sample(vertex.uv) * lut.Sample(vertex.uv);
+}
+
+frag Patched(Corner corner, out Color color, Patch patch, Texture first, Texture second)
+{
+    color = first.Sample(corner.uv + patch.offset) * second.Sample(corner.uv);
+}
+
+frag Sunny(Corner corner, out Color color, Stage stage)
+{
+    color = Sunlit(stage, corner.uv);
+}
+
+view Show(Art art, Stage stage)
+{
+    List<Corner> corners = [Corner { position = float2(0, 0), uv = float2(0, 0) }, Corner { position = float2(1, 0), uv = float2(1, 0) },
+                            Corner { position = float2(0, 1), uv = float2(0, 1) }];
+    Draw.Mesh(corners, [0, 1, 2], art.a, art.b, Filter.Point, art.c, Three);
+    Draw.Mesh(corners, [0, 1, 2], art.c, art.b, art.a, Three);
+    Draw.Blit(art.a, art.b, Draw.window, Two);
+    Draw.Instanced(corners, [0, 1, 2], [Patch { offset = float2(0.5, 0) }, Patch { offset = float2(0, 0.5) }], art.b, art.c, Patched);
+    Draw.Mesh(corners, [0, 1, 2], Sunny);
+}

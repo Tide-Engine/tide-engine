@@ -15,6 +15,12 @@ const int ALIASES = Aliases.Count();
 const int FORWARD_COUNT = Later.Count();
 enum Later { A = Direction.Count(), B }
 
+// Members worked out from an enum declared after them, and an array's length too: that enum is numbered first
+enum Ahead { First = int(Behind.Second) + 1, Next }
+singleton Sized { int[int(Behind.Second)] cells; int[int(BEHIND[0])] fewer; }
+const Behind[3] BEHIND = Behind.Values();
+enum Behind { One = 3, Second = int(Phase.Values()[1]) + 2, Third = int(BEHIND[0]) * 3 } // Third: a member before it
+
 const Weapon SHORT_BOW = .Bow;
 singleton Shorthand { Weapon weapon = .Bow; int checks; }
 Weapon ShortReturn(Weapon weapon = .Sword) { return weapon == .Sword ? .Bow : .Sword; }
@@ -166,6 +172,66 @@ system Advance(mut Match match, Time time)
 system Arm(Controls controls, mut Match match)
 {
     if (controls.weapon != match.loadout.primary) match.loadout.primary = controls.weapon;
+}
+
+// Two values of one enum in order, by their numbers, and every member of an enum in declaration order.
+const bool PHASES_IN_ORDER = Phase.Warmup < Phase.Playing && Phase.Over >= Phase.Playing;
+
+singleton Ordering
+{
+    bool inOrder = PHASES_IN_ORDER;
+    Direction[4] all = Direction.Values(); // An array of Count() members
+    int counted = Phase.Values().count;
+    int phases;      // Phase's numbers, through Values(): 0 + 5 + 6
+    int order;       // Each member's place, in declaration order
+    int aliases;     // Aliases' numbers, Same at its own place: -10 - 10 + 50 + 100
+    int sameSeen;    // How often Aliases.Same's number comes
+    int before;      // Phases before Over
+    bool smallOrder; // A byte's enum keeps its number's low bits, and orders by them
+    bool shorthand;
+    int shorthandCount;
+    Phase lastValue;
+    int voxelSum;
+}
+
+Phase LastOf(Phase[3] phases)
+{
+    return phases[phases.count - 1];
+}
+
+system Order(mut Ordering ordering, Match match)
+{
+    ordering.phases = 0;
+    ordering.order = 0;
+    mut int place = 1;
+    foreach (var phase in Phase.Values())
+    {
+        ordering.phases += int(phase);
+        ordering.order = ordering.order * 10 + place * int(phase == Phase.Values()[place - 1] ? 1 : 0);
+        place++;
+    }
+    ordering.aliases = 0;
+    ordering.sameSeen = 0;
+    foreach (var alias in Aliases.Values())
+    {
+        ordering.aliases += int(alias);
+        if (alias == Aliases.Same) ordering.sameSeen++;
+    }
+    ordering.before = 0;
+    foreach (var phase in Phase.Values())
+    {
+        if (phase < Phase.Over) ordering.before++;
+    }
+    ordering.smallOrder = Voxel.Air < Voxel.Water && Voxel(-1) > Voxel.Water && Voxel(256) <= Voxel.Air && !(Voxel.Stone >= Voxel.Water);
+    ordering.shorthand = match.phase >= .Warmup && .Warmup <= match.phase && !(match.phase > .Over);
+    ordering.shorthandCount = 0;
+    foreach (var phase in Phase.Values())
+    {
+        if (phase > .Warmup && phase <= match.phase) ordering.shorthandCount++;
+    }
+    ordering.lastValue = LastOf(Phase.Values());
+    ordering.voxelSum = 0;
+    foreach (var voxel in Voxel.Values()) ordering.voxelSum += int(voxel);
 }
 
 // Every section returns, and there's a default, so the function always returns.

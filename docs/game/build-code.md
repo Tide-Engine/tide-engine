@@ -124,7 +124,7 @@ float Twice(float x)
 }
 ```
 
-A constant build code makes can be a list of plain values (numbers, vectors, colors and structs of those) as well as what any constant can be. Code and field defaults read it. A `case` label, a bound or a setting can't, as its value isn't known until the game builds, and neither can a frag or a vert yet.
+A constant build code makes can be an array or a list of plain values (numbers, vectors, colors and structs of those) as well as what any constant can be: `const int[16] SQUARES = Squares();`. A list can be as long as you like, where one [written out](../language/basics.md#tables) holds 4096 values at the most. Code and field defaults read it. A `case` label, a bound, a setting or another constant can't, as its value isn't known until the game builds, and neither can a frag or a vert yet; build code that makes another constant can (`const float FIRST = Head(CURVE);`).
 
 ## Build functions
 

@@ -1,0 +1,5 @@
+// expect: operator '==' can't be used with quaternion and quaternion
+// expect: 'a.value == b.value' compares the four numbers
+singleton Marks { quaternion a; quaternion b; bool same; }
+scene Main { }
+system Check(mut Marks marks) { marks.same = marks.a == marks.b; }
