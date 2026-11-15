@@ -11,8 +11,9 @@ real. What follows replaces the two sections below where they differ.
   helper's parameter had itself among its origins: the depth limit made the target unknown (an int frag into an
   R32i field handed to `void Touch(mut RenderTarget t, int n)` was "isn't fixed"), and `numeric_image_origin`
   followed every path, 43 s for two self-calls and no end for three. Fields assigned from each other (a ping-pong
-  pair swapped through a local) were the same cycle. The visited list is a static vector reused each query: the
-  checker runs on one thread.
+  pair swapped through a local) were the same cycle. The visited list is a static array reused each query (the
+  checker runs on one thread), on its own heap and not the arena's: tidels resets the arena between analyses, and
+  an arena vector there was a use after free (`lsp_cubemaps` under ASan, a crash on MinGW).
 - **A local is followed as a field is.** `stmt.image_assignments` holds what `check_assign` gives an image local
   (`note_local_origin`) and the places `note_image_place` now makes for a local argument; a local's origins are its
   initializer and those, whether or not it's `assigned`. It was the initializer alone where the local wasn't

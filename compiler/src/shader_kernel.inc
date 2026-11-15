@@ -211,25 +211,33 @@ static void write_kernel(program *prog, shader *sh)
 // (expr.image_place).
 
 // The places one query has followed, each with the image of it asked for (image_place_again). Inference runs on the
-// checker's one thread.
+// checker's one thread. Its own heap, not the arena's (vec_push): the language server resets the arena between
+// analyses, and this list outlives them.
 typedef struct image_visit {
     const void *place;
     int color;
 } image_visit;
-static VEC(image_visit) image_visits;
+static image_visit *image_visits;
+static size_t image_visit_count, image_visit_capacity;
 
 void image_places_begin(void)
 {
-    image_visits.count = 0;
+    image_visit_count = 0;
 }
 
 bool image_place_again(const void *place, const int color)
 {
-    for (int i = 0; i < image_visits.count; i++) {
-        if (image_visits.items[i].place == place && image_visits.items[i].color == color) return true;
+    for (size_t i = 0; i < image_visit_count; i++) {
+        if (image_visits[i].place == place && image_visits[i].color == color) return true;
     }
-    const image_visit visit = {place, color};
-    vec_push(image_visits, visit);
+    if (image_visit_count == image_visit_capacity) {
+        const size_t capacity = image_visit_capacity ? image_visit_capacity * 2 : 64;
+        image_visit *grown = realloc(image_visits, capacity * sizeof *grown);
+        if (!grown) abort();
+        image_visits = grown;
+        image_visit_capacity = capacity;
+    }
+    image_visits[image_visit_count++] = (image_visit){place, color};
     return false;
 }
 
