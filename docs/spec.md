@@ -2058,21 +2058,6 @@ How a match keeps what it doesn't hold in memory: a chunk of blocks nobody is ne
 - **What a load finds comes back as an event,** `Loaded { string key; List<byte> bytes; bool found; bool failed; }`, in a later tick: sent to the entity the load named, or to the world. `found` is false and `bytes` empty where the store has nothing under the key. `failed` is true where something is kept there that couldn't be read (the disk refused it, or it's bigger than a value can be): not the same as nothing, so a game doesn't make it afresh and save over it. It's a tick's input, as a command is: the server gives it to a tick, the tick's frame carries it to every machine that has the whole match, the journal records it, and a replay takes it from there. So `Loaded` handlers run in the same tick on every machine, and the code that handles one is ordinary match code.
 - **Which tick.** An answer goes to the first tick after it's ready. With the files the standard hosts keep, that's usually the next tick or the one after (they're read on a thread of the files' own: below). In a match that doesn't hide state, an answer of more than about 1 KiB (`TIDE_COMMAND_BYTES` with its key) goes to the players as a download, as a big command does: it reaches a tick once every player has it, and the answers after it wait behind it.
 - `Loaded` is declared by the engine, as Tide code a program whose code has the words `Storage`, `.` and `Load` (comments aside) is compiled with; a program that doesn't has no such event, and a game's own `Loaded` clashes with it there. Its handlers follow the events' rule: one that takes components needs the entity every `Storage.Load` names, and a load that names none is then an error that says so. The engine sends it; a game's own `Send` of it is allowed, as of any event it could declare itself.
-- **Listing keys** (Claude's picks, 2026-11-15). `Storage.List(prefix)` asks for the keys the store has that start with `prefix` (an empty one: every key). `Storage.List(prefix, after)` goes on after a key, the last of the answer before: the keys past it. Either takes the entity its answer goes to last, as a load does: `Storage.List(prefix, entity)`, `Storage.List(prefix, after, entity)`; the second argument is `after` when it's a `string` and the entity when it's an `Entity`. The answer is a `Listed { string prefix; string after; List<string> keys; bool more; bool failed; }` event in a later tick, declared by the engine for a program whose code has `Storage`, `.` and `List`, as `Loaded` is for `Load`, with the same rule for handlers that take components. `keys` are sorted by their UTF-8 bytes (a key before the keys it starts), 1,024 at the most (`TIDE_STORAGE_LIST_MOST`; 1,024 keys of 256 bytes are 264 KiB, within a value's 32 MiB); `more` is true where there are keys past the last, which `Storage.List(listed.prefix, listed.keys[listed.keys.count - 1])` gets. `failed` is true where the store couldn't be listed (the disk refused a folder that could hold one of the answer's keys: one whose keys would all come after a full page's fails the page after instead), and `keys` is empty then; a store that has nothing under the prefix, and a host with nowhere to keep it, answer with no keys and `failed` false. `prefix` and `after` are the request's, so two pages of one prefix asked in one tick are told apart. A listing is answered as a load is, input to a tick with the same pacing, order and limits: a listing asked twice in a tick with one prefix, `after` and target is answered once, and one asked after a save in the same tick has the saved key.
-- A listing has only keys a save could have made: a file in `saved/` that isn't one (a `.new` a save left as the server stopped, a file of another name or spelling someone put there) is never listed. A key too long for a file's name (kept by its SHA-256, below) lists too: its key is kept beside its value, and a value whose key isn't there, or a key whose file isn't its hash, lists nothing.
-
-```csharp
-// Every chunk a dimension has saved, a page at a time
-Storage.List($"chunks/{dimension.number}/", this);
-
-event(Listed listed) Count(mut Atlas atlas)
-{
-    if (listed.failed) return;
-    foreach (var key in listed.keys) atlas.saved += 1;
-    if (listed.more) Storage.List(listed.prefix, listed.keys[listed.keys.count - 1], this);
-}
-```
-
 ```csharp
 // A chunk nobody has had for a while goes, one a player changed into the store first: in an event, which runs
 // after the tick's moves, so a player who came back to it in this tick keeps it
@@ -2101,6 +2086,21 @@ event(Loaded loaded) Fill(mut Chunk chunk)
 ```
 
 `ToBytes` and `FromBytes` are a grid's as bytes and back (Grids, Provisional, Grids as bytes).
+
+- **Listing keys** (Claude's picks, 2026-11-15). `Storage.List(prefix)` asks for the keys the store has that start with `prefix` (an empty one: every key). `Storage.List(prefix, after)` goes on after a key, the last of the answer before: the keys past it. Either takes the entity its answer goes to last, as a load does: `Storage.List(prefix, entity)`, `Storage.List(prefix, after, entity)`; the second argument is `after` when it's a `string` and the entity when it's an `Entity`. The answer is a `Listed { string prefix; string after; List<string> keys; bool more; bool failed; }` event in a later tick, declared by the engine for a program whose code has `Storage`, `.` and `List`, as `Loaded` is for `Load`, with the same rule for handlers that take components. `keys` are sorted by their UTF-8 bytes (a key before the keys it starts), 1,024 at the most (`TIDE_STORAGE_LIST_MOST`; 1,024 keys of 256 bytes are 264 KiB, within a value's 32 MiB); `more` is true where there are keys past the last, which `Storage.List(listed.prefix, listed.keys[listed.keys.count - 1])` gets. `failed` is true where the store couldn't be listed (the disk refused a folder that could hold one of the answer's keys: one whose keys would all come after a full page's fails the page after instead), and `keys` is empty then; a store that has nothing under the prefix, and a host with nowhere to keep it, answer with no keys and `failed` false. `prefix` and `after` are the request's, so two pages of one prefix asked in one tick are told apart. A listing is answered as a load is, input to a tick with the same pacing, order and limits: a listing asked twice in a tick with one prefix, `after` and target is answered once, and one asked after a save in the same tick has the saved key.
+- A listing has only keys a save could have made: a file in `saved/` that isn't one (a `.new` a save left as the server stopped, a file of another name or spelling someone put there) is never listed. A key too long for a file's name (kept by its SHA-256, below) lists too: its key is kept beside its value, and a value whose key isn't there, or a key whose file isn't its hash, lists nothing.
+
+```csharp
+// Every chunk a dimension has saved, a page at a time
+Storage.List($"chunks/{dimension.number}/", this);
+
+event(Listed listed) Count(mut Atlas atlas)
+{
+    if (listed.failed) return;
+    foreach (var key in listed.keys) atlas.saved += 1;
+    if (listed.more) Storage.List(listed.prefix, listed.keys[listed.keys.count - 1], this);
+}
+```
 
 - **In a match that hides state** (State visibility) nothing of a load reaches the players' machines but what its handlers change of what they may have, as with a command: the bytes stay on the server.
 - **Order.** A tick's requests are carried out once it has ended, after those of the ticks before, in the order it made them: a save then a load of one key in one tick finds what was saved, and so does a load in a later tick. A load asked twice in a tick with one key and one target is answered once. Answers are given to a tick in the order their loads and listings were asked, 64 a tick at the most (more wait for the next), and their `Loaded` and `Listed` handlers run with that tick's other events, after its systems: a system that goes on from what a handler did runs the tick after. Each answer is its own cause: what two answers' handlers spawn in one tick are different entities.
