@@ -1,3 +1,12 @@
+## Projection hashes by pieces; a field given a copy (2026-11-15)
+
+No runtime function is new or changed (netcode.md and voxels.md, 2026-11-15). Generated code for players now hashes
+runs of a table chunk's column pages itself, `tide_hash_wide` over `tide_page_data` of `tide_table.pages`, beside
+`tide_page_hash` as before, and digests a Visibility's overrides with `tide_map_next` and `tide_hash_more`. A field
+given `x.Copy()` goes through a generated `tide_grid_set_copy` over the existing `tide_grid_set`, `tide_grid_copy`,
+`tide_heap_of`, `tide_handle_where` and `tide_pack_holds`; it relies on `tide_grid_set` (`tide_grid_own`) copying a
+scratch grid's chunks into the field's heap in its records' order and leaving the scratch grid as it was.
+
 ## Heaps per owner in games that hide state (2026-11-14, later)
 
 No runtime function is new or changed (schedule-and-threads.md, top section). Generated code for players now reads

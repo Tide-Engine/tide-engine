@@ -159,6 +159,17 @@ foreach(variant checked memo_off)
 endforeach()
 target_compile_definitions(tidec_e2e_visibility_runs_checked PRIVATE TIDE_CLIENT_SPANS_CHECK)
 target_compile_definitions(tidec_e2e_visibility_runs_memo_off PRIVATE TIDE_CLIENT_MEMO_OFF)
+# Projection hashes kept 64 rows at a time: what could change a piece's rows while it's passed over, one change at a
+# time, each tick's hashes against a copy's with nothing kept, and repairs from what's kept against the rows'
+tide_e2e_test(visibility_pieces)
+foreach(variant checked memo_off)
+    tide_add_game(tidec_e2e_visibility_pieces_${variant} SOURCES e2e/visibility_pieces.tide NAME game
+        HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/visibility_pieces_test.c")
+    target_include_directories(tidec_e2e_visibility_pieces_${variant} PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    add_test(NAME tidec_e2e_visibility_pieces_${variant} COMMAND tidec_e2e_visibility_pieces_${variant})
+endforeach()
+target_compile_definitions(tidec_e2e_visibility_pieces_checked PRIVATE TIDE_CLIENT_SPANS_CHECK)
+target_compile_definitions(tidec_e2e_visibility_pieces_memo_off PRIVATE TIDE_CLIENT_MEMO_OFF)
 tide_e2e_test(shards) # One world split across shards: moving, ghosts, waiting on borders, checkpoints and splits
 tide_e2e_test(shards_players) # A player's machine following their avatar from shard to shard
 tide_e2e_test(shards_visibility) # A visibility group the root keeps, read on every shard and changed from a region
