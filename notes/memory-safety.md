@@ -1,3 +1,29 @@
+## The server's store: listings and answers (2026-11-15)
+
+`Storage.List` takes a prefix and a key to go on after from match code, a provider lists names anyone could have put in
+`saved/`, and every machine reads the answers out of frames (notes/voxels.md, section 3b). What keeps it safe:
+
+- **Game values are bounded before they're kept**: a key 1 to 256 bytes, a prefix and an `after` 0 to 256
+  (`tide_storage_ask`, which refuses and logs past them, and a size given with no bytes), a value
+  `TIDE_STORAGE_VALUE_MOST`. Requests copy them; nothing points into the world.
+- **Names from the disk are untrusted**: a name past `TIDE_STORAGE_PATH_MOST` is dropped as it's listed (`name_entry`), a
+  path is built only where it fits the walk's buffer (`walk`'s checks before each `memcpy`), and `tide_storage_key`
+  decodes into a 256-byte key, refusing a `%` without two capital hex digits inside the name, more than 256 bytes, and
+  anything that isn't UTF-8 or isn't the path the key would be written at. A hashed key's file is read whole and used only
+  at 1 to 256 bytes of UTF-8 whose path is that file's. The walk goes into a folder only where `<folder>/a.bin` is a key's
+  file, so each level adds two bytes or more to a key of 256 at most: 128 levels at most, symlinked loops too.
+- **Kept keys are fixed slots**: 1,025 of 256 bytes and their 16-bit sizes, each `memcpy` of a size already bounded.
+- **Answers are read checking every byte** (`tide_stored_read`): its kind, whom it's for and its outcome among theirs; a key
+  1 to 256 bytes (a prefix and an `after` 0 to 256) of UTF-8; a load's value only where it was found, at most
+  `TIDE_STORAGE_VALUE_MOST`; a listing's count at most 1,024 and each key walked to its end, nothing after the last;
+  `tide_stored_next_key` reads them the same way again. The generated code reads nothing but what it gives.
+- **The provider's thread touches its batch alone**: the requests it was handed, which nothing else changes, and its
+  answers, which the server reads only after the batch's `done` with acquire (released after the last of them).
+
+Tests: `storage_answers_that_arent_are_refused` (an answer cut at every byte, a key that isn't UTF-8, more keys than it has,
+no such kind), `storage_paths_give_their_keys_back` (19 strays, the longest path there is), the listings in
+`tidec_e2e_storage`. Sanitizer runs are CI's for this change.
+
 ## Grids from bytes (2026-11-14)
 
 `Grid3<T>.FromBytes(bytes)` reads bytes anyone could have sent (a command, a file, a store's value) into a grid in the
