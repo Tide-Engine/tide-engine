@@ -83,6 +83,7 @@ typedef struct tide_entity_slot
 
 struct tide_entity_index;
 struct tide_entity_order;
+struct tide_entity_retired_order;
 struct tide_entity_filtered_order;
 typedef struct tide_entities
 {
@@ -90,7 +91,8 @@ typedef struct tide_entities
     tide_page **page;
     struct tide_entity_index *index, *births;
     uint64_t key_clock, unkeyed_next;
-    struct tide_entity_order *ordered, *retired_order;
+    struct tide_entity_order *ordered;
+    struct tide_entity_retired_order *retired_order;
     struct tide_entity_filtered_order *filtered_order;
     uint32_t order_lock;
 } tide_entities;
