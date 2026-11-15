@@ -9279,6 +9279,18 @@ static void gen_stmt_now(gen *g, const stmt *s)
             else sb_printf(o, ", %s);\n", place_where(g, target->object));
             break;
         }
+        if (target->type.kind == TY_GRID && s->value->kind == E_METHOD && s->value->call == CALL_GRID && !s->value->hoisted
+            && !s->value->kept && str_eq_c(s->value->name, "Copy") && !task_grid_local(g, target)) {
+            // cells = other.Copy(): a field copies what it's given into its heap and leaves it as it was, so a grid code
+            // made goes in with no copy of it made first; anything else is copied first, as before (tide_grid_set_copy)
+            indent(g, o);
+            sb_put(o, "tide_grid_set_copy(&(");
+            gen_expr(g, o, target);
+            sb_put(o, "), ");
+            gen_expr(g, o, s->value->object);
+            sb_printf(o, ", &%s, %s);\n", grid_shape_name(target->type.decl), place_where(g, target));
+            break;
+        }
         if (target->type.kind == TY_GRID) { // cells = Grid2(...): the old one's chunks released
             indent(g, o);
             sb_put(o, "tide_grid_set(&(");
@@ -11436,6 +11448,14 @@ static void gen_grid_helpers(gen *g)
         sb_put(o, "TIDE_HELPER void tide_grid_carry(tide_grid *to, tide_grid value, const tide_grid_shape *s, const uint32_t where)\n{\n"
                   "    if (value.at && value.at == to->at) return;\n"
                   "    if (tide_heap_of(where) && value.at && (tide_handle_where(value.at) != TIDE_IN_SCRATCH || tide_pack_holds(value.at)))\n"
+                  "        value = tide_grid_copy(value, s);\n"
+                  "    tide_grid_set(to, value, s, where);\n}\n\n");
+        // A place given `cells.Copy()`: a world's field copies what tide_grid_set gives it into its heap, chunk by chunk
+        // in the order a copy would have them, and leaves the grid as it was, so one code made (the scratch area's) goes
+        // in as it is. Anything else is copied first, as tide_grid_set takes only what code made: a world's grid or the
+        // pack's, or one going where there's no heap (a local, which takes the handle it's given)
+        sb_put(o, "TIDE_HELPER void tide_grid_set_copy(tide_grid *to, tide_grid value, const tide_grid_shape *s, const uint32_t where)\n{\n"
+                  "    if (!tide_heap_of(where) || !value.at || tide_handle_where(value.at) != TIDE_IN_SCRATCH || tide_pack_holds(value.at))\n"
                   "        value = tide_grid_copy(value, s);\n"
                   "    tide_grid_set(to, value, s, where);\n}\n\n");
     }

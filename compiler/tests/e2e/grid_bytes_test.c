@@ -110,26 +110,33 @@ TIDE_TEST(grid_bytes_in_views)
 }
 
 // The built-in against the loops bench/voxels wrote, a 16-cube at a time: one
-// of blocks mixed cell by cell, and one of ground, as the game's are (no check
+// of blocks mixed cell by cell, and one of ground, as the game's are, and the
+// bytes read into a field, as bench/voxels' Fill does and with `??`, each of
+// those twice and the second said: a field's old blocks are the heap's again
+// only after the tick, so the first grows the heap by its rounds (no check
 // of the times: they're the machine's)
 TIDE_TEST(grid_bytes_measure)
 {
     start();
-    static const char *const names[] = {"", "Pack (Tide loops)", "Unpack (Tide loops)", "ToBytes", "FromBytes"};
+    static const char *const names[] = {"", "Pack (Tide loops)", "Unpack (Tide loops)", "ToBytes", "FromBytes", "field = (is).Copy()",
+                                        "field = ... ?? Grid3"};
     static const char *const chunks[] = {"mixed", "ground"};
     const int rounds = 400;
     for (int which = 0; which < 2; which++) {
-        for (int mode = 1; mode <= 4; mode++) {
-            world.Bench.mode = 0; // A tick of nothing, to take off
-            uint64_t start = tide_time_now_ns();
-            tide_world_tick(&world);
-            const uint64_t idle = tide_time_now_ns() - start;
-            world.Bench.mode = mode;
-            world.Bench.rounds = rounds;
-            world.Bench.which = which;
-            start = tide_time_now_ns();
-            tide_world_tick(&world);
-            const uint64_t took = tide_time_now_ns() - start;
+        for (int mode = 1; mode <= 6; mode++) {
+            uint64_t idle = 0, took = 0;
+            for (int pass = 0; pass < (mode >= 5 ? 2 : 1); pass++) {
+                world.Bench.mode = 0; // A tick of nothing, to take off
+                uint64_t start = tide_time_now_ns();
+                tide_world_tick(&world);
+                idle = tide_time_now_ns() - start;
+                world.Bench.mode = mode;
+                world.Bench.rounds = rounds;
+                world.Bench.which = which;
+                start = tide_time_now_ns();
+                tide_world_tick(&world);
+                took = tide_time_now_ns() - start;
+            }
             TIDE_CHECK(world.Bench.mode == 0 && world.Bench.sum > 0);
             printf("    %-6s %-20s %8.2f us a chunk", chunks[which], names[mode], (double)(took > idle ? took - idle : 0) / 1000.0 / rounds);
             if (mode == 1 || mode == 3) printf(", %d bytes", (int)(world.Bench.sum / rounds)); // What it wrote, about

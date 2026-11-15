@@ -71,13 +71,15 @@ singleton Kept
     Grid2<int> far;
 }
 
-// The C test's measurements: what Measure runs, and how many times. 1 Pack, 2 Unpack, 3 ToBytes, 4 FromBytes
+// The C test's measurements: what Measure runs, and how many times. 1 Pack, 2 Unpack, 3 ToBytes, 4 FromBytes, and
+// FromBytes into a field: 5 through `is` and Copy (as bench/voxels' Fill), 6 with `??`
 singleton Bench
 {
     int mode;
     int rounds;
     int which;      // 0 the dense chunk, 1 the ground
     int sum;
+    Grid3<Block> into = Grid3(16, 16, 16);
 }
 
 local singleton Seen
@@ -418,10 +420,20 @@ system Measure(mut Bench bench, Kept kept)
             Unpack(into, packed);
             sum += int(into[1, r % 16, 2]);
         }
-        else
+        else if (bench.mode == 4)
         {
             Grid3<Block> back = Grid3<Block>.FromBytes(bytes)!;
             sum += int(back[1, r % 16, 2]);
+        }
+        else if (bench.mode == 5)
+        {
+            if (Grid3<Block>.FromBytes(bytes) is Grid3<Block> saved) bench.into = saved.Copy();
+            sum += int(bench.into[1, r % 16, 2]);
+        }
+        else
+        {
+            bench.into = Grid3<Block>.FromBytes(bytes) ?? Grid3(16, 16, 16);
+            sum += int(bench.into[1, r % 16, 2]);
         }
     }
     bench.sum = sum;

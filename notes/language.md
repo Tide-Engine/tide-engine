@@ -173,6 +173,18 @@ the storage's ends so clang sees no tautology), `memset` of padding and `tide_em
 a `T?` field's `ok` made 0 or 1 first and the whole field zeros when it's 0. A game that calls neither generates the C it
 did: the flags gate everything, and `bench_voxels` with the old loops gives the hash it was pinned with.
 
+**A field given a copy** (2026-11-15, notes/voxels.md section 4): `field = x.Copy()` (an S_ASSIGN of a grid whose value
+is the `Copy` method, not hoisted, to a place that isn't a task's local) is `tide_grid_set_copy(&field, x, &shape,
+where)`, generated beside `tide_grid_carry`: a grid code made (the scratch area's, not the pack's) goes to
+`tide_grid_set` as it is, which copies its chunks into the field's heap in its records' order and leaves it alone, as
+a copy of it would have gone; a world's grid, the pack's, or any going where `where` has no heap (a local, which takes
+the handle) is copied first, as before. So `if (Grid3<T>.FromBytes(b) is Grid3<T> got) field = got.Copy();` reads
+once and copies once, as `field = Grid3<T>.FromBytes(b) ?? Grid3(...)` does. Nothing a game sees changes: the field's
+heap comes out block for block as it did (`bench_voxels`' pin stands). `grid_bytes_measure` has both forms. Not taken,
+so still a copy and then the field's (correction from review, the user docs had said "however it's written"): a
+field inside a list's, a map's or an array's element (`rows[i].cells = x.Copy()`, which `gen_element_assign` writes
+first), and a `Copy` hoisted for the order of evaluation; extending it to the element's path is open, unasked for.
+
 **Runtime** (`engine/src/grid.c`, the grids maintenance exception; notes/runtime-ownership.md): `tide_grid_to_bytes`,
 `tide_grid_from_bytes` and `tide_grid_from_memory` (the raw form, for C and the tests). ToBytes reads any grid (a world's
 through `tide_heap_read`, the pack's and a scratch grid's through the scratch area), orders the records by a merge sort of

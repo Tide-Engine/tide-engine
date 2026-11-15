@@ -388,7 +388,7 @@ static void gen_client_hash_helpers(gen *g)
               "    uint64_t at; // The container's handle; 0: an empty slot\n"
               "    uint64_t hash;\n    tide_client_page *pages; // Every page its value was read from, and their hashes then\n"
               "    uint32_t type, used, count, room;\n} tide_client_memo_entry;\n"
-              "struct tide_client_kept; // What the world's rows came to, table chunk by table chunk (client_spans_codegen.inc)\n"
+              "struct tide_client_kept; // What the world's rows came to, 64 rows of a table chunk at a time (client_spans_codegen.inc)\n"
               "TIDE_HELPER void tide_client_kept_free(struct tide_client_kept *k);\n"
               "typedef struct tide_client_memo {\n    const void *world;\n    tide_client_memo_entry *slots;\n    struct tide_client_kept *rows; // What its rows came to\n"
               "    uint32_t room, count, call, kept; // kept: entries this call used\n"

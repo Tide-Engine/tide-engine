@@ -1,5 +1,124 @@
 # Netcode: sessions, prediction, commands
 
+## Projection hashes kept 64 rows at a time (2026-11-15)
+
+The tick's check (`tide_game_client_hashes`, `client_spans_codegen.inc`) kept what a table chunk's 1,024 rows came to,
+and where any page of the chunk changed it compared every row of it, one by one: their lanes, their heap pages, their
+groups. With 8 bots moving in `bench_voxels` (6,490 chunks in 7 table chunks) about two table chunks a tick were read
+whole for a few dozen rows that changed, and every few ticks every row's audience was worked out again. Now:
+
+- **A piece** (`tide_client_piece`, `TIDE_CLIENT_PIECE` 64 rows) is what's kept and passed over. A table chunk
+  (`tide_client_span`) keeps each column page's hash and its rows; where none was written since its pieces were read
+  (`tide_client_span_written`, by the hashes pages keep), each piece is checked by its heap and slot pages alone. Where
+  some were, a piece keeps each column's run of its rows hashed (`tide_client_run_hash`, `tide_hash_wide` over the
+  page's data), and only the written columns' runs are hashed again. A piece whose runs, rows' heap pages and slots'
+  pages are as they were is not read (`tide_client_piece_same`).
+- **In a piece read again** a row's lanes are digested only for the components a column of which changed in the piece
+  (`tide_client_part_of<a>`, generated: a column's component; -1 for the entity's and the scene's), its own heap pages
+  compared only where one of the piece's moved, and what says which entity it is hashed again only where the entity's
+  or the scene's column or a slot's page moved; otherwise its sum moves by what its terms worked out again moved by
+  (sums wrap, so that's exact).
+- **A row's policies** (its Visibility's overrides) are kept as what they say (`tide_client_policies_digest`, in
+  `tide_client_rows.policies`) beside the pages they're in. A row whose heap pages changed under it, with the same terms
+  and policies, isn't fresh: its audience isn't worked out again. Before, every such row was.
+- **Audiences**: a piece is looked at only where a row of it was worked out again, every row's must be, or groups
+  changed and the piece's groups (the least and most id its rows' audiences go by, their own and their scenes', above 0,
+  and a bit of 256 for each by `tide_client_mix`; and whether a row is restricted to a group by a policy) take in one
+  that changed (`tide_client_changed_in`, the changed ids being in order). Inside, rows go by the row's check as before.
+  A piece's groups are gathered again each time it's looked at.
+- **A scene's root** makes every row's audience go again only where a root came, went (a hole, or the table's end,
+  where a kept row was) or has another Visibility (its lanes or its term). Before, any change to a root's table chunk
+  did: a dimension's `Streamer` map changes as chunks come and go, and 369 of 2,017 calls worked out all 6,490 rows.
+- The pages a piece's rows reached are made once each by a table on the stack (`tide_client_gathered_once`, up to 512;
+  sorted past that) where a sort took 4 µs a piece. A row whose pages aren't all kept (`page_count` `UINT32_MAX`) leaves
+  its piece unkept, so a piece kept as it was has every row's pages in its union.
+
+What's kept is still only a shortcut: the hashes are of values (no pin moved, `bench_voxels`' world hash and every
+projection hash among them), kept rows' audience, sums, denials and terms are what the rows come to at
+`tide_client_kept.tick`, which `client_changes` trusts, `TIDE_CLIENT_SPANS_CHECK` works each hash out both ways, and
+`TIDE_CLIENT_MEMO_OFF` keeps nothing (every column written, every piece read). No runtime change: generated code calls
+`tide_hash_wide` and reads table pages' data (`tide_page_data`).
+
+**Tests.** `tidec_e2e_visibility_pieces` (and `_checked`, `_memo_off`; `e2e/visibility_pieces.tide`, `_test.c`): 2,600
+cells with their own groups, grids, lists and a component each hides, in three table chunks, and 300 in a zone, a
+scene whose root's group they go by; 256 cards, whose only blocks in the heap are their Visibility's policies (even
+ones deny their `Face` to everyone from the start); 256 bags, a small list each, hundreds to a page; two rovers with a
+`Transform`, and a parent for them in the zone. Twenty-two changes, each to a cell, card, bag or rover in a piece
+nothing else touches, or to the zone: a group's audience; a grid's cell and a list's element where they are; a policy
+where it is, and gone; a policy where there was none, then another where it is; a card's policy where it is, and
+where there was none, then another where it is; a bag's element where it is (its page the bags' before it); a lane;
+another group; a component gained (another table) and lost; a group destroyed; the zone's group's audience; a rover
+taken into the zone's scene by `SetParent` (its row's scene column written in place, nothing else of it); another
+group's audience, which a cell given it goes by; the root given another group, and its Visibility removed; a new cell;
+holes past a 32nd of the table, which the tick's end fills from its end (rows go into other pieces and chunks). Each
+with the world otherwise still, then again with lists growing in pages all over. Every tick, every player's hash is the
+one a copy of the world hashes to with nothing kept, a repair by what changed from what the check kept is the one read
+from the rows byte for byte, each change shows to some player (quiet round), and the hashes are pinned, the same in all
+three. `_checked` also sorts every piece's pages to make them once each (`TIDE_CLIENT_ONCE_MOST` 4: what a piece past
+512 of them does). Mutations each fail it: groups that changed ignored by the pieces, pieces kept by their columns
+alone, a root's change ignored, written columns taken as unwritten, a changed policy not making its row fresh, the
+entity's and scene's columns taken as never moving (at the rover: until it, nothing but a row's slot page moved with
+them, which the slots' check sees), and the review's below: a Visibility's lanes not reading its policies again, its
+policies read only beside a component that holds heap data, a row's first page dropped where it's the row before's
+last, and the sort losing a page (`_checked`). `bench_voxels_checked` (8 bots, 30 s, and `--quick`) works every hash
+out twice. The visibility, shard, storage, alone-seen fixtures and `bench_earth` pass.
+
+**Corrections (review, 2026-11-15).** Two misses, both older than the pieces (dev's per-chunk walk had them), and two
+smaller things:
+
+- *A policy set where it is went unseen.* `Visibility.overrides` is recipient-private, so `client_codec_heapy` says a
+  Visibility holds nothing in the heap, and its policies were reached only inside the block for components that do: in
+  an archetype with none of those (`{Card, Face, Visibility}`) never, and in one with them only when that component's
+  lanes or pages moved, not when the Visibility's did (its map made, grown or moved), so the row's pages lacked the
+  map's blocks. `visibility.Set<T>(...)` on a key it has writes the entry in place (`tide_map_insert` gives the one
+  there): the Visibility's lanes stay the same and only a page of its heap changes, which neither case looked at. The
+  row's audience and denials stayed the old ones, every player's hash went on subtracting the old term, and
+  `client_changes` (trusting what's kept at its tick) sent no repair: a reveal lost until something else of the row
+  changed. Now every archetype that stores a Visibility reaches its policies' pages and digests them, and a change of
+  the Visibility's lanes (`heap_again`) reads them again.
+- *A row's first page was dropped where it was the row before's last.* `tide_client_gather` drops a number alike the
+  one before it, and a row's own pages went into the piece's store after the rows before it, so a row whose first page
+  was the last of the row before kept a range without it; a row with one page (a bag's small list, a card's policies
+  in their heap's page) kept none, and `tide_client_row_pages_same` over an empty range says the same, so an element
+  changed where it is in such a row was taken as unchanged (its neighbour's range had the page, so the piece was read,
+  and the neighbour hashed again). The gather now takes a floor, the row's start, as the hasher's `floor` does for a
+  container's pages (the same bug, 2026-11-04).
+- *No pointer arithmetic on NULL*: `piece->pages + heap_pages`, a piece's `row_pages + page_from` and the store's were
+  formed with a count of 0 and arrays not made yet (UBSan's pointer-overflow says so). They're formed only with a count
+  above 0 now (`tide_client_row_keep_kept` checks a row's range against its piece's arrays first), and a row with no
+  pages is the same as it was without looking.
+- *A written column's run was hashed twice in a piece read again*, by its check and its keep: the check's hashes
+  (`run`, one a column) go to `tide_client_piece_keep`, which hashes only where the check didn't (nothing kept, or
+  `TIDE_CLIENT_MEMO_OFF`).
+
+**Every row changing** (`visibility_pieces_measure`: the fixture's 2,900 cells, 4 players, 60 ticks each, release,
+eight runs of each build alternating, medians): nothing changing 16.6 µs a check before the pieces, 18.4 with them; a
+lane of every cell's `Cell` changing every tick (a component with a grid and a list) 1,094 µs to 697; every cell's
+`Secret` 777 to 271. The review's fixes measure the same as the pieces without them (18.1, 696 and 272): a 256-byte run
+hashed once less is lost in the rest. So a world whose every row changes costs less with pieces than without, and one
+where nothing changes about 2 µs more (more checks, a piece's rather than a chunk's, for 2,900 rows).
+
+**Measured** (`bench_voxels`, 8 bots, release, Windows, 12 threads, BelowNormal, three runs alternating with a build
+of the same tree without the change, the machine shared; each figure the median of the three, their range in
+brackets): server hashing (the world's hash and the projections') 43.0 to 18.4 ms a second (42.7–44.5 to 18.1–21.5),
+update median 1.27 to 0.95 ms (1.23–1.27 to 0.94–0.96), p99 7.1 to 5.8 (7.0–7.2 to 5.4–6.8). Sent bytes and the
+world hash the same. Standing still (`--still 100 --hop 0`): hashing 1.5 ms a second both, update 0.10 median both,
+p99 0.53 to 0.46. The review's fixes, five runs of each alternating with the pieces without them (medians): hashing
+19.5 and 19.0 ms a second (17.3–23.9 and 17.6–22.0), update median 0.99 and 0.97, p99 5.6 and 5.5, the same world
+hash and bytes; standing still 1.44 and 1.40, one run each. Of the projections' 0.28 ms a call now (0.70 before; a
+counting build): the chunks' table 0.20 (rows of pieces read 0.16, of which grids encoded again 0.05; the pieces'
+checks 0.02, their keeps 0.02), the directory's copy 0.03, routing 0.02, the dimensions' `Streamer` maps 0.02,
+audiences 0.01; the world's hash 0.03.
+
+**Left**: 62% of the pieces read (19k of 30k over the run) are read because a heap page of theirs changed under them:
+another entity's block in the same 16 KiB page (a grid's directory is a few hundred bytes, fifty to a page; a
+Visibility's policies are two small lists), so 248k rows were hashed again with nothing of theirs changed, and 17.6k
+grids encoded again for their directory's page. Next: keep, for blocks smaller than a page, their bytes' hash beside the
+page's, and where a page's hash changed, hash again the small blocks of it a row or a container read (memo entries,
+pieces, rows) before taking it as changed. Also: a container that changes is encoded whole (`Streamer.chunks`, 6,490
+entries, 105 µs each time); the directory of groups is copied whole each tick it changed (6,490 groups); a row's
+contributions to each player's sum are added up every tick.
+
 ## Projections over heaps per owner (2026-11-14, later)
 
 A game with visibility has a heap for each owner and runs (schedule-and-threads.md, top section), so what's generated
