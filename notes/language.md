@@ -1205,6 +1205,12 @@ functions did.
 gone): a task's grid local, a name `is` gives, a failable or `T?` local holding one and a statement's earlier await's
 grid go into its frame as `tide_grid_carry` copies, come back as the frame's, and are copied by `tide_grid_mine`
 (`place_where`) before the task writes them; match tasks keep theirs in the match heap. `tidec_e2e_task_grids`.
+Corrected (review, 2026-11-15, render-targets.md top): a statement's hoisted temporaries are dead once it has read
+them (`task_forget` in `gen_stmt_now`: after an S_VAR, S_EXPR or S_ASSIGN, and after an S_IF's or S_SWITCH's
+condition), so `var r = await t.Read()` and an `is` name carry one copy, not the await's too; a task's `foreach` over
+an asset reads the asset in place (`foreach_value`); and a list or a map of grids in a frame (a computed container,
+a `switch`'s result) goes through `tide_list%d_carry`/`tide_map%d_carry` (`gen_grid_container_carries`), every grid
+the frame's own copy, so no pack handle waits in a frame.
 
 **What stays refused.** Structs with grids in locals, returns and copies; `Grid2(...)` as an argument (functions take
 no new grid in `arg_fits`); lambdas capturing a grid (a stored callable captures plain values); worker code keeping a

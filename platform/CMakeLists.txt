@@ -1205,6 +1205,12 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     target_include_directories(tide_platform_cursor_rules PRIVATE "${PROJECT_SOURCE_DIR}/tests" desktop)
     target_link_libraries(tide_platform_cursor_rules PRIVATE tide)
     add_test(NAME tide_platform_cursor_rules COMMAND tide_platform_cursor_rules)
+    # The web's GPU that draws nothing (src/gpu_none.c), built natively too, where the sanitizers see its read backs.
+    # No window or GPU.
+    add_executable(tide_platform_gpu_none tests/gpu_none.c src/gpu_none.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tide_platform_gpu_none PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)
+    target_link_libraries(tide_platform_gpu_none PRIVATE tide)
+    add_test(NAME tide_platform_gpu_none COMMAND tide_platform_gpu_none)
 endif()
 
 # On Android, those of them a window's program runs as an app: the loading screen, the waits for a frame's fence,

@@ -10356,9 +10356,9 @@ static type check_method(checker *c, expr *e)
             if (e->type_arg.len > 0) {
                 cell = resolve_type(c, e->type_arg_ref, PLACE_LOCAL, e->type_arg_qual_at);
                 if (cell.kind == TY_ERROR) return T_ERR;
-                if (cell.kind != TY_COLOR && cell.kind != TY_FLOAT && cell.kind != TY_FLOAT2 && cell.kind != TY_FLOAT4
-                    && cell.kind != TY_INT) {
-                    diag_error(e->type_arg_qual_at, "Read gives a grid of what a volume holds: Color, float, float2, float4 or int, "
+                // What a Texture3D's formats hold (Rgba8, Rgba16f, R32f, Rgba32f, R32i): none holds two numbers a cell
+                if (cell.kind != TY_COLOR && cell.kind != TY_FLOAT && cell.kind != TY_FLOAT4 && cell.kind != TY_INT) {
+                    diag_error(e->type_arg_qual_at, "Read gives a grid of what a volume holds: Color, float, float4 or int, "
                                                     "not %s", type_name(cell));
                     diag_note("'Read<float>()' reads Format.R32f, 'Read<float4>()' Rgba16f and Rgba32f, 'Read<int>()' R32i, and "
                               "'Read()' an Rgba8 or Rgba16f volume");

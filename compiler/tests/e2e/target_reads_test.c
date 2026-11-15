@@ -171,6 +171,101 @@ TIDE_TEST(target_reads_let_go_with_their_task)
     tide_render_targets_free();
 }
 
+// The reads asked for and not begun.
+static int asked_count(void)
+{
+    int count = 0;
+    for (uint32_t i = 0; i < TIDE_GPU_READS; i++) count += tide_gpu_read_requests()[i].state == TIDE_GPU_READ_ASKED;
+    return count;
+}
+
+// A slot let go of: free, holding nothing, and no target's, so no renderer counts its bytes as held.
+static bool let_go(const tide_gpu_read_request *r)
+{
+    return r->state == TIDE_GPU_READ_FREE && r->data == NULL && r->target.id == 0 && r->bytes == 0;
+}
+
+// A dropped task lets go of its read wherever its ticket is: in the frame of a task it awaits (cancelled with the task
+// awaiting it), done by the renderer and not yet taken, a task whose entity is gone, asked or done. A local world
+// restored from another's bytes asks its reads again, as the tickets it was packed with are the other's.
+TIDE_TEST(target_reads_let_go_of_wherever_their_task_goes)
+{
+    tide_world_init(&w, 1.0f / 60.0f);
+    tide_world_tick(&w);
+    tide_local_init(&local);
+    local.Reads.started = true;
+    frame();
+    local.Reads.plain = tide_render_target_make_scaled_as(2, 2, 1, TIDE_TARGET_RGBA8);
+    // An awaited task's read, with the task awaiting it cancelled
+    local.Reads.outerNow = true;
+    frame();
+    tide_gpu_read_request *r = asked();
+    TIDE_REQUIRE(r != NULL);
+    local.Reads.outerCancel = true;
+    frame();
+    TIDE_CHECK(let_go(r) && local.Reads.outerGot == 0);
+    // Cancelled once the renderer is done, before the task took it
+    local.Reads.captureNow = true;
+    frame();
+    r = asked();
+    TIDE_REQUIRE(r != NULL);
+    answer(r, 2, 2, 4, 1);
+    TIDE_CHECK(r->state == TIDE_GPU_READ_DONE);
+    local.Reads.cancelNow = true;
+    frame();
+    TIDE_CHECK(let_go(r) && local.Reads.captured == 0);
+    // A lens's read, asked and then done, as the lens goes
+    for (int done = 0; done < 2; done++) {
+        local.Reads.lensNow = true;
+        frame(); // The lens comes
+        frame(); // ...and its view starts its task, which asks
+        r = asked();
+        TIDE_REQUIRE(r != NULL);
+        TIDE_CHECK(local.tide_tasks_function_Snap.count == 1);
+        if (done) answer(r, 2, 2, 4, 1);
+        local.Reads.lensGone = true;
+        frame();
+        local.Reads.lensGone = false;
+        TIDE_CHECK(let_go(r) && local.Reads.snapped == 0 && local.tide_tasks_function_Snap.count == 0);
+    }
+    // Packed with its read waiting and unpacked into another world: the copy asks its own, the original keeps its
+    local.Reads.captureNow = true;
+    frame();
+    r = asked();
+    TIDE_REQUIRE(r != NULL);
+    const uint32_t size = tide_local_pack(&local, NULL, 0);
+    uint8_t *packed = malloc(size);
+    TIDE_REQUIRE(packed != NULL && tide_local_pack(&local, packed, size) == size);
+    static tide_local restored;
+    TIDE_REQUIRE(tide_local_unpack(&restored, packed, size));
+    free(packed);
+    tide_draw_reset(&draw);
+    tide_frame(&w, NULL, 1, NULL, NULL, 1, &restored, &draw, &gui);
+    TIDE_CHECK(asked_count() == 2 && r->state == TIDE_GPU_READ_ASKED);
+    tide_gpu_read_request *again = NULL;
+    for (uint32_t i = 0; i < TIDE_GPU_READS; i++) {
+        tide_gpu_read_request *other = &tide_gpu_read_requests()[i];
+        if (other != r && other->state == TIDE_GPU_READ_ASKED) again = other;
+    }
+    TIDE_REQUIRE(again != NULL);
+    answer(again, 3, 2, 4, 1);
+    tide_draw_reset(&draw);
+    tide_frame(&w, NULL, 1, NULL, NULL, 1, &restored, &draw, &gui);
+    TIDE_CHECK(restored.Reads.captured == 3 && let_go(again) && r->state == TIDE_GPU_READ_ASKED);
+    answer(r, 2, 2, 4, 1);
+    frame();
+    TIDE_CHECK(local.Reads.captured == 2 && let_go(r));
+    tide_local_free(&restored);
+    // A volume made from a Grid3, read through a parameter, where the compiler can't see what it's made of: it fails
+    local.Reads.fogNow = true;
+    frame();
+    frame();
+    TIDE_CHECK(local.Reads.fogFailed == 1 && local.Reads.fogRead == 0 && asked() == NULL);
+    tide_draw_free(&draw); tide_local_free(&local); tide_world_free(&w);
+    for (uint32_t i = 0; i < TIDE_GPU_READS; i++) TIDE_CHECK(tide_gpu_read_requests()[i].state == TIDE_GPU_READ_FREE);
+    tide_render_targets_free();
+}
+
 // A part of an image, or a box of a volume, as it's asked for; a part of nothing fails as it's asked.
 static uint32_t begins_part(const tide_render_target target, const uint32_t kind, const int32_t x, const int32_t y,
                             const int32_t z, const int32_t width, const int32_t height, const int32_t depth)
@@ -208,6 +303,12 @@ TIDE_TEST(target_reads_of_parts_and_volumes)
         TIDE_CHECK(begins(volume.target, 0, kind) == (kind == TIDE_TARGET_READ_FLOAT));
         TIDE_CHECK(begins(colors.target, 0, kind) == (kind == TIDE_TARGET_READ_COLOR || kind == TIDE_TARGET_READ_FLOAT4));
         TIDE_CHECK(!begins(volume.target, 1, kind));
+    }
+    const int32_t no_box[][3] = {{2, 2, 0}, {0, 2, 2}, {2, 0, 2}, {2, 2, -1}, {1, 1, INT32_MIN}};
+    for (int i = 0; i < 5; i++) {
+        ticket = begins_part(volume.target, TIDE_TARGET_READ_FLOAT, 0, 0, 0, no_box[i][0], no_box[i][1], no_box[i][2]);
+        TIDE_CHECK(ticket && tide_gpu_list_read_poll(ticket, &result) && !result.ok);
+        tide_gpu_list_read_forget(ticket);
     }
     ticket = begins_part(volume.target, TIDE_TARGET_READ_FLOAT, 1, 2, 3, 5, 6, 7);
     r = asked();

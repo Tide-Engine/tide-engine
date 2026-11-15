@@ -1,3 +1,21 @@
+## No pack handle waits in a task's frame; gpu_none's read tokens (review, 2026-11-15)
+
+Corrects the section below, whose copying left one way through: a list or a map of grids in a frame. A `foreach`
+over an asset `List<Grid2<Color>>` or `Map<string, Grid2<Color>>` that waited kept its container in the frame
+(`tide_list%d_assign`, whose grid elements are raw handles, and the asset store's payload of a pack list is the
+same bytes), so after a pack-only reload (`tide run` loading a new pack while the game runs) the next round read
+offsets into the new region, which `tide_scratch_at` doesn't bound: `tide_grid_copy` read directories from
+anywhere (ASan: a memcpy-param-overlap in `scratch_chunk`, `tidec_e2e_task_grids`'
+`task_grids_pack_loaded_again_as_a_task_waits` with the old code). Now a task's loop over an asset reads the asset
+where it is, and any list or map of grids a frame holds (a computed container, a `switch`'s value) is carried by
+`tide_list%d_carry`/`tide_map%d_carry`: the frame's own list, each grid a copy in the task's world
+(`tide_grid_carry`), released with the frame or at the next wait once dead. Only assets hold lists of grids, and no
+named local can, so these are hidden values the task never writes; the frame's is borrowed back after a wait.
+`gpu_none`'s 256 read tokens were a ring that never checked a token was still out: more band reads begun in a frame
+than that gave a later read's size to an earlier token, whose done memset past its band (ASan: heap-buffer-overflow,
+`tide_platform_gpu_none`, a native test of the web's `gpu=none` GPU). It refuses a token while every place waits,
+as the recorder does, and the renderer asks again next frame.
+
 ## Reads of parts and volumes, and a task's grids across waits (2026-11-14)
 
 A read's part is any game's ints: the renderer clamps it to the image in 64 bits (`pixel_span`), refuses a part of
@@ -220,7 +238,8 @@ value. A scratch grid's places are checked against its size as a world's are (`t
 directory sizes come from the shape, never the game, and a write to the pack's grids (scratch-tagged offsets past
 `TIDE_PACK_BASE`) still finds nothing to write. A field taking a scratch grid copies its chunks into the world, so no
 world handle names scratch memory, and a scratch grid never reaches another thread: parallel loops refuse a local's or
-a parameter's grid, workers keep none, a task can't keep one across a wait and a lambda can't capture one. The
+a parameter's grid, workers keep none, a task can't keep one across a wait (corrected 2026-11-14, top of this note:
+a task keeps a copy of its own in its frame across waits) and a lambda can't capture one. The
 `grid_values` safety fixture tries sizes under 0 and at 2,000,000,000, places at the int limits, copies of a grid too
 big to list its chunks and churn of 2000 grids a system, under ASan.
 

@@ -1,3 +1,48 @@
+## Review of the readback workstream: corrections and the tests it lacked (2026-11-15)
+
+A review of "Reads of any size, of parts and of volumes; grids kept across waits" (below) found ten issues; all were
+confirmed and fixed (none refuted). Rules are Provisional in docs/spec.md (Grids a task keeps across its waits; Reads
+of any size, of parts and of volumes). Users: game/render-targets.md, game/tasks.md.
+
+- **No pack handle waits in a frame** (high; memory-safety.md top). A waiting `foreach` over an asset list or map of
+  grids kept its container in the frame as raw pack handles, read against the new region after a pack-only reload.
+  `foreach_value` now reads an asset in place in a task (B: each round the asset as it is, as an index loop does;
+  weighed: copying the asset into the frame, refusing the wait), and any list or map of grids in a frame (a computed
+  container, `fast ? run : walk`, a `switch`'s value hoisted before an await) is carried by `tide_list%d_carry` /
+  `tide_map%d_carry` (`gen_grid_container_carries`; `holds_grids`): the frame's own list, entries in their places,
+  each grid a copy, borrowed back after the wait, released with the frame (`gen_frame_release`) or once dead.
+- **A read kept across a wait is one copy.** A hoisted await's result stayed live to its block's end, so `var r =
+  await t.Read()` and an `is` name were each carried with the await's temporary: two heap copies of a 4K read. Now
+  `task_forget` ends a statement's temporaries after an S_VAR, S_EXPR or S_ASSIGN and after an S_IF's or S_SWITCH's
+  condition (not a foreach's, whose loop reads its container, nor a loop's condition, which has its own rounds).
+- **gpu_none's read tokens** (memory-safety.md top): a 256-token ring that wrapped under more band reads than that in
+  one frame; now a table that refuses a token while every place waits.
+- **Volume read refusals** (`check.c` Texture3D Read; `check_target_read`): `Read<float2>` is refused at the type (no
+  Texture3D format holds two numbers; the message and the note agree); a volume made from a Grid3 wherever it's
+  assigned (`volume_grid_origin`, following `image_target_format`'s origins) is "made from a Grid3, whose cells the CPU
+  has already: read the grid itself", for a Color read too (it compiled and failed as it ran), where before a typed
+  one got the "format isn't fixed" message, whose fix didn't apply. Through a parameter it fails as it runs (tested).
+  The "never match code" branch can't be reached: a match handler can't name a local singleton or keep a Texture3D,
+  each refused first, so it has no fixture.
+- **Docs.** game/render-targets.md's part and volume examples didn't compile (their targets' formats were in a comment);
+  both make their image now, and each was compiled with tidec, with the page's ReadIds example.
+- **Tests added** (each fails without its fix, checked by putting the old code back): `tidec_e2e_task_grids`'
+  `task_grids_pack_loaded_again_as_a_task_waits` (another pack built in C, loaded while a loop over an asset, a choice
+  of two lists and a choice of two maps waits: the asset's loop goes on through the new pack, the others through their
+  own copies; the old code fails under ASan in `scratch_chunk`, (B) alone undone fails its count) and
+  `task_grids_a_read_kept_across_waits_is_one_copy` (a 256x256 read kept by `var` and by `is`: the local heap grows by
+  one grid's cells, not two); `tidec_e2e_target_reads`' `target_reads_let_go_of_wherever_their_task_goes` (an awaited
+  task's read with the awaiting task cancelled, a read cancelled once done, a lens entity's task's read asked and done
+  as the lens goes, a local world packed with a read waiting and unpacked into another, which asks its own while the
+  original keeps its: undoing the child recursion or the unpack reset fails it; a Grid3 volume through a parameter
+  fails), and a volume's boxes of nothing in `target_reads_of_parts_and_volumes`; `tide_platform_gpu_none` (native,
+  ASan: 300 reads of their own sizes; the old ring overflows); 8 error fixtures `read_volume_*`. `tide_platform_readback`
+  gained a volume nothing wrote read as zeros (made for the read; on WebGPU made a frame later, which the read waits
+  for), a volume's box of nothing and one past it failing, the 512 MiB limit (the host holds a done read's 504 MiB in a
+  free place of the shared table, as a read not let go of would: a 16 MiB read fails, a pixel's reads), and on desktop
+  a 5120x2880 target, a 5K window's, read whole in eight bands (its seam rows checked). The web and Android read the 4K
+  one alone, for memory.
+
 ## 32-bit numbers loaded exactly, typed volumes blended, depth cubes, SampleLevel reads levels (2026-11-14)
 
 The owner's "make sure everything we can add or validate we do" took the remaining refusals of the section below.

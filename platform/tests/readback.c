@@ -252,6 +252,42 @@ static void check_more(void)
             && fabsf(uhd[i].got.b - uhd[i].want.b) <= step && uhd[i].got.a == 1.0f;
     }
     check(good, "a 3840x2160 target, a 4K window's, is read whole");
+    if (local.MoreState.fiveK) {
+        const struct { tide_color got, want; } five[] = {{m->fiveFirst, base}, {m->fiveLast, {1, 1, 1, 1}},
+                                                         {m->fiveSeam, {0, 1, 0, 1}}, {m->fiveAfter, base}};
+        good = m->fiveSize.x == 5120 && m->fiveSize.y == 2880;
+        for (int i = 0; i < 4; i++) {
+            good = good && fabsf(five[i].got.r - five[i].want.r) <= step && fabsf(five[i].got.g - five[i].want.g) <= step
+                && fabsf(five[i].got.b - five[i].want.b) <= step && five[i].got.a == 1.0f;
+        }
+        check(good, "a 5120x2880 target, a 5K window's, is read whole");
+    }
+    tide_grid_size(m->blank, size);
+    good = size[0] == 4 && size[1] == 3 && size[2] == 2;
+    for (int32_t z = 0; z < 2; z++) for (int32_t y = 0; y < 3; y++) for (int32_t x = 0; x < 4; x++) {
+        const float *cell = tide_grid_peek(m->blank, x, y, z, &tide_shape_Grid3_float);
+        good = good && (!cell || *cell == 0.0f);
+    }
+    check(good, "a volume nothing wrote is read as zeros");
+    check(m->boxEmptyFailed && m->boxOutsideFailed, "a volume's box of nothing and one past it fail");
+}
+
+// A result reads hold, of `bytes`, as one not let go of yet would: what the renderer counts reads holding together by
+static tide_gpu_read_request *held;
+static void hold(const uint32_t bytes)
+{
+    for (uint32_t i = 0; i < TIDE_GPU_READS && !held; i++) {
+        if (tide_gpu_read_requests()[i].state == TIDE_GPU_READ_FREE) held = &tide_gpu_read_requests()[i];
+    }
+    if (!held) return;
+    const uint32_t serial = held->serial;
+    *held = (tide_gpu_read_request){.target = {.id = TIDE_RENDER_INVALID}, .state = TIDE_GPU_READ_DONE, .bytes = bytes,
+                                    .serial = serial};
+}
+static void let_go_of_held(void)
+{
+    if (held) *held = (tide_gpu_read_request){.serial = held->serial};
+    held = NULL;
 }
 
 // The target read on its way back, if one is
@@ -267,7 +303,9 @@ static bool target_read_begun(void)
 static int frame(void *user, float seconds)
 {
     (void)user; (void)seconds;
-    static int phase; // 0 the first reads, 1 the reads past them, 2 a device lost, 3 the reads on the next device
+    // 0 the first reads, 1 the reads past them, 2 reads with most of what reads may hold held, 3 a device lost, 4 the
+    // reads on the next device
+    static int phase;
     static int waited;
 #ifndef __wasm__
     static uint32_t lost_epoch; // Vulkan's device's, as it was lost
@@ -287,9 +325,19 @@ static int frame(void *user, float seconds)
     if (phase == 1 && local.MoreResult.done) {
         check_more();
         phase = 2, waited = 0;
+        hold(504u << 20);
+        check(held != NULL, "a read's place is free to hold a result in");
+        local.MoreState.crowd = true;
+    }
+    if (phase == 2 && local.MoreResult.crowdDone) {
+        const MoreResult *m = &local.MoreResult;
+        check(!m->failed && m->crowdFailed && m->crowdOne == 16777217,
+              "past 512 MiB held by reads together a read fails, and one within it reads");
+        let_go_of_held();
+        phase = 3, waited = 0;
         local.MoreState.lose = true;
     }
-    if (phase == 2) {
+    if (phase == 3) {
         if (!lost && target_read_begun()) {
             // The device goes while the read is on its way back (as a driver that starts over, or a GPU switched)
 #ifdef __wasm__
@@ -302,10 +350,10 @@ static int frame(void *user, float seconds)
         if (local.MoreResult.lostDone) {
             const bool losable = strcmp(tide_platform_renderer(), "Vulkan") == 0 || strcmp(tide_platform_renderer(), "WebGPU") == 0;
             check(lost == losable && (!lost || local.MoreResult.lostFailed), "a read the device lost on its way back fails");
-            phase = 3, waited = 0;
+            phase = 4, waited = 0;
         }
     }
-    if (phase == 3) {
+    if (phase == 4) {
         // ...once there's another device
 #ifdef __wasm__
         if (!local.MoreState.again && strcmp(tide_platform_renderer(), "WebGPU") == 0 && !tide_web_eval("Tide.gpuDevices() > 1"))
@@ -330,6 +378,9 @@ static int frame(void *user, float seconds)
 int main(void)
 {
     tide_world_init(&world, 1.0f / 60.0f); tide_local_init(&local);
+#if !defined(__wasm__) && !defined(__ANDROID__)
+    local.MoreState.fiveK = true; // A 5K window's read, on desktop where one is, beside what the web and Android read
+#endif
     tide_platform_open(&(tide_window_desc){.title="Readback",.width=32,.height=32,.hidden=true});
     tide_platform_run(frame, NULL);
     return failures;

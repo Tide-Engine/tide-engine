@@ -104,7 +104,7 @@ An async function's world comes from what it does: changing the match (spawning 
 
 ## What a task keeps
 
-While a task waits, it keeps its locals and its parameters, copied: text, lists and grids too, a grid a `target.Read()` gave and one of an asset's among them. Its **components and singletons** it gets again each time it goes on, as they are then, so it sees what changed while it waited. They have to be the caller's own, its parameters:
+While a task waits, it keeps its locals and its parameters, copied: text, lists and grids too, a grid a `target.Read()` gave and one of an asset's among them. A `foreach` over an asset reads the asset as it is each time round, so a loop that waits a frame per element of `asset List<Grid2<Color>> run` goes on through the files [tide run](../tools/cli.md) loaded again while it waited; the element it held as it waited is its own copy. Its **components and singletons** it gets again each time it goes on, as they are then, so it sees what changed while it waited. They have to be the caller's own, its parameters:
 
 ```csharp
 async void Dash(mut Body body)

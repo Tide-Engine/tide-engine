@@ -98,6 +98,127 @@ TIDE_TEST(task_grids_kept_across_waits_are_the_tasks_own)
     tide_render_targets_free();
 }
 
+// Another pack of the game's assets, as tide run loads one when a file is saved: run and walk two grids, 5 and 6
+// wide, and runByName and walkByName the same two. Its region is smaller than the game's own.
+static uint8_t *other_pack(size_t *size)
+{
+    tide_pack_builder b = {0};
+    static tide_color pixels[6 * 2];
+    for (int i = 0; i < 12; i++) pixels[i] = (tide_color){0.5f, 0.25f, 0.125f, 1.0f};
+    const uint8_t content5[32] = {5}, content6[32] = {6}, key_a[32] = {10}, key_b[32] = {11};
+    const uint64_t five = tide_pack_grid(&b, content5, 5, 2, pixels, &tide_shape_Grid2_Color);
+    const uint64_t six = tide_pack_grid(&b, content6, 6, 2, pixels, &tide_shape_Grid2_Color);
+    const uint64_t list = tide_pack_list(&b, (const uint64_t[]){five, six}, 2);
+    tide_pack_name(&b, "run", TIDE_PACK_LIST, list, 2, TIDE_PACK_GRID);
+    tide_pack_name(&b, "walk", TIDE_PACK_LIST, list, 2, TIDE_PACK_GRID);
+    uint32_t chars;
+    const uint64_t a = tide_pack_string(&b, key_a, "a", 1, &chars), bb = tide_pack_string(&b, key_b, "b", 1, &chars);
+    uint64_t index;
+    const uint64_t map = tide_pack_map(&b, (const uint64_t[]){a, bb}, (const uint64_t[]){five, six}, 2, &index);
+    tide_pack_name(&b, "runByName", TIDE_PACK_MAP, map, index, 2);
+    tide_pack_name(&b, "walkByName", TIDE_PACK_MAP, map, index, 2);
+    return tide_pack_end(&b, size);
+}
+
+// A pack loaded again while a task waits inside a loop over the pack's grids: a loop over an asset goes on through
+// the asset as it is now, and a loop over a list or a map it worked out (a choice of two assets) through the frame's
+// own copy of it, whose grids are all its own. Kept raw, the frame named the old pack's grids by their places in it,
+// which in the new one are other bytes or none.
+TIDE_TEST(task_grids_pack_loaded_again_as_a_task_waits)
+{
+    size_t other_size;
+    uint8_t *other = other_pack(&other_size);
+    TIDE_REQUIRE(other != NULL);
+    TIDE_REQUIRE(tide_assets_load(tide_game_pack, tide_game_pack_size));
+    tide_world_init(&w, 1.0f / 60.0f);
+    tide_world_tick(&w);
+    tide_local_init(&local);
+    local.Reads.started = true; // ReadAll's reads aren't these
+    frame();
+    // Choose goes through walk, the game's three 2 by 2 grids, and the other pack is loaded as it waits at the first
+    local.Reads.chooseNow = true;
+    frame();
+    TIDE_CHECK(local.Reads.chosenWant == 6 && local.Reads.chosen == 0);
+    TIDE_REQUIRE(tide_assets_load(other, other_size));
+    for (int k = 0; k < 12 && local.Reads.chosenNamedWant == 0; k++) frame();
+    TIDE_CHECK(local.Reads.walkStage == 1 && local.Reads.chosen == 3 && local.Reads.chosenWidths == 6);
+    // ...then through walkByName, the other pack's two, and the game's own is loaded again as it waits at the first
+    TIDE_CHECK(local.Reads.chosenNamedWant == 11 && local.Reads.chosenNamed == 0);
+    TIDE_REQUIRE(tide_assets_load(tide_game_pack, tide_game_pack_size));
+    for (int k = 0; k < 12 && local.Reads.walkStage < 2; k++) frame();
+    TIDE_CHECK(local.Reads.walkStage == 2 && local.Reads.chosenNamed == 2 && local.Reads.chosenNamedWidths == 11);
+    // Walk goes through run and runByName as they are: the game's first grid, then the other pack's second, and the
+    // other pack's two
+    local.Reads.walkNow = true;
+    frame();
+    TIDE_CHECK(local.Reads.firstWidth == 2 && local.Reads.walked == 0);
+    TIDE_REQUIRE(tide_assets_load(other, other_size));
+    for (int k = 0; k < 12 && local.Reads.walkStage < 3; k++) frame();
+    TIDE_CHECK(local.Reads.walkStage == 3 && local.Reads.walked == 2 && local.Reads.walkedWidths == 2 + 6);
+    TIDE_CHECK(local.Reads.walkedNamed == 2 && local.Reads.walkedNamedWidths == 11);
+    TIDE_REQUIRE(tide_assets_load(tide_game_pack, tide_game_pack_size));
+    free(other);
+    tide_draw_free(&draw);
+    tide_local_free(&local);
+    tide_world_free(&w);
+    tide_render_targets_free();
+}
+
+// The local world's heaps' bytes, as far as they were ever used.
+static uint64_t local_heap_used(void)
+{
+    uint64_t used = 0;
+    for (uint32_t i = 0; local.heap.all && i < tide_heap_count; i++) used += local.heap.all[i].used;
+    return used;
+}
+
+// A 256 by 256 Color read answered with no zero pixel, so its grid has every chunk.
+static void answer_big(tide_gpu_read_request *r, const float base)
+{
+    r->width = 256, r->height = 256;
+    r->bytes = (256u * 256u * 4u + TIDE_GPU_LIST_HEADER_WORDS) * 4u;
+    r->data = tide_alloc_zeroed(1, r->bytes);
+    for (int32_t y = 0; y < 256; y++) for (int32_t x = 0; x < 256; x++) {
+        const float pixel[4] = {base + (float)x + 1000.0f * (float)y, 1, 2, 3};
+        memcpy(r->data + TIDE_GPU_LIST_HEADER_WORDS + (y * 256 + x) * 4, pixel, sizeof pixel);
+    }
+    r->state = TIDE_GPU_READ_BEGUN;
+    tide_gpu_read_finished(r, true);
+}
+
+// A read's grid that a task keeps across its waits is one copy in its frame, for `var r = await ...` and for an `is`
+// name alike: the value the await gave was a second, kept as long as the block it was in.
+TIDE_TEST(task_grids_a_read_kept_across_waits_is_one_copy)
+{
+    tide_world_init(&w, 1.0f / 60.0f);
+    tide_world_tick(&w);
+    tide_local_init(&local);
+    local.Reads.started = true;
+    frame();
+    local.Reads.big = tide_render_target_make_scaled_as(256, 256, 1, TIDE_TARGET_RGBA8);
+    local.Reads.keepNow = true;
+    frame();
+    const uint64_t grid = 256u * 256u * sizeof(tide_color); // Its cells, beside which its chunks' headers are little
+    for (int i = 0; i < 2; i++) {
+        tide_gpu_read_request *r = NULL;
+        for (int k = 0; k < 8 && !(r = asked()); k++) frame();
+        TIDE_REQUIRE(r != NULL);
+        const uint64_t before = local_heap_used();
+        answer_big(r, i ? 500.0f : 100.0f);
+        frame(); // The task has the grid, and waits two frames with it
+        const uint64_t kept = local_heap_used() - before;
+        TIDE_CHECK(kept >= grid && kept < grid + grid / 2);
+        for (int k = 0; k < 8 && local.Reads.keepStage < i + 1; k++) frame();
+        TIDE_CHECK(local.Reads.keepStage == i + 1);
+    }
+    TIDE_CHECK(color_is(local.Reads.keptCell, 100 + 3 + 3000, 1, 2, 3));
+    TIDE_CHECK(color_is(local.Reads.boundCell, 500 + 4 + 4000, 1, 2, 3));
+    tide_draw_free(&draw);
+    tide_local_free(&local);
+    tide_world_free(&w);
+    tide_render_targets_free();
+}
+
 TIDE_TEST(task_grids_of_the_match_are_in_its_snapshots_and_hash)
 {
     static tide_world a, b, c;

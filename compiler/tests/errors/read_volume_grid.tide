@@ -1,0 +1,5 @@
+// expect: this volume is made from a Grid3, whose cells the CPU has already: read the grid itself, not the volume
+scene Main {}
+local singleton Fog { Texture3D volume; Grid3<Color> cells; }
+view Make(mut Fog fog) { fog.cells = Grid3(4, 4, 4); fog.volume = fog.cells; }
+async void Read(Fog fog) { var cells = await fog.volume.Read(); }
