@@ -1,0 +1,81 @@
+scene Main { }
+
+// Every read a function makes of a texture it takes, it makes of a texture
+// field of a singleton or a component it's handed: at a level, with
+// gradients, an array's layer, a volume, grids of colors and of numbers, and
+// a kernel helper's image store.
+
+local singleton Looks
+{
+    Texture image;
+    TextureArray layers;
+    Texture3D volume;
+    Grid2<Color> paint = Grid2(2, 2);
+    Grid2<float> heights = Grid2(2, 2);
+    List<Vertex3> mesh;
+    List<int> faces;
+}
+
+Color Levelled(Looks looks, float2 uv) { return looks.image.SampleLevel(uv, 1.5); }
+Color Graded(Looks looks, float2 uv, float2 across, float2 down) { return looks.image.SampleGrad(uv, across, down); }
+Color Layered(Looks looks, float2 uv) { return looks.layers.Sample(uv, 2, Filter.Point); }
+Color Filled(Looks looks, float3 at) { return looks.volume.Sample(at); }
+Color Painted(Looks looks, float2 uv) { return looks.paint.Sample(uv) + Color(looks.heights.Sample(uv).r, 0, 0, 0); }
+
+// A kernel's helper stores into the volume of what it's given
+void Put(Looks looks, int3 at, Color color) { looks.volume[at] = color; }
+
+[Group(2, 2, 2)]
+compute Fill(Looks looks)
+{
+    Put(looks, this.at, Color(float3(this.at), 1));
+}
+
+frag Read(Vertex3 vertex, out Color color, Looks looks)
+{
+    color = Levelled(looks, vertex.uv) + Graded(looks, vertex.uv, this.Ddx(vertex.uv), this.Ddy(vertex.uv))
+          + Layered(looks, vertex.uv) + Filled(looks, float3(vertex.uv, 0.5)) + Painted(looks, vertex.uv);
+}
+
+// A component's plain fields and its local texture, read by one function from
+// a draw's vert and its frag: each stage reads the fields where it has them,
+// so the function is written for each, and one that reads none of them is one
+component Coated
+{
+    float lift;
+    float shade;
+    local Texture coat;
+}
+
+float Lift(Coated coated) { return coated.lift * coated.coat.SampleLevel(float2(0.5), 0).g; }
+float Twice(float x) { return x * 2; }
+
+// Its textures are all local, so it's a value of its other fields, as the frag's own is
+float Kept(Coated coated)
+{
+    Coated copy = coated;
+    return copy.shade;
+}
+
+vert Rise(mut Vertex3 vertex, Coated coated)
+{
+    vertex.position.y += Lift(coated) + Twice(vertex.position.x) + Kept(coated);
+}
+
+frag Coat(Vertex3 vertex, out Color color, Coated coated)
+{
+    color = Color(Lift(coated), Twice(vertex.uv.x), Kept(coated), 1);
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Coated { lift = 1 });
+}
+
+view Show(mut Looks looks, with Coated)
+{
+    looks.volume = Texture3D(int3(2));
+    GPU.Run(Fill, int3(2));
+    Draw.Mesh(looks.mesh, looks.faces, float4x4.identity, Read);
+    Draw.Mesh(looks.mesh, looks.faces, float4x4.identity, Rise, Coat);
+}

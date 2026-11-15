@@ -751,7 +751,7 @@ bool system_one_thread(const decl *sys, const char *quote, const decl *from, sb 
     } else if ((sys->task_access[0] | sys->task_access[1]) & 2u) {
         sb_put(out, "it changes tasks, which the match keeps in the order they start");
     } else if (set) {
-        sb_put(out, "it sets ");
+        sb_put(out, set->write_edits ? "it edits " : "it sets ");
         put_decl_name(out, set->component, quote, from);
         sb_put(out, " through its World, on any entity");
         *at = set->write_at;

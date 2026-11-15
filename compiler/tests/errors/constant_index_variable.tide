@@ -1,0 +1,4 @@
+// expect: default values must be constant expressions
+const List<int> QUAD = [0, 1, 2, 0, 2, 3];
+singleton Match { int n; int corner = QUAD[n]; }
+scene Main { }

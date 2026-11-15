@@ -204,6 +204,312 @@ scratch CI run found it: `tests/test_main.c` now flushes each test's line, so a 
 type, only its size. A field given what FromBytes made copies it from the scratch area (a read straight into a world's heap
 would save that). An open grid's hashed directory is slow for places chosen to collide (spec, Grids, Open).
 
+## Array and list constants written out (2026-11-14)
+
+Owner approved the recommendation ("go with your recommendations"); the rules are picks, Provisional in spec.md
+(Constants; Arrays and Lists lost their "not a constant yet"). Before, only build code made a list constant
+(`const List<int> X = F()`, the pack's) and arrays were refused outright.
+
+- **Checker.** `constant_type` no longer refuses arrays or lists; `constant_element_ok` says what a table holds:
+  plain values (no `holds_heap`/`holds_grid`, resources, callables, `Mesh`, entities, ECS types or `T?`), with a
+  switch-expression note for text. Maps, sets and grids keep "can't be a ... yet", now with a note naming arrays
+  and lists. A list's value must be a list literal or another list constant (`settle_list_constant`, after the
+  value is checked): it keeps the literal in `decl.list_literal` and `array_of(element, count)` in
+  `decl.list_array` (named; TY_ERROR for `[]`), through any chain of list constants. Anything else (a `switch`
+  of lists, say) is an error naming build code. Built list constants are unchanged (no literal, the pack's).
+- **Constants of them:** `is_constant` takes `E_INDEX` of constant operands. `fold_int` folds an element of a
+  constant table by a constant index (`constant_items` follows constants to the literal; the element type's zero
+  past either end; a byte element's low bits) and `Enum.Values()[i]`, and an array's or a list constant's `.count`.
+  So `const int THIRD = QUAD[2];`, `case QUAD[5]:` and `int[QUAD.count] seen;` work. `check_member` gives a list
+  constant's `.count` a `c_constant`, as arrays' have, so neither C nor WGSL evaluates the list for it.
+- **C.** An array constant is its value where read, as before for any constant (`gen_as` of the E_LIST:
+  `((tide_arrayN){{...}})`, indexed through `tide_arrayN_get`, which takes it by value; clang's optimizer turns the
+  compound literal into constant data). A list constant's `QUAD[i]` is `gen_listed_element`: the same compound
+  literal of `decl.list_array`, through `tide_arrayN_get`, or `((void)(i), zero)` for an empty one; `pointerable`
+  is false for it, so `MORE[i].kind` reads a value, and `open_loop_views` skips it (no `tide_list_loop` made from a
+  scratch list nobody reads). A whole read is unchanged: its literal, a scratch list (`tide_list_from`), which
+  `foreach`, `Contains`, arguments, `Draw.Mesh` and assignment take as any list.
+- **GPU** (shader.c): `listed_constant`, `put_listed` (`array<T, N>(...)`), `ex_listed_index` (`tide_el<n>`, the
+  arrays' bounds-checked reader), `.count` as an int, `foreach` through `st_foreach`'s array path; an array
+  constant was already an array value there. A list constant read whole, or passed to a function taking a list
+  (`refuse_whole_list`, also in the call's data argument), is an error naming `QUAD[i]`, `.count` and `foreach`;
+  an empty one, or one over 4096 values (`SHADER_LISTED_MOST`), is refused where it's read (the checker refuses
+  the longer ones first since the review fixes below).
+- Tests: `tidec_e2e_constant_tables` (float/int2/float3/struct/enum/byte/nested arrays and lists, `Values()`, type
+  aliases, by `int(kind)`, past either end, `[]`, a list constant naming another, folded elements in constants, a
+  `case` and an array length, a field default, Contains/IndexOf, a function taking a `List<int>`, a world copy
+  that's its own, a view, a `local worker`, `Draw.Mesh` of two list constants), `shaders/constant_tables`
+  (golden, spirv-val, FXC), `platform/tests/shaders.tide` Sink checks against CPU Marks, errors
+  `constant_list_of_text`, `constant_array_of_text`, `constant_list_of_lists`, `constant_list_of_entities`,
+  `constant_array_count`, `constant_list_not_written_out`, `constant_list_write`, `constant_array_write`,
+  `constant_map`, `constant_index_variable`, `gpu_constant_list_whole`, `gpu_constant_list_empty`. Removed, as they
+  pinned the lifted refusals: `array_const`, `const_list`, `alias_const_array`, `alias_const_list` (their aliases
+  are in the e2e now).
+- Gaps: text in tables (arrays of strings; the note names a switch expression); `foreach` over a list constant on
+  the CPU copies its literal into scratch once per loop (an array constant's doesn't); a list constant read whole
+  is a scratch list made where it's read, not a shared one; on the GPU the table is written inline at each read,
+  not as a module-scope `const`; no `==` between tables; a conditional of two list or array literals
+  (`WIDE ? [8, 16] : [4, 8]`) has no type to give them (name two constants instead, which fold).
+- **Review fixes (2026-11-15).**
+  - A list constant whose hidden array would hold more than `TIDE_ARRAY_MOST` values, all of its elements' lengths
+    together (`List<int[1024]>` of five), was accepted and wrote C that didn't compile: a long array has no
+    by-value `tide_arrayN_get` (gen_array_helpers). Reading it out of a scratch list instead would copy the whole
+    literal at every read and grow scratch on every loop pass, and a pointer to a compound literal puts it on the
+    stack in an unoptimized build, so `settle_list_constant` refuses it, as the GPU did, with a note naming build
+    code (whose list is the pack's, any length). The GPU's own 4096 check (`SHADER_LISTED_MOST`) is now one no
+    program reaches. Fixture `constant_list_too_long`; the e2e has a list of exactly 4096 (`CUBES`, 8 x 512).
+  - `constant_items` returns what a table is while compiling: the literal, a `Values()` call (so `case ALL[1]:` and
+    `int[int(TREES[1])]` fold for `const T[3] ALL = T.Values();`), a `default`'s zeros, through constant
+    conditionals and switches and an element of an element (`GRID[1][2]`). `constant_element` is its element by
+    a constant index, which `fold_int` and now `setting_float` use (`maxRewind = REWIND;` of `REWINDS[1]`, the LOD
+    multiplier too).
+  - Text's character under `constants_only` (`const char FIRST = NAME[0];`, a field default) is an error in
+    `check_index`, as it was before `is_constant` took `E_INDEX`; tidec doesn't fold it and the GPU has no text.
+  - A constant naming one build code makes (`const List<float> SAME = CURVE;`, `CURVE[1]`) says so
+    (`first_built_constant`) instead of the generic "must be a constant expression", naming code, field defaults,
+    and build code making this one too (`Head(CURVE)`, which works: build code reads other built constants).
+  - Notes: an enum index (`SIZES[kind]`) writes `SIZES[int(kind)]`; a struct element holding text names the field
+    and the switch; a resource element names assets and local fields.
+  - Built array constants (`const int[4] SQUARES = Squares();`, which `constant_type` took once arrays were
+    constants) are owned: `e2e/build_code` reads one by index, count, past its end and foreach.
+  - Tests: e2e `constant_tables` (`TIERS` of an enum declared after its readers, folded into an array length and two
+    cases; `GRID[1][2]`; `default`'s zeros; `maxRewind` from a table; 4096 values read by index, loop and foreach),
+    `build_code`, fixtures `constant_list_too_long`, `constant_text_character`, `constant_names_built_list`,
+    `constant_array_enum_index`, `constant_array_of_struct_text`, `constant_list_of_textures`.
+
+Validation of the three 2026-11-14 completions above (vector equality, enum order and `Values()`, constant tables),
+Windows, Clang 23.1.2, Node 24.22.1: `sanitize` passes the three new E2Es, the related `constants`,
+`constant_flow`, `build_code`, `worker_values`, `arrays`, `lists`, `lists_held`, `maps`, `nested`, `defaults`,
+`default_value`, `math`, `switch_values`, `commands`, `text_arrays`, `optional_fields`, `type_aliases`,
+`alias_assets` and `indexed_loops` E2Es, all 2,824 error, warning, shader golden, SPIR-V, FXC, schedule and outline
+checks, the 280 LSP tests and `tide_platform_shaders` on Vulkan; `web-debug` passes the three new E2Es on WASI and
+`tide_platform_shaders` on WebGPU. The new tidec compiles all 548 `.sources` lists of the sanitize build, but for
+four whose build code needs `--build-cc` (built and passing through CMake). The docs production build passes.
+
+## Enum ordering and `Enum.Values()` (2026-11-14)
+
+Owner approved the recommendation ("go with your recommendations"); the rules are picks, Provisional in spec.md
+(Enums and switch), moved out of its Open list.
+
+- **Ordering:** `binary_result`'s `< <= > >=` take two values of one enum (`same_type`), by their numbers. C compares
+  the stored values (`uint8_t`/`uint16_t` for byte/ushort enums, so `Voxel(-1)` is 255); WGSL the i32 the enum is
+  there. `fold_bool` already folded enum members through `fold_int`, so constant orderings fold. Enum shorthand
+  takes the other operand's enum for ordering too (`ordered` beside `compared` in E_BINARY checking). Errors:
+  `note_enum_comparison` after the operator error, for two enums (`int(a) < int(b)`) and an enum beside a number (a
+  member, or `int(x) < n`). Indexed loops already bound scalar keys by `<`; enum keys go through it unchanged.
+- **`Values()`:** `CALL_ENUM_VALUES` (appended to `builtin_call`, so no other call's number moves), checked in
+  `check_method` beside `Count()` (`named_enum`, so a member named `Values` and a value's `.Values()` keep their
+  meanings). Its type is `array_of(enum, Count())`, marked named. An alias (a member with an earlier one's number) is
+  at its own place, so `Values().count == Count()`. Over `TIDE_ARRAY_MOST` members is an error naming a `for` over
+  `Count()`; an empty enum already fails at its declaration. `is_constant` takes it as it takes `Count()`.
+  C: `((tide_arrayN){{Phase_Warmup, ...}})` (`enum_member_cname`); WGSL: `array<i32, N>(0, 5, 6)`; purity.c,
+  shader_prep_codegen.inc and `own_cell_only_expr` list it (and `Count()`, which the last didn't) as a constant.
+- **Editors:** completion offers `Values()` after `EnumType.` (not after `case`), hover and signature help show
+  `E.Values() -> E[N]` (analysis.c, `lsp_enum_values_and_order`).
+- Tests: `tidec_e2e_enums` (`enums_order_by_their_numbers`, `enum_values_are_every_member_in_order`: gaps, aliases,
+  byte wrap, shorthand, a field default, passing the array to a function, constants), `shaders/enum_values`
+  (golden, spirv-val, FXC), `platform/tests/shaders.tide` Sink checks against CPU Marks, errors
+  `enum_order_other_enum`, `enum_order_int`, `enum_values_arguments`, `enum_values_instance`,
+  `enum_values_wrong_length`; the LSP case above.
+- **Numbering order (review fix, 2026-11-15).** Enums were numbered in declaration order in the "declarations"
+  phase, after constants, settings and field types, so a member, an array length (`int[int(Tree.Oak)]`) or a
+  setting (`tickRate = int(Rate.Fast)`) that read an enum not numbered yet folded it as 0, silently for a member
+  (`A_X = 0` in game.h). `decl.numbered` (0, 1 checking, 2) and `number_named_enums` walk the checked value,
+  through constants, `Values()` and table elements, and `check_enum` each unnumbered enum it reads first, in that
+  enum's unit; `array_type` and `check_settings` call it with no enum. In a member's value, its own enum's member
+  at or after it (`Step.Values()[2]` in member 2, `First = int(Step.Second)`) and an enum being numbered (a circle)
+  are errors. `.count` of an array reads no member. `kind.Values()` / `kind.Count()` of a value get a note naming
+  the enum's. Tests: e2e `enums` (`Ahead` from `Behind` declared after it, `Behind.Third` from `BEHIND[0]`, a
+  singleton's two lengths), errors `enum_member_after`, `enum_member_later`, `enum_members_circle`, the two
+  `_instance` fixtures' notes. A member that reads an enum still being numbered at an earlier member is refused as
+  a circle, though it could be worked out.
+
+## `==` and `!=` on vectors and colors (2026-11-14)
+
+Owner approved the recommendation ("go with your recommendations"); every rule is a pick, Provisional in spec.md
+(Vector math). Games had ~90 uses of `Same(int2, int2)`/`CellEqual` helpers and `a.x == b.x && a.y == b.y`.
+
+- **Checker** (`binary_result`): `==`/`!=` of two numeric vectors of one size give `bool` (in the switch's T_EQ case
+  for int/float, in the double branch for anything beside a double vector); two Colors in the Color branch. Same
+  widening as `+`: int vector beside float is float, either beside double is double. Refused, each with a note
+  (`note_vector_comparison`, after the error, also from the Color and double branches): vector beside a number (write
+  `float3(...)`), two sizes, `< <= > >=` on vectors or colors (a component or `LengthSq`), matrices (columns),
+  `Rect` (its `position`/`size`), quaternions (no `==`: `a.value == b.value` for the numbers, `Math.Abs(Math.Dot(a, b))`
+  near 1 for the rotation, as q and -q are one). Quaternion `==` was in the first draft and taken out for that
+  ambiguity (Unity's `Quaternion.==` is a dot-product test). `note_missing_operator`'s struct note now says a vector
+  field compares whole. `equatable` (List Contains/IndexOf/Remove) takes vectors and colors.
+- **C** (`gen_binary`, before the vector arithmetic branch): `tide_equal_<suffix>(a, b)` with both sides `gen_as` the
+  widened type, `!` for `!=`; `tide_equal_color` for colors. The helpers are in `tide/math.h` (`TIDE_EQUAL` for
+  f/d/i 2-4, every component's `==` joined with `&`, no branch) and `tide/color.h` (agent-maintained math/color
+  runtime: runtime-ownership.md). List helpers' `index_of` uses the same call for vector/color elements (`whole`).
+- **GPU** (`put_binary`): `all(a == b)` / `any(a != b)`, int vectors converted to float beside a float one. Both
+  translators already had `all`/`any` (spirv.c, hlsl.c).
+- **Constants and folding:** a constant or field default may compare vectors (C works the value out); `fold_bool`
+  doesn't fold them (as it doesn't fold float comparisons), so they're not `case` labels or setting values.
+- **Indexed loops:** indexing.c's `relation` already took `row_vector == fixed` as an equality on each component, and
+  negation (`!=` under `continue`) as no bound; nothing reached it before this. `e2e/vector_equality` runs a 65-cell
+  list through such a guard (planned "indexed by cell.x"; the guard still runs for each candidate).
+- Tests: `tidec_e2e_vector_equality` (int/float/double 2-4, widening, -0 and NaN, colors and alpha, `default`, each
+  side once in order, constants and field defaults, List<int2>/List<Color> Contains/IndexOf/Remove, the indexed guard
+  and an unindexed one), `shaders/vector_equality` (golden, spirv-val, FXC), `platform/tests/shaders.tide` Sink
+  checks against CPU-computed Marks (a mutation of one failed the pixel), errors `vector_compare_scalar`,
+  `vector_compare_sizes`, `vector_order`, `vector_order_double`, `matrix_compare`, `quaternion_compare`,
+  `rect_compare`, `color_order`, `color_compare_vector`, `list_contains_matrix`; `struct_compare` still passes.
+- Generated C changes only for games that compare vectors (new calls) and for games with lists of vectors or colors,
+  which now also get the three unused-unless-called `index_of`/`contains`/`remove` helpers.
+- Gaps: no `==` on arrays or structs (unchanged); no folding of int vector equality for compile-time choices
+  (math.md says so: a constant from one isn't a `case`, a length or a setting).
+- Review fixes (2026-11-15): the e2e's evaluation-order check is `Next(c) == Next(c) - int2(1, 0)`, true only left to
+  right (it compared (1, 0) with (2, 0), false either way); spec's `Math.Hash` bullet, which this entry's edit had
+  cut into, is whole again; color `==` is in views.md and the spec's Views and drawing colors bullet.
+
+## world.Edit, and `with ownership` on command handlers (2026-11-14)
+
+The owner approved both on 2026-11-14 ("go with your recommendations"), from Mount & Rifle's campaign (79
+`world.Set<` calls, 25 `mut var x = found;` re-copies, one-field wrappers like AddMoney that exist to hold a
+Get/Set pair, and 35 command handlers opening with `if (sender != owner.player) return;`) and bannerlord-duel
+(150 Gets, 75 Sets). Everything below the two approvals is my pick, Provisional in spec.md (The World;
+Commands, Provisional).
+
+**`world.Edit<T>(entity, name) { ... }`**
+
+- **Syntax.** A World call that takes a block, the binding a bare name in the argument list, as
+  `items.Sort(a, b) { ... }` names its elements: the one block call that already declared names. Not
+  `mut var party` (the parser refuses `mut` at a call: "only 'out' is written at a call"), not `out mut var
+  party` (out says the call only gives the variable a value), not a new statement keyword (the task asked for
+  the block-call shape, and stacking with commas then works for free: `world.Edit<A>(a, x), world.Edit<B>(b,
+  y) { }`). `<T>` is required, as for Get/Set/TryGet. No `else` form and no bool result: a block call is a
+  statement, and an else would be a second block every one of the ~120 walkers of `expr.block` (check.c,
+  codegen.c, purity.c, indexing.c, the lane analyses, the language server) would have to learn; `Has` before
+  it says the same.
+- **Checker** (`check_world_call` with `edit`, `edit_allowed`, `edit_conflict`, `check_edit_block` in
+  check.c). The binding is a synthetic `param` (NEW, never in any decl's `params`) with `mode = PARAM_MUT`,
+  the component's type and `param.edit` = the call; `expr.edit_binding` points at it. `find_param` looks in
+  `checker.edits` (a stack of `edit_scope`: binding, call, and the `parallel`/`compare` in force as the Edit
+  began) before the code's params, so the name resolves as BIND_PARAM, "already declared" covers it, and
+  every rule for a `mut` component parameter applies: writes, `mut` arguments, methods with `this`
+  (`component_binding` takes it as attached), heap/C lends (`world_place`). The block is checked by
+  `check_edit_block`, never by check_stmt's generic call-block branch (S_EXPR skips an Edit by name and
+  World object; error paths check it through `check_world_args`), with no `block_depth` (it's ordinary code
+  that runs once: queries, Sorts and loops inside are fine). Effects as a Set: `world->written`,
+  `note_world_use(..., true)`, `note_text_write`, `stands_alone`/`call_acts`, indexing.c's world_sets.
+  Refusals: no block or not a statement; second argument not a bare name; read-only World; a view's match
+  component; inside a parallel step or a comparison; `await` inside (check_await, as `edits.count`); the
+  binding read from a parallel step or comparison started inside the block (check_name, by the scope's
+  recorded parallel/compare; lambdas already refuse capturing a component); the binding handed to a task's
+  component parameter (task_ref: "own" excludes it); `Edit<T>(this, ...)` where the code takes T as a `mut`
+  parameter, or in T's own method (beside a read-only T it's allowed, and is what a Set is there: the read
+  parameter's copy, lists too, is the system's `keeps_read_copy`, as `world_sets_component` is true);
+  Get/TryGet/Set/Edit of T inside the block whose handle is the Edit's as written (`same_handle_written`:
+  `this`, one read-only local or parameter, or the same fields of one; GetPrevious is exempt). Warnings, once
+  every body is checked (`warn_unused_edits`, over `checker.edit_bindings`, as a function's `mut` parameter
+  being written is known only then): a binding nothing names ("never used, so the Edit changes nothing"),
+  and one only read ("never changed, so the Edit only reads it", pointing at TryGet: the Edit still counts
+  as a write of every entity's T). `world->written` stays set for a read-only Edit, so the `mut World`
+  warning comes after the TryGet change, not beside the Edit's.
+- **Wrong calls say one thing** (`check_world_args`, `edit_shaped`): a World call that's wrong already (no
+  `<T>`, an unknown or non-component type, the wrong world, a misspelled method, a refused Edit) and reads
+  as an Edit (a block, a bare name second that's new) checks its block through `check_edit_block(c, e,
+  NULL)` with a binding of `T_ERR`, after its own error: uses of the name resolve quietly, `check_name`'s
+  parallel/comparison refusal and `edit_conflict` skip an error binding, and only the call's error is said.
+  A refused `World` parameter (an async function's) makes any call on it quiet the same way.
+  `tests/edit_errors_alone.cmake` pins each path's first and only error.
+- **Codegen** (`gen_world_edit`; `tide_world_edit_<C>` in gen_component_access, behind
+  `decl.world_edit_used`). The entity once into a temporary; `T *name = tide_world_edit_T(world,
+  tide_bindings, e, &row)`: the active binding tide_bound_component finds (the code's own `mut` parameter of
+  that entity, an enclosing Edit of it, through helpers), else `row` loaded from the lanes, else NULL (gone, no
+  T, another shard's) and the block is skipped. Inside the `if`, a new `tide_component_binding` for it heads
+  a block-local `tide_bindings` (shadowing the outer one), so a helper's Set or Edit of that entity finds and
+  replaces or aliases it, exactly as for a `mut` parameter; `tide_owner_entity_/world_<name>` give methods
+  their entity and world (gen_component_owner, component_owner_world). The store, `tide_store_T` (lanes that
+  differ, tide_table_scatter; preparation state kept), is pushed as a `gen_open` cleanup, so `closing()`
+  emits it before every `return`, `break`, `continue`, `try` and `fail` leaving the block, as a GUI container
+  is closed. A task's own `return`, `fail` and `try` go through `gen_task_leave`, which closes the containers
+  its code opened before `return TIDE_TASK_DONE;`, the result already spilled to the frame (before review a
+  task's `return` in an Edit skipped the store: the change was lost, and as `tide_text_set`/`tide_assign`
+  had released the stored row's old text and lists, the stored row kept released handles). The binding E_NAME is `(*name)`/`name->` (is_pointer_param), `place_where` gives the
+  component's heap, so list/text/grid writes go to its own memory with no copy; `call_operands` skips the
+  name argument. Borrowing: with lanes there's no row in memory to point at, so a copy of the lanes is
+  unavoidable; everything else is borrowed (the containers, an active binding).
+- **Semantics settled by that**: an Edit is a Get-change-Set that can't miss its Set, plus aliasing that
+  Get/Set lacked: Pay(this) through a helper changes the system's own `mut` binding (+10, +1, +100 is 111,
+  where Set would have discarded the unfinished 10); two Edits of one entity are one component. A Set of the
+  edited entity inside the block (through a helper) replaces the binding whole, as for a `mut` parameter. Get
+  and queries of it inside the block read what's stored.
+- **A read parameter's copy behind a guard** (`gen_row_copies`, `gen_row_copies_rest`): a read parameter
+  beside a World Set or Edit of its component with lists is copied (`tide_copy_T`, scratch) so the Set can't
+  change it. In a guarded system that copy was made before the guard and its scratch reset only for rows the
+  guard let through, so every skipped row's copy stayed in scratch past the tick (the Set path had it too;
+  `e2e/world_edit`'s Settle, gated by mode, found it as `tide_scratch_mark() != 0`). The copy is now made
+  after the guard, for the rows it lets through; the guard reads the gathered value, as nothing has changed
+  it yet.
+- **Schedule**: a World Set, whole component (`world_use.writes`), one thread for a per-entity system. Field
+  granularity was weighed and not built: Edit's load and store would have to touch only lane masks the lane
+  analyses compute for the binding (they're per system parameter, `code_reads(sys, i)`), and `world_use`
+  would need masks; it changes no threading (a Set keeps the system in order anyway), only which other
+  systems wait. Gap below.
+- **Editors**: `world_calls` has Edit (hover, completion with a block snippet); completion in the block
+  knows the name's type (collect_locals pushes a synthetic local for `edit_binding`).
+
+**`with ownership` on command handlers**
+
+- **Spelling**: the existing filter, not a new word. `ownership` already means "the player this code is
+  for": a view's is this machine's; a command handler's is its sender, which the connection names and every
+  machine agrees on. Match code has no machine, so there's nothing for the local meaning to be confused with
+  there; systems and event handlers still refuse it. Also the owner's word ("don't rename it").
+- **Checker** (`check_ownership`): `command` (a non-local handler of a command) passes both of its
+  refusals; `with` adds Owner to `need_mask` as for views. The sender is optional in the parser now
+  (`parse_handler`: none when `)` follows the trigger); a handler with neither a named sender nor an
+  ownership filter is an error at the check of its parameters, worded as the requirement it is ("must name
+  the player who sent its command"; a named sender that's never read is accepted, as before). Its note
+  offers `with ownership` only to a per-entity handler (`sys->per_entity`): a global one has no entity, and
+  the filter would make every global Send of it an error. Three printers that took params[1] as the
+  sender (put_override_start, the language server's two headers) check its mode.
+- **Codegen**: nothing new but `tide_me`. The dispatcher's per-entity case already ran `gen_chunk_columns`
+  and `gen_row_filter`, which filter by `tide_owner.player == tide_me`; for a command handler `tide_me` is
+  `*tide_sender` (the dispatcher's argument, `&c->sender`) instead of `tide_l->Session.player`. A dropped
+  command is a skipped case: handled, sequence consumed. Command handlers can't be async, so the task-start
+  path has no filter.
+- **Editors**: hover on `ownership` in a command handler says it's the sender's; completion offers it after
+  `with`/`without` in a command handler's parameters (`command_handler`).
+
+Tests: `e2e/world_edit` (3,000 parties in two archetypes with a sparse filter: the ring Give, by Edit,
+equals GiveTwin, the same code by Get/Set, field by field, lists and text included, every tick, in place
+and beside a snapshot, replayed, packed and unpacked, and on the platform's threads; continue/break/return
+out of the block and a function's `return p.gold`; a gone entity and one without Party skipped; the code's
+own binding through a helper and two Edits of one entity; a Bag's list grown into chunks, text and a map,
+then a Set of the same entity through a helper inside the block; a grid's cells a chunk apart; an event
+handler, an async handler before and after its wait, a command handler, and a view's Edit of a local
+component; `Self()` on the binding is the edited entity; a `try` passing an error on and a `fail` out of
+the block, with text and a list; an async handler's `return` out of the block before its wait, with 3,000
+list elements and long text, and after it, its blocks checked again a tick later; comma-listed Edits of two
+entities and of one entity twice, both changes landing, and a `return` out of the shared block; `Edit(this)`
+beside a read-only Party in a guarded system: the parameter, its list and text keep their values, Get reads
+the stored one, scratch is back to its mark), `e2e/command_ownership` (three counters, player
+0's, player 1's and nobody's; pokes and steals from both players with and without the filter and the
+sender's name: run, dropped, sequence consumed, resend refused, replay equal), `schedule/world_edit` (which
+says "it edits"), eighteen error fixtures (seventeen `world_edit_*`, `command_unnamed_sender` with its
+note), `edit_errors_alone` (eight wrong Edits and a global command handler without its sender, each with one
+error, the global one not offered `with ownership`), the warning fixture `world_edit_unused`
+(never used, only read, and the six ways a binding is changed), LSP `lsp_world_edit` (with a comma-listed
+Edit left as written by the formatter), `lsp_command_ownership`; `world_unknown_method` lists Edit.
+
+Gaps: no `else`; schedule by fields for an Edit's binding (above); Edit of the code's own entity beside a
+`mut` parameter of it is refused where knowable rather than aliased (aliasing does happen through helpers);
+the task paths of `try` and `fail` out of an Edit can't be reached yet (an async function can't take the
+World), but go through `gen_task_leave` like `return`; an Edit's binding read inside a
+parallel step or comparison is refused rather than captured; Mount & Rifle and bannerlord-duel weren't
+changed to use either (read-only references).
+
+Validation: native sanitize (Windows ASan, heap checks): the two e2e targets, world/world_set_*/
+world_functions/commands/ownership/ownership_events/handler_queries e2e, all 2,607 error, warning and
+schedule fixtures, `tidels_tests`; web-debug: the two e2e targets. Linux/macOS/MinGW/Android are CI's.
+After review (native sanitize only, at the owner's request that suites run in Actions): `e2e/world_edit`,
+`command_ownership`, `world_set_read`/`_own`/`_mut`, `row_lanes`, `view_reads`, `component_loads` and their
+codegen checks, `edit_errors_alone`, the 182 World/async/task/command/owner error and warning fixtures,
+`schedule/world_edit`, `world`, `world_functions`, `queries`, `tidels_tests`. The docs build and web runs
+are left to the Build workflow.
+
 ## Symbols read by code: defined(NAME), define(NAME, default) and --define NAME=value (2026-11-14)
 
 The owner approved "a define with a value, readable as an expression" ("go with your recommendations"); the

@@ -423,6 +423,19 @@ Validation: release, the tests of every game whose generated C changed but `fold
 `tidec_previous_same`, `tidec_outline_game`, `tidels_tests`; sanitize (Windows ASan, `TIDE_HEAP_CHECKS`), the same
 games with `grid_values`, `parallel`, `worker_grids` and `tidec_safety_grids`/`_grid_values`: 37 of 37.
 
+## world.Edit is a Set to the schedule (2026-11-14)
+
+An Edit (language.md, world.Edit) notes a `world_use` that writes, as a Set does, so everything that goes by
+those follows unchanged: the whole component, read and written, in `find_conflicts`; one thread for a
+per-entity system (`system_one_thread` says "it edits T through its World", by `world_use.write_edits`, which
+says whether the first write is an Edit's and follows it through helpers); `world_reads_own_writes`, the
+rows' page slots reloaded each row, `restrict` dropped, no gathering, no heap runs; through functions by
+`check_world_passing`. By fields wasn't built: the Edit's load and store would have to go by lane masks of
+the binding, which the lane analyses don't compute (they're per parameter of the system), and it would
+change which systems wait, not the threads. `schedule/world_edit.tide` pins Heal before Drain beside Rust,
+a function's Edit as its system's, and an Edit beside the system's own `mut Gold`. Threads: `e2e/world_edit`'s
+`world_edit_on_threads_is_one_threads`.
+
 ## `previous` bindings: a query that reads the tick's start (2026-11-13, evening)
 
 The owner's task, after the day's three threads on the schedule: a system that changes a component and reads

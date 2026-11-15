@@ -1,0 +1,4 @@
+// expect: field 'all' is Direction[3], not Direction[2]
+enum Direction { North, East }
+singleton Match { Direction[3] all = Direction.Values(); }
+scene Main { }

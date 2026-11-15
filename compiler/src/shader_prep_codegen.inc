@@ -54,7 +54,7 @@ static void shader_prep_expr(shader_prep_walk *w, const expr *e)
     if (e->resource_operation || e->io_operation || e->web_fetch || e->storage_flush || e->task_start_value
         || e->kind == E_AWAIT || e->kind == E_LIST || e->kind == E_INTERP) { w->safe = false; return; }
     switch (e->call) {
-    case CALL_NONE: case CALL_CONSTRUCT: case CALL_ENUM_COUNT:
+    case CALL_NONE: case CALL_CONSTRUCT: case CALL_ENUM_COUNT: case CALL_ENUM_VALUES:
     case CALL_METHOD: case CALL_FUNCTION: case CALL_TRANSFORM: case CALL_SNAP:
         break;
     case CALL_DRAW:
@@ -308,7 +308,7 @@ static void gen_shader_prep_leave(gen *g, const int v)
 static const char *shader_prep_from(const shader *sh, const shader_texture *t)
 {
     if (t->asset) return asset_cname(t->asset);
-    if (!t->source) return "tide_texture";
+    if (!t->source) return given_texture_name(t->given); // One the draw gives
     sb from = {0};
     if (sh->values_type && t->source == sh->values_type) sb_printf(&from, "tide_values.%s", field_cname(t->field));
     else {

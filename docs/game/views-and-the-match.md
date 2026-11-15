@@ -79,7 +79,7 @@ view Bodies(Player player, Scenery scenery, without ownership)
 
 They're filters, beside `with` and `without`: the view takes neither `Owner` nor `Session` for them, and `if (owner.player != session.player) return;` goes. A view that wants both kinds at once, like one that draws your player yellow and the others gray, still takes `Owner` and `Session` and compares.
 
-Only views have them. The match runs the same on every machine, so a system can't ask whose machine it's on: there it's an error, and `with Owner` picks the entities that any player owns. A local handler doesn't filter by them either: one of a match event takes `Owner owner` and `Session session`, and compares (see [Events](./events.md#what-isn-t-there-yet)). `ownership` is a keyword only right after `with` and `without`, so it still names anything else.
+Views have them, and so do [command handlers](./commands.md#only-the-sender-s-own-entities), where the player is the command's sender. The rest of the match runs the same on every machine, so a system can't ask whose machine it's on: there it's an error, and `with Owner` picks the entities that any player owns. A local handler doesn't filter by them either: one of a match event takes `Owner owner` and `Session session`, and compares (see [Events](./events.md#what-isn-t-there-yet)). `ownership` is a keyword only right after `with` and `without`, so it still names anything else.
 
 ## Confirmed state
 

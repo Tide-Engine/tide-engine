@@ -1,0 +1,6 @@
+// expect: this draw gives 1 texture, and its frag takes 2: 'source' and 'lut'
+// expect: a blit gives its frag's Texture parameters in their order, before its destination: 'Draw.Blit(source, lut, destination, Grade)'
+scene Main { }
+local singleton Image { Texture source; }
+frag Grade(Vertex vertex, out Color color, Texture source, Texture lut) { color = source.Sample(vertex.uv) * lut.Sample(vertex.uv); }
+view Show(Image image) { Draw.Blit(image.source, Draw.window, Grade); }

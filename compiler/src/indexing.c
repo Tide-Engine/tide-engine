@@ -455,7 +455,7 @@ static void walk_writes_expr(ictx *c, const expr *e)
         if (e->call == CALL_METHOD && d->is_mut_method) note_written(c, e->object);
     }
     if (e->call == CALL_LIST || e->call == CALL_GUI) note_written(c, e->object);
-    if (e->call == CALL_WORLD && str_eq_c(e->name, "Set")) {
+    if (e->call == CALL_WORLD && (str_eq_c(e->name, "Set") || str_eq_c(e->name, "Edit"))) {
         if (e->type_decl) vec_push(c->world_sets, e->type_decl);
         else c->world_sets_any = true;
     }

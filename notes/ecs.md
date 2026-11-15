@@ -29,6 +29,19 @@ in runs whose rows queue nothing puts each entity in a run by its identity (`tid
 share of the order, so a tick's new entities are spread over the runs and an entity's blocks stay in one run's heap.
 Design, measurements, tests and gaps: schedule-and-threads.md, top section.
 
+## world.Edit: another entity's component where it is (2026-11-14)
+
+`world.Edit<T>(e, name) { ... }` (language.md has the whole of it) adds no storage path: `tide_world_edit_<T>`
+returns the active `mut` binding tide_bound_component finds for (world, e, T), or the lanes gathered into a
+stack copy by `tide_load_<T>` (NULL when e is gone or lacks T), and the block's end is `tide_store_<T>`,
+which scatters only the lanes that differ (tide_table_scatter), copying a page a snapshot shares first, as
+a handler's `mut` parameter is put back. Text, lists, maps, sets and grids in the copy are the stored
+handles, changed in the component's heap, so nothing of them is copied; a list that moves while the block
+changes it is put back with its new handle, and the old block waits for the owner's flush as it does for a
+`mut` parameter. Structural changes stay queued, so the row stays put for the block. A Set of the same
+entity inside the block finds the Edit's binding in the chain and replaces it (tide_world_set_<T>'s
+`active`). Tests: `e2e/world_edit`.
+
 ## Columns and a heap kept for a tick (2026-11-13, evening)
 
 For queries' `previous` bindings (schedule-and-threads.md, top section): `tide_table_keep(to, from, columns,

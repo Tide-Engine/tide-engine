@@ -538,6 +538,19 @@ static inline tide_double4 tide_d4_splat(const double x) { return (tide_double4)
                              tide_##name##_##f(a.z, b.z, c.z), tide_##name##_##f(a.w, b.w, c.w)};  \
     }
 
+// Two vectors are equal when every component is: `a == b` in Tide, one bool. Floats compare as C's do
+// (a NaN equals nothing, -0 equals 0). Each component is compared, with no branch between them.
+#define TIDE_EQUAL(V, S)                                                                         \
+    static inline bool tide_equal_##S##2(const tide_##V##2 a, const tide_##V##2 b)               \
+    { return (a.x == b.x) & (a.y == b.y); }                                                      \
+    static inline bool tide_equal_##S##3(const tide_##V##3 a, const tide_##V##3 b)               \
+    { return (a.x == b.x) & (a.y == b.y) & (a.z == b.z); }                                       \
+    static inline bool tide_equal_##S##4(const tide_##V##4 a, const tide_##V##4 b)               \
+    { return (a.x == b.x) & (a.y == b.y) & (a.z == b.z) & (a.w == b.w); }
+TIDE_EQUAL(float, f)
+TIDE_EQUAL(double, d)
+TIDE_EQUAL(int, i)
+
 // float vectors
 TIDE_MAP2(float, f, add, f)
 TIDE_MAP2(float, f, sub, f)

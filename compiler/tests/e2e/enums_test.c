@@ -25,6 +25,10 @@ TIDE_TEST(enums_have_their_values)
     TIDE_CHECK(Phase_Playing == 5);
     TIDE_CHECK(Phase_Over == 6); // One more than the member before it
     TIDE_CHECK(Weapon_Bow == 1);
+    // Worked out from an enum declared after them, which is numbered first
+    TIDE_CHECK(Behind_Second == 7 && Behind_Third == 9 && Ahead_First == 8 && Ahead_Next == 9);
+    TIDE_CHECK(sizeof(world.Sized.cells.at) / sizeof(world.Sized.cells.at[0]) == 7);
+    TIDE_CHECK(sizeof(world.Sized.fewer.at) / sizeof(world.Sized.fewer.at[0]) == 3);
     tide_world_init(&world, 1.0f);
     TIDE_CHECK(world.Match.phase == Phase_Warmup);
     TIDE_CHECK(world.Match.loadout.primary == Weapon_Bow); // The struct's default
@@ -97,6 +101,32 @@ TIDE_TEST(enums_count_members_and_wrap)
     TIDE_CHECK(world.Picks.countedCase == 1 && world.Picks.builtinCount == 3); // Rollback, Delay, Owned
     ticks(3);
     TIDE_CHECK(world.Picks.direction == Direction_North);
+}
+
+TIDE_TEST(enums_order_by_their_numbers)
+{
+    tide_world_init(&world, 1.0f);
+    TIDE_CHECK(world.Ordering.inOrder);
+    ticks(3); // Playing by now, whichever of Advance and Order runs first
+    TIDE_CHECK(world.Ordering.before == 2);      // Warmup and Playing come before Over
+    TIDE_CHECK(world.Ordering.smallOrder);       // Voxel(-1) is 255, past Water; Voxel(256) is Air
+    TIDE_CHECK(world.Ordering.shorthand);        // .Warmup and .Over take match.phase's enum
+    TIDE_CHECK(world.Ordering.shorthandCount == 1);
+}
+
+TIDE_TEST(enum_values_are_every_member_in_order)
+{
+    tide_world_init(&world, 1.0f);
+    TIDE_CHECK(world.Ordering.all.at[0] == Direction_North && world.Ordering.all.at[1] == Direction_East
+               && world.Ordering.all.at[2] == Direction_South && world.Ordering.all.at[3] == Direction_West);
+    TIDE_CHECK(world.Ordering.counted == 3);
+    ticks(1);
+    TIDE_CHECK(world.Ordering.phases == 11);
+    TIDE_CHECK(world.Ordering.order == 123);
+    TIDE_CHECK(world.Ordering.aliases == 130); // An alias is at its own place: Count() of them
+    TIDE_CHECK(world.Ordering.sameSeen == 2);  // First and Same have one number
+    TIDE_CHECK(world.Ordering.lastValue == Phase_Over);
+    TIDE_CHECK(world.Ordering.voxelSum == 3);
 }
 
 // A byte's and a ushort's enums keep a number's low bits, as byte(x) does.

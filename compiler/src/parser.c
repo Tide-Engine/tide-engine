@@ -2782,7 +2782,9 @@ static decl *parse_handler(parser *p, const bool command)
         trigger.name = advance(p)->text;
     }
     param sender = {0};
-    if (command) {
+    // The sender may go unnamed where the handler filters by it, `with ownership` (the checker says where it can't)
+    const bool named_sender = command && !at(p, T_RPAREN);
+    if (named_sender) {
         expect(p, T_COMMA, "',' and the command sender: 'PlayerID sender'");
         sender.mode = PARAM_SENDER;
         sender.at = peek(p)->at;
@@ -2799,7 +2801,7 @@ static decl *parse_handler(parser *p, const bool command)
     d->is_handler = true;
     d->is_command = command;
     vec_push(d->params, trigger);
-    if (command) vec_push(d->params, sender);
+    if (named_sender) vec_push(d->params, sender);
     parse_query_rest(p, d);
     return d;
 }

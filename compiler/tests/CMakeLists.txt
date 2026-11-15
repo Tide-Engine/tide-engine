@@ -107,6 +107,11 @@ if(TIDE_PLATFORM)
     target_link_libraries(tidec_e2e_world_set_mut PRIVATE tide_platform)
     target_compile_definitions(tidec_e2e_world_set_mut PRIVATE TIDE_SET_MUT_THREADS=1)
 endif()
+tide_e2e_test(world_edit) # world.Edit<T>(e, name) { ... }: in place, put back however the block is left; Get/Set's results
+if(TIDE_PLATFORM)
+    target_link_libraries(tidec_e2e_world_edit PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_world_edit PRIVATE TIDE_EDIT_THREADS=1)
+endif()
 tide_e2e_test(world_functions) # ...and through functions and methods the World is passed on to
 tide_e2e_test(properties)
 tide_e2e_test(transforms) # Shared component placement, checked parenting and hierarchy state
@@ -250,6 +255,7 @@ tide_e2e_test(unused_locals WARNINGS "local 'fwd' is never used" "local 'spark' 
 tide_e2e_test(defaults)
 tide_e2e_test(default_value)
 tide_e2e_test(math)
+tide_e2e_test(vector_equality) # == and != on vectors and colors, as one bool; lists finding them; an indexed vector guard
 tide_e2e_test(float_bits)
 tide_e2e_test(readonly_aggregates)
 add_test(NAME tidec_readonly_aggregates_codegen
@@ -449,6 +455,8 @@ tide_e2e_test(events_lookup) # Verified event target rows and fallback after str
 tide_e2e_test(events_batch) # Queue-page runs preserve recording order, filters, defaults and C observers
 tide_e2e_test(events_runs) # Runs of events taken in their own loop: found, moved, other and gone targets, against C
 tide_e2e_test(commands)
+# `with ownership` and `without ownership` on command handlers: by the sender, from two players, with and without its name
+tide_e2e_test(command_ownership)
 # Commands in channels, unordered ones, and a command of a file's bytes, in chunks: on a slow network too
 tide_e2e_test(commands_channels)
 set_tests_properties(tidec_e2e_commands_channels PROPERTIES TIMEOUT 300)
@@ -656,6 +664,7 @@ tide_e2e_test(shaders) # frag and vert: what a mesh draw through them records
 tide_e2e_test(compute) # GPU.Run, GPU lists' operations and indirect draws: what they record, in frame order
 tide_e2e_test(instancing) # Instanced: lists of transforms and ordinary instance structs
 tide_e2e_test(draw_values) # A draw's values: a struct after its vert and frag, sent once for the draw
+tide_e2e_test(given_textures) # Several textures a draw gives, in order with their filters; a singleton's a function samples
 tide_e2e_test(draw_helpers) # Shaded helpers bind only explicit parameters, forwarding attached local fields
 tide_add_game(tidec_e2e_nested_split_debug SPLIT_CODE SPLIT_PLUMBING SOURCES e2e/nested.tide NAME game
     HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" e2e/nested_test.c)
@@ -765,6 +774,7 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     add_test(NAME tidec_e2e_fails_visualizers COMMAND tidec_e2e_fails_visualizers)
 endif()
 tide_e2e_test(constants SOURCES e2e/constants/a_tuning.tide e2e/constants/b_main.tide)
+tide_e2e_test(constant_tables) # Array and list constants written out, read by index, count and foreach in match code, views and workers
 tide_e2e_test(settings SOURCES e2e/settings.tide e2e/settings_more.tide) # Several blocks, in two files, are one list
 tide_e2e_test(profile SOURCES e2e/profile.tide e2e/profile_combat.tide) # What ticks and frames say to a host's profiler
 tide_e2e_test(handover)
@@ -991,6 +1001,9 @@ add_test(NAME tidec_prefab_error_once
 add_test(NAME tidec_scene_startup
     COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/scene_startup"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/scene_startup.cmake")
+add_test(NAME tidec_edit_errors_alone
+    COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/edit_errors_alone"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/edit_errors_alone.cmake")
 
 # Outline tests: `tidec --outline` on outline/<name>.tide, run in its folder so the paths it prints are the
 # file's name, must print outline/<name>.json exactly.

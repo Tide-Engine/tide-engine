@@ -1,0 +1,5 @@
+// expect: a constant list is written out, like '[1, 2, 3]', or is another list constant
+// expect: to work its elements out with code, call a function that returns the list
+const int MODE = 1;
+const List<int> SIZES = MODE switch { 0 => [1, 2], _ => [3] };
+scene Main { }

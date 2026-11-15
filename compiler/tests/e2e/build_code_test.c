@@ -48,6 +48,7 @@ TIDE_TEST(build_code_values_read_as_the_code_left_them)
     TIDE_CHECK(p->rulesLengthConstant == 27);
     TIDE_CHECK(text_is(&world, p->name, "tide"));
     TIDE_CHECK(p->noise == 6.0f); // The game's C, which its build code's program was built without
+    TIDE_CHECK(p->squares == 5 + 40 + 18000); // SQUARES[2], its count, and 1 + 2 + 5 + 10 for each
     tide_world_free(&world);
 }
 

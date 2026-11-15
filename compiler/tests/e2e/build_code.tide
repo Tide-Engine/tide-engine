@@ -159,8 +159,16 @@ build List<float> Curve()
     return curve;
 }
 
+build int[4] Squares()
+{
+    mut int[4] squares = default;
+    for (int i = 0; i < 4; i++) squares[i] = i * i + 1;
+    return squares;
+}
+
 const string NAME = Name();
 const List<float> CURVE = Curve();
+const int[4] SQUARES = Squares(); // An array, as any constant can be
 const float HALF = Twice(0.25);
 const Pair PAIR = MakePair(3);
 const int RULES_LENGTH = Length(rules); // A constant's code reads an asset's code's value
@@ -202,6 +210,7 @@ singleton Probe
     int beepRate;
     int beepChannels;
     int beepSamples;
+    int squares;
 }
 
 system Read(mut Probe probe)
@@ -227,6 +236,8 @@ system Read(mut Probe probe)
     probe.beepRate = beepSource.rate;
     probe.beepChannels = beepSource.channels;
     probe.beepSamples = beepSource.samples.count;
+    probe.squares = SQUARES[2] + SQUARES.count * 10 + SQUARES[4] * 100; // Past the end: zero
+    foreach (var square in SQUARES) probe.squares += square * 1000;
 }
 
 // Runtime-only drawing must not prevent any of the constants or assets above from being built.

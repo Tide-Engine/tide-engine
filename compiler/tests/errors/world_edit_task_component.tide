@@ -1,0 +1,8 @@
+// expect: 'Wound' gets its 'health' again each time it goes on, from the entity it belongs to, and 'other' is the component an Edit changes
+component Health { int value; Entity target; }
+scene Main { }
+async void Wound(mut Health health) { await Wait.Ticks(1); health.value -= 1; }
+system Hurt(Health health, mut World world)
+{
+    world.Edit<Health>(health.target, other) { other.value -= 1; Wound(other); }
+}

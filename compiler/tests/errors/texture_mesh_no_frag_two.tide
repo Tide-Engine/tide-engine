@@ -1,0 +1,6 @@
+// expect: a mesh drawn with no frag is drawn with one texture, and this gives 2
+// expect: a frag samples as many as it takes
+scene Main { }
+struct Corner { float2 position; float2 uv; Color color; }
+local singleton Art { Texture a; Texture b; List<Corner> corners; }
+view Show(Art art) { Draw.Mesh(art.corners, [0, 1, 2], art.a, Filter.Point, art.b); }
