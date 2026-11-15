@@ -548,6 +548,7 @@ tide_e2e_test(task_handles LAYOUT)
 tide_e2e_test(task_visibility)
 tide_e2e_test(worker_handles)
 tide_e2e_test(worker_priorities) # `priority:` on a local worker's call: order by priority, each level in turn, aging, cancelling, room
+tide_e2e_test(comparisons_settled) # Comparisons that are always true or false: valid Tide, which builds under -Werror and gives its answer
 if(TIDE_PLATFORM)
     target_link_libraries(tidec_e2e_task_handles PRIVATE tide_platform)
     target_compile_definitions(tidec_e2e_task_handles PRIVATE TIDE_TASK_MIGRATION=1)

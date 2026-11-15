@@ -3366,6 +3366,56 @@ static bool branchless(const gen *g, const expr *e)
     }
 }
 
+// Whether C text is numbers alone, with their operators and parentheses: `(31)`, `(-1)`, `3000000000LL`.
+static bool c_text_is_number(const char *text)
+{
+    bool digits = false;
+    for (const char *s = text; *s; s++) {
+        const char c = *s;
+        if (c >= '0' && c <= '9') {
+            digits = true;
+            while ((s[1] >= '0' && s[1] <= '9') || (s[1] >= 'a' && s[1] <= 'z') || (s[1] >= 'A' && s[1] <= 'Z') || s[1] == '.') s++;
+            continue;
+        }
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '"' || c == '\'') return false;
+    }
+    return digits;
+}
+
+// Whether C text has &, | or ^ between two values, as gen_binary writes them (` & `): not the & of an address.
+static bool c_text_has_bits(const char *text)
+{
+    return strstr(text, " & ") || strstr(text, " | ") || strstr(text, " ^ ");
+}
+
+// A comparison of two whole numbers, `left op right` as C. A comparison that's always true or false is valid Tide
+// with that answer (`((h + f) & 31) == 99` is false, `h == h` true, a byte is never below 0), but to clang it's
+// a mistake in C someone wrote, which generated C's warnings as errors would refuse to build:
+// -Wtautological-compare and those it has (a masked or or-ed value against a constant it can't equal, a value
+// compared with itself, a constant past a type's range). Each of them reads its operands through parentheses
+// and the conversions C makes itself, and stops at a cast that's written. So where clang could work the answer
+// out from the text, each side is written as a cast to the type C compares them in (`as`), which changes no
+// value: the same text on both sides; a side with &, | or ^ in it; a number beside a type smaller than an int
+// (`narrow`: a byte, a bool, an enum) or beside another number. Every other comparison is written as it was.
+static void put_whole_comparison(sb *o, const char *left, const tok_kind op, const char *right, const char *as, const bool narrow)
+{
+    const bool left_number = c_text_is_number(left), right_number = c_text_is_number(right);
+    const bool bits = c_text_has_bits(left) || c_text_has_bits(right);
+    if (strcmp(left, right) == 0 || bits || ((left_number || right_number) && (narrow || (left_number && right_number)))) {
+        sb_printf(o, "((%s)(%s) %s (%s)(%s))", as, left, c_op(op), as, right);
+    } else sb_printf(o, "(%s %s %s)", left, c_op(op), right);
+}
+
+static bool compares(const tok_kind op)
+{
+    return op == T_EQ || op == T_NE || op == T_LT || op == T_LE || op == T_GT || op == T_GE;
+}
+
+static bool whole_kind(const type t)
+{
+    return t.kind == TY_INT || t.kind == TY_BYTE || t.kind == TY_CHAR || t.kind == TY_BOOL || t.kind == TY_ENUM;
+}
+
 static void gen_binary(gen *g, sb *o, const tok_kind op, expr *l, expr *r, const type result, const decl *overload)
 {
     if (overload) {
@@ -3535,6 +3585,15 @@ static void gen_binary(gen *g, sb *o, const tok_kind op, expr *l, expr *r, const
         sb_put(o, ")");
         return;
     }
+    if ((lt.kind == TY_LONG || rt.kind == TY_LONG) && compares(op)) {
+        const type long_t = {TY_LONG, NULL};
+        sb left = {0}, right = {0};
+        gen_as(g, &left, l, long_t);
+        gen_as(g, &right, r, long_t);
+        put_whole_comparison(o, left.data ? left.data : "", op, right.data ? right.data : "", "int64_t",
+                             lt.kind != TY_LONG || rt.kind != TY_LONG);
+        return;
+    }
     if (lt.kind == TY_LONG || rt.kind == TY_LONG) { // & | ^ and comparisons: C widens the int side
         const type long_t = {TY_LONG, NULL};
         sb_put(o, "(");
@@ -3557,6 +3616,14 @@ static void gen_binary(gen *g, sb *o, const tok_kind op, expr *l, expr *r, const
         return;
     }
 
+    if (compares(op) && whole_kind(lt) && whole_kind(rt)) {
+        sb left = {0}, right = {0};
+        gen_expr(g, &left, l);
+        gen_expr(g, &right, r);
+        put_whole_comparison(o, left.data ? left.data : "", op, right.data ? right.data : "", "int32_t",
+                             (lt.kind != TY_INT && lt.kind != TY_CHAR) || (rt.kind != TY_INT && rt.kind != TY_CHAR));
+        return;
+    }
     bool mixed = (lt.kind == TY_FLOAT) != (rt.kind == TY_FLOAT) && lt.kind != TY_BOOL;
     sb_put(o, "(");
     if (mixed) gen_as(g, o, l, float_t);
@@ -9444,6 +9511,17 @@ static void gen_stmt_now(gen *g, const stmt *s)
             break;
         }
         indent(g, o);
+        if (s->op == T_ASSIGN && !(target->kind == E_MEMBER && target->swizzle_len > 1)) {
+            // `h = h;`, a local given itself: valid Tide that changes nothing, and to clang a mistake
+            // (-Wself-assign), which generated C's warnings as errors would refuse. Written as a read of it.
+            sb to = {0}, from = {0};
+            gen_expr(g, &to, target);
+            gen_as(g, &from, s->value, target->type);
+            const char *place = to.data ? to.data : "", *value = from.data ? from.data : "";
+            if (strcmp(place, value) == 0 && !strchr(place, '(')) sb_printf(o, "(void)(%s);\n", place);
+            else sb_printf(o, "%s = %s;\n", place, value);
+            break;
+        }
         if (target->kind == E_MEMBER && target->swizzle_len > 1) {
             // v.xz = value: compute into a temporary, then write each component.
             sb_printf(o, "{ const %s tide_t = ", c_type(target->type));

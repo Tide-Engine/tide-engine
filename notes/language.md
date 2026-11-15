@@ -23,7 +23,7 @@ first; docs/game/endless-worlds.md).
   temporary before its arguments and hands it to the worker's adapter as a last parameter `tide_priority`, which the
   adapter has only when some handle call of that worker says a priority (`decl.prioritized_handles`,
   `make_worker_tasks`); the adapter's own await passes it on. Checked: `bench/voxels`' C from its sources as they
-  were is the same with the old tidec and the new.
+  were is the same with the old tidec and the new but for the comparisons below.
 - **Runtime** (`engine/src/worker.c`, `tide/worker.h`; notes/schedule-and-threads.md, Worker priorities).
 - **Editors** (`compiler/lsp/analysis.c`): `priority:` in completion where an argument starts in a worker's call
   (once, with `WorkerPriority.` after it), the members with what each says in completion and hover, the name reserved
@@ -41,6 +41,34 @@ first; docs/game/endless-worlds.md).
   arguments though it's written after them. `expr.mesh_lod` holds two things under one name. Nothing measures a
   group's queues in the profiler: "Queue wait" is one row for every priority. Web and the sanitizers ran none of
   this here (CI's).
+
+## Comparisons clang can settle (2026-11-15)
+
+A comparison that's always true or false is valid Tide with that answer, but generated C is built with warnings as
+errors, and clang's `-Wtautological-compare` family (in `-Wall`) calls it a mistake: `((h + f) & 31) == 99`
+(`-Wtautological-bitwise-compare`, what voxels' check hit), `h == h` (self-comparison), and with other compilers or
+flags a constant past a byte's or an enum's range. The game then didn't build. (`tide build` compiles with `-w`, so
+only CMake's games and the tests saw it.)
+
+- **How.** The way generated C already kept clang from a self-comparison (`tide_asset_equal_id`, a helper clang
+  doesn't look into): clang's checks read operands through parentheses and the conversions C makes itself, and stop
+  at a cast that's written. `put_whole_comparison` (codegen.c, from `gen_binary`'s two paths for whole numbers)
+  writes both sides as casts to the type C compares them in, `((int32_t)(a & 31) == (int32_t)(99))`, where the text
+  could be settled: the same text on both sides; a side with ` & `, ` | ` or ` ^ ` in it; a number beside a byte, bool
+  or enum, or beside an int widened to a long, or beside another number. A cast to the type the operand already
+  converts to changes no value. Every other comparison is the text it was (`count == 0`, `i < 10`), so a game's C
+  changes only at those shapes: `bench/voxels` at one line, its `& 31` check.
+- **`h = h;`** of a local was refused too (`-Wself-assign`): it's written `(void)(h);` now. A field given itself
+  never warned.
+- **Not folded.** tidec doesn't work the answer out; clang's optimizer does, as before. Two comparisons with constants
+  that can't both hold (`h < 3 && h > 5`) were never refused: both sides are cheap, so they're written with `&` on
+  unsigned values, which clang's check of `&&` doesn't read.
+- **Tests.** `tidec_e2e_comparisons_settled`: 60 answers (masks, ors, shifts, a byte against 0, 255 and 256, an int
+  against a long's range, remainders, the same value on both sides, constants alone, bools and enums, pairs that
+  can't both hold, a local given itself, branches and loop conditions), built with the engine's flags.
+- **Gaps.** Checked with this machine's clang (LLVM 23) alone; Apple's clang and the web's are CI's. A warning clang
+  grows for another shape of valid Tide would need its shape added: the alternative, turning the family off in
+  generated C with a pragma, would also hide it where tidec's own plumbing compares wrongly.
 
 ## Grids as async parameters; a component handed on for its local fields alone (2026-11-15)
 
@@ -139,9 +167,9 @@ task pass and the other chunk's goes on to the same result, so the sanitizers se
 mesher's commonest end). Still not tested: a match task with grid parameters started from a per-entity system split
 across threads, at several thread counts, and one crossing shards.
 
-Found on the way, not fixed: a Tide condition whose bitwise part can't equal the constant it's compared with,
-`((h + f) & 31) == 99`, compiles to C that clang refuses under `-Werror` (`-Wtautological-bitwise-compare`), so a game
-with it doesn't build. tidec should fold or refuse it with a message of its own.
+Found on the way: a Tide condition whose bitwise part can't equal the constant it's compared with,
+`((h + f) & 31) == 99`, compiled to C that clang refuses under `-Werror` (`-Wtautological-bitwise-compare`), so a game
+with it didn't build. Fixed the same day: Comparisons clang can settle, above.
 
 ## Awaited loads and listings of the server's store (2026-11-15)
 
