@@ -219,8 +219,8 @@
           }
         },
         {
-          "comment": "command(Rename rename, PlayerID sender) RenamePlayer: a command handler",
-          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|worker|cached|virtual|override)\\s+)?(?:((?:local|async|worker|cached|virtual|override)(?:\\s+(?:local|async|worker|cached|virtual|override))?)\\s+)?(command)\\s*(\\()\\s*([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)(?:\\s+([A-Za-z_][A-Za-z0-9_]*))?\\s*(,)\\s*(PlayerID)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(\\))\\s*((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)",
+          "comment": "command(Rename rename, PlayerID sender) RenamePlayer: a command handler; the sender may be left out (command(Poke poke) Bump(..., with ownership))",
+          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|worker|cached|virtual|override)\\s+)?(?:((?:local|async|worker|cached|virtual|override)(?:\\s+(?:local|async|worker|cached|virtual|override))?)\\s+)?(command)\\s*(\\()\\s*([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)(?:\\s+([A-Za-z_][A-Za-z0-9_]*))?(?:\\s*(,)\\s*(PlayerID)\\s+([A-Za-z_][A-Za-z0-9_]*))?\\s*(\\))\\s*((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
             "1": {
               "name": "storage.modifier.tide"
