@@ -57,6 +57,22 @@ static int extern_system_count(const program *prog)
     return count;
 }
 
+// Each system whose rows are each on their entity's own run (system_heap_runs_scattered) gets a slot of the tick's
+// keys sorted by run (tide_run_keys), and how many there are; -1 for any other system.
+static int scattered_slot(const program *prog, const decl *sys)
+{
+    if (!system_heap_runs_scattered(sys)) return -1;
+    int slot = 0;
+    for (int i = 0; i < prog->systems.count && prog->systems.items[i] != sys; i++) slot += system_heap_runs_scattered(prog->systems.items[i]);
+    return slot;
+}
+static int scattered_count(const program *prog)
+{
+    int count = 0;
+    for (int i = 0; i < prog->systems.count; i++) count += system_heap_runs_scattered(prog->systems.items[i]);
+    return count;
+}
+
 // Emits C for a checked program. Everything specific to the game is generated
 // here: component structs, archetype storage, deferred structural changes and
 // events, system, view and handler bodies, dispatch loops, the tick and
@@ -10070,6 +10086,7 @@ static void gen_header(gen *g)
         sb_printf(o, "    tide_table %s;\n", arch_name(g, a));
     }
     if (extern_system_count(prog)) sb_put(o, "    struct tide_tick_completion *tide_completions; // Tick-local, never saved\n");
+    if (scattered_count(prog)) sb_put(o, "    struct tide_run_keys *tide_run_keys; // Tick-local: the keys of systems in runs by identity, by run; never saved\n");
     if (prog->owned_prediction) sb_printf(o, "    bool tide_owned_predicting; // Private execution selection, not simulation state\n    bool tide_owned_selected[%d];\n", prog->systems.count ? prog->systems.count : 1);
     if (prog->shard_state) sb_put(o, "    struct tide_shard_tick *tide_shard_now; // What its tick's run noted (tide/shard.h): tick-local, never saved\n");
     sb_put(o, "    tide_queue commands; // Of tide_command\n");
@@ -22362,6 +22379,35 @@ static void gen_system_run(gen *g, const decl *sys)
         sb_put(o, "// The run an entity's row is on in a system in runs whose rows queue nothing (tide/heap.h, A heap in runs)\n"
                   "TIDE_HELPER uint32_t tide_entity_run(const tide_entity e)\n{\n"
                   "    return (uint32_t)(((e.birth ^ e.lineage) * UINT64_C(0x9E3779B97F4A7C15)) >> (64u - TIDE_HEAP_RUN_BITS));\n}\n\n");
+        // Its keys by run, once a tick: each task then goes through its own runs' keys alone
+        sb_put(o, "// The keys of such a system sorted by their entities' runs, each run's in the keys' order, and where each run's\n"
+                  "// keys start: made once a tick, before its tasks where it has more than one (tide_own_<System>), else by its\n"
+                  "// one task, so that each task goes through its own runs' keys alone, run by run. A counting sort: two passes\n"
+                  "// over the keys. In the world while it ticks (tide_world.tide_run_keys), let go of when its systems are done.\n"
+                  "// Under 1024 keys none are made (count 0): each task goes through them all for its own runs' (tide_every_run),\n"
+                  "// a microsecond or two, where making them costs a block and a step before the tasks (bench_gallery's Stroke)\n"
+                  "typedef struct tide_run_keys {\n"
+                  "    tide_entity *keys;  // ...and after them, in the same block, the slot each was in (tide_entities_ordered_archetypes_slots)\n"
+                  "    uint32_t *slots;\n"
+                  "    uint32_t count;     // The keys it was made from, all of them\n"
+                  "    uint32_t starts[TIDE_HEAP_RUNS + 1u];\n"
+                  "} tide_run_keys;\n\n"
+                  "TIDE_HELPER void tide_run_keys_make(tide_run_keys *r, const tide_entity *keys, const uint32_t *slots, const uint32_t count)\n{\n"
+                  "    free(r->keys);\n"
+                  "    memset(r, 0, sizeof *r);\n"
+                  "    if (count < 1024u) return;\n"
+                  "    uint32_t at[TIDE_HEAP_RUNS] = {0};\n"
+                  "    for (uint32_t i = 0; i < count; i++) at[tide_entity_run(keys[i])]++;\n"
+                  "    for (uint32_t run = 0, sum = 0; run < TIDE_HEAP_RUNS; run++) {\n"
+                  "        r->starts[run] = sum;\n        sum += at[run];\n        at[run] = r->starts[run];\n    }\n"
+                  "    r->starts[TIDE_HEAP_RUNS] = count;\n"
+                  "    if ((uint64_t)count * (sizeof *r->keys + sizeof *r->slots) > SIZE_MAX) tide_out_of_memory();\n"
+                  "    r->keys = tide_alloc((size_t)count * (sizeof *r->keys + sizeof *r->slots));\n"
+                  "    r->slots = (uint32_t *)(void *)(r->keys + count);\n"
+                  "    for (uint32_t i = 0; i < count; i++) { // Stable: each run's in the keys' order\n"
+                  "        const uint32_t to = at[tide_entity_run(keys[i])]++;\n"
+                  "        r->keys[to] = keys[i];\n        r->slots[to] = slots[i];\n    }\n"
+                  "    r->count = count;\n}\n\n");
     }
     g->row_runs = scattered;
     for (int a = 0; !view && sys->per_entity && a < prog->archetypes.count; a++) {
@@ -22550,13 +22596,31 @@ static void gen_system_run(gen *g, const decl *sys)
             // there are, as many as there are entities up to TIDE_HEAP_RUNS, and the task's share of the runs.
             // Each run's blocks come from its own heap (tide/heap.h, A heap in runs)
             // One whose rows queue nothing: its runs are its entities' own (tide_entity_run), and the task's share of
-            // them goes through the order for its runs' entities, each row on its entity's run (gen_rows_function)
-            if (scattered) sb_put(o, "    const uint32_t tide_runs_from = (uint32_t)((uint64_t)TIDE_HEAP_RUNS * tide_task / tide_pieces);\n"
-                                     "    const uint32_t tide_runs_to = (uint32_t)((uint64_t)TIDE_HEAP_RUNS * (tide_task + 1u) / tide_pieces);\n"
-                                     "    const bool tide_every_run = tide_runs_from == 0u && tide_runs_to == TIDE_HEAP_RUNS;\n"
-                                     "    const uint32_t tide_run_was = tide_heap_run_enter(0u);\n"
-                                     "    const uint32_t tide_key_from = 0u, tide_key_to = tide_runs_from < tide_runs_to ? tide_key_count : 0u;\n");
-            else if (heap_runs) sb_put(o, "    const uint32_t tide_runs = tide_key_count < TIDE_HEAP_RUNS ? tide_key_count : TIDE_HEAP_RUNS;\n"
+            // them goes through its runs' keys alone, run by run, each run's in the keys' order, each row on its
+            // entity's run (gen_rows_function). The keys sorted by run (tide_run_keys_make) once a tick: before the
+            // tasks where there's more than one (tide_own_), else by the one task here, which then goes as each of
+            // the pool's would. Without them (a tick that gave none, or too few keys to sort) it goes through all of
+            // them for its own; each run's rows are in the keys' order either way, so the world is the same
+            if (scattered) {
+                sb_put(o, "    const uint32_t tide_runs_from = (uint32_t)((uint64_t)TIDE_HEAP_RUNS * tide_task / tide_pieces);\n"
+                          "    const uint32_t tide_runs_to = (uint32_t)((uint64_t)TIDE_HEAP_RUNS * (tide_task + 1u) / tide_pieces);\n");
+                bool arches = false;
+                for (int a = 0; a < prog->archetypes.count; a++) arches |= runs_on(g, sys, a);
+                if (arches) {
+                    const int slot = scattered_slot(prog, sys);
+                    sb_printf(o, "    tide_run_keys *const tide_by_run = tide_w->tide_run_keys ? &tide_w->tide_run_keys[%d] : NULL;\n"
+                                 "    if (tide_by_run && tide_pieces == 1u) tide_run_keys_make(tide_by_run, tide_keys, tide_key_slots, tide_key_count);\n"
+                                 "    const bool tide_sorted = tide_by_run && tide_by_run->keys && tide_by_run->count == tide_key_count;\n"
+                                 "    if (tide_sorted) {\n"
+                                 "        const uint32_t tide_first = tide_by_run->starts[tide_runs_from];\n"
+                                 "        tide_keys = tide_by_run->keys + tide_first;\n"
+                                 "        tide_key_slots = tide_by_run->slots + tide_first;\n"
+                                 "        tide_key_count = tide_by_run->starts[tide_runs_to] - tide_first;\n    }\n", slot);
+                } else sb_put(o, "    const bool tide_sorted = false;\n");
+                sb_put(o, "    const bool tide_every_run = tide_sorted || (tide_runs_from == 0u && tide_runs_to == TIDE_HEAP_RUNS);\n"
+                          "    const uint32_t tide_run_was = tide_heap_run_enter(0u);\n"
+                          "    const uint32_t tide_key_from = 0u, tide_key_to = tide_runs_from < tide_runs_to ? tide_key_count : 0u;\n");
+            } else if (heap_runs) sb_put(o, "    const uint32_t tide_runs = tide_key_count < TIDE_HEAP_RUNS ? tide_key_count : TIDE_HEAP_RUNS;\n"
                                      "    const uint32_t tide_run_to = (uint32_t)((uint64_t)tide_runs * (tide_task + 1u) / tide_pieces);\n"
                                      "    const uint32_t tide_run_was = tide_heap_run_enter(0u);\n"
                                      "    for (uint32_t tide_run = (uint32_t)((uint64_t)tide_runs * tide_task / tide_pieces); tide_run < tide_run_to; tide_run++) {\n"
@@ -22649,8 +22713,19 @@ static void gen_system_run(gen *g, const decl *sys)
     if (!view && split && system_owns(g, sys)) gen_system_pieces(g, sys);
     if (ordered && sys->gathers) gen_gather_function(g, sys, replay_clear.data ? replay_clear.data : "");
     if (ordered && (system_owns(g, sys) || sys->gathers || system_heap_runs(sys))) {
-        for (int done = system_owns(g, sys) ? 0 : 1; done < 2; done++) {
+        for (int done = system_owns(g, sys) || scattered ? 0 : 1; done < 2; done++) {
             sb_printf(o, "static void tide_%s_%s(void *tide_world_v)\n{\n    tide_world *tide_w = tide_world_v;\n", done ? "done" : "own", name);
+            // Its keys sorted by run, for its tasks to go through their own runs' alone
+            if (!done && scattered) {
+                bool arches = false;
+                for (int a = 0; a < prog->archetypes.count; a++) arches |= runs_on(g, sys, a);
+                if (arches) {
+                    sb_put(o, "    if (tide_w->tide_run_keys) {\n");
+                    gen_canonical_system_keys(g, sys);
+                    sb_printf(o, "    tide_run_keys_make(&tide_w->tide_run_keys[%d], tide_keys, tide_key_slots, tide_key_count);\n    }\n",
+                              scattered_slot(prog, sys));
+                }
+            }
             if (system_owns(g, sys)) {
                 bool marked = false;
                 for (int a = 0; a < prog->archetypes.count; a++) marked |= rows_live(g, sys, a);
@@ -24620,7 +24695,7 @@ static void gen_api(gen *g)
                          "    tide_world *w = world;\n    if (!w->tide_owned_predicting || w->tide_owned_selected[%d]) tide_task_%s(world, task, pieces);\n}\n",
                       name, i, name, name, i, name);
             const bool owns = (system_splits(sys) || system_splits_in_order(sys)) && system_owns(g, sys);
-            if (owns) {
+            if (owns || system_heap_runs_scattered(sys)) { // (One in runs by identity sorts its keys there)
                 sb_printf(o, "static void tide_owned_own_%s(void *world)\n{\n    tide_world *w = world;\n"
                              "    if (!w->tide_owned_predicting || w->tide_owned_selected[%d]) tide_own_%s(world);\n}\n", name, i, name);
             }
@@ -24694,7 +24769,8 @@ static void gen_api(gen *g)
             else sb_printf(o, "%s_%s, ", run, name);
             const bool ordered = system_splits_in_order(sys);
             const bool owns = (system_splits(sys) || ordered) && system_owns(g, sys);
-            if (owns) sb_printf(o, "tide_%sown_%s, ", prog->owned_prediction ? "owned_" : "", name);
+            // (One in runs by identity sorts its keys by run there: system_heap_runs_scattered)
+            if (owns || system_heap_runs_scattered(sys)) sb_printf(o, "tide_%sown_%s, ", prog->owned_prediction ? "owned_" : "", name);
             else sb_put(o, "NULL, ");
             if (owns && !sys->extern_system) sb_printf(o, "tide_%sdone_%s, ", prog->owned_prediction ? "owned_" : "", name); // One written in C made them the world's own
             else if (ordered && (sys->gathers || system_heap_runs(sys))) sb_printf(o, "tide_%sdone_%s, ", prog->owned_prediction ? "owned_" : "", name); // Its log, run in order
@@ -24736,6 +24812,9 @@ static void gen_api(gen *g)
     const int completions = extern_system_count(prog);
     if (prog->owned_prediction && prog->systems.count) sb_put(o, "    if (w->tide_owned_predicting) tide_owned_select(w);\n");
     if (completions) sb_printf(o, "    tide_tick_completion tide_completions[%d] = {0};\n    w->tide_completions = tide_completions;\n", completions);
+    // The keys of its systems in runs by identity, sorted by run before their tasks where they have more than one
+    const int scattered = scattered_count(prog);
+    if (scattered) sb_printf(o, "    tide_run_keys tide_by_run[%d];\n    memset(tide_by_run, 0, sizeof tide_by_run);\n    w->tide_run_keys = tide_by_run;\n", scattered);
     // A host that shows where ticks' time goes gave its jobs a profile
     // (tide/profile.h): the systems' part of the tick, and what follows them
     sb_put(o, "    tide_profile *tide_p = jobs ? jobs->profile : NULL;\n"
@@ -24752,6 +24831,7 @@ static void gen_api(gen *g)
         sb_printf(o, "    if (tide_p) tide_profile_sources(&tide_p->systems, %du, tide_system_sources);\n", prog->systems.count);
         sb_printf(o, "    const tide_tick_systems tide_tick = {tide_systems, %du, tide_prepare, &w->commands, &w->entities};\n", prog->systems.count);
         sb_put(o, "    tide_run_systems(w, &tide_tick, jobs);\n");
+        if (scattered) sb_printf(o, "    for (uint32_t i = 0; i < %du; i++) free(tide_by_run[i].keys);\n    w->tide_run_keys = NULL;\n", scattered);
     } else {
         sb_put(o, "    (void)tide_prepare;\n    if (tide_p) tide_profile_count(&tide_p->systems, 0u);\n");
     }
@@ -25574,6 +25654,7 @@ static void gen_world_bytes(gen *g, const bool local)
     if (!local && prog->owned_prediction) sb_put(o, "    header->tide_owned_predicting = false;\n    memset(header->tide_owned_selected, 0, sizeof header->tide_owned_selected);\n");
     if (g->ix_any) sb_put(o, "    header->tide_index_cache = NULL;\n");
     if (!local && prog->keeps_previous) sb_put(o, "    header->tide_previous = NULL;\n");
+    if (!local && scattered_count(prog)) sb_put(o, "    header->tide_run_keys = NULL;\n");
     if (local) sb_put(o, "    header->tide_io = NULL;\n    header->tide_workers = NULL;\n    header->tide_worker_jobs = NULL;\n");
     if (local && prog->command_types.count) sb_put(o, "    memset(header->tide_outgoing, 0, sizeof header->tide_outgoing);\n    header->tide_outgoing_count = 0;\n");
     // What the match sent is a frame's: none of it is the local state's to keep
@@ -25665,6 +25746,7 @@ static void gen_world_bytes(gen *g, const bool local)
     if (!local && prog->owned_prediction) sb_put(o, "    w->tide_owned_predicting = false;\n    memset(w->tide_owned_selected, 0, sizeof w->tide_owned_selected);\n");
     if (g->ix_any) sb_put(o, "    w->tide_index_cache = NULL; // ...nor this one\n");
     if (!local && prog->keeps_previous) sb_put(o, "    w->tide_previous = NULL;\n");
+    if (!local && scattered_count(prog)) sb_put(o, "    w->tide_run_keys = NULL;\n");
     if (local) sb_put(o, "    w->tide_io = io;\n    w->tide_workers = NULL;\n    w->tide_worker_jobs = NULL;\n");
     if (local && program_hears(prog)) sb_put(o, "    memset(&w->tide_heard, 0, sizeof w->tide_heard);\n");
     if (local && hears_visibility(prog)) sb_put(o, "    w->tide_available_predicted = w->tide_available_verified = NULL;\n"
