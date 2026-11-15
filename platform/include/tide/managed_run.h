@@ -145,7 +145,10 @@ TIDE_MANAGED_EXPORT(tide_managed_store_requests) uint32_t tide_managed_store_req
 // with 1,024 given. 1 where it's taken, to go to a tick once the answers asked
 // before it are in. 0, with nothing changed, for an id the module never gave,
 // gave a server since replaced or has the answer of, and an answer that isn't
-// one (tide_storage_answer). Between other calls, as many as the host has.
+// one (tide_storage_answer). Between other calls, as many as the host has. The
+// host answers every id it's given, 2 where it has nothing else to say (it
+// couldn't read it, or took more than it has room for): a tick takes no answer
+// past one still to come, so an id never answered holds back every later one.
 TIDE_MANAGED_EXPORT(tide_managed_stored)
 uint32_t tide_managed_stored(const double id, const uint32_t outcome, const uint8_t *data, const uint32_t size,
                              const uint32_t more)
@@ -369,8 +372,7 @@ uint32_t tide_managed_restore(const uint8_t *data, const uint32_t size, const do
 
 // The shard's journal (tide_server_desc.journal): each tick's record, which
 // the host keeps before anything the shard reports goes on.
-__attribute__((import_module("tide_host"), import_name("journal")))
-extern void tide_managed_journal(uint32_t tick, const void *data, uint32_t size);
+TIDE_MANAGED_IMPORT(journal) extern void tide_managed_journal(uint32_t tick, const void *data, uint32_t size);
 
 static tide_shard_agent *tide_managed_agent;
 static uint32_t tide_managed_ticks_before; // Its ticks before this server's first, which its journal numbers on from

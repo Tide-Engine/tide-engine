@@ -6,7 +6,9 @@ Agent-maintained, and nothing generated code calls (notes/voxels.md, section 3e)
 `tide_server_store_answer`. In session.c that's one line in `tide_server_create` (`s->stored.host = desc->store`) and
 the answer function, which lands any tick in flight first. `platform/include/tide/managed_run.h` (agent-maintained, the
 managed reactor) uses them, with three new exports of ABI 1 and no new import. No layout, hash, snapshot or wire
-change, and nothing changes for a server without a host: `tidec_e2e_storage*` pass as they were.
+change, and nothing changes for a server without a host: `tidec_e2e_storage*` pass as they were. After review: a
+hosted batch keeps copies of its loads and listings alone (not the tick's saved values), and `tide_storage_host` says
+the host answers every number it's handed (`FAILED` where nothing else), as one never answered holds back the rest.
 
 ## The server's store: review fixes (2026-11-15, after review)
 

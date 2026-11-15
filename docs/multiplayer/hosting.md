@@ -179,10 +179,16 @@ and writes them while the match goes on, so a tick never waits for its disk.
   tasks ask again for what they awaited. All shards of a sharded world share
   the world's. A new match, and a sharded world started on a new release, start
   with none.
-- **Limits.** A value is at most 4 MiB and a world keeps at most 64 MiB in
-  100,000 keys, by default; the operator sets these, and all matches on a host
-  together have a limit too. A save past a limit isn't kept, the match's log
+- **Limits.** A value is at most 4 MiB, and a world keeps at most 100,000 keys
+  in 64 MiB of disk, by default (each key's row counts too, about 256 bytes and
+  the key twice, and a value over 16 KiB by the 4 KiB blocks of its file); the
+  operator sets these, and an account's worlds together and all matches on a
+  host together have limits too. A save past a limit isn't kept, the match's log
   says why, and what the key held before stays.
+- **Pace.** A world's reads and writes go at a few MiB a second once it has
+  done a world's worth at once; what a match asks faster waits, and past what
+  may wait (64 MiB or 65,536 requests a world) a save isn't kept and a load or
+  a listing comes back as `failed`. Every load and listing is answered.
 - **Storage.** What worlds keep counts in the account's storage, beside
   releases, saves and reports. Past the plan's allowance with extra usage off,
   saves that would keep more are refused, as uploads are.
@@ -192,3 +198,6 @@ and writes them while the match goes on, so a tick never waits for its disk.
 - What couldn't be read (the disk refused it, or what's there isn't what was
   saved) comes back as `failed`, not as nothing, so a game doesn't make it
   afresh and save over it.
+- **A recovered match** goes on from its last save, and the service records a
+  save only once everything the match asked of its store before it is written:
+  its store can be newer than the save, never older.

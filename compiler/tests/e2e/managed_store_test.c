@@ -639,3 +639,66 @@ TIDE_TEST(managed_store_a_hosted_line_keeps_the_order_asked_and_waits_for_nothin
     TIDE_CHECK(tide_storage_waiting(&line) == 0 && line.first == NULL && line.last == NULL);
     tide_storage_free(&store);
 }
+
+// A host that answers inside keep, before the send returns
+typedef struct answering_host {
+    tide_storage_line *line;
+    uint32_t taken, refused;
+} answering_host;
+
+static void answer_in_keep(void *user, const tide_storage *requests, const uint64_t number)
+{
+    answering_host *h = user;
+    uint64_t n = number;
+    for (uint32_t i = 0; i < requests->count; i++) {
+        const tide_storage_request *r = &requests->items[i];
+        if (r->kind == TIDE_STORAGE_LOAD) {
+            const uint8_t value[3] = {4, 5, 6};
+            h->taken += tide_storage_answer(h->line, n++, TIDE_STORED_FOUND, value, 3, false);
+        } else if (r->kind == TIDE_STORAGE_LIST) {
+            // Checked against the prefix and the key it goes on after, which the line keeps once the requests are gone
+            uint8_t keys[32];
+            const char *before[] = {"p/a"}, *past[] = {"p/b", "p/c"};
+            h->refused += !tide_storage_answer(h->line, n, TIDE_STORED_FOUND, keys, keys_of(keys, before, 1), false);
+            h->taken += tide_storage_answer(h->line, n++, TIDE_STORED_FOUND, keys, keys_of(keys, past, 2), false);
+        }
+    }
+}
+
+// Its answers are on the line, in the order asked, when the send returns, and what an answer is checked against is
+// the line's own copy of its request: the tick's requests, saves and all, are gone by then
+TIDE_TEST(managed_store_a_host_may_answer_inside_keep)
+{
+    tide_storage_line line = {0};
+    answering_host h = {.line = &line};
+    const tide_storage_host host = {.user = &h, .keep = answer_in_keep};
+    line.host = &host;
+    // A save of 4,096 bytes, a load of its key and a listing of "p/" after "p/a", as a tick asks them
+    tide_storage store = {.count = 3, .room = 3, .size = 3 + 4096 + 3 + 2 + 3};
+    store.capacity = store.size;
+    store.items = calloc(3, sizeof *store.items);
+    store.bytes = malloc(store.size);
+    TIDE_REQUIRE(store.items && store.bytes);
+    memcpy(store.bytes, "big", 3);
+    memset(store.bytes + 3, 9, 4096);
+    memcpy(store.bytes + 4099, "bigp/p/a", 8);
+    store.items[0] = (tide_storage_request){.kind = TIDE_STORAGE_SAVE, .key = 0, .key_size = 3, .data = 3, .data_size = 4096};
+    store.items[1] = (tide_storage_request){.kind = TIDE_STORAGE_LOAD, .key = 4099, .key_size = 3, .to = TIDE_STORAGE_TO_EVENT};
+    store.items[2] = (tide_storage_request){.kind = TIDE_STORAGE_LIST, .key = 4102, .key_size = 2, .data = 4104, .data_size = 3,
+                                            .to = TIDE_STORAGE_TO_EVENT};
+    tide_storage_send(&line, &store, NULL, true);
+    TIDE_CHECK(store.count == 0 && store.bytes == NULL); // The line's again, and nothing of it kept
+    TIDE_CHECK(h.taken == 2 && h.refused == 1);
+    TIDE_CHECK(tide_storage_receive(&line, line_take, NULL) == 2 && tide_storage_waiting(&line) == 0);
+    tide_stored read;
+    TIDE_CHECK(line_answer_count == 2 && tide_stored_read(line_answers[0], line_sizes[0], &read));
+    TIDE_CHECK(read.kind == TIDE_STORAGE_LOAD && read.number == 0 && read.data_size == 3 && read.data[2] == 6
+               && read.key_size == 3 && memcmp(read.key, "big", 3) == 0);
+    TIDE_CHECK(tide_stored_read(line_answers[1], line_sizes[1], &read));
+    TIDE_CHECK(read.kind == TIDE_STORAGE_LIST && read.number == 1 && read.count == 2 && read.key_size == 2
+               && memcmp(read.key, "p/", 2) == 0 && read.after_size == 3 && memcmp(read.after, "p/a", 3) == 0);
+    for (uint32_t i = 0; i < line_answer_count; i++) free(line_answers[i]);
+    line_answer_count = 0;
+    tide_storage_finish(&line);
+    tide_storage_free(&store);
+}

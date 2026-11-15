@@ -10,8 +10,10 @@
   keeping nothing. A restore drops what the server it replaces never handed over (the start of the instance it
   recovers in). A shard's start is bound to a store of its own and handed over as `tide_server_desc.asked`.
 - `TIDE_MANAGED_TEST` builds the header natively for a test's fake host (`TIDE_MANAGED_IMPORT`/`TIDE_MANAGED_EXPORT`
-  empty, the game's weak hooks static pointers): `tidec_e2e_managed_store`. The rest, with its tests and a wasm build
-  of the fixture run under the services' worker, is in notes/voxels.md, section 3e.
+  empty, the game's weak hooks static pointers): `tidec_e2e_managed_store`, and since the review the sharded half too
+  (`tidec_e2e_managed_store_shards`; its `journal` import is `TIDE_MANAGED_IMPORT(journal)` now, which a native build
+  took as an unknown attribute). The host answers every id it's given (`tide_managed_stored`'s comment). The rest, with
+  its tests and a wasm build of the fixture run under the services' worker, is in notes/voxels.md, section 3e.
 
 ## A run with no window keeps the server's store without the files' thread (2026-11-15)
 

@@ -184,9 +184,14 @@ void tide_storage_serve(tide_storage *store, const tide_io *io, uint64_t *next,
 // finds what was saved. Its loads and listings are numbered from `number` in
 // the order they come (only they count), and the host answers each once, later
 // and in any order, with tide_storage_answer; the line gives the answers to
-// ticks in the order they were asked, as a provider's. What `keep` is given is
-// the line's again once it returns. A batch sent with `answers` false (a server
-// that stops) hands it its saves and deletes alone.
+// ticks in the order they were asked, as a provider's. The host answers every
+// number it's handed, FAILED where it has nothing else to say (it couldn't read
+// it, or had no room for it): no tick is given an answer past one still to
+// come, so a number never answered holds back every answer after it for good.
+// What `keep` is given is the line's again once it returns (the line keeps
+// copies of the loads and listings alone, to check their answers against). A
+// batch sent with `answers` false (a server that stops) hands it its saves and
+// deletes alone.
 typedef struct tide_storage_host {
     void *user;
     void (*keep)(void *user, const tide_storage *requests, uint64_t number);
