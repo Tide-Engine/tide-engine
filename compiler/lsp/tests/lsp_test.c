@@ -1722,7 +1722,8 @@ TIDE_TEST(lsp_shaders_hover)
 
     const char *pixel = hover_at(39, 9);
     TIDE_CHECK(has(pixel, "Pixel this") && has(pixel, "The pixel `Shade` runs for."));
-    TIDE_CHECK(has(pixel, "A frag's `this`") && has(pixel, "read-only fields are `position`, `depth` and `world`"));
+    TIDE_CHECK(has(pixel, "A frag's `this`") && has(pixel, "read-only fields are `position`, `depth`, `world` and `front`")
+               && has(pixel, "one of the 15 values carried"));
     TIDE_CHECK(has(hover_at(31, 45), "record Instance") && has(hover_at(31, 54), "how the mesh was drawn"));
     TIDE_CHECK(has(hover_at(39, 15), "Field of record `Pixel`. Where the pixel is on the screen"));
     TIDE_CHECK(has(hover_at(33, 66), "The transform `Draw.Mesh` was given"));
@@ -6763,6 +6764,57 @@ TIDE_TEST(lsp_numeric_images_and_outputs)
                                   "view V(mut Layered images) { images.layers = TextureArray(8, 8, 2, Format.R16f); images.cube = Cubemap(8, Format.Rg16f); }\n";
     open_document(layered);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    // Typed arrays, cubes and SampleLevel/SampleGrad hover, complete and sign as their numbers, with the typed defaults
+    {
+        static const char *const hovers[][2] = {
+            {"images.layers.Sam$ple(vertex.uv", "TextureArray.Sample(float2 uv, int layer, Filter filter = Filter.Point, Wrap wrap = Wrap.Clamp) -> float"},
+            {"images.cube.Sample$Level(", "Cubemap.SampleLevel(float3 direction, float level, Filter filter = Filter.Trilinear) -> float2"},
+        };
+        for (size_t i = 0; i < sizeof hovers / sizeof hovers[0]; i++) {
+            char marked[2048];
+            const char *at = strstr(layered, "images.layers.Sample(vertex.uv");
+            if (i == 1) at = strstr(layered, "images.cube.SampleLevel(");
+            const size_t before = (size_t)(at - layered);
+            const size_t written = strlen(hovers[i][0]) - 1;
+            snprintf(marked, sizeof marked, "%.*s%s%s", (int)before, layered, hovers[i][0], at + written);
+            open_document(marked);
+            const char *hover = request("textDocument/hover");
+            TIDE_CHECK(has(hover, hovers[i][1]));
+            TIDE_CHECK(!has(hover, "-> Color"));
+        }
+    }
+    snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = Color(images.scalar.Sample$Level(vertex.uv, 2), 0, 0); }\n", types);
+    open_document(program);
+    const char *level = request("textDocument/hover");
+    TIDE_CHECK(has(level, "Texture.SampleLevel(float2 uv, float level, Filter filter = Filter.Trilinear, Wrap wrap = Wrap.Clamp) -> float"));
+    TIDE_CHECK(has(level, "R32f and Rgba32f have none"));
+    snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = Color(images.scalar.SampleLevel(vertex.uv, $), 0, 0); }\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Texture.SampleLevel(float2 uv, float level, Filter filter = Filter.Trilinear, Wrap wrap = Wrap.Clamp) -> float"));
+    snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = Color(images.scalar.Sam$ple(vertex.uv, Filter.Bilinear), 0, 0); }\n", types);
+    open_document(program);
+    const char *blended = request("textDocument/hover");
+    TIDE_CHECK(has(blended, "-> float") && has(blended, "R8, Rg8, R16f, Rg16f and Rgba16f also blend") && !has(blended, "unsupported"));
+    static const char layered_types[] = "scene Main { }\nlocal singleton Layered { [Raw(float)] TextureArray layers; [Raw(float2)] Cubemap cube; }\n";
+    snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Layered images) { color = Color(images.layers.$); }\n", layered_types);
+    const char *layer_members = complete(program);
+    TIDE_CHECK(offers(layer_members, "Sample") && offers(layer_members, "SampleLevel") && offers(layer_members, "SampleGrad"));
+    TIDE_CHECK(offers(layer_members, "size") && offers(layer_members, "count"));
+    TIDE_CHECK(has(layer_members, "-> float") && !has(layer_members, "-> Color"));
+    TIDE_CHECK(has(layer_members, "SampleGrad($1, $2, $3, $4)"));
+    snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Layered images) { color = Color(images.cube.$); }\n", layered_types);
+    const char *cube_members = complete(program);
+    TIDE_CHECK(offers(cube_members, "Sample") && offers(cube_members, "SampleLevel") && !offers(cube_members, "SampleGrad"));
+    TIDE_CHECK(has(cube_members, "-> float2") && !has(cube_members, "-> Color"));
+    snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Layered images) { color = Color(images.cube.Sample(float3(vertex.uv, 1)$)); }\n", layered_types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Cubemap.Sample(float3 direction, Filter filter = Filter.Point) -> float2"));
+    open_document("scene Main { }\nfloat Height([Raw(float)] TextureArray image, float2 uv)\n{\n    return image.Sam$ple(uv, 1);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "TextureArray.Sample(float2 uv, int layer, Filter filter = Filter.Point, Wrap wrap = Wrap.Clamp) -> float"));
+    const char *plain_layers = complete("scene Main { }\nlocal singleton Layered { TextureArray layers; }\n"
+                                        "frag Show(Vertex vertex, out Color color, Layered images) { color = Color(images.layers.$); }\n");
+    TIDE_CHECK(offers(plain_layers, "size") && offers(plain_layers, "count") && !offers(plain_layers, "Resize"));
     snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = Color(images.scalar.Sample(vertex.uv$)); }\n", types);
     open_document(program);
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "-> float"));
@@ -12462,11 +12514,11 @@ TIDE_TEST(lsp_texture_arrays)
     TIDE_CHECK(offers(members, "Resize") && offers(members, "Dispose") && !offers(members, "Sample") && has(members, "layers[$1]"));
     snprintf(program, sizeof program, "%sfrag F(Vertex3 vertex, out Color color, Room room)\n{\n    color = room.paint.$\n}\n", types);
     members = complete(program);
-    TIDE_CHECK(offers(members, "Sample") && offers(members, "SampleGrad") && !offers(members, "layers") && !offers(members, "Dispose"));
+    TIDE_CHECK(offers(members, "Sample") && offers(members, "SampleGrad") && !offers(members, "layers") && !offers(members, "Dispose") && offers(members, "count"));
     TIDE_CHECK(has(members, "Sample($1, $2)"));
     snprintf(program, sizeof program, "%sfrag F(Vertex3 vertex, out Color color, Room room)\n{\n    float d = room.depths.$\n}\n", types);
     members = complete(program);
-    TIDE_CHECK(offers(members, "Sample") && offers(members, "Compare") && !offers(members, "count"));
+    TIDE_CHECK(offers(members, "Sample") && offers(members, "Compare") && offers(members, "count") && offers(members, "size"));
     snprintf(program, sizeof program, "%sview V(mut Room room)\n{\n    var n = room.depths.$\n}\n", types);
     members = complete(program);
     TIDE_CHECK(offers(members, "size") && offers(members, "count") && !offers(members, "Compare"));

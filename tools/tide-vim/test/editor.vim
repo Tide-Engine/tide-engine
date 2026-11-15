@@ -26,6 +26,10 @@ call assert_equal('tideNumber', s:group(6, 19))
 call assert_equal('tideCharacter', s:group(7, 14))
 call assert_equal('tideDirective', s:group(8, 1))
 %delete _
+call setline(1, ['compute Cull(Fog fog)', 'cached float Cost(float x)'])
+call assert_equal('tideKeyword', s:group(1, 1))
+call assert_equal('tideKeyword', s:group(2, 1))
+%delete _
 call setline(1, ['system Move()', '{', 'if (true)', '{', 'Step();', '}', '}'])
 normal! gg=G
 call assert_equal('        Step();', getline(5))

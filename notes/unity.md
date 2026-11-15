@@ -200,7 +200,7 @@ regenerated after changed uploads. Immutable prepared block chains bypass this o
 There is no per-pixel CPU conversion in a frame's mip path. On Unity OpenGL Core, texture-owned sampler
 state can still be Point from an earlier draw. The mip shader uses that texture's named sampler, reads exact
 texel centers and interpolates explicitly there, without changing the earlier draw's state. Other APIs use
-one bilinear SampleLevel. Numeric attachments stay unmipped; private sRGB color 10 retains its chain.
+one bilinear SampleLevel. R32F, RGBA32F and R32I attachments stay unmipped (R8 to RG16F have a chain, below); private sRGB color 10 retains its chain.
 
 **Actual Unity checks:** hidden/noAudio Unity 6000.6.0f1 scratch Sample, automatic Tide builds disabled.
 After merging numeric image work, Linear D3D11, D3D12, Vulkan and OpenGL Core ComputeReplayTests each
