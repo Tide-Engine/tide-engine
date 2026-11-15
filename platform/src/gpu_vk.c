@@ -1830,7 +1830,9 @@ static VkFormat target_color_format(const tide_gpu_target_format format, const u
 }
 
 // An array: of pixels, or drawn into a layer at a time, with a depth array beside it. One that holds depth alone is
-// its depth array. Colors have room for their smaller images from the start, where the device blits them.
+// its depth array. Colors have room for their smaller images from the start, where the device blits them; 32-bit
+// numbers (R32F, RGBA32F, R32I) have none, as WebGPU's have none: they're loaded, never blended, so nothing reads or
+// makes a level of them (a cube of them is six layers too).
 static tide_gpu_id vk_array(const tide_gpu_target_format format, const int width, const int height, const uint32_t layers,
                             const void *const *pixels)
 {
@@ -1840,8 +1842,10 @@ static tide_gpu_id vk_array(const tide_gpu_target_format format, const int width
     if (!pixels && !tide_gpu_target_colors(format)) {
         return make_layers(vk.depth_format, width, height, 1, layers, depth_usage, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
     }
-    const VkFormat color = color_format(tide_gpu_target_color(format, 0));
-    const uint32_t levels = blits(color) ? levels_for(width, height) : 1u;
+    const tide_gpu_color kind = tide_gpu_target_color(format, 0);
+    const bool loaded = kind == TIDE_GPU_COLOR_R32F || kind == TIDE_GPU_COLOR_RGBA32F || kind == TIDE_GPU_COLOR_R32I;
+    const VkFormat color = color_format(kind);
+    const uint32_t levels = !loaded && blits(color) ? levels_for(width, height) : 1u;
     const tide_gpu_id id = make_layers(color, width, height, levels, layers,
                                        VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
                                            | (pixels ? 0u : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT),
@@ -1929,6 +1933,12 @@ static void vk_array_write(const tide_gpu_id id, const uint32_t layer, const voi
     vk_texture *t = texture_of(id);
     if (vk.lost || !t || !t->arrayed || layer >= t->layers) return;
     write_pixels(t, pixels, x, y, width, height, t->width, layer);
+}
+
+uint32_t tide_gpu_vk_texture_levels(const tide_gpu_id texture)
+{
+    const vk_texture *t = vk.lost ? NULL : texture_of(texture);
+    return t ? t->levels : 0u;
 }
 
 // Volumes have one level, one array layer, and a 3D view. No attachment views or slices.

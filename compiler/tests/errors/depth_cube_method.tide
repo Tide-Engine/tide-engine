@@ -1,0 +1,5 @@
+// expect: a DepthCubemap has Sample(direction) and Compare(direction, value), not 'SampleLevel'
+scene Main { }
+local singleton Lamp { Cubemap cube; DepthCubemap shadows; }
+frag Lit(Vertex vertex,out Color color,Lamp lamp) { color=Color(lamp.shadows.SampleLevel(float3(vertex.uv,1),0),0,0); }
+view Show(mut Lamp lamp) { lamp.cube=Cubemap(64,Format.Depth); lamp.shadows=lamp.cube.depth; List<Vertex> quad=[Vertex {position=float2(0)},Vertex {position=float2(1,0)},Vertex {position=float2(0,1)}]; Draw.Mesh(quad,[0,1,2],Lit); }

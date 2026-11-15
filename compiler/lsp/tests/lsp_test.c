@@ -6809,6 +6809,15 @@ TIDE_TEST(lsp_exact_numbers_and_depth_cubes)
     const char *layers = complete(program);
     TIDE_CHECK(offers(layers, "Sample") && offers(layers, "SampleLevel") && has(layers, "-> float"));
     TIDE_CHECK(has(layers, "SampleLevel($1, $2, $3)") && has(layers, "four exact loads"));
+    // ...where the field's format is fixed: R32f has no levels, so neither SampleLevel nor SampleGrad, and R16f has them
+    snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = Color(images.depths.$); }\n"
+             "view V(mut Images images) { images.depths = TextureArray(8, 8, 2, Format.R32f); }\n", types);
+    const char *exact = complete(program);
+    TIDE_CHECK(offers(exact, "Sample") && !offers(exact, "SampleLevel") && !offers(exact, "SampleGrad"));
+    snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = Color(images.depths.$); }\n"
+             "view V(mut Images images) { images.depths = TextureArray(8, 8, 2, Format.R16f); }\n", types);
+    const char *halves = complete(program);
+    TIDE_CHECK(offers(halves, "SampleLevel") && offers(halves, "SampleGrad"));
     snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = Color(float(images.ids.$)); }\n", types);
     const char *ids = complete(program);
     TIDE_CHECK(offers(ids, "Sample") && has(ids, "-> int") && !offers(ids, "SampleLevel"));
@@ -6828,6 +6837,11 @@ TIDE_TEST(lsp_exact_numbers_and_depth_cubes)
     TIDE_CHECK(has(complete(program), "Filter filter = Filter.Trilinear"));
     snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = Color(images.fog.$.x); }\n", types);
     TIDE_CHECK(has(complete(program), "loaded exactly and blended in the shader for R32f and Rgba32f"));
+    // [Raw(T)]'s help says what's built: every role on arrays and cubes too, and 32-bit floats blended with Bilinear
+    open_document("scene Main { }\nlocal singleton Ids { [Raw($int)] TextureArray layers; }\n");
+    const char *raw = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(raw, "Raw(type)") && has(raw, "TextureArray and Cubemap fields"));
+    TIDE_CHECK(has(raw, "R32f and Rgba32f blend with Filter.Bilinear") && !has(raw, "take the float roles"));
 }
 
 TIDE_TEST(lsp_window_pixels_and_format_names)

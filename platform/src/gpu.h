@@ -532,8 +532,10 @@ typedef struct tide_gpu {
     // them) or RGBA8 mip chains. Its smaller images are its own. 0 where the device can't, which the renderer then
     // gives an array of pixels.
     tide_gpu_id (*array_blocks)(int width, int height, uint32_t layers, tide_texture_blocks blocks);
-    // An array of `layers` images of `format` (TIDE_GPU_RGBA8 or TIDE_GPU_R16F), zeros until written, read as
-    // TIDE_GPU_READ_ARRAY, a texture to `mipmaps` (each layer's, made of what's written) and `texture_free`...
+    // An array of `layers` images of `format` (TIDE_GPU_RGBA8 or TIDE_GPU_R16F, and TIDE_GPU_RGBA32F or TIDE_GPU_R32I
+    // for the renderer's zeros of 32-bit layers, read as TIDE_GPU_READ_NUMBER_ARRAY or _INT_ARRAY), zeros until
+    // written on every backend, read as TIDE_GPU_READ_ARRAY, a texture to `mipmaps` (each layer's, made of what's
+    // written) and `texture_free`...
     // A volume of texels, sampled with float3 (READ_VOLUME) and written by kernels where the
     // format permits storage. One level, zeroed, no render attachments. Invalid/oversized or
     // failed allocations return 0. texture_free frees it. volume_write reads a box from the

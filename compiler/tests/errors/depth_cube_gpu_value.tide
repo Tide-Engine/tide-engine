@@ -1,0 +1,14 @@
+// expect: DepthCubemap can't go to the GPU: a cube's depth is read with 'depths.Sample(direction)' or 'depths.Compare(direction, value)', not kept as a GPU value
+// A function is written for the depth cube it's passed, and keeps it nowhere
+scene Main { }
+local singleton Lamp { Cubemap cube; DepthCubemap shadows; }
+float Far(DepthCubemap shadows)
+{
+    DepthCubemap kept = shadows;
+    return 1;
+}
+frag Lit(Vertex vertex, out Color color, Lamp lamp)
+{
+    float far = Far(lamp.shadows);
+    color = Color(far, far, far);
+}

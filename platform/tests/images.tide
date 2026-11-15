@@ -690,3 +690,116 @@ view ShowNumberGrids(mut NumberGrids grids, NumberImages numbers)
         { Draw.Mesh(numbers.quad, [0,1,2,0,2,3], CheckGrids, GridProbe { mode = i == 3 ? 5 : i, frame = grids.frames }); }
     Draw.Transform(float2(16, 136)) { Draw.Mesh(numbers.quad, [0,1,2,0,2,3], grids.masks, CheckGridSource); }
 }
+
+// How each face of a cube is laid, both ways across it: each face's four quarters drawn with numbers of their own
+// (rows from the top, as a target's are), read back by the directions the faces' layout says point at them (+y up
+// for the four around, +x right of +z, -z at the top of the one above and +z of the one below). An R32f cube is
+// tidec's face math over six layers, an R16f one the GPU's own cube, and a depth cube the face math over a depth
+// array whose faces are drawn at a depth by where each pixel is: the three agree with the layout on every backend.
+// Then what's read where no image is given: an Rgba32f cube's every face (one layer of zeros is bound for none, which
+// the face is held to), an R32i cube's, an R32f volume blended from its eight loads and an Rgba16f one through the
+// sampler (TIDE_SHADER_READ_NUMBER_VOLUME_BLEND); and a color cube's depth, known only as the game runs, which no
+// draw reads: the draw is passed by.
+local singleton FaceImages
+{
+    [Raw(float)] Cubemap exact;
+    [Raw(float)] Cubemap sampled;
+    Cubemap lamp;
+    DepthCubemap shadows;
+    [Raw(float4)] Cubemap goneRays;
+    [Raw(int)] Cubemap goneIds;
+    [Raw(float)] Texture3D goneVolume;
+    [Raw(float4)] Texture3D goneHalfVolume;
+    Cubemap colors;
+    DepthCubemap colorDepth;
+    bool colorsChosen = true;
+    bool never;
+    bool made;
+}
+struct FaceCode { int face; }
+frag QuadrantCode(Vertex vertex, out float value, FaceCode code)
+{
+    value = float(code.face * 4 + (vertex.uv.x < 0.5 ? 0 : 1) + (vertex.uv.y < 0.5 ? 0 : 2));
+}
+frag QuadrantDepth(Vertex3 vertex, out Color color)
+{
+    color = Color.white;
+    float2 pixel = this.position.xy; // An 8 by 8 face's pixels, rows from the top
+    this.WriteDepth(0.125 + (pixel.x < 4 ? 0 : 0.25) + (pixel.y < 4 ? 0 : 0.5));
+}
+// The direction the layout says points at quarter `q` of face `face` (0 top left, 1 top right, 2 bottom left, 3
+// bottom right), half way out from the face's middle each way
+float3 Toward(int face, int q)
+{
+    float right = q % 2 == 0 ? -0.5 : 0.5;
+    float down = q < 2 ? -0.5 : 0.5;
+    if (face == 0) return float3(1, -down, -right);
+    if (face == 1) return float3(-1, -down, right);
+    if (face == 2) return float3(right, 1, down);
+    if (face == 3) return float3(right, -1, -down);
+    if (face == 4) return float3(right, -down, 1);
+    return float3(-right, -down, -1);
+}
+frag CheckFaces(Vertex vertex, out Color color, FaceImages images, NumberProbe probe)
+{
+    mut bool good = true;
+    for (var face = 0; face < 6; face++)
+    {
+        for (var q = 0; q < 4; q++)
+        {
+            float3 way = Toward(face, q);
+            if (probe.mode == 0) good = good && images.exact.Sample(way) == float(face * 4 + q);
+            else if (probe.mode == 1) good = good && images.sampled.Sample(way) == float(face * 4 + q);
+            else if (probe.mode == 2) good = good && DepthNear(images.shadows.Sample(way), 0.125 + (q % 2 == 0 ? 0 : 0.25) + (q < 2 ? 0 : 0.5));
+            else good = good && SameFour(images.goneRays.Sample(way), float4(0)) && images.goneIds.Sample(way) == 0;
+        }
+    }
+    if (probe.mode == 3) good = good && images.goneVolume.Sample(float3(0.5), Filter.Bilinear) == 0
+        && images.goneVolume.Sample(float3(0.25, 0.75, 0.5), Filter.Bilinear, Wrap.Repeat) == 0
+        && SameFour(images.goneHalfVolume.Sample(float3(0.5), Filter.Bilinear), float4(0));
+    color = good ? Color.green : Color.red;
+}
+frag ReadColorDepth(Vertex vertex, out Color color, FaceImages images)
+{
+    color = Color(1, images.colorDepth.Sample(float3(0, 0, 1)), 0);
+}
+[After(ShowNumberGrids)]
+view ShowFaces(mut FaceImages images, NumberImages numbers)
+{
+    if (!images.made)
+    {
+        images.exact = Cubemap(8, Format.R32f);
+        images.sampled = Cubemap(8, Format.R16f);
+        images.lamp = Cubemap(8, Format.Depth);
+        images.shadows = images.lamp.depth;
+        images.colors = Cubemap(8);
+        // Known only as the game runs: a cube of colors, whose faces' depth isn't kept to read
+        images.colorDepth = images.colorsChosen ? images.colors.depth : images.lamp.depth;
+        if (images.never)
+        {
+            images.goneRays = Cubemap(8, Format.Rgba32f);
+            images.goneIds = Cubemap(8, Format.R32i);
+            images.goneVolume = Texture3D(int3(2), Format.R32f);
+            images.goneHalfVolume = Texture3D(int3(2), Format.Rgba16f);
+        }
+        images.made = true;
+    }
+    List<Vertex3> card = [Vertex3 { position = float3(-1, -1, 0.5) }, Vertex3 { position = float3(1, -1, 0.5) },
+                          Vertex3 { position = float3(1, 1, 0.5) }, Vertex3 { position = float3(-1, 1, 0.5) }];
+    for (var face = 0; face < 6; face++)
+    {
+        images.exact.faces[face].SetScreen();
+        images.exact.faces[face].Mesh(numbers.quad, [0,1,2,0,2,3], QuadrantCode, FaceCode { face = face });
+        images.sampled.faces[face].SetScreen();
+        images.sampled.faces[face].Mesh(numbers.quad, [0,1,2,0,2,3], QuadrantCode, FaceCode { face = face });
+        RenderTarget side = images.lamp.faces[face];
+        side.Clear(Color.black);
+        side.SetCamera(float4x4.identity, float4x4.Ortho(2, 2, 0, 1));
+        side.SetCull(.None); side.SetDepth(.ReadWrite);
+        side.Mesh(card, [0,1,2,0,2,3], float4x4.identity, QuadrantDepth);
+    }
+    for (var i = 0; i < 4; i++)
+        Draw.Transform(float2(float(i % 3) * 8, 192 + float(i / 3) * 8))
+        { Draw.Mesh(numbers.quad, [0,1,2,0,2,3], CheckFaces, NumberProbe { mode = i }); }
+    Draw.Transform(float2(8, 200)) { Draw.Mesh(numbers.quad, [0,1,2,0,2,3], ReadColorDepth); }
+}
