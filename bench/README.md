@@ -24,6 +24,10 @@ Set `TIDE_BENCH_MACHINE` to the CPU/machine and `TIDE_BENCH_REVISION` to the sou
 
 `bench_views` (`views/`) times views that run once for each of 20,000 entities, a view at a time: reading one field of a wide component and of a small one, per entity and through a query, and a helper handed a big local singleton's lists. `bench_views [frames]`. Results: `notes/benchmarks.md`, Views over wide components.
 
+## Voxels and the server's store (2026-11-15)
+
+`bench_voxels` plays an endless world of blocks with bots that fly, dig, build and change dimension (`notes/voxels.md`). Its server keeps chunks nobody is near in a store kept in memory; `--files <folder>` keeps them as the platform's own files in that folder's `saved/` instead, read and written on the files' own thread as the standard hosts do, and `--files-here <folder>` the same as each tick ends, to see what that costs a server's update. Any benchmark of a game that uses the store takes both.
+
 ## Earth under load (2026-10-24)
 
 `bench_earth` plays the home page's planet (`examples/earth`, with room for 256 players) with bots that land in towns, walk, drive, wave and go to other towns: `--towns 1` puts everyone in one, `--drivers` and `--hop` say how many drive and how often they travel. As any benchmark of a sharded game, `--split <n>` runs its world split into `n` regions, each shard timed apart (`--most` and `--busiest` let regions split and merge); `--lag <ticks>` lets bots fall further behind before the run fails; and with visibility, `--diverge <bot>` says what differs between that bot's world and what the server says it is, tick by tick. Results and what they mean: `notes/benchmarks.md`, Earth under load.
