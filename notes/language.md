@@ -146,8 +146,8 @@ Parser diagnostics explicitly reject local/parameter attributes. The shader capt
 Contracts, Provisional picks, importer/cache/alpha details and validation: textures.md top section and spec.md.
 Numeric-role integration retains Color for every Linear source. [Raw(T), Linear] is refused, numeric helper
 parameters cannot borrow a Linear color source, and numeric direct-draw consumption cannot erase its mark.
-All seven numeric target formats have explicit no-sRGB-counterpart diagnostics. Typed numeric SampleLevel
-remains refused; Linear color SampleLevel keeps the ordinary color path.
+All seven numeric target formats have explicit no-sRGB-counterpart diagnostics. Typed SampleLevel of the formats
+every device blends reads between levels (render-targets.md, top); Linear color SampleLevel keeps the color path.
 
 ## Numeric GPU images (2026-11-14)
 
@@ -894,6 +894,11 @@ parallel foreach in a system skips them.
 `tide_grid_copy(g, &shape)`. Assigning a field `tide_grid_set`s it, which copies a scratch grid's cells into the
 world's heap (runtime-ownership.md). Calls passing a field's grid to a non-`mut` parameter pass the handle, as build
 functions did.
+
+**A task's grids across its waits** (2026-11-14, render-targets.md top section; the `grid_async_local` error below is
+gone): a task's grid local, a name `is` gives, a failable or `T?` local holding one and a statement's earlier await's
+grid go into its frame as `tide_grid_carry` copies, come back as the frame's, and are copied by `tide_grid_mine`
+(`place_where`) before the task writes them; match tasks keep theirs in the match heap. `tidec_e2e_task_grids`.
 
 **What stays refused.** Structs with grids in locals, returns and copies; `Grid2(...)` as an argument (functions take
 no new grid in `arg_fits`); lambdas capturing a grid (a stored callable captures plain values); worker code keeping a

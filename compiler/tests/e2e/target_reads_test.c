@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include <string.h>
 
 #include "game.h"
@@ -119,6 +120,147 @@ TIDE_TEST(target_reads_ask_for_their_image_and_kind_and_own_typed_grids)
     }
     tide_draw_free(&draw); tide_local_free(&local); tide_world_free(&w);
     tide_render_targets_free();
+}
+
+static bool begins(tide_render_target target, int32_t image, uint32_t kind);
+
+// A task dropped while it waits lets go of its read at once, wherever the read is: asked for, or begun (then the
+// renderer finishes it, and it goes free); and a local world freed with one waiting lets go of it too.
+TIDE_TEST(target_reads_let_go_with_their_task)
+{
+    tide_world_init(&w, 1.0f / 60.0f);
+    tide_world_tick(&w);
+    tide_local_init(&local);
+    local.Reads.started = true; // ReadAll's reads aren't these
+    frame();
+    local.Reads.plain = tide_render_target_make_scaled_as(2, 2, 1, TIDE_TARGET_RGBA8);
+    // Cancelled while asked for: its slot is free by the next frame, before any renderer saw it
+    local.Reads.captureNow = true;
+    frame();
+    tide_gpu_read_request *r = asked();
+    TIDE_REQUIRE(r != NULL);
+    local.Reads.cancelNow = true;
+    frame();
+    frame();
+    TIDE_CHECK(r->state == TIDE_GPU_READ_FREE && r->data == NULL && local.Reads.captured == 0);
+    // Cancelled once begun: the renderer may still write it, so it goes free once that's done
+    local.Reads.captureNow = true;
+    frame();
+    r = asked();
+    TIDE_REQUIRE(r != NULL);
+    r->state = TIDE_GPU_READ_BEGUN;
+    local.Reads.cancelNow = true;
+    frame();
+    frame();
+    TIDE_CHECK(r->state == TIDE_GPU_READ_BEGUN && r->forgotten);
+    r->width = r->height = 2;
+    r->bytes = (16u + TIDE_GPU_LIST_HEADER_WORDS) * 4u;
+    r->data = tide_alloc_zeroed(1, r->bytes);
+    tide_gpu_read_finished(r, true);
+    TIDE_CHECK(r->state == TIDE_GPU_READ_FREE && r->data == NULL && local.Reads.captured == 0);
+    // Waiting as the local world goes
+    local.Reads.captureNow = true;
+    frame();
+    r = asked();
+    TIDE_REQUIRE(r != NULL);
+    tide_draw_free(&draw);
+    tide_local_free(&local);
+    TIDE_CHECK(r->state == TIDE_GPU_READ_FREE);
+    for (uint32_t i = 0; i < TIDE_GPU_READS; i++) TIDE_CHECK(tide_gpu_read_requests()[i].state == TIDE_GPU_READ_FREE);
+    tide_world_free(&w);
+    tide_render_targets_free();
+}
+
+// A part of an image, or a box of a volume, as it's asked for; a part of nothing fails as it's asked.
+static uint32_t begins_part(const tide_render_target target, const uint32_t kind, const int32_t x, const int32_t y,
+                            const int32_t z, const int32_t width, const int32_t height, const int32_t depth)
+{
+    return tide_render_target_read_begin_part(target, 0, kind, (const int32_t[3]){x, y, z}, (const int32_t[3]){width, height, depth});
+}
+
+TIDE_TEST(target_reads_of_parts_and_volumes)
+{
+    const tide_render_target plain = tide_render_target_make_scaled_as(8, 8, 1, TIDE_TARGET_RGBA8);
+    uint32_t ticket = begins_part(plain, TIDE_TARGET_READ_COLOR, -3, 5, 99, 4, 2, 7);
+    tide_gpu_read_request *r = asked();
+    TIDE_REQUIRE(ticket && r);
+    // What was asked for goes to the renderer, which clamps it; an image's part is one deep from 0
+    TIDE_CHECK(r->from[0] == -3 && r->from[1] == 5 && r->from[2] == 0 && r->size[0] == 4 && r->size[1] == 2 && r->size[2] == 1);
+    tide_gpu_list_read_forget(ticket);
+    TIDE_CHECK(r->state == TIDE_GPU_READ_FREE);
+    ticket = tide_render_target_read_begin_as(plain, 0, TIDE_TARGET_READ_COLOR);
+    r = asked();
+    TIDE_REQUIRE(ticket && r);
+    TIDE_CHECK(r->from[0] == 0 && r->from[1] == 0 && r->size[0] == INT32_MAX && r->size[1] == INT32_MAX); // All of it
+    tide_gpu_list_read_forget(ticket);
+    tide_gpu_read_result result;
+    const int32_t nothing[][2] = {{0, 2}, {2, 0}, {-1, 2}, {2, -5}, {INT32_MIN, 1}};
+    for (int i = 0; i < 5; i++) {
+        ticket = begins_part(plain, TIDE_TARGET_READ_COLOR, 0, 0, 0, nothing[i][0], nothing[i][1], 1);
+        TIDE_CHECK(ticket && tide_gpu_list_read_poll(ticket, &result) && !result.ok);
+        tide_gpu_list_read_forget(ticket);
+    }
+    // A Texture3D: its cells as its one format's type, image 0, no depth; a box of none fails
+    const tide_texture3d_ref volume = tide_texture3d_make((tide_int3){4, 3, 2}, TIDE_TARGET_R32F);
+    const tide_texture3d_ref colors = tide_texture3d_make((tide_int3){4, 3, 2}, TIDE_TARGET_RGBA16F);
+    TIDE_REQUIRE(volume.target.id && colors.target.id);
+    for (uint32_t kind = 0; kind < TIDE_TARGET_READ_KINDS; kind++) {
+        TIDE_CHECK(begins(volume.target, 0, kind) == (kind == TIDE_TARGET_READ_FLOAT));
+        TIDE_CHECK(begins(colors.target, 0, kind) == (kind == TIDE_TARGET_READ_COLOR || kind == TIDE_TARGET_READ_FLOAT4));
+        TIDE_CHECK(!begins(volume.target, 1, kind));
+    }
+    ticket = begins_part(volume.target, TIDE_TARGET_READ_FLOAT, 1, 2, 3, 5, 6, 7);
+    r = asked();
+    TIDE_REQUIRE(ticket && r);
+    TIDE_CHECK(r->from[2] == 3 && r->size[2] == 7);
+    // The renderer's answer, a box of 2 by 1 by 2 cells, is a Grid3 of them, x fastest, then y, then z
+    r->width = 2, r->height = 1, r->depth = 2;
+    r->bytes = (4u + TIDE_GPU_LIST_HEADER_WORDS) * 4u;
+    r->data = tide_alloc_zeroed(1, r->bytes);
+    const float cells[4] = {1.5f, 2.5f, -3.5f, 4.5f};
+    memcpy(r->data + TIDE_GPU_LIST_HEADER_WORDS, cells, sizeof cells);
+    r->state = TIDE_GPU_READ_BEGUN;
+    tide_gpu_read_finished(r, true);
+    TIDE_CHECK(tide_gpu_list_read_poll(ticket, &result) && result.ok && result.count == 4 && result.depth == 2);
+    TIDE_CHECK(tide_render_target_read_grid(result, &tide_shape_Grid2_float).at == 0); // Three dimensions, not two
+    const tide_grid box = tide_render_target_read_grid(result, &tide_shape_Grid3_float);
+    int32_t size[3];
+    tide_grid_size(box, size);
+    TIDE_CHECK(size[0] == 2 && size[1] == 1 && size[2] == 2);
+    TIDE_CHECK(*(const float *)tide_grid_peek(box, 0, 0, 0, &tide_shape_Grid3_float) == 1.5f
+               && *(const float *)tide_grid_peek(box, 1, 0, 0, &tide_shape_Grid3_float) == 2.5f
+               && *(const float *)tide_grid_peek(box, 0, 0, 1, &tide_shape_Grid3_float) == -3.5f
+               && *(const float *)tide_grid_peek(box, 1, 0, 1, &tide_shape_Grid3_float) == 4.5f);
+    tide_gpu_list_read_forget(ticket);
+    tide_texture3d_dispose(volume);
+    TIDE_CHECK(!begins(volume.target, 0, TIDE_TARGET_READ_FLOAT)); // Disposed
+    tide_texture3d_dispose(colors);
+    tide_render_target_dispose(plain);
+    tide_render_targets_free();
+}
+
+// A grid made from a read is its pixels a row's run at a time: across chunks, with a pixel of more words than the
+// cell keeps, and for every width
+TIDE_TEST(target_read_grids_take_rows_a_run_at_a_time)
+{
+    for (int32_t width = 1; width <= 200; width += 37) {
+        const int32_t height = 70;
+        for (uint32_t step = 1; step <= 4; step += 3) {
+            const size_t words = (size_t)width * height * step;
+            uint32_t *data = tide_alloc_zeroed(words, sizeof *data);
+            for (size_t k = 0; k < words; k++) data[k] = (uint32_t)k * 7u + 1u;
+            const tide_gpu_read_result result = {.ok = true, .count = width * height, .width = width, .height = height,
+                                                  .stride = 1, .step = step, .words = data, .depth = 1};
+            const tide_grid grid = tide_render_target_read_grid(result, &tide_shape_Grid2_int);
+            bool good = grid.at != 0;
+            for (int32_t y = 0; good && y < height; y++) for (int32_t x = 0; good && x < width; x++) {
+                const int32_t *cell = tide_grid_peek(grid, x, y, 0, &tide_shape_Grid2_int);
+                good = cell && (uint32_t)*cell == data[((size_t)y * width + x) * step];
+            }
+            TIDE_CHECK(good);
+            free(data);
+        }
+    }
 }
 
 // A read that's begun, and finished at once as failed or not.

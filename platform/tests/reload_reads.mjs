@@ -26,4 +26,8 @@ assert.deepEqual(reads, [
     { build: 4242, ok: 1, count: 4, right: 1 },
     { build: 4343, ok: 1, count: 64, right: 1 },
 ], output);
+// A target read pending as a build goes fails then, and the host's renderer goes on without resolving it
+const pending = [...ran.stdout.matchAll(/reload-test: pending target read failed=(\d)/g)].map(([, failed]) => Number(failed));
+assert.ok(pending.length >= 1 && pending.every(failed => failed === 1), output);
 console.log('ok: a library\'s GPU list reads finish through the host\'s renderer, and a list made after a reload gets its own buffer');
+console.log('ok: a target read pending as its build unloads fails, and the renderer that goes on never resolves it');

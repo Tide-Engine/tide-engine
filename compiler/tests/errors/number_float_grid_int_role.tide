@@ -1,0 +1,9 @@
+// expect: image 'ids' holds a Grid2<float>'s image, which is read as Color or with [Raw(float)]: declare its numeric image role as float
+scene Main { }
+local singleton Art { Grid2<float> heights = Grid2(2, 2); [Raw(int)] Texture ids; }
+frag Read(Vertex vertex, out Color color, Art art) { color = Color(float(art.ids.Sample(vertex.uv)), 0, 0); }
+view Show(mut Art art)
+{
+    art.ids = art.heights;
+    Draw.Mesh([Vertex { }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }], [0, 1, 2], Read);
+}

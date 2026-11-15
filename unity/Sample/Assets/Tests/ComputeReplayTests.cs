@@ -89,8 +89,15 @@ public sealed unsafe class ComputeReplayTests
         public void LinearCopy(uint id) => Pipeline(id, 0xc0de0015, 16, 3, new uint[] { 0 }, true);
 
         public void PixelRead(uint id) {
-            Pipeline(id, 0xc0de0014, 16, 3, new uint[] { 0 }, true);
+            Pipeline(id, 0xc0de0014, 48, 3, new uint[] { 0 }, true);
             Add(Op.PipelineStorage, id, 1, 3, 1);
+        }
+
+        // One of the renderer's read kernels: an image of kind `read`, the floats' pool and the ints', the run's record
+        public void ReadKernel(uint id, ulong key, uint uniforms, uint read, bool sampled, bool ints)
+        {
+            Pipeline(id, key, uniforms, 3, new uint[] { read }, sampled);
+            Add(Op.PipelineStorage, id, 1, 3, ints ? 2u : 1u);
         }
 
         public void Numeric(uint id, ulong key, uint read = 0, uint format = 0, bool kernel = false)
@@ -1066,13 +1073,15 @@ public sealed unsafe class ComputeReplayTests
         var words = new uint[4 + count * 4]; words[0] = words[1] = count;
         c.Buffer(1, (uint)words.Length * 4, words);
         c.Buffer(2, 16, new uint[4]);
-        c.Buffer(3, 32, new uint[] { 64, 1, 1, count, count, 1, 1, 0 });
+        // One band of the whole image: a run a pixel, x along a row and y the row (cull.tide's ReadTargetPixels: the
+        // part's width, the band's rows and its first, the part's first pixel, the image's size, then the list's table)
+        c.Buffer(3, 32, new uint[] { 1, 64, 1, count, 64, 64, 1, 0 });
         c.PixelRead(32);
         c.Add(Op.ComputeBegin); c.Add(Op.Use, 32);
-        c.Add(Op.Uniforms, 16, 64, 64, 0, count);
+        c.Add(Op.Uniforms, 48, 64, 64, 0, 0, 0, 64, 64, 0, count, 0, 0, 0);
         c.Add(Op.Image, 0, 11); c.Add(Op.Sampler, 0, 0, 0);
         c.Add(Op.Storage, 0, 1); c.Add(Op.Storage, 1, 2); c.Add(Op.Storage, 2, 3);
-        c.Add(Op.Dispatch, 64, 1, 1); c.Add(Op.ComputeEnd);
+        c.Add(Op.Dispatch, 1, 64, 1); c.Add(Op.ComputeEnd);
         c.Add(Op.BufferRead, 1, 1, 16, count * 16);
         Replay(c);
         yield return Answers(1);
@@ -1091,6 +1100,230 @@ public sealed unsafe class ComputeReplayTests
             for (var k = 0; k < 4; k++) Assert.AreEqual(color[k], answers[1][i * 4 + k], $"pixel ({x}, {y}) from the top left, word {k}");
         }
         Assert.Greater(greens, 400, "the top left corner's pixels");
+    }
+
+    // The renderer's other read kernels (platform/src/cull.tide's ReadTarget..., `await target.Read<T>(image)`,
+    // ReadDepth and a face's or a layer's Read), as HLSL from platform/src/read_pixels_wgsl.h's WGSL through
+    // tide_wgsl_translate --hlsl: 00000000c0de0061 ReadTargetFloat4, 62 Int, 63 Depth, 64 Face, 65 Layer,
+    // 66 LayerNumbers, 67 Float, 68 LayerDepth. Each run as the recorder records it: the pools (floats' and ints', a list at their
+    // start: its count, its room, then a pixel after another), the run's record, a read of the list's pixels.
+    const ulong ReadFloat4 = 0xc0de0061, ReadInt = 0xc0de0062, ReadDepth = 0xc0de0063, ReadFace = 0xc0de0064,
+                ReadLayer = 0xc0de0065, ReadLayerNumbers = 0xc0de0066, ReadFloat = 0xc0de0067, ReadLayerDepth = 0xc0de0068, ReadPixels = 0xc0de0014;
+
+    // `image`'s pixels, `words` each, rows from the top, through the kernel `key`; `part` a face or a layer
+    IEnumerator ReadKernel(ulong key, uint read, bool sampled, uint image, int width, int height, int words, int part = -1)
+    {
+        answers.Clear();
+        var count = width * height;
+        var groups = (uint)((width + 63) / 64); // Along a row; a group a row, rows from the top (one band of them all)
+        var pool = new uint[4 + count * words];
+        pool[0] = pool[1] = (uint)count;
+        var ints = key == ReadInt;
+        var id = 900 + (uint)(key & 0xff);
+        var c = new Commands();
+        c.Buffer(990, (uint)pool.Length * 4, pool);
+        c.Buffer(991, (uint)pool.Length * 4, pool);
+        c.Buffer(992, 32, new uint[] { groups, (uint)height, 1, (uint)count, (uint)width, (uint)height, 1, 0 });
+        c.ReadKernel(id, key, 48u, read, sampled, ints);
+        c.Add(Op.ComputeBegin);
+        c.Add(Op.Use, id);
+        // The part's width, the band's rows and its first, the part's first pixel, the image's size, [a face or a
+        // layer,] then the list's table: its first word and its room
+        if (part < 0) c.Add(Op.Uniforms, 48, (uint)width, (uint)height, 0, 0, 0, (uint)width, (uint)height, 0, (uint)count, 0, 0, 0);
+        else c.Add(Op.Uniforms, 48, (uint)width, (uint)height, 0, 0, 0, (uint)width, (uint)height, (uint)part, 0, (uint)count, 0, 0);
+        c.Add(Op.Image, 0, image);
+        if (sampled) c.Add(Op.Sampler, 0, 0, 0);
+        c.Add(Op.Storage, 0, 990);
+        c.Add(Op.Storage, 1, 991);
+        c.Add(Op.Storage, 2, 992);
+        c.Add(Op.Dispatch, groups, (uint)height, 1);
+        c.Add(Op.ComputeEnd);
+        c.Add(Op.BufferRead, 1, ints ? 991u : 990u, 16, (uint)(count * words * 4));
+        Replay(c);
+        yield return Answers(1);
+        Assert.IsNotNull(answers[1], "the kernel's pixels read back");
+        Assert.AreEqual(count * words, answers[1].Length);
+    }
+
+    static float Float(uint bits) => BitConverter.Int32BitsToSingle(unchecked((int)bits));
+
+    // Every image of one target: its color through the Color kernel, its second and third as the numbers they
+    // hold, exactly, and its depth in forward terms (0 near, 1 far) whichever way Unity's device stores it.
+    [UnityTest]
+    public IEnumerator ReadKernelsReturnEveryImageOfATarget()
+    {
+        var c = new Commands();
+        c.Add(Op.Target, 300, 0x982, 4, 4, 301, 302, 303, 0, 304);
+        c.NumericMixed(310);
+        c.Add(Op.Begin, 300, 1);
+        c.Add(Op.Use, 310);
+        c.Add(Op.Uniforms, 16, 0, 0, 0, 0);
+        c.Add(Op.Draw, 0, 3, 1);
+        c.Add(Op.Draw, 0, 3, 1);
+        c.Add(Op.End);
+        // Then a draw whose frag has a color alone: the target's other images stay as they are (Unity's OpenGL Core
+        // wrote the color into each, until the shader said ColorMask 0 for them)
+        c.Images(31, ImageDraw, false);
+        ImageQuad(c, 300, 0, 0, 4, 4, 0, 0, 0, -1, new Color(0.25f, 0, 0, 1));
+        // And a depth nothing but a draw gives: a quarter of the way in over the top left alone, the far limit elsewhere
+        c.Add(Op.Target, 10, 1, 8, 8, 11, 0, 0, 0, 12);
+        c.DepthImage(32, 1);
+        c.Add(Op.Begin, 10, 1);
+        c.Add(Op.Scissor, 0, 0, 4, 2);
+        c.Add(Op.Use, 32);
+        ImageValues(c, 0, 0, 0, -1, new Color(0, 0, 0, 0.25f));
+        c.Add(Op.Image, 0, 0);
+        c.Add(Op.Draw, 0, 3, 1);
+        c.Add(Op.End);
+        Replay(c);
+
+        yield return ReadKernel(ReadPixels, 0, true, 301, 4, 4, 4);
+        var color = new[] { 0.25f, 0f, 0f, 1f };
+        for (var i = 0; i < 64; i++) Assert.AreEqual(color[i % 4], Float(answers[1][i]), "the first image's color, word " + i);
+        yield return ReadKernel(ReadFloat4, 9, false, 302, 4, 4, 4);
+        var numbers = new[] { 1.5f, -0.5f, 2f, 0.125f };
+        for (var i = 0; i < 64; i++) Assert.AreEqual(numbers[i % 4], Float(answers[1][i]), "the second image's numbers, word " + i);
+        yield return ReadKernel(ReadInt, 10, false, 303, 4, 4, 1);
+        foreach (var value in answers[1]) Assert.AreEqual(-16777217, unchecked((int)value), "the third image's whole numbers");
+        yield return ReadKernel(ReadDepth, 1, true, 304, 4, 4, 1);
+        foreach (var value in answers[1]) Assert.AreEqual(1f, Float(value), "a cleared depth is the far limit, 1");
+        yield return ReadKernel(ReadDepth, 1, true, 12, 8, 8, 1);
+        for (var i = 0; i < 64; i++)
+        {
+            var drawn = i % 8 < 4 && i / 8 < 2;
+            Assert.AreEqual(drawn ? 0.25f : 1f, Float(answers[1][i]), 1e-6f, $"depth at ({i % 8}, {i / 8}) from the top left");
+        }
+    }
+
+    // A number image blends between its pixels and has smaller images, and is an array's layer: R16F with 1.5 in
+    // its left half (its top left, in the layer) and nothing elsewhere.
+    [UnityTest]
+    public IEnumerator NumberImagesBlendHaveSmallerImagesAndAreLayers()
+    {
+        var c = ImageObjects();
+        c.Add(Op.Target, 140, 2, 64, 64, 141, 0, 0, 0, 142); // RGBA16F, where the blended read is drawn
+        c.Add(Op.Target, 100, 5, 4, 4, 101, 0, 0, 0, 102);
+        c.Add(Op.Array, 130, 5, 4, 4, 2, 0, 131);
+        c.Add(Op.ArrayLayer, 132, 130, 1);
+        c.Numeric(110, 0xc0de0021);
+        foreach (var into in new uint[] { 100, 132 })
+        {
+            c.Add(Op.Begin, into, 1);
+            c.Add(Op.Scissor, 0, 0, 2, into == 100 ? 4u : 1u);
+            c.Add(Op.Use, 110);
+            c.Add(Op.Uniforms, 16, 0, 0, 0, 0);
+            c.Add(Op.Draw, 0, 3, 1);
+            c.Add(Op.End);
+        }
+        c.Add(Op.Mipmaps, 101);
+        // Between the second column's middle and the third's: half of each where it blends, one of them where it doesn't
+        ImageQuad(c, 140, 0, 0, 32, 64, 0.5f, 0.5f, 0, 0, Color.black, 1, 0, 101);
+        ImageQuad(c, 140, 32, 0, 32, 64, 0.49f, 0.5f, 0, 0, Color.black, 0, 0, 101);
+        Replay(c);
+        var read = UnityEngine.Rendering.AsyncGPUReadback.Request(ImageTexture(141), 0, TextureFormat.RGBAFloat);
+        while (!read.done) yield return null;
+        Assert.IsFalse(read.hasError);
+        var values = read.GetData<float>();
+        Assert.AreEqual(0.75f, values[(32 * 64 + 16) * 4], "a number image blended between two pixels");
+        Assert.AreEqual(1.5f, values[(32 * 64 + 48) * 4], "and the nearest of them");
+        Assert.AreEqual(3, ImageTexture(101).mipmapCount, "a number image's smaller images");
+        read = UnityEngine.Rendering.AsyncGPUReadback.Request(ImageTexture(101), 2, TextureFormat.RGBAFloat);
+        while (!read.done) yield return null;
+        Assert.IsFalse(read.hasError);
+        Assert.AreEqual(0.75f, read.GetData<float>()[0], "its smallest image is the mean of its pixels");
+
+        yield return ReadKernel(ReadFloat, 9, false, 101, 4, 4, 1);
+        for (var i = 0; i < 16; i++) Assert.AreEqual(i % 4 < 2 ? 1.5f : 0f, Float(answers[1][i]), $"the number at ({i % 4}, {i / 4})");
+        yield return ReadKernel(ReadLayerNumbers, 6, true, 130, 4, 4, 4, 1);
+        for (var i = 0; i < 16; i++)
+            Assert.AreEqual(i < 2 ? 1.5f : 0f, Float(answers[1][i * 4]), $"the layer's number at ({i % 4}, {i / 4}) from the top left");
+    }
+
+    // A cube's face and an array's layer, read with their rows from the top as they were drawn: green clipped into
+    // the top left 4 by 2 of red.
+    [UnityTest]
+    public IEnumerator ReadKernelsReturnFacesAndLayersFromTheTopLeft()
+    {
+        var c = new Commands();
+        c.Add(Op.Cube, 20, 1, 8, 0);
+        c.Add(Op.CubeFace, 21, 20, 0, 22);
+        c.Add(Op.CubeFace, 23, 20, 2, 24);
+        c.Add(Op.CubeFace, 25, 20, 5, 26);
+        c.Add(Op.Array, 30, 1, 8, 8, 2, 0, 31);
+        c.Add(Op.ArrayLayer, 32, 30, 1);
+        c.Add(Op.Cube, 40, 1, 8, 0); // Unused compatible bindings while painting, so no attachment is sampled
+        c.Add(Op.Array, 50, 1, 8, 8, 2, 0, 51);
+        c.LayeredImage(60);
+        foreach (var into in new uint[] { 21, 23, 25, 32 })
+        {
+            foreach (var corner in new[] { false, true })
+            {
+                c.Add(Op.Begin, into, corner ? 0u : 1u);
+                if (corner) c.Add(Op.Scissor, 0, 0, 4, 2);
+                c.Add(Op.Use, 60);
+                ImageValues(c, 0, 0, 0, -1, corner ? Color.green : Color.red);
+                c.Add(Op.Image, 0, 40);
+                c.Add(Op.Image, 1, 50);
+                c.Add(Op.Sampler, 0, 0, 0);
+                c.Add(Op.Draw, 0, 3, 1);
+                c.Add(Op.End);
+            }
+        }
+        // Their depths: a quarter of the way in over the top left 4 by 2 of a face, of a layer, and of a layer of an
+        // array that's depth alone (read by its depth array's id, as the recorder gives it one of its own)
+        c.Add(Op.Array, 70, 0, 8, 8, 2, 0, 71);
+        c.Add(Op.ArrayLayer, 72, 70, 1);
+        c.DepthImage(61, 1);
+        foreach (var into in new uint[] { 23, 32, 72 })
+        {
+            c.Add(Op.Begin, into, 1);
+            c.Add(Op.Scissor, 0, 0, 4, 2);
+            c.Add(Op.Use, 61);
+            ImageValues(c, 0, 0, 0, -1, new Color(0, 0, 0, 0.25f));
+            c.Add(Op.Image, 0, 0);
+            c.Add(Op.Draw, 0, 3, 1);
+            c.Add(Op.End);
+        }
+        Replay(c);
+        foreach (var depth in new uint[] { 24, 31, 71 })
+        {
+            if (depth == 24) yield return ReadKernel(ReadDepth, 1, true, depth, 8, 8, 1);
+            else yield return ReadKernel(ReadLayerDepth, 7, true, depth, 8, 8, 1, 1);
+            var what = depth == 24 ? "a face's depth" : depth == 31 ? "a layer's depth" : "a depth array's layer";
+            for (var i = 0; i < 64; i++)
+                Assert.AreEqual(i % 8 < 4 && i / 8 < 2 ? 0.25f : 1f, Float(answers[1][i]), 1e-6f, $"{what} at ({i % 8}, {i / 8}) from the top left");
+        }
+        // The colors are drawn again after: the depth passes above cleared the face and the layer they share
+        c = new Commands();
+        foreach (var into in new uint[] { 23, 32 })
+        {
+            foreach (var corner in new[] { false, true })
+            {
+                c.Add(Op.Begin, into, corner ? 0u : 1u);
+                if (corner) c.Add(Op.Scissor, 0, 0, 4, 2);
+                c.Add(Op.Use, 60);
+                ImageValues(c, 0, 0, 0, -1, corner ? Color.green : Color.red);
+                c.Add(Op.Image, 0, 40);
+                c.Add(Op.Image, 1, 50);
+                c.Add(Op.Sampler, 0, 0, 0);
+                c.Add(Op.Draw, 0, 3, 1);
+                c.Add(Op.End);
+            }
+        }
+        Replay(c);
+        foreach (var part in new[] { 0, 2, 5, -1 })
+        {
+            if (part >= 0) yield return ReadKernel(ReadFace, 3, true, 20, 8, 8, 4, part);
+            else yield return ReadKernel(ReadLayer, 6, true, 30, 8, 8, 4, 1);
+            var what = part >= 0 ? "face " + part : "the layer";
+            for (var i = 0; i < 64; i++)
+            {
+                var corner = i % 8 < 4 && i / 8 < 2;
+                Assert.AreEqual(corner ? 0f : 1f, Float(answers[1][i * 4]), $"{what}'s red at ({i % 8}, {i / 8}) from the top left");
+                Assert.AreEqual(corner ? 1f : 0f, Float(answers[1][i * 4 + 1]), $"{what}'s green at ({i % 8}, {i / 8}) from the top left");
+                Assert.AreEqual(1f, Float(answers[1][i * 4 + 3]), $"{what}'s alpha");
+            }
+        }
     }
 
     // A clip rect's rows count from the top, in the camera's own pass as in a target's (the pixel read above): red

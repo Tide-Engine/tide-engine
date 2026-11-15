@@ -342,11 +342,13 @@ builds, runs and fails the exact accounting assertions; restoring the host
 byte-for-byte makes the browser test pass again. There is no runtime diff.
 Hosted coverage on other platforms remains the ordinary push-triggered run.
 
-## Match updates during desktop Vulkan presentation waits (2026-11-03)
+## Match updates during Vulkan presentation waits (2026-11-03; Android 2026-11-14)
 
 The standard and native reload hosts register `tide_run_wait_update` through
 `tide_platform_update_while_waiting`. Only the next-frame Vulkan fence wait
-after a complete frame calls it. It advances the custom network and session
+after a complete frame calls it: GLFW's window's, and since 2026-11-14
+Android's activity's, which until then presented without it
+(`notes/rendering.md`, Match updates during Vulkan frame waits). It advances the custom network and session
 on the same thread, returning the next tick deadline. No view, event handler,
 audio submission, reload, migration request or GPU work runs from this hook.
 Queued local events and session connection events remain for the next frame;

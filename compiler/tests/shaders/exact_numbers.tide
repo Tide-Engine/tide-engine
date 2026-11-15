@@ -1,0 +1,81 @@
+scene Main { }
+
+// 32-bit numbers, which no GPU blends on every device, loaded exactly: the nearest texel, or the four (a volume's
+// eight) around blended in the shader; arrays and cubes of them as layers. Typed volumes of half floats blend through
+// the GPU's sampler, and a typed array's nearest pixel is loaded whatever its format.
+local singleton Images
+{
+    RenderTarget distances;
+    RenderTarget points;
+    [Raw(float)] Texture distance;
+    [Raw(float4)] Texture point;
+    [Raw(float)] TextureArray depths;
+    [Raw(float4)] TextureArray positions;
+    [Raw(int)] TextureArray materials;
+    [Raw(float2)] TextureArray halves;
+    [Raw(float)] Cubemap far;
+    [Raw(float4)] Cubemap rays;
+    [Raw(int)] Cubemap ids;
+    [Raw(float4)] Texture3D fog;
+    [Raw(float)] Texture3D density;
+    [Raw(float)] Texture3D exact;
+}
+
+local singleton Fields { Grid3<float> cells; }
+
+float Smooth([Raw(float)] Texture image, float2 uv) { return image.Sample(uv, Filter.Bilinear, Wrap.Mirror); }
+int Material([Raw(int)] TextureArray layers, float2 uv, int layer) { return layers.Sample(uv, layer); }
+float Toward([Raw(float)] Cubemap cube, float3 way) { return cube.Sample(way); }
+frag Scalar(Vertex vertex, out float value) { value = vertex.uv.x; }
+frag Full(Vertex vertex, out float4 value) { value = float4(vertex.uv, 3.5, 0.25); }
+frag Whole(Vertex vertex, out int value) { value = int(vertex.uv.x * 100); }
+frag ReadSource(Vertex vertex, out Color color, [Raw(float)] Texture source)
+{
+    color = Color(source.Sample(vertex.uv, Filter.Bilinear), source.Sample(vertex.uv), 0);
+}
+frag Read(Vertex vertex, out Color color, Images images)
+{
+    mut float value = images.distance.Sample(vertex.uv, Filter.Bilinear) + Smooth(images.distance, vertex.uv);
+    value += images.distance.Sample(vertex.uv, Filter.Bilinear, Wrap.Repeat) + images.distance.SampleLevel(vertex.uv, 2, Filter.Point);
+    float4 point = images.point.Sample(vertex.uv, Filter.Bilinear) + images.point.Sample(vertex.uv);
+    value += images.depths.Sample(vertex.uv, 1) + images.depths.Sample(vertex.uv, 0, Filter.Bilinear, Wrap.Repeat);
+    float4 position = images.positions.Sample(vertex.uv, 1, Filter.Bilinear);
+    int material = images.materials.Sample(vertex.uv, 1) + Material(images.materials, vertex.uv, 0);
+    float2 half = images.halves.Sample(vertex.uv, 1) + images.halves.Sample(vertex.uv, 0, Filter.Bilinear);
+    value += images.far.Sample(float3(vertex.uv, 1)) + Toward(images.far, float3(-1, vertex.uv));
+    float4 ray = images.rays.Sample(float3(vertex.uv, -1), Filter.Point);
+    int id = images.ids.Sample(float3(vertex.uv.x, 1, vertex.uv.y));
+    float4 fog = images.fog.Sample(float3(vertex.uv, 0.5), Filter.Bilinear);
+    value += images.density.Sample(float3(vertex.uv, 0.25), Filter.Bilinear, Wrap.Repeat) + images.density.Sample(float3(vertex.uv, 0.75));
+    value += images.exact.Sample(float3(vertex.uv, 0.5), Filter.Bilinear);
+    color = Color(value + point.x + position.y + half.x + ray.z, float(material + id), fog.w, 1);
+}
+view Show(mut Images images, mut Fields fields)
+{
+    images.distances = RenderTarget(8, 8, 1, Format.R32f);
+    images.points = RenderTarget(8, 8, 1, Format.Rgba32f);
+    images.distance = images.distances.color;
+    images.point = images.points.color;
+    images.depths = TextureArray(8, 8, 2, 1, Format.R32f);
+    images.positions = TextureArray(8, 8, 2, 1, Format.Rgba32f);
+    images.materials = TextureArray(8, 8, 2, 1, Format.R32i);
+    images.halves = TextureArray(8, 8, 2, 1, Format.Rg16f);
+    images.far = Cubemap(8, Format.R32f);
+    images.rays = Cubemap(8, Format.Rgba32f);
+    images.ids = Cubemap(8, Format.R32i);
+    images.fog = Texture3D(int3(4), Format.Rgba16f);
+    fields.cells = Grid3<float>(4, 4, 4);
+    images.density = fields.cells;
+    images.exact = Texture3D(int3(4), Format.R32f);
+    List<Vertex> quad = [Vertex { position = float2(0) }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }];
+    images.distances.Mesh(quad, [0, 1, 2], Scalar);
+    images.points.Mesh(quad, [0, 1, 2], Full);
+    images.depths.layers[1].Mesh(quad, [0, 1, 2], Scalar);
+    images.positions.layers[0].Clear(float4(1, 2, 3, 4));
+    images.materials.layers[1].Mesh(quad, [0, 1, 2], Whole);
+    images.far.faces[2].Mesh(quad, [0, 1, 2], Scalar);
+    images.rays.faces[5].Clear(float4(-1, 0.5, 1e9, 2));
+    images.ids.faces[0].Clear(-7);
+    Draw.Mesh(quad, [0, 1, 2], Read);
+    Draw.Blit(images.distance, Draw.window, ReadSource);
+}

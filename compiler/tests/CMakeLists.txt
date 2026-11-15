@@ -387,6 +387,7 @@ tide_e2e_test(effects) # Audio declarations: code the audio thread runs, with st
 # Its echo keeps a delay line of 384 KB, which nothing may copy: a function of the generated C that had one on
 # its stack, on the audio thread's, doesn't build
 target_compile_options(tidec_e2e_effects PRIVATE -Wframe-larger-than=65536)
+tide_e2e_test(number_grids) # Grids of float2s, float4s, ints and bytes as textures through typed [Raw(T)] roles, and what changed of them
 tide_e2e_test(textures) # Texture as the one type a draw and a Sample take: grids of colors and of floats as textures, and the sampling a Texture carries
 tide_e2e_test(texture_compression)
 tide_e2e_test(linear_textures LAYOUT)
@@ -396,6 +397,7 @@ tide_e2e_test(render_lifecycle) # Shared target copies, resizing and explicit di
 tide_e2e_test(render_depth) # What a target holds, said when it's made, and a target's depth as frags and verts read it
 tide_e2e_test(image_clears) # Typed image clear values and argument ordering
 tide_e2e_test(target_reads) # await target.Read<T>(image) and ReadDepth(): what each asks for, and the typed grid it owns
+tide_e2e_test(task_grids) # Grids a task keeps across its waits, local and match tasks', a read's and the pack's among them
 tide_e2e_test(number_images SOURCES shaders/number_images.tide) # Numeric shader metadata and generated-C paths
 tide_e2e_test(render_colors) # Targets of several color images, a format each, and frags that write them all
 tide_e2e_test(render_samples) # A target's samples, said by name where it's made and kept in its id through a reload

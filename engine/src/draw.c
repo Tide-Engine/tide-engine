@@ -359,15 +359,9 @@ tide_cubemap_ref tide_cubemap_make(const float size)
 
 tide_cubemap_ref tide_cubemap_make_as(const float size, const tide_target_format format)
 {
-    // Faces are read through a blending sampler: the formats every device blends
-    if (format >= TIDE_TARGET_R32F && format <= TIDE_TARGET_R32I) {
-        fprintf(stderr, "Cubemap: 32-bit float and integer faces aren't blended on every device; use R16f, Rg16f or Rgba16f, "
-                        "or a RenderTarget for each image\n");
-        return (tide_cubemap_ref){0};
-    }
-    const bool held = format == TIDE_TARGET_RGBA16F || (format >= TIDE_TARGET_R8 && format <= TIDE_TARGET_RG16F);
-    const tide_render_target made = make_target((tide_target_size){.width = size, .height = size, .scale = 1.0f},
-                                                one_format(held ? format : TIDE_TARGET_RGBA8),
+    // Any color or number format, or depth alone: a cube of depth alone or of 32-bit numbers is six layers on the
+    // GPU, read through its faces' layers (the renderer's cube_layered)
+    const tide_render_target made = make_target((tide_target_size){.width = size, .height = size, .scale = 1.0f}, one_format(format),
                                                 "Cubemap(size) requires a positive size, its faces' side in pixels");
     tide_render_target_state *s = tide_render_target_state_of(made.id);
     if ((uint64_t)(uintptr_t)s & (TIDE_RENDER_CUBE | TIDE_RENDER_FACE)) { // Its id says which face there
@@ -401,12 +395,7 @@ void tide_cubemap_dispose(const tide_cubemap_ref cube)
 
 tide_texture_array_ref tide_texture_array_make(const tide_target_size size, const uint32_t layers, const tide_target_format format)
 {
-    // Layers are read through a blending sampler: the formats every device blends
-    if (format >= TIDE_TARGET_R32F && format <= TIDE_TARGET_R32I) {
-        fprintf(stderr, "TextureArray: 32-bit float and integer layers aren't blended on every device; use R16f, Rg16f or "
-                        "Rgba16f, a RenderTarget for each image, or an owned Texture3D\n");
-        return (tide_texture_array_ref){0};
-    }
+    // Any format: 32-bit numbers are loaded exactly from their layers (TIDE_SHADER_READ_NUMBER_LAYERS)
     const bool counted = layers >= 1u && layers <= TIDE_TEXTURE_ARRAY_LAYERS;
     if (!counted) {
         fprintf(stderr, "TextureArray(width, height, layers) requires 1 to %d layers, and this asked for %u\n",
@@ -2832,13 +2821,26 @@ static uint32_t pack_slot(tide_draw_list *d, const tide_texture *texture, const 
     return slot;
 }
 
+// A grid's Texture, as its cells are: colors (or, `raw`, as numbers) and floats, or a grid of numbers. 0 for a
+// texture that's no grid's, which `*grid_of` then says.
+static uint32_t grid_source(tide_draw_list *d, const tide_texture_ref texture, const bool raw, bool *grid_of)
+{
+    tide_grid grid;
+    tide_grid_shape shape;
+    *grid_of = tide_texture_grid(texture, &grid, &shape);
+    if (!*grid_of) return 0;
+    const uint32_t cells = tide_texture_grid_cells(texture);
+    if (cells >= TIDE_TEXTURE_CELLS_FLOAT2S) return tide_draw_grid_number_texture(d, grid, &shape, cells);
+    return raw ? tide_draw_grid_texture_raw(d, grid, &shape) : tide_draw_grid_texture(d, grid, &shape);
+}
+
 static uint32_t texture_source(tide_draw_list *d, const tide_texture_ref texture, const bool linear)
 {
     if (!texture.target.id) {
         if (texture.image.pixels) return texture_slot(d, &texture.image);
-        tide_grid grid;
-        tide_grid_shape shape;
-        if (tide_texture_grid(texture, &grid, &shape)) return tide_draw_grid_texture(d, grid, &shape);
+        bool grid;
+        const uint32_t slot = grid_source(d, texture, false, &grid);
+        if (grid) return slot;
         return pack_slot(d, &texture.image, linear);
     }
     const tide_render_target target = tide_render_target_resolve(texture.target);
@@ -2848,6 +2850,13 @@ static uint32_t texture_source(tide_draw_list *d, const tide_texture_ref texture
 uint32_t tide_draw_texture_source(tide_draw_list *d, const tide_texture_ref texture)
 {
     return texture_source(d, texture, false);
+}
+
+uint32_t tide_draw_texture_source_raw(tide_draw_list *d, const tide_texture_ref texture)
+{
+    bool grid;
+    const uint32_t slot = grid_source(d, texture, true, &grid);
+    return grid ? slot : texture_source(d, texture, false);
 }
 
 // Static [Linear] captures share borrowed source storage but keep a distinct draw/GPU cache entry.
@@ -2871,7 +2880,9 @@ uint32_t tide_draw_texture_source_linear(tide_draw_list *d, const tide_texture_r
 {
     tide_grid grid;
     tide_grid_shape shape;
-    if (tide_texture_grid(texture, &grid, &shape)) return tide_draw_grid_texture_linear(d, grid, &shape);
+    // Only a grid of colors has a linear reading; one of numbers isn't drawn under the mark
+    if (tide_texture_grid(texture, &grid, &shape))
+        return tide_texture_grid_cells(texture) == TIDE_TEXTURE_CELLS_COLORS ? tide_draw_grid_texture_linear(d, grid, &shape) : 0;
     return linear_source(d, texture_source(d, texture, true));
 }
 
@@ -5271,10 +5282,12 @@ static uint32_t append_mesh(tide_draw_list *d, const tide_draw_list *from, const
 }
 
 // Whether `next` is more of the same draw as `c`, of another level of the mesh `family`: a run that follows
-// it with nothing between, drawn with the same of everything else.
+// it with nothing between, drawn with the same of everything else, its depth bias too (a decal's runs gathered into
+// its base's would draw with the base's).
 static bool level_follows(const tide_draw_list *d, const tide_draw_command *c, const tide_draw_command *next, const uint32_t family)
 {
-    if (next->kind != c->kind || next->blend != c->blend || next->depth != c->depth || next->cull != c->cull) return false;
+    if (next->kind != c->kind || next->blend != c->blend || next->depth != c->depth || next->cull != c->cull
+        || next->depth_bias.x != c->depth_bias.x || next->depth_bias.y != c->depth_bias.y) return false;
     if (c->kind == TIDE_DRAW_MESH_3D) {
         const uint32_t mesh = next->mesh3.mesh;
         if (mesh == 0 || mesh > d->mesh_count || next->mesh3.count == 0) return false;

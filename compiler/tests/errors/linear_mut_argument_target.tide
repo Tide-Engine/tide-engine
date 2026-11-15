@@ -1,4 +1,4 @@
-// expect: this [Linear] source's format is not fixed by its constructor assignments
+// expect: [Linear] cannot read Rgba16f: this format has no sRGB counterpart
 scene Main { }
 local singleton Art { RenderTarget rt; [Linear] Texture lit; }
 void Make(mut RenderTarget t) { t = RenderTarget(64, 64, Format.Rgba16f); }
