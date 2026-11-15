@@ -184,6 +184,8 @@ static bench_flag flags[] = {
                "saved its chunks would have", 0, 0, 0, 0},
     {"watch", "1: counts the chunks that come to each bot's machine and times the box of a dimension it hops into, "
               "outside every timing; 0 for a profiler, which would see the counting", 1, 1, 0, 0},
+    {"look", "bots of each hundred that turn a little every tick, as a player's mouse does: an input that changes "
+             "every tick, which goes to every player", 0, 0, 0, 0},
 };
 
 static uint32_t mix(uint32_t x)
@@ -220,6 +222,11 @@ static void sample(const bench_flag *f, const uint32_t bot, const uint32_t tick,
     const uint32_t tower = f[8].value * 60u;
     const uint32_t hop = tower ? 0u : f[3].value * 60u;
     c->hops = hop ? (int32_t)((tick + mix(bot) % hop) / hop) : 0;
+    // A mouse: a turn of its own each tick, a few thousandths of a radian as a hand makes them
+    if (mix(bot * 31337u + 5u) % 100u < f[15].value) {
+        const uint32_t turn = mix(bot * 2246822519u ^ tick);
+        c->look = (tide_float2){(float)((int32_t)(turn & 63u) - 32) * 0.003f, (float)((int32_t)((turn >> 6) & 31u) - 16) * 0.003f};
+    }
     if (mix(bot * 7919u + 1u) % 100u < f[4].value) return;
     const bool builds = mix(bot * 104729u + 3u) % 100u < f[7].value;
     // A direction along the ground for five seconds, from a table: no platform's sines
