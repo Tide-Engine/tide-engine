@@ -10,8 +10,9 @@
 // one element at a time (tidec before runs, 2026-11-02): reading them in runs
 // must leave every block where it was. (Moved 2026-11-14, when a game that
 // hides state got a heap for each owner: Bulk's and Carried's values are read
-// into their own heaps, each block where one at a time leaves it there.)
-#define LOADED_WORLD_HASH UINT64_C(0x3cc784a2895668f1)
+// into their own heaps, each block where one at a time leaves it there. Moved again 2026-11-15, as a load ends
+// by freeing what reading it let go of: the heap's pending blocks are its free ones.)
+#define LOADED_WORLD_HASH UINT64_C(0xfe749b4295d1dd8e)
 
 static uint8_t *project(const tide_world *w, uint32_t *size)
 {

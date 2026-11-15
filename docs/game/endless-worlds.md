@@ -80,6 +80,22 @@ Both are restricted to `Audience.None` where they're added (`visibility.Set<Stre
 
 The server finds its chunks in `Streamer.chunks`, not with a query: a spawn joins the tables only once its tick's changes are applied, so two players who come near one place in one tick would otherwise make two chunks there. `Spawn` gives the entity at once.
 
+## Making chunks on every core
+
+A system that fills each new chunk from its dimension's seed, and then shows it to the players waiting for it, runs across every core, in a game that hides state as in any other ([The schedule](./schedule.md#splitting-across-threads)):
+
+```csharp
+system Generate(mut Chunk chunk, mut Seen seen)
+{
+    if (chunk.stage != Stage.Missing) return;
+    // ...the chunk's blocks, from Math.Perlin of the seed
+    chunk.stage = Stage.Made;
+    Visibility.Set(seen.group, seen.audience);
+}
+```
+
+Each chunk's blocks are its own, and the groups' audiences its rows set are set after them, in the chunks' order, as one thread would. Making or ending groups in the same system keeps it on one thread, so a game makes a chunk's group where it spawns the chunk.
+
 ## Keeping what nobody is near
 
 A chunk is asked for from the store as it's spawned, and made from the dimension's seed only if the store has nothing:

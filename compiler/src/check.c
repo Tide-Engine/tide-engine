@@ -19265,6 +19265,14 @@ static void check_extern_system(const checker *c, decl *sys)
         default:
             break;
         }
+        // C can change what a `mut` component or singleton holds in the heap (Box2D's topology list), which keeps
+        // that owner in the match's own heap (assign_heaps): the system then waits for every system that changes
+        // that heap, and they for it, as two that change one heap at once would corrupt it
+        if ((p->type.kind == TY_COMPONENT || p->type.kind == TY_SINGLETON) && p->mode == PARAM_MUT) {
+            bool holds = false;
+            for (int k = 0; k < p->type.decl->fields.count && !holds; k++) holds = type_in_heap(p->type.decl->fields.items[k].type, 0);
+            if (holds) note_heap_owner(sys, p->type.decl);
+        }
     }
     check_extern_c_name(c, sys);
 }

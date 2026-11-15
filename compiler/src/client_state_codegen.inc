@@ -1256,7 +1256,7 @@ static void gen_client_reload(gen *g, const client_codec *codec)
     }
     sb_put(o, "    if (kept_taken) tide_entities_free(&kept);\n"
               "    next->entities.free_head = 0; // Unseen slots are reserved, not available for prediction.\n"
-              "    tide_world_free(w);\n    *w = *next;\n    free(next);\n    tide_text_use(&w->heap, NULL);\n    return true;\n"
+              "    tide_world_free(w);\n    *w = *next;\n    free(next);\n    // What reading it let go of (a list outgrown as it was read) is free before the world ticks: a tick that\n    // starts with blocks waiting would have whatever system flushes first take them, on whichever thread\n    tide_heaps_flush(&w->heap);\n    tide_text_use(&w->heap, NULL);\n    return true;\n"
               "invalid:\n    if (kept_taken) tide_entities_free(&kept);\n    tide_world_free(next);\n    free(next);\n    tide_text_use(&w->heap, NULL);\n    return false;\n}\n\n");
 }
 
@@ -1379,7 +1379,7 @@ static void gen_client_state(gen *g)
     if (prog->hierarchy[0]) sb_put(o, "    if (!tide_client_take_hierarchy(next, &in) || !tide_client_hierarchy_valid(next)) goto invalid;\n");
     sb_put(o, "    if (in.failed || in.at != in.size) goto invalid;\n"
               "    next->entities.free_head = 0; // Unseen slots are reserved, not available for prediction.\n"
-              "    tide_world_free(w);\n    *w = *next;\n    free(next);\n    tide_text_use(&w->heap, NULL);\n    return true;\n"
+              "    tide_world_free(w);\n    *w = *next;\n    free(next);\n    // What reading it let go of (a list outgrown as it was read) is free before the world ticks: a tick that\n    // starts with blocks waiting would have whatever system flushes first take them, on whichever thread\n    tide_heaps_flush(&w->heap);\n    tide_text_use(&w->heap, NULL);\n    return true;\n"
               "invalid:\n    tide_world_free(next);\n    free(next);\n    tide_text_use(&w->heap, NULL);\n    return false;\n}\n\n"
               "static uint32_t tide_game_client_destroyed(const void *world, const void *previous, tide_player_id recipient, tide_entity *out, uint32_t capacity)\n{\n"
               "    const tide_world *w = world, *had = previous;\n    if (!had) return 0;\n"

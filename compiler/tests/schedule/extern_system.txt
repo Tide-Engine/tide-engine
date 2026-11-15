@@ -1,34 +1,51 @@
-extern_system: 6 systems each tick, 3 stages deep; 6 can run alongside others.
+extern_system: 9 systems each tick, 3 stages deep; 9 can run alongside others.
 A system starts once everything it runs after is done.
 
 stage 1  Move  (per entity, in C)
          reads Velocity, Time
          writes Position
-         alongside Heal, Gust
+         alongside Heal, Gust, Topo, Read, Note
 stage 1  Heal  (per entity, in C)
          writes Health
-         alongside Move, Tally, TallyRocks, Gust, Blow
+         alongside Move, Tally, TallyRocks, Gust, Blow, Topo, Read, Note
 stage 1  Gust  (once, in C)
          reads Time
          writes Wind
-         alongside Move, Tally, Heal, TallyRocks
+         alongside Move, Tally, Heal, TallyRocks, Topo, Read, Note
+stage 1  Topo  (once, in C)
+         writes Topology
+         alongside Move, Tally, Heal, TallyRocks, Gust, Blow
 
 stage 2  Tally  (per entity, in C)
          reads Position
          writes Count
          after Move: it writes Position, which this reads
-         alongside Heal, Gust, Blow
+         alongside Heal, Gust, Blow, Topo, Read, Note
 stage 2  Blow  (per entity)
          reads Wind
          writes Velocity
          after Move: it reads Velocity, which this writes
          after Gust: it writes Wind, which this reads
-         alongside Tally, Heal, TallyRocks
+         alongside Tally, Heal, TallyRocks, Topo, Read, Note
+stage 2  Read  (once, in C)
+         writes Journal
+         after Topo: both change text, lists or grids kept in one heap, those of Topology and Journal
+         alongside Move, Tally, Heal, TallyRocks, Gust, Blow
 
 stage 3  TallyRocks  (per entity, in C)
          writes Count
          after Tally: both write Count
-         alongside Heal, Gust, Blow
+         alongside Heal, Gust, Blow, Topo, Read, Note
+stage 3  Note  (once)
+         reads Time
+         writes Journal
+         after Topo: both change text, lists or grids kept in one heap, those of Topology and Journal (and through Read)
+         after Read: both change the text, lists or grids of Journal; both write Journal
+         alongside Move, Tally, Heal, TallyRocks, Gust, Blow
+
+Systems that change the text, lists or grids of any of these wait for each other, as they're kept in one heap:
+         Topology: C can write it
+         Journal: C can write it
 
 Event handlers, at the end of the tick, as their events are sent:
          Spawned: Setup
