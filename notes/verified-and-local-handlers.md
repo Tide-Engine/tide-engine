@@ -1,5 +1,77 @@
 # `verified` and local handlers of match events
 
+## The host hears the whole match's lifecycle (2026-11-15)
+
+**What was wrong.** In a game that hides state, the hosting machine's player reads the server's world
+(`mirror_tick`, notes/netcode.md, The host's player shares the server's world), and the server's tick runs as
+`tick_client_events(world, jobs, journals, all)`, `all` being that player's log. The generated
+`tide_hear_Spawned`/`tide_hear_Destroyed` of such a game, while `tide_client_listening` is set, record into each
+player's journal that may see the entity and return, and `tide_client_destroyed` pushed the private cause into those
+journals alone. So `all` never had a genuine `Spawned` or `Destroyed`, or a cause: the host's handlers of both never
+ran, and its availability, finding an entity gone from the server's world with no cause, ran `Hidden` for every
+destruction. `Changed<...>` wasn't watched on a server journaling for its players (`tide_watching`), so the host heard
+no field changes either. Found by bench/voxels' chunk seams (notes/voxels.md, section 9): a `local event(Hidden)`
+heard each dropped chunk on the host, though the spec has the host see the whole match and a known genuine
+destruction suppress concealment.
+
+**The fix** (`codegen.c`; the generated C of games with visibility and local handlers only):
+- `tide_client_all`, a thread-local of the generated `.c` beside `tide_client_listening`: the whole match's log while a
+  server journals for its players, `all` in `tide_world_tick_client_events` and a scene preparation's `events` in
+  `tide_game_prepare`, NULL elsewhere. Only in a game with local handlers (`program_hears`).
+- The lifecycle hearing's journal branch records the event once more after the players', with
+  `tide_client_recipient` -1 (what the entity has, nothing scrubbed, filters by its own components, as
+  `tick_events` records) into `tide_client_all`, where it's set.
+- `tide_client_destroyed` records the cause into `tide_client_all` while journaling, as into `tide_listening`
+  otherwise.
+- `tide_watching` is on for a journaling server whose own player takes the log (`tide_client_all`).
+- A dedicated server, a shard, and a server whose player isn't level with it pass no `all`: they record what they did
+  before, and nothing more goes into the discarded log.
+- `engine/src/session.c`'s `tick_begin`: a server with no player of its own to take what a scene's preparation sent
+  clears it, where it kept it for good; with lifecycle recorded there now, a dedicated server's would have grown with
+  every prepared spawn.
+
+**Contracts.** The host hears every genuine `Spawned` and `Destroyed` once, predicted and verified at once, hidden
+entities included, and every change of a watched field. An entity leaves it only as the match destroys it, so the
+cause takes `Hidden` away: `Hidden` comes there only for a component removed (or a handler's filter no longer met).
+A guest is as it was: `Destroyed` for what it may see at the destruction's turn, `Hidden` for what was hidden from it,
+a hide and a destruction in one tick included (the group set or destroyed before the destruction's turn: the
+event-time rule). Where a guest's own run of a tick destroys an entity the server hid from it earlier in that tick (a
+system that sets its own group and destroys its entity; `Visibility.Set` does nothing on a client), its predicted
+handlers hear `Destroyed`, as it ran the tick, and its verified ones `Hidden`. `Forgotten` comes once on each machine
+as the entity leaves it. The spec's State visibility (Provisional, 2026-11-15) and docs/game/visibility.md say so.
+
+**Generated C.** Old and new tidec over the release tree's 579 `.sources` lists (`--no-line`, the simulation ID
+aside): 565 the same, 4 failing alike on both (`tidec_e2e_build_code`, `scene_preparation_assets`, `worker_values`
+and its visualizers, whose build code needs `--build-cc`, which the lists don't carry), 10 changed: the games with visibility and local
+handlers (`bench_earth`, `earth`, `earth_tests`, and `tidec_e2e_` `event_containers`, `net_alone_seen`,
+`ownership_events`, `scene_preparation_visibility`, `visibility_groups`, `visibility_lifecycle` and the new fixture).
+A visibility game without local handlers is the same byte for byte; nothing in the world, its hash, snapshots, wire
+or the `tide_game` ABI changed.
+
+**Tests.** `tidec_e2e_visibility_host_lifecycle` (`compiler/tests/e2e/visibility_host_lifecycle.tide`): a host and a
+guest over a loopback, quiet and lossy, five pieces spawned after the guest joined: one destroyed while both see it,
+one hidden from the guest a second before it's destroyed, one hidden with its group and destroyed in one handler by an
+event a hidden clock sends (as voxels' `Drop`), one only hidden, one hidden and destroyed by its own system, which the
+guest runs too. Every handler of `Spawned`, `Shown`, `Hidden`, `Destroyed` (predicted and verified), `Forgotten` and
+`Changed<Clock.ticks>` counts by kind. With the old tidec's C the host heard no `Spawned`, no `Destroyed`, no change,
+and `Hidden` for the four destroyed; the guest's counts are the same before and after. bench/voxels' `voxels_walk`
+passes with its `Forgotten` handler and, with the fix, fails with the old `Hidden` one (81 chunks' sides kept on the
+host), where it passed before.
+
+**Validation** (release preset, Windows, the machine shared): every `tidec_e2e_visibility_*` (checked and memo-off
+variants included), `shards_visibility`, `ownership_events`, `local_events*`,
+`changed_events`, `local_fields_net`, `verified_*`, `tasks_local*`, `task_visibility`, `net_alone_seen`, `net`,
+`handover`, `scene_preparation*`, `storage*` and `event_containers`; the visibility, verified and local-event error
+fixtures; `tide_tests` filtered to visibility, session, server, host and mirror; `bench_voxels` (and `_forgets`,
+`_wide`, `_checked`, pins unchanged), `voxels_walk`, `earth_tests` and `bench_earth`: all pass. Sanitizers, the web
+and other platforms are CI's.
+
+**Gaps.** A host that takes the server's world whole (behind after a build change) still hears `Hidden` for what was
+destroyed in the ticks it skipped, with no history to tell (the spec allows it). The host's hearing of what a scene's
+preparation spawns is built the same way and untested. A guest's predicted `Destroyed` of an entity the server hid in
+the same tick (above) is its own run's, never taken back; whether predicted lifecycle handlers should wait out what
+the client can't know of audiences is the owner's.
+
 ## What local code reads, found by its source (2026-11-10)
 
 `collect_heard_reads` (heard_reads_codegen.inc) took 1.5-2.0 s of every build of Mount & Rifle: each expression
@@ -42,7 +114,8 @@ match handlers of a change, whole-component watches and containers are open.
 - **Codegen** (`gen_changes`, `program_watches`): `tide_changes_begin` at the
   start of `tide_world_tick_on` and `tide_changes_end` after its commands and
   tasks settle (before `Time.tick++`), both only while `tide_listening` and not
-  on a visibility server journaling for clients. Begin stores, per watched
+  on a visibility server journaling for clients, unless its own player takes the
+  whole match's log (2026-11-15, top section). Begin stores, per watched
   field, a thread-local array indexed by entity slot (`generation`, `present`,
   value), sized to `entities.next_unused`, filled by gathering only the lanes
   the field occupies (`watched_offset`). End walks the archetypes storing the

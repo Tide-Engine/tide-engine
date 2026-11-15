@@ -1270,6 +1270,8 @@ Tests: `net_a_host_with_another_player_ticks_once` also checks the host's player
 
 What changes for games: the host's views and local code see the whole match, hidden entities included (the spec's State visibility now says so; whether its views should be masked by its player's audience is Open there). Its local handlers hear every match event, including events from hidden state, which `hears_match_events` no longer decides. `tide_client_status.run_ticks`/`ahead_ticks` stay 0 for the host. The other machines are unchanged.
 
+Correction (2026-11-15): in a game that hides state, `all` had the match's own events but no genuine `Spawned` or `Destroyed`, no destruction cause and no `Changed<...>`: the generated lifecycle hearing wrote only the players' journals while `tick_client_events` ran. So the host heard neither lifecycle event and ran `Hidden` for every entity the match destroyed. Fixed in the generated C (`tide_client_all`; notes/verified-and-local-handlers.md, top section), tested by `tidec_e2e_visibility_host_lifecycle`. `tick_begin` now also clears what a scene's preparation sent when no player of the server's own is level to take it, where it used to keep it for good.
+
 Gaps:
 - A lone developer no longer gets the twin's desync check (the host's client hashing its own run of each tick against the server's). Nondeterminism shows only with another machine in (`--players 2`, the networking tests). An opt-in check (running the twin again) was offered to the owner and isn't built.
 - The host's presentation has no prediction correction to smooth, and draws the server's tick as it is.

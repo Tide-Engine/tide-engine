@@ -2927,6 +2927,7 @@ static void tick_begin(tide_server *s, ticking *t)
     // What this machine's own player's local handlers hear of the tick, the whole match's
     tide_event_log *heard = mirror_hearing(s, tick);
     if (heard) tide_event_log_take(heard, &s->preparation_events);
+    else tide_event_log_clear(&s->preparation_events); // Nobody here to hear what a scene's preparation sent
     t->size = w.size;
     t->journals = journals;
     t->heard = heard;
