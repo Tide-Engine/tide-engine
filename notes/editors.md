@@ -1,3 +1,51 @@
+## Typed image reads in editor help, and the rendering docs (2026-11-15)
+
+An audit of editor help and docs after the rendering work of 2026-11-14/15 found typed reads shown as Color.
+`format_numeric_read` and `numeric_read_doc` (`compiler/lsp/analysis.c`) now give every `[Raw(T)]` read of a
+Texture, Texture3D, TextureArray or Cubemap, for `Sample`, `SampleLevel` and `SampleGrad`, the checker's
+result type and typed defaults: Point for Sample, Trilinear for the other two, and Clamp (a cube has no wrap).
+Hover, signature help and member completion all use them, so they agree. `numeric_read_named` keeps a
+volume's SampleLevel and SampleGrad, and a cube's SampleGrad, on the plain forms, which these images
+don't have. The text depends on the kind of image. On 2D images and array layers, R8 to Rgba16f blend and
+have mipmaps, and R32f and Rgba32f blend with Bilinear from four loads. Cube faces in 32-bit formats are
+read at the nearest pixel. Volumes blend with Bilinear and have no mipmaps. Ints are read at the nearest
+pixel. This replaces the hover that said "other filters and mipmaps are unsupported". The [Raw] help,
+helper-parameter hover, Rgba16f doc and Texture3D constructor doc now say that a volume has no mipmaps. In
+GPU code, completion offers `size` and `count` on TextureArray, typed TextureArray and DepthTextureArray,
+since frags read them. The frag `this` doc lists `front` and says that `world`, and `front` in 3D, each use
+one of the 15 carried values. The handed-struct reads and their int fields were already fixed before this.
+Tests: `lsp_numeric_images_and_outputs` checks hover on a typed array Sample and a typed cube SampleLevel
+(no `-> Color`), hover and signature help on a typed Texture SampleLevel, hover on a blended typed Sample,
+completion on typed arrays (size, count, the four-argument SampleGrad snippet) and typed cubes (no
+SampleGrad), signature help on a cube Sample, hover on a helper's typed array parameter, and plain array
+completion in a frag. `lsp_texture_arrays` now expects a depth array's `size` and `count` in a frag.
+`lsp_shaders_hover` checks the `this` text.
+
+Correction after review (2026-11-15): `numeric_read_doc` first gave every kind one SampleLevel text, which
+told a cube that `SampleLevel(direction, 0)` and Filter.Bilinear read its R32f/Rgba32f faces, both refused
+at the draw; a cube's SampleLevel now has its own text (name Filter.Point, even at level 0), and its Sample
+text says a filter other than Point is the error. The typed volume Sample text named R8, Rg8, R16f and Rg16f,
+which a Texture3D can't be made with; it now names Rgba16f and Grid3<float> for the sampler and R32f and
+Rgba32f for the eight loads. Every claim was probed with tidec. `lsp_numeric_images_and_outputs` now pins
+the 2D level-0 sentence, a 32-bit cube's SampleLevel hover and signature help and its Sample hover, and a
+typed volume's Sample hover (no R8/R16f/Rg16f).
+
+Grammars: Vim and Emacs now treat `compute` and `cached` as keywords (Emacs gets `worker` too), as the
+TextMate grammars already did. `tools/tide-vim/test/editor.vim` and the Emacs ERT test check `compute`.
+DepthCubemap needs no grammar change: like DepthTexture, it's a capitalized type name.
+
+Docs and spec, in the same commit: docs/spec.md has reversed float depth (not 24 bits), 16 textures
+and samplers (not 12), four Filter members, `out Color` (not a white start), Draw.Occlusion built in
+place of the last-frame Hi-Z item, the numeric-samples diagnostic built, SampleLevel and anisotropy taken
+off the mipmap "Not there" list, Grid3 of colors and floats as arrays and volumes, and a frag's `[Linear]
+Texture` parameter built: removed from Open, with its rules, which the compiler checks. docs/game: the
+typed-cube level and Blit's blend lines are fixed, and so is the claim that a frag can't read `.size`.
+In shaders.md and meshes-and-textures.md, the basic texture text now comes first under Textures, and
+Volumes moved next to the cube section. DepthBias is in draw-settings.md's table, and 3d.md's decal and
+occlusion text covers it, including that biased draws and frags writing their own depth aren't
+occlusion tested. Every code block that changed on the rendering pages since 2026-11-14 compiles with
+tidec, given the declarations around it.
+
 ## Grids as bytes (2026-11-14)
 
 `grid_calls` (`compiler/lsp/analysis.c`) has `ToBytes` and `FromBytes`; `format_method` writes `GridN<T>` as the grid
@@ -61,7 +109,7 @@ Ordinary enum-member typo fixes cover the new format names.
 
 Raw attribute completion/signature help describes the four numeric role arguments. Fields and read-only
 Texture/Texture3D helper parameters carry their role into Sample hover, member completion and signature help;
-they return the numeric type and show Point as the default. Numeric float members offer SampleLevel/SampleGrad, on TextureArray and Cubemap roles too, with snippets that name the level (2026-11-14, render-targets.md), except a field whose constructor assignments fix it to R32f or Rgba32f (ield_has_levels, image_target_format of the field: those have no levels; 2026-11-15, corrected: this said only the blendable formats were offered, and every float role was). A helper's parameter or a field with no fixed format may be given either and offers them; the draw's error names the fix. [Raw(type)]'s signature help says arrays and cubes take every role and R32f/Rgba32f blend with Bilinear (it still said float roles and nearest only).
+they return the numeric type and show Point as the default. Numeric float members offer SampleLevel/SampleGrad, on TextureArray and Cubemap roles too, with snippets that name the level (2026-11-14, render-targets.md), except a field whose constructor assignments fix it to R32f or Rgba32f (field_has_levels, image_target_format of the field: those have no levels; 2026-11-15, corrected: this said only the blendable formats were offered, and every float role was). A helper's parameter or a field with no fixed format may be given either and offers them; the draw's error names the fix. [Raw(type)]'s signature help says arrays and cubes take every role and R32f/Rgba32f blend with Bilinear (it still said float roles and nearest only).
 Volume sampling signatures identify Texture3D and float3 coordinates. Clear completion, hover and signature
 help describe one to four positional image values and float clears past one, alongside the legacy broadcast.
 

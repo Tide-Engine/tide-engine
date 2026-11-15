@@ -1897,7 +1897,7 @@ static const char *format_member_doc(const str name)
     static const struct { const char *name, *doc; } formats[] = {
         {"Rgba8", "Four unsigned byte channels (4 bytes per pixel). Takes Color outputs and Color clears; the default target format."},
         {"Depth", "Depth and stencil without a color image. Use this as the target's only format; a Cubemap of it holds six faces of depth alone, which a frag reads through 'cube.depth', a DepthCubemap, by a direction (a lamp's shadow that shines every way)."},
-        {"Rgba16f", "Four 16-bit floats (8 bytes per pixel). Takes Color or float4 outputs and clears. A float4 preserves four independent channels, and a [Raw(float4)] read blends and reads mipmaps on every device; Color keeps its alpha and blend behavior."},
+        {"Rgba16f", "Four 16-bit floats (8 bytes per pixel). Takes Color or float4 outputs and clears. A float4 preserves four independent channels, and a [Raw(float4)] read blends on every device, and reads mipmaps but in a Texture3D, which has none; Color keeps its alpha and blend behavior."},
         {"R8", "One unsigned byte channel (1 byte per pixel). Takes float outputs and clears, clamped to 0–1. Read through a [Raw(float)] Texture, TextureArray layer or Cubemap face: nearest by default, and Filter.Bilinear, Trilinear, Anisotropic, SampleLevel and SampleGrad blend it and read its mipmaps on every device."},
         {"Rg8", "Two unsigned byte channels (2 bytes per pixel). Takes float2 outputs and clears, clamped to 0–1. Read through a [Raw(float2)] Texture, TextureArray layer or Cubemap face: nearest by default, and Filter.Bilinear, Trilinear, Anisotropic, SampleLevel and SampleGrad blend it and read its mipmaps on every device."},
         {"R16f", "One 16-bit float (2 bytes per pixel). Takes float outputs and clears. Read through a [Raw(float)] Texture, TextureArray layer or Cubemap face: nearest by default, and Filter.Bilinear, Trilinear, Anisotropic, SampleLevel and SampleGrad blend it and read its mipmaps on every device."},
@@ -2629,7 +2629,9 @@ static const char *shader_record_doc(const decl *d)
     }
     if (d && d == A.prog->pixel) {
         return "A frag's `this`: where its pixel is, on the screen and in the world, and `this.Discard()`, which leaves "
-               "it undrawn. Its read-only fields are `position`, `depth` and `world`. The GPU says them, so nothing is sent for it.";
+               "it undrawn. Its read-only fields are `position`, `depth`, `world` and `front`. The GPU says `position`, `depth` "
+               "and a 2D draw's `front`; `world`, and `front` in 3D (the side corrected for mirrored transforms), are each "
+               "one of the 15 values carried from the mesh's corners, where the frag reads them.";
     }
     if (d && d == A.prog->placed) {
         return "A vert's `this`: its vertex as the engine would place it. Its one read-only field is `clip`, where the "
@@ -3048,10 +3050,90 @@ static void format_method(const method_form *form, const type t, sb *out)
     }
 }
 
-static void format_numeric_sample(const type image, const type result, sb *out)
+// A [Raw(T)] image's Sample, SampleLevel or SampleGrad as the checker types it: the role's numbers, the nearest pixel
+// where a Sample names no filter, and between two levels where SampleLevel or SampleGrad names none. False for a
+// call the image hasn't (a volume's SampleLevel, a cube's SampleGrad).
+static bool format_numeric_read(const type image, const str name, const type result, sb *out)
 {
-    sb_printf(out, "%s.Sample(float%d uv, Filter filter = Filter.Point, Wrap wrap = Wrap.Clamp) -> %s",
-              type_name(image), image.kind == TY_TEXTURE3D ? 3 : 2, type_name(result));
+    const bool cube = image.kind == TY_CUBEMAP, volume = image.kind == TY_TEXTURE3D;
+    const char *where = cube ? "float3 direction" : volume ? "float3 uvw" : "float2 uv";
+    const char *layer = image.kind == TY_TEXTURE_ARRAY ? ", int layer" : "";
+    const char *wrap = cube ? "" : ", Wrap wrap = Wrap.Clamp";
+    if (str_eq_c(name, "Sample")) {
+        sb_printf(out, "%s.Sample(%s%s, Filter filter = Filter.Point%s) -> %s", type_name(image), where, layer, wrap,
+                  type_name(result));
+    } else if (str_eq_c(name, "SampleLevel") && !volume) {
+        sb_printf(out, "%s.SampleLevel(%s%s, float level, Filter filter = Filter.Trilinear%s) -> %s", type_name(image),
+                  where, layer, wrap, type_name(result));
+    } else if (str_eq_c(name, "SampleGrad") && !volume && !cube) {
+        sb_printf(out, "%s.SampleGrad(float2 uv, float2 dx, float2 dy%s, Filter filter = Filter.Trilinear%s) -> %s",
+                  type_name(image), layer, wrap, type_name(result));
+    } else {
+        return false;
+    }
+    return true;
+}
+
+// Whether a [Raw(T)] image of this kind has the read (format_numeric_read's cases)
+static bool numeric_read_named(const type image, const str name)
+{
+    if (str_eq_c(name, "Sample")) return true;
+    if (image.kind == TY_TEXTURE3D) return false;
+    return str_eq_c(name, "SampleLevel") || (str_eq_c(name, "SampleGrad") && image.kind != TY_CUBEMAP);
+}
+
+// What a [Raw(T)] image's read does, by the image's kind and the call, as the checker and shader.c have it
+static const char *numeric_read_doc(const type image, const str name)
+{
+    if (str_eq_c(name, "SampleLevel") && image.kind == TY_CUBEMAP) {
+        return "Reads a mip level of a cube towards `direction` as its declared numeric type, without alpha conversion, "
+               "between the two levels nearest it where no filter is named: 0 is the faces themselves, each level after "
+               "it half the size. R8, Rg8, R16f, Rg16f and Rgba16f faces have mipmaps. R32f and Rgba32f faces have none "
+               "and are read only at their nearest pixel: name Filter.Point, which reads the faces themselves at any "
+               "level; with no filter (even at level 0) or another filter it is an error at the draw. An int cube has no "
+               "levels: use Sample.";
+    }
+    if (str_eq_c(name, "SampleLevel")) {
+        return "Reads a mip level as the image's declared numeric type, without alpha conversion, between the two levels "
+               "nearest it where no filter is named: 0 is the image itself, each level after it half the size. R8, Rg8, "
+               "R16f, Rg16f and Rgba16f have mipmaps; R32f and Rgba32f have none, so level 0, or a level read naming "
+               "Filter.Point or Filter.Bilinear, is their image itself and any other is an error at the draw. A level "
+               "written 0 with no filter reads the image itself as Filter.Bilinear does, with no smaller images made. "
+               "An int image has no levels: use Sample.";
+    }
+    if (str_eq_c(name, "SampleGrad")) {
+        return "Reads an R8, Rg8, R16f, Rg16f or Rgba16f image as its declared numeric type with the uv's change a pixel "
+               "across (`dx`) and down (`dy`), which picks the mip level (between two, Filter.Trilinear, where no filter "
+               "is named). In a frag or a function a frag calls.";
+    }
+    switch (image.kind) {
+    case TY_TEXTURE3D:
+        return "Reads a volume's declared numeric type, without alpha conversion: the nearest cell where no filter is named, "
+               "or blended across all three axes with Filter.Bilinear, through the GPU's sampler for Rgba16f and a "
+               "Grid3<float>, and as the eight nearest cells loaded exactly and blended in the shader for R32f and "
+               "Rgba32f. A volume has no mipmaps, and an R32i volume reads its nearest cell.";
+    case TY_CUBEMAP:
+        return "Reads a cube's declared numeric type towards `direction`, without alpha conversion: the nearest pixel where "
+               "no filter is named. R8, Rg8, R16f, Rg16f and Rgba16f faces also blend and read mipmaps through the GPU's "
+               "sampler; R32f, Rgba32f and R32i faces are read at their nearest pixel, and a filter other than Filter.Point "
+               "on them is an error.";
+    case TY_TEXTURE_ARRAY:
+        return "Reads layer `layer` as its declared numeric type, without alpha conversion: the nearest pixel where no "
+               "filter is named. R8, Rg8, R16f, Rg16f and Rgba16f layers also blend and read mipmaps through the GPU's "
+               "sampler; R32f and Rgba32f layers blend with Filter.Bilinear, four exact loads blended in the shader, and "
+               "have no mipmaps; int layers are read at their nearest pixel.";
+    default:
+        return "Reads its declared numeric type, without alpha conversion: the nearest pixel where no filter is named. "
+               "R8, Rg8, R16f, Rg16f and Rgba16f also blend and read mipmaps through the GPU's sampler (SampleLevel, "
+               "SampleGrad); R32f and Rgba32f blend with Filter.Bilinear, four exact loads blended in the shader, the same "
+               "bits on every device, and have no mipmaps; ints are read at their nearest pixel. Wrap.Clamp, Wrap.Repeat "
+               "and Wrap.Mirror apply to every axis.";
+    }
+}
+
+static bool numeric_image_kind(const type t)
+{
+    return t.kind == TY_TEXTURE || t.kind == TY_TEXTURE3D || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_CUBEMAP;
 }
 
 static const method_form *find_form(const method_form *forms, const size_t count, const str name)
@@ -3865,7 +3947,8 @@ static void describe(const occurrence *o, sb *out)
         if (o->param->sample_role.len) {
             sb_put(out, "\n\nA numeric image borrowed from its caller, with the same declared role. Sample returns its "
                         "declared type with no alpha conversion, and reads the nearest cell unless it names a filter. "
-                        "R8, Rg8, R16f, Rg16f and Rgba16f images blend and read mipmaps (SampleLevel, SampleGrad); "
+                        "R8, Rg8, R16f, Rg16f and Rgba16f images blend and read mipmaps (SampleLevel, SampleGrad; a "
+                        "Texture3D blends and has no mipmaps); "
                         "32-bit floats blend with Filter.Bilinear, loaded exactly and blended in the shader, and have no "
                         "mipmaps; int images are nearest only.");
         }
@@ -4240,16 +4323,15 @@ static void describe(const occurrence *o, sb *out)
                 && retarget_bake_catalog_result(o->type))
                 form = &retarget_map_calls[2];
             if (!form) break;
-            const bool numeric = (o->object_type.kind == TY_TEXTURE || o->object_type.kind == TY_TEXTURE3D)
-                              && str_eq_c(o->name, "Sample") && o->type.kind != TY_COLOR && o->type.kind != TY_ERROR;
+            // A [Raw(T)] image's reads give its numbers, with the typed defaults (the checker's type of the call)
+            bool numeric = numeric_image_kind(o->object_type) && o->type.kind != TY_COLOR && o->type.kind != TY_ERROR;
             if (o->object_type.kind == TY_WORLD) format_world_method(form, o->component, &code);
-            else if (numeric)
-                format_numeric_sample(o->object_type, o->type, &code);
-            else format_method(form, o->object_type, &code);
+            else if (!numeric || !format_numeric_read(o->object_type, o->name, o->type, &code)) {
+                numeric = false;
+                format_method(form, o->object_type, &code);
+            }
             code_block(out, code.data);
-            sb_printf(out, "\n\n%s", numeric ? "Reads the nearest cell as the declared numeric type, without alpha conversion. "
-                      "The filter is implicit or explicit Filter.Point; other filters and mipmaps are unsupported. "
-                      "Wrap.Clamp, Wrap.Repeat and Wrap.Mirror apply to every axis." : form->doc);
+            sb_printf(out, "\n\n%s", numeric ? numeric_read_doc(o->object_type, o->name) : form->doc);
         }
         break;
     case OCC_MEMBER:
@@ -4407,7 +4489,7 @@ static void describe(const occurrence *o, sb *out)
              "On a Texture/Texture3D field or read-only function parameter, [Raw(float)], [Raw(float2)], [Raw(float4)] or [Raw(int)] declares "
              "the image's numeric Sample result, on a Texture, Texture3D, TextureArray or Cubemap. Typed images read "
              "the nearest cell unless a Sample names a filter: R8, Rg8, R16f, Rg16f and Rgba16f blend and read mipmaps on "
-             "every device; R32f and Rgba32f blend with Filter.Bilinear, loaded exactly and blended in the shader (a cube's "
+             "every device (a Texture3D has none); R32f and Rgba32f blend with Filter.Bilinear, loaded exactly and blended in the shader (a cube's "
              "faces nearest only), with no mipmaps; int images are nearest only. The role must fit their format. A grid of "
              "numbers is a Texture of its role alone: a Grid2<float> takes [Raw(float)] (or none), a Grid2<float2> [Raw(float2)], a "
              "Grid2<float4> [Raw(float4)], a Grid2<int> or Grid2<byte> [Raw(int)], as a field's value, a typed helper's "
@@ -7760,9 +7842,9 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         if (!gpu) {
             item(c, "layers", CK_PROPERTY, "RenderTarget, by its number", TEXTURE_ARRAY_LAYERS_DOC, "layers[$1]");
             item(c, "depth", CK_PROPERTY, "DepthTextureArray", TEXTURE_ARRAY_DEPTH_DOC, NULL);
-            item(c, "size", CK_PROPERTY, "int2", TEXTURE_ARRAY_SIZE_DOC, NULL);
-            item(c, "count", CK_PROPERTY, "int", TEXTURE_ARRAY_COUNT_DOC, NULL);
         }
+        item(c, "size", CK_PROPERTY, "int2", TEXTURE_ARRAY_SIZE_DOC, NULL); // ...in a frag or a vert too
+        item(c, "count", CK_PROPERTY, "int", TEXTURE_ARRAY_COUNT_DOC, NULL);
         if (samples) {
             const method_form *form = &array_calls[sizeof array_calls / sizeof array_calls[0] - 1];
             sb detail = {0}; format_method(form, t, &detail);
@@ -7777,10 +7859,8 @@ static void list_members(completion *c, const type t, const bool edges, const sc
             item(c, depth_array_calls[i].name, CK_METHOD, detail.data, depth_array_calls[i].doc,
                  i == 0 ? "Sample($1, $2)" : "Compare($1, $2, $3)");
         }
-        if (!gpu) {
-            item(c, "size", CK_PROPERTY, "int2", TEXTURE_ARRAY_SIZE_DOC, NULL);
-            item(c, "count", CK_PROPERTY, "int", TEXTURE_ARRAY_COUNT_DOC, NULL);
-        }
+        item(c, "size", CK_PROPERTY, "int2", TEXTURE_ARRAY_SIZE_DOC, NULL); // ...in a frag or a vert too
+        item(c, "count", CK_PROPERTY, "int", TEXTURE_ARRAY_COUNT_DOC, NULL);
         return;
     }
     if (t.kind == TY_DEPTH_CUBEMAP) { // A frag reads it by a direction
@@ -8347,51 +8427,33 @@ static void complete_members(completion *c, const int dot, const loc at, const o
     const bool layered = t.kind == TY_TEXTURE_ARRAY || t.kind == TY_CUBEMAP;
     if ((t.kind == TY_TEXTURE || t.kind == TY_TEXTURE3D || layered) && numeric.kind != TY_COLOR) {
         const bool sample = gpu || (sc.decl && (sc.decl->gpu_only || sc.decl->kind == DECL_FUNCTION || sc.decl->kind == DECL_METHOD));
-        const char *where = t.kind == TY_CUBEMAP ? "float3 direction" : t.kind == TY_TEXTURE_ARRAY ? "float2 uv, int layer" : "float2 uv";
-        const char *wrap = t.kind == TY_CUBEMAP ? "" : ", Wrap wrap = Wrap.Clamp";
-        if (sample && layered) {
+        // The forms and texts are hover's and signature help's (format_numeric_read, numeric_read_doc)
+        if (sample) {
             sb label = {0};
-            sb_printf(&label, "%s.Sample(%s, Filter filter = Filter.Point%s) -> %s", type_name(t), where, wrap, type_name(numeric));
-            item(c, "Sample", CK_METHOD, label.data,
-                 "Reads its declared numeric type, without alpha conversion: the nearest pixel where no filter is named. "
-                 "R8, Rg8, R16f, Rg16f and Rgba16f also blend and read mipmaps through the GPU's sampler; "
-                 "an array's R32f and Rgba32f layers blend with Filter.Bilinear, four exact loads blended in the shader, "
-                 "and a cube's R32f, Rgba32f and R32i faces and R32i layers are read at their nearest pixel.",
+            format_numeric_read(t, str_from("Sample"), numeric, &label);
+            item(c, "Sample", CK_METHOD, label.data, numeric_read_doc(t, str_from("Sample")),
                  t.kind == TY_TEXTURE_ARRAY ? "Sample($1, $2)" : "Sample($1)");
-        } else if (sample) {
-            sb label = {0};
-            format_numeric_sample(t, numeric, &label);
-            item(c, "Sample", CK_METHOD, label.data,
-                 "Reads its declared numeric type, without alpha conversion: the nearest cell, or blended where Filter.Bilinear "
-                 "is named, through the GPU's sampler for R8, Rg8, R16f, Rg16f, Rgba16f and a Grid3<float>, and as the four "
-                 "(a volume's eight) nearest cells loaded exactly and blended in the shader for R32f and Rgba32f, the same "
-                 "bits on every device. Ints are read at the nearest cell.",
-                 "Sample($1)");
         }
         // The formats every device blends have mipmaps too; a field its assignments fix to R32f or Rgba32f has none,
         // so it's offered neither
         if (sample && t.kind != TY_TEXTURE3D && numeric.kind != TY_INT && field_has_levels(image)) {
             sb level = {0};
-            sb_printf(&level, "%s.SampleLevel(%s, float level, Filter filter = Filter.Trilinear%s) -> %s",
-                      type_name(t), where, wrap, type_name(numeric));
-            item(c, "SampleLevel", CK_METHOD, level.data,
-                 "Reads a mip level of an R8, Rg8, R16f, Rg16f or Rgba16f image as its declared numeric type, between the two "
-                 "levels nearest it where no filter is named: 0 is the image itself, each level after it half the size, made "
-                 "of what was drawn. R32f and Rgba32f have no mipmaps: level 0, or a level read naming Filter.Point or "
-                 "Filter.Bilinear, is their image itself; any other is an error at the draw.",
+            format_numeric_read(t, str_from("SampleLevel"), numeric, &level);
+            item(c, "SampleLevel", CK_METHOD, level.data, numeric_read_doc(t, str_from("SampleLevel")),
                  t.kind == TY_TEXTURE_ARRAY ? "SampleLevel($1, $2, $3)" : "SampleLevel($1, $2)");
             if (t.kind != TY_CUBEMAP && !(is_shader(sc.decl) && !sc.decl->is_frag)) {
                 sb grad = {0};
-                sb_printf(&grad, "%s.SampleGrad(float2 uv, float2 dx, float2 dy%s, Filter filter = Filter.Trilinear%s) -> %s",
-                          type_name(t), t.kind == TY_TEXTURE_ARRAY ? ", int layer" : "", wrap, type_name(numeric));
-                item(c, "SampleGrad", CK_METHOD, grad.data,
-                     "Reads an R8, Rg8, R16f, Rg16f or Rgba16f image as its declared numeric type with the uv's change a pixel "
-                     "across and down, which picks the mip level. In a frag.",
+                format_numeric_read(t, str_from("SampleGrad"), numeric, &grad);
+                item(c, "SampleGrad", CK_METHOD, grad.data, numeric_read_doc(t, str_from("SampleGrad")),
                      t.kind == TY_TEXTURE_ARRAY ? "SampleGrad($1, $2, $3, $4)" : "SampleGrad($1, $2, $3)");
             }
         }
         if (layered) {
             if (!sample) list_members(c, t, edges, &sc); // Its faces or layers, its depth and the rest, for the view
+            else if (t.kind == TY_TEXTURE_ARRAY) { // ...and an array's size and count on the GPU too
+                item(c, "size", CK_PROPERTY, "int2", TEXTURE_ARRAY_SIZE_DOC, NULL);
+                item(c, "count", CK_PROPERTY, "int", TEXTURE_ARRAY_COUNT_DOC, NULL);
+            }
             return;
         }
         item(c, "size", CK_PROPERTY, t.kind == TY_TEXTURE3D ? "int3" : "int2", "The image's size in texels, or zeros for no image.", NULL);
@@ -10760,7 +10822,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
             static const char *const types[] = {"float", "float2", "float4", "int"};
             for (size_t i = 0; i < sizeof types / sizeof types[0]; i++)
                 item(&c, types[i], CK_STRUCT, "The numeric type this image stores and Sample returns",
-                     "Typed numeric images read the nearest cell unless a Sample names a filter. Float images in R8, Rg8, R16f, Rg16f or Rgba16f blend and have mipmaps; R32f and Rgba32f blend with Filter.Bilinear, loaded exactly, and have no mipmaps; int images are nearest only.", NULL);
+                     "Typed numeric images read the nearest cell unless a Sample names a filter. Float images in R8, Rg8, R16f, Rg16f or Rgba16f blend and have mipmaps (a Texture3D has none); R32f and Rgba32f blend with Filter.Bilinear, loaded exactly, and have no mipmaps; int images are nearest only.", NULL);
             break;
         }
         complete_value_types(&c, VT_VALUES);
@@ -12476,7 +12538,7 @@ static const struct {
      "that keep any number, a number format, or `Format.Depth`, six faces of depth alone that a frag reads through "
      "`cube.depth` (a lamp's shadows every way). It starts black, its depth far; copies share it, and `Dispose()` lets it go."},
     {"Texture3D", {"Texture3D(int3 size)", "Texture3D(int3 size, Format format)"},
-     "Creates a machine-local volume of the given size in texels. Rgba8 by default; Rgba16f, R32f, Rgba32f and R32i are portable writable formats. Typed Raw fields sample numeric values at the nearest cell, without mipmaps. Fill it with a compute kernel."},
+     "Creates a machine-local volume of the given size in texels. Rgba8 by default; Rgba16f, R32f, Rgba32f and R32i are portable writable formats. Typed Raw fields read their numbers at the nearest cell, or blended across all three axes with Filter.Bilinear (an int volume nearest only); a volume has no mipmaps. Fill it with a compute kernel."},
     {"TextureArray", {"TextureArray(float width, float height, int layers)",
                       "TextureArray(float width, float height, int layers, float pixelsPerUnit)",
                       "TextureArray(float width, float height, int layers, Format format)",
@@ -13141,7 +13203,7 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
         } else if (str_eq_c(name, "Retarget")) {
             add_signature(&s, RETARGET_ATTRIBUTE_FORM, RETARGET_ATTRIBUTE_DOC);
         } else if (str_eq_c(name, "Raw")) {
-            add_signature(&s, "Raw(type)", "On Texture, Texture3D, TextureArray and Cubemap fields or read-only GPU helper parameters, float, float2, float4 or int declares the numeric Sample type. Reads use the nearest cell unless a filter is named; R8, Rg8, R16f, Rg16f and Rgba16f blend and read mipmaps; R32f and Rgba32f blend with Filter.Bilinear (four exact loads, a volume's eight) and have no mipmaps, and a cube's R32f and Rgba32f faces are nearest only; int images are nearest only. Bare Raw retains its existing numeric-channel role.");
+            add_signature(&s, "Raw(type)", "On Texture, Texture3D, TextureArray and Cubemap fields or read-only GPU helper parameters, float, float2, float4 or int declares the numeric Sample type. Reads use the nearest cell unless a filter is named; R8, Rg8, R16f, Rg16f and Rgba16f blend and read mipmaps (a Texture3D has none); R32f and Rgba32f blend with Filter.Bilinear (four exact loads, a volume's eight) and have no mipmaps, and a cube's R32f and Rgba32f faces are nearest only; int images are nearest only. Bare Raw retains its existing numeric-channel role.");
         }
     } else if (str_eq_c(owner, "HumanoidRig") || str_eq_c(owner, "RetargetMap")) {
         const method_form *form = str_eq_c(owner, "HumanoidRig") ? &humanoid_rig_calls[0] : &retarget_map_calls[0];
@@ -13238,11 +13300,11 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
                     s.picked = i == (retarget_bake_catalog_result(called->type) ? 2u : 1u);
                 add_signature(&s, label.data, forms[i].doc);
             }
-        } else if (form && (t.kind == TY_TEXTURE || t.kind == TY_TEXTURE3D) && str_eq_c(name, "Sample")
-                   && numeric_receiver(callee - 1, at).kind != TY_COLOR) {
+        } else if (form && numeric_image_kind(t) && numeric_receiver(callee - 1, at).kind != TY_COLOR
+                   && numeric_read_named(t, name)) {
             sb label = {0};
-            format_numeric_sample(t, numeric_receiver(callee - 1, at), &label);
-            add_signature(&s, label.data, "Reads the declared numeric type with no alpha conversion: the nearest cell, or blended with a named filter where the format blends on every device (R8, Rg8, R16f, Rg16f, Rgba16f). SampleLevel and SampleGrad read those formats' mipmaps.");
+            format_numeric_read(t, name, numeric_receiver(callee - 1, at), &label);
+            add_signature(&s, label.data, numeric_read_doc(t, name));
         } else if (form) {
             sb label = {0};
             format_method(form, t, &label);

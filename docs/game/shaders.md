@@ -213,7 +213,8 @@ around the uv exactly and blends them in the shader, and the picture is the same
 have no mipmaps, so `Filter.Trilinear`, `Filter.Anisotropic`, and a `SampleLevel` or `SampleGrad` that reads
 between levels, on one are a compile error naming `R16f` or `Rgba16f`. Their one level is the image itself: a
 `SampleLevel` or `SampleGrad` naming `Filter.Point` reads its nearest pixel, one naming `Filter.Bilinear` blends
-the four, and `SampleLevel(uv, 0)` blends them too. `R32i` is always exact: a GPU blends no integers. Bare `[Raw]`
+the four, and `SampleLevel(uv, 0)` blends them too. A cube's `R32f` and `Rgba32f` faces are only read at their
+nearest pixel: its `SampleLevel` names `Filter.Point`, even at level 0. `R32i` is always exact: a GPU blends no integers. Bare `[Raw]`
 retains its existing four-channel behavior.
 
 ```csharp
@@ -723,52 +724,6 @@ frag Shade(BoxVertex vertex, out Color color, Ramp ramp)
 
 ## Textures
 
-### Linear-light color
-
-Mark color images used by lighting with `[Linear]`. Their stored RGB is display-encoded sRGB;
-GPU reads decode it to linear light before filtering, including `SampleGrad` and `SampleLevel`.
-Alpha stays coverage. Leave normal maps, masks and other numeric images unmarked or `[Raw]`.
-
-```csharp
-[Linear] asset Texture wood = "art/wood.png";
-
-frag Lit(Vertex vertex, out Color color)
-{
-    Color surface = wood.Sample(vertex.uv);
-    color = surface * Color(0.5, 0.5, 0.5); // Lighting uses linear values
-}
-```
-
-Keep copied references in `[Linear] Texture`, `[Linear] TextureArray` or `[Linear] Cubemap`
-fields. Sample these by their field or asset name. Read-only GPU helpers can borrow their
-source with an ordinary resource parameter. The mark goes on a glob's list or map too, every
-image marked (`[Linear] asset List<Texture> albedos = "art/albedo/*.png";`, read by element or
-`foreach`), through a local that isn't `mut`, a `?:` or switch whose every side is marked, a
-function's `[Linear] Texture` parameter and a frag's `[Linear] Texture` source. An unmarked
-field, `mut` local or parameter, a return, or the engine's own draw would lose the mark, so the
-compiler refuses those escapes. `[Raw, Linear]` is an error.
-
-A marked Texture field can take a `Grid2<Color>` or an RGBA8 target's `.color`; a marked
-TextureArray field can take a `Grid3<Color>` or a runtime RGBA8 array, and a marked Cubemap
-field can take a runtime RGBA8 cube. Float and single-channel formats have no sRGB form.
-The compiler follows where the target comes from, into a field or a local alike: an
-assignment, a struct's `{ target = RenderTarget(...) }`, and what a function assigns a target
-it's handed as `out` or `mut`, a recursive one too. Every way a field or local is given an
-image counts, so one made two ways has no one format. One C, a built-in or a `virtual`
-function makes has no format the compiler can see, and is an error that names the function.
-A marked read of an image that turns out not to be RGBA8 draws nothing and says so.
-A rendered image is copied for its marked reads when it has been drawn into, not every frame.
-The mark changes only the sampled image: CPU grid cells, `Decode`, the original target
-and `target.Read()` keep their values. It does not convert a frag's output or the screen.
-For a final display pass, tone-map linear light first and use `Math.ToDisplay`; for an
-unmarked input that needs explicit conversion, use `Math.ToLinear`. Both take `float`,
-`float3` and `Color`; Color alpha is preserved.
-
-In Unity, marked images work in either color space. A Linear project uses Unity's sRGB formats; a Gamma
-project, which has none, reads them through a copy decoded to linear light, at twice an RGBA8 image's memory.
-Tide never changes the project's settings.
-
-
 `Sample` reads a [texture](./meshes-and-textures.md#textures) at a `uv`, and gives its color there. A frag samples the textures it can name three ways:
 
 ```csharp
@@ -834,7 +789,7 @@ view Parts(Kit kit)
 - **A filter and a wrap go after the texture they're for**, and are that texture's alone for this draw: above, the wood's normal map is read at its nearest pixels, and its colour and ORM as they say. A texture with nothing after it is read as it says itself, or as the frag's `Sample` says.
 - **A vert takes them too.** Its `Texture` parameters are the draw's as well: one of the same name as a frag's is that one texture, and one of its own comes after all of the frag's. `vert Raise(mut PartVertex vertex, Texture normal, Texture height)` drawn with `Lit` takes `colour, normal, orm, height`. With no frag, the first texture is what the mesh's pixels are drawn with.
 - **A blit gives them before its destination**: `Draw.Blit(source, lut, Draw.window, Grade)` for `frag Grade(Vertex vertex, out Color color, Texture source, Texture lut)`. It takes no filter or wrap; its frag's `Sample` says those.
-- **A [`[Linear]`](#linear-light-color) image isn't one of them**: a draw's textures are read as they're stored, so a `[Linear]` asset or field given to a draw is an error. Keep a material's albedo in a `[Linear]` field of a component or singleton the frag takes, or that a [function it calls is handed](#in-a-function), and give the draw the unmarked normal and ORM maps.
+- **A [`[Linear]`](#linear-light-color) image goes to a `[Linear] Texture` parameter**: `frag Lit(PartVertex vertex, out Color color, [Linear] Texture colour, Texture normal, Texture orm, Look look)` takes the material's marked albedo from the draw beside the unmarked normal and ORM maps. A marked image given to an unmarked parameter is an error, since it would lose its mark, and so is an unmarked one given to a marked parameter (a `Grid2<Color>` goes to either). A `[Linear]` field of a component or singleton the frag takes, or that a [function it calls is handed](#in-a-function), works too.
 - **Each is a texture of the draw's own**, among the 16 it reads, with samplers of its own where its `Sample` leaves the filter or wrap to the texture. A draw that gives fewer or more textures than its frag and vert take is an error that names the ones they take, in order.
 
 `Filter.Trilinear` reads between the texture's smaller copies too, so it's smooth where the texture ends up [smaller than it is](./meshes-and-textures.md#drawn-smaller):
@@ -952,6 +907,51 @@ frag Ground(Corner corner, out Color color, Stage stage)
 - **Local fields go with it.** A frag or vert hands such a function the local fields of the match's component or singleton it reads, as a view hands its own functions. One that holds no texture and no list goes to a function as a value of its match fields, as it did, so a function that reads its local fields is an error there: read the local field in the frag and pass what it holds.
 - **It's still a name, not a value**: a copy of the singleton in a local, `var kept = stage;`, is an error, as it is for one that holds a list. One whose textures are all `local` fields of a match component or singleton is a value of its other fields, as before, in a frag and in a function alike: the copy has none of its textures, and goes nowhere the one it was made of goes. A plain struct carries no texture to the GPU, so a function that samples a struct's field is an error that says to take the component or singleton, or the texture itself; and a texture in a struct the singleton holds, `stage.lamps.shadow`, isn't sampled in a function yet.
 - **It's the GPU's alone**, as any function that samples is: a view that calls `Sunlit` is an error.
+
+### Linear-light color
+
+Mark color images used by lighting with `[Linear]`. Their stored RGB is display-encoded sRGB;
+GPU reads decode it to linear light before filtering, including `SampleGrad` and `SampleLevel`.
+Alpha stays coverage. Leave normal maps, masks and other numeric images unmarked or `[Raw]`.
+
+```csharp
+[Linear] asset Texture wood = "art/wood.png";
+
+frag Lit(Vertex vertex, out Color color)
+{
+    Color surface = wood.Sample(vertex.uv);
+    color = surface * Color(0.5, 0.5, 0.5); // Lighting uses linear values
+}
+```
+
+Keep copied references in `[Linear] Texture`, `[Linear] TextureArray` or `[Linear] Cubemap`
+fields. Sample these by their field or asset name. Read-only GPU helpers can borrow their
+source with an ordinary resource parameter. The mark goes on a glob's list or map too, every
+image marked (`[Linear] asset List<Texture> albedos = "art/albedo/*.png";`, read by element or
+`foreach`), through a local that isn't `mut`, a `?:` or switch whose every side is marked, a
+function's `[Linear] Texture` parameter and a frag's `[Linear] Texture` source. An unmarked
+field, `mut` local or parameter, a return, or the engine's own draw would lose the mark, so the
+compiler refuses those escapes. `[Raw, Linear]` is an error.
+
+A marked Texture field can take a `Grid2<Color>` or an RGBA8 target's `.color`; a marked
+TextureArray field can take a `Grid3<Color>` or a runtime RGBA8 array, and a marked Cubemap
+field can take a runtime RGBA8 cube. Float and single-channel formats have no sRGB form.
+The compiler follows where the target comes from, into a field or a local alike: an
+assignment, a struct's `{ target = RenderTarget(...) }`, and what a function assigns a target
+it's handed as `out` or `mut`, a recursive one too. Every way a field or local is given an
+image counts, so one made two ways has no one format. One C, a built-in or a `virtual`
+function makes has no format the compiler can see, and is an error that names the function.
+A marked read of an image that turns out not to be RGBA8 draws nothing and says so.
+A rendered image is copied for its marked reads when it has been drawn into, not every frame.
+The mark changes only the sampled image: CPU grid cells, `Decode`, the original target
+and `target.Read()` keep their values. It does not convert a frag's output or the screen.
+For a final display pass, tone-map linear light first and use `Math.ToDisplay`; for an
+unmarked input that needs explicit conversion, use `Math.ToLinear`. Both take `float`,
+`float3` and `Color`; Color alpha is preserved.
+
+In Unity, marked images work in either color space. A Linear project uses Unity's sRGB formats; a Gamma
+project, which has none, reads them through a copy decoded to linear light, at twice an RGBA8 image's memory.
+Tide never changes the project's settings.
 
 ### Textures that are numbers
 
@@ -1165,7 +1165,7 @@ The scene below has both. The sky is the asset, drawn on a ball around the camer
 - **The sky is a ball around the eye,** drawn from inside (`Cull.Front`) and with `Depth.None`, so everything else is in front of it. Its frag reads the cube towards each corner's own position.
 - **A reflection is `Math.Reflect`:** the way from the eye to the pixel, bounced off the pixel's normal, is the way the mirror reads.
 - **Six passes a frame is what a live reflection costs.** A cube that only holds what doesn't move is drawn once and kept: its images stay from frame to frame, like any target's.
-- **`Filter.Trilinear` reads a cube's smaller images,** which the renderer makes of what was last drawn into it when a draw reads them. That's what keeps a reflection of something far away from shimmering. There's no choosing the level yet, so a rough surface's blurred reflection isn't there.
+- **`Filter.Trilinear` reads a cube's smaller images,** which the renderer makes of what was last drawn into it when a draw reads them. That's what keeps a reflection of something far away from shimmering. A rough surface's blurred reflection picks a smaller image itself with `cube.SampleLevel(direction, level)`, above.
 
 ## Texture arrays
 
@@ -1806,3 +1806,4 @@ both forms and keep their own setting. Blocks restore what they found; 2D draws 
 The constant counts GPU precision steps (truncated to a whole number), and slope scales pixel-depth slope.
 A floating depth image's step follows its depth precision, rather than a fixed fraction of the range.
 Constants outside ±65536, slopes outside ±16 and nonfinite values become zero. Start with small factors.
+A biased draw is never [occlusion tested](./3d.md#occlusion-culling): it's drawn whole. How the factors count is provisional.

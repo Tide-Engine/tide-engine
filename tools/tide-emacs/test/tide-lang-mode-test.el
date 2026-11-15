@@ -36,14 +36,15 @@
 (ert-deftest tide-lang-highlighting ()
   (with-temp-buffer
     (tide-lang-mode)
-    (insert "component Health { int value; }\n#if DEBUG\nvar alive = true;\n")
+    (insert "component Health { int value; }\n#if DEBUG\nvar alive = true;\ncompute Cull(Fog fog)\n")
     (font-lock-ensure)
     (goto-char (point-min))
     (dolist (item '(("component" . font-lock-keyword-face)
                     ("Health" . font-lock-type-face)
                     ("int" . font-lock-type-face)
                     ("#if" . font-lock-preprocessor-face)
-                    ("true" . font-lock-constant-face)))
+                    ("true" . font-lock-constant-face)
+                    ("compute" . font-lock-keyword-face)))
       (search-forward (car item))
       (should (eq (get-text-property (1- (point)) 'face) (cdr item))))))
 

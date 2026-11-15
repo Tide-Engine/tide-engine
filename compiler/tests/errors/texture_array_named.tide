@@ -1,0 +1,9 @@
+// expect: a TextureArray's arguments aren't named: 'TextureArray(width, height, layers)'
+// expect: an array's layers have one sample a pixel
+scene Main { }
+const int SIDE = 16;
+local singleton Field { TextureArray layers; }
+view Make(mut Field field)
+{
+    field.layers = TextureArray(SIDE, SIDE, 3, samples: 4);
+}

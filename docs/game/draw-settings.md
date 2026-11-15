@@ -34,6 +34,7 @@ view Follow(Player player, with ownership)
 | `Draw.Camera(center, size)`, `Draw.Camera(...)` | `Draw.SetCamera(center, size)`, `Draw.SetCamera(...)` | The camera |
 | `Draw.Screen()` | `Draw.SetScreen()` | The screen's pixels in the camera's place (see [On the screen](./views.md#on-the-screen)) |
 | `Draw.Depth(mode)` | `Draw.SetDepth(mode)` | What 3D meshes do with depth: whether they're hidden behind what's nearer, and whether they hide what's behind them (see [Depth](./3d.md#depth)) |
+| `Draw.DepthBias(constant, slope)` | `Draw.SetDepthBias(constant, slope)` | Pulls 3D draws nearer (negative) or pushes them farther (positive) against what has the same depth, like a decal on a floor (see [Depth bias](./shaders.md#depth-bias)) |
 | `Draw.Cull(side)` | `Draw.SetCull(side)` | Which side of a 3D mesh's triangles isn't drawn: the back, unless this says otherwise (see [Which side draws](./3d.md#which-side-draws)) |
 | `Draw.FrustumCulling(enabled)` | `Draw.SetFrustumCulling(enabled)` | Whether to skip 3D instances wholly outside the camera; enabled by default (see [Frustum culling](./3d.md#frustum-culling)) |
 | `Draw.Occlusion(enabled)` | `Draw.SetOcclusion(enabled)` | Whether to skip instances of 3D lists that what's drawn before them surely hides; off by default (see [Occlusion culling](./3d.md#occlusion-culling)) |
@@ -42,7 +43,7 @@ view Follow(Player player, with ownership)
 | `Draw.LODPixels(pixels)`, `Draw.LODPixels()` | `Draw.SetLODPixels(pixels)`, `Draw.SetLODPixels()` | Allowed estimated error for automatic LOD, in screen pixels; default 1, multiplied by the asset's optional `[LOD(multiplier)]` |
 | `Draw.LODCamera(...)`, `Draw.LODCamera()` | `Draw.SetLODCamera(...)`, `Draw.SetLODCamera()` | The camera those meshes pick their level through, in place of the one they're drawn through; with nothing, their own again |
 
-Every frame starts from the defaults, so a `Set` never outlives its frame, and the GUI and the stats are never drawn with what a game set. A `Set` with no arguments puts the default back early: `Draw.SetTint()`, `Draw.SetStencil()`, `Draw.SetClip()`, `Draw.SetDepth()`, `Draw.SetCull()`, `Draw.SetFrustumCulling()`, `Draw.SetOcclusion()`, `Draw.SetBounds()`, `Draw.SetLOD()`, `Draw.SetLODPixels()`, `Draw.SetLODCamera()`; `Draw.SetCamera()` puts both cameras back, the 2D and the 3D, and `Draw.SetTransform()` both transforms. Bounds and the three for levels of detail have a block form with no arguments too, which does the same around some draws.
+Every frame starts from the defaults, so a `Set` never outlives its frame, and the GUI and the stats are never drawn with what a game set. A `Set` with no arguments puts the default back early: `Draw.SetTint()`, `Draw.SetStencil()`, `Draw.SetClip()`, `Draw.SetDepth()`, `Draw.SetDepthBias()`, `Draw.SetCull()`, `Draw.SetFrustumCulling()`, `Draw.SetOcclusion()`, `Draw.SetBounds()`, `Draw.SetLOD()`, `Draw.SetLODPixels()`, `Draw.SetLODCamera()`; `Draw.SetCamera()` puts both cameras back, the 2D and the 3D, and `Draw.SetTransform()` both transforms. Bounds and the three for levels of detail have a block form with no arguments too, which does the same around some draws.
 
 Writing one form as the other is a compile error that names the right one: `Draw.Blend(Blend.Add);` with no block says to write `Draw.SetBlend`, and `Draw.SetBlend(Blend.Add) { }` says `Draw.Blend`. Your editor offers the rename.
 
@@ -59,7 +60,7 @@ Draw.Tint(Color(1, 1, 1, 0.5))
 Every setting belongs to the destination it's called on. `Draw`'s are the window's, and a [render target](./render-targets.md) has its own, by the same names (`target.Blend(Blend.Add) { ... }`, `target.Clip(rect) { ... }`, `target.SetCamera(...)`, `target.Depth(mode) { ... }`): a blend or a tint set for the window doesn't reach a target's draws, and a target's doesn't reach the window's. Depth and cull are for 3D meshes alone: around 2D draws they change nothing, and that's no error.
 
 ::: info
-What a `Set` with no arguments does, how one setting nests in another, `Draw.Depth`'s name and its modes', `Cull`'s three names and which way round a triangle's front goes, and how `Draw.Stencil` is written, its tests' and operations' names and each of its rules, are provisional: they're how it works today, and may still change.
+What a `Set` with no arguments does, how one setting nests in another, `Draw.Depth`'s name and its modes', `Cull`'s three names and which way round a triangle's front goes, how `Draw.Stencil` is written, its tests' and operations' names and each of its rules, and how `Draw.DepthBias` counts (its constant in the depth image's precision steps, truncated to a whole number, its slope, and the limits past which a factor becomes zero) are provisional: they're how it works today, and may still change.
 :::
 
 ## Several at once
