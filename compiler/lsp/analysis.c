@@ -3089,8 +3089,9 @@ static const char *numeric_read_doc(const type image, const str name)
         return "Reads a mip level as the image's declared numeric type, without alpha conversion, between the two levels "
                "nearest it where no filter is named: 0 is the image itself, each level after it half the size. R8, Rg8, "
                "R16f, Rg16f and Rgba16f have mipmaps; R32f and Rgba32f have none, so level 0, or a level read naming "
-               "Filter.Point or Filter.Bilinear, is their image itself and any other is an error at the draw. An int "
-               "image has no levels: use Sample.";
+               "Filter.Point or Filter.Bilinear, is their image itself and any other is an error at the draw. A level "
+               "written 0 with no filter reads the image itself as Filter.Bilinear does, with no smaller images made. "
+               "An int image has no levels: use Sample.";
     }
     if (str_eq_c(name, "SampleGrad")) {
         return "Reads an R8, Rg8, R16f, Rg16f or Rgba16f image as its declared numeric type with the uv's change a pixel "
