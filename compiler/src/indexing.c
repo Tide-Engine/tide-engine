@@ -40,6 +40,7 @@ typedef struct ictx {
     const stmt *loop;
     bool list_steps;   // A parallel loop over a list: its variable is an index, and its rows are list[i]
     VEC(const expr *) written;  // What the loop changes: places rooted at locals and parameters
+    VEC(const expr *) written_local; // ...and places of which it changes the local fields alone (changes_local_fields_alone)
     VEC(const decl *) world_sets; // Components the loop sets through a World
     bool world_sets_any;          // ...or a call that may set any
     VEC(const stmt *) inner;      // Locals the loop's body declares
@@ -423,6 +424,15 @@ static bool places_overlap(const expr *a, const expr *b)
     return true;
 }
 
+// Whether a place is read through a local field of a match component or singleton: `chunk.faces[i]`.
+static bool through_local_field(const expr *read)
+{
+    for (const expr *e = read; e && (e->kind == E_MEMBER || e->kind == E_INDEX); e = e->object) {
+        if (e->kind == E_MEMBER && e->local_field) return true;
+    }
+    return false;
+}
+
 // Whether the loop changes anything of the variable (a local or a parameter) that `read` reads; `read` NULL: anything of it.
 static bool loop_changes(const ictx *c, const void *variable, const expr *read)
 {
@@ -431,7 +441,28 @@ static bool loop_changes(const ictx *c, const void *variable, const expr *read)
         if (name_target(place_root(target)) != variable) continue;
         if (!read || places_overlap(target, read)) return true;
     }
+    // A component handed on to change its local fields alone changes what's read through them (a loop over a local
+    // field's list), never its match fields
+    for (int i = 0; i < c->written_local.count; i++) {
+        if (name_target(place_root(c->written_local.items[i])) != variable) continue;
+        if (!read || through_local_field(read)) return true;
+    }
     return false;
+}
+
+// Whether a call's `mut` parameter changes the local fields alone of the match component or singleton it's given:
+// one with local fields whose function (a task's among them) writes none of its match fields, itself or through
+// what it hands it to (param.match_write, spread_local_field_use). Local code hands its own to no other (a view
+// can't change the match: check_local_field_calls), and a local task writes those alone. No key or bound is a local
+// field (row_path, invariant_read), so such a call changes nothing a query's loop finds rows by; a loop over a list
+// that's a local field of it is another matter (loop_changes, written_local). C writes what it's handed, and what it
+// writes isn't the compiler's to know: an extern's parameter, and one its function hands on to C itself or through
+// others (param.c_passed, settle_c_lends), changes the whole of it.
+static bool changes_local_fields_alone(const decl *d, const param *q)
+{
+    return q->mode == PARAM_MUT && !q->is_out && (q->type.kind == TY_COMPONENT || q->type.kind == TY_SINGLETON)
+        && q->type.decl && !q->type.decl->is_local && q->type.decl->local_part && !q->match_write
+        && !d->is_extern && !q->c_passed;
 }
 
 static void note_world_sets(ictx *c, const decl *d)
@@ -449,8 +480,15 @@ static void walk_writes_expr(ictx *c, const expr *e)
     if ((e->call == CALL_FUNCTION || e->call == CALL_METHOD) && e->method) {
         const decl *d = e->method;
         for (int i = 0; i < d->params.count && i < e->args.count; i++) {
-            if (d->params.items[i].mode == PARAM_MUT || d->params.items[i].is_out) note_written(c, e->args.items[i]);
-            if (e->args.items[i]->type.kind == TY_WORLD) note_world_sets(c, d);
+            const param *q = &d->params.items[i];
+            const expr *arg = e->args.items[i];
+            if (changes_local_fields_alone(d, q)) {
+                const expr *root = place_root(arg);
+                if (root && name_target(root)) vec_push(c->written_local, arg);
+            } else if (q->mode == PARAM_MUT || q->is_out) {
+                note_written(c, arg);
+            }
+            if (arg->type.kind == TY_WORLD) note_world_sets(c, d);
         }
         if (e->call == CALL_METHOD && d->is_mut_method) note_written(c, e->object);
     }
@@ -1141,7 +1179,8 @@ static bool expr_changes_param(const expr *e, const param *p, const field *f, lo
     if ((e->call == CALL_FUNCTION || e->call == CALL_METHOD) && e->method) {
         const decl *d = e->method;
         for (int i = 0; i < d->params.count && i < e->args.count; i++) {
-            if ((d->params.items[i].mode == PARAM_MUT || d->params.items[i].is_out) && names_param(e->args.items[i], p)) {
+            const param *q = &d->params.items[i];
+            if ((q->mode == PARAM_MUT || q->is_out) && !changes_local_fields_alone(d, q) && names_param(e->args.items[i], p)) {
                 *at = e->at;
                 return true;
             }

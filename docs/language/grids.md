@@ -86,6 +86,16 @@ system Generate(mut Terrain terrain)
 - A function returns a new grid, a copy, or a local of its own. A field takes the same, and a field's grid is the world's: snapshotted, hashed and sent as any field is.
 - A function takes a grid to read, or `mut` to change it where it is. Its writes are the caller's, so a system that passes `terrain.heights` as `mut` writes `Terrain`.
 - A local's grid lasts until the system, view or handler that made it is done, and a lambda can't capture one. A [task](../game/tasks.md) keeps one across its waits as it keeps its lists: a copy of its own, which it reads as it was and changes as its own after the wait, a read's grid and an asset's among them.
+- An async function takes a grid as it takes a list: a copy of the task's own, made where it's called, so what the caller changes after the call isn't the task's, and kept in the task's frame across every wait. It can't be `mut`: a task can't keep the caller's variable while it waits, so to change a field's grid it takes the component or singleton the field is in.
+
+```csharp
+// A chunk's faces, made from its blocks and its neighbour's as they were when the view asked
+async void Remesh(mut Chunk chunk, Grid3<Block> east)
+{
+    var built = await Faces(chunk.blocks, east); // A local worker, which takes its own snapshots
+    chunk.mesh = Mesh(built.vertices, built.indices);
+}
+```
 
 ## Grids as bytes
 

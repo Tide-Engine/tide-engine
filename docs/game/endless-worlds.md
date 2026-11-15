@@ -173,22 +173,50 @@ A chunk's faces are made into a mesh by a `local worker`, off the frame, and kep
 
 ### Faces across a chunk's edges
 
-A worker reads only what it's handed. Given a chunk's own grid, everything past its edge reads as air, so every block on its edge has a face there: two faces between every pair of solid chunks, hidden and drawn all the same. Hand it the blocks along the neighbours' sides too, and those faces aren't made:
+A worker reads only what it's handed. Given a chunk's own grid, everything past its edge reads as air, so every block on its edge has a face there: two faces between every pair of solid chunks, hidden and drawn all the same. Hand it the neighbours' grids too, and those faces aren't made:
 
 ```csharp
-local worker Built Faces(Grid3<Block> blocks, List<Block> east, List<Block> west, List<Block> above,
-                         List<Block> below, List<Block> north, List<Block> south)
+local worker Built Faces(Grid3<Block> blocks, Grid3<Block> east, Grid3<Block> west, Grid3<Block> above,
+                         Grid3<Block> below, Grid3<Block> north, Grid3<Block> south)
 {
     // ...for each block, the one beside it, in this chunk or across its edge
-    var right = x < 15 ? blocks[int3(x + 1, y, z)] : east[256 + z * 16 + y];  // Its neighbour's side at x = 0
+    var right = x < 15 ? blocks[int3(x + 1, y, z)] : east[int3(0, y, z)];
     if (Shows(block, right)) Face(vertices, indices, ...);
-    // ...and the chunk's own sides, for its neighbours' faces
+    // ...and each of the chunk's own sides as one number, for its neighbours
+}
+
+async void Remesh(mut Chunk chunk, Grid3<Block> east, Grid3<Block> west, Grid3<Block> above, Grid3<Block> below,
+                  Grid3<Block> north, Grid3<Block> south)
+{
+    var built = await Faces(chunk.blocks, east, west, above, below, north, south);
+    chunk.mesh = Mesh(built.vertices, built.indices);
+}
+
+// The blocks of the chunk at a place, or no grid's, all air
+Grid3<Block> Near(query (Chunk other) chunks, int3 at, int dimension)
+{
+    indexed foreach (var row in chunks)
+    {
+        if (row.other.at.x != at.x || row.other.at.y != at.y || row.other.at.z != at.z) continue;
+        if (row.other.dimension != dimension) continue;
+        return row.other.blocks.Copy();
+    }
+    return default;
+}
+
+view Chunks(mut Chunk chunk, query (Chunk other) chunks)
+{
+    // ...when its faces are to be made
+    var d = chunk.dimension;
+    chunk.job = Remesh(chunk, Near(chunks, chunk.at + int3(1, 0, 0), d), Near(chunks, chunk.at - int3(1, 0, 0), d),
+                       Near(chunks, chunk.at + int3(0, 1, 0), d), Near(chunks, chunk.at - int3(0, 1, 0), d),
+                       Near(chunks, chunk.at + int3(0, 0, 1), d), Near(chunks, chunk.at - int3(0, 0, 1), d));
 }
 ```
 
-The sides are lists, not grids, because a task can't take a grid. Each chunk's mesh gives back its own six sides, which this machine keeps in a local singleton's map by the chunk's place; the next chunk's faces are made with them. When a chunk's side changes, comes or goes, the neighbour it faces has its faces made again: at once for a block changed at the edge, and once its other neighbours have stopped coming for a chunk that came or went, since a view's worth of chunks comes over many frames and the faces between them are hidden ones. A chunk of sky has sides of air, and its coming changes nobody's faces. In `bench/voxels` this draws fewer than a third of the triangles it did, with the same picture.
+The view finds each neighbour by its place, an indexed loop over the chunks it has, and hands the task the neighbours' grids, which are the task's own copies ([Async and tasks](./tasks.md#what-a-task-keeps)): a neighbour that changes while the faces are made doesn't change them. Handing the task its own chunk as `mut` changes only the chunk's local fields, so the loop is still indexed by the chunks' places. Each mesh gives back its chunk's six sides and its neighbours' sides toward it as it read them, each as one number, kept in a map of this machine's. Its neighbours' meshes have been made from blocks of their own time, so whichever of two neighbours is made last compares the two: a neighbour made from another side of this chunk than this mesh's has its faces made again, and so has this chunk where it read another side of the neighbour than the neighbour's mesh was made from. That holds whichever was begun first, and when a side changes and changes back while one of them is being made. A change at the edge makes them again at once; a chunk that came or went, once its other neighbours have stopped coming, since a view's worth of chunks comes over many frames and the faces between them are hidden ones. Chunks that come together read each other's blocks, and each one's faces are made once. A chunk whose side is all air has no faces its neighbour hides: a chunk of sky has sides of air, its coming changes nobody's faces, and a block built under it changes none of its faces. In `bench/voxels` this draws fewer than a third of the triangles it did, with the same picture.
 
-Two things keep that picture whole. A block dug at a chunk's edge uncovers a face of the neighbour's, which only the neighbour's new mesh has: the chunk keeps its own new mesh aside until the neighbour's is made, and the two show in the same frame, rather than a hole into the neighbour for a frame or two. And a chunk's sides go from the map as its local fields do, in a `local event(Forgotten)` handler, which keeps its place in a local field, as the match's fields are gone by then. `Forgotten` comes whichever way the chunk leaves this machine: hidden from its player, or destroyed, which is the only way on the hosting machine, whose views see the whole match.
+Two things keep that picture whole. A block dug at a chunk's edge uncovers a face of the neighbour's, which only the neighbour's new mesh has: the chunk keeps its own new mesh aside until the neighbour's is made, and the two show in the same frame, rather than a hole into the neighbour for a frame or two. And a chunk that leaves this machine has the faces toward it made again, in a `local event(Forgotten)` handler, which keeps its place in a local field, as the match's fields are gone by then. `Forgotten` comes whichever way the chunk leaves this machine: hidden from its player, or destroyed, which is the only way on the hosting machine, whose views see the whole match.
 
 ### What players built far off
 

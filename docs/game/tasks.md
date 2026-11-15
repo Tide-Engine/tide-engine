@@ -124,6 +124,37 @@ system StartDash(mut Body body, Controls controls)
 
 An async function's `mut` parameters are its components and singletons; it can't keep the caller's other variables while it waits, so it returns what it works out instead. For the same reason it has no `out` parameters: a struct returns several values.
 
+**A grid parameter** is a copy of the task's own, made where it's called, as a list parameter is: a system or a view that changes its grid after starting the task doesn't change the task's, and the task reads its copy where it is after every wait, however many, with no copy made again. The pack's grid is copied whole, so a pack [tide run](../tools/cli.md) loads again while the task waits leaves the task's copy as it was. An async function the task awaits with the grid gets a copy of its own too. A match task's copy is part of the match, in snapshots, hashes and what a joining player gets, like its other grids; a local task's is this machine's. A grid parameter can't be `mut`: to change a field's grid, take the component or singleton it's in.
+
+```csharp
+singleton Field
+{
+    Grid2<int> cells = Grid2(64, 64);
+    bool watching;
+    int changed;
+}
+
+int Differences(Grid2<int> now, Grid2<int> before)
+{
+    mut var count = 0;
+    foreach (var at in now) count += now[at] != before[at] ? 1 : 0;
+    return count;
+}
+
+async void Settle(mut Field field, Grid2<int> before)
+{
+    await Wait.Ticks(30);
+    field.changed = Differences(field.cells, before); // The cells now, against the copy as they were 30 ticks ago
+}
+
+system Watch(mut Field field)
+{
+    if (field.watching) return;
+    field.watching = true;
+    Settle(field, field.cells);
+}
+```
+
 ### Local fields
 
 A local task reads and writes the [local fields](./local-state.md#local-fields) of the match components and singletons it takes, as a view does. They come with the component each time the task goes on, from where this machine keeps the entity's, so the task sees what views wrote while it waited, and what it writes is there for the next frame's views:
@@ -155,6 +186,7 @@ view Chunks(mut Chunk chunk)
 
 - **It's this machine's task.** Using local fields makes an async function local, so a view or a local handler starts it, never a system. `mut` on a match component lets it write the local fields alone: a task that also changes the component's match fields is an error, as it would run in both worlds.
 - **The view and the task share them.** What the view wrote before it started the task, the task reads, and the other way round. They're the entity's own from then on.
+- **Handing it the component changes nothing of the match.** A view that starts the task with its `mut Chunk chunk` changes the chunk's local fields, never its match fields, so a loop in that view over the other chunks that skips them by a match field of its own chunk, like `if (row.other.at.x != chunk.at.x + 1) continue;`, is still an [indexed loop](./systems.md#only-the-rows-that-can-pass), and it can hand the task the neighbour's grid, `Remesh(chunk, row.other.blocks)`, which is the task's own copy. The same goes for a function the view hands it to that writes its local fields alone. A function written in C, or one that hands the component on to C, counts as changing all of it: what C writes isn't the compiler's to know.
 - **It ends with the entity**, once the world this machine draws no longer has it, and the entity's local fields go once neither that world nor the one the server confirmed has it. So a task never writes for an entity that's gone. If the server undoes a destroy this machine predicted, the local fields come back as the task left them, but the task doesn't. That's why the example keeps the task's handle rather than a flag the task clears: `job.isRunning` is false once the task has ended, however it ended, so the view starts another.
 - **Hidden or without the component**, the same: an entity this machine's player can no longer see is gone, with its local fields and its task, and comes back with its defaults; a task that takes a component the entity loses ends at the next frame, whether it was waiting or due to go on, and that component's local fields go. If the component comes back, it comes with new local fields and no task.
 - **Rollback and reloads** leave them as they are: a task that goes on after a correction reads its component as corrected, and its local fields as this machine left them. A task that carries over a hot reload finds them where the new build keeps them.

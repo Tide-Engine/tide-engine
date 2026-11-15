@@ -1,0 +1,24 @@
+// expect: this system changes Chunk.at of its own entity as it goes, which the loop finds rows by
+// A match task that takes the system's chunk as mut and changes its place changes what the loop finds rows by,
+// unlike a local task, which changes the chunk's local fields alone
+component Chunk
+{
+    int3 at;
+    Grid3<int> blocks = Grid3(16, 16, 16);
+    local int seen;
+}
+singleton Probe { int x; }
+async void Move(mut Chunk chunk, Grid3<int> east)
+{
+    chunk.at.y += east[int3(0, 0, 0)];
+    await Wait.Ticks(1);
+}
+system Chunks(mut Chunk chunk, Probe probe, query (Chunk other) chunks)
+{
+    indexed foreach (var row in chunks)
+    {
+        if (row.other.at.x != probe.x) continue;
+        Move(chunk, row.other.blocks);
+    }
+}
+scene Main { }

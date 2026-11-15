@@ -19744,7 +19744,8 @@ static type method_type(const checker *c, const type_ref *r, const loc at, const
                       "code the GPU runs can't");
         } else {
             diag_error(at, "this can't take a grid");
-            diag_note("a function or a method takes one to read its cells, in code the GPU runs");
+            diag_note("a function, a method, a task and a worker can, like 'int Count(Grid2<int> cells)'; C, an operator, "
+                      "Interpolate, an audio declaration and a function that takes an Action can't");
         }
         return T_ERR;
     case TY_ACTION:
@@ -19942,7 +19943,8 @@ static void check_signature(checker *c, decl *m)
             continue;
         }
         const bool world = names_type_as(c, p->type_name, "World") && !find_type(c, p->type_name, p->type_at);
-        c->grid_param = !m->is_extern && !m->is_async && !m->is_operator && !m->is_interpolate && !m->is_audio && !m->takes_action;
+        // A task takes one as a copy of its own, made where it's called and kept in its frame (docs/spec.md, Grids)
+        c->grid_param = !m->is_extern && !m->is_operator && !m->is_interpolate && !m->is_audio && !m->takes_action;
         p->type = world ? (type){TY_WORLD, NULL} : method_type(c, type_ref_or_text(p->type_ref, p->type_name), p->type_qual_at, false);
         const bool layered_role = p->type.kind == TY_TEXTURE_ARRAY || p->type.kind == TY_CUBEMAP;
         if (p->sample_role.len && ((p->type.kind != TY_TEXTURE && p->type.kind != TY_TEXTURE3D && !layered_role) || p->mode != PARAM_READ
@@ -20605,6 +20607,14 @@ static void check_async_decl(decl *fn)
         if (p->type.kind == TY_RECORD) {
             diag_error(p->at, "a task runs between frames, so it can't take the devices");
             diag_note("pass it what it needs of them instead, like 'bool jumped'");
+        } else if (p->mode == PARAM_MUT && p->type.kind == TY_GRID) {
+            // Its mut parameters are components and singletons alone (docs/spec.md, Tasks): a grid it takes is a copy
+            diag_error(p->at, "a task can't keep the caller's grid '" STR_FMT "' while it waits, so it can't change it",
+                       STR_ARG(p->name));
+            diag_note("drop 'mut': the task takes a copy of its own, made where it's called; to change a field's grid, "
+                      "take the component or singleton it's in, as 'mut Chunk chunk', and change 'chunk.blocks'");
+            p->mode = PARAM_READ;
+            p->type = T_ERR; // Said: what the code does with it says nothing more
         } else if (p->mode == PARAM_MUT && p->type.kind != TY_ERROR) {
             diag_error(p->at, "a task can't keep the caller's '" STR_FMT "' while it waits, so it can't change it",
                        STR_ARG(p->name));
@@ -25074,7 +25084,7 @@ static void settle_grid_functions(checker *c)
     VEC(decl *) gpu = {0};
     for (int i = 0; i < c->prog->decls.count; i++) {
         decl *d = c->prog->decls.items[i];
-        if (d->kind == DECL_FUNCTION && !d->is_build && !d->is_worker && !d->is_extern && !d->gpu_only && takes_grid(d))
+        if (d->kind == DECL_FUNCTION && !d->is_build && !d->is_worker && !d->is_async && !d->is_extern && !d->gpu_only && takes_grid(d))
             vec_push(gpu, d);
     }
     for (bool changed = true; changed;) {
@@ -25777,6 +25787,26 @@ static bool type_in_heap(const type t, const int depth)
     return false;
 }
 
+// Which functions' parameters reach C (param.c_passed), through the functions
+// they're handed on to, until nothing more does; then the owners handed to
+// those (decl.c_written). Once the bodies are checked and mark_c_callers has
+// said which functions reach C: the loops' indexes ask it of a call's `mut`
+// parameter (indexing.c's changes_local_fields_alone), and assign_heaps of an
+// owner.
+static void settle_c_lends(const checker *c)
+{
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (int i = 0; i < c->c_lends.count; i++) {
+            const c_lend *l = &c->c_lends.items[i];
+            const bool reaches = l->to->is_extern || (l->into ? l->into->c_passed : l->to->reaches_extern);
+            if (!reaches) continue;
+            if (l->owner) l->owner->c_written = true;
+            else if (!l->from->c_passed) l->from->c_passed = changed = true;
+        }
+    }
+}
+
 // Which heap each owner's text, lists and grids are in (tide/heap.h, A
 // world's heaps): its own, by an id made from its name, for a match
 // component, singleton or event of the game's or a package's. The match's own
@@ -25795,18 +25825,7 @@ static bool type_in_heap(const type t, const int depth)
 static void assign_heaps(checker *c)
 {
     program *prog = c->prog;
-    // Which functions' parameters reach C, through the functions they're
-    // handed on to, until nothing more does; then the owners handed to those
-    for (bool changed = true; changed;) {
-        changed = false;
-        for (int i = 0; i < c->c_lends.count; i++) {
-            const c_lend *l = &c->c_lends.items[i];
-            const bool reaches = l->to->is_extern || (l->into ? l->into->c_passed : l->to->reaches_extern);
-            if (!reaches) continue;
-            if (l->owner) l->owner->c_written = true;
-            else if (!l->from->c_passed) l->from->c_passed = changed = true;
-        }
-    }
+    settle_c_lends(c); // Settled before the loops' indexes; again for what was checked since
     for (int i = 0; i < prog->systems.count; i++) {
         const decl *sys = prog->systems.items[i];
         for (int k = 0; sys->extern_system && k < sys->params.count; k++) {
@@ -27275,6 +27294,7 @@ bool check(program *prog)
     }
     warn_unused_locals(&c); // Once it's known which calls draw and call C
     warn_dropped_values(&c);
+    settle_c_lends(&c);
     plan_loop_indexes(prog);
     collect_device_uses(&c);
     check_workers(&c);

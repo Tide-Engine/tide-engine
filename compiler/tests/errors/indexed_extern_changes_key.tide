@@ -1,0 +1,18 @@
+// expect: this loop can't be indexed: its bound reads 'patch', which the loop changes
+// C a component is handed to as mut can change any of its fields: a component with local fields is no exception,
+// so the loop can't take its own patch's place as a bound the loop doesn't change
+component Patch
+{
+    int3 at;
+    local int seen;
+}
+extern void c_shift(mut Patch patch);
+system Move(mut Patch patch, query (Patch other) patches)
+{
+    indexed foreach (var row in patches)
+    {
+        if (row.other.at.x != patch.at.x + 1) continue;
+        c_shift(patch);
+    }
+}
+scene Main { }

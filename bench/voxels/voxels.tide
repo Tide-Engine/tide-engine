@@ -102,12 +102,13 @@ component Chunk
     local LocalTask job;    // Its faces being made
     local bool blank;       // Its mesh has no faces: a chunk of air, or one buried in stone
     local int triangles;
-    local int begun;        // The frame its faces were begun in, from its neighbours' sides as they were then...
-    local int asked;        // ...and the last frame a neighbour's came, changed or went: made again if that's later
+    local int begun;        // The frame its faces were begun in, from its blocks and its neighbours' as they were then...
+    local int asked;        // ...and the frame faces begun before are to be made again from, for a neighbour's side
     local bool urgent;      // ...and one changed, rather than came or went
-    local int epoch;        // Which of the player's comings into its dimension its own sides are kept for
-    local int[6] planes;    // ...and they, each as one number
+    local int epoch;        // Which of the player's comings into its dimension its faces were last made in
+    local int read;         // ...and last begun in, from what Sight.seen says it read at its sides
     local int3 place;       // ...and where: when it goes, its local fields are all there is of it (Leaving)
+    local int stale;        // Checks in a row that found its faces made from a neighbour's side that changed since
     local Mesh<Vertex3> next;   // Faces made that wait for the neighbours whose faces they changed (Awaits)...
     local bool holding;
     local bool nextBlank;

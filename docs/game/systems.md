@@ -184,7 +184,7 @@ indexed foreach (var b in boids) { ... }
 
 - Something happens before the condition, such as a `Send`. Move the condition first.
 - The value compared with changes inside the loop.
-- The system changes the same field of its own entity, such as `body.position += body.velocity` in a system whose loop finds boids by `position`. The index is kept while the rows it was made from don't change, so read the others as [the tick started](#as-the-tick-started) (`query (previous Body other, with Boid) boids`), or move that change into a system of its own.
+- The system changes the same field of its own entity, such as `body.position += body.velocity` in a system whose loop finds boids by `position`. The index is kept while the rows it was made from don't change, so read the others as [the tick started](#as-the-tick-started) (`query (previous Body other, with Boid) boids`), or move that change into a system of its own. Handing the component as `mut` to a function or a task counts where that changes its match fields; a view handing its own to a [local task](./tasks.md#local-fields) changes only its local fields, which no loop finds rows by. Handing it to C as `mut` (an `extern` function, or one that passes it on to one) counts as changing all of it.
 
 `tidec --schedule` lists every loop that skips rows, and whether an index finds the rest or why not. An index of rows that don't change, like walls, is made once and kept across ticks.
 
