@@ -286,8 +286,10 @@ static void check_world(const tide_world *w)
     TIDE_CHECK(v->handled == 3 + 10); // boxes/7's bytes, and its one key listed
 }
 
-// Sessions are made the same way each time: a host with `files_io`, and a guest without files if `guest`
-static void play(const tide_io *files_io, const int later)
+// A host with `files_io` and a guest without files, over a lossy network, until both have every answer. `later`: the
+// host's files carry its requests out only every `later` frames. `join`: the frame the guest joins at, before which
+// nothing is carried out, so a guest that joins late gets a world whose tasks wait
+static void play(const tide_io *files_io, const int later, const int join)
 {
     tide_loopback *net = tide_loopback_create(3);
     tide_loopback_set_conditions(net, (tide_net_conditions){.latency = 0.02, .jitter = 0.005, .loss = 0.03});
@@ -296,13 +298,19 @@ static void play(const tide_io *files_io, const int later)
     double t = 0.0;
     tide_session_start(host, NULL, t);
     TIDE_CHECK(tide_session_open(host, tide_loopback_endpoint(net, 1)));
-    tide_session_join(guest, tide_loopback_endpoint(net, 2), tide_loopback_address(1), t);
-    for (int frame = 0; frame < 300; frame++) {
+    for (int frame = 0; frame < join + 300; frame++) {
+        if (frame == join) {
+            if (join) { // The host's tasks wait, nothing carried out yet
+                const tide_world *server = tide_session_server_world(host);
+                TIDE_CHECK(server && server->Time.tick > 8 && server->Vault.finished == 0 && posted_count >= 3);
+            }
+            tide_session_join(guest, tide_loopback_endpoint(net, 2), tide_loopback_address(1), t);
+        }
         t += 1.0 / 60.0;
         tide_loopback_set_time(net, t);
         tide_session_update(host, t);
-        tide_session_update(guest, t);
-        if (later && frame % later == later - 1) run_posted();
+        if (frame >= join) tide_session_update(guest, t);
+        if (later && frame >= join && frame % later == later - 1) run_posted();
     }
     TIDE_CHECK(tide_session_status_of(host).client.state == TIDE_SESSION_CONNECTED);
     const tide_session_status joined = tide_session_status_of(guest);
@@ -324,7 +332,7 @@ TIDE_TEST(storage_await_answers_match_tasks_the_same_on_every_machine)
     TIDE_REQUIRE(tide_game_api.stored != NULL && tide_game_api.stored_again != NULL);
     forget_files();
     put_locked();
-    play(&io, 0);
+    play(&io, 0, 0);
     forget_files();
 }
 
@@ -333,7 +341,17 @@ TIDE_TEST(storage_await_answers_carried_out_later_are_the_same_on_every_machine)
 {
     forget_files();
     put_locked();
-    play(&deferred, 5);
+    play(&deferred, 5, 0);
+    TIDE_CHECK(posted_count == 0);
+    forget_files();
+}
+
+// A player who joins while the host's tasks wait gets them in its world, waiting, and has their answers from the frames
+TIDE_TEST(storage_await_a_player_who_joins_while_tasks_wait_has_the_same_world)
+{
+    forget_files();
+    put_locked();
+    play(&deferred, 4, 40);
     TIDE_CHECK(posted_count == 0);
     forget_files();
 }
