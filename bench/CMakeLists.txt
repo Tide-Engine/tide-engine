@@ -41,15 +41,14 @@ add_test(NAME bench_voxels_checked COMMAND bench_voxels_checked --quick --expect
 # Voxels to play: `voxels` in a window, with its views, the mouse and the keys
 if(TIDE_PLATFORM)
     tide_add_game(voxels SOURCES voxels/voxels.tide voxels/play.tide TITLE "Tide voxels" STATS)
-    # Two players walking apart for 45 s, in a run with no window: no machine keeps a chunk's sides once the chunk
-    # has gone from it (play.tide's own check logs it). Its saves go in the build's folder, emptied first
+    # Two players walking apart for 45 s, in a run with no window: chunks go from both machines as they walk, and
+    # the faces beside them are made again (play.tide's Leaving). Its saves go in the build's folder, emptied first
     set(voxels_walk_data "${CMAKE_CURRENT_BINARY_DIR}/voxels_walk")
     add_test(NAME voxels_walk_clean COMMAND "${CMAKE_COMMAND}" -E rm -rf "${voxels_walk_data}")
     set_tests_properties(voxels_walk_clean PROPERTIES FIXTURES_SETUP voxels_walk)
     add_test(NAME voxels_walk COMMAND voxels --players 2 --script "${CMAKE_CURRENT_SOURCE_DIR}/voxels/walk.txt"
              --size 320 180 --data-dir "${voxels_walk_data}")
-    set_tests_properties(voxels_walk PROPERTIES FIXTURES_REQUIRED voxels_walk TIMEOUT 300
-        FAIL_REGULAR_EXPRESSION "sides kept")
+    set_tests_properties(voxels_walk PROPERTIES FIXTURES_REQUIRED voxels_walk TIMEOUT 300)
     tide_gpu_test(voxels_walk)
 endif()
 
