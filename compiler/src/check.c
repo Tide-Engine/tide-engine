@@ -9535,9 +9535,11 @@ static type check_array_target(checker *c, expr *e)
         return T_ERR;
     }
     for (int i = 0; i < e->args.count; i++) {
-        if (e->args.items[i]->name.len) {
-            diag_error(e->args.items[i]->at, "a TextureArray's arguments aren't named: 'TextureArray(width, height, layers)'");
-            if (str_eq_c(e->args.items[i]->name, "samples")) diag_note("an array's layers have one sample a pixel");
+        // (The argument's own name, 'samples: 4', not the name an argument is: a constant given as a size)
+        const str named = arg_name(e, i);
+        if (named.len) {
+            diag_error(e->arg_name_at.items[i], "a TextureArray's arguments aren't named: 'TextureArray(width, height, layers)'");
+            if (str_eq_c(named, "samples")) diag_note("an array's layers have one sample a pixel");
             return T_ERR;
         }
     }

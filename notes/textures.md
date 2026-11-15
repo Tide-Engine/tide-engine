@@ -626,6 +626,10 @@ Vulkan's least `maxImageArrayLayers`).
    camera, clip and settings, depth and stencil of its own). `array.depth` is its `DepthTextureArray`: each layer's depth.
    So shadow cascades are `TextureArray(2048, 2048, 3, 1, Format.Depth)`, each cascade drawn into `cascades.layers[c]`,
    read as `cascades.depth.Compare(uv, c, value)`. `Resize(width, height)` and `Dispose()` as a target's.
+   **Corrected 2026-11-15:** its "arguments aren't named" check read each argument expression's own name, so a
+   constant given as a size (`TextureArray(SIZE, SIZE, 3, 1, Format.Depth)`) was refused as a named argument; it
+   reads the call's argument names now. Pinned by `e2e/texture_arrays.tide` (constants for the side and the layer
+   count) and `errors/texture_array_named.tide` (a real `samples: 4` beside constant sizes).
 4. **Reading one in a frag or a vert:** `array.Sample(uv, layer[, filter][, wrap])`, `array.SampleGrad(uv, dx, dy,
    layer[, filter][, wrap])`, `depthArray.Sample(uv, layer)` and `depthArray.Compare(uv, layer, value)`. `layer` is an
    `int` of any expression, so it can differ from pixel to pixel (a cascade picked by depth, a material by a splat
