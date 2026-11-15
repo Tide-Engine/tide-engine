@@ -1,0 +1,11 @@
+// expect: frag output 1 is Color, but Format.R32i takes int: change the output type or this image's format
+scene Main { }
+void Make(out RenderTarget t) { t = RenderTarget(8, 8, 1, Format.R32i); }
+frag Paint(Vertex vertex, out Color color) { color = Color.red; }
+view V()
+{
+    RenderTarget t;
+    Make(out t);
+    List<Vertex> quad = [Vertex { position = float2(0) }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }];
+    t.Mesh(quad, [0, 1, 2], Paint);
+}

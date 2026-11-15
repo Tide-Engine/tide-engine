@@ -272,7 +272,8 @@ typedef struct attribute {
 // ---------------------------------------------------------------------------
 // Declarations
 
-// The values an image field or an image parameter is given (field.image_assignments, param.image_assignments).
+// The values an image field, parameter or local is given (field.image_assignments, param.image_assignments,
+// stmt.image_assignments).
 typedef VEC(const expr *) image_origins;
 
 typedef struct field {
@@ -1321,7 +1322,8 @@ struct expr {
     bool raw_sampled;      // A [Raw] Texture asset's name as the object of a Sample, which is the one place it goes
     bool role_noted;       // ...and that it's among the role's uses already (check.c, note_role_use): once each
     // An image origin note_image_place made for an `out` or `mut` argument (check.c): what the callee assigns its
-    // parameter, `param` (NULL where that can't be seen: C's, a built-in's, a function value's, an override's)
+    // parameter, `param` (NULL where that can't be seen: C's, a built-in's, a function value's, an override's, with
+    // `method` the function where there is one, for a message)
     bool image_place;
     bool target_colors;    // target.colors: a render target's color images, of which an index reads one (target.colors[1])
                            // ...and cube.faces: a Cubemap's faces, of which an index is one as a RenderTarget (cube.faces[2])
@@ -1523,6 +1525,9 @@ struct stmt {
     // its own, and is unassigned until the call that makes it has run
     bool out_decl;
     bool delayed; // An explicitly typed local declared without an initializer
+    // An image local's origins after its declaration, for format inference: what assignments give it, and the places
+    // the calls it's handed to as `out` or `mut` make (expr.image_place), as a field's (field.image_assignments)
+    image_origins image_assignments;
     bool is_shared; // `shared int[64] sums;`: a kernel's local that its whole group shares (var<workgroup>)
     bool shared_atomic; // ...that atomics are used on: an array<atomic<i32>, N>, each read and write atomic
     loc shared_at;
@@ -2144,6 +2149,17 @@ bool image_role_fits(const expr *given, type want); // An image read as `want`: 
 unsigned shader_numeric_outputs(const shader *sh);
 unsigned shader_output_types(const shader *sh);
 int image_target_format(const expr *image, int color, int depth);
+// Format inference (image_target_format, and the checker's [Linear] sources) follows the places an image can come
+// from, a field's, a function parameter's or a local's origins, each once a query: image_places_begin starts one,
+// and image_place_again says whether `place`'s image `color` has been followed in it already, noting it if not. A
+// place followed again adds no image: a recursive helper handing its parameter back to itself, or two fields
+// assigned from each other, is a cycle with nothing new in it, and a place many paths lead to is read once.
+void image_places_begin(void);
+bool image_place_again(const void *place, int color);
+// The function whose out or mut parameter makes an image no format inference sees into, among the places image
+// `e` can come from (a virtual one, an override, C's; NULL for a built-in's or none), for an error's note.
+const struct decl *image_unseen_maker(const expr *e);
+void note_unseen_image_maker(const expr *e); // ...said as a note, where there's one
 bool image_format_accepts(int format, type value);
 bool field_is_raw(const field *f);
 bool declared_linear(const expr *texture);

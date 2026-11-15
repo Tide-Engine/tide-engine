@@ -3915,14 +3915,29 @@ type param_sample_type(const param *p)
     return (type){str_eq_c(role, "float") ? TY_FLOAT : str_eq_c(role, "float2") ? TY_FLOAT2 : str_eq_c(role, "int") ? TY_INT : TY_FLOAT4, NULL};
 }
 
+// ...following what an image's role follows (declared_role): a local that isn't mut keeps its initializer's, and a
+// choice its arms' (a choice of two roles is an error of its own, check.c's note_role_use, so its first arm says).
+static type image_type_of(const expr *image, const int depth)
+{
+    if (!image || depth > 16 || declared_linear(image)) return (type){TY_COLOR, NULL};
+    if (image->bind == BIND_PARAM && image->param && image->param->sample_role.len && !image->image_place)
+        return param_sample_type(image->param);
+    // A Grid2 of numbers is read as its cells are (Grid2<float2> as float2s...), wherever it's read as a texture
+    const type numbers = type_number_grid_role(image->type);
+    if (numbers.kind != TY_ERROR) return numbers;
+    if (image->kind == E_NAME && image->bind == BIND_LOCAL && image->local) {
+        const stmt *local = image->local;
+        const bool kept = local->kind == S_VAR && !local->is_mut && !local->assigned && !local->delayed && !local->out_decl;
+        return kept ? image_type_of(local->value, depth + 1) : (type){TY_COLOR, NULL};
+    }
+    if (image->kind == E_CONDITIONAL) return image_type_of(image->lhs, depth + 1);
+    if (image->kind == E_SWITCH) return image->args.count ? image_type_of(image->args.items[0], depth + 1) : (type){TY_COLOR, NULL};
+    return raw_sample_type(image->field);
+}
+
 type declared_image_type(const expr *image)
 {
-    if (declared_linear(image)) return (type){TY_COLOR, NULL};
-    if (image && image->bind == BIND_PARAM && image->param && image->param->sample_role.len) return param_sample_type(image->param);
-    // A Grid2 of numbers is read as its cells are (Grid2<float2> as float2s...), wherever it's read as a texture
-    const type numbers = image ? type_number_grid_role(image->type) : (type){TY_ERROR, NULL};
-    if (numbers.kind != TY_ERROR) return numbers;
-    return raw_sample_type(image ? image->field : NULL);
+    return image_type_of(image, 0);
 }
 
 void declared_sampling(const expr *texture, int *filter, int *wrap)
@@ -7915,6 +7930,7 @@ static bool check_image_sources(program *prog, const shader *sh, const expr *cal
         const type value = raw_sample_type(t->field);
         if (format == -1 && value.kind != TY_COLOR) {
             diag_error(call->at, "this numeric image's format isn't fixed by its constructor assignments: assign one fixed Format to this field, or use separate fields for different formats");
+            note_unseen_image_maker(&source);
             return false;
         }
         if (format == -6 && value.kind != TY_COLOR && value.kind != TY_FLOAT) {

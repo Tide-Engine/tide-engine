@@ -1,0 +1,5 @@
+// expect: clear value 1 is Color, but Format.R32i takes int: give each image a clear value of its type, in order
+scene Main { }
+local singleton Images { RenderTarget target; }
+void Make(mut RenderTarget t) { t = RenderTarget(8, 8, 1, Format.R32i); }
+view V(mut Images images) { Make(images.target); images.target.Clear(Color.red); }

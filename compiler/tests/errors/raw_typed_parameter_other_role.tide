@@ -1,0 +1,6 @@
+// expect: 'Keep' takes a [Raw(int)] Texture for 't', and this one is [Raw(float)]
+// expect: each [Raw(T)] reads the image as its own numbers
+scene Main { }
+local singleton Art { [Raw(float)] Texture heights; [Raw(int)] Texture ids; }
+void Keep(mut Art art, [Raw(int)] Texture t) { art.ids = t; }
+view Show(mut Art art) { Keep(art, art.heights); }

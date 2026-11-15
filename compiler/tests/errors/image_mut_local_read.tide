@@ -1,0 +1,9 @@
+// expect: Read<float> gives a Grid2<float> of the image's own numbers, and this target's format for image 0 isn't fixed
+scene Main { }
+void Remake(mut RenderTarget t) { t = RenderTarget(8, 8, 1, Format.R32i); }
+async void Read()
+{
+    mut RenderTarget t = RenderTarget(8, 8, 1, Format.R32f);
+    Remake(t);
+    var pixels = await t.Read<float>();
+}

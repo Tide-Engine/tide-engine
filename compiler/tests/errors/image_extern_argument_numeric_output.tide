@@ -1,4 +1,5 @@
 // expect: this numeric frag's destination format isn't fixed by its constructor assignments
+// expect: 'c_make' makes it in C, where the compiler can't see its format
 scene Main { }
 local singleton Images { RenderTarget target; }
 extern void c_make(out RenderTarget t);

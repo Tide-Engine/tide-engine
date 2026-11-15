@@ -5015,6 +5015,29 @@ TIDE_TEST(lsp_shader_this)
 }
 
 // What a frag and a vert write, `out`: the old spelling as a change, unwritten and read-first colors, hovers, and unwritten structs.
+// A frag's hover lists the int fields it reads of its vertex and of what its vert wrote for it, which the corners pass
+// on flat, as it does the floats.
+TIDE_TEST(lsp_shader_int_reads)
+{
+    start();
+    open_document("scene Main { }\n"
+                  "struct IdCorner { float2 position; int id; float2 uv; }\n"
+                  "struct Handed { float shade; int band; }\n"
+                  "local singleton Models { List<IdCorner> quad; List<int> faces; }\n"
+                  "vert Pass(mut IdCorner corner, out Handed handed)\n{\n"
+                  "    handed.shade = corner.uv.x;\n    handed.band = corner.id + 1;\n}\n"
+                  "frag Ids(IdCorner corner, Handed handed, out Color color)\n{\n"
+                  "    color = Color(float(corner.id + handed.band), handed.shade, 0, 1);\n}\n"
+                  "view Show(Models models)\n{\n    Draw.Mesh(models.quad, models.faces, Pass, Ids);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *frag = hover_at(9, 6);
+    TIDE_CHECK(has(frag, "frag Ids(IdCorner corner, Handed handed, out Color color)"));
+    TIDE_CHECK(has(frag, "- of its vertex, floats blended across the triangle and integral fields flat from its first corner: `id`"));
+    TIDE_CHECK(has(frag, "integral fields flat from its first corner: `Handed.shade`, `Handed.band`"));
+    TIDE_CHECK(has(hover_at(9, 34), "which the corners pass on: `shade`, `band`."));
+    TIDE_CHECK(has(hover_at(9, 19), "`id`"));
+}
+
 TIDE_TEST(lsp_shader_outputs)
 {
     start();

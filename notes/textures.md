@@ -1,3 +1,55 @@
+# Review of the format and role work: locals, cycles, choices, typed roles (2026-11-15)
+
+A review of 2a9255e33, f5bd8b149 and 9ef197989 reported twelve faults; each was probed with tidec first and all were
+real. What follows replaces the two sections below where they differ.
+
+- **Each place is followed once a query** (`image_places_begin`/`image_place_again`, shader_kernel.inc, declared in
+  ast.h). Every walker (`origins_target_format`, `origins_storage_format`, `numeric_origins`, check.c's
+  `linear_origins_format`) asks before following a field's, a parameter's or a local's origins, keyed by the place
+  and the image index; one followed already adds nothing (-3, 0 or false). A query starts at depth 0 (every caller
+  passes 0). `note_image_place` records a place when the argument is the callee's own parameter, so a recursive
+  helper's parameter had itself among its origins: the depth limit made the target unknown (an int frag into an
+  R32i field handed to `void Touch(mut RenderTarget t, int n)` was "isn't fixed"), and `numeric_image_origin`
+  followed every path, 43 s for two self-calls and no end for three. Fields assigned from each other (a ping-pong
+  pair swapped through a local) were the same cycle. The visited list is a static vector reused each query: the
+  checker runs on one thread.
+- **A local is followed as a field is.** `stmt.image_assignments` holds what `check_assign` gives an image local
+  (`note_local_origin`) and the places `note_image_place` now makes for a local argument; a local's origins are its
+  initializer and those, whether or not it's `assigned`. It was the initializer alone where the local wasn't
+  assigned and unknown where it was, so `mut RenderTarget t = RenderTarget(8, 8, 1); Remake(t);` (R32i) took a Color
+  frag (skipped as it ran) and refused an int one as Rgba8's, `Make(out var t)` had no format at all, and a kernel's
+  store into a volume re-made that way declared rgba16float and dropped every write. Union semantics, as a field's:
+  that local now has no one format, which a Color draw that may reach numbers, a kernel store, `Read<T>` and
+  `[Linear]` refuse; `RenderTarget t; Make(out t);` and `t = RenderTarget(...)` after a declaration are known.
+- **An unseen maker is named.** A place whose callee is C, virtual or an override keeps that decl in its `method`;
+  `note_unseen_image_maker` (after every "isn't fixed" error, and the [Linear] one) says which function and why.
+  A Color frag's error into a target that may hold numbers says that, not "this numeric frag".
+- **Choices of images.** `check_conditional` and `check_switch_value` hold a grid of numbers on any side to the
+  `[Raw(T)]` the choice goes to (`number_grid_value` handed on to each side, nested too), where a Texture and a
+  `Grid2<float2>` side typed the choice Texture and the grid went in unchecked (drawn as colors; a `Grid2<int>` got
+  the fallback). `note_role_use` returns T_ERR for a mixed choice, so it's one error: `raw_and_linear` names a
+  `[Raw]` side and a `[Linear]` one (three errors before), `raw_types_mixed` two typed sides of different T.
+- **Typed roles through locals and parameters.** `declared_image_type` (shader.c, `image_type_of`) follows a local
+  that isn't mut and a choice's first arm, as `declared_role` does, so `Texture t = art.i;` is a `[Raw(int)]` frag
+  source. A CPU function's `[Raw(T)]` parameter takes a `[Raw(T)]` image of its T (`check_raw_uses`, the error
+  names both roles otherwise), and `check_role_argument` refuses a typed image for a bare `[Raw]` parameter, which
+  would have read its numbers as colors.
+- **Several textures to a frag** (merged with b671bed0b): `check_raw_uses`, `check_linear_uses`, `check_blit`,
+  `check_mesh_draw` and `gen_shader_textures` hold each given texture to the frag parameter that reads it
+  (`given_param`, `shader_given_texture`), not to every marked parameter; a vert's and a frag's Texture of one name
+  with the frag's `[Raw]` or `[Linear]` is the two-roles error.
+- **Tests:** errors `image_recursive_helper_output`, `image_recursive_helper_paths` (60 s timeout: the unfixed tidec
+  never ends), `image_fields_cycle_output`, `image_out_local_output`, `image_out_var_output`,
+  `image_assigned_local_output`, `image_out_local_clear`, `image_mut_local_output`, `_kernel`, `_read`,
+  `linear_mut_local_target`, `image_mut_argument_output` (now its only origin is the helper's),
+  `_numeric_output`, `_clear`, `_read`, `image_virtual_argument_output`, `image_extern_argument_numeric_output`
+  (its note), `number_grid_choice_texture`, `_return`, `number_grid_switch_texture`, `raw_parameter_typed_argument`,
+  `raw_typed_parameter_other_role`, `raw_linear_choice_mixed`, `raw_typed_choice_mixed`,
+  `texture_shared_marked_role`; `tidec_e2e_marked_globs` pins each draw's capture (RawCopy's raw, LitCopy's
+  linear, a frag's marked and plain textures each its own) and a typed image through a local and a CPU parameter;
+  `platform/tests/images.tide` Mismatched fills every cell of its float grid, so the int read's probe lands on
+  bits an unguarded read would see.
+
 # [Raw] and [Linear] beyond one declaration (2026-11-14)
 
 From an audit: the marks went on one asset or a field and nowhere else, so a folder of normal maps was 40

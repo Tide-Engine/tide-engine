@@ -189,7 +189,9 @@ Unity's OpenGL Core last-corner exception are the handed ints' path. Editor hove
 struct's int fields among what the corners pass on (`put_reads` no longer drops them) and says floats blend while
 integral fields are flat. Tests: golden `shaders/vertex_int` (through spirv-val and fxc), `errors/gpu_frag_int_field`
 (now the 15-value limit with ints counted), pass 29 of `platform/tests/shaders.tide` (three first corners read
-directly, 16777217 and -2147483647 exact), `lsp_test`.
+directly, 16777217 and -2147483647 exact), `lsp_test`'s `lsp_shader_int_reads` (2026-11-15, after a review found
+no LSP test read an int field: a vertex's `id` and a handed struct's `band` listed in the frag's and the
+parameter's hovers).
 
 ## A kernel's typed read of the image it writes (2026-11-14)
 

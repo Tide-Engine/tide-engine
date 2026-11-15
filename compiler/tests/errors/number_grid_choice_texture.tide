@@ -1,0 +1,5 @@
+// expect: a Grid2<float2> is a Texture only where a [Raw(float2)] Texture is wanted, which reads its numbers as they are
+scene Main { }
+local singleton Art { Grid2<float2> flow = Grid2(4, 4); Texture tex; bool flag; }
+// A choice of a Texture and a grid of numbers is a Texture: the grid is one only where a [Raw(float2)] takes it
+view Show(mut Art art) { art.tex = art.flag ? art.flow : art.tex; }

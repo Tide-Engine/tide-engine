@@ -1198,7 +1198,7 @@ static void check_shared_names(const checker *c, const decl_kind kind)
 
 static type check_expr(checker *c, expr *e);
 static type check_expr_any(checker *c, expr *e);
-static void note_role_use(checker *c, expr *e, type t);
+static type note_role_use(checker *c, expr *e, type t);
 static bool same_place(const expr *a, const expr *b);
 static bool gpu_refuses(const checker *c, loc at, const char *what, const char *instead);
 static type check_snap(checker *c, expr *e, decl *singleton);
@@ -2868,6 +2868,14 @@ static const char *raw_kind_name(const type t)
     return t.kind == TY_TEXTURE3D ? "Texture3D" : t.kind == TY_TEXTURE_ARRAY ? "TextureArray" : t.kind == TY_CUBEMAP ? "Cubemap" : "Texture";
 }
 
+// A [Raw] image's role as written: "[Raw]", or a typed one's "[Raw(float2)]" (declared_image_type).
+static const char *raw_role_name(const expr *e)
+{
+    const type t = declared_image_type(e);
+    return t.kind == TY_FLOAT ? "[Raw(float)]" : t.kind == TY_FLOAT2 ? "[Raw(float2)]" : t.kind == TY_FLOAT4 ? "[Raw(float4)]"
+         : t.kind == TY_INT ? "[Raw(int)]" : "[Raw]";
+}
+
 static void raw_note(void)
 {
     diag_note("read it in a frag or a vert, by its name: 'color = masks.Sample(vertex.uv);' gives its numbers as they are. "
@@ -2875,7 +2883,8 @@ static void raw_note(void)
               "declare that one without [Raw]");
     diag_note("keep numeric images in '[Raw] Texture', '[Raw] TextureArray' or '[Raw] Cubemap' fields; they also accept [Raw] "
               "grids of colors and other [Raw] fields of their type. A local that isn't mut keeps the role of what it's "
-              "given, a function takes one as a '[Raw] Texture' parameter, and a frag as a '[Raw] Texture' source");
+              "given, a function takes one as a '[Raw] Texture' parameter (a [Raw(T)] one as a '[Raw(T)] Texture'), and a "
+              "frag as a '[Raw] Texture' source");
 }
 
 // A [Raw] grid where a Texture goes: false, and said.
@@ -2963,6 +2972,14 @@ static void check_role_argument(const call_site *site, const param *p, expr *arg
                                    : arg->kind == E_NAME && arg->bind == BIND_PARAM && arg->param
                                      && (raw ? arg->param->raw_role : arg->param->linear_role))
                                 : raw ? declared_raw(arg) : declared_linear(arg);
+    // A [Raw(T)] image reads as other numbers than a [Raw] parameter's colors: its role would change there
+    if (has && raw && !collection && declared_image_type(arg).kind != TY_COLOR) {
+        diag_error(arg->at, "'" STR_FMT "' takes a [Raw] %s for '" STR_FMT "', and this one is %s", STR_ARG(site->to->name),
+                   type_name(p->type), STR_ARG(p->name), raw_role_name(arg));
+        diag_note("a role never changes along the way: take it as a '%s %s' parameter", raw_role_name(arg), type_name(p->type));
+        arg->raw_sampled = true;
+        return;
+    }
     if (has) {
         arg->raw_sampled = true;
         return;
@@ -3015,8 +3032,19 @@ static void check_raw_uses(const checker *c)
                 continue;
             }
             if (!raw_kind(p->type) || !declared_raw(arg)) continue;
-            if (gpu && p->mode == PARAM_READ && !p->is_out) arg->raw_sampled = true;
-            else refuse_raw_grid(arg);
+            // A [Raw(T)] parameter, the CPU's too, keeps a [Raw(T)] image of its T, as it does a grid of those numbers
+            const bool typed = p->sample_role.len && p->type.kind == TY_TEXTURE && p->mode == PARAM_READ && !p->is_out;
+            if (typed && !gpu && !image_role_fits(arg, param_sample_type(p))) {
+                diag_error(arg->at, "'" STR_FMT "' takes a [Raw(" STR_FMT ")] Texture for '" STR_FMT "', and this one is %s",
+                           STR_ARG(site->to->name), STR_ARG(p->sample_role), STR_ARG(p->name), raw_role_name(arg));
+                diag_note("each [Raw(T)] reads the image as its own numbers: pass a [Raw(" STR_FMT ")] image, or change the "
+                          "parameter's role to the image's", STR_ARG(p->sample_role));
+                arg->raw_sampled = true;
+            } else if ((gpu || typed) && p->mode == PARAM_READ && !p->is_out) {
+                arg->raw_sampled = true;
+            } else {
+                refuse_raw_grid(arg);
+            }
         }
     }
     for (int i = 0; i < c->raw_uses.count; i++) {
@@ -3064,7 +3092,15 @@ static void note_param_origin(const param *to, const expr *value)
     vec_push(p->image_assignments, value);
 }
 
-// An image field (or a function's image parameter, handed on) that a call makes ('out') or may change ('mut'): it
+// ...and where an image local does, after its declaration (its initializer is its first): what a later read of it
+// can hold.
+static void note_local_origin(stmt *to, const expr *value)
+{
+    if (!to || to->kind != S_VAR || !image_kind(to->type)) return;
+    vec_push(to->image_assignments, value);
+}
+
+// An image field, local or function parameter (one handed on) that a call makes ('out') or may change ('mut'): it
 // then holds whatever the callee assigns its parameter, an origin of its own (expr.image_place) that format
 // inference follows into the callee's assignments. Where the callee's body can't be seen (`callee` NULL: a
 // built-in's out, C's, a virtual function's, which an override may replace), the place has no known format.
@@ -3073,7 +3109,9 @@ static void note_image_place(const expr *arg, const decl *callee, const int inde
     if (!image_kind(arg->type)) return;
     image_origins *origins = arg->field && image_kind(arg->field->type) ? &((field *)(uintptr_t)arg->field)->image_assignments
                            : arg->kind == E_NAME && arg->bind == BIND_PARAM && arg->param && arg->param->function_param
-                               && image_kind(arg->param->type) ? &arg->param->image_assignments : NULL;
+                               && image_kind(arg->param->type) ? &arg->param->image_assignments
+                           : arg->kind == E_NAME && arg->bind == BIND_LOCAL && arg->local && arg->local->kind == S_VAR
+                               ? &arg->local->image_assignments : NULL;
     if (!origins) return;
     const bool seen = callee && !callee->is_extern && !callee->is_virtual && !callee->is_override && index >= 0
                    && index < callee->params.count;
@@ -3082,6 +3120,7 @@ static void note_image_place(const expr *arg, const decl *callee, const int inde
     place->bind = BIND_PARAM;
     place->image_place = true;
     place->param = seen ? &callee->params.items[index] : NULL;
+    place->method = seen ? NULL : (decl *)(uintptr_t)callee; // Which one can't be seen into, for a message
     place->type = arg->type;
     place->at = arg->at;
     vec_push(*origins, place);
@@ -3090,17 +3129,29 @@ static void note_image_place(const expr *arg, const decl *callee, const int inde
 // Sampling copies admit RGBA8 storage only. Check every assignment, including later
 // ones, so changing a target to floating-point storage cannot evade validation.
 // Zero is compatible (including no image), one incompatible, minus one unknown.
+static int linear_source_format(const program *prog, const expr *e, int color, int depth, const char **reason);
+
+// ...of what a place (a field, a parameter, a local) can hold: its first value, `first`, and its other origins. A
+// place followed already in this query adds nothing (image_place_again).
+static int linear_origins_format(const program *prog, const void *place, const expr *first, const image_origins *origins,
+                                 const int color, const int depth, const char **reason)
+{
+    if (image_place_again(place, color)) return 0;
+    for (int i = -1; i < origins->count; i++) {
+        const int got = linear_source_format(prog, i < 0 ? first : origins->items[i], color, depth + 1, reason);
+        if (got) return got;
+    }
+    return 0;
+}
+
 static int linear_source_format(const program *prog, const expr *e, const int color, const int depth, const char **reason)
 {
+    if (depth == 0) image_places_begin();
     if (!e || e->kind == E_DEFAULT) return 0;
     if (depth > 32) return -1;
     if (e->image_place) { // What the callee assigns its parameter (note_image_place)
         if (!e->param) return -1;
-        for (int i = 0; i < e->param->image_assignments.count; i++) {
-            const int got = linear_source_format(prog, e->param->image_assignments.items[i], color, depth + 1, reason);
-            if (got) return got;
-        }
-        return 0;
+        return linear_origins_format(prog, e->param, NULL, &e->param->image_assignments, color, depth, reason);
     }
     if (declared_linear(e) || e->bind == BIND_ASSET) return 0;
     if (e->type.kind == TY_GRID && e->type.decl && e->type.decl->fields.count) {
@@ -3108,8 +3159,10 @@ static int linear_source_format(const program *prog, const expr *e, const int co
         *reason = "single-channel grid images";
         return 1;
     }
-    if (e->kind == E_NAME && e->bind == BIND_LOCAL && e->local && !e->local->assigned)
-        return linear_source_format(prog, e->local->value, color, depth + 1, reason);
+    if (e->kind == E_NAME && e->bind == BIND_LOCAL && e->local) { // Its initializer, and what it's given after
+        if (e->local->kind != S_VAR) return -1;
+        return linear_origins_format(prog, e->local, e->local->value, &e->local->image_assignments, color, depth, reason);
+    }
     if (e->kind == E_CONDITIONAL) {
         const int a = linear_source_format(prog, e->lhs, color, depth + 1, reason);
         return a ? a : linear_source_format(prog, e->rhs, color, depth + 1, reason);
@@ -3122,15 +3175,10 @@ static int linear_source_format(const program *prog, const expr *e, const int co
         return linear_source_format(prog, e->object->object, (int)index, depth + 1, reason);
     }
     if (e->field) {
-        const field *f = e->field;
         // Every image a field can hold is one of its recorded origins (note_image_origin), and a place a call makes
         // or changes holds what the callee assigns its parameter (note_image_place)
-        for (int i = -1; i < f->image_assignments.count; i++) {
-            const expr *origin = i < 0 ? f->default_value : f->image_assignments.items[i];
-            const int got = linear_source_format(prog, origin, color, depth + 1, reason);
-            if (got) return got;
-        }
-        return 0;
+        return linear_origins_format(prog, e->field, e->field->default_value, &e->field->image_assignments, color, depth,
+                                     reason);
     }
     if (e->call == CALL_BUILTIN && e->resource_operation && e->c_callee
         && (e->type.kind == TY_RENDER_TARGET || e->type.kind == TY_CUBEMAP || e->type.kind == TY_TEXTURE_ARRAY)) {
@@ -3164,6 +3212,7 @@ static void check_linear_uses(const checker *c)
             diag_note("assign a Format.Rgba8 image made with its constructor to its field, there or in a function it's handed "
                       "to as 'out' or 'mut'; an image from C, a list, a function's result or another parameter has no format "
                       "the compiler can see. Keep images of different formats in separate fields");
+            note_unseen_image_maker(e);
         }
     }
     for (int i = 0; i < c->calls.count; i++) {
@@ -3268,8 +3317,7 @@ static type check_expr_want_any(checker *c, expr *e, const type stored, const bo
     const type want = read_type(stored); // A field declared T? takes what a T? does
     if (e->kind == E_SWITCH && !checked) {
         const type t = check_switch_value(c, e, read_type(want));
-        note_role_use(c, e, t); // A switch of images of one role has it (declared_role)
-        return t;
+        return note_role_use(c, e, t); // A switch of images of one role has it (declared_role)
     }
     // As in C#, `default` of a T? is nothing.
     if (want.kind == TY_OPTIONAL && (e->kind == E_NULL || e->kind == E_DEFAULT)) {
@@ -12685,12 +12733,17 @@ static type check_switch_value(checker *c, expr *e, type want)
     }
     c->branch_depth++;
     const bool contextual = want.kind != TY_ERROR;
+    // The value of a typed [Raw(T)] Texture: so is each arm, which a grid of the numbers T reads can be
+    const expr *grid_value = c->number_grid_value;
+    const bool typed = grid_value == e;
     // Work out the common type before giving it to default/null/list arms.
     for (int i = 0; i < e->args.count; i++) {
         expr *arm = e->args.items[i];
         if (!contextual && (arm->kind == E_DEFAULT || arm->kind == E_NULL || arm->kind == E_LIST || arm->enum_shorthand)) continue;
         push_scope(c);
+        if (typed) c->number_grid_value = arm;
         const type t = contextual ? check_expr_want(c, arm, want) : check_expr_any(c, arm);
+        c->number_grid_value = grid_value;
         pop_scope(c);
         if (t.kind == TY_VOID) {
             diag_error(arm->at, "a switch expression's arm must produce a value");
@@ -12703,10 +12756,16 @@ static type check_switch_value(checker *c, expr *e, type want)
             else diag_error(arm->at, "switch expression arms must have compatible types: %s and %s", type_name(want), type_name(t));
         }
     }
+    bool grids_ok = true;
     if (!contextual) {
         for (int i = 0; i < e->args.count; i++) {
             expr *arm = e->args.items[i];
-            if (arm->kind != E_DEFAULT && arm->kind != E_NULL && arm->kind != E_LIST && !arm->enum_shorthand) continue;
+            if (arm->kind != E_DEFAULT && arm->kind != E_NULL && arm->kind != E_LIST && !arm->enum_shorthand) {
+                // A grid of numbers among Textures is one only where a [Raw(T)] of its T takes the switch (check_conditional)
+                if (want.kind == TY_TEXTURE)
+                    grids_ok &= refuse_number_grid(arm, arm->type, typed ? c->number_grid_role : (type){TY_ERROR, NULL});
+                continue;
+            }
             push_scope(c);
             const type t = check_expr_want(c, arm, want);
             pop_scope(c);
@@ -12714,7 +12773,7 @@ static type check_switch_value(checker *c, expr *e, type want)
         }
     }
     c->branch_depth--;
-    return e->type = switchable && fallback ? want : T_ERR;
+    return e->type = switchable && fallback && grids_ok ? want : T_ERR;
 }
 
 static type check_conditional(checker *c, expr *e)
@@ -12725,6 +12784,10 @@ static type check_conditional(checker *c, expr *e)
         if (type_is_numeric(cond) && type_dim(cond) == 1) diag_note("compare it, for example 'x != 0 ? a : b'");
     }
     c->branch_depth++;
+    // The value of a typed [Raw(T)] Texture (check_field_value, a typed parameter's argument): so is each side, which a
+    // grid of the numbers T reads can be (refuse_number_grid)
+    const expr *grid_value = c->number_grid_value;
+    const bool typed = grid_value == e;
     type a;
     type b;
     if (e->type_decl) {
@@ -12733,16 +12796,29 @@ static type check_conditional(checker *c, expr *e)
         b = check_expr_want(c, e->rhs, want);
     } else if ((e->lhs->kind == E_DEFAULT || e->lhs->enum_shorthand)
                && e->rhs->kind != E_DEFAULT && !e->rhs->enum_shorthand) {
+        if (typed) c->number_grid_value = e->rhs;
         b = check_expr(c, e->rhs);
+        if (typed) c->number_grid_value = e->lhs;
         a = check_expr_want(c, e->lhs, b);
     } else {
+        if (typed) c->number_grid_value = e->lhs;
         a = check_expr(c, e->lhs);
+        if (typed) c->number_grid_value = e->rhs;
         b = e->rhs->kind == E_DEFAULT || e->rhs->enum_shorthand ? check_expr_want(c, e->rhs, a) : check_expr(c, e->rhs);
     }
+    c->number_grid_value = grid_value;
     c->branch_depth--;
     const bool a_ok = check_side(e->lhs, a);
     const bool b_ok = check_side(e->rhs, b);
     if (!a_ok || !b_ok || cond.kind != TY_BOOL) return T_ERR;
+    // A Texture on one side and a grid of numbers on the other is a Texture, which the grid is only where a [Raw(T)]
+    // of its T takes the choice
+    const bool texture = (a.kind == TY_TEXTURE && type_assignable(a, b)) || (b.kind == TY_TEXTURE && type_assignable(b, a));
+    if (texture) {
+        const type role = typed ? c->number_grid_role : (type){TY_ERROR, NULL};
+        const bool lhs_ok = refuse_number_grid(e->lhs, a, role);
+        if (!refuse_number_grid(e->rhs, b, role) || !lhs_ok) return T_ERR;
+    }
     if (type_assignable(a, b)) return a;
     if (type_assignable(b, a)) return b;
     diag_error(e->at, "the two sides of '?:' have different types: %s and %s", type_name(a), type_name(b));
@@ -14355,22 +14431,68 @@ static bool mixed_roles(expr *e, const bool raw)
     return true;
 }
 
+// ...and one whose arms are [Raw] on some and [Linear] on others: one error naming both, where each role alone would
+// be another. True where it was said.
+static bool raw_and_linear(expr *e)
+{
+    expr *const arms[2] = {e->lhs, e->rhs};
+    const int count = e->kind == E_CONDITIONAL ? 2 : e->args.count;
+    int raw = 0, linear = 0;
+    for (int i = 0; i < count; i++) {
+        const expr *arm = e->kind == E_CONDITIONAL ? arms[i] : e->args.items[i];
+        raw += declared_raw(arm);
+        linear += declared_linear(arm);
+    }
+    if (!raw || !linear) return false;
+    diag_error(e->at, "this %s picks between images of different roles, [Raw] on some and [Linear] on others, and a value "
+               "has one role", e->kind == E_CONDITIONAL ? "?:" : "switch");
+    diag_note("[Raw] reads numbers as they're stored and [Linear] decodes sRGB colors: pick with if/else and assign each "
+              "side where its role goes");
+    for (int i = 0; i < count; i++) (e->kind == E_CONDITIONAL ? arms[i] : e->args.items[i])->raw_sampled = true;
+    return true;
+}
+
+// ...and one whose arms are all [Raw], of different types: [Raw(int)] and [Raw(float)], or [Raw] and [Raw(int)],
+// which read the image as different numbers. True where it was said.
+static bool raw_types_mixed(expr *e)
+{
+    expr *const arms[2] = {e->lhs, e->rhs};
+    const int count = e->kind == E_CONDITIONAL ? 2 : e->args.count;
+    for (int i = 0; i < count; i++) {
+        if (!declared_raw(e->kind == E_CONDITIONAL ? arms[i] : e->args.items[i])) return false;
+    }
+    const expr *first = e->kind == E_CONDITIONAL ? arms[0] : e->args.items[0];
+    for (int i = 1; i < count; i++) {
+        const expr *arm = e->kind == E_CONDITIONAL ? arms[i] : e->args.items[i];
+        if (declared_image_type(arm).kind == declared_image_type(first).kind) continue;
+        diag_error(e->at, "this %s picks between images of different roles, %s and %s, and a value has one role",
+                   e->kind == E_CONDITIONAL ? "?:" : "switch", raw_role_name(first), raw_role_name(arm));
+        diag_note("each reads the image as other numbers: give every side the same [Raw(T)], or pick with if/else and "
+                  "assign each side where its role goes");
+        for (int k = 0; k < count; k++) (e->kind == E_CONDITIONAL ? arms[k] : e->args.items[k])->raw_sampled = true;
+        return true;
+    }
+    return false;
+}
+
 // An image whose role comes from what it's made of (declared_role, shader.c): an element of a marked glob, a local
 // that keeps its initializer's, a parameter of a role, a choice between images of one role. It's a use of its own,
 // which some place must keep (check_raw_uses, check_linear_uses), and it keeps what it's made of: an element its
-// collection, a choice its arms. A local's initializer is kept where it's declared (check_var).
-static void note_role_use(checker *c, expr *e, const type t)
+// collection, a choice its arms. A local's initializer is kept where it's declared (check_var). The type it has, or
+// T_ERR for a choice of images of different roles, said here once.
+static type note_role_use(checker *c, expr *e, const type t)
 {
-    if (!builds(c->prog) || t.kind == TY_ERROR || e->role_noted) return;
+    if (!builds(c->prog) || t.kind == TY_ERROR || e->role_noted) return t;
     const bool choice = e->kind == E_CONDITIONAL || e->kind == E_SWITCH;
     const bool name = e->kind == E_NAME && (e->bind == BIND_LOCAL || (e->bind == BIND_PARAM && e->param
                                             && (e->param->raw_role || e->param->linear_role)));
-    if (!choice && !name && e->kind != E_INDEX) return;
+    if (!choice && !name && e->kind != E_INDEX) return t;
     const bool collection = name && texture_collection(t) && e->bind == BIND_PARAM;
+    if (choice && (raw_kind(t) || linear_kind(t)) && (raw_and_linear(e) || raw_types_mixed(e))) return e->type = T_ERR;
     for (int role = 0; role < 2; role++) {
         const bool raw = role == 0;
         if (!(raw ? raw_kind(t) : linear_kind(t)) && !collection) continue;
-        if (choice && mixed_roles(e, raw)) continue;
+        if (choice && mixed_roles(e, raw)) return e->type = T_ERR;
         const bool marked = collection ? (raw ? e->param->raw_role : e->param->linear_role)
                                        : raw ? declared_raw(e) : declared_linear(e);
         if (!marked) continue;
@@ -14384,6 +14506,7 @@ static void note_role_use(checker *c, expr *e, const type t)
         else vec_push(c->linear_uses, e);
         e->role_noted = true;
     }
+    return t;
 }
 
 static type check_expr_any(checker *c, expr *e)
@@ -14394,8 +14517,7 @@ static type check_expr_any(checker *c, expr *e)
     if (e->authored_unit) c->unit = e->authored_unit;
     const type result = check_expr_any_raw(c, e);
     c->unit = saved;
-    note_role_use(c, e, result);
-    return result;
+    return note_role_use(c, e, result);
 }
 
 static type check_expr_any_raw(checker *c, expr *e)
@@ -15803,6 +15925,8 @@ static void check_assign(checker *c, const stmt *s)
     if (s->target->field && s->op == T_ASSIGN && image_kind(target)) note_image_origin(s->target->field, s->value);
     if (s->target->kind == E_NAME && s->target->bind == BIND_PARAM && s->op == T_ASSIGN && image_kind(target))
         note_param_origin(s->target->param, s->value); // What a caller's `out` or `mut` argument then holds
+    if (s->target->kind == E_NAME && s->target->bind == BIND_LOCAL && s->op == T_ASSIGN && image_kind(target))
+        note_local_origin(s->target->local, s->value);
     if (target.kind == TY_ERROR) return;
     if (s->target->property) {
         if ((s->op == T_PLUS_PLUS || s->op == T_MINUS_MINUS) && !type_is_integer(target) && target.kind != TY_FLOAT && target.kind != TY_DOUBLE) {

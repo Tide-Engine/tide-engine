@@ -1,0 +1,12 @@
+// expect: this numeric frag's destination format isn't fixed by its constructor assignments
+// expect: 'Make' makes it, and is virtual: an override can replace it with one that makes it another way
+scene Main { }
+local singleton Images { RenderTarget target; }
+virtual void Make(out RenderTarget t) { t = RenderTarget(8, 8, 1, Format.R32i); }
+frag Ids(Vertex vertex, out int id) { id = 3; }
+view V(mut Images images)
+{
+    Make(out images.target);
+    List<Vertex> quad = [Vertex { position = float2(0) }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }];
+    images.target.Mesh(quad, [0, 1, 2], Ids);
+}

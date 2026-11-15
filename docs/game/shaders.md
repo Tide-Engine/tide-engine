@@ -749,10 +749,12 @@ compiler refuses those escapes. `[Raw, Linear]` is an error.
 A marked Texture field can take a `Grid2<Color>` or an RGBA8 target's `.color`; a marked
 TextureArray field can take a `Grid3<Color>` or a runtime RGBA8 array, and a marked Cubemap
 field can take a runtime RGBA8 cube. Float and single-channel formats have no sRGB form.
-The compiler follows where the target comes from: an assignment, a struct's `{ target =
-RenderTarget(...) }`, and what a function assigns a target it's handed as `out` or `mut`. One
-C or a built-in makes has no format the compiler can see, and is an error. A marked read of
-an image that turns out not to be RGBA8 draws nothing and says so.
+The compiler follows where the target comes from, into a field or a local alike: an
+assignment, a struct's `{ target = RenderTarget(...) }`, and what a function assigns a target
+it's handed as `out` or `mut`, a recursive one too. Every way a field or local is given an
+image counts, so one made two ways has no one format. One C, a built-in or a `virtual`
+function makes has no format the compiler can see, and is an error that names the function.
+A marked read of an image that turns out not to be RGBA8 draws nothing and says so.
 A rendered image is copied for its marked reads when it has been drawn into, not every frame.
 The mark changes only the sampled image: CPU grid cells, `Decode`, the original target
 and `target.Read()` keep their values. It does not convert a frag's output or the screen.
@@ -1002,7 +1004,9 @@ view Pick(mut Material m)
 }
 ```
 
-- Raw sources cannot become ordinary `Texture` fields, `mut` locals or unmarked parameters, be returned, or be drawn by the engine's own shader (a draw with no frag). These uses are errors, and so is a `?:` with a Raw side and a color side: a value has one role, never one added or dropped along the way.
+- Raw sources cannot become ordinary `Texture` fields, `mut` locals or unmarked parameters, be returned, or be drawn by the engine's own shader (a draw with no frag). These uses are errors, and so is a `?:` with a Raw side and a color side, or a `[Raw]` side and a `[Linear]` one: a value has one role, never one added or dropped along the way.
+- Each typed role, `[Raw(float)]`, `[Raw(float2)]`, `[Raw(float4)]` and `[Raw(int)]`, is a role of its own: it goes through a local that isn't `mut`, a choice whose every side has it, and a function's parameter of that role (`int2 Size([Raw(int)] Texture ids)`), on the CPU too, but not into a bare `[Raw]` parameter or one of another type, and a `?:` between two of them is an error. A frag draws a typed local's image as its typed source.
+- Each texture a draw gives goes to the frag parameter that reads it, and is held to that one's role alone: a frag taking a `[Linear] Texture` and a plain one is given a `[Linear]` image and an ordinary one. A vert's Texture and a frag's of one name are one texture, so they take the same role, and a vert's takes neither `[Raw]` nor `[Linear]`.
 - `rawField.size` is available as ordinary texture metadata, including `int2(0)` for a default or unavailable image; pack reload follows the currently bound asset. Reading its size does not read or convert its pixels.
 - The same file can be declared twice, once `[Raw]` and once not: they're two textures. Where `[Raw]` changes nothing, as for an image with no transparency, the pack and the GPU keep one copy for both.
 - A Raw `Texture` asset is [compressed](./assets.md#gpu-compression) as a color one is, when it's big enough: BC1 or BC3, its channels as the file has them, each a little off. For numbers that must be exact, a lookup table or a flow map, add `[Lossless]`: `[Raw, Lossless] asset Texture flow = "art/flow.png";`.

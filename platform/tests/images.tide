@@ -446,7 +446,8 @@ view ShowMismatched(mut Mismatched images, NumberImages numbers)
         images.ids = RenderTarget(8, 8, 1, Format.R32i);
         images.scene = RenderTarget(8, 8, 1);
         images.volume = Texture3D(int3(2));
-        images.heights[0, 0] = 3.5;
+        // Every cell, so the one an int read lands on has bits a read of the R16F image as ints would see
+        for (var y = 0; y < 2; y++) for (var x = 0; x < 2; x++) images.heights[x, y] = 3.5;
         images.floats = images.heights;
         images.numbers = images.ids.color;
         images.made = true;

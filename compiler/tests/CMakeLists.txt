@@ -858,6 +858,8 @@ foreach(source IN LISTS TIDE_ERROR_TESTS)
             "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/errors"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_error.cmake")
 endforeach()
+# A recursive helper's image parameter, followed once a place: following every path through it never ended
+set_tests_properties(tidec_error_image_recursive_helper_paths PROPERTIES TIMEOUT 60)
 
 # Build code's errors that only running it finds (docs/spec.md, Build code): as the error tests, with the compiler and
 # the engine's sources it's built with. Each has a folder of its own, where its program is kept.

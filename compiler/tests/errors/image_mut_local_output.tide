@@ -1,0 +1,11 @@
+// expect: this frag's destination may hold numbers, and its format isn't fixed by its constructor assignments
+scene Main { }
+void Remake(mut RenderTarget t) { t = RenderTarget(8, 8, 1, Format.R32i); }
+frag Paint(Vertex vertex, out Color color) { color = Color.red; }
+view V()
+{
+    mut RenderTarget t = RenderTarget(8, 8, 1);
+    Remake(t);
+    List<Vertex> quad = [Vertex { position = float2(0) }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }];
+    t.Mesh(quad, [0, 1, 2], Paint);
+}

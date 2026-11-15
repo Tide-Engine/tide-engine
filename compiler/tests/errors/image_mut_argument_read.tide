@@ -1,0 +1,6 @@
+// expect: Read<float4> gives a Grid2<float4>, but this target's image 0 is Format.R32i, which holds int: write 'await target.Read<int>()'
+scene Main {}
+local singleton State { RenderTarget target; }
+void Make(mut RenderTarget t) { t = RenderTarget(8, 8, 1, Format.R32i); }
+view V(mut State state) { Make(state.target); }
+async void Read(State state) { var pixels = await state.target.Read<float4>(); }

@@ -1,0 +1,13 @@
+// expect: this image's writable format isn't fixed by its constructor assignments
+scene Main { }
+local singleton Fog { Texture3D volume; }
+void Remake(mut Texture3D v) { v = Texture3D(int3(2), Format.R32i); }
+[Group(2, 2, 2)]
+compute Fill(Fog fog) { fog.volume[this.at] = Color(1, 0, 0, 1); }
+view V(mut Fog fog)
+{
+    mut Texture3D v = Texture3D(int3(2), Format.Rgba16f);
+    Remake(v);
+    fog.volume = v;
+    GPU.Run(Fill, int3(2));
+}

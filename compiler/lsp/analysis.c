@@ -4350,7 +4350,7 @@ static void describe(const occurrence *o, sb *out)
              "`mut` keeps the role of what it's given, a `?:` or switch of Raw images keeps it, and a function or a "
              "frag takes one as a `[Raw] Texture` parameter or source. Raw textures cannot escape to ordinary Texture "
              "storage, unmarked parameters, returns, or the engine's own draws. "
-             "On a Texture/Texture3D field or read-only GPU helper parameter, [Raw(float)], [Raw(float2)], [Raw(float4)] or [Raw(int)] declares "
+             "On a Texture/Texture3D field or read-only function parameter, [Raw(float)], [Raw(float2)], [Raw(float4)] or [Raw(int)] declares "
              "the image's numeric Sample result, on a Texture, Texture3D, TextureArray or Cubemap. Typed images read "
              "the nearest cell unless a Sample names a filter: R8, Rg8, R16f, Rg16f and Rgba16f blend and read mipmaps on "
              "every device; R32f and Rgba32f blend with Filter.Bilinear, loaded exactly and blended in the shader (a cube's "
