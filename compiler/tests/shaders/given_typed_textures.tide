@@ -1,0 +1,41 @@
+scene Main { }
+
+// A draw's typed textures after its first, each read as what it's given: an R32f image a frag's second Texture
+// blends is loaded exactly where the first keeps its sampler, and a grid of numbers is a third through its
+// [Raw(float2)]. A blit's second texture is one of its textures, not its destination. Pinned at the merge of
+// several textures with exact loads and grids of numbers (notes/shaders.md).
+
+local singleton Images
+{
+    RenderTarget distances;
+    [Raw(float)] Texture distance;
+    Texture plain;
+    Grid2<float2> flow = Grid2(3, 2);
+    Grid2<float4> vectors = Grid2(3, 2);
+}
+
+// Two grids of numbers, each through the role of the parameter it goes to
+frag Grids(Vertex vertex, out Color color, [Raw(float4)] Texture vectors, [Raw(float2)] Texture flow)
+{
+    color = Color(vectors.Sample(vertex.uv).w, flow.Sample(vertex.uv).y, 0);
+}
+
+frag Three(Vertex vertex, out Color color, Texture look, [Raw(float)] Texture far, [Raw(float2)] Texture flow)
+{
+    color = Color(look.Sample(vertex.uv).r + far.Sample(vertex.uv, Filter.Bilinear), flow.Sample(vertex.uv).x, 0);
+}
+
+frag Blitted(Vertex vertex, out Color color, Texture look, [Raw(float)] Texture far)
+{
+    color = Color(look.Sample(vertex.uv).r, far.Sample(vertex.uv, Filter.Bilinear), 0);
+}
+
+view Show(mut Images images)
+{
+    images.distances = RenderTarget(8, 8, 1, Format.R32f);
+    images.distance = images.distances.color;
+    List<Vertex> quad = [Vertex { position = float2(0) }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }];
+    Draw.Mesh(quad, [0, 1, 2], images.plain, images.distance, images.flow, Three);
+    Draw.Blit(images.plain, images.distance, Draw.window, Blitted);
+    Draw.Mesh(quad, [0, 1, 2], images.vectors, images.flow, Grids);
+}

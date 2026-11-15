@@ -1,0 +1,4 @@
+// expect: this mesh's shader takes 2 Texture sources, 'source' and 'mask': supply them in order after the mesh arguments
+scene Main { }
+frag Copy(Vertex vertex, out Color color, Texture source, Texture mask) { color = source.Sample(vertex.uv) * mask.Sample(vertex.uv).a; }
+view Show() { Draw.Mesh([Vertex { position = float2(0), uv = float2(0), color = Color.white }], [0, 0, 0], Copy); }

@@ -1,0 +1,8 @@
+// expect: a Sample in a function can't be Filter.Trilinear: only a frag's own Sample reads between a texture's smaller images
+// expect: frag 'Shade' samples it through 'Tile', here
+// The same for a texture of the singleton a function is handed
+scene Main { }
+local singleton Look { Texture atlas; List<Vertex3> mesh; }
+Color Tile(Look look, float2 uv) { return look.atlas.Sample(uv, Filter.Trilinear); }
+frag Shade(Vertex3 vertex, out Color color, Look look) { color = Tile(look, vertex.uv); }
+view Show(Look look) { Draw.Mesh(look.mesh, [0, 1, 2], float4x4.identity, Shade); }

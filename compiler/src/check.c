@@ -2924,17 +2924,34 @@ static bool check_sprite_args(const checker *c, const expr *e)
     return e->args.count == 0 || refuse_raw_grid(e->args.items[0]);
 }
 
+// The frag's or vert's Texture parameter that reads the `k`th texture a draw gives (shader_given_texture), or NULL.
+static const param *given_param(const decl *vert, const decl *frag, const int k)
+{
+    const decl *stages[2] = {frag, vert};
+    for (int s = 0; s < 2; s++) {
+        for (int i = 1; stages[s] && i < stages[s]->params.count; i++) {
+            if (shader_given_texture(vert, frag, &stages[s]->params.items[i]) == k) return &stages[s]->params.items[i];
+        }
+    }
+    return NULL;
+}
+
 // Every Raw Texture source must retain a static role, or only expose its size.
 static void check_raw_uses(const checker *c)
 {
     for (int i = 0; i < c->prog->mesh_draws.count; i++) {
         expr *call = c->prog->mesh_draws.items[i].call;
-        bool numeric = false;
-        for (int p = 1; call->frag && p < call->frag->params.count; p++)
-            numeric |= call->frag->params.items[p].type.kind == TY_TEXTURE && call->frag->params.items[p].sample_role.len;
-        if (!numeric) continue;
-        for (int a = 0; a < call->args.count; a++)
-            if (call->args.items[a]->type.kind == TY_TEXTURE) call->args.items[a]->raw_sampled = true;
+        if (!call->frag && !call->vert) continue;
+        // Each texture the draw gives goes to its parameter, which reads it as its role says. With no frag, the
+        // first is what the pixels are drawn with too: a color
+        int given = 0;
+        for (int a = call->blit ? 0 : 2; a < call->args.count && call->args.items[a]->bind != BIND_SHADER; a++) {
+            expr *arg = call->args.items[a];
+            if (arg->type.kind != TY_TEXTURE && arg->type.kind != TY_GRID) continue;
+            const int k = given++;
+            const param *to = given_param(call->vert, call->frag, k);
+            if (to && to->sample_role.len && arg->type.kind == TY_TEXTURE && (call->frag || k > 0)) arg->raw_sampled = true;
+        }
     }
     // GPU helpers substitute the original source expression, including its Raw field marker. No runtime value
     // carries that permission to an ordinary CPU Texture helper or a draw.
@@ -4422,11 +4439,41 @@ static decl *gpu_function(const checker *c)
 static bool function_samples(decl *fn, const expr *call, const expr *of, const type_kind reads, const bool assets)
 {
     const bool own = of->kind == E_NAME && of->bind == BIND_PARAM && of->param->function_param;
-    if (!own && !(assets && of->bind == BIND_ASSET)) {
+    // ...or a field of a component or a singleton it's given, as a parameter or as a method's receiver, which is the
+    // frag's or vert's own (shader.c, Textures of what's given)
+    const bool holder = of->kind == E_MEMBER && of->field && of->object->kind == E_NAME && of->object->bind == BIND_PARAM
+                     && of->object->param->function_param
+                     && (of->object->param->type.kind == TY_COMPONENT || of->object->param->type.kind == TY_SINGLETON);
+    const bool owned = fn->owner && (fn->owner->kind == DECL_COMPONENT || fn->owner->kind == DECL_SINGLETON);
+    const bool receiver = of->kind == E_NAME && of->bind == BIND_FIELD && of->field && owned;
+    if (!own && !holder && !receiver && !(assets && of->bind == BIND_ASSET)) {
         const char *what = reads == TY_DEPTH_TEXTURE ? "DepthTexture" : reads == TY_CUBEMAP ? "Cubemap" : reads == TY_GRID ? "grid"
                          : reads == TY_TEXTURE_ARRAY ? "TextureArray" : reads == TY_DEPTH_TEXTURE_ARRAY ? "DepthTextureArray"
                          : reads == TY_DEPTH_CUBEMAP ? "DepthCubemap" : "Texture";
-        diag_error(of->at, "a function samples a %s it takes as a parameter of its own%s", what,
+        // A field of a struct the component or singleton holds, `stage.lamps.shadow`, or `lamps.shadow` of a method's
+        const expr *root = of;
+        while (root->kind == E_MEMBER && root->field && root->object) root = root->object;
+        const bool in_struct = of->kind == E_MEMBER && of->field && root != of && root != of->object
+                            && root->kind == E_NAME && root->bind == BIND_PARAM && root->param->function_param
+                            && (root->param->type.kind == TY_COMPONENT || root->param->type.kind == TY_SINGLETON);
+        const bool in_own_struct = of->kind == E_MEMBER && of->field && root == of->object && root->kind == E_NAME
+                                && root->bind == BIND_FIELD && root->field && owned;
+        if (in_struct || in_own_struct) {
+            const decl *holds = in_struct ? root->param->type.decl : fn->owner;
+            diag_error(of->at, "a function samples a %s that's a field of the component or singleton it takes, and '" STR_FMT
+                               "' is a field of a struct '" STR_FMT "' holds, which it doesn't yet", what, STR_ARG(of->member),
+                       STR_ARG(holds->name));
+            if (in_struct) {
+                diag_note("make '" STR_FMT "' a field of '" STR_FMT "' itself, and sample it as '" STR_FMT "." STR_FMT "'",
+                          STR_ARG(of->member), STR_ARG(holds->name), STR_ARG(root->name), STR_ARG(of->member));
+            } else {
+                diag_note("make '" STR_FMT "' a field of '" STR_FMT "' itself, and sample it by its name", STR_ARG(of->member),
+                          STR_ARG(holds->name));
+            }
+            return false;
+        }
+        diag_error(of->at, "a function samples a %s it takes as a parameter of its own, or a field of a component or singleton "
+                           "it takes%s", what,
                    !assets ? "" : reads == TY_GRID ? ", or a Grid2<Color> asset by its name" : reads == TY_CUBEMAP
                    ? ", or a Cubemap asset by its name" : ", or a Texture asset by its name");
         diag_note("the frag or vert that calls it passes the one to read, a field of a component or singleton it takes: "
@@ -4435,6 +4482,9 @@ static bool function_samples(decl *fn, const expr *call, const expr *of, const t
                   reads == TY_DEPTH_TEXTURE ? "DepthTexture" : reads == TY_CUBEMAP ? "Cubemap" : reads == TY_GRID ? "Grid2<Color>" : "Texture",
                   reads == TY_DEPTH_TEXTURE ? "shadow" : reads == TY_CUBEMAP ? "sky" : "image", STR_ARG(fn->name),
                   reads == TY_DEPTH_TEXTURE ? "lamp.shadow" : reads == TY_CUBEMAP ? "room.sky" : "look.image");
+        diag_note("or the function takes that component or singleton itself, and samples its field: '" STR_FMT "(lamp, ...)' "
+                  "reading 'lamp.%s'; a plain struct carries no texture to the GPU", STR_ARG(fn->name),
+                  reads == TY_DEPTH_TEXTURE ? "shadow" : reads == TY_CUBEMAP ? "sky" : "image");
         return false;
     }
     fn->gpu_sampling = true;
@@ -7764,8 +7814,8 @@ static void note_mesh_forms(const expr *e)
         return;
     }
     diag_note("%s.Mesh(vertices, indices) draws a 2D mesh, and %s.Mesh(vertices, indices, transform) a 3D one, by its "
-              "vertices' position, the lists the CPU's or a kernel's GPU lists; then come a texture, its filter and its wrap, or "
-              "a vert and a frag by name, and after those a struct of values they read", on, on);
+              "vertices' position, the lists the CPU's or a kernel's GPU lists; then come textures, each with its filter and its "
+              "wrap, or a vert and a frag by name, and after those a struct of values they read", on, on);
 }
 
 // Whether a vert writes a struct of this type for its frag: `out FromLamp lamp`.
@@ -7883,12 +7933,36 @@ static void check_shader_binding(const checker *c, const expr *e, const expr *na
     (void)e;
 }
 
-static bool shader_takes_texture(const decl *code)
+// The Texture parameters a draw's vert and frag take, as it gives them (shader_given_texture), for a message:
+// "'colour', 'normal' and 'orm'".
+static const char *given_texture_names(const decl *vert, const decl *frag)
 {
-    for (int i = 1; code && i < code->params.count; i++) {
-        if (code->params.items[i].type.kind == TY_TEXTURE) return true;
+    const int wanted = shader_given_textures(vert, frag);
+    sb names = {0};
+    for (int k = 0; k < wanted; k++) {
+        const param *named = given_param(vert, frag, k);
+        if (!named) continue;
+        sb_printf(&names, "%s'" STR_FMT "'", k == 0 ? "" : k == wanted - 1 ? " and " : ", ", STR_ARG(named->name));
     }
-    return false;
+    return names.data ? names.data : "";
+}
+
+// A draw that gives `given` textures to a vert and a frag that take `wanted`: said at the draw.
+static void say_given_textures(const expr *e, const char *draw_name, const int given, const int wanted)
+{
+    // Whose they are: the stages that take any
+    const bool vert = e->vert && shader_given_textures(e->vert, NULL), frag = e->frag && shader_given_textures(NULL, e->frag);
+    const char *who = vert && frag ? "its vert and frag take" : vert ? "its vert takes" : "its frag takes";
+    diag_error(e->at, "this draw gives %d texture%s, and %s %d: %s", given, given == 1 ? "" : "s", who, wanted,
+               given_texture_names(e->vert, e->frag));
+    if (e->blit) {
+        diag_note("a blit gives its frag's Texture parameters in their order, before its destination: "
+                  "'%s(source, lut, destination, Grade)'", draw_name);
+    } else {
+        diag_note("a draw gives its frag's Texture parameters and then its vert's in their order, after the mesh's arguments, "
+                  "each with its filter and wrap after it where the draw says them: '%s(mesh, transform, colour, normal, "
+                  "Filter.Point, Lit)'; a vert's and a frag's of one name are one texture", draw_name);
+    }
 }
 
 // The values a draw gives its vert and frag, written after their names: a
@@ -7933,7 +8007,7 @@ static bool check_values_taken(const expr *e)
 static type check_blit(checker *c, expr *e)
 {
     e->blit = true;
-    // Draw.Blit(source, destination[, blend], frag[, values])
+    // Draw.Blit(source[, textures...], destination[, blend], frag[, values])
     int count = e->args.count;
     decl *frag = count >= 3 ? named_shader(c, e->args.items[count - 1]) : NULL;
     expr *values = NULL;
@@ -7944,43 +8018,75 @@ static type check_blit(checker *c, expr *e)
     }
     const bool values_ok = !values || check_draw_values(c, e, values);
     if (!check_frame_use(c, e->at, "Draw")) return T_ERR;
-    if (count != 3 && count != 4) {
+    // Its textures come first: its source, and after it any more its frag takes (Several textures a draw gives),
+    // with a destination after them
+    int sources = 0;
+    while (sources < last - 1
+           && (e->args.items[sources]->type.kind == TY_TEXTURE || type_is_texture_grid(e->args.items[sources]->type)
+               || type_number_grid_role(e->args.items[sources]->type).kind != TY_ERROR))
+        sources++;
+    if (sources == 0) sources = 1; // A source that's no texture, said below
+    const int destination = sources; // ...then where it goes, and how
+    for (int i = 1; i < last; i++) { // A filter or a wrap among them, as a mesh's textures have: a blit's frag says those
+        const type t = e->args.items[i]->type;
+        if (t.kind != TY_ENUM || (t.decl != c->prog->filter && t.decl != c->prog->wrap)) continue;
+        diag_error(e->args.items[i]->at, "a blit takes no %s: its frag's Sample says how it reads each texture",
+                   t.decl == c->prog->filter ? "filter" : "wrap");
+        diag_note("like 'source.Sample(vertex.uv, Filter.Point, Wrap.Repeat)' in the frag");
+        return T_ERR;
+    }
+    for (int i = destination; i + 1 < last; i++) { // A target where a texture goes, before the destination
+        const expr *arg = e->args.items[i];
+        if (arg->type.kind != TY_RENDER_TARGET || e->args.items[i + 1]->type.kind != TY_RENDER_TARGET) continue;
+        diag_error(arg->at, "a blit's textures go before its destination, and this is a RenderTarget, not a Texture");
+        diag_note("a target's color image is its Texture, 'target.color', and its others 'target.colors[1]'");
+        return T_ERR;
+    }
+    if (count != destination + 2 && count != destination + 3) {
         diag_error(e->at, "Blit takes an explicit source texture, destination target and frag: 'Draw.Blit(source, destination, Blur)'");
         diag_note("and how it goes over the destination, before the frag: 'Draw.Blit(source, destination, Blend.Add, Blur)'; "
                   "and after the frag, a struct of values it reads: 'Draw.Blit(source, destination, Blur, BlurParams { ... })'");
+        if (destination > 1) diag_note("a frag that takes several textures is given them in order before the destination: "
+                                       "'Draw.Blit(source, lut, destination, Grade)'");
         return T_ERR;
     }
     const type source = e->args.items[0]->type;
-    bool ok = refuse_raw_grid(e->args.items[0]);
-    if (type_number_grid_role(source).kind != TY_ERROR) { // A grid of numbers, for a frag whose [Raw(T)] reads them
-        type role = {TY_ERROR, NULL};
-        for (int p = 1; frag && frag->is_frag && p < frag->params.count; p++) {
-            const param *from = &frag->params.items[p];
-            if (from->type.kind == TY_TEXTURE && from->sample_role.len) role = param_sample_type(from);
-        }
-        ok = refuse_number_grid(e->args.items[0], source, role) && ok;
-    } else if (source.kind != TY_TEXTURE && !type_is_texture_grid(source) && source.kind != TY_ERROR) {
+    bool ok = true;
+    for (int i = 0; i < sources; i++) {
+        const expr *arg = e->args.items[i];
+        ok &= refuse_raw_grid(arg);
+        if (type_number_grid_role(arg->type).kind == TY_ERROR) continue;
+        // A grid of numbers, for a frag whose [Raw(T)] Texture there reads them
+        const param *reads = frag && frag->is_frag ? given_param(NULL, frag, i) : NULL;
+        const type role = reads && reads->sample_role.len ? param_sample_type(reads) : (type){TY_ERROR, NULL};
+        ok = refuse_number_grid(arg, arg->type, role) && ok;
+    }
+    if (type_number_grid_role(source).kind == TY_ERROR && source.kind != TY_TEXTURE && !type_is_texture_grid(source)
+        && source.kind != TY_ERROR) {
         diag_error(e->args.items[0]->at, "Blit's source is a Texture, which a Grid2<Color> and a Grid2<float> are too, not %s",
                    type_name(source));
         diag_note("a Grid2<float2>, Grid2<float4>, Grid2<int> or Grid2<byte> is the source of a frag whose Texture is "
                   "[Raw(float2)], [Raw(float4)] or [Raw(int)]");
         ok = false;
     }
-    if (e->args.items[1]->type.kind != TY_RENDER_TARGET && e->args.items[1]->type.kind != TY_ERROR) {
-        diag_error(e->args.items[1]->at, "Blit's destination is a RenderTarget, like Draw.window, not %s", type_name(e->args.items[1]->type));
+    const expr *target = e->args.items[destination];
+    if (target->type.kind != TY_RENDER_TARGET && target->type.kind != TY_ERROR) {
+        diag_error(target->at, "Blit's destination is a RenderTarget, like Draw.window, not %s", type_name(target->type));
         ok = false;
     }
-    const expr *source_expr = e->args.items[0];
-    if (source_expr->kind == E_MEMBER && str_eq_c(source_expr->member, "color")
-        && source_expr->object->type.kind == TY_RENDER_TARGET && same_place(source_expr->object, e->args.items[1])) {
-        diag_error(source_expr->at, "Blit can't sample the color image of its own destination");
-        ok = false;
+    for (int i = 0; i < sources; i++) {
+        const expr *source_expr = e->args.items[i];
+        if (source_expr->kind == E_MEMBER && str_eq_c(source_expr->member, "color")
+            && source_expr->object->type.kind == TY_RENDER_TARGET && same_place(source_expr->object, target)) {
+            diag_error(source_expr->at, "Blit can't sample the color image of its own destination");
+            ok = false;
+        }
     }
-    if (count == 4) {
-        const type blend = e->args.items[2]->type;
+    if (count == destination + 3) {
+        const type blend = e->args.items[destination + 1]->type;
         if (blend.kind != TY_ERROR && !(blend.kind == TY_ENUM && blend.decl == c->prog->blend)) {
-            diag_error(e->args.items[2]->at, "Blit's third of four is how it goes over its destination, a Blend like Blend.Add, "
-                       "not %s", type_name(blend));
+            diag_error(e->args.items[destination + 1]->at, "Blit's %s is how it goes over its destination, a Blend like Blend.Add, "
+                       "not %s", destination == 1 ? "third of four" : "argument before its frag", type_name(blend));
             ok = false;
         }
     }
@@ -7996,8 +8102,12 @@ static type check_blit(checker *c, expr *e)
         diag_error(e->args.items[last]->at, "Blit's frag runs on Vertex, its full-destination quad");
         ok = false;
     }
-    if (!shader_takes_texture(frag)) {
+    const int wanted = shader_given_textures(NULL, frag);
+    if (!wanted) {
         diag_error(e->args.items[last]->at, "Blit's frag takes its source as a read-only Texture parameter");
+        ok = false;
+    } else if (ok && wanted != sources) {
+        say_given_textures(e, "Draw.Blit", sources, wanted);
         ok = false;
     }
     if (ok) {
@@ -8005,19 +8115,21 @@ static type check_blit(checker *c, expr *e)
         check_shader_binding(c, e, e->args.items[last], frag);
         ok = diag_error_count() == errors && check_values_taken(e);
     }
-    if (!ok || source.kind == TY_ERROR || e->args.items[1]->type.kind == TY_ERROR) return T_ERR;
-    if (count == 4 && e->args.items[2]->type.kind == TY_ERROR) return T_ERR;
+    for (int i = 0; i < count - 1; i++) {
+        if (e->args.items[i]->type.kind == TY_ERROR) return T_ERR;
+    }
+    if (!ok) return T_ERR;
     e->call = CALL_DRAW;
     e->draw_dims = 2;
-    vec_push(e->arg_want, ((type){TY_TEXTURE, NULL})); // A grid is the texture it is
-    vec_push(e->arg_want, e->args.items[1]->type);
-    if (count == 4) vec_push(e->arg_want, e->args.items[2]->type);
+    for (int i = 0; i < sources; i++) vec_push(e->arg_want, ((type){TY_TEXTURE, NULL})); // A grid is the texture it is
+    vec_push(e->arg_want, target->type);
+    if (count == destination + 3) vec_push(e->arg_want, e->args.items[destination + 1]->type);
     const mesh_draw draw = {e, c->method ? c->method : c->system};
     vec_push(c->prog->mesh_draws, draw);
     return T_VOID_;
 }
 
-// Draw.Mesh(vertices, indices[, transform][, texture[, filter[, wrap]]][, vert][, frag][, values]).
+// Draw.Mesh(vertices, indices[, transform][, texture[, filter[, wrap]]...][, vert][, frag][, values]).
 // Whether the mesh is 2D or 3D is its vertices' to say, by their position: a
 // float2's goes through the 2D camera, a float3's takes a transform and goes
 // through the 3D one. A List<Vertex> or a List<Vertex3> with no vert and no
@@ -8294,18 +8406,17 @@ static type check_mesh_draw(checker *c, expr *e)
         return T_ERR;
     }
 
-    // A grid that's no texture, where the texture goes: said here, for every way the mesh is drawn. A grid of numbers
-    // is the source of a frag whose Texture parameter's [Raw(T)] reads them
-    for (int i = 2; i < count; i++) {
+    // A grid that's no texture, where a texture goes: said here, for every way the mesh is drawn. A grid of numbers
+    // is a texture of a frag or vert whose Texture parameter there (shader_given_texture) reads them by its [Raw(T)]
+    for (int i = 2, given = 0; i < count; i++) {
         const expr *arg = e->args.items[i];
         if (!refuse_raw_grid(arg)) return T_ERR;
+        const int k = arg->type.kind == TY_TEXTURE || arg->type.kind == TY_GRID ? given++ : -1; // Which texture it is
         if (arg->type.kind != TY_GRID || type_is_texture_grid(arg->type)) continue;
         if (type_number_grid_role(arg->type).kind != TY_ERROR) {
-            type source = {TY_ERROR, NULL};
-            for (int p = 1; e->frag && p < e->frag->params.count; p++) {
-                const param *from = &e->frag->params.items[p];
-                if (from->type.kind == TY_TEXTURE && from->sample_role.len) source = param_sample_type(from);
-            }
+            // With no frag, the first is what the pixels are drawn with too: colors
+            const param *reads = e->frag || k > 0 ? given_param(e->vert, e->frag, k) : NULL;
+            const type source = reads && reads->sample_role.len ? param_sample_type(reads) : (type){TY_ERROR, NULL};
             if (!refuse_number_grid(arg, arg->type, source)) return T_ERR;
             continue;
         }
@@ -8407,17 +8518,23 @@ static type check_mesh_draw(checker *c, expr *e)
     } else if (dims == 3) {
         at++; // Its transform, checked above
     }
-    // A texture, its filter and its wrap. The texture is a Texture, which a grid of colors or of floats
-    // is where one is wanted: what the draw draws with, or what its shader's Texture parameter is. The
-    // filter and the wrap are the texture's for this draw, where it isn't to be sampled as it says
-    const expr *texture = NULL;
-    if (at < count && (e->args.items[at]->type.kind == TY_GRID || e->args.items[at]->type.kind == TY_TEXTURE)) {
-        texture = e->args.items[at++];
+    // Textures, each with its filter and its wrap. A texture is a Texture, which a grid of colors or of floats
+    // is where one is wanted: what the draw draws with, or its vert's and frag's Texture parameters, in order
+    // (shader_given_texture). The filter and the wrap after each are that texture's for this draw, where it isn't
+    // to be sampled as it says
+    const expr *texture = NULL; // The first
+    const int textures_at = at;
+    int given = 0;
+    while (at < count && (e->args.items[at]->type.kind == TY_GRID || e->args.items[at]->type.kind == TY_TEXTURE)) {
+        if (!texture) texture = e->args.items[at];
+        at++;
+        given++;
         if (at < count && e->args.items[at]->type.kind == TY_ENUM && e->args.items[at]->type.decl == prog->filter) {
             at++;
             if (at < count && e->args.items[at]->type.kind == TY_ENUM && e->args.items[at]->type.decl == prog->wrap) at++;
         }
     }
+    const int textures_end = at;
     if (at < count) {
         const type extra = e->args.items[at]->type;
         if (extra.kind == TY_STRUCT && shaded) {
@@ -8436,15 +8553,43 @@ static type check_mesh_draw(checker *c, expr *e)
         return T_ERR;
     }
     if (!values_ok) ok = false;
-    const bool direct = shader_takes_texture(e->vert) || shader_takes_texture(e->frag);
-    if (direct && !texture) {
-        diag_error(e->at, "this mesh's shader takes a Texture source: supply one after the mesh arguments");
+    // A vert's and a frag's Texture of one name are one texture, read one way
+    for (int i = 1; e->vert && e->frag && i < e->vert->params.count; i++) {
+        const param *from = &e->vert->params.items[i];
+        for (int k = 1; from->type.kind == TY_TEXTURE && k < e->frag->params.count; k++) {
+            const param *to = &e->frag->params.items[k];
+            if (to->type.kind != TY_TEXTURE || !str_eq(to->name, from->name) || str_eq(to->sample_role, from->sample_role)) continue;
+            diag_error(e->at, "vert '" STR_FMT "' and frag '" STR_FMT "' take the one texture '" STR_FMT "' with two roles",
+                       STR_ARG(e->vert->name), STR_ARG(e->frag->name), STR_ARG(from->name));
+            diag_note("a vert's and a frag's Texture of one name are the one the draw gives there: give both the same [Raw(T)], "
+                      "or name them apart for two textures");
+            ok = false;
+        }
+    }
+    // As many as its vert and frag take; with no frag, the first is what its pixels are drawn with, so one more is
+    // there to give where its vert takes none
+    const int wanted = shader_given_textures(e->vert, e->frag);
+    if (wanted && !texture) {
+        diag_error(e->at, wanted == 1 ? "this mesh's shader takes a Texture source: supply one after the mesh arguments"
+                                      : "this mesh's shader takes %d Texture sources, %s: supply them in order after the mesh "
+                                        "arguments", wanted, given_texture_names(e->vert, e->frag));
         ok = false;
-    } else if (texture && e->frag && !direct) {
+    } else if (texture && e->frag && !wanted) {
         diag_error(texture->at, "this mesh's frag has no Texture parameter for the explicit source");
         diag_note("give '" STR_FMT "' one, 'Texture source', and read it there, 'color = source.Sample(vertex.uv);', or "
                   "have it sample a texture of a component or a singleton it takes, and leave this one out",
                   STR_ARG(e->frag->name));
+        ok = false;
+    } else if (given > (wanted ? wanted : 1) || (wanted && given != wanted)) {
+        if (wanted) say_given_textures(e, draw_name, given, wanted);
+        else {
+            int second = textures_at + 1; // Where it gives a second
+            while (second < textures_end && e->args.items[second]->type.kind == TY_ENUM) second++;
+            diag_error(e->args.items[second]->at, "a mesh drawn with no frag is drawn with one texture, and this gives %d",
+                       given);
+            diag_note("a frag samples as many as it takes: 'frag Lit(Corner corner, out Color color, Texture colour, Texture "
+                      "normal)', drawn with '%s(..., colour, normal, Lit)'", draw_name);
+        }
         ok = false;
     }
     // With no frag, a pixel is its vertex's color times the texture at its uv
@@ -8500,8 +8645,9 @@ static type check_mesh_draw(checker *c, expr *e)
     vec_push(e->arg_want, e->gpu_indices ? index_type : index_list);
     for (int i = 2; i < count; i++) {
         const expr *arg = e->args.items[i];
-        // The texture as the Texture it is, a grid too
-        vec_push(e->arg_want, i == 2 && dims == 3 && !instanced ? f4x4 : arg == texture ? ((type){TY_TEXTURE, NULL}) : arg->type);
+        // The textures as the Textures they are, a grid too
+        const bool sampled = i >= textures_at && i < textures_end && (arg->type.kind == TY_GRID || arg->type.kind == TY_TEXTURE);
+        vec_push(e->arg_want, i == 2 && dims == 3 && !instanced ? f4x4 : sampled ? ((type){TY_TEXTURE, NULL}) : arg->type);
     }
     const mesh_draw draw = {e, c->method ? c->method : c->system};
     vec_push(prog->mesh_draws, draw);
@@ -20011,7 +20157,6 @@ static void check_shader_decl(const checker *c, decl *d)
     d->outputs = 0;
     d->place = NULL;
     const param *color = NULL;
-    const param *source_texture = NULL;
     for (int i = 0; i < d->params.count; i++) {
         param *p = &d->params.items[i];
         bind_alias_ref(c, p->type_ref);
@@ -20096,12 +20241,7 @@ static void check_shader_decl(const checker *c, decl *d)
             p->type = value;
             p->function_param = true;
             const bool changes = p->mode == PARAM_MUT && !p->is_out; // `mut`, as written
-            if (value.kind == TY_TEXTURE) {
-                if (source_texture) {
-                    diag_error(p->at, "a %s takes one explicit Texture source, and this names two", word);
-                } else {
-                    source_texture = p;
-                }
+            if (value.kind == TY_TEXTURE) { // One of the textures its draw gives, in order (shader_given_texture)
                 if (p->mode == PARAM_MUT) {
                     diag_error(p->at, "a %s reads its Texture source: drop '%s'", word, p->is_out ? "out" : "mut");
                     p->mode = PARAM_READ;
@@ -24856,7 +24996,18 @@ static void check_local_field_calls(const checker *c)
                 diag_error(site->call->at, "'" STR_FMT "' uses the local fields of '" STR_FMT "', and a task can't yet",
                            STR_ARG(to->name), STR_ARG(d->name));
                 diag_note("call it from a view, and keep what the task needs in local state of its own");
-            } else if (from->kind != DECL_SYSTEM && from->kind != DECL_FUNCTION && !(from->kind == DECL_METHOD && row_binding(arg))) {
+            } else if (from->kind == DECL_SHADER && !shader_type_given(q->type)) {
+                // A frag or vert hands on its view's local fields with what it's given by its name: one that holds
+                // no texture and no list goes to a function as a value of its match fields
+                diag_error(site->call->at, "'" STR_FMT "' uses the local fields of '" STR_FMT "', and a frag or vert hands a "
+                           "function those only with a %s that holds a texture or a list", STR_ARG(to->name),
+                           STR_ARG(d->name), q->type.kind == TY_SINGLETON ? "singleton" : "component");
+                diag_note_at(q->local_use_at, "it does on line %d", q->local_use_at.line);
+                diag_note("anything else goes to the function as a value of its match fields: read the local field in "
+                          "the %s and pass what it holds", shader_word(from));
+            } else if (from->kind != DECL_SYSTEM && from->kind != DECL_FUNCTION
+                       && from->kind != DECL_SHADER // A frag or vert reads its view's local fields, and hands them on
+                       && !(from->kind == DECL_METHOD && row_binding(arg))) {
                 diag_error(site->call->at, "'" STR_FMT "' uses the local fields of '" STR_FMT "', which only views, local "
                            "handlers and the functions they call have", STR_ARG(to->name), STR_ARG(d->name));
             } else if (!own) {

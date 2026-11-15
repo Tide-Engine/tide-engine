@@ -1,0 +1,12 @@
+// expect: 'Gusty' uses the local fields of 'Weather', and a frag or vert hands a function those only with a singleton that holds a texture or a list
+// expect: anything else goes to the function as a value of its match fields: read the local field in the frag and pass what it holds
+// A singleton with no texture and no list goes to a function as a value of its match fields, which has no local ones
+scene Main { }
+singleton Weather { float wind; local float gust; }
+local singleton Scenery { List<Vertex3> mesh; }
+float Gusty(Weather weather) { return weather.gust + weather.wind; }
+frag Shade(Vertex3 vertex, out Color color, Weather weather)
+{
+    color = Color(Gusty(weather), 0, 0, 1);
+}
+view Show(Scenery scenery, Weather weather) { Draw.Mesh(scenery.mesh, [0, 1, 2], float4x4.identity, Shade); }

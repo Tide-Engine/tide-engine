@@ -551,7 +551,9 @@ typedef struct shader_sample {
 // texture it's called with that way (shader.c, pass_samples).
 typedef struct function_sample {
     int param;                // Which of the function's parameters it samples: -1 for an asset...
-    const struct expr *asset; // ...whose name this is, where the function samples it
+    // ...whose name this is, where the function samples it, or a field of a component or singleton it's given, as it
+    // names it: `stage.shadow` of its parameter, or `shadow` of its receiver (shader.c, Textures of what's given)
+    const struct expr *asset;
     shader_read read;
     int filter, wrap;         // As the Sample says them: -1 for what it leaves to the texture
     bool explicit_level;     // SampleLevel does not ask for derivatives
@@ -1592,6 +1594,7 @@ typedef struct shader_texture {
     const struct decl *source;
     const field *field;
     bool direct; // Supplied explicitly by Draw.Mesh or Draw.Blit, rather than a field
+    int given;   // ...which of the draw's textures, in the order it gives them (shader_given_texture)
     const struct decl *asset; // A Grid2<Color> or Texture asset, sampled by name: neither a field nor the draw's
     // How it's read: a color, a cube, a list's numbers, or a depth (the first way it's read: READ_DEPTH or
     // READ_COMPARE, which its samplers tell apart)
@@ -1662,9 +1665,10 @@ typedef struct shader {
     int dims;            // 2 or 3: its position's
     bool textured;       // No frag, and a texture given at the draw, read as that texture says
     bool direct_texture; // The draw supplies a Texture: the one it draws with, or its shader stages' source
-    // ...and where the frag's own typed Texture is handed an image of 32-bit floats, its Format (7 R32f, 8 Rgba32f),
-    // which a blended read loads exactly; -1 otherwise
-    int source_format;
+    int given_textures;  // ...how many it supplies, in order (shader_given_textures; one at least where it does)
+    // ...and for each, where a typed Texture parameter of its vert's or frag's is handed an image of 32-bit floats,
+    // its Format (7 R32f, 8 Rgba32f), which a blended read loads exactly; -1 otherwise (direct_texture's alone)
+    VEC(int) source_formats;
     bool blit;           // A full destination overwrite with a fixed Vertex quad
     bool instanced;      // Its draw supplies a list of instances
     bool gpu_instances;  // ...a GPU list's, read from its storage slot (instance_storage), drawn indirect
@@ -2143,6 +2147,18 @@ str json_field_key(const field *f);
 // Whether a shader reads a local field of the match's component or singleton
 // `d`: its draws are handed d's local part too.
 bool shader_reads_local(const shader *sh, const decl *d);
+
+// Which of a draw's textures a frag's or vert's Texture parameter `p` is, -1 for one that's none: a draw gives its
+// frag's Texture parameters in their order, then its vert's whose names the frag's don't have. A vert's and a
+// frag's parameter of the same name are the one texture (docs/spec.md, Several textures a draw gives).
+int shader_given_texture(const decl *vert, const decl *frag, const param *p);
+// ...and how many textures that is: what the draw gives after its mesh's arguments.
+int shader_given_textures(const decl *vert, const decl *frag);
+// Whether code the GPU runs hands a function one of type `t` by its name, the frag's or vert's own, never as a value:
+// a struct, a singleton or a component that holds a list, or a singleton or a component that holds a texture
+// (docs/spec.md, Structs that hold lists; A function samples the textures of a singleton or a component it's handed).
+// Only such a one takes its local fields with it.
+bool shader_type_given(type t);
 
 // A tide_shader's initializer's fields for its textures, where any isn't a color read through its own sampler:
 // `.texture_reads` and `.texture_samplers`.
