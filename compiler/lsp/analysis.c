@@ -703,6 +703,8 @@ static void walk_expr(const expr *e)
     if (e->kind == E_NAME && e->bind == BIND_PARAM && e->param
         && str_eq_c(e->param->name, "tide_preparation_scene")) return;
     if (e->task_source) { walk_expr(e->task_source); return; }
+    // A local worker call's `priority:`, which the checker keeps off its arguments
+    if ((e->kind == E_CALL || e->kind == E_METHOD) && e->mesh_lod && e->method && e->method->is_worker) walk_expr(e->mesh_lod);
     if (!e->is_out) {
         walk_value(e);
         return;
@@ -1893,6 +1895,23 @@ static const char *decl_what(const decl *d)
     return b.data;
 }
 
+// What each member of the built-in WorkerPriority says of a local worker's call (`priority:`).
+static const char *priority_member_doc(const str name)
+{
+    if (str_eq_c(name, "Urgent"))
+        return "The call starts before the normal and background ones that wait for a thread, in the order the urgent ones "
+               "came, and finds room when the worker's waiting calls are at their limit.";
+    if (str_eq_c(name, "Normal"))
+        return "What a call that says no priority has: it starts in the order it came, after the urgent ones, and after "
+               "four urgent starts while it waits.";
+    if (str_eq_c(name, "Background"))
+        return "The call starts once nothing more urgent waits, or after sixteen starts of other calls while it waits, so "
+               "it never waits for ever. Background calls take at most half of the room for waiting calls.";
+    return NULL;
+}
+
+static const char *enum_member_doc(const decl *d, const str name);
+
 static const char *format_member_doc(const str name)
 {
     static const struct { const char *name, *doc; } formats[] = {
@@ -1910,6 +1929,13 @@ static const char *format_member_doc(const str name)
     for (size_t i = 0; i < sizeof formats / sizeof formats[0]; i++) {
         if (str_eq_c(name, formats[i].name)) return formats[i].doc;
     }
+    return NULL;
+}
+
+static const char *enum_member_doc(const decl *d, const str name)
+{
+    if (d == A.prog->format) return format_member_doc(name);
+    if (d == A.prog->worker_priority) return priority_member_doc(name);
     return NULL;
 }
 
@@ -4565,8 +4591,7 @@ static void describe(const occurrence *o, sb *out)
             sb_printf(&code, STR_FMT "." STR_FMT " = %lld", STR_ARG(o->decl->name), STR_ARG(m->name), (long long)m->number);
             code_block(out, code.data);
             sb_printf(out, "\n\nMember of enum `" STR_FMT "`.", STR_ARG(o->decl->name));
-            if (o->decl == A.prog->format && format_member_doc(m->name))
-                sb_printf(out, " %s", format_member_doc(m->name));
+            if (enum_member_doc(o->decl, m->name)) sb_printf(out, " %s", enum_member_doc(o->decl, m->name));
         }
         break;
     case OCC_NAMESPACE: {
@@ -8366,7 +8391,7 @@ static void complete_members(completion *c, const int dot, const loc at, const o
                 char value[32];
                 snprintf(value, sizeof value, "%lld", (long long)d->members.items[m].number);
                 item(c, str_to_cstr(d->members.items[m].name), CK_ENUM_MEMBER, value,
-                     d == A.prog->format ? format_member_doc(d->members.items[m].name) : NULL, NULL);
+                     enum_member_doc(d, d->members.items[m].name), NULL);
             }
             if (ids[n - 1] == 0 || DOC->toks[ids[n - 1] - 1].kind != T_CASE) {
                 item(c, "Count()", CK_METHOD, "Count() -> int",
@@ -9083,6 +9108,19 @@ static void complete_argument_names(completion *c, const int open, const int las
                  "Levels of detail for a 3D mesh the game makes, made in the background and kept by what's in the mesh: "
                  "the multiplier `[LOD(...)]` takes on an asset. Written last.",
                  "lod: ");
+    }
+    // Build(input, priority: WorkerPriority.Background): a local worker call's one name of the engine's, last
+    bool priority_given = false;
+    for (int n = 0; n < named.count; n++) priority_given |= str_eq_c(named.items[n], "priority");
+    for (int i = 0; !method && !priority_given && i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        if (!d->is_worker || !str_eq(d->name, name)) continue;
+        item(c, "priority:", CK_VARIABLE, "WorkerPriority",
+             "When this call starts among the worker calls that wait for a thread: `WorkerPriority.Urgent` first, "
+             "`WorkerPriority.Normal` (what a call that says nothing has), then `WorkerPriority.Background`, each in "
+             "the order it came, and none waits for ever. Written last. It never interrupts a call that has started.",
+             "priority: WorkerPriority.");
+        break;
     }
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
@@ -11594,7 +11632,7 @@ static const char *check_new_name(const occurrence *target, const str name)
     static const char *const reserved[] = {"Math", "Draw", "Draw2D", "Draw3D", "Devices", "Time", "Owner", "Visibility", "VisibilityGroup", "Audience", "Spawn", "Send", "Spawned",
                                            "Destroyed", "Shown", "Hidden", "PlayerJoined", "PlayerLeft", "Scene", "Prediction", "Debug",
                                            "GUI", "GUILayout", "Screen", "Cursor", "Frame", "Anchor", "Action", "Session", "SessionState", "Clipboard",
-                                           "Vertex", "Vertex3", "Shape", "GUITheme", "GUIControl", "Filter", "Wrap", "Font", "Blend", "Depth", "Cull", "Format", "StencilTest", "StencilOp", "Draw", "DrawList", "Random",
+                                           "Vertex", "Vertex3", "Shape", "GUITheme", "GUIControl", "Filter", "Wrap", "Font", "Blend", "Depth", "Cull", "Format", "StencilTest", "StencilOp", "WorkerPriority", "Draw", "DrawList", "Random",
                                            "DisconnectReason", "Connected", "Disconnected", "Wait", "File", "Directory", "Path", "Application", "Storage", "IOError", "Json", "List", "Map", "Set", "Grid2", "Grid3",
                                            "string", "Sample", "Sanitize", "Predict", "define", "defined"};
     static char message[160];

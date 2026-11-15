@@ -1,0 +1,5 @@
+// expect: a call's priority is read as the call begins, before anything it waits for: 'await' the value into a variable first
+local worker int Build(int value) { return value; }
+async WorkerPriority Level() { await Wait.Frames(1); return WorkerPriority.Urgent; }
+async void Run() { var built = await Build(1, priority: await Level()); }
+scene Main;

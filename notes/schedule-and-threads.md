@@ -1,5 +1,37 @@
 # The schedule and the tick on threads
 
+## Worker priorities (2026-11-15)
+
+A local worker call's `priority:` (notes/language.md; spec, Local workers, Priorities). Provisional, Claude's picks.
+
+- **Where the order is kept.** In the worker group (`tide_workers`, engine/src/worker.c), not in the provider: a
+  group hands a provider as many calculations as it has threads beside the caller's (`threads - 1`, one at least) and
+  keeps the rest in three queues of its own, one a priority, oldest first. As a calculation ends (`worker_run`, on
+  the provider's thread) it hands over the group's next. So a provider's `background` stays the plain queue it was
+  (the platform's pool, a custom host's, a test's), other users of it (levels of detail, pipelines, asset loading)
+  are as they were, and nothing of a group waits in the provider's queue in the order it came. A calculation the
+  provider has is never taken back or passed. With no `background` a calculation runs where it's polled, as before.
+- **Which is next** (`hand_over`): the most urgent level's oldest; but a level whose oldest has seen its turn of more
+  urgent starts go by starts first (`level_turn`: 4 for normal, 16 for background; the least urgent such level
+  before the others). The counts are of starts, not time: no clock is read. A level's count starts again when it
+  empties.
+- **Room** (`tide_worker_can_reserve_at`): `tide_worker_limits`' pending and capture limits count each level apart
+  (normal: the limit; urgent: as much again; background: half). A first version counted all levels together with
+  thresholds (background to half, urgent a quarter past): under a backlog of normal calls a background call was then
+  never admitted, with no turn to wait for, since a call that waits for room has no place in any queue. The frame's
+  transfer limit is one for all, as it's the frame's time.
+- **Shared state.** The queues, the count of calculations a provider has and `closing` are under the group's spin
+  lock, taken by the frame thread (submit, forget, free) and by a provider's thread once a calculation. A queued
+  calculation that's forgotten is unlinked and released at once (it was skipped when its turn came, before).
+  `tide_workers_free` sets `closing` first, so nothing more is handed over, then waits for what was.
+- **Unchanged for calls with no priority:** the order they start in, how many run at once on the platform's pool
+  (it had `threads - 1` threads beside the caller's), admission. `bench_workers*`, `tide_platform_jobs` and the worker
+  fixtures pass as they were; voxels' 795 jobs in 300 frames wait 0.38 to 0.44 ms each in the queue against 0.40 to
+  0.46 before (two runs each, the machine shared), and take the same 0.44 to 0.47 ms.
+- **Gaps.** A long background calculation on every thread still holds an urgent one up until one ends (no thread is
+  kept back). Several local states in a process (`--players`) each hand the pool `threads - 1`. A worker's parallel
+  loop helpers go ahead of everything, as before. The lock is a spin lock, as the pool's own queue's is.
+
 ## From the review of heaps per owner in games that hide state (2026-11-15)
 
 - **Rows on threads flushed heap 0 at once.** A system whose rows log their `Visibility.Set` (`system_logs_groups`) has the

@@ -160,6 +160,7 @@ view Show(Devices devices)
     {
         Draw.SetStencil(StencilTest.Always, 2, StencilOp.Replace);
     }
+    Faces(blocks, priority: WorkerPriority.Background);
     if (GUI.Button("Copy")) Clipboard.Copy("x");
     GUIControl card = GUI.Control(Rect(0, 0, 1, 1));
     GUITheme look = default;

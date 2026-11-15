@@ -1424,7 +1424,7 @@ static bool enum_generated(const program *prog, const decl *d)
 {
     return d->kind == DECL_ENUM
         && ((d != prog->depth && d != prog->cull && d != prog->wrap && d != prog->format && d != prog->stencil_test
-             && d != prog->stencil_op) || d->named);
+             && d != prog->stencil_op && d != prog->worker_priority) || d->named);
 }
 
 // Local fields and correction errors stay with what was spawned, rather than
@@ -6837,6 +6837,14 @@ static void gen_task_start_in(gen *g, const expr *call, const bool local, const 
         }
         else gen_spill(g, slot.data, value.data, p->type, where);
     }
+    if (call->method->is_worker && call->method->prioritized_handles) { // Normal, where this call says none
+        const param *p = &fn->params.items[fn->params.count - 1];
+        indent(g, o);
+        sb_printf(o, "tide_start.%s = ", mangle(p->name));
+        if (call->mesh_lod) gen_as(g, o, call->mesh_lod, p->type);
+        else sb_printf(o, "(%s)0", c_type(p->type));
+        sb_put(o, ";\n");
+    }
     if (handle) {
         line(g, o, "tide_task_%s_new(%s, INT64_C(%llu), 0, &%s.tide_id, &%s.tide_slot);",
              local ? "local" : "match", local ? "tide_l" : "tide_w", (unsigned long long)task_code(fn), handle, handle);
@@ -6902,6 +6910,19 @@ static void gen_task_value(gen *g, expr *call, const char *name)
     const int mark = task_mark(g), containers = g->containers.count;
     const bool worker = call->method->is_worker;
     const char **before = NULL;
+    const char *priority_before = NULL;
+    if (worker && call->mesh_lod) { // Its `priority:`, read as the call begins, before its arguments
+        const type t = {TY_ENUM, g->prog->worker_priority};
+        const char *temp = made_up(g, "worker_priority");
+        hoist_spawns(g, call->mesh_lod);
+        priority_before = call->mesh_lod->hoisted;
+        indent(g, &g->c);
+        sb_printf(&g->c, "%s %s = ", c_type(t), temp);
+        gen_as(g, &g->c, call->mesh_lod, t);
+        sb_put(&g->c, ";\n");
+        task_declare(g, temp, t);
+        call->mesh_lod->hoisted = temp;
+    }
     if (worker) {
         before = arena_alloc(sizeof *before * (size_t)call->args.count);
         // Capture each value at its written position. In particular an early
@@ -6944,6 +6965,7 @@ static void gen_task_value(gen *g, expr *call, const char *name)
     g->containers.count = containers;
     task_pop(g, mark);
     if (before) for (int i = 0; i < call->args.count; i++) call->args.items[i]->hoisted = before[i];
+    if (worker && call->mesh_lod) call->mesh_lod->hoisted = priority_before;
 }
 
 // ---------------------------------------------------------------------------
@@ -9729,6 +9751,15 @@ static void make_worker_tasks(program *p)
         fn->worker_adapter = worker;
         worker->worker_adapter = fn;
         for (int k = 0; k < worker->params.count; k++) vec_push(fn->params, worker->params.items[k]);
+        if (worker->prioritized_handles) { // What a call that gives a handle said, kept until the worker's own call
+            param priority = {0};
+            priority.name = str_from("tide_priority");
+            priority.type = (type){TY_ENUM, p->worker_priority};
+            priority.mode = PARAM_READ;
+            priority.function_param = priority.read = true;
+            priority.at = priority.name_at = worker->at;
+            vec_push(fn->params, priority);
+        }
         expr *call = NEW(expr), *wait = NEW(expr);
         call->kind = E_CALL;
         call->at = worker->at;
@@ -9743,6 +9774,10 @@ static void make_worker_tasks(program *p)
             value->param = arg;
             value->name = arg->name;
             value->type = arg->type;
+            if (k >= worker->params.count) {
+                call->mesh_lod = value; // Its `priority:`
+                continue;
+            }
             vec_push(call->args, value);
             vec_push(call->arg_want, arg->type);
         }

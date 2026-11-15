@@ -1,3 +1,13 @@
+## Worker priorities (2026-11-15)
+
+Within the worker maintenance exception (Local worker runtime, Worker admission, below): `tide/worker.h` gained
+`tide_worker_reserve_at`, `tide_worker_can_reserve_at` and `TIDE_WORKER_NORMAL/URGENT/BACKGROUND`, which generated C
+calls only for a worker call that says a `priority:`; the functions without `_at` are those with normal.
+`tide_workers` keeps its queues by priority and hands a provider `threads - 1` calculations at a time, so
+`tide_background` and `tide_jobs` are unchanged and a provider needs nothing new. `tide_worker_limits`' first two
+members count each priority apart. No match storage, tick order, hash or wire format changed: priorities are this
+machine's. Contracts and tests: notes/schedule-and-threads.md (Worker priorities), notes/language.md.
+
 ## The server's store: a host that keeps it (2026-11-15, managed hosting)
 
 Agent-maintained, and nothing generated code calls (notes/voxels.md, section 3e). `tide/storage.h` gained

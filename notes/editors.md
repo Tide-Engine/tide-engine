@@ -1,3 +1,13 @@
+## A local worker call's `priority:` (2026-11-15)
+
+`complete_argument_names` offers `priority:` where an argument starts in a call of a `local worker` (not a method's,
+and once), inserting `priority: WorkerPriority.`; `WorkerPriority`'s members have what each says in completion and
+hover (`priority_member_doc`, through `enum_member_doc`, which Format's go through too); the name is in rename's
+reserved list; `walk_expr` goes through a worker call's priority, which the checker keeps off its arguments
+(`expr.mesh_lod`), so names in it hover, complete and rename. Both TextMate grammars list `WorkerPriority` with the
+built-in types (`tools/tide-syntax`'s grammar test and `probe.tide` have a line of it). Tested by `lsp_worker_priorities`.
+Not there: signature help doesn't show `priority:` after a worker's parameters.
+
 ## Typed image reads in editor help, and the rendering docs (2026-11-15)
 
 An audit of editor help and docs after the rendering work of 2026-11-14/15 found typed reads shown as Color.

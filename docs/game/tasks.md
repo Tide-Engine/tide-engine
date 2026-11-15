@@ -333,6 +333,36 @@ their code; trusted C must return before that drain can finish.
 Saved or retained waiting tasks restart their pending worker after restoration
 or reload. No worker state enters match snapshots, hashes or networking.
 
+### Which call starts first
+
+More worker calls can wait than there are threads free. A call says when it
+starts among them with `priority:`, written last, by name:
+
+```csharp
+// The chunk the player stands in, before the ones far off
+var built = await BuildMesh(voxels, priority: near ? WorkerPriority.Urgent : WorkerPriority.Normal);
+
+// A handle's call takes it too
+LocalTask<MeshData> far = BuildMesh(horizon, priority: WorkerPriority.Background);
+```
+
+`WorkerPriority` has three members. `Urgent` calls start first, then `Normal`
+ones, which is what a call that says nothing is, then `Background` ones, each
+in the order they came. Nothing waits for ever: a waiting normal call starts
+after four urgent starts, and a waiting background call after sixteen starts
+of the others. The worker is the same function for all of them, so one mesher
+serves the chunk underfoot and the horizon.
+
+A priority says which waiting call a free thread takes. It never interrupts a
+call that has started, and it doesn't make the copy of a call's inputs cheaper.
+The match's ticks keep their threads first, as before. Each priority has its
+own room for waiting calls, so a flood of background calls keeps no urgent one
+out.
+
+The value is read once, as the call begins: before the call waits for room and
+before its arguments. It can be any `WorkerPriority` value, but not one that
+has to be awaited. A worker can't name a parameter `priority`.
+
 ## In C
 
 Hosts tell local code how long each frame is, before `tide_frame`: `tide_local_frame_time(local, seconds)`, which local tasks' waits count down and `Frame.dt` reads. `tide/run.h` does. Under `tide run`, a waiting task carries over to a new build when its code is the same; when it changed, the task is dropped, and tide says so.
@@ -347,7 +377,13 @@ and completion. A zeroed GUI retains the synchronous fallback.
 the current defaults: 64 pending private jobs, 64 MiB of retained input
 captures, and 4 MiB of capture/result transfers per frame. Direct worker awaits
 wait for admission before evaluating their arguments. Nested awaited arguments
-don't hold a reservation while waiting for another worker.
+don't hold a reservation while waiting for another worker. The first two
+limits count each priority apart: normal calls have them, urgent calls as much
+again, and background calls half as much.
+
+Local state hands a provider as many calculations as it has threads beside the
+caller's, and keeps the rest in its own queues by priority, so a provider's
+`background` needs no ordering of its own.
 
 Transfer limits are soft: one transfer that crosses the budget finishes, then
 later transfers wait for another frame. This lets an oversized job make

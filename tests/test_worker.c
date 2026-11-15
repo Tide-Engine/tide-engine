@@ -207,3 +207,156 @@ TIDE_TEST(worker_profiles_publish_once_after_provider_completion)
     tide_workers_free(workers);
     tide_profile_free(&profile);
 }
+
+// Calculations that say which they are, in the order a provider's one thread ran them.
+typedef struct ordered_probe {
+    uint32_t *order, *runs;
+    uint32_t id, released;
+} ordered_probe;
+
+static void run_ordered(void *context)
+{
+    ordered_probe *p = context;
+    p->order[(*p->runs)++] = p->id;
+}
+static void release_ordered(void *context) { ((ordered_probe *)context)->released++; }
+
+static uint32_t start_at(tide_workers **workers, const tide_jobs *jobs, const uint32_t priority, ordered_probe *probe)
+{
+    const uint32_t ticket = tide_worker_reserve_at(workers, jobs, priority);
+    if (ticket) tide_worker_submit(*workers, ticket, run_ordered, release_ordered, probe, 0);
+    return ticket;
+}
+
+TIDE_TEST(worker_priorities_order_queued_calculations_and_keep_each_levels_order)
+{
+    deferred_workers queue = {0};
+    const tide_jobs jobs = {.self = &queue, .threads = 2, .background = defer, .help = help};
+    tide_workers *workers = NULL;
+    uint32_t order[8] = {0}, runs = 0;
+    ordered_probe probes[7];
+    static const uint32_t priorities[7] = {TIDE_WORKER_BACKGROUND, TIDE_WORKER_BACKGROUND, TIDE_WORKER_NORMAL, TIDE_WORKER_URGENT,
+                                           77u, TIDE_WORKER_URGENT, TIDE_WORKER_BACKGROUND}; // An unknown number is normal
+    for (uint32_t i = 0; i < 7; i++) {
+        probes[i] = (ordered_probe){order, &runs, i, 0};
+        TIDE_REQUIRE(start_at(&workers, &jobs, priorities[i], &probes[i]));
+    }
+    // The provider has the first alone, whatever its priority: it's never taken back or passed
+    TIDE_CHECK(queue.first && !queue.first->next);
+    while (help(&queue, false)) { }
+    static const uint32_t want[7] = {0, 3, 5, 2, 4, 1, 6};
+    TIDE_REQUIRE(runs == 7);
+    for (uint32_t i = 0; i < 7; i++) TIDE_CHECK(order[i] == want[i]);
+    tide_workers_free(workers);
+    for (uint32_t i = 0; i < 7; i++) TIDE_CHECK(probes[i].released == 1);
+}
+
+TIDE_TEST(worker_priorities_hand_a_provider_as_many_as_its_other_threads)
+{
+    deferred_workers queue = {0};
+    const tide_jobs jobs = {.self = &queue, .threads = 4, .background = defer, .help = help};
+    tide_workers *workers = NULL;
+    uint32_t order[8] = {0}, runs = 0;
+    ordered_probe probes[6];
+    for (uint32_t i = 0; i < 6; i++) {
+        probes[i] = (ordered_probe){order, &runs, i, 0};
+        start_at(&workers, &jobs, i == 5 ? TIDE_WORKER_URGENT : TIDE_WORKER_BACKGROUND, &probes[i]);
+    }
+    uint32_t handed = 0;
+    for (const tide_background *job = queue.first; job; job = job->next) handed++;
+    TIDE_CHECK(handed == 3);
+    while (help(&queue, false)) { }
+    // The three it had, then the urgent one before the background ones that waited with it
+    static const uint32_t want[6] = {0, 1, 2, 5, 3, 4};
+    TIDE_REQUIRE(runs == 6);
+    for (uint32_t i = 0; i < 6; i++) TIDE_CHECK(order[i] == want[i]);
+    tide_workers_free(workers);
+}
+
+TIDE_TEST(worker_priorities_age_so_nothing_waits_for_ever)
+{
+    enum { urgent = 64 };
+    deferred_workers queue = {0};
+    const tide_jobs jobs = {.self = &queue, .threads = 2, .background = defer, .help = help};
+    tide_workers *workers = NULL;
+    const tide_worker_limits limits = {.pending = 1024};
+    tide_workers_frame(&workers, &limits, NULL);
+    uint32_t order[urgent + 8] = {0}, runs = 0;
+    ordered_probe probes[urgent + 4];
+    static const uint32_t first[4] = {TIDE_WORKER_NORMAL, TIDE_WORKER_BACKGROUND, TIDE_WORKER_NORMAL, TIDE_WORKER_NORMAL};
+    for (uint32_t i = 0; i < 4; i++) { // The provider's, then one background and two normal ones that wait
+        probes[i] = (ordered_probe){order, &runs, 1000 + i, 0};
+        TIDE_REQUIRE(start_at(&workers, &jobs, first[i], &probes[i]));
+    }
+    for (uint32_t i = 0; i < urgent; i++) {
+        probes[4 + i] = (ordered_probe){order, &runs, i, 0};
+        TIDE_REQUIRE(start_at(&workers, &jobs, TIDE_WORKER_URGENT, &probes[4 + i]));
+    }
+    while (help(&queue, false)) { }
+    TIDE_REQUIRE(runs == urgent + 4);
+    // With urgent work always waiting, a normal one starts after every four urgent starts, and the background
+    // one after sixteen starts of the others
+    static const uint32_t want[19] = {1000, 0, 1, 2, 3, 1002, 4, 5, 6, 7, 1003, 8, 9, 10, 11, 12, 13, 1001, 14};
+    for (uint32_t i = 0; i < 19; i++) TIDE_CHECK(order[i] == want[i]);
+    for (uint32_t i = 19; i < urgent + 4; i++) TIDE_CHECK(order[i] == i - 4);
+    tide_workers_free(workers);
+}
+
+TIDE_TEST(worker_priorities_release_cancelled_waiting_work_at_once)
+{
+    deferred_workers queue = {0};
+    const tide_jobs jobs = {.self = &queue, .threads = 2, .background = defer, .help = help};
+    tide_workers *workers = NULL;
+    uint32_t order[4] = {0}, runs = 0;
+    ordered_probe probes[4];
+    uint32_t tickets[4];
+    for (uint32_t i = 0; i < 4; i++) {
+        probes[i] = (ordered_probe){order, &runs, i, 0};
+        tickets[i] = start_at(&workers, &jobs, i == 2 ? TIDE_WORKER_URGENT : TIDE_WORKER_NORMAL, &probes[i]);
+    }
+    tide_worker_forget(workers, tickets[2]); // Waiting, the next to start: gone with its captures, never run
+    TIDE_CHECK(probes[2].released == 1);
+    tide_worker_forget(workers, tickets[0]); // The provider's: skipped there, released once it says it's done
+    TIDE_CHECK(probes[0].released == 0);
+    tide_worker_forget(workers, tickets[2]);
+    while (help(&queue, false)) { }
+    tide_workers_collect(workers);
+    TIDE_CHECK(runs == 2 && order[0] == 1 && order[1] == 3);
+    TIDE_CHECK(probes[0].released == 1 && probes[2].released == 1);
+    TIDE_CHECK(tide_worker_poll(workers, tickets[1]) == &probes[1] && tide_worker_poll(workers, tickets[2]) == NULL);
+    tide_workers_free(workers);
+    for (uint32_t i = 0; i < 4; i++) TIDE_CHECK(probes[i].released == 1);
+}
+
+TIDE_TEST(worker_priorities_admit_each_level_by_its_own_room)
+{
+    tide_workers *workers = NULL;
+    const tide_worker_limits limits = {.pending = 8, .capture_bytes = 80};
+    tide_workers_frame(&workers, &limits, NULL);
+    uint32_t tickets[24], count = 0;
+    while (count < 24 && (tickets[count] = tide_worker_reserve_at(&workers, NULL, TIDE_WORKER_BACKGROUND)) != 0) count++;
+    TIDE_CHECK(count == 4 && !tide_worker_can_reserve_at(workers, TIDE_WORKER_BACKGROUND)); // Half the limit
+    TIDE_CHECK(tide_worker_can_reserve(workers) && tide_worker_can_reserve_at(workers, TIDE_WORKER_NORMAL));
+    while (count < 24 && (tickets[count] = tide_worker_reserve(&workers, NULL)) != 0) count++;
+    TIDE_CHECK(count == 12 && !tide_worker_can_reserve(workers)); // The limit, whatever else is pending
+    while (count < 24 && (tickets[count] = tide_worker_reserve_at(&workers, NULL, TIDE_WORKER_URGENT)) != 0) count++;
+    TIDE_CHECK(count == 20 && !tide_worker_can_reserve_at(workers, TIDE_WORKER_URGENT));
+    tide_worker_forget(workers, tickets[0]); // Room of a level is that level's alone
+    TIDE_CHECK(tide_worker_can_reserve_at(workers, TIDE_WORKER_BACKGROUND) && !tide_worker_can_reserve(workers));
+    for (uint32_t i = 1; i < count; i++) tide_worker_forget(workers, tickets[i]);
+    // Captures kept, likewise: background work to half of them
+    worker_probe probe = {0};
+    const uint32_t back = tide_worker_reserve_at(&workers, NULL, TIDE_WORKER_BACKGROUND);
+    tide_worker_submit(workers, back, run, release, &probe, 40);
+    TIDE_CHECK(!tide_worker_can_reserve_at(workers, TIDE_WORKER_BACKGROUND) && tide_worker_can_reserve(workers));
+    const uint32_t normal = tide_worker_reserve(&workers, NULL);
+    tide_worker_submit(workers, normal, run, release, &probe, 80);
+    TIDE_CHECK(!tide_worker_can_reserve(workers) && tide_worker_can_reserve_at(workers, TIDE_WORKER_URGENT));
+    const uint32_t urgent = tide_worker_reserve_at(&workers, NULL, TIDE_WORKER_URGENT);
+    tide_worker_submit(workers, urgent, run, release, &probe, 80);
+    TIDE_CHECK(!tide_worker_can_reserve_at(workers, TIDE_WORKER_URGENT));
+    tide_worker_forget(workers, normal);
+    TIDE_CHECK(tide_worker_can_reserve(workers) && !tide_worker_can_reserve_at(workers, TIDE_WORKER_URGENT));
+    tide_workers_free(workers);
+    TIDE_CHECK(probe.released == 3);
+}

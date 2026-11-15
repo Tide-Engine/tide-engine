@@ -216,6 +216,21 @@ view Chunks(mut Chunk chunk, query (Chunk other) chunks)
 
 The view finds each neighbour by its place, an indexed loop over the chunks it has, and hands the task the neighbours' grids, which are the task's own copies ([Async and tasks](./tasks.md#what-a-task-keeps)): a neighbour that changes while the faces are made doesn't change them. Handing the task its own chunk as `mut` changes only the chunk's local fields, so the loop is still indexed by the chunks' places. Each mesh gives back its chunk's six sides and its neighbours' sides toward it as it read them, each as one number, kept in a map of this machine's. Its neighbours' meshes have been made from blocks of their own time, so whichever of two neighbours is made last compares the two: a neighbour made from another side of this chunk than this mesh's has its faces made again, and so has this chunk where it read another side of the neighbour than the neighbour's mesh was made from. That holds whichever was begun first, and when a side changes and changes back while one of them is being made. A change at the edge makes them again at once; a chunk that came or went, once its other neighbours have stopped coming, since a view's worth of chunks comes over many frames and the faces between them are hidden ones. Chunks that come together read each other's blocks, and each one's faces are made once. A chunk whose side is all air has no faces its neighbour hides: a chunk of sky has sides of air, its coming changes nobody's faces, and a block built under it changes none of its faces. In `bench/voxels` this draws fewer than a third of the triangles it did, with the same picture.
 
+When a player arrives somewhere, hundreds of chunks want faces at once. The chunks around the player go first: each call says its `priority:` ([Async and tasks](./tasks.md#which-call-starts-first)), and the same `Faces` serves them all.
+
+```csharp
+// In Remesh, which the view hands a priority
+var built = await Faces(chunk.blocks, east, west, above, below, north, south, priority: priority);
+
+// In the view: how far the chunk is from the player's, in chunks
+var away = Math.Max(Math.Max(Math.Abs(chunk.at.x - sight.chunk.x), Math.Abs(chunk.at.z - sight.chunk.z)),
+                    Math.Abs(chunk.at.y - sight.chunk.y));
+var priority = !changed ? WorkerPriority.Background   // Only a neighbour came or went: mostly hidden faces
+             : away <= 2 ? WorkerPriority.Urgent : WorkerPriority.Normal;
+```
+
+The ground far off (below) is one big mesh, made with `WorkerPriority.Background`: after the chunks' faces, and never so late that it's missing for long, as a background call waits for at most sixteen others to start.
+
 Two things keep that picture whole. A block dug at a chunk's edge uncovers a face of the neighbour's, which only the neighbour's new mesh has: the chunk keeps its own new mesh aside until the neighbour's is made, and the two show in the same frame, rather than a hole into the neighbour for a frame or two. And a chunk that leaves this machine has the faces toward it made again, in a `local event(Forgotten)` handler, which keeps its place in a local field, as the match's fields are gone by then. `Forgotten` comes whichever way the chunk leaves this machine: hidden from its player, or destroyed, which is the only way on the hosting machine, whose views see the whole match.
 
 ### What players built far off

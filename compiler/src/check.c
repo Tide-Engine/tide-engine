@@ -446,7 +446,7 @@ static void names_filter(program *prog, const int64_t number)
 static bool named_only(const program *prog, const decl *d)
 {
     return d == prog->depth || d == prog->cull || d == prog->wrap || d == prog->format || d == prog->stencil_test
-        || d == prog->stencil_op || d == prog->sound || d == prog->samples || d == prog->effect || d == prog->view_time
+        || d == prog->stencil_op || d == prog->worker_priority || d == prog->sound || d == prog->samples || d == prog->effect || d == prog->view_time
         || d == prog->audience || d == prog->visibility_group || d == prog->clip_data || d == prog->mesh_level;
 }
 
@@ -5541,6 +5541,10 @@ static bool bind_args(const expr *e, const decl *m, int *param_of, const bool qu
                 suggestion s = suggest_start(name);
                 for (int k = 0; k < count; k++) suggest_consider(&s, m->params.items[k].name);
                 suggest_note(&s);
+                if (m->is_worker && str_eq_c(name, "priority")) {
+                    diag_note("a worker call's 'priority:' is written last, after its arguments: '" STR_FMT
+                              "(..., priority: WorkerPriority.Background)'", STR_ARG(m->name));
+                }
             }
             ok = false;
             continue;
@@ -6591,9 +6595,69 @@ static type builtin_task_start(checker *c, expr *e, const type result, const int
     return handle;
 }
 
+static bool expr_waits(const expr *e)
+{
+    if (!e) return false;
+    if (e->kind == E_AWAIT) return true;
+    if (expr_waits(e->object) || expr_waits(e->lhs) || expr_waits(e->rhs) || expr_waits(e->cond)) return true;
+    for (int i = 0; i < e->args.count; i++) if (expr_waits(e->args.items[i])) return true;
+    for (int i = 0; i < e->inits.count; i++) if (expr_waits(e->inits.items[i].value)) return true;
+    return false;
+}
+
+// `priority: WorkerPriority.Background`, written last in a local worker's call: which of the calls that wait
+// for a thread starts first (docs/spec.md, Local workers). Taken off the arguments before they're matched with
+// the worker's parameters, none of which can have the name (check_function), so a function that isn't a worker
+// keeps a 'priority' parameter of its own, alone or among the functions that share its name.
+static expr *take_call_priority(const checker *c, expr *e, const decl *fn, loc *at)
+{
+    const int last = e->args.count - 1;
+    if (last < 0 || e->arg_names.count != e->args.count || !str_eq_c(e->arg_names.items[last], "priority")) return NULL;
+    decl_list same = {0};
+    if (fn->shares_name) sharing_name(c->prog, fn, &same);
+    else vec_push(same, (decl *)fn);
+    bool worker = false;
+    for (int k = 0; k < same.count; k++) {
+        const decl *d = same.items[k];
+        if (d->is_worker) {
+            worker = true;
+            continue;
+        }
+        for (int i = 0; i < d->params.count; i++)
+            if (str_eq_c(d->params.items[i].name, "priority")) return NULL;
+    }
+    if (!worker) return NULL;
+    expr *priority = e->args.items[last];
+    *at = e->arg_name_at.items[last];
+    e->args.count--;
+    e->arg_names.count--;
+    e->arg_name_at.count--;
+    bool named = false;
+    for (int i = 0; i < e->arg_names.count; i++) named |= e->arg_names.items[i].len > 0;
+    if (!named) e->arg_names.count = e->arg_name_at.count = 0;
+    return priority;
+}
+
 static type check_function_call(checker *c, expr *e, decl *fn)
 {
+    loc priority_at = e->at;
+    expr *priority = take_call_priority(c, e, fn, &priority_at);
     fn = check_routine_args(c, e, fn);
+    if (priority) {
+        const type want = {TY_ENUM, c->prog->worker_priority};
+        const type got = check_expr_want(c, priority, want);
+        if (fn && !fn->is_worker) {
+            diag_error(priority_at, "'priority:' says when a local worker's call starts, and '" STR_FMT "' isn't a worker",
+                       STR_ARG(fn->name));
+            diag_note("leave out 'priority:'; a 'local worker' function's calls take it");
+        } else if (got.kind != TY_ERROR && (got.kind != TY_ENUM || got.decl != want.decl)) {
+            diag_error(priority->at, "'priority:' takes a WorkerPriority, and this is %s", type_name(got));
+            diag_note("write 'priority: WorkerPriority.Urgent', 'WorkerPriority.Normal' or 'WorkerPriority.Background'");
+        } else if (expr_waits(priority)) {
+            diag_error(priority->at, "a call's priority is read as the call begins, before anything it waits for: "
+                       "'await' the value into a variable first");
+        } else if (fn) e->mesh_lod = priority;
+    }
     if (!fn) return T_ERR;
     if (fn->is_async || (fn->is_worker && c->awaiting != e)) check_task_call(c, e, fn);
     if (fn->is_worker) {
@@ -6601,6 +6665,7 @@ static type check_function_call(checker *c, expr *e, decl *fn)
         if (c->awaiting != e) {
             e->task_start_value = true;
             fn->handles_tasks = true;
+            if (e->mesh_lod) fn->prioritized_handles = true;
             note_side(fn, TASK_LOCAL, e->at);
         } else if (from && from->is_async) {
             from->uses_workers = true;
@@ -11791,6 +11856,11 @@ static type check_enum_member(expr *e, decl *d)
     if (d->builtin && str_eq_c(d->name, "Cull")) {
         diag_note("a 3D mesh's triangles aren't drawn from the back, 'Cull.Back', as each frame starts; or from the "
                   "front, 'Cull.Front'; or they're drawn from both sides, 'Cull.None'");
+    }
+    if (d->builtin && str_eq_c(d->name, "WorkerPriority")) {
+        diag_note("a local worker's call starts before the others that wait, 'WorkerPriority.Urgent'; in the order it "
+                  "came, 'WorkerPriority.Normal', as a call that says nothing does; or after them, "
+                  "'WorkerPriority.Background'");
     }
     if (d->builtin && str_eq_c(d->name, "Wrap")) {
         diag_note("a uv past a texture's edges reads the cells at its edge, 'Wrap.Clamp'; the texture again, 'Wrap.Repeat'; "
@@ -20640,6 +20710,11 @@ static void check_function_decl(checker *c, decl *fn)
             if (p->mode != PARAM_READ || p->is_out) {
                 diag_error(p->at, "a worker owns its inputs; return the result instead of taking 'mut' or 'out'");
             }
+            if (str_eq_c(p->name, "priority")) {
+                diag_error(p->name_at, "'priority' is what a worker's call says of when it starts, "
+                           "'" STR_FMT "(..., priority: WorkerPriority.Background)': give the parameter another name",
+                           STR_ARG(fn->name));
+            }
         }
     }
 }
@@ -23048,6 +23123,19 @@ static void add_builtins(program *prog)
         vec_push(stencil_op->members, m);
     }
     prog->stencil_op = stencil_op;
+    // enum WorkerPriority { Normal, Urgent, Background }: which queued local worker call a free thread takes
+    // (`priority:`), with tide/worker.h's TIDE_WORKER_ values; Normal is its zero, what a call that says none has.
+    // Like Depth, generated C has it only in a game whose code names it.
+    static const char *const priorities[] = {"Normal", "Urgent", "Background"};
+    decl *worker_priority = NEW(decl);
+    worker_priority->kind = DECL_ENUM;
+    worker_priority->name = str_from("WorkerPriority");
+    worker_priority->builtin = true;
+    for (int i = 0; i < (int)(sizeof priorities / sizeof priorities[0]); i++) {
+        const enum_member m = {str_from(priorities[i]), {0, 0, 0}, NULL, i};
+        vec_push(worker_priority->members, m);
+    }
+    prog->worker_priority = worker_priority;
 
     // This machine's part in a match (see tide/session.h, whose enums have the
     // same values): local singleton Session { SessionState state; PlayerID
@@ -23125,6 +23213,7 @@ static void add_builtins(program *prog)
     vec_push(decls, format);
     vec_push(decls, stencil_test);
     vec_push(decls, stencil_op);
+    vec_push(decls, worker_priority);
     vec_push(decls, state);
     vec_push(decls, reason);
     vec_push(decls, session);

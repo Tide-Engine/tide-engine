@@ -788,7 +788,7 @@
         {
           "comment": "Built-in singletons, components, events, enums, records, the World, generic types and function groups. Not after a '.': GUI.Button is a function",
           "name": "support.class.tide",
-          "match": "(?<!\\.)\\b(Time|Math|Draw|GUI|GUILayout|Screen|Cursor|Frame|Anchor|Vertex|Vertex3|Shape|GUITheme|GUIControl|Filter|Wrap|Font|Blend|Depth|Cull|StencilTest|StencilOp|Random|Owner|Visibility|VisibilityGroup|Audience|World|Devices|Keyboard|Mouse|Gamepad|Button|Dpad|Spawned|Destroyed|Shown|Hidden|PlayerJoined|PlayerLeft|Scene|Prediction|Debug|Session|SessionState|DisconnectReason|Connected|Disconnected|Wait|Clipboard|File|Directory|Path|Application|Storage|IOError|Json|List|GPUList|GPU|Map|Set|Grid2|Grid3|Task|LocalTask)\\b"
+          "match": "(?<!\\.)\\b(Time|Math|Draw|GUI|GUILayout|Screen|Cursor|Frame|Anchor|Vertex|Vertex3|Shape|GUITheme|GUIControl|Filter|Wrap|Font|Blend|Depth|Cull|StencilTest|StencilOp|WorkerPriority|Random|Owner|Visibility|VisibilityGroup|Audience|World|Devices|Keyboard|Mouse|Gamepad|Button|Dpad|Spawned|Destroyed|Shown|Hidden|PlayerJoined|PlayerLeft|Scene|Prediction|Debug|Session|SessionState|DisconnectReason|Connected|Disconnected|Wait|Clipboard|File|Directory|Path|Application|Storage|IOError|Json|List|GPUList|GPU|Map|Set|Grid2|Grid3|Task|LocalTask)\\b"
         },
         {
           "comment": "Spawn(...), Send(...)",

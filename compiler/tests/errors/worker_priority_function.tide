@@ -1,0 +1,4 @@
+// expect: 'Add' has no parameter 'priority'
+int Add(int value) { return value + 1; }
+view Show() { var sum = Add(1, priority: WorkerPriority.Urgent); }
+scene Main;

@@ -366,6 +366,7 @@ const cases = {
                                                 ['StencilTest', 'support.class']]],
         ['Draw.SetStencil(StencilTest.Always, 2, StencilOp.Replace);', [['SetStencil', 'entity.name.function.call'],
                                                                         ['StencilOp', 'support.class']]],
+        ['Faces(blocks, priority: WorkerPriority.Background);', [['WorkerPriority', 'support.class']]],
         ['Draw.Text("DUEL"', [['Text', 'entity.name.function.call'], ['Anchor', 'support.class'], ['Font', 'support.class']]],
         ['extern void DrawUI(DrawList list);', [['DrawList', 'storage.type.primitive']]],
         ['RenderTarget scene; Texture image;', [['RenderTarget', 'storage.type.primitive'], ['Texture', 'storage.type.primitive']]],

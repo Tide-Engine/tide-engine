@@ -1,0 +1,4 @@
+// expect: a worker call's 'priority:' is written last, after its arguments: 'Build(..., priority: WorkerPriority.Background)'
+local worker int Build(int value) { return value; }
+async void Run() { var built = await Build(priority: WorkerPriority.Urgent, value: 1); }
+scene Main;

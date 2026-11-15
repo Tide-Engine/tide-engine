@@ -547,6 +547,7 @@ tide_e2e_test(local_workers)
 tide_e2e_test(task_handles LAYOUT)
 tide_e2e_test(task_visibility)
 tide_e2e_test(worker_handles)
+tide_e2e_test(worker_priorities) # `priority:` on a local worker's call: order by priority, each level in turn, aging, cancelling, room
 if(TIDE_PLATFORM)
     target_link_libraries(tidec_e2e_task_handles PRIVATE tide_platform)
     target_compile_definitions(tidec_e2e_task_handles PRIVATE TIDE_TASK_MIGRATION=1)

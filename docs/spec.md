@@ -3014,21 +3014,61 @@ Snapshot capture copies the directory and existing chunks on the calling thread.
 Capture follows written argument order. An earlier grid capture survives later
 argument mutations or waits as privately owned task state until dispatch.
 
-**Open:** deterministic match workers, invocation priorities, distributed match
-task handles and explicit cancellation outcomes beyond status properties.
+**Priorities (Provisional, Claude's picks, 2026-11-15; the owner said to go with
+the recommendations).** A local worker's call says when it starts among the
+calls that wait for a thread: `await Faces(blocks, priority: WorkerPriority.Background)`,
+and the same on a call that gives a handle.
+
+- **The spelling is a named argument, written last**, as `samples:` is on a
+  render target and `lod:` on a mesh draw: the engine's one name on a call that
+  otherwise takes its own arguments. Argued: a method on the handle
+  (`Faces(...).Background()`) would change a call that has already started, and
+  a directly awaited call has no handle to write it on; an attribute or a second
+  declaration would put it on the worker, when the point is one mesher for the
+  chunk underfoot and the horizon; a word before the call would be a new
+  keyword. A worker can't name a parameter `priority` (an error at the
+  parameter); a function that isn't a worker keeps one of its own, and
+  `priority:` on its call is that parameter or the usual error.
+- **`WorkerPriority` is a built-in enum: `Normal`, `Urgent`, `Background`.**
+  `Normal` is its zero, what `default` and a call that says nothing have. The
+  name is the game's no longer; `Priority` alone was left to games. The value is
+  any expression of the type but one that awaits.
+- **Which starts.** The urgent calls first, then the normal ones, then the
+  background ones, each level in the order its calls came. A waiting normal call
+  starts after four urgent starts and a waiting background call after sixteen
+  starts of the others, so none waits for ever: under a steady stream of urgent
+  calls, every fifth start is a normal call and every seventeenth a background
+  one. A priority is read when a thread is free: it interrupts nothing that
+  runs, takes nothing back from a thread, and doesn't lessen what copying a
+  call's inputs costs. A match's ticks keep their precedence over all of it.
+- **Room.** The limits on waiting calls and kept inputs (Implemented choices,
+  above) count each priority apart: they're the normal calls', urgent calls
+  have as much again and background calls half as much. So no level keeps
+  another from being admitted, and local state can hold two and a half times
+  the limits when all three are full. A frame's transfer limit is one for all.
+- **When it's read.** Once, as the call begins: before the call waits for room,
+  which is the priority's, and before its arguments. What in it has effects
+  keeps its written place among the statement's other effects.
+- **Unchanged:** a call that says nothing is a normal call, generated C for a
+  game that names no priority is what it was, and a host with no threads runs a
+  call where it's polled, whatever its priority. It's this machine's alone:
+  nothing of it is match state.
+- **Not built:** changing the priority of a call that waits (a chunk the player
+  walked up to); a share of threads kept for urgent work while long background
+  calculations run on all of them (a free thread is the only time a priority
+  is read); priorities for a worker's own parallel loops, whose helpers still
+  go first; a match's workers, which stay reserved.
+
+**Open:** deterministic match workers, distributed match task handles and
+explicit cancellation outcomes beyond status properties.
 
 ### Proposed worker extensions (not implemented)
 
 These are recommendations for the owner's review, not approved requirements.
 No new syntax or runtime behavior below is part of the current implementation.
 
-- **Priorities:** put scheduling metadata on an invocation, so the same mesher
-  can serve visible and distant chunks. Start with three queue priorities:
-  Urgent, Normal and Background, FIFO within each and aging to avoid starvation.
-  Tick work retains precedence. Priority changes only when queued work starts;
-  it neither interrupts running calculations nor removes the cost of capture.
-  Invocation spelling and any foreground-capacity reservation need decisions
-  and measurements before implementation.
+- **Priorities:** built 2026-11-15 (Local workers, Priorities). Left of the
+  proposal: a share of threads kept for urgent work.
 - **Explicit cancellation outcomes:** ordinary await cancellation ends its
   continuation. If game code needs to continue after cancellation, consider a
   separate outcome-returning await API that preserves success, declared failure

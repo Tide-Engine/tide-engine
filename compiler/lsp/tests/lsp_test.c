@@ -3518,6 +3518,34 @@ TIDE_TEST(lsp_local_workers)
     TIDE_CHECK(has(request("textDocument/completion"), "\"label\":\"Add\""));
 }
 
+// A local worker call's `priority:`: no diagnostic, offered where an argument starts in a worker's call (once,
+// and not in a plain function's), WorkerPriority's members with what each says, and a member's hover.
+TIDE_TEST(lsp_worker_priorities)
+{
+    start();
+#define PRIORITY_HEAD "scene Main;\nlocal worker int Build(int value) { return value + 1; }\nint Add(int value) { return value; }\n"
+    open_document(PRIORITY_HEAD "async void Run() { await Build(1, priority: WorkerPriority.Back$ground); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "WorkerPriority.Background = 2") && has(hover, "never waits for ever"));
+    const char *offered = complete(PRIORITY_HEAD "async void Run() { var built = await Build(1, $); }\n");
+    TIDE_CHECK(offers(offered, "priority:") && has(offered, "Written last") && offers(offered, "value:") == false);
+    const char *first = complete(PRIORITY_HEAD "async void Run() { var built = await Build($); }\n");
+    TIDE_CHECK(offers(first, "priority:") && offers(first, "value:"));
+    const char *once = complete(PRIORITY_HEAD "async void Run() { var built = await Build(1, priority: WorkerPriority.Urgent, $); }\n");
+    TIDE_CHECK(!offers(once, "priority:"));
+    const char *plain = complete(PRIORITY_HEAD "view Show() { var sum = Add($); }\n");
+    TIDE_CHECK(!offers(plain, "priority:") && offers(plain, "value:"));
+    const char *members = complete(PRIORITY_HEAD "async void Run() { var built = await Build(1, priority: WorkerPriority.$); }\n");
+    TIDE_CHECK(offers(members, "Urgent") && offers(members, "Normal") && offers(members, "Background"));
+    TIDE_CHECK(has(members, "starts before the normal and background ones"));
+    open_document(PRIORITY_HEAD "async void Run() { var built = await Build(1, priority: 2); }\n");
+    TIDE_CHECK(has(last_sent(), "'priority:' takes a WorkerPriority, and this is int"));
+    open_document(PRIORITY_HEAD "enum WorkerPriority { Mine }\n");
+    TIDE_CHECK(!has(last_sent(), "\"diagnostics\":[]"));
+#undef PRIORITY_HEAD
+}
+
 TIDE_TEST(lsp_task_handles_preserve_results_members_and_source_types)
 {
     start();

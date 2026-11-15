@@ -1,0 +1,5 @@
+// expect: 'priority:' says when a local worker's call starts, and 'Build' isn't a worker
+local worker int Build(int value) { return value; }
+int Build(float value) { return int(value); }
+view Show() { var built = Build(1.5, priority: WorkerPriority.Urgent); }
+scene Main;

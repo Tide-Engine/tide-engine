@@ -706,6 +706,7 @@ typedef struct decl {
     type task_value; // The complete result, including optional/failure wrapping
     struct decl *task_origin; // A world-polymorphic creator, until its side is settled
     struct decl *worker_adapter; // Private async entry for a first-class worker call
+    bool prioritized_handles;    // A worker: a call that gives a handle says its `priority:`, which its adapter takes last
     struct decl *task_result_store; // Private completed-result storage declaration
     bool handles_tasks; // Values of calls of this async function escape as handles
     unsigned task_access[2]; // Match/local operation registry: 1 read, 2 write
@@ -1423,7 +1424,10 @@ struct expr {
     int draw_dims;        // CALL_DRAW: 0 for a call that selects no destination; else the window's, and a mesh's vertex dimensions
     struct decl *instance_type; // Its List<T> element struct; NULL for List<float4x4>
     struct expr *values;        // mesh draw and Blit: the struct it gives its vert and frag after their names, or NULL
-    struct expr *mesh_lod;      // A 3D mesh draw's `lod:` multiplier: levels made for the mesh while the game runs, or NULL
+    // A call's one argument written last by its engine's name, kept off `args`, or NULL: a 3D mesh draw's `lod:`
+    // multiplier (levels made for the mesh while the game runs), and a local worker call's `priority:`, a
+    // WorkerPriority (call_priority). Every pass that goes through a call's parts goes through it.
+    struct expr *mesh_lod;
     struct decl *mesh_lod_vertex; // ...and the vertex they weigh
     struct decl *values_type;   // ...and its type: sent once, for the draw
     struct decl *frag;
@@ -1849,6 +1853,7 @@ typedef struct program {
     decl *format;        // The built-in enum Format, what a render target holds: in generated C when code names it
     decl *stencil_test;  // The built-in enum StencilTest, the test a draw's stencil number passes: the same
     decl *stencil_op;    // The built-in enum StencilOp, what becomes of the stored number where a draw draws: the same
+    decl *worker_priority; // The built-in enum WorkerPriority, a local worker call's `priority:`: the same
     decl *io_error;      // The built-in IOError enum, shared with tide/io.h
     VEC(struct expr *) io_calls; // Checked filesystem calls, for result adapters in generated C
     VEC(json_root) json_roots; // The types Json.Read and Json.Write are called with: generated C has their functions

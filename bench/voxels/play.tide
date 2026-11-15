@@ -5,10 +5,12 @@
 // A chunk's faces are a mesh made once, on a worker, from the chunk's blocks
 // and its six neighbours' as they were, and made again when a block of it
 // changes, or a neighbour comes, changes at its side or goes: the frame never
-// waits for one. Past the chunks the server sent, the ground is drawn from the
-// dimension's seed, which every machine has: the same hills the server would
-// make there, with nothing sent for them, but where a far region says players
-// changed a column, which is drawn as they left it.
+// waits for one. The chunks around the player have theirs made first, the
+// far ground's after the chunks' (each call's `priority:`). Past the chunks
+// the server sent, the ground is drawn from the dimension's seed, which every
+// machine has: the same hills the server would make there, with nothing sent
+// for them, but where a far region says players changed a column, which is
+// drawn as they left it.
 
 settings { title = "Voxels"; }
 
@@ -17,6 +19,10 @@ const int FAR_STEP = 8;     // ...each this many cells across
 const float SUNK = 5;       // How far the far ground is drawn below where it is, to stay under the chunks'
 const int SETTLE = 15;      // Frames with no neighbour coming or going before a chunk's faces are made again
 const int HOLD = 10;        // Frames a chunk's faces wait at most for a neighbour's they changed
+const int CLOSE = 2;        // Chunks each way from the player's whose faces are made before the others'
+// A build that measures (--define VOXELS_MEASURE=1) logs, each frame, how many chunks this machine has and how
+// many of them have no faces yet, around the player and in all
+const int MEASURE = define(VOXELS_MEASURE, 0);
 
 struct Built
 {
@@ -46,6 +52,9 @@ local singleton Sight
     int drawn;              // Chunks drawn this frame, those waiting for a mesh, and the chunks' triangles drawn
     int waiting;
     int triangles;
+    int close;              // The chunks within CLOSE of the player's, those of them with no faces yet...
+    int closeWaiting;
+    int here;               // ...and all the chunks of its dimension this machine has
     int frame;              // Counts frames
     int epoch;              // Counts the player's comings into a dimension: the one the maps below are of
     // Chunks, by KeyOf, whose faces are to be made again if they were begun before a frame, for a neighbour's side
@@ -186,10 +195,10 @@ int Back(int side)
 // mesh made again, a chunk of sky that comes is none of its neighbours', and chunks that come together read each
 // other's blocks once. Where its side changed toward a neighbour, the new faces wait for the neighbour's (Awaits), so
 // the two show together: a block dug at the edge leaves no hole beside it while the neighbour's faces are made.
-async void Remesh(mut Chunk chunk, mut Sight sight, int version, int epoch, Grid3<Block> east, Grid3<Block> west,
-                  Grid3<Block> above, Grid3<Block> below, Grid3<Block> north, Grid3<Block> south)
+async void Remesh(mut Chunk chunk, mut Sight sight, int version, int epoch, WorkerPriority priority, Grid3<Block> east,
+                  Grid3<Block> west, Grid3<Block> above, Grid3<Block> below, Grid3<Block> north, Grid3<Block> south)
 {
-    var built = await Faces(chunk.blocks, east, west, above, below, north, south);
+    var built = await Faces(chunk.blocks, east, west, above, below, north, south, priority: priority);
     chunk.drawn = version;
     mut var wait = false;
     if (epoch == sight.epoch)
@@ -413,7 +422,9 @@ async void MakeFar(mut Sight sight, int dimension, int seed, float3 middle, int3
                    Map<long, Column> changed, int stamp)
 {
     sight.farMaking = true;
-    var built = await Ground3(seed, int(middle.x), int(middle.z), chunk, near, tall, changed);
+    // After the chunks' faces: it's the ground far off, and it takes as long as a hundred chunks' do
+    var built = await Ground3(seed, int(middle.x), int(middle.z), chunk, near, tall, changed,
+                              priority: WorkerPriority.Background);
     sight.far = Mesh(built.vertices, built.indices);
     sight.farDimension = dimension;
     sight.farMiddle = middle;
@@ -441,6 +452,9 @@ view Eyes(Avatar avatar, mut Sight sight, with ownership)
     sight.drawn = 0;
     sight.waiting = 0;
     sight.triangles = 0;
+    sight.close = 0;
+    sight.closeWaiting = 0;
+    sight.here = 0;
     sight.frame += 1;
     // A neighbour's word that no chunk took in a frame is for one this machine hasn't; a wait for one that never made
     // its faces is over once a chunk would have stopped waiting
@@ -517,6 +531,15 @@ view Chunks(mut Chunk chunk, mut Sight sight, query (Chunk other) chunks)
     // Where it is, for Leaving: from here on its neighbours' faces can read its blocks
     chunk.read = sight.epoch;
     chunk.place = chunk.at;
+    // How far it is from the player's chunk, in chunks
+    var away = Math.Max(Math.Max(Math.Abs(chunk.at.x - sight.chunk.x), Math.Abs(chunk.at.z - sight.chunk.z)),
+                        Math.Abs(chunk.at.y - sight.chunk.y));
+    sight.here += 1;
+    if (away <= CLOSE)
+    {
+        sight.close += 1;
+        if (!chunk.meshed) sight.closeWaiting += 1;
+    }
     // Faces that waited for their neighbours' show once those are made, or after HOLD frames
     if (chunk.holding && (sight.frame - chunk.waited > HOLD || !Awaits(sight, chunk.at)))
     {
@@ -542,6 +565,11 @@ view Chunks(mut Chunk chunk, mut Sight sight, query (Chunk other) chunks)
     var asked = chunk.asked > chunk.begun && (chunk.urgent || sight.frame - chunk.asked >= SETTLE);
     if (!chunk.job.isRunning && (changed || asked))
     {
+        // When its faces are made, among all that wait for a thread: before the others' around the player, where
+        // they show first and a block dug or built is the player's own; after them where only a neighbour came
+        // or went, whose faces toward it are mostly hidden ones
+        var priority = !changed && !chunk.urgent ? WorkerPriority.Background
+                     : away <= CLOSE ? WorkerPriority.Urgent : WorkerPriority.Normal;
         chunk.begun = sight.frame;
         chunk.urgent = false;
         var at = chunk.at;
@@ -557,7 +585,7 @@ view Chunks(mut Chunk chunk, mut Sight sight, query (Chunk other) chunks)
         mut var seen = sight.seen.Get(key) ?? default;
         seen.pending = sight.frame;
         sight.seen[key] = seen;
-        chunk.job = Remesh(chunk, sight, chunk.stamp, sight.epoch, east, west, above, below, north, south);
+        chunk.job = Remesh(chunk, sight, chunk.stamp, sight.epoch, priority, east, west, above, below, north, south);
     }
     // This machine's own check, of each chunk once every 32 frames: faces made from a neighbour's side that has
     // changed since, both chunks' faces settled, twice in a row, are a line in the log
@@ -585,6 +613,14 @@ view Chunks(mut Chunk chunk, mut Sight sight, query (Chunk other) chunks)
     sight.drawn += 1;
     sight.triangles += chunk.triangles;
     Draw.Mesh(chunk.mesh, float4x4.Translate(float3(chunk.at.x * SIZE, chunk.at.y * SIZE, chunk.at.z * SIZE)));
+}
+
+// A build that measures says each frame's counts: when the chunks around the player all have faces, and when all do
+view Measure(Sight sight)
+{
+    if (MEASURE == 0 || !sight.has) return;
+    var far = sight.farMade && sight.farDimension == sight.dimension ? 1 : 0;
+    Debug.Log($"Voxels measure: frame {sight.frame} epoch {sight.epoch} close {sight.close} waiting {sight.closeWaiting} here {sight.here} waiting {sight.waiting} far {far}");
 }
 
 // The other players, a box each

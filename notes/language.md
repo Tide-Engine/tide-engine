@@ -1,3 +1,47 @@
+## A local worker call's `priority:` (2026-11-15)
+
+Built on the owner's word to go with the recommendations in the spec's Proposed worker extensions. Everything
+language-visible is Provisional, Claude's picks (spec: Local workers, Priorities; docs/game/tasks.md, Which call starts
+first; docs/game/endless-worlds.md).
+
+- **Spelling.** `Faces(blocks, priority: WorkerPriority.Background)`: a named argument, last, the way `samples:` and
+  `lod:` are the engine's one name on a call. `WorkerPriority { Normal, Urgent, Background }` is a built-in enum
+  (`prog->worker_priority`, declared with the other built-ins in check.c, in generated C only when a game names it:
+  `named_only`, `enum_generated`), Normal its zero. The runtime's `TIDE_WORKER_NORMAL/URGENT/BACKGROUND` are its
+  members' numbers; any other number is normal.
+- **Checker** (`take_call_priority`, `check_function_call`). The argument is taken off the call before its arguments
+  are matched with parameters, when it's last, named `priority`, the name's functions have a worker among them and
+  none that isn't a worker has a `priority` parameter. It's kept in `expr.mesh_lod`, the field a mesh draw's `lod:`
+  has: every pass that goes through a call's parts already goes through it (lane reads and writes, purity, ordering,
+  borrows, asset usage: about twenty walkers), so a priority that reads a component (`chunk.at`) is a read of the
+  task's like any other. Errors: a worker's parameter named `priority`; a value that isn't a WorkerPriority; one that
+  awaits; `priority:` on the function of an overloaded name that isn't a worker; not last (the usual "no parameter",
+  with a note that says where it goes); a member that isn't one (the enum's note).
+- **Codegen.** A directly awaited call (`gen_worker_await`) reads the priority into a frame slot
+  (`tide_worker_level<k>`) before its ticket's, and reserves with `tide_worker_reserve_at`/`_can_reserve_at`; a call
+  with none writes what it wrote before, the same text. A call that gives a handle (`gen_task_value`) reads it into a
+  temporary before its arguments and hands it to the worker's adapter as a last parameter `tide_priority`, which the
+  adapter has only when some handle call of that worker says a priority (`decl.prioritized_handles`,
+  `make_worker_tasks`); the adapter's own await passes it on. Checked: `bench/voxels`' C from its sources as they
+  were is the same with the old tidec and the new.
+- **Runtime** (`engine/src/worker.c`, `tide/worker.h`; notes/schedule-and-threads.md, Worker priorities).
+- **Editors** (`compiler/lsp/analysis.c`): `priority:` in completion where an argument starts in a worker's call
+  (once, with `WorkerPriority.` after it), the members with what each says in completion and hover, the name reserved
+  for rename, and the walker goes through a worker call's priority (hover, references and rename inside it). The
+  TextMate grammars know `WorkerPriority`.
+- **Tests.** `tidec_e2e_worker_priorities` (six cases with a host of one thread that counts starts: order by
+  priority and each level's own order, a default value as normal; four urgent starts then a normal one and the
+  background one seventeenth under 40 urgent calls; handles; a cancelled queued call never starts and the ones after
+  it do; a priority from a function, a call with its argument named, a plain function's own `priority` parameter;
+  room by priority with a host's limit of 4). Seven `tidec_error_worker_priority_*`. `tide_tests`' five
+  `worker_priorities_*` (test_worker.c). `tidels_tests`' `lsp_worker_priorities`. `tools/tide-syntax`'s grammar test.
+  The worker fixtures there were (`local_workers`, `worker_handles`, `worker_values`, `worker_grids`,
+  `tasks_local_fields`, `task_handles`, `scene_preparation*`, `bench_workers*`, `tide_platform_jobs`) pass unchanged.
+- **Gaps.** A waiting call's priority can't be changed (cancel it and call again). The value is read before the
+  arguments though it's written after them. `expr.mesh_lod` holds two things under one name. Nothing measures a
+  group's queues in the profiler: "Queue wait" is one row for every priority. Web and the sanitizers ran none of
+  this here (CI's).
+
 ## Grids as async parameters; a component handed on for its local fields alone (2026-11-15)
 
 Two limits `bench/voxels`' mesher hit (`notes/voxels.md`, section 9 and 12): an async function couldn't take a grid,
