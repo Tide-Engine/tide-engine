@@ -21,19 +21,36 @@ target_link_libraries(bench_gallery PRIVATE tide_bench)
 add_test(NAME bench_gallery COMMAND bench_gallery --quick --expect 0xc8e6ab383a684a0a)
 
 # An endless world of blocks in dimensions: chunks made around players, each
-# machine sent its own, and gone once nobody's near (notes/voxels.md).
+# machine sent its own, and gone once nobody's near, and far regions of what
+# players built farther off (notes/voxels.md). A quick run checks the far
+# regions against the chunks every second (--audit) and fails on what's wrong.
 tide_add_game(bench_voxels SOURCES voxels/voxels.tide NAME voxels HOST voxels/main.c)
 target_link_libraries(bench_voxels PRIVATE tide_bench)
-add_test(NAME bench_voxels COMMAND bench_voxels --quick --expect 0x1f3c165e43a78b10)
+add_test(NAME bench_voxels COMMAND bench_voxels --quick --expect 0x4ebcc443d78e978b)
+# The store keeping the far regions' saves and none of the chunks', as a server that stopped before it saved them:
+# a region that comes back with columns its chunks no longer have puts them right as those chunks are made
+add_test(NAME bench_voxels_forgets COMMAND bench_voxels --quick --forget 1 --expect 0xa199531280421472)
+# Chunks a player has 9 each way, more than their one far region each way holds: they have the regions that do
+add_test(NAME bench_voxels_wide COMMAND bench_voxels --quick --near 9 --far 1 --expect 0xf5f8baa91878a156)
 # The same with every projection hash worked out twice, from what's kept of the rows that didn't change and from
 # the rows themselves: the run stops where the two differ (TIDE_CLIENT_SPANS_CHECK)
 tide_add_game(bench_voxels_checked SOURCES voxels/voxels.tide NAME voxels HOST voxels/main.c)
 target_link_libraries(bench_voxels_checked PRIVATE tide_bench)
 target_compile_definitions(bench_voxels_checked PRIVATE TIDE_CLIENT_SPANS_CHECK)
-add_test(NAME bench_voxels_checked COMMAND bench_voxels_checked --quick --expect 0x1f3c165e43a78b10)
+add_test(NAME bench_voxels_checked COMMAND bench_voxels_checked --quick --expect 0x4ebcc443d78e978b)
 # Voxels to play: `voxels` in a window, with its views, the mouse and the keys
 if(TIDE_PLATFORM)
     tide_add_game(voxels SOURCES voxels/voxels.tide voxels/play.tide TITLE "Tide voxels" STATS)
+    # Two players walking apart for 45 s, in a run with no window: no machine keeps a chunk's sides once the chunk
+    # has gone from it (play.tide's own check logs it). Its saves go in the build's folder, emptied first
+    set(voxels_walk_data "${CMAKE_CURRENT_BINARY_DIR}/voxels_walk")
+    add_test(NAME voxels_walk_clean COMMAND "${CMAKE_COMMAND}" -E rm -rf "${voxels_walk_data}")
+    set_tests_properties(voxels_walk_clean PROPERTIES FIXTURES_SETUP voxels_walk)
+    add_test(NAME voxels_walk COMMAND voxels --players 2 --script "${CMAKE_CURRENT_SOURCE_DIR}/voxels/walk.txt"
+             --size 320 180 --data-dir "${voxels_walk_data}")
+    set_tests_properties(voxels_walk PROPERTIES FIXTURES_REQUIRED voxels_walk TIMEOUT 300
+        FAIL_REGULAR_EXPRESSION "sides kept")
+    tide_gpu_test(voxels_walk)
 endif()
 
 # The home page's planet (examples/earth), its match as it is but for taking

@@ -1920,7 +1920,7 @@ Implemented on the owner's go-ahead, to be revisited once games use them:
 
 ### Open
 
-- Generating chunks as they're first needed, keeping the regions around players loaded, and sending each player only theirs: an endless voxel world. `bench/voxels` does it today with chunks as entities, a grid each: made as players come near, each player sent only theirs (State visibility), and kept in the server's store while nobody is near (The server's store, Provisional). That's Claude's pick for the game, not a decision about grids; `notes/voxels.md` says what it measures.
+- Generating chunks as they're first needed, keeping the regions around players loaded, and sending each player only theirs: an endless voxel world. `bench/voxels` does it today with chunks as entities, a grid each: made as players come near, each player sent only theirs (State visibility), and kept in the server's store while nobody is near (The server's store, Provisional); farther off, far regions, entities of their own with a wider audience than the chunks', summarise what players built, a column's top at a time (2026-11-15). That's Claude's pick for the game, not a decision about grids; `notes/voxels.md` says what it measures.
 - Functions that take grids; parallel steps that spawn and send.
 - Skipping what's settled: a parallel loop that only runs where something near changed (what `[Sleeps]` did for chunk systems).
 - `for` loops that run at once when nothing a step does depends on the others.
