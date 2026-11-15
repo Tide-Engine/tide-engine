@@ -141,13 +141,52 @@ Read a numeric image through a declared [typed texture field](./shaders.md#numbe
 `[Raw(float2)] Texture velocity;` then `velocity = target.colors[1];` in local code. Its `Sample` returns a
 `float2`. A typed read that names no filter reads the nearest pixel. Images in `R8`, `Rg8`, `R16f`, `Rg16f`
 and `Rgba16f` also blend (`Filter.Bilinear`, `Filter.Trilinear`, `Filter.Anisotropic`) and have mipmaps, read
-with `SampleLevel` and `SampleGrad`: a blurred mask or a variance shadow map works on every device. `R32f`,
-`Rgba32f` and `R32i` read their nearest pixel everywhere, since no GPU blends integers and only some blend
-32-bit floats; asking one of them to blend is a compile error that names the format to draw into instead.
+with `SampleLevel` and `SampleGrad`: a blurred mask or a variance shadow map works on every device. `R32f` and
+`Rgba32f` blend with `Filter.Bilinear` as four exact loads blended in the shader, the same bits on every device
+(only some GPUs blend 32-bit floats themselves), and have no mipmaps; `R32i` reads its nearest pixel, since no GPU
+blends integers. Asking one of them for what it hasn't got is a compile error that names the format to draw into
+instead.
 
-The same four compact formats make array layers and cube faces: `TextureArray(256, 256, 4, Format.R16f)` and
-`Cubemap(256, Format.R16f)`. Draw numbers into `array.layers[i]` or `cube.faces[i]`, and read them through a
-`[Raw(float)] TextureArray` or `[Raw(float)] Cubemap` field.
+Every number format makes array layers and cube faces: `TextureArray(256, 256, 4, Format.R16f)`,
+`Cubemap(256, Format.R32f)`, `TextureArray(64, 64, 8, Format.R32i)`. Draw numbers into `array.layers[i]` or
+`cube.faces[i]`, and read them through a `[Raw(float)] TextureArray`, `[Raw(int)] Cubemap` or other typed field.
+A cube of `R32f`, `Rgba32f` or `R32i` is read at its nearest pixel, exactly: a distance cube a lamp's shadow keeps
+to full precision, or an id per direction.
+
+### A cube of depth alone
+
+`Cubemap(1024, Format.Depth)` is six faces of depth alone, for a lamp that shines every way. Draw each face from
+the lamp's place, as for any cube, and read the depth through `cube.depth`, a `DepthCubemap`, kept in a field of a
+component or singleton the frag takes. `Sample(direction)` gives the nearest thing's depth that way, 0 near to 1
+far, and `Compare(direction, depth)` how much of what's stored around there isn't nearer than `depth`, blended
+within the face: 1 is lit.
+
+```tide
+local singleton Lamp { Cubemap cube; DepthCubemap shadows; float3 at; bool made; }
+
+view MakeLamp(mut Lamp lamp)
+{
+    if (!lamp.made) { lamp.cube = Cubemap(1024, Format.Depth); lamp.shadows = lamp.cube.depth; lamp.made = true; }
+    // ...then each face drawn from lamp.at with float4x4.PerspectiveFov(1.5707964, 1, 0.1, 50)
+}
+
+// The depth a face's camera stores for a point `way` from the lamp: along the face's axis, its perspective's
+float LampDepth(float3 way)
+{
+    float along = Math.Max(Math.Abs(way.x), Math.Max(Math.Abs(way.y), Math.Abs(way.z)));
+    return 50 / (50 - 0.1) * (1 - 0.1 / along);
+}
+
+frag Lit(Vertex3 vertex, out Color color, Lamp lamp)
+{
+    float3 way = this.world - lamp.at;
+    float lit = lamp.shadows.Compare(way, LampDepth(way) - 0.0005);
+    color = Color(lit, lit, lit);
+}
+```
+
+Its faces read back with `await cube.faces[i].ReadDepth()`. A cube of colors keeps no depth to read: each face
+draws with depth of its own, and `cube.depth` of one is a compile error where its format is known.
 
 ### Clearing each image
 
@@ -204,7 +243,7 @@ frag Copy(Vertex vertex, out Color color, Texture source)
 }
 ```
 
-- **Its color is read like any target's.** `target.color` and `target.colors[i]` are what each pixel's samples come to, worked out each time drawing into the target ends. A frag samples them, and a `Draw.Blit` reads them, as it would any other target's.
+- **Its color is read like any target's.** `target.color` and `target.colors[i]` are what each pixel's samples come to, worked out each time drawing into the target ends. A frag or a kernel samples them, and a `Draw.Blit` reads them, as it would any other target's: between its smaller images too (`Filter.Trilinear`, `SampleLevel`), made of what the samples came to. (Unity's replay doesn't make those yet, and reads the resolved image alone there.)
 - **Its depth is read like any target's.** `target.depth` is one depth a pixel: one of the pixel's samples, as they are when the draw that reads it comes. It's only worked out for a target whose depth some draw reads, and again only after more was drawn into the target, so a target nothing reads the depth of costs nothing more. An edge in it is a step, as in a target with no samples. `Format.Depth` with `samples` is still an error: a target of depth alone has one sample.
 - **It costs memory:** as many colors and depths a pixel as it has samples, plus the color they come to. Four samples at the window's size is about four and a half times a plain target. A frag still runs once for each pixel a triangle covers, so drawing costs little more.
 - **A device may have fewer.** 4 is there on everything Tide draws with, for images of bytes. Where a device hasn't got what's asked, the target is drawn with the most it has under that, and the engine says so once in the game's output. WebGPU has 1 and 4 alone: 2 is 4 there, and 8 is 4.
@@ -288,11 +327,31 @@ async void SavePixels(RenderTarget target)
 }
 ```
 
-It takes a frame or more and can fail if the device is lost or the image exceeds the limits. Never read it in
-match code. Multisampled targets read their resolved color. Float images retain colors above one, and alpha
-is not multiplied into RGB. Copy a grid into a field with `.Copy()`, following normal grid ownership.
-Reads share 64 slots with GPU list reads. An image can contain up to 4,000,000 pixels; outstanding pixel results
-are limited to 128 MiB.
+It takes a frame or more and can fail if the device is lost or what reads hold together passes the limit. Never
+read it in match code. Multisampled targets read their resolved color. Float images retain colors above one, and
+alpha is not multiplied into RGB. Copy a grid into a field with `.Copy()`, following normal grid ownership, or keep
+it in the task: a task keeps a grid across its later waits as it keeps its lists, so `pixels` can still be read
+after another `await`. Reads share 64 slots with GPU list reads. An image of any size is read, a 4K or 5K window's
+too; what reads hold together, until they're let go of, is at most 512 MiB.
+
+### A part of an image
+
+A read takes a part of the image after its number, if it has one: its first pixel and how many pixels across and
+down, in the image's own pixels, as the grid is. The part is clamped to the image, and the grid is what's inside it,
+from that part's first pixel; a part with nothing of the image in it fails. Reading one pixel under the mouse copies
+one pixel, and a big image can be read in tiles.
+
+```tide
+local singleton Picked { RenderTarget ids; int id; }
+
+async void PickAt(mut Picked picked, int2 pixel)
+{
+    // ids: RenderTarget.Window(Format.R32i), each object drawn with its number
+    if (await picked.ids.Read<int>(pixel, int2(1, 1)) is Grid2<int> one) picked.id = one[0, 0];
+}
+```
+
+`ReadDepth(from, size)` and a face's or a layer's reads take a part the same way.
 
 ### Which image, and as what
 
@@ -338,8 +397,10 @@ async void ReadIds(mut Picking picking)
 `await target.ReadDepth()` returns `Grid2<float> fails IOError`: each pixel's depth, 0 at the near plane and 1
 at the far limit, as [`this.depth` and a depth's `Sample`](#a-target-s-depth) give it, whichever way the device
 stores it. Every target has one, a target of depth alone too. A multisampled target gives one depth a pixel.
-Where depth is stored as floats the depths a frag wrote come back exactly; on a device with 24-bit depth they
-come back to the nearest of its steps.
+Where depth is stored as floats (reversed, as most devices store it), a depth a frag wrote comes back exactly when
+it's 0.5 or more, or a multiple of 2^-24; otherwise to the nearest such step, about 6e-8 (0.1 comes back as
+0.10000002). On a device with 24-bit depth it comes back to the nearest of that format's steps. Compare with a
+tolerance, not `==`.
 
 ### Cube faces and array layers
 
@@ -347,7 +408,23 @@ A [cube's face](./meshes-and-textures.md) and an array's layer are targets, and 
 a time: `await cube.faces[2].Read()`, `await array.layers[1].Read()`, and `ReadDepth()` of either. Each is one
 image, with its rows from the top as it was drawn, of the format its cube or array was made with: a face of a
 `Cubemap(256, Format.R16f)` is read with `Read<float>()`, a layer of a `Format.Rg8` array with `Read<float2>()`,
-by the table above.
+an `R32i` face or layer with `Read<int>()`, by the table above. A face of a `Cubemap(size, Format.Depth)` has its
+depth alone: `ReadDepth()`.
+
+### A volume's cells
+
+A `Texture3D` is read the same way, into a `Grid3` of its format's type: `await volume.Read()` for an `Rgba8` or
+`Rgba16f` volume, `Read<float>()` for `R32f`, `Read<float4>()` for `Rgba32f`, `Read<int>()` for `R32i`, each cell as a
+kernel's `volume[at]` reads it. A box of it is its first cell and how many along each axis, `int3`s:
+
+```tide
+local singleton Fluid { [Raw(float)] Texture3D pressure; Grid3<float> slice; }
+
+async void Probe(mut Fluid fluid)
+{
+    if (await fluid.pressure.Read<float>(int3(0, 0, 8), int3(32, 32, 1)) is Grid3<float> slice) fluid.slice = slice.Copy();
+}
+```
 
 ### How many images
 

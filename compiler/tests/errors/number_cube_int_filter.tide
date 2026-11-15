@@ -1,0 +1,5 @@
+// expect: an int cube reads its nearest pixel: a GPU blends no integers. Use Sample(direction) or Filter.Point
+scene Main { }
+local singleton Room { [Raw(int)] Cubemap ids; }
+frag Read(Vertex vertex,out Color color,Room room) { color=Color(float(room.ids.Sample(float3(vertex.uv,1),Filter.Trilinear)),0,0); }
+view Show(mut Room room) { room.ids=Cubemap(8,Format.R32i); List<Vertex> quad=[Vertex {position=float2(0)},Vertex {position=float2(1,0)},Vertex {position=float2(0,1)}]; Draw.Mesh(quad,[0,1,2],Read); }

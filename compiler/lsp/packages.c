@@ -539,8 +539,10 @@ static bool condition_primary(condition *c)
             condition_wrong(c, "'%.*s' is a symbol this file's packages make, so no line of it depends on one", len, name);
             return false;
         }
-        for (int i = 0; i < symbol_count; i++) {
-            if ((int)strlen(symbols[i]) == len && memcmp(symbols[i], name, (size_t)len) == 0) return true;
+        for (int i = 0; i < symbol_count; i++) { // NAME, or NAME=value: defined either way
+            const char *equals = strchr(symbols[i], '=');
+            const int named = equals ? (int)(equals - symbols[i]) : (int)strlen(symbols[i]);
+            if (named == len && memcmp(symbols[i], name, (size_t)len) == 0) return true;
         }
         return false;
     }

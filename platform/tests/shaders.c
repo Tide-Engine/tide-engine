@@ -1937,13 +1937,16 @@ static void run_flat_corner_checks(const char *when)
     tide_gui_end(&gui, &list);
     local.Art.targetPass = 0;
     const tide_float2 points[] = {{14.5f, 16.5f}, {18.5f, 16.5f}, {46.5f, 16.5f}, {50.5f, 16.5f},
-                                  {78.5f, 16.5f}, {82.5f, 16.5f}};
-    uint32_t got[6];
-    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, 6, got);
+                                  {78.5f, 16.5f}, {82.5f, 16.5f},
+                                  {14.5f, 48.5f}, {18.5f, 48.5f}, {46.5f, 48.5f}, {50.5f, 48.5f},
+                                  {78.5f, 48.5f}, {82.5f, 48.5f}};
+    uint32_t got[12];
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, 12, got);
     const uint32_t wanted[] = {0xFF0000FFu, 0x00FF00FFu, 0x0000FFFFu};
-    for (int i = 0; i < 6; i++) {
-        const bool ok = got[i] == wanted[i / 2];
-        printf("%s: the first corner's exact int, int2 and bool reach pixel %d%s (0x%08X)\n",
+    for (int i = 0; i < 12; i++) {
+        const bool ok = got[i] == wanted[i % 6 / 2];
+        printf(i < 6 ? "%s: the first corner's exact int, int2 and bool reach pixel %d%s (0x%08X)\n"
+                     : "%s: a frag reads its vertex's own int, the first corner's, at pixel %d%s (0x%08X)\n",
                ok ? "ok" : "FAIL", i, when, (unsigned)got[i]);
         if (!ok) failures++;
     }

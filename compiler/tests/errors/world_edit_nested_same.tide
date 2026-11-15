@@ -1,0 +1,11 @@
+// expect: this entity's Health is 'other' already: the Edit around this one changes it
+component Health { int value; Entity target; }
+scene Main { }
+system Hurt(Health health, mut World world)
+{
+    world.Edit<Health>(health.target, other)
+    {
+        world.Edit<Health>(health.target, again) { again.value -= 1; }
+        other.value -= 1;
+    }
+}

@@ -77,6 +77,7 @@ static const char *outside_type(const type t)
     case TY_ACTION: return "runs an Action";
     case TY_DRAW_LIST: return "uses the frame's draw list";
     case TY_TEXTURE3D: case TY_TEXTURE: case TY_DEPTH_TEXTURE: case TY_CUBEMAP: case TY_TEXTURE_ARRAY: case TY_DEPTH_TEXTURE_ARRAY:
+    case TY_DEPTH_CUBEMAP:
         return "uses a texture, which is this machine's";
     case TY_RENDER_TARGET: return "uses a render target, which is this machine's";
     case TY_GPU_LIST: return "uses a GPU list, which is this machine's";
@@ -216,6 +217,7 @@ static void walk_expr(pctx *c, const expr *e)
     switch (e->call) {
     case CALL_CONSTRUCT:
     case CALL_ENUM_COUNT:
+    case CALL_ENUM_VALUES:
     case CALL_TEXT:
     case CALL_LIST:  // A list, a map, a set or a grid it could change is a `mut` local of its own
     case CALL_MAP:

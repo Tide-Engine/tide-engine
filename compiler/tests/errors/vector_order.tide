@@ -1,0 +1,5 @@
+// expect: operator '<' can't be used with int2 and int2
+// expect: vectors have no order: '==' and '!=' compare two whole
+singleton Marks { int2 a; int2 b; bool before; }
+scene Main { }
+system Check(mut Marks marks) { marks.before = marks.a < marks.b; }

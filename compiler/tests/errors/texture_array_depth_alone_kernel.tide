@@ -1,0 +1,9 @@
+// expect: image 'maps' is a TextureArray of depth alone (Format.Depth), which has no colors to read: keep its depth in a DepthTextureArray field holding 'maps.depth' and read that with Sample(uv, layer), or make the array with a color Format
+scene Main { }
+local singleton Lamp { [Raw(float)] TextureArray maps; GPUList<float> sums; }
+compute Sum(Lamp lamp) { lamp.sums[0] = lamp.maps.SampleLevel(float2(0.5), 0, 0); }
+view Show(mut Lamp lamp)
+{
+    lamp.maps = TextureArray(64, 64, 3, 1, Format.Depth);
+    GPU.Run(Sum, 1);
+}

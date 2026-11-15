@@ -3129,10 +3129,23 @@ char *tide_wgsl_to_hlsl(const char *wgsl, char *error, const size_t error_size)
     return result;
 }
 
+// The colors a shader's fragment stage writes, bit i for SV_Target<i>: none for one that writes depth alone.
+static uint32_t written_outputs(const char *hlsl)
+{
+    static const char semantic[] = "SV_Target";
+    uint32_t written = 0;
+    for (const char *at = hlsl; (at = strstr(at, semantic)) != NULL;) {
+        at += sizeof semantic - 1u;
+        written |= *at >= '0' && *at <= '3' ? 1u << (uint32_t)(*at - '0') : 1u;
+    }
+    return written;
+}
+
 char *tide_hlsl_unity_shader(const char *hlsl, const char *name)
 {
     hs o = {0};
     const uint32_t numbers = numeric_outputs(hlsl);
+    const uint32_t written = written_outputs(hlsl);
     hprintf(&o,
             "// Made by tide unity from the game's WGSL. Do not edit: it's made again as the game is built.\n"
             "Shader \"%s\"\n"
@@ -3163,6 +3176,9 @@ char *tide_hlsl_unity_shader(const char *hlsl, const char *name)
                  "            Blend [_TideSrcColor] [_TideDstColor], [_TideSrcAlpha] [_TideDstAlpha]\n");
         for (uint32_t i = 0; i < 4u; i++) if (numbers >> i & 1u) hprintf(&o, "            Blend %u One Zero\n", i);
         if (pass) for (uint32_t i = 0; i < 4u; i++) hprintf(&o, "            ColorMask 0 %u\n", i);
+        // A target's images the fragment stage has no output for stay as they are, as on Tide's own backends.
+        // Unity's OpenGL Core otherwise writes the first output's color into every one of them
+        else if (written) for (uint32_t i = 0; i < 4u; i++) if (!(written >> i & 1u)) hprintf(&o, "            ColorMask 0 %u\n", i);
         hput(&o, "            ZTest [_TideZTest]\n"
                  "            ZWrite [_TideZWrite]\n"
                  "            Cull [_TideCull]\n"

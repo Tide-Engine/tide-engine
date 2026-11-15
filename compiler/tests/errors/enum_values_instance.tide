@@ -1,0 +1,4 @@
+// expect: Direction has no method 'Values'
+enum Direction { North, East }
+int First(Direction direction) { return int(direction.Values()[0]); }
+scene Main { }

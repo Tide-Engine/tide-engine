@@ -1,0 +1,8 @@
+// expect: this method is Health's, so its fields are this entity's Health already
+component Health
+{
+    int value;
+    void Hurt(mut World world) { world.Edit<Health>(this, mine) { mine.value -= 1; } }
+}
+scene Main { }
+system Tick(Health health, mut World world) { health.Hurt(world); }

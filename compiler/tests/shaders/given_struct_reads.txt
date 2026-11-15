@@ -24,6 +24,7 @@ fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {
 @group(0) @binding(5) var pixels2: texture_3d<f32>;
 @group(0) @binding(6) var sampler2: sampler;
 @group(0) @binding(7) var pixels3: texture_2d<f32>;
+@group(0) @binding(8) var sampler3: sampler;
 @group(0) @binding(9) var pixels4: texture_2d<f32>;
 var<private> tide_n0: vec4f;
 var<private> tide_n1: vec4f;
@@ -73,19 +74,19 @@ fn tf_Graded_40(t_uv: vec2f, t_across: vec2f, t_down: vec2f) -> vec4f {
     var tide_choice2: vec2f = t_uv;
     var tide_choice3: vec2f = t_across;
     var tide_choice4: vec2f = t_down;
-    return tide_straight(textureSampleGrad(pixels0, sampler0, tide_choice2, tide_choice3, tide_choice4));
+    return tide_straight(textureSampleGrad(pixels0, sampler1, tide_choice2, tide_choice3, tide_choice4));
 }
 
 fn tf_Layered_40(t_uv: vec2f) -> vec4f {
-    return tide_straight(textureSampleLevel(pixels1, sampler1, t_uv, clamp(2, 0, i32(textureNumLayers(pixels1)) - 1), 0.0));
+    return tide_straight(textureSampleLevel(pixels1, sampler2, t_uv, clamp(2, 0, i32(textureNumLayers(pixels1)) - 1), 0.0));
 }
 
 fn tf_Filled_40(t_at: vec3f) -> vec4f {
-    return tide_straight(textureSampleLevel(pixels2, sampler2, t_at, 0.0));
+    return tide_straight(textureSampleLevel(pixels2, sampler3, t_at, 0.0));
 }
 
 fn tf_Painted_40(t_uv: vec2f) -> vec4f {
-    return (tide_straight(textureSampleLevel(pixels3, sampler2, t_uv, 0.0)) + vec4f(tide_straight(textureSampleLevel(pixels4, sampler2, t_uv, 0.0)).r, 0.0, 0.0, 0.0));
+    return (tide_straight(textureSampleLevel(pixels3, sampler3, t_uv, 0.0)) + vec4f(tide_straight(textureSampleLevel(pixels4, sampler3, t_uv, 0.0)).r, 0.0, 0.0, 0.0));
 }
 
 fn ts_Read(t_vertex: tt_Vertex3, t_color: ptr<function, vec4f>) {

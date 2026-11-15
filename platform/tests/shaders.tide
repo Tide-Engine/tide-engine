@@ -115,6 +115,22 @@ singleton Marks
     float towardsEased = Math.Damp(0.5, 10, 3, 0.25);
     float3 towardsWalked = Math.MoveTowards(float3(0.5, 0, 0), float3(3.5, 4, 0), 2.5);
     float2 towardsSlid = Math.Damp(float2(0.5, 1), float2(4, 8), 2, 0.5);
+    // == and != on vectors and colors, as the CPU works them out
+    int2 cellMark = int2(3, 4);
+    bool cellsSame = int2(3, 4) == float2(3, 4);
+    bool cellsDiffer = int2(3, 4) != int2(3, 5);
+    Color tintMark = Color(1, 0.5, 0.25, 0.5);
+    bool tintsSame = Color(1, 0.5, 0.25, 0.5) == Color(1, 0.5, 0.25);
+    // Enums in order and their members, as the CPU has them
+    bool shadesInOrder = Shade.Light < Shade.Mid && Shade.Dark >= Shade.Mid;
+    bool wrappedAfter = Shade(-1) > Shade.Dark; // 255, a byte's low bits
+    Shade[3] shades = Shade.Values();
+    // Array and list constants' elements and counts, as the CPU reads them
+    float stepAt2 = STEPS[2];
+    int orderSum = ORDER[0] + ORDER[1] + ORDER[2] + ORDER[3] + ORDER[4];
+    int orderCount = ORDER.count;
+    float2 lastTurn = TURNS[1];
+    int shadeFirst = int(SHADE_ORDER[0]);
 }
 
 local singleton Art
@@ -421,6 +437,11 @@ struct Pair
 
 const float HALF = 0.5;
 const int THREE = 3;
+// Tables: array and list constants, read on the GPU as the CPU reads them (Marks)
+const float[4] STEPS = [0.25, 0.5, 1, 2];
+const List<int> ORDER = [3, 1, 4, 1, 5];
+const List<float2> TURNS = [float2(1, 0), float2(0, -1)];
+const Shade[3] SHADE_ORDER = [.Dark, .Light, .Mid];
 
 float Twice(float x)
 {
@@ -485,6 +506,10 @@ frag Sink(Corner3 vertex, out Color color, Marks marks)
     if (cell.x != 6 || cell.y != 8) ok = false;
     float2 mixed = float2(cell) * HALF;
     if (!Near(mixed.y, 4)) ok = false;
+    // == and != on vectors and colors: one bool, the CPU's
+    if ((marks.cellMark == float2(3, 4)) != marks.cellsSame || (marks.cellMark != int2(3, 5)) != marks.cellsDiffer) ok = false;
+    if (!marks.cellsSame || cell != int2(6, 8) || !(float3(cell, 1) == float3(6, 8, 1))) ok = false;
+    if ((marks.tintMark == Color(1, 0.5, 0.25)) != marks.tintsSame || marks.tintMark != Color(1, 0.5, 0.25, 0.5)) ok = false;
 
     // Math
     if (!Near(Math.Clamp(5.0, 0, 1), 1) || !Near(Math.Lerp(2.0, 4.0, 0.5), 3) || !Near(Math.Saturate(-1.0), 0)) ok = false;
@@ -554,6 +579,25 @@ frag Sink(Corner3 vertex, out Color color, Marks marks)
     if (Mode(number) != Mode.Bright || Mode(number - 1) != Mode.Plain) ok = false;
     if (Shade(number + 257) != Shade.Dark || int(Shade(number + 511)) != 0 || int(Shade(number - 2)) != 255) ok = false;
     if (Mode.Count() != 2 || Shade.Count() != 3 || Mode((number + 1) % Mode.Count()) != Mode.Plain) ok = false;
+    // ...in order by their numbers, and every member through Values(), as the CPU has them
+    if ((Shade(number) < Shade(number + 1) && Shade(number + 1) <= .Dark) != marks.shadesInOrder) ok = false;
+    if ((Shade(number - 2) > Shade.Dark) != marks.wrappedAfter || !(mode > Mode.Plain) || mode < .Bright) ok = false;
+    mut int after = 0;
+    mut int place = 0;
+    foreach (var shade in Shade.Values())
+    {
+        if (shade > Shade.Light) after += int(shade);
+        if (shade != marks.shades[place]) ok = false;
+        place++;
+    }
+    if (after != 3 || place != Shade.Count() || Mode.Values()[number] != Mode.Bright) ok = false;
+
+    // Array and list constants: elements by an index the GPU works out, counts, foreach, and zeros past either end
+    if (STEPS[number + 1] != marks.stepAt2 || ORDER.count != marks.orderCount || TURNS[number] != marks.lastTurn) ok = false;
+    mut int ordered = 0;
+    foreach (var o in ORDER) ordered += o;
+    if (ordered != marks.orderSum || ORDER[number - 2] != 0 || ORDER[number + 9] != 0 || STEPS[number + 3] != 0) ok = false;
+    if (int(SHADE_ORDER[number - 1]) != marks.shadeFirst || SHADE_ORDER[int(Shade.Mid) + number] != Shade.Mid) ok = false;
 
     // Colors
     Color tint = Color(0.5, 0.25, 1) * Color.white * 2 - Color(0, 0, 1, 1) + Color.clear;
@@ -5331,6 +5375,14 @@ frag FlatRead(Corner3 vertex, FlatMark mark, out Color color)
     else if (mark.which == -2147483647) color = Color.green;
     else color = Color.blue;
 }
+// A frag reading its vertex's int itself: the triangle's first corner's, flat, as a vert's handed ones are
+frag FlatVertexRead(Corner3 vertex, out Color color)
+{
+    if (vertex.kind == 16777217) color = Color.red;
+    else if (vertex.kind == -2147483647) color = Color.green;
+    else if (vertex.kind == 7) color = Color.blue;
+    else color = Color.white;
+}
 [After(TriangleSides)]
 view FlatCorners(Art art)
 {
@@ -5346,6 +5398,9 @@ view FlatCorners(Art art)
     Draw.Mesh(corners, [0, 1, 2], float4x4.Translate(Cell(0, 0)), FlatMarks, FlatRead);
     Draw.Mesh(corners, [1, 2, 0], float4x4.Translate(Cell(1, 0)), FlatMarks, FlatRead);
     Draw.Mesh(corners, [2, 0, 1], float4x4.Translate(Cell(2, 0)), FlatMarks, FlatRead);
+    Draw.Mesh(corners, [0, 1, 2], float4x4.Translate(Cell(0, 1)), FlatVertexRead);
+    Draw.Mesh(corners, [1, 2, 0], float4x4.Translate(Cell(1, 1)), FlatVertexRead);
+    Draw.Mesh(corners, [2, 0, 1], float4x4.Translate(Cell(2, 1)), FlatVertexRead);
 }
 
 local singleton LevelsState { RenderTarget target; Cubemap cube; Texture image; bool made; float level; bool cubeRead; }

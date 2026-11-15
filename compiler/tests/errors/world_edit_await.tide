@@ -1,0 +1,12 @@
+// expect: a task can't wait inside an Edit's block: 'other' is put back on its entity as the block ends, in the tick the block began in
+component Health { int value; Entity target; }
+event Hit { }
+scene Main { }
+async event(Hit) Later(Health health, mut World world)
+{
+    world.Edit<Health>(health.target, other)
+    {
+        other.value -= 1;
+        await Wait.Ticks(1);
+    }
+}

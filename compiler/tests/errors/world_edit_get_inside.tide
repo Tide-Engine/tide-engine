@@ -1,0 +1,11 @@
+// expect: the Edit around this Get changes this entity's Health as 'other', which is put back as its block ends: this would read it as it was before
+component Health { int value; Entity target; }
+scene Main { }
+system Hurt(Health health, mut World world)
+{
+    var target = health.target;
+    world.Edit<Health>(target, other)
+    {
+        other.value = world.Get<Health>(target).value - 1;
+    }
+}

@@ -139,8 +139,10 @@ static const uint8_t tide_transfer_display_guess[417] = {
 static inline uint8_t tide_transfer_display_byte(const float light)
 {
     const float x = tide_saturate_f(light);
+    // Under 2^-13, which is under the least value of byte 1: by value, not bits, so -0 (whose sign bit saturating
+    // keeps) is 0 rather than an index past the table
+    if (!(x >= 0x1p-13f)) return 0u;
     const uint32_t bits = tide_f_bits(x);
-    if (bits < 0x39000000u) return 0u; // Under 2^-13, which is under the least value of byte 1
     uint32_t byte = tide_transfer_display_guess[(bits - 0x39000000u) >> 18];
     while (byte < 255u && tide_transfer_display_from[byte + 1u] <= x) byte++;
     return (uint8_t)byte;

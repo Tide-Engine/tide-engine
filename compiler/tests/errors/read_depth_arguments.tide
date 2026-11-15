@@ -1,4 +1,4 @@
-// expect: ReadDepth takes no arguments and finishes later
+// expect: ReadDepth takes nothing, or a part of the depth
 scene Main {}
 local singleton State { RenderTarget target; }
 async void Read(State state) { var depths = await state.target.ReadDepth(0); }

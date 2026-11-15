@@ -1,0 +1,119 @@
+// == and != on vectors and colors: one bool, true when every component is equal (!= when any differs).
+
+const bool SAME_CONSTANT = int2(1, 2) == int2(1, 2);
+const bool DIFFER_CONSTANT = float3(1, 2, 3) != float3(1, 2, 3.5);
+
+singleton Counter
+{
+    int calls;
+}
+
+singleton Checks
+{
+    bool ints;
+    bool intsDiffer;
+    bool floats;
+    bool floatsDiffer;
+    bool fours;
+    bool doubles;
+    bool doublesDiffer;
+    bool widened;
+    bool widenedDiffer;
+    bool widenedDouble;
+    bool signedZero;
+    bool nanEqual;
+    bool nanDiffer;
+    bool colors;
+    bool alphaDiffers;
+    bool defaults;
+    bool constants = SAME_CONSTANT && DIFFER_CONSTANT;
+    bool fieldDefault = float2(0.5, 1) == float2(0.5, 1);
+    int calls;
+    int found;
+    int index;
+    bool removed;
+    bool colorFound;
+    int matched;
+    int unmatched;
+}
+
+singleton Grid
+{
+    List<int2> cells;
+    int2 target = int2(3, 5);
+}
+
+scene Main { }
+
+int2 Next(mut Counter counter)
+{
+    counter.calls++;
+    return int2(counter.calls, 0);
+}
+
+event(Spawned) Fill(with Main, mut Grid grid)
+{
+    for (int y = 0; y < 8; y++)
+    {
+        for (int x = 0; x < 8; x++) grid.cells.Add(int2(x, y));
+    }
+    grid.cells.Add(int2(3, 5)); // The target twice, so the loop's guard counts two
+}
+
+system Compare(mut Checks checks, mut Counter counter)
+{
+    int2 a = int2(1, 2);
+    int3 b = int3(1, 2, 3);
+    checks.ints = a == int2(1, 2) && b == int3(1, 2, 3) && !(a == int2(2, 1));
+    checks.intsDiffer = a != int2(1, 3) && !(b != int3(1, 2, 3));
+    float2 f = float2(0.5, -1);
+    checks.floats = f == float2(0.5, -1) && float3(f, 2) == float3(0.5, -1, 2);
+    checks.floatsDiffer = f != float2(0.5, 1) && !(f != float2(0.5, -1));
+    checks.fours = float4(1, 2, 3, 4) == float4(1, 2, 3, 4) && int4(1, 2, 3, 4) != int4(1, 2, 3, 5);
+    double2 d = double2(0.1d, 3);
+    checks.doubles = d == double2(0.1d, 3) && double3(d, 1) == double3(0.1d, 3, 1) && double4(1) == double4(1, 1, 1, 1);
+    checks.doublesDiffer = d != double2(0.1, 3); // 0.1 as a float, widened, isn't 0.1d
+    // An int vector beside a float vector is a float vector, as for + and -
+    checks.widened = a == float2(1, 2) && float3(1, 2, 3) == b;
+    checks.widenedDiffer = a != float2(1, 2.5);
+    checks.widenedDouble = double2(1, 2) == a && double2(0.5, -1) == f;
+    // Each component as C compares floats: -0 equals 0, and NaN equals nothing, itself included
+    float zero = 0;
+    checks.signedZero = float2(-zero, 1) == float2(0, 1);
+    float2 nan = float2(zero / zero, 1);
+    checks.nanEqual = nan == nan;
+    checks.nanDiffer = nan != nan;
+    // Colors: every channel, alpha too
+    Color c = Color(1, 0.5, 0.25);
+    checks.colors = c == Color(1, 0.5, 0.25, 1) && Color.red == Color(1, 0, 0) && c != Color.white;
+    checks.alphaDiffers = Color(1, 0, 0, 0.5) != Color.red;
+    checks.defaults = float3(0) == default && default == int2(0, 0) && f != default;
+    // Each side once, left to right
+    counter.calls = 0;
+    bool firstWins = Next(counter) == Next(counter);
+    checks.calls = counter.calls + (firstWins ? 100 : 0);
+    // A list's Contains, IndexOf and Remove compare elements as == does
+    mut List<int2> cells = [int2(0, 0), int2(2, 3), int2(4, 5)];
+    checks.found = cells.Contains(int2(2, 3)) && !cells.Contains(int2(3, 2)) ? 1 : 0;
+    checks.index = cells.IndexOf(int2(4, 5));
+    checks.removed = cells.Remove(int2(0, 0)) && cells.count == 2 && !cells.Remove(int2(9, 9));
+    List<Color> colors = [Color.red, Color(0, 1, 0, 0.5)];
+    checks.colorFound = colors.Contains(Color(0, 1, 0, 0.5)) && !colors.Contains(Color.green);
+}
+
+// A loop guard on a vector's equality: the loop goes through an index of the cells' components
+system Count(Grid grid, mut Checks checks)
+{
+    checks.matched = 0;
+    foreach (var cell in grid.cells)
+    {
+        if (cell != grid.target) continue;
+        checks.matched++;
+    }
+    checks.unmatched = 0;
+    foreach (var cell in grid.cells)
+    {
+        if (cell == grid.target) continue;
+        checks.unmatched++;
+    }
+}

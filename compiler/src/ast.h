@@ -173,6 +173,9 @@ typedef enum type_kind {
     TY_FONT,      // Font: a local reference to a font of this machine's registry (tide/font.h): Font.Regular, Font.Bold, an asset's or a decoded one
     TY_GPU_LIST,  // GPUList<T>: a list that lives on the GPU, this machine's (tide_gpu_list); decl's one field is its element
     TY_TEXTURE3D, // Texture3D: machine-local volume, sampled continuously on all three axes
+    // DepthCubemap: a depth cube's depth (Cubemap(size, Format.Depth)), six faces of it, which a frag or vert reads by a
+    // direction as a DepthTexture is read by a uv. Appended, as TY_DOUBLE was, to keep the kinds before it as they are
+    TY_DEPTH_CUBEMAP,
 } type_kind;
 
 typedef struct type {
@@ -269,6 +272,9 @@ typedef struct attribute {
 // ---------------------------------------------------------------------------
 // Declarations
 
+// The values an image field or an image parameter is given (field.image_assignments, param.image_assignments).
+typedef VEC(const expr *) image_origins;
+
 typedef struct field {
     str name;
     str type_name;
@@ -295,7 +301,10 @@ typedef struct field {
     // `since.Snap()` somewhere: it counts its own snaps in a hidden int after the fields, tide_snaps_<name>,
     // and views draw it as it is between two ticks whose counts differ
     bool snap_counted;
-    VEC(const expr *) image_assignments; // Resource origins, for portable storage-image format inference
+    // Every value an image field can hold, as far as the compiler sees, for format inference (storage images, numeric
+    // outputs and reads, [Linear] sources): assignments, struct literals' initializers, and an `out` or `mut`
+    // argument's place (expr.image_place). The default is an origin too, apart
+    image_origins image_assignments;
 } field;
 
 typedef enum param_mode {
@@ -319,6 +328,9 @@ typedef struct device_leaf {
 
 typedef struct param {
     str sample_role; // [Raw(T)]: the numeric type sampled or stored through this image parameter.
+    // A function's image parameter: what its body assigns it, and the places of the calls it hands it to as `out` or
+    // `mut`, which a caller's `out` or `mut` argument then holds (field.image_assignments)
+    image_origins image_assignments;
     const struct field *call_binding; // A shader function slot, stored in its named binding value.
     const struct expr *capture_source; // Compiler-only source identity of a lambda capture.
     bool owner_context; // Entity identity borrowed from an attached component argument.
@@ -355,6 +367,9 @@ typedef struct param {
     bool placement_local; // `local Component value`: access to machine-local storage of a shared component type
     loc placement_at;
     bool function_param; // A method's or function's: a copy, or with mut, the caller's variable itself
+    // `world.Edit<Party>(id, party) { ... }`'s `party`: the Edit call. A `mut` component of the entity it names, in
+    // scope in the block alone, as the code's own `mut` parameter is for its entity; not one of the code's params
+    const struct expr *edit;
     // `out Health health`, a function's or method's, as C#'s: the call makes the caller's variable, which starts
     // unassigned in the code and is assigned on every path that returns. Its mode is PARAM_MUT, as for everything
     // else it's a variable the call changes, by address. An extern function's `out List<byte> image` is a list C
@@ -455,6 +470,7 @@ typedef struct world_use {
     loc write_at; // ...and the first Set
     bool query_read; // A query parameter also reads this component's candidate rows
     bool through_world; // Some World call names it
+    bool write_edits;   // The first Set is an Edit, for what's said of it
 } world_use;
 
 typedef struct system_wait {
@@ -505,7 +521,10 @@ typedef enum shader_read {
     READ_VOLUME, READ_NUMBER, READ_INT, READ_NUMBER_VOLUME, READ_INT_VOLUME,
     // A typed float image read through a filtering sampler (blended, or at a mip level): a color's binding and sampler,
     // numbers as stored, and zero where no image is given
-    READ_NUMBER_BLEND
+    READ_NUMBER_BLEND,
+    // A typed array's layers, or a typed cube's six faces held as layers, of 32-bit floats or ints: loaded exactly
+    // from a texture_2d_array, with no sampler (a cube's face and its texel worked out from the direction)
+    READ_NUMBER_LAYERS, READ_INT_LAYERS
 } shader_read;
 
 // A grid a frag or vert samples: a field of one of its parameters, and how.
@@ -720,6 +739,7 @@ typedef struct decl {
     bool tried_previous;  // ...or world.TryGetPrevious of it
     bool tried;           // Components: some code calls world.TryGet of it, so generated C has its helper
     bool world_set_used;  // Components: World.Set needs the owned-value/active-binding helper
+    bool world_edit_used; // Components: world.Edit needs its helper, which finds an active binding or loads the row
 
     // Events
     bool world_event;        // Built-in events the engine sends to the world, never to an entity
@@ -890,6 +910,11 @@ typedef struct decl {
     struct decl *build_fn;    // An asset or a constant: the function that makes its value, or NULL
     struct decl *build_owner; // That function: the asset or constant it makes
     struct build_value *built; // An asset or a constant: what its code made, once it has run (build_code.h)
+    // A list constant written out, `const List<int> QUAD = [0, 1, 2];`, directly or through the constant it names: its
+    // [a, b, c], whose elements C and the GPU read where it's indexed (no list is made for `QUAD[i]` or `QUAD.count`),
+    // and the array type of as many (`int[3]`; TY_ERROR for an empty list), which they index it as.
+    struct expr *list_literal;
+    type list_array;
     // Purity (compiler/src/purity.c, docs/spec.md, Pure functions): a function or method with code is pure when
     // its result comes from its arguments alone and running it leaves nothing changed. Worked out once every
     // body is checked (infer_purity); `impure_why` says the first thing that keeps it from being pure
@@ -1140,6 +1165,7 @@ typedef enum builtin_call {
     CALL_JSON,      // Json.Read<T>(text), Json.Write(value), string.FromBytes(bytes) and int.TryParse(text, out value):
                     // calls c_callee with its arguments as values, text a tide_str, and an `out` one by address
     CALL_VISIBILITY, // Shared audience groups and typed whole-component restrictions.
+    CALL_ENUM_VALUES, // Enum.Values(): an array of every declared member, in declaration order; its type is that array
 } builtin_call;
 
 enum { VISIBILITY_RECEIVER = 1, VISIBILITY_MUT = 2, VISIBILITY_WORLD = 4, VISIBILITY_COMPONENT = 8 };
@@ -1287,12 +1313,16 @@ struct expr {
     bool typed_text;       // keyboard.text: what was typed, which C keeps as code points
     bool local_field;      // box.verts: a local field of a match component or singleton, in its local part (`field` is that one's)
     bool raw_sampled;      // A [Raw] Texture asset's name as the object of a Sample, which is the one place it goes
+    // An image origin note_image_place made for an `out` or `mut` argument (check.c): what the callee assigns its
+    // parameter, `param` (NULL where that can't be seen: C's, a built-in's, a function value's, an override's)
+    bool image_place;
     bool target_colors;    // target.colors: a render target's color images, of which an index reads one (target.colors[1])
                            // ...and cube.faces: a Cubemap's faces, of which an index is one as a RenderTarget (cube.faces[2])
     // await target.Read<T>(image), await target.ReadDepth() (GPU_TARGET_READ): which color image, from 0, and as what
     // (tide/draw.h's tide_target_read: 0 Color, 1 float, 2 float2, 3 float4, 4 int, 5 the depth)
     uint8_t read_image, read_kind;
-
+    // ...of a part (its last two arguments: the first pixel, and how many along each axis), and of a Texture3D's cells
+    bool read_part, read_volume;
 
     // E_CALL, E_METHOD
     VEC(expr *) args;
@@ -1324,6 +1354,9 @@ struct expr {
     bool placement_local; // `local Spawn(...)`: explicit machine-local placement; on `Scene`, `local Scene.Load(...)`
     bool switches_scene;  // CALL_LOAD: Scene.Switch, which unloads its world's scenes first
     struct stmt *compare[2]; // CALL_LIST Sort: the two elements its block compares, as read-only locals of the block
+    // CALL_WORLD Edit, `world.Edit<Party>(id, party) { ... }`: the block's binding, the entity's component itself, as a
+    // `mut` component parameter is (param.edit), which the block's end puts back (gen_world_edit)
+    struct param *edit_binding;
     struct stmt *step;    // E_STEP: the assignment it makes, `lhs += 1`, which is all of it when it's a statement
     bool postfix;         // ...written after its variable: the value is what the variable held before
     const char *hoisted;  // Spawns, and calls, units and operators that keep their order: the temporary codegen ran it into, before the statement
@@ -1632,6 +1665,9 @@ typedef struct shader {
     bool textured;       // No frag, and a texture given at the draw, read as that texture says
     bool direct_texture; // The draw supplies a Texture: the one it draws with, or its shader stages' source
     int given_textures;  // ...how many it supplies, in order (shader_given_textures; one at least where it does)
+    // ...and for each, where a typed Texture parameter of its vert's or frag's is handed an image of 32-bit floats,
+    // its Format (7 R32f, 8 Rgba32f), which a blended read loads exactly; -1 otherwise (direct_texture's alone)
+    VEC(int) source_formats;
     bool blit;           // A full destination overwrite with a fixed Vertex quad
     bool instanced;      // Its draw supplies a list of instances
     bool gpu_instances;  // ...a GPU list's, read from its storage slot (instance_storage), drawn indirect
@@ -1779,6 +1815,8 @@ typedef struct program {
     decl *io_error;      // The built-in IOError enum, shared with tide/io.h
     VEC(struct expr *) io_calls; // Checked filesystem calls, for result adapters in generated C
     VEC(json_root) json_roots; // The types Json.Read and Json.Write are called with: generated C has their functions
+    uint64_t json_vector_reads;  // The vectors, quaternions and colors Json.Read reads, a bit for each type's kind (1 << TY_FLOAT3): each has a reader
+    uint64_t json_vector_writes; // ...and the ones Json.Write writes, each with a writer
     bool from_bytes;     // string.FromBytes(bytes) is called: its adapter goes in the generated C
     type from_bytes_result; // ...and what it gives: string?
     bool decodes;        // grid.Decode(bytes) is called: its adapter and tide/png.h go in the generated C
@@ -1818,7 +1856,6 @@ typedef struct program {
     VEC(decl *) local_parts; // The local parts of the match's components and singletons (decl.local_part), in their order
     VEC(decl *) start_scenes; // Scenes Session.Start starts matches in
     bool out_args;       // Some call has an `out` argument: generated C declares the locals they make before their statements
-    VEC(const field *) image_places; // Image fields a call made or may have changed (`out`, `mut`): what they hold isn't known
     bool uses_text;      // Some code makes text, in the scratch area the run functions clear
     bool uses_heap;      // Some field holds text or a list: the worlds have a heap
     // ...and the entities' places as it began: a match handler reads the tick's start, or a function does through its
@@ -2094,6 +2131,8 @@ void declared_sampling(const expr *texture, int *filter, int *wrap);
 bool declared_raw(const expr *texture);
 type raw_sample_type(const field *image);
 type declared_image_type(const expr *image);
+type param_sample_type(const param *p); // A [Raw(T)] parameter's T, Color for one with no typed role
+bool image_role_fits(const expr *given, type want); // An image read as `want`: its own role, or a float grid's float
 unsigned shader_numeric_outputs(const shader *sh);
 unsigned shader_output_types(const shader *sh);
 int image_target_format(const expr *image, int color, int depth);

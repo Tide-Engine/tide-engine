@@ -997,7 +997,7 @@ static void walk_value(const expr *e)
             o.decl = e->type_alias ? e->type_alias : e->type_decl;
             o.object_type = (type){TY_ERROR, NULL};
             add_occ(o);
-        } else if (e->call == CALL_ENUM_COUNT || e->call == CALL_SKINNED || e->call == CALL_MESH_DECODE
+        } else if (e->call == CALL_ENUM_COUNT || e->call == CALL_ENUM_VALUES || e->call == CALL_SKINNED || e->call == CALL_MESH_DECODE
                    || (e->resource_operation && (e->object->type.kind == TY_RENDER_TARGET || e->object->type.kind == TY_CUBEMAP
                                                  || e->object->type.kind == TY_TEXTURE_ARRAY))) {
             o.kind = OCC_METHOD;
@@ -1805,6 +1805,7 @@ static const char *builtin_type_doc(const type_kind kind)
     case TY_TEXTURE3D: return "A machine-local volume. Create Texture3D(int3 size[, Format format]), Sample(float3 uvw[, Filter[, Wrap]]) in GPU code, or read an exact cell with [int3]. Kernels write cells without mut; writes outside the volume go nowhere. Size is in texels; Resize(int3), Dispose() and contentRevision follow render targets. No mipmaps or slice drawing.";
     case TY_TEXTURE_ARRAY: return "A local reference to layers of images of one size, which a frag or vert reads by a uv and a layer, `Sample(uv, layer)`, where it's an asset by its name or a field of a component or singleton it takes; a function they call takes one as a parameter, and reads the array its call names, or takes the component or singleton that holds it, and reads its field. The layer is an int of any expression, and one past the layers reads the nearest. An asset's is the files a glob matches, in path order, or a list of paths, in its order: `asset TextureArray ground = \"art/ground/*.png\";`. `TextureArray(width, height, layers)` is one a view draws into, a layer at a time: `array.layers[0]` is a RenderTarget, and `array.depth` each layer's depth. On the CPU, `array.size` is a layer's pixels and `array.count` how many layers it has.";
     case TY_DEPTH_TEXTURE_ARRAY: return "A local reference to a TextureArray's depth, `array.depth`, each layer's, which a frag or vert reads where it's a field of a component or singleton it takes: `Sample(uv, layer)` gives how far the nearest thing drawn there is, 0 at the near plane to 1 at the far limit, and `Compare(uv, layer, value)` how much of what's stored around there isn't nearer than `value`, 0 to 1, as a shadow's cascades want. A function they call takes one as a parameter, and reads the depths its call names, or takes the component or singleton that holds it, and reads its field. On the CPU, `size` is a layer's pixels and `count` how many layers it has.";
+    case TY_DEPTH_CUBEMAP: return "A local reference to a depth cube's depth, `cube.depth` of `Cubemap(size, Format.Depth)`, six faces of it, which a frag or vert reads where it's a field of a component or singleton it takes: `Sample(direction)` gives how far the nearest thing drawn that way from the cube's middle is, 0 at the near plane to 1 at the far limit, and `Compare(direction, value)` how much of what's stored around there isn't nearer than `value`, 0 to 1, as a lamp that shines every way wants for its shadows. A function they call takes one as a parameter, and reads the depths its call names, or takes the component or singleton that holds it, and reads its field. A default one reads as the far limit.";
     case TY_RENDER_TARGET: return "A local drawing destination. `RenderTarget(width, height)` is one of that size in logical pixels, like the window's, at the display's full resolution; `RenderTarget(width, height, 1)` has exactly that many pixels, whatever the display; `RenderTarget.Window()` is always the window's size. `samples: 4`, after everything else, draws each of its pixels with that many samples, which smooths the edges of the triangles drawn into it. Each says last what it holds when that isn't one color image: `Format.Depth` is depth alone, and a format for each makes several, `RenderTarget(width, height, Format.Rgba8, Format.Rgba16f)`, which a frag's Color, float, float2, float4 or int outputs go to in order. Numeric outputs must fit their Format and replace the stored value without tint or alpha multiplication. Drawing into one is as drawing into the window. Copies share the image; `Resize(width, height)` discards its contents and `Dispose()` releases it. Color and depth persist across frames. `target.color` is its Texture, `target.colors[1]` its second color image's, and `target.depth` its DepthTexture; `Draw.window` is the window destination.";
     case TY_RECT: return "A rectangle on the screen, for the GUI: x and y from the top left, y down, then width and height.";
     case TY_MESH: return "An asset's mesh: `asset Mesh<Corner> tree = \"art/tree.glb\";` is a glTF, FBX or OBJ file as vertices of the struct in its `<>`, which the file fills by its fields' names (`position`, `normal`, `uv`, `uv2`, `color`, `tangent`). `Draw.Mesh(tree, transform, ...)` and `Draw.Instanced(tree, instances, ...)` draw it; `tree.vertices` and `tree.indices` are its lists, read-only, which any code reads. Fields, lists, arrays, maps, parameters and results keep its stable asset ID; geometry stays shared and resolves on access. `Mesh(vertices, indices)` makes one of the game's own lists, a copy nothing changes after, which goes everywhere an asset's does.";
@@ -1889,15 +1890,15 @@ static const char *format_member_doc(const str name)
 {
     static const struct { const char *name, *doc; } formats[] = {
         {"Rgba8", "Four unsigned byte channels (4 bytes per pixel). Takes Color outputs and Color clears; the default target format."},
-        {"Depth", "Depth and stencil without a color image. Use this as the target's only format."},
+        {"Depth", "Depth and stencil without a color image. Use this as the target's only format; a Cubemap of it holds six faces of depth alone, which a frag reads through 'cube.depth', a DepthCubemap, by a direction (a lamp's shadow that shines every way)."},
         {"Rgba16f", "Four 16-bit floats (8 bytes per pixel). Takes Color or float4 outputs and clears. A float4 preserves four independent channels, and a [Raw(float4)] read blends and reads mipmaps on every device; Color keeps its alpha and blend behavior."},
         {"R8", "One unsigned byte channel (1 byte per pixel). Takes float outputs and clears, clamped to 0–1. Read through a [Raw(float)] Texture, TextureArray layer or Cubemap face: nearest by default, and Filter.Bilinear, Trilinear, Anisotropic, SampleLevel and SampleGrad blend it and read its mipmaps on every device."},
         {"Rg8", "Two unsigned byte channels (2 bytes per pixel). Takes float2 outputs and clears, clamped to 0–1. Read through a [Raw(float2)] Texture, TextureArray layer or Cubemap face: nearest by default, and Filter.Bilinear, Trilinear, Anisotropic, SampleLevel and SampleGrad blend it and read its mipmaps on every device."},
         {"R16f", "One 16-bit float (2 bytes per pixel). Takes float outputs and clears. Read through a [Raw(float)] Texture, TextureArray layer or Cubemap face: nearest by default, and Filter.Bilinear, Trilinear, Anisotropic, SampleLevel and SampleGrad blend it and read its mipmaps on every device."},
         {"Rg16f", "Two 16-bit floats (4 bytes per pixel). Takes float2 outputs and clears. Read through a [Raw(float2)] Texture, TextureArray layer or Cubemap face: nearest by default, and Filter.Bilinear, Trilinear, Anisotropic, SampleLevel and SampleGrad blend it and read its mipmaps on every device."},
-        {"R32f", "One 32-bit float (4 bytes per pixel). Takes float outputs and clears, including values past one. Read through [Raw(float)] Texture at its nearest pixel on every device: no blending or mipmaps, and no array layers or cube faces (use R16f for those). One sample only; kernels can write it."},
-        {"Rgba32f", "Four 32-bit floats (16 bytes per pixel). Takes float4 outputs and clears, with four independent channels. Read through [Raw(float4)] Texture at its nearest pixel on every device: no blending or mipmaps, and no array layers or cube faces (use Rgba16f for those). One sample only; kernels can write it."},
-        {"R32i", "One signed 32-bit integer (4 bytes per pixel). Takes int outputs and clears, exactly. Read through [Raw(int)] Texture with Point sampling. One sample only; kernels can write it."},
+        {"R32f", "One 32-bit float (4 bytes per pixel). Takes float outputs and clears, including values past one. Read through a [Raw(float)] Texture, Texture3D, TextureArray layer or Cubemap face, loaded exactly: the nearest pixel, or with Filter.Bilinear the four around blended in the shader, the same bits on every device (a cube's faces nearest only). No mipmaps: Trilinear, Anisotropic, SampleLevel and SampleGrad need R16f. One sample only; kernels can write it."},
+        {"Rgba32f", "Four 32-bit floats (16 bytes per pixel). Takes float4 outputs and clears, with four independent channels. Read through a [Raw(float4)] Texture, Texture3D, TextureArray layer or Cubemap face, loaded exactly: the nearest pixel, or with Filter.Bilinear the four around blended in the shader, the same bits on every device (a cube's faces nearest only). No mipmaps: Trilinear, Anisotropic, SampleLevel and SampleGrad need Rgba16f. One sample only; kernels can write it."},
+        {"R32i", "One signed 32-bit integer (4 bytes per pixel). Takes int outputs and clears, exactly. Read through a [Raw(int)] Texture, Texture3D, TextureArray layer or Cubemap face at its nearest pixel. One sample only; kernels can write it."},
     };
     for (size_t i = 0; i < sizeof formats / sizeof formats[0]; i++) {
         if (str_eq_c(name, formats[i].name)) return formats[i].doc;
@@ -1953,12 +1954,13 @@ static void format_header(const decl *d, sb *out)
     if (d->is_handler && d->params.count > 0) {
         sb_put(out, d->is_command ? "command(" : "event(");
         format_param(&d->params.items[0], out);
-        if (d->is_command && d->params.count > 1) {
+        const bool sender = d->is_command && d->params.count > 1 && d->params.items[1].mode == PARAM_SENDER;
+        if (sender) {
             sb_put(out, ", ");
             format_param(&d->params.items[1], out);
         }
         sb_printf(out, ") " STR_FMT "(", STR_ARG(d->name));
-        first = d->is_command ? 2 : 1;
+        first = sender ? 2 : 1;
     } else {
         sb_printf(out, "%s%s " STR_FMT "(", d->extern_system ? "extern " : "", decl_keyword(d), STR_ARG(d->name));
     }
@@ -2282,6 +2284,10 @@ static const method_form session_calls[] = {
 #define TEXTURE_ARRAY_DEPTH_DOC                                                                                        \
     "Each layer's depth, as a DepthTextureArray, for a frag to read: kept in a field of a component or singleton "    \
     "the frag takes, and read there with `Sample(uv, layer)` or `Compare(uv, layer, value)`. An asset's array has none."
+#define CUBEMAP_DEPTH_DOC                                                                                              \
+    "A cube of depth alone's six faces of depth (`Cubemap(size, Format.Depth)`), as a DepthCubemap, for a frag to "  \
+    "read by a direction: kept in a field of a component or singleton the frag takes, and read there with "         \
+    "`Sample(direction)` or `Compare(direction, value)`. A cube of colors keeps no depth to read."
 #define TEXTURE_ARRAY_LAYERS_DOC                                                                                       \
     "The layers of an array made with `TextureArray(width, height, layers)`, each a target to draw into: "            \
     "`layers[0]` is the first, as a RenderTarget, with its own camera, clip and settings. Only indexed."
@@ -2325,16 +2331,17 @@ static const method_form session_calls[] = {
 
 // Json's calls and string's own: in no table of the engine's, as they take and give types of the game's.
 #define JSON_READ_DOC                                                                                                  \
-    "Reads JSON as a `T`: a struct, a `List<T>` or a `Map<string, T>` of what JSON holds (bool, the integers, float, " \
-    "char, string, enums by their member's name, structs, lists, arrays and maps by text). A field's key is its "      \
-    "name, or what `[Json(\"key\")]` before it says. A key the JSON leaves out keeps its field's default, and so "    \
-    "does a `null`; a key no field has is skipped. Nothing, unwrapped with `??` or `is`, when the text isn't JSON, a "  \
-    "value isn't its field's kind, or a number doesn't fit its field. The same on every machine, so the match can "    \
-    "read what a command brought."
+    "Reads JSON as a `T`: a struct, a `List<T>`, a `Set<T>` or a `Map<K, T>` of what JSON holds (bool, the "           \
+    "integers, float, double, char, string, enums by their member's name, vectors, quaternions and colors as arrays "  \
+    "of their numbers, structs, lists, sets and arrays as arrays, and maps by text, an int or an enum). A field's key " \
+    "is its name, or what `[Json(\"key\")]` before it says. A key the JSON leaves out keeps its field's default, and " \
+    "so does a `null`; a key no field has is skipped. Nothing, unwrapped with `??` or `is`, when the text isn't JSON, " \
+    "a value isn't its field's kind, a vector has the wrong number of numbers, or a number doesn't fit its field. The " \
+    "same on every machine, so the match can read what a command brought."
 #define JSON_WRITE_DOC                                                                                                 \
-    "The value as JSON, with no spaces: a struct, a `List<T>` or a `Map<string, T>` of what JSON holds. A float is "   \
-    "written with the fewest digits that read back as the same float, and `null` where it's NaN or infinite. "        \
-    "`Json.Read<T>` of the text gives the value back."
+    "The value as JSON, with no spaces: a struct, a `List<T>`, a `Set<T>` or a `Map<K, T>` of what JSON holds. A "    \
+    "float is written with the fewest digits that read back as the same float, and `null` where it's NaN or "         \
+    "infinite. `Json.Read<T>` of the text gives the value back."
 static const method_form json_calls[] = {
     {"Read", "Json.Read<T>(string json) -> T?", JSON_READ_DOC},
     {"Read", "Json.Read<T>(List<byte> json) -> T?", JSON_READ_DOC},
@@ -2429,7 +2436,7 @@ static const method_form texture_calls[] = {
      "when UVs change inside a loop, and for `Filter.Anisotropic` they are what a pixel covers: it reads along "
      "the longer of the two. Point and Bilinear still read the base image. Omitted filter and wrap "
      "use the texture's settings, as Sample does. Verts and CPU code cannot call SampleGrad."},
-    {"SampleLevel", "SampleLevel(float2 uv, float level, Filter filter = the texture's, Wrap wrap = the texture's) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper. Trilinear blends adjacent levels; levels clamp to the available images."},
+    {"SampleLevel", "SampleLevel(float2 uv, float level, Filter filter = Filter.Trilinear, Wrap wrap = the texture's) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper, between the two levels nearest it (Trilinear, which a filter left out is). Levels clamp to the available images; `Filter.Point` and `Filter.Bilinear` read level 0."},
 };
 
 static const method_form depth_calls[] = {
@@ -2458,13 +2465,25 @@ static const method_form cube_calls[] = {
      "Another side for all six faces of a cube made with `Cubemap(size)`, in pixels, and empty images."},
     {"Dispose", "Dispose()",
      "Lets a cube made with `Cubemap(size)` go, its six faces with it. Every copy of it then names no cube."},
-    {"SampleLevel", "SampleLevel(float3 direction, float level, Filter filter = Filter.Bilinear) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper. Trilinear blends adjacent levels; levels clamp to the available images."},
+    {"SampleLevel", "SampleLevel(float3 direction, float level, Filter filter = Filter.Trilinear) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper, between the two levels nearest it (Trilinear, which a filter left out is): a blurred reflection's roughness. Levels clamp to the available images; `Filter.Point` and `Filter.Bilinear` read level 0."},
+};
+
+static const method_form depth_cube_calls[] = {
+    {"Sample", "Sample(float3 direction) -> float",
+     "Reads a depth cube's depth in a frag or vert, towards `direction` from the cube's middle, of any length: how far "
+     "the nearest thing drawn that way is, from 0 at the near plane to 1 at the far limit, as a DepthTexture's Sample "
+     "reads one. It's the nearest pixel's, on the face the direction points at."},
+    {"Compare", "Compare(float3 direction, float value) -> float",
+     "Compares a depth cube's depth with `value` in a frag or vert, as a DepthTexture's Compare does: how much of what's "
+     "stored around `direction` isn't nearer than `value`, from 0 to 1, blended within the face it points at. A lamp "
+     "that shines every way: 1 is lit, 0 in shadow."},
 };
 
 static const method_form volume_calls[] = {
-    {"Sample", "Sample(float3 uvw, Filter filter = Filter.Bilinear, Wrap wrap = Wrap.Clamp) -> Color", "Reads a volume in GPU code. Color volumes blend all three axes. A typed Raw volume returns its declared float, float2, float4 or int and reads the nearest cell; only Filter.Point is accepted. Volumes have no mipmaps."},
+    {"Sample", "Sample(float3 uvw, Filter filter = the role's, Wrap wrap = Wrap.Clamp) -> Color", "Reads a volume in GPU code. Color volumes blend all three axes. A typed Raw volume returns its declared float, float2, float4 or int, at the nearest cell where no filter is named; `Filter.Bilinear` blends a float volume's eight cells around (through the GPU's sampler for Rgba16f and a Grid3<float>, loaded exactly and blended in the shader for R32f and Rgba32f). Int volumes read the nearest cell. Volumes have no mipmaps."},
     {"Resize", "Resize(int3 size)", "Changes the volume size in texels, discarding contents. Copies share the resource."},
     {"Dispose", "Dispose()", "Releases this volume and leaves all references empty."},
+    {"Read", "Read<T>([int3 from, int3 size]) -> Grid3<T> fails IOError", "Await in local async code for an owned copy of the volume's cells, a frame or more later, as a render target's image is read: without `<T>` a `Grid3<Color>` of an Rgba8 or Rgba16f volume, `Read<float>()` for R32f, `Read<float4>()` for Rgba32f (and an Rgba16f volume's numbers), `Read<int>()` for R32i, bit for bit. A box of it: its first cell and how many along each axis, `Read(int3(0), int3(8))`, clamped to the volume. The volume's format must be fixed where it's made; device loss fails."},
 };
 
 static const method_form array_calls[] = {
@@ -2485,7 +2504,7 @@ static const method_form array_calls[] = {
     {"Dispose", "Dispose()",
      "Lets an array made with `TextureArray(width, height, layers)` go, its layers and depth with it. Every copy of "
      "it then names no array."},
-    {"SampleLevel", "SampleLevel(float2 uv, int layer, float level, Filter filter = the array's, Wrap wrap = the array's) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper. Trilinear blends adjacent levels; levels clamp to the available images."},
+    {"SampleLevel", "SampleLevel(float2 uv, int layer, float level, Filter filter = Filter.Trilinear, Wrap wrap = the array's) -> Color", "Reads an explicit mip level of a layer in a frag, vert, kernel or GPU helper, between the two levels nearest it (Trilinear, which a filter left out is). Levels clamp to the available images; `Filter.Point` and `Filter.Bilinear` read level 0."},
 };
 
 static const method_form depth_array_calls[] = {
@@ -2502,8 +2521,8 @@ static const method_form depth_array_calls[] = {
 static const method_form target_calls[] = {
     {"Resize", "Resize(float width, float height)", "Changes the shared image's size, in logical pixels, and discards its contents, even at the same size. It keeps its pixels per unit. Not for a target made with `RenderTarget.Window`, which follows the window."},
     {"Dispose", "Dispose()", "Releases the shared image. All target and color aliases become invalid; repeated disposal is harmless."},
-    {"Read", "Read<T>([int image]) -> Grid2<T> fails IOError", "Await in local async code for an owned copy of one resolved color image, a frame or more later: `await target.Read()` its first, `Read(1)` its second, with a constant int. Without `<T>` it's a `Grid2<Color>` of an Rgba8 or Rgba16f image, straight Color values, including HDR. An image of numbers is read as its own type, bit for bit: `Read<float>()` for R8, R16f and R32f, `Read<float2>()` for Rg8 and Rg16f, `Read<float4>()` for Rgba32f (and an Rgba16f image's four numbers as stored), `Read<int>()` for R32i. The target's formats must be fixed where it's made. A cube's face and an array's layer are read the same way: `await cube.faces[0].Read()`. At most 4,000,000 pixels; device loss fails."},
-    {"ReadDepth", "ReadDepth() -> Grid2<float> fails IOError", "Await in local async code for an owned copy of the target's depth, a frame or more later: 0 at the near plane and 1 at the far one, as `this.depth` and `DepthTexture.Sample` give it, whatever the device stores. One depth a pixel for a multisampled target. Also for a target of depth alone, a cube's face and an array's layer. At most 4,000,000 pixels; device loss fails."},
+    {"Read", "Read<T>([int image][, int2 from, int2 size]) -> Grid2<T> fails IOError", "Await in local async code for an owned copy of one resolved color image, a frame or more later: `await target.Read()` its first, `Read(1)` its second, with a constant int. Without `<T>` it's a `Grid2<Color>` of an Rgba8 or Rgba16f image, straight Color values, including HDR. An image of numbers is read as its own type, bit for bit: `Read<float>()` for R8, R16f and R32f, `Read<float2>()` for Rg8 and Rg16f, `Read<float4>()` for Rgba32f (and an Rgba16f image's four numbers as stored), `Read<int>()` for R32i. The target's formats must be fixed where it's made. A part of it: its first pixel and how many pixels across and down, `Read(int2(x, y), int2(16, 16))`, in the image's own pixels, clamped to it (none of it there fails). A cube's face and an array's layer are read the same way: `await cube.faces[0].Read()`. Any size of image; what reads hold together is at most 512 MiB; device loss fails."},
+    {"ReadDepth", "ReadDepth([int2 from, int2 size]) -> Grid2<float> fails IOError", "Await in local async code for an owned copy of the target's depth, a frame or more later: 0 at the near plane and 1 at the far one, as `this.depth` and `DepthTexture.Sample` give it, whatever the device stores. One depth a pixel for a multisampled target. Also for a target of depth alone, a cube's face and an array's layer. A part of it as `Read`'s: its first pixel and how many, int2s, clamped to the image. Any size; device loss fails."},
 };
 
 #define BLIT_FORM "Draw.Blit(Texture source[, Texture textures...], RenderTarget destination[, Blend blend], frag shader[, values])"
@@ -2760,6 +2779,12 @@ static const method_form world_calls[] = {
     {"Set", "Set<T>(Entity entity, T value)",
      "Puts the component back on the entity, right away; nothing happens when the entity has none. It needs "
      "`mut World`, counts as writing every entity's, and keeps a system on one thread."},
+    {"Edit", "Edit<T>(Entity entity, name) { ... }",
+     "Changes the entity's component where it is: `name` is new, declared by the call, and in the block it's the "
+     "component itself, as a `mut` parameter is. What the block changes is put back on the entity as the block ends, "
+     "however it's left (`return`, `break`, `continue`, `try`, `fail`). An entity that's gone, or has none, skips the block: "
+     "`world.Edit<Health>(target, health) { health.value -= 5; }`. Like `Set`, it needs `mut World`, counts as "
+     "writing every entity's, and keeps a system on one thread."},
 };
 
 static const method_form singleton_calls[] = {
@@ -2902,6 +2927,7 @@ static const method_form *methods_of(const type t, size_t *count)
     case TY_TEXTURE3D: forms = volume_calls; *count = sizeof volume_calls / sizeof volume_calls[0]; break;
     case TY_TEXTURE_ARRAY: forms = array_calls; *count = sizeof array_calls / sizeof array_calls[0]; break;
     case TY_DEPTH_TEXTURE_ARRAY: forms = depth_array_calls; *count = sizeof depth_array_calls / sizeof depth_array_calls[0]; break;
+    case TY_DEPTH_CUBEMAP: forms = depth_cube_calls; *count = sizeof depth_cube_calls / sizeof depth_cube_calls[0]; break;
     case TY_RENDER_TARGET: forms = target_calls; *count = sizeof target_calls / sizeof target_calls[0]; break;
     case TY_ENTITY: case TY_LOCAL_ENTITY: forms = entity_calls; *count = sizeof entity_calls / sizeof entity_calls[0]; break;
     case TY_SINGLETON: forms = singleton_calls; *count = sizeof singleton_calls / sizeof singleton_calls[0]; break;
@@ -2952,7 +2978,7 @@ static void format_method(const method_form *form, const type t, sb *out)
     const char *value = generic && t.kind == TY_MAP ? type_name(t.decl->fields.items[1].type) : "V";
     sb_put(out, t.kind == TY_RECORD && t.decl == A.prog->pixel ? "this"
                 : generic || t.kind == TY_RECORD || (t.decl && (t.decl->skin_kind || t.decl->asset_ref_geometry || t.decl == A.prog->audience || t.decl == A.prog->visibility)) || t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP
-                  || t.kind == TY_TEXTURE3D || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY ? type_name(t)
+                  || t.kind == TY_TEXTURE3D || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY || t.kind == TY_DEPTH_CUBEMAP ? type_name(t)
                 : t.kind == TY_LIST ? "items"
                 : t.kind == TY_MAP || t.kind == TY_SET ? "keys"
                 : t.kind == TY_GRID ? "cells"
@@ -3012,6 +3038,7 @@ static void describe_default(const type t, sb *out)
     case TY_CUBEMAP: sb_put(out, "No cube: it reads as black"); break;
     case TY_TEXTURE_ARRAY: sb_put(out, "No array: its size and count are zeros"); break;
     case TY_DEPTH_TEXTURE_ARRAY: sb_put(out, "No array's depth: its size and count are zeros"); break;
+    case TY_DEPTH_CUBEMAP: sb_put(out, "No cube's depth: it reads as the far limit, 1"); break;
     case TY_ENUM: {
         const enum_member *zero = NULL;
         for (int i = 0; i < t.decl->members.count && !zero; i++) {
@@ -3042,16 +3069,14 @@ static bool shader_planned(const decl *d)
 // The fields of its parameter `p` a frag or vert reads, each in backquotes
 // with `prefix` before it, onto the list `out`: the match's, then the local
 // ones of a match component or singleton, which this machine keeps beside
-// them. Grids aren't read: they're sampled (put_samples). Of a frag's vertex,
-// `blended`, ints aren't either: they don't blend across a triangle, so its
-// corners pass none on.
-static void put_reads(const param *p, const char *prefix, const bool blended, sb *out)
+// them. Grids aren't read: they're sampled (put_samples). Of a frag's vertex
+// and of what its vert hands it, the corners pass on ints too, flat.
+static void put_reads(const param *p, const char *prefix, sb *out)
 {
     const decl *t = p->type.decl;
     for (int k = 0; t && k < t->fields.count; k++) {
         const field *f = &t->fields.items[k];
         if (f->hidden || f->type.kind == TY_GRID || !(p->whole || (p->reads && p->reads[k]))) continue;
-        if (blended && type_is_int_based(f->type)) continue;
         sb_printf(out, "%s`%s" STR_FMT "`", out->len ? ", " : "", prefix, STR_ARG(f->name));
     }
     const decl *part = t && p->local_reads ? t->local_part : NULL;
@@ -3152,7 +3177,7 @@ static void describe_shader(const decl *d, sb *out)
                               : "\n\nRuns on the GPU, for each vertex of a mesh a view draws through it: `Draw.%s(..., "
                                 STR_FMT ")`, a %s one. It changes the vertex in place, before its triangles are drawn.",
               instanced ? "Instanced" : "Mesh", STR_ARG(d->name), three_d ? "3D" : "2D");
-    if (hands) sb_put(out, " What it writes to a struct it takes as `out`, the frag it's drawn with reads, blended across the triangle.");
+    if (hands) sb_put(out, " What it writes to a struct it takes as `out`, the frag it's drawn with reads: floats blended across the triangle, integral fields flat from its first corner.");
     if (d->place) {
         sb_printf(out, " It puts its vertex itself, where it writes `" STR_FMT "`, in the place of the draw's transform and "
                        "the camera.", STR_ARG(d->place->name));
@@ -3169,12 +3194,12 @@ static void describe_shader(const decl *d, sb *out)
     for (int i = 0; i < d->params.count; i++) {
         const param *p = &d->params.items[i];
         if (i == 0) { // A vert has its whole vertex
-            if (d->is_frag) put_reads(p, "", true, &vertex);
+            if (d->is_frag) put_reads(p, "", &vertex);
             continue;
         }
         if (p->type.kind == TY_STRUCT && p->is_out) continue; // What a vert writes for its frag: nothing sends it
         if (handed_param(d, p)) { // ...and what the frag reads of it comes from the mesh's corners
-            put_reads(p, type_prefix(p), true, &handed);
+            put_reads(p, type_prefix(p), &handed);
             continue;
         }
         const bool component = p->type.kind == TY_COMPONENT;
@@ -3182,7 +3207,7 @@ static void describe_shader(const decl *d, sb *out)
         const bool values = values_param(d, p); // The draw's own, once for the draw, as a singleton's
         const bool data = p->type.kind == TY_STRUCT && !values;
         if (!component && !transform && !data && !values && p->type.kind != TY_SINGLETON) continue; // Its pixel, which nothing sends
-        put_reads(p, type_prefix(p), false, component || transform || data ? &instance : &draw);
+        put_reads(p, type_prefix(p), component || transform || data ? &instance : &draw);
         put_samples(d, i, type_prefix(p), &textures);
     }
     if (!instance.len && !draw.len && !textures.len && !vertex.len && !handed.len) {
@@ -3193,8 +3218,8 @@ static void describe_shader(const decl *d, sb *out)
     if (instance.len) sb_printf(out, "\n- for each instance: %s", instance.data);
     if (draw.len) sb_printf(out, "\n- for each draw: %s", draw.data);
     if (textures.len) sb_printf(out, "\n- as textures: %s", textures.data);
-    if (vertex.len) sb_printf(out, "\n- of its vertex, blended across the triangle: %s", vertex.data);
-    if (handed.len) sb_printf(out, "\n- of what its vert wrote for it, blended across the triangle: %s", handed.data);
+    if (vertex.len) sb_printf(out, "\n- of its vertex, floats blended across the triangle and integral fields flat from its first corner: %s", vertex.data);
+    if (handed.len) sb_printf(out, "\n- of what its vert wrote for it, floats blended across the triangle and integral fields flat from its first corner: %s", handed.data);
 }
 
 // A frag's or vert's parameter: what it is to the GPU, and for a component
@@ -3207,8 +3232,8 @@ static void describe_shader_param(const decl *d, const param *p, sb *out)
     sb fields = {0};
     sb grids = {0};
     if (index == 0 && d->is_frag) {
-        sb_put(out, "\n\nThe vertex, blended across the triangle from its three corners. A frag reads it.");
-        if (planned) put_reads(p, "", true, &fields);
+        sb_put(out, "\n\nThe vertex, its floats blended across the triangle from its three corners and its integral fields flat from its first corner. A frag reads it.");
+        if (planned) put_reads(p, "", &fields);
         if (fields.len) sb_printf(out, " Fields this code reads, which the corners pass on: %s.", fields.data);
         return;
     }
@@ -3253,15 +3278,15 @@ static void describe_shader_param(const decl *d, const param *p, sb *out)
     }
     if (p->is_out && p->type.kind == TY_STRUCT) {
         sb_printf(out, "\n\nWhat the vert writes for the frag it's drawn with. It starts with no value: the vert writes each "
-                       "of its fields, on every path. A frag that takes a `" STR_FMT "` reads its floats blended and its integral fields flat across the "
-                       "triangle from its three corners, and only the fields it reads go from the corners to the pixels.",
+                       "of its fields, on every path. A frag that takes a `" STR_FMT "` reads its floats blended across the "
+                       "triangle from its three corners and its integral fields flat from its first corner, and only the fields it reads go from the corners to the pixels.",
                   STR_ARG(t->name));
         return;
     }
     if (handed_param(d, p)) {
-        sb_put(out, "\n\nWhat the vert this frag is drawn with wrote for it, an `out` parameter of the vert's, floats blended and integral fields flat "
-                    "across the triangle from its three corners. A draw whose vert writes none is an error at the draw.");
-        if (planned) put_reads(p, "", true, &fields);
+        sb_put(out, "\n\nWhat the vert this frag is drawn with wrote for it, an `out` parameter of the vert's, floats blended "
+                    "across the triangle from its three corners and integral fields flat from its first corner. A draw whose vert writes none is an error at the draw.");
+        if (planned) put_reads(p, "", &fields);
         if (fields.len) sb_printf(out, " Fields this code reads, which the corners pass on: %s.", fields.data);
         return;
     }
@@ -3283,7 +3308,7 @@ static void describe_shader_param(const decl *d, const param *p, sb *out)
         sb_put(out, " Which of its fields this code reads is worked out once the game has no errors.");
         return;
     }
-    put_reads(p, "", false, &fields);
+    put_reads(p, "", &fields);
     put_samples(d, index, "", &grids);
     if (fields.len) sb_printf(out, " Fields this code reads, the only ones sent: %s.", fields.data);
     if (grids.len) sb_printf(out, " Grids it samples, sent as textures: %s.", grids.data);
@@ -3610,6 +3635,14 @@ static void describe(const occurrence *o, sb *out)
         const bool with = o->param->mode == PARAM_WITH;
         const bool listener = o->param_of && o->param_of->listens;
         code_block(out, with ? "with ownership" : "without ownership");
+        if (o->param_of && o->param_of->is_handler && !o->param_of->is_local && o->param_of->event && o->param_of->event->is_command) {
+            sb_put(out, with ? "\n\nFilter: the command handler runs for the entities the player who sent the command owns: "
+                               "those with an `Owner` whose `player` is the sender. A command sent for any other entity is "
+                               "dropped, as a guard would drop it. For entities any player owns, write `with Owner`."
+                             : "\n\nFilter: the command handler runs for the entities the player who sent the command doesn't "
+                               "own: another player's, and those with no `Owner`. A command sent for the sender's own is dropped.");
+            break;
+        }
         sb_printf(out, "\n\nFilter: the %s runs for ", listener ? "local handler" : "view");
         sb_put(out, with ? "the entities this machine's player owns: those with an `Owner` "
                            "whose `player` is `Session.player`. For entities any player owns, write `with Owner`."
@@ -3788,7 +3821,8 @@ static void describe(const occurrence *o, sb *out)
             sb_put(out, "\n\nA numeric image borrowed from its caller, with the same declared role. Sample returns its "
                         "declared type with no alpha conversion, and reads the nearest cell unless it names a filter. "
                         "R8, Rg8, R16f, Rg16f and Rgba16f images blend and read mipmaps (SampleLevel, SampleGrad); "
-                        "32-bit float and int images are nearest only.");
+                        "32-bit floats blend with Filter.Bilinear, loaded exactly and blended in the shader, and have no "
+                        "mipmaps; int images are nearest only.");
         }
         if (o->param->mode == PARAM_QUERY) {
             if (o->param->function_param) {
@@ -4092,6 +4126,14 @@ static void describe(const occurrence *o, sb *out)
                       o->object_type.decl->members.count);
             break;
         }
+        if (o->call == CALL_ENUM_VALUES) {
+            sb_printf(&code, "%s.Values() -> %s[%d]", name_for(o->object_type.decl), name_for(o->object_type.decl),
+                      o->object_type.decl->members.count);
+            code_block(out, code.data);
+            sb_put(out, "\n\nEvery declared member once, in the order they're declared, as an array of `Count()` of them: "
+                        "`foreach (var value in E.Values())`. A member with another's number is there at its own place.");
+            break;
+        }
         if (is_routine(o->decl)) {
             format_routine(o->decl, &code);
             code_block(out, code.data);
@@ -4211,6 +4253,7 @@ static void describe(const occurrence *o, sb *out)
             if (str_eq_c(o->name, "depth")) sb_put(out, "\n\n" TEXTURE_ARRAY_DEPTH_DOC);
             if (str_eq_c(o->name, "layers")) sb_put(out, "\n\n" TEXTURE_ARRAY_LAYERS_DOC);
         }
+        if (o->object_type.kind == TY_CUBEMAP && str_eq_c(o->name, "depth")) sb_put(out, "\n\n" CUBEMAP_DEPTH_DOC);
         break;
     case OCC_ATTRIBUTE: {
         static const struct {
@@ -4301,9 +4344,13 @@ static void describe(const occurrence *o, sb *out)
              "helpers that borrow the original source. `.size` is readable on the CPU and GPU. Raw textures cannot "
              "escape to ordinary Texture storage, CPU arguments or returns, or draws. "
              "On a Texture/Texture3D field or read-only GPU helper parameter, [Raw(float)], [Raw(float2)], [Raw(float4)] or [Raw(int)] declares "
-             "the image's numeric Sample result; a TextureArray or Cubemap takes the three float roles. Typed images read "
+             "the image's numeric Sample result, on a Texture, Texture3D, TextureArray or Cubemap. Typed images read "
              "the nearest cell unless a Sample names a filter: R8, Rg8, R16f, Rg16f and Rgba16f blend and read mipmaps on "
-             "every device, 32-bit float and int images are nearest only. The role must fit their format."},
+             "every device; R32f and Rgba32f blend with Filter.Bilinear, loaded exactly and blended in the shader (a cube's "
+             "faces nearest only), with no mipmaps; int images are nearest only. The role must fit their format. A grid of "
+             "numbers is a Texture of its role alone: a Grid2<float> takes [Raw(float)] (or none), a Grid2<float2> [Raw(float2)], a "
+             "Grid2<float4> [Raw(float4)], a Grid2<int> or Grid2<byte> [Raw(int)], as a field's value, a typed helper's "
+             "argument or a typed frag's source, and each is sampled by its own name as those numbers."},
             {"Lossless", "[Lossless]",
              "Keeps this `Texture` asset's pixels exact in the pack, a byte a channel. Without it, an image whose sides are "
              "powers of two and at least 128 pixels is block-compressed as the game is built (BC1, or BC3 with alpha), "
@@ -7094,6 +7141,17 @@ static void collect_list(stmt *const *stmts, const int count, const loc at, scop
             for (int k = 0; k < 2; k++) { // items.Sort(a, b) { ... }: its two elements
                 if (s->value->compare[k]) vec_push(sc->locals, s->value->compare[k]);
             }
+            const param *edited = s->value->edit_binding;
+            if (edited) { // world.Edit<Party>(id, party) { ... }: its name, the entity's component, as a local of its type is
+                stmt *local = arena_alloc(sizeof *local);
+                memset(local, 0, sizeof *local);
+                local->kind = S_VAR;
+                local->name = edited->name;
+                local->name_at = edited->name_at;
+                local->type = edited->type;
+                local->is_mut = true;
+                vec_push(sc->locals, local);
+            }
             collect_locals(s->value->block, at, sc);
         }
         if (s->kind == S_SWITCH && loc_cmp(at, s->end) <= 0) {
@@ -7245,6 +7303,7 @@ static type member_type(const type t, const str member)
     if (t.kind == TY_GPU_LIST && (str_eq_c(member, "count") || str_eq_c(member, "capacity"))) return (type){TY_INT, NULL};
     if (t.kind == TY_GPU_LIST && str_eq_c(member, "contentRevision")) return (type){TY_LONG, NULL};
     if (t.kind == TY_CUBEMAP && str_eq_c(member, "faces")) return t; // Of which an index is a RenderTarget
+    if (t.kind == TY_CUBEMAP && str_eq_c(member, "depth")) return (type){TY_DEPTH_CUBEMAP, NULL};
     if (t.kind == TY_TEXTURE3D && str_eq_c(member, "size")) return (type){TY_INT3, NULL};
     if (t.kind == TY_TEXTURE3D && str_eq_c(member, "contentRevision")) return (type){TY_LONG, NULL};
     if (t.kind == TY_TEXTURE_ARRAY && str_eq_c(member, "layers")) return t; // ...and of an array's layers
@@ -7609,6 +7668,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
                  "`faces[5]`, in the order +x, -x, +y, -y, +z, -z. A face is what a camera at the cube's middle sees "
                  "along that axis with a field of view of 90: +y is up for the four around, and for the one above "
                  "and the one below, -z and +z.", "faces[$1]");
+            item(c, "depth", CK_PROPERTY, "DepthCubemap", CUBEMAP_DEPTH_DOC, NULL);
         }
         if (samples) {
             const method_form *form = &cube_calls[sizeof cube_calls / sizeof cube_calls[0] - 1];
@@ -7622,7 +7682,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
             sb detail = {0};
             format_method(&volume_calls[i], t, &detail);
             item(c, volume_calls[i].name, CK_METHOD, detail.data, volume_calls[i].doc,
-                 i == 0 ? "Sample($1)" : i == 1 ? "Resize($1)" : "Dispose()");
+                 i == 0 ? "Sample($1)" : i == 1 ? "Resize($1)" : i == 2 ? "Dispose()" : "Read()");
         }
         item(c, "size", CK_PROPERTY, "int3", "The volume's size in texels, or zeros for no volume.", NULL);
         if (!gpu) item(c, "contentRevision", CK_PROPERTY, "long", "Changes when the volume's contents are discarded; refill it after a change.", NULL);
@@ -7659,6 +7719,15 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         if (!gpu) {
             item(c, "size", CK_PROPERTY, "int2", TEXTURE_ARRAY_SIZE_DOC, NULL);
             item(c, "count", CK_PROPERTY, "int", TEXTURE_ARRAY_COUNT_DOC, NULL);
+        }
+        return;
+    }
+    if (t.kind == TY_DEPTH_CUBEMAP) { // A frag reads it by a direction
+        for (size_t i = 0; samples && i < sizeof depth_cube_calls / sizeof depth_cube_calls[0]; i++) {
+            sb detail = {0};
+            format_method(&depth_cube_calls[i], t, &detail);
+            item(c, depth_cube_calls[i].name, CK_METHOD, detail.data, depth_cube_calls[i].doc,
+                 i == 0 ? "Sample($1)" : "Compare($1, $2)");
         }
         return;
     }
@@ -7800,6 +7869,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
             sb snippet = {0};
             if (strcmp(forms[i].name, "TryGet") == 0) sb_put(&snippet, "TryGet<${1:Component}>(${2:entity}, out var ${3:value})");
             else if (strcmp(forms[i].name, "TryGetPrevious") == 0) sb_put(&snippet, "TryGetPrevious<${1:Component}>(${2:entity}, out var ${3:value})");
+            else if (strcmp(forms[i].name, "Edit") == 0) sb_put(&snippet, "Edit<${1:Component}>(${2:entity}, ${3:name})\n{\n\t$0\n}");
             else sb_printf(&snippet, "%s<$1>($2)", forms[i].name);
             item(c, forms[i].name, CK_METHOD, detail.data, forms[i].doc, snippet.data);
         }
@@ -7883,6 +7953,13 @@ static bool changes_match(const scope *sc)
         && !sc->decl->is_interpolate && !sc->decl->is_audio;
 }
 
+// What a field's image is read as: a grid of numbers' cells (Grid2<float2>...), or its [Raw(T)] role's T.
+static type field_image_role(const field *f)
+{
+    const type numbers = type_number_grid_role(f->type);
+    return numbers.kind != TY_ERROR ? numbers : raw_sample_type(f);
+}
+
 // A half-written Sample can have no expression tree yet. Recover its declared image role from the
 // receiver's field chain, so signature help and member completion do not turn numeric images into colors.
 static type numeric_receiver(const int dot, const loc at)
@@ -7890,7 +7967,7 @@ static type numeric_receiver(const int dot, const loc at)
     const type color = {TY_COLOR, NULL};
     if (dot < 1 || DOC->toks[dot - 1].kind != T_IDENT) return color;
     const occurrence *o = occurrence_at(DOC->toks[dot - 1].at);
-    if (o && o->field) return raw_sample_type(o->field);
+    if (o && o->field) return field_image_role(o->field);
     if (o && o->param && o->param->sample_role.len) {
         return numeric_role(o->param->sample_role);
     }
@@ -7909,7 +7986,7 @@ static type numeric_receiver(const int dot, const loc at)
         }
         owner = member_type(owner, DOC->toks[k].text);
     }
-    return image ? raw_sample_type(image) : color;
+    return image ? field_image_role(image) : color;
 }
 
 static void complete_members(completion *c, const int dot, const loc at, const order_completion order)
@@ -8078,6 +8155,10 @@ static void complete_members(completion *c, const int dot, const loc at, const o
             if (ids[n - 1] == 0 || DOC->toks[ids[n - 1] - 1].kind != T_CASE) {
                 item(c, "Count()", CK_METHOD, "Count() -> int",
                      "Number of declared members, including members with the same numeric value. A compile-time constant.", "Count()");
+                if (d->members.count > 0) {
+                    item(c, "Values()", CK_METHOD, "Values() -> array",
+                         "Every declared member once, in declaration order: an array of Count() of them, for 'foreach'.", "Values()");
+                }
             }
             return;
         }
@@ -8152,32 +8233,58 @@ static void complete_members(completion *c, const int dot, const loc at, const o
     // input.jump.down or input.aim.fire.down, including borrowed helper input.
     const bool edges = n >= 2 && p && p->type.kind == TY_INPUT;
     const type numeric = numeric_receiver(dot, at);
-    if ((t.kind == TY_TEXTURE || t.kind == TY_TEXTURE3D) && numeric.kind != TY_COLOR) {
+    const bool layered = t.kind == TY_TEXTURE_ARRAY || t.kind == TY_CUBEMAP;
+    if ((t.kind == TY_TEXTURE || t.kind == TY_TEXTURE3D || layered) && numeric.kind != TY_COLOR) {
         const bool sample = gpu || (sc.decl && (sc.decl->gpu_only || sc.decl->kind == DECL_FUNCTION || sc.decl->kind == DECL_METHOD));
-        if (sample) {
+        const char *where = t.kind == TY_CUBEMAP ? "float3 direction" : t.kind == TY_TEXTURE_ARRAY ? "float2 uv, int layer" : "float2 uv";
+        const char *wrap = t.kind == TY_CUBEMAP ? "" : ", Wrap wrap = Wrap.Clamp";
+        if (sample && layered) {
+            sb label = {0};
+            sb_printf(&label, "%s.Sample(%s, Filter filter = Filter.Point%s) -> %s", type_name(t), where, wrap, type_name(numeric));
+            item(c, "Sample", CK_METHOD, label.data,
+                 "Reads its declared numeric type, without alpha conversion: the nearest pixel where no filter is named. "
+                 "R8, Rg8, R16f, Rg16f and Rgba16f also blend and read mipmaps through the GPU's sampler; "
+                 "an array's R32f and Rgba32f layers blend with Filter.Bilinear, four exact loads blended in the shader, "
+                 "and a cube's R32f, Rgba32f and R32i faces and R32i layers are read at their nearest pixel.",
+                 t.kind == TY_TEXTURE_ARRAY ? "Sample($1, $2)" : "Sample($1)");
+        } else if (sample) {
             sb label = {0};
             format_numeric_sample(t, numeric, &label);
             item(c, "Sample", CK_METHOD, label.data,
-                 "Reads its declared numeric type, without alpha conversion: the nearest cell, or blended where a filter is named and the format blends on every device (R8, Rg8, R16f, Rg16f, Rgba16f).",
+                 "Reads its declared numeric type, without alpha conversion: the nearest cell, or blended where Filter.Bilinear "
+                 "is named, through the GPU's sampler for R8, Rg8, R16f, Rg16f, Rgba16f and a Grid3<float>, and as the four "
+                 "(a volume's eight) nearest cells loaded exactly and blended in the shader for R32f and Rgba32f, the same "
+                 "bits on every device. Ints are read at the nearest cell.",
                  "Sample($1)");
-            if (t.kind == TY_TEXTURE && numeric.kind != TY_INT) { // The formats every device blends have mipmaps too
-                sb level = {0}, grad = {0};
-                sb_printf(&level, "Texture.SampleLevel(float2 uv, float level, Filter filter = Filter.Trilinear, Wrap wrap = Wrap.Clamp) -> %s",
-                          type_name(numeric));
-                sb_printf(&grad, "Texture.SampleGrad(float2 uv, float2 dx, float2 dy, Filter filter = Filter.Trilinear, Wrap wrap = Wrap.Clamp) -> %s",
-                          type_name(numeric));
-                item(c, "SampleLevel", CK_METHOD, level.data,
-                     "Reads a mip level of an R8, Rg8, R16f, Rg16f or Rgba16f image as its declared numeric type: 0 is the image "
-                     "itself, each level after it half the size, made of what was drawn.", "SampleLevel($1)");
+        }
+        if (sample && t.kind != TY_TEXTURE3D && numeric.kind != TY_INT) { // The formats every device blends have mipmaps too
+            sb level = {0};
+            sb_printf(&level, "%s.SampleLevel(%s, float level, Filter filter = Filter.Trilinear%s) -> %s",
+                      type_name(t), where, wrap, type_name(numeric));
+            item(c, "SampleLevel", CK_METHOD, level.data,
+                 "Reads a mip level of an R8, Rg8, R16f, Rg16f or Rgba16f image as its declared numeric type, between the two "
+                 "levels nearest it where no filter is named: 0 is the image itself, each level after it half the size, made "
+                 "of what was drawn. R32f and Rgba32f have no mipmaps.",
+                 t.kind == TY_TEXTURE_ARRAY ? "SampleLevel($1, $2, $3)" : "SampleLevel($1, $2)");
+            if (t.kind != TY_CUBEMAP && !(is_shader(sc.decl) && !sc.decl->is_frag)) {
+                sb grad = {0};
+                sb_printf(&grad, "%s.SampleGrad(float2 uv, float2 dx, float2 dy%s, Filter filter = Filter.Trilinear%s) -> %s",
+                          type_name(t), t.kind == TY_TEXTURE_ARRAY ? ", int layer" : "", wrap, type_name(numeric));
                 item(c, "SampleGrad", CK_METHOD, grad.data,
                      "Reads an R8, Rg8, R16f, Rg16f or Rgba16f image as its declared numeric type with the uv's change a pixel "
-                     "across and down, which picks the mip level. In a frag.", "SampleGrad($1)");
+                     "across and down, which picks the mip level. In a frag.",
+                     t.kind == TY_TEXTURE_ARRAY ? "SampleGrad($1, $2, $3, $4)" : "SampleGrad($1, $2, $3)");
             }
+        }
+        if (layered) {
+            if (!sample) list_members(c, t, edges, &sc); // Its faces or layers, its depth and the rest, for the view
+            return;
         }
         item(c, "size", CK_PROPERTY, t.kind == TY_TEXTURE3D ? "int3" : "int2", "The image's size in texels, or zeros for no image.", NULL);
         if (!gpu && t.kind == TY_TEXTURE3D) {
             item(c, "Resize", CK_METHOD, "Texture3D.Resize(int3 size)", volume_calls[1].doc, "Resize($1)");
             item(c, "Dispose", CK_METHOD, "Texture3D.Dispose()", volume_calls[2].doc, "Dispose()");
+            item(c, "Read", CK_METHOD, "Texture3D.Read<T>([int3 from, int3 size]) -> Grid3<T> fails IOError", volume_calls[3].doc, "Read()");
             item(c, "contentRevision", CK_PROPERTY, "long", "Changes when the volume's contents are discarded.", NULL);
         }
         return;
@@ -8452,7 +8559,7 @@ static bool complete_in_namespace(completion *c, const str ns, const order_compl
 static const char *const value_types[] = {
     "bool", "byte", "char", "int", "long", "int2", "int3", "int4", "float", "float2", "float3", "float4", "quaternion",
     "double", "double2", "double3", "double4", "double2x2", "double3x3", "double4x4", "float2x2", "float3x3", "float4x4", "Entity", "LocalEntity", "PlayerID", "Color", "Rect",
-    "Texture", "DepthTexture", "Cubemap", "TextureArray", "DepthTextureArray", "RenderTarget", "Clip",
+    "Texture", "DepthTexture", "Cubemap", "TextureArray", "DepthTextureArray", "DepthCubemap", "RenderTarget", "Clip",
 };
 
 // Which built-in types to offer: each place takes its own.
@@ -8486,9 +8593,9 @@ static void complete_value_types(completion *c, const unsigned which)
         if (!(which & kind)) continue;
         if ((which & VT_GPU) && (type_is_double_based(t) || t.kind == TY_LONG || t.kind == TY_PLAYER || t.kind == TY_RECT
             || t.kind == TY_RENDER_TARGET || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_OPTIONAL
-            || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY || t.kind == TY_ARRAY || t.kind == TY_MESH)) continue;
+            || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY || t.kind == TY_DEPTH_CUBEMAP || t.kind == TY_ARRAY || t.kind == TY_MESH)) continue;
         if ((t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET
-             || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY)
+             || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY || t.kind == TY_DEPTH_CUBEMAP)
             && !(which & (VT_LOCAL_ENTITY | VT_GPU))) continue;
         complete_alias(c, d);
     }
@@ -8502,9 +8609,9 @@ static void complete_value_types(completion *c, const unsigned which)
         // Its ints are 32 bits, and it has no handles into the world, nor rects
         if ((which & VT_GPU) && (type_is_double_based(t) || t.kind == TY_LONG || t.kind == TY_PLAYER || t.kind == TY_RECT || t.kind == TY_RENDER_TARGET
                                  || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_TEXTURE_ARRAY
-                                 || t.kind == TY_DEPTH_TEXTURE_ARRAY)) continue; // A depth, a cube and an array are read where they're a field, never a parameter
+                                 || t.kind == TY_DEPTH_TEXTURE_ARRAY || t.kind == TY_DEPTH_CUBEMAP)) continue; // A depth, a cube and an array are read where they're a field, never a parameter
         if ((t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET
-             || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY)
+             || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY || t.kind == TY_DEPTH_CUBEMAP)
             && !(which & (VT_LOCAL_ENTITY | VT_GPU))) continue;
         if (which & kind) item(c, value_types[i], CK_STRUCT, "built-in type", builtin_type_doc(t.kind), NULL);
     }
@@ -9088,12 +9195,14 @@ static void complete_overrides(completion *c)
                 sb_printf(&header, "%s%s%s(", v->is_local ? "local " : "", v->is_async ? "async " : "",
                           v->is_command ? "command" : "event");
                 put_param_here(&header, &v->params.items[0]);
-                if (v->is_command && v->params.count > 1) {
+                // A command handler's sender, where it names one (one that filters by ownership may not)
+                const bool sender = v->is_command && v->params.count > 1 && v->params.items[1].mode == PARAM_SENDER;
+                if (sender) {
                     sb_put(&header, ", ");
                     put_param_here(&header, &v->params.items[1]);
                 }
                 sb_put(&header, ") ");
-                first = v->is_command ? 2 : 1;
+                first = sender ? 2 : 1;
             } else if (v->kind == DECL_SYSTEM) {
                 sb_put(&header, v->is_view ? "view " : "system ");
             } else if (v->kind == DECL_SHADER) {
@@ -9337,6 +9446,18 @@ static bool local_match_handler(const int open)
         if (str_eq(event->name, DOC->toks[name].text) && event->is_local) return false;
     }
     return !str_eq_c(DOC->toks[name].text, "Forgotten");
+}
+
+// A command handler's parameter header, `command(Rename rename) RenamePlayer(`: its filters are by the sender's ownership.
+static bool command_handler(const int open)
+{
+    if (open < 3 || DOC->toks[open - 2].kind != T_RPAREN) return false;
+    int depth = 1, trigger = open - 3;
+    for (; trigger >= 0; trigger--) {
+        if (DOC->toks[trigger].kind == T_RPAREN) depth++;
+        if (DOC->toks[trigger].kind == T_LPAREN && --depth == 0) break;
+    }
+    return trigger >= 1 && DOC->toks[trigger - 1].kind == T_IDENT && str_eq_c(DOC->toks[trigger - 1].text, "command");
 }
 
 // The header a '(' in a type's body opens, at token `i`: the input's Sample or
@@ -10503,9 +10624,10 @@ void analysis_completion(const int line, const int character, jbuf *out)
                  "Marks Texture fields or Grid2<Color> fields as numeric data. [Raw] Texture fields accept Raw Texture or "
                  "Raw Grid2<Color> assets and fields, or default. GPU sampling and metadata helpers borrow the original "
                  "source. .size works on the CPU and GPU; Raw textures cannot be drawn or escape as ordinary Texture values. "
-                 "[Raw(float)], [Raw(float2)], [Raw(float4)] and [Raw(int)] on Texture/Texture3D fields or read-only GPU helper parameters declare "
-                 "numeric Sample results; TextureArray and Cubemap fields take the float roles. Reads are nearest unless a filter is "
-                 "named; 32-bit float and int images are nearest only.", "Raw");
+                 "[Raw(float)], [Raw(float2)], [Raw(float4)] and [Raw(int)] on Texture, Texture3D, TextureArray and Cubemap fields "
+                 "or read-only GPU helper parameters declare numeric Sample results. Reads are nearest unless a filter is "
+                 "named; 32-bit floats blend with Filter.Bilinear alone, and int images are nearest only. A Grid2<float2>, "
+                 "Grid2<float4>, Grid2<int> or Grid2<byte> is a Texture where its role (float2, float4, int) takes it.", "Raw");
             item(&c, "Json", CK_FUNCTION, "[Json(\"key\")]",
                  "This struct field's key in JSON, where it isn't the field's name: what Json.Read and Json.Write call it.",
                  "Json(\"$1\")");
@@ -10520,7 +10642,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
             static const char *const types[] = {"float", "float2", "float4", "int"};
             for (size_t i = 0; i < sizeof types / sizeof types[0]; i++)
                 item(&c, types[i], CK_STRUCT, "The numeric type this image stores and Sample returns",
-                     "Typed numeric images read the nearest cell unless a Sample names a filter. Float images in R8, Rg8, R16f, Rg16f or Rgba16f blend and have mipmaps; int and 32-bit float images are nearest only.", NULL);
+                     "Typed numeric images read the nearest cell unless a Sample names a filter. Float images in R8, Rg8, R16f, Rg16f or Rgba16f blend and have mipmaps; R32f and Rgba32f blend with Filter.Bilinear, loaded exactly, and have no mipmaps; int images are nearest only.", NULL);
             break;
         }
         complete_value_types(&c, VT_VALUES);
@@ -10703,10 +10825,13 @@ void analysis_completion(const int line, const int character, jbuf *out)
                 complete_param_name(&c, prev->text);
             }
         } else if (pk == T_WITH || pk == T_WITHOUT) {
-            // Views and local match-event handlers can filter by this machine's player.
+            // Views and local match-event handlers can filter by this machine's player, and command handlers by the sender.
             if (view || (f.header == HEADER_SYSTEM && local_match_handler(f.open))) {
                 item(&c, "ownership", CK_KEYWORD,
                      pk == T_WITH ? "Entities this machine's player owns" : "Entities this machine's player doesn't own", NULL, NULL);
+            } else if (f.header == HEADER_SYSTEM && command_handler(f.open)) {
+                item(&c, "ownership", CK_KEYWORD,
+                     pk == T_WITH ? "Entities the command's sender owns" : "Entities the command's sender doesn't own", NULL, NULL);
             }
             if (view) {
                 // ...and with verified Dead: by the world the server has confirmed, which only they see
@@ -12229,8 +12354,9 @@ static const struct {
      "A Cubemap that's drawn into: six square images of `size` pixels a side, each a destination, `cube.faces[0]` "
      "to `cube.faces[5]` in the order +x, -x, +y, -y, +z, -z, with depth of its own, and all six what a frag "
      "reads by a direction, `cube.Sample(direction)`. A face is what a camera at the cube's middle sees along "
-     "its axis with a field of view of 90. Its faces hold `Format.Rgba8`, or `Format.Rgba16f`, floats that keep "
-     "any number. It starts black; copies share it, and `Dispose()` lets it go."},
+     "its axis with a field of view of 90. Its faces hold `Format.Rgba8`, or another format: `Format.Rgba16f`, floats "
+     "that keep any number, a number format, or `Format.Depth`, six faces of depth alone that a frag reads through "
+     "`cube.depth` (a lamp's shadows every way). It starts black, its depth far; copies share it, and `Dispose()` lets it go."},
     {"Texture3D", {"Texture3D(int3 size)", "Texture3D(int3 size, Format format)"},
      "Creates a machine-local volume of the given size in texels. Rgba8 by default; Rgba16f, R32f, Rgba32f and R32i are portable writable formats. Typed Raw fields sample numeric values at the nearest cell, without mipmaps. Fill it with a compute kernel."},
     {"TextureArray", {"TextureArray(float width, float height, int layers)",
@@ -12240,7 +12366,8 @@ static const struct {
      "A TextureArray that's drawn into: `layers` images of one size, 1 to 256, in logical pixels like a "
      "RenderTarget's, or `pixelsPerUnit` of them a unit. Each layer is a destination, `array.layers[0]` the first, "
      "with depth of its own, `array.depth`, and all of them what a frag reads by a uv and a layer, "
-     "`array.Sample(uv, layer)`. Its layers hold `Format.Rgba8`, `Format.Rgba16f`, floats that keep any number, or "
+     "`array.Sample(uv, layer)`. Its layers hold `Format.Rgba8`, `Format.Rgba16f`, floats that keep any number, a "
+     "number format (R8 to R32i, read through a `[Raw(T)]` field), or "
      "`Format.Depth`, depth alone, as shadow cascades want: `TextureArray(2048, 2048, 3, 1, Format.Depth)`. It "
      "starts empty; copies share it, and `Dispose()` lets it go."},
     {"PlayerID", {"PlayerID(int index)"}, "A player by index, for local play and tests."},
@@ -12944,6 +13071,10 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
             sb_printf(&label, "%s.Count() -> int", name_for(t.decl));
             add_signature(&s, label.data,
                           "Number of declared members, including members with the same numeric value. A compile-time constant.");
+        } else if (called && called->call == CALL_ENUM_VALUES) {
+            sb label = {0};
+            sb_printf(&label, "%s.Values() -> %s[%d]", name_for(t.decl), name_for(t.decl), t.decl->members.count);
+            add_signature(&s, label.data, "Every declared member once, in declaration order: an array of Count() of them.");
         } else if (t.kind == TY_STRING) {
             builtin_signatures(str_from("string"), name, visit_signature, &s);
         } else if (t.kind == TY_STRUCT && t.decl == A.prog->random) {

@@ -514,6 +514,88 @@ TIDE_TEST(draw_levels_of_draws_in_a_row_are_gathered)
     tide_draw_free(&d);
 }
 
+// Draw.DepthBias: draws in a row under another bias aren't gathered with the ones before, a mesh's instances and a
+// shader's alike: each run keeps the bias it was drawn under (a decal's instances gathered into its base's run would
+// draw with the base's).
+TIDE_TEST(draw_levels_under_another_depth_bias_are_gathered_apart)
+{
+    tide_draw_list d = {0};
+    frame(&d);
+    const uint32_t mesh = leveled_mesh(&d);
+    tide_draw_instance(&d, mesh, at(1.0f, 100.0f), 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
+    tide_draw_instance(&d, mesh, at(2.0f, 2.0f), 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
+    tide_draw_set_depth_bias(&d, -8.0f, 0.5f);
+    tide_draw_instance(&d, mesh, at(3.0f, 100.0f), 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
+    tide_draw_instance(&d, mesh, at(4.0f, 2.0f), 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
+    tide_draw_unset_depth_bias(&d);
+    tide_draw_prepare(&d, NULL);
+    const tide_draw_command *runs[16];
+    TIDE_REQUIRE(runs_of(&d, runs, 16) == 4);
+    static const uint32_t levels[4] = {0, 2, 0, 2};
+    static const float xs[4] = {1.5f, 0.5f, 3.5f, 2.5f}, biased[4] = {0.0f, 0.0f, -8.0f, -8.0f};
+    for (uint32_t k = 0; k < 4; k++) {
+        TIDE_CHECK(mesh_of(&d, runs[k])->level == levels[k] && runs[k]->mesh3.count == 1);
+        TIDE_CHECK(d.matrices[runs[k]->mesh3.first].c3.x == xs[k]);
+        TIDE_CHECK(runs[k]->depth_bias.x == biased[k] && runs[k]->depth_bias.y == (k < 2 ? 0.0f : 0.5f));
+    }
+    // A shader's instances, one at a time
+    static const tide_shader shader = {.id = 7, .dims = 3, .vertex_size = 32, .instance_floats = 5};
+    typedef struct instance {
+        tide_float4x4 transform;
+        float tag[4];
+    } instance;
+    static const float bytes[4 * 8] = {0};
+    frame(&d);
+    bool fill;
+    const uint32_t shaded = tide_draw_mesh_slot(&d, TIDE_MESH_BYTES, 61, 62, 1, &fill);
+    TIDE_REQUIRE(fill);
+    tide_draw_mesh_fill_bytes(&d, shaded, bytes, 32, 4, whole, 12);
+    tide_draw_mesh_levels(&d, shaded, &two_levels);
+    static const float depth[4] = {100.0f, 2.0f, 100.0f, 2.0f};
+    for (uint32_t i = 0; i < 4; i++) {
+        if (i == 2) tide_draw_set_depth_bias(&d, -8.0f, 0.5f);
+        const instance given = {.transform = at(0.0f, depth[i]), .tag = {(float)(i + 1u)}};
+        tide_draw_shaded(&d, &shader, shaded, &given, NULL, NULL, 0);
+    }
+    tide_draw_unset_depth_bias(&d);
+    tide_draw_prepare(&d, NULL);
+    uint32_t live = 0;
+    static const float tags[4] = {2.0f, 1.0f, 4.0f, 3.0f};
+    for (uint32_t i = 0; i < d.count; i++) {
+        const tide_draw_command *c = &d.commands[i];
+        if (c->kind != TIDE_DRAW_SHADED) continue;
+        const tide_draw_run *run = &d.runs[c->shaded.run];
+        if (!run->shader || !run->count) continue;
+        TIDE_REQUIRE(live < 4);
+        TIDE_CHECK(run->count == 1 && c->depth_bias.x == (live < 2 ? 0.0f : -8.0f));
+        instance got;
+        memcpy(&got, d.instances + run->first, sizeof got);
+        TIDE_CHECK(got.tag[0] == tags[live]);
+        live++;
+    }
+    TIDE_CHECK(live == 4);
+    // ...and two at one level drawn in a row are one run under one bias, and the next a run of its own under another
+    frame(&d);
+    const uint32_t again = tide_draw_mesh_slot(&d, TIDE_MESH_BYTES, 61, 62, 1, &fill);
+    TIDE_REQUIRE(again == shaded && !fill);
+    const instance near = {.transform = at(0.0f, 2.0f)};
+    tide_draw_shaded(&d, &shader, shaded, &near, NULL, NULL, 0);
+    tide_draw_shaded(&d, &shader, shaded, &near, NULL, NULL, 0);
+    tide_draw_set_depth_bias(&d, -8.0f, 0.5f);
+    tide_draw_shaded(&d, &shader, shaded, &near, NULL, NULL, 0);
+    tide_draw_unset_depth_bias(&d);
+    live = 0;
+    for (uint32_t i = 0; i < d.count; i++) {
+        const tide_draw_command *c = &d.commands[i];
+        if (c->kind != TIDE_DRAW_SHADED || !d.runs[c->shaded.run].shader || !d.runs[c->shaded.run].count) continue;
+        TIDE_REQUIRE(live < 2);
+        TIDE_CHECK(d.runs[c->shaded.run].count == (live ? 1u : 2u) && c->depth_bias.x == (live ? -8.0f : 0.0f));
+        live++;
+    }
+    TIDE_CHECK(live == 2);
+    tide_draw_free(&d);
+}
+
 // The same through a shader of the game's: each instance's transform starts
 // its bytes, and the rest of them go with it.
 TIDE_TEST(draw_levels_of_shaded_instances_are_picked_and_gathered)

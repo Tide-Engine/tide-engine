@@ -212,6 +212,18 @@ replayed after it run the new code: a change that matters shows as the first tic
 
 ## Raw Texture field roles (2026-10-25)
 
+**Typed roles (audit, 2026-11-14).** The marker and the layout name were written from `field_is_raw` alone, so
+`[Raw(float)]` and `[Raw(int)]` (and `[Raw]`) were all `[Raw] Texture`: an edit between them kept the field, and a
+Grid2<float>'s R16F image then went to an `i32` binding (a WebGPU validation error; on Vulkan an image view of the
+wrong numeric type). `field_role_spelling` (codegen.c) spells each role, `[Raw(int)] Texture`, `[Raw(float4)]
+Texture3D` and so on, for the header comment and `tide_layout_field.type` both; plain `[Raw]` and `[Linear]` are
+spelled as they were, so existing games' headers don't move. `raw_texture_layout` now compiles plain, `[Raw]`,
+`[Raw(float)]`, `[Raw(float4)]` and `[Raw(int)]` and needs five different hashes, five layout names and one
+simulation ID. As defence in depth the renderer gives an integer read none of the uploaded images but a grid of
+ints' (`TIDE_TEXELS_INT`, since the same day: textures.md, top), and no other read those (`texture_to_read_as`),
+which `tide_platform_images` checks by handing a `[Raw(int)]` field a float grid's image from C (it failed Vulkan's
+validation layer without the guard).
+
 Owner-approved Raw Texture fields retain their ordinary C reference layout.
 Annotated fields receive a generated header comment so a role flip changes the
 game header hash and selects migration, plus private layout spelling

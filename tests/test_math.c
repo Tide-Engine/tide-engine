@@ -752,6 +752,9 @@ TIDE_TEST(math_transfer_bytes)
     }
     // Out of range and no number, as the functions the formula is made of take them
     TIDE_CHECK(tide_transfer_display_byte(-1.0f) == 0 && tide_transfer_display_byte(NAN) == 0 && tide_transfer_display_byte(7.0f) == 255);
+    // -0, which saturating keeps: 0 under every alpha, not a byte read past the guesses
+    TIDE_CHECK(tide_transfer_display_byte(-0.0f) == 0 && tide_transfer_display_byte(-0x1p-140f) == 0);
+    for (int alpha = 0; alpha < 256; alpha++) TIDE_CHECK(tide_transfer_premultiplied_byte(-0.0f, (uint8_t)alpha) == 0);
     TIDE_CHECK(tide_transfer_premultiplied_byte(NAN, 255) == 0 && tide_transfer_premultiplied_byte(9.0f, 255) == 255);
     TIDE_CHECK(tide_transfer_premultiplied_byte(1.0f, 0) == 0 && tide_transfer_premultiplied_byte(INFINITY, 128) == premultiplied_byte_by_pow(1.0f, 128));
 }

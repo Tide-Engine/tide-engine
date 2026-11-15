@@ -1,0 +1,4 @@
+// expect: Contains compares elements with '==', which float2x2 doesn't have
+singleton Marks { List<float2x2> turns; bool found; }
+scene Main { }
+system Check(mut Marks marks) { marks.found = marks.turns.Contains(float2x2.identity); }

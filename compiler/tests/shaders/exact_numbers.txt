@@ -1,0 +1,481 @@
+// Scalar on Vertex: WGSL
+// tide numeric outputs: 1
+const tide_reversed_depth = true;
+fn tide_depth(d: f32) -> f32 { return select(d, 1.0 - d, tide_reversed_depth); }
+fn tide_clip_depth(p: vec4f) -> f32 { return select((p.z + p.w) * 0.5, (p.w - p.z) * 0.5, tide_reversed_depth); }
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) @invariant tide_at: vec4f,
+    @location(0) tide_s1: vec2f,
+}
+struct tt_Vertex {
+    m_position: vec2f,
+    m_uv: vec2f,
+    m_color: vec4f,
+}
+fn ts_Scalar(t_vertex: tt_Vertex, t_value: ptr<function, f32>) {
+    (*t_value) = t_vertex.m_uv.x;
+}
+
+@vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f) -> tide_corner {
+    var tide_vertex: tt_Vertex = tt_Vertex(tide_a0, tide_a1, tide_a2);
+    let tide_place = vec4f(tide_vertex.m_position, 0.0, 1.0);
+    let tide_clip = tide_block.tide_camera * tide_place;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, tide_clip_depth(tide_clip), tide_clip.w);
+    out.tide_s1 = tide_vertex.m_uv;
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) f32 {
+    tide_at = in.tide_at;
+    var tide_color: f32 = f32();
+    ts_Scalar(tt_Vertex(vec2f(), in.tide_s1, vec4f()), &tide_color);
+    return tide_color;
+}
+
+// Full on Vertex: WGSL
+// tide numeric outputs: 1
+const tide_reversed_depth = true;
+fn tide_depth(d: f32) -> f32 { return select(d, 1.0 - d, tide_reversed_depth); }
+fn tide_clip_depth(p: vec4f) -> f32 { return select((p.z + p.w) * 0.5, (p.w - p.z) * 0.5, tide_reversed_depth); }
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) @invariant tide_at: vec4f,
+    @location(0) tide_s1: vec2f,
+}
+struct tt_Vertex {
+    m_position: vec2f,
+    m_uv: vec2f,
+    m_color: vec4f,
+}
+fn ts_Full(t_vertex: tt_Vertex, t_value: ptr<function, vec4f>) {
+    (*t_value) = vec4f(t_vertex.m_uv, 3.5, 0.25);
+}
+
+@vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f) -> tide_corner {
+    var tide_vertex: tt_Vertex = tt_Vertex(tide_a0, tide_a1, tide_a2);
+    let tide_place = vec4f(tide_vertex.m_position, 0.0, 1.0);
+    let tide_clip = tide_block.tide_camera * tide_place;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, tide_clip_depth(tide_clip), tide_clip.w);
+    out.tide_s1 = tide_vertex.m_uv;
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    var tide_color: vec4f = vec4f();
+    ts_Full(tt_Vertex(vec2f(), in.tide_s1, vec4f()), &tide_color);
+    return tide_color;
+}
+
+// Whole on Vertex: WGSL
+// tide numeric outputs: 1
+const tide_reversed_depth = true;
+fn tide_depth(d: f32) -> f32 { return select(d, 1.0 - d, tide_reversed_depth); }
+fn tide_clip_depth(p: vec4f) -> f32 { return select((p.z + p.w) * 0.5, (p.w - p.z) * 0.5, tide_reversed_depth); }
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) @invariant tide_at: vec4f,
+    @location(0) tide_s1: vec2f,
+}
+struct tt_Vertex {
+    m_position: vec2f,
+    m_uv: vec2f,
+    m_color: vec4f,
+}
+fn ts_Whole(t_vertex: tt_Vertex, t_value: ptr<function, i32>) {
+    (*t_value) = i32((t_vertex.m_uv.x * 100.0));
+}
+
+@vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f) -> tide_corner {
+    var tide_vertex: tt_Vertex = tt_Vertex(tide_a0, tide_a1, tide_a2);
+    let tide_place = vec4f(tide_vertex.m_position, 0.0, 1.0);
+    let tide_clip = tide_block.tide_camera * tide_place;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, tide_clip_depth(tide_clip), tide_clip.w);
+    out.tide_s1 = tide_vertex.m_uv;
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) i32 {
+    tide_at = in.tide_at;
+    var tide_color: i32 = i32();
+    ts_Whole(tt_Vertex(vec2f(), in.tide_s1, vec4f()), &tide_color);
+    return tide_color;
+}
+
+// Read on Vertex: WGSL
+const tide_reversed_depth = true;
+fn tide_depth(d: f32) -> f32 { return select(d, 1.0 - d, tide_reversed_depth); }
+fn tide_clip_depth(p: vec4f) -> f32 { return select((p.z + p.w) * 0.5, (p.w - p.z) * 0.5, tide_reversed_depth); }
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+@group(0) @binding(1) var pixels0: texture_2d<f32>;
+@group(0) @binding(2) var sampler0: sampler;
+@group(0) @binding(3) var pixels1: texture_2d<f32>;
+@group(0) @binding(4) var sampler1: sampler;
+@group(0) @binding(5) var pixels2: texture_2d_array<f32>;
+@group(0) @binding(6) var sampler2: sampler;
+@group(0) @binding(7) var pixels3: texture_2d_array<f32>;
+@group(0) @binding(9) var pixels4: texture_2d_array<i32>;
+@group(0) @binding(11) var pixels5: texture_2d_array<f32>;
+@group(0) @binding(13) var pixels6: texture_2d_array<f32>;
+@group(0) @binding(15) var pixels7: texture_2d_array<f32>;
+@group(0) @binding(17) var pixels8: texture_2d_array<i32>;
+@group(0) @binding(19) var pixels9: texture_3d<f32>;
+@group(0) @binding(21) var pixels10: texture_3d<f32>;
+@group(0) @binding(23) var pixels11: texture_3d<f32>;
+@group(0) @binding(25) var pixels12: texture_3d<f32>;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) @invariant tide_at: vec4f,
+    @location(0) tide_s1: vec2f,
+}
+struct tt_Vertex {
+    m_position: vec2f,
+    m_uv: vec2f,
+    m_color: vec4f,
+}
+fn tide_index2_0(k: vec2i, n: vec2i) -> vec2i {
+    return clamp(k, vec2i(0), n - vec2i(1));
+}
+fn tide_number0_0_13_blend(uv: vec2f) -> vec4f {
+    let tide_uv = clamp(uv, vec2f(0.0), vec2f(1.0));
+    let tide_size = vec2i(textureDimensions(pixels0));
+    let tide_p = tide_uv * vec2f(tide_size) - 0.5;
+    let tide_b = floor(tide_p);
+    let tide_t = tide_p - tide_b;
+    let tide_i = vec2i(tide_b);
+    let tide_c0 = textureLoad(pixels0, tide_index2_0(tide_i + vec2i(0, 0), tide_size), 0);
+    let tide_c1 = textureLoad(pixels0, tide_index2_0(tide_i + vec2i(1, 0), tide_size), 0);
+    let tide_c2 = textureLoad(pixels0, tide_index2_0(tide_i + vec2i(0, 1), tide_size), 0);
+    let tide_c3 = textureLoad(pixels0, tide_index2_0(tide_i + vec2i(1, 1), tide_size), 0);
+    let tide_y0 = mix(mix(tide_c0, tide_c1, tide_t.x), mix(tide_c2, tide_c3, tide_t.x), tide_t.y);
+    return tide_y0;
+}
+fn tide_index2_2(k: vec2i, n: vec2i) -> vec2i {
+    let m = ((k % (2 * n)) + 2 * n) % (2 * n);
+    return select(2 * n - vec2i(1) - m, m, m < n);
+}
+fn tide_number0_2_13_blend(uv: vec2f) -> vec4f {
+    let tide_m = uv - 2.0 * floor(uv * 0.5);
+    let tide_uv = min(tide_m, 2.0 - tide_m);
+    let tide_size = vec2i(textureDimensions(pixels0));
+    let tide_p = tide_uv * vec2f(tide_size) - 0.5;
+    let tide_b = floor(tide_p);
+    let tide_t = tide_p - tide_b;
+    let tide_i = vec2i(tide_b);
+    let tide_c0 = textureLoad(pixels0, tide_index2_2(tide_i + vec2i(0, 0), tide_size), 0);
+    let tide_c1 = textureLoad(pixels0, tide_index2_2(tide_i + vec2i(1, 0), tide_size), 0);
+    let tide_c2 = textureLoad(pixels0, tide_index2_2(tide_i + vec2i(0, 1), tide_size), 0);
+    let tide_c3 = textureLoad(pixels0, tide_index2_2(tide_i + vec2i(1, 1), tide_size), 0);
+    let tide_y0 = mix(mix(tide_c0, tide_c1, tide_t.x), mix(tide_c2, tide_c3, tide_t.x), tide_t.y);
+    return tide_y0;
+}
+fn tf_Smooth_40(t_uv: vec2f) -> f32 {
+    return (tide_number0_2_13_blend(t_uv)).x;
+}
+
+fn tide_index2_1(k: vec2i, n: vec2i) -> vec2i {
+    return ((k % n) + n) % n;
+}
+fn tide_number0_1_13_blend(uv: vec2f) -> vec4f {
+    let tide_uv = uv - floor(uv);
+    let tide_size = vec2i(textureDimensions(pixels0));
+    let tide_p = tide_uv * vec2f(tide_size) - 0.5;
+    let tide_b = floor(tide_p);
+    let tide_t = tide_p - tide_b;
+    let tide_i = vec2i(tide_b);
+    let tide_c0 = textureLoad(pixels0, tide_index2_1(tide_i + vec2i(0, 0), tide_size), 0);
+    let tide_c1 = textureLoad(pixels0, tide_index2_1(tide_i + vec2i(1, 0), tide_size), 0);
+    let tide_c2 = textureLoad(pixels0, tide_index2_1(tide_i + vec2i(0, 1), tide_size), 0);
+    let tide_c3 = textureLoad(pixels0, tide_index2_1(tide_i + vec2i(1, 1), tide_size), 0);
+    let tide_y0 = mix(mix(tide_c0, tide_c1, tide_t.x), mix(tide_c2, tide_c3, tide_t.x), tide_t.y);
+    return tide_y0;
+}
+fn tide_number0_0_13(uv: vec2f) -> vec4f {
+    let tide_uv = clamp(uv, vec2f(0.0), vec2f(1.0));
+    let tide_size = vec2i(textureDimensions(pixels0));
+    let tide_at = clamp(vec2i(floor(tide_uv * vec2f(tide_size))), vec2i(0), tide_size - vec2i(1));
+    return textureLoad(pixels0, tide_at, 0);
+}
+fn tide_number1_0_13_blend(uv: vec2f) -> vec4f {
+    let tide_uv = clamp(uv, vec2f(0.0), vec2f(1.0));
+    let tide_size = vec2i(textureDimensions(pixels1));
+    let tide_p = tide_uv * vec2f(tide_size) - 0.5;
+    let tide_b = floor(tide_p);
+    let tide_t = tide_p - tide_b;
+    let tide_i = vec2i(tide_b);
+    let tide_c0 = textureLoad(pixels1, tide_index2_0(tide_i + vec2i(0, 0), tide_size), 0);
+    let tide_c1 = textureLoad(pixels1, tide_index2_0(tide_i + vec2i(1, 0), tide_size), 0);
+    let tide_c2 = textureLoad(pixels1, tide_index2_0(tide_i + vec2i(0, 1), tide_size), 0);
+    let tide_c3 = textureLoad(pixels1, tide_index2_0(tide_i + vec2i(1, 1), tide_size), 0);
+    let tide_y0 = mix(mix(tide_c0, tide_c1, tide_t.x), mix(tide_c2, tide_c3, tide_t.x), tide_t.y);
+    return tide_y0;
+}
+fn tide_number1_0_13(uv: vec2f) -> vec4f {
+    let tide_uv = clamp(uv, vec2f(0.0), vec2f(1.0));
+    let tide_size = vec2i(textureDimensions(pixels1));
+    let tide_at = clamp(vec2i(floor(tide_uv * vec2f(tide_size))), vec2i(0), tide_size - vec2i(1));
+    return textureLoad(pixels1, tide_at, 0);
+}
+fn tide_number2_0_13(uv: vec2f, layer: i32) -> vec4f {
+    let tide_uv = clamp(uv, vec2f(0.0), vec2f(1.0));
+    let tide_layer = clamp(layer, 0, i32(textureNumLayers(pixels2)) - 1);
+    let tide_size = vec2i(textureDimensions(pixels2));
+    let tide_at = clamp(vec2i(floor(tide_uv * vec2f(tide_size))), vec2i(0), tide_size - vec2i(1));
+    return textureLoad(pixels2, tide_at, tide_layer, 0);
+}
+fn tide_number2_1_13_blend(uv: vec2f, layer: i32) -> vec4f {
+    let tide_uv = uv - floor(uv);
+    let tide_layer = clamp(layer, 0, i32(textureNumLayers(pixels2)) - 1);
+    let tide_size = vec2i(textureDimensions(pixels2));
+    let tide_p = tide_uv * vec2f(tide_size) - 0.5;
+    let tide_b = floor(tide_p);
+    let tide_t = tide_p - tide_b;
+    let tide_i = vec2i(tide_b);
+    let tide_c0 = textureLoad(pixels2, tide_index2_1(tide_i + vec2i(0, 0), tide_size), tide_layer, 0);
+    let tide_c1 = textureLoad(pixels2, tide_index2_1(tide_i + vec2i(1, 0), tide_size), tide_layer, 0);
+    let tide_c2 = textureLoad(pixels2, tide_index2_1(tide_i + vec2i(0, 1), tide_size), tide_layer, 0);
+    let tide_c3 = textureLoad(pixels2, tide_index2_1(tide_i + vec2i(1, 1), tide_size), tide_layer, 0);
+    let tide_y0 = mix(mix(tide_c0, tide_c1, tide_t.x), mix(tide_c2, tide_c3, tide_t.x), tide_t.y);
+    return tide_y0;
+}
+fn tide_number3_0_13_blend(uv: vec2f, layer: i32) -> vec4f {
+    let tide_uv = clamp(uv, vec2f(0.0), vec2f(1.0));
+    let tide_layer = clamp(layer, 0, i32(textureNumLayers(pixels3)) - 1);
+    let tide_size = vec2i(textureDimensions(pixels3));
+    let tide_p = tide_uv * vec2f(tide_size) - 0.5;
+    let tide_b = floor(tide_p);
+    let tide_t = tide_p - tide_b;
+    let tide_i = vec2i(tide_b);
+    let tide_c0 = textureLoad(pixels3, tide_index2_0(tide_i + vec2i(0, 0), tide_size), tide_layer, 0);
+    let tide_c1 = textureLoad(pixels3, tide_index2_0(tide_i + vec2i(1, 0), tide_size), tide_layer, 0);
+    let tide_c2 = textureLoad(pixels3, tide_index2_0(tide_i + vec2i(0, 1), tide_size), tide_layer, 0);
+    let tide_c3 = textureLoad(pixels3, tide_index2_0(tide_i + vec2i(1, 1), tide_size), tide_layer, 0);
+    let tide_y0 = mix(mix(tide_c0, tide_c1, tide_t.x), mix(tide_c2, tide_c3, tide_t.x), tide_t.y);
+    return tide_y0;
+}
+fn tide_number4_0_5(uv: vec2f, layer: i32) -> i32 {
+    let tide_uv = clamp(uv, vec2f(0.0), vec2f(1.0));
+    let tide_layer = clamp(layer, 0, i32(textureNumLayers(pixels4)) - 1);
+    let tide_size = vec2i(textureDimensions(pixels4));
+    let tide_at = clamp(vec2i(floor(tide_uv * vec2f(tide_size))), vec2i(0), tide_size - vec2i(1));
+    return textureLoad(pixels4, tide_at, tide_layer, 0).x;
+}
+fn tf_Material_44(t_uv: vec2f, t_layer: i32) -> i32 {
+    return tide_number4_0_5(t_uv, t_layer);
+}
+
+fn tide_cube_face(d: vec3f) -> vec3f {
+    let a = abs(d);
+    if (a.x >= a.y && a.x >= a.z) {
+        let m = max(a.x, 1e-30);
+        if (d.x >= 0.0) { return vec3f((1.0 - d.z / m) * 0.5, (1.0 - d.y / m) * 0.5, 0.0); }
+        return vec3f((1.0 + d.z / m) * 0.5, (1.0 - d.y / m) * 0.5, 1.0);
+    }
+    if (a.y >= a.z) {
+        let m = max(a.y, 1e-30);
+        if (d.y >= 0.0) { return vec3f((1.0 + d.x / m) * 0.5, (1.0 + d.z / m) * 0.5, 2.0); }
+        return vec3f((1.0 + d.x / m) * 0.5, (1.0 - d.z / m) * 0.5, 3.0);
+    }
+    let m = max(a.z, 1e-30);
+    if (d.z >= 0.0) { return vec3f((1.0 + d.x / m) * 0.5, (1.0 - d.y / m) * 0.5, 4.0); }
+    return vec3f((1.0 - d.x / m) * 0.5, (1.0 - d.y / m) * 0.5, 5.0);
+}
+fn tide_number6_0_13(uv: vec3f) -> vec4f {
+    let tide_face = tide_cube_face(uv);
+    let tide_uv = tide_face.xy;
+    let tide_layer = i32(tide_face.z);
+    let tide_size = vec2i(textureDimensions(pixels6));
+    let tide_at = clamp(vec2i(floor(tide_uv * vec2f(tide_size))), vec2i(0), tide_size - vec2i(1));
+    return textureLoad(pixels6, tide_at, tide_layer, 0);
+}
+fn tf_Toward_46(t_way: vec3f) -> f32 {
+    return (tide_number6_0_13(t_way)).x;
+}
+
+fn tide_number7_0_13(uv: vec3f) -> vec4f {
+    let tide_face = tide_cube_face(uv);
+    let tide_uv = tide_face.xy;
+    let tide_layer = i32(tide_face.z);
+    let tide_size = vec2i(textureDimensions(pixels7));
+    let tide_at = clamp(vec2i(floor(tide_uv * vec2f(tide_size))), vec2i(0), tide_size - vec2i(1));
+    return textureLoad(pixels7, tide_at, tide_layer, 0);
+}
+fn tide_number8_0_5(uv: vec3f) -> i32 {
+    let tide_face = tide_cube_face(uv);
+    let tide_uv = tide_face.xy;
+    let tide_layer = i32(tide_face.z);
+    let tide_size = vec2i(textureDimensions(pixels8));
+    let tide_at = clamp(vec2i(floor(tide_uv * vec2f(tide_size))), vec2i(0), tide_size - vec2i(1));
+    return textureLoad(pixels8, tide_at, tide_layer, 0).x;
+}
+fn tide_number11_0_10(uv: vec3f) -> f32 {
+    let tide_uv = clamp(uv, vec3f(0.0), vec3f(1.0));
+    let tide_size = vec3i(textureDimensions(pixels11));
+    let tide_at = clamp(vec3i(floor(tide_uv * vec3f(tide_size))), vec3i(0), tide_size - vec3i(1));
+    return textureLoad(pixels11, tide_at, 0).x;
+}
+fn tide_index3_0(k: vec3i, n: vec3i) -> vec3i {
+    return clamp(k, vec3i(0), n - vec3i(1));
+}
+fn tide_number12_0_13_blend(uv: vec3f) -> vec4f {
+    let tide_uv = clamp(uv, vec3f(0.0), vec3f(1.0));
+    let tide_size = vec3i(textureDimensions(pixels12));
+    let tide_p = tide_uv * vec3f(tide_size) - 0.5;
+    let tide_b = floor(tide_p);
+    let tide_t = tide_p - tide_b;
+    let tide_i = vec3i(tide_b);
+    let tide_c0 = textureLoad(pixels12, tide_index3_0(tide_i + vec3i(0, 0, 0), tide_size), 0);
+    let tide_c1 = textureLoad(pixels12, tide_index3_0(tide_i + vec3i(1, 0, 0), tide_size), 0);
+    let tide_c2 = textureLoad(pixels12, tide_index3_0(tide_i + vec3i(0, 1, 0), tide_size), 0);
+    let tide_c3 = textureLoad(pixels12, tide_index3_0(tide_i + vec3i(1, 1, 0), tide_size), 0);
+    let tide_c4 = textureLoad(pixels12, tide_index3_0(tide_i + vec3i(0, 0, 1), tide_size), 0);
+    let tide_c5 = textureLoad(pixels12, tide_index3_0(tide_i + vec3i(1, 0, 1), tide_size), 0);
+    let tide_c6 = textureLoad(pixels12, tide_index3_0(tide_i + vec3i(0, 1, 1), tide_size), 0);
+    let tide_c7 = textureLoad(pixels12, tide_index3_0(tide_i + vec3i(1, 1, 1), tide_size), 0);
+    let tide_y0 = mix(mix(tide_c0, tide_c1, tide_t.x), mix(tide_c2, tide_c3, tide_t.x), tide_t.y);
+    let tide_y1 = mix(mix(tide_c4, tide_c5, tide_t.x), mix(tide_c6, tide_c7, tide_t.x), tide_t.y);
+    return mix(tide_y0, tide_y1, tide_t.z);
+}
+fn ts_Read(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
+    var t_value: f32 = ((tide_number0_0_13_blend(t_vertex.m_uv)).x + tf_Smooth_40(t_vertex.m_uv));
+    var tide_choice0: vec2f = t_vertex.m_uv;
+    var tide_choice1: i32 = 1;
+    var tide_choice2: i32 = 1;
+    var tide_choice3: f32 = (tide_number0_1_13_blend(tide_choice0)).x;
+    var tide_choice4: vec2f = t_vertex.m_uv;
+    var tide_choice5: i32 = 2;
+    var tide_choice6: f32 = (tide_number0_0_13(tide_choice4)).x;
+    t_value = (t_value + (tide_choice3 + tide_choice6));
+    var t_point: vec4f = (tide_number1_0_13_blend(t_vertex.m_uv) + tide_number1_0_13(t_vertex.m_uv));
+    t_value = (t_value + ((tide_number2_0_13(t_vertex.m_uv, 1)).x + (tide_number2_1_13_blend(t_vertex.m_uv, 0)).x));
+    var t_position: vec4f = tide_number3_0_13_blend(t_vertex.m_uv, 1);
+    var t_material: i32 = (tide_number4_0_5(t_vertex.m_uv, 1) + tf_Material_44(t_vertex.m_uv, 0));
+    var t_half: vec2f = ((textureSampleLevel(pixels5, sampler0, t_vertex.m_uv, clamp(1, 0, i32(textureNumLayers(pixels5)) - 1), 0.0)).xy + (textureSampleLevel(pixels5, sampler1, t_vertex.m_uv, clamp(0, 0, i32(textureNumLayers(pixels5)) - 1), 0.0)).xy);
+    t_value = (t_value + ((tide_number6_0_13(vec3f(t_vertex.m_uv, 1.0))).x + tf_Toward_46(vec3f(f32((-1)), t_vertex.m_uv))));
+    var t_ray: vec4f = tide_number7_0_13(vec3f(t_vertex.m_uv, f32((-1))));
+    var t_id: i32 = tide_number8_0_5(vec3f(t_vertex.m_uv.x, 1.0, t_vertex.m_uv.y));
+    var t_fog: vec4f = textureSampleLevel(pixels9, sampler1, vec3f(t_vertex.m_uv, 0.5), 0.0);
+    t_value = (t_value + ((textureSampleLevel(pixels10, sampler2, vec3f(t_vertex.m_uv, 0.25), 0.0)).x + tide_number11_0_10(vec3f(t_vertex.m_uv, 0.75))));
+    t_value = (t_value + (tide_number12_0_13_blend(vec3f(t_vertex.m_uv, 0.5))).x);
+    (*t_color) = vec4f(((((t_value + t_point.x) + t_position.y) + t_half.x) + t_ray.z), f32((t_material + t_id)), t_fog.w, 1.0);
+}
+
+@vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f) -> tide_corner {
+    var tide_vertex: tt_Vertex = tt_Vertex(tide_a0, tide_a1, tide_a2);
+    let tide_place = vec4f(tide_vertex.m_position, 0.0, 1.0);
+    let tide_clip = tide_block.tide_camera * tide_place;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, tide_clip_depth(tide_clip), tide_clip.w);
+    out.tide_s1 = tide_vertex.m_uv;
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    ts_Read(tt_Vertex(vec2f(), in.tide_s1, vec4f()), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+
+// ReadSource on Vertex: WGSL
+const tide_reversed_depth = true;
+fn tide_depth(d: f32) -> f32 { return select(d, 1.0 - d, tide_reversed_depth); }
+fn tide_clip_depth(p: vec4f) -> f32 { return select((p.z + p.w) * 0.5, (p.w - p.z) * 0.5, tide_reversed_depth); }
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+@group(0) @binding(1) var pixels0: texture_2d<f32>;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) @invariant tide_at: vec4f,
+    @location(0) tide_s1: vec2f,
+}
+struct tt_Vertex {
+    m_position: vec2f,
+    m_uv: vec2f,
+    m_color: vec4f,
+}
+fn tide_index2_0(k: vec2i, n: vec2i) -> vec2i {
+    return clamp(k, vec2i(0), n - vec2i(1));
+}
+fn tide_number0_0_13_blend(uv: vec2f) -> vec4f {
+    let tide_uv = clamp(uv, vec2f(0.0), vec2f(1.0));
+    let tide_size = vec2i(textureDimensions(pixels0));
+    let tide_p = tide_uv * vec2f(tide_size) - 0.5;
+    let tide_b = floor(tide_p);
+    let tide_t = tide_p - tide_b;
+    let tide_i = vec2i(tide_b);
+    let tide_c0 = textureLoad(pixels0, tide_index2_0(tide_i + vec2i(0, 0), tide_size), 0);
+    let tide_c1 = textureLoad(pixels0, tide_index2_0(tide_i + vec2i(1, 0), tide_size), 0);
+    let tide_c2 = textureLoad(pixels0, tide_index2_0(tide_i + vec2i(0, 1), tide_size), 0);
+    let tide_c3 = textureLoad(pixels0, tide_index2_0(tide_i + vec2i(1, 1), tide_size), 0);
+    let tide_y0 = mix(mix(tide_c0, tide_c1, tide_t.x), mix(tide_c2, tide_c3, tide_t.x), tide_t.y);
+    return tide_y0;
+}
+fn tide_number0_0_10(uv: vec2f) -> f32 {
+    let tide_uv = clamp(uv, vec2f(0.0), vec2f(1.0));
+    let tide_size = vec2i(textureDimensions(pixels0));
+    let tide_at = clamp(vec2i(floor(tide_uv * vec2f(tide_size))), vec2i(0), tide_size - vec2i(1));
+    return textureLoad(pixels0, tide_at, 0).x;
+}
+fn ts_ReadSource(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
+    (*t_color) = vec4f((tide_number0_0_13_blend(t_vertex.m_uv)).x, tide_number0_0_10(t_vertex.m_uv), 0.0, 1.0);
+}
+
+@vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f) -> tide_corner {
+    var tide_vertex: tt_Vertex = tt_Vertex(tide_a0, tide_a1, tide_a2);
+    let tide_place = vec4f(tide_vertex.m_position, 0.0, 1.0);
+    let tide_clip = tide_block.tide_camera * tide_place;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, tide_clip_depth(tide_clip), tide_clip.w);
+    out.tide_s1 = tide_vertex.m_uv;
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    ts_ReadSource(tt_Vertex(vec2f(), in.tide_s1, vec4f()), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+

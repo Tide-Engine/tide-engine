@@ -20,6 +20,9 @@ Shader "Hidden/Tide/00000000c0de0011"
         Pass
         {
             Blend [_TideSrcColor] [_TideDstColor], [_TideSrcAlpha] [_TideDstAlpha]
+            ColorMask 0 1
+            ColorMask 0 2
+            ColorMask 0 3
             ZTest [_TideZTest]
             ZWrite [_TideZWrite]
             Cull [_TideCull]
@@ -36,6 +39,7 @@ Shader "Hidden/Tide/00000000c0de0011"
             #pragma target 4.5
             #pragma exclude_renderers gles3
             #include "Packages/com.tide.unity/Runtime/Shaders/TideWarnings.hlsl"
+#define TIDEHL_SOURCE_REVERSED 0
 // Made by tidec from WGSL (compiler/src/hlsl.c). Do not edit.
 #if defined(SHADER_API_D3D11) || defined(SHADER_API_PSSL) || defined(SHADER_API_METAL) || defined(SHADER_API_VULKAN) \
     || defined(SHADER_API_SWITCH) || defined(SHADER_API_XBOXONE) || defined(SHADER_API_GAMECORE) || defined(SHADER_API_WEBGPU)
@@ -76,14 +80,14 @@ float tidehl_flip() { return _TideFlip != 0.0 ? sign(_TideFlip) : _ProjectionPar
 float4 tidehl_clip(float4 p) {
     p.y *= tidehl_flip();
 #if TIDEHL_REVERSED_Z
-    p.z = p.w - p.z;
+    if (!TIDEHL_SOURCE_REVERSED) p.z = p.w - p.z;
 #else
-    p.z = 2.0 * p.z - p.w;
+    p.z = TIDEHL_SOURCE_REVERSED ? p.w - 2.0 * p.z : 2.0 * p.z - p.w;
 #endif
     return p;
 }
-float tidehl_depth_in(float d) { return TIDEHL_REVERSED_Z ? 1.0 - d : d; }
-float tidehl_depth_out(float d) { return TIDEHL_REVERSED_Z ? 1.0 - d : d; }
+float tidehl_depth_in(float d) { return TIDEHL_REVERSED_Z != TIDEHL_SOURCE_REVERSED ? 1.0 - d : d; }
+float tidehl_depth_out(float d) { return TIDEHL_REVERSED_Z != TIDEHL_SOURCE_REVERSED ? 1.0 - d : d; }
 float4 tidehl_position(float4 p) {
     if (tidehl_flip() < 0.0) p.y = _TideHeight - p.y;
     p.z = tidehl_depth_in(p.z);
@@ -350,13 +354,13 @@ float tidehl_compare(Texture2D<float> t, SamplerState own, float2 at, float d) {
     float2 p = at * size - 0.5;
     float2 f = frac(p);
     float4 g = t.GatherRed(TIDEHL_NEAREST(own), (floor(p) + 1.0) / size);
-#if TIDEHL_REVERSED_Z
+#if TIDEHL_REVERSED_Z != TIDEHL_SOURCE_REVERSED
     g = 1.0 - g;
 #endif
-    float4 lit = step(d.xxxx, g); // Gathered as (0, 1), (1, 1), (1, 0), (0, 0)
+    float4 lit = TIDEHL_SOURCE_REVERSED ? step(g, d.xxxx) : step(d.xxxx, g); // Gathered as (0, 1), (1, 1), (1, 0), (0, 0)
     return lerp(lerp(lit.w, lit.z, f.x), lerp(lit.x, lit.y, f.x), f.y);
 }
-float tidehl_compare(TextureCube<float> t, SamplerState own, float3 at, float d) { return d <= tidehl_depth(t, own, at) ? 1.0 : 0.0; }
+float tidehl_compare(TextureCube<float> t, SamplerState own, float3 at, float d) { return (TIDEHL_SOURCE_REVERSED ? d >= tidehl_depth(t, own, at) : d <= tidehl_depth(t, own, at)) ? 1.0 : 0.0; }
 float tidehl_depth(Texture2DArray<float> t, SamplerState own, float3 at) { return tidehl_depth_in(t.SampleLevel(TIDEHL_NEAREST(own), at, 0.0)); }
 float tidehl_compare(Texture2DArray<float> t, SamplerState own, float3 at, float d) { // at.z: the layer
     uint w, h, n;
@@ -365,10 +369,10 @@ float tidehl_compare(Texture2DArray<float> t, SamplerState own, float3 at, float
     float2 p = at.xy * size - 0.5;
     float2 f = frac(p);
     float4 g = t.GatherRed(TIDEHL_NEAREST(own), float3((floor(p) + 1.0) / size, at.z));
-#if TIDEHL_REVERSED_Z
+#if TIDEHL_REVERSED_Z != TIDEHL_SOURCE_REVERSED
     g = 1.0 - g;
 #endif
-    float4 lit = step(d.xxxx, g);
+    float4 lit = TIDEHL_SOURCE_REVERSED ? step(g, d.xxxx) : step(d.xxxx, g);
     return lerp(lerp(lit.w, lit.z, f.x), lerp(lit.x, lit.y, f.x), f.y);
 }
 

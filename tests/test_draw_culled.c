@@ -518,6 +518,56 @@ TIDE_TEST(draw_culled_carry_occlusion)
     tide_heaps_free(&heap);
 }
 
+// Draw.DepthBias: culled draws of one list that differ only in their bias are sets of their own, a set's commands each
+// keep the bias their draws were made under (a decal drawn after its base must not draw with the base's), and a biased
+// draw never tests occlusion, as what it's measured against is depth drawn without its bias.
+TIDE_TEST(draw_culled_depth_bias_keeps_sets_apart_and_out_of_occlusion)
+{
+    const uint64_t mark = tide_scratch_mark();
+    tide_heaps heap = {0};
+    tide_text_use(NULL, &heap);
+    tide_list plain = scattered(300, 5u, NONE_MIRRORED, 20.0f);
+    in_view(plain, 1u);
+    tide_draw_list d = {0};
+    frame(&d, true);
+    tide_draw_set_occlusion(&d, true);
+    TIDE_CHECK(draw(&d, plain));
+    TIDE_CHECK(draw(&d, plain)); // Joins the one before: no bias either
+    tide_draw_set_depth_bias(&d, -8.0f, 0.0f);
+    TIDE_CHECK(draw(&d, plain)); // A set of its own...
+    TIDE_CHECK(draw(&d, plain)); // ...which the next under the same bias joins
+    tide_draw_set_depth_bias(&d, -8.0f, 1.5f);
+    TIDE_CHECK(draw(&d, plain)); // Another slope: another set
+    tide_draw_unset_depth_bias(&d);
+    TIDE_CHECK(draw(&d, plain)); // None again, after a biased set: another
+    TIDE_REQUIRE(d.cull_count == 6);
+    TIDE_CHECK(d.culls[0].occlusion && d.culls[1].occlusion && d.culls[5].occlusion);
+    TIDE_CHECK(!d.culls[2].occlusion && !d.culls[3].occlusion && !d.culls[4].occlusion);
+    const tide_float2 biases[6] = {{0, 0}, {0, 0}, {-8, 0}, {-8, 0}, {-8, 1.5f}, {0, 0}};
+    uint32_t sets = 0, joined = 0, commands = 0;
+    for (uint32_t i = 0; i < d.count; i++) {
+        const tide_draw_command *c = &d.commands[i];
+        if (c->kind != TIDE_DRAW_SHADED || c->shaded.run >= d.run_count || !d.runs[c->shaded.run].culled) continue;
+        const tide_draw_run *r = &d.runs[c->shaded.run];
+        commands++;
+        // The set's draws all have its first's bias, and the command draws with it
+        for (uint32_t j = r->culled - 1u; j < r->culled - 1u + r->culled_count && j < 6u; j++) {
+            TIDE_CHECK(biases[j].x == biases[r->culled - 1u].x && biases[j].y == biases[r->culled - 1u].y);
+        }
+        TIDE_CHECK(r->culled - 1u < 6u && c->depth_bias.x == biases[r->culled - 1u].x && c->depth_bias.y == biases[r->culled - 1u].y);
+        bool first = true;
+        for (uint32_t k = 0; k < c->shaded.run; k++) first &= d.runs[k].culled != r->culled;
+        sets += first;
+        joined += first && r->culled_count == 2;
+    }
+    TIDE_CHECK(commands >= 4 && sets == 4 && joined == 2);
+    tide_draw_free(&d);
+    tide_list_release(&plain, TIDE_IN_LOCAL);
+    tide_scratch_reset(mark);
+    tide_text_use(NULL, NULL);
+    tide_heaps_free(&heap);
+}
+
 // Draws of one list joining a set whose levels end below theirs (Draw.LOD 1, then 3): the levels between would have
 // no mesh made, so the second is a set of its own. Joining left level 2's run with an unset mesh, which the next
 // draw's join read as an index (Mount & Rifle's crash in tide_draw_shaded_culled). Every culled run's mesh is one of

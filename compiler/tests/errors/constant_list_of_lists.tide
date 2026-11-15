@@ -1,0 +1,4 @@
+// expect: a constant list holds plain values, not List<int>
+// expect: keep what it holds in plain fields of a struct, or make the value in code where it's used
+const List<List<int>> ROWS = [[1, 2], [3]];
+scene Main { }

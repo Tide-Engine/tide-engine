@@ -1696,7 +1696,7 @@ TIDE_TEST(lsp_shaders_hover)
     TIDE_CHECK(has(frag, "frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun, Models models)"));
     TIDE_CHECK(has(frag, "Runs on the GPU, for each pixel of a mesh a view draws through it"));
     TIDE_CHECK(has(frag, "- for each instance: `Box.tint`\\n- for each draw: `Sun.direction`\\n- as textures: `Models.wood`\\n"
-                         "- of its vertex, blended across the triangle: `normal`, `uv`"));
+                         "- of its vertex, floats blended across the triangle and integral fields flat from its first corner: `normal`, `uv`"));
     TIDE_CHECK(!has(frag, "glow") && !has(frag, "strength") && !has(frag, "Runs once per tick"));
     const char *vert = hover_at(43, 82);
     TIDE_CHECK(has(vert, "vert Wave(mut BoxVertex vertex, Time time, Instance instance)") && has(vert, "for each vertex"));
@@ -2721,6 +2721,24 @@ TIDE_TEST(lsp_enum_count_and_cast_diagnostic)
                              " return ((values)[0]) + (n)++; }\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 #undef COUNT_GAME
+}
+
+TIDE_TEST(lsp_enum_values_and_order)
+{
+    start();
+#define VALUES_GAME "enum Direction { North, East = 10, South }\nsingleton Match { int n; Direction d; }\nscene Main { }\n"
+    const char *completion = complete(VALUES_GAME "system S(mut Match match) { match.n = Direction.$; }\n");
+    TIDE_CHECK(offers(completion, "Values()"));
+    TIDE_CHECK(has(completion, "Values() -> array"));
+    open_document(VALUES_GAME "system S(mut Match match)\n{\n    foreach (var d in Direction.Val$ues())\n"
+                              "    {\n        if (d > match.d && d <= .South) match.n++;\n    }\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "Direction.Values() -> Direction[3]"));
+    TIDE_CHECK(has(hover, "declaration order") || has(hover, "order they're declared"));
+    open_document(VALUES_GAME "system S(mut Match match) { var all = Direction.Values($); }\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Direction.Values() -> Direction[3]"));
+#undef VALUES_GAME
 }
 
 TIDE_TEST(lsp_scheduling_phases)
@@ -4307,6 +4325,20 @@ TIDE_TEST(lsp_directives)
     TIDE_CHECK(!has(branches, "\"startLine\":0"));
     open_document("scene Main { }\n#define LATE\n");
     TIDE_CHECK(has(sent[0], "comes after code"));
+
+    // Code reads symbols too: defined(NAME), and define(NAME, default), which editors read as its default (a command
+    // line's value they can't know), with no diagnostic; the formatter leaves the calls as they're written
+    static const char read[] = "#define MINE\n"
+                               "scene Main { }\n"
+                               "const bool PREPASS = !defined(NO_PREPASS);\n"
+                               "const bool OURS = defined(MINE) && defined(DEBUG);\n"
+                               "const int ARMY_SIDE = define(ARMY_SIDE, 500);\n"
+                               "singleton Army { int side = ARMY_SIDE; bool prepass = PREPASS; bool ours = OURS; }\n";
+    open_document(read);
+    TIDE_CHECK(has(sent[0], "\"diagnostics\":[]"));
+    TIDE_CHECK(has(format_reply(read), "\"result\":[]"));
+    open_document("scene Main { }\nconst int SIDE = define(SIDE);\n");
+    TIDE_CHECK(has(sent[0], "define takes a symbol's name and the value it has when the build gives it none"));
 }
 
 TIDE_TEST(lsp_folding)
@@ -5063,7 +5095,7 @@ TIDE_TEST(lsp_shader_outputs)
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     const char *vert = hover_at(6, 6);
     TIDE_CHECK(has(vert, "vert Place(mut Corner corner, out FromLamp lamp, Sun sun)"));
-    TIDE_CHECK(has(vert, "What it writes to a struct it takes as `out`, the frag it's drawn with reads, blended across the triangle"));
+    TIDE_CHECK(has(vert, "What it writes to a struct it takes as `out`, the frag it's drawn with reads: floats blended across the triangle, integral fields flat from its first corner"));
     TIDE_CHECK(has(vert, "- for each draw: `Sun.at`") && !has(vert, "FromLamp."));
     const char *writes = hover_at(6, 45);
     TIDE_CHECK(has(writes, "out FromLamp lamp") && has(writes, "What the vert writes for the frag it's drawn with"));
@@ -5071,7 +5103,7 @@ TIDE_TEST(lsp_shader_outputs)
     const char *frag = hover_at(11, 6);
     TIDE_CHECK(has(frag, "Draw.Instanced(..., Look)") && has(frag, "Its `out` parameters write the target's images in order"));
     TIDE_CHECK(has(frag, "- for each instance: `Crate.paint`"));
-    TIDE_CHECK(has(frag, "- of what its vert wrote for it, blended across the triangle: `FromLamp.glow`") && !has(frag, "FromLamp.place"));
+    TIDE_CHECK(has(frag, "- of what its vert wrote for it, floats blended across the triangle and integral fields flat from its first corner: `FromLamp.glow`") && !has(frag, "FromLamp.place"));
     const char *lamp = hover_at(11, 35);
     TIDE_CHECK(has(lamp, "What the vert this frag is drawn with wrote for it") && has(lamp, "which the corners pass on: `glow`."));
     TIDE_CHECK(has(hover_at(11, 47), "An element of the draw's instance list"));
@@ -6400,18 +6432,22 @@ TIDE_TEST(lsp_render_target_formats_and_depth)
     const char *members = complete(program);
     TIDE_CHECK(offers(members, "depth") && offers(members, "color") && offers(members, "Read") && has(members, "DepthTexture"));
     // Its reads back: an image as its own type, by its number, and its depth; and how many images it holds
-    TIDE_CHECK(offers(members, "ReadDepth") && has(members, "Read<T>([int image]) -> Grid2<T> fails IOError")
-               && has(members, "ReadDepth() -> Grid2<float> fails IOError") && has(members, "colors.count"));
-    snprintf(program, sizeof program, "%slocal singleton Saved { Grid2<float> depths; Grid2<Color> pixels; int images; }\n"
+    TIDE_CHECK(offers(members, "ReadDepth") && has(members, "Read<T>([int image][, int2 from, int2 size]) -> Grid2<T> fails IOError")
+               && has(members, "ReadDepth([int2 from, int2 size]) -> Grid2<float> fails IOError") && has(members, "colors.count"));
+    snprintf(program, sizeof program, "%slocal singleton Saved { Grid2<float> depths; Grid2<Color> pixels; int images; Grid2<Color> part; }\n"
                                       "async void Save(Lamp lamp, mut Saved saved)\n{\n"
                                       "    if (await lamp.map.ReadDepth() is Grid2<float> depths) saved.depths = depths.Copy();\n"
+                                      "    if (await lamp.map.Read(0, int2(4, 4), int2(8, 8)) is Grid2<Color> part) saved.part = part.Copy();\n"
                                       "    if (await lamp.map.Read<Color>(0) is Grid2<Color> pixels) saved.pixels = pixels.Copy();\n"
                                       "    saved.images = lamp.map.colors.count;\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     snprintf(program, sizeof program, "%sasync void Save(Lamp lamp)\n{\n    var depths = await lamp.map.ReadDepth($\n}\n", types);
     open_document(program);
-    TIDE_CHECK(has(request("textDocument/signatureHelp"), "ReadDepth() -> Grid2<float> fails IOError"));
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "ReadDepth([int2 from, int2 size]) -> Grid2<float> fails IOError"));
+    // A Texture3D's cells, whole or a box of them
+    TIDE_CHECK(has(complete("scene Main { }\nlocal singleton Fog { Texture3D volume; }\nview V(Fog fog) { fog.volume.$ }\n"),
+                   "Read<T>([int3 from, int3 size]) -> Grid3<T> fails IOError"));
     snprintf(program, sizeof program, "%sview V(mut Lamp lamp)\n{\n    var shadow = lamp.map.depth;\n    lamp.shadow = sha$dow;\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(request("textDocument/hover"), "DepthTexture"));
@@ -6746,6 +6782,52 @@ TIDE_TEST(lsp_numeric_image_helpers)
     open_document("scene Main { }\nint Read([Raw(int)] Texture3D image, float3 uv)\n{\n"
                   "    return image.Sample(uv$);\n}\n");
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "-> int"));
+}
+
+// 32-bit layers and faces, int arrays and cubes, typed volumes that blend, a depth cube's depth, and SampleLevel's
+// filter left out (Trilinear)
+TIDE_TEST(lsp_exact_numbers_and_depth_cubes)
+{
+    start();
+    static const char types[] = "scene Main { }\nlocal singleton Images { [Raw(float)] TextureArray depths; [Raw(int)] Cubemap ids; "
+                                "[Raw(float4)] Texture3D fog; Cubemap sky; Cubemap lamp; DepthCubemap shadows; }\n";
+    char program[4096];
+    snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images)\n{\n"
+             "    float depth = images.depths.Sample(vertex.uv, 1, Filter.Bilinear);\n"
+             "    int id = images.ids.Sample(float3(vertex.uv, 1));\n"
+             "    float4 fog = images.fog.Sample(float3(vertex.uv, 0.5), Filter.Bilinear);\n"
+             "    Color sky = images.sky.SampleLevel(float3(vertex.uv, 1), 2);\n"
+             "    float lit = images.shadows.Compare(float3(vertex.uv, 1), 0.5) + images.shadows.Sample(float3(1, 0, 0));\n"
+             "    color = Color(depth + float(id) + fog.w + lit, sky.g, 0);\n}\n"
+             "view V(mut Images images) { images.depths = TextureArray(8, 8, 2, Format.R32f); images.ids = Cubemap(8, Format.R32i); "
+             "images.fog = Texture3D(int3(4), Format.Rgba16f); images.sky = Cubemap(8); images.lamp = Cubemap(64, Format.Depth); "
+             "images.shadows = images.lamp.depth; }\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    // A typed array's members are its role's, SampleLevel's snippet names its level
+    snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = Color(images.depths.$); }\n", types);
+    const char *layers = complete(program);
+    TIDE_CHECK(offers(layers, "Sample") && offers(layers, "SampleLevel") && has(layers, "-> float"));
+    TIDE_CHECK(has(layers, "SampleLevel($1, $2, $3)") && has(layers, "four exact loads"));
+    snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = Color(float(images.ids.$)); }\n", types);
+    const char *ids = complete(program);
+    TIDE_CHECK(offers(ids, "Sample") && has(ids, "-> int") && !offers(ids, "SampleLevel"));
+    // A depth cube's depth, read by a direction, and a cube's member that hands it out
+    snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = Color(images.shadows.$); }\n", types);
+    const char *depths = complete(program);
+    TIDE_CHECK(offers(depths, "Sample") && offers(depths, "Compare") && has(depths, "float3 direction"));
+    snprintf(program, sizeof program, "%sview V(mut Images images) { var d = images.lamp.$; }\n", types);
+    const char *cube = complete(program);
+    TIDE_CHECK(offers(cube, "faces") && offers(cube, "depth") && has(cube, "DepthCubemap"));
+    TIDE_CHECK(offers(complete("scene Main { }\nlocal singleton L { Depth$ shadows; }\n"), "DepthCubemap"));
+    snprintf(program, sizeof program, "%sview V(mut Images images) { images.lamp = Cubemap(64, Format.Dep$th); }\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/hover"), "cube.depth"));
+    // SampleLevel that names no filter reads between levels
+    snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = images.sky.$; }\n", types);
+    TIDE_CHECK(has(complete(program), "Filter filter = Filter.Trilinear"));
+    snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = Color(images.fog.$.x); }\n", types);
+    TIDE_CHECK(has(complete(program), "loaded exactly and blended in the shader for R32f and Rgba32f"));
 }
 
 TIDE_TEST(lsp_window_pixels_and_format_names)
@@ -8590,7 +8672,7 @@ TIDE_TEST(lsp_world)
     open_document(WORLD_GAME "system Heal(Healer healer, mut World world)\n{\n"
                              "    if (world.Has<Health>(healer.patient)) return;\n}\n"
                              "system Idle(Healer healer, World world)\n{\n    if (healer.patient == this) return;\n}\n");
-    TIDE_CHECK(has(last_sent(), "'world' is declared mut but never calls Set") && has(last_sent(), "'world' is never used"));
+    TIDE_CHECK(has(last_sent(), "'world' is declared mut but never calls Set or Edit") && has(last_sent(), "'world' is never used"));
     TIDE_CHECK(count(last_sent(), "\"tags\":[1]") == 2);
     const char *remove_mut = actions_at(5);
     TIDE_CHECK(has(remove_mut, "Remove 'mut' from 'world'") && has(remove_mut, "\"newText\":\"\""));
@@ -10119,6 +10201,45 @@ TIDE_TEST(lsp_functions_send_and_spawn)
     TIDE_CHECK(has(last_sent(), "a view can't change the match, and 'Soon' starts 'Later', a task that changes the match"));
 #undef LATER
 #undef ACTS
+}
+
+TIDE_TEST(lsp_world_edit)
+{
+    start();
+    open_document(WORLD_FUNCTION "system Heal(Healer healer, mut World world)\n{\n"
+                                 "    world.Edit<Health>(healer.patient, health) { health.value += 1; }\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(hover_at(10, 11), "Edit<Health>(Entity entity, name) { ... }")); // The name is new: no type of its own
+    TIDE_CHECK(has(hover_at(10, 11), "`name` is new, declared by the call"));
+    TIDE_CHECK(has(hover_at(10, 11), "is put back on the entity as the block ends"));
+    TIDE_CHECK(has(hover_at(10, 50), "Health health")); // The block's name: the entity's component
+    const char *members = complete(WORLD_FUNCTION "system Heal(Healer healer, mut World world) { world.$ }\n");
+    TIDE_CHECK(offers(members, "Edit"));
+    TIDE_CHECK(has(members, "Edit<${1:Component}>(${2:entity}, ${3:name})"));
+    // In its block, the name's fields
+    TIDE_CHECK(offers(complete(WORLD_FUNCTION "system Heal(Healer healer, mut World world)\n{\n"
+                                              "    world.Edit<Health>(healer.patient, health) { health.$ }\n}\n"), "value"));
+    // The formatter leaves an Edit as it's written: a call, its <>, and its block's braces on lines of their own
+    TIDE_CHECK(has(format_reply(WORLD_FUNCTION "system Heal(Healer healer, mut World world)\n{\n"
+                                               "    world.Edit<Health>(healer.patient, health)\n    {\n"
+                                               "        health.value += 1;\n    }\n}\n"), "\"result\":[]"));
+    // ...and Edits listed with commas, a call a line
+    TIDE_CHECK(has(format_reply(WORLD_FUNCTION "system Heal(Healer healer, mut World world)\n{\n"
+                                               "    world.Edit<Health>(healer.patient, health),\n"
+                                               "    world.Edit<Health>(this, own)\n    {\n"
+                                               "        health.value += own.value;\n    }\n}\n"), "\"result\":[]"));
+}
+
+TIDE_TEST(lsp_command_ownership)
+{
+    start();
+    open_document("component Name { string value; }\ncommand SetName { string text; }\nscene Main { }\n"
+                  "command(SetName set) Rename(mut Name name, with ownership) { name.value = set.text; }\n"
+                  "event(Spawned) Setup(with Main) { Spawn(Name, Owner { player = PlayerID(0) }); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(hover_at(3, 49), "the entities the player who sent the command owns"));
+    TIDE_CHECK(offers(complete("component Name { string value; }\ncommand SetName { string text; }\nscene Main { }\n"
+                               "command(SetName set) Rename(mut Name name, with $) { }\n"), "ownership"));
 }
 
 TIDE_TEST(lsp_world_in_functions)
