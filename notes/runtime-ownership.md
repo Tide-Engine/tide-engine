@@ -52,6 +52,29 @@ identity (`TIDE_SIMULATION_RUNTIME` hashes them all), so no player of the old on
 hash or snapshot change; `bench_voxels`' pinned hash is unchanged. Contracts and tests: notes/voxels.md, sections 3a to
 3c.
 
+## Projection hashes kept by blocks (2026-11-15, later)
+
+No runtime function is new or changed (netcode.md, top section). What generated code for players relies on now, all
+of it existing:
+
+- **A block's bytes**: it hashes a block smaller than a page itself, `tide_hash_wide` over `tide_page_data` from the
+  block's offset in its page, for `16 << class` bytes: the class its header's `link` says (`tide_block_class`), or for
+  a grid's chunk, whose header is cells (grid.c), the class of `tide_grid_chunk_bytes`. It relies on a block never
+  crossing its page (heap.c's alloc), on a page of one place holding only blocks smaller than a page, and on a block's
+  bytes being all a value read through it depends on. Bounds are its own: it hashes nothing past the page's `size`
+  or the heap's `used`.
+- **A page's kept hash**: `tide_client_page_hash` reads `tide_page.hashed` (acquire) and `hash` where `hashed` is
+  the bytes in use, as cached functions' keys do (Cached functions' tables, below), and calls `tide_heap_block_hash`
+  otherwise. So a hash already kept is taken without the call's count of a move: no hash is made there, so nothing a
+  grid's chunk cache holds goes stale by it.
+- **Entity slots**: `tide_entity_slot_of` (inline, entity.h) for a slot's `entity` and `snaps`, where it kept the
+  slot `tide_entity_slot_index` gave. A slot whose entity isn't the row's says nothing.
+- **A map's entries list**: the groups' directory is compared chunk by chunk by `tide_list_chunk`'s layout (a block of
+  chunk offsets after the list's header, `TIDE_LIST_CHUNK / size` entries a chunk) and each chunk's page hash.
+
+If the owner changes a block's header, a chunk's layout, or makes a page hold blocks of a page or more beside small
+ones, `tide_client_key` (client_state_codegen.inc) says what it assumes.
+
 ## Projection hashes by pieces; a field given a copy (2026-11-15)
 
 No runtime function is new or changed (netcode.md and voxels.md, 2026-11-15). Generated code for players now hashes
