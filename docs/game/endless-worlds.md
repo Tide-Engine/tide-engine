@@ -305,4 +305,19 @@ A far region comes and goes as chunks do, a while after nobody is within its dis
 
 ## What it costs
 
-`bench/voxels`, 4 bots flying across fresh terrain with 845 chunks each, 60 ticks a second, 50 ms each way: the server's update takes 0.37 ms (median), each bot is sent about 20 KB a second, and a bot's machine holds the 850 entities near it. Standing still, the server spends 1 ms a second checking what each player has; with 8 bots flying apart (6,490 chunks held), 18 ms a second, as it reads only the chunks whose data changed, or a page of memory they share with others that changed. With its store as files, read on the files' own thread, the server's longest update is about 7 ms where it was 15 with them read as each tick ended. Far regions cost each bot 0.5 to 1 KB a second where the bots build, and nothing where nobody does. The engine's notes (`notes/voxels.md`) have the rest, and what's still missing.
+`bench/voxels`, 4 bots flying across fresh terrain with 845 chunks each, 60 ticks a second, 50 ms each way: the server's update takes 0.37 ms (median), each bot is sent about 20 KB a second, and a bot's machine holds the 850 entities near it. Standing still, the server spends 1 ms a second checking what each player has; with 8 bots flying apart (6,490 chunks held), 18 ms a second, as it reads only the chunks whose data changed, or a page of memory they share with others that changed. With its store as files, read on the files' own thread, the server's longest update is about 7 ms where it was 15 with them read as each tick ended. Far regions cost each bot 0.5 to 1 KB a second where the bots build, and nothing where nobody does. A predicting machine's own ticks cost half what they did since a copied world keeps its entities' order (10 ms a second with 860 entities).
+
+Past that size (`notes/voxels.md`, At scale; one machine, 2026-11-16):
+
+| | 8 players, 845 chunks each | 3,125 chunks each | 6,845 chunks each | 32 players | 64 players |
+|---|---|---|---|---|---|
+| Server's update, median / 99th percentile, ms | 1.0 / 5.8 | 2.6 / 14.7 | 5.1 / 30.5 | 3.7 / 15.7 | 7 to 8 / 43 to 47 |
+| Sent to each player, KB a second | 23 | 73 | 160 | 27 | 30 |
+| A player's machine's ticks, 99th percentile, ms | 1.7 | 4.9 | 9.6 | 2.1 | 2 to 3 |
+
+- A 60 Hz tick holds up to about 32 players at the default view, or 8 at twice its radius, on one thread as on twelve; past either, one update in a hundred runs over a frame. What caps players is the repairs the server works out for each of them, which read its whole world.
+- A chunk costs about 140 bytes as sent, a thirtieth of its cells, at every size. A hop or a join is a whole box at once: 116 KB at the default view, half a second until it's there, and about 0.8 s at twice the radius, as the store answers 64 chunks a tick.
+- The bots' inputs change every few seconds. Players who turn every tick, as a mouse does, add 13 to 44 KB a second to what each is sent with 8 to 32 of them: every player's input goes to every player, in each frame until it's acknowledged.
+- A player's own frame at 1920 by 1080 takes 0.2 ms of CPU at the default view of the version to play (405 chunks) and 1.1 ms with 3,125, with one long frame as a box is asked for on the machine that hosts (10 to 20 ms, and 55 to 60).
+
+The engine's notes (`notes/voxels.md`) have the rest, and what's still missing.

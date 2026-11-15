@@ -1,5 +1,35 @@
 # ECS and simulation state
 
+## A copied table keeps its entities' orders (2026-11-16)
+
+`tide_entities_copy` threw away the sorted keys `tide_entities_ordered` and `tide_entities_ordered_archetypes(_slots)`
+keep (a snapshot built its own on demand). A predicting client ticks a copy of
+its world every tick (`world_at(c, tick + 1)` copied from `tick`), so every tick it scanned every slot and sorted
+every entity again for each set of archetypes its systems and queries go through, though nothing had come or gone:
+with 860 entities, half of a client's simulating; with 6,900, 25 ms a second (notes/voxels.md, At scale).
+
+- **An order is shared.** `struct tide_entity_order` has a count of holders (`refs`, atomic) and no list link: the
+  table it was made in and every copy made while it stands have the one array, which nothing writes once made. A
+  copy takes its source's whole-table order and each subset's that is made (under the source's order lock: its
+  orders are derived state, as for the readers), and makes on demand the ones its source hadn't.
+- **Each side's changes are its own.** A table that changes puts its reference aside until it settles
+  (`struct tide_entity_retired_order`, a node of the table's own, as one order can be put aside by several tables),
+  so arrays an outer query borrowed stay valid as before, and the other tables' orders are as they were. The last
+  holder frees it: an order outlives the table it came from.
+- **Why it's the copy's**: an order says which keys are alive, in which slots, of which archetypes; a copy has the
+  same slots (it shares the pages), and every change of any of the three already put the order aside
+  (`order_invalidate`, `filtered_invalidate`). Tables read from bytes (`tide_entities_unpack`, `_unpack_delta`)
+  start with none.
+- **Tests**: `entity_orders_are_shared_with_copies_until_either_changes` (`tests/test_entity.c`); the two older
+  order tests checked that a copy's array was another, and check now that it's the same.
+- **Measured** (`bench_voxels`, 8 bots, release, Windows): a client's simulating 18.4 to 9.6 ms a second with 860
+  entities, 60.5 to 29.4 with 3,100, 122 to 55 with 6,900; its update's p99 2.5 to 1.7, 8.4 to 4.9 and 17.7 to
+  9.6 ms. A server ticks its own world, whose orders it kept, so its ticks are as they were. No world hash moves.
+- **Left**: a table that does change sorts every entity of each subset again, once for each tick something came or
+  went (a server of chunks: 3.4 of its 30.7 ms a second of simulating with 6,900 entities, 8.2 of 83.6 with
+  18,000); what came and went merged into the order it had would cost what changed. The loops' indexes are lost to
+  a copy the same way, and aren't shared yet (notes/voxels.md, At scale, What costs a chunk that's only held).
+
 ## Heaps per owner in games that hide state (2026-11-14, later)
 
 A game with state visibility no longer keeps every owner in the match's heap 0 (`assign_heaps`: only shards do): its
@@ -505,8 +535,9 @@ spawns). Short per-table atomic locking serializes lazy publication against
 structural registration/destruction; queries borrow immutable arrays. A changed
 keyset retires its prior array until `tide_entities_settle`, keeping an outer
 query valid when it spawns, destroys or triggers a nested query. Location, snap-
-count and presentation writes preserve the cache. Snapshots retain no cache
-pointer and build their own on demand. `tide_entities_ordered_archetypes` owns
+count and presentation writes preserve the cache. Snapshots share their source's
+arrays until either changes (2026-11-16, top section; they built their own on
+demand before). `tide_entities_ordered_archetypes` owns
 ascending unique archetype-ID sets and caches only their ALIVE keys; repeated
 nested queries therefore traverse matching archetypes rather than every entity
 in the world. Actual archetype changes invalidate these subsets, row-only moves

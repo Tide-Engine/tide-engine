@@ -1,5 +1,16 @@
 # Benchmarks
 
+## Voxels at scale, and what the session benches report (2026-11-16)
+
+`bench_voxels` at two and three times its view, with 16, 32 and 64 bots, on one and two threads and two cores, and
+the version to play at 1920 by 1080: the tables, what breaks first on each axis and what was fixed are in
+notes/voxels.md, At scale. The bench's side of it (bench/README.md, Voxels): repairs by what changed are timed into
+`pack` and `unpack`; a line gives each side's updates in all and what the columns leave; what each bot is sent is
+split by kind of datagram; `bench_desc.watch` lets a game look at each bot's world after every frame (voxels counts
+the chunks that come and times a hop's box; `--watch 0` for a profiler); `--look` makes voxels' bots turn every
+tick. Profiling a whole run with `tide_sample` sees the counting unless it's switched off: a first profile had
+`watch` and the entity lookups under it as a tenth of the samples.
+
 ## What a server's projection checks read again (2026-11-15)
 
 `bench_voxels_counts` is `bench_voxels` built with `TIDE_CLIENT_COUNTS`: at the program's end it prints what the
