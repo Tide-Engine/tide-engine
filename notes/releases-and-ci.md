@@ -1058,3 +1058,14 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
     Local Windows and WSL tests, a preview of the `.116` to `.117` history,
     actionlint (with the existing `queue` exception) and whitespace checks
     validate this change; no Actions run was started for it.
+
+## Packages on other branches (2026-11-15)
+
+A run on a branch other than dev and release claims no version, and its
+JetBrains job built the plugin as `0.0.0-dev` while the packages were
+`<VERSION>-dev`, so every Package job there failed at `cmake/package.cmake`'s
+version check and a dispatched branch run gave no packages. The JetBrains job
+now builds the plugin as `<VERSION>-dev` when no version was claimed (owner,
+2026-11-15), the same as CMakeLists.txt works out in a checkout without tags.
+dev and release are unchanged. To check: a dispatched run on a scratch branch
+has green Package jobs and `tide-<platform>` artifacts.
