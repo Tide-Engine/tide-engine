@@ -13802,10 +13802,16 @@ static void gen_storage(gen *g)
 static bool task_table_in(const decl *fn, bool local);
 static bool task_awaits_store(const decl *fn, int depth);
 
-// Whether the program has match tasks that await a load or a listing of the server's store.
-static bool awaits_store(const program *prog)
+// Whether the match has tasks that await a load or a listing of the server's store: a table of them (an async
+// function that awaits one but that nothing runs has none).
+static bool awaits_store(const gen *g)
 {
-    return prog->stored_load.decl || prog->stored_list.decl;
+    if (!g->prog->stored_load.decl && !g->prog->stored_list.decl) return false;
+    for (int i = 0; i < g->tasks.count; i++) {
+        const task_info *ti = &g->tasks.items[i];
+        if (!task_is_completion(ti->fn) && task_table_in(ti->fn, false) && task_awaits_store(ti->fn, 0)) return true;
+    }
+    return false;
 }
 
 // tide_game.stored: what a load or a listing found, before a later tick, on every machine. An event's answer sends
@@ -13820,7 +13826,7 @@ static void gen_stored(gen *g)
     if (!prog->uses_storage) return;
     sb *o = &g->c;
     const decl *loaded = storage_answer_event(prog, "Loaded"), *listed = storage_answer_event(prog, "Listed");
-    const bool tasks = awaits_store(prog);
+    const bool tasks = awaits_store(g);
     if (tasks) {
         const char *io_error = c_type((type){TY_ENUM, prog->io_error});
         sb_put(o, "// A match task's answer from the store: into the frame that waits for it, whose task goes on at the end of\n"
@@ -27898,7 +27904,7 @@ static void gen_game_api(gen *g)
     }
     if (prog->uses_storage) {
         sb_put(o, "    .stored = tide_game_stored,\n");
-        if (awaits_store(prog)) sb_put(o, "    .stored_again = tide_game_stored_again,\n");
+        if (awaits_store(g)) sb_put(o, "    .stored_again = tide_game_stored_again,\n");
     }
     if (prog->visibility_state) {
         // (A projection over the one before it reads its rows' links where they are: not a hierarchy's section)

@@ -56,6 +56,13 @@ string Long(string letter)
     return made;
 }
 
+// Nothing starts it: an awaited load where no task of the match awaits the store still builds
+async int Size(string key) fails IOError
+{
+    var bytes = try await Storage.Load(key);
+    return bytes.count;
+}
+
 // Keys' bytes into a hash, in order: what C checks the keys were
 int Mix(int hash, string key)
 {
