@@ -11,14 +11,14 @@ A game needs no C: `tide` runs it in a window. This page is for CMake builds and
 ```cmake
 tide_add_game(<target> [SOURCES <file.tide|file.c|file.cpp>...] [HOST <file.c>...] [WINDOW]
               [NAME <name>] [TITLE <title>] [STATS] [LAYOUT] [WARNINGS <text>...]
-              [PACKAGES <Name> <file.tide>...] [DEFINES <SYMBOL>...])
+              [PACKAGES <Name> <file.tide>...] [DEFINES <SYMBOL>[=<value>]...])
 ```
 
 - The game is every `.tide` file in the current source folder and its subfolders. `SOURCES` lists the files instead.
 - The game's C, which defines its `extern` functions (see [Calling C](./functions.md)), is every `.c` file there but the `HOST` ones, or the `.c` files listed in `SOURCES`, and its `.cpp` files the same way, built as `tide` builds them (see [C++](./functions.md#c)). Unlike `tide`, CMake doesn't pick up prebuilt libraries: link them to the target yourself.
 - Without `HOST`, the game is the whole program: a generated `main` runs it in a window, titled `TITLE`, or the game's `title` setting, or `<target>`. `STATS` shows the [stats](../tools/cli.md#stats) in a corner, closed to their one line, as the game's `stats` setting does. On the web, it's `<target>.html`.
 - With `HOST`, those C files are the program. They include `<name>.h`, the generated header, where `NAME` defaults to `<target>`. `WINDOW` says the host opens a window, so its Android build is an app instead of a program run from a shell. `LAYOUT` also describes the game's data layout, as `tide run` does for hot reloading (`tide_game_layout`, in `tide/layout.h`).
-- `DEFINES` supplies symbols for the game's [`#if` lines](../language/namespaces.md#symbols-of-your-own), as `tide run --define` does, each `NAME` or `NAME=value` for the game's [`define(NAME, default)`](../language/namespaces.md#values-from-the-build): `DEFINES FAST ARMY_SIDE=50`. Debug builds define `DEBUG` too. CMake passes them to the Tide code only, not to the game's C.
+- `DEFINES` supplies symbols for the game's [`#if` lines](../language/namespaces.md#symbols-of-your-own), as `tide run --define` does, each `NAME` or `NAME=value` for the game's [`define(NAME, default)`](../language/namespaces.md#values-from-the-build): `DEFINES FAST ARMY_SIDE=50`. Debug builds define `DEBUG` too, unless `DEFINES` names it, as `DEBUG=2`. CMake passes them to the Tide code only, not to the game's C, and `<target>_schedule` reads them too.
 - `PACKAGES` names a package and then its `.tide` files, repeated for each package. They compile before the game's files, in the order the packages are listed. This is for CMake integrations and tests: `tide_add_game` does not read `tide.packages` or fetch its dependencies. Use `tide` for a game that lists [packages](../packages/using-and-writing.md).
 - Warnings are errors in the repo's build: a warning from tidec fails it, unless part of its text is listed after `WARNINGS`, and each of those has to be there. Tests use it for programs tidec warns about on purpose.
 - `<target>_schedule` is a build target that prints the game's [schedule](../game/schedule.md).

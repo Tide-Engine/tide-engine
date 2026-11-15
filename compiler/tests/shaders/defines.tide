@@ -1,0 +1,28 @@
+// The build's symbols read by GPU code: defined(NAME) and define(NAME, default)
+// become the literals they read as, in a frag as on the CPU. With the build's
+// values (the lines below), and the default where it gives none.
+// define: GAIN=2
+// define: STEPS=-3
+// define: MODE=Bright
+// define: HALF
+scene Main { }
+
+enum Mode { Plain, Bright }
+
+const float GAIN = define(GAIN, 1);
+
+frag Tint(Vertex vertex, out Color color)
+{
+    float g = define(GAIN, 0.5) * GAIN;
+    int steps = define(STEPS, 4);
+    int unset = define(UNSET, 7);
+    bool half = defined(HALF);
+    Mode m = define(MODE, Mode.Plain);
+    color = Color(vertex.uv.x * g, float(steps + unset) * 0.1, half ? 1 : 0, m == Mode.Bright ? 1 : 0.5);
+}
+
+view Show()
+{
+    List<Vertex> quad = [Vertex { position = float2(0) }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }];
+    Draw.Mesh(quad, [0, 1, 2], Tint);
+}

@@ -1,0 +1,8 @@
+// expect: constant 'N' is int, not float
+// expect: constant 'F' is float, not double
+// expect: constant 'B' is byte, not int
+const int N = define(N, 1.5); // ...and in a build that gives none: the same errors
+const float F = define(F, 1.5d);
+const byte B = define(B, 1000);
+singleton Sizes { int n = N; float f = F; byte b = B; }
+scene Main { }

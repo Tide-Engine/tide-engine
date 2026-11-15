@@ -4303,6 +4303,15 @@ TIDE_TEST(lsp_directives)
     TIDE_CHECK(has(format_reply(read), "\"result\":[]"));
     open_document("scene Main { }\nconst int SIDE = define(SIDE);\n");
     TIDE_CHECK(has(sent[0], "define takes a symbol's name and the value it has when the build gives it none"));
+    // Completion offers both where a value goes, and a method of the name hides the build's, with no diagnostic
+    const char *offered = complete("scene Main { }\nsingleton Army { int side; }\nsystem S(mut Army army)\n{\n    army.side = $\n}\n");
+    TIDE_CHECK(offers(offered, "define") && offers(offered, "defined"));
+    open_document("scene Main { }\nstruct S { int x; int define(int a, int b) { return a + b; } int G() { return define(x, 2); } }\n");
+    TIDE_CHECK(has(sent[0], "\"diagnostics\":[]"));
+    // ...and a name can't become either
+    open_document("scene Main { }\nconst int SI$DE = 500;\nsingleton Army { int side = SIDE; }\n");
+    TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"define\""), "built into the language"));
+    TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"defined\""), "built into the language"));
 }
 
 TIDE_TEST(lsp_folding)

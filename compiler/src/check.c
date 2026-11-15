@@ -3928,9 +3928,18 @@ static type check_depth_array_read(const checker *c, expr *e);
 // quaternion(x, y, z, w), float3x3(c0, c1, c2) and friends.
 static type check_construct(checker *c, expr *e, const type target)
 {
+    // float3(define(X, 0), ...): a define's value reads as a part of the vector, the color or the quaternion, a float
+    // here. Not a number's conversion, int(define(X, 1.5)), which takes what it converts
+    const bool parts = ((type_is_float_based(target) || type_is_double_based(target) || type_is_int_based(target))
+                        && type_dim(target) > 1 && !matrix_dim(target))
+                    || target.kind == TY_COLOR || target.kind == TY_QUATERNION;
+    const type part = target.kind == TY_COLOR || target.kind == TY_QUATERNION ? T_FLOAT_ : type_scalar(target);
     bool any_error = false;
     for (int i = 0; i < e->args.count; i++) {
-        if (check_expr(c, e->args.items[i]).kind == TY_ERROR) any_error = true;
+        expr *const arg = e->args.items[i];
+        if (parts && arg->kind == E_CALL && str_eq_c(arg->name, "define")) c->define_want = part;
+        if (check_expr(c, arg).kind == TY_ERROR) any_error = true;
+        c->define_want = (type){0};
     }
     if (any_error) return T_ERR;
 
@@ -6537,8 +6546,21 @@ static const char *define_kind_name(const type t)
     }
 }
 
+// Whether a float's or a double's text (define_number's) says a number other than zero: a digit before its exponent
+// that isn't 0. One that rounds to zero in its type is no number it holds, and C refuses the literal.
+static bool define_nonzero(const char *s)
+{
+    for (; *s && *s != 'e' && *s != 'E'; s++) {
+        if (*s >= '1' && *s <= '9') return true;
+    }
+    return false;
+}
+
 // The literal `value` (a --define's text) reads as, a value of `t`, checked; NULL, said, when it's no such value.
-static expr *define_literal(checker *c, const expr *e, const str name, const type t, const char *value)
+// `fallback` is the define's default, and `by_default` says `t` is its type because nothing said where it goes (a
+// define in arithmetic, say): then a value of another kind of number says to write the default as one.
+static expr *define_literal(checker *c, const expr *e, const str name, const type t, const char *value, const expr *fallback,
+                            const bool by_default)
 {
     expr *lit = NEW(expr);
     lit->at = e->at;
@@ -6564,7 +6586,10 @@ static expr *define_literal(checker *c, const expr *e, const str name, const typ
     case TY_FLOAT:
     case TY_DOUBLE: {
         ok = define_number(value);
-        if (ok) ok = t.kind == TY_FLOAT ? isfinite(strtof(number, NULL)) : isfinite(strtod(number, NULL));
+        if (ok) { // Finite in the type, and not so small it rounds to zero there (1e-50 in a float)
+            const double read = t.kind == TY_FLOAT ? (double)strtof(number, NULL) : strtod(number, NULL);
+            ok = isfinite(read) && (read != 0.0 || !define_nonzero(number));
+        }
         lit->kind = E_FLOAT;
         sb text = {0};
         sb_printf(&text, "%s%s", number, t.kind == TY_DOUBLE ? "d" : "");
@@ -6614,6 +6639,10 @@ static expr *define_literal(checker *c, const expr *e, const str name, const typ
             break;
         case TY_STRING:
             diag_note("text from the command line has to be UTF-8, with no control characters but tabs and line breaks");
+#ifdef _WIN32 // tide and tidec read a narrow command line, in the console's code page
+            diag_note("on Windows, what's outside ASCII arrives in the console's code page: keep such text in the game, and "
+                      "choose it with an enum's member, 'define(" STR_FMT ", Banner.Day)'", STR_ARG(name));
+#endif
             break;
         default: {
             sb members = {0};
@@ -6625,16 +6654,27 @@ static expr *define_literal(checker *c, const expr *e, const str name, const typ
             break;
         }
         }
+        // define(S, 1) * 2 reads an int, as its default is one: where a decimal or a long was meant, the code says so
+        int64_t whole;
+        const bool integer = t.kind == TY_BYTE || t.kind == TY_INT || t.kind == TY_LONG;
+        const long long shown = fallback->kind == E_INT ? (long long)fallback->int_value : 1;
+        if (by_default && integer && define_number(value) && !define_integer(value, INT64_MIN, INT64_MAX, &whole)) {
+            diag_note("its default is %s, so its value reads as one: for a decimal, write the default as a float, "
+                      "'define(" STR_FMT ", %lld.0)'", define_kind_name(t), STR_ARG(name), shown);
+        } else if (by_default && t.kind == TY_INT && define_integer(value, INT64_MIN, INT64_MAX, &whole)) {
+            diag_note("its default is an int, so its value reads as one: for a bigger number, write the default as a long, "
+                      "'define(" STR_FMT ", %lldL)'", STR_ARG(name), shown);
+        }
         return NULL;
     }
     check_expr_want(c, lit, t);
     return lit;
 }
 
-static type check_symbol_call(checker *c, expr *e)
+// `want` is the type of where the call goes, when check_expr_want_any or a vector's constructor said one
+// (c->define_want, which check_call takes).
+static type check_symbol_call(checker *c, expr *e, const type want)
 {
-    const type want = c->define_want;
-    c->define_want = (type){0};
     const bool valued = str_eq_c(e->name, "define");
     if (e->args.count != (valued ? 2 : 1) || e->args.items[0]->kind != E_NAME || e->type_args.count > 0) {
         if (valued) diag_error(e->at, "define takes a symbol's name and the value it has when the build gives it none: 'define(ARMY_SIDE, 500)'");
@@ -6643,8 +6683,18 @@ static type check_symbol_call(checker *c, expr *e)
         return e->type = T_ERR;
     }
     const str name = e->args.items[0]->name;
+    // tide's versions and the packages' symbols never have a value, in any build: they're defined()'s to read
+    const bool tide_version = name.len >= 5 && memcmp(name.ptr, "TIDE_", 5) == 0;
+    if (valued && (tide_version || (name.len >= 8 && memcmp(name.ptr, "PACKAGE_", 8) == 0))) {
+        diag_error(e->args.items[0]->at, "'" STR_FMT "' is tide's to define, with no value, and define reads the value a "
+                                         "'--define NAME=value' gives", STR_ARG(name));
+        diag_note(tide_version ? "read whether this tide is that version or newer: 'defined(" STR_FMT ")'"
+                               : "read whether the game builds with that package: 'defined(" STR_FMT ")'", STR_ARG(name));
+        return e->type = T_ERR;
+    }
     const char *value = NULL;
-    const int defined = lex_read_symbol(name, e->at.file, &value);
+    bool own = false;
+    const int defined = lex_read_symbol(name, e->at.file, &value, &own);
     if (defined < 0) {
         diag_error(e->args.items[0]->at, "'" STR_FMT "' isn't a symbol Tide knows", STR_ARG(name));
         diag_note("a version of tide is written like TIDE_0_3_OR_NEWER, true in tide 0.3 and newer");
@@ -6668,14 +6718,22 @@ static type check_symbol_call(checker *c, expr *e)
         suggest_constant(c, fallback);
         return e->type = T_ERR;
     }
-    const type given = check_constant_expr(c, fallback, define_kind(want), want);
+    const bool wanted = define_kind(want);
+    const type given = check_constant_expr(c, fallback, wanted, want);
     if (given.kind == TY_ERROR) return e->type = T_ERR;
-    // Where a float goes, define(SCALE, 1)'s value is a float's
-    const type t = define_kind(want) && (same_type(want, given) || (type_is_numeric(want) && type_is_numeric(given))) ? want : given;
+    // Where a float goes, define(SCALE, 1)'s value is a float's, and where a long goes a long's: the type of where it
+    // goes when the default converts to that, as it would without the define. Otherwise the default's, so the value's
+    // literal is what the default is, and where it goes takes or refuses the two alike, in every build
+    const bool converts = wanted && (same_type(want, given) || type_assignable(want, given));
+    if (wanted && want.kind == TY_BYTE && given.kind == TY_INT) { // A default that fits no byte, define(B, 1000)
+        *e = *fallback; // ...is refused as it is, whatever byte the build gives
+        return e->type;
+    }
+    const type t = converts ? want : given;
     if (!define_kind(t)) {
         diag_error(fallback->at, "define gives a bool, a byte, an int, a long, a float, a double, a string or an enum, "
                                  "what a command line's text can say, and this is %s", type_name(given));
-        diag_note("read the parts it's made from, each a define of its own: 'float3(define(X, 0), define(Y, 0), 0)'");
+        diag_note("read the parts it's made from, each a define of its own: 'float3(define(X, 0.0), define(Y, 0.0), 0)'");
         return e->type = T_ERR;
     }
     if (defined == 0) { // Not defined: its default, as written
@@ -6691,11 +6749,17 @@ static type check_symbol_call(checker *c, expr *e)
         }
         diag_error(e->at, "'" STR_FMT "' is defined with no value, and 'define(" STR_FMT ", ...)' reads %s here",
                    STR_ARG(name), STR_ARG(name), define_kind_name(t));
-        diag_note("give it one, '--define " STR_FMT "=<value>'; a symbol alone, or a file's '#define', is for "
-                  "'defined(" STR_FMT ")' and '#if " STR_FMT "'", STR_ARG(name), STR_ARG(name), STR_ARG(name));
+        if (own) { // The file's own #define, which never has one: no command line gives this file a value
+            diag_note("this file's '#define " STR_FMT "' defines it with none, over the build's: take the '#define' away to "
+                      "read '--define " STR_FMT "=<value>', or write the value as a constant, 'const int " STR_FMT " = 500;'",
+                      STR_ARG(name), STR_ARG(name), STR_ARG(name));
+        } else {
+            diag_note("give it one, '--define " STR_FMT "=<value>', or read whether it's defined: 'defined(" STR_FMT ")'",
+                      STR_ARG(name), STR_ARG(name));
+        }
         return e->type = T_ERR;
     }
-    expr *lit = define_literal(c, e, name, t, value);
+    expr *lit = define_literal(c, e, name, t, value, fallback, !wanted);
     if (!lit) return e->type = T_ERR;
     *e = *lit;
     return e->type;
@@ -6703,7 +6767,8 @@ static type check_symbol_call(checker *c, expr *e)
 
 static type check_call(checker *c, expr *e)
 {
-    if (str_eq_c(e->name, "defined") || str_eq_c(e->name, "define")) return check_symbol_call(c, e);
+    const type define_want = c->define_want; // A define(NAME, default)'s, if this is one: no call checked after it
+    c->define_want = (type){0};
     if (str_eq_c(e->name, "GPUList") && e->type_args.count && !find_local(c, e->name) && !find_param(c, e->name))
         return check_gpu_list_make(c, e);
     const stmt *call_local = find_local(c, e->name);
@@ -6734,6 +6799,9 @@ static type check_call(checker *c, expr *e)
         e->object = self;
         return check_expr(c, e);
     }
+    // The build's symbols, read as constants: unless a method, a parameter or a local Func of the name is called, as
+    // one of those hides Spawn
+    if (str_eq_c(e->name, "defined") || str_eq_c(e->name, "define")) return check_symbol_call(c, e, define_want);
 
     type builtin;
     e->type_alias = authored_alias(c, e->name, e->at);
@@ -9200,8 +9268,8 @@ static bool json_key(const type t, const bool map)
 // Whether JSON has something for a value of type `t`, and for everything in
 // it: a bool, a number, a char or text (a string), an enum (its member's
 // name), a vector, a quaternion or a color (an array of numbers), a struct (an
-// object), a list, a set or an array (an array) and a map by text, an int or
-// an enum (an object). `*why` is the type it has nothing for, and `*in` and
+// object), a list, a set or an array (an array) and a map by text, a byte, an
+// int, a long or an enum (an object). `*why` is the type it has nothing for, and `*in` and
 // `*at` the struct and the field that hold it, if one does. `outer` is the
 // structs being looked into, so one with a list of itself ends.
 static bool json_holds(const type t, type *why, const decl **in, const field **at, const decl **outer, const int depth)
@@ -9302,14 +9370,14 @@ static bool json_takes(const type t, const loc at, const char *call)
         diag_note("an object's keys are text: a map JSON holds is by a string, or by a byte, an int, a long or an enum, written as "
                   "its digits or its member's name. Keep this one as a List<T> of structs with the key in a field");
     } else if (why.kind == TY_SET) {
-        diag_note("a set JSON holds is an array of strings, chars, ints, longs or enums: keep these in a List<T>");
+        diag_note("a set JSON holds is an array of strings, chars, bytes, ints, longs or enums: keep these in a List<T>");
     } else if (why.kind == TY_FLOAT2X2 || why.kind == TY_FLOAT3X3 || why.kind == TY_FLOAT4X4 || why.kind == TY_DOUBLE2X2
                || why.kind == TY_DOUBLE3X3 || why.kind == TY_DOUBLE4X4) {
         diag_note("a vector is an array of numbers in JSON, and a matrix has nothing: keep its columns in vector fields, or what "
                   "it's made from (a position, a rotation and a scale)");
     } else {
         diag_note("JSON holds bool, the integers, float, double, char, string, enums, vectors, quaternions and colors, structs of "
-                  "these, List<T>, Set<T>, arrays and maps by a string, an int or an enum");
+                  "these, List<T>, Set<T>, arrays and maps by a string, a byte, an int, a long or an enum");
     }
     return false;
 }
