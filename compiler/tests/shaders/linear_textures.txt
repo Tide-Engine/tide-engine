@@ -15,7 +15,9 @@ struct tide_uniforms {
 @group(0) @binding(5) var pixels2: texture_2d_array<f32>;
 @group(0) @binding(6) var sampler2: sampler;
 @group(0) @binding(7) var pixels3: texture_2d_array<f32>;
+@group(0) @binding(8) var sampler3: sampler;
 @group(0) @binding(9) var pixels4: texture_cube<f32>;
+@group(0) @binding(10) var sampler4: sampler;
 @group(0) @binding(11) var pixels5: texture_cube<f32>;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
@@ -79,18 +81,18 @@ fn ts_Read(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
     var tide_choice16: vec2f = t_vertex.m_uv;
     var tide_choice17: i32 = 0;
     var tide_choice18: i32 = 0;
-    var tide_choice19: vec4f = tide_straight(textureSampleLevel(pixels3, sampler0, tide_choice16, clamp(tide_choice17, 0, i32(textureNumLayers(pixels3)) - 1), tide_clamp1(0.0, 0.0, 31.0)));
+    var tide_choice19: vec4f = tide_straight(textureSampleLevel(pixels3, sampler2, tide_choice16, clamp(tide_choice17, 0, i32(textureNumLayers(pixels3)) - 1), tide_clamp1(0.0, 0.0, 31.0)));
     var tide_choice20: vec4f = (tide_choice15 + tide_choice19);
     var tide_choice21: vec2f = t_vertex.m_uv;
     var tide_choice22: i32 = 1;
     var tide_choice23: vec3f = vec3f(tide_choice21, 1.0);
     var tide_choice24: i32 = 0;
-    var tide_choice25: vec4f = tide_straight(textureSampleLevel(pixels4, sampler2, tide_choice23, tide_clamp1(0.0, 0.0, 31.0)));
+    var tide_choice25: vec4f = tide_straight(textureSampleLevel(pixels4, sampler3, tide_choice23, tide_clamp1(0.0, 0.0, 31.0)));
     var tide_choice26: vec4f = (tide_choice20 + tide_choice25);
     var tide_choice27: vec2f = t_vertex.m_uv;
     var tide_choice28: i32 = 1;
     var tide_choice29: vec3f = vec3f(tide_choice27, 1.0);
-    var tide_choice30: vec4f = tide_straight(textureSampleLevel(pixels5, sampler2, tide_choice29, 0.0));
+    var tide_choice30: vec4f = tide_straight(textureSampleLevel(pixels5, sampler4, tide_choice29, 0.0));
     (*t_color) = (tide_choice26 + tide_choice30);
 }
 

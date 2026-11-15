@@ -1455,7 +1455,7 @@ typedef struct resource_outer {
 static bool holds_render_resource_in(const type t, const resource_outer *outer, const bool fonts)
 {
     if (t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET
-        || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY || t.kind == TY_TEXTURE3D
+        || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY || t.kind == TY_TEXTURE3D || t.kind == TY_DEPTH_CUBEMAP
         || t.kind == TY_CLIP || t.kind == TY_GPU_LIST || (fonts && t.kind == TY_FONT)) return true;
     if (t.kind != TY_STRUCT && t.kind != TY_LIST && t.kind != TY_MAP && t.kind != TY_SET
         && t.kind != TY_GRID && t.kind != TY_ARRAY && t.kind != TY_OPTIONAL && t.kind != TY_FAILABLE) return false;
@@ -2011,6 +2011,7 @@ static bool element_ok(const type t, const loc at, const type *key, const bool a
         return true;
     case TY_STRUCT:
     case TY_TEXTURE3D: case TY_TEXTURE: case TY_DEPTH_TEXTURE: case TY_RENDER_TARGET: case TY_CLIP: case TY_FONT: case TY_DEPTH_TEXTURE_ARRAY:
+    case TY_DEPTH_CUBEMAP:
         return true;
     case TY_TEXTURE_ARRAY:
         if (asset) {
@@ -2652,7 +2653,7 @@ static bool array_element_ok(const type t, const loc at)
         return true;
     case TY_STRING: case TY_LIST: case TY_MAP: case TY_SET:
     case TY_TEXTURE: case TY_DEPTH_TEXTURE: case TY_CUBEMAP: case TY_RENDER_TARGET: case TY_CLIP: case TY_FONT:
-    case TY_TEXTURE3D: case TY_TEXTURE_ARRAY: case TY_DEPTH_TEXTURE_ARRAY: return true;
+    case TY_TEXTURE3D: case TY_TEXTURE_ARRAY: case TY_DEPTH_TEXTURE_ARRAY: case TY_DEPTH_CUBEMAP: return true;
     case TY_GRID:
         diag_error(at, "an array's elements can't be grids");
         diag_note("a grid is its holder's alone, never copied: keep it in a component or a singleton");
@@ -2786,6 +2787,7 @@ static type check_grid_method(checker *c, expr *e, type grid);
 static type check_grid_sample(const checker *c, expr *e, type grid);
 static type check_instance_call(expr *e);
 static type check_depth_read(const checker *c, expr *e);
+static type check_depth_cube_read(const checker *c, expr *e);
 static type check_cube_sample(const checker *c, expr *e);
 static type check_new_grid(checker *c, expr *e, type want);
 static bool is_new_mesh(const checker *c, const expr *e);
@@ -3001,7 +3003,7 @@ static bool linear_kind(const type t)
 static bool image_kind(const type t)
 {
     return t.kind == TY_RENDER_TARGET || t.kind == TY_TEXTURE || t.kind == TY_TEXTURE3D || t.kind == TY_TEXTURE_ARRAY
-        || t.kind == TY_CUBEMAP;
+        || t.kind == TY_CUBEMAP || t.kind == TY_DEPTH_CUBEMAP;
 }
 
 // Where an image field gets its value: an assignment's or a struct literal's. Format inference ([Linear] sources,
@@ -4074,9 +4076,11 @@ static type check_construct(checker *c, expr *e, const type target)
     // TextureArray(1024, 1024, 4), TextureArray(2048, 2048, 3, 1, Format.Depth): layers drawn into one at a time
     if (target.kind == TY_TEXTURE_ARRAY) return check_array_target(c, e);
     if (target.kind == TY_TEXTURE3D) return check_volume_target(c, e);
-    if (target.kind == TY_TEXTURE || target.kind == TY_DEPTH_TEXTURE || target.kind == TY_DEPTH_TEXTURE_ARRAY) {
+    if (target.kind == TY_TEXTURE || target.kind == TY_DEPTH_TEXTURE || target.kind == TY_DEPTH_TEXTURE_ARRAY
+        || target.kind == TY_DEPTH_CUBEMAP) {
         diag_error(e->at, "%s has no constructor", name);
         if (target.kind == TY_DEPTH_TEXTURE) diag_note("a DepthTexture is a render target's depth: 'target.depth'");
+        else if (target.kind == TY_DEPTH_CUBEMAP) diag_note("a DepthCubemap is a depth cube's depth: 'Cubemap(size, Format.Depth).depth'");
         else diag_note("declare a Texture asset for an image file, or read a render target's color image: 'target.color'");
         return T_ERR;
     }
@@ -4491,7 +4495,8 @@ static bool function_samples(decl *fn, const expr *call, const expr *of, const t
     const bool own = of->kind == E_NAME && of->bind == BIND_PARAM && of->param->function_param;
     if (!own && !(assets && of->bind == BIND_ASSET)) {
         const char *what = reads == TY_DEPTH_TEXTURE ? "DepthTexture" : reads == TY_CUBEMAP ? "Cubemap" : reads == TY_GRID ? "grid"
-                         : reads == TY_TEXTURE_ARRAY ? "TextureArray" : reads == TY_DEPTH_TEXTURE_ARRAY ? "DepthTextureArray" : "Texture";
+                         : reads == TY_TEXTURE_ARRAY ? "TextureArray" : reads == TY_DEPTH_TEXTURE_ARRAY ? "DepthTextureArray"
+                         : reads == TY_DEPTH_CUBEMAP ? "DepthCubemap" : "Texture";
         diag_error(of->at, "a function samples a %s it takes as a parameter of its own%s", what,
                    !assets ? "" : reads == TY_GRID ? ", or a Grid2<Color> asset by its name" : reads == TY_CUBEMAP
                    ? ", or a Cubemap asset by its name" : ", or a Texture asset by its name");
@@ -8668,19 +8673,9 @@ static type check_cube_target(checker *c, expr *e)
     if (argc < 1 || argc > 2 || !type_assignable(T_FLOAT_, e->args.items[0]->type)
         || (argc == 2 && !(format.kind == TY_ENUM && format.decl == c->prog->format))) {
         diag_error(e->at, "Cubemap takes its faces' side in pixels, and what each holds when that isn't "
-                          "Format.Rgba8: 'Cubemap(256)' or 'Cubemap(256, Format.Rgba16f)'");
-        diag_note("a cube's six faces are squares of one size and one format, each with depth of its own");
-        return T_ERR;
-    }
-    if (argc == 2 && e->args.items[1]->enum_member && e->args.items[1]->enum_member->number == 1) {
-        diag_error(e->args.items[1]->at, "a cube holds colors or numbers: its faces are Format.Rgba8, Rgba16f, R8, Rg8, R16f or Rg16f, "
-                                         "and each has depth of its own to draw with");
-        diag_note("a cube of depth alone, for a lamp that shines every way, isn't there yet");
-        return T_ERR;
-    }
-    if (argc == 2 && e->args.items[1]->enum_member && e->args.items[1]->enum_member->number >= 7) {
-        diag_error(e->args.items[1]->at, "a Cubemap's faces are read through a blending sampler, which 32-bit float and integer images "
-                                         "lack on some devices: use Format.R16f, Rg16f or Rgba16f, or a RenderTarget for each image");
+                          "Format.Rgba8: 'Cubemap(256)', 'Cubemap(256, Format.Rgba16f)' or 'Cubemap(1024, Format.Depth)'");
+        diag_note("a cube's six faces are squares of one size and one format, each with depth of its own; a cube of "
+                  "Format.Depth holds depth alone, read through 'cube.depth'");
         return T_ERR;
     }
     e->call = CALL_BUILTIN;
@@ -8746,12 +8741,6 @@ static type check_array_target(checker *c, expr *e)
     const int argc = e->args.count;
     const type last = argc ? e->args.items[argc - 1]->type : T_ERR;
     const bool formatted = last.kind == TY_ENUM && last.decl == c->prog->format;
-    if (formatted && e->args.items[argc - 1]->enum_member && e->args.items[argc - 1]->enum_member->number >= 7) {
-        diag_error(e->args.items[argc - 1]->at, "a TextureArray's layers are read through a blending sampler, which 32-bit float and integer "
-                                                "images lack on some devices: use Format.R16f, Rg16f or Rgba16f, a RenderTarget for each "
-                                                "image, or a Texture3D for a numeric volume");
-        return T_ERR;
-    }
     const int sizes = argc - (formatted ? 1 : 0); // width, height, layers[, pixelsPerUnit]
     bool numbers = sizes == 3 || sizes == 4;
     for (int i = 0; numbers && i < sizes; i++) {
@@ -9570,7 +9559,8 @@ static type check_method(checker *c, expr *e)
     const expr *previous_asset = c->asset_value;
     c->asset_value = e->object;
     const type obj = check_expr(c, e->object);
-    if (read_typed && obj.kind != TY_RENDER_TARGET && obj.kind != TY_ERROR) { // Left for its receiver's type, above
+    if (read_typed && obj.kind != TY_RENDER_TARGET && !(obj.kind == TY_TEXTURE3D && str_eq_c(e->name, "Read"))
+        && obj.kind != TY_ERROR) { // Left for its receiver's type, above
         diag_error(e->type_arg_at, "'" STR_FMT "' takes no type in '<>'", STR_ARG(e->name));
         diag_note("a render target's read does, for an image of numbers: 'await target.Read<float>()'");
     }
@@ -9685,11 +9675,60 @@ static type check_method(checker *c, expr *e)
         diag_error(e->at, "a DepthTextureArray has Sample(uv, layer) and Compare(uv, layer, value), not '" STR_FMT "'", STR_ARG(e->name));
         return T_ERR;
     }
+    if (obj.kind == TY_DEPTH_CUBEMAP) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        if (str_eq_c(e->name, "Sample") || str_eq_c(e->name, "Compare")) return check_depth_cube_read(c, e);
+        diag_error(e->at, "a DepthCubemap has Sample(direction) and Compare(direction, value), not '" STR_FMT "'", STR_ARG(e->name));
+        return T_ERR;
+    }
     if (obj.kind == TY_TEXTURE3D) {
         e->object->raw_sampled = true;
         if (str_eq_c(e->name, "Sample")) {
             check_sample_args(c, e, false);
             return check_volume_sample(c, e);
+        }
+        if (str_eq_c(e->name, "Read")) {
+            // await volume.Read(), Read<T>(), and a box of it, Read(int3 from, int3 size): an owned Grid3 of its cells,
+            // a frame or more later, as a render target's read (check_target_read holds the type against its format)
+            for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+            for (int i = 0; i < e->args.count; i++) if (e->args.items[i]->type.kind == TY_ERROR) return T_ERR;
+            bool fits = c->awaiting == e && (e->args.count == 0 || e->args.count == 2);
+            for (int i = 0; fits && i < e->args.count; i++) fits = e->args.items[i]->type.kind == TY_INT3;
+            if (!fits) {
+                diag_error(e->at, "a Texture3D's Read takes nothing, or a box of it: its first cell and how many cells along each "
+                                  "axis, int3s, and finishes later: 'var cells = await volume.Read();' or 'await "
+                                  "volume.Read(int3(0), int3(8))' in local async code");
+                return T_ERR;
+            }
+            type cell = (type){TY_COLOR, NULL};
+            if (e->type_arg.len > 0) {
+                cell = resolve_type(c, e->type_arg_ref, PLACE_LOCAL, e->type_arg_qual_at);
+                if (cell.kind == TY_ERROR) return T_ERR;
+                if (cell.kind != TY_COLOR && cell.kind != TY_FLOAT && cell.kind != TY_FLOAT2 && cell.kind != TY_FLOAT4
+                    && cell.kind != TY_INT) {
+                    diag_error(e->type_arg_qual_at, "Read gives a grid of what a volume holds: Color, float, float2, float4 or int, "
+                                                    "not %s", type_name(cell));
+                    diag_note("'Read<float>()' reads Format.R32f, 'Read<float4>()' Rgba16f and Rgba32f, 'Read<int>()' R32i, and "
+                              "'Read()' an Rgba8 or Rgba16f volume");
+                    return T_ERR;
+                }
+            }
+            if (in_async_function(c)) {
+                if (!note_side(c->method, TASK_LOCAL, e->at)) return T_ERR;
+            } else if (!local_code(c)) {
+                diag_error(e->at, "a Texture3D belongs to this machine: read it in local async code, never match code");
+                return T_ERR;
+            }
+            decl *code = reading_code(c);
+            if (code) code->uses_gpu_read = true;
+            e->read_kind = (uint8_t)(cell.kind == TY_FLOAT ? 1 : cell.kind == TY_FLOAT2 ? 2 : cell.kind == TY_FLOAT4 ? 3
+                                     : cell.kind == TY_INT ? 4 : 0);
+            e->read_image = 0;
+            e->read_part = e->args.count == 2;
+            e->read_volume = true;
+            e->gpu = GPU_TARGET_READ;
+            vec_push(c->prog->mesh_draws, ((mesh_draw){.in = reading_code(c), .call = e}));
+            return result_of(c->prog, grid_of(c->prog, cell, 3), (type){TY_ENUM, c->prog->io_error}, false);
         }
         const bool resize = str_eq_c(e->name, "Resize"), dispose = str_eq_c(e->name, "Dispose");
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
@@ -9698,7 +9737,8 @@ static type check_method(checker *c, expr *e)
                 diag_error(e->at, "a Texture3D has no mipmaps: use Sample(uvw, Filter.Point) or Sample(uvw, Filter.Bilinear)");
                 return T_ERR;
             }
-            diag_error(e->at, "a Texture3D has Sample(uvw[, filter[, wrap]]), Resize(int3) and Dispose(), not '" STR_FMT "'", STR_ARG(e->name));
+            diag_error(e->at, "a Texture3D has Sample(uvw[, filter[, wrap]]), Read(), Resize(int3) and Dispose(), not '" STR_FMT "'",
+                       STR_ARG(e->name));
             return T_ERR;
         }
         if (gpu_refuses(c, e->at, resize ? "resize a Texture3D" : "dispose a Texture3D", "local code owns the volume")) return T_ERR;
@@ -9799,13 +9839,23 @@ static type check_method(checker *c, expr *e)
             // the formats the target was made with (check_target_read), which are known once every body is checked
             const bool depth = str_eq_c(e->name, "ReadDepth");
             for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
-            if (c->awaiting != e || e->args.count > (depth ? 0 : 1)) {
-                diag_error(e->at, depth ? "ReadDepth takes no arguments and finishes later: 'var depths = await target.ReadDepth();' "
-                                          "in local async code"
-                                        : "Read takes the color image's number, or nothing for the first, and finishes later: "
-                                          "'var pixels = await target.Read();' in local async code");
+            for (int i = 0; i < e->args.count; i++) if (e->args.items[i]->type.kind == TY_ERROR) return T_ERR;
+            // ...and a part of it: its first pixel and how many pixels across and down, int2s, after the image's number
+            const int whole = depth ? 0 : e->args.count == 1 || e->args.count == 3 ? 1 : 0;
+            const bool part = e->args.count - whole == 2;
+            bool fits = c->awaiting == e && (e->args.count == whole || part);
+            for (int i = whole; fits && part && i < e->args.count; i++) fits = e->args.items[i]->type.kind == TY_INT2;
+            if (!fits) {
+                diag_error(e->at, depth ? "ReadDepth takes nothing, or a part of the depth: its first pixel and how many pixels "
+                                          "across and down, int2s, and finishes later: 'var depths = await target.ReadDepth();' "
+                                          "or 'await target.ReadDepth(int2(x, y), int2(16, 16))' in local async code"
+                                        : "Read takes the color image's number, or nothing for the first, then a part of it if "
+                                          "not all: its first pixel and how many pixels across and down, int2s, and finishes "
+                                          "later: 'var pixels = await target.Read();' or 'await target.Read(int2(x, y), "
+                                          "int2(16, 16))' in local async code");
                 return T_ERR;
             }
+            e->read_part = part;
             if (e->object->kind == E_MEMBER && e->object->c_constant && str_eq_c(e->object->member, "window")) {
                 diag_error(e->at, "the window cannot be read: draw into a RenderTarget and await target.Read()");
                 return T_ERR;
@@ -9830,23 +9880,22 @@ static type check_method(checker *c, expr *e)
             e->read_kind = (uint8_t)(depth ? 5 : cell.kind == TY_FLOAT ? 1 : cell.kind == TY_FLOAT2 ? 2 : cell.kind == TY_FLOAT4 ? 3
                                      : cell.kind == TY_INT ? 4 : 0);
             e->read_image = 0;
-            if (e->args.count) {
-                // Which image is part of the read's type, so it's a number the compiler knows
-                const expr *image = e->args.items[0];
-                if (image->type.kind == TY_ERROR) return T_ERR;
-                for (int i = 0; image->constant && i < 32; i++) image = image->constant->value;
-                if (!type_assignable(T_INT_, e->args.items[0]->type) || image->kind != E_INT) {
+            if (whole) {
+                // Which image is part of the read's type, so it's a number the compiler knows: a literal, or a const
+                // of literals, other constants and operators (fold_int)
+                int64_t image = 0;
+                if (!type_assignable(T_INT_, e->args.items[0]->type) || !fold_int(e->args.items[0], &image)) {
                     diag_error(e->args.items[0]->at, "Read takes which color image as a constant int, counted from 0: 'await "
                                                      "target.Read(1)' reads 'target.colors[1]'");
                     diag_note("what a read gives depends on the image's format, so the compiler has to know which image it is");
                     return T_ERR;
                 }
-                if (image->int_value < 0 || image->int_value >= TARGET_COLORS) {
+                if (image < 0 || image >= TARGET_COLORS) {
                     diag_error(e->args.items[0]->at, "a render target holds %d color images at the most: 'Read(0)' to 'Read(%d)'",
                                TARGET_COLORS, TARGET_COLORS - 1);
                     return T_ERR;
                 }
-                e->read_image = (uint8_t)image->int_value;
+                e->read_image = (uint8_t)image;
             }
             if (in_async_function(c)) {
                 if (!note_side(c->method, TASK_LOCAL, e->at)) return T_ERR;
@@ -11188,10 +11237,22 @@ static type check_member(checker *c, expr *e)
         if (gpu_code(c)) {
             diag_error(e->at, "a %s reads a Cubemap with 'Sample(direction)': its faces are the view's to draw into",
                        shader_word(gpu_code(c)));
+            if (str_eq_c(e->member, "depth")) {
+                diag_note("a depth cube's depth is read through a DepthCubemap field of a component or singleton the %s takes, "
+                          "which the view sets: 'lamp.shadows = lamp.cube.depth;'", shader_word(gpu_code(c)));
+            }
             return T_ERR;
         }
+        if (str_eq_c(e->member, "depth")) { // A depth cube's six faces of depth, Cubemap(size, Format.Depth)
+            if (e->object->bind == BIND_ASSET) {
+                diag_error(e->at, "an asset's Cubemap is the pack's images, which nothing draws into: it has no depth");
+                return T_ERR;
+            }
+            return (type){TY_DEPTH_CUBEMAP, NULL};
+        }
         if (!str_eq_c(e->member, "faces")) {
-            diag_error(e->at, "a Cubemap has 'faces', its six sides as targets to draw into, not '" STR_FMT "'", STR_ARG(e->member));
+            diag_error(e->at, "a Cubemap has 'faces', its six sides as targets to draw into, and 'depth', a depth cube's, not '"
+                              STR_FMT "'", STR_ARG(e->member));
             if (str_eq_c(e->member, "color") || str_eq_c(e->member, "colors")) {
                 diag_note("the cube itself is what a frag reads: 'cube.Sample(direction)', where it's a field of a component or "
                           "a singleton the frag takes");
@@ -12774,8 +12835,8 @@ static type check_volume_sample(const checker *c, expr *e)
     }
     e->call = CALL_GRID;
     const type sampled = declared_image_type(of);
-    if (sampled.kind != TY_COLOR && n > 1 && e->args.items[1]->enum_member->number != 0) {
-        diag_error(e->args.items[1]->at, "a typed numeric volume reads its nearest cell on every device: use Filter.Point or leave the filter out");
+    if (sampled.kind == TY_INT && n > 1 && e->args.items[1]->enum_member->number != 0) {
+        diag_error(e->args.items[1]->at, "an int volume reads its nearest cell: a GPU blends no integers. Use Filter.Point or leave the filter out");
         return T_ERR;
     }
     return sampled;
@@ -12846,9 +12907,15 @@ static type check_array_sample(const checker *c, expr *e)
             return T_ERR;
         }
     }
+    const type sampled = declared_image_type(e->object); // A [Raw(T)] array's numbers, as its role says
+    if (sampled.kind == TY_INT && (grad || (e->args.count > at + 1 && e->args.items[at + 1]->enum_member->number != 0))) {
+        diag_error(grad ? e->at : e->args.items[at + 1]->at, "an int array reads its nearest pixel: a GPU blends no integers. "
+                                                             "Use Sample(uv, layer) or Filter.Point");
+        return T_ERR;
+    }
     e->call = CALL_GRID;
     e->type_decl = NULL;
-    return declared_image_type(e->object); // A [Raw(T)] array's numbers, as its role says
+    return sampled;
 }
 
 // depths.Sample(uv, layer) and depths.Compare(uv, layer, value): a DepthTextureArray read in a frag or a vert, as a
@@ -12884,6 +12951,49 @@ static type check_depth_array_read(const checker *c, expr *e)
                                   : "Sample takes where to read, a float2 from (0, 0) to (1, 1), and which layer, an int: "
                                     "'cascades.Sample(uv, layer)'");
         if (!compare && e->args.count == 3) diag_note("a depth is read at its nearest pixel: it takes no Filter");
+        return T_ERR;
+    }
+    e->call = CALL_GRID;
+    e->type_decl = NULL;
+    return T_FLOAT_;
+}
+
+// shadows.Sample(direction) and shadows.Compare(direction, value): a depth cube's depth read in a frag or a vert, as
+// a DepthTexture is, by the direction from the cube's middle, of any length (a lamp's shadow that shines every way).
+static type check_depth_cube_read(const checker *c, expr *e)
+{
+    const bool compare = str_eq_c(e->name, "Compare");
+    const decl *shader = gpu_code(c);
+    decl *function = shader ? NULL : gpu_function(c);
+    if (!shader && !function) {
+        diag_error(e->at, "%s reads a depth cube on the GPU: in a frag or a vert", compare ? "Compare" : "Sample");
+        return T_ERR;
+    }
+    const expr *of = e->object;
+    if (function) {
+        if (!function_samples(function, e, of, TY_DEPTH_CUBEMAP, false)) return T_ERR;
+    } else if (of->kind != E_MEMBER || !of->field || of->object->kind != E_NAME || of->object->bind != BIND_PARAM
+               || of->object->param->function_param || of->object->param->type.kind == TY_STRUCT) {
+        diag_error(of->at, "a %s reads a DepthCubemap that's a field of a component or singleton it takes, like "
+                           "'lamp.shadows.%s'", shader_word(shader), compare ? "Compare(direction, value)" : "Sample(direction)");
+        diag_note("a view puts a depth cube's depth there: 'lamp.shadows = lamp.cube.depth;'");
+        return T_ERR;
+    }
+    if (!order_named_args(e, compare ? "direction, value" : "direction", 0)) return T_ERR;
+    for (int i = 0; i < e->args.count; i++) {
+        if (e->args.items[i]->type.kind == TY_ERROR) return T_ERR;
+    }
+    const int wanted = compare ? 2 : 1;
+    if (e->args.count != wanted || e->args.items[0]->type.kind != TY_FLOAT3
+        || (compare && !type_assignable(T_FLOAT_, e->args.items[1]->type))) {
+        diag_error(e->at, compare ? "Compare takes which way to read from the cube's middle, a float3 of any length, and the "
+                                    "depth to compare what's stored there with, a number from 0 to 1: "
+                                    "'shadows.Compare(direction, depth)'"
+                                  : "Sample takes which way to read from the cube's middle, a float3 of any length: "
+                                    "'shadows.Sample(direction)'");
+        if (!compare && e->args.count == 2) diag_note("a depth is read at its nearest pixel: it takes no Filter");
+        if (e->args.count >= 1 && e->args.items[0]->type.kind == TY_FLOAT2)
+            diag_note("a float2 from (0, 0) to (1, 1) reads a DepthTexture; a cube is read by a direction");
         return T_ERR;
     }
     e->call = CALL_GRID;
@@ -12945,9 +13055,14 @@ static type check_cube_sample(const checker *c, expr *e)
                                          "the GPU is told how a texture is read before any pixel runs");
         return T_ERR;
     }
+    const type sampled = declared_image_type(e->object); // A [Raw(T)] cube's numbers, as its role says
+    if (sampled.kind == TY_INT && e->args.count == 2 && e->args.items[1]->enum_member->number != 0) {
+        diag_error(e->args.items[1]->at, "an int cube reads its nearest pixel: a GPU blends no integers. Use Sample(direction) or Filter.Point");
+        return T_ERR;
+    }
     e->call = CALL_GRID;
     e->type_decl = NULL;
-    return declared_image_type(e->object); // A [Raw(T)] cube's numbers, as its role says
+    return sampled;
 }
 
 // grid.Decode(bytes): a Grid2<Color> becomes the PNG in a List<byte>, sized
@@ -13284,16 +13399,8 @@ static type check_await(checker *c, expr *e)
         diag_note("go through them with 'for' loops, which can wait: 'for (var y = 0; y < cells.size.y; y++) { ... }'");
         return T_ERR;
     }
-    // A grid a task holds is the one 'is' named, from a read: it's in the scratch area, which a wait gives back
-    for (int i = 0; i < c->locals.count; i++) {
-        const stmt *const held = c->locals.items[i];
-        if (held->type.kind != TY_GRID) continue;
-        diag_error(e->at, "a task can't wait while it holds the grid '" STR_FMT "': a local's grid lasts until the task waits",
-                   STR_ARG(held->name));
-        diag_note("copy what's kept into a component or singleton first, like 'state.pixels = " STR_FMT ".Copy();', and wait "
-                  "after the code '" STR_FMT "' is in", STR_ARG(held->name), STR_ARG(held->name));
-        return T_ERR;
-    }
+    // A grid the task holds as it waits, a local's or a value an earlier await in the statement gave, goes in its
+    // frame as a copy of its own (codegen.c, gen_spill)
     if (t.kind == TY_ERROR) return T_ERR;
     if (t.kind == TY_STRUCT && t.decl->task_handle) {
         if (!t.decl->task_origin && in_async_function(c)
@@ -13878,8 +13985,10 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
             diag_error(target->at, "an array's layers, its depth, its size and its count are its own: they can't be assigned");
             return false;
         }
-        if (of_target->kind == E_MEMBER && of_target->object->type.kind == TY_CUBEMAP && of_target->target_colors) {
-            diag_error(target->at, "a cube's faces are its own images, which what's drawn into them changes: they can't be assigned");
+        if (of_target->kind == E_MEMBER && of_target->object->type.kind == TY_CUBEMAP
+            && (of_target->target_colors || part->type.kind == TY_DEPTH_CUBEMAP)) {
+            diag_error(target->at, "a cube's faces and its depth are its own images, which what's drawn into them changes: they "
+                                   "can't be assigned");
             diag_note("draw into one, 'cube.faces[0].Mesh(...)'");
             return false;
         }
@@ -15617,12 +15726,8 @@ static void check_var(checker *c, stmt *s)
     // what a function returned, in the scratch area as a local's list is, and never another's.
     const bool names_grid = s->type.kind == TY_GRID && s->value && (gpu_code(c) || (c->method && c->method->gpu_only));
     if (s->type.kind == TY_GRID && !names_grid) {
-        const loc at = s->type_at.line ? s->type_at : s->value ? s->value->at : s->at;
-        if (async_code(c)) {
-            diag_error(at, "a task can't keep a grid while it waits: a local's grid lasts until the code that made it is done");
-            diag_note("keep it in a component or singleton, or make and use it in a function the task calls");
-            s->type = T_ERR;
-        } else if (s->value && s->value->type.kind == TY_GRID && !fresh_grid(s->value, false) && c->method
+        // A task's grid goes in its frame as it waits, a copy of its own, as its lists do (codegen.c, gen_spill)
+        if (s->value && s->value->type.kind == TY_GRID && !fresh_grid(s->value, false) && c->method
                    && c->method->kind == DECL_FUNCTION && takes_grid(c->method) && s->value->kind == E_NAME
                    && s->value->bind == BIND_PARAM) {
             // A name for a grid it's passed: in a function only code the GPU runs calls, as a frag's local names one,
@@ -17519,11 +17624,8 @@ static void check_field_raw(const field *f, const attribute *a)
         const bool layered = f->type.kind == TY_TEXTURE_ARRAY || f->type.kind == TY_CUBEMAP;
         if ((f->type.kind != TY_TEXTURE && f->type.kind != TY_TEXTURE3D && !layered) || a->args.count || a->values.count != 1
             || raw_sample_type(f).kind == TY_COLOR) {
-            diag_error(a->at, "Raw takes no arguments, or one numeric image type: [Raw(float)], [Raw(float2)], [Raw(float4)] or [Raw(int)] on a Texture or Texture3D field");
-            diag_note("a TextureArray or Cubemap field takes [Raw(float)], [Raw(float2)] or [Raw(float4)]");
-        } else if (layered && raw_sample_type(f).kind == TY_INT) {
-            diag_error(a->at, "a TextureArray or Cubemap holds no integer images: its role is [Raw(float)], [Raw(float2)] or [Raw(float4)]");
-            diag_note("a GPU reads layers and faces through a sampler, which blends no integers: keep an int image in a RenderTarget's Texture");
+            diag_error(a->at, "Raw takes no arguments, or one numeric image type: [Raw(float)], [Raw(float2)], [Raw(float4)] or "
+                              "[Raw(int)] on a Texture, Texture3D, TextureArray or Cubemap field");
         }
     }
 }
@@ -18373,8 +18475,6 @@ static void check_signature(checker *c, decl *m)
         if (p->sample_role.len && ((p->type.kind != TY_TEXTURE && p->type.kind != TY_TEXTURE3D && !layered_role) || p->mode != PARAM_READ
             || m->is_extern || m->is_async))
             diag_error(p->at, "[Raw(T)] qualifies a read-only Texture, Texture3D, TextureArray or Cubemap parameter of a synchronous GPU helper");
-        else if (p->sample_role.len && layered_role && str_eq_c(p->sample_role, "int"))
-            diag_error(p->at, "a TextureArray or Cubemap holds no integer images: its role is [Raw(float)], [Raw(float2)] or [Raw(float4)]");
         check_param_role(m, p);
         c->grid_param = false;
         if (type_is_asset_collection(p->type)) {
@@ -19280,11 +19380,16 @@ static void check_shader_decl(const checker *c, decl *d)
                 // A vert's is an element of the list its Instanced draw is given, or the values its draw gives
                 // after its name. A frag's is either, or what the draw's vert writes for it. The draw says which
                 p->function_param = false; // Supplied by the draw: its instances, its values, or its vert
-            } else if (value.kind == TY_TEXTURE_ARRAY || value.kind == TY_DEPTH_TEXTURE_ARRAY) {
+            } else if (value.kind == TY_TEXTURE_ARRAY || value.kind == TY_DEPTH_TEXTURE_ARRAY || value.kind == TY_DEPTH_CUBEMAP) {
                 diag_error(at, "a %s reads a %s that's %sa field of a component or singleton it takes, not a parameter of its own",
                            word, type_name(value), value.kind == TY_TEXTURE_ARRAY ? "an asset by its name, or " : "");
-                diag_note("keep it in local state, 'local singleton Ground { TextureArray scans; }', which a view sets, and "
-                          "read it there: 'ground.scans.Sample(uv, layer)'");
+                if (value.kind == TY_DEPTH_CUBEMAP) {
+                    diag_note("keep it in local state, 'local singleton Lamp { DepthCubemap shadows; }', which a view sets, and "
+                              "read it there: 'lamp.shadows.Compare(direction, depth)'");
+                } else {
+                    diag_note("keep it in local state, 'local singleton Ground { TextureArray scans; }', which a view sets, and "
+                              "read it there: 'ground.scans.Sample(uv, layer)'");
+                }
             } else if (value.kind == TY_CUBEMAP) {
                 diag_error(at, "a %s reads a Cubemap that's an asset by its name, or a field of a component or singleton it "
                                "takes, not a parameter of its own", word);
@@ -23532,7 +23637,7 @@ static void check_gpu_only_calls(const checker *c)
             continue;
         }
         if (reads != TY_TEXTURE && reads != TY_DEPTH_TEXTURE && reads != TY_CUBEMAP && reads != TY_TEXTURE3D && reads != TY_TEXTURE_ARRAY
-            && reads != TY_DEPTH_TEXTURE_ARRAY) {
+            && reads != TY_DEPTH_TEXTURE_ARRAY && reads != TY_DEPTH_CUBEMAP) {
             diag_error(site->call->at, "'" STR_FMT "' reads a grid it's passed, which shader code and local workers can call",
                        STR_ARG(site->to->name));
             diag_note_at(site->to->gpu_only_at, "it takes or passes the grid on line %d; here, read the cells through the grid's "

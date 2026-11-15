@@ -2505,26 +2505,35 @@ TIDE_TEST(draw_typed_clears_keep_float_and_integer_bits_when_appended)
     tide_render_targets_free();
 }
 
-// The number formats every device blends make cube faces and array layers; 32-bit floats and integers make none.
-TIDE_TEST(draw_number_cubes_and_arrays_hold_blendable_formats_only)
+// Every number format makes cube faces and array layers, 32-bit floats and integers too (loaded exactly), and a cube
+// of depth alone holds no color: its depth is what's read (tide_cubemap_depth), a color cube's none.
+TIDE_TEST(draw_number_cubes_and_arrays_hold_every_format)
 {
-    const tide_target_format held[4] = {TIDE_TARGET_R8, TIDE_TARGET_RG8, TIDE_TARGET_R16F, TIDE_TARGET_RG16F};
-    for (uint32_t i = 0; i < 4; i++) {
+    const tide_target_format held[7] = {TIDE_TARGET_R8, TIDE_TARGET_RG8, TIDE_TARGET_R16F, TIDE_TARGET_RG16F,
+                                        TIDE_TARGET_R32F, TIDE_TARGET_RGBA32F, TIDE_TARGET_R32I};
+    for (uint32_t i = 0; i < 7; i++) {
         const tide_cubemap_ref cube = tide_cubemap_make_as(8, held[i]);
         TIDE_REQUIRE(cube.target.id != 0);
         TIDE_CHECK(tide_render_target_formats(cube.target.id).count == 1);
         TIDE_CHECK(tide_render_target_formats(cube.target.id).color[0] == held[i]);
         TIDE_CHECK(tide_render_target_samples(cube.target.id) == 1);
+        TIDE_CHECK(tide_cubemap_depth(cube).target.id == TIDE_RENDER_INVALID);
         const tide_texture_array_ref array = tide_texture_array_make((tide_target_size){.width = 8, .height = 4, .scale = 1.0f}, 3, held[i]);
         TIDE_REQUIRE(array.target.id != 0 && array.layers == 3);
         TIDE_CHECK(tide_render_target_formats(array.target.id).color[0] == held[i]);
     }
-    const tide_target_format refused[3] = {TIDE_TARGET_R32F, TIDE_TARGET_RGBA32F, TIDE_TARGET_R32I};
-    for (uint32_t i = 0; i < 3; i++) {
-        TIDE_CHECK(tide_cubemap_make_as(8, refused[i]).target.id == 0);
-        TIDE_CHECK(tide_texture_array_make((tide_target_size){.width = 8, .height = 4, .scale = 1.0f}, 3, refused[i]).target.id == 0);
-    }
     TIDE_CHECK(tide_render_target_formats(tide_cubemap_make_as(8, TIDE_TARGET_RGBA16F).target.id).color[0] == TIDE_TARGET_RGBA16F);
+    // A depth cube: no color, its faces destinations of depth alone, its depth the cube's own id, kept through a reload
+    const tide_cubemap_ref lamp = tide_cubemap_make_as(16, TIDE_TARGET_DEPTH);
+    TIDE_REQUIRE(lamp.target.id != 0);
+    TIDE_CHECK(tide_render_target_formats(lamp.target.id).count == 0 && tide_render_target_cubic(lamp.target.id));
+    const tide_render_target face = tide_cubemap_face(lamp, 3);
+    TIDE_CHECK(tide_render_target_face(face.id) == 3 && tide_render_target_colors(face.id) == 0);
+    const tide_depth_ref depth = tide_cubemap_depth(lamp);
+    TIDE_CHECK(depth.target.id == tide_render_target_cube_of(lamp.target.id) && tide_render_target_cubic(depth.target.id));
+    const tide_render_target again = tide_render_target_recreate(depth.target);
+    TIDE_CHECK(tide_render_target_cubic(again.id) && tide_render_target_formats(again.id).count == 0);
+    TIDE_CHECK(tide_cubemap_depth((tide_cubemap_ref){0}).target.id == 0);
     tide_render_targets_free();
 }
 

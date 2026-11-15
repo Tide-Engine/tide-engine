@@ -53,16 +53,18 @@ static int frame(void *user, const float seconds)
         remade = true;
     }
     tide_draw_reset(&list);
-    tide_gui_begin(&gui, &devices, tide_f2(24, 144), tide_platform_measure_text);
+    tide_gui_begin(&gui, &devices, tide_f2(24, 192), tide_platform_measure_text);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
-    const tide_float2 places[50] = {{4,4},{12,4},{20,4},{4,12},{12,12},{20,12},{4,20},{12,20},{20,20},
+    tide_float2 places[66] = {{4,4},{12,4},{20,4},{4,12},{12,12},{20,12},{4,20},{12,20},{20,20},
         {4,28},{12,28},{20,28},{4,36},{12,36},{20,36},{4,44},{12,44},
         {4,52},{12,52},{20,52},{4,60},{12,60},{20,60},{4,68},{12,68},{20,68},
         {4,76},{12,76},{20,76},{4,84},{12,84},{20,84},{4,92},{12,92},{20,92},{4,100},{12,100},{20,100},
         {4,108},{12,108},{4,116},{12,116},{20,116},{4,124},{4,132},{12,132},{20,132},{4,140},{12,140},{20,140}};
-    uint32_t pixels[50];
-    tide_platform_read_pixels_as(&list, 24, 144, 1, places, 50, pixels);
+    for (unsigned i = 0; i < 15; i++) places[50 + i] = tide_f2(4.0f + 8.0f * (float)(i % 3), 148.0f + 8.0f * (float)(i / 3));
+    places[65] = tide_f2(4, 188);
+    uint32_t pixels[66];
+    tide_platform_read_pixels_as(&list, 24, 192, 1, places, 66, pixels);
     if (++warm < 3) return TIDE_KEEP_RUNNING;
     check(pixels[0], 0, 0, 0, "a draw before the image write sees the earlier black image");
     check(pixels[1], 0, 0, 255, "a draw between writes sees the exact first HDR color with alpha undone");
@@ -83,7 +85,7 @@ static int frame(void *user, const float seconds)
     static const char *const filtered[] = {"R8 blends to the midpoint between two pixels", "R16f blends through a helper, and Point stays exact",
         "R8 and R16f mip levels are means of what was drawn", "R16f gradients choose the smallest image",
         "Rg16f pair blends and reads a level", "Rgba16f four free channels blend and read a level",
-        "blended reads of no image, no array and no cube are zero", "an R16f array layer: cleared, blended and exact",
+        "blended reads of no image, no array and no cube are zero, alpha too", "an R16f array layer: cleared, blended and exact",
         "an R16f array layer's mip level through a helper", "an Rg8 array layer blends both channels",
         "an R16f cube face: blended, cleared faces exact", "a cube face's mip level, and an Rg16f cube face",
         "a 4-sample R16f target's mip level is the mean of what its samples came to",
@@ -98,6 +100,17 @@ static int frame(void *user, const float seconds)
         "a Grid2<byte> by its name reads each cell's 0 to 255", "a Grid2<int> cell changed every frame is sent and read",
         "a Grid2<byte> as a frag's source reads its numbers"};
     for (unsigned i = 0; i < 6; i++) check(pixels[44 + i], 0, 255, 0, grids[i]);
+    static const char *const exact[] = {"R32f blends four exact loads, clamped, repeated, mirrored and through a helper",
+        "Rgba32f blends four free channels exactly, 1e9 too", "an R32f array layer: cleared, nearest, blended, a layer past its last",
+        "an Rgba32f array layer blends exactly, and another reads its clear", "an R32i array's layers are exact ints",
+        "an R32f cube's six faces, each its own clear, by direction", "an R32f cube face drawn in halves, read either side",
+        "R32i and Rgba32f cube faces are exact", "an R32f volume blends its eight cells exactly",
+        "an Rgba16f volume and a Grid3<float> blend through the sampler, a free fourth channel kept",
+        "a Color texture's SampleLevel that names no filter reads between levels", "...and a Color cube's and array's",
+        "a depth cube's depth by a direction: a frag's, the far limit, through a helper",
+        "a depth cube's depth compared, either side of what's stored", "no array, cube or depth cube: zeros, and the far limit"};
+    for (unsigned i = 0; i < 15; i++) check(pixels[50 + i], 0, 255, 0, exact[i]);
+    check(pixels[65], 0, 255, 0, "a frag's own typed Texture handed an R32f image blends it exactly");
     if (local.Images.revision <= 0 || (stage == 2 && local.Images.revision == revision)) failures++;
 #ifdef __wasm__
     if (stage == 0 && !failures) {
@@ -116,7 +129,7 @@ int main(void)
     tide_world_init(&world, 1.0f / 60.0f);
     tide_world_tick(&world);
     tide_local_init(&local);
-    tide_platform_open(&(tide_window_desc){.title = "images", .width = 24, .height = 144, .hidden = true});
+    tide_platform_open(&(tide_window_desc){.title = "images", .width = 24, .height = 192, .hidden = true});
     printf("renderer: %s\n", tide_platform_renderer());
     tide_platform_run(frame, NULL);
 }

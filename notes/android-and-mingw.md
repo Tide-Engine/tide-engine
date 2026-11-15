@@ -263,6 +263,34 @@ twin, made the way the shaders' and readback's are: `tide_add_game(... HOST
     caller's `TIDE_HIDDEN` would make an app's runs here and CI's differ.
     Considered: an extra a setting (`tide.env.TIDE_X`), which needs the
     intent's keys through JNI for nothing more.
+    - **Each setting is said, and the runner holds the app to it** (fixed
+      2026-11-14 after review): the fixtures work out what to expect from the
+      same `getenv` (`depth_reads.c` and `readback.c` from
+      `TIDE_TEST_DEPTH_FALLBACK`, `cull.c` from `TIDE_GPU_CULLING`, `draw.c`
+      from `tide_texture_anisotropy()`), so a variant whose settings never
+      arrived (an app that isn't debuggable, the extra lost, `intent_env`
+      misreading it) ran the default and passed as a copy of its base test.
+      `intent_env` now prints `setting: TIDE_NAME=value` for each it set, and
+      a line for each it left out (not a `TIDE_` name of capitals, digits and
+      underscores; `setenv` failing); an app that isn't debuggable says it
+      left the intent's `tide.env` out; an extra longer than the 1,023 bytes
+      read keeps its whole words and says so (a cut word would be a setting
+      of another value). `run_android.mjs` gathers the `setting:` lines of
+      the app's own pid at every look while it runs (they're its first
+      lines, which a long run could push out of the log's ring before it
+      ends) and from the last read, and fails a run, for each `--run` too,
+      whose app didn't say each of its `--env` exactly, naming the missing
+      ones, with the app's own code where that wasn't 0. `tide_android_runner`
+      tests it: all said, said only while running, one never said (another
+      pid's word for it ignored), none said with the app's code kept, another
+      value, no `--env`, and each of several runs. On the emulator the eight
+      variants' outputs have their `setting:` lines.
+    - Started by hand, several settings need the phone's shell's quotes inside
+      the host's (`--es tide.env "'TIDE_A=1 TIDE_B=2'"`): `adb shell` joins
+      its arguments and the device's shell splits them again, so with the
+      host's quotes alone `TIDE_B=2` was lost (checked on the emulator, from
+      PowerShell: one `setting:` line against two). `docs/tools/cli.md`,
+      Android, says so; the runner quotes for the device (`quote`).
   - `--run <arguments>`, once or more: the app is installed once, its data
     cleared (`pm clear`, as the desktop scripts empty their folder first),
     started for each run in turn with those arguments, printing `--- <arguments>`
@@ -296,7 +324,15 @@ twin, made the way the shaders' and readback's are: `tide_add_game(... HOST
     or a fast desktop: `gpu_time.c` took a pass of the window's to be the
     window's pixels, but the frame it reads back (`tide_platform_read_pixels`)
     is a pass at the window's logical pixels (411 by 914 here, against 1080 by
-    2400), which it now accepts as that; `loading.c` read the loading screen as
+    2400). It first accepted either size for any window pass, which let a
+    window pass of logical pixels through on any display above a scale of 1
+    (review, 2026-11-14); now the readback draws a list of its own, `list` with
+    a second rect in the window's pass (15 vertices where the window's have 9),
+    so that pass alone may be the logical size, measured once at most, and
+    every other window pass must be the window's pixels. The emulator's run
+    says `readback: its window pass measured 1 time, at 411x914`; desktop's
+    (scale 1) 120x64, and the web's readback pass went unmeasured, as any
+    pass may; `loading.c` read the loading screen as
     a 320 by 180 window where it's laid out on the screen's size, and now reads
     it at the window's own, in one read of 844 points rather than a read a
     point. That made a race visible on desktop too: the screen's pipelines are
@@ -309,8 +345,22 @@ twin, made the way the shaders' and readback's are: `tide_add_game(... HOST
     real file is bigger": the emulator's driver (gfxstream over lavapipe) keeps
     nothing in its pipeline cache but the 32 bytes of its header, so a warm
     run reads 32 bytes and caching pipelines does nothing there. The limit is
-    now one byte under the driver's data in the file the last run left, and a
-    whole file is one of at least the two headers (24 and 32 bytes).
+    now one byte under the driver's data in the file the last run left. A
+    whole file was first taken as one of at least the two headers (24 and 32
+    bytes) on every device, which let a desktop regression writing a file of
+    headers alone, no pipelines in it, pass all ten runs (review,
+    2026-11-14). Now the driver is asked apart from the device's own cache
+    (`tide_gpu_vk_pipeline_cache_keeps` in `gpu_vk.c`: a compute shader that
+    does nothing, hand-written SPIR-V 1.0, compiled into an empty cache of its
+    own, whose data must be more than its 32-byte header). Where it keeps
+    pipelines, the outgrown run's file must be more than the headers and a
+    warm run must read more than the driver's header, stricter than before
+    (`read > 0`); where it keeps none, the file must be exactly the headers,
+    and each run says `pipeline cache: this device's driver keeps no
+    pipelines, only its 32-byte header`. This machine's desktop GPU (Windows,
+    sanitize, under the validation layer) keeps them: warm runs read 79,359 bytes and up, the
+    outgrown file 79,409; the emulator says it keeps none, its outgrown file
+    56 bytes.
 - **Not twinned, and why:** runs with no window, which Android refuses ("a
   game runs without a window on desktop only", `tide_platform_open_headless`):
   `tide_platform_gpu_wait_headless`, the benchmarks' `--quick` tests

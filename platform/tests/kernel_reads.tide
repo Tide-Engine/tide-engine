@@ -15,8 +15,8 @@ local singleton Reads
     Cubemap noCube;
     TextureArray noLayers;
     DepthTextureArray noLayerDepths;
-    [Raw(float)] Cubemap noNumberCube;
-    [Raw(float)] TextureArray noNumberLayers;
+    [Raw(float4)] Cubemap noNumberCube;     // Four channels: zeros' alpha is 0, where the dark cube's is 1
+    [Raw(float4)] TextureArray noNumberLayers;
     [Raw(float)] Texture noNumbers;
     // Disposed before they're read
     Texture goneColor;
@@ -25,6 +25,8 @@ local singleton Reads
     TextureArray goneLayers;
     DepthTextureArray goneLayerDepths;
     [Raw(float)] Texture goneNumbers;
+    [Raw(float4)] Cubemap goneNumberCube;
+    [Raw(float4)] TextureArray goneNumberLayers;
     // Given
     RenderTarget deep;
     DepthTexture depth;
@@ -57,6 +59,7 @@ local singleton Reads
 Color Verdict(bool good) { return good ? Color.green : Color.red; }
 bool Near(float a, float b) { return Math.Abs(a - b) < 0.02; }
 bool NearColor(Color a, Color b) { return Near(a.r, b.r) && Near(a.g, b.g) && Near(a.b, b.b) && Near(a.a, b.a); }
+bool Zeros(float4 v) { return v.x == 0 && v.y == 0 && v.z == 0 && v.w == 0; }
 
 [Group(1)]
 compute Missing(Reads reads)
@@ -66,8 +69,8 @@ compute Missing(Reads reads)
     reads.results.color[int2(1, 0)] = Verdict(NearColor(reads.noCube.SampleLevel(float3(0, 0, 1), 0), Color(0, 0, 0, 1)));
     reads.results.color[int2(2, 0)] = Verdict(NearColor(reads.noLayers.SampleLevel(uv, 0, 0), Color.white));
     reads.results.color[int2(3, 0)] = Verdict(reads.noLayerDepths.Sample(uv, 0) == 1 && reads.noLayerDepths.Compare(uv, 0, 0.5) == 1);
-    reads.results.color[int2(4, 0)] = Verdict(reads.noNumberCube.SampleLevel(float3(0, 0, 1), 0) == 0
-        && reads.noNumberLayers.SampleLevel(uv, 0, 0) == 0 && reads.noNumbers.SampleLevel(uv, 0) == 0);
+    reads.results.color[int2(4, 0)] = Verdict(Zeros(reads.noNumberCube.SampleLevel(float3(0, 0, 1), 0))
+        && Zeros(reads.noNumberLayers.SampleLevel(uv, 0, 0)) && reads.noNumbers.SampleLevel(uv, 0) == 0);
 }
 
 [Group(1)]
@@ -80,6 +83,8 @@ compute Disposed(Reads reads)
     reads.results.color[int2(8, 0)] = Verdict(NearColor(reads.goneLayers.SampleLevel(uv, 0, 0), Color.white)
         && reads.goneLayerDepths.Sample(uv, 0) == 1);
     reads.results.color[int2(9, 0)] = Verdict(reads.goneNumbers.SampleLevel(uv, 0) == 0);
+    reads.results.color[int2(15, 0)] = Verdict(Zeros(reads.goneNumberCube.SampleLevel(float3(0, 0, 1), 0))
+        && Zeros(reads.goneNumberLayers.SampleLevel(uv, 0, 0)));
 }
 
 [Group(1)]
@@ -158,6 +163,10 @@ view Show(mut Reads reads)
         reads.goneLayers = TextureArray(8, 8, 2, 1);
         reads.goneLayerDepths = reads.goneLayers.depth;
         reads.goneLayers.Dispose();
+        reads.goneNumberCube = Cubemap(8, Format.Rgba16f);
+        reads.goneNumberCube.Dispose();
+        reads.goneNumberLayers = TextureArray(8, 8, 2, 1, Format.Rgba16f);
+        reads.goneNumberLayers.Dispose();
         reads.deep = RenderTarget(8, 8, 1, Format.Depth);
         reads.depth = reads.deep.depth;
         reads.cube = Cubemap(8);

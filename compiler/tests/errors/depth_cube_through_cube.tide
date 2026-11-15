@@ -1,0 +1,6 @@
+// expect: a frag reads a Cubemap with 'Sample(direction)': its faces are the view's to draw into
+// expect: a depth cube's depth is read through a DepthCubemap field of a component or singleton the frag takes, which the view sets: 'lamp.shadows = lamp.cube.depth;'
+scene Main { }
+local singleton Lamp { Cubemap cube; }
+frag Lit(Vertex vertex,out Color color,Lamp lamp) { color=Color(lamp.cube.depth.Sample(float3(vertex.uv,1)),0,0); }
+view Show(mut Lamp lamp) { lamp.cube=Cubemap(64,Format.Depth); List<Vertex> quad=[Vertex {position=float2(0)},Vertex {position=float2(1,0)},Vertex {position=float2(0,1)}]; Draw.Mesh(quad,[0,1,2],Lit); }

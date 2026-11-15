@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "tide/draw.h"
+#include "tide/page.h" // tide_alloc_zeroed
 #include "tide_test.h"
 #include "draw_test.h"
 
@@ -931,5 +932,37 @@ TIDE_TEST(draw_pixel_reads_bound_slots_and_reject_disposal)
     tide_gpu_read_result result;
     TIDE_CHECK(ticket && tide_gpu_list_read_poll(ticket, &result) && !result.ok);
     tide_gpu_list_read_forget(ticket);
+    tide_gpu_reads_share(NULL);
+}
+
+// A build unloads (a hot reload, tide_run_unload's order: its targets, then its lists) with target reads pending in
+// the table the host shares with the next build: one asked for names an image the unloaded build's registry had, and
+// fails then; one begun has its own copy, finishes as the renderer has it, and is polled as any other.
+TIDE_TEST(draw_pixel_reads_pending_through_a_build_unload)
+{
+    static tide_gpu_reads table;
+    memset(&table, 0, sizeof table);
+    tide_gpu_reads_share(&table);
+    const tide_render_target target = tide_render_target_make(2, 2);
+    const uint32_t asked = tide_render_target_read_begin(target);
+    const uint32_t begun = tide_render_target_read_begin(target);
+    TIDE_REQUIRE(asked && begun && asked != begun);
+    tide_gpu_read_request *r = &table.requests[begun & (TIDE_GPU_READS - 1u)];
+    TIDE_REQUIRE(r->state == TIDE_GPU_READ_ASKED);
+    r->state = TIDE_GPU_READ_BEGUN; // As the renderer has it: its kernel ran into its own copy, which is on its way back
+    r->width = r->height = 2;
+    r->bytes = (16u + TIDE_GPU_LIST_HEADER_WORDS) * 4u;
+    r->data = tide_alloc_zeroed(1, r->bytes);
+    tide_render_targets_free();
+    tide_gpu_lists_free();
+    tide_gpu_read_result result;
+    TIDE_CHECK(tide_gpu_list_read_poll(asked, &result) && !result.ok); // Failed, before any renderer resolves its target
+    TIDE_CHECK(table.requests[asked & (TIDE_GPU_READS - 1u)].state == TIDE_GPU_READ_FAILED);
+    TIDE_CHECK(r->state == TIDE_GPU_READ_BEGUN && !tide_gpu_list_read_poll(begun, &result));
+    tide_gpu_read_finished(r, true);
+    TIDE_CHECK(tide_gpu_list_read_poll(begun, &result) && result.ok && result.width == 2 && result.height == 2 && result.count == 4);
+    tide_gpu_list_read_forget(asked);
+    tide_gpu_list_read_forget(begun);
+    for (uint32_t i = 0; i < TIDE_GPU_READS; i++) TIDE_CHECK(table.requests[i].state == TIDE_GPU_READ_FREE);
     tide_gpu_reads_share(NULL);
 }

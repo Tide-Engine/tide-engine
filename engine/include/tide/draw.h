@@ -1198,12 +1198,23 @@ typedef struct tide_cubemap_ref {
 } tide_cubemap_ref;
 
 // A cube to draw into: six images of `size` by `size` pixels (exactly: a
-// cube's faces aren't the window's to scale), each of `format`, a color's
-// (TIDE_TARGET_RGBA8 for anything but TIDE_TARGET_RGBA16F), black until
-// they're drawn into, with depth of their own. A dead one, having said so,
-// for a size there's no image of.
+// cube's faces aren't the window's to scale), each of `format` (any color or
+// number format: TIDE_TARGET_RGBA8 for one there's none of), black until
+// they're drawn into, with depth of their own; or with TIDE_TARGET_DEPTH, six
+// faces of depth alone, read as the cube's depth (tide_cubemap_depth), at the
+// far limit until they're drawn into. A dead one, having said so, for a size
+// there's no image of.
 tide_cubemap_ref tide_cubemap_make_as(float size, tide_target_format format);
 tide_cubemap_ref tide_cubemap_make(float size); // ...of TIDE_TARGET_RGBA8
+// A depth cube's depth, Tide's DepthCubemap: what a frag reads by a direction (Sample, Compare), its id the cube's
+// own. TIDE_RENDER_INVALID for a cube of colors, whose faces' depths aren't kept to read, and for the pack's.
+static inline tide_depth_ref tide_cubemap_depth(const tide_cubemap_ref cube)
+{
+    const tide_render_target resolved = tide_render_target_resolve(cube.target);
+    const bool depth = tide_render_target_cubic(resolved.id) && tide_render_target_colors(resolved.id) == 0;
+    const uint64_t id = depth ? tide_render_target_cube_of(resolved.id) : cube.target.id ? TIDE_RENDER_INVALID : 0u;
+    return (tide_depth_ref){.target = {.id = id, .size = resolved.size}};
+}
 // Its face `face` (0 to 5: +x, -x, +y, -y, +z, -z) as a destination: what a
 // camera at the cube's middle that looks along that axis with a field of
 // view of 90 degrees sees, with +y up for the four around, and for the one
@@ -1750,18 +1761,28 @@ typedef enum tide_shader_read {
     // (TIDE_GPU_READ_ARRAY, _CUBE), their numbers as stored, and zeros where none is given
     TIDE_SHADER_READ_NUMBER_ARRAY = 14,
     TIDE_SHADER_READ_NUMBER_CUBE = 15,
+    // A typed Texture3D (an Rgba16f volume, a Grid3<float>'s R16f) blended through a filtering sampler, read as any
+    // volume is (TIDE_GPU_READ_VOLUME); zeros where none is given, and for a 32-bit volume, which no device blends
+    TIDE_SHADER_READ_NUMBER_VOLUME_BLEND = 16,
+    // A typed TextureArray's layers of 32-bit floats or ints, or a typed Cubemap's faces of them (a cube of R32f,
+    // Rgba32f or R32i is six layers), loaded at exact texels from a `texture_2d_array<f32>` or `<i32>` through no
+    // sampler (TIDE_GPU_READ_NUMBER_ARRAY, _INT_ARRAY); zeros where none is given
+    TIDE_SHADER_READ_NUMBER_LAYERS = 17,
+    TIDE_SHADER_READ_INT_LAYERS = 18,
 } tide_shader_read;
 
 // Whether a shader's read is a typed image's through a sampler: none given reads as zeros, not a color's white.
 static inline bool tide_shader_read_blends_numbers(const uint8_t read)
 {
-    return read >= TIDE_SHADER_READ_NUMBER_BLEND && read <= TIDE_SHADER_READ_NUMBER_CUBE;
+    return (read >= TIDE_SHADER_READ_NUMBER_BLEND && read <= TIDE_SHADER_READ_NUMBER_CUBE)
+        || read == TIDE_SHADER_READ_NUMBER_VOLUME_BLEND;
 }
 
-// Whether a shader's read loads exact pixels through no sampler: a list's numbers, or a typed image's nearest pixel.
+// Whether a shader's read loads exact pixels through no sampler: a list's numbers, or a typed image's exact pixels.
 static inline bool tide_shader_read_loads(const uint8_t read)
 {
-    return read == TIDE_SHADER_READ_DATA || (read >= TIDE_SHADER_READ_NUMBER && read <= TIDE_SHADER_READ_INT_VOLUME);
+    return read == TIDE_SHADER_READ_DATA || (read >= TIDE_SHADER_READ_NUMBER && read <= TIDE_SHADER_READ_INT_VOLUME)
+        || read == TIDE_SHADER_READ_NUMBER_LAYERS || read == TIDE_SHADER_READ_INT_LAYERS;
 }
 
 // The most bytes of the game's a shader's uniforms hold, after the engine's
@@ -1919,7 +1940,7 @@ static inline uint32_t tide_shader_samplers(const tide_shader *s, uint8_t reads[
         const uint8_t read = s->texture_reads[i];
         reads[i] = (s->image_writes >> i & 1u) || tide_shader_read_loads(read) ? (uint8_t)TIDE_SHADER_READ_DATA
                  : read == TIDE_SHADER_READ_ARRAY || read == TIDE_SHADER_READ_VOLUME || read == TIDE_SHADER_READ_NUMBER_BLEND
-                   || read == TIDE_SHADER_READ_NUMBER_ARRAY ? (uint8_t)TIDE_SHADER_READ_COLOR
+                   || read == TIDE_SHADER_READ_NUMBER_ARRAY || read == TIDE_SHADER_READ_NUMBER_VOLUME_BLEND ? (uint8_t)TIDE_SHADER_READ_COLOR
                  : read == TIDE_SHADER_READ_NUMBER_CUBE ? (uint8_t)TIDE_SHADER_READ_CUBE
                  : read == TIDE_SHADER_READ_DEPTH_ARRAY ? (uint8_t)TIDE_SHADER_READ_DEPTH : read;
     }
@@ -2189,10 +2210,11 @@ enum { TIDE_GPU_READS = 64 };
 typedef struct tide_gpu_read_result {
     bool ok;
     int32_t count;
-    int32_t width, height; // Pixel reads
+    int32_t width, height; // Pixel reads: the part read, rows from the top
     uint32_t stride;
     uint32_t step; // Pixel reads: the words from one pixel to the next, `stride` or more
     const uint32_t *words;
+    int32_t depth; // A volume's read: its cells along z (`count` is width * height * depth); 1 for an image's
 } tide_gpu_read_result;
 // `await target.Read...()`: which of a target's images a read is of, and as what. A color image is read as the
 // type its format holds: TIDE_TARGET_READ_COLOR for RGBA8 and RGBA16F (straight alpha), FLOAT for R8, R16F and
@@ -2228,8 +2250,14 @@ static inline bool tide_target_read_fits(const uint32_t format, const uint32_t k
     }
 }
 uint32_t tide_render_target_read_begin(tide_render_target target); // Its first color image, as TIDE_TARGET_READ_COLOR
-uint32_t tide_render_target_read_begin_as(tide_render_target target, int32_t image, uint32_t kind);
-// The grid of a read that's done: `shape`'s cells are the read's pixels (as many bytes each), or it's no grid.
+uint32_t tide_render_target_read_begin_as(tide_render_target target, int32_t image, uint32_t kind); // ...all of it
+// A part of it: `from` its first pixel (x right, y down, and a Texture3D's z, 0 for an image), `size` how many along
+// each axis (1 deep for an image), clamped to what the image has as the read begins; one with none of it there fails.
+// A Texture3D (its target, TIDE_RENDER_VOLUME) is read the same way, a box of its cells, image 0.
+uint32_t tide_render_target_read_begin_part(tide_render_target target, int32_t image, uint32_t kind, const int32_t from[3],
+                                            const int32_t size[3]);
+// The grid of a read that's done: `shape`'s cells are the read's pixels (as many bytes each), of two dimensions for an
+// image's and three for a volume's, or it's no grid.
 tide_grid tide_render_target_read_grid(tide_gpu_read_result result, const tide_grid_shape *shape);
 uint32_t tide_gpu_list_read_begin(tide_gpu_list list, bool count_only);
 bool tide_gpu_list_read_poll(uint32_t ticket, tide_gpu_read_result *out);
@@ -2253,6 +2281,9 @@ typedef struct tide_gpu_read_request {
     uint8_t image;  // A target's read: which color image, from 0
     uint8_t kind;   // ...and as what (tide_target_read)
     uint32_t age;   // Frames since it was done (tide_gpu_reads_frame)
+    int32_t from[3]; // A target's read: the part asked for, its first pixel (a volume's cell), and
+    int32_t size[3]; // ...how many along each axis, which the renderer clamps to the image (`width` and `height`)
+    int32_t depth;   // ...and a volume's cells along z it read, as `width` and `height` are along x and y
 } tide_gpu_read_request;
 // The requests and the serial their tickets go by. Each copy of the engine has one, and a host that loads the game
 // as a library hands its own to each library it loads (tide_gpu_reads_share, through tide_host_game.gpu_reads_share),

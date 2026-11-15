@@ -31,6 +31,7 @@
 #include <android/native_activity.h>
 #include <android/native_window.h>
 #include <dlfcn.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <jni.h>
 #include <pthread.h>
@@ -251,14 +252,24 @@ const char *tide_android_cache_path(void)
     return cache;
 }
 
-// One of the intent's strings into `text`: false where it has none.
+// One of the intent's strings into `text`: false where it has none. One longer than `text` keeps its whole words
+// that fit, saying so: a word cut short would be another argument, or a setting with another value.
 static bool intent_string(JNIEnv *env, jobject intent, jmethodID get_extra, const char *name, char *text, const size_t size)
 {
     jstring key = (*env)->NewStringUTF(env, name);
     jstring value = get_extra ? (jstring)(*env)->CallObjectMethod(env, intent, get_extra, key) : NULL;
     if (!value) return false;
     const char *chars = (*env)->GetStringUTFChars(env, value, NULL);
-    snprintf(text, size, "%s", chars ? chars : "");
+    const char *const from = chars ? chars : "";
+    snprintf(text, size, "%s", from);
+    if (strlen(from) >= size) {
+        if (from[size - 1u] != ' ') { // The last word was cut
+            char *const space = strrchr(text, ' ');
+            if (space) *space = '\0';
+            else text[0] = '\0';
+        }
+        printf("tide: the intent's %s is longer than %zu bytes; the words past that are left out\n", name, size - 1u);
+    }
     if (chars) (*env)->ReleaseStringUTFChars(env, value, chars);
     return true;
 }
@@ -281,7 +292,8 @@ static bool debuggable(JNIEnv *env, const jobject activity, const jclass activit
 
 // The intent's "tide.env", a debuggable app's: Tide's settings, NAME=value words apart (as cmake/run_android.mjs
 // gives a test's), into the environment before main, as a program run from a shell has them there. A name that isn't
-// TIDE_ and capitals, digits and underscores is left out.
+// TIDE_ and capitals, digits and underscores is left out. Each is said, `setting: NAME=value` for one set, so whoever
+// started the app can tell they were taken: run_android.mjs fails a run whose app didn't say each of its own.
 static void intent_env(char *text)
 {
     char *rest = NULL;
@@ -291,9 +303,14 @@ static void intent_env(char *text)
         for (const char *c = word + 5; named && c < equals; c++) {
             named = (*c >= 'A' && *c <= 'Z') || (*c >= '0' && *c <= '9') || *c == '_';
         }
-        if (!named) continue;
+        if (!named) {
+            printf("tide: the setting '%s' is left out: a setting is TIDE_NAME=value, the name capitals, digits and "
+                   "underscores\n", word);
+            continue;
+        }
         *equals = '\0';
-        setenv(word, equals + 1, 1);
+        if (setenv(word, equals + 1, 1) == 0) printf("setting: %s=%s\n", word, equals + 1);
+        else printf("tide: the setting %s couldn't be set (%s)\n", word, strerror(errno));
     }
 }
 
@@ -324,9 +341,10 @@ static int intent_args(char *text, const size_t size, char **argv, const int max
             }
         }
         static char settings[1024];
-        if (debuggable(env, activity, activity_class)
-            && intent_string(env, intent, get_extra, "tide.env", settings, sizeof settings)) {
-            intent_env(settings);
+        if (intent_string(env, intent, get_extra, "tide.env", settings, sizeof settings)) {
+            if (debuggable(env, activity, activity_class)) intent_env(settings);
+            else printf("tide: the settings this app was started with (the intent's tide.env) are left out: an app built "
+                        "to ship takes none\n");
         }
     }
     if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);

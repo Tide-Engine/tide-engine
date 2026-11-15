@@ -1,4 +1,5 @@
-// expect: image 'source' is blended or read at a mip level, and Format.Rgba32f is read at its nearest pixel on every device: draw the numbers into Format.Rgba16f
+// expect: image 'source' is read between its smaller images, and Format.Rgba32f has none: read it with Sample(uv) or Filter.Bilinear, or draw the numbers into Format.Rgba16f
+// expect: no GPU blends 32-bit floats on every device, so tidec loads them exactly
 scene Main { }
 local singleton Images { RenderTarget target; [Raw(float4)] Texture source; }
 frag Read(Vertex vertex,out Color color,Images images) { color=Color(images.source.Sample(vertex.uv,Filter.Trilinear).x,0,0); }

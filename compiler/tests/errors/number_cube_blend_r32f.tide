@@ -1,0 +1,6 @@
+// expect: cube 'faces' is blended or read at a mip level, and Format.R32f faces are read at their nearest pixel: read it with Sample(direction) or Filter.Point, or make its faces Format.R16f
+// expect: no GPU blends 32-bit floats on every device, so tidec loads a cube of them exactly
+scene Main { }
+local singleton Room { [Raw(float)] Cubemap faces; }
+frag Read(Vertex vertex,out Color color,Room room) { color=Color(room.faces.Sample(float3(vertex.uv,1),Filter.Bilinear),0,0); }
+view Show(mut Room room) { room.faces=Cubemap(8,Format.R32f); List<Vertex> quad=[Vertex {position=float2(0)},Vertex {position=float2(1,0)},Vertex {position=float2(0,1)}]; Draw.Mesh(quad,[0,1,2],Read); }

@@ -1,3 +1,14 @@
+## Exact loads, cube face math and depth cubes in shader.c (2026-11-14)
+
+Where a typed read can't go through a sampler the same way everywhere, tidec writes the read itself: R32f/Rgba32f
+Bilinear as four (a volume's eight) `textureLoad`s blended with `mix` (`ex_numeric_sample`, the wrap applied to the
+uv and, through `tide_index{2,3}_{0,1,2}`, to the corners), a typed array's Point as one load from an unfilterable
+`texture_2d_array`, and a 32-bit cube's or a depth cube's face and place from the direction (`tide_cube_face`),
+read from the six layers it's held as. The read kind comes from `sampling_of`'s `exact_sampling`, which knows a
+typed field's format from its assignments and a frag's own Texture's from its draw (`shader.source_format`).
+Depth cubes read through `tide_depth_cube<t>_<s>`/`tide_compare_cube<t>_<s>`, `DEPTH_ARRAY` reads to the runtime.
+Shader goldens `exact_numbers` and `depth_cubes`; everything else in render-targets.md, top.
+
 ## A frag reads its vertex's ints, flat (2026-11-14)
 
 From an audit: a frag reading `corner.material` (an int of its vertex) was refused with a note to keep it a float
