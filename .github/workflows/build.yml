@@ -261,7 +261,10 @@ jobs:
     needs: version
     runs-on: ubuntu-24.04
     env:
-      TIDE_VERSION: ${{ needs.version.outputs.version || '0.0.0-dev' }}
+      # Off dev and release no version is claimed: the packages there are a
+      # development build's (VERSION's, with -dev, as CMakeLists.txt works out
+      # in a checkout without tags), and the plugin they carry must match.
+      TIDE_VERSION: ${{ needs.version.outputs.version }}
     defaults:
       run:
         shell: bash
@@ -280,7 +283,7 @@ jobs:
       - name: Build and verify
         run: |
           chmod +x gradlew
-          ./gradlew buildPlugin buildCliInstaller verifyPlugin -PpluginVersion="$TIDE_VERSION"
+          ./gradlew buildPlugin buildCliInstaller verifyPlugin -PpluginVersion="${TIDE_VERSION:-$(head -n 1 ../../VERSION)-dev}"
           mv build/distributions/tide-*.zip build/distributions/tide-jetbrains.zip
       - uses: actions/upload-artifact@v4
         with:
