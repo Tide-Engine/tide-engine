@@ -1,3 +1,28 @@
+## Awaited loads and listings of the server's store (2026-11-15)
+
+`await Storage.Load(key)` (`List<byte> fails IOError`) and `await Storage.List(prefix[, after])` (`StorageKeys fails
+IOError`) in match tasks. Every rule is Provisional, Claude's picks (spec: The server's store, Awaiting a load or a
+listing; Tasks, the note dated 2026-11-15); what was built, its runtime side, measurements and tests are in
+`notes/voxels.md`, section 3d.
+
+- **An engine await that isn't a builtin task.** `check_storage_static` sees `c->awaiting == e` and returns the result
+  type, marking `expr.storage_await` and `decl.awaits_store`; without `await` the call keeps its event form and its void
+  type, so there's no `builtin_task_start` handle (a kept call is the "doesn't produce a value" error with a note).
+  `check_await` takes it as it takes `Web.Fetch`. It notes the task's side as the match's (`note_task_side`), and a
+  task already local is refused with a message of its own.
+- **A causal site** (`causal_expr`): the operation's identity is `{tide_identity_clock, tide_causal_next(site)}`, a
+  spawn's there, so it's the same on every machine, survives snapshots with the frame's counters, and is never two
+  operations'. A task handle's identity wasn't used: most tasks have none, and it's the private registry's.
+- **The frame** has the request (key, `after`, kind, op) and the answer as the failable result's fields, only in a frame
+  of a function that awaits the store itself; frames that await one that does reach it through `tide_await_*`.
+  `gen_stored_await` returns `INT32_MAX` until `tide_stored_answered`, so the task pass never wakes it by time; the
+  answer sets the row's `wake` to the tick it's given to.
+- **`StorageKeys`** is Tide in the storage prelude, with `Listed` (`STORAGE_PRELUDE_LISTED`), so a listing that's only
+  an event's adds an unused struct to its program.
+
+Tests: `tidec_e2e_storage_await`, `tidec_e2e_storage_await_shards`, `tidec_error_storage_await_*` (nine),
+`lsp_storage_awaited_completes_and_hovers`.
+
 ## Local tasks use local fields (2026-11-14)
 
 The voxel world's gap (`notes/voxels.md`, section 5): a local task couldn't use a match component's local

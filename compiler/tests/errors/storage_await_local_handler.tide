@@ -1,0 +1,10 @@
+// expect: Storage.Load is the match's: the machine that runs the match keeps what match code saves
+// expect: local code keeps this machine's own files with File and Directory
+scene Main { }
+local singleton Menu { int bytes; }
+local event Opened { }
+local async event(Opened) Open(mut Menu menu)
+{
+    var got = await Storage.Load("menu") ?? [];
+    menu.bytes = got.count;
+}

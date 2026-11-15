@@ -13064,6 +13064,53 @@ TIDE_TEST(lsp_storage_completes_hovers_and_names_listings)
     TIDE_CHECK(has(last_sent(), "\"severity\":1"));
 }
 
+// What a match task awaits of the store: after `await`, the load and the listing whose answers are its values, their
+// forms on hover first, and StorageKeys' fields
+TIDE_TEST(lsp_storage_awaited_completes_and_hovers)
+{
+    start();
+    const char *completion = complete("scene Main { }\nsingleton Seen { int n; }\n"
+                                      "async void Fill(mut Seen seen)\n{\n    var got = await Storage.$\n}\n");
+    TIDE_CHECK(offers(completion, "Load") && offers(completion, "List") && !offers(completion, "Save")
+               && !offers(completion, "Delete") && has(completion, "List<byte> fails IOError")
+               && has(completion, "StorageKeys fails IOError"));
+    completion = complete("scene Main { }\nevent Ask { }\nsingleton Seen { int n; }\n"
+                          "async event(Ask ask) Fill(mut Seen seen)\n{\n    var got = await Storage.$\n}\n");
+    TIDE_CHECK(offers(completion, "Load") && offers(completion, "List"));
+    // A local task's: the store isn't this machine's
+    completion = complete("scene Main { }\nlocal singleton Menu { int n; }\n"
+                          "async void Fill(mut Menu menu)\n{\n    var got = await Storage.$\n}\n");
+    TIDE_CHECK(!offers(completion, "Load") && !offers(completion, "List"));
+    open_document("scene Main { }\nsingleton Seen { int n; }\n"
+                  "async void Fill(mut Seen seen)\n{\n"
+                  "    if (await Storage.Lo$ad(\"chunk\") is List<byte> bytes) seen.n = bytes.count;\n}\n"
+                  "system S(mut Seen seen) { if (seen.n == 0) Fill(seen); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "await Storage.Load(string key) -> List<byte> fails IOError") && has(hover, "IOError.NotFound")
+               && has(hover, "Storage.Load(string key, Entity entity)"));
+    TIDE_CHECK(strstr(hover, "await Storage.Load") < strstr(hover, "Storage.Load(string key, Entity entity)"));
+    open_document("scene Main { }\nsingleton Seen { int n; }\n"
+                  "async void Count(mut Seen seen)\n{\n"
+                  "    var page = await Storage.List(\"chunks/\") ?? default;\n"
+                  "    seen.n = page.ke$ys.count;\n}\n"
+                  "system S(mut Seen seen) { if (seen.n == 0) Count(seen); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "List<string>"));
+    open_document("scene Main { }\nsingleton Seen { int n; }\n"
+                  "async void Count(mut Seen seen)\n{\n"
+                  "    var page = await Storage.List(\"chunks/\", $\"chunks/9\") ?? default;\n"
+                  "    seen.n = page.keys.count;\n}\n"
+                  "system S(mut Seen seen) { if (seen.n == 0) Count(seen); }\n");
+    const char *help = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(help, "await Storage.List(string prefix, string after) -> StorageKeys fails IOError"));
+    // Without await, the plain forms: a statement asks for an event
+    completion = complete("scene Main { }\nsingleton Seen { int n; }\n"
+                          "async void Fill(mut Seen seen)\n{\n    Storage.$\n}\n");
+    TIDE_CHECK(offers(completion, "Save") && offers(completion, "Load") && has(completion, "Storage.Load(string key)"));
+}
+
 TIDE_TEST(lsp_humanoid_retargeting_completion_and_calibration_help)
 {
     start();

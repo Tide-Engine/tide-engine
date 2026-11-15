@@ -1,0 +1,10 @@
+// expect: 'await' waits, and only async functions and handlers can
+// expect: make it async: 'async int Size(...)'
+scene Main { }
+singleton Seen { int bytes; }
+int Size(string key)
+{
+    var got = await Storage.Load(key) ?? [];
+    return got.count;
+}
+system Ask(mut Seen seen) { seen.bytes = Size("chunk"); }

@@ -39,9 +39,10 @@ void builtins_use_io(const decl *bytes, const decl *paths);
 const char *web_prelude(size_t *len);
 bool web_prelude_wanted(const char *text, size_t len);
 // The server's store (Storage.Save, Load, Delete and List in match code): the
-// events a load's and a listing's answers come as, Loaded and Listed, are
-// Tide's own code the same way, which a program that loads or lists compiles
-// (storage_prelude_wanted: which of them its code names).
+// events a load's and a listing's answers come as, Loaded and Listed, and
+// StorageKeys, what an awaited listing gives, are Tide's own code the same way,
+// which a program that loads or lists compiles (storage_prelude_wanted: which
+// of them its code names; StorageKeys comes with Listed).
 #define STORAGE_PRELUDE_PATH "<tide>/storage.tide"
 enum { STORAGE_PRELUDE_LOADED = 1, STORAGE_PRELUDE_LISTED = 2 };
 const char *storage_prelude(unsigned wanted, size_t *len);

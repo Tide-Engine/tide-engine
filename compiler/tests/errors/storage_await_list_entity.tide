@@ -1,0 +1,10 @@
+// expect: an awaited listing's keys are the task's, so it names no entity
+// expect: without 'await', 'Storage.List(prefix, entity);' sends the entity a Listed event instead
+scene Main { }
+component Atlas { int keys; }
+async void Count(mut Atlas atlas, Entity at)
+{
+    var page = await Storage.List("chunks/", at) ?? default;
+    atlas.keys = page.keys.count;
+}
+system Ask(mut Atlas atlas) { if (atlas.keys == 0) Count(atlas, this); }

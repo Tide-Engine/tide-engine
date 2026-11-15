@@ -1744,7 +1744,7 @@ static void causal_expr(expr *e, uint32_t *sites)
 {
     if (!e) return;
     e->causal_site = *sites;
-    if (e->prefab || e->call == CALL_SPAWN || e->call == CALL_LOAD || e->call == CALL_SEND
+    if (e->prefab || e->call == CALL_SPAWN || e->call == CALL_LOAD || e->call == CALL_SEND || e->storage_await
         || (e->method && (e->method->acts[0] || e->method->acts[1] || e->method->is_async || e->method->starts_tasks))) (*sites)++;
     causal_expr(e->object, sites); causal_expr(e->lhs, sites); causal_expr(e->rhs, sites); causal_expr(e->cond, sites);
     for (int i = 0; i < e->args.count; i++) causal_expr(e->args.items[i], sites);
@@ -6419,6 +6419,61 @@ static void gen_worker_snapshot(gen *g, type t, const char *place, int depth);
 static void gen_worker_own(gen *g, type t, const char *place, const char *where);
 static bool worker_has_storage(type t);
 
+// await Storage.Load(key), await Storage.List(prefix[, after]) in a match task, at its point `k`: the request is
+// the frame's, with an identity of its own (tide_stored_op: the identity clock and a cause, as a spawn's), which its
+// answer names. The task waits with no tick to look again at, until tide_game.stored puts the answer in its frame
+// (tide_stored_put_*) and wakes it, in the tick the answer is given to: the same tick on every machine. Only the
+// server's own run of the tick asks (tide_storage_ask does nothing unbound); a player's machine waits for the
+// same answer from the frame.
+static void gen_stored_await(gen *g, expr *e, const char *name, const int k)
+{
+    sb *o = &g->c;
+    const expr *call = e->lhs;
+    const bool list = str_eq_c(call->name, "List");
+    const char *kind = list ? "TIDE_STORAGE_LIST" : "TIDE_STORAGE_LOAD";
+    line(g, o, "{");
+    g->indent++;
+    indent(g, o);
+    sb_printf(o, "const tide_str tide_stored_key%d = ", k);
+    gen_as(g, o, call->args.items[0], call->arg_want.items[0]);
+    sb_put(o, ";\n");
+    indent(g, o);
+    sb_printf(o, "const tide_str tide_stored_after%d = ", k);
+    if (list && call->args.count == 2) gen_as(g, o, call->args.items[1], call->arg_want.items[1]);
+    else sb_put(o, "(tide_str){0}");
+    sb_put(o, ";\n");
+    line(g, o, "tide_f->tide_stored_op = (tide_entity){tide_w->tide_identity_clock, tide_causal_next(&tide_causal, %uu)};",
+         call->causal_site);
+    line(g, o, "tide_f->tide_stored_kind = %s;", kind);
+    line(g, o, "tide_f->tide_stored_answered = 0;");
+    line(g, o, "tide_text_set(&tide_f->tide_stored_key, tide_stored_key%d, TIDE_IN_MATCH);", k);
+    line(g, o, "tide_text_set(&tide_f->tide_stored_after, tide_stored_after%d, TIDE_IN_MATCH);", k);
+    line(g, o, "tide_storage_ask(tide_w, %s, tide_stored_key%d, (tide_list){0}, tide_stored_after%d, TIDE_STORAGE_TO_TASK, "
+               "tide_f->tide_stored_op);", kind, k, k);
+    g->indent--;
+    line(g, o, "}");
+    line(g, o, "tide_stored_resume%d:;", k);
+    line(g, o, "if (!tide_f->tide_stored_answered) {");
+    g->indent++;
+    gen_spill_live(g);
+    line(g, o, "tide_f->tide_state = %d;", k);
+    line(g, o, "return INT32_MAX; // No tick to look again at: its answer wakes it");
+    g->indent--;
+    line(g, o, "}");
+    line(g, o, "%s %s;", c_type(e->type), name);
+    gen_reload(g, name, list ? "tide_f->tide_stored_list" : "tide_f->tide_stored_load", e->type);
+    line(g, o, "tide_stored_done_%s(tide_f);", type_cname(g->task->info->frame));
+    e->hoisted = name;
+    line(g, o, "if (0) {");
+    line(g, o, "tide_resume%d:;", k);
+    g->indent++;
+    gen_reload_live(g);
+    line(g, o, "goto tide_stored_resume%d;", k);
+    g->indent--;
+    line(g, o, "}");
+    task_declare(g, name, e->type);
+}
+
 static void gen_await(gen *g, expr *e, const char *name)
 {
     if (e->lhs->type.kind == TY_STRUCT && e->lhs->type.decl->task_handle) {
@@ -6434,6 +6489,10 @@ static void gen_await(gen *g, expr *e, const char *name)
     const expr *call = e->lhs;
     const int k = ++t->points;
     const char *where = world_where(t->local);
+    if (call->storage_await) {
+        gen_stored_await(g, e, name, k);
+        return;
+    }
     if (call->storage_flush) {
         line(g, o, "tide_f->tide_io_ticket = 0;");
         line(g, o, "tide_io_resume%d:;", k);
@@ -9528,6 +9587,15 @@ static void add_task(gen *g, decl *fn)
     if (fn->uses_io) frame_field(frame, "tide_io_ticket", int_t);
     if (fn->uses_fetch) frame_field(frame, "tide_fetch_ticket", int_t);
     if (fn->uses_gpu_read) frame_field(frame, "tide_gpu_ticket", int_t); // A GPU list's read back, while it's awaited
+    if (fn->awaits_store) { // An awaited load or listing of the server's store: its request, and its answer once given
+        frame_field(frame, "tide_stored_op", (type){TY_ENTITY, NULL}); // The operation's own identity, which its answer names
+        frame_field(frame, "tide_stored_kind", int_t);                  // TIDE_STORAGE_LOAD or _LIST while it waits, or 0
+        frame_field(frame, "tide_stored_answered", int_t);              // ...and 1 once its answer is in the frame
+        frame_field(frame, "tide_stored_key", (type){TY_STRING, NULL}); // The key, or a listing's prefix
+        frame_field(frame, "tide_stored_after", (type){TY_STRING, NULL}); // A listing's key to go on after
+        if (fn->awaits_store & 1u) frame_fields_for(frame, "tide_stored_load", g->prog->stored_load);
+        if (fn->awaits_store & 2u) frame_fields_for(frame, "tide_stored_list", g->prog->stored_list);
+    }
     if (fn->rolls) frame_field(frame, "tide_dice", (type){TY_STRUCT, g->prog->random}); // What it rolls with, across its waits
     if (fn->kind == DECL_SYSTEM) frame_field(frame, "tide_event", (type){TY_EVENT, fn->event});
     for (int i = 0; i < fn->params.count; i++) {
@@ -13703,12 +13771,10 @@ static const decl *storage_answer_event(const program *prog, const char *event)
 
 // The server's store (tide/storage.h): what match code's Storage.Save, Load,
 // Delete and List call, each a request beside the world that only the
-// server's own run of the tick has room for, and tide_game.stored, which takes
-// what a load or a listing found before a later tick and sends its Loaded or
-// Listed event: to the entity the request named, or to the world. Each answer
-// is its own cause (its number), so what two answers' handlers spawn in one
-// tick are different entities. An answer a match task waits for
-// (TIDE_STORAGE_TO_TASK) sends no event.
+// server's own run of the tick has room for. What a load or a listing finds
+// comes back through tide_game.stored (gen_stored, once the tasks' frames are
+// known), as a Loaded or Listed event or into the frame of the match task that
+// awaits it.
 static void gen_storage(gen *g)
 {
     const program *prog = g->prog;
@@ -13731,20 +13797,124 @@ static void gen_storage(gen *g)
               "TIDE_HELPER void tide_storage_list_after_to(tide_world *w, const tide_str prefix, const tide_str after,\n"
               "                                           const tide_entity target)\n{\n"
               "    tide_storage_ask(w, TIDE_STORAGE_LIST, prefix, (tide_list){0}, after, TIDE_STORAGE_TO_EVENT, target);\n}\n\n");
+}
+
+static bool task_table_in(const decl *fn, bool local);
+static bool task_awaits_store(const decl *fn, int depth);
+
+// Whether the program has match tasks that await a load or a listing of the server's store.
+static bool awaits_store(const program *prog)
+{
+    return prog->stored_load.decl || prog->stored_list.decl;
+}
+
+// tide_game.stored: what a load or a listing found, before a later tick, on every machine. An event's answer sends
+// Loaded or Listed (TIDE_STORAGE_TO_EVENT) with a cause of its own (the target and the answer's number), so what two
+// answers' handlers spawn in one tick are different entities; a match task's (TIDE_STORAGE_TO_TASK) goes into the
+// frame that waits for it, whose task goes on at the end of the tick (tide_stored_give). And
+// tide_game.stored_again, which a server calls with its store bound after it takes a world it didn't run to
+// (a rewind, a match it goes on with): what that world's tasks wait for is asked again.
+static void gen_stored(gen *g)
+{
+    const program *prog = g->prog;
+    if (!prog->uses_storage) return;
+    sb *o = &g->c;
     const decl *loaded = storage_answer_event(prog, "Loaded"), *listed = storage_answer_event(prog, "Listed");
-    if (!loaded && !listed) { // A game that saves and never loads: its server still keeps what it saves (tide_game.stored says it has a store)
+    const bool tasks = awaits_store(prog);
+    if (tasks) {
+        const char *io_error = c_type((type){TY_ENUM, prog->io_error});
+        sb_put(o, "// A match task's answer from the store: into the frame that waits for it, whose task goes on at the end of\n"
+                  "// the tick. One whose task has ended (its owner went, it was cancelled) is nobody's.\n"
+                  "TIDE_HELPER bool tide_stored_give(tide_world *w, const tide_stored *answer)\n{\n"
+                  "    if (tide_entity_is_null(answer->target)) return false;\n");
+        if (prog->stored_load.decl) {
+            sb_printf(o, "    %s load = {0};\n"
+                         "    if (answer->kind == TIDE_STORAGE_LOAD) {\n"
+                         "        load.ok = answer->outcome == TIDE_STORED_FOUND;\n"
+                         "        load.error = (%s)(load.ok ? TIDE_IO_NONE : answer->outcome == TIDE_STORED_MISSING ? TIDE_IO_NOT_FOUND : TIDE_IO_FAILED);\n"
+                         "        if (load.ok) load.value = tide_stored_bytes(answer);\n"
+                         "    }\n", c_type(prog->stored_load), io_error);
+        }
+        if (prog->stored_list.decl) {
+            const decl *keys = prog->stored_list.decl->fields.items[0].type.decl; // StorageKeys
+            sb_printf(o, "    %s list = {0};\n"
+                         "    if (answer->kind == TIDE_STORAGE_LIST) {\n"
+                         "        list.ok = answer->outcome == TIDE_STORED_FOUND;\n"
+                         "        list.error = (%s)(list.ok ? TIDE_IO_NONE : TIDE_IO_FAILED);\n"
+                         "        if (list.ok) {\n"
+                         "            list.value.%s = tide_stored_keys(answer);\n"
+                         "            list.value.%s = answer->more;\n"
+                         "        }\n"
+                         "    }\n", c_type(prog->stored_list), io_error, field_cname(&keys->fields.items[0]),
+                      field_cname(&keys->fields.items[1]));
+        }
+        sb args = {0};
+        if (prog->stored_load.decl) sb_put(&args, ", &load");
+        if (prog->stored_list.decl) sb_put(&args, ", &list");
+        for (int i = 0; i < g->tasks.count; i++) {
+            const task_info *ti = &g->tasks.items[i];
+            if (task_is_completion(ti->fn) || !task_table_in(ti->fn, false) || !task_awaits_store(ti->fn, 0)) continue;
+            const char *id = task_id(ti->fn), *frame = type_cname(ti->frame);
+            sb_printf(o, "    for (uint32_t i = 0; i < w->tide_tasks_%s.count; i++) { // " STR_FMT "\n", id, STR_ARG(ti->fn->qualified));
+            sb_printf(o, "        const tide_task_%s *r = tide_table_get(&w->tide_tasks_%s, &tide_columns_tasks_%s, i, 0);\n", id, id, id);
+            sb_printf(o, "        if (r->task.wake < 0 || !tide_stored_waits_%s(&r->frame, answer->target, (int32_t)answer->kind)) continue;\n", frame);
+            sb_printf(o, "        tide_task_%s *m = tide_table_cell(&w->tide_tasks_%s, &tide_columns_tasks_%s, i, 0);\n", id, id, id);
+            sb_printf(o, "        (void)tide_stored_put_%s(&m->frame, answer->target%s);\n", frame, args.data ? args.data : "");
+            sb_put(o, "        m->task.wake = w->Time.tick; // At this tick's end, with the tasks whose time has come\n"
+                      "        return true;\n    }\n");
+        }
+        sb_put(o, "    return false;\n}\n\n");
+        // Asked again in the order the tasks started, as they'd have asked
+        sb_put(o, "static void tide_game_stored_again(void *world)\n{\n"
+                  "    tide_world *w = world;\n    tide_text_use(&w->heap, NULL);\n    uint32_t tide_n = 0;\n");
+        for (int i = 0; i < g->tasks.count; i++) {
+            const task_info *ti = &g->tasks.items[i];
+            if (task_is_completion(ti->fn) || !task_table_in(ti->fn, false) || !task_awaits_store(ti->fn, 0)) continue;
+            const char *id = task_id(ti->fn);
+            sb_printf(o, "    if (w->tide_tasks_%s.count > UINT32_MAX - tide_n) tide_out_of_memory();\n"
+                         "    tide_n += w->tide_tasks_%s.count;\n", id, id);
+        }
+        sb_put(o, "    if (tide_n == 0) return;\n"
+                  "    if ((uint64_t)tide_n > SIZE_MAX / sizeof(tide_due)) tide_out_of_memory();\n"
+                  "    tide_due *tide_due_list = malloc(sizeof(tide_due) * tide_n);\n    if (!tide_due_list) tide_out_of_memory();\n"
+                  "    uint32_t tide_count = 0;\n");
+        for (int i = 0; i < g->tasks.count; i++) {
+            const task_info *ti = &g->tasks.items[i];
+            if (task_is_completion(ti->fn) || !task_table_in(ti->fn, false) || !task_awaits_store(ti->fn, 0)) continue;
+            const char *id = task_id(ti->fn);
+            sb_printf(o, "    for (uint32_t tide_i = 0; tide_i < w->tide_tasks_%s.count; tide_i++) {\n"
+                         "        const tide_task_%s *tide_t = tide_table_get(&w->tide_tasks_%s, &tide_columns_tasks_%s, tide_i, 0);\n"
+                         "        if (tide_t->task.wake >= 0) tide_due_list[tide_count++] = (tide_due){.order = tide_t->task.order, .kind = %du, .row = tide_i};\n"
+                         "    }\n", id, id, id, id, i);
+        }
+        sb_put(o, "    qsort(tide_due_list, tide_count, sizeof(tide_due), tide_due_compare);\n"
+                  "    for (uint32_t tide_d = 0; tide_d < tide_count; tide_d++) {\n"
+                  "        switch (tide_due_list[tide_d].kind) {\n");
+        for (int i = 0; i < g->tasks.count; i++) {
+            const task_info *ti = &g->tasks.items[i];
+            if (task_is_completion(ti->fn) || !task_table_in(ti->fn, false) || !task_awaits_store(ti->fn, 0)) continue;
+            const char *id = task_id(ti->fn);
+            sb_printf(o, "        case %du:\n"
+                         "            tide_stored_ask_%s(w, &((const tide_task_%s *)tide_table_get(&w->tide_tasks_%s, &tide_columns_tasks_%s, "
+                         "tide_due_list[tide_d].row, 0))->frame);\n"
+                         "            break;\n", i, type_cname(ti->frame), id, id, id);
+        }
+        sb_put(o, "        default: break;\n        }\n    }\n    free(tide_due_list);\n}\n\n");
+    }
+    if (!loaded && !listed && !tasks) { // A game that saves and never loads: its server still keeps what it saves (tide_game.stored says it has a store)
         sb_put(o, "static bool tide_game_stored(void *world, const uint8_t *data, uint32_t size)\n{\n"
                   "    (void)world;\n    (void)data;\n    (void)size;\n    return false;\n}\n\n");
         return;
     }
     sb_put(o, "static bool tide_game_stored(void *world, const uint8_t *data, uint32_t size)\n{\n"
               "    tide_world *w = world;\n    tide_stored answer;\n"
-              "    if (!tide_stored_read(data, size, &answer) || answer.to != TIDE_STORAGE_TO_EVENT) return false;\n"
+              "    if (!tide_stored_read(data, size, &answer)) return false;\n"
               "    const uint64_t mark = tide_scratch_mark();\n    tide_text_use(&w->heap, NULL);\n"
               "    bool sent = false;\n");
+    if (tasks) sb_put(o, "    if (answer.to == TIDE_STORAGE_TO_TASK) sent = tide_stored_give(w, &answer);\n");
     if (loaded) {
         const char *name = type_cname(loaded);
-        sb_put(o, "    if (answer.kind == TIDE_STORAGE_LOAD) {\n");
+        sb_put(o, "    if (answer.to == TIDE_STORAGE_TO_EVENT && answer.kind == TIDE_STORAGE_LOAD) {\n");
         sb_printf(o, "        const %s value = {.%s = tide_text_temp(tide_stored_text(answer.key, answer.key_size)),\n"
                      "                          .%s = tide_stored_bytes(&answer), .%s = answer.outcome == TIDE_STORED_FOUND,\n"
                      "                          .%s = answer.outcome == TIDE_STORED_FAILED};\n",
@@ -13756,7 +13926,7 @@ static void gen_storage(gen *g)
     }
     if (listed) {
         const char *name = type_cname(listed);
-        sb_put(o, "    if (answer.kind == TIDE_STORAGE_LIST) {\n");
+        sb_put(o, "    if (answer.to == TIDE_STORAGE_TO_EVENT && answer.kind == TIDE_STORAGE_LIST) {\n");
         sb_printf(o, "        const %s value = {.%s = tide_text_temp(tide_stored_text(answer.key, answer.key_size)),\n"
                      "                          .%s = tide_text_temp(tide_stored_text(answer.after, answer.after_size)),\n"
                      "                          .%s = tide_stored_keys(&answer), .%s = answer.more,\n"
@@ -19316,6 +19486,104 @@ static void gen_frame_release(gen *g, const decl *frame)
     sb_put(o, "}\n\n");
 }
 
+// Whether a task's frame, or a frame of what it awaits, can wait for the server's store (gen_stored_await).
+static bool task_awaits_store(const decl *fn, const int depth)
+{
+    if (fn->awaits_store) return true;
+    for (int k = 0; depth < 32 && k < fn->awaits.count; k++) { // An await of itself is refused; the depth bounds the walk
+        if (task_awaits_store(fn->awaits.items[k], depth + 1)) return true;
+    }
+    return false;
+}
+
+// What a frame that waits for the store has (gen_stored_await): tide_stored_done_*, which lets go of the request and
+// the answer once the task has taken it; tide_stored_waits_*, whether it or a frame it awaits waits for the answer
+// `op` names, of `kind`; tide_stored_put_*, which puts that answer there (the answer as each kind the program awaits);
+// and tide_stored_ask_*, which asks again what it waits for (tide_game.stored_again). A task waits at one place at a
+// time, so one frame of the chain at most waits.
+static void gen_frame_stored(gen *g, const task_info *ti)
+{
+    const decl *fn = ti->fn;
+    if (!task_awaits_store(fn, 0)) return;
+    sb *o = &g->c;
+    const program *prog = g->prog;
+    const char *name = type_cname(ti->frame);
+    const int indent_before = g->indent;
+    sb params = {0}, args = {0}, unused = {0};
+    if (prog->stored_load.decl) {
+        sb_printf(&params, ", const %s *load", c_type(prog->stored_load));
+        sb_put(&args, ", load");
+        sb_put(&unused, "    (void)load;\n");
+    }
+    if (prog->stored_list.decl) {
+        sb_printf(&params, ", const %s *list", c_type(prog->stored_list));
+        sb_put(&args, ", list");
+        sb_put(&unused, "    (void)list;\n");
+    }
+    if (fn->awaits_store) {
+        sb_printf(o, "TIDE_HELPER void tide_stored_done_%s(%s *f)\n{\n", name, name);
+        g->indent = 1;
+        gen_spill(g, "f->tide_stored_key", "((tide_str){0})", (type){TY_STRING, NULL}, "TIDE_IN_MATCH");
+        gen_spill(g, "f->tide_stored_after", "((tide_str){0})", (type){TY_STRING, NULL}, "TIDE_IN_MATCH");
+        for (int part = 0; part < 2; part++) {
+            if (!(fn->awaits_store & (1u << part))) continue;
+            const type t = part ? prog->stored_list : prog->stored_load;
+            sb zero = {0};
+            sb_printf(&zero, "((%s){0})", c_type(t));
+            gen_spill(g, part ? "f->tide_stored_list" : "f->tide_stored_load", zero.data, t, "TIDE_IN_MATCH");
+        }
+        sb_put(o, "    f->tide_stored_op = (tide_entity){0};\n    f->tide_stored_kind = 0;\n    f->tide_stored_answered = 0;\n}\n\n");
+    }
+    sb_printf(o, "TIDE_HELPER bool tide_stored_waits_%s(const %s *f, const tide_entity op, const int32_t kind)\n{\n", name, name);
+    if (fn->awaits_store) {
+        sb_put(o, "    if (f->tide_stored_kind && f->tide_stored_kind == kind && !f->tide_stored_answered\n"
+                  "        && tide_entity_equal(f->tide_stored_op, op)) return true;\n");
+    }
+    for (int i = 0; i < fn->awaits.count; i++) {
+        const task_info *child = task_of(g, fn->awaits.items[i]);
+        if (!task_awaits_store(child->fn, 0)) continue;
+        sb_printf(o, "    if (tide_stored_waits_%s(&f->tide_await_%s, op, kind)) return true;\n", type_cname(child->frame),
+                  task_id(child->fn));
+    }
+    sb_put(o, "    (void)f;\n    (void)op;\n    (void)kind;\n    return false;\n}\n\n");
+    sb_printf(o, "TIDE_HELPER bool tide_stored_put_%s(%s *f, const tide_entity op%s)\n{\n%s", name, name,
+              params.data ? params.data : "", unused.data ? unused.data : "");
+    if (fn->awaits_store) {
+        sb_put(o, "    if (f->tide_stored_kind && !f->tide_stored_answered && tide_entity_equal(f->tide_stored_op, op)) {\n");
+        g->indent = 2;
+        for (int part = 0; part < 2; part++) {
+            if (!(fn->awaits_store & (1u << part))) continue;
+            sb_printf(o, "        if (f->tide_stored_kind == %s) {\n", part ? "TIDE_STORAGE_LIST" : "TIDE_STORAGE_LOAD");
+            g->indent = 3;
+            gen_spill(g, part ? "f->tide_stored_list" : "f->tide_stored_load", part ? "(*list)" : "(*load)",
+                      part ? prog->stored_list : prog->stored_load, "TIDE_IN_MATCH");
+            sb_put(o, "        }\n");
+        }
+        sb_put(o, "        f->tide_stored_answered = 1;\n        return true;\n    }\n");
+    }
+    for (int i = 0; i < fn->awaits.count; i++) {
+        const task_info *child = task_of(g, fn->awaits.items[i]);
+        if (!task_awaits_store(child->fn, 0)) continue;
+        sb_printf(o, "    if (tide_stored_put_%s(&f->tide_await_%s, op%s)) return true;\n", type_cname(child->frame),
+                  task_id(child->fn), args.data ? args.data : "");
+    }
+    sb_put(o, "    (void)f;\n    (void)op;\n    return false;\n}\n\n");
+    sb_printf(o, "TIDE_HELPER void tide_stored_ask_%s(tide_world *w, const %s *f)\n{\n", name, name);
+    if (fn->awaits_store) {
+        sb_put(o, "    if (f->tide_stored_kind && !f->tide_stored_answered && !tide_entity_is_null(f->tide_stored_op)) {\n"
+                  "        tide_storage_ask(w, (uint32_t)f->tide_stored_kind, tide_text_view(f->tide_stored_key), (tide_list){0},\n"
+                  "                         tide_text_view(f->tide_stored_after), TIDE_STORAGE_TO_TASK, f->tide_stored_op);\n"
+                  "        return;\n    }\n");
+    }
+    for (int i = 0; i < fn->awaits.count; i++) {
+        const task_info *child = task_of(g, fn->awaits.items[i]);
+        if (!task_awaits_store(child->fn, 0)) continue;
+        sb_printf(o, "    tide_stored_ask_%s(w, &f->tide_await_%s);\n", type_cname(child->frame), task_id(child->fn));
+    }
+    sb_put(o, "    (void)w;\n    (void)f;\n}\n\n");
+    g->indent = indent_before;
+}
+
 static void gen_frame_forget_io(gen *g, const task_info *ti)
 {
     if (!ti->fn->uses_io) return;
@@ -19692,6 +19960,7 @@ static void gen_tasks(gen *g)
         gen_frame_forget_io(g, &g->tasks.items[i]);
         gen_frame_forget_gpu(g, &g->tasks.items[i]);
         gen_frame_workers(g, &g->tasks.items[i]);
+        gen_frame_stored(g, &g->tasks.items[i]);
     }
     for (int i = 0; i < g->tasks.count; i++) {
         const task_info *ti = &g->tasks.items[i];
@@ -27629,6 +27898,7 @@ static void gen_game_api(gen *g)
     }
     if (prog->uses_storage) {
         sb_put(o, "    .stored = tide_game_stored,\n");
+        if (awaits_store(prog)) sb_put(o, "    .stored_again = tide_game_stored_again,\n");
     }
     if (prog->visibility_state) {
         // (A projection over the one before it reads its rows' links where they are: not a hierarchy's section)
@@ -29443,6 +29713,7 @@ bool codegen(program *prog, const codegen_options *opts)
     if (prog->input && prog->input->predict) gen_predict(&g);
     if (prog->input && input_needs_repair(prog->input)) gen_repair(&g);
     gen_tasks(&g);
+    gen_stored(&g); // After the tasks' frames: an awaited load's answer goes into one
     gen_task_trace(&g);
     gen_shard_tasks(&g); // A frame's fields are known now
     for (int i = 0; i < prog->systems.count; i++) {

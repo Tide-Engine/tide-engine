@@ -19,10 +19,19 @@
   `tide_stored_next_key` reads them the same way again. The generated code reads nothing but what it gives.
 - **The provider's thread touches its batch alone**: the requests it was handed, which nothing else changes, and its
   answers, which the server reads only after the batch's `done` with acquire (released after the last of them).
+- **An answer for a task goes into a frame of its own kind only** (2026-11-15, `await Storage.Load` and `List`,
+  notes/voxels.md section 3d): `tide_stored_give` builds the value from what `tide_stored_read` checked (`tide_stored_bytes`,
+  `tide_stored_keys`), then puts it only into a frame whose `tide_stored_op` is the answer's target, which still waits
+  and waits for that kind (`tide_stored_waits_*`), through the frame's own typed spills into the match's heap. A target no
+  frame has (made up, an ended task's, one already answered) changes nothing, and a load's answer never lands in a frame
+  that waits for a listing, or the other way: a frame has the fields of the kinds its function awaits alone. The frame's
+  request is the game's key and `after`, bounded by `tide_storage_ask` as any request's, asked again from the frame by
+  `tide_stored_ask_*`.
 
 Tests: `storage_answers_that_arent_are_refused` (an answer cut at every byte, a key that isn't UTF-8, more keys than it has,
 no such kind), `storage_paths_give_their_keys_back` (19 strays, the longest path there is), the listings in
-`tidec_e2e_storage`. Sanitizer runs are CI's for this change.
+`tidec_e2e_storage`; `storage_await_answer_for_no_task_changes_nothing` (a load's and a listing's answer for a target no
+task has: refused, the world's hash the same) in `tidec_e2e_storage_await`. Sanitizer runs are CI's for this change.
 
 ## Grids from bytes (2026-11-14)
 

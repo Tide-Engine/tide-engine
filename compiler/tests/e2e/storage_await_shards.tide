@@ -1,0 +1,48 @@
+// Match tasks that await the store while their entities cross from one shard
+// to another (tests/e2e/storage_await_shards_test.c, on the engine's
+// orchestrator): each task asks again on the shard it arrives at, and gets its
+// answer there; the answer to the shard it left finds no task.
+
+settings
+{
+    shards = true;
+    reach = 4;
+}
+
+component Mover
+{
+    [Position] float2 position;
+    float2 velocity;
+    int id;
+    int got;   // What its task's load gave: its id + 1 bytes
+    int tries; // Tasks that got to their end
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    for (int i = 0; i < 8; i++) Spawn(Mover { position = float2(-1.0 - i * 0.25, float(i)), velocity = float2(10, 0), id = i });
+}
+
+// A value of `count` bytes
+List<byte> Bytes(int count)
+{
+    mut List<byte> made = [];
+    for (var i = 0; i < count; i++) made.Add(byte(i));
+    return made;
+}
+
+async void Fetch(mut Mover m, string key)
+{
+    if (await Storage.Load(key) is List<byte> bytes) m.got = bytes.count;
+    else m.got = -1;
+    m.tries += 1;
+}
+
+system Move(mut Mover m, Time time)
+{
+    if (time.tick == 1) Storage.Save($"mover/{m.id}", Bytes(m.id + 1));
+    if (time.tick == 3) Fetch(m, $"mover/{m.id}");
+    m.position += m.velocity * time.dt;
+}

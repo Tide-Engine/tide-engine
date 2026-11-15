@@ -2053,7 +2053,7 @@ How a match keeps what it doesn't hold in memory: a chunk of blocks nobody is ne
 
 ### Provisional
 
-- `Storage.Save(key, bytes)`, `Storage.Load(key)`, `Storage.Load(key, entity)`, `Storage.Delete(key)` and `Storage.List(prefix)` (below) are match code's: systems, match handlers, match tasks, and the functions they call. The key is text, the bytes a `List<byte>`. They ask the machine that runs the match to keep, find, forget or list bytes under keys. Nothing of the match changes when they're called, and nothing comes back from the call.
+- `Storage.Save(key, bytes)`, `Storage.Load(key)`, `Storage.Load(key, entity)`, `Storage.Delete(key)` and `Storage.List(prefix)` (below) are match code's: systems, match handlers, match tasks, and the functions they call. The key is text, the bytes a `List<byte>`. They ask the machine that runs the match to keep, find, forget or list bytes under keys. Nothing of the match changes when they're called, and nothing comes back from the call, but to a match task that awaits a load or a listing (below).
 - **Only the server's own run of a tick asks.** A player's machine that predicts or confirms the same tick asks nothing: its machine has no store, and the same request twice would be two saves. So what a save keeps is the server's value, never a prediction's.
 - **What a load finds comes back as an event,** `Loaded { string key; List<byte> bytes; bool found; bool failed; }`, in a later tick: sent to the entity the load named, or to the world. `found` is false and `bytes` empty where the store has nothing under the key. `failed` is true where something is kept there that couldn't be read (the disk refused it, or it's bigger than a value can be): not the same as nothing, so a game doesn't make it afresh and save over it. It's a tick's input, as a command is: the server gives it to a tick, the tick's frame carries it to every machine that has the whole match, the journal records it, and a replay takes it from there. So `Loaded` handlers run in the same tick on every machine, and the code that handles one is ordinary match code.
 - **Which tick.** An answer goes to the first tick after it's ready. With the files the standard hosts keep, that's usually the next tick or the one after (they're read on a thread of the files' own: below). In a match that doesn't hide state, an answer of more than about 1 KiB (`TIDE_COMMAND_BYTES` with its key) goes to the players as a download, as a big command does: it reaches a tick once every player has it, and the answers after it wait behind it.
@@ -2102,6 +2102,41 @@ event(Listed listed) Count(mut Atlas atlas)
 }
 ```
 
+- **Awaiting a load or a listing** (Claude's picks, 2026-11-15). A match task (an async function whose world is the match, a match event's async handler, and the async functions they await) can wait for the answer and have it as a value: `var bytes = await Storage.Load(key);` gives the `List<byte>` kept under the key (`List<byte> fails IOError`), failing with `IOError.NotFound` where nothing is kept there and `IOError.Failed` where something is kept that couldn't be read (a `Loaded`'s `found` false, and its `failed`). `await Storage.List(prefix)` and `await Storage.List(prefix, after)` give a `StorageKeys { List<string> keys; bool more; }` (`StorageKeys fails IOError`), failing with `IOError.Failed` where a `Listed`'s `failed` would be true. `StorageKeys` is declared by the engine beside `Listed`, for a program whose code has `Storage`, `.` and `List`, and a game's own type of the name clashes with it there.
+  - **The answer is input, as an event's is.** It's asked, carried out, paced and ordered with the event's requests: only the server's own run of a tick asks; it's carried out after the tick, in order; it's given to a later tick, 64 a tick, by download past about 1 KiB in a match that doesn't hide state; the frame carries it to every machine that has the whole match and the journal records it. The task goes on at the end of the tick it's given to, with the tasks whose time has come, in the order they started, on every machine: a player's machine predicting past it waits as the server's would have until the frame that has it comes. In a match that hides state players' frames don't carry it, as a match task's frame is the server's alone there.
+  - **No entity, no handle.** An awaited load or listing names no entity (an error that says so): its answer is the task's. Without `await`, the call asks for a `Loaded` or `Listed` event, in a task too, so it gives no handle to keep: `var asked = Storage.Load(key);` is the error that a call with no value is, with a note to await it. `Storage.Save` and `Storage.Delete` give nothing to wait for (an error that says to call them as statements).
+  - **The request is the task's.** Its frame keeps the key (a listing's prefix and `after`) and an identity of its own, the identity clock and a cause of the task's as a spawn's entity has, which the answer names. So a snapshot, the world's hash, a packed world, a joining player's world, rollback and a hot reload that carries the task over hold the wait, and two tasks that await one key in one tick are asked and answered apart, never as one.
+  - **A task that ends before its answer** (its owner is destroyed, it's cancelled, a hot reload drops it) is gone, and its answer finds no task and changes nothing.
+  - **Asked again** (where the event's answer is lost): rewinding a match drops the answers on their way, as for events, and every task the rewound world has waiting asks again, from what its frame keeps, with the next tick, in the order the tasks started (`tide_game.stored_again`). So do the waiting tasks of a world a server is made with (`tide_server_desc.world`: a match taken up again, a shard started from a checkpoint), and a task whose entity moves to another shard, on the shard it comes to, as the answer to the shard it left finds no task there.
+  - **Who can await it:** match code alone, as the store is the match's. A local task (one that uses local state) awaiting it is an error that says the store is the match's; `await` outside async code is the error it always is; a system can't wait, and starts a task that does.
+
+```csharp
+// Every chunk a dimension has saved, a page at a time, in a match task
+async void Survey(mut Atlas atlas, string prefix)
+{
+    mut var after = "";
+    mut var going = true;
+    while (going)
+    {
+        var page = await Storage.List(prefix, after);
+        if (page is StorageKeys keys)
+        {
+            atlas.saved += keys.keys.count;
+            going = keys.more;
+            if (going) after = keys.keys[keys.keys.count - 1];
+        }
+        else going = false; // IOError.Failed: the store couldn't be listed
+    }
+}
+
+async void Fill(mut Chunk chunk, string key)
+{
+    var saved = await Storage.Load(key);
+    if (saved is List<byte> bytes && Grid3<Block>.FromBytes(bytes) is Grid3<Block> blocks) chunk.blocks = blocks.Copy();
+    else if (saved is IOError.NotFound) chunk.stage = Stage.Missing; // Never saved: made from the seed
+}
+```
+
 - **In a match that hides state** (State visibility) nothing of a load reaches the players' machines but what its handlers change of what they may have, as with a command: the bytes stay on the server.
 - **Order.** A tick's requests are carried out once it has ended, after those of the ticks before, in the order it made them: a save then a load of one key in one tick finds what was saved, and so does a load in a later tick. A load asked twice in a tick with one key and one target is answered once. Answers are given to a tick in the order their loads and listings were asked, 64 a tick at the most (more wait for the next), and their `Loaded` and `Listed` handlers run with that tick's other events, after its systems: a system that goes on from what a handler did runs the tick after. Each answer is its own cause: what two answers' handlers spawn in one tick are different entities.
 - What the match's start (its `Spawned` handlers) and a scene's preparation ask is carried out with the first tick that ends after them, before what that tick asks.
@@ -2112,17 +2147,17 @@ event(Listed listed) Count(mut Atlas atlas)
 - **Off the tick's thread** (Claude's picks, 2026-11-15). The standard hosts read, write and list on a thread of the files' own, one for the process, a tick's requests at a time after the ticks' before: a tick never waits for the disk, and the server takes each answer at the first tick after it's ready. A host with no such thread (a page's files, which are the page's thread's; a test's or a benchmark's kept in memory) carries a tick's requests out as the tick ends, and its answers go to the next tick. Answers are input either way, so every machine and a replay take each one in the same tick.
 - **A server that stops** cleanly carries out what was asked before it's gone: what its ticks, its start and a preparation saved and deleted is written, though nothing waits for the disk to flush it. What loads and listings would find, which no tick will take, isn't read.
 - **A match that uses the store doesn't migrate.** What it keeps, and the answers on their way, are the hosting machine's: `hostMigration` in a program that uses `Storage` is an error, and the server offers no handover.
-- **Rewinding a match** (`tide/timeline.h`) drops the answers on their way, those still being read too: the rewound ticks ask again as they run. A load or a listing the rewound world asked before the point it went back to, whose answer hadn't come, is never answered. What the ticks let go saved and deleted stays saved and deleted.
+- **Rewinding a match** (`tide/timeline.h`) drops the answers on their way, those still being read too: the rewound ticks ask again as they run. A load or a listing the rewound world asked before the point it went back to, whose answer hadn't come, is never answered as an event; one a task of the rewound world awaits is asked again (Awaiting a load or a listing, above). What the ticks let go saved and deleted stays saved and deleted.
 - A host with nowhere to keep it (a test's, a benchmark's, C that gives its server no files: `tide_server_desc.io`) keeps nothing: saves go nowhere, every load finds nothing and every listing no keys, so the same match plays on.
 - Local code can't use it: a view or a local handler keeps this machine's own files with `File` and `Directory` (Local files), and what a player wants saved of the match goes there as a command. Not input sampling, code the GPU runs or a parallel loop's step either. An argument of another type than the call takes is an error that says which one (`Storage.List takes its prefix as string, not int`).
 
 ### Open
 
-- Awaiting a load or a listing in a match task (`var bytes = await Storage.Load(key);`), where the event is the only way now. The runtime takes requests whose answer is for a waiting task (`TIDE_STORAGE_TO_TASK` in `tide/storage.h`); the language doesn't yet.
+- A handle of a load or a listing (`Task<List<byte> fails IOError> asked = ...`), to start several and await them later: without `await` the call is the event's now, so a handle needs a spelling of its own (a method, a word), which is the owner's to pick. `WhenAll` over tasks isn't decided either (Tasks, Open).
 - Any value as bytes and back (a component or a struct, as a grid has `ToBytes` and `FromBytes`: Grids), where a game writes its own loops or JSON now.
 - A listing that says more of each key than its name (its value's size, when it was saved), and one that goes backwards.
 - A store for each match of a server that hosts several, and the hosting service's (managed matches keep nothing yet).
-- A load or a listing asked for and not yet answered when a server stops isn't asked again when its match goes on from a save. A shard's checkpoint doesn't carry the answers it hasn't given a tick yet either, nor the requests its files' thread hasn't carried out: a shard started from one without its journal loses them.
+- A load or a listing asked for and not yet answered when a server stops isn't asked again when its match goes on from a save, but for one a task awaits. A shard's checkpoint doesn't carry the answers it hasn't given a tick yet either, nor the requests its files' thread hasn't carried out: a shard started from one without its journal loses them.
 
 ## Assets
 
@@ -2842,6 +2877,7 @@ Implemented, awaiting approval:
 - `async` goes before a function or an event handler, before or after `local` if it has one (`local async event(...)`); before anything else it's an error that says where it goes. Methods can't be async yet, nor extern functions or functions that take an Action. `await` is a keyword, and binds like `try`: `await Doubled(3) + 1` adds 1 to the value. A `!` after an awaited call is the awaited value's: `await Fetch(name)!`.
 - An async call returns a started handle, as specified below. Systems, views, handlers and async code start tasks, and so does a plain function or method, as the code that calls it could (see Functions and blocks): the input's `Sample`, `Sanitize` and `Predict`, code the GPU runs, operators and `Interpolate` start none. A discarded ordinary async call continues without retaining its result.
 - `await` waits for a handle or immediate async call. `Wait.Ticks(n)` starts a match timer, `Wait.Frames(n)` a local timer, and `Wait.Seconds(s)` a timer in its caller's world: in the match, the nearest whole number of ticks, at least one; in local code, this machine's time, which hosts give each frame (`tide_local_frame_time`) and a task counts down frame by frame, within a tenth of a millisecond. A wait of 0 or less doesn't wait. `await` isn't allowed in a block written after a call.
+- (Claude's picks, 2026-11-15) `await Storage.Load(key)` and `await Storage.List(prefix[, after])` wait in a match task for the server's store, an outside answer that reaches the match as input, so the task goes on in the same tick on every machine (The server's store, Awaiting a load or a listing). They make an async function match code, and have no handle of their own.
 - Async code is a state machine, as in C#: a call of an async function runs until it first waits, inside the code that calls it. A directly awaited call can share its caller's private frame; kept handles identify separate started operations. An async function can't directly await itself through that private frame; it can start itself again and keep the resulting handle.
 - A task keeps its parameters and locals while it waits, copied, with their text and lists in its world's heap. An async function's component and singleton parameters aren't kept: it gets them again each time it goes on, as they are then, from the entity it belongs to, so the caller passes its own (a parameter), and a task whose entity lost one ends. Its `mut` parameters are only components and singletons; it can't keep the caller's other variables, and it has no `out` parameters: its call returns before it has made anything, so it returns a struct instead.
 - An async handler is a task per event: its event is copied into the task, and its components are the entity's, got again after each wait.

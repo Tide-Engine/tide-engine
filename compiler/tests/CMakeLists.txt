@@ -1251,3 +1251,5 @@ if(TIDE_PLATFORM AND NOT TIDE_WEB AND NOT TIDE_ANDROID)
     target_link_libraries(tidec_e2e_storage PRIVATE tide_platform)
     target_compile_definitions(tidec_e2e_storage PRIVATE STORAGE_PLATFORM=1)
 endif()
+tide_e2e_test(storage_await) # Match tasks that await the store's loads and listings: in the same tick on every machine
+tide_e2e_test(storage_await_shards) # ...and ask again on the shard their entity crosses to while they wait

@@ -2403,6 +2403,9 @@ static uint32_t dispatch_injected(tide_server *s, tide_writer *w, private_journa
     const tide_game *g = s->game;
     if (!takes_messages(g) || !s->injected_count) return 0;
     uint32_t count = 0;
+    // What a message asks of the store goes with the coming tick's requests: a match task that came from another
+    // shard asks again here what it waits for (shard_world_codegen.inc, tide_shard_take_tasks)
+    if (g->stored) tide_storage_bind(s->world, &s->storage);
     while (count < s->injected_count && count < TIDE_SHARD_MESSAGES_PER_TICK) {
         injected *m = &s->injected[count];
         const published *p = NULL;
@@ -2438,6 +2441,7 @@ static uint32_t dispatch_injected(tide_server *s, tide_writer *w, private_journa
         free(m->data);
         count++;
     }
+    if (g->stored) tide_storage_unbind(s->world);
     if (count) {
         memmove(s->injected, s->injected + count, (size_t)(s->injected_count - count) * sizeof *s->injected);
         s->injected_count -= count;
@@ -3591,8 +3595,16 @@ tide_server *tide_server_create(const tide_server_desc *desc, const double now)
         }
         s->seed &= 0x7FFFFFFFu;
     }
-    if (desc->world) g->copy_world(s->world, desc->world);
-    else {
+    if (desc->world) {
+        g->copy_world(s->world, desc->world);
+        // A match it goes on with: what its tasks waited for from the store was on its way to another server, or one
+        // that stopped, and is asked again with the first tick's
+        if (g->stored_again) {
+            tide_storage_bind(s->world, &s->storage);
+            g->stored_again(s->world);
+            tide_storage_unbind(s->world);
+        }
+    } else {
         // What the match's start asks of the store (its Spawned handlers) is the first tick's to carry out, before
         // what that tick asks
         if (g->stored) tide_storage_bind(s->world, &s->storage);
@@ -8473,6 +8485,13 @@ bool tide_session_rewind(tide_session *s, const void *world)
     (void)tide_server_drop_injected(server, TIDE_STORED_MESSAGE);
     tide_storage_forget(&server->stored);
     tide_storage_clear(&server->storage);
+    // ...but a match task the rewound world has waiting for one is asked for again, with the next tick's: its request
+    // is in its frame, and it would wait for ever
+    if (g->stored_again) {
+        tide_storage_bind(server->world, &server->storage);
+        g->stored_again(server->world);
+        tide_storage_unbind(server->world);
+    }
     if (kept) {
         g->keep_commands(server->world, kept);
         free_world(g, kept);

@@ -171,9 +171,17 @@ typedef struct tide_game {
     // coming tick, which sends its Loaded or Listed event (or, for an answer a
     // match task waits for, hands it to the task). The server calls it as it runs the tick,
     // clients as they apply its frame, and a replay as it makes the tick
-    // again. False when the bytes aren't one, which changes nothing. NULL: the
-    // game loads nothing.
+    // again. False when the bytes aren't one, or what they answer is nobody's
+    // (a task that has ended), which changes nothing. NULL: the game loads
+    // nothing.
     bool (*stored)(void *world, const uint8_t *data, uint32_t size);
+    // A game whose match tasks await a load or a listing (`await
+    // Storage.Load(key)`): asks again, of the store bound to `world`
+    // (tide_storage_bind), what its waiting tasks wait for, in the order they
+    // started. The server calls it once it has taken a world whose answers on
+    // their way aren't coming (a rewind's, a match it goes on with), so those
+    // tasks are answered in a later tick rather than never. NULL: no task waits.
+    void (*stored_again)(void *world);
     // Restrict a copied slot input before sending it to this recipient.
     void (*filter_client_input)(const void *world, tide_player_id recipient, uint32_t slot, void *input);
     // The same for all max_players + 1 contiguous input_size slots at once;

@@ -1,3 +1,17 @@
+## The server's store: tasks that await it (2026-11-15, later)
+
+For `await Storage.Load(key)` and `await Storage.List(prefix[, after])` (notes/voxels.md, section 3d). The store's
+runtime is unchanged; generated code asks with `TIDE_STORAGE_TO_TASK` and a target of its own (the operation's identity:
+the identity clock and a cause), and its `tide_game.stored` now takes such answers, putting each into the waiting task's
+frame and returning false where none waits. New at the boundary, both agent-maintained: `tide_game.stored_again(world)`
+(tide/session.h), generated for a game whose tasks await the store, which the server (session.c) calls with its store
+bound after `tide_session_rewind` and after making a server from a given world (`tide_server_desc.world`), so a waiting
+task asks again what its frame keeps; and session.c's `dispatch_injected` binds the store around the messages it takes
+before a tick (`tide_storage_bind`/`unbind`), so a sharded game's task that arrives with its entity asks again on its new
+shard (generated `tide_shard_take_tasks`). No layout, hash, snapshot or wire change; `bench_voxels`' pin is unchanged.
+If the owner takes session.c over: those three calls, and that `stored` can return false for an answer it took and
+dropped, are what the generated side relies on.
+
 ## The server's store: listings, its own thread, answers for tasks (2026-11-15)
 
 The store's runtime (`tide/storage.h`, `engine/src/storage.c`) is agent-maintained, as is the file provider

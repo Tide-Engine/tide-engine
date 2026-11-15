@@ -14325,6 +14325,7 @@ static type check_await(checker *c, expr *e)
     }
     if (call->call == CALL_WAIT) return T_VOID_;
     if (call->storage_flush || call->web_fetch) return t;
+    if (call->storage_await) return t; // Storage.Load and List in a match task: the store's answer is the value
     if (call->gpu == GPU_READ || call->gpu == GPU_READ_COUNT || call->gpu == GPU_TARGET_READ) return t; // A GPU list's read back
     if ((call->kind == E_CALL || call->kind == E_METHOD) && call->call == CALL_FUNCTION && (call->method->is_async || call->method->is_worker)) return t;
     diag_error(e->at, "'await' needs a task handle or an async call, like 'await Wait.Ticks(30)'");
@@ -16583,6 +16584,15 @@ static void check_var(checker *c, stmt *s)
     if (s->type_name.len == 0) {
         if (value.kind == TY_VOID) {
             diag_error(s->value->at, "this expression doesn't produce a value");
+            // Storage.Load(key) and Storage.List(prefix) ask for an event: a match task has the answer as a value only
+            // by awaiting it
+            const expr *v = s->value;
+            if (v->call == CALL_VISIBILITY && (v->visibility_operation & VISIBILITY_STORAGE)
+                && (str_eq_c(v->name, "Load") || str_eq_c(v->name, "List"))) {
+                diag_note("without 'await', Storage." STR_FMT " is answered by a %s event; a match task has the answer as "
+                          "its value by awaiting it: '%s'", STR_ARG(v->name), str_eq_c(v->name, "Load") ? "Loaded" : "Listed",
+                          str_eq_c(v->name, "Load") ? "var bytes = await Storage.Load(key);" : "var page = await Storage.List(prefix);");
+            }
             value = T_ERR;
         }
         if (value.kind == TY_DRAW_LIST) {

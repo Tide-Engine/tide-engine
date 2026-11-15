@@ -70,6 +70,43 @@ event(Listed listed) Count(mut Atlas atlas)
 
 A listing has only keys a save made: other files in the folder (a half-written save the server stopped in, a file someone put there) are left out.
 
+### Waiting for the answer in a task
+
+A match [task](./tasks.md) can wait for a load or a listing instead, and have the answer as a value: `await Storage.Load(key)` gives the `List<byte>` kept under the key, and `await Storage.List(prefix)` or `await Storage.List(prefix, after)` a `StorageKeys`, its `keys` and whether there are `more`. Each fails with an `IOError`: `NotFound` where nothing is kept under the key, and `Failed` where something is kept that couldn't be read, or the keys couldn't be listed.
+
+```csharp
+// A chunk's blocks, once the store has answered
+async void Fill(mut Chunk chunk, string key)
+{
+    var saved = await Storage.Load(key);
+    if (saved is List<byte> bytes && Grid3<Block>.FromBytes(bytes) is Grid3<Block> blocks) chunk.blocks = blocks.Copy();
+    else if (saved is IOError.NotFound) chunk.stage = Stage.Missing; // Never saved: made from the seed
+    // Anything else was kept but couldn't be read: not made afresh over it
+}
+
+// Every key under a prefix, a page at a time
+async void Survey(mut Atlas atlas, string prefix)
+{
+    mut var after = "";
+    mut var going = true;
+    while (going)
+    {
+        var page = await Storage.List(prefix, after);
+        if (page is StorageKeys keys)
+        {
+            atlas.saved += keys.keys.count;
+            going = keys.more;
+            if (going) after = keys.keys[keys.keys.count - 1];
+        }
+        else going = false;
+    }
+}
+```
+
+The answer is the same as a `Loaded`'s or a `Listed`'s, and comes the same way: in a later tick, the same one on every machine, which the task goes on at the end of with the other tasks whose time has come. An awaited load names no entity, as its answer is the task's; without `await`, `Storage.Load(key)` is answered by a `Loaded` event, in a task too. Two tasks that await one key are answered apart.
+
+What a task waits for is kept in it, so a snapshot, a joining player and a rewind keep it too. A task that ends before its answer comes (its entity was destroyed, or it was cancelled) is gone, and its answer changes nothing. Rewinding the match drops the answers on their way, and the tasks the rewound match has waiting ask again. Only match tasks wait for the store: local code keeps this machine's files with `File`.
+
 The answer comes once the files have been read, usually the next tick or the one after, and its handlers run after that tick's systems. In a match that doesn't hide state, an answer of more than about 1 KiB goes to every player first, as a big command does, so it can take longer, and the answers after it wait for it. The answers come in the order they were asked, and what a tick asks is carried out after what the ticks before it asked: a load after a save of its key, in the same tick or a later one, finds what was saved.
 
 The standard hosts read and write the files on a thread of their own, so a tick never waits for the disk; a page keeps them on its own thread, between ticks. A server that stops cleanly writes what it was asked to save first.

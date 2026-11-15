@@ -144,6 +144,29 @@ The server reads and writes the chunks' files on a thread of their own, after th
 
 What a dimension has saved can be listed, a page of keys at a time, for a map of where players built or to move a world's saves elsewhere: `Storage.List($"chunks/{dimension.number}/", this)` answers with a `Listed` event, and the next page is asked for after its last key ([Saving the match](./files.md#saving-the-match)). Keys made of folders (`chunks/<dimension>/...`) keep a listing to the folder its prefix names.
 
+A match task can wait for the store instead of handling its events, which keeps a job of several steps in one place. A dimension's map of saved chunks, a page at a time:
+
+```csharp
+async void Survey(mut Atlas atlas, int dimension)
+{
+    mut var after = "";
+    mut var going = true;
+    while (going)
+    {
+        var page = await Storage.List($"chunks/{dimension}/", after);
+        if (page is StorageKeys keys)
+        {
+            atlas.saved += keys.keys.count;
+            going = keys.more;
+            if (going) after = keys.keys[keys.keys.count - 1];
+        }
+        else going = false; // The store couldn't be listed
+    }
+}
+```
+
+The task goes on in the tick each answer is given to, the same on every machine, and what it waits for is kept in it: a task whose entity goes ends with it, its answer changing nothing, and a rewind asks again for what the rewound tasks wait for ([Waiting for the answer in a task](./files.md#waiting-for-the-answer-in-a-task)).
+
 ## Drawing what's far
 
 A chunk's faces are made into a mesh by a `local worker`, off the frame, and kept in the chunk's `local` fields ([Local state](./local-state.md), [Async and tasks](./tasks.md)); they're made again when its blocks change. Meshes outside the view aren't drawn ([frustum culling](./3d.md#frustum-culling)).

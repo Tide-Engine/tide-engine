@@ -2255,6 +2255,21 @@ static const method_form storage_calls[] = {
      "Asks for the keys that start with the prefix and come after `after`, answered by a `Listed` event to the entity "
      "in a later tick."},
 };
+// ...and what a match task awaits of it, the answer its value: the task goes on in the tick the answer is given to,
+// on every machine
+static const method_form storage_awaited_calls[] = {
+    {"Load", "await Storage.Load(string key) -> List<byte> fails IOError",
+     "Waits, in a match task, for what the machine that runs the match keeps under the key: its bytes, or "
+     "`IOError.NotFound` where nothing is kept there and `IOError.Failed` where what's kept couldn't be read. The task "
+     "goes on in the tick the answer is given to, on every machine."},
+    {"List", "await Storage.List(string prefix) -> StorageKeys fails IOError",
+     "Waits, in a match task, for the keys that start with the prefix: a `StorageKeys`, whose `keys` are sorted by their "
+     "bytes, 1,024 at the most, and whose `more` says whether there are keys past the last. Fails with `IOError.Failed` "
+     "where the store couldn't be listed."},
+    {"List", "await Storage.List(string prefix, string after) -> StorageKeys fails IOError",
+     "Waits, in a match task, for the keys that start with the prefix and come after `after`: the last key of the page "
+     "before, to go on from it."},
+};
 static const method_form audience_calls[] = {
     {"Add", "Add(PlayerID player)", "Adds a player to this writable audience value."},
     {"Remove", "Remove(PlayerID player)", "Removes a player from this writable audience value."},
@@ -4103,13 +4118,21 @@ static void describe(const occurrence *o, sb *out)
         }
         if (o->call == CALL_VISIBILITY && str_eq_c(o->owner, "Storage")) {
             // Load's and List's forms, every one, as the hover's occurrence doesn't keep how many arguments the call
-            // has, and the first's words
+            // has, and the first's words: an awaited one's (its value is the answer) before the others where it's
+            // awaited, after them where it isn't
             const char *doc = NULL;
             sb forms = {0};
-            for (size_t i = 0; i < sizeof storage_calls / sizeof storage_calls[0]; i++) {
-                if (!str_eq_c(o->name, storage_calls[i].name)) continue;
-                sb_printf(&forms, "%s%s", forms.len ? "\n" : "", storage_calls[i].form);
-                if (!doc) doc = storage_calls[i].doc;
+            const bool awaited = o->type.kind == TY_FAILABLE;
+            for (int pass = 0; pass < 2; pass++) {
+                const bool waits = awaited ? pass == 0 : pass == 1;
+                const method_form *calls = waits ? storage_awaited_calls : storage_calls;
+                const size_t count = waits ? sizeof storage_awaited_calls / sizeof storage_awaited_calls[0]
+                                           : sizeof storage_calls / sizeof storage_calls[0];
+                for (size_t i = 0; i < count; i++) {
+                    if (!str_eq_c(o->name, calls[i].name)) continue;
+                    sb_printf(&forms, "%s%s", forms.len ? "\n" : "", calls[i].form);
+                    if (!doc) doc = calls[i].doc;
+                }
             }
             if (doc) {
                 code_block(out, forms.data);
@@ -8299,6 +8322,24 @@ static void complete_members(completion *c, const int dot, const loc at, const o
             // The server's store from match code and the functions it calls; Flush from local async code and functions
             const bool routine = sc.decl && sc.decl->kind == DECL_FUNCTION;
             const bool match = sc.decl && sc.decl->kind == DECL_SYSTEM && !sc.decl->is_local && !sc.decl->is_view;
+            // `await Storage.`: in a match task, the load and the listing whose answer is the task's value
+            const int before = ids[n - 1] - 1;
+            if (before >= 0 && DOC->toks[before].kind == T_AWAIT) {
+                if (!sc.in_input && sc.decl && sc.decl->is_async && !sc.decl->is_local && !sc.decl->is_view
+                    && sc.decl->task_side != TASK_LOCAL) {
+                    for (size_t i = 0; i < sizeof storage_awaited_calls / sizeof storage_awaited_calls[0]; i++) {
+                        if (i && strcmp(storage_awaited_calls[i].name, storage_awaited_calls[i - 1].name) == 0) continue;
+                        item(c, storage_awaited_calls[i].name, CK_FUNCTION, storage_awaited_calls[i].form,
+                             storage_awaited_calls[i].doc,
+                             strcmp(storage_awaited_calls[i].name, "Load") == 0 ? "Load(${1:key})" : "List(${1:prefix})");
+                    }
+                }
+                if (sc.decl && sc.decl->is_async && (routine || sc.decl->is_view || sc.decl->is_local)) {
+                    builtin_visit v = {c, false};
+                    builtin_list_members(base, add_builtin_member, &v); // Flush
+                }
+                return;
+            }
             if (!sc.in_input && (routine || match)) {
                 for (size_t i = 0; i < sizeof storage_calls / sizeof storage_calls[0]; i++) {
                     if (i && strcmp(storage_calls[i].name, storage_calls[i - 1].name) == 0) continue; // Load's second form
@@ -13169,6 +13210,9 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
     } else if (str_eq_c(owner, "Storage") && !str_eq_c(name, "Flush")) { // Flush is a builtin, below
         for (size_t i = 0; i < sizeof storage_calls / sizeof storage_calls[0]; i++) {
             if (str_eq_c(name, storage_calls[i].name)) add_signature(&s, storage_calls[i].form, storage_calls[i].doc);
+        }
+        for (size_t i = 0; i < sizeof storage_awaited_calls / sizeof storage_awaited_calls[0]; i++) { // ...and awaited
+            if (str_eq_c(name, storage_awaited_calls[i].name)) add_signature(&s, storage_awaited_calls[i].form, storage_awaited_calls[i].doc);
         }
     } else if (str_eq_c(owner, "Audience") || str_eq_c(owner, "Visibility")) {
         const bool audience = str_eq_c(owner, "Audience");

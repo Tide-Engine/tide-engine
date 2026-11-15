@@ -2743,7 +2743,8 @@ bool web_prelude_wanted(const char *text, const size_t len)
         || has_text(text, len, "IOError.TimedOut");
 }
 
-// What a load of the server's store comes back as, and a listing of its keys (STORAGE_PRELUDE_PATH)
+// What a load of the server's store comes back as, and a listing of its keys, as an event and as what an awaited
+// listing gives (STORAGE_PRELUDE_PATH)
 #define STORAGE_LOADED_TEXT                                                                                            \
     "// What Storage.Load asked the server's store for, as it comes back in a later\n"                                \
     "// tick: sent to the entity the load named, or to the world. `found` is false,\n"                                \
@@ -2771,6 +2772,15 @@ bool web_prelude_wanted(const char *text, const size_t len)
     "    List<string> keys;\n"                                                                                        \
     "    bool more;\n"                                                                                                \
     "    bool failed;\n"                                                                                              \
+    "}\n"                                                                                                             \
+    "\n"                                                                                                              \
+    "// What `await Storage.List(prefix)` gives a match task: the keys, as a Listed\n"                                \
+    "// event has them, and whether there are `more` past the last, which\n"                                          \
+    "// `await Storage.List(prefix, keys[keys.count - 1])` goes on with.\n"                                           \
+    "struct StorageKeys\n"                                                                                            \
+    "{\n"                                                                                                             \
+    "    List<string> keys;\n"                                                                                        \
+    "    bool more;\n"                                                                                                \
     "}\n"
 
 static const char storage_loaded_text[] = STORAGE_LOADED_TEXT;
