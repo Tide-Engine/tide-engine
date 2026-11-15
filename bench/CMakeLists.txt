@@ -21,16 +21,17 @@ target_link_libraries(bench_gallery PRIVATE tide_bench)
 add_test(NAME bench_gallery COMMAND bench_gallery --quick --expect 0xc8e6ab383a684a0a)
 
 # An endless world of blocks in dimensions: chunks made around players, each
-# machine sent its own, and gone once nobody's near (notes/voxels.md).
+# machine sent its own, and gone once nobody's near, and far regions of what
+# players built farther off (notes/voxels.md).
 tide_add_game(bench_voxels SOURCES voxels/voxels.tide NAME voxels HOST voxels/main.c)
 target_link_libraries(bench_voxels PRIVATE tide_bench)
-add_test(NAME bench_voxels COMMAND bench_voxels --quick --expect 0x1f3c165e43a78b10)
+add_test(NAME bench_voxels COMMAND bench_voxels --quick --expect 0x07f8d5a78a39ee59)
 # The same with every projection hash worked out twice, from what's kept of the rows that didn't change and from
 # the rows themselves: the run stops where the two differ (TIDE_CLIENT_SPANS_CHECK)
 tide_add_game(bench_voxels_checked SOURCES voxels/voxels.tide NAME voxels HOST voxels/main.c)
 target_link_libraries(bench_voxels_checked PRIVATE tide_bench)
 target_compile_definitions(bench_voxels_checked PRIVATE TIDE_CLIENT_SPANS_CHECK)
-add_test(NAME bench_voxels_checked COMMAND bench_voxels_checked --quick --expect 0x1f3c165e43a78b10)
+add_test(NAME bench_voxels_checked COMMAND bench_voxels_checked --quick --expect 0x07f8d5a78a39ee59)
 # Voxels to play: `voxels` in a window, with its views, the mouse and the keys
 if(TIDE_PLATFORM)
     tide_add_game(voxels SOURCES voxels/voxels.tide voxels/play.tide TITLE "Tide voxels" STATS)

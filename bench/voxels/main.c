@@ -2,8 +2,11 @@
 //
 // Each bot flies off in a direction of its own, turning every few seconds, so
 // the box of chunks it has keeps moving: chunks are made ahead of it and left
-// behind it. It digs and builds some of the time, and every `hop` seconds
-// goes to the next dimension.
+// behind it. It digs and builds some of the time (`builders` of each hundred
+// bots do), and every `hop` seconds goes to the next dimension. With `tower`,
+// each flies straight out a way of its own for that many seconds and then
+// climbs, building a tower: what each builds is far from the others, who see
+// it in their far regions.
 
 #include <stdio.h>
 #include <string.h>
@@ -25,7 +28,7 @@ typedef struct kept {
 
 static kept *store;
 static uint32_t store_room, store_count;
-static uint64_t store_bytes, store_writes, store_reads, store_found;
+static uint64_t store_bytes, store_writes, store_reads, store_found, store_far_found;
 
 static uint32_t path_hash(const char *path)
 {
@@ -62,6 +65,7 @@ static tide_io_error store_read(void *user, const char *path, uint8_t **data, ui
     const kept *k = store_room ? store_slot(path) : NULL;
     if (!k || !k->path) return TIDE_IO_NOT_FOUND;
     store_found++;
+    store_far_found += strncmp(path, "saved/far/", 10) == 0;
     *data = malloc(k->size ? k->size : 1u);
     if (!*data) return TIDE_IO_FAILED;
     memcpy(*data, k->data, k->size);
@@ -155,7 +159,12 @@ static bench_flag flags[] = {
     {"hop", "seconds between a bot's changes of dimension; 0 never", 20, 2, 0, 0},
     {"still", "bots of each hundred that stay where they are", 0, 0, 0, 0},
     {"keep", "ticks between saves of a chunk players changed, while it's held", 600, 90, 0, 1},
-    {"linger", "ticks a chunk nobody has stays before it goes", 120, 30, 0, 0},
+    {"linger", "ticks a chunk or a far region nobody has stays before it goes", 120, 5, 0, 0},
+    {"builders", "bots of each hundred that dig and build", 100, 100, 0, 0},
+    {"tower", "seconds a bot flies straight out, each its own way, before it climbs building a tower; 0 never", 0, 0, 0, 0},
+    {"far", "far regions (8 by 8 chunks) a player has around theirs, sideways", 6, 1, 0, 1},
+    {"pace", "far columns a dimension's changes are sent in each time, at most", 64, 64, 0, 1},
+    {"gap", "ticks between sendings of a dimension's far changes; 0 every tick", 30, 30, 0, 0},
 };
 
 static uint32_t mix(uint32_t x)
@@ -177,6 +186,9 @@ static void make_world(const bench_flag *f, void *world, const float dt)
     w->Worlds.count = (int32_t)f[2].value;
     w->Worlds.keep = (int32_t)f[5].value;
     w->Worlds.linger = (int32_t)f[6].value;
+    w->Worlds.far = (int32_t)f[9].value;
+    w->Worlds.pace = (int32_t)f[10].value;
+    w->Worlds.gap = (int32_t)f[11].value;
 }
 
 static void sample(const bench_flag *f, const uint32_t bot, const uint32_t tick, void *input)
@@ -186,13 +198,25 @@ static void sample(const bench_flag *f, const uint32_t bot, const uint32_t tick,
     const uint32_t hop = f[3].value * 60u;
     c->hops = hop ? (int32_t)((tick + mix(bot) % hop) / hop) : 0;
     if (mix(bot * 7919u + 1u) % 100u < f[4].value) return;
+    const bool builds = mix(bot * 104729u + 3u) % 100u < f[7].value;
     // A direction along the ground for five seconds, from a table: no platform's sines
     static const float ways[8][2] = {{1, 0}, {0.7f, 0.7f}, {0, 1}, {-0.7f, 0.7f}, {-1, 0}, {-0.7f, -0.7f}, {0, -1}, {0.7f, -0.7f}};
+    const uint32_t tower = f[8].value * 60u;
+    if (tower) {
+        // Out along a way of its own (eight bots, eight ways), then straight up, a plank above it each cell it rises:
+        // a tower whose top changes twelve times a second (it flies 12 cells a second), far from the others'
+        if (tick < tower) c->move = (tide_float3){ways[bot & 7u][0], 0, ways[bot & 7u][1]};
+        else {
+            c->move = (tide_float3){0, 1, 0};
+            c->build = builds;
+        }
+        return;
+    }
     const uint32_t leg = (tick + bot * 53u) / 300u;
     const uint32_t h = mix(bot * 2654435761u ^ leg);
     c->move = (tide_float3){ways[h & 7u][0], (float)((h >> 3) % 3u) * 0.1f - 0.1f, ways[h & 7u][1]};
-    c->dig = (tick / 30u + bot) % 4u == 0u;
-    c->build = (tick / 45u + bot) % 6u == 0u;
+    c->dig = builds && (tick / 30u + bot) % 4u == 0u;
+    c->build = builds && (tick / 45u + bot) % 6u == 0u;
 }
 
 #define EACH(w, e)                                                                                                    \
@@ -210,20 +234,29 @@ static uint32_t held(const void *world)
 static void describe(const void *world)
 {
     const tide_world *w = world;
-    uint32_t chunks = 0, edited = 0, avatars = 0;
-    uint64_t edits = 0;
+    uint32_t chunks = 0, edited = 0, avatars = 0, regions = 0, sent = 0, far = 0;
+    uint64_t edits = 0, sendings = 0;
     EACH(w, e)
     {
         avatars += tide_has_Avatar(w, e);
+        if (tide_has_Far(w, e)) {
+            regions++;
+            const int32_t version = tide_get_Far(w, e).version;
+            sent += version > 0;
+            sendings += (uint64_t)version;
+        }
         if (!tide_has_Chunk(w, e)) continue;
         chunks++;
         const int32_t changed = tide_get_Chunk(w, e).edits;
         edited += changed > 0;
         edits += (uint64_t)changed;
     }
+    for (uint32_t i = 0; i < store_room; i++) far += store[i].path && strncmp(store[i].path, "saved/far/", 10) == 0;
     printf("  chunks %u (%u changed by players, %llu changes), avatars %u\n", chunks, edited, (unsigned long long)edits, avatars);
-    printf("  the store: %u chunks saved in %llu bytes (%llu saves); %llu loads, %llu of them found\n", store_count,
-           (unsigned long long)store_bytes, (unsigned long long)store_writes, (unsigned long long)store_reads,
+    printf("  far regions %u (%u with columns players changed, sent %llu times); %u kept in the store, %llu loaded back\n",
+           regions, sent, (unsigned long long)sendings, far, (unsigned long long)store_far_found);
+    printf("  the store: %u chunks and far regions saved in %llu bytes (%llu saves); %llu loads, %llu of them found\n",
+           store_count, (unsigned long long)store_bytes, (unsigned long long)store_writes, (unsigned long long)store_reads,
            (unsigned long long)store_found);
 }
 
