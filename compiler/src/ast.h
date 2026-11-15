@@ -353,7 +353,7 @@ typedef struct param {
     bool read;    // The body names it
     bool written; // The body assigns through it
     bool heap_written; // A function's: its code can change text, lists or grids through it (check.c, settle_heap_passes)
-    bool c_passed;     // A function's: its code hands it, whole or in part, to C, itself or through other functions (assign_heaps)
+    bool c_passed;     // A function's: its code hands it, whole or in part, to C, itself or through other functions (settle_c_lends)
     bool c_indirect; // Internal CPU ABI: a proven read-only aggregate can borrow its caller's storage
     bool ownership; // `with ownership`, `without ownership`: by whether this machine's player owns the entity; no type, `type_at` is the word
     bool scene;     // `with scene Arena`, `without scene Arena`: by whether the entity is a loaded Arena's; no type, ...

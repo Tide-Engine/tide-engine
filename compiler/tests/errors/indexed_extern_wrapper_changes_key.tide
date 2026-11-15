@@ -1,0 +1,20 @@
+// expect: this system changes Patch.at of its own entity as it goes, which the loop finds rows by
+// A helper that only hands its component on to C writes none of its fields itself, but C can write them all: the
+// key of the system's own patch, among them
+component Patch
+{
+    int3 at;
+    local int seen;
+}
+singleton Probe { int x; }
+extern void c_shift(mut Patch patch);
+void Shift(mut Patch patch) { c_shift(patch); }
+system Move(mut Patch patch, Probe probe, query (Patch other) patches)
+{
+    indexed foreach (var row in patches)
+    {
+        if (row.other.at.x != probe.x) continue;
+        Shift(patch);
+    }
+}
+scene Main { }

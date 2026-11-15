@@ -73,6 +73,26 @@ sharded game's match task carries its grid parameters to another shard through t
 its grid locals; no test makes one cross. Web, sanitizers and the other platforms are CI's (this was validated in
 `release` on Windows only).
 
+**Correction (review, 2026-11-15): C.** `changes_local_fields_alone` trusted `param.match_write`, which only a Tide
+body sets: an `extern` function's `mut` parameter never has it, nor a helper's that only hands the component on to C
+(`void Shift(mut Patch p) { c_shift(p); }`, a pass-on, which adds nothing). So a system that handed its own component
+with a local field to C was indexed by that component's own fields, which C changes: a regression, as every `mut`
+argument had counted before. Now the call's function mustn't be `extern` and its parameter mustn't reach C
+(`param.c_passed`). `c_passed` was settled in `assign_heaps`, after the loops are planned; its fixpoint is now
+`settle_c_lends`, run once the bodies are checked and `mark_c_callers` has run (before `plan_loop_indexes`) and again in
+`assign_heaps` for what was checked since (the same fixpoint, so it only adds). Tests: `tidec_error_indexed_extern_changes_key`
+(the bound reads the system's own patch, handed to an `extern`) and `_wrapper_changes_key` (a helper passing it on to
+C, the key the patch's own `at`): both compiled before the fix. Not changed: local code can still hand its own
+component to an `extern` `mut` parameter (`check_local_field_calls` asks `match_write`, which C never sets). C is
+trusted there as anywhere; what it writes to the match fields stays in the view's copy (local code keeps its read-only
+snapshot of match components, `gen_entity_copies`), so the match doesn't change. Spec, Local state, What the call
+changes, says so and leaves refusing it to the owner. Overrides needed nothing: `place_overrides` puts an override in
+its virtual's place before any body is checked, so a call's `match_write` is the override's.
+
+Found on the way, not fixed: a Tide condition whose bitwise part can't equal the constant it's compared with,
+`((h + f) & 31) == 99`, compiles to C that clang refuses under `-Werror` (`-Wtautological-bitwise-compare`), so a game
+with it doesn't build. tidec should fold or refuse it with a message of its own.
+
 ## Awaited loads and listings of the server's store (2026-11-15)
 
 `await Storage.Load(key)` (`List<byte> fails IOError`) and `await Storage.List(prefix[, after])` (`StorageKeys fails

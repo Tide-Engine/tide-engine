@@ -21,6 +21,11 @@ changes only local fields. Both checks took every `mut` argument as a write of t
   helper it hands the component to adds to; a first version that skipped the argument altogether let it through).
 - Generated C of every game the build knows (579 source lists, plain and `--layout`), old and new tidec, is the same
   but for the two that need the change (notes/language.md, top section): no other loop's plan moved.
+- **Correction (review, 2026-11-15)**: C writes what it's handed, and `match_write` is set only by Tide bodies, so an
+  `extern`'s `mut` parameter, and a helper's that hands the component on to C, counted as changing local fields alone.
+  `changes_local_fields_alone` now takes the callee and needs it not `extern` and the parameter not `c_passed` (settled
+  before `plan_loop_indexes` by `settle_c_lends`, check.c). `tidec_error_indexed_extern_changes_key` (bound) and
+  `tidec_error_indexed_extern_wrapper_changes_key` (the system's own key) compiled before; refused now.
 
 ## Exact keys (2026-11-14)
 

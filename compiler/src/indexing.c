@@ -455,11 +455,14 @@ static bool loop_changes(const ictx *c, const void *variable, const expr *read)
 // what it hands it to (param.match_write, spread_local_field_use). Local code hands its own to no other (a view
 // can't change the match: check_local_field_calls), and a local task writes those alone. No key or bound is a local
 // field (row_path, invariant_read), so such a call changes nothing a query's loop finds rows by; a loop over a list
-// that's a local field of it is another matter (loop_changes, written_local).
-static bool changes_local_fields_alone(const param *q)
+// that's a local field of it is another matter (loop_changes, written_local). C writes what it's handed, and what it
+// writes isn't the compiler's to know: an extern's parameter, and one its function hands on to C itself or through
+// others (param.c_passed, settle_c_lends), changes the whole of it.
+static bool changes_local_fields_alone(const decl *d, const param *q)
 {
     return q->mode == PARAM_MUT && !q->is_out && (q->type.kind == TY_COMPONENT || q->type.kind == TY_SINGLETON)
-        && q->type.decl && !q->type.decl->is_local && q->type.decl->local_part && !q->match_write;
+        && q->type.decl && !q->type.decl->is_local && q->type.decl->local_part && !q->match_write
+        && !d->is_extern && !q->c_passed;
 }
 
 static void note_world_sets(ictx *c, const decl *d)
@@ -479,7 +482,7 @@ static void walk_writes_expr(ictx *c, const expr *e)
         for (int i = 0; i < d->params.count && i < e->args.count; i++) {
             const param *q = &d->params.items[i];
             const expr *arg = e->args.items[i];
-            if (changes_local_fields_alone(q)) {
+            if (changes_local_fields_alone(d, q)) {
                 const expr *root = place_root(arg);
                 if (root && name_target(root)) vec_push(c->written_local, arg);
             } else if (q->mode == PARAM_MUT || q->is_out) {
@@ -1177,7 +1180,7 @@ static bool expr_changes_param(const expr *e, const param *p, const field *f, lo
         const decl *d = e->method;
         for (int i = 0; i < d->params.count && i < e->args.count; i++) {
             const param *q = &d->params.items[i];
-            if ((q->mode == PARAM_MUT || q->is_out) && !changes_local_fields_alone(q) && names_param(e->args.items[i], p)) {
+            if ((q->mode == PARAM_MUT || q->is_out) && !changes_local_fields_alone(d, q) && names_param(e->args.items[i], p)) {
                 *at = e->at;
                 return true;
             }

@@ -25787,6 +25787,26 @@ static bool type_in_heap(const type t, const int depth)
     return false;
 }
 
+// Which functions' parameters reach C (param.c_passed), through the functions
+// they're handed on to, until nothing more does; then the owners handed to
+// those (decl.c_written). Once the bodies are checked and mark_c_callers has
+// said which functions reach C: the loops' indexes ask it of a call's `mut`
+// parameter (indexing.c's changes_local_fields_alone), and assign_heaps of an
+// owner.
+static void settle_c_lends(const checker *c)
+{
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (int i = 0; i < c->c_lends.count; i++) {
+            const c_lend *l = &c->c_lends.items[i];
+            const bool reaches = l->to->is_extern || (l->into ? l->into->c_passed : l->to->reaches_extern);
+            if (!reaches) continue;
+            if (l->owner) l->owner->c_written = true;
+            else if (!l->from->c_passed) l->from->c_passed = changed = true;
+        }
+    }
+}
+
 // Which heap each owner's text, lists and grids are in (tide/heap.h, A
 // world's heaps): its own, by an id made from its name, for a match
 // component, singleton or event of the game's or a package's. The match's own
@@ -25805,18 +25825,7 @@ static bool type_in_heap(const type t, const int depth)
 static void assign_heaps(checker *c)
 {
     program *prog = c->prog;
-    // Which functions' parameters reach C, through the functions they're
-    // handed on to, until nothing more does; then the owners handed to those
-    for (bool changed = true; changed;) {
-        changed = false;
-        for (int i = 0; i < c->c_lends.count; i++) {
-            const c_lend *l = &c->c_lends.items[i];
-            const bool reaches = l->to->is_extern || (l->into ? l->into->c_passed : l->to->reaches_extern);
-            if (!reaches) continue;
-            if (l->owner) l->owner->c_written = true;
-            else if (!l->from->c_passed) l->from->c_passed = changed = true;
-        }
-    }
+    settle_c_lends(c); // Settled before the loops' indexes; again for what was checked since
     for (int i = 0; i < prog->systems.count; i++) {
         const decl *sys = prog->systems.items[i];
         for (int k = 0; sys->extern_system && k < sys->params.count; k++) {
@@ -27285,6 +27294,7 @@ bool check(program *prog)
     }
     warn_unused_locals(&c); // Once it's known which calls draw and call C
     warn_dropped_values(&c);
+    settle_c_lends(&c);
     plan_loop_indexes(prog);
     collect_device_uses(&c);
     check_workers(&c);
