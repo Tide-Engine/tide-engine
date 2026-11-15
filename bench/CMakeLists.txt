@@ -42,7 +42,9 @@ add_test(NAME bench_voxels_checked COMMAND bench_voxels_checked --quick --expect
 if(TIDE_PLATFORM)
     tide_add_game(voxels SOURCES voxels/voxels.tide voxels/play.tide TITLE "Tide voxels" STATS)
     # Two players walking apart for 45 s, in a run with no window: no machine keeps a chunk's sides once the chunk
-    # has gone from it (play.tide's own check logs it). Its saves go in the build's folder, emptied first
+    # has gone from it (play.tide's own check logs it). Its saves go in the build's folder, emptied first. A desktop's
+    # run: it takes the host's options and files, which a page's and a phone's runners give another way
+    if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     set(voxels_walk_data "${CMAKE_CURRENT_BINARY_DIR}/voxels_walk")
     add_test(NAME voxels_walk_clean COMMAND "${CMAKE_COMMAND}" -E rm -rf "${voxels_walk_data}")
     set_tests_properties(voxels_walk_clean PROPERTIES FIXTURES_SETUP voxels_walk)
@@ -51,6 +53,7 @@ if(TIDE_PLATFORM)
     set_tests_properties(voxels_walk PROPERTIES FIXTURES_REQUIRED voxels_walk TIMEOUT 300
         FAIL_REGULAR_EXPRESSION "sides kept")
     tide_gpu_test(voxels_walk)
+    endif()
 endif()
 
 # The home page's planet (examples/earth), its match as it is but for taking
