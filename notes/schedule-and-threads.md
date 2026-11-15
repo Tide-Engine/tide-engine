@@ -1,5 +1,17 @@
 # The schedule and the tick on threads
 
+## Keys by run and logged group sets, together (2026-11-15)
+
+The two sections below were built apart and broke merged: `tidec_e2e_visibility_runs` on the real pool gave another world
+than one thread. Keys sorted by run (`tide_run_keys`, past 1024 keys) send a system's rows run by run, on one thread
+too, while a system whose rows log the groups' audiences they set (`system_logs_groups`) sets them as its rows go on
+one thread and, on threads, merges its tasks' logs by entity, taking each log to be in its entities' order. Two entities
+setting one group in a tick then ended with another audience on one thread than on the pool. Now such a system
+doesn't sort its keys (`sorts_keys_by_run` in codegen.c, which `scattered_slot` and `scattered_count` go by): its rows go
+in the keys' order on one thread and in each task, as before the sort, and its tasks walk every key for their runs'
+(a microsecond a thousand keys, beside `Generate`'s rows). `visibility_runs` passes on one thread, the fake pool and the
+real one again, its pins unchanged.
+
 ## Heaps per owner and runs in games that hide state (2026-11-14, later)
 
 The task: in a game with state visibility (`prog->visibility_state`), owners holding heap data get heaps of their own

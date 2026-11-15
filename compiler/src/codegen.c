@@ -57,19 +57,28 @@ static int extern_system_count(const program *prog)
     return count;
 }
 
-// Each system whose rows are each on their entity's own run (system_heap_runs_scattered) gets a slot of the tick's
-// keys sorted by run (tide_run_keys), and how many there are; -1 for any other system.
+// Whether a system whose rows are each on their entity's own run (system_heap_runs_scattered) goes through its keys
+// sorted by run (tide_run_keys), each task through its own runs' alone. Not one whose rows log the visibility groups'
+// audiences they set (system_logs_groups): on one thread they're set as its rows go, and on threads its tasks' logs are
+// merged by entity, each log in its entities' order, so its rows go in the keys' order, one thread's and each task's
+static bool sorts_keys_by_run(const decl *sys)
+{
+    return system_heap_runs_scattered(sys) && !system_logs_groups(sys);
+}
+
+// Each system that sorts its keys by run gets a slot of the tick's keys sorted by run (tide_run_keys), and how many
+// there are; -1 for any other system.
 static int scattered_slot(const program *prog, const decl *sys)
 {
-    if (!system_heap_runs_scattered(sys)) return -1;
+    if (!sorts_keys_by_run(sys)) return -1;
     int slot = 0;
-    for (int i = 0; i < prog->systems.count && prog->systems.items[i] != sys; i++) slot += system_heap_runs_scattered(prog->systems.items[i]);
+    for (int i = 0; i < prog->systems.count && prog->systems.items[i] != sys; i++) slot += sorts_keys_by_run(prog->systems.items[i]);
     return slot;
 }
 static int scattered_count(const program *prog)
 {
     int count = 0;
-    for (int i = 0; i < prog->systems.count; i++) count += system_heap_runs_scattered(prog->systems.items[i]);
+    for (int i = 0; i < prog->systems.count; i++) count += sorts_keys_by_run(prog->systems.items[i]);
     return count;
 }
 
@@ -22605,7 +22614,7 @@ static void gen_system_run(gen *g, const decl *sys)
                 sb_put(o, "    const uint32_t tide_runs_from = (uint32_t)((uint64_t)TIDE_HEAP_RUNS * tide_task / tide_pieces);\n"
                           "    const uint32_t tide_runs_to = (uint32_t)((uint64_t)TIDE_HEAP_RUNS * (tide_task + 1u) / tide_pieces);\n");
                 bool arches = false;
-                for (int a = 0; a < prog->archetypes.count; a++) arches |= runs_on(g, sys, a);
+                for (int a = 0; a < prog->archetypes.count && sorts_keys_by_run(sys); a++) arches |= runs_on(g, sys, a);
                 if (arches) {
                     const int slot = scattered_slot(prog, sys);
                     sb_printf(o, "    tide_run_keys *const tide_by_run = tide_w->tide_run_keys ? &tide_w->tide_run_keys[%d] : NULL;\n"
@@ -22716,7 +22725,7 @@ static void gen_system_run(gen *g, const decl *sys)
         for (int done = system_owns(g, sys) || scattered ? 0 : 1; done < 2; done++) {
             sb_printf(o, "static void tide_%s_%s(void *tide_world_v)\n{\n    tide_world *tide_w = tide_world_v;\n", done ? "done" : "own", name);
             // Its keys sorted by run, for its tasks to go through their own runs' alone
-            if (!done && scattered) {
+            if (!done && scattered && sorts_keys_by_run(sys)) {
                 bool arches = false;
                 for (int a = 0; a < prog->archetypes.count; a++) arches |= runs_on(g, sys, a);
                 if (arches) {
