@@ -3,8 +3,10 @@
 ## What a server's projection checks read again (2026-11-15)
 
 `bench_voxels_counts` is `bench_voxels` built with `TIDE_CLIENT_COUNTS`: at the program's end it prints what the
-server's checks read again and why (pieces by their reason, rows, grids encoded, blocks hashed again and their bytes,
-pages looked at) and how long each part of a check took, over the whole run. The `bench_voxels_counts` test runs it
+server's checks read again and why (pieces by their reason and how many kept their arrays, rows, grids encoded, blocks
+hashed again and their bytes, pages looked at, big containers' chunks read again and kept) and how long each part of
+a check took, over the whole run (2026-11-16: also, inside the rows read, the rows read from the heap again and the
+grids, maps and lists encoded for them: `TIDE_CLIENT_FROM`/`TIDE_CLIENT_TO`). The `bench_voxels_counts` test runs it
 quick with `bench_voxels`' pin (the counting changes no hash), so a counting build that breaks or crashes fails where
 it's built. The counting makes its timings no measure of the build without it: time with `bench_voxels`. The numbers it gave are in notes/netcode.md,
 top section.

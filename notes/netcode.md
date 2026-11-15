@@ -1,5 +1,141 @@
 # Netcode: sessions, prediction, commands
 
+## Projection hashes: the rows that changed, and big containers by their chunks (2026-11-16)
+
+Two costs the blocks (the section below) left in a tick's check of a world of thousands of chunks: a piece of 64 rows
+read for one of its columns had each of its rows looked at (533k for 119k that changed), and a container that
+changed was encoded and hashed whole (a dimension's `Streamer.chunks`, 6,490 entries, 105 µs each time). Now
+(`client_spans_codegen.inc`, `client_state_codegen.inc`):
+
+- **A piece keeps a copy of its columns' runs** (`tide_client_piece.lanes`: every column's 64 values, side by side)
+  beside each run's hash (`runs`). A written column's run that hashes otherwise is compared with the copy value by
+  value (`tide_client_rows_differ`): `tide_client_piece_same` says, for each component of the archetype, which rows
+  of the piece a lane of it changed in, a bit a row (`changed`), and the same for the entity's and the scene's columns
+  (`ids_rows`), and makes the copy and the hash the run's. So what says a row changed is its own bytes, exactly: the
+  per-row digests of each component's lanes (`tide_client_rows.digests`, `tide_client_lanes_digest`) are gone, and a
+  piece's memory is its rows' bytes once more (about 250 bytes a chunk in voxels) where it was 8 bytes a component a
+  row. The hash stays because comparing every written run with its copy read twice the memory: the pieces' checks
+  were about 12 ms a run dearer without it (counted: 165k runs compared over a run, for 10k pieces read). A piece that
+  isn't kept whole (its rows are more or fewer: the table's last; or a row of it reads outside the heaps) still has
+  its copy, so the rows it had are compared the same way and only the new ones are read whole (the first build read
+  every row of such a piece: 6.5k more rows from the heap over a run, which the counts showed).
+- **A piece read again keeps its arrays** (`inplace`): its rows' blocks (`row_pages`), its pages and their hashes
+  stand while no row of it reads the heap again or is another entity than it was, and while they stand only the rows
+  with a bit are looked at (`look`). A chunk whose `Seen` changed moves its term and its sum where they are; nothing
+  of the 63 rows beside it is touched. The first row that reads the heap again, or is another entity, has the piece's
+  arrays made again as before: the rows before it give the blocks and slots they had
+  (`tide_client_piece_rows_again`), the rows after go on as they did. A slot's page of the piece's that changed makes
+  every row's slot looked at (`tide_client_row_slot_same`: its entity there still, with the snaps it had), and a
+  piece whose arrays stood takes its slots' pages' hashes as they are (`tide_client_piece_keep_slots`).
+- **Who may have a row is worked out again only where what that goes by changed in the row** (`seen`): its scene
+  (the entity's and the scene's columns), its Visibility's lanes or policies, or which of its components it has (a
+  sparse one's presence byte). Before, any term of it that changed did (a chunk's `Seen`, its `Chunk`'s stage).
+  `tide_client_rows.fresh` and `tide_client_piece.fresh` mean that now.
+- **A container too big for one chunk of its list is a tree of its chunks** (`tide_client_sum`,
+  `tide_client_memo_sums`, `tide_client_sum_kept`; `gen_client_hv`). A map or a set whose live entries are more
+  bytes than `TIDE_LIST_CHUNK` is the sum of its entries' hashes, each `tide_client_mix(tide_hash(order, key,
+  value))`: an entry's order is part of it, so the sum says the map with its order, wherever its entries are stored
+  (the server's has dead entries among them, a player's machine's hasn't). A list whose elements are more bytes than
+  that is the hashes of its elements a chunk's worth at a time (`TIDE_LIST_CHUNK` over an element's size, by index,
+  not by how the list is stored), chained in order. What's hashed of the container is then a byte saying which (1, a
+  sum; 2, chunks' hashes) and those 8 bytes. Which way a container goes is its count's alone, so a server and a
+  player's machine agree, and so do a map that grows past a chunk and one that shrinks back.
+  Each chunk's part is kept with the memo's entry for the container (`tide_client_memo_entry.sums`) where the entries
+  or elements hold nothing in the heap (they are what their bytes are): a chunk whose page hashes as it did, with as
+  many elements read of it, isn't read. Entries that hold lists or texts are summed without keeping (their own
+  containers are the memo's as before). A list of elements whose bytes are their codec's is hashed where it is, a
+  chunk at a time, with no copy.
+- **A grid's cells whose bytes are their codec's go a chunk at once** (`tide_client_write` of the chunk) where each
+  cell was a call: the same bytes, 3.7 µs a 16-cubed chunk of bytes to 1.1 (counted).
+- The directory's copy reads its entries through a list cache (`tide_list_cached_at`) where each was a lookup.
+
+**Pins.** Hashes of rows and of containers that fit a chunk are what they were: `bench_voxels`' world hash and bytes
+sent, and every projection pin but one. A container too big for a chunk hashes to another number, by its nature
+(another function of the same value), so `visibility_hash_memo_test.c`'s pin moved, `0xa15bc20786198050` to
+`0xc8f1048a1b38d2a4` (its catalog's 40,000 bytes are a tree now; nothing else of it is more than a chunk), the same
+with the memo on and off; a player's machine's own world, loaded from what it's sent, hashes to the server's in both
+(that test, and the new one's every tick). Simulation identity: `singleton and entity tree hashes 3`
+(`asset_usage.c`), so a build from before joins no match of this one. `TIDE_CLIENT_SPANS_CHECK` (`bench_voxels_checked`
+with 8 bots for 30 s and quick, the fixtures' `_checked`) and `TIDE_CLIENT_MEMO_OFF` pass; kept rows are still exactly
+the world's at `tide_client_kept.tick` (every fixture's repairs from what's kept against the rows'). No runtime change
+(notes/runtime-ownership.md, Projection hashes: rows by their bytes, big containers by their chunks).
+
+**Measured** (`bench_voxels`, 8 bots, 30 s, 4 threads, release, Windows, BelowNormal, one at a time, three runs
+alternating with dev's build of the same tree; medians, ranges in brackets): server hashing (the world's hash and
+the projections') 9.40 to 6.95 ms a second (9.40–9.50 to 6.00–6.99), update median 0.91 to 0.82 ms (0.88–0.91 to
+0.72–0.83), p99 6.07 to 5.46 (6.04–6.24 to 5.33–5.73), simulate the same (32.0 and 31.3); a client's hashing 0.79
+to 0.59 ms a second (0.79–0.81 to 0.52–0.59), its update median 0.16 both, p99 2.26 to 2.18. The same bytes sent
+(186.8 KB a second) and world hash (0x77babb9991dd25da) in all six. An earlier three pairs, with another agent's
+builds running: 10.06 to 7.31 (9.03–11.78 to 7.02–8.29). Standing still (`--still 100 --hop 0`, three pairs): hashing
+0.66 to 0.64 ms a second (0.65–0.71 to 0.64–0.65), update median 0.08 both, p99 0.61 to 0.59; a client's 0.34 both.
+Counted over a run (`bench_voxels_counts`, 2,017 checks; the two runs an hour apart on a shared machine: `sums`,
+which nothing here touched, took 19.2 ms in the first and 15.8 in the second, so about a fifth of every drop is the
+machine's):
+
+| 8 bots moving | before | after |
+|---|---|---|
+| pieces read: a column's run / a heap page / nothing kept | 10,381 / 131 / 466 | the same |
+| ...of which their arrays stood | 0 | 6,667 |
+| rows looked at in pieces read | 533,328 | 280,038 |
+| rows read from the heap again | 50,873 | 50,873 |
+| rows something changed of (`rows fresh`) | 119,491 | 119,491 |
+| big containers' chunks read again / kept | (4,948 containers whole, 476 not grids) | 1,079 / 1,676 |
+| rows of pieces read | 125.5 ms | 43.7 |
+| ...rows read from the heap again | 69.5 | 26.7 |
+| ......maps and sets encoded | 33.8 | 4.7 |
+| ......grids encoded | 16.4 | 4.7 |
+| pieces checked | 80.3 | 73.9 |
+| pieces kept | 11.2 | 6.0 |
+| audiences / sums / groups | 27.9 / 19.2 / 12.2 | 22.3 / 15.8 / 8.3 |
+| all of a check's parts | 279 ms | 172 |
+
+The rows still looked at that nothing changed of (160k) are those of pieces whose arrays are made again (a row of
+them read the heap again: new chunks come a few dozen at a time at a table's end), which every row of gives its
+blocks to. `visibility_trees_measure` (a book of a map of 8,000 entries and a list of 40,000 ints, 4 players, 200
+ticks each, three runs alternating with dev's build, medians): one entry set where it is each tick 177.6 to 11.6 µs
+a check; an entry gone and another added 178.2 to 18.2; one number of the list 30.4 to 4.5; nothing changing 1.3 to
+1.4.
+
+**Tests.** `tidec_e2e_visibility_trees` (and `_checked`, `_memo_off`; `e2e/visibility_trees.tide`, `_test.c`): three
+vaults, each a map of 2,000 entries, a set of 2,500, a list of 9,000 ints, one of 5,000 structs with padding, a map of
+800 lists, a list of 2,200 texts and a map of 1,023 entries (a chunk's worth exactly); a singleton with a map of
+3,000 and a list of 5,000; a book (the measurement's); 300 tiles with a small list, a `Tag`, and a `[Sparse]` `Badge`
+one player of their audience may have. Thirty-eight changes: an entry where it is, in a map's first chunk and its
+last; two keys taken out and put again, against a twin that puts them the other way round (only the entries' orders
+tell them apart); one gone and another added with the count the same; a key put again with its value; a map growing
+across chunks, shrinking, under a chunk's worth and over again; the set's; an element where it is, two swapped
+between chunks, a list growing across chunks, its first element gone (every other moves along), down to one element
+and up again, its last element gone where that's a 0 (its chunk's bytes stay: only the count says); an element with
+padding; a list held by a big map's entry; a text of a big list; the map of a chunk's worth one over, changed there,
+and back; the singleton's; three rows' small values and a later row's list in one piece and the other way round;
+one of those values back as it was; that list's element where the list is now; a sparse component given and taken
+(its byte in the row, back as it was); a row of the last piece while it gets another; a row gone, made and snapped
+beside one that changes. Quiet, then with lists growing all over. Every tick, every player's hash is the one a copy
+of the world hashes to with nothing kept, and the one that player's own world hashes to, loaded from what it's sent
+(another layout, its maps' live entries alone, hashed with what the player's memo kept of the tick before's world);
+a repair from what's kept is the rows'; each change shows against its twin; pinned, the same in all three. Each of
+these fails it, or the pieces' or blocks' fixture: a chunk's page hash not compared, a chunk's count not compared
+(the 0 gone), chunk sums kept for entries that hold lists, an entry's order left out of its hash (the twin), only
+the first changed row of a run seen, a kept piece's copy not made the run's, nor its hash (the value back; the byte
+back), a piece's arrays left standing though a row read the heap again, a Visibility's lanes not working its
+audience out again (pieces), nor which components it has (the badge), a row's slot not looked at where a slot's page
+changed (the snap, here and in blocks), rows whose entity or scene changed not looked at (pieces' rover). The pin of
+`visibility_hash_memo` moved (above). All of `tidec_e2e_visibility_*`, `tidec_e2e_task_visibility`,
+`_scene_preparation_visibility`, `_shards_visibility`, `_net_alone_seen`, `_storage_await_hidden`, `bench_voxels*`,
+`bench_earth*`, `earth_tests` and `tide_tests visibility` pass in release on Windows; sanitizers, the web and the
+other platforms are CI's.
+
+**Left.** The pieces' checks are what a check mostly costs now (74 of 172 ms a run): 1,866 heap pages' hashes looked
+at a call (25 a piece), 20 ms of blocks hashed again for another's block in their page (209 MB a run), 8 ms of
+slots' snaps. Pages written since the last call, kept by the runtime (a heap's list of them, as the world's hash
+finds them stale), would let a check go from the pages that changed to the pieces that read them, and look at no
+other: a runtime change, the owner's to agree. What a piece's rows add to each player's sum is still added up whole
+for a piece any row of which changed (16 ms a run, 64 rows for the 11 that changed): taking the old rows' part away
+and adding the new would need each row's before its terms move. A big map whose entries hold lists or texts is
+summed whole when it changes (no chunk kept), and a grid is encoded whole (a chunk's grid here is one chunk; a grid
+of many chunks would want each chunk's hash kept as a list's are). A big list an element of which is inserted or
+removed early has every chunk after it hashed again, as its elements all moved.
+
 ## Projection hashes kept by blocks (2026-11-15, later)
 
 The pieces below left most of the check's reading to heap pages that changed for other entities' blocks: with 8 bots
@@ -99,7 +235,8 @@ the language. `bench_voxels_counts` runs as a test now (notes/benchmarks.md).
 be another function of its value, and every projection pin would move, so it isn't done here; resuming its hash from a
 kept prefix would need `tide_hash` to be resumable at a chunk's edge. Heap pages looked at are a piece's whole union
 each call (25 a piece in voxels); a heap's pages written since the last call, kept by the runtime, would let a piece
-look at none.
+look at none. (2026-11-16, the section above: containers too big for one chunk of their list are trees now, and only
+those, so one pin moved; the heap pages are as they were.)
 
 ## Projection hashes kept 64 rows at a time (2026-11-15)
 

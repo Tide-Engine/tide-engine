@@ -19,23 +19,29 @@
 //   were (another entity's block in the page changed) the piece is passed over
 //   still, the page's hash now kept; a slot's page that does has its rows'
 //   snaps looked at again.
-// - Otherwise each row's components are: one none of whose columns' runs in
-//   the piece changed, or whose lanes (and presence) hash as they did, is not
-//   hashed again, and one that holds anything in the heap (a grid) is hashed
-//   again only when its lanes changed or a heap page its row's values were
-//   read from changed. So a chunk whose small `Seen` changed doesn't hash its
-//   4,096 blocks again. A Visibility's policies are blocks in the heap too, in
-//   every archetype that has one, though nothing a recipient is sent: a policy
-//   set where it is changes a page of theirs, not the Visibility's lanes. A
-//   row keeps every page it read, its first too where that's the last of the
-//   row before (rows made together share pages).
+// - A piece keeps a copy of its columns' runs beside their hashes: a run that
+//   hashes otherwise is compared with it value by value, which says which rows
+//   changed, and in which component (or the entity's or the scene's column).
+//   Only those rows are looked at, and the piece's own arrays (its rows'
+//   blocks, its pages) stand while none of them reads the heap again or is
+//   another entity: the first that does has them made again from there.
+// - Of a row looked at, a component no lane of which (nor its presence)
+//   changed in the row is not hashed again, and one that holds anything in the
+//   heap (a grid) is hashed again only when its lanes changed or a block its
+//   row's values were read from changed. So a chunk whose small `Seen` changed
+//   doesn't hash its 4,096 blocks again. A Visibility's policies are blocks in
+//   the heap too, in every archetype that has one, though nothing a recipient
+//   is sent: a policy set where it is changes a page of theirs, not the
+//   Visibility's lanes. A row keeps every page it read, its first too where
+//   that's the last of the row before (rows made together share pages).
 // - Who may have a row goes by its groups' audiences, which are no part of the
 //   row: the directory of groups is compared with the copy kept of it. A piece
 //   whose rows' groups (their least and most, and a bit for each of 256) take
 //   in none of those that changed, with no row restricted to a group or worked
 //   out again, isn't looked at; in the others a row's audience is worked out
 //   again only when its own group's, its scene's or a group one of its
-//   components is restricted to changed, or when the row itself changed. Every
+//   components is restricted to changed, or when what it goes by in the row
+//   did (its scene, its Visibility, which components it has). Every
 //   row's is when a scene's root came, went, or has another Visibility. The
 //   copy of the directory is entry by entry, a chunk of its list compared only
 //   where its page changed.
@@ -110,7 +116,10 @@ static void gen_client_span_helpers(gen *g)
               "// A table chunk's rows are kept this many at a time\n"
               "#define TIDE_CLIENT_PIECE_SHIFT 6u\n#define TIDE_CLIENT_PIECE (1u << TIDE_CLIENT_PIECE_SHIFT)\n\n"
               "typedef struct tide_client_piece {\n"
-              "    uint64_t *lanes;       // Each column's run of its rows, hashed, as they were last read\n"
+              "    // Each column's run of its rows as they were last read: a copy, column after column, each its size times\n"
+              "    // TIDE_CLIENT_PIECE (tide_client_runs_bytes). What says which rows of a piece changed, and in which component\n"
+              "    uint8_t *lanes;\n"
+              "    uint64_t *runs;        // ...and each run's hash: a written column's run that hashes as it did isn't compared\n"
               "    // The heap pages its rows' values were read from, by place (its heap and its first place there:\n"
               "    // tide_client_place), then its slots' pages\n"
               "    uint64_t *pages;\n"
@@ -125,7 +134,7 @@ static void gen_client_span_helpers(gen *g)
               "    // group by one of its components' policies\n"
               "    int64_t low, high;\n    uint64_t bloom[4];\n    bool by_group;\n"
               "    bool kept;             // What the arrays hold for its rows is what they come to\n"
-              "    bool fresh;            // ...a row of it worked out again in this call\n"
+              "    bool fresh;            // ...a row of it has its audience to work out again in this call\n"
               "    // What its rows add to each player's sum (tide_client_hashes_work's routing): the players, and for each the\n"
               "    // sum of its rows' hashes as that player may have them and how many; kept while no row of it is read\n"
               "    // again or has its audience worked out again (`routed`)\n"
@@ -142,12 +151,11 @@ static void gen_client_span_helpers(gen *g)
               "    uint64_t *has;         // ...which of the components that can be denied it has, and its hash's sum with all of it\n"
               "    Audience *denied;      // ...who may have each of those\n"
               "    uint64_t *terms;       // ...each component's term of the sum, `parts` a row\n"
-              "    uint64_t *digests;     // ...and the hash of the lanes it was worked out from, `parts` a row\n"
               "    int64_t *groups;       // ...its own group and its scene's, as its audience was worked out\n"
               "    uint64_t *policies;    // ...its Visibility's policies, hashed (tide_client_policies_digest), 0 for none\n"
               "    uint32_t *page_from;   // ...its heap pages in its piece's row_pages; a count of UINT32_MAX: never kept\n"
               "    uint32_t *page_count;\n"
-              "    uint32_t *fresh;       // ...the call something of it was last worked out in\n"
+              "    uint32_t *fresh;       // ...the call its audience was last to be worked out again in (what it goes by changed)\n"
               "    uint32_t *snaps;       // ...its entity's snaps, as what says which entity it is was last hashed, and its slot\n"
               "    uint32_t *slot;\n"
               "    uint8_t *flags;\n"
@@ -170,11 +178,11 @@ static void gen_client_span_helpers(gen *g)
                  "        for (uint32_t i = 0; i < r->span_room; i++) {\n"
                  "            tide_client_span *s = &r->spans[i];\n"
                  "            for (uint32_t p = 0; p < s->piece_room; p++) {\n"
-                 "                free(s->pieces[p].lanes);\n                free(s->pieces[p].pages);\n                free(s->pieces[p].page_hashes);\n"
+                 "                free(s->pieces[p].lanes);\n                free(s->pieces[p].runs);\n                free(s->pieces[p].pages);\n                free(s->pieces[p].page_hashes);\n"
                  "                free(s->pieces[p].row_pages);\n                free(s->pieces[p].route_players);\n                free(s->pieces[p].route_sums);\n            }\n"
                  "            free(s->pieces);\n            free(s->lanes);\n        }\n"
                  "        free(r->spans);\n        free(r->audience);\n        free(r->has);\n        free(r->denied);\n        free(r->terms);\n"
-                 "        free(r->digests);\n        free(r->groups);\n        free(r->policies);\n        free(r->page_from);\n        free(r->page_count);\n"
+                 "        free(r->groups);\n        free(r->policies);\n        free(r->page_from);\n        free(r->page_count);\n"
                  "        free(r->fresh);\n        free(r->snaps);\n        free(r->slot);\n        free(r->flags);\n    }\n"
                  "    free(k->group_entries);\n    free(k->chunk_hashes);\n    free(k->changed);\n    free(k->route_sums);\n    free(k->route_touched);\n"
                  "    memset(k, 0, sizeof *k);\n}\n\n", archetypes > 0 ? archetypes : 1);
@@ -192,7 +200,6 @@ static void gen_client_span_helpers(gen *g)
               "        r->has = tide_client_grow(r->has, had * 2u, (size_t)room * 2u, sizeof *r->has);\n"
               "        if (denials) r->denied = tide_client_grow(r->denied, had * denials, (size_t)room * denials, sizeof *r->denied);\n"
               "        r->terms = tide_client_grow(r->terms, had * parts, (size_t)room * parts, sizeof *r->terms);\n"
-              "        r->digests = tide_client_grow(r->digests, had * parts, (size_t)room * parts, sizeof *r->digests);\n"
               "        r->groups = tide_client_grow(r->groups, had * 2u, (size_t)room * 2u, sizeof *r->groups);\n"
               "        r->policies = tide_client_grow(r->policies, had, room, sizeof *r->policies);\n"
               "        r->page_from = tide_client_grow(r->page_from, had, room, sizeof *r->page_from);\n"
@@ -235,21 +242,43 @@ static void gen_client_span_helpers(gen *g)
               "// A table chunk past the table's end: nothing of it is kept\n"
               "TIDE_HELPER void tide_client_span_forget(tide_client_span *s)\n{\n"
               "    s->kept = false;\n    for (uint32_t p = 0; p < s->piece_room; p++) s->pieces[p].kept = s->pieces[p].routed = false;\n}\n\n"
-              "// A column's run of rows in a table chunk, from row `at` of it, hashed\n"
-              "TIDE_HELPER uint64_t tide_client_run_hash(const tide_table *t, const tide_columns *c, const uint32_t chunk, const uint32_t k,\n"
-              "                                         const uint32_t at, const uint32_t rows)\n{\n"
-              "    const uint8_t *data = tide_page_data(t->pages[chunk * c->count + k]);\n"
-              "    return tide_hash_wide(data + (size_t)at * c->sizes[k], (size_t)rows * c->sizes[k]);\n}\n\n");
+              "// A column's run of rows in a table chunk, from row `at` of it, where it is\n"
+              "TIDE_HELPER const uint8_t *tide_client_run(const tide_table *t, const tide_columns *c, const uint32_t chunk, const uint32_t k,\n"
+              "                                           const uint32_t at)\n{\n"
+              "    return (const uint8_t *)tide_page_data(t->pages[chunk * c->count + k]) + (size_t)at * c->sizes[k];\n}\n\n"
+              "// Which of `rows` values of `size` bytes side by side differ between two runs: a bit a row\n"
+              "TIDE_HELPER uint64_t tide_client_rows_differ(const uint8_t *now, const uint8_t *was, const uint32_t rows, const uint32_t size)\n{\n"
+              "    uint64_t differ = 0;\n"
+              "    if (size == 4u) {\n"
+              "        for (uint32_t i = 0; i < rows; i++) {\n            uint32_t a, b;\n"
+              "            memcpy(&a, now + (size_t)i * 4u, 4u);\n            memcpy(&b, was + (size_t)i * 4u, 4u);\n"
+              "            differ |= (uint64_t)(a != b) << i;\n        }\n"
+              "    } else if (size == 8u) {\n"
+              "        for (uint32_t i = 0; i < rows; i++) {\n            uint64_t a, b;\n"
+              "            memcpy(&a, now + (size_t)i * 8u, 8u);\n            memcpy(&b, was + (size_t)i * 8u, 8u);\n"
+              "            differ |= (uint64_t)(a != b) << i;\n        }\n"
+              "    } else if (size == 1u) {\n"
+              "        for (uint32_t i = 0; i < rows; i++) differ |= (uint64_t)(now[i] != was[i]) << i;\n"
+              "    } else {\n"
+              "        for (uint32_t i = 0; i < rows; i++) differ |= (uint64_t)(memcmp(now + (size_t)i * size, was + (size_t)i * size, size) != 0) << i;\n"
+              "    }\n"
+              "    return differ;\n}\n\n"
+              "// The bytes a piece's copy of its columns' runs takes: each column's size, TIDE_CLIENT_PIECE rows of it\n"
+              "TIDE_HELPER size_t tide_client_runs_bytes(const tide_columns *c)\n{\n"
+              "    size_t bytes = 0;\n    for (uint32_t k = 0; k < c->count; k++) bytes += (size_t)c->sizes[k] << TIDE_CLIENT_PIECE_SHIFT;\n"
+              "    return bytes ? bytes : 1u;\n}\n\n");
     sb_put(o, "// The hash of the heap page at a place (tide_client_place), where one starts there; else false\n"
               "TIDE_HELPER bool tide_client_place_same(tide_heaps *heaps, const uint64_t place, const uint64_t hash)\n{\n"
               "    uint32_t size;\n    uint64_t now;\n"
               "    return tide_client_place_hash(heaps, place, &size, &now) && now == hash;\n}\n\n");
     sb_put(o, "// Whether a piece's rows, and all they were read from, are as they were when what's kept of them was worked\n"
               "// out: their columns' runs (those of the columns `written`, the rest unwritten), their heap pages and their\n"
-              "// slots' pages. Where they aren't, `changed` says which of the archetype's components a column of changed in\n"
-              "// (`part_of`, `parts` of them), `heap_moved` whether one of their heap pages did, and `ids_moved` whether what\n"
-              "// says which entity each row is might have (the entity's or the scene's column, or a slot's page: its snaps).\n"
-              "// `*runs` is the written columns' runs as they are now, for tide_client_piece_keep; NULL where they weren't hashed.\n"
+              "// slots' pages. A written column's run that hashes otherwise than it did is compared with the piece's copy of it,\n"
+              "// row by row: `changed` says, for each of the archetype's components (`part_of`, `parts` of them), which\n"
+              "// rows of the piece a lane of it changed in (a bit a row), and `ids_rows` the same for the entity's and the scene's\n"
+              "// columns; the copy is then the run as it is now, so the piece's rows must be read (those rows of it, at least).\n"
+              "// `heap_moved` says whether one of their heap pages changed, and `slots_moved` whether one of their slots' pages\n"
+              "// did (a row's snaps then say whether it's the entity it was: tide_client_row_slot_same).\n"
               "// A heap page that changed has the blocks of it the rows read hashed again (tide_client_item_same): where every one\n"
               "// is as it was, the page's hash now is kept in its place, and the piece isn't read for it\n"
               "TIDE_HELPER bool tide_client_piece_blocks_same(tide_client_piece *s, const tide_heap *h, const tide_page *page, const uint64_t place,\n"
@@ -279,25 +308,42 @@ static void gen_client_span_helpers(gen *g)
     sb_put(o, "TIDE_HELPER bool tide_client_piece_same(tide_client_piece *s, const tide_client_rows *r, const tide_world *w, const tide_table *t,\n"
               "                                        const tide_columns *c, const uint32_t chunk, const uint32_t at, const uint32_t rows,\n"
               "                                        const bool *written, tide_heaps *heaps, const int32_t *part_of, const uint32_t parts,\n"
-              "                                        bool *changed, bool *heap_moved, bool *ids_moved, uint64_t *run, const uint64_t **runs)\n{\n"
-              "    *heap_moved = *ids_moved = true;\n    *runs = NULL;\n"
-              "    for (uint32_t i = 0; i < parts; i++) changed[i] = true;\n"
+              "                                        uint64_t *changed, uint64_t *ids_rows, bool *heap_moved, bool *slots_moved)\n{\n"
+              "    *heap_moved = *slots_moved = true;\n    *ids_rows = UINT64_MAX;\n"
+              "    for (uint32_t i = 0; i < parts; i++) changed[i] = UINT64_MAX;\n"
               "#ifdef TIDE_CLIENT_MEMO_OFF // For tests: every row read again\n"
-              "    (void)s; (void)r; (void)w; (void)t; (void)c; (void)chunk; (void)at; (void)rows; (void)written; (void)heaps; (void)part_of; (void)run;\n"
+              "    (void)s; (void)r; (void)w; (void)t; (void)c; (void)chunk; (void)at; (void)rows; (void)written; (void)heaps; (void)part_of;\n"
               "    return false;\n#else\n"
               "    TIDE_CLIENT_COUNT(1);\n"
-              "    if (!s->kept || s->rows != rows) {\n        TIDE_CLIENT_COUNT(2);\n        return false;\n    }\n"
-              "    for (uint32_t i = 0; i < parts; i++) changed[i] = false;\n"
-              "    bool same = true, by_run = false;\n    *ids_moved = false;\n    (void)by_run;\n"
-              "    for (uint32_t k = 0; written && k < c->count; k++) {\n"
-              "        if (!written[k]) continue;\n"
-              "        run[k] = tide_client_run_hash(t, c, chunk, k, at, rows);\n        TIDE_CLIENT_COUNT(17);\n        TIDE_CLIENT_COUNT_BY(18, rows * c->sizes[k]);\n"
-              "        if (run[k] == s->lanes[k]) continue;\n"
-              "        same = false;\n        by_run = true;\n"              "        if (part_of[k] >= 0) changed[part_of[k]] = true;\n"
-              "        else *ids_moved = true; // The entity's or the scene's\n"
+              "    if (!s->lanes) {\n        TIDE_CLIENT_COUNT(2);\n        return false;\n    }\n"
+              "    // A piece that isn't kept whole (its rows are more or fewer, or a row of it can't be kept by its pages) still\n"
+              "    // has its copy: the rows it had are compared, every column of them, and each then says for itself whether its\n"
+              "    // own blocks and its slot are as they were (heap_moved, slots_moved)\n"
+              "    const bool whole = s->kept && s->rows == rows;\n"
+              "    const uint32_t had = s->rows < rows ? s->rows : rows;\n"
+              "    const uint64_t fresh = had < rows ? UINT64_MAX << had : 0u; // (Rows it hadn't: everything of them)\n"
+              "    for (uint32_t i = 0; i < parts; i++) changed[i] = fresh;\n"
+              "    bool same = true, by_run = false;\n    *ids_rows = fresh;\n    (void)by_run;\n"
+              "    size_t from = 0;\n"
+              "    for (uint32_t k = 0; k < c->count; from += (size_t)c->sizes[k] << TIDE_CLIENT_PIECE_SHIFT, k++) {\n"
+              "        const uint32_t size = c->sizes[k];\n"
+              "        if (!size || (whole && !(written && written[k]))) continue;\n"
+              "        const uint8_t *now = tide_client_run(t, c, chunk, k, at);\n"
+              "        uint8_t *was = s->lanes + from;\n"
+              "        TIDE_CLIENT_COUNT(17);\n        TIDE_CLIENT_COUNT_BY(18, rows * size);\n"
+              "        // (Its hash first: the copy of a run that didn't change isn't read)\n"
+              "        const uint64_t run = tide_hash_wide(now, (size_t)rows * size);\n"
+              "        if (whole && run == s->runs[k]) continue;\n"
+              "        const uint64_t rows_of = tide_client_rows_differ(now, was, had, size);\n"
+              "        memcpy(was, now, (size_t)rows * size);\n"
+              "        s->runs[k] = run;\n"
+              "        if (!rows_of) continue;\n"
+              "        same = false;\n        by_run = true;\n"
+              "        if (part_of[k] >= 0) changed[part_of[k]] |= rows_of;\n"
+              "        else *ids_rows |= rows_of; // The entity's or the scene's\n"
               "    }\n"
-              "    if (written) *runs = run;\n"
-              "    *heap_moved = false;\n"
+              "    if (!whole) {\n        TIDE_CLIENT_COUNT(2);\n        return false;\n    }\n");
+    sb_put(o, "    *heap_moved = false;\n"
               "    TIDE_CLIENT_COUNT_BY(15, s->heap_pages);\n    TIDE_CLIENT_COUNT_BY(16, s->slot_pages);\n"
               "    // (Its pages are in order, by heap: tide_client_piece_keep, so a heap is found once for its pages)\n"
               "    uint32_t id = UINT32_MAX;\n    tide_heap *h = NULL;\n"
@@ -312,12 +358,13 @@ static void gen_client_span_helpers(gen *g)
               "            bool held;\n            TIDE_CLIENT_TIMED(8, held = tide_client_piece_blocks_same(s, h, page, s->pages[i], now));\n            if (held) {\n"
               "                s->page_hashes[i] = now;\n                continue;\n            }\n        }\n"
               "        *heap_moved = true;\n        same = false;\n        break;\n    }\n"
+              "    *slots_moved = false;\n"
               "    for (uint32_t i = s->heap_pages; i < s->heap_pages + s->slot_pages; i++) {\n"
               "        const uint64_t now = tide_entities_slot_page_hash(&w->entities, (uint32_t)s->pages[i]);\n"
               "        if (now == s->page_hashes[i]) continue;\n"
-              "        bool held = false;\n        if (!*ids_moved) TIDE_CLIENT_TIMED(9, held = tide_client_piece_snaps_same(r, w, t, c, (chunk << c->shift) + at, rows, (uint32_t)s->pages[i]));\n        if (held) {\n"
+              "        bool held = false;\n        if (!*ids_rows) TIDE_CLIENT_TIMED(9, held = tide_client_piece_snaps_same(r, w, t, c, (chunk << c->shift) + at, rows, (uint32_t)s->pages[i]));\n        if (held) {\n"
               "            s->page_hashes[i] = now;\n            continue;\n        }\n"
-              "        *ids_moved = true;\n        same = false;\n        break;\n    }\n"
+              "        *slots_moved = true;\n        same = false;\n        break;\n    }\n"
               "    if (!same) TIDE_CLIENT_COUNT(by_run ? 3 : *heap_moved ? 4 : 5);\n"
               "    return same;\n#endif\n}\n\n");
     sb_put(o, "// Whether a row's own blocks and heap pages are as they were (a row never kept, or that read outside the match's\n"
@@ -330,13 +377,6 @@ static void gen_client_span_helpers(gen *g)
               "    for (uint32_t i = from; i < from + count; i++) {\n"
               "        if (!tide_client_item_same(heaps, &s->row_pages[i])) return false;\n    }\n"
               "    return true;\n#endif\n}\n\n");
-    sb_put(o, "// A component's lanes in a row (and its presence byte, or UINT32_MAX for none), hashed: what says it's as it was\n"
-              "TIDE_HELPER uint64_t tide_client_lanes_digest(const tide_table *t, const tide_columns *c, const uint32_t row, const uint32_t first,\n"
-              "                                             const uint32_t count, const uint32_t presence)\n{\n"
-              "    uint64_t h = 0x9ae16a3b2f90404full;\n"
-              "    if (presence != UINT32_MAX) h = tide_hash_more(h, tide_table_get(t, c, row, presence), 1u);\n"
-              "    for (uint32_t k = first; k < first + count; k++) h = tide_hash_more(h, tide_table_get(t, c, row, k), c->sizes[k]);\n"
-              "    return h;\n}\n\n");
     sb_put(o, "// What's gathered for a piece: the heap pages its rows reached (their places, as keys), its slots' pages, or its\n"
               "// rows' own blocks and pages (tide_client_item)\n"
               "typedef struct tide_client_gathered { tide_client_item *items; uint32_t count, room; } tide_client_gathered;\n\n"
@@ -409,21 +449,27 @@ static void gen_client_span_helpers(gen *g)
               "    if (count == UINT32_MAX || !s->row_pages || from > s->row_page_count || count > s->row_page_count - from) {\n"
               "        r->page_count[row] = UINT32_MAX; // (Never so: a row kept is in its piece's arrays)\n        return;\n    }\n"
               "    tide_client_row_keep(store, r, row, s->row_pages + from, count, heaps);\n}\n\n");
-    sb_put(o, "// Keeps what a piece's rows were read from, now that they're worked out: its columns' runs (those written, or all\n"
-              "// where nothing was kept), the union of its rows' heap pages and its slots' pages, and each row's own pages\n"
-              "// (`store`, which the piece takes). A piece a row of which read outside the match's heaps (`poisoned`) isn't kept.\n"
-              "// `runs`: the written columns' runs tide_client_piece_same hashed, or NULL\n"
+    sb_put(o, "// Keeps what a piece's rows were read from, now that they're worked out: its columns' runs (copied where nothing\n"
+              "// was kept; the written ones of a kept piece are tide_client_piece_same's already), the union of its rows' heap\n"
+              "// pages and its slots' pages, and each row's own pages (`store`, which the piece takes). A piece a row of which\n"
+              "// read outside the match's heaps (`poisoned`) isn't kept\n"
               "TIDE_HELPER void tide_client_piece_keep(tide_client_piece *s, const tide_world *w, const tide_table *t, const tide_columns *c,\n"
-              "                                        const uint32_t chunk, const uint32_t at, const uint32_t rows, const bool *written,\n"
-              "                                        const uint64_t *runs, tide_heaps *heaps, tide_client_gathered *reached,\n"
+              "                                        const uint32_t chunk, const uint32_t at, const uint32_t rows,\n"
+              "                                        tide_heaps *heaps, tide_client_gathered *reached,\n"
               "                                        tide_client_gathered *slots, tide_client_gathered *store, const bool poisoned)\n{\n"
-              "    const bool all = !s->kept || s->rows != rows || !s->lanes;\n"
-              "    if (!s->lanes) {\n        s->lanes = malloc((size_t)(c->count ? c->count : 1u) * sizeof *s->lanes);\n"
-              "        if (!s->lanes) tide_out_of_memory();\n    }\n"
-              "    for (uint32_t k = 0; k < c->count; k++) {\n"
-              "        if (!c->sizes[k]) s->lanes[k] = 0u;\n"
-              "        else if (all) s->lanes[k] = tide_client_run_hash(t, c, chunk, k, at, rows);\n"
-              "        else if (written && written[k]) s->lanes[k] = runs ? runs[k] : tide_client_run_hash(t, c, chunk, k, at, rows);\n    }\n"
+              "#ifndef TIDE_CLIENT_MEMO_OFF // (With nothing kept, nothing is compared with the copy: none is made)\n"
+              "    if (!s->kept || s->rows != rows || !s->lanes) {\n"
+              "        if (!s->lanes) {\n            s->lanes = malloc(tide_client_runs_bytes(c));\n"
+              "            s->runs = malloc((size_t)(c->count ? c->count : 1u) * sizeof *s->runs);\n"
+              "            if (!s->lanes || !s->runs) tide_out_of_memory();\n        }\n"
+              "        size_t from = 0;\n"
+              "        for (uint32_t k = 0; k < c->count; from += (size_t)c->sizes[k] << TIDE_CLIENT_PIECE_SHIFT, k++) {\n"
+              "            s->runs[k] = 0;\n"
+              "            if (!c->sizes[k]) continue;\n"
+              "            const uint8_t *now = tide_client_run(t, c, chunk, k, at);\n"
+              "            memcpy(s->lanes + from, now, (size_t)rows * c->sizes[k]);\n"
+              "            s->runs[k] = tide_hash_wide(now, (size_t)rows * c->sizes[k]);\n        }\n    }\n"
+              "#else\n    (void)t; (void)c; (void)chunk; (void)at;\n#endif\n"
               "    const uint32_t heap_pages = tide_client_gathered_once(reached), slot_pages = tide_client_gathered_once(slots);\n"
               "    // (By heap, then place: a few dozen, for the most part in order already)\n"
               "    if (heap_pages > 64u) qsort(reached->items, heap_pages, sizeof *reached->items, tide_client_item_order);\n"
@@ -453,6 +499,37 @@ static void gen_client_span_helpers(gen *g)
               "    tide_client_item *items = s->row_pages;\n    const uint32_t room = s->row_page_room;\n"
               "    s->row_pages = store->items;\n    s->row_page_count = store->count;\n    s->row_page_room = store->room;\n"
               "    store->items = items;\n    store->room = room;\n    store->count = 0;\n}\n\n");
+    sb_put(o, "// A piece read again keeps its own arrays (its rows' blocks, its pages) while no row of it is read from the heap\n"
+              "// again or is another entity than it was: a row whose small lanes changed (who has it) moves its terms where they\n"
+              "// are, and the rows nothing of which changed aren't looked at. Whether a row is the entity it was, with the snaps\n"
+              "// it had, where a slot's page of the piece's changed: its slot says so (its entity's and its scene's columns are\n"
+              "// compared with the piece's copy)\n"
+              "TIDE_HELPER bool tide_client_row_slot_same(const tide_client_rows *r, const tide_world *w, const uint32_t row, const tide_entity e)\n{\n"
+              "    if (r->slot[row] == UINT32_MAX) return false;\n"
+              "    const tide_entity_slot *slot = tide_entity_slot_of(&w->entities, r->slot[row]);\n"
+              "    return memcmp(&slot->entity, &e, sizeof e) == 0 && slot->snaps == r->snaps[row];\n}\n\n"
+              "// ...and the first row that is read again, or is another entity, has the piece's arrays made again: the rows\n"
+              "// before it (`from` up to `to`), which are as they were, give the blocks they had and their slots' pages. True\n"
+              "// where one of them can't be kept by its pages (never so: the piece was kept)\n"
+              "TIDE_HELPER bool tide_client_piece_rows_again(tide_client_gathered *store, tide_client_gathered *reached, tide_client_gathered *slots,\n"
+              "                                              tide_client_rows *r, const tide_client_piece *s, const uint32_t from, const uint32_t to,\n"
+              "                                              tide_heaps *heaps)\n{\n"
+              "    bool poisoned = false;\n"
+              "    for (uint32_t row = from; row < to; row++) {\n"
+              "        if (!(r->flags[row] & TIDE_CLIENT_HASHED)) continue; // A hole\n"
+              "        tide_client_row_keep_kept(store, r, row, s, heaps);\n"
+              "        if (r->page_count[row] == UINT32_MAX) poisoned = true;\n"
+              "        else if (r->page_count[row]) tide_client_gather_pages(reached, store->items + r->page_from[row], r->page_count[row]);\n"
+              "        if (r->slot[row] == UINT32_MAX) poisoned = true;\n"
+              "        else {\n            const uint64_t slot = r->slot[row] >> TIDE_ENTITY_PAGE_SHIFT;\n"
+              "            tide_client_gather_numbers(slots, &slot, 1u);\n        }\n    }\n"
+              "    return poisoned;\n}\n\n"
+              "// ...and a piece whose arrays stood keeps its slots' pages as they are now: every row of it is the entity it\n"
+              "// was, with its snaps (its columns' runs are tide_client_piece_same's already)\n"
+              "TIDE_HELPER void tide_client_piece_keep_slots(tide_client_piece *s, const tide_world *w)\n{\n"
+              "    for (uint32_t i = s->heap_pages; i < s->heap_pages + s->slot_pages; i++)\n"
+              "        s->page_hashes[i] = tide_entities_slot_page_hash(&w->entities, (uint32_t)s->pages[i]);\n"
+              "    TIDE_CLIENT_COUNT(19);\n}\n\n");
     sb_put(o, "// A piece's groups, gathered again from its rows' as they're looked at\n"
               "TIDE_HELPER void tide_client_piece_groups_none(tide_client_piece *s)\n{\n"
               "    s->low = INT64_MAX;\n    s->high = 0;\n    memset(s->bloom, 0, sizeof s->bloom);\n    s->by_group = false;\n}\n\n"
@@ -506,7 +583,7 @@ static void gen_client_span_helpers(gen *g)
                  "    const bool same = chunks && l.at == k->group_list;\n"
                  "    if (chunks > k->chunk_room) {\n"
                  "        k->chunk_hashes = tide_client_grow(k->chunk_hashes, k->chunk_room, chunks, sizeof *k->chunk_hashes);\n        k->chunk_room = chunks;\n    }\n"
-                 "    bool hashed = chunks > 0;\n"
+                 "    bool hashed = chunks > 0;\n    tide_list_cache cache = {0};\n"
                  "    for (uint32_t c = 0, lo = 0; lo < n; c++, lo += per) {\n"
                  "        const uint32_t hi = n - lo < per ? n : lo + per;\n"
                  "        if (c < chunks) {\n"
@@ -519,7 +596,7 @@ static void gen_client_span_helpers(gen *g)
                  "            k->chunk_hashes[c] = hash;\n"
                  "        } else hashed = false;\n"
                  "        for (uint32_t i = lo; i < hi; i++) {\n"
-                 "            const entry *now = tide_map_entry(m, (int32_t)i, &tide_map%d_kind);\n"
+                 "            const entry *now = tide_list_cached_at(&cache, l, (int32_t)i, sizeof *now);\n"
                  "            if (!now) continue;\n"
                  "            if (i < had && memcmp(&kept[i], now, sizeof *now) == 0) continue;\n"
                  "            if (i < had && kept[i].tide_order > 0) tide_client_changed_add(k, kept[i].key); // Gone, or its audience another\n"
@@ -532,7 +609,7 @@ static void gen_client_span_helpers(gen *g)
                  "        qsort(k->changed, k->changed_count, sizeof *k->changed, tide_client_id_order);\n"
                  "        uint32_t unique = 0;\n"
                  "        for (uint32_t i = 0; i < k->changed_count; i++) if (!unique || k->changed[unique - 1u] != k->changed[i]) k->changed[unique++] = k->changed[i];\n"
-                 "        k->changed_count = unique;\n    }\n}\n\n", groups, groups);
+                 "        k->changed_count = unique;\n    }\n}\n\n", groups);
     sb_put(o, "TIDE_HELPER bool tide_client_changed_has(const struct tide_client_kept *k, const int64_t id)\n{\n"
                  "    if (id <= 0) return false; // All players, or a client's own: no group's audience\n"
                  "    uint32_t lo = 0, hi = k->changed_count;\n"
@@ -576,9 +653,9 @@ static void gen_client_hash_rows(gen *g, int *deniable, int *parts)
                  "    tide_client_gathered reached = {0}, slots = {0}, store = {0};\n"
                  "    // A scene's root came, went, or has another Visibility: every entity of its scene goes by its group\n"
                  "    bool roots_fresh = false;\n"
-                 "    bool written[%d], changed[%d];\n"
-                 "    uint64_t run[%d]; // The written columns' runs, as a piece's check hashed them\n    (void)run;\n",
-              most_columns, most_parts, most_columns);
+                 "    bool written[%d];\n"
+                 "    uint64_t changed[%d]; // For each component of a piece's archetype, the rows of the piece it changed in\n",
+              most_columns, most_parts);
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a)) continue;
         const int n = client_deniable(g, a, deniable);
@@ -607,15 +684,22 @@ static void gen_client_hash_rows(gen *g, int *deniable, int *parts)
                      "        for (uint32_t p = 0; p < pieces; p++) {\n"
                      "            tide_client_piece *piece = &span->pieces[p];\n"
                      "            const uint32_t at = p << TIDE_CLIENT_PIECE_SHIFT, count = here - at < TIDE_CLIENT_PIECE ? here - at : TIDE_CLIENT_PIECE;\n"
-                     "            bool heap_moved = true, ids_moved = true;\n            const uint64_t *runs = NULL;\n            piece->fresh = false;\n"
-                     "            if (again) {\n                for (uint32_t i = 0; i < %du; i++) changed[i] = true;\n            }\n"
+                     "            bool heap_moved = true, slots_moved = true;\n            uint64_t ids_rows = UINT64_MAX;\n            piece->fresh = false;\n"
+                     "            if (again) {\n                for (uint32_t i = 0; i < %du; i++) changed[i] = UINT64_MAX;\n            }\n"
                      "            else if (tide_client_piece_same(piece, kept%d, w, &w->%s, %s, chunk, at, count, moved, hs->heaps, tide_client_part_of%d, %du,\n"
-                     "                                            changed, &heap_moved, &ids_moved, run, &runs)) {\n                TIDE_CLIENT_MARK(5);\n                continue;\n            }\n            TIDE_CLIENT_MARK(5);\n"
+                     "                                            changed, &ids_rows, &heap_moved, &slots_moved)) {\n                TIDE_CLIENT_MARK(5);\n                continue;\n            }\n            TIDE_CLIENT_MARK(5);\n"
                      "            piece->routed = false;\n            reached.count = slots.count = store.count = 0;\n            bool poisoned = false, any_fresh = false;\n"
-                     "            // (Its rows are the entities they were, with the snaps they had: each one's sum moves by its terms')\n"
-                     "            if (!ids_moved && piece->slot_pages) tide_client_gather_numbers(&slots, piece->pages + piece->heap_pages, piece->slot_pages);\n"
-                     "            for (uint32_t row = first + at; row < first + at + count; row++) {\n",
-                  table, columns, table, columns, a, table, columns, (unsigned)(m ? m : 1), a, table, columns, a, (unsigned)(m ? m : 1));
+                     "            // Its arrays stand while its rows read nothing from the heap again and are the entities they were (a\n"
+                     "            // piece with nothing kept, or a heap page of whose rows changed, says heap_moved: made again), and\n"
+                     "            // while they do, only the rows something changed in are looked at (every one, where a slot's page did)\n"
+                     "            bool inplace = !again && !heap_moved;\n"
+                     "            uint64_t look = slots_moved ? UINT64_MAX : ids_rows;\n"
+                     "            for (uint32_t i = 0; i < %du; i++) look |= changed[i];\n"
+                     "            for (uint32_t row = first + at; row < first + at + count; row++) {\n"
+                     "                const uint32_t bit = row - (first + at);\n"
+                     "                if (inplace && !(look >> bit & 1u)) continue;\n",
+                  table, columns, table, columns, a, table, columns, (unsigned)(m ? m : 1), a, table, columns, a, (unsigned)(m ? m : 1),
+                  (unsigned)(m ? m : 1));
         sb_printf(o, "                if (tide_row_gone(%s)) { // A hole (tide_table_remove): nothing kept of it\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         if (root) sb_printf(o, "                    if (kept%d->flags[row]) roots_fresh = true;\n", a);
         sb_printf(o, "                    kept%d->flags[row] = 0;\n                    kept%d->page_count[row] = UINT32_MAX;\n                    continue;\n                }\n",
@@ -626,34 +710,30 @@ static void gen_client_hash_rows(gen *g, int *deniable, int *parts)
             if (comp_sparse(g, deniable[k])) sb_printf(o, "                if (%s) mask |= 1ull << %d;\n", presence_cell(g, "w", a, deniable[k], "row", false), k);
             else sb_printf(o, "                mask |= 1ull << %d;\n", k);
         }
-        // (A row whose entity has no slot here has no slot page to keep it by: its piece isn't kept, as one that read
-        // outside the heaps isn't, so the slot it gets later is seen)
-        sb_put(o, "                if (ids_moved) {\n"
-                  "                    const uint32_t at_slot = tide_entity_slot_index(&w->entities, e);\n"
-                  "                    if (at_slot == UINT32_MAX) poisoned = true;\n"
-                  "                    else {\n"
-                  "                        const uint64_t slot = at_slot >> TIDE_ENTITY_PAGE_SHIFT;\n"
-                  "                        tide_client_gather_numbers(&slots, &slot, 1u);\n                    }\n                }\n");
+        // What says which entity a row is is hashed again where its entity's or its scene's column changed in the row, or
+        // a slot's page of the piece's changed and the row's slot says another entity, or other snaps
         sb_printf(o, "                const bool all = again || !(kept%d->flags[row] & TIDE_CLIENT_HASHED);\n"
                      "                uint64_t *const term = &terms%d[(size_t)row * %du];\n"
-                     "                uint64_t *const digest = &kept%d->digests[(size_t)row * %du];\n"
                      "                bool fresh = all;\n"
-                     "                uint64_t moved_by = 0; // What the terms worked out again add to its sum\n",
-                  a, a, (unsigned)(m ? m : 1), a, (unsigned)(m ? m : 1));
+                     "                uint64_t moved_by = 0; // What the terms worked out again add to its sum\n"
+                     "                const bool ids_again = all || (ids_rows >> bit & 1u) || (slots_moved && !tide_client_row_slot_same(kept%d, w, row, e));\n",
+                  a, a, (unsigned)(m ? m : 1), a);
         if (root) sb_put(o, "                if (all) roots_fresh = true;\n");
-        // Each component's lanes, hashed, where a column of it changed in the piece: else they're as they were
+        // Each component: whether a lane of it (or its presence byte, for a sparse one) changed in the row
         bool any_heapy = false;
         for (int t = 0; t < m; t++) {
             const int c = parts[t];
             const decl *d = prog->components.items[c];
             const bool heapy = client_codec_heapy(prog, (type){TY_COMPONENT, (decl *)d}, 0);
             any_heapy |= heapy;
-            // (a sparse component's presence byte is part of what it was worked out from)
-            char presence[32];
-            if (comp_sparse(g, c)) snprintf(presence, sizeof presence, "%du", (unsigned)arch_presence(g, a, c));
-            else snprintf(presence, sizeof presence, "UINT32_MAX");
-            sb_printf(o, "                const uint64_t lanes%d = all || changed[%d] ? tide_client_lanes_digest(&w->%s, %s, row, %du, %du, %s) : digest[%d];\n",
-                      t, t, table, columns, (unsigned)arch_column(g, a, c), (unsigned)comp_lanes(d), presence, t);
+            sb_printf(o, "                const bool lanes%d = all || (changed[%d] >> bit & 1u);\n", t, t);
+        }
+        // Who may have it is worked out again (`seen`) only where what that goes by in the row changed: its scene (its
+        // entity's and scene's columns), its Visibility (lanes or policies), or which components it has; a row whose
+        // other values changed has the audience it had (its groups' audiences are the directory's: tide_client_groups_diff)
+        sb_put(o, "                bool seen = ids_again;\n");
+        for (int t = 0; t < m; t++) {
+            if (parts[t] == prog->visibility->index) sb_printf(o, "                if (lanes%d) seen = true;\n", t);
         }
         // A Visibility's policies (its overrides) are blocks in the heap, though no part of what a recipient is sent of it
         // (they're private: client_codec_heapy says it holds nothing there), and who may have the row's components goes
@@ -668,21 +748,23 @@ static void gen_client_hash_rows(gen *g, int *deniable, int *parts)
             sb_printf(o, "                bool heap_again = all || kept%d->page_count[row] == UINT32_MAX", a);
             for (int t = 0; t < m; t++) {
                 if (t == visibility || client_codec_heapy(prog, (type){TY_COMPONENT, prog->components.items[parts[t]]}, 0))
-                    sb_printf(o, " || lanes%d != digest[%d]", t, t);
+                    sb_printf(o, " || lanes%d", t);
             }
             sb_printf(o, ";\n                if (!heap_again && heap_moved && !tide_client_row_pages_same(piece, kept%d, row, hs->heaps)) {\n"
-                         "                    heap_again = true;\n                    TIDE_CLIENT_COUNT(8);\n                }\n", a);
-            sb_put(o, "                if (heap_again) {\n                    TIDE_CLIENT_COUNT(7);\n"
+                         "                    heap_again = true;\n                    TIDE_CLIENT_COUNT(8);\n                }\n"
+                         "                if (inplace && (heap_again || ids_again)) {\n                    inplace = false;\n"
+                         "                    poisoned |= tide_client_piece_rows_again(&store, &reached, &slots, kept%d, piece, first + at, row, hs->heaps);\n"
+                         "                }\n", a, a);
+            sb_put(o, "                if (heap_again) {\n                    TIDE_CLIENT_COUNT(7); TIDE_CLIENT_FROM(read_from);\n"
                       "                    hs->reached = 0;\n                    hs->floor = 0;\n                    hs->poisoned = false;\n");
             for (int t = 0; t < m; t++) {
                 const int c = parts[t];
                 if (!client_codec_heapy(prog, (type){TY_COMPONENT, prog->components.items[c]}, 0)) continue;
                 sb_printf(o, "                    {\n                        const uint64_t now = tide_client_term%d_%d(w, e, loc, %s, hs);\n",
                           a, c, comp_sparse(g, c) ? presence_cell(g, "w", a, c, "row", false) : "true");
-                if (t == root_visibility) sb_printf(o, "                        if (now != term[%d] || lanes%d != digest[%d]) roots_fresh = true;\n", t, t, t);
-                sb_printf(o, "                        moved_by += now - term[%d];\n                        term[%d] = now;\n                    }\n"
-                             "                    digest[%d] = lanes%d;\n",
-                          t, t, t, t);
+                if (t == root_visibility) sb_printf(o, "                        if (now != term[%d] || lanes%d) roots_fresh = true;\n", t, t);
+                sb_printf(o, "                        moved_by += now - term[%d];\n                        term[%d] = now;\n                    }\n",
+                          t, t);
             }
             if (visibility >= 0) {
                 // A Visibility's own policies are read as who may have it is worked out: their pages are the row's too
@@ -693,50 +775,62 @@ static void gen_client_hash_rows(gen *g, int *deniable, int *parts)
                              "                            tide_client_reach_list(hs, policy.overrides.entries);\n"
                              "                            tide_client_reach_list(hs, policy.overrides.index);\n"
                              "                            policies = tide_client_policies_digest(policy.overrides);\n                        }\n"
-                             "                        if (policies != kept%d->policies[row]) fresh = true;\n"
+                             "                        if (policies != kept%d->policies[row]) fresh = seen = true;\n"
                              "                        kept%d->policies[row] = policies;\n                    }\n",
                           a, a);
             }
             // (Fresh where a term or a policy came out another, or the row is new: its sum says the first)
             sb_printf(o, "                    if (hs->poisoned) kept%d->page_count[row] = UINT32_MAX;\n"
-                         "                    else tide_client_row_keep(&store, kept%d, row, hs->reach, hs->reached, hs->heaps);\n"
-                         "                } else tide_client_row_keep_kept(&store, kept%d, row, piece, hs->heaps);\n"
+                         "                    else tide_client_row_keep(&store, kept%d, row, hs->reach, hs->reached, hs->heaps); TIDE_CLIENT_TO(13, read_from);\n"
+                         "                } else if (!inplace) tide_client_row_keep_kept(&store, kept%d, row, piece, hs->heaps);\n"
                          "                // (A row whose pages aren't all kept leaves its piece read again each call)\n"
-                         "                if (kept%d->page_count[row] == UINT32_MAX) poisoned = true;\n"
-                         "                else if (kept%d->page_count[row]) tide_client_gather_pages(&reached, store.items + kept%d->page_from[row], kept%d->page_count[row]);\n",
+                         "                if (!inplace && kept%d->page_count[row] == UINT32_MAX) poisoned = true;\n"
+                         "                else if (!inplace && kept%d->page_count[row]) tide_client_gather_pages(&reached, store.items + kept%d->page_from[row], kept%d->page_count[row]);\n",
                       a, a, a, a, a, a, a);
         } else {
-            sb_printf(o, "                kept%d->page_count[row] = 0;\n                kept%d->page_from[row] = store.count;\n", a, a);
+            sb_printf(o, "                if (inplace && ids_again) {\n                    inplace = false;\n"
+                         "                    poisoned |= tide_client_piece_rows_again(&store, &reached, &slots, kept%d, piece, first + at, row, hs->heaps);\n"
+                         "                }\n"
+                         "                kept%d->page_count[row] = 0;\n                kept%d->page_from[row] = store.count;\n", a, a, a);
         }
         // ...and what doesn't, each on its own
         for (int t = 0; t < m; t++) {
             const int c = parts[t];
             if (client_codec_heapy(prog, (type){TY_COMPONENT, prog->components.items[c]}, 0)) continue;
-            sb_printf(o, "                if (all || lanes%d != digest[%d]) {\n"
+            sb_printf(o, "                if (lanes%d) {\n"
                          "                    const uint64_t now = tide_client_term%d_%d(w, e, loc, %s, &hs->out);\n"
                          "                    moved_by += now - term[%d];\n                    term[%d] = now;\n"
-                         "                    digest[%d] = lanes%d;\n"
                          "                    fresh = true;\n",
-                      t, t, a, c, comp_sparse(g, c) ? presence_cell(g, "w", a, c, "row", false) : "true", t, t, t, t);
+                      t, a, c, comp_sparse(g, c) ? presence_cell(g, "w", a, c, "row", false) : "true", t, t);
             if (t == root_visibility) sb_put(o, "                    roots_fresh = true;\n");
             sb_put(o, "                }\n");
         }
         // Its sum: what says which entity it is and its terms; where that's as it was, the sum it had and what its
         // terms worked out again moved by (a kept row's sum is always its own: wrapping sums are exact)
         sb_printf(o, "                uint64_t sum = has%d[row * 2u + 1u] + moved_by;\n"
-                     "                if (all || ids_moved) {\n"
+                     "                if (ids_again) {\n"
                      "                    sum = tide_client_entity_id%d(w, e, loc, &hs->out);\n"
                      "                    kept%d->slot[row] = tide_entity_slot_index(&w->entities, e);\n"
                      "                    kept%d->snaps[row] = tide_entity_slot_of(&w->entities, kept%d->slot[row])->snaps;\n", a, a, a, a, a);
         for (int t = 0; t < m; t++) sb_printf(o, "                    sum += term[%d];\n", t);
-        sb_put(o, "                }\n");
-        sb_printf(o, "                if (sum != has%d[row * 2u + 1u] || mask != has%d[row * 2u]) fresh = true;\n"
+        // (A row whose entity has no slot here has no slot page to keep it by: its piece isn't kept, as one that read
+        // outside the heaps isn't, so the slot it gets later is seen)
+        sb_printf(o, "                }\n"
+                     "                if (!inplace && kept%d->slot[row] == UINT32_MAX) poisoned = true;\n"
+                     "                else if (!inplace) {\n"
+                     "                    const uint64_t slot = kept%d->slot[row] >> TIDE_ENTITY_PAGE_SHIFT;\n"
+                     "                    tide_client_gather_numbers(&slots, &slot, 1u);\n                }\n", a, a);
+        sb_printf(o, "                if (sum != has%d[row * 2u + 1u]) fresh = true;\n"
+                     "                if (mask != has%d[row * 2u]) fresh = seen = true;\n"
                      "                has%d[row * 2u] = mask;\n                has%d[row * 2u + 1u] = sum;\n"
                      "                kept%d->flags[row] |= TIDE_CLIENT_HASHED;\n"
-                     "                if (fresh) {\n                    kept%d->fresh[row] = call;\n                    any_fresh = true;\n                    TIDE_CLIENT_COUNT(11);\n                }\n"
+                     "                if (fresh) TIDE_CLIENT_COUNT(11);\n"
+                     "                if (seen) {\n                    kept%d->fresh[row] = call;\n                    any_fresh = true;\n                }\n"
                      "            }\n",
                   a, a, a, a, a, a);
-        sb_printf(o, "            TIDE_CLIENT_MARK(6);\n            tide_client_piece_keep(piece, w, &w->%s, %s, chunk, at, count, moved, runs, hs->heaps, &reached, &slots, &store, poisoned);\n"
+        sb_printf(o, "            TIDE_CLIENT_MARK(6);\n"
+                     "            if (inplace) tide_client_piece_keep_slots(piece, w);\n"
+                     "            else tide_client_piece_keep(piece, w, &w->%s, %s, chunk, at, count, hs->heaps, &reached, &slots, &store, poisoned);\n"
                      "            piece->fresh = any_fresh;\n            TIDE_CLIENT_MARK(7);\n"
                      "        }\n"
                      "        tide_client_span_kept(span, &w->%s, %s, chunk, here, pieces);\n"

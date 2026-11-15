@@ -387,11 +387,13 @@ static void gen_client_hash_helpers(gen *g)
     // the program's end. Nothing of it is in any other build
     sb_put(o, "#ifdef TIDE_CLIENT_COUNTS\n#include \"tide/time.h\"\n"
               "static TIDE_THREAD_LOCAL bool tide_client_counting; // A server's check, not one worked out twice\n"
-              "static uint64_t tide_client_counts[20];\n"
+              "static uint64_t tide_client_counts[24];\n"
               "#define TIDE_CLIENT_COUNT_BY(i, n) do { if (tide_client_counting) __atomic_add_fetch(&tide_client_counts[i], (uint64_t)(n), __ATOMIC_RELAXED); } while (0)\n"
               "#define TIDE_CLIENT_COUNT(i) TIDE_CLIENT_COUNT_BY(i, 1u)\n"
               "// ...and how long each part of a check took, in nanoseconds: from the mark before\n"
-              "static uint64_t tide_client_times[10];\n"
+              "static uint64_t tide_client_times[16];\n"
+              "#define TIDE_CLIENT_FROM(v) const uint64_t v = tide_client_counting ? tide_client_now() : 0u\n"
+              "#define TIDE_CLIENT_TO(i, v) do { if (tide_client_counting) __atomic_add_fetch(&tide_client_times[i], tide_client_now() - v, __ATOMIC_RELAXED); } while (0)\n"
               "static TIDE_THREAD_LOCAL uint64_t tide_client_mark_at;\n"
               "#define tide_client_now tide_time_now_ns\n"
               "#define TIDE_CLIENT_TIMED(i, what) do { const uint64_t from_ = tide_client_counting ? tide_client_now() : 0u; what; if (tide_client_counting) __atomic_add_fetch(&tide_client_times[i], tide_client_now() - from_, __ATOMIC_RELAXED); } while (0)\n"
@@ -400,26 +402,33 @@ static void gen_client_hash_helpers(gen *g)
               "static void tide_client_counts_print(void);\n"
               "__attribute__((constructor)) static void tide_client_counts_at_exit(void)\n{\n    atexit(tide_client_counts_print);\n}\n"
               "static void tide_client_counts_print(void)\n{\n"
-              "    static const char *const names[20] = {\"calls\", \"pieces looked at\", \"read: nothing kept\", \"read: a column's run\",\n"
+              "    static const char *const names[24] = {\"calls\", \"pieces looked at\", \"read: nothing kept\", \"read: a column's run\",\n"
               "        \"read: a heap page\", \"read: a slot's page\", \"rows in pieces read\", \"rows read from the heap again\",\n"
               "        \"...for their pages alone\", \"grids encoded\", \"containers encoded\", \"rows fresh\", \"blocks hashed again\",\n"
               "        \"...and found the same\", \"bytes of blocks hashed\", \"heap pages looked at\",\n"
-              "        \"slot pages looked at\", \"columns' runs hashed\", \"their bytes\", \"\"};\n"
-              "    for (uint32_t i = 0; i < 20u; i++) if (names[i][0]) fprintf(stderr, \"tide client counts: %s %llu\\n\", names[i], (unsigned long long)tide_client_counts[i]);\n"
-              "    static const char *const parts[10] = {\"singletons\", \"rows (the rest)\", \"groups\", \"audiences\", \"sums\", \"pieces checked\",\n"
-              "        \"rows of pieces read\", \"pieces kept\", \"...of which pages by their blocks\", \"...slots by their snaps\"};\n"
-              "    for (uint32_t i = 0; i < 10u; i++) if (parts[i][0]) fprintf(stderr, \"tide client counts: %s %.3f ms\\n\", parts[i], (double)tide_client_times[i] / 1e6);\n"
+              "        \"slot pages looked at\", \"columns' runs hashed\", \"their bytes\", \"pieces read whose arrays stood\",\n"
+              "        \"big containers' chunks read again\", \"...and kept\", \"\", \"\"};\n"
+              "    for (uint32_t i = 0; i < 24u; i++) if (names[i][0]) fprintf(stderr, \"tide client counts: %s %llu\\n\", names[i], (unsigned long long)tide_client_counts[i]);\n"
+              "    static const char *const parts[16] = {\"singletons\", \"rows (the rest)\", \"groups\", \"audiences\", \"sums\", \"pieces checked\",\n"
+              "        \"rows of pieces read\", \"pieces kept\", \"...of which pages by their blocks\", \"...slots by their snaps\",\n"
+              "        \"grids encoded\", \"maps and sets encoded\", \"lists encoded\", \"rows read from the heap again\", \"\", \"\"};\n"
+              "    for (uint32_t i = 0; i < 16u; i++) if (parts[i][0]) fprintf(stderr, \"tide client counts: %s %.3f ms\\n\", parts[i], (double)tide_client_times[i] / 1e6);\n"
               "}\n"
-              "#else\n#define TIDE_CLIENT_TIMED(i, what) what\n#define TIDE_CLIENT_COUNT(i) ((void)0)\n#define TIDE_CLIENT_COUNT_BY(i, n) ((void)0)\n#define TIDE_CLIENT_MARK(i) ((void)0)\n#endif\n\n");
+              "#else\n#define TIDE_CLIENT_TIMED(i, what) what\n#define TIDE_CLIENT_COUNT(i) ((void)0)\n#define TIDE_CLIENT_COUNT_BY(i, n) ((void)0)\n#define TIDE_CLIENT_MARK(i) ((void)0)\n#define TIDE_CLIENT_FROM(v) ((void)0)\n#define TIDE_CLIENT_TO(i, v) ((void)0)\n#endif\n\n");
     sb_put(o, "// What a value was read from, by its key (tide_client_key): a block smaller than a page, or a page whole; the\n"
               "// hash its page had (0: not looked at yet), and a block's own bytes' hash. A block's page that hashes as it did\n"
               "// says the block is as it was; one that doesn't has the block's bytes hashed again (another entity's block in the\n"
               "// page changed, not this one), and where they're as they were, the page's hash now is kept in its place\n"
               "typedef struct tide_client_item { uint64_t key, page, block; } tide_client_item;\n"
+              "// What a chunk of a big container's list came to (tide_client_memo_sums): its page's hash and how many elements\n"
+              "// of it were read (none: nothing kept), and their sum (a map's or a set's entries) or hash (a list's). The page's\n"
+              "// hash says its bytes, wherever the chunk is\n"
+              "typedef struct tide_client_sum { uint64_t page, sum; uint32_t count; } tide_client_sum;\n"
               "typedef struct tide_client_memo_entry {\n"
               "    uint64_t at; // The container's handle; 0: an empty slot\n"
               "    uint64_t hash;\n    tide_client_item *items; // Every block and page its value was read from, and their hashes then\n"
-              "    uint32_t type, used, count, room;\n    bool broken; // Read from a piece of a bigger page: it never holds\n} tide_client_memo_entry;\n"
+              "    tide_client_sum *sums; // A container too big for one chunk of its list: what each chunk came to\n"
+              "    uint32_t type, used, count, room, sum_room;\n    bool broken; // Read from a piece of a bigger page: it never holds\n} tide_client_memo_entry;\n"
               "struct tide_client_kept; // What the world's rows came to, 64 rows of a table chunk at a time (client_spans_codegen.inc)\n"
               "TIDE_HELPER void tide_client_kept_free(struct tide_client_kept *k);\n"
               "typedef struct tide_client_memo {\n    const void *world;\n    tide_client_memo_entry *slots;\n    struct tide_client_kept *rows; // What its rows came to\n"
@@ -527,7 +536,7 @@ static void gen_client_hash_helpers(gen *g)
               "static tide_client_memo **tide_client_memos;\n"
               "static uint32_t tide_client_memo_count, tide_client_memo_calls, tide_client_memo_lock;\n\n");
     sb_put(o, "TIDE_HELPER void tide_client_memo_clear(tide_client_memo *m)\n{\n"
-              "    for (uint32_t i = 0; i < m->room; i++) free(m->slots[i].items);\n"
+              "    for (uint32_t i = 0; i < m->room; i++) {\n        free(m->slots[i].items);\n        free(m->slots[i].sums);\n    }\n"
               "    if (m->rows) {\n        tide_client_kept_free(m->rows);\n        free(m->rows);\n    }\n"
               "    free(m->slots);\n    memset(m, 0, sizeof *m);\n}\n\n");
     sb_put(o, "// The world's memo; or one nobody asked for in a while (four times as long as it would take every memo to be\n"
@@ -578,7 +587,7 @@ static void gen_client_hash_helpers(gen *g)
               "    m->room = room;\n    m->count = 0;\n"
               "    for (uint32_t i = 0; i < had; i++) {\n"
               "        if (!was[i].at) continue;\n"
-              "        if (heaps && !tide_client_memo_holds(&was[i], heaps)) {\n            free(was[i].items);\n            continue;\n        }\n"
+              "        if (heaps && !tide_client_memo_holds(&was[i], heaps)) {\n            free(was[i].items);\n            free(was[i].sums);\n            continue;\n        }\n"
               "        m->slots[tide_client_memo_slot(m, was[i].at, was[i].type)] = was[i];\n        m->count++;\n    }\n"
               "    free(was);\n}\n\n");
     sb_put(o, "TIDE_HELPER void tide_client_memo_done(tide_client_memo *m, tide_heaps *heaps)\n{\n"
@@ -657,6 +666,49 @@ static void gen_client_hash_helpers(gen *g)
               "    if (unique) memcpy(e->items, r, (size_t)unique * sizeof *r);\n"
               "    e->count = unique;\n    e->hash = hash;\n    e->broken = broken;\n"
               "    if (e->used != m->call) {\n        e->used = m->call;\n        m->kept++;\n    }\n}\n\n");
+    // A container too big for one chunk of its list (tide/list.h) hashes as a tree of its chunks, so a change costs the
+    // chunks it's in. What it hashes to is a function of its value alone, as ever, and another function than a small
+    // container's: a map or a set is the sum of its live entries' hashes (each its order, key and value: the orders say
+    // the order, so the sum says the map, wherever its entries are stored); a list is the hashes of its elements a
+    // chunk's worth at a time (TIDE_LIST_CHUNK over an element's size: by its count, not by how it's stored). Which one
+    // a container takes goes by its count alone (gen_client_hv), never by how its list is stored: a player's machine
+    // stores a map's live entries alone, the server its dead ones among them.
+    sb_put(o, "// The elements of `size` bytes a chunk of a list holds (tide/list.h); one, for an element bigger than a chunk\n"
+              "TIDE_HELPER uint32_t tide_client_chunk_holds(const size_t size)\n{\n"
+              "    return size && size <= TIDE_LIST_CHUNK ? TIDE_LIST_CHUNK / (uint32_t)size : 1u;\n}\n\n");
+    sb_put(o, "// What each chunk of the big container at `l` came to, as the memo keeps it (`chunks` of them, nothing kept of one\n"
+              "// never read): NULL where nothing's kept (no memo), or its list isn't in that many chunks in the match's heaps.\n"
+              "// The memo's entry is made where there's none; it holds nothing until tide_client_memo_put\n"
+              "TIDE_HELPER tide_client_sum *tide_client_memo_sums(tide_client_hasher *hs, const tide_list l, const uint32_t type, const uint32_t chunks)\n{\n"
+              "#ifdef TIDE_CLIENT_MEMO_OFF // For tests: every hash made again\n    (void)hs; (void)l; (void)type; (void)chunks;\n    return NULL;\n#else\n"
+              "    tide_client_memo *m = hs->memo;\n"
+              "    if (!m || !l.at || tide_handle_world(l.at) != TIDE_IN_MATCH) return NULL;\n"
+              "    const tide_heap *h = tide_client_heap(hs->heaps, tide_client_heap_of(l.at));\n"
+              "    if (!h || tide_handle_offset(l.at) >> TIDE_HEAP_PAGE_SHIFT >= h->pages) return NULL;\n"
+              "    const tide_block *b = tide_heap_block(h, tide_handle_offset(l.at));\n"
+              "    if (b->b == TIDE_LIST_ASSET || !(b->b & TIDE_LIST_CHUNKED) || (b->b & ~TIDE_LIST_CHUNKED) < chunks) return NULL;\n"
+              "    if ((m->count + 1u) * 2u > m->room) tide_client_memo_rehash(m, m->room ? m->room * 2u : 128u, NULL);\n"
+              "    tide_client_memo_entry *e = &m->slots[tide_client_memo_slot(m, l.at, type)];\n"
+              "    if (!e->at) {\n        e->at = l.at;\n        e->type = type;\n        e->broken = true;\n        m->count++;\n    }\n"
+              "    if (e->sum_room < chunks) {\n"
+              "        e->sums = realloc(e->sums, (size_t)chunks * sizeof *e->sums);\n"
+              "        if (!e->sums) tide_out_of_memory();\n"
+              "        memset(e->sums + e->sum_room, 0, (size_t)(chunks - e->sum_room) * sizeof *e->sums);\n"
+              "        e->sum_room = chunks;\n    }\n"
+              "    return e->sums;\n#endif\n}\n\n"
+              "// Whether chunk `c` of the list `l` (in chunks: tide_client_memo_sums) is as it was when `s` was kept of it: its\n"
+              "// page hashing as it did, with `count` elements read of it (a list that lost its last element has the bytes it\n"
+              "// had). Where it isn't, `s` is the chunk as it is now, for its `sum` to be worked out again\n"
+              "TIDE_HELPER bool tide_client_sum_kept(tide_client_hasher *hs, tide_client_sum *s, const tide_list l, const uint32_t c, const uint32_t count)\n{\n"
+              "    tide_heap *h = tide_client_heap(hs->heaps, tide_client_heap_of(l.at));\n"
+              "    const tide_block *b = tide_heap_block(h, tide_handle_offset(l.at));\n"
+              "    const uint64_t chunk = ((const uint64_t *)(const void *)(b + 1))[c];\n"
+              "    const tide_page *page = chunk >> TIDE_HEAP_PAGE_SHIFT < h->pages ? h->page[chunk >> TIDE_HEAP_PAGE_SHIFT] : NULL;\n"
+              "    if (!page) { // (Never so: a list's chunks are its heap's)\n        s->count = 0;\n        return false;\n    }\n"
+              "    const uint64_t hash = tide_client_page_hash(h, page);\n"
+              "    if (s->count == count && s->page == hash) {\n        TIDE_CLIENT_COUNT(21);\n        return true;\n    }\n"
+              "    TIDE_CLIENT_COUNT(20);\n"
+              "    s->page = hash;\n    s->count = count;\n    return false;\n}\n\n");
     sb_put(o, "// A container's hash: from the memo when nothing it was read from changed, else made from\n");
     sb_put(o, "// its bytes, written from `mark` on, which make way for it\n");
     sb_put(o, "TIDE_HELPER void tide_client_hv_end(tide_client_hasher *hs, const uint64_t at, const uint32_t type, const bool keep,\n"
@@ -686,7 +738,7 @@ static void gen_client_hv_begin(gen *g, const int id, const char *handle, const 
                      "    uint64_t kept;\n"
                      "    if (keep && tide_client_memo_get(hs, %s, %du, &kept)) {\n"
                      "        tide_client_write(&hs->out, &kept, sizeof kept);\n        return;\n    }\n"
-                     "    if (keep) TIDE_CLIENT_COUNT(10);\n"
+                     "    if (keep) TIDE_CLIENT_COUNT(10);\n    TIDE_CLIENT_FROM(began);\n"
                      "    const uint32_t mark = hs->out.size, from = hs->reached, floor = hs->floor;\n"
                      "    const bool poisoned = hs->poisoned;\n    hs->poisoned = false;\n    hs->floor = from;\n",
               handle, handle, keep, handle, id);
@@ -726,11 +778,49 @@ static void gen_client_hv(gen *g, const client_codec *codec, const int id)
         char keep[128];
         snprintf(keep, sizeof keep, "(uint64_t)count * sizeof(%s) >= 256u", elem_ctype(et));
         gen_client_hv_begin(g, id, "v->at", keep);
-        sb_put(o, "    tide_client_reach_list(hs, *v);\n"
-                  "    tide_write_varint(&hs->out, count);\n"
-                  "    tide_list_cache cache = {0};\n");
+        // A list whose elements are more than one chunk holds is the hashes of its elements a chunk's worth at a time
+        // (tide_client_sum, above), each kept where the elements hold nothing in the heap; what a chunk's worth is goes
+        // by the element's size, not by how the list is stored (a pack's is one run)
+        char place[256];
+        snprintf(place, sizeof place, "(const %s *)tide_list_cached_at(&cache, *v, (int32_t)i, sizeof(%s))", elem_ctype(et), elem_ctype(et));
+        sb_printf(o, "    tide_client_reach_list(hs, *v);\n"
+                     "    tide_write_varint(&hs->out, count);\n"
+                     "    tide_list_cache cache = {0};\n"
+                     "    if ((uint64_t)count * sizeof(%s) > TIDE_LIST_CHUNK) {\n"
+                     "        const uint32_t per = tide_client_chunk_holds(sizeof(%s)), base = hs->out.size;\n"
+                     "        tide_client_sum *const sums = %s && sizeof(%s) <= TIDE_LIST_CHUNK ? tide_client_memo_sums(hs, *v, %du, (count + per - 1u) / per) : NULL;\n"
+                     "        uint64_t tree = TIDE_HASH_START;\n"
+                     "        for (uint32_t c = 0, lo = 0; lo < count; c++, lo += per) {\n"
+                     "            const uint32_t hi = count - lo < per ? count : lo + per;\n"
+                     "            uint64_t part;\n"
+                     "            if (sums && tide_client_sum_kept(hs, &sums[c], *v, c, hi - lo)) part = sums[c].sum;\n"
+                     "            else {\n",
+                  elem_ctype(et), elem_ctype(et), client_codec_heapy(g->prog, et, 0) ? "false" : "keep", elem_ctype(et), id);
         if (client_codec_raw(g->prog, et)) {
-            sb_printf(o, "    for (uint32_t i = 0; i < count;) {\n"
+            // (Its bytes are its codec's: hashed where they are when the chunk's worth is one run, as a list in chunks has it)
+            sb_printf(o, "                const %s *run = tide_list_cached_at(&cache, *v, (int32_t)lo, sizeof *run);\n"
+                         "                if (cache.at == v->at && cache.at && lo - cache.first < cache.count && cache.first + cache.count - lo >= hi - lo)\n"
+                         "                    part = tide_hash(run, (size_t)(hi - lo) * sizeof *run);\n"
+                         "                else {\n"
+                         "                    for (uint32_t i = lo; i < hi; i++) tide_client_write(&hs->out, %s, (uint32_t)sizeof *run);\n"
+                         "                    if (hs->out.overflow) tide_out_of_memory();\n"
+                         "                    part = tide_hash(hs->out.data + base, hs->out.size - base);\n"
+                         "                    hs->out.size = base;\n                }\n", elem_ctype(et), place);
+        } else {
+            sb_put(o, "                for (uint32_t i = lo; i < hi; i++) {\n");
+            gen_client_hv_call(g, codec, et, place, "                    ");
+            sb_put(o, "                }\n"
+                      "                if (hs->out.overflow) tide_out_of_memory();\n"
+                      "                part = tide_hash(hs->out.data + base, hs->out.size - base);\n"
+                      "                hs->out.size = base;\n");
+        }
+        sb_put(o, "                if (sums) sums[c].sum = part;\n            }\n"
+                  "            tree = tide_hash_more(tree, &part, sizeof part);\n        }\n"
+                  "        tide_write_u8(&hs->out, 2u); // (Its chunks' hashes, not its elements' bytes)\n"
+                  "        tide_write_u64(&hs->out, tide_hash_end(tree));\n"
+                  "    } else ");
+        if (client_codec_raw(g->prog, et)) {
+            sb_printf(o, "for (uint32_t i = 0; i < count;) {\n"
                          "        const %s *element = tide_list_cached_at(&cache, *v, (int32_t)i, sizeof *element);\n"
                          "        uint32_t n = cache.at == v->at && cache.at && i - cache.first < cache.count ? cache.first + cache.count - i : 1u;\n"
                          "        if (n > count - i) n = count - i;\n"
@@ -738,13 +828,11 @@ static void gen_client_hv(gen *g, const client_codec *codec, const int id)
                          "        tide_client_write(&hs->out, element, (uint32_t)(n * sizeof *element));\n"
                          "        i += n;\n    }\n", elem_ctype(et));
         } else {
-            char place[256];
-            snprintf(place, sizeof place, "(const %s *)tide_list_cached_at(&cache, *v, (int32_t)i, sizeof(%s))", elem_ctype(et), elem_ctype(et));
-            sb_put(o, "    for (uint32_t i = 0; i < count; i++) {\n");
+            sb_put(o, "for (uint32_t i = 0; i < count; i++) {\n");
             gen_client_hv_call(g, codec, et, place, "        ");
             sb_put(o, "    }\n");
         }
-        sb_printf(o, "    tide_client_hv_end(hs, v->at, %du, keep, mark, from, floor, poisoned);\n", id);
+        sb_printf(o, "    tide_client_hv_end(hs, v->at, %du, keep, mark, from, floor, poisoned);\n    if (keep) TIDE_CLIENT_TO(12, began);\n", id);
     } else if (t.kind == TY_MAP || t.kind == TY_SET) {
         const int map = t.decl->index;
         char keep[128];
@@ -755,15 +843,44 @@ static void gen_client_hv(gen *g, const client_codec *codec, const int id)
         sb_put(o, "    tide_write_varint(&hs->out, v->live);\n"
                   "    tide_write_u64(&hs->out, (uint64_t)v->last_order);\n");
         gen_client_hv_begin(g, id, "v->entries.at", keep);
-        sb_put(o, "    tide_client_reach_list(hs, v->entries);\n    tide_client_reach_list(hs, v->index);\n"
-                  "    int64_t order = 0;\n    int32_t next = 0;\n    int32_t i;\n");
-        sb_printf(o, "    while ((i = tide_map_next(*v, &tide_map%d_kind, &order, &next)) >= 0) {\n", map);
-        sb_printf(o, "        const tide_map%d_entry *entry = tide_map_entry(*v, i, &tide_map%d_kind);\n", map, map);
-        sb_put(o, "        tide_write_u64(&hs->out, (uint64_t)order);\n");
-        gen_client_hv_call(g, codec, t.decl->fields.items[0].type, "&entry->key", "        ");
-        if (t.kind == TY_MAP) gen_client_hv_call(g, codec, t.decl->fields.items[1].type, "&entry->value", "        ");
-        sb_put(o, "    }\n");
-        sb_printf(o, "    tide_client_hv_end(hs, v->entries.at, %du, keep, mark, from, floor, poisoned);\n", id);
+        // A map whose live entries are more than one chunk of its list holds is the sum of their hashes (tide_client_sum,
+        // above): each chunk's part is kept where its entries hold nothing in the heap, so they are what their bytes are
+        const bool plain = !client_codec_heapy(g->prog, t.decl->fields.items[0].type, 0)
+            && (t.kind == TY_SET || !client_codec_heapy(g->prog, t.decl->fields.items[1].type, 0));
+        sb_printf(o, "    tide_client_reach_list(hs, v->entries);\n    tide_client_reach_list(hs, v->index);\n"
+                     "    if ((uint64_t)v->live * sizeof(tide_map%d_entry) > TIDE_LIST_CHUNK) {\n"
+                     "        const uint32_t entries = (uint32_t)tide_map_entries(*v), per = tide_client_chunk_holds(sizeof(tide_map%d_entry));\n"
+                     "        tide_client_sum *const sums = %s && sizeof(tide_map%d_entry) <= TIDE_LIST_CHUNK\n"
+                     "            ? tide_client_memo_sums(hs, v->entries, %du, (entries + per - 1u) / per) : NULL;\n"
+                     "        tide_list_cache cache = {0};\n        uint64_t sum = 0;\n"
+                     "        for (uint32_t c = 0, lo = 0; lo < entries; c++, lo += per) {\n"
+                     "            const uint32_t hi = entries - lo < per ? entries : lo + per;\n"
+                     "            if (sums && tide_client_sum_kept(hs, &sums[c], v->entries, c, hi - lo)) {\n"
+                     "                sum += sums[c].sum;\n                continue;\n            }\n"
+                     "            uint64_t part = 0;\n"
+                     "            for (uint32_t i = lo; i < hi; i++) {\n"
+                     "                const tide_map%d_entry *entry = tide_list_cached_at(&cache, v->entries, (int32_t)i, sizeof *entry);\n"
+                     "                if (!tide_map_live(entry)) continue;\n"
+                     "                tide_write_u64(&hs->out, (uint64_t)entry->tide_order);\n",
+                  map, map, plain ? "keep" : "false", map, id, map);
+        gen_client_hv_call(g, codec, t.decl->fields.items[0].type, "&entry->key", "                ");
+        if (t.kind == TY_MAP) gen_client_hv_call(g, codec, t.decl->fields.items[1].type, "&entry->value", "                ");
+        sb_put(o, "                if (hs->out.overflow) tide_out_of_memory();\n"
+                  "                part += tide_client_mix(tide_hash(hs->out.data + mark, hs->out.size - mark));\n"
+                  "                hs->out.size = mark;\n            }\n"
+                  "            if (sums) sums[c].sum = part;\n"
+                  "            sum += part;\n        }\n"
+                  "        tide_write_u8(&hs->out, 1u); // (Its entries' sum, not their bytes)\n"
+                  "        tide_write_u64(&hs->out, sum);\n"
+                  "    } else {\n"
+                  "        int64_t order = 0;\n        int32_t next = 0;\n        int32_t i;\n");
+        sb_printf(o, "        while ((i = tide_map_next(*v, &tide_map%d_kind, &order, &next)) >= 0) {\n", map);
+        sb_printf(o, "            const tide_map%d_entry *entry = tide_map_entry(*v, i, &tide_map%d_kind);\n", map, map);
+        sb_put(o, "            tide_write_u64(&hs->out, (uint64_t)order);\n");
+        gen_client_hv_call(g, codec, t.decl->fields.items[0].type, "&entry->key", "            ");
+        if (t.kind == TY_MAP) gen_client_hv_call(g, codec, t.decl->fields.items[1].type, "&entry->value", "            ");
+        sb_put(o, "        }\n    }\n");
+        sb_printf(o, "    tide_client_hv_end(hs, v->entries.at, %du, keep, mark, from, floor, poisoned);\n    if (keep) TIDE_CLIENT_TO(11, began);\n", id);
     } else if (t.kind == TY_GRID) {
         const type cell = t.decl->fields.items[0].type;
         sb_put(o, "    const tide_grid_dir *dir = tide_grid_dir_of(*v);\n");
@@ -785,14 +902,21 @@ static void gen_client_hv(gen *g, const client_codec *codec, const int id)
                      "                (void)tide_client_reach_block(hs, tide_client_heap_of(v->at), records[i].block, tide_grid_chunk_bytes(&%s));\n",
                   grid_shape_name(t.decl));
         sb_put(o, "            tide_write_bytes(&hs->out, records[i].chunk, sizeof records[i].chunk);\n");
-        sb_printf(o, "            const uint8_t *cells = tide_grid_chunk_at(tide_heap_read(tide_handle_where(v->at)), records[i].block);\n"
-                     "            for (uint32_t k = 0; k < tide_grid_chunk_bytes(&%s) / sizeof(%s); k++) {\n",
-                  grid_shape_name(t.decl), elem_ctype(cell));
-        char place[256];
-        snprintf(place, sizeof place, "(const %s *)(const void *)(cells + (size_t)k * sizeof(%s))", elem_ctype(cell), elem_ctype(cell));
-        gen_client_hv_call(g, codec, cell, place, "                ");
-        sb_put(o, "            }\n        }\n        free(records);\n    }\n");
-        sb_printf(o, "    tide_client_hv_end(hs, v->at, %du, keep, mark, from, floor, poisoned);\n", id);
+        sb_put(o, "            const uint8_t *cells = tide_grid_chunk_at(tide_heap_read(tide_handle_where(v->at)), records[i].block);\n");
+        if (client_codec_raw(g->prog, cell)) {
+            // (Cells whose bytes are their codec's go as they are, a chunk at once: the bytes a cell at a time made)
+            sb_printf(o, "            tide_client_write(&hs->out, cells, (uint32_t)(tide_grid_chunk_bytes(&%s) / sizeof(%s) * sizeof(%s)));\n",
+                      grid_shape_name(t.decl), elem_ctype(cell), elem_ctype(cell));
+        } else {
+            sb_printf(o, "            for (uint32_t k = 0; k < tide_grid_chunk_bytes(&%s) / sizeof(%s); k++) {\n",
+                      grid_shape_name(t.decl), elem_ctype(cell));
+            char place[256];
+            snprintf(place, sizeof place, "(const %s *)(const void *)(cells + (size_t)k * sizeof(%s))", elem_ctype(cell), elem_ctype(cell));
+            gen_client_hv_call(g, codec, cell, place, "                ");
+            sb_put(o, "            }\n");
+        }
+        sb_put(o, "        }\n        free(records);\n    }\n");
+        sb_printf(o, "    tide_client_hv_end(hs, v->at, %du, keep, mark, from, floor, poisoned);\n    if (keep) TIDE_CLIENT_TO(10, began);\n", id);
     }
     sb_put(o, "}\n\n");
 }

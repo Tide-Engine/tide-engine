@@ -62,9 +62,30 @@ identity (`TIDE_SIMULATION_RUNTIME` hashes them all), so no player of the old on
 hash or snapshot change; `bench_voxels`' pinned hash is unchanged. Contracts and tests: notes/voxels.md, sections 3a to
 3c.
 
-## Projection hashes kept by blocks (2026-11-15, later)
+## Projection hashes: rows by their bytes, big containers by their chunks (2026-11-16)
 
 No runtime function is new or changed (netcode.md, top section). What generated code for players relies on now, all
+of it existing:
+
+- **A table chunk's columns**: it copies and compares runs of a column's page (`tide_page_data` of
+  `tide_table.pages`, a column's `tide_columns.sizes` bytes a row), where it hashed them. A row's value of a lane is
+  those bytes, padding and all (generated types' padding is zeroed).
+- **A list in chunks**: a container whose elements are more bytes than `TIDE_LIST_CHUNK` is hashed a chunk's worth
+  of elements at a time (`TIDE_LIST_CHUNK / size`, by index), and where its list is in chunks in the match's heaps,
+  chunk `c`'s part is kept by the hash of the page chunk `c`'s offset is in (the block of offsets after the list's
+  header, as `tide_list_chunk` reads it): it relies on chunk `c` holding elements `c * per` on, `per` of them, and on
+  a map's entries being its list's elements, an entry's first 8 bytes its order (above 0 for a live one:
+  `tide_map_live`). What a big container hashes to doesn't depend on any of it (a list that isn't
+  in chunks is hashed the same chunk's worth at a time); only what's kept does.
+- `TIDE_HASH_START`, `tide_hash_more` and `tide_hash_end` (net.h) chain a list's chunks' hashes.
+
+If the owner changes how many elements a chunk holds, or a map's entry's header, `gen_client_hv`
+(client_state_codegen.inc) says what it assumes; a change to `TIDE_LIST_CHUNK` moves what big containers hash to
+(the pins of `visibility_trees` and `visibility_hash_memo`), a server's and a player's machine's alike.
+
+## Projection hashes kept by blocks (2026-11-15, later)
+
+No runtime function is new or changed (netcode.md, the section after the top). What generated code for players relies on now, all
 of it existing:
 
 - **A block's bytes**: it hashes a block smaller than a page itself, `tide_hash_wide` over `tide_page_data` from the
