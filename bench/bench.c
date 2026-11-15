@@ -1357,9 +1357,15 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
         d->make_world(d->flags, first, (float)FRAME);
         if (real->stored) tide_storage_unbind(first);
         // The store: the game's own, or the platform's files in a folder, on their own thread or (--files-here) not
-        static tide_io files_io;
         const tide_io *io = d->io;
         if (files_folder) {
+#ifdef __wasm__
+            // The web's files are the page's (tide.js), which a bench run by the WASI runner has none of
+            fprintf(stderr, "%s: --files%s: a bench on the web has no platform files; run it natively\n", d->name,
+                    files_here ? "-here" : "");
+            return 1;
+#else
+            static tide_io files_io;
             const tide_io *platform = tide_platform_io_init("dev.tide.bench", files_folder);
             if (!platform || !platform->persistent_data_path || !platform->persistent_data_path[0]) {
                 fprintf(stderr, "%s: --files: the folder %s can't be used\n", d->name, files_folder);
@@ -1370,6 +1376,7 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
             if (files_here) files_io.post = NULL;
             if (files_here) files_io.settle = NULL;
             io = &files_io;
+#endif
         }
         const tide_server_desc server_desc = {
             .game = &timed,

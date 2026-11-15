@@ -26,7 +26,7 @@ Set `TIDE_BENCH_MACHINE` to the CPU/machine and `TIDE_BENCH_REVISION` to the sou
 
 ## Voxels and the server's store (2026-11-15)
 
-`bench_voxels` plays an endless world of blocks with bots that fly, dig, build and change dimension (`notes/voxels.md`). Its server keeps chunks nobody is near in a store kept in memory; `--files <folder>` keeps them as the platform's own files in that folder's `saved/` instead, read and written on the files' own thread as the standard hosts do, and `--files-here <folder>` the same as each tick ends, to see what that costs a server's update. Any benchmark of a game that uses the store takes both.
+`bench_voxels` plays an endless world of blocks with bots that fly, dig, build and change dimension (`notes/voxels.md`). Its server keeps chunks nobody is near in a store kept in memory; `--files <folder>` keeps them as the platform's own files in that folder's `saved/` instead, read and written on the files' own thread as the standard hosts do, and `--files-here <folder>` the same as each tick ends, to see what that costs a server's update. Any benchmark of a game that uses the store takes both, natively (a web bench has no platform files).
 
 ## Earth under load (2026-10-24)
 
