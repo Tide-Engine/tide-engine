@@ -55,8 +55,8 @@ system Native1(mut Native native) { Fill(native.cells); }
 system Native2(mut Other other) { Refill(other.cells); }
 
 // Per entity, changing their own rows' lists: Stuff and Walk above go across
-// threads, in runs. These stay in order on one: a grid's owner, and one C can
-// write, whose blocks are in the match's own heap
+// threads, in runs, and so does a grid's owner (Dig). One C can write stays in
+// order on one, as its blocks are in the match's own heap
 component Plot { int id; Grid2<int> cells = Grid2(8, 8); List<int> marks; }
 component Wire { int id; List<int> cells; }
 system Dig(mut Plot plot) { plot.marks.Add(plot.id); }

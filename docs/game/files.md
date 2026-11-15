@@ -33,6 +33,33 @@ selects a separate persistent directory. Scripted runs otherwise use the normal
 saves. The override changes relative paths and `Application.persistentDataPath`;
 explicit absolute paths still reach the files they name.
 
+## Saving the match
+
+Match code can't touch files: they're this machine's, and the match is the same on every machine. What a match needs kept, it asks the machine that runs it to keep, with `Storage`:
+
+```csharp
+// As a chunk nobody is near goes
+Storage.Save($"chunks/{chunk.at.x}_{chunk.at.z}", chunk.blocks.ToBytes());
+
+// As someone next comes near: the answer is an event, a tick later
+Storage.Load($"chunks/{at.x}_{at.z}", chunk);
+
+event(Loaded loaded) Fill(mut Chunk chunk)
+{
+    if (loaded.found) chunk.blocks = Grid3<Block>.FromBytes(loaded.bytes) ?? Grid3(16, 16, 16);
+}
+```
+
+A grid's `ToBytes()` and its type's `FromBytes(bytes)` turn it into a `List<byte>` and back, its size and its cells, a chunk of air as nothing and a chunk of one block as a few bytes (see [Grids as bytes](../language/grids.md#grids-as-bytes)). For values of other kinds, a game writes its own bytes, or [JSON](../language/json.md).
+
+`Storage.Save(key, bytes)` keeps a `List<byte>` under a key, replacing what was there. `Storage.Load(key)` asks for it back: the answer is a `Loaded` event in a later tick, with the `key`, the `bytes`, whether it was `found`, and whether reading it `failed` (something is kept there that couldn't be read, which a game shouldn't make afresh and save over), sent to the entity the load names (`Storage.Load(key, entity)`) or to the world. `Storage.Delete(key)` forgets it.
+
+The answer usually comes the next tick, and its handlers run after that tick's systems. In a match that doesn't hide state, an answer of more than about 1 KiB goes to every player first, as a big command does, so it can take longer, and the answers after it wait for it.
+
+Only the server asks: a player's machine that runs the same tick saves and loads nothing. With the standard hosts, each key is a file in `saved/` in the game's persistent data folder, on the machine that runs the match: the hosting player's, or a dedicated server's (the same folder, named for the game's `appId` or, without one, for the game). A key is any text up to 256 bytes, with `/` for folders, and a value up to 32 MiB. Any key is a file of its own on every system: in its file's name, everything but small letters, digits, `-`, `_` and the dots of its last part is written out as `%XX`, and so is the first letter of a Windows device's name (`con`, `nul`). A save is written whole beside the old file and then moved over it, so a server that stops mid-save keeps one or the other. Every match a server hosts shares the folder, so a game with several worlds puts the world's name in its keys. A match that uses the store can't change hands (`hostMigration`): what it keeps is on the hosting machine.
+
+`Storage.Flush` is local code's, and about this machine's own files.
+
 ## Logs and crashes
 
 A game run with a window keeps its log and its crashes in its persistent data directory (`Application.persistentDataPath`), beside its saves, so a player's problem can be looked into once they send them:

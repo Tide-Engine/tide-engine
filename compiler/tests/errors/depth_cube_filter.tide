@@ -1,0 +1,6 @@
+// expect: Sample takes which way to read from the cube's middle, a float3 of any length: 'shadows.Sample(direction)'
+// expect: a depth is read at its nearest pixel: it takes no Filter
+scene Main { }
+local singleton Lamp { Cubemap cube; DepthCubemap shadows; }
+frag Lit(Vertex vertex,out Color color,Lamp lamp) { color=Color(lamp.shadows.Sample(float3(vertex.uv,1),Filter.Point),0,0); }
+view Show(mut Lamp lamp) { lamp.cube=Cubemap(64,Format.Depth); lamp.shadows=lamp.cube.depth; List<Vertex> quad=[Vertex {position=float2(0)},Vertex {position=float2(1,0)},Vertex {position=float2(0,1)}]; Draw.Mesh(quad,[0,1,2],Lit); }

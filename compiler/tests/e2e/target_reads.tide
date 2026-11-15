@@ -40,6 +40,45 @@ local singleton Reads
     bool cancelNow;
     int captured;
     Grid3<float> box;   // A volume's read's grid (target_reads_of_parts_and_volumes)
+    // Reads let go of wherever a task goes (target_reads_let_go_of_wherever_their_task_goes)
+    LocalTask outer;    // A task awaiting one that reads, cancelled as the read waits
+    bool outerNow;
+    bool outerCancel;
+    int outerGot;
+    bool lensNow;       // A lens's task, which ends with the lens
+    bool lensGone;
+    int snapped;
+    Texture3D fog;      // A volume made from a Grid3, read through a parameter: its read fails as it runs
+    Grid3<Color> fogCells;
+    bool fogNow;
+    int fogFailed;
+    int fogRead;
+}
+
+component Lens { bool asked; }
+
+async int Width(mut Reads reads)
+{
+    if (await reads.plain.Read() is Grid2<Color> pixels) return pixels.size.x;
+    return -1;
+}
+async void Outer(mut Reads reads) { reads.outerGot = await Width(reads); }
+
+async void Snap(mut Reads reads)
+{
+    if (await reads.plain.Read() is Grid2<Color> pixels) reads.snapped += pixels.size.x;
+}
+view Lenses(mut local Lens lens, mut Reads reads)
+{
+    if (reads.lensGone) { this.Destroy(); return; }
+    if (lens.asked) return;
+    lens.asked = true;
+    Snap(reads);
+}
+
+async void ReadFog(Texture3D volume, mut Reads reads)
+{
+    if (await volume.Read() is Grid3<Color> cells) reads.fogRead += cells.size.x; else reads.fogFailed += 1;
 }
 
 // A target whose formats aren't known here is still read as Color, and checked as it runs
@@ -99,6 +138,16 @@ view Captures(mut Reads reads)
 {
     if (reads.captureNow) { reads.captureNow = false; reads.capture = Capture(reads); }
     if (reads.cancelNow) { reads.cancelNow = false; reads.capture.Cancel(); }
+    if (reads.outerNow) { reads.outerNow = false; reads.outer = Outer(reads); }
+    if (reads.outerCancel) { reads.outerCancel = false; reads.outer.Cancel(); }
+    if (reads.lensNow) { reads.lensNow = false; local Spawn(Lens { }); }
+    if (reads.fogNow)
+    {
+        reads.fogNow = false;
+        reads.fogCells = Grid3(2, 2, 2);
+        reads.fog = reads.fogCells;
+        ReadFog(reads.fog, reads);
+    }
 }
 
 view Start(mut Reads reads)

@@ -1,5 +1,26 @@
 # Netcode: sessions, prediction, commands
 
+## Projections over heaps per owner (2026-11-14, later)
+
+A game with visibility has a heap for each owner and runs (schedule-and-threads.md, top section), so what's generated
+for players reads a value wherever its handle says (`client_state_codegen.inc`, `client_spans_codegen.inc`,
+`client_changes_codegen.inc`; no session or runtime change):
+
+- **A heap page is named by its heap and its place**: `tide_client_place(heap, first)`, a `where`'s id and run (as
+  `tide_heaps_of` takes them) above 32 bits and the page's first place below. `tide_client_hasher` holds the world's
+  `tide_heaps`; `tide_client_reach_block(hs, heap, block)` takes the heap a block is in (a list's chunks and a grid's
+  are in their block's, `tide_client_heap_of(handle)`); `tide_client_place_hash` gives a place's page size and hash,
+  or false where no page starts there or the heap or run was never made (none is made: `tide_client_heap` reads
+  `tide_heaps.all`, `tide_heap_slots` and `tide_heap.runs`, where `tide_heaps_of` would allocate). The memo's entries
+  (`tide_client_page`: place, size, hash), a table chunk's kept heap pages, a row's own pages and the groups'
+  directory's digest all use places, so a page of one heap never stands for another's page at the same place.
+- **Values go where their owner's code would make them**: a projection's load, a reload, a repair's records and
+  singletons, and the releases of what they replace say `decl_where(owner)` (`TIDE_WHERE_RUN(TIDE_IN_MATCH, id)` for
+  an owner in runs, run 0 outside them), not `TIDE_IN_MATCH`.
+- **What's sent and hashed is unchanged**: the projection hashes are of values (no pin moved), and the bytes sent and
+  repaired by `bench_voxels` are the same byte for byte. A player's machine runs the same systems in runs on its own
+  heaps; its projection hashes as the server's (`tidec_e2e_visibility_runs`).
+
 ## A command handler's `with ownership`: the sender's own entity (2026-11-14)
 
 `command(Rename rename) RenamePlayer(mut Name name, with ownership)` runs only when the target's
@@ -1154,7 +1175,9 @@ A container's hash is a function of its value alone, so the server and a client
 build; it's only a different function of the same values, a 64-bit hash of
 hashes (`singleton tree hashes` is in the simulation identity). Text stays inline.
 Singletons holding nothing in the heap, entities, inputs and commands hash as
-they did; games with transform hierarchies still hash `client_state`'s bytes.
+they did. Games with transform hierarchies hashed `client_state`'s bytes until
+2026-11-15; they now hash as the others do, with each recipient's links and
+anchors as one section (notes/voxels.md, section 1).
 
 What makes it cheap: a container of 256 bytes or more keeps its hash in a memo,
 by its handle and codec, with every heap page its value was read from (its own
@@ -2155,8 +2178,8 @@ and grew with the square of the players):
   components gets another, computed once and kept for the next recipient with
   the same mask. The sum doesn't depend on row order, which a client's tables,
   missing hidden rows, needn't share with the server's. Games with transform
-  hierarchies keep hashing `client_state`'s bytes, as each recipient's cut links
-  and anchors differ. A transfer's check is now the hash of the bytes the
+  hierarchies kept hashing `client_state`'s bytes, as each recipient's cut links
+  and anchors differ, until 2026-11-15: those go as one section now (notes/voxels.md). A transfer's check is now the hash of the bytes the
   loaded world encodes to again (it compared `client_hash`, which was the same
   hash). `recipient logical state schema 2` is in the simulation identity
   (with `singleton tree hashes` after it since 2026-11-04, above).

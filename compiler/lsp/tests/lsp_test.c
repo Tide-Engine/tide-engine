@@ -4339,6 +4339,15 @@ TIDE_TEST(lsp_directives)
     TIDE_CHECK(has(format_reply(read), "\"result\":[]"));
     open_document("scene Main { }\nconst int SIDE = define(SIDE);\n");
     TIDE_CHECK(has(sent[0], "define takes a symbol's name and the value it has when the build gives it none"));
+    // Completion offers both where a value goes, and a method of the name hides the build's, with no diagnostic
+    const char *offered = complete("scene Main { }\nsingleton Army { int side; }\nsystem S(mut Army army)\n{\n    army.side = $\n}\n");
+    TIDE_CHECK(offers(offered, "define") && offers(offered, "defined"));
+    open_document("scene Main { }\nstruct S { int x; int define(int a, int b) { return a + b; } int G() { return define(x, 2); } }\n");
+    TIDE_CHECK(has(sent[0], "\"diagnostics\":[]"));
+    // ...and a name can't become either
+    open_document("scene Main { }\nconst int SI$DE = 500;\nsingleton Army { int side = SIDE; }\n");
+    TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"define\""), "built into the language"));
+    TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"defined\""), "built into the language"));
 }
 
 TIDE_TEST(lsp_folding)
@@ -6832,6 +6841,15 @@ TIDE_TEST(lsp_exact_numbers_and_depth_cubes)
     const char *layers = complete(program);
     TIDE_CHECK(offers(layers, "Sample") && offers(layers, "SampleLevel") && has(layers, "-> float"));
     TIDE_CHECK(has(layers, "SampleLevel($1, $2, $3)") && has(layers, "four exact loads"));
+    // ...where the field's format is fixed: R32f has no levels, so neither SampleLevel nor SampleGrad, and R16f has them
+    snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = Color(images.depths.$); }\n"
+             "view V(mut Images images) { images.depths = TextureArray(8, 8, 2, Format.R32f); }\n", types);
+    const char *exact = complete(program);
+    TIDE_CHECK(offers(exact, "Sample") && !offers(exact, "SampleLevel") && !offers(exact, "SampleGrad"));
+    snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = Color(images.depths.$); }\n"
+             "view V(mut Images images) { images.depths = TextureArray(8, 8, 2, Format.R16f); }\n", types);
+    const char *halves = complete(program);
+    TIDE_CHECK(offers(halves, "SampleLevel") && offers(halves, "SampleGrad"));
     snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = Color(float(images.ids.$)); }\n", types);
     const char *ids = complete(program);
     TIDE_CHECK(offers(ids, "Sample") && has(ids, "-> int") && !offers(ids, "SampleLevel"));
@@ -6851,6 +6869,11 @@ TIDE_TEST(lsp_exact_numbers_and_depth_cubes)
     TIDE_CHECK(has(complete(program), "Filter filter = Filter.Trilinear"));
     snprintf(program, sizeof program, "%sfrag Show(Vertex vertex, out Color color, Images images) { color = Color(images.fog.$.x); }\n", types);
     TIDE_CHECK(has(complete(program), "loaded exactly and blended in the shader for R32f and Rgba32f"));
+    // [Raw(T)]'s help says what's built: every role on arrays and cubes too, and 32-bit floats blended with Bilinear
+    open_document("scene Main { }\nlocal singleton Ids { [Raw($int)] TextureArray layers; }\n");
+    const char *raw = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(raw, "Raw(type)") && has(raw, "TextureArray and Cubemap fields"));
+    TIDE_CHECK(has(raw, "R32f and Rgba32f blend with Filter.Bilinear") && !has(raw, "take the float roles"));
 }
 
 TIDE_TEST(lsp_window_pixels_and_format_names)
@@ -13005,6 +13028,27 @@ TIDE_TEST(lsp_mesh_decode_completes_hovers_and_checks)
                   "system Read(mut Art art) { art.model = Model.Decode($art.bytes)!; }\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "Decode(List<byte> bytes)"));
+}
+
+TIDE_TEST(lsp_grid_bytes_completes_hovers_and_checks)
+{
+    start();
+    const char *completion = complete("scene Main { }\nview V()\n{\n    var cells = Grid3<int>.$\n}\n");
+    TIDE_CHECK(offers(completion, "FromBytes") && has(completion, "FromBytes(List<byte> bytes)"));
+    completion = complete("scene Main { }\nsingleton Field { Grid2<int> cells; }\nview V(Field field) { field.cells.$ }\n");
+    TIDE_CHECK(offers(completion, "ToBytes") && !offers(completion, "FromBytes"));
+    open_document("scene Main { }\nsingleton Field { Grid3<int> cells; List<byte> saved; }\n"
+                  "system Read(mut Field field) { field.cells = Grid3<int>.From$Bytes(field.saved)!; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "Grid3<int>.FromBytes(List<byte> bytes) -> Grid3<int> fails IOError") && has(hover, "InvalidData"));
+    open_document("scene Main { }\nsingleton Field { Grid3<int> cells; List<byte> saved; }\n"
+                  "system Save(mut Field field) { field.saved = field.cells.To$Bytes(); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "Grid3<int>.ToBytes() -> List<byte>"));
+    open_document("scene Main { }\nsingleton Field { Grid2<int> cells; List<byte> saved; }\n"
+                  "system Read(mut Field field) { field.cells = Grid2<int>.FromBytes($field.saved)!; }\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "FromBytes(List<byte> bytes)"));
 }
 
 TIDE_TEST(lsp_humanoid_retargeting_completion_and_calibration_help)

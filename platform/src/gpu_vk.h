@@ -68,6 +68,8 @@ void tide_gpu_vk_lose(void);
 // For tests: the size of the window's images, as the swapchain was last
 // made, and how many times it has been made; 0 by 0 with none.
 void tide_gpu_vk_swapchain(int *width, int *height, uint32_t *made);
+// For tests: how many levels a texture, a cube or an array has room for (its image's mipLevels), 0 for none.
+uint32_t tide_gpu_vk_texture_levels(tide_gpu_id texture);
 // For tests: the bytes of compiled pipelines the device took from the cache
 // file it was given (tide_gpu.pipeline_cache), 0 for none: no file, one that
 // isn't whole, or one for another device or driver.

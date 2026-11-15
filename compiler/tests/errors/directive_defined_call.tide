@@ -1,0 +1,6 @@
+// expect: '#if' reads a symbol by its name alone: '#if SIDE'
+// expect: 'defined(SIDE)' is code's, a constant: 'const bool HAS = defined(SIDE);'
+#if defined(SIDE)
+const int SIDES = 1;
+#endif
+scene Main { }

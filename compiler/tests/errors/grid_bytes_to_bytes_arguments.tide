@@ -1,0 +1,7 @@
+// expect: ToBytes takes no arguments: 'cells.ToBytes()'
+singleton Field { Grid2<int> cells; List<byte> saved; }
+system Save(mut Field field)
+{
+    field.saved = field.cells.ToBytes(1);
+}
+scene Main { }

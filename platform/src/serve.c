@@ -325,6 +325,23 @@ int tide_serve(const tide_serve_desc *desc)
     }
     if (!serve_load(desc)) return 1;
     host.jobs = tide_platform_jobs();
+    // What its matches save (Storage.Save in match code) is kept in the game's own folder, as a player's saves are:
+    // its appId's, or for a game with none, dev.tide.<its name>, the name its player build goes by (the pack's, less
+    // the "-server" a server's has). Only for a game that uses the store: the provider makes its folders at once.
+    // (A build that first says Storage in a reload keeps nothing until the server starts again.)
+    if (!host.io && desc->game->stored) {
+        char fallback[256];
+        const char *id = desc->game->app_id;
+        if (!id) {
+            size_t n = strlen(desc->pack_name);
+            if (n > 7u && strcmp(desc->pack_name + n - 7u, "-server") == 0) n -= 7u;
+            snprintf(fallback, sizeof fallback, "dev.tide.%.*s", (int)(n < 200u ? n : 200u), desc->pack_name);
+            for (char *p = fallback; *p; ++p)
+                if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') || *p == '.')) *p = '_';
+            id = fallback;
+        }
+        host.io = tide_platform_io_init(id, NULL);
+    }
     if (!(udp_only ? tide_platform_udp_open((uint16_t)port, &host.transport)
                    : tide_platform_host_open((uint16_t)port, &host.transport))) {
         fprintf(stderr, "tide: cannot listen on server port %u\n", (unsigned)port);

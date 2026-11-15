@@ -603,6 +603,36 @@ bool tide_entity_destroy(tide_entities *t, tide_entity e)
     return true;
 }
 
+uint64_t tide_entities_slot_page_hash(const tide_entities *t, const uint32_t page)
+{
+    if (page >= t->pages || !t->page[page]) return 0u;
+    return tide_page_hash(t->page[page], used_on(t, page) * (uint32_t)sizeof(tide_entity_slot));
+}
+
+bool tide_entity_erase(tide_entities *t, tide_entity e)
+{
+    order_lock(t);
+    const uint32_t at = tide_entity_slot_index(t, e);
+    if (at == UINT32_MAX)
+    {
+        order_unlock(t);
+        return false;
+    }
+    order_invalidate(t);
+    tide_entity_slot *slot = slot_to_change(t, at);
+    __atomic_store_n(&slot->state, TIDE_ENTITY_FREE, __ATOMIC_RELEASE);
+    // No key stays in the slot or the index: nothing says it was here, and it can be installed again
+    index_remove(t->index, e);
+    __atomic_store_n(&slot->entity.birth, 0u, __ATOMIC_RELAXED);
+    __atomic_store_n(&slot->entity.lineage, 0u, __ATOMIC_RELAXED);
+    slot->archetype = TIDE_ARCHETYPE_NONE;
+    slot->row = t->free_head;
+    slot->snaps = 0;
+    t->free_head = at + 1u;
+    order_unlock(t);
+    return true;
+}
+
 bool tide_entity_install(tide_entities *t, tide_entity e)
 {
     if (tide_entity_is_null(e))
@@ -853,7 +883,10 @@ static bool rebuild_index(tide_entities *t)
         {
             if (s->archetype != TIDE_ARCHETYPE_NONE || s->row > t->next_unused || s->snaps)
                 return false;
-            if (tide_entity_is_null(s->entity) || index_get(t->index, s->entity) != UINT32_MAX)
+            // A slot tide_entity_erase freed has no key at all: nothing of what was in it is known
+            if (tide_entity_is_null(s->entity))
+                continue;
+            if (index_get(t->index, s->entity) != UINT32_MAX)
                 return false;
             index_put(&t->index, s->entity, at);
             continue;

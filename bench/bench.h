@@ -89,6 +89,9 @@ typedef struct bench_desc {
     // as their machine has it: a line each, at most `most` of them. NULL: no --diverge.
     uint32_t (*tick_of)(const void *world);
     void (*differ)(const void *server, const void *client, uint32_t most);
+    // Where the server keeps the match's store (Storage.Save and Load in match
+    // code: tide_server_desc.io), or NULL: nowhere, so every load finds nothing.
+    const struct tide_io *io;
 } bench_desc;
 
 // Reads the command line, runs the benchmark and reports. Returns the

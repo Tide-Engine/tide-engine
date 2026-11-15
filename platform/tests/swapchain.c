@@ -69,17 +69,21 @@ static bool draw(const int frame)
     return far <= 2u;
 }
 
-// Whether the swapchain's images are the window's size, made `made` times in all.
-static void check_swapchain(const uint32_t made, const char *what)
+// Whether the swapchain's images are the window's size, made `more` times since the last check, or once more than
+// that where `twice` allows it: a turned screen can reach an Android app as two sizes, a swapchain made at each.
+static void check_swapchain(const uint32_t more, const bool twice, const char *what)
 {
+    static uint32_t before;
     int width, height, image_width, image_height;
     uint32_t times;
     tide_window_pixel_size(&width, &height);
     tide_gpu_vk_swapchain(&image_width, &image_height, &times);
     char said[256];
-    snprintf(said, sizeof said, "%s: the window's images are its %d by %d pixels (%d by %d), made %u times (%u)", what, width,
-             height, image_width, image_height, made, times);
-    expect(image_width == width && image_height == height && times == made, said);
+    const uint32_t made = times - before;
+    snprintf(said, sizeof said, "%s: the window's images are its %d by %d pixels (%d by %d), made %u times more%s (%u)", what,
+             width, height, image_width, image_height, more, twice ? " or one over" : "", made);
+    expect(image_width == width && image_height == height && (made == more || (twice && made == more + 1u)), said);
+    before = times;
 }
 
 typedef enum { START, GROWING, SHRINKING, LOSING, AWAY, BACK, DONE } stage;
@@ -102,7 +106,7 @@ static int frame(void *user, const float seconds)
             printf("FAIL: the window draws with %s, where this test is Vulkan's\n", tide_platform_renderer());
             return 1;
         }
-        check_swapchain(1, "as the window opened");
+        check_swapchain(1, false, "as the window opened");
         from_width = width, from_height = height;
 #ifdef __ANDROID__
         ask("turn");
@@ -125,10 +129,10 @@ static int frame(void *user, const float seconds)
         }
         waited = 0;
 #ifdef __ANDROID__
-        check_swapchain(now == GROWING ? 2u : 3u, now == GROWING ? "the screen turned" : "the screen turned back");
+        check_swapchain(1, true, now == GROWING ? "the screen turned" : "the screen turned back");
         expect((width > height) == (now == GROWING), "the window took the screen's other shape");
 #else
-        check_swapchain(now == GROWING ? 2u : 3u, now == GROWING ? "a window made bigger" : "a window made smaller");
+        check_swapchain(1, false, now == GROWING ? "a window made bigger" : "a window made smaller");
 #endif
         from_width = width, from_height = height;
         if (now == GROWING) {
@@ -147,7 +151,7 @@ static int frame(void *user, const float seconds)
     case LOSING:
         // The frame after the loss drew on another device, in a swapchain made on it
         expect(tide_gpu_vulkan.epoch() != epoch, "a lost device was made again as the next frame drew");
-        check_swapchain(4, "after the device was lost");
+        check_swapchain(1, false, "after the device was lost");
 #ifdef __ANDROID__
         epoch = tide_gpu_vulkan.epoch();
         ask("home");
@@ -179,7 +183,7 @@ static int frame(void *user, const float seconds)
             return TIDE_KEEP_RUNNING;
         }
         expect(tide_gpu_vulkan.epoch() == epoch, "the device and everything made on it stayed while the app was away");
-        check_swapchain(5, "the app back at the front");
+        check_swapchain(1, false, "the app back at the front");
         now = DONE;
         return TIDE_KEEP_RUNNING;
     case DONE:

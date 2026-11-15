@@ -114,6 +114,7 @@ static void start(tide_shards *s, const tide_shard_action *a, const double now)
     d.world = world;
     d.seed = s->desc.seed;
     d.jobs = s->desc.jobs;
+    d.io = s->desc.io;
     d.closed = a->shard != TIDE_SHARD_ROOT; // Players join the world at the root, and a region takes those it's told of
     if (s->desc.transports) s->desc.transports(s->desc.user, a->shard, d.transports);
     here *h = grow(s, a->shard);

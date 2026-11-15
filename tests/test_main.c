@@ -53,6 +53,7 @@ int main(const int argc, char **argv)
         const double ms = (double)(tide_time_now_ns() - start) / 1e6;
 
         printf("%s %s (%.3f ms)\n", current_failures ? "FAIL" : "ok  ", tc->name, ms);
+        fflush(stdout); // A test that crashes after this one leaves the lines before it, which a pipe would hold back
         ran++;
         if (current_failures) failed++;
     }

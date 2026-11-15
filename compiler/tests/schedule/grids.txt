@@ -1,21 +1,28 @@
-grids: 4 systems each tick, 4 stages deep; none can run at the same time.
+grids: 6 systems each tick, 4 stages deep; 6 can run alongside others.
 A system starts once everything it runs after is done.
 
 stage 1  Paint  (once)
          writes Field
-         alongside nothing
+         alongside Generate, Bud
+stage 1  Generate  (per entity)
+         writes Chunk
+         alongside Paint, Blur, Fall, Count
 
 stage 2  Blur  (once, 1 parallel loop)
          writes Field
          after Paint: both change the text, lists or grids of Field; both write Field.cells
-         alongside nothing
+         alongside Generate, Bud
+stage 2  Bud  (per entity)
+         writes Chunk
+         after Generate: both change the text, lists or grids of Chunk; both write Chunk.blocks
+         alongside Paint, Blur, Fall, Count
 
 stage 3  Fall  (once, 2 parallel loops)
          reads Time
          writes Field
          after Paint: both change the text, lists or grids of Field; both write Field.cells (and through Blur)
          after Blur: both change the text, lists or grids of Field; both write Field.cells
-         alongside nothing
+         alongside Generate, Bud
 
 stage 4  Count  (once)
          reads Field
@@ -23,7 +30,7 @@ stage 4  Count  (once)
          after Paint: it writes Field.cells, which this reads (and through Blur)
          after Blur: it writes Field.cells, which this reads (and through Fall)
          after Fall: it writes Field.cells, which this reads
-         alongside nothing
+         alongside Generate, Bud
 
 Parallel loops, and when their steps go to the threads:
          Blur, line 23: a grid's cells, a step reckoned at 86: on the threads from 1163 steps in a tick that's on them, 23256 in one that isn't

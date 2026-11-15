@@ -37,9 +37,21 @@ struct tide_index {
     // number is x + cells[0] * (y + cells[1] * z), so a row of cells along x is a run of the built arrays.
     double low[3], scale[3];
     uint32_t cells[3];
-    uint32_t total; // Cells, at most twice the finite entries
+    uint32_t total; // Cells, at most twice the finite entries (exact keys: slots)
     uint32_t starts_room;
     uint32_t *starts; // Where each cell's entries start in the built arrays, and where the last one's end
+
+    // Exact keys (tide_index_begin_exact): `exact` whole numbers an entry, every entry's as added in `whole`, and
+    // its `dims` doubles (0 to 3) in `keys`, every entry's too (an entry's number is its place in `ordinals`).
+    // Built: the entries by the slot their whole numbers' hash is in (`mask`: slots - 1), each slot's in the order
+    // added, with their hashes, whole numbers, doubles (built_keys) and numbers (built_entries); `starts` as above
+    uint32_t exact; // 0: an index of doubles
+    uint32_t mask;
+    size_t whole_room, built_whole_room; // In whole numbers
+    uint32_t hashes_room;
+    int64_t *whole;
+    int64_t *built_whole;
+    uint64_t *built_hashes;
 };
 
 static size_t bytes(const size_t count, const size_t size)
@@ -75,12 +87,24 @@ void tide_index_free(tide_index *ix)
     free(ix->built_keys);
     free(ix->built_entries);
     free(ix->starts);
+    free(ix->whole);
+    free(ix->built_whole);
+    free(ix->built_hashes);
     free(ix);
 }
 
 void tide_index_begin(tide_index *ix, const uint32_t dims)
 {
     ix->dims = dims < 1 ? 1 : dims > 3 ? 3 : dims;
+    ix->exact = 0;
+    ix->count = ix->finite = ix->always = 0;
+    ix->built = false;
+}
+
+void tide_index_begin_exact(tide_index *ix, const uint32_t exact, const uint32_t dims)
+{
+    ix->exact = exact < 1 ? 1 : exact > TIDE_INDEX_EXACT ? TIDE_INDEX_EXACT : exact;
+    ix->dims = dims > 3 ? 3 : dims;
     ix->count = ix->finite = ix->always = 0;
     ix->built = false;
 }
@@ -99,6 +123,11 @@ static void grow_entries(tide_index *ix)
 
 void tide_index_add(tide_index *ix, const double *keys, const uint64_t ordinal)
 {
+    if (ix->exact) {
+        const int64_t none[TIDE_INDEX_EXACT] = {0};
+        tide_index_add_exact(ix, none, keys, ordinal);
+        return;
+    }
     if (ix->count == ix->room) grow_entries(ix);
     const uint32_t dims = ix->dims;
     ix->ordinals[ix->count++] = ordinal;
@@ -110,6 +139,27 @@ void tide_index_add(tide_index *ix, const double *keys, const uint64_t ordinal)
     } else {
         ix->always_ordinals[ix->always++] = ordinal;
     }
+    ix->built = false;
+}
+
+void tide_index_add_exact(tide_index *ix, const int64_t *whole, const double *keys, const uint64_t ordinal)
+{
+    if (!ix->exact) {
+        tide_index_add(ix, keys, ordinal);
+        return;
+    }
+    if (ix->count == ix->room) grow_entries(ix);
+    const uint32_t exact = ix->exact, dims = ix->dims;
+    const size_t at = (size_t)ix->count * exact;
+    if (at + exact > ix->whole_room) {
+        const size_t twice = ix->whole_room * 2, least = (size_t)64 * exact;
+        const size_t room = twice > at + exact ? twice : at + exact > least ? at + exact : least;
+        ix->whole = tide_realloc(ix->whole, bytes(ix->whole_room, sizeof(int64_t)), bytes(room, sizeof(int64_t)));
+        ix->whole_room = room;
+    }
+    memcpy(ix->whole + at, whole, exact * sizeof(int64_t));
+    if (dims) memcpy(ix->keys + (size_t)ix->count * dims, keys, dims * sizeof(double)); // Room for 3 an entry
+    ix->ordinals[ix->count++] = ordinal;
     ix->built = false;
 }
 
@@ -322,9 +372,66 @@ static void build_grid(tide_index *ix)
     free(cell);
 }
 
+// Exact keys: a hash of an entry's whole numbers. Only which slot an entry is
+// in comes of it, so only the cost of a search.
+static uint64_t hash_whole(const int64_t *whole, const uint32_t exact)
+{
+    uint64_t h = 0x9E3779B97F4A7C15ull * (exact + 1u);
+    for (uint32_t i = 0; i < exact; i++) {
+        h = (h ^ (uint64_t)whole[i]) * 0xBF58476D1CE4E5B9ull;
+        h ^= h >> 31;
+    }
+    h = (h ^ (h >> 30)) * 0x94D049BB133111EBull;
+    return h ^ (h >> 31);
+}
+
+// The entries by the slot of their whole numbers' hash, each slot's in the
+// order added: a counting sort, as the grid's.
+static void build_exact(tide_index *ix)
+{
+    const uint32_t n = ix->count, exact = ix->exact, dims = ix->dims;
+    uint32_t slots = 1; // A power of two, at least one an entry
+    while (slots < n && slots < (1u << 31)) slots <<= 1;
+    ix->total = slots;
+    ix->mask = slots - 1u;
+    if ((size_t)slots + 1 > ix->starts_room) {
+        free(ix->starts);
+        ix->starts_room = slots + 1u;
+        ix->starts = tide_alloc(bytes(ix->starts_room, sizeof(uint32_t)));
+    }
+    if (n > ix->hashes_room) {
+        free(ix->built_hashes);
+        ix->built_hashes = tide_alloc(bytes(n, sizeof(uint64_t)));
+        ix->hashes_room = n;
+    }
+    if ((size_t)n * exact > ix->built_whole_room) {
+        free(ix->built_whole);
+        ix->built_whole_room = (size_t)n * exact;
+        ix->built_whole = tide_alloc(bytes(ix->built_whole_room, sizeof(int64_t)));
+    }
+    uint32_t *starts = ix->starts;
+    memset(starts, 0, bytes((size_t)slots + 1, sizeof(uint32_t)));
+    uint64_t *hash = tide_alloc(bytes(n, sizeof(uint64_t)));
+    for (uint32_t i = 0; i < n; i++) {
+        hash[i] = hash_whole(ix->whole + (size_t)i * exact, exact);
+        starts[(hash[i] & ix->mask) + 1]++;
+    }
+    for (uint32_t c = 0; c < slots; c++) starts[c + 1] += starts[c];
+    for (uint32_t i = 0; i < n; i++) {
+        const uint32_t place = starts[hash[i] & ix->mask]++;
+        ix->built_entries[place] = i;
+        ix->built_hashes[place] = hash[i];
+        memcpy(ix->built_whole + (size_t)place * exact, ix->whole + (size_t)i * exact, exact * sizeof(int64_t));
+        if (dims) memcpy(ix->built_keys + (size_t)place * dims, ix->keys + (size_t)i * dims, dims * sizeof(double));
+    }
+    for (uint32_t c = slots; c > 0; c--) starts[c] = starts[c - 1];
+    starts[0] = 0;
+    free(hash);
+}
+
 void tide_index_end(tide_index *ix)
 {
-    const uint32_t n = ix->finite;
+    const uint32_t n = ix->exact ? ix->count : ix->finite;
     if (n > ix->built_room) {
         free(ix->built_keys);
         free(ix->built_entries);
@@ -333,7 +440,8 @@ void tide_index_end(tide_index *ix)
         ix->built_room = n;
     }
     if (n > 0) {
-        if (ix->dims == 1) build_sorted(ix);
+        if (ix->exact) build_exact(ix);
+        else if (ix->dims == 1) build_sorted(ix);
         else build_grid(ix);
     }
     ix->built = true;
@@ -593,7 +701,7 @@ void tide_index_find(const tide_index *ix, const double *lo, const double *hi, t
 {
     out->count = 0;
     if (ix->count == 0) return;
-    if (!ix->built) {
+    if (!ix->built || ix->exact) {
         give_all(ix, out);
         return;
     }
@@ -618,6 +726,48 @@ void tide_index_find(const tide_index *ix, const double *lo, const double *hi, t
     }
     if (dims == 1) find_sorted(ix, wlo[0], whi[0], out);
     else find_grid(ix, wlo, whi, out);
+}
+
+void tide_index_find_exact(const tide_index *ix, const int64_t *whole, const double *lo, const double *hi,
+                           tide_index_hits *out)
+{
+    out->count = 0;
+    if (ix->count == 0) return;
+    if (!ix->built || !ix->exact) {
+        give_all(ix, out);
+        return;
+    }
+    const uint32_t exact = ix->exact, dims = ix->dims;
+    double wlo[3] = {0, 0, 0}, whi[3] = {0, 0, 0};
+    for (uint32_t d = 0; d < dims; d++) {
+        const double l = lo[d], u = hi[d];
+        if (l != l || u != u) { // A NaN bound: this double is open
+            wlo[d] = -__builtin_inf();
+            whi[d] = __builtin_inf();
+            continue;
+        }
+        const double w = ((finite(l) ? magnitude(l) : 0) + (finite(u) ? magnitude(u) : 0)) * (1.0 / 65536.0) + 1e-30;
+        wlo[d] = finite(l) ? l - w : l;
+        whi[d] = finite(u) ? u + w : u;
+    }
+    const uint64_t h = hash_whole(whole, exact);
+    const uint32_t slot = (uint32_t)(h & ix->mask);
+    const uint32_t from = ix->starts[slot], to = ix->starts[slot + 1];
+    uint64_t *items = reserve_items(out, to - from);
+    uint32_t k = 0;
+    // A slot's entries are in the order added, so the hits ascend
+    for (uint32_t j = from; j < to; j++) {
+        if (ix->built_hashes[j] != h) continue;
+        const int64_t *w = ix->built_whole + (size_t)j * exact;
+        bool same = true;
+        for (uint32_t e = 0; e < exact; e++) same &= w[e] == whole[e];
+        if (!same) continue;
+        const double *keys = ix->built_keys + (size_t)j * dims;
+        bool in = true;
+        for (uint32_t d = 0; d < dims; d++) in &= !finite(keys[d]) || ((keys[d] >= wlo[d]) & (keys[d] <= whi[d]));
+        if (in) items[k++] = ix->ordinals[ix->built_entries[j]];
+    }
+    out->count = k;
 }
 
 void tide_index_lock(uint32_t *lock)

@@ -145,28 +145,46 @@ TIDE_TEST(row_heaps_pack_and_delta_give_the_world_back)
 }
 
 #ifdef TIDE_ROW_HEAPS_THREADS
+static void alone(void *self, void (*work)(void *context, uint32_t thread), void *context)
+{
+    (void)self;
+    work(context, 0);
+}
+
 // For measuring, from a release build with TIDE_ROW_HEAPS_TIME set: a tick's
 // mean time on one thread and on the pool, over 200 ticks after 20 (three
-// rounds, a snapshot taken every tick as a session takes one).
+// rounds, a snapshot taken every tick as a session takes one), and each
+// system's from the jobs' profile.
 TIDE_TEST(row_heaps_time)
 {
     const tide_jobs *pool = tide_platform_jobs();
     if (!getenv("TIDE_ROW_HEAPS_TIME") || !pool) return;
     static tide_world world, kept;
+    static tide_profile profile;
     for (int round = 0; round < 3; round++) {
         for (int threads = 0; threads < 2; threads++) {
+            tide_jobs jobs = threads ? *pool : (tide_jobs){.threads = 1u, .run = alone};
+            jobs.profile = &profile;
             tide_world_init(&world, 1.0f);
             uint64_t began = 0;
             for (int i = 0; i < 220; i++) {
-                if (i == 20) began = tide_time_now_ns();
+                if (i == 20) {
+                    began = tide_time_now_ns();
+                    tide_profile_clear(&profile);
+                }
                 tide_world_copy(&kept, &world);
-                if (threads) tide_world_tick_on(&world, pool);
-                else tide_world_tick(&world);
+                tide_world_tick_on(&world, &jobs);
                 (void)tide_world_hash(&world);
             }
-            printf("    %s: %.3f ms a tick\n", threads ? "the pool" : "one thread", (double)(tide_time_now_ns() - began) / 200.0 / 1e6);
+            printf("    %s: %.3f ms a tick, systems %.3f:", threads ? "the pool" : "one thread",
+                   (double)(tide_time_now_ns() - began) / 200.0 / 1e6, profile.systems_ms / profile.ticks);
+            for (uint32_t k = 0; k < profile.systems.count; k++) {
+                printf(" %s %.3f", profile.systems.items[k].name, profile.systems.items[k].total / profile.ticks);
+            }
+            printf("\n");
             tide_world_free(&kept);
             tide_world_free(&world);
+            tide_profile_free(&profile);
         }
     }
 }

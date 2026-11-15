@@ -1,5 +1,34 @@
 # ECS and simulation state
 
+## Heaps per owner in games that hide state (2026-11-14, later)
+
+A game with state visibility no longer keeps every owner in the match's heap 0 (`assign_heaps`: only shards do): its
+components' and singletons' text, lists, maps, sets and grids are in their own heaps and runs as in any game. What
+reads values for players (projections, their tree hashes and memo, the table chunks' and rows' kept pages, repairs)
+names a heap page by its heap's id and run and its place there, and loads each value into its owner's heap
+(`decl_where`). Design, tests, measurements and gaps: schedule-and-threads.md, top section; the page identities:
+netcode.md, top section.
+
+## A page's copy is counted before it's in the table (2026-11-15)
+
+A heap's `moves` (what a grid's or a list's cache checks, to hold what it found) counts a page's copy before the
+copy goes in the page table (`moved` in `engine/src/heap.c`, in `write_shared_in_runs`, `tide_heap_write_shared`
+and `tide_heap_write_over`), where it counted after: a thread that finds the copy (an acquire load of the table)
+then reads `moves` as counted or later, so a cache whose `moves` is unchanged never holds the old page. And a system
+in runs by identity has each task go through its own runs' keys alone. Both from a review: schedule-and-threads.md,
+top section.
+
+## Grids in runs, and runs by identity (2026-11-14)
+
+A grid's directory and chunks are in one heap, its handle's, which for an owner changed in runs is the heap of the
+run the grid was made in. Any run's rows change its cells where they are; a row that adds a chunk to a grid in
+another run's heap moves the grid whole into its own run's heap first (`grid_home`, `engine/src/grid.c`), and outside
+runs a grid adds chunks in its own heap whichever run's. Every grid function tells a field's own grid by
+`tide_handle_in` and changes and releases it through its own heap, as text.c and list.c do. And a per-entity system
+in runs whose rows queue nothing puts each entity in a run by its identity (`tide_entity_run`, generated), not by its
+share of the order, so a tick's new entities are spread over the runs and an entity's blocks stay in one run's heap.
+Design, measurements, tests and gaps: schedule-and-threads.md, top section.
+
 ## world.Edit: another entity's component where it is (2026-11-14)
 
 `world.Edit<T>(e, name) { ... }` (language.md has the whole of it) adds no storage path: `tide_world_edit_<T>`
@@ -36,7 +65,7 @@ the bits they were. A field's own block is one in its owner's memory whichever r
 (`tide_handle_in`), changed and released through its own heap; a list in chunks moves whole into the heap of the
 run that gives it more chunks. Packs, hashes and deltas name a run's heap by its id with the run above it, and a
 world with none hashes and packs as before. The whole of it, what was weighed, the tests and the gaps (grids
-among them) are in schedule-and-threads.md, top section.
+among them, in runs too since 2026-11-14) are in schedule-and-threads.md, top section.
 
 ## The lane analyses also feed the schedule (2026-11-13)
 

@@ -1,3 +1,26 @@
+## Heaps per owner in games that hide state (2026-11-14, later)
+
+No runtime function is new or changed (schedule-and-threads.md, top section). Generated code for players now reads
+`tide_heaps.all`, `tide_heap_slots` and `tide_heap.runs` directly (`tide_client_heap`, so a read never makes a heap),
+besides `tide_heap.pages` and `page` as before, and a system in runs whose rows set groups' audiences logs them with
+`tide_gather_push` and reads them back with `tide_gathered` in its `done` (the gathering systems' per-task logs, tag
+1); with one piece it calls `tide_heap_run_enter(0)`/`tide_heap_run_leave` around the set, as cached functions do.
+If the owner takes heap.c or jobs.c over: those fields' meaning, and a `done` seeing its own tasks' logs for a system
+that doesn't gather, are what that code relies on.
+
+## Grids in runs (2026-11-14)
+
+Mine, under the grids, heap and jobs maintenance below (schedule-and-threads.md, top section). No new runtime
+function. `tide/grid.h`'s and `engine/src/grid.c`'s functions tell a field's own grid by `tide_handle_in` (any run's
+heap of its owner) where they compared `where`s, change and release it through the heap its handle names, and
+allocate only from a heap this thread may hand blocks out of: a grid in another run's heap is moved whole into this
+run's first (`grid_home`), its old blocks released as another run's are. `tide_par_begin` keeps the grid's own
+`where` in the loop. Generated code for a system in runs whose rows queue nothing defines `tide_entity_run`, a
+`TIDE_HELPER` of its own (the run of an entity, from its identity), and calls the existing `tide_heap_run_enter` for
+each row. A caller of `tide_grid_poke` or `tide_grid_release` that passes a `where` naming another run of the grid's
+owner (C reaching a grid of an owner a system changes in runs) is now its owner's, where before it was taken for
+another world's and left alone.
+
 ## Reads of parts and volumes, banded reads (2026-11-14)
 
 Within the owner-approved pixel readback (2026-11-13) and the owner's "make sure everything we can add or validate we
@@ -23,6 +46,18 @@ reference had for its 1 or 2. Contracts and tests: textures.md (top); the Unity 
 The same day, for `[Raw]` and `[Linear]` globs and frag sources: `TIDE_PACK_LINEAR` on a `TIDE_PACK_LIST` of
 textures' element kind and a `TIDE_PACK_TEXTURES` map's count (`lay_textures` strips it and marks each element),
 and generated C capturing a frag's marked source with `tide_draw_texture_source_raw` or `_linear`.
+
+## Grids as bytes (2026-11-14)
+
+Within the grids maintenance exception (`tide/grid.h`, `engine/src/grid.c`), for an endless voxel world's chunks in the
+server's store: generated code calls two new functions, `tide_grid_to_bytes(g, shape, repair)` (`cells.ToBytes()`, a
+`List<byte>` in the scratch area) and `tide_grid_from_bytes(bytes, shape, repair, &out)` (`Grid3<T>.FromBytes`, a scratch
+grid, false for bytes that aren't one), and the inline `tide_cell_bool`, `_float`, `_double` and `_char` from the `repair`
+functions it generates for a cell type (`tide_grid_repair_fn`). `tide_grid_from_memory` is the raw form for C and the tests;
+`TIDE_GRID_BYTES_MOST` the limit. `grid.h` now includes `tide/list.h`. No layout, snapshot, hash or match-state change: the
+bytes are values code makes, and a game that calls neither generates the C it did. The owner should confirm the new
+generated calls and the format (docs/spec.md, Grids, Grids as bytes). Contracts and tests: notes/language.md, Grids as bytes;
+safety: notes/memory-safety.md, Grids from bytes.
 
 ## [Linear] image captures (2026-11-14)
 
@@ -291,7 +326,9 @@ New and agent-maintained, like `tide/voice.h`: `engine/include/tide/screen_keybo
 
 New and agent-maintained: the index runtime, `engine/include/tide/index.h` and `engine/src/index.c`
 (`tide_index_make`/`free`/`begin`/`add`/`end`/`count`/`ordinals`/`find`, `tide_index_hits_init`/`free`,
-`tide_index_lock`/`unlock`), which generated code calls for every indexed loop. The caches of indexes are
+`tide_index_lock`/`unlock`; since 2026-11-14 exact keys, `tide_index_begin_exact`/`add_exact`/`find_exact` and
+`TIDE_INDEX_EXACT`, within the voxel-world task that asked for them), which generated code calls for every indexed
+loop. The caches of indexes are
 generated helpers (`index_codegen.inc`: `tide_ix_*`, `tide_index_cache_prepare`/`free`), like the rows cache, over
 existing runtime calls (`tide_page_retain`/`release`, `tide_table_*`, `tide_list_*`, `tide_alloc*`); a game with an
 indexed loop gets a `struct tide_index_cache *` at the end of `tide_world` and `tide_local`, and defines

@@ -25,6 +25,9 @@ typedef struct tide_shards_desc {
     float dt;                // 0: 1 / tick_rate
     const void *start;       // The scene the match starts in (tide_start), NULL: Main
     uint32_t seed;           // Time.seed, every shard's
+    // Where the world keeps its store (Storage.Save and Load in match code:
+    // tide_server_desc.io), every shard's the same; NULL: nowhere
+    const struct tide_io *io;
     // Where things are: the box the regions divide, which grow past it to
     // take what goes outside. `split` regions along each axis to start with
     // (0 counts as 1).

@@ -1,3 +1,50 @@
+## Review of the readback workstream: corrections and the tests it lacked (2026-11-15)
+
+A review of "Reads of any size, of parts and of volumes; grids kept across waits" (below) found ten issues; all were
+confirmed and fixed (none refuted). Rules are Provisional in docs/spec.md (Grids a task keeps across its waits; Reads
+of any size, of parts and of volumes). Users: game/render-targets.md, game/tasks.md.
+
+- **No pack handle waits in a frame** (high; memory-safety.md top). A waiting `foreach` over an asset list or map of
+  grids kept its container in the frame as raw pack handles, read against the new region after a pack-only reload.
+  `foreach_value` now reads an asset in place in a task (B: each round the asset as it is, as an index loop does;
+  weighed: copying the asset into the frame, refusing the wait), and any list or map of grids in a frame (a computed
+  container, `fast ? run : walk`, a `switch`'s value hoisted before an await) is carried by `tide_list%d_carry` /
+  `tide_map%d_carry` (`gen_grid_container_carries`; `holds_grids`): the frame's own list, entries in their places,
+  each grid a copy, borrowed back after the wait, released with the frame (`gen_frame_release`) or once dead.
+- **A read kept across a wait is one copy.** A hoisted await's result stayed live to its block's end, so `var r =
+  await t.Read()` and an `is` name were each carried with the await's temporary: two heap copies of a 4K read. Now
+  `task_forget` ends a statement's temporaries after an S_VAR, S_EXPR or S_ASSIGN and after an S_IF's or S_SWITCH's
+  condition (not a foreach's, whose loop reads its container, nor a loop's condition, which has its own rounds).
+  A match task's frame then holds no dead temporary at a later wait, so `tidec_e2e_optional_fields`' pinned world
+  hash changed, to 14134961438823363422 on every platform CI ran (an intentional result change).
+- **gpu_none's read tokens** (memory-safety.md top): a 256-token ring that wrapped under more band reads than that in
+  one frame; now a table that refuses a token while every place waits.
+- **Volume read refusals** (`check.c` Texture3D Read; `check_target_read`): `Read<float2>` is refused at the type (no
+  Texture3D format holds two numbers; the message and the note agree); a volume made from a Grid3 wherever it's
+  assigned (`volume_grid_origin`, following `image_target_format`'s origins) is "made from a Grid3, whose cells the CPU
+  has already: read the grid itself", for a Color read too (it compiled and failed as it ran), where before a typed
+  one got the "format isn't fixed" message, whose fix didn't apply. Through a parameter it fails as it runs (tested).
+  The "never match code" branch can't be reached: a match handler can't name a local singleton or keep a Texture3D,
+  each refused first, so it has no fixture.
+- **Docs.** game/render-targets.md's part and volume examples didn't compile (their targets' formats were in a comment);
+  both make their image now, and each was compiled with tidec, with the page's ReadIds example.
+- **Tests added** (each fails without its fix, checked by putting the old code back): `tidec_e2e_task_grids`'
+  `task_grids_pack_loaded_again_as_a_task_waits` (another pack built in C, loaded while a loop over an asset, a choice
+  of two lists and a choice of two maps waits: the asset's loop goes on through the new pack, the others through their
+  own copies; the old code fails under ASan in `scratch_chunk`, (B) alone undone fails its count) and
+  `task_grids_a_read_kept_across_waits_is_one_copy` (a 256x256 read kept by `var` and by `is`: the local heap grows by
+  one grid's cells, not two); `tidec_e2e_target_reads`' `target_reads_let_go_of_wherever_their_task_goes` (an awaited
+  task's read with the awaiting task cancelled, a read cancelled once done, a lens entity's task's read asked and done
+  as the lens goes, a local world packed with a read waiting and unpacked into another, which asks its own while the
+  original keeps its: undoing the child recursion or the unpack reset fails it; a Grid3 volume through a parameter
+  fails), and a volume's boxes of nothing in `target_reads_of_parts_and_volumes`; `tide_platform_gpu_none` (native,
+  ASan: 300 reads of their own sizes; the old ring overflows); 8 error fixtures `read_volume_*`. `tide_platform_readback`
+  gained a volume nothing wrote read as zeros (made for the read; on WebGPU made a frame later, which the read waits
+  for), a volume's box of nothing and one past it failing, the 512 MiB limit (the host holds a done read's 504 MiB in a
+  free place of the shared table, as a read not let go of would: a 16 MiB read fails, a pixel's reads), and on desktop
+  a 5120x2880 target, a 5K window's, read whole in eight bands (its seam rows checked). The web and Android read the 4K
+  one alone, for memory.
+
 ## 32-bit numbers loaded exactly, typed volumes blended, depth cubes, SampleLevel reads levels (2026-11-14)
 
 The owner's "make sure everything we can add or validate we do" took the remaining refusals of the section below.
@@ -6,14 +53,15 @@ faces, Depth cubes (Cubemaps), explicit mip level, and Compute's volume sampling
 images, Choosing a mip level, cubes), game/render-targets.md (A cube of depth alone, readback), meshes-and-textures.md.
 
 - **What a game gains.** `Filter.Bilinear` on a typed R32f/Rgba32f `Texture`, `TextureArray` layer or `Texture3D`:
-  four (eight) texels loaded and blended in the shader, bit-identical everywhere (`Point`, and `SampleLevel`/`SampleGrad`
-  naming Point/Bilinear, load the nearest). Typed `Texture3D` Bilinear: Rgba16f and `Grid3<float>` through the sampler
+  four (eight) texels loaded and blended in the shader, bit-identical everywhere (`Point` loads the nearest; a
+  `SampleLevel`/`SampleGrad` naming Point loads it and one naming Bilinear blends the four, the image's one level:
+  corrected 2026-11-15, this said both load the nearest). Typed `Texture3D` Bilinear: Rgba16f and `Grid3<float>` through the sampler
   (`TIDE_SHADER_READ_NUMBER_VOLUME_BLEND`, 16, a GPU `READ_VOLUME`, no `tide_straight`, zeros for none from the
   existing zero volume). `TextureArray`/`Cubemap` of R32f, Rgba32f and R32i; `[Raw(int)]` on arrays, cubes and helper
   parameters; a typed array's Point read is a load where its format is 32-bit or unknown (a kernel's field). `Cubemap(size, Format.Depth)` with
   `cube.depth`, a `DepthCubemap` (`TY_DEPTH_CUBEMAP`, appended to the type kinds; `tide_depth_ref` of the cube's id),
   `Sample(direction)` and `Compare(direction, value)`. A Color/cube/array `SampleLevel` that names no filter is
-  Trilinear (`said_filter` 2 in `ex_sample_read`).
+  Trilinear (`said_filter` 2 in `ex_sample_read`), but at a level written 0 or less, Bilinear (`base_level`, 2026-11-15).
 - **Compiler** (`shader.c`). `sampling_of` = `sampling_as` (the old body) then `exact_sampling(s, format, typed)`: a
   typed field's format comes from `image_target_format` of its assignments (fixed for every typed field already), a
   frag's or vert's own Texture's from the texture its draw gives there (`shader.source_formats`, one for each of the
@@ -42,7 +90,8 @@ images, Choosing a mip level, cubes), game/render-targets.md (A cube of depth al
   `INT_ARRAY` (float vs R32i) and its depth array to a `DEPTH_ARRAY` read of `TIDE_PIXELS_TARGET_DEPTH` of the cube's
   id (`of_cube_depth`: `of_array`, `of_destination` and source preparation take it; a color cube's depth reads none),
   and a `READ_CUBE` of a layered cube or a filtering `READ_ARRAY` of a 32-bit array none. New fallbacks
-  `gpu_state.number_layers`/`int_layers` (1x1x1 arrays of RGBA32F/R32I, zero on every backend). Mipmaps are never made
+  `gpu_state.number_layers`/`int_layers` (1x1x1 `array_of` RGBA32F/R32I, zeros on every backend, Unity's replay too;
+  2026-11-15: they were drawn-into arrays, uncleared on Unity). Mipmaps are never made
   of 32-bit images, layered cubes or 32-bit target images (`unblended_format`). Readback: a layered cube's face reads
   through the layer kernels (`PIXEL_READ_LAYER_DEPTH`, `_LAYER_NUMBERS`); R32i faces and layers through the new
   `ReadTargetLayerInts` (cull.tide; `gpu_list.c` no longer refuses int faces/layers); `ReadTargetLayerNumbers` is now
@@ -85,6 +134,35 @@ images, Choosing a mip level, cubes), game/render-targets.md (A cube of depth al
   a color cube's depth (its faces' depths are separate images; the spec says to draw a depth cube too);
   `cube.depth.size`. Still left out by the owner: a blend per output, a chosen mip level as a destination, frag-drawn
   volume slices, an sRGB target format; the precise depth read waits on the owner.
+- **Review fixes (2026-11-15).** (1) `ex_numeric_sample` holds a 32-bit cube's face to the image's layers
+  (`min(i32(face), textureNumLayers - 1)`), as an array's layer is held: the fallback for none is one layer, and
+  faces 1-5 loaded past it (defined only by Vulkan's robustImageAccess; undefined on Unity's Metal). (2)
+  `layers_fallback` is `gpu->array_of(RGBA32F | R32I, 1, 1, 1)` (zeros until written on every backend; Unity's
+  `MakeArrayOf` writes zeros), not a drawn-into array, which Unity's replay never clears (gpu.h's `array_of` lists
+  the two formats). (3) `vk_array` makes one level for R32F/RGBA32F/R32I colors (a layered cube too), as tide.js's
+  `gpu_array` does: nothing makes or reads their levels, and a chain was a third more VRAM than `held()` counts
+  (`tide_gpu_vk_texture_levels`, a test hook). (4) A Color/cube/array/typed `SampleLevel` that names no filter at a
+  level written as a literal 0 or less is Bilinear, not Trilinear (`base_level` in `ex_sample_read`, spec Provisional):
+  the same pixels, and no mip chain made each frame for a target redrawn every frame; it's also why R32f/Rgba32f take
+  `SampleLevel(uv, 0)` (four loads). (5) Spec/notes corrected: `SampleLevel`/`SampleGrad` naming Bilinear on
+  R32f/Rgba32f blends the four loads (the code did; the text said nearest). (6) Messages: an int cube's or array's
+  `SampleLevel` says `Sample(direction)` / `Sample(uv, layer)`; `refuse_blended_numbers` says `Sample(uv, layer)` for an
+  array; an asset's `cube.depth` (and `array.depth`) notes how to make one of depth alone; `function_samples`' notes
+  name each texture type's parameter (a DepthCubemap's said `Texture image`). (7) LSP: `[Raw(type)]` signature help
+  says arrays/cubes take every role and 32-bit floats blend with Bilinear; member completion leaves SampleLevel and
+  SampleGrad out where a field's assignments fix it to R32f/Rgba32f (`field_has_levels`).
+  Tests: goldens `exact_numbers` (the face clamp; SampleLevel/SampleGrad naming Bilinear and SampleLevel(uv, 0) of
+  R32f as four loads; a Color target's `Sample(Bilinear)` and `SampleLevel(uv, 0)` one sampler; ReadSource handed R32f
+  and R16f is two shaders) and `linear_textures` (level-0 reads share the Bilinear sampler again); errors
+  `number_filter_source_trilinear_r32f` (a frag's own typed source, the `t->direct` refusal), `number_cube_int_level`,
+  `number_array_int_level`, `depth_cube_{constructor,method,filter,gpu_value,function_local,asset}`; LSP
+  `lsp_exact_numbers_and_depth_cubes` (signature help, R32f/R16f member completion); embed
+  `embed_render_number_layers_fallback_is_zeros` (ARRAY_OF packets bound, no drawn-into 32-bit array); targets
+  `check_array_levels` (Vulkan levels); images probes 66-70 (each face's four quarters of an R32f cube, an R16f
+  hardware cube and a depth cube against the layout's directions, so both axes of all six faces; an Rgba32f and R32i
+  cube with none on every face, an R32f and an Rgba16f volume with none blended: zeros; a color cube's `depth` known
+  only at run time: the draw is passed by). Checked failing with (1)-(3) reverted: the golden, the embed test and the
+  levels check fail; the zero-faces probe passes on this NVIDIA device either way (its robust loads give zeros).
 
 ## Reads of any size, of parts and of volumes; grids kept across waits; dropped reads let go (2026-11-14)
 

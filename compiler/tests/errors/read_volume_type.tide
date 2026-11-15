@@ -1,0 +1,5 @@
+// expect: Read gives a grid of what a volume holds: Color, float, float4 or int, not bool
+scene Main {}
+local singleton Fog { Texture3D volume; }
+view Make(mut Fog fog) { fog.volume = Texture3D(int3(4), Format.R32f); }
+async void Read(Fog fog) { var cells = await fog.volume.Read<bool>(); }

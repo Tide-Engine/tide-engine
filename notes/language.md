@@ -1,3 +1,209 @@
+## Local tasks use local fields (2026-11-14)
+
+The voxel world's gap (`notes/voxels.md`, section 5): a local task couldn't use a match component's local
+fields ("a task can't use local fields yet"), so `bench/voxels/play.tide` had its mesher leave each chunk's
+faces in a local singleton's list for the chunk's view to find. Now an async function that's local code
+reads and writes the local fields of the match components and singletons it takes, through its own
+parameter, as a view does, and gets them again with the component each time it goes on. Every rule is
+Provisional, Claude's picks (spec: Local state, Local tasks and local fields; Tasks, the two notes dated
+2026-11-14).
+
+**Checker** (`check.c`).
+
+- `local_fields_param` takes a task's own `task_ref` parameter: it's the entity's, got again each time,
+  not a copy. That one change lets `check_local_field`, helper calls and the propagation see tasks.
+- `check_local_field`: in an async function whose world is the match (`task_side == TASK_MATCH`), "'f' is a
+  local field of 'C': it's this machine's, and 'F' is a match task, which can't see it", with a note at what
+  made it the match's; otherwise `note_side(TASK_LOCAL)` at the use. A match async handler keeps the
+  "the match can't see it" error. Local async handlers take only local state (a local handler of a match
+  event can't be async), so no handler reaches a match component's local fields.
+- `check_async_decl`: `mut` on a match component or singleton **with a local part** no longer makes the
+  task the match's at its signature. `check_writable` notes TASK_MATCH where the task's own such parameter
+  has a match field written, unless it already uses the local fields: then the both-ways error, which
+  `check_local_field_calls` words for a task ("... but a task runs in one world", split it in two). `mut`
+  on one without local fields is TASK_MATCH at the signature, as before.
+- `spread_local_field_use` is the old first loop of `check_local_field_calls`, now with async callers
+  (it skipped them). `settle_task_local_fields` runs it before `check_acts` and `resolve_tasks`, then notes
+  each task's side from its parameters' `local_use`/`match_write`, so a task's world counts what helpers,
+  awaited tasks and started tasks do with its parameter; `check_local_field_calls` runs it again after
+  `plan_shaders` (it only sets flags). A match task that reaches local fields through a helper gets
+  `note_side`'s "uses local state here, and changes the match on line N" at the argument.
+- The old "uses the local fields of 'C', and a task can't yet" error is gone. A match system starting a
+  local-field task gets `resolve_tasks`' "uses local state, on line N, so the match can't start it" alone.
+  A view's or local handler's own parameter passed to a task that uses local fields gets `param.task_fields`.
+
+**Codegen** (`codegen.c`).
+
+- `gen_task_resume`: the body takes `C_local *tide_lf_<name>` (const when read-only) after each component
+  that `has_fields_ptr`; a singleton's is `&tide_l-><S>_local`, as a view's. The wrapper loads every
+  component first (`TIDE_TASK_GONE` without one), then finds or attaches the entity's row
+  (`tide_attach_<C>_local` with `tide_entity_born` of the world views draw) and passes the cell. A local
+  task's `mut` match component isn't stored back (its world is const, and it wrote local fields alone); a
+  `mut` match singleton is a copy, as a view's is.
+- **Shared rows.** A task's first segment runs inside the view's call, while the view holds a pointer to
+  the entity's local fields. A view's `mut` parameter normally points at a copy of the defaults
+  (`tide_ln<i>`) and adds a row after the row's run if the copy changed, which would duplicate the key the
+  task just attached. `attaches_first` now includes `task_fields`, so such a view attaches before the run
+  and both write one cell. A local handler of a match event does the same.
+- **Cell stability.** Adding a row can move the first chunk's cells (`tide_table_add` doubles it). Within
+  one resume only the task's own entity is touched (its wrapper, awaited children, tasks it starts, which
+  all belong to it), and the row exists before the body runs, so nothing adds under the pointer. No pointer
+  is kept across a wait: the wrapper finds the row again each time.
+- **A match that's over** (`tide_local.tide_match_over`, a fix for every local task, not just these):
+  `tide_local_disconnected` records `tide_task_order`, and the local task pass treats a task of one of the
+  match's entities, or a world task whose function takes a match component or singleton, started before it
+  as gone. Before, a task of the old match's entity went on for the next match's entity with the same
+  handle (another match's identities start over), writing its local fields. Tasks started in the next
+  frame's views have later orders and go on.
+
+**Rules** (spec, Local tasks and local fields): what the task reads of the match is the predicted world's,
+unblended; local fields aren't in the frame, so rollback and hot reload need nothing new; the task ends
+when its entity leaves the world views draw (existing rule), and the fields go when it's in neither world,
+so a task never outlives them and never writes for an entity this machine no longer has; hidden is gone;
+losing the component ends the task (its load fails) and takes the fields; Forgotten-while-waiting can't
+happen (forgetting is at frame start, the task pass after the views ends the task the same frame).
+
+**Tests.** `e2e/tasks_local_fields` (7 cases): the view's write before the start and the task's before its
+wait share the row, a worker's result through a helper and text in the fields, two entities' tasks, an edit
+remeshing one; an entity destroyed while its task waits (Forgotten sees the task's first step; no row comes
+back); a component lost; a match singleton's fields; a destroy predicted and undone (fields kept, task gone,
+the view starts another because its `local LocalTask job` handle isn't running); the match over with the
+next match's entities at the same handles (fails without `tide_match_over`: checked by zeroing it after
+`tide_local_disconnected`); the local state's bytes with tasks waiting (workers drained and restarted).
+Errors: `local_field_task` (now a match task, by `Wait.Ticks`), `local_field_task_helper`,
+`local_field_task_both`, `local_field_task_from_system`, `local_field_task_copy`.
+
+**Validation** (Windows, release, warning-free): all 2,546 `tidec_error_*`/diagnostics tests; the
+e2e, safety, platform and package tests of every game whose C changed and of local fields and tasks
+(38: `tidec_e2e_{tasks_local_fields, tasks_local, tasks, tasks_flow, task_handles, task_visibility,
+function_tasks, local_workers, worker_grids, worker_handles, worker_values, local_fields,
+local_fields_net, local_fields_plain, query_local_fields, fetch, io, frame_time, rolls, render_targets,
+target_reads, transforms}`, `tidec_safety_{tasks, gpu_lists, query_local_fields}`,
+`tide_platform_{kernels, migrate, occlusion, readback}` (GPU), `tide_lobby_{menu, own, relay}`,
+`tide_steam_lobby`, `bench_workers`, `bench_voxels`, `tidels_{tests, stdio, pipe}`); under ASan
+(`sanitize`) `tidec_e2e_{tasks_local_fields, tasks_local, local_workers, local_fields,
+query_local_fields, function_tasks, task_handles}`. `voxels` built and ran headless (`notes/voxels.md`, section 5). Web,
+other platforms and the full suites are left to CI and the coordinator.
+
+**Generated C** of every game in `build/release` (551 source lists, prototypes included) with the old and
+new tidec, the output folder and simulation identity left out: 522 the same; the 27 with local tasks
+differ by the `tide_match_over` field, its line in `tide_local_disconnected`, the pass's condition (91
+tables, 2 of them world tasks that take a match singleton) and so their layout hash; `voxels` and this
+fixture compile only with the new one. So the checker's earlier propagation and the deferred `mut` side
+change nothing else.
+
+**After its review** (merged into t3/minecraft-scale-world-readiness, 2026-11-14): the local task pass
+(`gen_task_pass`) ended a task of a match entity only when the entity was gone; a waiting task whose
+entity lost a component it takes stayed in its table, and if the component came back before the wake it
+went on with the new instance's local fields, after `Forgotten` had run for the old. Now the pass also
+requires `tide_has_<C>(tide_w, owner)` for each match component the task takes, waiting or due, so the
+spec's "ends with it" and "Forgotten while it waited can't be" hold. A task owned by a local entity that
+takes the match's components or singletons now ends with its match too (`owner_local` and
+`tide_match_over`), as docs/game/tasks.md said. `tasks_local_fields_end_with_their_component_while_they_wait`
+(Ember: `Wait.Frames(20)`, the component removed and added back) fails without the first. The docs
+example and `bench/voxels/play.tide` keep the task's handle (`local LocalTask job`) instead of a flag the
+task clears, which stayed set where a task ended with its fields kept; local-state.md says a view that can
+start such a task makes the entity's fields its own.
+
+**Gaps.** A destroy this machine predicted ends the task even when the server undoes it (the fields stay):
+a task could instead wait while only the confirmed world has its entity, which changes when existing
+local tasks end, so it's left for the owner. A local handler of a match event that starts a local task
+with its match component hands it no match world (`tide_local_start_*(NULL, ...)`), so the task ends at
+once; that's older than this. A view that starts a local-field task makes every entity's row as it runs
+for it, written or not. A sharded game's views of other shards' worlds start tasks whose entities the home
+world hasn't got, which end at once (older too).
+
+## Grids as bytes (2026-11-14)
+
+`cells.ToBytes()` and `Grid3<T>.FromBytes(bytes)` (`Grid3<T> fails IOError`), for an endless voxel world's chunks in the
+server's store (notes/voxels.md, section 4, with the measurements). Every rule is Provisional, Claude's picks (docs/spec.md,
+Grids, Grids as bytes); the user page is docs/language/grids.md, Grids as bytes.
+
+**Parser.** `Grid2`/`Grid3` then `<...>` then `.` (`type_then_dot`, as `Mesh<V>.Decode`) is an `E_NAME` with
+`type_arg_ref`. Nothing else named a grid changes: `Grid3<A>.B` was two comparisons before, which never checked.
+
+**Checker** (`check.c`). `check_grid_from_bytes`, from `check_method` after `check_font_decode`: the receiver as written
+(`resolve_type`, PLACE_LOCAL, which checks the cell as any grid type), an alias of a grid type (`type_alias`, which
+`alias_receiver` set), or a bare `Grid2`/`Grid3` (the error says to name the cell). Only `FromBytes` (another name says the
+type has that one), refused in GPU code (`gpu_refuses`), one `List<byte>` (`skinned_arguments`). Sets `CALL_GRID_BYTES` (new,
+appended to `builtin_call`), `type_decl` the grid, `grid_from_bytes` and `grid_from_bytes_result` on the grid decl, receiver
+`BIND_TYPE`. `ToBytes` is `check_grid_method`'s, no arguments, the same refusal, `grid_to_bytes`, gives `List<byte>`;
+`FromBytes` on a value says it's the type's. `fresh_grid` takes `??` (both sides) and `try` as `!` already was, so
+`field = Grid3<T>.FromBytes(b) ?? Grid3(16, 16, 16)` and `var g = try Grid3<T>.FromBytes(b);` hold a grid of their own.
+`CALL_GRID_BYTES` only reads: pure (`purity.c`), not a write (`writes` defaults), not an act (`call_acts` defaults), its
+receiver an operand for ToBytes (`call_operands`), a statement's call (`gen_stmt`'s list).
+
+**Codegen** (`gen_grid_bytes`, from `gen_grid_helpers` for a grid decl with either flag). `tide_grid<k>_to_bytes(tide_grid)`
+and `tide_grid<k>_from_bytes(tide_list)` (the result with `IOError_InvalidData`), over the runtime's with the shape and
+`tide_grid<k>_repair(uint8_t *cells, uint32_t count)`, or NULL where every byte of a cell is a value of it (`cell_repairs`:
+ints, bytes, longs, entities, players, structs of those with no padding). The repair works on bytes at offsets the
+compiler's layout gives (`decl_layout_padded`, which `gen_fields` writes the same), never a C bool read that could be 2:
+`tide_cell_float`/`_double`/`_bool`/`_char` (inline, `tide/grid.h`) at each part, an enum's number by its sorted members
+(ranges for up to four runs, a `switch` past that, nothing when every number of its storage is one, comparisons kept off
+the storage's ends so clang sees no tautology), `memset` of padding and `tide_empty`, a loop for an array's elements, and
+a `T?` field's `ok` made 0 or 1 first and the whole field zeros when it's 0. A game that calls neither generates the C it
+did: the flags gate everything, and `bench_voxels` with the old loops gives the hash it was pinned with.
+
+**Runtime** (`engine/src/grid.c`, the grids maintenance exception; notes/runtime-ownership.md): `tide_grid_to_bytes`,
+`tide_grid_from_bytes` and `tide_grid_from_memory` (the raw form, for C and the tests). ToBytes reads any grid (a world's
+through `tide_heap_read`, the pack's and a scratch grid's through the scratch area), orders the records by a merge sort of
+their indices (`order_records`: places come from bytes, and quicksort can be made quadratic), copies a chunk into a buffer
+only where it repairs or the chunk passes the size, leaves out chunks of zeros, and writes tokens with room for the worst
+case made once a chunk (`out_cells`); the chunk count goes before the chunks in five bytes' room, moved back once known.
+FromBytes checks the header (tag, format and dims, the cell's bytes, the geometry format 1 gives that cell, which
+`format_shift` works out as `grid_shape` does), sizes up to `INT32_MAX`, the count against the bytes left (a place byte an
+axis, a token and a cell each), a sized grid's chunks and `TIDE_GRID_BYTES_MOST` (256 MiB, said on stderr), makes the
+scratch grid with the directory's room for them all at once (`scratch_room`), and for each chunk checks its place (a sized
+axis's chunks, or `INT32_MIN >> shift` to `INT32_MAX >> shift` on an open one, in 64 bits), that it's after the one before
+(`compare_places`, so no place twice and no lookup), decodes the tokens into a scratch block (`in_cells`: a run past the
+chunk or past the bytes fails), repairs, zeros what's outside the size and keeps it if anything's left, its record put in
+the table by `insert_read`, which refuses a slot more than 256 past its hash's (places chosen to collide). Any failure drops the
+grid; what was made is the scratch area's, gone at its mark.
+
+**Tests.** `tidec_e2e_grid_bytes` (`e2e/grid_bytes.tide`, `_test.c`): 45 checks: a 16-cube of air (7 bytes, its size
+back), cells set and set back, one of stone (13 bytes), sparse, dense, the dense one into a field and through `try`,
+`is` and `!`, the same cells set backwards are the same bytes, the old loops' `Pack` and `Unpack` (kept as the
+measurement's baseline) agree, `Block(200)` written as Air, an open `Grid2<int>` at the ints' four corners, a
+`Grid3<Wide>` open sideways (an int enum with members apart) and bytes made by hand with a number that's no member, a
+struct cell (float, byte enum, bool, char, `int?`) round trip and bytes made by hand with a NaN, a block of 200, a bool
+of 7, padding, half a UTF-16 pair and an `ok` of 9, an asset's `Grid2<Color>` (the pack's grid) round trip, entities and
+players, every cut of two encodings and a byte more refused, each byte of the dense one spoiled (3,361 of 3,480 still
+read), bytes made by hand for each refusal the spec lists, a chunk of zeros and a run written as two (taken). In C: two
+encodings whole, all eight by an FNV hash pinned in CMake (`GRID_BYTES_HASH`, `GRID_BYTES_SPOILED`), the fields' cells
+read by a host, a copy and the world as bytes, a view's round trip and a local worker's `ToBytes` of a match grid's
+snapshot (the same count as the view's), and `grid_bytes_measure`. `tidec_safety_grid_bytes`: the world's grids through
+bytes and back every tick under the host's snapshots and packing (a 16-cube, an open grid at the ints' corners, a
+2-billion-cell grid hashed by place, struct cells), cuts every 7 bytes, every byte spoiled (4,096 read, into the world),
+65,537 chunks refused with the log's line, a NaN, a bool of 9 and a block of 7 repaired. `tests/test_grid_bytes.c` (in
+`tide_tests`), every read from an allocation the bytes' own size: a round trip of 3,000 cells across sized and open
+axes, every cut and three flips of every byte of 40 chunks at the ints' edges (none cut reads; what reads writes bytes
+that read back as the same bytes), 6,000 random inputs of which 2,000 are made as the format has them (each reads) and
+the rest spoiled or of no format, places at `INT32_MIN >> 6` and `INT32_MAX >> 6` read and one past them refused, cells
+past a 20-wide side zeroed in the chunk, a 20-byte struct's repairs, the two counts past what bytes hold, and places
+made by inverting the directory's hash so they share a slot (200 read, 300 refused). Errors: `grid_bytes_on_value`,
+`_bare`, `_argument`, `_to_bytes_arguments`, `_static_name`, `_gpu`, `_unwrapped`.
+`lsp_grid_bytes_completes_hovers_and_checks` (notes/editors.md). Release: those, `bench_voxels*`, `tidels_tests` (280),
+every `tidec_error_*` and `tidec_warning_*` (2,566), every safety fixture (27), and the grid, decode, mesh decode, JSON,
+worker grid, local worker, parallel, fails, optional field, pure call and storage fixtures; sanitize (Windows ASan): `tide_tests
+grid`, `tidec_e2e_grid_bytes`, `tidec_safety_grid_bytes`, `tidec_safety_grid_values`, `tidec_e2e_grid_values`,
+`bench_voxels`, `bench_voxels_checked`. Web and the docs site's build weren't run here: the e2e's hash is meant to be the
+web's too.
+
+**After its review** (merged into t3/minecraft-scale-world-readiness): a sized grid's chunk counts could multiply past 64
+bits and wrap (notes/memory-safety.md, Chunk counts past 64 bits), now saturated; the alias form
+(`using Blocks = Grid3<Block>; Blocks.FromBytes(bytes)`) has a check in `tidec_e2e_grid_bytes` (46 now); the spec names
+`LocalEntity` cells beside `Entity`, and says that bytes `ToBytes` wrote of an open grid filled at places chosen to collide
+can be refused when read back, as a world's own grid doesn't limit its probes.
+
+**Correction (2026-11-15)**: `grid_bytes_in_views` crashed on macOS and Android, nowhere else: its `tide_local` was
+on the stack unzeroed, and `tide_local_init` lets go of what a local world had first (`tide_entities_free` of whatever
+the stack held). The test's, not the runtime's; it's `= {0}` now, as every other test's is. A `lldb` backtrace from a
+scratch CI run found it: `tests/test_main.c` now flushes each test's line, so a crash's log shows the tests before it.
+
+**Gaps.** Bytes of another chunk geometry aren't read (a future format would say so), and the bytes don't name the cell's
+type, only its size. A field given what FromBytes made copies it from the scratch area (a read straight into a world's heap
+would save that). An open grid's hashed directory is slow for places chosen to collide (spec, Grids, Open).
+
 ## Array and list constants written out (2026-11-14)
 
 Owner approved the recommendation ("go with your recommendations"); the rules are picks, Provisional in spec.md
@@ -320,7 +526,8 @@ three army sizes by `#if ARMY_50 / #elif ARMY_BIG / #else`); each is now one lin
   `lex_symbols_reset` clears them), so `lex_read_symbol(name, file, &value)` answers as `#if` would in that file:
   the file's own, then tide's versions, then the build's (noted). -1 for a `TIDE_` name that's no version.
   `cond_equality` refuses a number, text, `'`, `-` or `.` after `==`/`!=` with a note pointing at `define`.
-- **Checker** (`check_symbol_call`, just before `check_call`, which sends `defined`/`define` there first): the
+- **Checker** (`check_symbol_call`, just before `check_call`, which sends `defined`/`define` there once nothing in
+  scope has the name, below): the
   call becomes the literal it reads as (`check_has`'s way), so `fold_int`, `is_constant` (which also takes the
   unchecked calls), array sizes and `switch` cases see a literal. `defined` → `E_BOOL`, its args dropped.
   `define`: the default is `is_constant` (with a check that a member chain's root isn't a local, a parameter or a
@@ -348,10 +555,52 @@ three army sizes by `#if ARMY_50 / #elif ARMY_BIG / #else`); each is now one lin
   `lsp_directives`, and the CLI's `tide_cli_build_report` (C gets `-D BATTLE_TEST=7`, the header says it, another
   value is another identity, the later of two wins, a bad value's error and fix, `--define =7` refused) and
   `tide_cli_packages` (`--define STEAM=480` takes the `#if STEAM` branch).
+- **Review fixes (2026-11-15):**
+  - *Shadowing.* `check_call` takes `c->define_want` first (so no later call sees it) and sends `defined`/`define`
+    to `check_symbol_call(c, e, want)` only after callable locals, parameters and fields, an `Action` parameter,
+    the type's own methods and a preparation owner's: a method `define` called with an implicit `this` was read
+    as the build's symbol before. As `Spawn`. `is_builtin_name` still refuses them for types, functions and
+    constants. LSP: both are in rename's `reserved[]`, offered in completion and in `call_forms` signature help
+    (`DEFINED_DOC`, `DEFINE_DOC`).
+  - *Type.* The value reads as `want` only when `type_assignable(want, default)` (so a long's int default reads a
+    long; `type_is_numeric` has no long), otherwise as the default's own type, so where it goes takes or refuses
+    the literal as it would the default, in every build. A byte `want` with an int default (one that fit no byte:
+    `check_expr_want` would have made it a byte) is replaced by the default itself, as the byte rule in
+    `check_expr_want_any` would otherwise take a small value and refuse the big default. `check_construct` gives
+    a `define` argument of a vector (dim > 1), `Color` or `quaternion` the part's type as `want` (not `int(x)`'s
+    conversions). Elsewhere (`?:`, arithmetic, `Math`) the default decides, and `define_literal`'s `by_default`
+    note says to write `1.0` (a decimal value) or `5L` (a whole one past an int).
+  - *Where a bare symbol came from.* `lex_read_symbol` gained `bool *own` (the file's `#define`/`#undef`
+    answered); the no-value note says to take that `#define` away, or to give the build's a value or read it with
+    `defined`. `define` of a `TIDE_` or `PACKAGE_` name is an error in every build (they never have a value).
+  - *Floats* that round to zero in their type (`define_nonzero`) are refused: C refuses `1e-50f`.
+  - *`#if` and values.* `cond_reader` keeps the valued build symbol its last operand was (`valued`, `value`;
+    parentheses clear it); `cond_equality` refuses `==`/`!=` beside one, `read_condition` gives a leftover `<`,
+    `>` or `=` the value note (`cond_value_note`), and `cond_primary` refuses `defined(` with a note to write the
+    name alone. `packages.c`'s conditions say the same (`condition.valued`, `condition_end`).
+  - *DEBUG with a value.* `main.c` adds its `DEBUG` only when the command line named none, so `--define DEBUG=3`
+    keeps its value in a debug build (C got two `-D` before, and the lexer the later, valueless one); the
+    reload player's build drops `DEBUG` by name, value or not; `tide_add_game` adds `--define DEBUG` only when
+    `DEFINES` has no `DEBUG`, and `<target>_schedule` now passes `${defines}`.
+  - *Tests:* `e2e/defines` (`MANY=5000000000` into a long, `SPOT_X=0.5`/`RED=0.25` as a `float3`'s and a
+    `Color`'s parts, `#if SIDE` for a valued symbol, a struct's own `define` method), fixtures
+    `define_default_fits(_plain)` (the same three errors with and without `// define:` lines),
+    `define_int_default_decimal/long`, `define_value_underflow`, `define_no_value(_build)`, `define_tide_symbol`,
+    `define_hidden_by_func`, `directive_compare_symbol_value`, `directive_compare_order`, `directive_defined_call`;
+    `compiler/tests/shaders/defines.tide` (a frag's `define`/`defined` as WGSL literals; `expect_schedule.cmake`
+    now reads `// define: <S>` lines too, so the `tidec_spirv_`/`tidec_hlsl_` runs build it with its defaults);
+    `tidec_lexer` (`own`); `lsp_directives` (completion, a method `define` with no diagnostic, rename refused);
+    `tide_cli_build_report` (`tide schedule --define DEBUG=3` reads 3, a plain debug schedule gives the no-value
+    error); `tide_cli_packages` (`#if STEAM == 480`, `== DEMO` beside a valued STEAM, `> 400`, `defined(STEAM)`).
 - **Not built / gaps:** a file's `#define NAME value` (a file's symbols stay valueless: a value there is a
-  `const`); `#if` reading values; `char` and vector values; a settings or `tide.packages` place to list defines.
-  On Windows a value outside ASCII given on a command line arrives in the console's code page, not UTF-8, and is
-  refused with the "has to be UTF-8" note (seen through CMake's command); `tide` and tidec read narrow `argv`.
+  `const`); `#if` reading values; `char` and vector values; a settings or `tide.packages` place to list defines;
+  whether `#if A == B` between symbols with no values should be refused too (it compares their being defined, as
+  C#'s does) — all Open in spec.md. On Windows a value outside ASCII given on a command line arrives in the
+  console's code page, not UTF-8, and is refused with the "has to be UTF-8" note, which says so on Windows (seen
+  through CMake's command); `tide` and tidec read narrow `argv`. A text value passes to handwritten C as tokens,
+  so an apostrophe warns in every C file (`docs/tools/cli.md` says so). Source float literals that overflow or
+  round to zero in a float (`1e50`, `1e-50`) still reach C as `1e50f`, which clang refuses under `-Werror`: the
+  parser checks only a double's overflow (a gap of literals, not of defines).
 
 ## Vectors, colors, quaternions, sets and maps by a number in JSON (2026-11-14)
 
@@ -361,7 +610,7 @@ catalog only because JSON refused vectors. Sets as arrays and maps by a byte, an
 of the same code for about 80 generated-C lines, so they're built too; a map by a `char` is not (Open).
 
 - **Checker** (`check.c`, the JSON block): `json_holds` takes the eleven vector kinds, a set whose key `json_key`
-  allows (string, char, int, long, enum; a set has no byte key), a map whose key it allows (string, byte, int,
+  allows (string, char, byte, int, long, enum), a map whose key it allows (string, byte, int,
   long, enum), and `TY_ERROR` (said where it's declared, so no second "JSON has nothing for <error>").
   `json_takes` takes a struct, a list, a set or any map as `T`. `mark_json` gives a vector no declaration: the
   program keeps a bit per kind (`program.json_vector_reads/writes`, `1 << kind`, a `_Static_assert` that each
@@ -380,7 +629,7 @@ of the same code for about 80 generated-C lines, so they're built too; a map by 
   every game): the new loops emit nothing without a bit or a marked set, and a map by text writes the same text.
 - **Tests:** `compiler/tests/e2e/json_vectors` (46 checks: every kind, defaults and `null` numbers, NaN as `null`
   back to the default's number, wrong lengths, non-arrays, ints that aren't whole or don't fit, vectors in lists,
-  maps, arrays and a `T?`, sets of int/string/enum/char with repeats, maps by int/long/byte/enum and an enum
+  maps, arrays and a `T?`, sets of int/string/enum/char/byte with repeats, maps by int/long/byte/enum and an enum
   `: byte`, keys that aren't numbers or members, roots that are a list, a set and maps; in C, the bits of 0.1,
   -0, 0.70710677 and 0.30000000000000004, the written text, and `JSON_VECTORS_HASH`, shared by native sanitize
   and web-debug). `compiler/tests/safety/json` gained `shapes` (131,073 numbers for a vector and a color, a set
@@ -1205,6 +1454,12 @@ functions did.
 gone): a task's grid local, a name `is` gives, a failable or `T?` local holding one and a statement's earlier await's
 grid go into its frame as `tide_grid_carry` copies, come back as the frame's, and are copied by `tide_grid_mine`
 (`place_where`) before the task writes them; match tasks keep theirs in the match heap. `tidec_e2e_task_grids`.
+Corrected (review, 2026-11-15, render-targets.md top): a statement's hoisted temporaries are dead once it has read
+them (`task_forget` in `gen_stmt_now`: after an S_VAR, S_EXPR or S_ASSIGN, and after an S_IF's or S_SWITCH's
+condition), so `var r = await t.Read()` and an `is` name carry one copy, not the await's too; a task's `foreach` over
+an asset reads the asset in place (`foreach_value`); and a list or a map of grids in a frame (a computed container,
+a `switch`'s result) goes through `tide_list%d_carry`/`tide_map%d_carry` (`gen_grid_container_carries`), every grid
+the frame's own copy, so no pack handle waits in a frame.
 
 **What stays refused.** Structs with grids in locals, returns and copies; `Grid2(...)` as an argument (functions take
 no new grid in `arg_fits`); lambdas capturing a grid (a stored callable captures plain values); worker code keeping a

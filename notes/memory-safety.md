@@ -1,3 +1,71 @@
+## Grids from bytes (2026-11-14)
+
+`Grid3<T>.FromBytes(bytes)` reads bytes anyone could have sent (a command, a file, a store's value) into a grid in the
+scratch area, in match code on every machine (notes/language.md, Grids as bytes). What keeps it safe for any bytes:
+
+- **Reads end where the bytes do.** One reader (`bytes_in`: where it is and the end) and every read checks the end first:
+  varints of at most 5 bytes for a 32-bit number (10 for a place's delta, with nothing past 64 bits), a cell's bytes, a
+  literal run's `run * cell` against what's left. A list in chunks is flattened first (`tide_list_flatten`), so the bytes are
+  one span.
+- **Nothing is made for what the bytes only say.** The count of chunks is checked against the bytes left (each takes a
+  place byte an axis, a token and a cell), a sized grid's chunks and `TIDE_GRID_BYTES_MOST` (256 MiB of cells, refused before
+  any is made and named on stderr) before the directory is sized for them; sizes are at most `INT32_MAX`; the cell's bytes
+  and the chunk geometry are the reader's own type's, never the bytes'.
+- **Places are checked in 64 bits** before they're a chunk's: within a sized axis's chunks (so the directory's table by
+  index stays in its room) or what an int can say on an open one (`INT32_MIN >> shift` to `INT32_MAX >> shift`), and each
+  after the one before (`compare_places`), so no place is twice in the directory, whose lookup would find one of them.
+- **A run can't pass its chunk**: a token's cells are checked against the chunk's left before it's written, so a chunk is
+  written only within its block, which is the shape's size, not the bytes'.
+- **The work is bounded too**: chunks are in order, so no lookup finds a place twice, and on an open axis a chunk whose
+  slot in the directory's hashed table would be more than 256 past its hash's (`insert_read`, `BYTES_PROBES_MOST`; the
+  table is at most half full) refuses the bytes, so places chosen to collide cost a few hundred probes each, never a walk of
+  every chunk before them. 65,536 colliding chunks would have been about two billion probes.
+- **Cells are values of their type** before anything reads them as such: the generated repair works on bytes at the
+  compiler's offsets, so a bool's byte of 2, an enum that's none of its members, a char past U+10FFFF and a NaN are never read
+  as C values (a `_Bool` that isn't 0 or 1 is undefined), and padding is zeros, as the world's hash and packing take it.
+  Cells outside a sized grid's size are zeroed in their chunk, so no hidden bytes reach the world's pages.
+- **Failure leaves nothing behind**: the grid made so far is dropped (its blocks are the scratch area's), and `*out` is
+  empty, which the result's `ok` false says.
+- ToBytes reads a grid code or a world has, whose directory is the engine's own; its output grows by `tide_alloc`, its room
+  for a chunk's tokens made once for the worst case (every cell, and a two-byte token for each), and stops the program as
+  running out of memory does past what a `List<byte>` holds (2 GiB), which no grid within the heap's limits reaches.
+
+Tests: `tests/test_grid_bytes.c` reads every input from a `malloc` of exactly its size (`tide_grid_from_memory`), so ASan sees
+a read one byte past: every cut, three flips of every byte, 6,000 random inputs; `tidec_safety_grid_bytes` and
+`tidec_e2e_grid_bytes` in the sanitize preset (Windows ASan here; Linux UBSan is CI's); `grid_bytes_places_chosen_to_collide`
+inverts the directory's hash to make 200 places that share a slot (read) and 300 (refused). Not bounded: places chosen to
+sit side by side in the table, each near its own slot, which make a later lookup of a place with no chunk walk them all
+(spec, Grids, Open): the game's code reading the grid, not FromBytes, pays that.
+
+**Chunk counts past 64 bits** (found by the review, 2026-11-14, and older than FromBytes): `dir_head` multiplied a sized
+grid's chunks along its three axes in `uint64_t`, which wraps. 252,871 x 1,179,713 x 61,836,419 chunks (sizes 4,045,936 x
+18,875,408 x 989,382,704, each under `INT32_MAX`) is 2^64 + 21, so the grid listed its chunks by place in a table of 21
+slots and its first chunk's index wrote a megabyte past it: from plain Tide code (`Grid3(...)`, then a cell set), and with
+FromBytes from 23 bytes anyone could send. Now every such product saturates (`sat_mul`, `sat_add` in grid.c): `dir_head`,
+FromBytes' bound on the chunk count, a parallel loop's tiles (`around`, and the lists made for `records * around` and
+`count * around`, which `places_room` then refuses past `UINT32_MAX` as it did) and its window of chunks (a signed
+product that could overflow), and `block_reach` adds in 64 bits (a block of `INT32_MAX` cells overflowed an `int`).
+`grid_bytes_sizes_whose_chunks_pass_64_bits` (tide_tests) reads those bytes and checks the grid isn't flat (it fails
+without the fix, in release), and `tidec_safety_grid_bytes` sets and reads such a grid in the world (`wraps`).
+
+## No pack handle waits in a task's frame; gpu_none's read tokens (review, 2026-11-15)
+
+Corrects the section below, whose copying left one way through: a list or a map of grids in a frame. A `foreach`
+over an asset `List<Grid2<Color>>` or `Map<string, Grid2<Color>>` that waited kept its container in the frame
+(`tide_list%d_assign`, whose grid elements are raw handles, and the asset store's payload of a pack list is the
+same bytes), so after a pack-only reload (`tide run` loading a new pack while the game runs) the next round read
+offsets into the new region, which `tide_scratch_at` doesn't bound: `tide_grid_copy` read directories from
+anywhere (ASan: a memcpy-param-overlap in `scratch_chunk`, `tidec_e2e_task_grids`'
+`task_grids_pack_loaded_again_as_a_task_waits` with the old code). Now a task's loop over an asset reads the asset
+where it is, and any list or map of grids a frame holds (a computed container, a `switch`'s value) is carried by
+`tide_list%d_carry`/`tide_map%d_carry`: the frame's own list, each grid a copy in the task's world
+(`tide_grid_carry`), released with the frame or at the next wait once dead. Only assets hold lists of grids, and no
+named local can, so these are hidden values the task never writes; the frame's is borrowed back after a wait.
+`gpu_none`'s 256 read tokens were a ring that never checked a token was still out: more band reads begun in a frame
+than that gave a later read's size to an earlier token, whose done memset past its band (ASan: heap-buffer-overflow,
+`tide_platform_gpu_none`, a native test of the web's `gpu=none` GPU). It refuses a token while every place waits,
+as the recorder does, and the renderer asks again next frame.
+
 ## Reads of parts and volumes, and a task's grids across waits (2026-11-14)
 
 A read's part is any game's ints: the renderer clamps it to the image in 64 bits (`pixel_span`), refuses a part of
@@ -21,6 +89,20 @@ conversion. Runtime unit tests exhaust all 48,184 numeric tags and 496 legacy ta
 aliases, reject oversized RGBA32f volumes and invalid clear counts, and compare appended payloads exactly.
 
 # No Tide code can corrupt memory
+
+## Projections reading heaps per owner (2026-11-14, later)
+
+What reads values for players in a game that hides state now reaches pages of any of the world's heaps and runs
+(netcode.md, top section). What keeps that safe: a page is looked up by the heap a block's own handle names, its id
+masked to 12 bits and its run to 5 (`tide_client_heap`), which reads the heap set's array and a heap's runs as they
+are and gives NULL for a set or a run never made, where `tide_heaps_of` would allocate one in a world being only
+read; a place is a page's only where `first < pages`, the page is there and starts at that place; anything else makes
+the value "poisoned", kept by nothing, as a value read outside the heap was. A memo entry or a kept page never holds
+a pointer, only a place and the hash it had, checked again before it's used. Loads and repairs make values in their
+owner's heap through the same codecs and bounds as before; only the `where` changed. The logged group sets
+(`tide_visibility_set_logged`) read back fixed-size entries of a task's log, each checked for its tag, size and room
+before it's copied. Tested by `tidec_e2e_visibility_runs` and its checked and memo-off builds in release; the
+sanitize run (ASan, `TIDE_HEAP_CHECKS`) is CI's for this change.
 
 ## What a cached function keeps and hands out (2026-11-13)
 
@@ -220,7 +302,8 @@ value. A scratch grid's places are checked against its size as a world's are (`t
 directory sizes come from the shape, never the game, and a write to the pack's grids (scratch-tagged offsets past
 `TIDE_PACK_BASE`) still finds nothing to write. A field taking a scratch grid copies its chunks into the world, so no
 world handle names scratch memory, and a scratch grid never reaches another thread: parallel loops refuse a local's or
-a parameter's grid, workers keep none, a task can't keep one across a wait and a lambda can't capture one. The
+a parameter's grid, workers keep none, a task can't keep one across a wait (corrected 2026-11-14, top of this note:
+a task keeps a copy of its own in its frame across waits) and a lambda can't capture one. The
 `grid_values` safety fixture tries sizes under 0 and at 2,000,000,000, places at the int limits, copies of a grid too
 big to list its chunks and churn of 2000 grids a system, under ASan.
 

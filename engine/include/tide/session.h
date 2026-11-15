@@ -146,6 +146,33 @@ typedef struct tide_game {
     // same values; what's alike for them all is worked out once. The server
     // asks for every player's after each tick.
     void (*client_hashes)(const void *world, const tide_player_id *recipients, uint32_t count, uint64_t *out);
+    // Optional, together: a repair that costs what changed for a recipient,
+    // not what it has. `client_changes` compares two worlds of one match
+    // (`lineage`: the world the match ticks, whose kept hashes both share) as
+    // `recipient` may have them: a plan (returned, to free) naming the
+    // entities whose permitted values differ or that came into its sight and
+    // those that left it; `now`, what a projection starts with and those
+    // entities' records; and `was`, the same of `base`. `changed_size` is how
+    // much of `now` is entities the recipient already had. The recipient makes
+    // `was` again from the world it confirmed (`client_changes_base`), so
+    // `now` goes as what differs from it, and a copy of that world takes the
+    // plan and `now` (`apply_client_changes`): false, with the world in no
+    // state to keep, for bytes that aren't one. NULL: repairs go as whole
+    // projections (client_state).
+    uint8_t *(*client_changes)(const void *world, const void *base, const void *lineage, tide_player_id recipient,
+                               uint32_t *plan_size, uint8_t **now, uint32_t *now_size, uint8_t **was, uint32_t *was_size,
+                               uint32_t *changed_size);
+    uint8_t *(*client_changes_base)(const void *world, tide_player_id recipient, const uint8_t *plan, uint32_t plan_size,
+                                    uint32_t *size);
+    bool (*apply_client_changes)(void *world, const uint8_t *plan, uint32_t plan_size, const uint8_t *now, uint32_t now_size,
+                                 const uint8_t *was, uint32_t was_size);
+    // A game whose match code uses the server's store (Storage.Load): what a
+    // load found, a TIDE_STORED_MESSAGE (tide/storage.h), for the coming tick,
+    // which sends its Loaded event. The server calls it as it runs the tick,
+    // clients as they apply its frame, and a replay as it makes the tick
+    // again. False when the bytes aren't one, which changes nothing. NULL: the
+    // game loads nothing.
+    bool (*stored)(void *world, const uint8_t *data, uint32_t size);
     // Restrict a copied slot input before sending it to this recipient.
     void (*filter_client_input)(const void *world, tide_player_id recipient, uint32_t slot, void *input);
     // The same for all max_players + 1 contiguous input_size slots at once;
@@ -425,6 +452,11 @@ typedef struct tide_server_desc {
     const char (*ban_messages)[TIDE_MESSAGE_BYTES];
     bool closed;                 // Takes no one new from the start, only players coming back
     const tide_jobs *jobs;       // Threads to run ticks on (tide/jobs.h), or NULL: this one
+    // Where the match's store is kept (Storage.Save, Load and Delete in match
+    // code): files under this provider's persistent root, in `saved/`
+    // (tide/storage.h). It outlives the server. NULL: nothing is kept, so
+    // saves go nowhere and every load finds nothing.
+    const struct tide_io *io;
     // 64 bits nobody could guess, from the system, for the seed of the match
     // it starts (tide_game.seeded): no two matches go the same. NULL: the seed
     // is `seed`, and a run repeats exactly (tests and benchmarks). A match
@@ -528,10 +560,11 @@ bool tide_server_banned(const tide_server *s, tide_player_id player);
 // sharded, the message is bigger than TIDE_SHARD_MESSAGE_LIMIT, or there's no
 // memory for it.
 bool tide_server_inject(tide_server *s, const uint8_t *data, uint32_t size);
-// How many handed messages are still waiting for a tick.
+// How many handed shard messages are still waiting for a tick: not the
+// answers of the match's store (tide/storage.h) waiting with them.
 uint32_t tide_server_injected(const tide_server *s);
-// The `i`th of them, from the first to be applied: its bytes and size, NULL
-// past the last.
+// The `i`th message waiting, shard message or store answer, from the first to
+// be applied: its bytes and size, NULL past the last.
 const uint8_t *tide_server_injected_message(const tide_server *s, uint32_t i, uint32_t *size);
 // Drops those of a kind (their first byte, tide_shard_kind) still
 // waiting, and says how many: a reloaded sharded world drops its ghosts on
@@ -711,6 +744,7 @@ typedef struct tide_session_desc {
     tide_sample_fn sample;
     void *user;
     const tide_jobs *jobs;    // Threads to run ticks on (tide/jobs.h), or NULL: this one
+    const struct tide_io *io; // Where the matches it hosts keep their store (tide_server_desc.io), or NULL: nowhere
     uint64_t (*now_ns)(void); // The real time, for its clients to keep within their budget (tide_client_desc), or NULL
     double resim_budget;      // Seconds a frame a client may spend running predicted ticks again; 0 for 0.004
     double guess_seconds;     // How long its clients guess that others' inputs stay as they were; 0 for 0.15 (tide_client_desc)

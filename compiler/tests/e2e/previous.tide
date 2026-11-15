@@ -15,6 +15,7 @@ component Boid
     int seen;
     float nearest;
     int friends;
+    int paired;
     Entity friend;      // The boid spawned before it
     string name;        // What it holds in a heap is read as it was, too
     List<int> marks;
@@ -50,6 +51,7 @@ singleton Tally
     long beforeRanks;
     long nowRanks;
     int lost;
+    long paired;
     int heard;
     long heardSum;
     int told;
@@ -207,6 +209,27 @@ system Crowd(mut Rank rank, Boid b, query (previous Boid other) others)
         close++;
     }
     if (close > 40) rank.level = (rank.level + 1) % 11;
+}
+
+// An exact key of the tick's start in a system that changes the field it finds rows by: the next boid by its id
+// and its team as they were. The Rank beside them isn't the tick's start, so its bound is the guard's alone
+system Pair(mut Boid b, query (previous Boid other, Rank rank) others)
+{
+    mut var paired = 0;
+    foreach (var o in others)
+    {
+        if (o.other.id != b.id + 1 || o.other.team != (b.id + 1) % 3 || o.rank.level > 3) continue;
+        paired += o.rank.level + 1;
+    }
+    b.paired = paired;
+    b.team = (b.team + paired) % 3;
+}
+
+system CountPaired(mut Tally tally, query (Boid b) all)
+{
+    mut var sum = 0L;
+    foreach (var row in all) sum += row.b.paired * (row.b.id % 5 + 1);
+    tally.paired = sum;
 }
 
 // What a row of the tick's start holds in a heap, made the world's own: text into a list, a list assigned whole,

@@ -4224,8 +4224,9 @@ static void find_player_schema(run *r)
         if (!r->player || !opts || !defines) abort();
         *opts = *r->b.opts;
         opts->define_count = 0;
-        for (int i = 0; i < r->b.opts->define_count; i++) {
-            if (strcmp(r->b.opts->defines[i], "DEBUG") != 0) defines[opts->define_count++] = r->b.opts->defines[i];
+        for (int i = 0; i < r->b.opts->define_count; i++) { // DEBUG, with a value or not
+            const char *d = r->b.opts->defines[i];
+            if (strncmp(d, "DEBUG", 5) != 0 || (d[5] != '\0' && d[5] != '=')) defines[opts->define_count++] = d;
         }
         opts->defines = defines;
         opts->output = path_join(r->dir, "player");

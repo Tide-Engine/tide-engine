@@ -86,53 +86,91 @@ static char *view_offset(const char *at)
     return b.data;
 }
 
-// A world's handle (tide/text.h): the heap its block is in, the one of its
-// world's with the handle's id (tide_heaps_of), as an expression. Kept short,
-// as the block's below is: Windows' debugger engine gives up on a text's
-// DisplayString past some length, and never comes back from one a little
-// longer. A block in a heap of a run past the first (tide/heap.h, A heap in
-// runs) isn't found for that reason: its page's place below is past its
-// owner's first heap's, and reads as memory that isn't there.
-static char *view_heap(const char *at)
+// Where a handle's block is, as a view finds it: the scratch area's (and the pack's), a world's in its owner's
+// first heap, or a world's in the heap of a run past the first (tide/heap.h, A heap in runs). Each is an
+// expression of its own under a Condition (view_case) rather than one with ?: between them: Windows' debugger
+// engine gives up on a text's DisplayString past some length, and never comes back from one a little longer, and
+// choosing between an owner's first heap and its runs' would name the heap twice (debugging.md).
+enum { VIEW_SCRATCH, VIEW_FIRST, VIEW_RUN, VIEW_CASES };
+
+// The handle's run, as an expression: TIDE_HEAP_RUN_BITS from TIDE_HANDLE_RUN_SHIFT (a world's handles only)
+static char *view_run(const char *at)
+{
+    sb b = {0};
+    sb_printf(&b, "((%s) >> %u & %uu)", at, TIDE_HANDLE_RUN_SHIFT, TIDE_HEAP_RUNS - 1u);
+    return b.data;
+}
+
+// Whether a handle `at` is of case `kind`, as an expression: the cases don't overlap, so where several nodes show
+// (ValueNode, IndexListItems), one of them does.
+static char *view_case(const char *at, const int kind)
+{
+    sb b = {0};
+    if (kind == VIEW_SCRATCH) sb_printf(&b, "%s == %u", view_where(at), TIDE_IN_SCRATCH);
+    else sb_printf(&b, "%s != %u && %s %s 0", view_where(at), TIDE_IN_SCRATCH, view_run(at), kind == VIEW_RUN ? "!=" : "==");
+    return b.data;
+}
+
+// A world's handle (tide/text.h): the heap its block is in, the one of its world's with the handle's id
+// (tide_heaps_of), and for VIEW_RUN that heap's runs' (tide_heap.runs, run 1 first), as an expression.
+static char *view_heap(const char *at, const int kind)
 {
     sb b = {0};
     sb_printf(&b, "(tide_world_heaps[%s]->all + tide_heap_slots[(%s) & 0x%Xu])", view_where(at), at, TIDE_HEAP_IDS - 1u);
-    return b.data;
+    if (kind != VIEW_RUN) return b.data;
+    sb r = {0};
+    sb_printf(&r, "(%s->runs + (%s - 1))", b.data, view_run(at));
+    return r.data;
 }
 
-// The block a handle `at` names (tide_block_at), as an expression: the pack's
-// region, a scratch slot, or a page of a world's heap. A world's handle has
-// its block's offset from bit TIDE_HANDLE_BLOCK_SHIFT up, under the world's
-// two bits: the page it's in is that offset's place, and it's as far into the
-// page as into its place, since a block of more than a page starts its page.
-static char *view_block(const char *at)
+// The block a handle `at` of case `kind` names (tide_block_at), as an expression: the pack's region or a scratch
+// slot, or a page of a world's heap. A world's handle has its block's offset from bit TIDE_HANDLE_BLOCK_SHIFT up
+// to the run's bits: the page it's in is that offset's place, and it's as far into the page as into its place,
+// since a block of more than a page starts its page.
+static char *view_block(const char *at, const int kind)
 {
-    const char *where = view_where(at), *offset = view_offset(at), *heap = view_heap(at);
     sb b = {0};
-    sb_printf(&b,
-              "(%s == %u ? (tide_block*)(%s >= 0x%llXULL ? tide_pack_memory + (%s - 0x%llXULL)"
-              " : tide_scratch_slots[%s >> %u] + (%s & 0x%Xu))"
-              " : (tide_block*)((char*)(%s->page[(%s) << 2 >> %u] + 1) + ((%s) >> %u & 0x%Xu)))",
-              where, TIDE_IN_SCRATCH, offset, (unsigned long long)TIDE_PACK_BASE, offset, (unsigned long long)TIDE_PACK_BASE,
-              offset, TIDE_SCRATCH_SHIFT, offset, TIDE_SCRATCH_BYTES - 1u, heap, at, 2u + TIDE_HANDLE_BLOCK_SHIFT + TIDE_HEAP_PAGE_SHIFT,
-              at, TIDE_HANDLE_BLOCK_SHIFT, (1u << TIDE_HEAP_PAGE_SHIFT) - 16u);
+    if (kind == VIEW_SCRATCH) {
+        const char *offset = view_offset(at);
+        sb_printf(&b, "((tide_block*)(%s >= 0x%llXULL ? tide_pack_memory + (%s - 0x%llXULL) : tide_scratch_slots[%s >> %u] + (%s & 0x%Xu)))",
+                  offset, (unsigned long long)TIDE_PACK_BASE, offset, (unsigned long long)TIDE_PACK_BASE, offset, TIDE_SCRATCH_SHIFT,
+                  offset, TIDE_SCRATCH_BYTES - 1u);
+        return b.data;
+    }
+    const unsigned above = 64u - TIDE_HANDLE_RUN_SHIFT; // The world's and the run's bits, shifted out
+    // In parentheses of its own, as `->` binds before a cast
+    sb_printf(&b, "((tide_block*)((char*)(%s->page[(%s) << %u >> %u] + 1) + ((%s) >> %u & 0x%Xu)))", view_heap(at, kind), at, above,
+              above + TIDE_HANDLE_BLOCK_SHIFT + TIDE_HEAP_PAGE_SHIFT, at, TIDE_HANDLE_BLOCK_SHIFT, (1u << TIDE_HEAP_PAGE_SHIFT) - 16u);
     return b.data;
 }
 
-// Element `index` of the list `at` (an expression), of C type `ctype` and
-// `size` bytes, side by side or in chunks (tide_list_at). Asset lists aren't
-// read: their elements are in the pack's pools.
-static void view_list_items(sb *o, const char *at, const char *ctype, const int size, const char *index)
+// ` Condition="<kind's case> && <test>"`, or the case alone: the case first, so nothing of a block is read
+// through another case's expression
+static void view_condition(sb *o, const char *test, const char *at, const int kind)
 {
-    const char *blk = view_block(at);
+    sb_put(o, " Condition=\"");
+    xml_put(o, view_case(at, kind));
+    if (test) xml_printf(o, " && %s", test);
+    sb_put(o, "\"");
+}
+
+// Element `index` of the list `at` (an expression) of case `kind`, of C type
+// `ctype` and `size` bytes, side by side or in chunks (tide_list_at): a list's
+// chunks are in its block's heap. Asset lists aren't read: their elements are
+// in the pack's pools. The scratch area's lists are side by side.
+static void view_list_items(sb *o, const char *at, const int kind, const char *ctype, const int size, const char *index)
+{
+    const char *blk = view_block(at, kind);
     const unsigned per = TIDE_LIST_CHUNK / (unsigned)(size > 0 ? size : 1);
     sb_put(o, "          <ValueNode Condition=\"");
     xml_printf(o, "(%s->b & 0x%Xu) == 0", blk, TIDE_LIST_CHUNKED);
     sb_put(o, "\">");
     xml_printf(o, "((%s*)(%s + 1))[%s]", ctype, blk, index);
-    sb_put(o, "</ValueNode>\n          <ValueNode>");
+    sb_put(o, "</ValueNode>\n");
+    if (kind == VIEW_SCRATCH) return;
+    sb_put(o, "          <ValueNode>");
     xml_printf(o, "*(%s*)((char*)(%s->page[((unsigned long long*)(%s + 1))[%s / %u] >> %u] + 1) + %u + (%s %% %u) * %d)",
-               ctype, view_heap(at), blk, index, per, TIDE_HEAP_PAGE_SHIFT, (unsigned)sizeof(tide_block), index, per, size);
+               ctype, view_heap(at, kind), blk, index, per, TIDE_HEAP_PAGE_SHIFT, (unsigned)sizeof(tide_block), index, per, size);
     sb_put(o, "</ValueNode>\n");
 }
 
@@ -156,22 +194,37 @@ static bool view_needs_type(const decl *d)
 static void natvis_list(sb *o, const decl *list, const char *at)
 {
     const type e = list_elem(list);
-    const char *blk = view_block(at);
     sb_put(o, "        <DisplayString Condition=\"");
     xml_printf(o, "%s == 0", at);
-    sb_put(o, "\">{{ count = 0 }}</DisplayString>\n        <DisplayString Condition=\"");
-    xml_printf(o, "%s->b == 0x%Xu", blk, TIDE_LIST_ASSET);
-    sb_put(o, "\">{{ count = {");
-    xml_printf(o, "%s->a", blk);
-    sb_put(o, "}, an asset's }}</DisplayString>\n        <DisplayString>{{ count = {");
-    xml_printf(o, "%s->a", blk);
-    sb_put(o, "} }}</DisplayString>\n        <Expand>\n          <IndexListItems Condition=\"");
-    xml_printf(o, "%s != 0 && %s->b != 0x%Xu", at, blk, TIDE_LIST_ASSET);
-    sb_put(o, "\">\n          <Size>");
-    xml_printf(o, "%s->a", blk);
-    sb_put(o, "</Size>\n");
-    view_list_items(o, at, view_ctype(e), view_size(e), "$i");
-    sb_put(o, "          </IndexListItems>\n        </Expand>\n");
+    sb_put(o, "\">{{ count = 0 }}</DisplayString>\n");
+    for (int kind = 0; kind < VIEW_CASES; kind++) {
+        const char *blk = view_block(at, kind);
+        sb test = {0};
+        sb_printf(&test, "%s->b == 0x%Xu", blk, TIDE_LIST_ASSET);
+        sb_put(o, "        <DisplayString");
+        view_condition(o, test.data, at, kind);
+        sb_put(o, ">{{ count = {");
+        xml_printf(o, "%s->a", blk);
+        sb_put(o, "}, an asset's }}</DisplayString>\n        <DisplayString");
+        view_condition(o, NULL, at, kind);
+        sb_put(o, ">{{ count = {");
+        xml_printf(o, "%s->a", blk);
+        sb_put(o, "} }}</DisplayString>\n");
+    }
+    sb_put(o, "        <Expand>\n");
+    for (int kind = 0; kind < VIEW_CASES; kind++) {
+        const char *blk = view_block(at, kind);
+        sb test = {0};
+        sb_printf(&test, "%s != 0 && %s->b != 0x%Xu", at, blk, TIDE_LIST_ASSET);
+        sb_put(o, "          <IndexListItems");
+        view_condition(o, test.data, at, kind);
+        sb_put(o, ">\n          <Size>");
+        xml_printf(o, "%s->a", blk);
+        sb_put(o, "</Size>\n");
+        view_list_items(o, at, kind, view_ctype(e), view_size(e), "$i");
+        sb_put(o, "          </IndexListItems>\n");
+    }
+    sb_put(o, "        </Expand>\n");
 }
 
 static void natvis_field(sb *o, const field *f, const char *path)
@@ -195,26 +248,40 @@ static void natvis_field(sb *o, const field *f, const char *path)
         sb_printf(&entry, "tide_map%d_entry", t.decl->index);
         sb at = {0};
         sb_printf(&at, "%s.entries.at", path);
-        const char *blk = view_block(at.data);
         sb ed = {0};
         const decl entry_decl = map_entry_decl(t.decl);
         const int size = decl_layout(&entry_decl).size;
         const unsigned per = TIDE_LIST_CHUNK / (unsigned)(size > 0 ? size : 1);
-        sb_printf(&ed, "((%s->b & 0x%Xu) == 0 ? ((%s*)(%s + 1)) + i : (%s*)((char*)(%s->page[((unsigned long long*)(%s + 1))[i / %u] >> %u] + 1) + %u + (i %% %u) * %d))",
-                  blk, TIDE_LIST_CHUNKED, entry.data, blk, entry.data, view_heap(at.data), blk, per, TIDE_HEAP_PAGE_SHIFT,
-                  (unsigned)sizeof(tide_block), per, size);
+        // Through its block `b` and that block's heap `h`, found once for the case its handle is (view_case)
+        sb_printf(&ed, "((b->b & 0x%Xu) == 0 ? ((%s*)(b + 1)) + i : (%s*)((char*)(h->page[((unsigned long long*)(b + 1))[i / %u] >> %u] + 1) + %u + (i %% %u) * %d))",
+                  TIDE_LIST_CHUNKED, entry.data, entry.data, per, TIDE_HEAP_PAGE_SHIFT, (unsigned)sizeof(tide_block), per, size);
         sb_put(o, "      <Synthetic Name=\"");
         xml_put(o, name.data);
         sb_put(o, "\">\n        <DisplayString>{{ count = {");
         xml_printf(o, "%s.live", path);
         sb_put(o, "} }}</DisplayString>\n        <Expand>\n          <CustomListItems Condition=\"");
         xml_printf(o, "%s != 0", at.data);
-        sb_put(o, "\" MaxItemsPerView=\"5000\">\n            <Variable Name=\"i\" InitialValue=\"0\"/>\n");
-        sb_put(o, "            <Variable Name=\"n\" InitialValue=\"");
-        xml_printf(o, "(int)%s->a", blk);
-        sb_put(o, "\"/>\n            <Variable Name=\"e\" InitialValue=\"");
+        sb_put(o, "\" MaxItemsPerView=\"5000\">\n            <Variable Name=\"i\" InitialValue=\"0\"/>\n"
+                  "            <Variable Name=\"n\" InitialValue=\"0\"/>\n"
+                  "            <Variable Name=\"b\" InitialValue=\"(tide_block*)0\"/>\n"
+                  "            <Variable Name=\"h\" InitialValue=\"(tide_heap*)0\"/>\n");
+        sb_put(o, "            <Variable Name=\"e\" InitialValue=\"");
         xml_printf(o, "(%s*)0", entry.data);
-        sb_put(o, "\"/>\n            <Loop Condition=\"i &lt; n\">\n              <Exec>");
+        sb_put(o, "\"/>\n");
+        for (int kind = 0; kind < VIEW_CASES; kind++) {
+            sb_printf(o, "            <%s Condition=\"", kind == 0 ? "If" : "Elseif");
+            xml_put(o, view_case(at.data, kind));
+            sb_put(o, "\">\n              <Exec>");
+            xml_printf(o, "b = %s", view_block(at.data, kind));
+            sb_put(o, "</Exec>\n");
+            if (kind != VIEW_SCRATCH) {
+                sb_put(o, "              <Exec>");
+                xml_printf(o, "h = %s", view_heap(at.data, kind));
+                sb_put(o, "</Exec>\n");
+            }
+            sb_printf(o, "            </%s>\n", kind == 0 ? "If" : "Elseif");
+        }
+        sb_put(o, "            <Exec>n = (int)b-&gt;a</Exec>\n            <Loop Condition=\"i &lt; n\">\n              <Exec>");
         xml_printf(o, "e = %s", ed.data);
         sb_put(o, "</Exec>\n              <If Condition=\"e-&gt;tide_order &gt; 0\">\n");
         if (set) sb_put(o, "                <Item>e-&gt;key</Item>\n");
@@ -321,16 +388,34 @@ static void write_natvis(const gen *g, sb *o)
               "    <DisplayString>{ptr,[bytes]s8}</DisplayString>\n"
               "    <StringView>ptr,[bytes]s8</StringView>\n"
               "  </Type>\n");
-    const char *text = view_block("at");
-    sb_put(o, "  <Type Name=\"tide_text\">\n    <DisplayString Condition=\"at == 0\">\"\"</DisplayString>\n    <DisplayString>{");
-    xml_printf(o, "(char*)(%s + 1),[%s->a]s8", text, text);
-    sb_put(o, "}</DisplayString>\n    <StringView>");
-    xml_printf(o, "(char*)(%s + 1),[%s->a]s8", text, text);
-    sb_put(o, "</StringView>\n  </Type>\n");
-    sb_put(o, "  <Type Name=\"tide_list\">\n    <DisplayString Condition=\"at == 0\">{{ count = 0 }}</DisplayString>\n"
-              "    <DisplayString>{{ count = {");
-    xml_printf(o, "%s->a", text);
-    sb_put(o, "} }}</DisplayString>\n  </Type>\n");
+    // Text and a list's count, for each case of where a handle's block is (view_case)
+    sb_put(o, "  <Type Name=\"tide_text\">\n    <DisplayString Condition=\"at == 0\">\"\"</DisplayString>\n");
+    for (int kind = 0; kind < VIEW_CASES; kind++) {
+        const char *text = view_block("at", kind);
+        sb_put(o, "    <DisplayString");
+        view_condition(o, NULL, "at", kind);
+        sb_put(o, ">{");
+        xml_printf(o, "(char*)(%s + 1),[%s->a]s8", text, text);
+        sb_put(o, "}</DisplayString>\n");
+    }
+    for (int kind = 0; kind < VIEW_CASES; kind++) {
+        const char *text = view_block("at", kind);
+        sb_put(o, "    <StringView");
+        view_condition(o, "at != 0", "at", kind);
+        sb_put(o, ">");
+        xml_printf(o, "(char*)(%s + 1),[%s->a]s8", text, text);
+        sb_put(o, "</StringView>\n");
+    }
+    sb_put(o, "  </Type>\n");
+    sb_put(o, "  <Type Name=\"tide_list\">\n    <DisplayString Condition=\"at == 0\">{{ count = 0 }}</DisplayString>\n");
+    for (int kind = 0; kind < VIEW_CASES; kind++) {
+        sb_put(o, "    <DisplayString");
+        view_condition(o, NULL, "at", kind);
+        sb_put(o, ">{{ count = {");
+        xml_printf(o, "%s->a", view_block("at", kind));
+        sb_put(o, "} }}</DisplayString>\n");
+    }
+    sb_put(o, "  </Type>\n");
     sb_put(o, "  <Type Name=\"tide_map\">\n    <DisplayString>{{ count = {live} }}</DisplayString>\n  </Type>\n");
     // What generated code keeps a function's list and map lookups in: the engine's, nothing of the game's
     sb_put(o, "  <Type Name=\"tide_list_cache\">\n    <DisplayString>the engine's</DisplayString>\n    <Expand HideRawView=\"true\"/>\n  </Type>\n"

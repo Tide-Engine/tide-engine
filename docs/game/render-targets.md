@@ -344,9 +344,14 @@ one pixel, and a big image can be read in tiles.
 ```tide
 local singleton Picked { RenderTarget ids; int id; }
 
+view Make(mut Picked picked)
+{
+    // Its format is where it's made, as the read's type is the image's: each object is drawn into it with its number
+    if (!picked.ids.valid) picked.ids = RenderTarget.Window(Format.R32i);
+}
+
 async void PickAt(mut Picked picked, int2 pixel)
 {
-    // ids: RenderTarget.Window(Format.R32i), each object drawn with its number
     if (await picked.ids.Read<int>(pixel, int2(1, 1)) is Grid2<int> one) picked.id = one[0, 0];
 }
 ```
@@ -415,16 +420,26 @@ depth alone: `ReadDepth()`.
 
 A `Texture3D` is read the same way, into a `Grid3` of its format's type: `await volume.Read()` for an `Rgba8` or
 `Rgba16f` volume, `Read<float>()` for `R32f`, `Read<float4>()` for `Rgba32f`, `Read<int>()` for `R32i`, each cell as a
-kernel's `volume[at]` reads it. A box of it is its first cell and how many along each axis, `int3`s:
+kernel's `volume[at]` reads it. As with a target, the volume is made with its format wherever it's assigned. A box of
+it is its first cell and how many along each axis, `int3`s:
 
 ```tide
-local singleton Fluid { [Raw(float)] Texture3D pressure; Grid3<float> slice; }
+local singleton Fluid { [Raw(float)] Texture3D pressure; bool made; Grid3<float> slice; }
+
+view Make(mut Fluid fluid)
+{
+    // A kernel writes its cells each frame
+    if (!fluid.made) { fluid.made = true; fluid.pressure = Texture3D(int3(32), Format.R32f); }
+}
 
 async void Probe(mut Fluid fluid)
 {
     if (await fluid.pressure.Read<float>(int3(0, 0, 8), int3(32, 32, 1)) is Grid3<float> slice) fluid.slice = slice.Copy();
 }
 ```
+
+A volume made from a `Grid3` is that grid's cells, which the CPU has already: read the grid, not the volume (its read
+is an error that says so, or fails as it runs where the compiler can't see what the volume was made of).
 
 ### How many images
 

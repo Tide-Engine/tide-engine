@@ -137,16 +137,17 @@ TIDE_TEST(lexer_symbols_with_values_are_read_by_file_and_noted)
     TIDE_REQUIRE(tokens && !out.errors);
     TIDE_CHECK(tokens[0].kind == T_IDENT && str_eq_c(tokens[0].text, "int")); // #if SIDE left its line out, #undef said
     const char *value = "unset";
-    TIDE_CHECK(lex_read_symbol(str_from("OWN"), src.file, &value) == 1 && !value); // The file's own: no value
-    TIDE_CHECK(lex_read_symbol(str_from("SIDE"), src.file, &value) == 0 && !value); // ...and its #undef
-    TIDE_CHECK(lex_read_symbol(str_from("OWN"), src.file + 1, &value) == 0);        // Another file has neither
-    TIDE_CHECK(lex_read_symbol(str_from("SIDE"), src.file + 1, &value) == 1 && value && strcmp(value, "60") == 0);
-    TIDE_CHECK(lex_read_symbol(str_from("TITLE"), src.file, &value) == 1 && value && strcmp(value, "a=b") == 0);
-    TIDE_CHECK(lex_read_symbol(str_from("EMPTY"), src.file, &value) == 1 && value && strcmp(value, "") == 0);
-    TIDE_CHECK(lex_read_symbol(str_from("FAST"), src.file, &value) == 1 && !value);
-    TIDE_CHECK(lex_read_symbol(str_from("NONE"), src.file, &value) == 0 && !value);
-    TIDE_CHECK(lex_read_symbol(str_from("TIDE_0_1_OR_NEWER"), src.file, &value) == 1);
-    TIDE_CHECK(lex_read_symbol(str_from("TIDE_0_1"), src.file, &value) == -1);
+    bool own = false;
+    TIDE_CHECK(lex_read_symbol(str_from("OWN"), src.file, &value, &own) == 1 && !value && own); // The file's own: no value
+    TIDE_CHECK(lex_read_symbol(str_from("SIDE"), src.file, &value, &own) == 0 && !value && own); // ...and its #undef
+    TIDE_CHECK(lex_read_symbol(str_from("OWN"), src.file + 1, &value, &own) == 0 && !own);       // Another file has neither
+    TIDE_CHECK(lex_read_symbol(str_from("SIDE"), src.file + 1, &value, &own) == 1 && value && strcmp(value, "60") == 0 && !own);
+    TIDE_CHECK(lex_read_symbol(str_from("TITLE"), src.file, &value, &own) == 1 && value && strcmp(value, "a=b") == 0);
+    TIDE_CHECK(lex_read_symbol(str_from("EMPTY"), src.file, &value, &own) == 1 && value && strcmp(value, "") == 0);
+    TIDE_CHECK(lex_read_symbol(str_from("FAST"), src.file, &value, &own) == 1 && !value);
+    TIDE_CHECK(lex_read_symbol(str_from("NONE"), src.file, &value, &own) == 0 && !value);
+    TIDE_CHECK(lex_read_symbol(str_from("TIDE_0_1_OR_NEWER"), src.file, &value, &own) == 1);
+    TIDE_CHECK(lex_read_symbol(str_from("TIDE_0_1"), src.file, &value, &own) == -1);
     // What the game's identity lists: the build's, by name, with values; not the file's own, nor versions
     int count = 0;
     const lex_symbol *read = lex_symbols_read(&count);
@@ -162,7 +163,7 @@ TIDE_TEST(lexer_symbols_with_values_are_read_by_file_and_noted)
     again.text = "int y;\n";
     again.len = strlen(again.text);
     TIDE_REQUIRE(lex(&again));
-    TIDE_CHECK(lex_read_symbol(str_from("OWN"), src.file, &value) == 0);
+    TIDE_CHECK(lex_read_symbol(str_from("OWN"), src.file, &value, &own) == 0);
     done();
 }
 

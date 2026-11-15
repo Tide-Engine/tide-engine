@@ -408,6 +408,7 @@ typedef struct param {
     loc local_use_at;    // ...where it first does
     bool local_written;  // ...and writes one
     bool local_shared;   // The outer binding shares live attached storage with local-field queries
+    bool task_fields;    // A view's or handler's that starts a task with it, which uses its local fields: both write the entity's row
     bool match_write;    // A helper's: it changes the match's fields of it, itself or through another helper
     loc match_write_at;  // ...where it first does
     VEC(struct param) query; // PARAM_QUERY's read-only bindings and component filters
@@ -697,6 +698,9 @@ typedef struct decl {
     struct decl *asset_ref_of; // Asset<T>: named static/skinned model identity, resolved without ownership on .Value
     bool asset_ref_geometry;   // ...Mesh<V> itself: the identity, or (id < 0) geometry the game made, in two hidden lists
     bool mesh_decoded;         // ...and Mesh<V>.Decode makes one: its adapter goes in the generated C
+    bool grid_to_bytes;        // A grid type: cells.ToBytes() is called, so its helper and its cells' repair go in the generated C
+    bool grid_from_bytes;      // ...Grid3<T>.FromBytes(bytes) is, the same
+    type grid_from_bytes_result; // ...and what that gives: Grid3<T> fails IOError
     bool task_handle; // Task<T>/LocalTask<T>: shared operation identity, not an owned result
     bool task_local;
     type task_value; // The complete result, including optional/failure wrapping
@@ -888,6 +892,12 @@ typedef struct decl {
     // ...and whose they are: components, singletons and events that hold some, and NULL for the match's own
     // (note_heap_owner in check.c). A function's or method's: what it sends, spawns or adds holding some.
     VEC(struct decl *) heap_owners;
+    // A system's: whether its own code sets visibility groups' audiences (Visibility.Set(group, audience)), which in
+    // runs on threads its rows log for its `done` to set in its entities' order (VISIBILITY_LOGGED); and whether
+    // anything else of it changes the match's own heap (a NULL owner above), which keeps its rows in order
+    bool sets_groups;
+    bool match_heap_written;
+    bool writes_text_at_logged; // writes_text_at is a logged Set's, which keeps nothing in order: the next write's goes there
     // A component's, singleton's or event's: the id of the heap its text, lists and grids are in, 0 for the
     // match's own (assign_heaps in check.c), and whether C can write it, which keeps it there
     uint16_t heap_id;
@@ -1172,10 +1182,15 @@ typedef enum builtin_call {
     CALL_JSON,      // Json.Read<T>(text), Json.Write(value), string.FromBytes(bytes) and int.TryParse(text, out value):
                     // calls c_callee with its arguments as values, text a tide_str, and an `out` one by address
     CALL_VISIBILITY, // Shared audience groups and typed whole-component restrictions.
+    CALL_GRID_BYTES, // cells.ToBytes() and Grid3<T>.FromBytes(bytes): `name` says which; type_decl is the grid. They only read
     CALL_ENUM_VALUES, // Enum.Values(): an array of every declared member, in declaration order; its type is that array
 } builtin_call;
 
-enum { VISIBILITY_RECEIVER = 1, VISIBILITY_MUT = 2, VISIBILITY_WORLD = 4, VISIBILITY_COMPONENT = 8 };
+// (VISIBILITY_STORAGE: a call of the server's store, Storage.Save and its kin, which takes the world the same way)
+// VISIBILITY_LOGGED: a group's audience set in a per-entity system's own code, which its rows log in runs on threads
+// (sets_groups)
+enum { VISIBILITY_RECEIVER = 1, VISIBILITY_MUT = 2, VISIBILITY_WORLD = 4, VISIBILITY_COMPONENT = 8, VISIBILITY_STORAGE = 16,
+       VISIBILITY_LOGGED = 32 };
 
 // What a GUI call needs besides its arguments, and which form of a draw
 // setting a call is (expr.gui).
@@ -1783,6 +1798,10 @@ typedef struct program {
     decl *prepared_players;
     decl *preparation_order;
     bool uses_prepared;
+    bool uses_storage;   // Match code uses the server's store (Storage.Save, Load or Delete), first at storage_at
+    loc storage_at;
+    bool bare_load;      // ...and some Storage.Load names no entity, at bare_load_at
+    loc bare_load_at;
     decl *destroyed;
     decl *shown;          // Local availability transitions of match entities/components
     decl *hidden;
@@ -2045,8 +2064,12 @@ bool system_gather_check(const program *prog, const decl *sys, bool *little);
 // right.
 bool system_splits(const decl *sys);
 bool system_splits_in_order(const decl *sys);
-// ...of which those that change their rows' text or lists, in runs (tide/heap.h, A heap in runs).
+// ...of which those that change their rows' text, lists or grids, in runs (tide/heap.h, A heap in runs),
+// and of those, the ones whose rows queue nothing: their runs are each entity's own, by its identity, not
+// shares of the order.
 bool system_heap_runs(const decl *sys);
+bool system_heap_runs_scattered(const decl *sys);
+bool system_logs_groups(const decl *sys);
 
 // For a per-entity system written in Tide whose entities don't go across
 // threads: the first thing in it that keeps them in order on one, as "it

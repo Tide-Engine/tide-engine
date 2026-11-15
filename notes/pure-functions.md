@@ -23,7 +23,7 @@ A cached function is only read by its callers, so such a cache makes no view or 
 - **What's listed as pure:** literals, names of parameters, locals, constants, assets and types; fields, indexes,
   operators (a struct's operator is a call), `?:`, `??`, `is`, `try`, `!`, switch expressions, text with values in
   it, list and struct literals, `++` (of a `mut` local); `CALL_CONSTRUCT`, `CALL_ENUM_COUNT`, `CALL_TEXT`,
-  `CALL_LIST`, `CALL_MAP`, `CALL_GRID`, `CALL_NEW_GRID`, `CALL_NEW_MESH`, `CALL_MESH_DECODE`, `CALL_JSON`,
+  `CALL_LIST`, `CALL_MAP`, `CALL_GRID`, `CALL_GRID_BYTES` (2026-11-14), `CALL_NEW_GRID`, `CALL_NEW_MESH`, `CALL_MESH_DECODE`, `CALL_JSON`,
   `CALL_RANDOM` (a generator value's own methods), `CALL_SKINNED`; `CALL_BUILTIN` on `Math`, `Path`, `string` and
   the numeric types (`pure_owner`), on a value (`position.Normalized()`), `Random(seed)`, and `Debug.Assert`.
 - **A call of an `async` function or a worker** is "starts 'X', which runs as a task", awaited or not.

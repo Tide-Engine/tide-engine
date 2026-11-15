@@ -1,4 +1,4 @@
-// expect: image 'layers' is read between its smaller images, and Format.Rgba32f has none: read it with Sample(uv) or Filter.Bilinear, or draw the numbers into Format.Rgba16f
+// expect: image 'layers' is read between its smaller images, and Format.Rgba32f has none: read it with Sample(uv, layer) or Filter.Bilinear, or draw the numbers into Format.Rgba16f
 scene Main { }
 local singleton Images { [Raw(float4)] TextureArray layers; }
 frag Read(Vertex vertex,out Color color,Images images) { color=Color(images.layers.SampleLevel(vertex.uv,1,2.0).x,0,0); }

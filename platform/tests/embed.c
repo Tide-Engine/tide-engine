@@ -939,6 +939,81 @@ TIDE_TEST(embed_render_multisampled_target_mipmaps)
     tide_embed_destroy(e);
 }
 
+// A typed array's or a 32-bit cube's layers loaded where no image is given (TIDE_SHADER_READ_NUMBER_LAYERS,
+// _INT_LAYERS): what's bound for none is an array of a format, which the other program makes of zeros it writes
+// (ARRAY_OF, as a Grid3's), one layer of RGBA32F or R32I; never an array to draw into (ARRAY with no pixels), which
+// Unity makes as a render texture whose pixels nothing has cleared, and which a clear would make black, not zeros.
+static const tide_shader number_layers_shader = {
+    .name = "number layers",
+    .wgsl = "@group(0) @binding(1) var pixels0: texture_2d_array<f32>;\n"
+            "@vertex fn vertex(@location(0) p: vec2f) -> @builtin(position) vec4f { return vec4f(p, 0.0, 1.0); }\n"
+            "@fragment fn fragment() -> @location(0) vec4f { return textureLoad(pixels0, vec2i(0), 5, 0); }\n",
+    .id = 0x7E57A11A,
+    .dims = 2,
+    .vertex_size = 2 * sizeof(float),
+    .attribute_count = 1,
+    .attributes = {{TIDE_SHADER_FLOAT2, 0}},
+    .texture_count = 1,
+    .texture_reads = {TIDE_SHADER_READ_NUMBER_LAYERS},
+};
+static const tide_shader int_layers_shader = {
+    .name = "int layers",
+    .wgsl = "@group(0) @binding(1) var pixels0: texture_2d_array<i32>;\n"
+            "@vertex fn vertex(@location(0) p: vec2f) -> @builtin(position) vec4f { return vec4f(p, 0.0, 1.0); }\n"
+            "@fragment fn fragment() -> @location(0) vec4f { return vec4f(textureLoad(pixels0, vec2i(0), 5, 0)); }\n",
+    .id = 0x7E57A11B,
+    .dims = 2,
+    .vertex_size = 2 * sizeof(float),
+    .attribute_count = 1,
+    .attributes = {{TIDE_SHADER_FLOAT2, 0}},
+    .texture_count = 1,
+    .texture_reads = {TIDE_SHADER_READ_INT_LAYERS},
+};
+
+TIDE_TEST(embed_render_number_layers_fallback_is_zeros)
+{
+    char *argv[] = {program};
+    tide_embed *e = start(1, argv);
+    TIDE_REQUIRE(e != NULL);
+    frames(e, 1, NULL);
+    tide_draw_list draw = {0};
+    tide_draw_reset(&draw);
+    tide_draw_render_target(&draw, (tide_render_target){.id = TIDE_RENDER_WINDOW});
+    static const float corners[4][2] = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}};
+    static const uint32_t indices[6] = {0, 1, 2, 0, 2, 3};
+    bool fill;
+    const uint32_t mesh = tide_draw_mesh_slot(&draw, TIDE_MESH_BYTES, 0x7E57A11C, 0, 1, &fill);
+    if (fill) tide_draw_mesh_fill_bytes(&draw, mesh, corners, sizeof corners[0], 4, indices, 6);
+    const uint32_t none[TIDE_SHADER_TEXTURES] = {0};
+    tide_draw_shaded(&draw, &number_layers_shader, mesh, NULL, NULL, none, 0);
+    tide_draw_shaded(&draw, &int_layers_shader, mesh, NULL, NULL, none, 0);
+    uint32_t size = 0;
+    const uint8_t *p = tide_platform_embed_render(&draw, &size);
+    TIDE_REQUIRE(p != NULL && size > 0);
+    uint32_t floats = 0, ints = 0, drawn_into = 0, bound[2] = {0}, bound_count = 0;
+    for (uint32_t at = 0; at + 8u <= size;) {
+        const uint32_t kind = u32_at(p, at), length = u32_at(p, at + 4u);
+        TIDE_REQUIRE(length <= size - at - 8u);
+        if (kind == TIDE_EMBED_RENDER_ARRAY_OF && length >= 20u && u32_at(p, at + 16u) == 1u && u32_at(p, at + 20u) == 1u
+            && u32_at(p, at + 24u) == 1u) {
+            if (u32_at(p, at + 12u) == TIDE_GPU_RGBA32F) floats = u32_at(p, at + 8u);
+            if (u32_at(p, at + 12u) == TIDE_GPU_R32I) ints = u32_at(p, at + 8u);
+        }
+        if (kind == TIDE_EMBED_RENDER_ARRAY && length >= 28u) {
+            const tide_gpu_target_format format = (tide_gpu_target_format)u32_at(p, at + 12u);
+            const tide_gpu_color color = tide_gpu_target_color(format, 0);
+            const bool numbers = color == TIDE_GPU_COLOR_RGBA32F || color == TIDE_GPU_COLOR_R32I;
+            drawn_into += numbers && u32_at(p, at + 28u) == 0u; // Made with no pixels: to be drawn into
+        }
+        if (kind == TIDE_EMBED_RENDER_IMAGE && length >= 8u && bound_count < 2u) bound[bound_count++] = u32_at(p, at + 12u);
+        at += 8u + length;
+    }
+    TIDE_CHECK(floats != 0 && ints != 0 && drawn_into == 0u);
+    TIDE_CHECK(bound_count == 2u && bound[0] == floats && bound[1] == ints);
+    tide_draw_free(&draw);
+    tide_embed_destroy(e);
+}
+
 TIDE_TEST(embed_render)
 {
     char *argv[] = {program};

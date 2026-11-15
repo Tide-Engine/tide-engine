@@ -1,0 +1,10 @@
+// expect: a function samples a DepthCubemap it takes as a parameter of its own, or a field of a component or singleton it takes
+// expect: 'float Lit(DepthCubemap shadows, ...)', called as 'Lit(lamp.shadows, ...)'
+scene Main { }
+local singleton Lamp { Cubemap cube; DepthCubemap shadows; }
+float Lit(Lamp lamp, float3 way)
+{
+    DepthCubemap kept = lamp.shadows;
+    return kept.Sample(way);
+}
+frag Shade(Vertex vertex, out Color color, Lamp lamp) { color = Color(Lit(lamp, float3(vertex.uv, 1)), 0, 0); }

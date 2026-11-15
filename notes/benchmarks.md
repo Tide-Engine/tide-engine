@@ -1,5 +1,13 @@
 # Benchmarks
 
+## Grids in runs, and runs by identity (2026-11-14)
+
+What a per-entity system that changes its rows' grids, or text and lists while queueing nothing, gains on threads:
+schedule-and-threads.md, top section (a streaming-chunks game's `Generate` 2.85-3.08 ms a tick on the pool before,
+0.58-0.63 after; `tidec_e2e_row_grids` with `TIDE_ROW_GRIDS_TIME`). The gallery's quick pin moved, its canvases'
+system now putting each canvas's blocks in its own run's heap: tick 272 `c8e6ab383a684a0a`, the same on 1, 4 and 12
+threads.
+
 ## A flock with `previous` (2026-11-13, evening)
 
 `bench/flock` (`bench_flock`, `bench_flock_now`; each test runs `--quick --expect <hash>`): one component and one
@@ -445,6 +453,13 @@ More threads change nothing here: the tick's estimate of a system's work counts 
 so neither build's tick goes on threads at these sizes. Before a system's own loop searched its index with no lock
 once it was found to hold that tick, checking the index's facts under the lock for every entity made the indexed
 build 22 ms a tick at 10,000. Details: notes/indexed-loops.md, Code generation.
+
+Since 2026-11-14 it also has chunks found by their place (`--chunks n --lookers n [--ways 1|2|3]`, none unless
+asked; `--quick` takes 400 and 50): each looker finds one chunk a tick by an `int3` and an `int` (ways 1), by a
+`long` packed from them (2) or both (3), and the run fails unless every lookup found its one chunk both ways. Before
+and after exact keys: indexed-loops.md, Exact keys (10,000 chunks, 1,000 lookups a tick: 6.4-7.1 ms to 0.061 by
+place, 74.5 to 0.055 by the long, which wasn't indexed). `bench_index` times the same at the runtime's level
+(`run_chunks`).
 
 ## Listed runs culled on the GPU, Mount & Rifle's menu (2026-11-05)
 

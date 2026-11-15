@@ -1,0 +1,86 @@
+// The server's store from match code: saves, loads that find what was saved and
+// loads that find nothing, a delete, and answers whose handlers spawn. Played
+// on a host with a guest: the guest's world goes as the host's does, though
+// only the host's machine has the store.
+
+settings { maxPlayers = 2; }
+
+scene Main { }
+
+singleton Vault
+{
+    int found;      // Loads that found their key
+    int missing;    // ...and that found nothing
+    int failed;     // ...and whose files couldn't be read
+    int sum;        // Every byte loaded, added up
+    int crates;     // Crates the answers' handlers spawned
+    string last;    // The last key answered
+}
+
+component Crate
+{
+    int size;
+}
+
+input Controls { float2 move; }
+
+// A value of `count` bytes: start, start + 1, ...
+List<byte> Bytes(int start, int count)
+{
+    mut List<byte> made = [];
+    for (var i = 0; i < count; i++) made.Add(byte(start + i));
+    return made;
+}
+
+system Work(Time time)
+{
+    if (time.tick == 5)
+    {
+        Storage.Save("boxes/7", Bytes(1, 3));
+        Storage.Save("a b/../c", Bytes(10, 2));     // Any key is one: its bytes are written out where a file's name can't have them
+        Storage.Save("big", Bytes(0, 5000));        // Past what a frame carries inline: by download
+        Storage.Save("gone", Bytes(9, 1));
+        Storage.Save("con", Bytes(20, 1));          // A Windows device's name: its file is another
+        Storage.Save("a", Bytes(30, 1));            // ...and a file "a.bin" and a folder "a.bin" are two keys' places
+        Storage.Save("a.bin/x", Bytes(40, 1));
+    }
+    if (time.tick == 8)
+    {
+        Storage.Load("boxes/7");
+        Storage.Load("boxes/7");                    // Asked twice in a tick, answered once
+        Storage.Load("a b/../c");
+        Storage.Load("boxes/none");
+        Storage.Load("con");
+        Storage.Load("a");
+        Storage.Load("a.bin/x");
+        Storage.Load("locked");                     // The host's files say it can't be read
+        Storage.Delete("gone");
+    }
+    if (time.tick == 12)
+    {
+        Storage.Load("gone");
+        Storage.Load("big");
+        Storage.Save("boxes/7", Bytes(4, 1));       // A save takes the place of the one before
+    }
+    if (time.tick == 16) Storage.Load("boxes/7");
+}
+
+// Each answer's handler spawns: two answers in one tick are two crates
+event(Loaded loaded) Take(mut Vault vault)
+{
+    vault.last = loaded.key;
+    if (loaded.failed)
+    {
+        vault.failed += 1;
+        return;
+    }
+    if (!loaded.found)
+    {
+        vault.missing += 1;
+        return;
+    }
+    vault.found += 1;
+    foreach (var b in loaded.bytes) vault.sum += b;
+    vault.crates += 1;
+    Spawn(Crate { size = loaded.bytes.count });
+}

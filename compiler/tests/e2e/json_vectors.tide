@@ -189,7 +189,9 @@ void Sets(mut Results r, mut Kept kept)
 
     // As the value itself
     var only = Json.Read<Set<string>>("[\"a\",\"b\",\"a\"]") ?? default;
-    Expect(r, only.count == 2 && Json.Write(only) == "[\"a\",\"b\"]" && Json.Read<Set<int>>("{}") == null);
+    var bytes = Json.Read<Set<byte>>("[1,255,1]") ?? default; // A set of bytes too
+    Expect(r, only.count == 2 && Json.Write(only) == "[\"a\",\"b\"]" && Json.Read<Set<int>>("{}") == null
+                  && bytes.count == 2 && Json.Write(bytes) == "[1,255]" && Json.Read<Set<byte>>("[256]") == null);
     var named = Json.Read<Map<Side, string>>("{\"Right\":\"r\"}") ?? default;
     Expect(r, named[Side.Right] == "r" && Json.Write(named) == "{\"Right\":\"r\"}");
     kept.edges = Json.Write(Json.Read<Map<int, int>>("{\"2147483647\":1,\"-2147483648\":2}") ?? default);

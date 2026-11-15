@@ -117,6 +117,16 @@ tide_e2e_test(properties)
 tide_e2e_test(transforms) # Shared component placement, checked parenting and hierarchy state
 tide_e2e_test(visibility_groups) # Shared audiences, whole-component restrictions and scene inheritance
 tide_e2e_test(visibility_projection SOURCES e2e/visibility_projection.tide e2e/visibility_projection_c.c)
+# A game with transform hierarchies hashes its rows as any does, and its links and anchors as one section: the same
+# hashes with every one worked out twice (from what's kept and from the rows), and with nothing kept between them
+foreach(variant checked memo_off)
+    tide_add_game(tidec_e2e_visibility_projection_${variant} SOURCES e2e/visibility_projection.tide e2e/visibility_projection_c.c
+        NAME game HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/visibility_projection_test.c")
+    target_include_directories(tidec_e2e_visibility_projection_${variant} PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    add_test(NAME tidec_e2e_visibility_projection_${variant} COMMAND tidec_e2e_visibility_projection_${variant})
+endforeach()
+target_compile_definitions(tidec_e2e_visibility_projection_checked PRIVATE TIDE_CLIENT_SPANS_CHECK)
+target_compile_definitions(tidec_e2e_visibility_projection_memo_off PRIVATE TIDE_CLIENT_MEMO_OFF)
 tide_e2e_test(visibility_lists) # A projection's lists read back in runs, the heap as element by element left it
 tide_e2e_test(stable_main)
 
@@ -134,6 +144,21 @@ tide_add_game(tidec_e2e_visibility_hash_memo_off SOURCES e2e/visibility_hash_mem
 target_include_directories(tidec_e2e_visibility_hash_memo_off PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 target_compile_definitions(tidec_e2e_visibility_hash_memo_off PRIVATE TIDE_CLIENT_MEMO_OFF)
 add_test(NAME tidec_e2e_visibility_hash_memo_off COMMAND tidec_e2e_visibility_hash_memo_off)
+# Heaps of their own and runs on threads in a game that hides state: one thread's world, projections the same
+# wherever values are; again with every projection hash worked out twice, and with nothing kept between hashes
+tide_e2e_test(visibility_runs)
+if(TIDE_PLATFORM)
+    target_link_libraries(tidec_e2e_visibility_runs PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_visibility_runs PRIVATE TIDE_VISIBILITY_RUNS_THREADS=1)
+endif()
+foreach(variant checked memo_off)
+    tide_add_game(tidec_e2e_visibility_runs_${variant} SOURCES e2e/visibility_runs.tide NAME game
+        HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/visibility_runs_test.c")
+    target_include_directories(tidec_e2e_visibility_runs_${variant} PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    add_test(NAME tidec_e2e_visibility_runs_${variant} COMMAND tidec_e2e_visibility_runs_${variant})
+endforeach()
+target_compile_definitions(tidec_e2e_visibility_runs_checked PRIVATE TIDE_CLIENT_SPANS_CHECK)
+target_compile_definitions(tidec_e2e_visibility_runs_memo_off PRIVATE TIDE_CLIENT_MEMO_OFF)
 tide_e2e_test(shards) # One world split across shards: moving, ghosts, waiting on borders, checkpoints and splits
 tide_e2e_test(shards_players) # A player's machine following their avatar from shard to shard
 tide_e2e_test(shards_visibility) # A visibility group the root keeps, read on every shard and changed from a region
@@ -486,6 +511,7 @@ tide_e2e_test(gui_entered) # TextField, IntField and FloatField with `out entere
 tide_e2e_test(actions)
 tide_e2e_test(tasks)
 tide_e2e_test(tasks_local)
+tide_e2e_test(tasks_local_fields) # Local tasks that read and write their entity's local fields, after a worker
 tide_e2e_test(local_workers)
 tide_e2e_test(task_handles LAYOUT)
 tide_e2e_test(task_visibility)
@@ -528,7 +554,7 @@ tide_e2e_test(constant_flow) # Known bool conditions agree for returns, switch e
 tide_e2e_test(strings)
 # char: literals, a text's characters by index and by foreach, switch, keys, where they're kept, inputs and commands
 tide_e2e_test(chars)
-target_compile_definitions(tidec_e2e_chars PRIVATE CHARS_HASH=6535361674441007572ull)
+target_compile_definitions(tidec_e2e_chars PRIVATE CHARS_HASH=7239718306326553534ull)
 tide_e2e_test(show_values)
 tide_e2e_test(text_fields)
 tide_e2e_test(lists)
@@ -541,13 +567,15 @@ tide_e2e_test(out_params SOURCES e2e/out_params.tide e2e/out_params_c.c) # `out`
 tide_e2e_test(generics) # Generic functions: inference, <> at calls, `has`, instantiations, a plain overload winning
 tide_e2e_test(loop_views) # Loops that keep a list's shape index it through a view: chunks, side by side, scratch, assets, snapshots
 tide_e2e_test(json) # Json.Read<T> and Json.Write, and text as bytes, pieces and numbers
-target_compile_definitions(tidec_e2e_json PRIVATE JSON_HASH=11445927822352450642ull)
+target_compile_definitions(tidec_e2e_json PRIVATE JSON_HASH=4274344058269490730ull)
 tide_e2e_test(json_vectors) # ...vectors, quaternions and colors as arrays, sets as arrays, and maps by a number or an enum
-target_compile_definitions(tidec_e2e_json_vectors PRIVATE JSON_VECTORS_CHECKS=46 JSON_VECTORS_HASH=11481368449994237363ull)
+target_compile_definitions(tidec_e2e_json_vectors PRIVATE JSON_VECTORS_CHECKS=46 JSON_VECTORS_HASH=15438447969881144247ull)
 tide_e2e_test(optional_fields) # T? fields: in structs, components, singletons, scenes, events, commands and the input
-target_compile_definitions(tidec_e2e_optional_fields PRIVATE OPTIONAL_FIELDS_HASH=17632594201705351794ull)
+target_compile_definitions(tidec_e2e_optional_fields PRIVATE OPTIONAL_FIELDS_HASH=14864352149542646336ull)
 tide_e2e_test(grids SOURCES e2e/grids.tide e2e/grids_c.c) # Grids
 tide_e2e_test(grid_values) # Grids code owns: locals, mut parameters, returns and Copy
+tide_e2e_test(grid_bytes) # cells.ToBytes() and Grid3<T>.FromBytes(bytes): round trips, repairs, refusals, the bytes pinned
+target_compile_definitions(tidec_e2e_grid_bytes PRIVATE GRID_BYTES_HASH=0xF9EAD962E215CDB8ull GRID_BYTES_SPOILED=3361)
 tide_e2e_test(parallel) # Parallel loops over grids and lists
 tide_e2e_test(parallel_list_batch) # Independent output lanes preserve exact reductions, calls and snapshots
 tide_e2e_test(window_indices) # Task-local windows with global positions, offsets and partial writes
@@ -587,6 +615,11 @@ tide_e2e_test(row_heaps) # A per-entity system that changes its rows' text and l
 if(TIDE_PLATFORM)
     target_link_libraries(tidec_e2e_row_heaps PRIVATE tide_platform)
     target_compile_definitions(tidec_e2e_row_heaps PRIVATE TIDE_ROW_HEAPS_THREADS=1)
+endif()
+tide_e2e_test(row_grids) # ...and its rows' grids: new chunks, cells set and zeroed, grids replaced and copied, a parallel loop, one thread's world
+if(TIDE_PLATFORM)
+    target_link_libraries(tidec_e2e_row_grids PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_row_grids PRIVATE TIDE_ROW_GRIDS_THREADS=1)
 endif()
 tide_e2e_test(previous) # `previous` query bindings: the tick's start whatever ran since, on threads one thread's world, no part of the world
 # ...and the same game with every loop gone through plainly (NO_LOOP_INDEXES), which prints the same tick by tick
@@ -704,7 +737,8 @@ tide_e2e_test(crlf) # Windows line endings, kept by .gitattributes
 tide_e2e_test(directives) # #if and the rest: what other versions of tide read is left out
 # #define and #undef, and the build's symbols: --define's, DEBUG, and PACKAGE_<NAME> for each of its packages
 tide_e2e_test(defines SOURCES e2e/defines/game.tide PACKAGES Extra e2e/defines/Extra/extra.tide DEFINES FAST WIDE SIDE=50
-    BIG=-9223372036854775808 SMALL=255 SCALE=-2.5 FAR=0.1 "TITLE=Two \"words\", a \\ and a tab:\t." EMPTY= SLOW=false ARMY=Huge)
+    BIG=-9223372036854775808 SMALL=255 SCALE=-2.5 FAR=0.1 "TITLE=Two \"words\", a \\ and a tab:\t." EMPTY= SLOW=false ARMY=Huge
+    MANY=5000000000 SPOT_X=0.5 RED=0.25)
 target_compile_definitions(tidec_e2e_defines PRIVATE DEFINES_DEBUG=$<IF:$<CONFIG:Debug>,1,0>)
 tide_e2e_test(multi_file SOURCES e2e/multi_file/a_physics.tide e2e/multi_file/b_main.tide
     e2e/multi_file/c_combat.tide e2e/multi_file/d_items.tide)
@@ -1213,3 +1247,4 @@ endif()
 if(TIDE_NODE)
     add_test(NAME tidec_read_target_builtin COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/read_target_builtin.mjs" "${TIDEC_PATH}" "${PROJECT_SOURCE_DIR}")
 endif()
+tide_e2e_test(storage) # The server's store from match code: saves, loads and deletes, the same on every machine
