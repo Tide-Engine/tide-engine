@@ -219,7 +219,7 @@
           }
         },
         {
-          "comment": "command(Rename rename, PlayerID sender) RenamePlayer: a command handler; the sender may be left out (command(Poke poke) Bump(..., with ownership))",
+          "comment": "command(Rename rename, PlayerID sender) RenamePlayer, command(Poke poke) Bump: a command handler, its sender named or not",
           "match": "(?:^|(?<=\\]))\\s*(?:(local|async|worker|cached|virtual|override)\\s+)?(?:((?:local|async|worker|cached|virtual|override)(?:\\s+(?:local|async|worker|cached|virtual|override))?)\\s+)?(command)\\s*(\\()\\s*([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)(?:\\s+([A-Za-z_][A-Za-z0-9_]*))?(?:\\s*(,)\\s*(PlayerID)\\s+([A-Za-z_][A-Za-z0-9_]*))?\\s*(\\))\\s*((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
             "1": {
