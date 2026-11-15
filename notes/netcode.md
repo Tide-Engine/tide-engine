@@ -38,15 +38,19 @@ The hashes are of values, as before: no pin moved (`bench_voxels`' world hash, i
 `TIDE_CLIENT_SPANS_CHECK` (`bench_voxels_checked`, 8 bots and quick, `tidec_e2e_visibility_*_checked`) and
 `TIDE_CLIENT_MEMO_OFF` pass; kept rows are still exactly the world's at `tide_client_kept.tick`.
 
-**Measuring**: `TIDE_CLIENT_COUNTS` (`bench_voxels_counts`, built beside the bench, no test) counts what a server's
+**Measuring**: `TIDE_CLIENT_COUNTS` (`bench_voxels_counts`, built beside the bench and run quick as a test) counts what a server's
 checks read again and why, and how long each part took, printed at the program's end.
 
 **Measured** (`bench_voxels`, 8 bots, 30 s, 4 threads, release, Windows, BelowNormal, the machine shared with another
 agent's builds; three runs alternating before and after, medians, ranges in brackets): server hashing 18.1 to 9.5 ms
 a second (17.8–18.2 to 8.5–9.9), update median 1.08 to 0.96 ms (1.07–1.08 to 0.83–0.97), p99 6.48 to 5.71
 (6.27–6.73 to 5.54–5.81), simulate the same, the same bytes sent and world hash. Standing still (`--still 100
---hop 0`, two runs each): hashing 1.56 to 0.80 ms a second, update median 0.11 to 0.10, p99 0.65 to 0.62. Counted over
-a run (2,017 checks):
+--hop 0`, two runs each): hashing 1.56 to 0.80 ms a second, update median 0.11 to 0.10, p99 0.65 to 0.62. A bot's
+machine runs the same code for its own projection check (review, same day: three more alternating pairs, the same
+settings, before built from the parent commit's two codegen files): a client's hashing 1.41 to 0.82 ms a second
+(1.33–1.43 to 0.80–0.82), update median 0.17 to 0.17 ms (0.16–0.17 both), p99 2.63 to 2.33 (2.48–2.70 to 2.29–2.39);
+the server's hashing in those runs 17.8 to 9.8 (16.5–18.2 to 9.4–10.0); world hash 0x77babb9991dd25da and bytes sent
+the same in all six. Counted over a run (2,017 checks):
 
 | 8 bots moving | before | after |
 |---|---|---|
@@ -65,24 +69,33 @@ every `Secret` 272 to 268.
 
 **Tests.** `tidec_e2e_visibility_blocks` (and `_checked`, `_memo_off`; `e2e/visibility_blocks.tide`, `_test.c`):
 1,200 plots each with a group, a grid of two chunks of 16 cubed (one in use), a map of 40 entries (the memo's) and one
-of 3, a small list; fifteen changes, each to a plot or the one made before it, whose blocks share its pages: the
+of 3, a small list; sixteen changes, each to a plot or the one made before it, whose blocks share its pages: the
 neighbour's grid chunk, then the plot's the tick after; the same for the small map and the big one, in place; the
 plot's grid gaining a chunk (its directory, among others'); its list let go, the neighbour given a list of the plot's
 old bytes where it was, then one of other bytes where the neighbour's own was; five groups of every eight destroyed, a
-group made (the directory packed), a group's audience whose entry moved; a plot destroyed and another made in its slot.
+group made (the directory packed), a group's audience whose entry moved; a plot snapped (`this.Snap()` in a system
+reading `Plot`: its slot's page changes by its snaps alone); a plot destroyed and another made in its slot.
 Quiet and with lists growing all over; each tick every player's hash against a copy's with nothing kept and repairs from
 what's kept against the rows'; each change shows, against a twin of the world without it, both hashed by copies and the
 twin given the world's `Control` (a public singleton, so before, every step "showed" by its step number:
 `visibility_pieces_test.c` had the same, fixed too; its quiet round shows every step that way). Pinned, the same in all
 three. Each of these fails it: a block's bytes not compared, a grid chunk's size from its header, a directory chunk
 taken as unchanged by its list alone, a piece's routing kept across its audiences worked out again, a piece's changed
-page taken as same without its blocks. The pieces, runs, projection, hash memo, lists, groups, predicted and lifecycle
+page taken as same without its blocks, a slot's page taken as same without its rows' snaps (the snap step). The pieces, runs, projection, hash memo, lists, groups, predicted and lifecycle
 fixtures, `tidec_e2e_grid_bytes` and `bench_voxels*` pass; `bench_voxels_checked` with 8 bots for 30 s too.
 
-**Left**: the snaps compare has no test that fails without it: `this.Snap()` on a plot in the fixture changed no
-player's projection hash (a twin without it hashed the same), which is worth a look of its own (does a snap reach a
-projection where nothing is drawn?); slots' pages changing for other entities pass in `bench_voxels_checked`. A
-container that changes is still encoded whole (`Streamer.chunks`, 6,490 entries, 105 µs): a tree of its chunks would
+**Corrections** (review, same day): the first version of this section said the snaps compare had no failing test,
+as `this.Snap()` on a plot changed no player's projection hash. It does: a snap of a live plot (step 16, run before
+the step that destroys the same target) shows against its twin, and with `|| slot->snaps != r->snaps[row]` removed
+from `tide_client_piece_snaps_same` the fixture fails at that step (player 0's kept hash isn't the world's, and its
+repair isn't the rows'). Snapping in `Change` (`mut Plot`) shows as well. The earlier attempt's cause wasn't kept; the
+likeliest is a snap of a target already destroyed by step 14. A row whose entity has no slot (`tide_entity_slot_index`
+gives `UINT32_MAX`: not on a server, whose tables hold no AWAY entities) gathered slot page `UINT32_MAX >> 10`, which
+hashes 0 forever, so the slot the entity got later went unseen while its row and entity column stayed; such a row now
+makes its piece not kept (`poisoned`), as a row that read outside the heaps does. No test reaches that state through
+the language. `bench_voxels_counts` runs as a test now (notes/benchmarks.md).
+
+**Left**: a container that changes is still encoded whole (`Streamer.chunks`, 6,490 entries, 105 µs): a tree of its chunks would
 be another function of its value, and every projection pin would move, so it isn't done here; resuming its hash from a
 kept prefix would need `tide_hash` to be resumable at a chunk's edge. Heap pages looked at are a piece's whole union
 each call (25 a piece in voxels); a heap's pages written since the last call, kept by the runtime, would let a piece

@@ -91,9 +91,11 @@ system Grow(Control control)
     if (control.step == 15) MakePlot(PLOTS + 2);
 }
 
-// An entity gone, and another made in its slot
+// An entity snapped (its slot's snaps, in a slot page no other entity changed: only the snaps tell its piece), then
+// gone, and another made in its slot
 system Turnover(Plot plot, Control control)
 {
+    if (control.step == 16 && plot.id == control.target) this.Snap();
     if (control.step == 14 && plot.id == control.target) this.Destroy();
 }
 

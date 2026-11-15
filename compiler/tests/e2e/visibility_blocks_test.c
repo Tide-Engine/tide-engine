@@ -16,8 +16,8 @@
 #define PLAYERS 4u
 // Every check's projection hashes, hashed together, and the world's hash at the end: the same on every platform and
 // build, memo on, memo off and with every hash worked out twice
-#define PROJECTIONS UINT64_C(0x9124d25b93781691)
-#define WORLD UINT64_C(0xfa2bcbad325c2b18)
+#define PROJECTIONS UINT64_C(0xf3c2b779965662eb)
+#define WORLD UINT64_C(0x6d4a6b2604242435)
 
 // The changes a tick can be asked for (visibility_blocks.tide, Control.step), in the order they're made. `other` is
 // the plot made just before the target, whose blocks are beside the target's in its pages. Targets and their
@@ -41,6 +41,7 @@ static const struct {
     {11, 0, -1, "most groups gone"},
     {12, 0, -1, "a group made: the directory packs its live entries together"},
     {13, 1100, -1, "a group's audience, its entry moved"},
+    {16, 784, -1, "a plot snapped: its slot's snaps alone changed"},
     {14, 784, -1, "a plot gone"},
     {15, 0, -1, "another made in its slot"},
 };

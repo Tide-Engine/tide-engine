@@ -626,9 +626,14 @@ static void gen_client_hash_rows(gen *g, int *deniable, int *parts)
             if (comp_sparse(g, deniable[k])) sb_printf(o, "                if (%s) mask |= 1ull << %d;\n", presence_cell(g, "w", a, deniable[k], "row", false), k);
             else sb_printf(o, "                mask |= 1ull << %d;\n", k);
         }
+        // (A row whose entity has no slot here has no slot page to keep it by: its piece isn't kept, as one that read
+        // outside the heaps isn't, so the slot it gets later is seen)
         sb_put(o, "                if (ids_moved) {\n"
-                  "                    const uint64_t slot = tide_entity_slot_index(&w->entities, e) >> TIDE_ENTITY_PAGE_SHIFT;\n"
-                  "                    tide_client_gather_numbers(&slots, &slot, 1u);\n                }\n");
+                  "                    const uint32_t at_slot = tide_entity_slot_index(&w->entities, e);\n"
+                  "                    if (at_slot == UINT32_MAX) poisoned = true;\n"
+                  "                    else {\n"
+                  "                        const uint64_t slot = at_slot >> TIDE_ENTITY_PAGE_SHIFT;\n"
+                  "                        tide_client_gather_numbers(&slots, &slot, 1u);\n                    }\n                }\n");
         sb_printf(o, "                const bool all = again || !(kept%d->flags[row] & TIDE_CLIENT_HASHED);\n"
                      "                uint64_t *const term = &terms%d[(size_t)row * %du];\n"
                      "                uint64_t *const digest = &kept%d->digests[(size_t)row * %du];\n"

@@ -41,6 +41,9 @@ add_test(NAME bench_voxels_checked COMMAND bench_voxels_checked --quick --expect
 tide_add_game(bench_voxels_counts SOURCES voxels/voxels.tide NAME voxels HOST voxels/main.c)
 target_link_libraries(bench_voxels_counts PRIVATE tide_bench)
 target_compile_definitions(bench_voxels_counts PRIVATE TIDE_CLIENT_COUNTS)
+# ...and with what the server's checks read again counted and printed at the end (notes/benchmarks.md): the counting
+# changes no hash
+add_test(NAME bench_voxels_counts COMMAND bench_voxels_counts --quick --expect 0x4ebcc443d78e978b)
 # Voxels to play: `voxels` in a window, with its views, the mouse and the keys
 if(TIDE_PLATFORM)
     tide_add_game(voxels SOURCES voxels/voxels.tide voxels/play.tide TITLE "Tide voxels" STATS)
