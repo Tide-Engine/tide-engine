@@ -466,7 +466,11 @@ typedef struct listing {
     uint16_t sizes[HELD];
     uint16_t heap[HELD];                 // Slots, the greatest key's first
     uint32_t count;
+    // A folder the provider couldn't list: the first error, and the least of what such folders' keys start with,
+    // which fails the listing where its keys could be among the answer's (worth_walking, once the walk is done)
     tide_io_error error;
+    char failed_at[TIDE_STORAGE_KEY_MOST];
+    uint32_t failed_size;
     char path[TIDE_STORAGE_PATH_MOST + 16u]; // The folder being walked, and its entries' paths after it
 } listing;
 
@@ -529,11 +533,11 @@ static bool worth_walking(const listing *l, const char *start, const uint32_t n)
         const int c = memcmp(start, l->after, k);
         if (c < 0) return false;
     }
-    if (l->count == HELD) { // Every key here is past the greatest kept where `start` is past it, and it doesn't start with it
+    if (l->count == HELD) { // Every key here is past the greatest kept where `start` is past it, or is it or starts it
         const uint16_t top = l->heap[0];
         const uint32_t k = n < l->sizes[top] ? n : l->sizes[top];
         const int c = memcmp(start, l->keys[top], k);
-        if (c > 0 || (c == 0 && l->sizes[top] < n)) return false;
+        if (c > 0 || (c == 0 && l->sizes[top] <= n)) return false;
     }
     return true;
 }
@@ -544,15 +548,27 @@ static tide_io_error list_folder(const listing *l, const bool directories, names
     return error == TIDE_IO_NOT_FOUND ? TIDE_IO_NONE : error; // A folder never made holds no keys
 }
 
-// The keys in the folder at l->path (`size` bytes of it), and the folders in it, one by one: not the provider's
-// recursive listing, whose paths say nothing of where the folder it was asked for ends.
-static void walk(listing *l, const uint32_t size)
+// A folder whose keys all start with `start` (`n` bytes) that couldn't be listed. Folders that fail are apart (one
+// in another isn't walked), so where the least of them can't hold a key the answer has, none can.
+static void failed(listing *l, const tide_io_error error, const char *start, const uint32_t n)
+{
+    if (!l->error || compare_keys(start, n, l->failed_at, l->failed_size) < 0) {
+        if (n) memcpy(l->failed_at, start, n);
+        l->failed_size = n;
+    }
+    if (!l->error) l->error = error;
+}
+
+// The keys in the folder at l->path (`size` bytes of it), all starting with `start` (`n` bytes, or none to be
+// sure), and the folders in it, one by one: not the provider's recursive listing, whose paths say nothing of where
+// the folder it was asked for ends.
+static void walk(listing *l, const uint32_t size, const char *start, const uint32_t n_start)
 {
     names files = {0}, folders = {0};
     l->path[size] = '\0';
     tide_io_error error = list_folder(l, false, &files);
     if (!error) error = list_folder(l, true, &folders);
-    if (error && !l->error) l->error = error;
+    if (error) failed(l, error, start, n_start);
     char key[TIDE_STORAGE_KEY_MOST];
     for (uint32_t i = 0; !error && i < files.count; i++) {
         const uint32_t n = (uint32_t)strlen(files.items[i]);
@@ -574,7 +590,7 @@ static void walk(listing *l, const uint32_t size)
         memcpy(l->path + size + 1u + n, "/a.bin", 6);
         const uint32_t k = tide_storage_key(l->path, size + 1u + n + 6u, key, sizeof key);
         if (!k || !worth_walking(l, key, k - 1u)) continue; // `key` less its "a"
-        walk(l, size + 1u + n);
+        walk(l, size + 1u + n, key, k - 1u);
     }
     l->path[size] = '\0';
     free_names(&files);
@@ -594,7 +610,7 @@ static void walk_hashed(listing *l)
     names files = {0};
     memcpy(l->path, "saved/%%", 9);
     tide_io_error error = list_folder(l, false, &files);
-    if (error && !l->error) l->error = error;
+    if (error) failed(l, error, "", 0); // What's there can't be told: any key could be
     if (!error && files.count > 1) qsort(files.items, files.count, sizeof *files.items, compare_names);
     char key[TIDE_STORAGE_KEY_MOST], path[TIDE_STORAGE_PATH_MOST + 1u], value[72];
     for (uint32_t i = 0; !error && i < files.count; i++) {
@@ -605,14 +621,14 @@ static void walk_hashed(listing *l)
         const char *wanted = value;
         if (!bsearch(&wanted, files.items, files.count, sizeof *files.items, compare_names)) continue;
         if (!l->io->read) {
-            l->error = TIDE_IO_FAILED;
+            failed(l, TIDE_IO_FAILED, "", 0);
             break;
         }
         snprintf(l->path, sizeof l->path, "saved/%%%%/%s", name);
         uint8_t *data = NULL;
         uint32_t size = 0;
         const tide_io_error read = l->io->read(l->io->user, l->path, &data, &size);
-        if (read && read != TIDE_IO_NOT_FOUND && !l->error) l->error = read;
+        if (read && read != TIDE_IO_NOT_FOUND) failed(l, read, "", 0);
         // The key, if it is one this file is named for
         if (!read && size >= 1u && size <= TIDE_STORAGE_KEY_MOST) {
             memcpy(key, data, size);
@@ -674,9 +690,11 @@ static uint8_t *list_keys(const tide_io *io, const tide_storage_request *r, cons
     l->after = answer.after;
     l->after_size = answer.after_size;
     const uint32_t folder = prefix_folder(l);
-    if (folder) walk(l, folder);
+    if (folder) walk(l, folder, "", 0);
     walk_hashed(l);
-    if (l->error) {
+    // A folder that couldn't be listed fails it where its keys could be among those it has: not where they'd all be
+    // past them, which a listing that goes on finds, whichever order the folders came in
+    if (l->error && worth_walking(l, l->failed_at, l->failed_size)) {
         fprintf(stderr, "tide: Storage.List: the keys starting \"%.*s\" couldn't all be listed (error %d): its Listed says "
                         "it failed\n", (int)answer.key_size, answer.key, (int)l->error);
         answer.outcome = TIDE_STORED_FAILED;

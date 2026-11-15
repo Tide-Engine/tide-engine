@@ -143,8 +143,8 @@ static tide_io_error io_list(void *user, const char *path, const bool directorie
     if (strstr(path, "locked")) return TIDE_IO_ACCESS_DENIED;
     if (!holds(path)) return TIDE_IO_NOT_FOUND;
     const size_t n = strlen(path);
-    char given[64][512];
-    uint32_t given_count = 0;
+    char (*given)[512] = NULL; // Each folder once
+    uint32_t given_count = 0, given_room = 0;
     for (uint32_t i = 0; i < file_count; i++) {
         const char *f = files[i].path;
         if (strncmp(f, path, n) != 0 || f[n] != '/') continue;
@@ -160,9 +160,14 @@ static tide_io_error io_list(void *user, const char *path, const bool directorie
         bool seen = false;
         for (uint32_t k = 0; k < given_count && !seen; k++) seen = strcmp(given[k], folder) == 0;
         if (seen) continue;
-        if (given_count < 64) strcpy(given[given_count++], folder);
+        if (given_count == given_room) {
+            given_room = given_room ? given_room * 2u : 64u;
+            given = realloc(given, given_room * sizeof *given);
+        }
+        strcpy(given[given_count++], folder);
         entry(entry_user, folder);
     }
+    free(given);
     return TIDE_IO_NONE;
 }
 
@@ -681,6 +686,23 @@ TIDE_TEST(storage_lists_keys_by_prefix_in_order_and_in_pages)
                && strcmp(got, "page/1024") == 0);
     TIDE_CHECK(listed(&io, &store, "page/", "page/0000", pages, sizeof pages, &count, &more, &failed) && count == 1024 && !more);
     TIDE_CHECK(listed(&io, &store, "page/10", "", got, sizeof got, &count, &more, &failed) && count == 25);
+    // ...and in 1,100 folders, which a page walks only where they can hold one of its keys: those past the greatest it
+    // has once it has enough, and before `after`, are left alone
+    for (int i = 0; i < 1100; i++) {
+        char key[32];
+        snprintf(key, sizeof key, "f/%04d/k", i);
+        save_key(&store, key);
+    }
+    tide_storage_serve(&store, &io, &next, take_answer, NULL);
+    uint32_t walked = lists;
+    TIDE_CHECK(listed(&io, &store, "f/", "", pages, sizeof pages, &count, &more, &failed) && count == 1024 && more);
+    TIDE_CHECK(strncmp(pages, "f/0000/k f/0001/k", 17) == 0 && strstr(pages, "f/1023/k") && !strstr(pages, "f/1024/k"));
+    TIDE_CHECK(lists - walked < 2u * 1100u); // Not every folder: those past the 1,025th weren't
+    walked = lists;
+    TIDE_CHECK(listed(&io, &store, "f/", "f/1023/k", got, sizeof got, &count, &more, &failed) && count == 76 && !more);
+    TIDE_CHECK(strncmp(got, "f/1024/k f/1025/k", 17) == 0 && strstr(got, "f/1099/k"));
+    TIDE_CHECK(lists - walked < 2u * 200u); // Those before it weren't either
+    TIDE_CHECK(listed(&io, &store, "f/05", "", got, sizeof got, &count, &more, &failed) && count == 100 && !more);
     // Asked twice in a tick: answered once
     list_keys("list/", "");
     list_keys("list/", "");
@@ -688,10 +710,14 @@ TIDE_TEST(storage_lists_keys_by_prefix_in_order_and_in_pages)
     forget_answers();
     tide_storage_serve(&store, &io, &next, take_answer, NULL);
     TIDE_CHECK(answer_count == 2);
-    // A folder that can't be listed fails the listing: no keys, not "more"
+    // A folder that can't be listed fails the listing where its keys could be among the answer's: no keys, not "more".
+    // Where they'd all be past the answer's last, it doesn't, and the page after does
     put_file("saved/locked/k.bin", (const uint8_t *)"x", 1);
     TIDE_CHECK(listed(&io, &store, "locked/", "", got, sizeof got, &count, &more, &failed) && failed && count == 0 && !more);
-    TIDE_CHECK(listed(&io, &store, "", "", got, sizeof got, &count, &more, &failed) && failed && count == 0);
+    TIDE_CHECK(listed(&io, &store, "", "", pages, sizeof pages, &count, &more, &failed) && !failed && count == 1024 && more);
+    TIDE_CHECK(listed(&io, &store, "", "lista", got, sizeof got, &count, &more, &failed) && failed && count == 0);
+    TIDE_CHECK(listed(&io, &store, "lo", "", got, sizeof got, &count, &more, &failed) && failed);
+    TIDE_CHECK(listed(&io, &store, "l", "", got, sizeof got, &count, &more, &failed) && failed); // Fewer than a page: it could hold one
     // No files at all: nothing kept, no keys; files that can't be listed: failed
     TIDE_CHECK(listed(NULL, &store, "list/", "", got, sizeof got, &count, &more, &failed) && !failed && count == 0);
     const tide_io unlisted = {.exists = io_exists, .create = io_create, .read = io_read, .write = io_write};
