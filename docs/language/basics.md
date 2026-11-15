@@ -126,7 +126,7 @@ system Regenerate(mut Health health, Time time)
 - Constants are named in FULL_CASE.
 - A constant is the same on every machine. Any code can read one: systems, views, handlers, functions and other constants. Reading one never makes a system wait for another.
 - They work anywhere a constant value is needed: field defaults, `[Clamp]` bounds, `case` labels and the values of enum members. In the last two, int constants and operators on them work: `case MAX_LEVEL + 1:`.
-- A constant can be a number, vector, matrix, quaternion, `bool`, `Color`, `Rect`, `PlayerID`, text, struct or enum, or a table of them: an array or a list written out (below). It can't be an entity, a map or a set.
+- A constant can be a number, vector, matrix, quaternion, `bool`, `Color`, `Rect`, `PlayerID`, text, struct or enum, or a table of plain values: an array or a list written out (below), which holds no text. It can't be an entity, a map or a set.
 - A constant in a namespace belongs to it: code outside writes `Combat.CRIT_MULTIPLIER` (see [Namespaces and files](./namespaces.md)).
 - Changing a constant under `tide run` reloads the game and keeps the match where it is.
 
@@ -145,10 +145,10 @@ const TreeKind[3] PLANTED = [.Birch, .Pine, .Oak];
 float HeightOf(TreeKind kind) { return HEIGHTS[int(kind)]; }
 ```
 
-- What a table holds is plain values: numbers, bools, chars, vectors, matrices, quaternions, colors, rects, enums, arrays, and structs of those. Text, lists inside a table, entities and resources are errors; for text, a switch expression on the index picks one.
-- An array constant has exactly as many values as its type says. A list constant is written out (`[...]`, `[]` too) or names another list constant; one that code works out is made by [build code](../game/build-code.md), `const List<int> SQUARES = Squares(16);`.
-- `HEIGHTS[i]` reads an element, and gives the element type's zero past either end, as any array or list does; `.count` is how many it has. `foreach` goes through one, and a list constant goes wherever a `List<T>` is read: `Draw.Mesh(corners, QUAD)`, a function's parameter, `QUAD.Contains(2)`, or copied into a field, which then has a list of its own.
-- Its elements are worked out while compiling, so an element read with a constant index is a constant too: `const int THIRD = QUAD[2];`, a `case`, an array's length (`int[QUAD.count] seen;`).
+- What a table holds is plain values: numbers, bools, chars, vectors, matrices, quaternions, colors, rects, enums, arrays, and structs of those. Text (in a struct too), lists inside a table, entities and resources are errors; for text, a switch expression on the index picks one.
+- An array constant has exactly as many values as its type says. A list constant is written out (`[...]`, `[]` too) or names another list constant written out, and holds 4096 values at the most, all of its elements' lengths together, as an array does. A longer one, or one that code works out, is made by [build code](../game/build-code.md), `const List<int> SQUARES = Squares(16);`; another constant can't name that one, which code and field defaults read instead.
+- `HEIGHTS[i]` reads an element by an `int`, `HEIGHTS[int(kind)]` by an enum's number, and gives the element type's zero past either end, as any array or list does; `.count` is how many it has. `foreach` goes through one, and a list constant goes wherever a `List<T>` is read: `Draw.Mesh(corners, QUAD)`, a function's parameter, `QUAD.Contains(2)`, or copied into a field, which then has a list of its own.
+- Its elements are worked out while compiling, so an element read with a constant index is a constant too, of a table written out, another table constant, `TreeKind.Values()` and an element of a table (`GRID[1][2]`): `const int THIRD = QUAD[2];`, a `case`, an array's length (`int[QUAD.count] seen;`), a setting (`maxRewind = WINDOWS[1];`). A character of text isn't one: `NAME[0]` is read in code.
 - Nothing can change one: `QUAD[0] = 1` and `QUAD.Add(4)` are errors. Copy it into a `mut var` to change the copy.
 - They're no part of the match: reading one makes no system wait, and costs what reading the element costs. Frags and verts read them too, by index, `.count` and `foreach`.
 - `TreeKind.Values()` is one already: every member of an enum, as `TreeKind[3]` ([Every member](#every-member)).
@@ -297,7 +297,7 @@ system Advance(mut Match match)
 }
 ```
 
-- A member without a value is one more than the one before it, and the first is 0. A value is an int, which can come from constants: `Playing = FIRST_LEVEL + 1`.
+- A member without a value is one more than the one before it, and the first is 0. A value is an int, which can come from constants: `Playing = FIRST_LEVEL + 1`. It can read any member of another enum, wherever that enum is declared, and the members before it in its own; one at or after it, or two enums worked out from each other, is an error.
 - Write a member with its enum, `Phase.Playing`, or use `.Playing` when the expected enum type is clear: `match.phase = .Playing;`. Typed declarations, field defaults, function arguments and returns, container elements and `case .Warmup:` inside an enum switch supply that type. Comparisons can use it too: `match.phase == .Playing`. A typed conditional can use shorthand in both branches: `Phase next = ready ? .Playing : .Warmup;`.
 - Without an expected enum type, keep the qualified spelling: `var phase = Phase.Playing;`. If overloads could take different enums, qualify the argument; the compiler does not pick an enum by searching for its member name.
 - `==` and `!=` compare two values of the same enum, and `<`, `<=`, `>` and `>=` put two in order by their numbers: `Phase.Warmup < Phase.Playing` because 0 is less than 5. The order is the numbers', not where members are written; shorthand works here too, `match.phase >= .Playing`. An enum doesn't compare with a number or another enum: `int(phase) < 3` compares numbers.
@@ -375,7 +375,7 @@ TreeKind second = TreeKind.Values()[1]; // Oak
 
 - It's an array, `TreeKind[3]` here: index it, read its `.count`, keep it in a field (`TreeKind[3] kinds = TreeKind.Values();`) or a [constant](#tables). It's made while compiling, so it costs nothing, and works in match code, views, workers, frags and verts alike.
 - A member declared with another's number is there at its own place: in `enum Size { Small = 1, Little = 1, Big }`, `Size.Values()` is `Small, Little, Big`, whose first two are one value. Go through `Count()` places, as `Count()` counts both.
-- It takes no arguments; a member you declare named `Values` stays `Phase.Values`.
+- It takes no arguments, and belongs to the enum: a value's `kind.Values()` is an error that names `TreeKind.Values()`. A member you declare named `Values` stays `Phase.Values`.
 
 ## Comments and attributes
 

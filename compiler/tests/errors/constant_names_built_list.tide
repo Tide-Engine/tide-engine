@@ -1,0 +1,11 @@
+// expect: 'CURVE' is made by build code, so another constant can't be worked out from it
+// expect: read 'CURVE' in code or in a field's default, or make this constant with build code too
+build List<float> Curve()
+{
+    mut List<float> curve = [];
+    for (int i = 0; i < 4; i++) curve.Add(i * 0.5);
+    return curve;
+}
+const List<float> CURVE = Curve();
+const List<float> SAME = CURVE;
+scene Main { }

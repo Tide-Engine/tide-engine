@@ -762,6 +762,7 @@ typedef struct decl {
     loc backing_at;
     const type_ref *backing_ref; // Authored enum backing type, including a qualified alias.
     int width;      // ...in bytes: 1 (byte), 2 (ushort) or 4 (int), once checked
+    int numbered;   // Its members' numbers: 0 not worked out yet, 1 being worked out, 2 worked out (check_enum)
 
     // Methods and functions
     struct decl *owner;       // A method's struct or component; NULL for a function

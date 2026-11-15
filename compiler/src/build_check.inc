@@ -100,8 +100,8 @@ static void build_constant_function(checker *c, decl *k)
     build_function(c, k, r, k->value);
 }
 
-// What a built constant can be: what any constant can, and lists of plain values (`List<float>`), which the pack
-// holds. Not maps, sets, grids or arrays, nor a list of lists or text.
+// What a built constant can be: what any constant can, arrays of plain values (constant_type says), and lists of
+// plain values (`List<float>`), which the pack holds. Not maps, sets or grids, nor a list of lists or text.
 static bool build_constant_type_ok(const type t, const loc at)
 {
     if (t.kind == TY_LIST) {

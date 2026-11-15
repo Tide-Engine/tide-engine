@@ -1,0 +1,7 @@
+// expect: an array's index is an int, not Kind
+// expect: index it by the member's number: 'SIZES[int(m.kind)]'
+enum Kind { Ash, Birch, Cedar }
+const float[3] SIZES = [1, 2, 3];
+singleton Match { Kind kind; float size; }
+system Tick(mut Match m) { m.size = SIZES[m.kind]; }
+scene Main { }

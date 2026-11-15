@@ -55,8 +55,24 @@ TIDE_TEST(constant_tables_work_out_constants_and_cases)
     TIDE_CHECK(t->cased == 3);
     TIDE_CHECK(t->firstSize == 5);
     TIDE_CHECK(sizeof(t->sized.at) / sizeof(t->sized.at[0]) == 6);
+    TIDE_CHECK(sizeof(t->tiered.at) / sizeof(t->tiered.at[0]) == 5); // Tier.Values()[1], declared after the singleton
+    TIDE_CHECK(sizeof(t->six.at) / sizeof(t->six.at[0]) == 6);       // GRID[1][2]
+    TIDE_CHECK(sizeof(t->two.at) / sizeof(t->two.at[0]) == 2);       // A default's element is zero
+    TIDE_CHECK(t->tierCase == 0);
     t = ticked(2);
     TIDE_CHECK(t->cased == 1);
+    TIDE_CHECK(t->tierCase == 15); // case int(TIERS[1]) and case TIERS[2]
+    TIDE_CHECK(t->zeros == 0);
+    TIDE_CHECK(t->rewind == 0.5f); // maxRewind = REWINDS[1], through a constant
+}
+
+// A list constant of as many values as an array holds, its elements' lengths together: 4096
+TIDE_TEST(list_constants_as_long_as_an_array_read_by_index)
+{
+    const Tables *t = ticked(2); // i = 1
+    TIDE_CHECK(t->cubes == 8 + 0 + 800 + 8000);
+    TIDE_CHECK(t->cubesLoop == 56); // DOWN[0] of the seven CUBEs, none of the default
+    TIDE_CHECK(t->cubesEach == 7);  // UP[0] of each
 }
 
 TIDE_TEST(list_constants_are_lists_where_a_list_goes)

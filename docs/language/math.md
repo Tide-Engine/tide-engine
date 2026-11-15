@@ -130,7 +130,7 @@ if (body.velocity != float3(0)) Wake(body);  // Any component that isn't 0
 bool spotted = seen.Contains(int2(x, y));    // A list's Contains, IndexOf and Remove compare the same way
 ```
 
-This is Tide's own: Unity.Mathematics' `==` on vectors gives a vector of bools, where Tide's gives the one answer a condition needs. It works in frags and verts too, and in constants.
+This is Tide's own: Unity.Mathematics' `==` on vectors gives a vector of bools, where Tide's gives the one answer a condition needs. It works in frags and verts too, and in constants and field defaults, though there the value is worked out as the game runs, not while compiling: a constant made from a vector comparison can't be a `case` label, an array's length or a setting.
 
 ## Functions
 

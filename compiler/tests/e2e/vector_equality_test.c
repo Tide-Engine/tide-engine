@@ -57,7 +57,7 @@ TIDE_TEST(vector_equality_in_constants_and_defaults)
 TIDE_TEST(vector_equality_works_each_side_once)
 {
     const Checks c = checked();
-    TIDE_CHECK(c.calls == 2); // int2(1, 0) == int2(2, 0): two calls, and false
+    TIDE_CHECK(c.calls == 102); // int2(1, 0) == int2(2, 0) - int2(1, 0): two calls, left to right
 }
 
 TIDE_TEST(lists_find_vectors_and_colors)

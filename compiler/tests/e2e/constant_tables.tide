@@ -37,6 +37,21 @@ const int CORNER_COUNT = CORNERS.count;
 const float BIGGEST = SIZES[3];
 const int LAST_KIND = int(ALL[2]);
 const int PAST = QUAD[10]; // Past the end: the element type's zero, as a list's
+const int CELL = GRID[1][2];              // An element of an element
+const Tier[3] TIERS = Tier.Values();      // Of an enum declared below, numbered first
+const int[2] ZEROS = default;
+const float[2] REWINDS = [0.25, 0.5];
+const float REWIND = REWINDS[1];          // A setting's value
+
+settings { maxRewind = REWIND; }
+
+// A list of as many values as an array holds, all of its elements' lengths together (8 * 512); one more is an error
+// that names build code
+const int[8] UP = [1, 2, 3, 4, 5, 6, 7, 8];
+const int[8] DOWN = [8, 7, 6, 5, 4, 3, 2, 1];
+const int[8][8] SQUARE = [UP, DOWN, UP, DOWN, UP, DOWN, UP, DOWN];
+const int[8][8][8] CUBE = [SQUARE, SQUARE, SQUARE, SQUARE, SQUARE, SQUARE, SQUARE, default];
+const List<int[8][8][8]> CUBES = [CUBE, default, CUBE, CUBE, CUBE, CUBE, CUBE, CUBE];
 
 singleton Tables
 {
@@ -68,6 +83,15 @@ singleton Tables
     Seed kept;
     float helper;
     int firstSize = int(SIZES[1]) + QUAD[5]; // A field's default reads them too
+    int[int(TIERS[1])] tiered;               // Mid's 5, through a constant that's Values()
+    int[CELL] six;
+    int[ZEROS[1] + 2] two;
+    int tierCase;
+    int zeros;
+    float rewind;
+    int cubes;
+    int cubesLoop;
+    int cubesEach;
 }
 
 local singleton Display
@@ -128,6 +152,24 @@ system Read(mut Tables tables, Time time)
     tables.copiedLast = tables.copied[6] + QUAD[6];
     tables.kept = SPAWNS[1];
     tables.helper = SumOf(QUAD) + SumOf(SAME_QUAD) * 100;
+    tables.tierCase = 0;
+    switch (i + 4)
+    {
+        case int(TIERS[1]): tables.tierCase = 5; break; // Values()'s element, through a constant
+        default: break;
+    }
+    switch (i == 1 ? Tier.High : Tier.Low)
+    {
+        case TIERS[2]: tables.tierCase += 10; break;
+        default: break;
+    }
+    tables.zeros = ZEROS[1] + ZEROS[i];
+    tables.rewind = time.maxRewind;
+    tables.cubes = CUBES[i * 2][1][2][7] + CUBES[1][0][0][0] * 10 + CUBES.count * 100 + CUBES[3][6][1][0] * 1000;
+    tables.cubesLoop = 0;
+    for (int k = 0; k < CUBES.count; k++) tables.cubesLoop += CUBES[k][0][1][0];
+    tables.cubesEach = 0;
+    foreach (var cube in CUBES) tables.cubesEach += cube[6][0][0];
 }
 
 local worker int Corners(int n)
@@ -155,3 +197,5 @@ view Show(mut Display shown, Tables tables)
 }
 
 scene Main { }
+
+enum Tier { Low, Mid = 5, High }

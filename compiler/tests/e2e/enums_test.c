@@ -25,6 +25,10 @@ TIDE_TEST(enums_have_their_values)
     TIDE_CHECK(Phase_Playing == 5);
     TIDE_CHECK(Phase_Over == 6); // One more than the member before it
     TIDE_CHECK(Weapon_Bow == 1);
+    // Worked out from an enum declared after them, which is numbered first
+    TIDE_CHECK(Behind_Second == 7 && Behind_Third == 9 && Ahead_First == 8 && Ahead_Next == 9);
+    TIDE_CHECK(sizeof(world.Sized.cells.at) / sizeof(world.Sized.cells.at[0]) == 7);
+    TIDE_CHECK(sizeof(world.Sized.fewer.at) / sizeof(world.Sized.fewer.at[0]) == 3);
     tide_world_init(&world, 1.0f);
     TIDE_CHECK(world.Match.phase == Phase_Warmup);
     TIDE_CHECK(world.Match.loadout.primary == Weapon_Bow); // The struct's default

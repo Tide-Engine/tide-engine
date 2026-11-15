@@ -2369,6 +2369,7 @@ static type resolve_mesh(const checker *c, const type_ref *r, const type_place p
 static type resolve_named(const checker *c, const type_ref *r, type_place place, loc at);
 static type resolve_mesh(const checker *c, const type_ref *r, type_place place, loc at);
 static type array_type(checker *c, type element, expr *size, loc at);
+static void number_named_enums(checker *c, const decl *d, int i, const expr *e, int depth);
 
 // An array holds TIDE_ARRAY_MOST elements at the most (types.h), all of its lengths together, but in an audio
 // declaration's state, where one is a delay line: as many as a state has bytes
@@ -2693,6 +2694,7 @@ static type array_type(checker *c, const type element, expr *size, const loc at)
     const type st = check_constant_expr(c, size, false, T_ERR);
     int64_t n = 0;
     if (st.kind == TY_ERROR) return T_ERR;
+    number_named_enums(c, NULL, 0, size, 0); // int[int(Tree.Oak)]: the enums it reads, numbered first
     if (!type_is_integer(st) || !fold_int(size, &n)) {
         diag_error(size->at, "an array's length is a constant int, like 'int[32] cells' or 'int[CAP] cells'");
         if (!is_constant(c, size)) diag_note("it's part of the type, so it can't change: a list grows as it needs, 'List<int>'");
@@ -10569,6 +10571,10 @@ static type check_method(checker *c, expr *e)
     }
     if (obj.kind != TY_ENTITY && obj.kind != TY_LOCAL_ENTITY) {
         diag_error(e->at, "%s has no method '" STR_FMT "'", type_name(obj), STR_ARG(e->name));
+        if (obj.kind == TY_ENUM && (str_eq_c(e->name, "Values") || str_eq_c(e->name, "Count"))) { // direction.Values()
+            diag_note(STR_FMT "() belongs to the enum, not to a value of it: '" STR_FMT "." STR_FMT "()'", STR_ARG(e->name),
+                      STR_ARG(obj.decl->qualified.len ? obj.decl->qualified : obj.decl->name), STR_ARG(e->name));
+        }
         return T_ERR;
     }
     if (str_eq_c(e->name, "Send")) return check_send(c, e);
@@ -12607,9 +12613,20 @@ static type check_index(checker *c, expr *e)
     if (index.kind != TY_ERROR && !type_assignable(T_INT_, index)) {
         diag_error(e->lhs->at, "%s index is an int, not %s", obj.kind == TY_ARRAY ? "an array's" : obj.kind == TY_STRING ? "a text's" : "a list's",
                    type_name(index));
+        if (index.kind == TY_ENUM) { // SIZES[kind]: by the member's number
+            str table, key;
+            const bool named = qualified_text(e->object, &table) && qualified_text(e->lhs, &key);
+            diag_note("index it by the member's number: '" STR_FMT "[int(" STR_FMT ")]'", STR_ARG(named ? table : str_from("table")),
+                      STR_ARG(named ? key : str_from("kind")));
+        }
     }
     if (obj.kind == TY_RECORD && obj.decl->array_of) return (type){TY_RECORD, obj.decl->array_of}; // touches[i]
     if (obj.kind == TY_ARRAY) return array_element(obj); // cells[i], or the element's zero past the end
+    if (obj.kind == TY_STRING && c->constants_only) { // A constant indexes arrays and lists; text's characters are code's
+        diag_error(e->at, "a constant value can't read a character of text: it can read an element of a constant array or list");
+        diag_note("write the character itself, like 'a', or read it from the text in code");
+        return T_ERR;
+    }
     if (obj.kind == TY_STRING) return T_CHAR_; // name[i]: its character there, counting characters, or '\0' past either end
     if (obj.kind != TY_LIST) {
         diag_error(e->at, "only lists, arrays, maps and text have elements to index, and this is %s", type_name(obj));
@@ -15680,12 +15697,35 @@ int switch_choice(const expr *e)
     return -1;
 }
 
-// The [a, b, c] a constant array or list is, through the constants it names: NULL for one made some other way
-// (build code's, another expression's).
+// What a constant array or list is while compiling: the [a, b, c] it's written as, the `Phase.Values()` it is, or the
+// `default` of all zeros, through the constants it names, the conditionals and switches it picks one of, and the
+// tables it's an element of (GRID[1] of GRID[1][2]). NULL for one made some other way (build code's, another
+// expression's).
 static const expr *constant_items(const expr *e)
 {
     for (int depth = 0; e && depth < 64; depth++) {
-        if (e->kind == E_LIST) return e;
+        if (e->kind == E_LIST || e->kind == E_DEFAULT || (e->kind == E_METHOD && e->call == CALL_ENUM_VALUES)) return e;
+        if (e->kind == E_CONDITIONAL) {
+            bool cond;
+            if (!fold_bool(e->cond, &cond)) return NULL;
+            e = cond ? e->lhs : e->rhs;
+            continue;
+        }
+        if (e->kind == E_SWITCH) {
+            const int choice = switch_choice(e);
+            if (choice < 0) return NULL;
+            e = e->args.items[choice];
+            continue;
+        }
+        if (e->kind == E_INDEX) {
+            const expr *outer = constant_items(e->object);
+            int64_t i;
+            if (!outer || outer->kind == E_METHOD || !fold_int(e->lhs, &i)) return NULL;
+            if (outer->kind == E_DEFAULT) return outer; // All zeros, every element too
+            if (i < 0 || i >= outer->args.count) return NULL;
+            e = outer->args.items[i];
+            continue;
+        }
         if ((e->kind != E_NAME && e->kind != E_MEMBER) || e->bind != BIND_CONST) return NULL;
         const decl *k = e->constant;
         if (k->index != 2 || k->build_fn) return NULL;
@@ -15693,6 +15733,19 @@ static const expr *constant_items(const expr *e)
         e = k->value;
     }
     return NULL;
+}
+
+// TABLE[i] of a constant table by a constant index, while compiling: the expression its element is, or NULL with
+// `*zero` for the element type's zero (past either end, or of a `default`). False when it isn't known; a Values()
+// element is fold_int's.
+static bool constant_element(const expr *e, const expr **element, bool *zero)
+{
+    const expr *items = constant_items(e->object);
+    int64_t i;
+    if (!items || items->kind == E_METHOD || !fold_int(e->lhs, &i)) return false;
+    *zero = items->kind == E_DEFAULT || i < 0 || i >= items->args.count;
+    *element = *zero ? NULL : items->args.items[i];
+    return true;
 }
 
 static bool fold_int(const expr *e, int64_t *out)
@@ -15706,19 +15759,21 @@ static bool fold_int(const expr *e, int64_t *out)
     }
     case E_INDEX: { // CARDS[2] and Phase.Values()[1], of a constant: that element, or the zero past either end
         if (!type_is_integer(e->type) && e->type.kind != TY_ENUM && e->type.kind != TY_CHAR) return false;
-        if (!fold_int(e->lhs, &l)) return false;
-        if (e->object->kind == E_METHOD && e->object->call == CALL_ENUM_VALUES) {
-            const decl *d = e->object->type_decl;
+        const expr *items = constant_items(e->object);
+        if (items && items->kind == E_METHOD) { // Phase.Values()[1], or ALL[1] of a constant that's Phase.Values()
+            if (!fold_int(e->lhs, &l)) return false;
+            const decl *d = items->type_decl;
             *out = l >= 0 && l < d->members.count ? d->members.items[l].number : 0;
             return true;
         }
-        const expr *items = constant_items(e->object);
-        if (!items) return false;
-        if (l < 0 || l >= items->args.count) {
+        const expr *element;
+        bool zero;
+        if (!constant_element(e, &element, &zero)) return false;
+        if (zero) {
             *out = 0;
             return true;
         }
-        if (!fold_int(items->args.items[l], out)) return false;
+        if (!fold_int(element, out)) return false;
         if (e->type.kind == TY_BYTE) *out = (uint8_t)*out; // As the element is kept
         return true;
     }
@@ -15746,7 +15801,7 @@ static bool fold_int(const expr *e, int64_t *out)
                 return true;
             }
             const expr *items = e->object->type.kind == TY_LIST ? constant_items(e->object) : NULL;
-            if (items) {
+            if (items && items->kind == E_LIST) {
                 *out = items->args.count;
                 return true;
             }
@@ -16786,6 +16841,24 @@ static const expr *first_variable(const checker *c, const expr *e)
     return found;
 }
 
+// The first name in `e` of a constant build code makes, which is read as the game runs: NULL if there's none.
+static const expr *first_built_constant(const checker *c, const expr *e)
+{
+    if (!e) return NULL;
+    decl *other;
+    if (e->kind == E_NAME) {
+        const decl *named = lookup(c->prog, c->unit, e->name, NAME_CONST, &other);
+        return named && build_constant(c, named) ? e : NULL;
+    }
+    const expr *found = first_built_constant(c, e->object);
+    if (!found) found = first_built_constant(c, e->cond);
+    if (!found) found = first_built_constant(c, e->lhs);
+    if (!found) found = first_built_constant(c, e->rhs);
+    for (int i = 0; !found && i < e->args.count; i++) found = first_built_constant(c, e->args.items[i]);
+    for (int i = 0; !found && i < e->inits.count; i++) found = first_built_constant(c, e->inits.items[i].value);
+    return found;
+}
+
 // After saying a value isn't constant: the constant a name in it may have
 // meant, if one is spelled like it.
 static void suggest_constant(const checker *c, const expr *value)
@@ -16835,14 +16908,30 @@ static bool constant_element_ok(const type element, const char *what, const loc 
     if (holds_heap(element) || holds_grid(element)) {
         diag_error(at, "a constant %s holds plain values, not %s: they're the build's bytes, the same on every machine",
                    what, type_name(element));
-        if (element.kind == TY_STRING) diag_note("for text, a switch expression on the index picks one: "
-                                                 "'i switch { 0 => \"Easy\", 1 => \"Hard\", _ => \"\" }'");
-        else diag_note("keep what it holds in plain fields of a struct, or make the value in code where it's used");
+        const field *f = NULL; // A struct's field that holds what a table can't
+        for (int i = 0; element.kind == TY_STRUCT && !f && i < element.decl->fields.count; i++) {
+            const type t = element.decl->fields.items[i].type;
+            if (holds_heap(t) || t.kind == TY_GRID) f = &element.decl->fields.items[i];
+        }
+        if (element.kind == TY_STRING || (element.kind == TY_ARRAY && holds_text(element))) {
+            diag_note("for text, a switch expression on the index picks one: 'i switch { 0 => \"Easy\", 1 => \"Hard\", _ => \"\" }'");
+        } else if (f && f->type.kind == TY_STRING) {
+            diag_note("its field '" STR_FMT "' is text: keep a number in its place, and pick the text with a switch "
+                      "expression on it where it's read, 'n switch { 0 => \"Easy\", _ => \"Hard\" }'", STR_ARG(f->name));
+        } else if (f) {
+            diag_note("its field '" STR_FMT "' is %s, which a table can't hold: keep plain values in the struct, or make "
+                      "the value in code where it's used", STR_ARG(f->name), type_name(f->type));
+        } else {
+            diag_note("keep what it holds in plain fields of a struct, or make the value in code where it's used");
+        }
         return false;
     }
     if (holds_callable(element) || holds_resource_but_font(element) || element.kind == TY_MESH) {
         diag_error(at, "a constant %s can't hold %s: it belongs to this machine's rendering, in local state", what,
                    type_name(element));
+        if (holds_callable(element)) diag_note("keep it in a field of a local singleton, which a view sets");
+        else diag_note("declare the build's images and meshes as assets, 'asset Texture icon = \"icon.png\";', and keep ones "
+                       "made as the game runs in a field of a local singleton");
         return false;
     }
     if (element.kind == TY_ENTITY || element.kind == TY_LOCAL_ENTITY) {
@@ -16924,11 +17013,21 @@ static type constant_type(const checker *c, const decl *k, const bool built)
 
 // const List<int> QUAD = [0, 1, 2, 0, 2, 3];: a list written out, or another list constant, whose literal it keeps
 // (decl.list_literal) with the array type of as many (decl.list_array), so `QUAD[i]` and `QUAD.count` read the
-// elements where they're written. One that build code makes is the pack's, and has neither.
+// elements where they're written. That array holds TIDE_ARRAY_MOST values at the most, as any array does, all of
+// its elements' lengths together: a longer list is build code's. One that build code makes is the pack's, and has
+// neither.
 static void settle_list_constant(checker *c, decl *k)
 {
     const expr *v = k->value;
     if (v->kind == E_LIST) {
+        const int64_t values = (int64_t)v->args.count * array_elements(list_element(k->return_type));
+        if (values > TIDE_ARRAY_MOST) {
+            diag_error(v->at, "a list constant written out holds %d values at the most, all of its elements' lengths "
+                              "together, and this one has %lld", TIDE_ARRAY_MOST, (long long)values);
+            diag_note("build code makes a longer one, which the game reads from its pack: 'const List<int> MANY = Many();', "
+                      "with 'build List<int> Many() { return [...]; }'");
+            return;
+        }
         k->list_literal = (expr *)v;
         if (v->args.count > 0) {
             k->list_array = array_of(c->prog, list_element(k->return_type), v->args.count, v->at);
@@ -16964,11 +17063,19 @@ static void check_constant(checker *c, decl *k)
             build_constant_function(c, k);
         }
     } else if ((void)(k->return_type = constant_type(c, k, false)), !is_constant(c, k->value)) {
-        diag_error(k->value->at, "a constant's value must be a constant expression");
-        diag_note("use literals, other constants, constructors like float3(...), struct values of constants, Math "
-                  "functions and operators, or a call that build code makes it with; a constant can't read fields, "
-                  "singletons or Time");
-        suggest_constant(c, k->value);
+        const expr *built = first_built_constant(c, k->value);
+        if (built) { // const List<float> SAME = CURVE;, of a CURVE build code makes
+            diag_error(built->at, "'" STR_FMT "' is made by build code, so another constant can't be worked out from it",
+                       STR_ARG(built->name));
+            diag_note("read '" STR_FMT "' in code or in a field's default, or make this constant with build code too, by "
+                      "calling a function", STR_ARG(built->name));
+        } else {
+            diag_error(k->value->at, "a constant's value must be a constant expression");
+            diag_note("use literals, other constants, constructors like float3(...), struct values of constants, Math "
+                      "functions and operators, or a call that build code makes it with; a constant can't read fields, "
+                      "singletons or Time");
+            suggest_constant(c, k->value);
+        }
     } else {
         const type t = check_constant_expr(c, k->value, true, k->return_type);
         if (k->return_type.kind != TY_ERROR && t.kind != TY_ERROR && !type_assignable(k->return_type, t)) {
@@ -17082,6 +17189,16 @@ static bool setting_float(const expr *e, float *out, const int depth)
         return true;
     }
     if (e->bind == BIND_CONST) return setting_float(e->constant->value, out, depth + 1);
+    if (e->kind == E_INDEX) { // RATES[1]: an element of a constant table, by a constant index
+        const expr *element;
+        bool zero;
+        if (!constant_element(e, &element, &zero)) return false;
+        if (zero) {
+            *out = 0.0f;
+            return true;
+        }
+        return setting_float(element, out, depth + 1);
+    }
     if (e->kind == E_UNARY) {
         if (!setting_float(e->lhs, out, depth + 1)) return false;
         if (e->op == T_MINUS) *out = -*out;
@@ -17223,6 +17340,7 @@ static void check_settings(checker *c)
             }
             const type t = check_constant_expr(c, value, true, f->type);
             if (t.kind == TY_ERROR) continue;
+            number_named_enums(c, NULL, 0, value, 0); // tickRate = int(Rate.Fast) * 10: settings come before the enums
             if (!type_assignable(f->type, t)) {
                 diag_error(value->at, "'" STR_FMT "' is %s, not %s", STR_ARG(f->name), type_name(f->type), type_name(t));
                 continue;
@@ -18585,8 +18703,100 @@ static void check_enum_storage(const checker *c, decl *d)
     }
 }
 
+static void check_enum(checker *c, decl *d);
+
+// Member `i` of enum `d` is worked out from `e`, checked: the other enums whose members it reads, through the constants
+// it names too, are numbered before it, wherever they're declared. What can't be numbered first is an error: a
+// member of its own enum at or after it, and an enum whose members are being worked out from this one's. With no
+// `d`, `e` is another value worked out while declarations are (an array's length, a setting), before the enums are.
+static void number_named_enums(checker *c, const decl *d, const int i, const expr *e, const int depth)
+{
+    if (!e || depth > 64) return;
+    const decl *owner = NULL;
+    int member = -1; // Which of its members is read, or -1 for all of them
+    if (e->kind == E_MEMBER && str_eq_c(e->member, "count") && e->object->type.kind == TY_ARRAY) return; // Its type's
+    if (e->kind == E_INDEX) {
+        number_named_enums(c, d, i, e->lhs, depth + 1); // Numbered first, so the index can be worked out
+        const expr *items = constant_items(e->object);
+        const expr *element;
+        bool zero;
+        if (items && items->kind == E_METHOD) { // Phase.Values()[2], or ALL[2] of a constant that's Phase.Values()
+            int64_t k;
+            owner = items->type_decl;
+            if (fold_int(e->lhs, &k)) {
+                if (k < 0 || k >= owner->members.count) return; // Past either end: no member's number, a zero
+                member = (int)k;
+            }
+        } else if (constant_element(e, &element, &zero)) { // TABLE[1]: only that element is read
+            if (!zero) number_named_enums(c, d, i, element, depth + 1);
+            return;
+        } else {
+            number_named_enums(c, d, i, e->object, depth + 1);
+            return;
+        }
+    } else if (e->kind == E_METHOD && e->call == CALL_ENUM_VALUES) {
+        owner = e->type_decl;
+    } else if (e->kind == E_MEMBER && e->enum_member && e->type.kind == TY_ENUM && e->type.decl) {
+        owner = e->type.decl;
+        const ptrdiff_t at = e->enum_member - owner->members.items;
+        if (at >= 0 && at < owner->members.count) member = (int)at;
+    } else if ((e->kind == E_NAME || e->kind == E_MEMBER) && e->bind == BIND_CONST) {
+        if (e->constant->index == 2) number_named_enums(c, d, i, e->constant->value, depth + 1); // What it's worked out from
+        return;
+    } else {
+        number_named_enums(c, d, i, e->object, depth + 1);
+        number_named_enums(c, d, i, e->cond, depth + 1);
+        number_named_enums(c, d, i, e->lhs, depth + 1);
+        number_named_enums(c, d, i, e->rhs, depth + 1);
+        for (int k = 0; k < e->args.count; k++) number_named_enums(c, d, i, e->args.items[k], depth + 1);
+        for (int k = 0; k < e->inits.count; k++) number_named_enums(c, d, i, e->inits.items[k].value, depth + 1);
+        return;
+    }
+    if (!owner || owner->builtin || owner->kind != DECL_ENUM) return;
+    if (!d) {
+        if (owner->numbered == 0) {
+            const unit *const outer = c->unit;
+            c->unit = owner->unit;
+            check_enum(c, (decl *)owner);
+            c->unit = outer;
+        }
+        return;
+    }
+    const str name = d->members.items[i].name;
+    if (owner == d) {
+        if (member >= 0 && member < i) return;
+        if (member == i) {
+            diag_error(e->at, "'" STR_FMT "." STR_FMT "' is worked out from itself", STR_ARG(d->name), STR_ARG(name));
+        } else if (member > i) {
+            diag_error(e->at, "'" STR_FMT "." STR_FMT "' is worked out from '" STR_FMT "." STR_FMT "', which comes after it "
+                              "and has no number yet", STR_ARG(d->name), STR_ARG(name), STR_ARG(d->name),
+                       STR_ARG(d->members.items[member].name));
+        } else {
+            diag_error(e->at, "'" STR_FMT "." STR_FMT "' is worked out from '" STR_FMT ".Values()', whose members from '" STR_FMT
+                              "' on have no numbers yet", STR_ARG(d->name), STR_ARG(name), STR_ARG(d->name), STR_ARG(name));
+        }
+        diag_note("a member's value can read the members before it in its own enum, and any other enum's");
+        return;
+    }
+    if (owner->numbered == 1) {
+        diag_error(e->at, "'" STR_FMT "." STR_FMT "' is worked out from '" STR_FMT "', whose members are being worked out "
+                          "from '" STR_FMT "': enums can't be numbered from each other in a circle", STR_ARG(d->name),
+                   STR_ARG(name), STR_ARG(owner->name), STR_ARG(d->name));
+        diag_note("give one of them numbers of its own");
+        return;
+    }
+    if (owner->numbered == 0) { // Declared after it: numbered now, as its own unit
+        const unit *const outer = c->unit;
+        c->unit = owner->unit;
+        check_enum(c, (decl *)owner);
+        c->unit = outer;
+    }
+}
+
 static void check_enum(checker *c, decl *d)
 {
+    if (d->numbered) return; // Numbered already, before an enum declared ahead of it read its members
+    d->numbered = 1;
     if (d->members.count == 0) diag_error(d->at, "enum '" STR_FMT "' needs at least one member", STR_ARG(d->name));
     check_enum_storage(c, d);
     const int64_t most = d->width == 1 ? 255 : d->width == 2 ? 65535 : INT32_MAX;
@@ -18601,7 +18811,9 @@ static void check_enum(checker *c, decl *d)
         }
         if (m->value) {
             int64_t number;
-            const type t = is_constant(c, m->value) ? check_constant_expr(c, m->value, false, T_ERR) : T_INT_;
+            const bool constant = is_constant(c, m->value);
+            const type t = constant ? check_constant_expr(c, m->value, false, T_ERR) : T_INT_;
+            if (constant && t.kind != TY_ERROR) number_named_enums(c, d, i, m->value, 0); // What it reads, numbered first
             if (t.kind == TY_ERROR) {
             } else if (!type_assignable(T_INT_, t) || !fold_int(m->value, &number)) {
                 diag_error(m->value->at, "a member's value is an int, like '" STR_FMT " = 3'", STR_ARG(m->name));
@@ -18634,6 +18846,7 @@ static void check_enum(checker *c, decl *d)
             }
         }
     }
+    d->numbered = 2;
 }
 
 // Puts `d` in prog->structs after the structs it contains. A struct can't

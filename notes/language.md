@@ -27,7 +27,8 @@ Owner approved the recommendation ("go with your recommendations"); the rules ar
   arrays' bounds-checked reader), `.count` as an int, `foreach` through `st_foreach`'s array path; an array
   constant was already an array value there. A list constant read whole, or passed to a function taking a list
   (`refuse_whole_list`, also in the call's data argument), is an error naming `QUAD[i]`, `.count` and `foreach`;
-  an empty one, or one over 4096 values (`SHADER_LISTED_MOST`), is refused where it's read.
+  an empty one, or one over 4096 values (`SHADER_LISTED_MOST`), is refused where it's read (the checker refuses
+  the longer ones first since the review fixes below).
 - Tests: `tidec_e2e_constant_tables` (float/int2/float3/struct/enum/byte/nested arrays and lists, `Values()`, type
   aliases, by `int(kind)`, past either end, `[]`, a list constant naming another, folded elements in constants, a
   `case` and an array length, a field default, Contains/IndexOf, a function taking a `List<int>`, a world copy
@@ -41,7 +42,34 @@ Owner approved the recommendation ("go with your recommendations"); the rules ar
 - Gaps: text in tables (arrays of strings; the note names a switch expression); `foreach` over a list constant on
   the CPU copies its literal into scratch once per loop (an array constant's doesn't); a list constant read whole
   is a scratch list made where it's read, not a shared one; on the GPU the table is written inline at each read,
-  not as a module-scope `const`; no `==` between tables.
+  not as a module-scope `const`; no `==` between tables; a conditional of two list or array literals
+  (`WIDE ? [8, 16] : [4, 8]`) has no type to give them (name two constants instead, which fold).
+- **Review fixes (2026-11-15).**
+  - A list constant whose hidden array would hold more than `TIDE_ARRAY_MOST` values, all of its elements' lengths
+    together (`List<int[1024]>` of five), was accepted and wrote C that didn't compile: a long array has no
+    by-value `tide_arrayN_get` (gen_array_helpers). Reading it out of a scratch list instead would copy the whole
+    literal at every read and grow scratch on every loop pass, and a pointer to a compound literal puts it on the
+    stack in an unoptimized build, so `settle_list_constant` refuses it, as the GPU did, with a note naming build
+    code (whose list is the pack's, any length). The GPU's own 4096 check (`SHADER_LISTED_MOST`) is now one no
+    program reaches. Fixture `constant_list_too_long`; the e2e has a list of exactly 4096 (`CUBES`, 8 x 512).
+  - `constant_items` returns what a table is while compiling: the literal, a `Values()` call (so `case ALL[1]:` and
+    `int[int(TREES[1])]` fold for `const T[3] ALL = T.Values();`), a `default`'s zeros, through constant
+    conditionals and switches and an element of an element (`GRID[1][2]`). `constant_element` is its element by
+    a constant index, which `fold_int` and now `setting_float` use (`maxRewind = REWIND;` of `REWINDS[1]`, the LOD
+    multiplier too).
+  - Text's character under `constants_only` (`const char FIRST = NAME[0];`, a field default) is an error in
+    `check_index`, as it was before `is_constant` took `E_INDEX`; tidec doesn't fold it and the GPU has no text.
+  - A constant naming one build code makes (`const List<float> SAME = CURVE;`, `CURVE[1]`) says so
+    (`first_built_constant`) instead of the generic "must be a constant expression", naming code, field defaults,
+    and build code making this one too (`Head(CURVE)`, which works: build code reads other built constants).
+  - Notes: an enum index (`SIZES[kind]`) writes `SIZES[int(kind)]`; a struct element holding text names the field
+    and the switch; a resource element names assets and local fields.
+  - Built array constants (`const int[4] SQUARES = Squares();`, which `constant_type` took once arrays were
+    constants) are owned: `e2e/build_code` reads one by index, count, past its end and foreach.
+  - Tests: e2e `constant_tables` (`TIERS` of an enum declared after its readers, folded into an array length and two
+    cases; `GRID[1][2]`; `default`'s zeros; `maxRewind` from a table; 4096 values read by index, loop and foreach),
+    `build_code`, fixtures `constant_list_too_long`, `constant_text_character`, `constant_names_built_list`,
+    `constant_array_enum_index`, `constant_array_of_struct_text`, `constant_list_of_textures`.
 
 Validation of the three 2026-11-14 completions above (vector equality, enum order and `Values()`, constant tables),
 Windows, Clang 23.1.2, Node 24.22.1: `sanitize` passes the three new E2Es, the related `constants`,
@@ -77,6 +105,18 @@ Owner approved the recommendation ("go with your recommendations"); the rules ar
   (golden, spirv-val, FXC), `platform/tests/shaders.tide` Sink checks against CPU Marks, errors
   `enum_order_other_enum`, `enum_order_int`, `enum_values_arguments`, `enum_values_instance`,
   `enum_values_wrong_length`; the LSP case above.
+- **Numbering order (review fix, 2026-11-15).** Enums were numbered in declaration order in the "declarations"
+  phase, after constants, settings and field types, so a member, an array length (`int[int(Tree.Oak)]`) or a
+  setting (`tickRate = int(Rate.Fast)`) that read an enum not numbered yet folded it as 0, silently for a member
+  (`A_X = 0` in game.h). `decl.numbered` (0, 1 checking, 2) and `number_named_enums` walk the checked value,
+  through constants, `Values()` and table elements, and `check_enum` each unnumbered enum it reads first, in that
+  enum's unit; `array_type` and `check_settings` call it with no enum. In a member's value, its own enum's member
+  at or after it (`Step.Values()[2]` in member 2, `First = int(Step.Second)`) and an enum being numbered (a circle)
+  are errors. `.count` of an array reads no member. `kind.Values()` / `kind.Count()` of a value get a note naming
+  the enum's. Tests: e2e `enums` (`Ahead` from `Behind` declared after it, `Behind.Third` from `BEHIND[0]`, a
+  singleton's two lengths), errors `enum_member_after`, `enum_member_later`, `enum_members_circle`, the two
+  `_instance` fixtures' notes. A member that reads an enum still being numbered at an earlier member is refused as
+  a circle, though it could be worked out.
 
 ## `==` and `!=` on vectors and colors (2026-11-14)
 
@@ -111,7 +151,11 @@ Owner approved the recommendation ("go with your recommendations"); every rule i
   `rect_compare`, `color_order`, `color_compare_vector`, `list_contains_matrix`; `struct_compare` still passes.
 - Generated C changes only for games that compare vectors (new calls) and for games with lists of vectors or colors,
   which now also get the three unused-unless-called `index_of`/`contains`/`remove` helpers.
-- Gaps: no `==` on arrays or structs (unchanged); no folding of int vector equality for compile-time choices.
+- Gaps: no `==` on arrays or structs (unchanged); no folding of int vector equality for compile-time choices
+  (math.md says so: a constant from one isn't a `case`, a length or a setting).
+- Review fixes (2026-11-15): the e2e's evaluation-order check is `Next(c) == Next(c) - int2(1, 0)`, true only left to
+  right (it compared (1, 0) with (2, 0), false either way); spec's `Math.Hash` bullet, which this entry's edit had
+  cut into, is whole again; color `==` is in views.md and the spec's Views and drawing colors bullet.
 
 ## world.Edit, and `with ownership` on command handlers (2026-11-14)
 

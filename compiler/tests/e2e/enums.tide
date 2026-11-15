@@ -15,6 +15,12 @@ const int ALIASES = Aliases.Count();
 const int FORWARD_COUNT = Later.Count();
 enum Later { A = Direction.Count(), B }
 
+// Members worked out from an enum declared after them, and an array's length too: that enum is numbered first
+enum Ahead { First = int(Behind.Second) + 1, Next }
+singleton Sized { int[int(Behind.Second)] cells; int[int(BEHIND[0])] fewer; }
+const Behind[3] BEHIND = Behind.Values();
+enum Behind { One = 3, Second = int(Phase.Values()[1]) + 2, Third = int(BEHIND[0]) * 3 } // Third: a member before it
+
 const Weapon SHORT_BOW = .Bow;
 singleton Shorthand { Weapon weapon = .Bow; int checks; }
 Weapon ShortReturn(Weapon weapon = .Sword) { return weapon == .Sword ? .Bow : .Sword; }

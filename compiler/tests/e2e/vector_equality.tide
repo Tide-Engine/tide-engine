@@ -88,10 +88,10 @@ system Compare(mut Checks checks, mut Counter counter)
     checks.colors = c == Color(1, 0.5, 0.25, 1) && Color.red == Color(1, 0, 0) && c != Color.white;
     checks.alphaDiffers = Color(1, 0, 0, 0.5) != Color.red;
     checks.defaults = float3(0) == default && default == int2(0, 0) && f != default;
-    // Each side once, left to right
+    // Each side once, left to right: (1, 0) == (2, 0) - (1, 0) only in that order; the other is (2, 0) == (0, 0)
     counter.calls = 0;
-    bool firstWins = Next(counter) == Next(counter);
-    checks.calls = counter.calls + (firstWins ? 100 : 0);
+    bool inOrder = Next(counter) == Next(counter) - int2(1, 0);
+    checks.calls = counter.calls + (inOrder ? 100 : 0);
     // A list's Contains, IndexOf and Remove compare elements as == does
     mut List<int2> cells = [int2(0, 0), int2(2, 3), int2(4, 5)];
     checks.found = cells.Contains(int2(2, 3)) && !cells.Contains(int2(3, 2)) ? 1 : 0;

@@ -1,4 +1,5 @@
 // expect: Direction has no method 'Count'
+// expect: Count() belongs to the enum, not to a value of it: 'Direction.Count()'
 enum Direction { North, East }
 int Count(Direction direction) { return direction.Count(); }
 scene Main { }

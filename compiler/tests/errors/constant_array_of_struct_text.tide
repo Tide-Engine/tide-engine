@@ -1,0 +1,5 @@
+// expect: a constant array holds plain values, not Level: they're the build's bytes, the same on every machine
+// expect: its field 'title' is text: keep a number in its place, and pick the text with a switch expression on it
+struct Level { int size; string title; }
+const Level[2] LEVELS = [Level { size = 8, title = "Easy" }, Level { size = 16, title = "Hard" }];
+scene Main { }

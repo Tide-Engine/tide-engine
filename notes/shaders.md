@@ -5,7 +5,8 @@ written out is now read the same way: `QUAD[i]` is `tide_el<n>(array<T, N>(...),
 array reader `need_array` makes for `decl.list_array`), `QUAD.count` is N, `foreach` goes through `st_foreach`'s array
 path. `Enum.Values()` is `array<i32, N>(numbers)`. No uniform, binding or translator change. A list constant read whole
 (`refuse_whole_list`, from BIND_CONST names, members and a function's list argument), an empty one, or one over 4096
-values is refused with what to write. Goldens `constant_tables` and `enum_values` (spirv-val and FXC too);
+values is refused with what to write; since 2026-11-15 the checker refuses a list constant of more than 4096 values,
+all of its elements' lengths together, on the CPU too, so the GPU's own count check is one no program reaches. Goldens `constant_tables` and `enum_values` (spirv-val and FXC too);
 `platform/tests/shaders.tide` compares them with CPU values. Rules: language.md, same date.
 
 ## Vector and color equality (2026-11-14)
