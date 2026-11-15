@@ -313,6 +313,8 @@ meshes-and-textures.md, views.md and language/math.md. No sRGB target Format or 
 - Unity marked replay requires Player Color Space Linear, diagnosed once in Gamma projects without changing
   settings or unmarked resources. The actual Gamma GPU strips sRGB storage despite explicit formats;
   notes/unity.md records the measured limitation and Unity replay validation.
+  Corrected 2026-11-15: Gamma projects replay marked images through a linear-light RGBA16F copy decoded from
+  their stored bytes (TideSrgbDecode.shader), with no refusal; notes/unity.md, top section.
 
 Final integration after merging typed numeric images from origin/dev: Windows Clang 23.1.2 ASan
 passes 65 focused CTests; Node 24.22.1/web-debug passes 57 focused CTests. These include 37 Linear

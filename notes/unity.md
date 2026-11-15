@@ -1,3 +1,90 @@
+## The replay of 2026-11-14's GPU work, Gamma [Linear] images, multisampled mipmaps, triangle sides (2026-11-15)
+
+Everything the day's readback, number-image, checker-format and capability work records is now replayed and run
+in Unity (6000.6.0f1, Windows, hidden batch with the GPU, `-noAudio`), and the review's Unity findings are closed.
+
+**Built in `TideRender.cs`:**
+
+- **[Linear] images in Gamma projects** (review finding 28; spec, Provisional picks for `[Linear]`). Unity strips
+  sRGB formats in Gamma, so a marked image keeps its bytes UNorm in `Image.encoded` and is read through a
+  linear-light RGBA16F copy (`Decoded`), drawn by `Runtime/Resources/TideSrgbDecode.shader` (a texel load, sRGB
+  decoded, alpha kept) for each written texture, array, array part, cube face and sRGB BC1/BC3 or RGBA8 level
+  (authored levels each decoded; missing ones made from the copy with GenerateMips, so in linear light). A copy a
+  camera draw of the frame read is renamed first (`DecodedAgain`). Color-10 attachments (the renderer's [Linear]
+  sampling copies) are RGBA16F in Gamma. The refusal (`srgbRefused`, `SrgbAvailable`, its error) is gone, and the
+  three sRGB witnesses run in both color spaces (`GammaProjectsExplainMarkedImagesAndKeepUnmarkedImages` removed).
+  Cost: Gamma projects only, twice an RGBA8 image's memory, more for BC.
+- **A multisampled color's smaller images** (findings 12/18, the Unity half; WebGPU's and Vulkan's were built).
+  A blendable color of a multisampled target is marked `drawn`; MIPMAPS of its id resolves the samples into a
+  one-sample copy with a chain (`mipped`, `ResolveAntiAliasedSurface`, with the drawn image bound first because
+  OpenGL Core's Unity resolves only its bound target and asserts otherwise), GenerateMips, and binds the copy for
+  reads until a pass draws into the target again (`Shown`). A copy a camera draw read this frame is renamed.
+- **A cube's faces share one 2D color image** (finding 17): `Image.faceColor`, made with the first face; a pass
+  that doesn't clear copies its face in first. Five of the six extra images a drawn cube had are gone. Not done:
+  counting the one left in the engine's held GPU memory (`made_face` counts the face's depth alone): gpu.h has no
+  way for a backend to say it holds an image of its own per cube, and adding one changes the runtime's interface.
+- **Stand-ins of each read's own dimension** (`EmptyRead`): a far depth (kinds 1, 2, 7), a dark cube, a white
+  array, zero RGBA32F and R32I arrays (13, 14), zero number images and volumes. Only reached where no image is bound.
+- **Smaller images only for blendable colors**: drawn arrays and cubes of R32F, RGBA32F or R32I, and ARRAY_OF images
+  of formats 5-7, get no chain (they're loaded, never filtered; Vulkan and tide.js do the same).
+- **Integer images are render textures.** Unity makes no Texture2D or Texture2DArray of R32_SInt or
+  R32G32B32A32_SInt ("not supported for Sample usage"): a Grid2<int> texture and the renderer's zero 32-bit int
+  layers (D's `layers_fallback`, which relied on `MakeArrayOf`'s zeros) failed to be made at all. `NewIntegers`
+  makes an R32_SInt/RGBA32_SInt render texture with random writes, and `IntegersInto` copies a box of pixels into
+  it from a raw buffer (`TideCompute.compute`'s TideIntsTo2D/Array/3D) in the frame's order, a write of a part
+  after `Written`'s rename. Integer volumes upload the same way (their Texture3D upload of an integer format hit
+  the same refusal); a device without load/store for the format gets the volume message.
+- **A triangle's side** (findings 29, 45). Run, `this.front` was wrong two ways. Unity turns the rasterizer's
+  sides round (culling and SV_IsFrontFace together) whenever a render texture is bound on Direct3D, Vulkan and
+  Metal, for the projection it flips there, so in a target's pass, which Tide doesn't flip, fronts read as backs
+  and Cull.Back culled fronts, with or without a camera drawing. And in the camera's own pass `tidehl_facing`
+  turned SV_IsFrontFace round a second time for `_ProjectionParams.x < 0`, though culling there was right. Now a
+  target's pass on those APIs sets `SetInvertCulling(true)` until its End, and `tidehl_facing`
+  (compiler/src/hlsl.c) turns the side only for Tide's own flip (`_TideFlip < 0`, OpenGL Core's targets).
+- **OpenGL Core's blends of several targets** (found by the new tests' order; older than them, as dev's renderer
+  fails the same way). A blend said for all targets at once (`Blend [..]` with no index) is set by Unity's OpenGL
+  Core for every draw buffer, but a later draw's `Blend 1 One Zero`, which it believes is set already, is skipped:
+  after a depth-alone draw (Blend Zero One), the number image at index 1 of a later several-image draw kept its
+  old pixels, while the int at index 2 (never blended) was written. `tide_hlsl_unity_shader` now says each of the
+  four targets' blends by its index (`Blend i [_TideSrcColor] ...`, numbers' `Blend i One Zero`). Every generated
+  shader's text changes; keys don't. Unity's own draws (URP's) still set blends for all targets at once between
+  Tide's passes; no test shows a difference from that.
+
+**Checked-in assets.** The Sample's read kernels match what `tide unity` writes byte for byte. 00000000c0de0066
+(ReadTargetLayerNumbers) was stale: it sampled where the WGSL now loads; ComputeReplayTests passes read kind 13 and
+no sampler for it. Added: 69 Float2, 6a FaceNumbers, 6b LayerInts, 6c-6f the volume kernels, and hand-written test
+WGSL with HLSL from `tide_wgsl_translate --hlsl`: triangle_side (c0de0016), flat_int (17), depth_plane (18, a sloped
+plane), write_depth (19), compare_layers (1a, a depth array's compare), sample_level (1b, a kernel's SampleLevel).
+Every test .shader was written again for the blend and facing changes (c0de0012 and c0de0013 were stale, their
+prelude older than the reversed source depth; c0de0002 has no WGSL source and was edited to the same header). The
+Sample's `com.tide.game/Resources/TideShaders` is what this tide writes for it now (the rest of com.tide.game, whose
+hash is the build's, is left as it was).
+
+**Replay tests added** (ComputeReplayTests): ReadKernelsReadPartsBandsAndPairs, ReadKernelsReadFacesAndLayersOfNumbers
+(an R16F cube face, R32F/RGBA32F/R32I layers, the zero 32-bit layer stand-ins), ReadKernelsReadVolumesWholeAndInBoxes,
+ReadKernelsReadMultisampledAndDepthAloneDepths, NumberGridTexturesKeepTheirNumbers, IntegerImagesTakeWritesOfParts,
+MultisampledTargetsHaveSmallerImagesOfWhatTheyResolveTo, TrianglesFrontIsWhereTheirCornersGoClockwise (a target's
+pass, the camera's own, a target's pass with no camera), FlatIntsComeFromTheFirstCorner (OpenGL Core: the last),
+SlopeBiasPushesAwayWherePositive, FragsWriteTheDepthTheySay, DepthArraysCompareTheirLayers,
+HalfFloatVolumesOfFourBlendEveryAxis, SrgbImagesKeepEveryLevelAndLayerAsStored. One expectation corrected: a cleared
+RGBA32F layer's alpha is 1, as Vulkan's and WebGPU's clears give. `platform/tests/embed.c`
+`embed_render_target_packets_name_formats_by_number` (finding 48) pins TARGET packets' format words as literals
+(0x9671, 0x40005, 10, 0), their color and depth ids (depth 0 when multisampled) and `target_samples` giving 1 for
+R32F, RGBA32F and R32I, so a renumbered `tide_gpu_color` can't pass both suites while Unity reads other formats.
+
+**Runs** (a scratch prefix from this checkout's mingw-release `tide_cli` and `tide_platform`; a Gamma Sample and a
+Linear copy, each built with `tide unity Assets -o Library/Tide --assets Assets --once`): all PlayMode tests in the Gamma Sample on Direct3D 11 (`-force-d3d11`),
+Direct3D 12, Vulkan and OpenGL Core with `-tide-command`: 59 of 59 each, nothing skipped (the sRGB witnesses run in
+Gamma now), ScaleTests quiet (none in 120 of 120 frames showing, the whole frame none in 116 to 117).
+ComputeReplayTests in the Linear copy on the same four: 36 of 36 each. IntegerImagesTakeWritesOfParts, added after
+those runs, alone on the four: passes. EditMode once (`-nographics`): 44 of 47, two ignored as before and the
+launch-argument test failing only for `-tide-command`. Before the fixes, on Direct3D 11 the integer textures and
+layers failed to be made and the triangle sides were wrong in both passes; on OpenGL Core the multisampled
+resolve asserted and ReadKernelsReturnEveryImageOfATarget lost its number image after the depth-alone and
+banded tests ran before it. Not run: Metal, a Unity WebGPU player, Android, and the scratch port of
+`platform/tests/readback.tide` with the real recorder (the replay tests above hand the replay the recorder's packets
+by kind, `embed.c` pins what the recorder writes).
+
 ## What the replay owes this day's exact reads and depth cubes (2026-11-14, not run in Unity)
 
 render-targets.md (top) built 32-bit array layers and cube faces, typed array loads, typed volume blends and
@@ -30,6 +117,9 @@ but for c0de0014, which was already stale), and ComputeReplayTests' `ReadKernel`
 compiled or replayed in an editor here (the owner's Unity is off limits to this work): the next Unity run checks them.
 
 ## For the next Unity pass: a multisampled target's smaller images (2026-11-14)
+
+Built 2026-11-15 (top section).
+
 
 Vulkan and now WebGPU make a chain of a multisampled target's resolved colors when a read needs one
 (render-targets.md, Kernels read every kind of image). `TideRender.cs` was left alone in that work; Unity's replay
@@ -66,7 +156,8 @@ Three things were wrong, none in the new work's own code, all older and never ru
   unchanged. `00000000c0de0011.shader` (the tests' image draw) was written again with it.
 
 Left as it is: `EmptyRead` gives the white 2D image for a missing cube, array or depth array, which Unity
-refuses with the dimension message rather than reading zeros. Nothing reaches it now but a refused sRGB image
+refuses with the dimension message rather than reading zeros (corrected 2026-11-15: a stand-in of each read kind's
+own dimension now, top section). Nothing reaches it now but a refused sRGB image
 or an image that couldn't be made.
 
 **Replay tests added** (`ComputeReplayTests`, hand-made commands as the recorder writes them; the kernels are
@@ -150,7 +241,7 @@ Tide's 2D clips drawn into a render target in Unity were mirrored top to bottom 
   in four columns (second +8: the first stays; second -8: it wins; first -8 then none: the first stays; none:
   the second passes, being equal), in a target's pass and in the camera's own. `SetGlobalDepthBias` takes
   Tide's sign as it is on all four APIs, Unity turning it for its own depth. Constant bias only: the fixture's
-  shader has no slope.
+  shader has no slope (the slope part is run since, 2026-11-15: `SlopeBiasPushesAwayWherePositive`).
 - `ClipRectsCountRowsFromTheTop` pins both kinds of pass.
 
 **Runs:** Unity 6000.6.0f1, Windows, hidden batch mode with `-noAudio` and a GPU, a scratch Sample pointing at
@@ -182,7 +273,8 @@ TIDE_EMBED_ABI and TideLibrary.Abi advance together from 23 to 24 so older repla
 new format values as ordinary bytes. The C recorder's embed_render_srgb_images_retain_encoding_formats
 pins unmodified upload bytes, host BC support, marked block descriptors and RGBA-array fallback descriptors.
 
-**Provisional Unity prerequisite:** Player Color Space must be Linear for [Linear] resources. This is a real
+**Provisional Unity prerequisite** (withdrawn 2026-11-15: Gamma projects decode marked images into a linear-light
+copy instead, top section): Player Color Space must be Linear for [Linear] resources. This is a real
 Unity constraint: in a Gamma scratch Sample, explicit GraphicsFormat SRGB Texture2D and Cubemap
 constructors returned UNorm, and marked gray 128 sampled as 128 rather than linear 55. The replay
 refuses marked images/arrays/cubes/internal targets and reports once, naming Project Settings > Player >
@@ -313,7 +405,8 @@ the same integral value to all three corners.
 
 References: [OpenGL provoking vertex](https://wikis.khronos.org/opengl/Provoking_Vertex),
 [Apple's render command guide](https://developer.apple.com/library/archive/documentation/Miscellaneous/Conceptual/MetalProgrammingGuide/Render-Ctx/Render-Ctx.html).
-This is a source/API convention audit; no new Unity graphics replay run is claimed.
+This is a source/API convention audit; no new Unity graphics replay run is claimed. (Run since, 2026-11-15:
+`FlatIntsComeFromTheFirstCorner` passes on the four APIs, OpenGL Core taking the last corner; top section.)
 Metal runtime validation requires a Mac.
 
 ## Triangle side (2026-11-14)
@@ -322,7 +415,8 @@ Metal runtime validation requires a Mac.
 `tidehl_facing` corrects projection flips. The generated vertex stage carries the
 model mirror sign; the renderer supplies camera mirroring in screen.z's sign.
 No replay packet change. Runtime replay on Unity graphics APIs is not yet verified
-for this member; FXC validates the generated HLSL on this machine.
+for this member; FXC validates the generated HLSL on this machine. Corrected 2026-11-15: run, it was the wrong way
+round in the camera's own pass and in a target's on Direct3D and Vulkan; fixed (top section).
 
 # Unity as a front end
 

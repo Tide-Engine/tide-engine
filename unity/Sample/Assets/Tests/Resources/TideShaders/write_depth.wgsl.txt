@@ -1,0 +1,12 @@
+// Source of 00000000c0de0019.shader, through tide_wgsl_translate --hlsl: a plane drawn at forward depth u.at.x whose
+// frag writes forward depth u.at.y instead (a frag's this.WriteDepth), both in the reversed depth a game's shaders
+// have (tide_reversed_depth), in u.color.
+const tide_reversed_depth = true;
+struct Values { at: vec4<f32>, color: vec4<f32> }
+@group(0) @binding(0) var<uniform> u: Values;
+struct Written { @location(0) color: vec4<f32>, @builtin(frag_depth) depth: f32 }
+@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
+    var points = array<vec2<f32>, 3>(vec2<f32>(-1.0, -1.0), vec2<f32>(3.0, -1.0), vec2<f32>(-1.0, 3.0));
+    return vec4<f32>(points[i], 1.0 - u.at.x, 1.0);
+}
+@fragment fn fragment() -> Written { return Written(u.color, 1.0 - u.at.y); }

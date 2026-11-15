@@ -7,9 +7,11 @@ audio and is where you author.
 Early: the owner is testing it. What's built and what isn't is in the Tide
 repository's `notes/unity.md`.
 
-Tide `[Linear]` textures need Unity's **Project Settings > Player > Other Settings > Color Space** set to **Linear**.
-Unity's Gamma mode disables sRGB image formats; Tide reports the required setting and refuses marked resources.
-Unmarked images keep their existing behavior in either color space. Tide never changes this project setting.
+Tide `[Linear]` textures work in either **Project Settings > Player > Other Settings > Color Space**. In Linear they
+use Unity's sRGB image formats. Unity's Gamma mode has none, so there a marked image keeps its bytes as stored and is
+read through a copy decoded to linear light in half floats, which costs twice an RGBA8 image's memory (more for
+compressed images). Unmarked images keep their existing behavior in either color space. Tide never changes this
+project setting.
 
 ## Install
 

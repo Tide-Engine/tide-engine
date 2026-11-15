@@ -303,7 +303,8 @@ unwritten-path triangle fallback, last-write-wins, Equal rejection, and Only/Equ
 prewarming and device recreation. All 189 WGSL golden/SPIR-V/FXC checks pass, existing goldens unchanged.
 Argument and vert error fixtures pass. Shader LSP 11/11 and shared grammar 381/381 pass; docs build passes.
 Unity 6000.6.0f1 existing ComputeReplayTests pass 10/10 on D3D11, D3D12, Vulkan and OpenGL Core, hidden batch
-with no audio. The builtin translation itself is checked by the new WriteDepth FXC/SPIR-V fixture.
+with no audio. The builtin translation itself is checked by the new WriteDepth FXC/SPIR-V fixture. Since
+2026-11-15 a frag writing depth is replayed in Unity too (`FragsWriteTheDepthTheySay`, unity.md top section).
 Metal runtime needs a Mac. Vulkan/WebGPU reversed storage has not landed on dev at this merge.
 
 ## Writable images and sampled volumes (2026-11-14)
@@ -382,7 +383,10 @@ LSP pixel completion; platform shaders pass 28 pins front/back, model mirrors,
 camera mirrors and Cull.Back agreement, including prewarmed draws. Native ASan
 Vulkan and web-debug SwiftShader WebGPU pass; all 59 existing WGSL goldens remain
 unchanged. Docs build and LSP completion are checked with this change.
-Unity replay and Metal require separate verification; no Unity run claimed.
+Unity replay and Metal require separate verification; no Unity run claimed. Corrected 2026-11-15: run in Unity on
+four APIs (`TrianglesFrontIsWhereTheirCornersGoClockwise`), which found `this.front` the wrong way round in the
+camera's own pass and in a target's pass on Direct3D and Vulkan: `tidehl_facing` and TideRender's Begin are fixed
+(unity.md, top section).
 
 # Code the GPU runs: frags and verts
 

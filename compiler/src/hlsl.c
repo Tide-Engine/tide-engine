@@ -2541,7 +2541,10 @@ static const char *const prelude[] = {
     "    p.w = 1.0 / p.w;\n"
     "    return p;\n"
     "}\n"
-    "bool tidehl_facing(bool front) { return tidehl_flip() < 0.0 ? !front : front; }\n"
+    "// A triangle's side. Unity turns the rasterizer's sides round with its own flips (the camera's projection, and a\n"
+    "// render texture on Direct3D, Vulkan and Metal, which TideRender undoes in a target's pass), so only Tide's flip of\n"
+    "// a target (OpenGL Core's) turns them\n"
+    "bool tidehl_facing(bool front) { return _TideFlip < 0.0 ? !front : front; }\n"
     "// A color into Unity's own target, which takes linear colors where its project is in linear color space\n"
     "float4 tidehl_output(float4 c) {\n"
     "    if (_TideLinear > 0.5 && c.a > 0.0) {\n"
@@ -3172,9 +3175,14 @@ char *tide_hlsl_unity_shader(const char *hlsl, const char *name)
     // ShaderLab accepts a dynamic ColorMask only for target zero. A second pass with literal masks keeps all
     // MRT attachments untouched for depth-only drawing, including integer targets where blending is unavailable.
     for (uint32_t pass = 0; pass < (numbers ? 2u : 1u); pass++) {
-        hput(&o, "        Pass\n        {\n"
-                 "            Blend [_TideSrcColor] [_TideDstColor], [_TideSrcAlpha] [_TideDstAlpha]\n");
-        for (uint32_t i = 0; i < 4u; i++) if (numbers >> i & 1u) hprintf(&o, "            Blend %u One Zero\n", i);
+        hput(&o, "        Pass\n        {\n");
+        // Each target's blend said for it alone, numbers' as none. A blend for every target at once leaves Unity's
+        // OpenGL Core keeping the targets after the first blending that way in the draws after, where those draws
+        // say a blend of their own for them that it thinks they have already
+        for (uint32_t i = 0; i < 4u; i++) {
+            if (numbers >> i & 1u) hprintf(&o, "            Blend %u One Zero\n", i);
+            else hprintf(&o, "            Blend %u [_TideSrcColor] [_TideDstColor], [_TideSrcAlpha] [_TideDstAlpha]\n", i);
+        }
         if (pass) for (uint32_t i = 0; i < 4u; i++) hprintf(&o, "            ColorMask 0 %u\n", i);
         // A target's images the fragment stage has no output for stay as they are, as on Tide's own backends.
         // Unity's OpenGL Core otherwise writes the first output's color into every one of them

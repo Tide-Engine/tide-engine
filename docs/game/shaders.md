@@ -764,8 +764,9 @@ For a final display pass, tone-map linear light first and use `Math.ToDisplay`; 
 unmarked input that needs explicit conversion, use `Math.ToLinear`. Both take `float`,
 `float3` and `Color`; Color alpha is preserved.
 
-In Unity, marked images require **Project Settings > Player > Other Settings > Color Space > Linear**.
-Tide reports a clear error in a Gamma project and leaves its settings and unmarked images alone.
+In Unity, marked images work in either color space. A Linear project uses Unity's sRGB formats; a Gamma
+project, which has none, reads them through a copy decoded to linear light, at twice an RGBA8 image's memory.
+Tide never changes the project's settings.
 
 
 `Sample` reads a [texture](./meshes-and-textures.md#textures) at a `uv`, and gives its color there. A frag samples the textures it can name three ways:

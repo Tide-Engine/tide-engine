@@ -1,0 +1,8 @@
+// Source of 00000000c0de001b.compute, through tide_wgsl_translate --hlsl: an image read at u.at.xy between its
+// smaller images at level u.at.z (a kernel's SampleLevel), its four numbers into the storage's first.
+struct Values { at: vec4<f32> }
+@group(0) @binding(0) var<uniform> u: Values;
+@group(0) @binding(1) var image: texture_2d<f32>;
+@group(0) @binding(2) var through: sampler;
+@group(0) @binding(33) var<storage, read_write> result: array<vec4<f32>>;
+@compute @workgroup_size(1) fn compute() { result[0] = textureSampleLevel(image, through, u.at.xy, u.at.z); }

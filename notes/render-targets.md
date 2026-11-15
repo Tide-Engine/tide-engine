@@ -1,3 +1,12 @@
+## Unity replays what this note's 2026-11-14 work records (2026-11-15)
+
+Everything the readback, number-image, depth-cube and 32-bit work recorded is now replayed and run in Unity
+6000.6.0f1 on Direct3D 11, Direct3D 12, Vulkan and OpenGL Core, in Gamma and Linear projects: parts, bands and
+pairs; faces and layers of numbers and ints; volumes whole and in boxes; number grid textures (Grid2<int> and
+Grid2<float2>); multisampled targets' smaller images; depth arrays' compares; Rgba16f volumes' blends; a kernel's
+SampleLevel; flat ints; a triangle's side; slope bias; WriteDepth. Fixes, tests and runs are in unity.md's top
+section. Multisampled mipmaps are built on every backend now (Vulkan, WebGPU, Unity's one-sample copy).
+
 ## Review of the readback workstream: corrections and the tests it lacked (2026-11-15)
 
 A review of "Reads of any size, of parts and of volumes; grids kept across waits" (below) found ten issues; all were
@@ -103,7 +112,8 @@ images, Choosing a mip level, cubes), game/render-targets.md (A cube of depth al
   one level. Vulkan: `color_of` maps R32_SFLOAT/R32G32B32A32_SFLOAT/R32_SINT back (a layer target's kind was BYTES and
   stopped the program: "a pipeline is for targets that hold something else"); descriptors were already read-agnostic.
   The recorder passes the new read values through unchanged; no embed ABI or packet change.
-- **Unity's replay (not changed here: TideRender.cs is the owner's later pass).** What it must do: (1) bind a recorded
+- **Unity's replay (not changed here: TideRender.cs is the owner's later pass; done and run in Unity 2026-11-15,
+  unity.md, top section).** What it must do: (1) bind a recorded
   array to the two new read kinds 13/14 as a `Texture2DArray` (the HLSL is `Texture2DArray<float4|int4>.Load`, checked
   by fxc); `EmptyRead` gives `white` for an unknown kind, which is never reached while the engine binds its own
   recorded fallback arrays, but should give a zero RGBA32F/R32_SInt Tex2DArray for 13/14; (2) a depth cube and a
@@ -128,7 +138,7 @@ images, Choosing a mip level, cubes), game/render-targets.md (A cube of depth al
   `tidec_error_*`, e2e cubemaps/texture_arrays/number_images/target_reads/render_targets/texture3d, `tide_tests`,
   `tidels_tests`, `tide_cli_tests`, `tide_spirv_shaders_valid`, `tide_hlsl_shaders_valid`; web-debug SwiftShader
   WebGPU images/readback and their fallbacks (device loss included), the WASI e2e and `tide_web_runtime`. Not run:
-  Unity, Android, Metal, real-GPU web lanes.
+  Unity (Run in Unity since, 2026-11-15: unity.md, top section.), Android, Metal, real-GPU web lanes.
 - **Not built, and why.** Mipmaps of R32f/Rgba32f (a kernel-made chain and an eight-load level blend weighed, spec);
   blending a 32-bit cube across a face's edge (needs the faces beside it; nearest only, an error that names R16f);
   a color cube's depth (its faces' depths are separate images; the spec says to draw a depth cube too);
@@ -243,7 +253,7 @@ language/grids.md. Corrects "Owned pixel readback" below (the refusal of a wait 
   `c0de0061`-`68`.compute) were written again from the new WGSL with `tide_wgsl_translate --hlsl` (the old WGSL
   reproduced the checked-in files byte for byte but for c0de0014, already stale), and ComputeReplayTests' read
   commands now give the banded layout (48 bytes of uniforms, a 2D dispatch): neither was compiled or replayed in an
-  editor. Android, Metal and the real-GPU web lanes were not run. The asked-with-bands state at device loss (every
+  editor (Run in Unity since, 2026-11-15: unity.md, top section.). Android, Metal and the real-GPU web lanes were not run. The asked-with-bands state at device loss (every
   band's `buffer_read` refused) has no hook to reach it.
 - **Not built:** reading a Texture asset back (spec: the same pixels are a `Grid2<Color>` asset on the CPU, and the
   GPU's copy can be block-compressed).
@@ -289,7 +299,7 @@ game/render-targets.md, Smooth edges.
   its resolved color, and `TIDE_EMBED_RENDER_MIPMAPS` names that color when a read needs a chain
   (`embed_render_multisampled_target_mipmaps` pins both, and that an R32f image read Trilinear asks for none).
   `TideRender.cs` was left alone: making that chain there (a one-sample companion with mips, resolved into before
-  GenerateMips) is the next Unity pass's (unity.md).
+  GenerateMips) is the next Unity pass's (unity.md). Built 2026-11-15 (unity.md, top section).
 - **Tests.** `tide_platform_kernel_reads` (new: `platform/tests/kernel_reads.tide/.c`), native Vulkan with
   validation and web-debug WebGPU, the device lost and found on the web, and `tide_platform_kernel_reads_none`
   (web, `gpu=none`): 25 probes (26 since the correction below) in a game where no frag reads a depth, cube or array: no depth, cube, array, array
@@ -376,7 +386,7 @@ Portable filtering and Number images as array layers and cube faces. Users: game
   editor for this change; Metal, Android and real-GPU web lanes were not run.
 - **Not built, and why.** (Since built, the section above this one: R32f/Rgba32f blending by exact loads, 32-bit layers
   and faces, blended typed Texture3D reads.) (Mipmaps of a multisampled target on WebGPU are built since, the top of this
-  note; Unity's replay of them waits on the next Unity pass.) Left out by the owner: a blend per output, a chosen mip level as a destination,
+  note; Unity's replay of them too, 2026-11-15, unity.md.) Left out by the owner: a blend per output, a chosen mip level as a destination,
   frag-drawn volume slices, an sRGB target format; R8/Rg8/R16f/Rg16f kernel storage isn't portable on WebGPU.
 
 ## Numeric image language surface and clears (2026-11-14)
@@ -506,7 +516,7 @@ below differ (no depth, face, layer or numeric read; one pipeline), this is what
     `colors.count`.
   - `lsp_render_target_formats_and_depth`: completions and signature help for the reads, a clean document.
 - **Not run:** Unity's replay of the ten new kernels (their HLSL compiles under fxc cs_5_0 with Unity's
-  warnings, `tide_hlsl_shaders_valid`, and they use no new packet); Android, where the same fixture is the app
+  warnings, `tide_hlsl_shaders_valid`, and they use no new packet; corrected: run on four APIs since, unity.md); Android, where the same fixture is the app
   `tide_platform_readback_app` on CI's emulator (not run here; its exact-depth assertion is Windows' alone, as a
   device chooses its depth storage); Metal; the optional real-GPU web lanes.
 

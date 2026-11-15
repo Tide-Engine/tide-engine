@@ -56,7 +56,10 @@ float4 tidehl_position(float4 p) {
     p.w = 1.0 / p.w;
     return p;
 }
-bool tidehl_facing(bool front) { return tidehl_flip() < 0.0 ? !front : front; }
+// A triangle's side. Unity turns the rasterizer's sides round with its own flips (the camera's projection, and a
+// render texture on Direct3D, Vulkan and Metal, which TideRender undoes in a target's pass), so only Tide's flip of
+// a target (OpenGL Core's) turns them
+bool tidehl_facing(bool front) { return _TideFlip < 0.0 ? !front : front; }
 // A color into Unity's own target, which takes linear colors where its project is in linear color space
 float4 tidehl_output(float4 c) {
     if (_TideLinear > 0.5 && c.a > 0.0) {
@@ -465,6 +468,7 @@ int tide_count0();
 int tide_capacity0();
 float4 tide_get0(int tide_i);
 void tide_put0(int tide_i, float4 tide_v);
+float4 tide_number0_0_13(float2 uv, int layer);
 float2 tf_ReadUv(int t_x, int t_y, int t_across, int t_down);
 void ts_ReadTargetLayerNumbers();
 void compute(uint3 tide_gid, uint3 tide_lid, uint tide_lix, uint3 tide_wid, uint3 tide_groups);
@@ -519,6 +523,15 @@ void tide_put0(int tide_i, float4 tide_v)
     }
 }
 
+float4 tide_number0_0_13(float2 uv, int layer)
+{
+    float2 tide_uv = clamp(uv, ((float2)(0.0)), ((float2)(1.0)));
+    int tide_layer = clamp(layer, 0, (((int)(tidehl_layers(_TideTexture0))) - 1));
+    int2 tide_size = ((int2)(tidehl_size(_TideTexture0, uint(0))));
+    int2 tide_at = clamp(tidehl_f2i(floor((tide_uv * ((float2)(tide_size))))), ((int2)(0)), (tide_size - ((int2)(1))));
+    return tidehl_load(_TideTexture0, int2(tide_at), int(tide_layer), int(0));
+}
+
 float2 tf_ReadUv(int t_x, int t_y, int t_across, int t_down)
 {
     return ((float2(((float)(t_x)), ((float)(t_y))) + ((float2)(0.5))) / float2(((float)(t_across)), ((float)(t_down))));
@@ -529,7 +542,7 @@ void ts_ReadTargetLayerNumbers()
     if (((tide_inv_at.x >= tidehl_u_tide_v0.x) || (tide_inv_at.y >= tidehl_u_tide_v0.y))) {
         return;
     } else {
-        tide_put0(((tide_inv_at.y * tidehl_u_tide_v0.x) + tide_inv_at.x), tidehl_sample_level(_TideTexture0, sampler_TideTexture0, tidehl_mode(((_TideSampling >> 0u) & 15u), 0u), float3(tf_ReadUv((tidehl_u_tide_v0.w + tide_inv_at.x), ((tidehl_u_tide_v1.x + tidehl_u_tide_v0.z) + tide_inv_at.y), tidehl_u_tide_v1.y, tidehl_u_tide_v1.z), float(clamp(tidehl_u_tide_v1.w, 0, (((int)(tidehl_layers(_TideTexture0))) - 1)))), float(0.0)));
+        tide_put0(((tide_inv_at.y * tidehl_u_tide_v0.x) + tide_inv_at.x), tide_number0_0_13(tf_ReadUv((tidehl_u_tide_v0.w + tide_inv_at.x), ((tidehl_u_tide_v1.x + tidehl_u_tide_v0.z) + tide_inv_at.y), tidehl_u_tide_v1.y, tidehl_u_tide_v1.z), tidehl_u_tide_v1.w));
     }
 }
 

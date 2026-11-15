@@ -754,6 +754,48 @@ TIDE_TEST(embed_render_number_grid_textures)
     tide_gpu_record_reset();
 }
 
+// A target's packet as the replay reads it (TideRender.cs MakeTarget, AttachmentFormat): its format word verbatim, a
+// color's number 4 bits each from the lowest and its samples from bit 16, which are written here as the numbers the
+// C# switch takes (2 RGBA16F, 5 R16F, 6 RG16F, 7 R32F, 8 RGBA32F, 9 R32I, 10 sRGB) so a renumbered tide_gpu_color
+// fails here and not only in Unity; then its four color ids (0 past the last) and its depth's, 0 where it's
+// multisampled (the depth is read through resolve_depth). The samples a target gets: none for 32-bit numbers.
+TIDE_TEST(embed_render_target_packets_name_formats_by_number)
+{
+    TIDE_CHECK(TIDE_GPU_COLOR_FLOAT == 2 && TIDE_GPU_COLOR_R16F == 5 && TIDE_GPU_COLOR_RG16F == 6 && TIDE_GPU_COLOR_R32F == 7
+               && TIDE_GPU_COLOR_RGBA32F == 8 && TIDE_GPU_COLOR_R32I == 9 && TIDE_GPU_COLOR_SRGB == 10);
+    const tide_gpu_target_format four = 0x9671u; // Bytes, R32f, Rg16f, R32i
+    const tide_gpu_target_format halves = 0x40005u, wide = 0x40007u, ids = 0x40009u, srgb = 10u;
+    TIDE_CHECK(tide_gpu_target_with(tide_gpu_target_with(tide_gpu_target_with(TIDE_GPU_TARGET_COLOR, TIDE_GPU_COLOR_R32F),
+                                                         TIDE_GPU_COLOR_RG16F), TIDE_GPU_COLOR_R32I) == four);
+    TIDE_CHECK(tide_gpu_target_sampled(TIDE_GPU_COLOR_R16F, 4) == halves);
+    TIDE_CHECK(tide_gpu_record.target_samples(halves) == 4u && tide_gpu_record.target_samples(0x40001u) == 4u);
+    TIDE_CHECK(tide_gpu_record.target_samples(wide) == 1u && tide_gpu_record.target_samples(ids) == 1u);
+    TIDE_CHECK(tide_gpu_record.target_samples(0x40008u) == 1u && tide_gpu_record.target_samples(0x40071u) == 1u);
+    TIDE_CHECK(tide_gpu_record.target_samples(0x80001u) == 8u && tide_gpu_record.target_samples(0x30001u) == 2u);
+    tide_gpu_record_begin();
+    const tide_gpu_id targets[] = {tide_gpu_record.target(four, 3, 2), tide_gpu_record.target(halves, 5, 7),
+                                   tide_gpu_record.target(srgb, 4, 4), tide_gpu_record.target(TIDE_GPU_TARGET_DEPTH, 2, 2)};
+    const uint32_t formats[] = {0x9671u, 0x40005u, 10u, 0u}, widths[] = {3, 5, 4, 2}, heights[] = {2, 7, 4, 2};
+    const uint32_t colors[] = {4, 1, 1, 0};
+    uint32_t size;
+    const uint8_t *packet = tide_gpu_record_end(&size);
+    TIDE_REQUIRE(size == 4u * 44u);
+    for (uint32_t t = 0; t < 4; t++) {
+        const uint8_t *p = packet + 44u * t;
+        TIDE_CHECK(u32_at(p, 0) == TIDE_EMBED_RENDER_TARGET && u32_at(p, 4) == 36u);
+        TIDE_CHECK(u32_at(p, 8) == targets[t] && u32_at(p, 12) == formats[t]);
+        TIDE_CHECK(u32_at(p, 16) == widths[t] && u32_at(p, 20) == heights[t]);
+        for (uint32_t c = 0; c < TIDE_GPU_MAX_COLORS; c++) {
+            const uint32_t id = u32_at(p, 24 + 4 * c);
+            TIDE_CHECK(c < colors[t] ? id != 0u && id == tide_gpu_record.target_texture(targets[t], c) : id == 0u);
+        }
+        const uint32_t depth = u32_at(p, 40);
+        TIDE_CHECK(depth == tide_gpu_record.target_depth(targets[t]) && (t == 1 ? depth == 0u : depth != 0u));
+    }
+    for (uint32_t t = 0; t < 4; t++) tide_gpu_record.target_free(targets[t]);
+    tide_gpu_record_reset();
+}
+
 // gpu.h's compute calls, written down as the replay reads them (TideRender.cs): a kernel's pipeline and what it binds
 // of storage, a compute pass, direct and indirect dispatches and draws, a draw of records as many as a count says, a
 // copy, and a read back the other program answers (tide_embed_render_read) for buffer_read_done to give, once. The

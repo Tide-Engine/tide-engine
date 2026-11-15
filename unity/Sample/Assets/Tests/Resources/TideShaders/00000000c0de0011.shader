@@ -19,7 +19,10 @@ Shader "Hidden/Tide/00000000c0de0011"
     {
         Pass
         {
-            Blend [_TideSrcColor] [_TideDstColor], [_TideSrcAlpha] [_TideDstAlpha]
+            Blend 0 [_TideSrcColor] [_TideDstColor], [_TideSrcAlpha] [_TideDstAlpha]
+            Blend 1 [_TideSrcColor] [_TideDstColor], [_TideSrcAlpha] [_TideDstAlpha]
+            Blend 2 [_TideSrcColor] [_TideDstColor], [_TideSrcAlpha] [_TideDstAlpha]
+            Blend 3 [_TideSrcColor] [_TideDstColor], [_TideSrcAlpha] [_TideDstAlpha]
             ColorMask 0 1
             ColorMask 0 2
             ColorMask 0 3
@@ -94,7 +97,10 @@ float4 tidehl_position(float4 p) {
     p.w = 1.0 / p.w;
     return p;
 }
-bool tidehl_facing(bool front) { return tidehl_flip() < 0.0 ? !front : front; }
+// A triangle's side. Unity turns the rasterizer's sides round with its own flips (the camera's projection, and a
+// render texture on Direct3D, Vulkan and Metal, which TideRender undoes in a target's pass), so only Tide's flip of
+// a target (OpenGL Core's) turns them
+bool tidehl_facing(bool front) { return _TideFlip < 0.0 ? !front : front; }
 // A color into Unity's own target, which takes linear colors where its project is in linear color space
 float4 tidehl_output(float4 c) {
     if (_TideLinear > 0.5 && c.a > 0.0) {
