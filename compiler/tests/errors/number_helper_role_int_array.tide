@@ -1,3 +1,0 @@
-// expect: a TextureArray or Cubemap holds no integer images: its role is [Raw(float)], [Raw(float2)] or [Raw(float4)]
-scene Main { }
-int Read([Raw(int)] TextureArray layers, float2 at) { return 0; }

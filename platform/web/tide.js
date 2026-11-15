@@ -1556,8 +1556,12 @@
     const STORAGE_BINDING = 1 + 2 * MAX_TEXTURES; // TIDE_GPU_STORAGE_BINDING: storage buffer i is at this + i
     const READ_ARRAY = 6, READ_DEPTH_ARRAY = 7; // TIDE_GPU_READ_ARRAY, _DEPTH_ARRAY: an array's colors, or its depth
     const READ_NUMBER = 9, READ_INT = 10, READ_NUMBER_VOLUME = 11, READ_INT_VOLUME = 12;
+    // TIDE_GPU_READ_NUMBER_ARRAY, _INT_ARRAY: an array's layers loaded, unfilterable floats or ints (a cube of 32-bit
+    // numbers is six of them)
+    const READ_NUMBER_ARRAY = 13, READ_INT_ARRAY = 14;
     const numericVolume = read => read === READ_NUMBER_VOLUME || read === READ_INT_VOLUME;
-    const integerImage = read => read === READ_INT || read === READ_INT_VOLUME;
+    const numericArray = read => read === READ_NUMBER_ARRAY || read === READ_INT_ARRAY;
+    const integerImage = read => read === READ_INT || read === READ_INT_VOLUME || read === READ_INT_ARRAY;
     const readsDepth = read => read === 1 || read === READ_COMPARE || read === READ_SAMPLES || read === READ_DEPTH_ARRAY;
     // A pipeline's samplers where it says none apart (gpu.h's tide_gpu_samplers): texture i that's sampled has sampler i,
     // read as it is, and one that's loaded none (READ_DATA, a binding it hasn't)
@@ -1618,8 +1622,9 @@
                     ? { sampleType: 'float', viewDimension: 'cube' }
                     : read === 8 || numericVolume(read)
                     ? { sampleType: integerImage(read) ? 'sint' : read === 8 ? 'float' : 'unfilterable-float', viewDimension: '3d' }
-                    : read === READ_ARRAY || read === READ_DEPTH_ARRAY
-                    ? { sampleType: read === READ_ARRAY ? 'float' : 'depth', viewDimension: '2d-array' }
+                    : read === READ_ARRAY || read === READ_DEPTH_ARRAY || numericArray(read)
+                    ? { sampleType: read === READ_ARRAY ? 'float' : read === READ_NUMBER_ARRAY ? 'unfilterable-float'
+                        : read === READ_INT_ARRAY ? 'sint' : 'depth', viewDimension: '2d-array' }
                     : { sampleType: read === READ_DATA || integerImage(read) ? 'sint'
                         : read === READ_NUMBER ? 'unfilterable-float' : readsDepth(read) ? 'depth' : 'float',
                         multisampled: read === READ_SAMPLES } });
@@ -2141,9 +2146,11 @@
                 return gpuAdd('texture', { texture, view: texture.createView({ dimension: '2d-array', aspect: 'depth-only' }),
                     depthLayers: whole, width, height, row: 0, groups: new Set() });
             }
-            const kind = into & 15; // tide_gpu_color: 3 to 6 are the number formats every device blends
-            const format = kind === 10 ? 'rgba8unorm-srgb' : kind >= 2 && kind <= 6 ? attachmentFormats[kind] : 'rgba8unorm';
-            const levels = 1 + Math.floor(Math.log2(Math.max(width, height)));
+            // tide_gpu_color: 3 to 6 are the number formats every device blends, 7 to 9 the 32-bit ones, which have no
+            // smaller images: they're loaded, never blended
+            const kind = into & 15;
+            const format = kind === 10 ? 'rgba8unorm-srgb' : kind >= 2 && kind <= 9 ? attachmentFormats[kind] : 'rgba8unorm';
+            const levels = kind >= 7 && kind <= 9 ? 1 : 1 + Math.floor(Math.log2(Math.max(width, height)));
             const texture = device.createTexture({ size: [width, height, layers], format, mipLevelCount: levels,
                 usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT });
             const each = [];

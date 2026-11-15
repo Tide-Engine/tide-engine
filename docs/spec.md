@@ -1511,8 +1511,10 @@ var text = Json.Write(info ?? LobbyInfo { });     // string
 
 Built 2026-10-11. Beyond the two calls and that a struct's fields are an object's keys, each rule is Claude's pick, awaiting the owner:
 
-- **The calls.** `Json.Read<T>(json)` takes a `string` or a `List<byte>` of UTF-8 (a response's body) and gives a `T?`, unwrapped as any is (`??`, `is`, `!`). `Json.Write(value)` takes the value and gives its JSON with no spaces. `T`, and what `Write` takes, is a struct, a `List<T>` or a `Map<string, T>`: a value alone (`Json.Read<int>`) goes in a struct's field. Arguments go in order, without names. `Json` is a name of the language's, like `Math`: a game declares nothing called `Json`.
-- **What JSON holds.** `bool` (`true`, `false`); `byte`, `int` and `long` (a number); `float` (a number); `string` (a string); `char` (a string of one character, `""` for `'\0'`); an enum (its member's name, as a string); a struct of the game's (an object, a key for each field); `List<T>` and `T[N]` (an array); `Map<string, T>` (an object, a key for each entry). Anything else is a compile error at the call, naming the type and the field that holds it ("JSON has nothing for Entity, which 'Lobby.owner' holds"): entities and players, vectors, quaternions, colors and matrices, sets, maps whose keys aren't text, grids, textures and the other resources, the engine's own structs (`Random`, `Sound`), and components, singletons, events and inputs, which aren't values of their own (copy what's needed into a struct).
+- **The calls.** `Json.Read<T>(json)` takes a `string` or a `List<byte>` of UTF-8 (a response's body) and gives a `T?`, unwrapped as any is (`??`, `is`, `!`). `Json.Write(value)` takes the value and gives its JSON with no spaces. `T`, and what `Write` takes, is a struct, a `List<T>`, a `Set<T>` or a `Map<K, T>`: a value alone (`Json.Read<int>`) goes in a struct's field. Arguments go in order, without names. `Json` is a name of the language's, like `Math`: a game declares nothing called `Json`.
+- **What JSON holds.** `bool` (`true`, `false`); `byte`, `int` and `long` (a number); `float` and `double` (a number); `string` (a string); `char` (a string of one character, `""` for `'\0'`); an enum (its member's name, as a string); a vector, a quaternion or a color (an array of its numbers, below); a struct of the game's (an object, a key for each field); `List<T>` and `T[N]` (an array); a set (an array of its keys, below); a map by a `string`, a `byte`, an `int`, a `long` or an enum (an object, a key for each entry, below). Anything else is a compile error at the call, naming the type and the field that holds it ("JSON has nothing for Entity, which 'Lobby.owner' holds"): entities and players, matrices, sets of entities or players, maps by a `char`, an entity or a player, grids, textures and the other resources, the engine's own structs (`Random`, `Sound`), and components, singletons, events and inputs, which aren't values of their own (copy what's needed into a struct).
+- **Vectors, quaternions and colors as arrays** (built 2026-11-14; the owner approved arrays, "go with your recommendations", and each rule here is Claude's pick). `float2`-`float4`, `int2`-`int4` and `double2`-`double4` are an array of exactly their numbers in order (`[x, y, z]`), a `quaternion` is `[x, y, z, w]`, and a `Color` is `[r, g, b, a]`, written with all four and read from four or from three, `[r, g, b]`, with alpha 1. An array of any other length makes the read give nothing, unlike `T[N]`'s forgiving fill: a vector missing a number is more likely a mistake than a zero, and Color's three-or-four is the one exception. Each number reads as its field's kind would (an int's whole and fitting, a float's the nearest float), a `null` in place of one leaves that one at the place's default (the field's declared default's number, zero in a list), and so a float written as `null` (NaN, an infinity) reads back as that number's default. What's written reads back bit for bit. Matrices stay refused, with a note to keep their columns in vector fields or what they're made from.
+- **Sets as arrays and maps by a number or an enum** (built 2026-11-14 with vectors, as they fell out of the same code; Claude's picks). A `Set<T>` of strings, chars, ints, longs or enums is an array of its keys, written in the order they were added; one read twice is in the set once, and a `null` element adds its type's default, as a list's `null` element is the default. A `Map<K, T>` by a `byte`, an `int`, a `long` or an enum is an object whose keys are the key's text: a number's digits (`"12"`, `"-3"`, written as `tide_str_add_long` writes them; read as `long.TryParse` reads, so `"007"` is 7 and `" 1"`, `"+1"`, `"1.5"`, `"1e2"` and `""` give nothing, as does one that doesn't fit `K`), an enum member's name (the first name a number has, or its digits where no member has it; read from any member's name, an alias's too, or from digits that fit its storage). A map by a `char` is still refused (Open).
 - **Keys.** A field's key is its name, or the text of `[Json("key")]` before it: `[Json("max_players")] int maxPlayers;`. The attribute goes on a struct's field, takes one text literal of at most 120 bytes, and no two fields of a struct have one key. Keys match exactly, by their bytes, case and all.
 - **`T?` fields** (built 2026-10-11, with fields that are a `T?`: see Errors, T? fields). A key the JSON leaves out keeps the field's declared default, which is no value unless it declares one; `null` is no value, whatever the default; anything else is read as its `T` would be, a struct's value from its fields' defaults. Written, a field with no value has no key, so a struct of `T?` fields says only what's set (a partial update), and what's written reads back as the same value unless a field with no value declares a default.
 - **Reading is forgiving about what's there:** a key the JSON leaves out keeps its field's declared default; a `null` leaves what it's for as it is (a field's default, an element's or a value's default in a list or a map); a key no field has is skipped, its value read past (it still has to be JSON); a key written twice takes the last one, a struct's fields starting over from their defaults each time. An array for a `T[N]` fills the elements it has room for: fewer leave the rest, more are skipped. `null` as the whole text gives nothing.
@@ -1526,7 +1528,7 @@ Built 2026-10-11. Beyond the two calls and that a struct's fields are an object'
 
 - A JSON value for shapes a struct doesn't say (the owner: not now), and with it reading one key out of a document.
 - A way to write `null` for a `T?` field with no value, where a service wants the key (today the key is left out), and with it telling a key that's `null` from one that's missing where a field has a default.
-- Vectors, colors and quaternions as arrays (`[x, y, z]`), sets as arrays, and maps by an int or an enum.
+- Maps by a `char` (an object whose keys are one-character strings), and matrices (as arrays of columns, or refused for good).
 - Whether a key no field has, a number that doesn't fit and an unknown enum name should each be an error the game can tell apart, where today the read gives nothing whatever was wrong.
 - Options: indented output, leaving out fields at their defaults, keys in another case (`snake_case` for every field at once).
 - What a read gives when it runs out of the scratch area before its own bounds: the program stops, as any code that makes too much does (see Limits).
@@ -1835,7 +1837,8 @@ Implemented on the owner's go-ahead, to be revisited once games use them:
   - A field takes a new grid, what a function returns, or a copy: `terrain.heights = Ramp(64);` gives the field that grid's size and cells, the world's own. Its default is still a new grid.
   - A function can take a grid, `mut` or not, as any value: one it reads, and with `mut` one it changes where it is, a field's or a local's (`Border(terrain.heights, 9)`), whose writes count as the caller's, as any `mut` argument's do. A grid can't be an `out` parameter. A worker reads its grid parameters and code the GPU runs reads them where they are, as before; neither takes one `mut`.
   - `cells.Copy()` is a grid of its own with the same size and cells, of any grid: a field's, an asset's or a local's.
-- **How a grid code owns is kept** (Claude's picks, 2026-11-03): in the scratch area, as a local's list is, gone when the system, view or handler that made it is done, and copied into the world when a field takes it. So a parallel loop goes through a world's grid, a component's or a singleton's, not a local's or a parameter's (an error that says so; a foreach over one goes in order), a task can't keep one in a local while it waits, and a lambda can't capture one. A worker still reads only its captured grid parameters: its code keeps no grid in a local.
+- **How a grid code owns is kept** (Claude's picks, 2026-11-03): in the scratch area, as a local's list is, gone when the system, view or handler that made it is done, and copied into the world when a field takes it. So a parallel loop goes through a world's grid, a component's or a singleton's, not a local's or a parameter's (an error that says so; a foreach over one goes in order), a lambda can't capture one, and a task keeps one across its waits as a copy of its own in its frame, as it keeps its text and lists (Provisional, Claude, 2026-11-14: Grids a task keeps across its waits). A worker still reads only its captured grid parameters: its code keeps no grid in a local.
+- **Grids a task keeps across its waits** (Provisional, Claude, 2026-11-14, as the owner asked that every gap that can be closed is: "make sure everything we can add or validate we do"): a grid a task holds as it waits (a local's, a name `is` gives, a failable or `T?` local holding one, and a value an earlier `await` of the same statement gave, as in `(await a.Read())![0, 0] + (await b.Read())![0, 0]`) goes into its frame as a copy of its own, in the task's world's heap, as its text and lists do. After the wait the task reads the frame's copy where it is, and the first change it makes (a cell set, `Clear`, `Decode`, a `mut` argument) makes it a copy of the task's own again, so a grid kept unchanged across many waits is copied once. A grid the task didn't make (the pack's, as a `foreach` over an asset `List<Grid2<Color>>` gives, or a field's read before the wait) is copied whole, so the frame never holds the pack's memory, which a hot reload can take away. A match task's grids are in the match's heap: snapshots, packed worlds and the world's hash take them in with everything else. A grid no local in scope holds goes back to the heap at the next wait. Weighed: refusing every wait while a grid is held (what was built first, the same day; it refused a `foreach` over an asset's frames with a wait in it, and missed the grid of an earlier `await` in the statement and a failable local's, which then went through freed memory), and copying at every wait as lists are (which would copy a 4K read's 127 MiB once a frame for a task that waits a frame at a time).
 - `Grid2(...)` takes its cell type from where it goes: a field, a local's type, a parameter or what a function returns; anywhere else it's an error that says so.
 - A chunk is the engine's: 4096 cells (64 by 64, or 16 by 16 by 16 in 3D), or for cells bigger than four bytes, as many as fit in a page (16 KiB), a power of two along each axis, the first axes the most.
 - A loop over a grid with a size on every axis goes through every cell within it. An open axis goes on forever, so there a loop goes through the cells of the chunks the grid has, where something was set: in blocks, every block that takes in part of one. A foreach over an open grid goes through them in the same order, rows from the first, skipping what has no chunk.
@@ -3407,9 +3410,8 @@ The owner: "these make sense, lets do all of these". `await target.Read()` in lo
 `Grid2<Color>` with `fails IOError`, by the same asynchronous rules as GPUList.Read. It never enters match code.
 It captures the frame drawn after the request, a frame or more later, and fails when the device is lost.
 Colors are straight Color values, as Sample returns, rather than multiplied by alpha.
-The grid `is` names is a local's grid, which lasts until the task next waits, so an `await` while it is in scope
-is a compile error that says to copy what's kept into a component or singleton first (Provisional, Claude,
-2026-11-14: the alternative, carrying the grid across waits as a task carries its lists, is not built).
+The grid `is` names is a local's grid, which a task keeps across its later waits as it keeps its lists, a copy of
+its own in its frame (Provisional, Claude, 2026-11-14: Grids a task keeps across its waits).
 A target's other color images, images of numbers as their own types, its depth, a cube's faces and an array's
 layers are read too since 2026-11-14 (`Read(image)`, `Read<T>()`, `ReadDepth()`), and `target.colors.count`
 says how many images it holds: their rules are picks, under Provisional (which image a read is of, and as what).
@@ -3462,8 +3464,8 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
 RGBA8 preserves its stored quantization; RGBA16f preserves HDR values above one. Transparent pixels give zero.
 Grid dimensions are physical pixels, with x right and y down. A copied grid uses `.Copy()` under ordinary grid
 ownership rules; a directly awaited return is fresh. `is Grid2<Color> pixels` can unwrap this failable result.
-There are 64 read slots shared with list reads, at most 4,000,000 pixels per image and 128 MiB of outstanding
-pixel results. Exceeding the image/byte limit fails; occupied slots wait, as list reads do. Headless native runs
+There are 64 read slots shared with list reads, and 512 MiB of outstanding pixel results; an image of any size is read
+(Reads of any size, of parts and of volumes, below). Exceeding the byte limit fails; occupied slots wait, as list reads do. Headless native runs
 wait at the next frame's start. Hidden fixed-size web test frames wait between WASM frames for pending mappings,
 so scripted frame counts agree without blocking the browser thread. Ordinary resizable web games remain async.
 Unsupported formats fail before binding a shader. `Read()` accepts Rgba8/Rgba16f as Color and always
@@ -3475,7 +3477,7 @@ The owner asked that every read that can work does (2026-11-14: "make sure every
 we do"). What was built, each a pick with what it was weighed against:
 
 - **`await target.Read(image)` reads color image `image`,** counted from 0 as `target.colors[image]` is. It is a
-  constant int (a literal or a `const`), from 0 to 3: the image is part of what the read gives, which the
+  constant int (a literal, or a `const` of literals, other constants and operators), from 0 to 3: the image is part of what the read gives, which the
   compiler has to know. An index that's only known as the game runs was weighed and refused for that reason,
   not left to fail as it runs; `target.colors[i].Read()` was weighed too, and would have made every `Texture`
   look readable where only a target's image is.
@@ -3530,12 +3532,38 @@ we do"). What was built, each a pick with what it was weighed against:
   it would mean drawing every frame of any game that might read into a target of Tide's first and copying that
   to the display, a cost for all frames to serve one. A game that wants its frame draws into
   `RenderTarget.Window()`, reads that, and `Draw.Blit`s it to the window.
-- **Limits are the Color read's:** 64 read slots shared with list reads, 4,000,000 pixels an image, 128 MiB of
-  outstanding results (a float or int image is 4 bytes a pixel of it, a float2 one 8, the others 16, and so is any read of a
-  face or a layer).
-- **Not there:** reading a part of an image (a rectangle); a `Texture3D`'s cells or a `Texture` asset's pixels
-  back (a kernel writing a GPU list reads either); a number read of a target whose format is only known as the
-  game runs.
+- **Limits are the Color read's:** 64 read slots shared with list reads, and 512 MiB of outstanding results (a float
+  or int image is 4 bytes a pixel of it, a float2 one 8, the others 16, and so is any read of a face or a layer).
+
+#### Provisional: reads of any size, of parts and of volumes (2026-11-14)
+
+The owner asked that every read that can work does ("make sure everything we can add or validate we do"). Each a pick:
+
+- **An image of any size is read.** The 4,000,000-pixel limit was the one dispatch's (65,535 groups of 64); a read now
+  runs its kernel over a band of rows at a time, each band a buffer of its own of at most 32 MiB and 65,535 rows, all
+  of them from the same frame's image and read back on their own, so a 4K or 5K `RenderTarget.Window()` is read whole
+  whatever one buffer a device binds (128 MiB on every WebGPU device). What reads hold together, from when their
+  kernels run until they're let go of, is at most 512 MiB (a 5K window's Color, 225 MiB, fits; an 8K one's alone):
+  past that a read fails with `IOError`. Weighed: tiles a game asks for itself (the rectangle below does that, where a
+  read of the whole image would hold too much), and a whole image in one buffer (past what devices bind).
+- **A part of an image: `Read(int2 from, int2 size)`**, after the image's number where it has one (`Read(1, from,
+  size)`, `Read<float>(from, size)`) and the same for `ReadDepth(from, size)` and a face's and a layer's reads: its
+  first pixel and how many pixels across and down, in the image's own pixels (as the grid is), x right and y down.
+  It's clamped to the image: the grid is the part inside it, its cell (0, 0) that part's first pixel, and a part with
+  none of the image in it, or a size of 0 or less, fails. The limits are the part's, so a tile of an image too big to
+  hold whole reads, and picking one pixel copies one. Weighed: a `Rect` (it's floats, for the GUI, where a read's
+  pixels are whole), a type of int rectangles (one more type for a pair of int2s), and a grid of the size asked for
+  with zeros outside the image (a read past the edge would look like pixels of zero).
+- **A `Texture3D`'s cells: `await volume.Read()`, `Read<T>()` and a box, `Read(int3 from, int3 size)`,** an owned
+  `Grid3` of the volume's format's type, `fails IOError`, as an image's read is: `Read()` of an Rgba8 or Rgba16f volume
+  (straight Colors), `Read<float>()` of R32f, `Read<float4>()` of Rgba32f (and an Rgba16f volume's numbers),
+  `Read<int>()` of R32i, each cell exactly as a kernel's `volume[at]` reads it. The type is checked against the format
+  the volume was made with, as a target's is. The box is clamped as a part is. A volume nothing wrote yet reads zeros;
+  one made from a `Grid3` is that grid's, which the CPU has (its read fails).
+- **Not there:** a `Texture` asset's pixels back. The same pixels, exactly, are a `Grid2<Color>` asset of the same file
+  on the CPU with no wait (`asset Grid2<Color> map = "art/map.png";`), where the GPU's copy can be block-compressed
+  (BC1, BC3, BC7: a device's decoding of the blocks, not the file's pixels) and is made only for a frame that draws
+  with it. Also not there: a number read of a target whose format is only known as the game runs.
 
 #### Provisional: depth bias (2026-11-14)
 
@@ -3571,7 +3599,13 @@ and over an error under Equal/Only, which would prevent useful prepasses.
 
 NaN levels become zero; negative infinity clamps to zero and positive infinity to the last image.
 Level zero is the original image, one halves each dimension, and fractional levels blend with Trilinear or
-Anisotropic. Point and Bilinear retain their base-image sampler contract. Levels clamp to 0..31 and the sampler's
+Anisotropic. Point and Bilinear retain their base-image sampler contract. A SampleLevel that names no filter is
+Trilinear (Provisional, Claude, 2026-11-14), on a Color texture, a cube and an array as on a typed image, whatever
+filter the texture says: a level read through a filter that reads none would be the base image's, which the
+editors' two-argument `SampleLevel(uv, level)` silently was. Weighed: the texture's own filter, as `Sample`'s is (a
+cube's Bilinear), with a warning where it's known to read no levels; and an error asking for the filter; chosen the
+filter the call means. SampleGrad keeps the texture's own filter, as its gradients are how Anisotropic is reached.
+Levels clamp to 0..31 and the sampler's
 available chain; an image with no smaller images reads level zero. TextureArray uses
 `SampleLevel(uv, layer, level[, filter[, wrap]])`: layer precedes level to keep Sample's argument order.
 Chosen over level-before-layer, which would make a positional float level look like the existing integer layer.
@@ -3812,7 +3846,7 @@ No new backend API or recorder packet is needed: WGSL explicit-level sampling al
     - **An asset's is `asset Cubemap sky = "art/sky_??.png";`:** a glob that matches exactly the six files, each a supported PNG, PSD, JPEG, TGA, BMP or RGBA8 DDS image (only its base image is used). Argued: six named arguments, or six `asset Texture`s put together in code, say the faces outright; but an asset's path is one constant text, and a glob over files named by a convention is what a list of textures already is. **Each file is named for its face by how its name ends before its extension: `px`, `nx`, `py`, `ny`, `pz`, `nz`,** in any case. Picked over `+x` and `-x`, which are awkward in file names, shells and URLs, and over `right`, `left`, `top`, which don't say which way is which; it's the convention the tools that write cube maps mostly use. A file that ends in none of them, a face that's missing or there twice, a face that isn't square and faces of different sizes are errors at the path, which name the file. One file, or a URL, is an error that says to write a glob.
     - **A list or a map of cubes isn't there:** `List<Cubemap>` and `Map<string, Cubemap>` are errors, as the glob is already the cube's own.
     - **In the pack, a cube is six images, each there once** (shared by its file's hash, with a `Texture` of the same file too), and a block that names them in order. A `Cubemap` of the pack's is a name, as a `Texture` of the pack's is: what a field keeps of `sky` is the cube as the files are now.
-    - **`Cubemap(size)` makes a `Cubemap` that's drawn into** (a constructor, as `RenderTarget(width, height)` is; it was `RenderTarget.Cube(size)` for an afternoon, and a static of one type that makes another read oddly: `RenderTarget.Cube` is an error that names the constructor), and `Cubemap(size, format)` one whose faces hold `format`: `Format.Rgba8`, when left out, or `Format.Rgba16f`. `Format.Depth` is an error. It's made in local code, as a target is. Its name is the card's; that it gives a `Cubemap`, and not a `RenderTarget` with six of everything, is a pick: a cube is no destination by itself, and every method a target has would have to refuse it.
+    - **`Cubemap(size)` makes a `Cubemap` that's drawn into** (a constructor, as `RenderTarget(width, height)` is; it was `RenderTarget.Cube(size)` for an afternoon, and a static of one type that makes another read oddly: `RenderTarget.Cube` is an error that names the constructor), and `Cubemap(size, format)` one whose faces hold `format`: `Format.Rgba8`, when left out, `Format.Rgba16f`, a number format (Number images as array layers and cube faces, below), or `Format.Depth`, six faces of depth alone (Depth cubes, below). It's made in local code, as a target is. Its name is the card's; that it gives a `Cubemap`, and not a `RenderTarget` with six of everything, is a pick: a cube is no destination by itself, and every method a target has would have to refuse it.
     - **Its size is in pixels,** whatever the display, where a target's is in logical pixels at the display's scale: a cube's faces aren't laid over the window. `cube.Resize(size)` gives it another and empty images, and `cube.Dispose()` lets it go for every copy. Neither is for an asset's cube, which is an error where it's known and a line on the game's output otherwise.
     - **`cube.faces[i]` is a `RenderTarget`,** with an int that's any expression: the face `i`, from 0, in the faces' order. `cube.faces` is only read one at a time, as `target.colors` is, and can't be assigned. A constant index past 5 is an error; one that's only known as the game runs, and a face of a cube that isn't drawn into (an asset's, or one never made), is no destination, and draws into it are passed by.
     - **A face is a destination like any other:** its own camera, clip, transform, blend, tint, depth, cull and stencil, every draw a target has, and depth and stencil of its own, kept from frame to frame. Six faces are six sets of depth. Its color and its depth aren't handed out (`face.color` and `face.depth` name no image, and a draw that samples one is passed by): the cube is what's read. `face.Resize` and `face.Dispose` change nothing, having said so: they're the cube's.
@@ -3824,11 +3858,15 @@ No new backend API or recorder packet is needed: WGSL explicit-level sampling al
     - **`Format.Rgba16f`** is floats on every backend (the bytes fallback went with the GL backends, 2026-11-05).
     - **A game with no `Cubemap` generates the C it did,** and no shader's text moved.
     - In C: `tide_cubemap_ref`, `tide_cubemap_make`, `tide_cubemap_make_as`, `tide_cubemap_face`, `tide_cubemap_resize`, `tide_cubemap_dispose`, `tide_draw_cube_source`, and `TIDE_SHADER_READ_CUBE` for how a shader reads that texture; in the pack, `TIDE_PACK_CUBEMAP`, `tide_pack_cubemap_of` and `tide_pack_cubemap_find`.
-    - Not there: choosing the level a cube is read at, or a roughness, which a blurred reflection wants (mipmaps have no chosen level yet); a cube of depth alone, for a lamp that shines every way; a face's depth as a `DepthTexture`, or its color as a `Texture`; several color images or samples on a cube; a cube as a draw's own texture or a frag's own parameter; a cube made of six `Texture`s or grids as the game runs; image formats other than PNG, PSD, JPEG, TGA, BMP and RGBA8 DDS, and the layouts that put six faces in one file (a cross, a strip, a panorama); float files; lists, maps and arrays of cubes; drawing all six faces in one pass; `[Filter]` on a cube.
+    - **Depth cubes** (Provisional, Claude, 2026-11-14; the owner asked for the "isn't there yet" refusal to go: "make sure everything we can add or validate we do"): `Cubemap(size, Format.Depth)` is six faces of depth alone, each a destination of depth alone as a `RenderTarget(w, h, Format.Depth)` is, at the far limit until drawn into. `cube.depth` is its `DepthCubemap`, a type of its own (a `DepthTexture` is read by a uv; this by a direction), kept in local state as a `DepthTexture` is and read in a frag or a vert where it's a field of a component or singleton the code takes, or a GPU helper's parameter: `Sample(direction)` gives the nearest thing's depth that way from the cube's middle, forward, 0 at the near plane to 1 at the far limit; `Compare(direction, value)` how much of what's stored around there isn't nearer than `value`, 0 to 1, blended as a `DepthTexture`'s compare is. A direction of any length; `value` is kept between 0 and 1. A default one is no cube's and reads as the far limit. `cube.depth` of a cube of colors is a compile error at the draw where its format is known (each of its faces draws with a depth of its own, which isn't kept to be read); where it isn't, it's no image, and a draw that reads it is passed by with a line, as one reading a disposed target's depth is.
+      - **How it's held and read: six layers of a depth array,** the faces' targets its layers, and tidec works out the face the direction points at and the place on it (the longest axis, x before y before z where two are as long) and reads that layer as a `DepthTextureArray` is, through the same sampler, under either depth storage (reversed floats, or the forward fallback). Weighed: a cube texture of depth with its own view (`texture_depth_cube`, a cube-compatible depth image), whose comparisons a GPU blends across a face's edge; Unity's replay compares a cube nearest-only where its 2D and array compares blend four comparisons, so the pictures would differ there, and it needs a new depth-cube image on every backend and in the recorder. Chosen six layers, the same picture everywhere with no new backend or recorder image: a compare at a face's very edge blends within that face, its last pixels standing for the next face's.
+      - Its faces read back with `ReadDepth()`; `face.depth` and `face.color` still name no image.
+      - Not there: a cube of colors' depth (draw it into a depth cube too); `cube.depth.size`.
+    - Not there: a face's depth as a `DepthTexture`, or its color as a `Texture`; several color images or samples on a cube; a cube as a draw's own texture or a frag's own parameter; a cube made of six `Texture`s or grids as the game runs; image formats other than PNG, PSD, JPEG, TGA, BMP and RGBA8 DDS, and the layouts that put six faces in one file (a cross, a strip, a panorama); float files; lists, maps and arrays of cubes; drawing all six faces in one pass; `[Filter]` on a cube.
   - **Texture arrays** (2026-11-05: the owner asked for them, "just cause nothing needs [it] isn't an excuse", and picked from a proposal that they are types of their own, `TextureArray` and `DepthTextureArray`; that an asset's is a glob's images or a list of paths; that one a view draws into is `TextureArray(width, height, layers, ...)`, whose `layers[i]` are targets and whose `depth` is its depth array; and that a frag reads one with `Sample(uv, layer)`, an int layer, clamped. Every rule below beyond those was picked to build it, Provisional):
     - **A type of its own, `TextureArray`,** for the same reason a `Cubemap` is one: every place a `Texture` goes reads it by a `float2`, and an array is read by a `float2` and a layer. Its depth, each layer's, is a `DepthTextureArray`. An array is one of a draw's 16 textures, however many layers it has, and each way it's read one of its samplers.
     - **An asset's is images of one size,** a glob's, as its layers in the order a glob's list has them (by path), `asset TextureArray ground = "art/ground/*.png";`, or a list of paths in its order, `asset TextureArray ground = ["art/grass.png", "art/rock.png"];`, each a file or a glob, the same file twice being two layers of one image in the pack. 1 to 256 of them; one of another size is an error that names both. `[Filter]` and `[Wrap]` say how a `Sample` that says none reads it. Its layers compress as a `Texture` asset's do (built 2026-11-05): each layer of 128 pixels or more, a power of two a side, is BC1 where every alpha is 255 and BC3 otherwise, and an array with both is BC3 throughout on the GPU (an opaque layer's BC1 blocks turned to BC3 losslessly), its smaller images prepared in the build; `[Lossless]` keeps every layer exact, and a device without BC decodes every level. A list or a map of arrays isn't there (the glob is the array's own).
-    - **`TextureArray(width, height, layers[, pixelsPerUnit][, format])` is one a view draws into:** its size is a target's (logical pixels at the display's scale, or its own pixels a unit), `layers` an int from 1 to 256 (a constant past them is an error; at run time, a line and no array), and `format` what each layer holds, `Format.Rgba8` when left out, `Format.Rgba16f`, one of the number formats every device blends (`R8`, `Rg8`, `R16f`, `Rg16f`: Number images as array layers and cube faces, below), or `Format.Depth` for depth alone, as a shadow's cascades want. One color image a layer, and one sample a pixel. It's made in local code, as a target is.
+    - **`TextureArray(width, height, layers[, pixelsPerUnit][, format])` is one a view draws into:** its size is a target's (logical pixels at the display's scale, or its own pixels a unit), `layers` an int from 1 to 256 (a constant past them is an error; at run time, a line and no array), and `format` what each layer holds, `Format.Rgba8` when left out, `Format.Rgba16f`, a number format (`R8`, `Rg8`, `R16f`, `Rg16f`, `R32f`, `Rgba32f`, `R32i`: Number images as array layers and cube faces, below), or `Format.Depth` for depth alone, as a shadow's cascades want. One color image a layer, and one sample a pixel. It's made in local code, as a target is.
     - **`array.layers[i]` is a `RenderTarget`,** a destination as a cube's face is: its own camera, clip and settings, drawing into layer `i` of the array's colors and of its depth. Read one at a time; one past its layers, or of an asset's array, is no destination, and draws into it are passed by. A layer can't be resized or disposed by itself: `array.Resize(width, height)` and `array.Dispose()` are the whole array's. A new or resized array is black, its depth at the far limit.
     - **`array.depth` is its `DepthTextureArray`.** `array.size` (a layer's pixels, an `int2`) and `array.count` (its layers) are read in local code, as a `Texture`'s size is, and in a frag or a vert (built 2026-11-05: the GPU's own `textureDimensions` and `textureNumLayers`); a `DepthTextureArray` has both too. Zeros for none.
     - **A `Grid3<Color>` or a `Grid3<float>` converts to a `TextureArray`** (built 2026-11-05) wherever a `Grid2` of them converts to a `Texture`: its z its layers, each `size.x` by `size.y`, 1 to 256 of them and at most 16,384 a side, or the array is none. It names the grid, as a grid's `Texture` does: what's drawn is the grid as it is then, and the GPU gets only the parts of the layers whose chunks changed. Colors are a byte a channel, floats a half each, read in `.r`. A `Grid3` of anything else where an array goes is an error that says which are.
@@ -3910,14 +3948,25 @@ No new backend API or recorder packet is needed: WGSL explicit-level sampling al
     every backend (Vulkan 1.3's required formats, WebGPU core, Unity's), so their mipmaps are made of what was
     drawn, when a read that uses them first needs them, as a Color target's are. Wrap remains
     Clamp/Repeat/Mirror, the Sample's own (a `Texture` field takes no `[Wrap]`).
-    - **`R32f` and `Rgba32f` stay nearest on every device.** A GPU blends 32-bit floats only with an optional
-      feature (WebGPU's `float32-filterable`, a format feature on Vulkan). Weighed: asking for the feature and
-      blending where it's there, nearest elsewhere, which gives another picture by device and was refused for
-      that; blending four exact loads in the shader, the same picture everywhere at four reads a Sample and with
-      no mipmaps or anisotropy, which isn't built and is the owner's to ask for; and nearest only, chosen. A
-      blended read, `SampleLevel` or `SampleGrad` of one is a compile error at the draw that names `R16f` or
-      `Rgba16f`; the format is known there from the field's constructor assignments, which a typed field needs
-      fixed already.
+    - **`R32f` and `Rgba32f` blend through exact loads, the same bits on every device** (Provisional, Claude,
+      2026-11-14, after the owner's "make sure everything we can add or validate we do"; it replaces that day's
+      nearest-only rule). A GPU blends 32-bit floats only with an optional feature (WebGPU's `float32-filterable`,
+      a format feature on Vulkan), so a `Filter.Bilinear` read of one is the four texels around the uv (a
+      `Texture3D`'s eight) loaded exactly and blended in tidec's shader code by where the uv is between them, as
+      the GPU's Bilinear is, with the Sample's wrap on the texels it reaches past an edge. A `Texture`, a
+      `TextureArray`'s layer and a `Texture3D` blend so; `Filter.Point` loads the nearest texel, and so does
+      `SampleLevel` or `SampleGrad` naming `Filter.Point` or `Filter.Bilinear` (level 0). Which images are of these
+      formats tidec knows from a typed field's constructor assignments, which it needs fixed already, and from a
+      draw's source for a frag's own typed `Texture` (a shader of its own for those): the R8 to Rgba16f formats keep
+      the GPU's one sampled read. Weighed: asking for the feature and blending where it's there, nearest elsewhere,
+      another picture by device, refused for that; nearest only, the first day's rule; and loads for every format,
+      the same bits for those too at four reads where the GPU's sampler takes one, refused for what it costs the
+      formats that blend everywhere.
+    - **They have no mipmaps:** `Filter.Trilinear`, `Filter.Anisotropic`, a `SampleLevel` or `SampleGrad` that
+      names neither Point nor Bilinear (or no filter, which is Trilinear), of an `R32f` or `Rgba32f` image, is a
+      compile error at the draw naming `R16f` or `Rgba16f`. Weighed: a chain made of exact means by a kernel, and an
+      eight-load blend between two levels, which would read levels everywhere at about twice a Bilinear's cost and
+      a chain's memory; chosen none, as the formats' purpose is numbers as they are.
     - **`R32i` stays nearest:** no GPU blends integers. Any filter but Point, `SampleLevel` and `SampleGrad`
       are errors where they're written.
     - **A read through a blending sampler is never handed an image it can't blend,** whatever path the image
@@ -3936,16 +3985,28 @@ No new backend API or recorder packet is needed: WGSL explicit-level sampling al
     - **A typed read of no image is zeros,** blended or not, in a Texture, an array or a cube.
     - Ordinary Color and bare Raw textures keep their filters.
   - **Number images as array layers and cube faces** (Provisional, 2026-11-14): `TextureArray(width, height,
-    layers[, pixelsPerUnit], format)` and `Cubemap(size, format)` take `R8`, `Rg8`, `R16f` and `Rg16f` beside
-    their color formats. A frag's numeric output draws into `array.layers[i]` or `cube.faces[i]` and
-    `Clear(value)` fills one with a typed value, both matched to the format as a target's are. They're read
-    through `[Raw(float)]`, `[Raw(float2)]` or `[Raw(float4)]` on a `TextureArray` or `Cubemap` field or a GPU
-    helper's read-only parameter: `Sample`, `SampleLevel` and (an array's) `SampleGrad` give the role's type,
-    nearest where no filter is named, blended and between mipmaps where one is. `R32f`, `Rgba32f` and `R32i`
-    are refused there with the fix: an array's layers and a cube's faces are read through a sampler, a cube by
-    nothing else on any GPU, and those formats need a non-blending sampler binding of their own, which isn't
-    built (weighed against exact loads of an array's layer, which a cube has no counterpart of; `R16f` holds a
-    distance or a moment to three digits). `[Raw(int)]` on either is an error for the same reason.
+    layers[, pixelsPerUnit], format)` and `Cubemap(size, format)` take every number format beside their color
+    formats: `R8`, `Rg8`, `R16f`, `Rg16f`, and (Claude, later the same day) `R32f`, `Rgba32f` and `R32i`. A frag's
+    numeric output draws into `array.layers[i]` or `cube.faces[i]` and `Clear(value)` fills one with a typed value,
+    both matched to the format as a target's are. They're read through `[Raw(float)]`, `[Raw(float2)]`,
+    `[Raw(float4)]` or `[Raw(int)]` on a `TextureArray` or `Cubemap` field or a GPU helper's read-only parameter:
+    `Sample` gives the role's type, nearest where no filter is named; a filter named blends, and `SampleLevel` and
+    (an array's) `SampleGrad` read between mipmaps, Trilinear where they name no filter, for the formats every
+    device blends. A typed array's nearest pixel is an exact load where its format is a 32-bit one or isn't known (a
+    kernel's field the renderer binds), through a binding every float format fits (an unfilterable
+    `texture_2d_array<f32>`, `<i32>` for ints), the texel a nearest sampler gives; one of a known R8 to Rgba16f format
+    keeps its nearest sampler, so its nearest and blended reads stay one of a draw's 16 textures. Its `R32f` and
+    `Rgba32f` layers blend with `Filter.Bilinear` as four exact loads (Portable filtering).
+    - **A cube of 32-bit numbers is six layers** on the GPU, an array's, its faces their targets: no GPU samples an
+      integer cube, nor blends 32-bit floats everywhere. tidec reads it by working out the face the direction points
+      at and the place on it (the longest axis; x before y before z where two are as long, at a face's very edge),
+      and loading the nearest texel there, the same on every backend. It's read at its nearest pixel alone: a
+      filter or a level is a compile error at the draw naming `R16f` or `Rgba16f`, as blending across a face's edge
+      from loads would take the faces beside it and no backend's own. Weighed: an unfilterable cube binding and a
+      non-filtering sampler for the float formats, which leaves integers out and binds differently on Unity; a 2D
+      array view of a cube, which Unity's replay can't take of a cube's image; six layers chosen.
+    - **`[Raw(int)]`** on an array or a cube reads `R32i` layers and faces, nearest alone: a filter is an error
+      that says no GPU blends integers. A typed read of no image is zeros, as ever.
   - **Multisampling:** R8, Rg8, R16f and Rg16f support their usual sample counts and resolve each numeric
     channel by the mean. Numeric float4 outputs into Rgba16f use its ordinary mean resolve too. R32f,
     Rgba32f and R32i require one sample, including when mixed with other images of a target. Optional float32
@@ -4263,6 +4324,10 @@ These are implementation picks, rather than additional owner decisions.
   the eight neighboring cells, with Point for an exact nearest cell. Clamp, Repeat and Mirror apply on all axes.
   There are no volume mipmaps, and no `SampleLevel`, Trilinear or Anisotropic volume filtering: a full chain and
   its three-dimensional downsampling were weighed against a predictable base-level image for simulation and lookup data.
+  A typed `[Raw(float)]`, `[Raw(float2)]` or `[Raw(float4)]` volume reads its nearest cell where no filter is named,
+  as a typed `Texture` does, and blends with `Filter.Bilinear` (Provisional, Claude, 2026-11-14, under Portable
+  filtering): an `Rgba16f` volume and a `Grid3<float>`'s through the GPU's sampler, an `R32f` or `Rgba32f` one as its
+  eight cells loaded exactly and blended in the shader. A `[Raw(int)]` volume reads its nearest cell alone.
 - **Exact cells:** `volume[int3 at]` reads a `Color`, or a typed Raw field's float/float2/float4/int, in GPU code, zeros outside. It accompanies continuous
   `Sample` rather than forcing callers to reconstruct cell-center normalized coordinates. A float grid's ordinary volume
   reads its value as red, zero green and blue and alpha one.
@@ -4356,7 +4421,7 @@ Kernels, GPU lists, `GPU.Run`, ordered `Add`, atomics, `shared`, `GPU.Barrier`, 
 - **GPU lists passed on alone** (built 2026-11-05): a function's `GPUList<T>` parameter is the list its call names, by a field or by the caller's own such parameter; the function is written once for each storage buffer it's called with, as one taking a `List<T>` is for each list. It isn't a value: no local keeps one, no function returns one, and `?:` doesn't pick one. What a function does to it, writing elements, `Add` and atomics, the kernel that calls it does to the list it passed, so a frag or vert calling one that writes is an error that says a kernel runs it. A call of a function that adds to a list counts as an `Add` of that list: once on a path, not in a loop, and a statement of its own, checked once every function's body is.
 - **The count:** only `Add`, `Set`, `Clear` and `SetCount(n)` change it; a write by index past the count leaves it, so a list a kernel fills by index takes `SetCount` from the CPU. `SetCount` is a pick of its own, in local code beside `Set` and `Clear`.
 - **`capacity`** is readable on both sides; `contentRevision` on the CPU.
-- **Reads back** are of the list as the frame drawn after the read was asked for leaves it (the renderer begins them once that frame's work is recorded). On the web they arrive when the browser has them; without a window (`--capture`, `--frames`, `--script`) at the next frame's start. A read nobody polls for 600 frames (its task was cancelled) is let go. 64 are pending at most; past that the await waits.
+- **Reads back** are of the list as the frame drawn after the read was asked for leaves it (the renderer begins them once that frame's work is recorded). On the web they arrive when the browser has them; without a window (`--capture`, `--frames`, `--script`) at the next frame's start. A task dropped while it waits (cancelled, its owner gone, its local world freed) lets go of its read at once, a target's too, so its slot and what it holds go free; one the renderer has begun goes once the renderer is done with it (Provisional, Claude, 2026-11-14: a dropped read held its slot and its bytes for 600 frames, which made a target's later reads fail). A read nobody polls or lets go of for 600 frames (C that asks and never looks) is let go. 64 are pending at most; past that the await waits.
 - **Atomics on `shared` memory** are on a `shared int[N]`'s elements; such an array's reads and writes are atomic too, and it can't be read whole.
 - **Shared locals** take no initializer, are changeable without `mut`, and are a kernel's own body's top level.
 - **`Draw.Instanced` over a GPU list** takes no `lod:` and no skinned mesh. Inside `Draw.Transform` (built 2026-11-05, after the first cut, which left such a draw unmoved), the draw's matrix goes with its uniforms and the GPU puts each instance's transform through it, as the CPU does a list's; one that mirrors turns the draw's front round, as it does a list's.
@@ -4523,9 +4588,7 @@ The owner: "compute shaders will be a guarantee now, if a render backend can't s
   - Costs that are easy to miss:
     - tidec's helper texts are written once in GLSL and spelled into WGSL (`put_helper`), so dropping GLSL means making WGSL their source: a refactor of `shader.c` with every golden checked. (As built, Claude's pick, Provisional: the emitter is WGSL only and the helper texts stay in their C-like notation, which `put_helper` spells into WGSL; every WGSL and SPIR-V output came out byte-identical: `notes/shaders.md`.)
     - WebGPU's compatibility mode (Chrome's path on GLES 3.1 Android) allows no storage buffers in the vertex stage by default, so this targets core WebGPU only.
-    - Android's emulator fell back to GLES with SwiftShader (its Vulkan there is 1.2), so emulator GPU runs needed a Vulkan 1.3 software device. Checked 2026-11-05: the emulator's own lavapipe (`-gpu lavapipe`) gives the device Vulkan 1.3, and CI's Android job runs the renderer's apps on it (`notes/android-and-mingw.md`). Since 2026-11-14 every GPU fixture a desktop runs as a window program runs there as an app too, the kernels', images', culling's and depth fixtures' among them, on the device's descriptor sets (`notes/android-and-mingw.md`, Every window fixture an app).
-      - Provisional (Claude, 2026-11-14): a debuggable Android app (any but `tide build --android --distribution`'s) takes Tide's settings (`TIDE_` names) from its intent's `tide.env` and sets them before `main`, as a desktop run has them in its environment; that's how the fixtures' 24-bit depth, anisotropy and culling variants run there. An app built to ship takes none: any app on the phone can start another's activity with extras, and a setting such as `TIDE_RELAY` would point its game elsewhere. Weighed: a test passing its whole environment, as a program run through adb does (the caller's `TIDE_HIDDEN` would make local and CI runs differ), one extra a setting (the intent's keys through JNI for nothing more), and settings in every app (above).
-      - Provisional (Claude, 2026-11-14): Android's frames go on with the match while the frame's fence is waited for (`tide_platform_update_while_waiting`), as desktop's do; until then Android's presented without the host's updater, so a GPU-bound phone's match waited out each fence. Weighed: keeping it desktop's alone, as built on 2026-11-03, which had no reason given but a first platform.
+    - Android's emulator fell back to GLES with SwiftShader (its Vulkan there is 1.2), so emulator GPU runs needed a Vulkan 1.3 software device. Checked 2026-11-05: the emulator's own lavapipe (`-gpu lavapipe`) gives the device Vulkan 1.3, and CI's Android job runs the renderer's apps on it (`notes/android-and-mingw.md`). Since 2026-11-14 every GPU fixture a desktop runs as a window program runs there as an app too, the kernels', images', culling's and depth fixtures' among them, on the device's descriptor sets (`notes/android-and-mingw.md`, Every window fixture an app). Their 24-bit depth, anisotropy and culling variants take Tide's settings as a debuggable app does (Settings, Provisional: Tide's settings in an Android app).
     - CI can use lavapipe or SwiftShader for Vulkan and Dawn's software adapter, as it uses SwiftShader WebGPU now.
   - Staging: build compute and indirect drawing on Vulkan and WebGPU, then delete GL in the same series. Between those steps, a game that ran a kernel on OpenGL had its runs passed by, saying why. Done 2026-11-05: GL is gone.
   - **Built 2026-11-05 (Claude's picks, Provisional):**
@@ -5494,6 +5557,7 @@ Implemented, awaiting approval:
 - A closed match changes hands closed: its players come back, but no one new joins. The room keeps its code, and its key (128 random bits) only goes to the match's players, so no one else can take the room over.
 - A host that's still running but doesn't answer the relay in time, like one stopped at a breakpoint, loses the room to its players. When it carries on, its match fails on its own machine (`Failed`).
 - `Session.End()` on a client does nothing. A match that ends, by `Session.End()` or by its last scene unloading, ends at the relay too: for five minutes, players who come back to its room to take it over are told it ended, and go offline with `Ended`, whatever goodbye they missed. The room's code stays taken that long.
+- **The match while a frame waits for the GPU** (built 2026-11-03 for desktop; Android's, Provisional, Claude, 2026-11-14). While Vulkan waits, after a frame is shown, for the fence of the frame whose resources the next one reuses, the standard host goes on with the match (the network and the session's ticks, no views, input, drawing or reloads: `tide_platform_update_while_waiting`), so a GPU-bound frame doesn't hold up the match's traffic. Desktop's window does this, and since 2026-11-14 Android's activity too: until then it presented without the host's updater, so a GPU-bound phone's match waited out each fence (`tide_platform_gpu_wait_app` found it). Weighed: keeping it desktop's alone, as built on 2026-11-03, which had no reason given but a first platform. The web's WebGPU and runs with no window never call it.
 
 ### Open
 
@@ -5614,6 +5678,7 @@ Implemented, awaiting approval:
 - `version` is text written out, or a constant that is: the version people see, like `1.2.0`, one to three numbers between dots, which Android and iOS both take (iOS's version has to be). Without it, it's `1.0`. The number app stores order updates by is each build's own: on Android, the minutes since 2020.
 - A setting that's set twice, a name that isn't a setting, and a type written before one are errors. The first is at the second place the setting is set, in the same block or in another, and says where the other one is, with its file when that's another. Set twice to the same value, it's still an error. The last two say that a game's own values are constants.
 - In generated C, the settings are in `tide_game_api` (`tick_rate` and `title`), in the `.c` rather than the header, so they don't change the game's hash.
+- **Tide's settings in an Android app** (Provisional, Claude, 2026-11-14). The engine's own settings for a run, the `TIDE_` names a desktop run takes from its environment (`TIDE_GPU_CULLING`, `TIDE_VULKAN_ANISOTROPY` and the like), aren't the game's `settings`, and a phone has no environment to give an app. A debuggable Android app (any but `tide build --android --distribution`'s) takes them from its intent's `tide.env`, `NAME=value` words apart, and sets them before `main`; it says each it set in its output (`setting: TIDE_NAME=value`), and each it left out (a name not `TIDE_` and capitals, digits and underscores), so whoever started it can tell: `cmake/run_android.mjs` fails a test whose app didn't say each of its own, which would otherwise pass as the test without them. An app built to ship takes none, and says so: any app on the phone can start another's activity with extras, and a setting such as `TIDE_RELAY` would point its game elsewhere. Weighed: a test passing its whole environment, as a program run through adb does (the caller's `TIDE_HIDDEN` would make local and CI runs differ); one extra a setting (the intent's keys through JNI for nothing more); settings in every app (the point above); and a silent activity, with each test checking its own setting (the fixtures work out what to expect from the same setting they're given, so one that never arrived passes as the default does).
 
 ### Open
 
@@ -6164,14 +6229,30 @@ Implemented, awaiting approval:
 
 Symbols beyond tide's versions (the owner, 2026-10-07: `#if` with no `#define` isn't much, symbols from the command line, `#if DEBUG`, and knowing whether a package is installed; everything below is Claude's pick of how):
 
-- A symbol is defined or not, with no value, as in C#. One that nothing defines is false, and no error: `#if STEAM` has to compile in the build that doesn't define it.
+- To `#if`, a symbol is defined or not, as in C#: a value a build gives it (below) changes nothing there. One that nothing defines is false, and no error: `#if STEAM` has to compile in the build that doesn't define it.
 - `#define NAME` and `#undef NAME` are C#'s: for the file they're in, and before its first token, as they're for all of it; after code they're an error. `#undef` takes away a build's symbol too, in that file. A line in a branch that's left out isn't read.
-- `--define NAME` on `tide run`, `build`, `schedule` and `shaders` (and tidec, and a line of its `@list`; `DEFINES` in `tide_add_game`) defines a symbol for every file of the game and its packages. No `-D`, no `NAME=value`, no setting or `tide.packages` line for it.
+- `--define NAME` on `tide run`, `build`, `schedule` and `shaders` (and tidec, and a line of its `@list`; `DEFINES` in `tide_add_game`) defines a symbol for every file of the game and its packages, and `--define NAME=value` defines it with a value (below). No `-D`, no setting or `tide.packages` line for it.
 - `DEBUG` is defined in `tide`'s default debug mode, and undefined with `--release` or `--distribution` (in this repo's CMake builds: in the Debug configuration). Nothing else is predefined: no `RELEASE`, no symbols for `--web` or `--android`, and none for platforms, as a game is one code for all of them.
 - `PACKAGE_<NAME>` is defined for each package the game builds with: its name (the `package Name` of its `tide.packages`, its namespace) in capitals, anything that's no letter or digit as `_`. No versions of packages.
 - `TIDE_` and `PACKAGE_` names, `true` and `false` can't be defined, by a file or a command line.
 - **The build's symbols that conditions read are part of the game's identity.** Each one a condition reads (not a file's own, not tide's versions) is listed in the generated header with whether it's defined, so it's in the game's hash: a debug and a release build of a game that says `#if DEBUG`, or builds with other `--define`s that the game reads, are different games and join none of each other's matches, where they'd otherwise connect and correct each other every tick. A game that reads none has the header it had. The alternative that was weighed: refusing those symbols in match code, which a lexer can't tell.
 - Editors read `DEBUG` as defined and know the game's packages; what a command line defines they don't, and read as not defined.
+
+Symbols read by code, with values (built 2026-11-14; the owner approved "a define with a value, readable as an expression", "go with your recommendations", and each rule below is Claude's pick):
+
+```csharp
+const bool PREPASS = !defined(NO_PREPASS);
+const int ARMY_SIDE = define(ARMY_SIDE, 500); // tide run --define ARMY_SIDE=1000
+```
+
+- **`defined(NAME)`** is a constant `bool`: whether `#if NAME` would be true in that file (its own `#define` and `#undef` first, then the build's symbols, tide's versions too). A `TIDE_` name that's no version is the error it is in `#if`.
+- **`define(NAME, default)`** is a constant: the value the build's `--define NAME=value` gave, or `default`, a constant, when the build gives NAME none. The spelling pairs with `defined`: `define` reads the value a define gave. Its type is the default's, or the type where it goes when that's one too and the default converts to it (`define(SCALE, 1)` in a `float`: its value reads as a float). That type is `bool` (`true` or `false`), `byte`, `int` or `long` (decimal digits, with `-` before a negative one, fitting the type; no hex, no `_`), `float` or `double` (decimal, `2.5`, `-1e3`, finite in the type), `string` (the text as it is: UTF-8, with no control characters but tabs and line breaks), or an enum (a member's name, as written, an alias's too). Anything else, a vector say, is an error that says to read its parts, each a define. A value that isn't one is an error at the `define`, naming the symbol, the value and the type, with a note that shows a value that would be (`--define ARMY_SIDE=500`).
+- **A symbol defined with no value** (`--define FAST`, or a file's `#define FAST`, which never has one) reads as `true` where the type is `bool`, and is an error anywhere else, which says to give it one. A symbol defined with an empty value (`--define TITLE=`) has the empty value.
+- **The call becomes the literal it reads as** while checking (`check_symbol_call`), so it goes anywhere a constant does: a `const`, a field's default, an array's size, a `switch` case, a GPU function, a function's body. A game declares no function or type called `defined` or `define`: they're the language's names.
+- **`#if` never reads a value.** `#if SIDE == 3` (a number, text or a `-` after `==` or `!=`) is an error that says to compare the constant in code or define a symbol for each choice; `==` and `!=` between symbols compare whether each is defined, as before.
+- **Command lines.** `--define NAME=value` splits at the first `=`, so a value can hold `=`; the name is what `--define NAME` takes, and `NAME=` is an empty value. A name given twice takes the later value: the lexer's last word stands, and `tide` passes the C compiler that one `-D`. Handwritten game and package C gets `-D NAME=value` as clang reads it (the value as C tokens, not a string); a symbol with no value is 1 there, as before. `tide.packages` `#if` lines read a symbol with a value as defined.
+- **Identity.** Every build symbol a condition or code reads is in the generated header's comment with what it was, `NAME=0`, `NAME=1` or, with a value, `NAME="value"` (quotes and backslashes escaped, bytes outside printable ASCII and `?` as `\xNN`), so it's in the game's hash: builds that read different values are different games, as builds that read a symbol differently are. A game that reads no valued symbol has the header it had. The generation cache's key and custom C's identity already held each `--define` as written, value and all.
+- Editors know no command line, so `define(NAME, default)` reads as its default there, and `defined(NAME)` as `#if` reads NAME.
 
 ## Open
 

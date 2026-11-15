@@ -38,8 +38,8 @@ typedef struct tide_vk_window {
 bool tide_gpu_vk_open(const tide_vk_window *window, bool say);
 // The frame's work goes to the GPU, and what it drew into the window shows.
 void tide_gpu_vk_present(void);
-// Desktop's presentation may update a match while the next frame's fence is
-// pending. The callback returns seconds until its next update, or negative
+// A window's presentation (desktop's and Android's) may update a match while
+// the next frame's fence is pending. The callback returns seconds until its next update, or negative
 // for an ordinary indefinite wait. It must not touch GPU/window resources.
 // Acquisition, readback and mid-frame flushes never call it.
 void tide_gpu_vk_present_updating(double (*update)(void));
@@ -75,5 +75,10 @@ size_t tide_gpu_vk_pipeline_cache_read(void);
 // For tests: how many bytes of the driver's data a cache file can have and still be read (64 MiB): a bigger one
 // is left out, and written over as the run ends with what the run compiled.
 void tide_gpu_vk_pipeline_cache_outgrown(size_t bytes);
+// For tests: whether the device's driver keeps what it compiles in a pipeline cache. A compute pipeline that does
+// nothing is compiled into an empty cache of its own, apart from the device's, and the driver's data for it must be
+// more than its 32-byte header. Desktop drivers keep their pipelines; the Android emulator's (gfxstream) keeps the
+// header alone, so a file of its pipelines is two headers whatever the run compiled.
+bool tide_gpu_vk_pipeline_cache_keeps(void);
 
 extern const tide_gpu tide_gpu_vulkan;

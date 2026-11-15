@@ -1,0 +1,4 @@
+// expect: a cube's faces and its depth are its own images, which what's drawn into them changes: they can't be assigned
+scene Main { }
+local singleton Lamp { Cubemap cube; Cubemap other; }
+view Show(mut Lamp lamp) { lamp.cube=Cubemap(64,Format.Depth); lamp.other=Cubemap(64,Format.Depth); lamp.cube.depth=lamp.other.depth; }

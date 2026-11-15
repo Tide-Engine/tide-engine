@@ -80,7 +80,7 @@ images still use their exact image decoder.
 
 When nothing a build is made of changed, `tide build` and `tide run` skip that
 step too and say `Tide code and assets are up to date`: the same Tide, options
-and `--define` symbols, and every source file, package file and asset file with
+and `--define` symbols and values, and every source file, package file and asset file with
 the size and last-write time it had at the last build. A build whose code gave
 a warning is compiled every time, so the warning is shown every time, and so is
 a game with an asset from a URL, which each build asks the server about. Deleting
@@ -221,7 +221,7 @@ still performs only front-end validation, even with a preview flag.
 | `--web` | A web page (WebGPU), built with clang's WebAssembly target |
 | `--android` | An Android app, for phones and the emulator (see [Android](#android)) |
 | `--scene <Name>` | Starts in the named prefab or scene for this run/build, over the project's `startScene` setting; use the qualified name for a declaration in a namespace |
-| `--define <SYMBOL>` | Defines a symbol for the game's [`#if` lines](../language/namespaces.md#symbols-of-your-own), as many times as there are symbols. Builds also pass it as a C/C++ macro with value 1 to the game's and its packages' handwritten sources. `DEBUG` is defined in the default debug mode, including those C/C++ sources. Changing symbols rebuilds these sources and changes custom-C simulation compatibility. `schedule` and `shaders` take it too |
+| `--define <SYMBOL>[=<value>]` | Defines a symbol for the game's [`#if` lines](../language/namespaces.md#symbols-of-your-own), as many times as there are symbols. With `=value`, code reads the value as a constant: `const int ARMY_SIDE = define(ARMY_SIDE, 500);` is 1000 with `--define ARMY_SIDE=1000` and 500 without it ([Values from the build](../language/namespaces.md#values-from-the-build)); a symbol named twice takes the later value. Builds also pass it as a C/C++ macro to the game's and its packages' handwritten sources: with value 1, or as `-D SYMBOL=value`. `DEBUG` is defined in the default debug mode, including those C/C++ sources. Changing symbols or values rebuilds these sources and changes custom-C simulation compatibility. `schedule` and `shaders` take it too |
 | `--title <title>` | The window's title, over the game's `title` setting (default: that, or the folder's name) |
 | `--stats` | Shows the [stats](#stats) in the window's corner, as the game's `stats` setting does. `run` starts them open |
 | `--debug-views` | Turns the [debug views](debug-views.md) on, as the game's `debugViews` setting does: F7 shows the profiler, which says where a frame's time and a tick's go |
@@ -447,7 +447,7 @@ Building for Android needs two things of Google's: the NDK, Android's C library 
 - To sign with another key (a build server's, or one you already have), set `TIDE_ANDROID_KEY` to its file: PEM, the private key (RSA, 2048 bits or more) and then its certificate. `openssl pkcs12 -in upload.p12 -nodes -out key.pem` makes one from a keystore; a `.jks` keystore becomes a `.p12` first with `keytool -importkeystore -srckeystore upload.jks -destkeystore upload.p12 -deststoretype PKCS12`.
 - Each build's version code, which Android only updates an app to a higher one of, is the minutes since 2020 began, so every build is newer than the last. Where `SOURCE_DATE_EPOCH` is set, it stands in for now. The version people see is the game's `version` setting, like `1.2.0`, or else 1.0.
 - The back button comes to the game as Escape, as in Unity.
-- An app that isn't built with `--distribution` takes Tide's settings, like `TIDE_GPU_CULLING=0`, from how it's started, as a desktop run takes them from its environment: `adb shell am start -n <appId>/android.app.NativeActivity --es tide.env "TIDE_GPU_CULLING=0"`, several apart by spaces. An app built to ship takes none: any app on the phone can start another with such words.
+- An app that isn't built with `--distribution` takes Tide's settings, like `TIDE_GPU_CULLING=0`, from how it's started, as a desktop run takes them from its environment: `adb shell am start -n <appId>/android.app.NativeActivity --es tide.env "'TIDE_GPU_CULLING=0 TIDE_VULKAN_ANISOTROPY=1'"`, several apart by spaces. Keep both quotes: the double ones are your shell's, and the single ones the phone's, which reads the command again, so without them only the first setting arrives. The app says each setting it took in its output (`adb logcat -s tide`), as `setting: TIDE_GPU_CULLING=0`, and each it left out. An app built to ship takes none, and says so: any app on the phone can start another with such words.
 - With `tide run --android`, saving a `.tide` or C file builds the app again, installs it and starts it over: a phone can't swap code into a running app, so the match starts over too. Type `r` and press Enter to start it over yourself; closing the app ends the run.
 
 ### Google Play

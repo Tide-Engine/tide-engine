@@ -2884,6 +2884,12 @@ static void gen_component_owner(gen *g, sb *o, const expr *e)
     else sb_put(o, "tide_this");
 }
 
+// A grid local of a task's code, which a wait leaves as the frame's (gen_spill, gen_reload).
+static bool task_grid_local(const gen *g, const expr *e)
+{
+    return g->task && e->kind == E_NAME && e->bind == BIND_LOCAL && e->type.kind == TY_GRID;
+}
+
 // Where a place's memory is, as C, for its text and lists (see tide/text.h):
 // a world's, for what's part of one, which owns them, or the scratch area's,
 // for what isn't, which borrows. A field or list element is where its value is.
@@ -2895,6 +2901,12 @@ static const char *place_where(const gen *g, const expr *e)
     }
     while (e->kind == E_MEMBER || e->kind == E_INDEX) e = e->object;
     if (e->kind != E_NAME) return "TIDE_IN_SCRATCH";
+    // A task's grid local is its frame's after a wait (gen_reload): what changes it changes a copy of its own
+    if (task_grid_local(g, e)) {
+        sb mine = {0};
+        sb_printf(&mine, "tide_grid_mine(&%s, &%s)", local_cname(g, e->name), grid_shape_name(e->type.decl));
+        return mine.data;
+    }
     // A mut method's own fields: where its caller's value is
     if (e->bind == BIND_FIELD) return g->routine && g->routine->is_mut_method && !g->in_input ? "tide_self_where" : "TIDE_IN_SCRATCH";
     if (e->bind != BIND_PARAM) return "TIDE_IN_SCRATCH";
@@ -4936,6 +4948,12 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_put(o, ")");
             break;
         }
+        if (e->object->type.kind == TY_CUBEMAP && e->type.kind == TY_DEPTH_CUBEMAP) { // cube.depth, a depth cube's
+            sb_put(o, "tide_cubemap_depth(");
+            gen_expr(g, o, e->object);
+            sb_put(o, ")");
+            break;
+        }
         if (e->object->type.kind == TY_TEXTURE_ARRAY || e->object->type.kind == TY_DEPTH_TEXTURE_ARRAY) {
             // array.depth, array.size, array.count, and its depth's size and count
             const bool depths = e->object->type.kind == TY_DEPTH_TEXTURE_ARRAY;
@@ -6076,12 +6094,15 @@ static const char *task_slot_for(gen *g, const char *local, const type t)
 }
 
 // Puts `value`, C of type `t`, in the frame's place `slot` (C, like
-// tide_f->x): text and lists as the world's own, `where` the task's world.
+// tide_f->x): text, lists and grids as the world's own, `where` the task's
+// world. A grid the task took back from its frame and left as it was stays the
+// frame's (tide_grid_carry).
 static void gen_spill(gen *g, const char *slot, const char *value, const type t, const char *where)
 {
     sb *o = &g->c;
     switch (t.kind) {
     case TY_STRING: line(g, o, "tide_text_set(&%s, %s, %s);", slot, value, where); return;
+    case TY_GRID: line(g, o, "tide_grid_carry(&%s, %s, &%s, %s);", slot, value, grid_shape_name(t.decl), where); return;
     case TY_LIST: line(g, o, "tide_list%d_assign(&%s, %s, %s);", t.decl->index, slot, value, where); return;
     case TY_MAP:
     case TY_SET: line(g, o, "tide_map%d_assign(&%s, %s, %s);", t.decl->index, slot, value, where); return;
@@ -6117,7 +6138,8 @@ static void gen_spill(gen *g, const char *slot, const char *value, const type t,
 }
 
 // Takes the value in the frame's place `slot` back into C local `local`, of
-// type `t`. Lists come back as copies, so the task changes its own.
+// type `t`. Lists come back as copies, so the task changes its own; a grid as
+// the frame's, which a write first copies (tide_grid_mine, place_where).
 static void gen_reload(gen *g, const char *local, const char *slot, const type t)
 {
     sb *o = &g->c;
@@ -6192,12 +6214,20 @@ static bool task_value_handles(const type t, const task_ref_outer *outer)
     return false;
 }
 
+// Whether a frame's slot of type `t` holds a grid: a grid's, or a T?'s or a failable call's result's whose value is one.
+static bool slot_holds_grid(const type t)
+{
+    if (t.kind == TY_GRID) return true;
+    return (t.kind == TY_OPTIONAL || t.kind == TY_FAILABLE) && t.decl && t.decl->fields.items[0].type.kind == TY_GRID;
+}
+
 static void gen_spill_live(gen *g)
 {
     const char *where = world_where(g->task->local);
     for (int i = 0; i < g->task->info->slots.count; i++) {
         const task_slot *slot = &g->task->info->slots.items[i];
-        if (!task_value_handles(slot->type, NULL)) continue;
+        // A grid no local in scope holds goes back to the world's heap as the task waits: a read's can be big
+        if (!task_value_handles(slot->type, NULL) && !slot_holds_grid(slot->type)) continue;
         bool live = false;
         for (int k = 0; k < g->task->live.count; k++) live |= strcmp(slot->local, g->task->live.items[k].name) == 0;
         if (live) continue;
@@ -6372,14 +6402,44 @@ static void gen_await(gen *g, expr *e, const char *name)
         // await list.Read(): a ticket of the frame's until the GPU is done with the frame drawn next (tide/draw.h)
         line(g, o, "tide_f->tide_gpu_ticket = 0;");
         line(g, o, "tide_gpu_resume%d:;", k);
-        indent(g, o);
-        sb_put(o, call->gpu == GPU_TARGET_READ
-            ? "if (!tide_f->tide_gpu_ticket) tide_f->tide_gpu_ticket = (int32_t)tide_render_target_read_begin_as("
-            : "if (!tide_f->tide_gpu_ticket) tide_f->tide_gpu_ticket = (int32_t)tide_gpu_list_read_begin(");
-        gen_expr(g, o, call->object);
-        // Which image and as what (tide_target_read): the grid below is of that kind's cells
-        if (call->gpu == GPU_TARGET_READ) sb_printf(o, ", %d, %uu);\n", (int)call->read_image, (unsigned)call->read_kind);
-        else sb_printf(o, ", %s);\n", call->gpu == GPU_READ_COUNT ? "true" : "false");
+        if (call->gpu == GPU_TARGET_READ && call->read_part) {
+            // A part of the image, or a box of a volume: its first pixel and how many along each axis, clamped to the
+            // image as the read begins
+            const int n = call->args.count;
+            const type vec = {call->read_volume ? TY_INT3 : TY_INT2, NULL};
+            line(g, o, "if (!tide_f->tide_gpu_ticket) {");
+            g->indent++;
+            indent(g, o);
+            sb_printf(o, "const %s tide_from%d = ", c_type(vec), k);
+            gen_as(g, o, call->args.items[n - 2], vec);
+            sb_put(o, ";\n");
+            indent(g, o);
+            sb_printf(o, "const %s tide_size%d = ", c_type(vec), k);
+            gen_as(g, o, call->args.items[n - 1], vec);
+            sb_put(o, ";\n");
+            indent(g, o);
+            sb_put(o, "tide_f->tide_gpu_ticket = (int32_t)tide_render_target_read_begin_part(");
+            gen_expr(g, o, call->object);
+            sb from_z = {0}, size_z = {0}; // A part of an image is one deep
+            if (call->read_volume) sb_printf(&from_z, "tide_from%d.z", k), sb_printf(&size_z, "tide_size%d.z", k);
+            else sb_put(&from_z, "0"), sb_put(&size_z, "1");
+            sb_printf(o, "%s, %d, %uu, (const int32_t[3]){tide_from%d.x, tide_from%d.y, %s}, "
+                         "(const int32_t[3]){tide_size%d.x, tide_size%d.y, %s});\n",
+                      call->read_volume ? ".target" : "", (int)call->read_image, (unsigned)call->read_kind, k, k, from_z.data,
+                      k, k, size_z.data);
+            g->indent--;
+            line(g, o, "}");
+        } else {
+            indent(g, o);
+            sb_put(o, call->gpu == GPU_TARGET_READ
+                ? "if (!tide_f->tide_gpu_ticket) tide_f->tide_gpu_ticket = (int32_t)tide_render_target_read_begin_as("
+                : "if (!tide_f->tide_gpu_ticket) tide_f->tide_gpu_ticket = (int32_t)tide_gpu_list_read_begin(");
+            gen_expr(g, o, call->object);
+            // Which image and as what (tide_target_read): the grid below is of that kind's cells
+            if (call->gpu == GPU_TARGET_READ) sb_printf(o, "%s, %d, %uu);\n", call->read_volume ? ".target" : "",
+                                                       (int)call->read_image, (unsigned)call->read_kind);
+            else sb_printf(o, ", %s);\n", call->gpu == GPU_READ_COUNT ? "true" : "false");
+        }
         line(g, o, "tide_gpu_read_result tide_read%d;", k);
         line(g, o, "if (!tide_gpu_list_read_poll((uint32_t)tide_f->tide_gpu_ticket, &tide_read%d)) {", k);
         g->indent++;
@@ -8955,7 +9015,9 @@ static void gen_stmt_now(gen *g, const stmt *s)
             gen_expr(g, o, target);
             sb_put(o, "), ");
             gen_expr(g, o, s->value);
-            sb_printf(o, ", &%s, %s);\n", grid_shape_name(target->type.decl), place_where(g, target));
+            // A task's local takes the new grid whatever it held: its frame still has the old one (gen_spill)
+            sb_printf(o, ", &%s, %s);\n", grid_shape_name(target->type.decl),
+                      task_grid_local(g, target) ? "TIDE_IN_SCRATCH" : place_where(g, target));
             break;
         }
         if (target->kind == E_INDEX && target->object->type.kind == TY_MAP) { // scores[k] = x: added, or the value replaced
@@ -9742,13 +9804,27 @@ static void gen_header(gen *g)
     // Maps' entry representation is opaque in public structs, but must still distinguish builds.
     if (prog->maps.count) sb_put(o, "// Map ABI: signed 64-bit insertion order (2).\n\n");
     if (prog->uses_heap) sb_put(o, "// Heap ABI: retained immutable asset lists (1), 64-bit handles (1).\n\n");
-    // The build's symbols its #if conditions read: in the header, so in the game's hash
+    // The build's symbols its #if conditions and defined()/define() read: in the header, so in the game's hash
     int symbols = 0;
     const lex_symbol *read = lex_symbols_read(&symbols);
     if (symbols) {
         sb_put(o, "// The symbols of this build that the game's #if conditions read (--define's, DEBUG, PACKAGE_...),\n");
         sb_put(o, "// and whether each is defined: builds that differ in one are different games.\n//");
-        for (int i = 0; i < symbols; i++) sb_printf(o, " %s=%d", read[i].name, read[i].defined ? 1 : 0);
+        for (int i = 0; i < symbols; i++) {
+            if (!read[i].value) {
+                sb_printf(o, " %s=%d", read[i].name, read[i].defined ? 1 : 0);
+                continue;
+            }
+            // A value given, in quotes, nothing in it that ends the comment's line: what's no printable ASCII by its
+            // number, and '?', which could start a trigraph
+            sb_printf(o, " %s=\"", read[i].name);
+            for (const unsigned char *p = (const unsigned char *)read[i].value; *p; p++) {
+                if (*p == '"' || *p == '\\') sb_printf(o, "\\%c", *p);
+                else if (*p >= ' ' && *p < 0x7F && *p != '?') sb_printf(o, "%c", *p);
+                else sb_printf(o, "\\x%02X", *p);
+            }
+            sb_put(o, "\"");
+        }
         sb_put(o, "\n\n");
     }
     if (prog->task_handles.count) sb_put(o, "#include <stdint.h>\n\ntypedef struct tide_task_handle_value {\n"
@@ -11064,6 +11140,22 @@ static void gen_grid_bytes(gen *g, const decl *grid)
 static void gen_grid_helpers(gen *g)
 {
     sb *o = &g->c;
+    if (g->prog->grids.count) {
+        // A grid going into a world's place (`where`), a task's frame as it waits among them: a copy of its own there.
+        // One the place has already (a task's, taken back from its frame and left as it was) stays; anything code
+        // didn't make (a world's, the pack's) is copied first, as tide_grid_set takes only what code made.
+        sb_put(o, "TIDE_HELPER void tide_grid_carry(tide_grid *to, tide_grid value, const tide_grid_shape *s, const uint32_t where)\n{\n"
+                  "    if (value.at && value.at == to->at) return;\n"
+                  "    if (tide_heap_of(where) && value.at && (tide_handle_where(value.at) != TIDE_IN_SCRATCH || tide_pack_holds(value.at)))\n"
+                  "        value = tide_grid_copy(value, s);\n"
+                  "    tide_grid_set(to, value, s, where);\n}\n\n");
+    }
+    if (g->prog->grids.count && g->tasks.count) {
+        // A task's grid local, to change: the frame's after a wait, which the task changes through a copy of its own
+        sb_put(o, "TIDE_HELPER uint32_t tide_grid_mine(tide_grid *g, const tide_grid_shape *s)\n{\n"
+                  "    if (g->at && (tide_handle_where(g->at) != TIDE_IN_SCRATCH || tide_pack_holds(g->at))) *g = tide_grid_copy(*g, s);\n"
+                  "    return TIDE_IN_SCRATCH;\n}\n\n");
+    }
     for (int i = 0; i < g->prog->grids.count; i++) {
         const decl *grid = g->prog->grids.items[i];
         const int k = grid->index;
@@ -11317,7 +11409,7 @@ static void gen_text_helpers(gen *g)
             } else if (hp->list) sb_printf(o, "    tide_list%d_assign(&to->%s, value.%s, where);\n", hp->list->index, hp->path, hp->path);
             else if (hp->array) sb_printf(o, "    tide_array%d_assign(&to->%s, value.%s, where);\n", hp->array->index, hp->path, hp->path);
             else if (hp->map) sb_printf(o, "    tide_map%d_assign(&to->%s, value.%s, where);\n", hp->map->index, hp->path, hp->path);
-            else if (hp->grid) sb_printf(o, "    tide_grid_set(&to->%s, value.%s, &%s, where);\n", hp->path, hp->path, grid_shape_name(hp->grid));
+            else if (hp->grid) sb_printf(o, "    tide_grid_carry(&to->%s, value.%s, &%s, where);\n", hp->path, hp->path, grid_shape_name(hp->grid));
             else sb_printf(o, "    tide_text_set(&to->%s, tide_text_view(value.%s), where);\n", hp->path, hp->path);
         }
         // A T? field left with no value keeps nothing: its lists go back to the heap, and it's zeros, as one
@@ -11600,17 +11692,81 @@ static void gen_show_helpers(gen *g)
 // each calling those of the types in it, then the functions the calls
 // themselves are (program.json_roots). A game that calls neither has none.
 
+// A vector's, a quaternion's or a color's numbers, as JSON has them (an
+// array, in this order): how many, each one's place in the C value, and their
+// kind, 'f' float, 'd' double or 'i' int. 0 for any other type.
+static int json_vector_parts(const type t, const char *const **places, char *kind)
+{
+    static const char *const xyzw[] = {"x", "y", "z", "w"};
+    static const char *const quaternion[] = {"value.x", "value.y", "value.z", "value.w"};
+    static const char *const rgba[] = {"r", "g", "b", "a"};
+    *places = xyzw;
+    *kind = 'f';
+    switch (t.kind) {
+    case TY_FLOAT2: return 2;
+    case TY_FLOAT3: return 3;
+    case TY_FLOAT4: return 4;
+    case TY_DOUBLE2: *kind = 'd'; return 2;
+    case TY_DOUBLE3: *kind = 'd'; return 3;
+    case TY_DOUBLE4: *kind = 'd'; return 4;
+    case TY_INT2: *kind = 'i'; return 2;
+    case TY_INT3: *kind = 'i'; return 3;
+    case TY_INT4: *kind = 'i'; return 4;
+    case TY_QUATERNION: *places = quaternion; return 4;
+    case TY_COLOR: *places = rgba; return 4;
+    default: return 0;
+    }
+}
+
 // The function that reads (tide_json_get_...) or writes (tide_json_put_...)
-// a struct, an enum, a list, a map or an array.
+// a struct, an enum, a list, a set, a map, an array, or a vector, a
+// quaternion or a color (by its C type's name, which no game's type has).
 static const char *json_helper(const type t, const bool reads)
 {
     sb b = {0};
+    const char *const *places;
+    char kind;
     sb_printf(&b, "tide_json_%s_", reads ? "get" : "put");
     if (t.kind == TY_LIST) sb_printf(&b, "list%d", t.decl->index);
     else if (t.kind == TY_MAP) sb_printf(&b, "map%d", t.decl->index);
+    else if (t.kind == TY_SET) sb_printf(&b, "set%d", t.decl->index);
     else if (t.kind == TY_ARRAY) sb_printf(&b, "array%d", t.decl->index);
+    else if (json_vector_parts(t, &places, &kind)) sb_put(&b, c_type(t));
     else sb_put(&b, type_cname(t.decl));
     return b.data;
+}
+
+// A vector's reader or writer: an array of exactly its numbers, a color's
+// of three (alpha 1) or four. A `null` number leaves that one as it was, the
+// place's default, as a field's `null` does.
+static void gen_json_vector(sb *o, const type t, const bool reads)
+{
+    const char *const *places;
+    char kind;
+    const int n = json_vector_parts(t, &places, &kind);
+    const char *number = kind == 'f' ? "float" : kind == 'd' ? "double" : "int32_t";
+    if (reads) {
+        sb_printf(o, "    %s *const parts[] = {", number);
+        for (int i = 0; i < n; i++) sb_printf(o, "%s&v->%s", i ? ", " : "", places[i]);
+        sb_printf(o, "};\n    int32_t n = 0;\n    if (!tide_json_array(j)) return false;\n    while (tide_json_item(j, 0)) {\n"
+                     "        if (n == %d) return false;\n", n);
+        if (kind == 'i') {
+            sb_put(o, "        if (!tide_json_null(j)) {\n            int64_t i;\n"
+                      "            if (!tide_json_int(j, INT32_MIN, INT32_MAX, &i)) return false;\n            *parts[n] = (int32_t)i;\n        }\n");
+        } else {
+            sb_printf(o, "        if (!tide_json_null(j) && !tide_json_%s(j, parts[n])) return false;\n", number);
+        }
+        sb_put(o, "        n++;\n    }\n");
+        if (t.kind == TY_COLOR) sb_put(o, "    if (n == 3) v->a = 1.0f;\n    return !j->failed && n >= 3;\n}\n\n");
+        else sb_printf(o, "    return !j->failed && n == %d;\n}\n\n", n);
+        return;
+    }
+    for (int i = 0; i < n; i++) {
+        sb_printf(o, "    a = tide_str_add_cstr(a, \"%s\");\n", i ? "," : "[");
+        if (kind == 'i') sb_printf(o, "    a = tide_str_add_int(a, v.%s, 0);\n", places[i]);
+        else sb_printf(o, "    a = tide_json_add_%s(a, v.%s);\n", number, places[i]);
+    }
+    sb_put(o, "    return tide_str_add_cstr(a, \"]\");\n}\n\n");
 }
 
 // What reads a value of type `t` from the reader `j` into `place`, C for
@@ -11694,6 +11850,13 @@ static void gen_json_helpers(gen *g)
     for (int pass = 0; pass < 2; pass++) { // Declared first: a struct can hold a list of itself
         const char *end = pass ? "\n{\n" : ";\n";
         for (int reads = 0; reads < 2; reads++) {
+            // Vectors, quaternions and colors: an array of their numbers
+            for (int kind = 0; kind < 64; kind++) {
+                if (!((reads ? prog->json_vector_reads : prog->json_vector_writes) >> kind & 1u)) continue;
+                const type t = {(type_kind)kind, NULL};
+                gen_json_prototype(o, t, c_type(t), reads, true, end);
+                if (pass) gen_json_vector(o, t, reads);
+            }
             // Enums: a member's name, or the number of a value no member has
             for (int i = 0; i < prog->decls.count; i++) {
                 const decl *d = prog->decls.items[i];
@@ -11840,31 +12003,112 @@ static void gen_json_helpers(gen *g)
                     sb_put(o, "    }\n    return tide_str_add_cstr(a, \"]\");\n}\n\n");
                 }
             }
-            // Maps by text: an object, an entry for each key, the last one of a key written twice
+            // Maps: an object, an entry for each key, the last one of a key written twice. A key is text: a string's
+            // own, a number's digits ("3", "-12"), an enum's member's name (or a number that fits it)
             for (int k = 0; k < prog->maps.count; k++) {
                 const decl *d = prog->maps.items[k];
-                if (!(reads ? d->json_reads : d->json_writes)) continue;
+                if (d->is_set || !(reads ? d->json_reads : d->json_writes)) continue;
                 const type t = {TY_MAP, (decl *)d};
+                const type key = d->fields.items[0].type;
                 const type value = d->fields.items[1].type;
                 gen_json_prototype(o, t, "tide_map", reads, true, end);
                 if (!pass) continue;
+                const decl *named = key.kind == TY_ENUM ? key.decl : NULL;
                 if (reads) {
+                    if (named && named->members.count > 0) {
+                        sb_put(o, "    static const char *const names[] = {");
+                        for (int m = 0; m < named->members.count; m++) sb_printf(o, "%s\"" STR_FMT "\"", m ? ", " : "", STR_ARG(named->members.items[m].name));
+                        sb_put(o, "};\n    static const int64_t numbers[] = {");
+                        for (int m = 0; m < named->members.count; m++) sb_printf(o, "%s%lld", m ? ", " : "", (long long)named->members.items[m].number);
+                        sb_put(o, "};\n");
+                    }
                     sb_put(o, "    *v = (tide_map){0};\n    if (!tide_json_object(j)) return false;\n    tide_text key;\n");
-                    sb_printf(o, "    while (tide_json_key(j, &key, sizeof(tide_map%d_entry))) {\n        %s value = ", k, elem_ctype(value));
+                    sb_printf(o, "    while (tide_json_key(j, &key, sizeof(tide_map%d_entry))) {\n", k);
+                    if (key.kind != TY_STRING) { // Its text as the number or the member it names
+                        const int width = named ? named->width : 0;
+                        const char *least = key.kind == TY_BYTE || width == 1 || width == 2 ? "0" : key.kind == TY_LONG ? "INT64_MIN" : "INT32_MIN";
+                        const char *most = key.kind == TY_BYTE || width == 1 ? "255" : width == 2 ? "65535" : key.kind == TY_LONG ? "INT64_MAX" : "INT32_MAX";
+                        sb_put(o, "        const tide_str text = tide_text_view(key);\n        int64_t n;\n");
+                        if (named) {
+                            sb_put(o, "        if (!tide_str_parse_long(text, &n)) {\n");
+                            if (named->members.count > 0) {
+                                sb_printf(o, "            int32_t m = 0;\n            while (m < %d && !tide_str_eq(text, tide_str_from_cstr(names[m]))) m++;\n"
+                                             "            if (m == %d) return false;\n            n = numbers[m];\n",
+                                          named->members.count, named->members.count);
+                            } else {
+                                sb_put(o, "            return false;\n");
+                            }
+                            sb_printf(o, "        } else if (n < %s || n > %s) {\n            return false;\n        }\n", least, most);
+                        } else if (key.kind == TY_LONG) { // Every long's digits parse, and nothing else's
+                            sb_put(o, "        if (!tide_str_parse_long(text, &n)) return false;\n");
+                        } else {
+                            sb_printf(o, "        if (!tide_str_parse_long(text, &n) || n < %s || n > %s) return false;\n", least, most);
+                        }
+                    }
+                    sb_printf(o, "        %s value = ", elem_ctype(value));
                     gen_json_default(g, o, value);
                     sb_put(o, ";\n");
                     gen_json_read_part(o, value, "value", "        ");
-                    sb_printf(o, "        tide_map%d_set(v, tide_text_view(key), %s, TIDE_IN_SCRATCH);\n    }\n    return !j->failed;\n}\n\n", k,
-                              value.kind == TY_STRING ? "tide_text_view(value)" : "value");
+                    sb_printf(o, "        tide_map%d_set(v, ", k);
+                    if (key.kind == TY_STRING) sb_put(o, "tide_text_view(key)");
+                    else sb_printf(o, "(%s)n", c_type(key));
+                    sb_printf(o, ", %s, TIDE_IN_SCRATCH);\n    }\n    return !j->failed;\n}\n\n", value.kind == TY_STRING ? "tide_text_view(value)" : "value");
                 } else {
                     sb_put(o, "    bool first = true;\n    a = tide_str_add_cstr(a, \"{\");\n");
                     sb_printf(o, "    for (int32_t i = 0; i < tide_map_entries(v); i++) {\n"
                                  "        const tide_map%d_entry *e = tide_map_entry(v, i, &tide_map%d_kind);\n"
                                  "        if (!tide_map_live(e)) continue;\n        if (!first) a = tide_str_add_cstr(a, \",\");\n"
-                                 "        first = false;\n        a = tide_json_add_text(a, tide_text_view(e->key));\n"
-                                 "        a = tide_str_add_cstr(a, \":\");\n", k, k);
+                                 "        first = false;\n", k, k);
+                    if (key.kind == TY_STRING) {
+                        sb_put(o, "        a = tide_json_add_text(a, tide_text_view(e->key));\n        a = tide_str_add_cstr(a, \":\");\n");
+                    } else {
+                        sb_put(o, "        a = tide_str_add_cstr(a, \"\\\"\");\n");
+                        const char *in = "        ";
+                        if (named) { // The first name a number has, or the number
+                            bool any = false;
+                            for (int m = 0; m < named->members.count; m++) {
+                                bool earlier = false;
+                                for (int before = 0; before < m; before++) earlier |= named->members.items[before].number == named->members.items[m].number;
+                                if (earlier) continue;
+                                sb_printf(o, "        %sif ((int64_t)e->key == %lldLL) a = tide_str_add_cstr(a, \"" STR_FMT "\");\n", any ? "else " : "",
+                                          (long long)named->members.items[m].number, STR_ARG(named->members.items[m].name));
+                                any = true;
+                            }
+                            if (any) {
+                                sb_put(o, "        else ");
+                                in = "";
+                            }
+                        }
+                        sb_printf(o, "%sa = tide_str_add_long(a, (int64_t)e->key, 0);\n        a = tide_str_add_cstr(a, \"\\\":\");\n", in);
+                    }
                     gen_json_write_part(o, value, "e->value", "        ");
                     sb_put(o, "    }\n    return tide_str_add_cstr(a, \"}\");\n}\n\n");
+                }
+            }
+            // Sets: an array of their keys, in the order they were added; one read twice is there once
+            for (int k = 0; k < prog->maps.count; k++) {
+                const decl *d = prog->maps.items[k];
+                if (!d->is_set || !(reads ? d->json_reads : d->json_writes)) continue;
+                const type t = {TY_SET, (decl *)d};
+                const type key = d->fields.items[0].type;
+                gen_json_prototype(o, t, "tide_map", reads, true, end);
+                if (!pass) continue;
+                if (reads) {
+                    sb_put(o, "    *v = (tide_map){0};\n    if (!tide_json_array(j)) return false;\n");
+                    sb_printf(o, "    while (tide_json_item(j, sizeof(tide_map%d_entry))) {\n        %s key = ", k, elem_ctype(key));
+                    gen_json_default(g, o, key);
+                    sb_put(o, ";\n");
+                    gen_json_read_part(o, key, "key", "        ");
+                    sb_printf(o, "        (void)tide_map%d_add(v, %s, TIDE_IN_SCRATCH);\n    }\n    return !j->failed;\n}\n\n", k,
+                              key.kind == TY_STRING ? "tide_text_view(key)" : "key");
+                } else {
+                    sb_put(o, "    bool first = true;\n    a = tide_str_add_cstr(a, \"[\");\n");
+                    sb_printf(o, "    for (int32_t i = 0; i < tide_map_entries(v); i++) {\n"
+                                 "        const tide_map%d_entry *e = tide_map_entry(v, i, &tide_map%d_kind);\n"
+                                 "        if (!tide_map_live(e)) continue;\n        if (!first) a = tide_str_add_cstr(a, \",\");\n"
+                                 "        first = false;\n", k, k);
+                    gen_json_write_part(o, key, "e->key", "        ");
+                    sb_put(o, "    }\n    return tide_str_add_cstr(a, \"]\");\n}\n\n");
                 }
             }
             // Arrays: an array, whose values go to the elements in order; the ones past its length are skipped
@@ -11894,7 +12138,7 @@ static void gen_json_helpers(gen *g)
     // The calls: a T? that's nothing unless the whole text was one value of the type, and a value's text
     for (int i = 0; i < prog->json_roots.count; i++) {
         const json_root *r = &prog->json_roots.items[i];
-        const char *stored = r->type.kind == TY_LIST ? "tide_list" : r->type.kind == TY_MAP ? "tide_map" : c_type(r->type);
+        const char *stored = r->type.kind == TY_LIST ? "tide_list" : r->type.kind == TY_MAP || r->type.kind == TY_SET ? "tide_map" : c_type(r->type);
         for (int bytes = 0; bytes < 2; bytes++) {
             if (!(bytes ? r->reads_bytes : r->reads_text)) continue;
             const char *result = c_type(r->result);
@@ -18783,6 +19027,58 @@ static void gen_frame_forget_io(gen *g, const task_info *ti)
     sb_put(o, "}\n\n");
 }
 
+// Whether a task's frame can hold a GPU read's ticket: its own await's, or an awaited task's frame within it.
+static bool frame_reads_gpu(gen *g, const task_info *ti)
+{
+    if (ti->fn->uses_gpu_read) return true;
+    for (int i = 0; i < ti->fn->awaits.count; i++) {
+        const task_info *child = task_of(g, ti->fn->awaits.items[i]);
+        if (child && frame_reads_gpu(g, child)) return true;
+    }
+    return false;
+}
+
+// A task dropped while it waits for a GPU read lets go of the read at once (tide_gpu_list_read_forget: one asked for
+// goes free, one begun once the renderer is done with it), as a task that finishes its await does, and as its other
+// tickets go: its slot and what it holds are no one's to keep. A frame carried through a hot reload keeps its ticket,
+// as the host's table is the next build's too.
+static void gen_frame_forget_gpu(gen *g, const task_info *ti)
+{
+    if (!frame_reads_gpu(g, ti)) return;
+    sb *o = &g->c;
+    const char *name = type_cname(ti->frame);
+    // ...and a frame packed with another world, restored, reads again: its ticket was that world's
+    for (int forget = 0; forget < 2; forget++) {
+        sb_printf(o, "TIDE_HELPER void tide_%s_gpu_%s(%s *v)\n{\n", forget ? "forget" : "reset", name, name);
+        if (ti->fn->uses_gpu_read) {
+            if (forget) sb_put(o, "    if (v->tide_gpu_ticket) tide_gpu_list_read_forget((uint32_t)v->tide_gpu_ticket);\n");
+            sb_put(o, "    v->tide_gpu_ticket = 0;\n");
+        }
+        for (int i = 0; i < ti->fn->awaits.count; i++) {
+            const task_info *child = task_of(g, ti->fn->awaits.items[i]);
+            if (!child || !frame_reads_gpu(g, child)) continue;
+            sb_printf(o, "    tide_%s_gpu_%s(&v->tide_await_%s);\n", forget ? "forget" : "reset", type_cname(child->frame),
+                      task_id(child->fn));
+        }
+        sb_put(o, "}\n\n");
+    }
+}
+
+// Every waiting task's GPU reads let go of, or (restored) asked for again, in a local world.
+static void gen_forget_gpu_tables(gen *g, const char *local, const char *pad, const bool forget)
+{
+    sb *o = &g->c;
+    for (int i = 0; i < g->tasks.count; i++) {
+        const task_info *ti = &g->tasks.items[i];
+        if (!task_table_in(ti->fn, true) || !frame_reads_gpu(g, ti)) continue;
+        const char *id = task_id(ti->fn);
+        sb_printf(o, "%sfor (uint32_t i = 0; i < %s->tide_tasks_%s.count; i++) {\n", pad, local, id);
+        sb_printf(o, "%s    tide_task_%s *task = tide_table_cell(&%s->tide_tasks_%s, &tide_columns_tasks_%s, i, 0);\n", pad, id, local, id, id);
+        sb_printf(o, "%s    tide_%s_gpu_%s(&task->frame);\n", pad, forget ? "forget" : "reset", type_cname(ti->frame));
+        sb_printf(o, "%s}\n", pad);
+    }
+}
+
 // External completion tickets are owned by the live tasks that requested
 // them. Restored tasks request a fresh barrier when they next resume.
 static void gen_reset_io_tables(gen *g, const char *local, const char *pad, const bool forget)
@@ -18884,6 +19180,7 @@ static void gen_task_pass(gen *g, const bool local)
         sb_printf(o, "            tide_task_%s *tide_gone = tide_table_cell(&%s->tide_tasks_%s, &tide_columns_tasks_%s, tide_i, 0);\n", id, w, id, id);
         if (local && ti->fn->uses_workers) sb_printf(o, "            tide_forget_workers_%s(&tide_gone->frame, tide_l->tide_workers);\n", type_cname(ti->frame));
         if (local && ti->fn->uses_io) sb_printf(o, "            tide_forget_io_%s(&tide_gone->frame, tide_l->tide_io);\n", type_cname(ti->frame));
+        if (local && frame_reads_gpu(g, ti)) sb_printf(o, "            tide_forget_gpu_%s(&tide_gone->frame);\n", type_cname(ti->frame));
         if (ti->fn->handles_tasks)
             sb_printf(o, "            tide_task_%s_complete_%s(%s, &tide_gone->frame, TIDE_TASK_GONE);\n", local ? "local" : "match", id, w);
         sb_printf(o, "            tide_release_%s(&tide_gone->frame, %s);\n", type_cname(ti->frame), where);
@@ -18962,6 +19259,7 @@ static void gen_task_pass(gen *g, const bool local)
         }
         if (local && ti->fn->uses_workers) sb_printf(o, "            if (tide_r < 0) tide_forget_workers_%s(&tide_f, tide_l->tide_workers);\n", type_cname(ti->frame));
         if (local && ti->fn->uses_io) sb_printf(o, "            if (tide_r < 0) tide_forget_io_%s(&tide_f, tide_l->tide_io);\n", type_cname(ti->frame));
+        if (local && frame_reads_gpu(g, ti)) sb_printf(o, "            if (tide_r < 0) tide_forget_gpu_%s(&tide_f);\n", type_cname(ti->frame));
         sb_printf(o, "            if (tide_r < 0) tide_release_%s(&tide_f, %s);\n", type_cname(ti->frame), where);
         sb_printf(o, "            tide_task_%s *tide_back = tide_table_cell(&%s->tide_tasks_%s, &tide_columns_tasks_%s, tide_due_v.row, 0);\n",
                   id, w, id, id);
@@ -19077,6 +19375,7 @@ static void gen_tasks(gen *g)
         gen_task_waiting(g, &g->tasks.items[i]);
         gen_frame_release(g, g->tasks.items[i].frame);
         gen_frame_forget_io(g, &g->tasks.items[i]);
+        gen_frame_forget_gpu(g, &g->tasks.items[i]);
         gen_frame_workers(g, &g->tasks.items[i]);
     }
     for (int i = 0; i < g->tasks.count; i++) {
@@ -19146,6 +19445,7 @@ static void gen_tasks(gen *g)
             sb_put(o, "    if (tide_r < 0) {\n");
             if (local && ti->fn->uses_workers) sb_printf(o, "        tide_forget_workers_%s(tide_f, tide_l->tide_workers);\n", type_cname(ti->frame));
             if (local && ti->fn->uses_io) sb_printf(o, "        tide_forget_io_%s(tide_f, tide_l->tide_io);\n", type_cname(ti->frame));
+            if (local && frame_reads_gpu(g, ti)) sb_printf(o, "        tide_forget_gpu_%s(tide_f);\n", type_cname(ti->frame));
             sb_printf(o, "        tide_release_%s(tide_f, %s);\n        return;\n    }\n", type_cname(ti->frame), world_where(local));
             if (ti->fn->handles_tasks) sb_printf(o, "    if (%s->tide_tasks_%s.count >= INT32_MAX) tide_out_of_memory();\n", w, id);
             sb_printf(o, "    const uint32_t tide_row = tide_table_add(&%s->tide_tasks_%s, &tide_columns_tasks_%s);\n", w, id, id);
@@ -25203,6 +25503,7 @@ static void gen_world_bytes(gen *g, const bool local)
     if (g->ix_any) sb_put(o, "    tide_index_cache_free(w->tide_index_cache);\n    w->tide_index_cache = NULL;\n");
     if (!local && g->prog->keeps_previous) sb_put(o, "    tide_previous_release(w, true);\n");
     if (local) sb_put(o, "    tide_workers_free(w->tide_workers);\n    w->tide_workers = NULL;\n");
+    if (local) gen_forget_gpu_tables(g, "w", "    ", true); // Its tasks' reads, which go with them
     resident_field residents[RESIDENTS_MOST];
     const int resident_count = local ? 0 : resident_fields(prog, residents, RESIDENTS_MOST);
     for (int i = 0; i < resident_count; i++) {
@@ -25432,6 +25733,9 @@ static void gen_world_bytes(gen *g, const bool local)
     }
     if (local) gen_reset_io_tables(g, "w", "    ", false);
     if (local) gen_reset_worker_tables(g, "w", "    ", false);
+    // A restored task reads again: the ticket it was carried with is the packed world's, which that world lets go of
+    // as it's freed (a native reload carrying it over), or another program's table's (the web's)
+    if (local) gen_forget_gpu_tables(g, "w", "    ", false);
     for (int i = 0; i < fields.count; i++) {
         sb_printf(o, "    ok = ok && tide_attached_unpack(&w->%s, %s, &bytes);\n", fields_table(fields.items[i]), fields_columns(fields.items[i]));
     }
@@ -25994,7 +26298,8 @@ static bool resource_fields(const decl *d)
 static bool resource_type(const type t)
 {
     if (t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET
-        || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY || t.kind == TY_TEXTURE3D || t.kind == TY_GPU_LIST) return true;
+        || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY || t.kind == TY_TEXTURE3D || t.kind == TY_GPU_LIST
+        || t.kind == TY_DEPTH_CUBEMAP) return true;
     if (t.kind == TY_STRUCT || t.kind == TY_OPTIONAL || t.kind == TY_FAILABLE
         || t.kind == TY_LIST || t.kind == TY_ARRAY || t.kind == TY_MAP) return resource_fields(t.decl);
     return false;
@@ -26066,7 +26371,7 @@ static void gen_resource_value(gen *g, const type t, const char *at, const char 
         sb_printf(o, "%s}\n", pad);
         return;
     }
-    if (t.kind == TY_DEPTH_TEXTURE_ARRAY) { // Its array's target, kept or made again
+    if (t.kind == TY_DEPTH_TEXTURE_ARRAY || t.kind == TY_DEPTH_CUBEMAP) { // Its array's or cube's target, kept or made again
         sb_printf(o, "%sif (tide_render_target_managed(%s.target.id)) {\n", pad, at);
         sb_printf(o, "%s    if (same_memory) {\n%s        tide_render_target_adopt(%s.target);\n", pad, pad, at);
         sb_printf(o, "%s        %s.target = tide_render_target_resolve(%s.target);\n%s    } else %s.target = tide_render_target_recreate(%s.target);\n",
@@ -26370,6 +26675,7 @@ static void gen_rebind_resources(gen *g)
         if (d->kind != DECL_COMPONENT || !resource_fields(d)) continue;
         sb_printf(o, "    for (uint32_t row = 0; row < l->%s.rows.count; row++) {\n", fields_table(d));
         sb_printf(o, "        %s *v = tide_attached_cell(&l->%s, %s, row);\n", type_cname(d), fields_table(d), fields_columns(d));
+        if (resolving_volume_refs) sb_put(o, "        (void)v;\n");
         gen_resource_fields(g, d, "(*v)", "        ");
         sb_put(o, "    }\n");
     }
@@ -26379,6 +26685,7 @@ static void gen_rebind_resources(gen *g)
         const char *id = task_id(ti->fn);
         sb_printf(o, "    for (uint32_t row = 0; row < l->tide_tasks_%s.count; row++) {\n", id);
         sb_printf(o, "        tide_task_%s *v = tide_table_cell(&l->tide_tasks_%s, &tide_columns_tasks_%s, row, 0);\n", id, id, id);
+        if (resolving_volume_refs) sb_put(o, "        (void)v; // A frame that holds no volume has none to resolve\n");
         gen_resource_fields(g, ti->frame, "v->frame", "        ");
         sb_put(o, "    }\n");
     }
@@ -27684,7 +27991,10 @@ static void gen_shader_textures(gen *g, sb *o, const shader *sh, const int s, ui
                       texture->field->is_local ? "l" : "", b, field_cname(texture->field));
             continue;
         }
-        if (texture->read == READ_ARRAY) { // A TextureArray: an asset's by name, or a field's
+        // A typed array's or cube's 32-bit numbers, loaded from its layers: the array or the cube, as its read is
+        const bool layered = texture->read == READ_NUMBER_LAYERS || texture->read == READ_INT_LAYERS;
+        if (texture->read == READ_ARRAY || (layered && texture->field && texture->field->type.kind == TY_TEXTURE_ARRAY)) {
+            // A TextureArray: an asset's by name, or a field's
             if (texture->asset) {
                 sb_printf(o, "    tide_textures[%d] = tide_draw_array_source%s(tide_draw, %s);\n", t, linear, asset_cname(texture->asset));
             } else {
@@ -27695,7 +28005,8 @@ static void gen_shader_textures(gen *g, sb *o, const shader *sh, const int s, ui
             }
             continue;
         }
-        if (texture->read == READ_CUBE) { // A Cubemap: an asset's by name, or a field's
+        if (texture->read == READ_CUBE || (layered && texture->field && texture->field->type.kind == TY_CUBEMAP)) {
+            // A Cubemap: an asset's by name, or a field's
             if (texture->asset) {
                 sb_printf(o, "    tide_textures[%d] = tide_draw_cube_source%s(tide_draw, %s);\n", t, linear, asset_cname(texture->asset));
             } else {
@@ -27728,7 +28039,8 @@ static void gen_shader_textures(gen *g, sb *o, const shader *sh, const int s, ui
                       field_is_raw(texture->field) ? "_raw" : linear, texture->field->is_local ? "l" : "", b,
                       field_cname(texture->field));
         }
-        else if (texture->field->type.kind == TY_DEPTH_TEXTURE || texture->field->type.kind == TY_DEPTH_TEXTURE_ARRAY)
+        else if (texture->field->type.kind == TY_DEPTH_TEXTURE || texture->field->type.kind == TY_DEPTH_TEXTURE_ARRAY
+                 || texture->field->type.kind == TY_DEPTH_CUBEMAP)
             sb_printf(o, "    tide_textures[%d] = tide_draw_depth_source(tide_draw, tide_%sb%d->%s);\n", t,
                       texture->field->is_local ? "l" : "", b, field_cname(texture->field));
         else if (number_grid_cells(texture->field->type)) // A grid of numbers, sampled by its name

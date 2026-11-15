@@ -1,0 +1,7 @@
+// expect: define's second argument is a constant, the value 'SIDE' has when the build gives it none: 'define(SIDE, 500)'
+singleton Army { int side; int start; }
+system Grow(mut Army army)
+{
+    army.side = define(SIDE, army.start);
+}
+scene Main { }

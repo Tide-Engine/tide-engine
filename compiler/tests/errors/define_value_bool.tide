@@ -1,0 +1,6 @@
+// expect: the build gives 'PREPASS' the value 'yes', and 'define(PREPASS, ...)' reads a bool here
+// expect: give true or false: '--define PREPASS=true'
+// define: PREPASS=yes
+const bool PREPASS = define(PREPASS, true);
+singleton Draws { bool prepass = PREPASS; }
+scene Main { }

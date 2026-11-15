@@ -18,9 +18,13 @@
 // frames, so each round ends at the first sample and only fails at this many.
 enum { ROUND = 60, PATIENCE = 3600 };
 
-static tide_draw_list list, overlay, offscreen;
+// What frame 10 reads back (tide_platform_read_pixels) is `list` with a second rect in the window's pass, so that
+// pass's samples say they're the readback's: 15 vertices, where the window's have 9. It's drawn at the window's
+// logical size at a scale of 1, which is the window's pixels only on a display of a scale of 1, not a phone's.
+enum { WINDOW_VERTICES = 9, READ_VERTICES = 15 };
+static tide_draw_list list, overlay, offscreen, readback;
 static tide_render_target target;
-static int pass_samples, seen_passes;
+static int pass_samples, seen_passes, read_samples;
 static int empty_window_samples;
 static uint32_t window_width, window_height, read_width, read_height;
 static int failures, frames, samples, rounds, since;
@@ -40,18 +44,19 @@ static void collect_pass(void *user, const tide_gpu_pass_sample *sample)
     bool valid = isfinite(sample->ms) && sample->frame > 0 && sample->pass >= 1 && sample->pass <= 2
         && sample->shaders;
     const bool empty_window = sample->pass == 2 && sample->target == 0 && sample->draw_calls == 0;
+    const bool read = sample->pass == 2 && sample->vertices == READ_VERTICES;
     if (empty_window) {
         empty_window_samples++;
         valid = valid && sample->vertices == 0 && sample->shaders[0] == 0;
     } else {
-        valid = valid && sample->draw_calls == 2 && sample->vertices == 9
+        valid = valid && sample->draw_calls == 2 && (sample->vertices == WINDOW_VERTICES || read)
             && strstr(sample->shaders, "Builtin clear") && strstr(sample->shaders, "Builtin shapes");
     }
     if (sample->pass == 1) valid = valid && sample->target != 0 && sample->width == 32 && sample->height == 16;
-    // The window's own pixels, or, where the frame is read back (tide_platform_read_pixels), its logical ones at a scale
-    // of 1: the same on a display of a scale of 1, not on a phone's
-    if (sample->pass == 2) valid = valid && sample->target == 0 && ((sample->width == window_width && sample->height == window_height)
-        || (sample->width == read_width && sample->height == read_height));
+    // The window's own pixels, and the readback's at its logical size: drawn once, so measured once at most
+    if (read && ++read_samples > 1) valid = false;
+    if (sample->pass == 2) valid = valid && sample->target == 0 && sample->width == (read ? read_width : window_width)
+        && sample->height == (read ? read_height : window_height);
     if (!valid && failures == 0) fprintf(stderr, "pass=%u target=%llu size=%ux%u calls=%llu vertices=%llu shaders=%s\n",
         (unsigned)sample->pass, (unsigned long long)sample->target, (unsigned)sample->width, (unsigned)sample->height,
         (unsigned long long)sample->draw_calls, (unsigned long long)sample->vertices, sample->shaders);
@@ -82,18 +87,22 @@ static int frame(void *user, const float seconds)
         read_height = (uint32_t)size.y;
         printf("renderer: %s; GPU timing %s\n", tide_platform_renderer(), supported ? "supported" : "unavailable");
         target = tide_render_target_make_scaled(32, 16, 1);
-        tide_draw_render_target(&list, target);
-        tide_draw_set_screen(&list);
-        tide_draw_clear(&list, TIDE_COLOR_BLUE);
-        tide_draw_rect(&list, tide_f2(8, 8), tide_f2(4, 4), TIDE_COLOR_RED);
+        for (int i = 0; i < 2; i++) { // The window's list, then the readback's
+            tide_draw_list *const l = i ? &readback : &list;
+            tide_draw_render_target(l, target);
+            tide_draw_set_screen(l);
+            tide_draw_clear(l, TIDE_COLOR_BLUE);
+            tide_draw_rect(l, tide_f2(8, 8), tide_f2(4, 4), TIDE_COLOR_RED);
+            tide_draw_to(l, 0, 0, 0);
+            tide_draw_set_screen(l);
+            tide_draw_clear(l, TIDE_COLOR_BLUE);
+            tide_draw_rect(l, tide_f2(32, 32), tide_f2(16, 16), TIDE_COLOR_RED);
+            if (i) tide_draw_rect(l, tide_f2(2, 2), tide_f2(4, 4), TIDE_COLOR_RED);
+        }
         tide_draw_render_target(&offscreen, target);
         tide_draw_set_screen(&offscreen);
         tide_draw_clear(&offscreen, TIDE_COLOR_BLUE);
         tide_draw_rect(&offscreen, tide_f2(8, 8), tide_f2(4, 4), TIDE_COLOR_RED);
-        tide_draw_to(&list, 0, 0, 0);
-        tide_draw_set_screen(&list);
-        tide_draw_clear(&list, TIDE_COLOR_BLUE);
-        tide_draw_rect(&list, tide_f2(32, 32), tide_f2(16, 16), TIDE_COLOR_RED);
         tide_platform_gpu_timing(true);
         tide_platform_gpu_profile(collect_pass, NULL);
         tide_draw_rect(&overlay, tide_f2(1, 1), tide_f2(1, 1), TIDE_COLOR_BLUE);
@@ -111,7 +120,7 @@ static int frame(void *user, const float seconds)
     if (frames == 10) {
         const tide_float2 point = {32, 32};
         uint32_t color = 0;
-        tide_platform_read_pixels(&list, &point, 1, &color);
+        tide_platform_read_pixels(&readback, &point, 1, &color);
         check((color >> 8) == 0xFF0000u, "timing leaves the rendered pixels unchanged");
     }
     since++;
@@ -135,7 +144,11 @@ static int frame(void *user, const float seconds)
         tide_platform_gpu_timing(false);
         check(tide_platform_gpu_ms() < 0.0, "closing discards pending samples");
         if (rounds == 2) {
+            // A full query ring may leave it unmeasured, as any pass
+            printf("readback: its window pass measured %d time%s, at %ux%u\n", read_samples, read_samples == 1 ? "" : "s",
+                   (unsigned)read_width, (unsigned)read_height);
             tide_draw_free(&list);
+            tide_draw_free(&readback);
             tide_draw_free(&overlay);
             tide_draw_free(&offscreen);
             tide_render_target_dispose(target);

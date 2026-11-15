@@ -1,9 +1,11 @@
 #include <ctype.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "asset_files.h"
+#include "lexer.h" // What defined(NAME) and define(NAME, default) read of the build's symbols
 #include "build_report.h"
 #include "humanoid_assets.h"
 #include "assets.h"
@@ -90,6 +92,7 @@ typedef struct checker {
     bool grid_param;         // Resolving a function's parameter, which can be a grid: one code the GPU runs passes it
     bool assets_constant;    // ...a field's default, where an asset's name is read as a constant is
     decl *generic;           // The instantiation of a generic function being checked: its type parameters' names are types
+    type define_want;        // Where a define(NAME, default) about to be checked goes: the type its value reads as
 } checker;
 
 // A call of an async function: awaited, its frame part of the caller's, or
@@ -1455,7 +1458,7 @@ typedef struct resource_outer {
 static bool holds_render_resource_in(const type t, const resource_outer *outer, const bool fonts)
 {
     if (t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET
-        || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY || t.kind == TY_TEXTURE3D
+        || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY || t.kind == TY_TEXTURE3D || t.kind == TY_DEPTH_CUBEMAP
         || t.kind == TY_CLIP || t.kind == TY_GPU_LIST || (fonts && t.kind == TY_FONT)) return true;
     if (t.kind != TY_STRUCT && t.kind != TY_LIST && t.kind != TY_MAP && t.kind != TY_SET
         && t.kind != TY_GRID && t.kind != TY_ARRAY && t.kind != TY_OPTIONAL && t.kind != TY_FAILABLE) return false;
@@ -2011,6 +2014,7 @@ static bool element_ok(const type t, const loc at, const type *key, const bool a
         return true;
     case TY_STRUCT:
     case TY_TEXTURE3D: case TY_TEXTURE: case TY_DEPTH_TEXTURE: case TY_RENDER_TARGET: case TY_CLIP: case TY_FONT: case TY_DEPTH_TEXTURE_ARRAY:
+    case TY_DEPTH_CUBEMAP:
         return true;
     case TY_TEXTURE_ARRAY:
         if (asset) {
@@ -2652,7 +2656,7 @@ static bool array_element_ok(const type t, const loc at)
         return true;
     case TY_STRING: case TY_LIST: case TY_MAP: case TY_SET:
     case TY_TEXTURE: case TY_DEPTH_TEXTURE: case TY_CUBEMAP: case TY_RENDER_TARGET: case TY_CLIP: case TY_FONT:
-    case TY_TEXTURE3D: case TY_TEXTURE_ARRAY: case TY_DEPTH_TEXTURE_ARRAY: return true;
+    case TY_TEXTURE3D: case TY_TEXTURE_ARRAY: case TY_DEPTH_TEXTURE_ARRAY: case TY_DEPTH_CUBEMAP: return true;
     case TY_GRID:
         diag_error(at, "an array's elements can't be grids");
         diag_note("a grid is its holder's alone, never copied: keep it in a component or a singleton");
@@ -2786,6 +2790,7 @@ static type check_grid_method(checker *c, expr *e, type grid);
 static type check_grid_sample(const checker *c, expr *e, type grid);
 static type check_instance_call(expr *e);
 static type check_depth_read(const checker *c, expr *e);
+static type check_depth_cube_read(const checker *c, expr *e);
 static type check_cube_sample(const checker *c, expr *e);
 static type check_new_grid(checker *c, expr *e, type want);
 static bool is_new_mesh(const checker *c, const expr *e);
@@ -2941,7 +2946,7 @@ static bool linear_kind(const type t)
 static bool image_kind(const type t)
 {
     return t.kind == TY_RENDER_TARGET || t.kind == TY_TEXTURE || t.kind == TY_TEXTURE3D || t.kind == TY_TEXTURE_ARRAY
-        || t.kind == TY_CUBEMAP;
+        || t.kind == TY_CUBEMAP || t.kind == TY_DEPTH_CUBEMAP;
 }
 
 // Where an image field gets its value: an assignment's or a struct literal's. Format inference ([Linear] sources,
@@ -3182,7 +3187,9 @@ static type check_expr_want_any(checker *c, expr *e, const type stored, const bo
         null_error(e, want);
         return e->type = T_ERR;
     }
+    if (!checked && e->kind == E_CALL && str_eq_c(e->name, "define")) c->define_want = inner; // const float S = define(S, 1)
     const type t = checked ? e->type : check_expr_any(c, e);
+    c->define_want = (type){0}; // Taken by that define, and by nothing after it
     if (inner.kind == TY_STRUCT && inner.decl->asset_ref_of && e->bind == BIND_ASSET
         && type_asset_reference_accepts(inner.decl, e->constant->return_type)) {
         e->asset_reference = true;
@@ -3978,9 +3985,11 @@ static type check_construct(checker *c, expr *e, const type target)
     // TextureArray(1024, 1024, 4), TextureArray(2048, 2048, 3, 1, Format.Depth): layers drawn into one at a time
     if (target.kind == TY_TEXTURE_ARRAY) return check_array_target(c, e);
     if (target.kind == TY_TEXTURE3D) return check_volume_target(c, e);
-    if (target.kind == TY_TEXTURE || target.kind == TY_DEPTH_TEXTURE || target.kind == TY_DEPTH_TEXTURE_ARRAY) {
+    if (target.kind == TY_TEXTURE || target.kind == TY_DEPTH_TEXTURE || target.kind == TY_DEPTH_TEXTURE_ARRAY
+        || target.kind == TY_DEPTH_CUBEMAP) {
         diag_error(e->at, "%s has no constructor", name);
         if (target.kind == TY_DEPTH_TEXTURE) diag_note("a DepthTexture is a render target's depth: 'target.depth'");
+        else if (target.kind == TY_DEPTH_CUBEMAP) diag_note("a DepthCubemap is a depth cube's depth: 'Cubemap(size, Format.Depth).depth'");
         else diag_note("declare a Texture asset for an image file, or read a render target's color image: 'target.color'");
         return T_ERR;
     }
@@ -4395,7 +4404,8 @@ static bool function_samples(decl *fn, const expr *call, const expr *of, const t
     const bool own = of->kind == E_NAME && of->bind == BIND_PARAM && of->param->function_param;
     if (!own && !(assets && of->bind == BIND_ASSET)) {
         const char *what = reads == TY_DEPTH_TEXTURE ? "DepthTexture" : reads == TY_CUBEMAP ? "Cubemap" : reads == TY_GRID ? "grid"
-                         : reads == TY_TEXTURE_ARRAY ? "TextureArray" : reads == TY_DEPTH_TEXTURE_ARRAY ? "DepthTextureArray" : "Texture";
+                         : reads == TY_TEXTURE_ARRAY ? "TextureArray" : reads == TY_DEPTH_TEXTURE_ARRAY ? "DepthTextureArray"
+                         : reads == TY_DEPTH_CUBEMAP ? "DepthCubemap" : "Texture";
         diag_error(of->at, "a function samples a %s it takes as a parameter of its own%s", what,
                    !assets ? "" : reads == TY_GRID ? ", or a Grid2<Color> asset by its name" : reads == TY_CUBEMAP
                    ? ", or a Cubemap asset by its name" : ", or a Texture asset by its name");
@@ -6419,8 +6429,282 @@ static type check_self_call(checker *c, expr *e, decl *m)
 
 static type check_gpu_list_make(checker *c, expr *e);
 
+// ---------------------------------------------------------------------------
+// defined(NAME) and define(NAME, default): what the build's --define, or the
+// file's own #define, says of a symbol, read by code as a constant (see
+// docs/spec.md, Conditional compilation). The call becomes the literal it
+// reads as, so it goes anywhere a constant does.
+
+static void suggest_constant(const checker *c, const expr *value);
+
+// The types define(NAME, default) gives: a value a command line's text says.
+static bool define_kind(const type t)
+{
+    return t.kind == TY_BOOL || t.kind == TY_BYTE || t.kind == TY_INT || t.kind == TY_LONG || t.kind == TY_FLOAT
+        || t.kind == TY_DOUBLE || t.kind == TY_STRING || t.kind == TY_ENUM;
+}
+
+// A whole number in decimal, with a '-' before it if it's negative, from `least` to `most`.
+static bool define_integer(const char *s, const int64_t least, const int64_t most, int64_t *out)
+{
+    const bool negative = *s == '-';
+    if (negative) s++;
+    if (!*s) return false;
+    uint64_t u = 0;
+    for (; *s; s++) {
+        if (!isdigit((unsigned char)*s)) return false;
+        const uint64_t d = (uint64_t)(*s - '0');
+        if (u > (UINT64_MAX - d) / 10u) return false;
+        u = u * 10u + d;
+    }
+    const uint64_t lowest = (uint64_t)INT64_MAX + 1u;
+    if (negative ? u > lowest : u > (uint64_t)INT64_MAX) return false;
+    const int64_t v = !negative ? (int64_t)u : u == lowest ? INT64_MIN : -(int64_t)u;
+    if (v < least || v > most) return false;
+    *out = v;
+    return true;
+}
+
+// A number as a float's or a double's text is written in decimal: digits, a point and digits, or both, after a '-'
+// if it's negative, and an exponent.
+static bool define_number(const char *s)
+{
+    if (*s == '-') s++;
+    int digits = 0;
+    for (; isdigit((unsigned char)*s); s++) digits++;
+    if (*s == '.') {
+        for (s++; isdigit((unsigned char)*s); s++) digits++;
+    }
+    if (!digits) return false;
+    if (*s == 'e' || *s == 'E') {
+        s++;
+        if (*s == '+' || *s == '-') s++;
+        if (!isdigit((unsigned char)*s)) return false;
+        while (isdigit((unsigned char)*s)) s++;
+    }
+    return *s == '\0';
+}
+
+// Text as a string literal's is written between its quotes, escapes and all, into `*out`; false for text that isn't
+// UTF-8 or has a control character other than a tab or a line break.
+static bool define_text(const char *value, str *out)
+{
+    sb b = {0};
+    for (const unsigned char *p = (const unsigned char *)value; *p;) {
+        const unsigned char ch = *p;
+        if (ch < 0x80) {
+            if (ch == '\\' || ch == '"') sb_printf(&b, "\\%c", ch);
+            else if (ch == '\n') sb_put(&b, "\\n");
+            else if (ch == '\r') sb_put(&b, "\\r");
+            else if (ch == '\t') sb_put(&b, "\\t");
+            else if (ch < ' ' || ch == 0x7F) return false;
+            else sb_putn(&b, (const char *)p, 1);
+            p++;
+            continue;
+        }
+        const int more = ch >= 0xF0 && ch < 0xF5 ? 3 : ch >= 0xE0 && ch < 0xF0 ? 2 : ch >= 0xC2 && ch < 0xE0 ? 1 : -1;
+        if (more < 0) return false;
+        uint32_t code = more == 3 ? ch & 0x07u : more == 2 ? ch & 0x0Fu : ch & 0x1Fu;
+        for (int i = 1; i <= more; i++) {
+            if ((p[i] & 0xC0u) != 0x80u) return false; // The NUL that ends it is no continuation byte either
+            code = code << 6 | (p[i] & 0x3Fu);
+        }
+        if ((more == 2 && code < 0x800u) || (more == 3 && code < 0x10000u) || code > 0x10FFFFu || (code >= 0xD800u && code < 0xE000u)) {
+            return false;
+        }
+        sb_putn(&b, (const char *)p, (size_t)more + 1u);
+        p += more + 1;
+    }
+    *out = b.data ? (str){b.data, (int)b.len} : str_from("");
+    return true;
+}
+
+// What a value of `t` is called where a define's value isn't one: "an int".
+static const char *define_kind_name(const type t)
+{
+    switch (t.kind) {
+    case TY_BOOL: return "a bool";
+    case TY_BYTE: return "a byte";
+    case TY_INT: return "an int";
+    case TY_LONG: return "a long";
+    case TY_FLOAT: return "a float";
+    case TY_DOUBLE: return "a double";
+    case TY_STRING: return "text";
+    default: {
+        sb b = {0};
+        sb_printf(&b, "a member of %s", type_name(t));
+        return b.data;
+    }
+    }
+}
+
+// The literal `value` (a --define's text) reads as, a value of `t`, checked; NULL, said, when it's no such value.
+static expr *define_literal(checker *c, const expr *e, const str name, const type t, const char *value)
+{
+    expr *lit = NEW(expr);
+    lit->at = e->at;
+    bool ok = true;
+    const char *number = value[0] == '-' ? value + 1 : value;
+    switch (t.kind) {
+    case TY_BOOL:
+        ok = strcmp(value, "true") == 0 || strcmp(value, "false") == 0;
+        lit->kind = E_BOOL;
+        lit->bool_value = ok && value[0] == 't';
+        break;
+    case TY_BYTE:
+    case TY_INT:
+    case TY_LONG: {
+        const int64_t least = t.kind == TY_BYTE ? 0 : t.kind == TY_INT ? INT32_MIN : INT64_MIN;
+        const int64_t most = t.kind == TY_BYTE ? 255 : t.kind == TY_INT ? INT32_MAX : INT64_MAX;
+        lit->kind = E_INT;
+        ok = define_integer(value, least, most, &lit->int_value);
+        lit->is_long = t.kind == TY_LONG;
+        lit->text = str_from(value);
+        break;
+    }
+    case TY_FLOAT:
+    case TY_DOUBLE: {
+        ok = define_number(value);
+        if (ok) ok = t.kind == TY_FLOAT ? isfinite(strtof(number, NULL)) : isfinite(strtod(number, NULL));
+        lit->kind = E_FLOAT;
+        sb text = {0};
+        sb_printf(&text, "%s%s", number, t.kind == TY_DOUBLE ? "d" : "");
+        lit->text = (str){text.data, (int)text.len};
+        lit->is_double = t.kind == TY_DOUBLE;
+        if (ok && value[0] == '-') { // As the source says one, -2.5: the minus an operator
+            expr *minus = NEW(expr);
+            minus->kind = E_UNARY;
+            minus->at = e->at;
+            minus->op = T_MINUS;
+            minus->lhs = lit;
+            lit = minus;
+        }
+        break;
+    }
+    case TY_STRING:
+        lit->kind = E_STRING;
+        ok = define_text(value, &lit->text);
+        break;
+    default: { // An enum: a member's name, as .Member would be
+        ok = false;
+        for (int i = 0; i < t.decl->members.count && !ok; i++) ok = str_eq_c(t.decl->members.items[i].name, value);
+        lit->kind = E_MEMBER;
+        lit->member = str_from(value);
+        lit->enum_shorthand = true;
+        lit->object = NEW(expr);
+        lit->object->kind = E_NAME;
+        lit->object->at = e->at;
+        lit->object->name = str_from("");
+        break;
+    }
+    }
+    if (!ok) {
+        diag_error(e->at, "the build gives '" STR_FMT "' the value '%s', and 'define(" STR_FMT ", ...)' reads %s here",
+                   STR_ARG(name), value, STR_ARG(name), define_kind_name(t));
+        switch (t.kind) {
+        case TY_BOOL: diag_note("give true or false: '--define " STR_FMT "=true'", STR_ARG(name)); break;
+        case TY_BYTE: diag_note("give a whole number from 0 to 255: '--define " STR_FMT "=12'", STR_ARG(name)); break;
+        case TY_INT:
+            diag_note("give a whole number from -2147483648 to 2147483647, in digits: '--define " STR_FMT "=500'", STR_ARG(name));
+            break;
+        case TY_LONG: diag_note("give a whole number a long holds, in digits: '--define " STR_FMT "=500'", STR_ARG(name)); break;
+        case TY_FLOAT:
+        case TY_DOUBLE:
+            diag_note("give a number %s holds, in decimal: '--define " STR_FMT "=2.5' or '--define " STR_FMT "=-1e3'",
+                      define_kind_name(t), STR_ARG(name), STR_ARG(name));
+            break;
+        case TY_STRING:
+            diag_note("text from the command line has to be UTF-8, with no control characters but tabs and line breaks");
+            break;
+        default: {
+            sb members = {0};
+            for (int i = 0; i < t.decl->members.count && i < 8; i++) {
+                sb_printf(&members, "%s'" STR_FMT "'", i ? ", " : "", STR_ARG(t.decl->members.items[i].name));
+            }
+            if (t.decl->members.count > 8) sb_put(&members, ", ...");
+            diag_note("give one of its members' names, as written: %s", members.data ? members.data : "it has none");
+            break;
+        }
+        }
+        return NULL;
+    }
+    check_expr_want(c, lit, t);
+    return lit;
+}
+
+static type check_symbol_call(checker *c, expr *e)
+{
+    const type want = c->define_want;
+    c->define_want = (type){0};
+    const bool valued = str_eq_c(e->name, "define");
+    if (e->args.count != (valued ? 2 : 1) || e->args.items[0]->kind != E_NAME || e->type_args.count > 0) {
+        if (valued) diag_error(e->at, "define takes a symbol's name and the value it has when the build gives it none: 'define(ARMY_SIDE, 500)'");
+        else diag_error(e->at, "defined takes one symbol's name: 'defined(DEBUG)'");
+        diag_note("a symbol is what '#if' reads: the build's '--define NAME' or '--define NAME=value', or the file's '#define NAME'");
+        return e->type = T_ERR;
+    }
+    const str name = e->args.items[0]->name;
+    const char *value = NULL;
+    const int defined = lex_read_symbol(name, e->at.file, &value);
+    if (defined < 0) {
+        diag_error(e->args.items[0]->at, "'" STR_FMT "' isn't a symbol Tide knows", STR_ARG(name));
+        diag_note("a version of tide is written like TIDE_0_3_OR_NEWER, true in tide 0.3 and newer");
+        return e->type = T_ERR;
+    }
+    if (!valued) {
+        e->kind = E_BOOL;
+        e->bool_value = defined == 1;
+        e->args.count = 0;
+        return e->type = T_BOOL_;
+    }
+    expr *const fallback = e->args.items[1];
+    // A constant, checked where only constants are in scope, as a constant's value is. army.start reads like
+    // Combat.MAX until it's checked: a chain from a local, a parameter or a field isn't one
+    const expr *root = fallback;
+    while (root->kind == E_MEMBER && root->object) root = root->object;
+    const bool variable = root->kind == E_NAME && (find_local(c, root->name) || find_param(c, root->name) || field_in_scope(c, root->name));
+    if (variable || !is_constant(c, fallback)) {
+        diag_error(fallback->at, "define's second argument is a constant, the value '" STR_FMT "' has when the build gives "
+                                 "it none: 'define(" STR_FMT ", 500)'", STR_ARG(name), STR_ARG(name));
+        suggest_constant(c, fallback);
+        return e->type = T_ERR;
+    }
+    const type given = check_constant_expr(c, fallback, define_kind(want), want);
+    if (given.kind == TY_ERROR) return e->type = T_ERR;
+    // Where a float goes, define(SCALE, 1)'s value is a float's
+    const type t = define_kind(want) && (same_type(want, given) || (type_is_numeric(want) && type_is_numeric(given))) ? want : given;
+    if (!define_kind(t)) {
+        diag_error(fallback->at, "define gives a bool, a byte, an int, a long, a float, a double, a string or an enum, "
+                                 "what a command line's text can say, and this is %s", type_name(given));
+        diag_note("read the parts it's made from, each a define of its own: 'float3(define(X, 0), define(Y, 0), 0)'");
+        return e->type = T_ERR;
+    }
+    if (defined == 0) { // Not defined: its default, as written
+        *e = *fallback;
+        return e->type;
+    }
+    if (!value) { // Defined, with no value
+        if (t.kind == TY_BOOL) {
+            e->kind = E_BOOL;
+            e->bool_value = true;
+            e->args.count = 0;
+            return e->type = T_BOOL_;
+        }
+        diag_error(e->at, "'" STR_FMT "' is defined with no value, and 'define(" STR_FMT ", ...)' reads %s here",
+                   STR_ARG(name), STR_ARG(name), define_kind_name(t));
+        diag_note("give it one, '--define " STR_FMT "=<value>'; a symbol alone, or a file's '#define', is for "
+                  "'defined(" STR_FMT ")' and '#if " STR_FMT "'", STR_ARG(name), STR_ARG(name), STR_ARG(name));
+        return e->type = T_ERR;
+    }
+    expr *lit = define_literal(c, e, name, t, value);
+    if (!lit) return e->type = T_ERR;
+    *e = *lit;
+    return e->type;
+}
+
 static type check_call(checker *c, expr *e)
 {
+    if (str_eq_c(e->name, "defined") || str_eq_c(e->name, "define")) return check_symbol_call(c, e);
     if (str_eq_c(e->name, "GPUList") && e->type_args.count && !find_local(c, e->name) && !find_param(c, e->name))
         return check_gpu_list_make(c, e);
     const stmt *call_local = find_local(c, e->name);
@@ -8566,19 +8850,9 @@ static type check_cube_target(checker *c, expr *e)
     if (argc < 1 || argc > 2 || !type_assignable(T_FLOAT_, e->args.items[0]->type)
         || (argc == 2 && !(format.kind == TY_ENUM && format.decl == c->prog->format))) {
         diag_error(e->at, "Cubemap takes its faces' side in pixels, and what each holds when that isn't "
-                          "Format.Rgba8: 'Cubemap(256)' or 'Cubemap(256, Format.Rgba16f)'");
-        diag_note("a cube's six faces are squares of one size and one format, each with depth of its own");
-        return T_ERR;
-    }
-    if (argc == 2 && e->args.items[1]->enum_member && e->args.items[1]->enum_member->number == 1) {
-        diag_error(e->args.items[1]->at, "a cube holds colors or numbers: its faces are Format.Rgba8, Rgba16f, R8, Rg8, R16f or Rg16f, "
-                                         "and each has depth of its own to draw with");
-        diag_note("a cube of depth alone, for a lamp that shines every way, isn't there yet");
-        return T_ERR;
-    }
-    if (argc == 2 && e->args.items[1]->enum_member && e->args.items[1]->enum_member->number >= 7) {
-        diag_error(e->args.items[1]->at, "a Cubemap's faces are read through a blending sampler, which 32-bit float and integer images "
-                                         "lack on some devices: use Format.R16f, Rg16f or Rgba16f, or a RenderTarget for each image");
+                          "Format.Rgba8: 'Cubemap(256)', 'Cubemap(256, Format.Rgba16f)' or 'Cubemap(1024, Format.Depth)'");
+        diag_note("a cube's six faces are squares of one size and one format, each with depth of its own; a cube of "
+                  "Format.Depth holds depth alone, read through 'cube.depth'");
         return T_ERR;
     }
     e->call = CALL_BUILTIN;
@@ -8644,12 +8918,6 @@ static type check_array_target(checker *c, expr *e)
     const int argc = e->args.count;
     const type last = argc ? e->args.items[argc - 1]->type : T_ERR;
     const bool formatted = last.kind == TY_ENUM && last.decl == c->prog->format;
-    if (formatted && e->args.items[argc - 1]->enum_member && e->args.items[argc - 1]->enum_member->number >= 7) {
-        diag_error(e->args.items[argc - 1]->at, "a TextureArray's layers are read through a blending sampler, which 32-bit float and integer "
-                                                "images lack on some devices: use Format.R16f, Rg16f or Rgba16f, a RenderTarget for each "
-                                                "image, or a Texture3D for a numeric volume");
-        return T_ERR;
-    }
     const int sizes = argc - (formatted ? 1 : 0); // width, height, layers[, pixelsPerUnit]
     bool numbers = sizes == 3 || sizes == 4;
     for (int i = 0; numbers && i < sizes; i++) {
@@ -8964,17 +9232,44 @@ static void check_json_attribute(const decl *d, const field *f, const attribute 
     }
 }
 
+// Whether `t` is a vector, a quaternion or a color: in JSON an array of its
+// components' numbers ([x, y, z]; a color's [r, g, b, a]).
+static bool json_vector(const type t)
+{
+    switch (t.kind) {
+    case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT2: case TY_FLOAT3: case TY_FLOAT4: case TY_DOUBLE2: case TY_DOUBLE3:
+    case TY_DOUBLE4: case TY_QUATERNION: case TY_COLOR:
+        return true;
+    default: return false;
+    }
+}
+
+// Whether a set's key, or a map's when `map`, has something in JSON: text, a
+// whole number or an enum, and for a set (an array of them) a char too. A
+// map's key is an object's, so always text: a number's digits, an enum's name.
+static bool json_key(const type t, const bool map)
+{
+    return t.kind == TY_STRING || t.kind == TY_BYTE || t.kind == TY_INT || t.kind == TY_LONG || t.kind == TY_ENUM || (!map && t.kind == TY_CHAR);
+}
+
 // Whether JSON has something for a value of type `t`, and for everything in
 // it: a bool, a number, a char or text (a string), an enum (its member's
-// name), a struct (an object), a list or an array (an array) and a map by
-// text (an object). `*why` is the type it has nothing for, and `*in` and
+// name), a vector, a quaternion or a color (an array of numbers), a struct (an
+// object), a list, a set or an array (an array) and a map by text, an int or
+// an enum (an object). `*why` is the type it has nothing for, and `*in` and
 // `*at` the struct and the field that hold it, if one does. `outer` is the
 // structs being looked into, so one with a list of itself ends.
 static bool json_holds(const type t, type *why, const decl **in, const field **at, const decl **outer, const int depth)
 {
     switch (t.kind) {
+    case TY_ERROR: // Said where it's declared: once is enough
     case TY_BOOL: case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_DOUBLE: case TY_FLOAT: case TY_STRING: case TY_ENUM:
+    case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT2: case TY_FLOAT3: case TY_FLOAT4: case TY_DOUBLE2: case TY_DOUBLE3:
+    case TY_DOUBLE4: case TY_QUATERNION: case TY_COLOR:
         return true;
+    case TY_SET: // An array of its keys
+        if (json_key(t.decl->fields.items[0].type, false)) return true;
+        break;
     case TY_STRUCT:
         // A T? field: what its value is, or `null` and a key left out for none
         if (t.decl->optional_of) return json_holds(t.decl->fields.items[0].type, why, in, at, outer, depth);
@@ -9001,7 +9296,7 @@ static bool json_holds(const type t, type *why, const decl **in, const field **a
         outer[depth] = NULL;
         return json_holds(t.decl->fields.items[0].type, why, in, at, outer, depth + 1);
     case TY_MAP:
-        if (map_key(t).kind != TY_STRING || depth == JSON_TYPE_DEPTH) break;
+        if (!json_key(map_key(t), true) || depth == JSON_TYPE_DEPTH) break;
         outer[depth] = NULL;
         return json_holds(map_value(t), why, in, at, outer, depth + 1);
     default: break;
@@ -9011,27 +9306,35 @@ static bool json_holds(const type t, type *why, const decl **in, const field **a
     return false;
 }
 
+_Static_assert(TY_INT2 < 64 && TY_INT3 < 64 && TY_INT4 < 64 && TY_FLOAT2 < 64 && TY_FLOAT3 < 64 && TY_FLOAT4 < 64 && TY_DOUBLE2 < 64
+                   && TY_DOUBLE3 < 64 && TY_DOUBLE4 < 64 && TY_QUATERNION < 64 && TY_COLOR < 64,
+               "program.json_vector_reads keeps a bit for each of these kinds");
+
 // `t` and the types in it are read, or written: codegen writes their readers, or their writers.
-static void mark_json(const type t, const bool reads)
+static void mark_json(program *prog, const type t, const bool reads)
 {
-    if (t.kind != TY_STRUCT && t.kind != TY_ENUM && t.kind != TY_LIST && t.kind != TY_ARRAY && t.kind != TY_MAP) return;
+    if (json_vector(t)) { // No declaration of its own: which ones have a reader and a writer is the program's to say
+        *(reads ? &prog->json_vector_reads : &prog->json_vector_writes) |= 1ull << t.kind;
+        return;
+    }
+    if (t.kind != TY_STRUCT && t.kind != TY_ENUM && t.kind != TY_LIST && t.kind != TY_ARRAY && t.kind != TY_MAP && t.kind != TY_SET) return;
     bool *marked = reads ? &t.decl->json_reads : &t.decl->json_writes;
     if (*marked) return;
     *marked = true;
     if (t.kind == TY_ENUM) return;
     for (int i = 0; i < t.decl->fields.count; i++) {
-        if (!t.decl->fields.items[i].hidden) mark_json(t.decl->fields.items[i].type, reads);
+        if (!t.decl->fields.items[i].hidden) mark_json(prog, t.decl->fields.items[i].type, reads);
     }
 }
 
 // Whether `call` (Json.Read or Json.Write) takes a value of type `t`: a
-// struct, a list or a map by text, of what JSON holds. Says what's in the way.
+// struct, a list, a set or a map, of what JSON holds. Says what's in the way.
 static bool json_takes(const type t, const loc at, const char *call)
 {
     if (t.kind == TY_ERROR) return false;
     const bool reads = strcmp(call, "Json.Read") == 0;
-    if (t.kind != TY_STRUCT && t.kind != TY_LIST && !(t.kind == TY_MAP && map_key(t).kind == TY_STRING)) {
-        diag_error(at, "%s %s a struct, a List<T> or a Map<string, T>, and this is %s", call, reads ? "reads" : "writes", type_name(t));
+    if (t.kind != TY_STRUCT && t.kind != TY_LIST && t.kind != TY_MAP && t.kind != TY_SET) {
+        diag_error(at, "%s %s a struct, a List<T>, a Set<T> or a Map<K, T>, and this is %s", call, reads ? "reads" : "writes", type_name(t));
         if (t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_EVENT || t.kind == TY_INPUT) {
             diag_note("copy what the JSON has of it %s a struct, which is a value of its own", reads ? "from" : "into");
         } else {
@@ -9050,9 +9353,19 @@ static bool json_takes(const type t, const loc at, const char *call)
     } else {
         diag_error(at, "JSON has nothing for %s", type_name(why));
     }
-    if (why.kind == TY_MAP) diag_note("an object's keys are text: a map JSON holds is a Map<string, T>");
-    else if (why.kind == TY_SET) diag_note("JSON has arrays: keep the keys in a List<T>");
-    else diag_note("JSON holds bool, the integers, float, char, string, enums, structs of these, List<T>, arrays and Map<string, T>");
+    if (why.kind == TY_MAP) {
+        diag_note("an object's keys are text: a map JSON holds is by a string, or by a byte, an int, a long or an enum, written as "
+                  "its digits or its member's name. Keep this one as a List<T> of structs with the key in a field");
+    } else if (why.kind == TY_SET) {
+        diag_note("a set JSON holds is an array of strings, chars, ints, longs or enums: keep these in a List<T>");
+    } else if (why.kind == TY_FLOAT2X2 || why.kind == TY_FLOAT3X3 || why.kind == TY_FLOAT4X4 || why.kind == TY_DOUBLE2X2
+               || why.kind == TY_DOUBLE3X3 || why.kind == TY_DOUBLE4X4) {
+        diag_note("a vector is an array of numbers in JSON, and a matrix has nothing: keep its columns in vector fields, or what "
+                  "it's made from (a position, a rotation and a scale)");
+    } else {
+        diag_note("JSON holds bool, the integers, float, double, char, string, enums, vectors, quaternions and colors, structs of "
+                  "these, List<T>, Set<T>, arrays and maps by a string, an int or an enum");
+    }
     return false;
 }
 
@@ -9128,7 +9441,7 @@ static type check_json_call(checker *c, expr *e)
     r->reads_text |= reads && !bytes;
     r->reads_bytes |= bytes;
     r->writes |= !reads;
-    if (builds(c->prog)) mark_json(t, reads);
+    if (builds(c->prog)) mark_json(c->prog, t, reads);
     sb callee = {0};
     sb_printf(&callee, "tide_json_%s%d", !reads ? "write" : bytes ? "read_bytes" : "read", root);
     e->call = CALL_JSON;
@@ -9527,7 +9840,8 @@ static type check_method(checker *c, expr *e)
     const expr *previous_asset = c->asset_value;
     c->asset_value = e->object;
     const type obj = check_expr(c, e->object);
-    if (read_typed && obj.kind != TY_RENDER_TARGET && obj.kind != TY_ERROR) { // Left for its receiver's type, above
+    if (read_typed && obj.kind != TY_RENDER_TARGET && !(obj.kind == TY_TEXTURE3D && str_eq_c(e->name, "Read"))
+        && obj.kind != TY_ERROR) { // Left for its receiver's type, above
         diag_error(e->type_arg_at, "'" STR_FMT "' takes no type in '<>'", STR_ARG(e->name));
         diag_note("a render target's read does, for an image of numbers: 'await target.Read<float>()'");
     }
@@ -9642,11 +9956,60 @@ static type check_method(checker *c, expr *e)
         diag_error(e->at, "a DepthTextureArray has Sample(uv, layer) and Compare(uv, layer, value), not '" STR_FMT "'", STR_ARG(e->name));
         return T_ERR;
     }
+    if (obj.kind == TY_DEPTH_CUBEMAP) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        if (str_eq_c(e->name, "Sample") || str_eq_c(e->name, "Compare")) return check_depth_cube_read(c, e);
+        diag_error(e->at, "a DepthCubemap has Sample(direction) and Compare(direction, value), not '" STR_FMT "'", STR_ARG(e->name));
+        return T_ERR;
+    }
     if (obj.kind == TY_TEXTURE3D) {
         e->object->raw_sampled = true;
         if (str_eq_c(e->name, "Sample")) {
             check_sample_args(c, e, false);
             return check_volume_sample(c, e);
+        }
+        if (str_eq_c(e->name, "Read")) {
+            // await volume.Read(), Read<T>(), and a box of it, Read(int3 from, int3 size): an owned Grid3 of its cells,
+            // a frame or more later, as a render target's read (check_target_read holds the type against its format)
+            for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+            for (int i = 0; i < e->args.count; i++) if (e->args.items[i]->type.kind == TY_ERROR) return T_ERR;
+            bool fits = c->awaiting == e && (e->args.count == 0 || e->args.count == 2);
+            for (int i = 0; fits && i < e->args.count; i++) fits = e->args.items[i]->type.kind == TY_INT3;
+            if (!fits) {
+                diag_error(e->at, "a Texture3D's Read takes nothing, or a box of it: its first cell and how many cells along each "
+                                  "axis, int3s, and finishes later: 'var cells = await volume.Read();' or 'await "
+                                  "volume.Read(int3(0), int3(8))' in local async code");
+                return T_ERR;
+            }
+            type cell = (type){TY_COLOR, NULL};
+            if (e->type_arg.len > 0) {
+                cell = resolve_type(c, e->type_arg_ref, PLACE_LOCAL, e->type_arg_qual_at);
+                if (cell.kind == TY_ERROR) return T_ERR;
+                if (cell.kind != TY_COLOR && cell.kind != TY_FLOAT && cell.kind != TY_FLOAT2 && cell.kind != TY_FLOAT4
+                    && cell.kind != TY_INT) {
+                    diag_error(e->type_arg_qual_at, "Read gives a grid of what a volume holds: Color, float, float2, float4 or int, "
+                                                    "not %s", type_name(cell));
+                    diag_note("'Read<float>()' reads Format.R32f, 'Read<float4>()' Rgba16f and Rgba32f, 'Read<int>()' R32i, and "
+                              "'Read()' an Rgba8 or Rgba16f volume");
+                    return T_ERR;
+                }
+            }
+            if (in_async_function(c)) {
+                if (!note_side(c->method, TASK_LOCAL, e->at)) return T_ERR;
+            } else if (!local_code(c)) {
+                diag_error(e->at, "a Texture3D belongs to this machine: read it in local async code, never match code");
+                return T_ERR;
+            }
+            decl *code = reading_code(c);
+            if (code) code->uses_gpu_read = true;
+            e->read_kind = (uint8_t)(cell.kind == TY_FLOAT ? 1 : cell.kind == TY_FLOAT2 ? 2 : cell.kind == TY_FLOAT4 ? 3
+                                     : cell.kind == TY_INT ? 4 : 0);
+            e->read_image = 0;
+            e->read_part = e->args.count == 2;
+            e->read_volume = true;
+            e->gpu = GPU_TARGET_READ;
+            vec_push(c->prog->mesh_draws, ((mesh_draw){.in = reading_code(c), .call = e}));
+            return result_of(c->prog, grid_of(c->prog, cell, 3), (type){TY_ENUM, c->prog->io_error}, false);
         }
         const bool resize = str_eq_c(e->name, "Resize"), dispose = str_eq_c(e->name, "Dispose");
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
@@ -9655,7 +10018,8 @@ static type check_method(checker *c, expr *e)
                 diag_error(e->at, "a Texture3D has no mipmaps: use Sample(uvw, Filter.Point) or Sample(uvw, Filter.Bilinear)");
                 return T_ERR;
             }
-            diag_error(e->at, "a Texture3D has Sample(uvw[, filter[, wrap]]), Resize(int3) and Dispose(), not '" STR_FMT "'", STR_ARG(e->name));
+            diag_error(e->at, "a Texture3D has Sample(uvw[, filter[, wrap]]), Read(), Resize(int3) and Dispose(), not '" STR_FMT "'",
+                       STR_ARG(e->name));
             return T_ERR;
         }
         if (gpu_refuses(c, e->at, resize ? "resize a Texture3D" : "dispose a Texture3D", "local code owns the volume")) return T_ERR;
@@ -9756,13 +10120,23 @@ static type check_method(checker *c, expr *e)
             // the formats the target was made with (check_target_read), which are known once every body is checked
             const bool depth = str_eq_c(e->name, "ReadDepth");
             for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
-            if (c->awaiting != e || e->args.count > (depth ? 0 : 1)) {
-                diag_error(e->at, depth ? "ReadDepth takes no arguments and finishes later: 'var depths = await target.ReadDepth();' "
-                                          "in local async code"
-                                        : "Read takes the color image's number, or nothing for the first, and finishes later: "
-                                          "'var pixels = await target.Read();' in local async code");
+            for (int i = 0; i < e->args.count; i++) if (e->args.items[i]->type.kind == TY_ERROR) return T_ERR;
+            // ...and a part of it: its first pixel and how many pixels across and down, int2s, after the image's number
+            const int whole = depth ? 0 : e->args.count == 1 || e->args.count == 3 ? 1 : 0;
+            const bool part = e->args.count - whole == 2;
+            bool fits = c->awaiting == e && (e->args.count == whole || part);
+            for (int i = whole; fits && part && i < e->args.count; i++) fits = e->args.items[i]->type.kind == TY_INT2;
+            if (!fits) {
+                diag_error(e->at, depth ? "ReadDepth takes nothing, or a part of the depth: its first pixel and how many pixels "
+                                          "across and down, int2s, and finishes later: 'var depths = await target.ReadDepth();' "
+                                          "or 'await target.ReadDepth(int2(x, y), int2(16, 16))' in local async code"
+                                        : "Read takes the color image's number, or nothing for the first, then a part of it if "
+                                          "not all: its first pixel and how many pixels across and down, int2s, and finishes "
+                                          "later: 'var pixels = await target.Read();' or 'await target.Read(int2(x, y), "
+                                          "int2(16, 16))' in local async code");
                 return T_ERR;
             }
+            e->read_part = part;
             if (e->object->kind == E_MEMBER && e->object->c_constant && str_eq_c(e->object->member, "window")) {
                 diag_error(e->at, "the window cannot be read: draw into a RenderTarget and await target.Read()");
                 return T_ERR;
@@ -9787,23 +10161,22 @@ static type check_method(checker *c, expr *e)
             e->read_kind = (uint8_t)(depth ? 5 : cell.kind == TY_FLOAT ? 1 : cell.kind == TY_FLOAT2 ? 2 : cell.kind == TY_FLOAT4 ? 3
                                      : cell.kind == TY_INT ? 4 : 0);
             e->read_image = 0;
-            if (e->args.count) {
-                // Which image is part of the read's type, so it's a number the compiler knows
-                const expr *image = e->args.items[0];
-                if (image->type.kind == TY_ERROR) return T_ERR;
-                for (int i = 0; image->constant && i < 32; i++) image = image->constant->value;
-                if (!type_assignable(T_INT_, e->args.items[0]->type) || image->kind != E_INT) {
+            if (whole) {
+                // Which image is part of the read's type, so it's a number the compiler knows: a literal, or a const
+                // of literals, other constants and operators (fold_int)
+                int64_t image = 0;
+                if (!type_assignable(T_INT_, e->args.items[0]->type) || !fold_int(e->args.items[0], &image)) {
                     diag_error(e->args.items[0]->at, "Read takes which color image as a constant int, counted from 0: 'await "
                                                      "target.Read(1)' reads 'target.colors[1]'");
                     diag_note("what a read gives depends on the image's format, so the compiler has to know which image it is");
                     return T_ERR;
                 }
-                if (image->int_value < 0 || image->int_value >= TARGET_COLORS) {
+                if (image < 0 || image >= TARGET_COLORS) {
                     diag_error(e->args.items[0]->at, "a render target holds %d color images at the most: 'Read(0)' to 'Read(%d)'",
                                TARGET_COLORS, TARGET_COLORS - 1);
                     return T_ERR;
                 }
-                e->read_image = (uint8_t)image->int_value;
+                e->read_image = (uint8_t)image;
             }
             if (in_async_function(c)) {
                 if (!note_side(c->method, TASK_LOCAL, e->at)) return T_ERR;
@@ -11151,10 +11524,22 @@ static type check_member(checker *c, expr *e)
         if (gpu_code(c)) {
             diag_error(e->at, "a %s reads a Cubemap with 'Sample(direction)': its faces are the view's to draw into",
                        shader_word(gpu_code(c)));
+            if (str_eq_c(e->member, "depth")) {
+                diag_note("a depth cube's depth is read through a DepthCubemap field of a component or singleton the %s takes, "
+                          "which the view sets: 'lamp.shadows = lamp.cube.depth;'", shader_word(gpu_code(c)));
+            }
             return T_ERR;
         }
+        if (str_eq_c(e->member, "depth")) { // A depth cube's six faces of depth, Cubemap(size, Format.Depth)
+            if (e->object->bind == BIND_ASSET) {
+                diag_error(e->at, "an asset's Cubemap is the pack's images, which nothing draws into: it has no depth");
+                return T_ERR;
+            }
+            return (type){TY_DEPTH_CUBEMAP, NULL};
+        }
         if (!str_eq_c(e->member, "faces")) {
-            diag_error(e->at, "a Cubemap has 'faces', its six sides as targets to draw into, not '" STR_FMT "'", STR_ARG(e->member));
+            diag_error(e->at, "a Cubemap has 'faces', its six sides as targets to draw into, and 'depth', a depth cube's, not '"
+                              STR_FMT "'", STR_ARG(e->member));
             if (str_eq_c(e->member, "color") || str_eq_c(e->member, "colors")) {
                 diag_note("the cube itself is what a frag reads: 'cube.Sample(direction)', where it's a field of a component or "
                           "a singleton the frag takes");
@@ -12732,8 +13117,8 @@ static type check_volume_sample(const checker *c, expr *e)
     }
     e->call = CALL_GRID;
     const type sampled = declared_image_type(of);
-    if (sampled.kind != TY_COLOR && n > 1 && e->args.items[1]->enum_member->number != 0) {
-        diag_error(e->args.items[1]->at, "a typed numeric volume reads its nearest cell on every device: use Filter.Point or leave the filter out");
+    if (sampled.kind == TY_INT && n > 1 && e->args.items[1]->enum_member->number != 0) {
+        diag_error(e->args.items[1]->at, "an int volume reads its nearest cell: a GPU blends no integers. Use Filter.Point or leave the filter out");
         return T_ERR;
     }
     return sampled;
@@ -12804,9 +13189,15 @@ static type check_array_sample(const checker *c, expr *e)
             return T_ERR;
         }
     }
+    const type sampled = declared_image_type(e->object); // A [Raw(T)] array's numbers, as its role says
+    if (sampled.kind == TY_INT && (grad || (e->args.count > at + 1 && e->args.items[at + 1]->enum_member->number != 0))) {
+        diag_error(grad ? e->at : e->args.items[at + 1]->at, "an int array reads its nearest pixel: a GPU blends no integers. "
+                                                             "Use Sample(uv, layer) or Filter.Point");
+        return T_ERR;
+    }
     e->call = CALL_GRID;
     e->type_decl = NULL;
-    return declared_image_type(e->object); // A [Raw(T)] array's numbers, as its role says
+    return sampled;
 }
 
 // depths.Sample(uv, layer) and depths.Compare(uv, layer, value): a DepthTextureArray read in a frag or a vert, as a
@@ -12842,6 +13233,49 @@ static type check_depth_array_read(const checker *c, expr *e)
                                   : "Sample takes where to read, a float2 from (0, 0) to (1, 1), and which layer, an int: "
                                     "'cascades.Sample(uv, layer)'");
         if (!compare && e->args.count == 3) diag_note("a depth is read at its nearest pixel: it takes no Filter");
+        return T_ERR;
+    }
+    e->call = CALL_GRID;
+    e->type_decl = NULL;
+    return T_FLOAT_;
+}
+
+// shadows.Sample(direction) and shadows.Compare(direction, value): a depth cube's depth read in a frag or a vert, as
+// a DepthTexture is, by the direction from the cube's middle, of any length (a lamp's shadow that shines every way).
+static type check_depth_cube_read(const checker *c, expr *e)
+{
+    const bool compare = str_eq_c(e->name, "Compare");
+    const decl *shader = gpu_code(c);
+    decl *function = shader ? NULL : gpu_function(c);
+    if (!shader && !function) {
+        diag_error(e->at, "%s reads a depth cube on the GPU: in a frag or a vert", compare ? "Compare" : "Sample");
+        return T_ERR;
+    }
+    const expr *of = e->object;
+    if (function) {
+        if (!function_samples(function, e, of, TY_DEPTH_CUBEMAP, false)) return T_ERR;
+    } else if (of->kind != E_MEMBER || !of->field || of->object->kind != E_NAME || of->object->bind != BIND_PARAM
+               || of->object->param->function_param || of->object->param->type.kind == TY_STRUCT) {
+        diag_error(of->at, "a %s reads a DepthCubemap that's a field of a component or singleton it takes, like "
+                           "'lamp.shadows.%s'", shader_word(shader), compare ? "Compare(direction, value)" : "Sample(direction)");
+        diag_note("a view puts a depth cube's depth there: 'lamp.shadows = lamp.cube.depth;'");
+        return T_ERR;
+    }
+    if (!order_named_args(e, compare ? "direction, value" : "direction", 0)) return T_ERR;
+    for (int i = 0; i < e->args.count; i++) {
+        if (e->args.items[i]->type.kind == TY_ERROR) return T_ERR;
+    }
+    const int wanted = compare ? 2 : 1;
+    if (e->args.count != wanted || e->args.items[0]->type.kind != TY_FLOAT3
+        || (compare && !type_assignable(T_FLOAT_, e->args.items[1]->type))) {
+        diag_error(e->at, compare ? "Compare takes which way to read from the cube's middle, a float3 of any length, and the "
+                                    "depth to compare what's stored there with, a number from 0 to 1: "
+                                    "'shadows.Compare(direction, depth)'"
+                                  : "Sample takes which way to read from the cube's middle, a float3 of any length: "
+                                    "'shadows.Sample(direction)'");
+        if (!compare && e->args.count == 2) diag_note("a depth is read at its nearest pixel: it takes no Filter");
+        if (e->args.count >= 1 && e->args.items[0]->type.kind == TY_FLOAT2)
+            diag_note("a float2 from (0, 0) to (1, 1) reads a DepthTexture; a cube is read by a direction");
         return T_ERR;
     }
     e->call = CALL_GRID;
@@ -12903,9 +13337,14 @@ static type check_cube_sample(const checker *c, expr *e)
                                          "the GPU is told how a texture is read before any pixel runs");
         return T_ERR;
     }
+    const type sampled = declared_image_type(e->object); // A [Raw(T)] cube's numbers, as its role says
+    if (sampled.kind == TY_INT && e->args.count == 2 && e->args.items[1]->enum_member->number != 0) {
+        diag_error(e->args.items[1]->at, "an int cube reads its nearest pixel: a GPU blends no integers. Use Sample(direction) or Filter.Point");
+        return T_ERR;
+    }
     e->call = CALL_GRID;
     e->type_decl = NULL;
-    return declared_image_type(e->object); // A [Raw(T)] cube's numbers, as its role says
+    return sampled;
 }
 
 // grid.Decode(bytes): a Grid2<Color> becomes the PNG in a List<byte>, sized
@@ -13260,16 +13699,8 @@ static type check_await(checker *c, expr *e)
         diag_note("go through them with 'for' loops, which can wait: 'for (var y = 0; y < cells.size.y; y++) { ... }'");
         return T_ERR;
     }
-    // A grid a task holds is the one 'is' named, from a read: it's in the scratch area, which a wait gives back
-    for (int i = 0; i < c->locals.count; i++) {
-        const stmt *const held = c->locals.items[i];
-        if (held->type.kind != TY_GRID) continue;
-        diag_error(e->at, "a task can't wait while it holds the grid '" STR_FMT "': a local's grid lasts until the task waits",
-                   STR_ARG(held->name));
-        diag_note("copy what's kept into a component or singleton first, like 'state.pixels = " STR_FMT ".Copy();', and wait "
-                  "after the code '" STR_FMT "' is in", STR_ARG(held->name), STR_ARG(held->name));
-        return T_ERR;
-    }
+    // A grid the task holds as it waits, a local's or a value an earlier await in the statement gave, goes in its
+    // frame as a copy of its own (codegen.c, gen_spill)
     if (t.kind == TY_ERROR) return T_ERR;
     if (t.kind == TY_STRUCT && t.decl->task_handle) {
         if (!t.decl->task_origin && in_async_function(c)
@@ -13775,8 +14206,10 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
             diag_error(target->at, "an array's layers, its depth, its size and its count are its own: they can't be assigned");
             return false;
         }
-        if (of_target->kind == E_MEMBER && of_target->object->type.kind == TY_CUBEMAP && of_target->target_colors) {
-            diag_error(target->at, "a cube's faces are its own images, which what's drawn into them changes: they can't be assigned");
+        if (of_target->kind == E_MEMBER && of_target->object->type.kind == TY_CUBEMAP
+            && (of_target->target_colors || part->type.kind == TY_DEPTH_CUBEMAP)) {
+            diag_error(target->at, "a cube's faces and its depth are its own images, which what's drawn into them changes: they "
+                                   "can't be assigned");
             diag_note("draw into one, 'cube.faces[0].Mesh(...)'");
             return false;
         }
@@ -15511,12 +15944,8 @@ static void check_var(checker *c, stmt *s)
     // what a function returned, in the scratch area as a local's list is, and never another's.
     const bool names_grid = s->type.kind == TY_GRID && s->value && (gpu_code(c) || (c->method && c->method->gpu_only));
     if (s->type.kind == TY_GRID && !names_grid) {
-        const loc at = s->type_at.line ? s->type_at : s->value ? s->value->at : s->at;
-        if (async_code(c)) {
-            diag_error(at, "a task can't keep a grid while it waits: a local's grid lasts until the code that made it is done");
-            diag_note("keep it in a component or singleton, or make and use it in a function the task calls");
-            s->type = T_ERR;
-        } else if (s->value && s->value->type.kind == TY_GRID && !fresh_grid(s->value, false) && c->method
+        // A task's grid goes in its frame as it waits, a copy of its own, as its lists do (codegen.c, gen_spill)
+        if (s->value && s->value->type.kind == TY_GRID && !fresh_grid(s->value, false) && c->method
                    && c->method->kind == DECL_FUNCTION && takes_grid(c->method) && s->value->kind == E_NAME
                    && s->value->bind == BIND_PARAM) {
             // A name for a grid it's passed: in a function only code the GPU runs calls, as a frag's local names one,
@@ -15977,6 +16406,8 @@ static bool is_constant(const checker *c, const expr *e)
         }
         return true;
     case E_CALL: // A built-in type's constructor, an enum's conversion, a grid's size, and a Random's seed
+        if (str_eq_c(e->name, "defined")) return true; // What the build says of a symbol, before it's checked into a literal
+        if (str_eq_c(e->name, "define")) return e->args.count == 2 && is_constant(c, e->args.items[1]);
         return (resolve_builtin_alias(c, e->name, &ignored) || is_new_grid(e) || converted_enum(c, e)
                 || find_type(c, e->name, e->at) == c->prog->random
                 || (authored_alias(c, e->name, e->at) && resolve_alias_type(c, authored_alias(c, e->name, e->at)).kind == TY_GRID))
@@ -17404,11 +17835,8 @@ static void check_field_raw(const field *f, const attribute *a)
         const bool layered = f->type.kind == TY_TEXTURE_ARRAY || f->type.kind == TY_CUBEMAP;
         if ((f->type.kind != TY_TEXTURE && f->type.kind != TY_TEXTURE3D && !layered) || a->args.count || a->values.count != 1
             || raw_sample_type(f).kind == TY_COLOR) {
-            diag_error(a->at, "Raw takes no arguments, or one numeric image type: [Raw(float)], [Raw(float2)], [Raw(float4)] or [Raw(int)] on a Texture or Texture3D field");
-            diag_note("a TextureArray or Cubemap field takes [Raw(float)], [Raw(float2)] or [Raw(float4)]");
-        } else if (layered && raw_sample_type(f).kind == TY_INT) {
-            diag_error(a->at, "a TextureArray or Cubemap holds no integer images: its role is [Raw(float)], [Raw(float2)] or [Raw(float4)]");
-            diag_note("a GPU reads layers and faces through a sampler, which blends no integers: keep an int image in a RenderTarget's Texture");
+            diag_error(a->at, "Raw takes no arguments, or one numeric image type: [Raw(float)], [Raw(float2)], [Raw(float4)] or "
+                              "[Raw(int)] on a Texture, Texture3D, TextureArray or Cubemap field");
         }
     }
 }
@@ -18258,8 +18686,6 @@ static void check_signature(checker *c, decl *m)
         if (p->sample_role.len && ((p->type.kind != TY_TEXTURE && p->type.kind != TY_TEXTURE3D && !layered_role) || p->mode != PARAM_READ
             || m->is_extern || m->is_async))
             diag_error(p->at, "[Raw(T)] qualifies a read-only Texture, Texture3D, TextureArray or Cubemap parameter of a synchronous GPU helper");
-        else if (p->sample_role.len && layered_role && str_eq_c(p->sample_role, "int"))
-            diag_error(p->at, "a TextureArray or Cubemap holds no integer images: its role is [Raw(float)], [Raw(float2)] or [Raw(float4)]");
         c->grid_param = false;
         if (type_is_asset_collection(p->type)) {
             m->borrows_asset_collections = true;
@@ -19159,11 +19585,16 @@ static void check_shader_decl(const checker *c, decl *d)
                 // A vert's is an element of the list its Instanced draw is given, or the values its draw gives
                 // after its name. A frag's is either, or what the draw's vert writes for it. The draw says which
                 p->function_param = false; // Supplied by the draw: its instances, its values, or its vert
-            } else if (value.kind == TY_TEXTURE_ARRAY || value.kind == TY_DEPTH_TEXTURE_ARRAY) {
+            } else if (value.kind == TY_TEXTURE_ARRAY || value.kind == TY_DEPTH_TEXTURE_ARRAY || value.kind == TY_DEPTH_CUBEMAP) {
                 diag_error(at, "a %s reads a %s that's %sa field of a component or singleton it takes, not a parameter of its own",
                            word, type_name(value), value.kind == TY_TEXTURE_ARRAY ? "an asset by its name, or " : "");
-                diag_note("keep it in local state, 'local singleton Ground { TextureArray scans; }', which a view sets, and "
-                          "read it there: 'ground.scans.Sample(uv, layer)'");
+                if (value.kind == TY_DEPTH_CUBEMAP) {
+                    diag_note("keep it in local state, 'local singleton Lamp { DepthCubemap shadows; }', which a view sets, and "
+                              "read it there: 'lamp.shadows.Compare(direction, depth)'");
+                } else {
+                    diag_note("keep it in local state, 'local singleton Ground { TextureArray scans; }', which a view sets, and "
+                              "read it there: 'ground.scans.Sample(uv, layer)'");
+                }
             } else if (value.kind == TY_CUBEMAP) {
                 diag_error(at, "a %s reads a Cubemap that's an asset by its name, or a field of a component or singleton it "
                                "takes, not a parameter of its own", word);
@@ -21614,7 +22045,7 @@ static bool is_builtin_name(const str name)
         || str_eq_c(name, "Application") || str_eq_c(name, "Storage") || str_eq_c(name, "Web") || str_eq_c(name, "Json")
         || str_eq_c(name, "Action") || str_eq_c(name, "DrawList") || str_eq_c(name, "string") || str_eq_c(name, "Debug")
         || str_eq_c(name, "Transform") || str_eq_c(name, "Visibility") || str_eq_c(name, "VisibilityGroup") || str_eq_c(name, "Audience")
-        || str_eq_c(name, "Shards");
+        || str_eq_c(name, "Shards") || str_eq_c(name, "defined") || str_eq_c(name, "define");
 }
 
 static void c_name_of(const decl *d, sb *out)
@@ -23424,7 +23855,7 @@ static void check_gpu_only_calls(const checker *c)
             continue;
         }
         if (reads != TY_TEXTURE && reads != TY_DEPTH_TEXTURE && reads != TY_CUBEMAP && reads != TY_TEXTURE3D && reads != TY_TEXTURE_ARRAY
-            && reads != TY_DEPTH_TEXTURE_ARRAY) {
+            && reads != TY_DEPTH_TEXTURE_ARRAY && reads != TY_DEPTH_CUBEMAP) {
             diag_error(site->call->at, "'" STR_FMT "' reads a grid it's passed, which shader code and local workers can call",
                        STR_ARG(site->to->name));
             diag_note_at(site->to->gpu_only_at, "it takes or passes the grid on line %d; here, read the cells through the grid's "

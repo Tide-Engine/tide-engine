@@ -412,6 +412,7 @@ tide_e2e_test(render_lifecycle) # Shared target copies, resizing and explicit di
 tide_e2e_test(render_depth) # What a target holds, said when it's made, and a target's depth as frags and verts read it
 tide_e2e_test(image_clears) # Typed image clear values and argument ordering
 tide_e2e_test(target_reads) # await target.Read<T>(image) and ReadDepth(): what each asks for, and the typed grid it owns
+tide_e2e_test(task_grids) # Grids a task keeps across its waits, local and match tasks', a read's and the pack's among them
 tide_e2e_test(number_images SOURCES shaders/number_images.tide) # Numeric shader metadata and generated-C paths
 tide_e2e_test(render_colors) # Targets of several color images, a format each, and frags that write them all
 tide_e2e_test(render_samples) # A target's samples, said by name where it's made and kept in its id through a reload
@@ -548,6 +549,8 @@ tide_e2e_test(generics) # Generic functions: inference, <> at calls, `has`, inst
 tide_e2e_test(loop_views) # Loops that keep a list's shape index it through a view: chunks, side by side, scratch, assets, snapshots
 tide_e2e_test(json) # Json.Read<T> and Json.Write, and text as bytes, pieces and numbers
 target_compile_definitions(tidec_e2e_json PRIVATE JSON_HASH=4274344058269490730ull)
+tide_e2e_test(json_vectors) # ...vectors, quaternions and colors as arrays, sets as arrays, and maps by a number or an enum
+target_compile_definitions(tidec_e2e_json_vectors PRIVATE JSON_VECTORS_CHECKS=46 JSON_VECTORS_HASH=15438447969881144247ull)
 tide_e2e_test(optional_fields) # T? fields: in structs, components, singletons, scenes, events, commands and the input
 target_compile_definitions(tidec_e2e_optional_fields PRIVATE OPTIONAL_FIELDS_HASH=9457763508960445269ull)
 tide_e2e_test(grids SOURCES e2e/grids.tide e2e/grids_c.c) # Grids
@@ -713,7 +716,8 @@ tide_e2e_test(big_world)
 tide_e2e_test(crlf) # Windows line endings, kept by .gitattributes
 tide_e2e_test(directives) # #if and the rest: what other versions of tide read is left out
 # #define and #undef, and the build's symbols: --define's, DEBUG, and PACKAGE_<NAME> for each of its packages
-tide_e2e_test(defines SOURCES e2e/defines/game.tide PACKAGES Extra e2e/defines/Extra/extra.tide DEFINES FAST WIDE)
+tide_e2e_test(defines SOURCES e2e/defines/game.tide PACKAGES Extra e2e/defines/Extra/extra.tide DEFINES FAST WIDE SIDE=50
+    BIG=-9223372036854775808 SMALL=255 SCALE=-2.5 FAR=0.1 "TITLE=Two \"words\", a \\ and a tab:\t." EMPTY= SLOW=false ARMY=Huge)
 target_compile_definitions(tidec_e2e_defines PRIVATE DEFINES_DEBUG=$<IF:$<CONFIG:Debug>,1,0>)
 tide_e2e_test(multi_file SOURCES e2e/multi_file/a_physics.tide e2e/multi_file/b_main.tide
     e2e/multi_file/c_combat.tide e2e/multi_file/d_items.tide)

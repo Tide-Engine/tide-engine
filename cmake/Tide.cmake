@@ -1,7 +1,7 @@
 # tide_add_game(<target> [SOURCES <file.tide|file.c|file.cpp>...] [HOST <file.c>...] [WINDOW] [NAME <name>]
 #               [TITLE <title>] [STATS] [LAYOUT] [EMBED] [VISUALIZERS] [SPLIT_PLUMBING] [SPLIT_CODE] [WARNINGS <text>...]
 #               [PACKAGES <Name> <file.tide>... [<Name> <file.tide>...]]
-#               [DEFINES <SYMBOL>...] [SHELL <page.html>])
+#               [DEFINES <SYMBOL>[=<value>]...] [SHELL <page.html>])
 #
 # Builds a Tide game as the program <target>. The game is every .tide file
 # in the current source folder and its subfolders (new ones are picked up by
@@ -18,8 +18,9 @@
 # packages builds with tide.
 #
 # DEFINES lists symbols the game's #if lines read as defined, as tide's
-# --define does (docs/spec.md, Conditional compilation). DEBUG is defined in a
-# Debug build, and PACKAGE_<NAME> for each package after PACKAGES.
+# --define does (docs/spec.md, Conditional compilation), each one SYMBOL or
+# SYMBOL=value, which the game's define(SYMBOL, default) reads. DEBUG is
+# defined in a Debug build, and PACKAGE_<NAME> for each package after PACKAGES.
 #
 # Without HOST, the game is the whole program: it opens a window titled TITLE,
 # or the game's title setting, or <target>, and runs (see

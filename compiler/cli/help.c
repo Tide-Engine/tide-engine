@@ -215,11 +215,13 @@ static const argument_help arguments[] = {
      "bundle and require the game's appId. unity --android builds the game's\n"
      "library for a Unity Android player, for each of Android's CPUs, once.\n"
      "Choose native, web or Android.", RUN | BUILD | UNITY},
-    {"--define", "--define <SYMBOL>", "Define a symbol for #if lines",
+    {"--define", "--define <SYMBOL>[=<value>]", "Define a symbol for #if lines, with a value code reads",
      "Repeat for as many symbols as needed, like --define FAST --define STEAM.\n"
-     "Builds also define these macros as 1 in game/package C and C++ sources.\n"
-     "DEBUG is automatic without --release; PACKAGE_<NAME> is automatic for\n"
-     "each package. TIDE_ and PACKAGE_ prefixes are reserved.", COMPILE},
+     "SYMBOL=value also gives code a value: const int SIDE = define(SIDE, 500);\n"
+     "reads --define SIDE=1000 as 1000, and 500 without it. #if SIDE is true either way.\n"
+     "Builds also define these macros in game/package C and C++ sources: as 1, or as\n"
+     "the value. DEBUG is automatic without --release; PACKAGE_<NAME> is automatic\n"
+     "for each package. TIDE_ and PACKAGE_ prefixes are reserved.", COMPILE},
     {"--title", "--title <title>", "Override the game's window title",
      "Defaults to the game's title setting, or its folder name.", RUN | BUILD},
     {"--scene", "--scene <qualified-name>", "Start directly in an authored prefab or scene",

@@ -155,7 +155,7 @@ typedef struct tide_host_game {
 #define TIDE_HOST_LIBRARY_SHAPE "tide_host_library_shape"
 #define TIDE_HOST_SHAPE                                                                                               \
     ((uint64_t)(sizeof(tide_host_game) & 0xFFFF) | (uint64_t)(sizeof(tide_game) & 0xFFFF) << 16                       \
-     | (uint64_t)(sizeof(tide_io) & 0xFFFF) << 32                                                                     \
+     | (uint64_t)((sizeof(tide_io) + sizeof(tide_gpu_reads)) & 0xFFFF) << 32 /* The read table the host shares */     \
      | (uint64_t)((sizeof(tide_layout) + 3u * sizeof(tide_layout_type) + 7u * sizeof(tide_layout_field)) & 0xFFFF) << 48)
 #ifdef _WIN32
 #define TIDE_HOST_EXPORT __declspec(dllexport)

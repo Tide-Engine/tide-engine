@@ -1,0 +1,4 @@
+// expect: a render target holds 4 color images at the most: 'Read(0)' to 'Read(3)'
+scene Main {}
+local singleton State { RenderTarget target; }
+async void Read(State state) { var pixels = await state.target.Read(-1); }

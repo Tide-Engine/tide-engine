@@ -8,6 +8,17 @@ checker gave the type name), and signature help is `CALL_MESH_DECODE`'s case. `l
 both completions, hover of both calls with no diagnostics, and signature help inside FromBytes' parentheses. No grammar
 change: `Grid3<Block>.FromBytes` is names and punctuation the TextMate grammar already colors.
 
+## defined(NAME) and define(NAME, default) in editors (2026-11-14)
+
+The language server checks them as tidec does (`check_symbol_call`, `notes/language.md`): `analysis_run` still
+defines only `DEBUG` and the game's packages, so `define(NAME, default)` is its default and `defined(NAME)` what
+`#if NAME` is there, a file's own `#define` included (the lexer keeps a file's symbols by `loc.file`, forgotten
+when the file is lexed again). Greying out is unchanged: only `#if` leaves lines out, and these calls are code.
+The formatter sees ordinary call tokens and leaves them as written. `lsp_directives` checks a document of
+`defined`/`define` constants has no diagnostic and formats as it is, and that `define(SIDE)` says what it takes.
+`Json.Read`/`Json.Write` hover text names vectors, sets and numbered maps (the JSON note in `notes/language.md`).
+No grammar change: both are plain identifiers before `(`.
+
 ## Linear image annotation (2026-11-14)
 
 Attribute completion offers Linear before asset and field declarations; attribute hover describes sRGB
@@ -36,7 +47,7 @@ Ordinary enum-member typo fixes cover the new format names.
 
 Raw attribute completion/signature help describes the four numeric role arguments. Fields and read-only
 Texture/Texture3D helper parameters carry their role into Sample hover, member completion and signature help;
-they return the numeric type and show Point as the default. Numeric members omit SampleGrad/SampleLevel.
+they return the numeric type and show Point as the default. Numeric members of the blendable formats offer SampleLevel/SampleGrad, on TextureArray and Cubemap roles too, with snippets that name the level (2026-11-14, render-targets.md).
 Volume sampling signatures identify Texture3D and float3 coordinates. Clear completion, hover and signature
 help describe one to four positional image values and float clears past one, alongside the legacy broadcast.
 

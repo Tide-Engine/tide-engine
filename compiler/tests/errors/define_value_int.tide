@@ -1,0 +1,6 @@
+// expect: the build gives 'ARMY_SIDE' the value 'lots', and 'define(ARMY_SIDE, ...)' reads an int here
+// expect: give a whole number from -2147483648 to 2147483647, in digits: '--define ARMY_SIDE=500'
+// define: ARMY_SIDE=lots
+const int ARMY_SIDE = define(ARMY_SIDE, 500);
+singleton Army { int side = ARMY_SIDE; }
+scene Main { }

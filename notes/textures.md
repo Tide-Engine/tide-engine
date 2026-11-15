@@ -259,7 +259,15 @@ suite). Explicit levels use the already tested HLSL level-sampling helpers. NaN 
 infinities clamp to the range, then samplers clamp to the available chain. Point/Bilinear remain level zero.
 Typed numeric texture roles connect the public Format members through Sample, returning their declared
 numeric type. R8/Rg8/R16f/Rg16f/Rgba16f roles also take SampleLevel, SampleGrad and the blending filters, with a
-mip chain made on demand; R32f/Rgba32f/R32i stay nearest (render-targets.md, top). Metal and other machines remain CI/device coverage.
+mip chain made on demand; R32f/Rgba32f blend Bilinear through exact loads and have no chain, R32i is nearest
+(render-targets.md, top). Metal and other machines remain CI/device coverage.
+
+Correction (2026-11-14, later): a Color texture's, cube's or array's SampleLevel that named no filter went through
+the texture's own filter (a cube's Bilinear), whose sampler clamps its level to 0: the editors' two-argument
+snippet silently read the base image. Unnamed is Trilinear now (`said_filter` in `ex_sample_read`, spec Provisional,
+explicit mip level), as it was for typed images; SampleGrad keeps the texture's filter. Generated C of a game with
+such a call changes (its sampler bits gain TIDE_SAMPLING_MIPS, and the texture's mips are made when read); the
+linear_textures golden moved, images.tide pins a Color texture's, cube's and array's level 3 as the mean.
 
 # Textures and how they are sampled
 

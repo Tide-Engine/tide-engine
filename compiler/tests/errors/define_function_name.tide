@@ -1,0 +1,3 @@
+// expect: 'define' is built into the language
+int define(int side, int fallback) { return side + fallback; }
+scene Main { }

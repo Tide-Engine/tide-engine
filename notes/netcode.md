@@ -1222,11 +1222,13 @@ changes is encoded again, not its changed chunk); entities are still hashed
 every tick, each from its components; and the client's verification hash goes
 the same way but on a world loaded or predicted afresh it finds less unchanged.
 
-## Service the match while desktop presentation waits (2026-11-03)
+## Service the match while presentation waits (2026-11-03; Android 2026-11-14)
 
 The owner prioritized networking after the focus measurements below. Desktop
 Vulkan's end-present frame fence now waits to the next match deadline and calls
-the standard host's match-only update between waits. The GPU still owns its
+the standard host's match-only update between waits; Android's activity does
+the same since 2026-11-14 (`notes/rendering.md`, Match updates during Vulkan
+frame waits). The GPU still owns its
 unfinished resources, and the existing two-frame queue limit remains. Rendering
 details and remaining blocking points are in rendering.md; clock, local event,
 input and correction-aging contracts are in standard-host.md.

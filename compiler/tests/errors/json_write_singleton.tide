@@ -1,4 +1,4 @@
-// expect: Json.Write writes a struct, a List<T> or a Map<string, T>, and this is Seen
+// expect: Json.Write writes a struct, a List<T>, a Set<T> or a Map<K, T>, and this is Seen
 // expect: copy what the JSON has of it into a struct, which is a value of its own
 scene Main { }
 struct Info { string id; int players; }
