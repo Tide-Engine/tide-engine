@@ -116,6 +116,56 @@ TIDE_TEST(lexer_degree_tokens_preserve_unary_minus_operators_names_and_locations
     done();
 }
 
+// A build's symbols with values (--define SIDE=50) and a file's own, as code
+// reads them (defined(NAME), define(NAME, default)): the file's first, the
+// build's noted with their values for the game's identity.
+TIDE_TEST(lexer_symbols_with_values_are_read_by_file_and_noted)
+{
+    lexer_diagnostics out = {0};
+    source src;
+    input(&src, "#define OWN\n#undef SIDE\n#if SIDE\nleft out\n#endif\nint x;\n", &out);
+    TIDE_CHECK(lex_define_ok("ARMY=") && lex_define_ok("TITLE=a b=c") && lex_define_ok("FAST"));
+    TIDE_CHECK(!lex_define_ok("=5") && !lex_define_ok("") && !lex_define_ok("TIDE_X=1") && !lex_define_ok("PACKAGE_A=1"));
+    TIDE_CHECK(!lex_define_ok("1A=2") && !lex_define_ok("true=1") && !lex_define_ok("A B=1"));
+    TIDE_CHECK(lex_define_name_length("TITLE=a=b") == 5 && lex_define_name_length("FAST") == 4);
+    lex_define("SIDE=50");
+    lex_define("FAST");
+    lex_define("TITLE=a=b");
+    lex_define("SIDE=60"); // Said again: the later value
+    lex_define("EMPTY=");
+    token *tokens = lex(&src);
+    TIDE_REQUIRE(tokens && !out.errors);
+    TIDE_CHECK(tokens[0].kind == T_IDENT && str_eq_c(tokens[0].text, "int")); // #if SIDE left its line out, #undef said
+    const char *value = "unset";
+    TIDE_CHECK(lex_read_symbol(str_from("OWN"), src.file, &value) == 1 && !value); // The file's own: no value
+    TIDE_CHECK(lex_read_symbol(str_from("SIDE"), src.file, &value) == 0 && !value); // ...and its #undef
+    TIDE_CHECK(lex_read_symbol(str_from("OWN"), src.file + 1, &value) == 0);        // Another file has neither
+    TIDE_CHECK(lex_read_symbol(str_from("SIDE"), src.file + 1, &value) == 1 && value && strcmp(value, "60") == 0);
+    TIDE_CHECK(lex_read_symbol(str_from("TITLE"), src.file, &value) == 1 && value && strcmp(value, "a=b") == 0);
+    TIDE_CHECK(lex_read_symbol(str_from("EMPTY"), src.file, &value) == 1 && value && strcmp(value, "") == 0);
+    TIDE_CHECK(lex_read_symbol(str_from("FAST"), src.file, &value) == 1 && !value);
+    TIDE_CHECK(lex_read_symbol(str_from("NONE"), src.file, &value) == 0 && !value);
+    TIDE_CHECK(lex_read_symbol(str_from("TIDE_0_1_OR_NEWER"), src.file, &value) == 1);
+    TIDE_CHECK(lex_read_symbol(str_from("TIDE_0_1"), src.file, &value) == -1);
+    // What the game's identity lists: the build's, by name, with values; not the file's own, nor versions
+    int count = 0;
+    const lex_symbol *read = lex_symbols_read(&count);
+    TIDE_REQUIRE(count == 6);
+    TIDE_CHECK(strcmp(read[0].name, "EMPTY") == 0 && read[0].defined && read[0].value && !read[0].value[0]);
+    TIDE_CHECK(strcmp(read[1].name, "FAST") == 0 && read[1].defined && !read[1].value);
+    TIDE_CHECK(strcmp(read[2].name, "NONE") == 0 && !read[2].defined && !read[2].value);
+    TIDE_CHECK(strcmp(read[3].name, "OWN") == 0 && !read[3].defined); // Read in the other file, where it's the build's
+    TIDE_CHECK(strcmp(read[4].name, "SIDE") == 0 && read[4].defined && strcmp(read[4].value, "60") == 0);
+    TIDE_CHECK(strcmp(read[5].name, "TITLE") == 0 && read[5].defined && strcmp(read[5].value, "a=b") == 0);
+    // Lexed again, a file says its symbols again
+    source again = src;
+    again.text = "int y;\n";
+    again.len = strlen(again.text);
+    TIDE_REQUIRE(lex(&again));
+    TIDE_CHECK(lex_read_symbol(str_from("OWN"), src.file, &value) == 0);
+    done();
+}
+
 TIDE_TEST(lexer_degree_suffixes_reject_combined_base_and_identifier_continuations)
 {
     static const char *const invalid[] = {"180fdeg", "180Fdeg", "180Ldeg", "180ldeg", "180degf", "180degF", "180degL",

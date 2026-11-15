@@ -1,0 +1,7 @@
+// expect: a condition compares whether symbols are defined, not their values: '#if' can't read what a '--define NAME=value' gave
+// expect: read the value in code, as a constant with a default: 'const int SIDE = define(SIDE, 500);', then 'if (SIDE == 3)'
+// define: SIDE=3
+scene Main { }
+#if SIDE == 3
+const int THREE = 1;
+#endif

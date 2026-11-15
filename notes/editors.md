@@ -1,3 +1,14 @@
+## defined(NAME) and define(NAME, default) in editors (2026-11-14)
+
+The language server checks them as tidec does (`check_symbol_call`, `notes/language.md`): `analysis_run` still
+defines only `DEBUG` and the game's packages, so `define(NAME, default)` is its default and `defined(NAME)` what
+`#if NAME` is there, a file's own `#define` included (the lexer keeps a file's symbols by `loc.file`, forgotten
+when the file is lexed again). Greying out is unchanged: only `#if` leaves lines out, and these calls are code.
+The formatter sees ordinary call tokens and leaves them as written. `lsp_directives` checks a document of
+`defined`/`define` constants has no diagnostic and formats as it is, and that `define(SIDE)` says what it takes.
+`Json.Read`/`Json.Write` hover text names vectors, sets and numbered maps (the JSON note in `notes/language.md`).
+No grammar change: both are plain identifiers before `(`.
+
 ## Linear image annotation (2026-11-14)
 
 Attribute completion offers Linear before asset and field declarations; attribute hover describes sRGB

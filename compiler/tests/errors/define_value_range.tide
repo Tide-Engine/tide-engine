@@ -1,0 +1,6 @@
+// expect: the build gives 'LAYERS' the value '256', and 'define(LAYERS, ...)' reads a byte here
+// expect: give a whole number from 0 to 255: '--define LAYERS=12'
+// define: LAYERS=256
+const byte LAYERS = define(LAYERS, 4);
+singleton Stack { byte layers = LAYERS; }
+scene Main { }

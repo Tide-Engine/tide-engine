@@ -1,0 +1,7 @@
+// expect: the build gives 'ARMY' the value 'huge', and 'define(ARMY, ...)' reads a member of Size here
+// expect: give one of its members' names, as written: 'Small', 'Large', 'Huge'
+// define: ARMY=huge
+enum Size { Small, Large, Huge }
+const Size ARMY = define(ARMY, Size.Large);
+singleton Army { Size size = ARMY; }
+scene Main { }

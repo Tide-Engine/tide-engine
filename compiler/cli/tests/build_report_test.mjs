@@ -169,6 +169,26 @@ try {
     assert.notEqual(identity(), definedIdentity);
     assert.equal(compiledDefined().filter(name => name.startsWith("custom.")).length, 4);
     assert(!compiledDefined().includes("engine.c"), "user defines preserve engine-object reuse");
+    // ...and so does a value: C gets -D BATTLE_TEST=7, code reads it with define(), and another value is another game
+    put(join(defined, "game.tide"), "scene Main { }\nconst int TROOPS = define(BATTLE_TEST, 1);\nsingleton Army { int troops = TROOPS; }\n");
+    env.TIDE_TEST_BUILD_DEFINE = "7";
+    const valued = await run([...definedArgs, "--define", "BATTLE_TEST=7"]);
+    assert.equal(valued.code, 0, valued.said);
+    const valuedIdentity = identity();
+    const header = readFileSync(join(defined, ".tide", "native-release", "gen", "game.h"), "utf8");
+    assert.match(header, / BATTLE_TEST="7"/);
+    env.TIDE_TEST_BUILD_DEFINE = "8";
+    const otherValue = await run([...definedArgs, "--define", "BATTLE_TEST=6", "--define", "BATTLE_TEST=8"]); // The later one
+    assert.equal(otherValue.code, 0, otherValue.said);
+    assert.notEqual(identity(), valuedIdentity);
+    const notInt = await run([...definedArgs, "--define", "BATTLE_TEST=many"]);
+    assert.notEqual(notInt.code, 0);
+    assert.match(notInt.said, /the build gives 'BATTLE_TEST' the value 'many', and 'define\(BATTLE_TEST, \.\.\.\)' reads an int here/);
+    assert.match(notInt.said, /--define BATTLE_TEST=500/);
+    const unnamed = await run([...definedArgs, "--define", "=7"]);
+    assert.equal(unnamed.code, 2, unnamed.said);
+    assert.match(unnamed.said, /--define ARMY_SIDE=500/);
+    put(join(defined, "game.tide"), "scene Main { }\n");
     delete env.TIDE_TEST_BUILD_DEFINE;
 
     // Large generated code is in parts, as many as its size takes, and its data's, with ThinLTO compilation and a

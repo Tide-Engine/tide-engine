@@ -2331,16 +2331,17 @@ static const method_form session_calls[] = {
 
 // Json's calls and string's own: in no table of the engine's, as they take and give types of the game's.
 #define JSON_READ_DOC                                                                                                  \
-    "Reads JSON as a `T`: a struct, a `List<T>` or a `Map<string, T>` of what JSON holds (bool, the integers, float, " \
-    "char, string, enums by their member's name, structs, lists, arrays and maps by text). A field's key is its "      \
-    "name, or what `[Json(\"key\")]` before it says. A key the JSON leaves out keeps its field's default, and so "    \
-    "does a `null`; a key no field has is skipped. Nothing, unwrapped with `??` or `is`, when the text isn't JSON, a "  \
-    "value isn't its field's kind, or a number doesn't fit its field. The same on every machine, so the match can "    \
-    "read what a command brought."
+    "Reads JSON as a `T`: a struct, a `List<T>`, a `Set<T>` or a `Map<K, T>` of what JSON holds (bool, the "           \
+    "integers, float, double, char, string, enums by their member's name, vectors, quaternions and colors as arrays "  \
+    "of their numbers, structs, lists, sets and arrays as arrays, and maps by text, an int or an enum). A field's key " \
+    "is its name, or what `[Json(\"key\")]` before it says. A key the JSON leaves out keeps its field's default, and " \
+    "so does a `null`; a key no field has is skipped. Nothing, unwrapped with `??` or `is`, when the text isn't JSON, " \
+    "a value isn't its field's kind, a vector has the wrong number of numbers, or a number doesn't fit its field. The " \
+    "same on every machine, so the match can read what a command brought."
 #define JSON_WRITE_DOC                                                                                                 \
-    "The value as JSON, with no spaces: a struct, a `List<T>` or a `Map<string, T>` of what JSON holds. A float is "   \
-    "written with the fewest digits that read back as the same float, and `null` where it's NaN or infinite. "        \
-    "`Json.Read<T>` of the text gives the value back."
+    "The value as JSON, with no spaces: a struct, a `List<T>`, a `Set<T>` or a `Map<K, T>` of what JSON holds. A "    \
+    "float is written with the fewest digits that read back as the same float, and `null` where it's NaN or "         \
+    "infinite. `Json.Read<T>` of the text gives the value back."
 static const method_form json_calls[] = {
     {"Read", "Json.Read<T>(string json) -> T?", JSON_READ_DOC},
     {"Read", "Json.Read<T>(List<byte> json) -> T?", JSON_READ_DOC},

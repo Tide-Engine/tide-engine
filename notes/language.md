@@ -145,6 +145,93 @@ codegen checks, `edit_errors_alone`, the 182 World/async/task/command/owner erro
 `schedule/world_edit`, `world`, `world_functions`, `queries`, `tidels_tests`. The docs build and web runs
 are left to the Build workflow.
 
+## Symbols read by code: defined(NAME), define(NAME, default) and --define NAME=value (2026-11-14)
+
+The owner approved "a define with a value, readable as an expression" ("go with your recommendations"); the
+spelling and every rule are my picks, Provisional in spec.md (Conditional compilation). Mount & Rifle has ~300
+`#if` lines, many only to pick a constant (`#if NO_PREPASS / const bool PREPASS = false; / #else ... #endif`,
+three army sizes by `#if ARMY_50 / #elif ARMY_BIG / #else`); each is now one line.
+
+- **Lexer** (`lexer.c`, the symbols block): `build_symbols` keeps `{name, value}` (`build_symbol`; `value` NULL for
+  none), `lex_define("NAME=value")` splits at the first `=` (`lex_define_name_length`) and a name defined again
+  takes the later value. `lex_define_ok` is the command lines' check (the name as `lex_symbol_ok` takes it, any
+  value). `lex_symbol` (what `lex_symbols_read` lists) gained `value`; `read_build_symbol` records it whenever the
+  symbol has one, however it was read. A file's own `#define`/`#undef` are also kept past its lexing
+  (`kept_symbols`, by `loc.file`, the last word standing; a file lexed again first forgets its own, and
+  `lex_symbols_reset` clears them), so `lex_read_symbol(name, file, &value)` answers as `#if` would in that file:
+  the file's own, then tide's versions, then the build's (noted). -1 for a `TIDE_` name that's no version.
+  `cond_equality` refuses a number, text, `'`, `-` or `.` after `==`/`!=` with a note pointing at `define`.
+- **Checker** (`check_symbol_call`, just before `check_call`, which sends `defined`/`define` there first): the
+  call becomes the literal it reads as (`check_has`'s way), so `fold_int`, `is_constant` (which also takes the
+  unchecked calls), array sizes and `switch` cases see a literal. `defined` → `E_BOOL`, its args dropped.
+  `define`: the default is `is_constant` (with a check that a member chain's root isn't a local, a parameter or a
+  field: `army.start` reads like `Combat.MAX` until checked) and checked by `check_constant_expr`, with
+  `c->define_want` (set in `check_expr_want_any` for a `define` call) when that's a define type the default
+  converts to. Not defined: `*e = *default`. A value: `define_literal` makes an `E_INT` (with `is_long` for a
+  long; byte through the existing "int constant fits a byte" rule), an `E_FLOAT` (text as written, `d` added for a
+  double, a negative one as `E_UNARY` minus, finite by `strtof`/`strtod`), an `E_STRING` (escaped for
+  `gen_text_literal`, UTF-8 checked), an `E_BOOL`, or `.Member` shorthand for an enum, then `check_expr_want`.
+  `defined`/`define` are in `is_builtin_name`.
+- **Identity** (`gen_header`): a symbol with a value is `NAME="value"` in the symbols comment (quotes, backslashes,
+  `?` and anything outside printable ASCII escaped, so the comment's line can't end early or splice); one without
+  is `NAME=0/1` as before, so a game reading no valued symbol has the header it had.
+- **Command lines:** tidec's `add_define` and `tide`'s `--define` take `lex_define_ok`; `tide` keeps one entry per
+  name (the later), so C's `-D` is said once (`c_defines` passes `NAME=value` as clang reads it). `tide.packages`
+  conditions (`compiler/lsp/packages.c`) compare names up to `=`. CMake `DEFINES` pass `NAME=value` through to
+  tidec as they are.
+- **Tests:** `compiler/tests/e2e/defines` (now `DEFINES FAST WIDE SIDE=50 BIG=-9223372036854775808 SMALL=255
+  SCALE=-2.5 FAR=0.1 "TITLE=..." EMPTY= SLOW=false ARMY=Huge`: every type, a value's escapes, an empty one, an int
+  default read as a float, a valueless symbol as a bool, a file's own and another file's, an array field's
+  default and a system's body), `tidec_lexer` (`lexer_symbols_with_values_are_read_by_file_and_noted`), error
+  fixtures `define_value_int/range/float/bool/enum`, `define_no_value`, `define_arguments`, `defined_arguments`,
+  `define_not_constant(_call)`, `define_type`, `defined_tide`, `define_function_name` and
+  `directive_compare_value` (`expect_error.cmake` reads `// define: <S>` lines after the first as `--define`),
+  `lsp_directives`, and the CLI's `tide_cli_build_report` (C gets `-D BATTLE_TEST=7`, the header says it, another
+  value is another identity, the later of two wins, a bad value's error and fix, `--define =7` refused) and
+  `tide_cli_packages` (`--define STEAM=480` takes the `#if STEAM` branch).
+- **Not built / gaps:** a file's `#define NAME value` (a file's symbols stay valueless: a value there is a
+  `const`); `#if` reading values; `char` and vector values; a settings or `tide.packages` place to list defines.
+  On Windows a value outside ASCII given on a command line arrives in the console's code page, not UTF-8, and is
+  refused with the "has to be UTF-8" note (seen through CMake's command); `tide` and tidec read narrow `argv`.
+
+## Vectors, colors, quaternions, sets and maps by a number in JSON (2026-11-14)
+
+The owner approved arrays for vectors, colors and quaternions ("go with your recommendations"); the rules are my
+picks, Provisional in spec.md (JSON). Mount & Rifle kept float[3] fields and twin structs for its saves and gear
+catalog only because JSON refused vectors. Sets as arrays and maps by a byte, an int, a long or an enum came out
+of the same code for about 80 generated-C lines, so they're built too; a map by a `char` is not (Open).
+
+- **Checker** (`check.c`, the JSON block): `json_holds` takes the eleven vector kinds, a set whose key `json_key`
+  allows (string, char, int, long, enum; a set has no byte key), a map whose key it allows (string, byte, int,
+  long, enum), and `TY_ERROR` (said where it's declared, so no second "JSON has nothing for <error>").
+  `json_takes` takes a struct, a list, a set or any map as `T`. `mark_json` gives a vector no declaration: the
+  program keeps a bit per kind (`program.json_vector_reads/writes`, `1 << kind`, a `_Static_assert` that each
+  kind is under 64). The notes after "JSON has nothing for" say what a map's key, a set's key and a matrix can be.
+- **Codegen** (`gen_json_helpers`): `json_vector_parts` says a vector's numbers (count, C place, float/double/int),
+  `gen_json_vector` writes `tide_json_get_<C type>` (`tide_json_get_tide_float3`: no game type has a `tide_`
+  name) and its writer. The reader fills the place's numbers in turn through a table of pointers, refuses the
+  item past the count before writing it, gives false unless the count is exact (a color's 3 or 4, alpha 1.0f for
+  3), and a `null` number writes nothing. Sets are their own loop over `prog->maps` (`is_set`): an array of keys,
+  each read into a local of its stored type and added with `tide_map<n>_add(..., TIDE_IN_SCRATCH)`, written over
+  live entries. A map by a number reads its key's text with `tide_str_parse_long` and a range check (none for a
+  long), by an enum a static table of names then `tide_str_eq`, digits that fit the storage otherwise; writing
+  quotes `tide_str_add_long`'s digits or the first name a number has. No runtime function was added: everything
+  is generated over `tide/json.h` and `tide/text.h` as they were.
+- **A game with no vector, set or numbered map in JSON generates the C it did** (by construction, not diffed over
+  every game): the new loops emit nothing without a bit or a marked set, and a map by text writes the same text.
+- **Tests:** `compiler/tests/e2e/json_vectors` (46 checks: every kind, defaults and `null` numbers, NaN as `null`
+  back to the default's number, wrong lengths, non-arrays, ints that aren't whole or don't fit, vectors in lists,
+  maps, arrays and a `T?`, sets of int/string/enum/char with repeats, maps by int/long/byte/enum and an enum
+  `: byte`, keys that aren't numbers or members, roots that are a list, a set and maps; in C, the bits of 0.1,
+  -0, 0.70710677 and 0.30000000000000004, the written text, and `JSON_VECTORS_HASH`, shared by native sanitize
+  and web-debug). `compiler/tests/safety/json` gained `shapes` (131,073 numbers for a vector and a color, a set
+  of them, 2,000 keys of 1,000 numbers, a key of 131,072 digits and one of 64 letters, and 1,320 spoiled bytes of
+  a pose). Error fixtures: `json_map_key` (now `Map<char, string>`), `json_set` (now `Set<Entity>`),
+  `json_field_nested` (now `float4x4`, the matrix note), `json_set_float` (one error, no follow-up),
+  `json_field_entity`, `json_read_value`, `json_write_singleton` (their new wording). Hover docs for
+  `Json.Read`/`Json.Write` in `compiler/lsp/analysis.c`; `tidels_tests json` passes.
+- **Not built:** maps by a `char`; matrices (refused, as before); a way to say a vector's array may be short.
+
 ## Scene.Switch, scene loads in functions, local fallback offline (2026-11-14)
 
 Owner: scenes felt awkward to switch between ("I imagine scenes almost as what I'm mainly doing ... menu is
@@ -4994,7 +5081,7 @@ macOS, MinGW, Android and the sanitizers were not run here, and no workflow
 was dispatched.
 
 **Not built**: a dynamic JSON value; `T?` fields (built since: see T? fields, above);
-vectors, colors, sets and maps by an int or an enum; telling why a read gave
+vectors, colors, sets and maps by an int or an enum (built 2026-11-14, the section at the top); telling why a read gave
 nothing; indented output or leaving out defaults; `Join`, `byte.TryParse`, a
 `Parse` that fails; `TryParse` in the GUI's own number fields.
 ## AnimationCatalog and bool/out lookup, 2026-10-11
@@ -5302,7 +5389,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **A build's symbol that a condition read is in the game's hash:** `read_build_symbol` notes each, by name, with whether it was defined (`lex_symbols_read`, in order of the names), and `gen_header` writes them as a comment after `#pragma once`, only when there are any. So builds that read one differently are different games, which no session connects, and a game whose conditions read none (or only versions and their files' own) generates the header it did. A hot reload that adds the first `#if DEBUG` changes the hash once, and migrates by name.
   - **Editors:** `#define` and `#undef` lines are directive lines (`LINE_DIRECTIVE`), which the formatter leaves and the folding of `#if` branches passes by; the grammar has both words.
   - **Tests:** `compiler/tests/e2e/defines` (a file's own, `#undef` of a build's, a build's in another file, `DEBUG` by the build's configuration, a package that's there and one that isn't), `compiler/tests/errors/directive_define_*` and `directive_undef_package`, and `lsp_directives`.
-  - **Not built:** values, package versions as symbols, a place in the game's folder to list defines (so an editor knows them), `DEBUG` for a game's C.
+  - **Not built:** values (built 2026-11-14 for code, `define(NAME, default)`: the section at the top), package versions as symbols, a place in the game's folder to list defines (so an editor knows them), `DEBUG` for a game's C.
 
 - **Combined animation imports and writable names** (2026-10-11): `check_asset_decl` records resolved constant path expressions in `decl.asset_paths`; only plain `Animations` accepts a literal file list or a glob as one combined inferred catalog. `[Name("source")]` on singular `Animation` selects a unique original clip; implicit selection requires exactly one clip. The checker, codegen and editor share cleaned members and flattened source ordinals, with filename prefixes for cross-source alias collisions. Contract matching remains first-letter-only or exact `[Name]`; dynamic `Find` remains exact and ambiguity-sensitive. `Animation` retains its existing raw model data/index ABI. `Animations.data` is now a nested source-byte list; the generated private catalog adapters borrow a model blob for direct operations and wrap it only when a catalog escapes. Ordinary nested-list ownership supplies snapshots/serialization without engine changes. Inferred conversions check source ordinals before carrying indexed members to a different catalog type. See `notes/assets-and-files.md` for fixtures and validation.
 

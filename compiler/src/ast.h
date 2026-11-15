@@ -1805,6 +1805,8 @@ typedef struct program {
     decl *io_error;      // The built-in IOError enum, shared with tide/io.h
     VEC(struct expr *) io_calls; // Checked filesystem calls, for result adapters in generated C
     VEC(json_root) json_roots; // The types Json.Read and Json.Write are called with: generated C has their functions
+    uint64_t json_vector_reads;  // The vectors, quaternions and colors Json.Read reads, a bit for each type's kind (1 << TY_FLOAT3): each has a reader
+    uint64_t json_vector_writes; // ...and the ones Json.Write writes, each with a writer
     bool from_bytes;     // string.FromBytes(bytes) is called: its adapter goes in the generated C
     type from_bytes_result; // ...and what it gives: string?
     bool decodes;        // grid.Decode(bytes) is called: its adapter and tide/png.h go in the generated C
