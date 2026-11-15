@@ -1,0 +1,5 @@
+// expect: can't assign Grid2<bool> to Texture
+// expect: a Texture is a Grid2<Color> or a Grid2<float> anywhere, and a Grid2<float2>, Grid2<float4>, Grid2<int> or Grid2<byte> where
+scene Main { }
+local singleton Art { Grid2<bool> on = Grid2(4, 4); Texture plain; }
+view Show(mut Art art) { art.plain = art.on; }

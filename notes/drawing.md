@@ -27,13 +27,34 @@ depth-precision-production.md.
 
 # Depth bias (2026-11-14)
 
+Corrections and tests (audit, 2026-11-14). "Level gathering compares it" (below) wasn't so: `level_follows`
+(`engine/src/draw.c`), which `tide_draw_gather_levels` goes by on the CPU's path, compared blend, depth and cull
+but not the bias, so a biased draw of a leveled mesh right after an unbiased one was gathered into its runs and
+drawn with its bias (none). It compares the pair now. Every place two draws can become one is pinned, each
+failing when its comparison is taken out (checked so):
+- `draw_culled_depth_bias_keeps_sets_apart_and_out_of_occlusion` (`tests/test_draw_culled.c`): culled draws of
+  one list differing only in bias (constant, then slope) are sets of their own, the next under the same bias joins
+  its set, each command keeps its bias, and only the unbiased ones test occlusion.
+- `draw_meshes_3d_join_under_one_depth_bias_only` (`tests/test_draw.c`): shader-less 3D instances of one mesh in a
+  row are one command under one bias, two under two.
+- `draw_levels_under_another_depth_bias_are_gathered_apart` (`tests/test_draw_levels.c`): the gathering above, a
+  mesh's instances and a shader's, and the shaded merge (`last->depth_bias` in `shaded_instances`' run join).
+- `cull.tide`/`cull.c` setting 6 (`tide_platform_cull`, `_cull_decided`, web `tide_platform_cull`): six boxes near
+  and far, so each draw is runs of two levels that join where the device takes first instances, drawn green under
+  `Cull.None` (a call apart), then red under `Draw.DepthBias(8, 0)`, which fails against them, then red with none,
+  which covers them. The middle box's middle must be red on the GPU's culling and the CPU's, and the frames the same
+  pixels: with `cull_joins_with`'s bias comparison taken out, the GPU path drew it green (3,076 pixels differed).
+  The CPU path drew it red even with the second red draw left out before the gathering fix (the biased draw took
+  the green one's bias); both draw it green then now.
+All pass natively (ASan, Vulkan with validation) and on web-debug (WASI units, software WebGPU pixels).
+
 Corrections (review, 2026-11-14). WebGPU kept the last bias past its pass: a kernel run after a frame whose
 last draw was biased made its compute pipeline again as a render pipeline and threw (TypeError in
 `createRenderPipeline`), and pipelines used directly (hi-z, linear copies) got a biased variant. `tide.js` now
 starts every render and compute pass with none, as Vulkan's dynamic state does; `kernels.tide` ends its frame
 with a biased draw, which failed on web-debug before the fix and passes after. GPU-culled joins
 (`cull_joins_with`) now compare the bias, so two draws of a family that differ only in bias stay two calls;
-that one has no fixture of its own.
+that one had no fixture of its own (it has since: above).
 
 Owner-approved 2026-11-13: destination-owned DepthBias/SetDepthBias, block restore and zero-argument reset,
 3D only. Picks and alternatives are Provisional in spec.md. Constant is truncated, bounded precision units;

@@ -40,15 +40,18 @@ typedef enum tide_gpu_buffer_kind { TIDE_GPU_VERTICES, TIDE_GPU_INDICES, TIDE_GP
 // TIDE_GPU_RGBA32I is four ints of 32 bits, which a pipeline reads as they
 // are, each pixel by its place (TIDE_GPU_READ_DATA) and never blended: numbers
 // of any kind, a float's as its bits. Every backend has it with nothing asked.
+// TIDE_GPU_RG16F is two halves (a Grid2<float2>'s cells), read as (r, g, 0, 1), blended on every device as R16F is.
 typedef enum tide_gpu_format { TIDE_GPU_RGBA8, TIDE_GPU_R8, TIDE_GPU_R16F, TIDE_GPU_RGBA32I,
     TIDE_GPU_RGBA16F, TIDE_GPU_R32F, TIDE_GPU_RGBA32F, TIDE_GPU_R32I,
-    TIDE_GPU_SRGBA8 // Encoded RGB, hardware decoded before filtering; alpha stays coverage.
+    TIDE_GPU_SRGBA8, // Encoded RGB, hardware decoded before filtering; alpha stays coverage.
+    TIDE_GPU_RG16F
 } tide_gpu_format;
 
 // The bytes a pixel of a texture takes, as texture and texture_write are given them.
 static inline int tide_gpu_format_bytes(const tide_gpu_format format)
 {
-    return format == TIDE_GPU_RGBA8 || format == TIDE_GPU_SRGBA8 || format == TIDE_GPU_R32F || format == TIDE_GPU_R32I ? 4
+    return format == TIDE_GPU_RGBA8 || format == TIDE_GPU_SRGBA8 || format == TIDE_GPU_R32F || format == TIDE_GPU_R32I
+               || format == TIDE_GPU_RG16F ? 4
          : format == TIDE_GPU_RGBA16F ? 8 : format == TIDE_GPU_R16F ? 2
          : format == TIDE_GPU_RGBA32I || format == TIDE_GPU_RGBA32F ? 16 : 1;
 }
@@ -178,7 +181,11 @@ typedef enum tide_gpu_read {
     TIDE_GPU_READ_SAMPLES, TIDE_GPU_READ_ARRAY, TIDE_GPU_READ_DEPTH_ARRAY, TIDE_GPU_READ_VOLUME,
     // Numeric images are loaded at the nearest cell without a sampler. Float32 filtering is optional on
     // WebGPU, so NUMBER uses an unfilterable-float binding even for formats that can be filtered.
-    TIDE_GPU_READ_NUMBER, TIDE_GPU_READ_INT, TIDE_GPU_READ_NUMBER_VOLUME, TIDE_GPU_READ_INT_VOLUME
+    TIDE_GPU_READ_NUMBER, TIDE_GPU_READ_INT, TIDE_GPU_READ_NUMBER_VOLUME, TIDE_GPU_READ_INT_VOLUME,
+    // ...and an array's layers loaded so (tide_gpu.array, of any float format, or of TIDE_GPU_COLOR_R32I):
+    // `texture_2d_array<f32>` as unfilterable floats, and `texture_2d_array<i32>`, each with textureLoad and no
+    // sampler. What a typed array of 32-bit numbers is read with, and a cube of them, which is six layers.
+    TIDE_GPU_READ_NUMBER_ARRAY, TIDE_GPU_READ_INT_ARRAY
 } tide_gpu_read;
 
 // The most layers an array has (tide_gpu.array): WebGPU's default maxTextureArrayLayers, Vulkan's least.

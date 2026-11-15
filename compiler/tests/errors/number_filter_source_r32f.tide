@@ -1,5 +1,0 @@
-// expect: the frag blends its source or reads its smaller images, and Format.R32f is read at its nearest pixel on every device
-scene Main { }
-local singleton Images { RenderTarget target; [Raw(float)] Texture source; }
-frag Read(Vertex vertex,out Color color,[Raw(float)] Texture source) { color=Color(source.Sample(vertex.uv,Filter.Bilinear),0,0); }
-view Show(mut Images images) { images.target=RenderTarget(8,8,Format.R32f); images.source=images.target.color; Draw.Blit(images.source,Draw.window,Read); }

@@ -1,3 +1,242 @@
+## 32-bit numbers loaded exactly, typed volumes blended, depth cubes, SampleLevel reads levels (2026-11-14)
+
+The owner's "make sure everything we can add or validate we do" took the remaining refusals of the section below.
+Every rule is Provisional (Claude) in docs/spec.md: Portable filtering, Number images as array layers and cube
+faces, Depth cubes (Cubemaps), explicit mip level, and Compute's volume sampling. Users: game/shaders.md (Number
+images, Choosing a mip level, cubes), game/render-targets.md (A cube of depth alone, readback), meshes-and-textures.md.
+
+- **What a game gains.** `Filter.Bilinear` on a typed R32f/Rgba32f `Texture`, `TextureArray` layer or `Texture3D`:
+  four (eight) texels loaded and blended in the shader, bit-identical everywhere (`Point`, and `SampleLevel`/`SampleGrad`
+  naming Point/Bilinear, load the nearest). Typed `Texture3D` Bilinear: Rgba16f and `Grid3<float>` through the sampler
+  (`TIDE_SHADER_READ_NUMBER_VOLUME_BLEND`, 16, a GPU `READ_VOLUME`, no `tide_straight`, zeros for none from the
+  existing zero volume). `TextureArray`/`Cubemap` of R32f, Rgba32f and R32i; `[Raw(int)]` on arrays, cubes and helper
+  parameters; a typed array's Point read is a load where its format is 32-bit or unknown (a kernel's field). `Cubemap(size, Format.Depth)` with
+  `cube.depth`, a `DepthCubemap` (`TY_DEPTH_CUBEMAP`, appended to the type kinds; `tide_depth_ref` of the cube's id),
+  `Sample(direction)` and `Compare(direction, value)`. A Color/cube/array `SampleLevel` that names no filter is
+  Trilinear (`said_filter` 2 in `ex_sample_read`).
+- **Compiler** (`shader.c`). `sampling_of` = `sampling_as` (the old body) then `exact_sampling(s, format, typed)`: a
+  typed field's format comes from `image_target_format` of its assignments (fixed for every typed field already), a
+  frag's own Texture's from its draw's source (`shader.source_format`, part of `plan`'s key only where that source is
+  7/8, so no other game's shaders split; `writing` is the shader `emitter` is writing, NULL while checking, and the
+  layout refines direct samples by `sh->source_format`). Refinement: `NUMBER_BLEND`/typed `VOLUME` filter <= 1 on
+  7/8 -> `READ_NUMBER`/`READ_NUMBER_VOLUME`; typed `ARRAY` filter 0 (a format not known blendable: 32-bit, or unknown as a kernel's is; a known R8-Rgba16f one keeps its one sampled binding, which a draw's 16 textures need) or <= 1 (7/8/9) -> `READ_NUMBER_LAYERS`
+  /`READ_INT_LAYERS` (new compiler kinds, TIDE 17/18 -> GPU `READ_NUMBER_ARRAY`/`READ_INT_ARRAY`, 13/14); typed `CUBE`
+  filter 0 on 7/8/9 -> the same layers kinds. `[Raw(int)]` arrays/cubes go straight to `READ_INT_LAYERS`.
+  `ex_numeric_sample` writes the helpers: wrap on the uv, then either the nearest texel or four/eight corners whose
+  integer places are wrapped by `tide_index{2,3}_{0,1,2}` (clamp, repeat, mirrored repeat) and `mix`ed; a cube's
+  `tide_cube_face(d) -> (u, v, face)` (longest axis, ties x then y then z; the gpu.h face layout, the inverse of
+  ReadTargetFace's directions), loaded from `texture_2d_array`. A read written for a sampler returns all four
+  channels and `ex_sample` narrows. What stays on a sampler for 7/8 (levels, gradients, Trilinear, a cube blended) is
+  `refuse_blended_numbers` at the draw. Depth cubes: `ex_depth_cube_read` emits `tide_depth_cube<t>_<s>` /
+  `tide_compare_cube<t>_<s>` (face math then the `DEPTH_ARRAY`/`COMPARE_ARRAY` read, `tide_depth` both ways), the
+  texture a `texture_depth_2d_array`, so `texture_reads` say `DEPTH_ARRAY`: no new runtime read kind. `check_image_sources`
+  refuses a `DepthCubemap` whose cube's known format isn't Depth (`image_target_format` follows `cube.depth`).
+- **Checker** (`check.c`): Cubemap's Depth/32-bit refusals and TextureArray's 32-bit one gone; `[Raw(int)]` on layered
+  fields and parameters allowed; int array/cube filters, int volume Bilinear refused ("a GPU blends no integers");
+  typed float volumes take Bilinear. `cube.depth` (local code; an asset's is an error), `check_depth_cube_read`, the
+  type through holds/arrays/purity/codegen (`tide_cubemap_depth`, reload like `DEPTH_TEXTURE_ARRAY`, `tide_draw_depth_source`).
+- **Runtime** (`platform.c`). `cube_layered(id)`: a cube of depth alone or 32-bit numbers is `made_array(format, s, s,
+  6)` with `made_layer` faces (`cube_for`), never `gpu->cube`; `texture_to_read_as` gives it only to `NUMBER_ARRAY`/
+  `INT_ARRAY` (float vs R32i) and its depth array to a `DEPTH_ARRAY` read of `TIDE_PIXELS_TARGET_DEPTH` of the cube's
+  id (`of_cube_depth`: `of_array`, `of_destination` and source preparation take it; a color cube's depth reads none),
+  and a `READ_CUBE` of a layered cube or a filtering `READ_ARRAY` of a 32-bit array none. New fallbacks
+  `gpu_state.number_layers`/`int_layers` (1x1x1 arrays of RGBA32F/R32I, zero on every backend). Mipmaps are never made
+  of 32-bit images, layered cubes or 32-bit target images (`unblended_format`). Readback: a layered cube's face reads
+  through the layer kernels (`PIXEL_READ_LAYER_DEPTH`, `_LAYER_NUMBERS`); R32i faces and layers through the new
+  `ReadTargetLayerInts` (cull.tide; `gpu_list.c` no longer refuses int faces/layers); `ReadTargetLayerNumbers` is now
+  a load, so it reads R32f/Rgba32f layers too. read_pixels_wgsl.h regenerated, shaders.h and the CLI's Unity count
+  follow (merged with the banded part reads of the same day: ReadTargetLayerInts takes their rows/first/left/top
+  uniforms, PIXEL_READ_LAYER_INTS sits before the volume kernels; 22 computes).
+- **Backends.** gpu.h `TIDE_GPU_READ_NUMBER_ARRAY`/`_INT_ARRAY` (loaded, no sampler: `tide_gpu_sampler_read`'s
+  `>= NUMBER` covers them). WebGPU: `layoutFor` 2d-array `unfilterable-float`/`sint`; `gpu_array` takes kinds 7-9 with
+  one level. Vulkan: `color_of` maps R32_SFLOAT/R32G32B32A32_SFLOAT/R32_SINT back (a layer target's kind was BYTES and
+  stopped the program: "a pipeline is for targets that hold something else"); descriptors were already read-agnostic.
+  The recorder passes the new read values through unchanged; no embed ABI or packet change.
+- **Unity's replay (not changed here: TideRender.cs is the owner's later pass).** What it must do: (1) bind a recorded
+  array to the two new read kinds 13/14 as a `Texture2DArray` (the HLSL is `Texture2DArray<float4|int4>.Load`, checked
+  by fxc); `EmptyRead` gives `white` for an unknown kind, which is never reached while the engine binds its own
+  recorded fallback arrays, but should give a zero RGBA32F/R32_SInt Tex2DArray for 13/14; (2) a depth cube and a
+  32-bit cube arrive as ordinary array packets (depth-only and color arrays, `TIDE_GPU_CUBE_FACES` layers, layer
+  targets), already replayed for `TextureArray`; their reads are its existing `Texture2DArray` depth compare (Gather
+  PCF) and loads, so the picture matches Vulkan and WebGPU; (3) the catalogue gains ReadTargetLayerInts and a changed
+  ReadTargetLayerNumbers, written by `tide unity`. Not replayed in an editor for this change.
+- **Tests.** Shaders: `exact_numbers` and `depth_cubes` (new WGSL goldens; their SPIR-V passes spirv-val and HLSL fxc),
+  `number_filters` and `linear_textures` regenerated (typed array Point loads; SampleLevel's Trilinear samplers).
+  Errors: 12 new (`number_cube_blend_r32f`, `number_array_level_rgba32f`, `number_array_int_filter`,
+  `number_cube_int_filter`, `number_volume_int_blend`, `depth_cube_*` x7), 7 changed messages, 10 removed (they compile
+  now: `cubemap_target_depth`, `number_filter_r32f`, `number_filter_source_r32f`, `number_*_format*`, `*_role_int*`).
+  Units: `draw_number_cubes_and_arrays_hold_every_format` (every format, a depth cube's face and depth and its reload).
+  LSP: `lsp_exact_numbers_and_depth_cubes`. Pixels: platform/tests/images 16 probes (R32f/Rgba32f blends clamped,
+  repeated, mirrored, through a helper and a frag's own source; R32f/Rgba32f/R32i layers; an R32f cube's six faces and
+  a drawn face's halves; R32i/Rgba32f faces; an R32f volume's eight cells; Rgba16f and Grid3<float> volumes through the
+  sampler; Color texture/cube/array SampleLevel unnamed; a depth cube sampled, compared and through a helper; none
+  given), registered also as `tide_platform_images_depth_fallback`; platform/tests/readback: R32f/R32i faces, R32i and
+  Rgba32f layers, a depth cube's faces, bit for bit.
+- **Validation** (Windows, Clang 23, Node 24.22.1, hidden): sanitize Vulkan `tide_platform_images` (+ depth fallback),
+  `_readback` (+ fallback), `_targets`, `_shaders`, `_compute`, `_kernels`, `_depth_reads` (+ fallbacks), every
+  `tidec_error_*`, e2e cubemaps/texture_arrays/number_images/target_reads/render_targets/texture3d, `tide_tests`,
+  `tidels_tests`, `tide_cli_tests`, `tide_spirv_shaders_valid`, `tide_hlsl_shaders_valid`; web-debug SwiftShader
+  WebGPU images/readback and their fallbacks (device loss included), the WASI e2e and `tide_web_runtime`. Not run:
+  Unity, Android, Metal, real-GPU web lanes.
+- **Not built, and why.** Mipmaps of R32f/Rgba32f (a kernel-made chain and an eight-load level blend weighed, spec);
+  blending a 32-bit cube across a face's edge (needs the faces beside it; nearest only, an error that names R16f);
+  a color cube's depth (its faces' depths are separate images; the spec says to draw a depth cube too);
+  `cube.depth.size`. Still left out by the owner: a blend per output, a chosen mip level as a destination, frag-drawn
+  volume slices, an sRGB target format; the precise depth read waits on the owner.
+
+## Reads of any size, of parts and of volumes; grids kept across waits; dropped reads let go (2026-11-14)
+
+The readback audit's workstream (owner, 2026-11-14: "make sure everything we can add or validate we do"). Every
+rule is a pick, Provisional in docs/spec.md (Grids a task keeps across its waits; Reads of any size, of parts and of
+volumes; the GPU lists' reads bullet for dropped tasks). Users: game/render-targets.md, game/tasks.md,
+language/grids.md. Corrects "Owned pixel readback" below (the refusal of a wait while a grid is held is gone) and
+"Readback of every image" (its limits).
+
+- **Grids across waits** (the high finding: the first fix refused a wait only while an `is` grid local was in scope,
+  so a failable local's grid and the grid of an earlier `await` in the same statement were carried as raw scratch
+  handles across the wait, and read freed or reused scratch after it). Now `gen_spill` has a grid case,
+  `tide_grid_carry(&slot, value, shape, where)`: a helper written into the game's C (no runtime function), which
+  leaves the slot alone where the value is the slot's own grid (the task took it back and didn't change it), copies a
+  grid code didn't make first (a world's, the pack's: `tide_grid_set` only takes a scratch grid's cells), and else is
+  `tide_grid_set` into the task's world's heap. `gen_reload` gives the local the frame's grid as it is; `place_where`
+  of a task's grid local is `tide_grid_mine(&local, shape)`, which makes it a scratch copy before any write (a cell,
+  `Clear`, `Decode`, a `mut` argument) and says `TIDE_IN_SCRATCH`; a whole assignment to it takes the new grid with no
+  copy. A dead slot holding a grid is released at the next wait (`slot_holds_grid` in `gen_spill_live`). The frame's
+  release already released grid fields. The checker's blanket refusal in `check_await` and the S_VAR "a task can't
+  keep a grid while it waits" are gone; `errors/read_target_kept_across_wait` and `errors/grid_async_local` became
+  `tidec_e2e_task_grids`. Match tasks keep theirs in the match heap, which `tide_heaps_hash`, the snapshot copy and
+  packing already cover. `tide_assign_<T>`'s grid paths use `tide_grid_carry` too, so a struct value with a grid
+  carried in a frame (a foreach over an asset `Map<string, Grid2<Color>>`) keeps it across a second wait (it was
+  released and re-owned as empty) and copies a pack grid (it took the size alone).
+- **Dropped tasks forget their GPU read** (`gen_frame_forget_gpu`, `frame_reads_gpu`: a frame's own ticket or an
+  awaited child frame's): `tide_forget_gpu_<frame>` on the gone/cancelled branch of the task pass, the `tide_r < 0`
+  paths of the run loop and of a task's start, `tide_task_local_cancel_work` and `tide_local_free`;
+  `tide_reset_gpu_<frame>` (ticket 0, read again) as a local world is unpacked. A swap that keeps the frames
+  (rebind) forgets nothing: the host's table is the next build's. The 600-frame release stays as a backstop.
+- **Reads of any size.** `target_read_prepare` clamps the part asked for to the image (`pixel_span`), and splits its
+  rows into bands of at most `PIXEL_BAND_BYTES` (32 MiB) and `PIXEL_BAND_ROWS` (65,535). Each band is a storage
+  buffer of its own (`made_buffer`), its list's header at word 0, bound where the kernel's list's pool goes (after
+  `bind_pools`, so the other pool is still bound): no GPU list's pool grows, and every band's kernel runs in the same
+  compute pass of the same frame. `compute.inc`'s `pixel_reads[slot]` (serial, bands, failed) replaces the pool
+  ranges; each band's `buffer_read` begins as soon as one can (the request is BEGUN at its first), its `buffer_read_done`
+  writes into the request's data at the band's place, and the read finishes once all are back, failed where one came
+  back -1. A band of a request let go of before it began goes; a forgotten BEGUN one begins no more bands and finishes
+  as its begun ones come back. Device loss drops the bands (ids alone) and fails a banded or begun read. The 4,000,000
+  pixel check is gone; `PIXEL_READ_PENDING_MOST` (512 MiB) bounds what reads hold together.
+- **Kernels** (`cull.tide`): every ReadTarget kernel indexes by `this.at.xy` over a 2D dispatch of a band, with
+  uniforms `width` (the part's), `rows` and `first` (the band's), `left`, `top` (the part's first pixel), `across`,
+  `down` (the image's size, for its uv), and `face`/`layer`. Four new ones, ReadVolumeColor/Float/Float4/Int, read a
+  Texture3D's cells exactly (`image[int3]`) by row (a y and a z each: `VolumeCell`). `pixel_read_kernel` names each
+  kernel's uniforms; `read_pixels_wgsl.h` and shaders.h list fifteen; Unity's CLI catalogue writes 21 computes.
+- **Engine** (`gpu_list.c`, draw.h): `tide_render_target_read_begin_part(target, image, kind, from[3], size[3])`
+  (begin_as is it with all of the image); `tide_gpu_read_request` gains `from`, `size`, `depth` (appended; embed ABI
+  26, Unity's `TideLibrary.Abi`; TIDE_HOST_SHAPE counts the shared table's size), `tide_gpu_read_result.depth`. A
+  volume (`TIDE_RENDER_VOLUME`) is named as image 0 of its one format, no depth. `tide_render_target_read_grid` makes
+  a Grid3 for a volume's result and fills a row's run of a chunk with one poke and one copy (a `memcpy` of the run where
+  a pixel is its cell's words). Measured on this machine (sanitize build, ASan, a 2000x2000 stand-in result, three
+  runs each, a temporary test not kept): `Grid2<float>` 93-98 ms a cell at a time, 6.4-7.2 ms now; `Grid2<Color>`
+  103-119 ms, 26-30 ms now (64 MB of copying). Release builds weren't timed.
+- **Renderer, volumes:** a volume nothing drew with is made for the read (`volume_for` of a description of it), and
+  one still being made (`texture_status` 0) is asked again next frame.
+- **Compiler:** `Read`/`ReadDepth` take `int2 from, int2 size` after the image's number (`expr.read_part`), the image
+  number folds (`fold_int`: a const of constants and operators; `Read(-1)` gets the range message), and a Texture3D's
+  `Read<T>([int3 from, int3 size])` (`expr.read_volume`) gives a `Grid3`, its type held against the volume's format by
+  `check_target_read`. Generated C calls begin_part only for a part (other reads are the C they were).
+- **Tests.** `tidec_e2e_task_grids` (local task: two reads in a statement, a read and an async call among a call's
+  arguments, a failable local, an `is` name across a read of another target, a made grid changed after waits and
+  cleared, an asset list's and an asset map's grids a frame at a time, with a view scribbling scratch each frame; a
+  match task's grid across ticks, packed and unpacked as it waits, hashes equal each tick); both fail with the old raw
+  spill. `tidec_e2e_target_reads`: a computed const image number, a read cancelled asked and begun and one waiting as
+  the local world goes (each frees its slot; fails without the forget), parts and volumes as asked (refusals, a Grid3
+  of a box), grids of reads 1 to 186 wide with a step of 1 and 4. `draw_pixel_reads_pending_through_a_build_unload`
+  (tests/test_draw_settings.c). `tide_platform_reload_reads`: a target read asked as a build unloads fails, and the
+  host's renderer never resolves it (an ASan use-after-free without `pixel_reads_unload`). `tide_platform_readback`,
+  native Vulkan (validation layers) and WebGPU, and under the depth fallback: a 3840x2160 target, a 4K window's (8.3
+  million pixels, 127 MiB of Colors, four bands; read where it's kept, a band's last row and the next's checked), a
+  2100x2000 Rgba8 target (4.2 million pixels, three bands, rows checked across the seams) and R32f one bit for bit, a corner past the edge clamped, one
+  pixel of an int image, a part clamped from negative corners, a depth's, a face's and a layer's part, a part outside
+  and a part of nothing failing, four Texture3D formats whole and a box, a written depth of 0.1 within 2^-24 (and as
+  `1 - (1 - 0.1f)` under float storage), then the device lost with a read on its way back (it fails), and reads on the
+  next device exact. Errors' four argument messages changed; `read_target_index_negative` (`Read(-1)` gets the range
+  message).
+- **Not run:** Unity. The Sample's read kernels (`Assets/Tests/Resources/TideShaders/00000000c0de0014` and
+  `c0de0061`-`68`.compute) were written again from the new WGSL with `tide_wgsl_translate --hlsl` (the old WGSL
+  reproduced the checked-in files byte for byte but for c0de0014, already stale), and ComputeReplayTests' read
+  commands now give the banded layout (48 bytes of uniforms, a 2D dispatch): neither was compiled or replayed in an
+  editor. Android, Metal and the real-GPU web lanes were not run. The asked-with-bands state at device loss (every
+  band's `buffer_read` refused) has no hook to reach it.
+- **Not built:** reading a Texture asset back (spec: the same pixels are a `Grid2<Color>` asset on the CPU, and the
+  GPU's copy can be block-compressed).
+
+## Kernels read every kind of image, and multisampled targets have smaller images everywhere (2026-11-14)
+
+An audit of the renderer's paths (Vulkan and WebGPU) found kernels reading images through fallbacks only draws
+made, mipmaps kernels never had made, and gaps beside them; the owner's "make sure everything we can add or validate
+we do" covers building them. Every rule is a pick, Provisional in docs/spec.md (Compute on the GPU, what a kernel
+reads; Views and drawing, Portable filtering and A target's samples). Users: game/shaders.md, Reading images;
+game/render-targets.md, Smooth edges.
+
+- **Fallbacks for kernels.** `texture_to_read_as` worked out its `none` before looking at the texture, and the far
+  depth, the dark cube and the white/zero arrays were made only in `upload_shaded`'s loop over SHADED/BLIT steps.
+  A kernel reading a depth with no frag reading one called `target_depth(0)`: `vk.targets[-1]` on Vulkan, a
+  TypeError on WebGPU; a cube or array fallback of 0 left a Vulkan binding unwritten and kept a WebGPU run from
+  ever running. Now: `make_read_fallbacks(shader)` (the loop, factored out) also runs for every STEP_COMPUTE step,
+  before any pass; `read_fallback(read, blend)` is called only on the paths that return none (the one-pixel
+  textures made there as before, the pass-needing ones only found); `vk_target_texture`/`vk_target_depth` and
+  tide.js's `gpu_target_texture`/`gpu_target_depth` give 0 for an id that's no target's; and `run_compute` passes by
+  a run with any image 0 on every backend (it had only on WebGPU, through `texture_status`).
+- **An array of depth alone read as colors** (texture_to_read_as's array branch) is none now, as a depth-alone
+  target's color already was through `vk_target_texture`: a kernel bound the depth layers to a float, filtering
+  binding (refused by WebGPU, undefined filtering on Vulkan). Draws were already passed by (`texture_unavailable`).
+  tidec now refuses it where the constructor is seen (`check_image_sources`, shader.c): a `TextureArray` or a
+  `Texture` field, or a frag's direct source, holding Format.Depth's image read as colors, naming the
+  `DepthTextureArray`/`DepthTexture` field to read instead (`array.depth.Sample` isn't GPU code; the audit's
+  suggested message named it). `image_format_accepts(1, ...)` is unchanged: frag outputs into depth alone rely on it.
+- **Mipmaps and the format guard.** `blends_target_format` is the one rule for both: `texture_to_read_as` gives a
+  filtering read of an R32f/Rgba32f/R32i target image none, and `mipmaps_needed` makes no chain of one (WebGPU's
+  `gpu_mipmaps` drew r32sint/r32float through a filtering pipeline: validation errors every frame the target was
+  drawn). `gpu_mipmaps` returns early for those formats itself (`blendedFormat`), as a backstop.
+- **Kernels have mipmaps made.** `run_compute` calls `prepare_mipmaps` for each COLOR/CUBE/ARRAY slot it doesn't
+  write, with the slot's filter, outside a pass, as `prepare_step_mipmaps` does for draws. And a pass begun on a
+  destination after a kernel ran (without another destination chosen between) counts as drawn again
+  (`after_kernel`, `target_drawn`): before, a draw, a run that read the target's chain, and a draw into the same
+  target left `mipped == drawn`, so the next read got the chain of the first draw. A kernel writing a target image
+  whose chain exists binds its full view as storage on Vulkan, which validation accepts (stores go to the base
+  level); WebGPU binds `first`, its one-level view.
+- **Multisampled targets' chains.** WebGPU's resolve textures now carry `format` and `usage`, so `gpu_mipmaps`
+  remakes them with levels and `first` becomes level 0, which `gpu_begin` already resolves into. Vulkan had it.
+  The recorder needs nothing new: `TIDE_EMBED_RENDER_TARGET` says the target's samples in its format and names
+  its resolved color, and `TIDE_EMBED_RENDER_MIPMAPS` names that color when a read needs a chain
+  (`embed_render_multisampled_target_mipmaps` pins both, and that an R32f image read Trilinear asks for none).
+  `TideRender.cs` was left alone: making that chain there (a one-sample companion with mips, resolved into before
+  GenerateMips) is the next Unity pass's (unity.md).
+- **Tests.** `tide_platform_kernel_reads` (new: `platform/tests/kernel_reads.tide/.c`), native Vulkan with
+  validation and web-debug WebGPU, the device lost and found on the web, and `tide_platform_kernel_reads_none`
+  (web, `gpu=none`): 25 probes (26 since the correction below) in a game where no frag reads a depth, cube or array: no depth, cube, array, array
+  depth, typed cube/array/image; disposed target color, depth, cube, array (colors and depth), typed image; a depth a
+  frag wrote (read and compared), a face, a layer, depth layers; a depth-alone array through `?:`; level 3 of R16f,
+  Color, an R16f layer, an R16f face, 4-sample R16f and Color targets, read at the middle of a column of 4 left of a
+  quarter's line so level 0 (0) and level 3 (1) differ; the same target drawn again after the kernel in one pass
+  run (2); an R32i image through `?:` at a level; a chain written by a kernel then read at levels 0 and 3. Without
+  the kernels' fallbacks the first 15 fail (the runs are passed by), without the kernels' mipmaps the six level
+  probes, without `after_kernel` the redraw probe. `tide_platform_images` gained a 4-sample R16f and Color target's
+  level 3 in a frag and a Trilinear read of an R32i image (white, and on WebGPU no validation error). Errors:
+  `texture_array_depth_alone_colors`, `_kernel`, `render_target_depth_alone_color`, `_source`.
+- **Correction (review, same day): typed cubes' zeros weren't tested.** Every typed cube and array given no image
+  was `[Raw(float)]`, whose one channel is 0 in the zeros and in the dark cube alike, so dropping `zero_cube` from
+  `make_read_fallbacks` (or `read_fallback`'s `blend && cube` branch) left every suite green: a typed cube would
+  have read (0,0,0,1). kernel_reads' never-given typed cube and array are now `[Raw(float4)]`, checked to be four
+  zeros, and a new probe (row 0, column 15) reads a disposed `[Raw(float4)]` Rgba16f cube and array; images.tide's
+  frag probe of no array and no cube (filtered mode 6) reads four channels too. Not making `zero_cube`, or not
+  choosing it in `read_fallback`, fails the kernel's never-given and disposed probes and the frag's, on Vulkan; not
+  choosing `zero_array` fails the same three. Sanitize (Vulkan) and web-debug (WebGPU, device lost and found;
+  `gpu=none`): kernel_reads and images pass.
+- **Validation** (Windows, Clang 23, Node 24.22.1, hidden): sanitize: 29 renderer `gpu` fixtures (draw, targets,
+  compute, images, kernels, kernel_reads, occlusion, cull, shaders, prewarm, readback, depth fallbacks and others),
+  draw units 129/129, the embed suite 29/29, the 84 related diagnostics, 73 shader goldens and texture e2es;
+  web-debug: 21 pixel fixtures on software WebGPU, `kernel_reads_none`, WASI draw units 129/129.
+- **Not run:** Unity's replay (no C# changed), Android, Metal, the optional real-GPU web lanes.
+
 ## Number images blend, have mipmaps, and make array layers and cube faces (2026-11-14)
 
 The owner asked that the first day's conservative refusals go where every backend can do the work ("make sure
@@ -55,11 +294,9 @@ Portable filtering and Number images as array layers and cube faces. Users: game
   206 shader golden/SPIR-V/FXC checks, the focused diagnostics, `tidec_e2e_number_images`/`_cubemaps`, draw units
   125/125 and `tidels_tests` pass. Unity: the C# change is one condition and was not compiled or replayed in an
   editor for this change; Metal, Android and real-GPU web lanes were not run.
-- **Not built, and why.** Blending R32f/Rgba32f (device-dependent without the owner; a four-load shader blend is the
-  alternative weighed in the spec). R32f/Rgba32f/R32i layers and faces (need non-filtering sampler bindings; a cube
-  has no exact load). Blended typed Texture3D reads (typed volumes are storage formats; Rgba16f volumes could
-  blend). Mipmaps of a multisampled target on WebGPU and Unity (their resolved images have no chain, as before
-  this work, for colors too). Left out by the owner: a blend per output, a chosen mip level as a destination,
+- **Not built, and why.** (Since built, the section above this one: R32f/Rgba32f blending by exact loads, 32-bit layers
+  and faces, blended typed Texture3D reads.) (Mipmaps of a multisampled target on WebGPU are built since, the top of this
+  note; Unity's replay of them waits on the next Unity pass.) Left out by the owner: a blend per output, a chosen mip level as a destination,
   frag-drawn volume slices, an sRGB target format; R8/Rg8/R16f/Rg16f kernel storage isn't portable on WebGPU.
 
 ## Numeric image language surface and clears (2026-11-14)
@@ -421,7 +658,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **A draw into a target that reads that target's depth is passed by,** as one that reads its color is (`samples_destination`, with the same line on stderr; `tide_draw_blit` refuses as it records), and so is a draw that samples the color of a target of depth alone (`unavailable_texture`).
   - **tidec:** `TY_DEPTH_TEXTURE` (`tide_depth_ref`, 24 bytes), which is a rendering resource wherever `Texture` is one (`holds_render_resource`, the reload's rebinding in `gen_resource_fields`); `check_depth_read` for the two reads; `shader_sample.read` and `shader_texture.read`, so a depth that's both sampled and compared is two of the shader's textures; `Format` is in generated C only in a game that names it, as `Depth` is (`enum_generated`), and a shader's `.texture_reads` only where a texture isn't a color. A game that uses none of it generates the C it did, byte for byte: old and new tidec over every game's source list, with `--layout` and without (237 games; only the three that use it differ: the shaders test, `render_depth` and the docs' `shadows`).
   - **Not built:** a `DepthTexture` as a draw's own source or a frag's own parameter (an error that says where it goes); skipping a frag that can't discard. A function's parameter is there since 2026-10-08: a function a frag or vert calls takes a `DepthTexture`, a `Texture` or a `Cubemap` and reads the one its call names (`notes/shaders.md`, A function samples the textures it takes).
-  - **Tests:** `tide_platform_targets` (`platform/tests/targets.c`): at `gpu.h`, a target of depth alone drawn into column by column and read back as a number, compared at pixels and between them, kept and tested across passes, a color target's depth, a clear; and through the renderer, what draws into depth alone and what doesn't, a frag that discards there, the same way up as color, a target's own depth refused, the far limit where none is given, a screen target of depth alone at three scales, and a forgotten list. `tide_platform_shaders` (pass 7 of `shaders.tide`, `run_shadow_checks`): a shadow map written in Tide, casters through a slanted lamp's `float4x4.Ortho` camera, one through a frag that discards, a lit frag that compares, and the stored depth read as a number, at three display scales. Both on OpenGL 3.3, WebGL 2 and WebGPU, where the device is then lost and found. `draw_targets_say_what_they_hold_and_lend_their_depth` (`tests/test_draw.c`) for the list and the id; `compiler/tests/e2e/render_depth` for what tidec generates, a reload in the same memory and in other memory among it; `compiler/tests/shaders/depth` pins the GLSL and WGSL; `compiler/tests/errors/render_depth_*` and `render_target_format_*`, a file a diagnostic; `lsp_render_target_formats_and_depth`. Not run: Android (its apps of these tests are started by hand), and OpenGL on a Mac, which nothing runs.
+  - **Tests:** `tide_platform_targets` (`platform/tests/targets.c`): at `gpu.h`, a target of depth alone drawn into column by column and read back as a number, compared at pixels and between them, kept and tested across passes, a color target's depth, a clear; and through the renderer, what draws into depth alone and what doesn't, a frag that discards there, the same way up as color, a target's own depth refused, the far limit where none is given, a screen target of depth alone at three scales, and a forgotten list. `tide_platform_shaders` (pass 7 of `shaders.tide`, `run_shadow_checks`): a shadow map written in Tide, casters through a slanted lamp's `float4x4.Ortho` camera, one through a frag that discards, a lit frag that compares, and the stored depth read as a number, at three display scales. Both on OpenGL 3.3, WebGL 2 and WebGPU, where the device is then lost and found. `draw_targets_say_what_they_hold_and_lend_their_depth` (`tests/test_draw.c`) for the list and the id; `compiler/tests/e2e/render_depth` for what tidec generates, a reload in the same memory and in other memory among it; `compiler/tests/shaders/depth` pins the GLSL and WGSL; `compiler/tests/errors/render_depth_*` and `render_target_format_*`, a file a diagnostic; `lsp_render_target_formats_and_depth`. Android: the apps of these tests (`tide_platform_targets_app`, `_shaders_app` and their 24-bit depth fallbacks) in CI's Android job (`notes/android-and-mingw.md`, Every window fixture an app). Not run: OpenGL on a Mac, which nothing runs.
 - **A target holds several color images, a frag writes them all, and an image can be floats** (built 2026-10-07. The owner picked each of three, asked that day: a format for each color image after a target's size, four at the most; a frag's `out Color` parameters to them by their order, each image read as `target.colors[i]`, an output with no image in its place dropped and an image with no output left as it was; and float images wherever a GPU draws into them, with 4 bytes a pixel and a line that says so where one doesn't. The rest is Claude's picks, Provisional in `docs/spec.md`, Views and drawing, Several colors and float images). What's built, and what code relies on:
   - **Tide:** `RenderTarget(width, height[, pixelsPerUnit], format...)` and `RenderTarget.Window([factor], format...)`, a `Format` for each color image; `Format.Rgba16f`, the enum's third member, beside `Rgba8` and `Depth`; `target.colors[i]`, a `Texture`, with `target.color` the first; and a frag with up to four `out Color` parameters. `docs/game/render-targets.md` (What a target holds, Several colors) and `docs/game/shaders.md` (Several outputs) are the users' pages.
   - **What a target holds is still its id's, in more bits.** The low 14: 3 for each of four color images in order, 1 + its `tide_target_format` and 0 past the last, so none at all is a target of depth alone (`TIDE_RENDER_FORMAT`); then 2 that only a texture's reference has, for which image it names (`TIDE_RENDER_IMAGE`). Three bits a format, where two would hold the two there are, for the formats to come. So a target's state was on a boundary of 16 KiB (`TIDE_RENDER_BITS + 1`), and is on one of 64 KiB since its samples took two bits more (A target's samples, below): `make_target` allocates that much more than the state and keeps what it allocated in `tide_render_target_state.memory`, which is what's freed, by the build that allocated it or by one that adopted the state. `tide_render_target` is the 24 bytes it was, and a game's header says nothing of any of it. A test that makes a state by hand makes it on that boundary (`foreign_state` in `tests/test_draw.c`).
@@ -437,7 +674,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **A float image is `GL_RGBA16F` and `rgba16float`:** four floats of 16 bits, which every backend that has them draws into, blends and reads blended between pixels. OpenGL 3.3, OpenGL ES 3.2 and WebGPU have them; an older OpenGL ES 3 and WebGL 2 where the extension is there, which is nearly everywhere (99.7% of WebGL 2 by web3dsurvey, 2026-10). It adds no function: `tide.js` asks WebGL for `EXT_color_buffer_float`, or `EXT_color_buffer_half_float`, as it makes the context, and `gl_float_targets` finds out by making a framebuffer of one, once. Without it a float image is made as bytes, `gl_target_make` says so once on stderr, and nothing else differs. `tide_gpu_gl_no_floats` has OpenGL make targets that way while it's set, for tests.
   - **The renderer's pipelines are for a kind of target, which is what it holds** (`frame_target.into`, from `gpu_target_format`): the engine's own in `engine_made`, a set for each kind a list draws into (`pipelines_into`; the window's kind first), the ones that test or store stencil in their list by it too (`stencil_pipeline.into`), and a game shader's by `shader_pipeline.into`, where each had a flag for depth alone. The engine's own draw one color, into a target's first image. A clear of a target of several goes through a shader of four outputs (`clear_all_glsl_fragment`, `clear_all_wgsl` in `platform/src/shaders.h`), the same color into each.
   - **Not built:** a float of 32 bits and images of one or two channels (WebGPU neither blends nor filters 32-bit floats without features a device may lack); an output of another type than `Color`; a blend for each output; a clear's color past 1, or one for each image (a clear's color is bytes on its way to the renderer); a game asking whether float images are floats; `colors.count`. All Open in `docs/spec.md`.
-  - **Tests:** `draw_targets_hold_several_colors_and_lend_each` (`tests/test_draw.c`) for ids, references, the list and another build's; `check_colors` in `platform/tests/targets.c` at `gpu.h` (three outputs into three images, one into three, three into one, floats that add up, what's read back, and OpenGL as a device with no floats), and `check_render_colors` through the renderer (the engine's own draws, a clear, blits of two outputs and of one, a target's own second image refused, one it hasn't got, a forgotten list, and the fallback again); pass 11 of `platform/tests/shaders.tide` with `run_output_checks` in `shaders.c` (frags of three outputs, two and one written in Tide, one that discards, a shape of the engine's, each image read back by a frag, a float image added into and read blended), the same pixels on OpenGL 3.3, WebGL 2 and WebGPU, where the device is then lost and found; `compiler/tests/e2e/render_colors` for what tidec generates, a reload in the same memory and in other memory among it; `compiler/tests/shaders/outputs` pins the GLSL and WGSL; `compiler/tests/errors/render_target_format*`, `render_target_colors_*`, `render_target_*_assigned` and `frag_*_output*`, a file a diagnostic; `lsp_render_target_colors_and_frag_outputs`. Not run: Android, whose apps of these tests are started by hand, and OpenGL on a Mac. The docs' `outputs` example shows it (`docs/game/shaders.md`, Several outputs): a scene filled into three images by one frag, and lit from them by a blit's.
+  - **Tests:** `draw_targets_hold_several_colors_and_lend_each` (`tests/test_draw.c`) for ids, references, the list and another build's; `check_colors` in `platform/tests/targets.c` at `gpu.h` (three outputs into three images, one into three, three into one, floats that add up, what's read back, and OpenGL as a device with no floats), and `check_render_colors` through the renderer (the engine's own draws, a clear, blits of two outputs and of one, a target's own second image refused, one it hasn't got, a forgotten list, and the fallback again); pass 11 of `platform/tests/shaders.tide` with `run_output_checks` in `shaders.c` (frags of three outputs, two and one written in Tide, one that discards, a shape of the engine's, each image read back by a frag, a float image added into and read blended), the same pixels on OpenGL 3.3, WebGL 2 and WebGPU, where the device is then lost and found; `compiler/tests/e2e/render_colors` for what tidec generates, a reload in the same memory and in other memory among it; `compiler/tests/shaders/outputs` pins the GLSL and WGSL; `compiler/tests/errors/render_target_format*`, `render_target_colors_*`, `render_target_*_assigned` and `frag_*_output*`, a file a diagnostic; `lsp_render_target_colors_and_frag_outputs`. Android: the apps of these tests, in CI's Android job (`notes/android-and-mingw.md`, Every window fixture an app). Not run: OpenGL on a Mac. The docs' `outputs` example shows it (`docs/game/shaders.md`, Several outputs): a scene filled into three images by one frag, and lit from them by a blit's.
 - **A target's samples: multisampling, said where a target is made** (card 8 of the reshaping, built 2026-10-07. That render targets have MSAA with a `samples` argument is the owner's; that it's a named argument and the last, the counts, what a device with fewer does, that a multisampled depth is refused, and that the window has none are Claude's picks, Provisional in `docs/spec.md`, Views and drawing, A target's samples). `docs/game/render-targets.md` (Smooth edges) is the users' page. What's built, and what code relies on:
   - **Tide:** `RenderTarget(width, height[, pixelsPerUnit][, format...], samples: n)` and `RenderTarget.Window([factor][, format...], samples: n)`, with n 1, 2, 4 or 8. Its color images are read as any target's (`target.color`, `target.colors[i]`): what each pixel's samples come to when a pass on it ends. `target.depth` of one wasn't read until 2026-10-13 (above): the draw that read it was passed by, with a line.
   - **The id has it, in two bits more** (`TIDE_RENDER_SAMPLES`, bits 14 and 15: the count as a power of two; `tide_render_target_samples(id)`, 1 for the window and a borrowed target). So `TIDE_RENDER_BITS` is 16 bits, a state is on a boundary of 64 KiB (`make_target_sampled` allocates that much more than the state, as `foreign_state` in `tests/test_draw.c` does), and `tide_render_target_state.holds` is those 16 bits but the image's two. The low bits, and not the bits above a pointer's 48: Android tags the top byte of heap pointers, and a 32-bit one has none to spare by rule. `tide_render_target_whole` keeps the samples (they're the target's, not an image's), so everything that goes by a target's id goes by them with no field of its own, and `tide_render_target_recreate` makes a target again with the samples its old id said: a hot reload keeps them with the generated code it had (`tide_local_rebind_resources` is the C it was). `tide_render_target` is still 24 bytes.
@@ -450,7 +687,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **The window has none** (see the spec for why: three ways to ask on three platforms, each refusable, and none on a WebGPU canvas). A game draws into `RenderTarget.Window(samples: 4)` and blits.
   - **Memory:** `samples` times the color and depth, and the resolved color beside: 36 bytes a pixel at 4 samples of `Rgba8` where a plain target has 8.
   - **Not built:** a query of what a device has or a target got; a frag for each sample; alpha to coverage; a resolve before which light is tone mapped; completion that offers `samples:` in the editors.
-  - **Tests:** `draw_targets_say_their_samples_and_keep_them_through_a_reload` (`tests/test_draw.c`: the id's bits, each way to make one, counts that are none, references, recreate, a foreign state); `check_samples` in `platform/tests/targets.c` at `gpu.h` (a triangle whose edge crosses an 8 by 8 target: pixels in between with samples and none without, the texture sampled is what's read back, a second pass over the samples the first left under a scissor, a clear, and three color images with floats, each resolved) and `check_render_samples` through the renderer (a turned 3D mesh in a target of the window's size, blitted to the window, with 4, 1 and 8 samples: edge pixels in between or not, a shader's blit and a shape of the engine's into it, kept a frame, its depth refused), the same on OpenGL 3.3, WebGL 2 and WebGPU, where the device is then lost and found; `compiler/tests/e2e/render_samples` (each way to write it, a constant, a variable, a function, numbers that are none, depth alone, references, a reload in the same memory and in other memory), natively and under Node; `compiler/tests/errors/render_target_samples_*`, `render_target_window_samples_*` and `render_target_argument_named`, a file a diagnostic; `lsp_render_target_samples`. Not run: Android (OpenGL ES 3's path, whose `glGetInternalformativ` is the web's), and OpenGL on a Mac.
+  - **Tests:** `draw_targets_say_their_samples_and_keep_them_through_a_reload` (`tests/test_draw.c`: the id's bits, each way to make one, counts that are none, references, recreate, a foreign state); `check_samples` in `platform/tests/targets.c` at `gpu.h` (a triangle whose edge crosses an 8 by 8 target: pixels in between with samples and none without, the texture sampled is what's read back, a second pass over the samples the first left under a scissor, a clear, and three color images with floats, each resolved) and `check_render_samples` through the renderer (a turned 3D mesh in a target of the window's size, blitted to the window, with 4, 1 and 8 samples: edge pixels in between or not, a shader's blit and a shape of the engine's into it, kept a frame, its depth refused), the same on OpenGL 3.3, WebGL 2 and WebGPU, where the device is then lost and found; `compiler/tests/e2e/render_samples` (each way to write it, a constant, a variable, a function, numbers that are none, depth alone, references, a reload in the same memory and in other memory), natively and under Node; `compiler/tests/errors/render_target_samples_*`, `render_target_window_samples_*` and `render_target_argument_named`, a file a diagnostic; `lsp_render_target_samples`. Android: the apps of `targets.c` and `shaders.tide`, on the device's Vulkan, in CI's Android job (OpenGL ES 3's path went 2026-11-05). Not run: OpenGL on a Mac.
 - **A `Cubemap` is six images a frag reads by a direction: an asset's six files, or a cube a view draws into a face at a time** (item 9 of the reshaping, the last, built 2026-10-07. That the drawing side gets cube maps, for skyboxes and reflections, is the owner's; each rule is Claude's pick, Provisional in `docs/spec.md`, Views and drawing, Cubemaps, with what was weighed: a type of its own over a `Texture` with a flag, the faces' file names, `Cubemap(size)` giving a `Cubemap`, a cube's size in pixels, a filter said at the Sample and none carried). `docs/game/shaders.md` (Skybox and reflections, with the live `skybox` example), `docs/game/assets.md` (Cubemaps) and `docs/game/meshes-and-textures.md` (Six of them, as a cube) are the users' pages. What's built, and what code relies on:
   - **Tide:** `asset Cubemap sky = "art/sky_??.png";`; `Cubemap(size[, format])`, a constructor as `RenderTarget(width, height)` is (it was `RenderTarget.Cube` for an afternoon: a static of one type that makes another read oddly, and `RenderTarget.Cube` is an error that names the constructor now); `cube.faces[i]`, a `RenderTarget`; `cube.Resize(size)` and `cube.Dispose()`; and in a frag or a vert, `cube.Sample(direction[, filter])`, where the cube is an asset by its name or a field of a component or a singleton the code takes, as a `DepthTexture` is.
   - **The faces are `+x`, `-x`, `+y`, `-y`, `+z`, `-z`, each as it's seen from the cube's middle with its rows from the top:** `+y` up for the four around, `+x` to the right of `+z` (the world is left-handed, as `perspective_camera` is), `-z` at the top of the one above and `+z` at the top of the one below. It's OpenGL's and WebGPU's own layout, so pixels go in as they are on both, and a face drawn into is the same way up as one uploaded: OpenGL's target passes are flipped as they're drawn (`compile` in `gpu_gl.c`), which puts a face's top in its first row, where a cube face's `t` starts. `check_cubes` (`platform/tests/targets.c`) reads an uploaded cube and a drawn one towards the same twelve directions, and pass 17 of `shaders.tide` draws a card through `quaternion.LookRotation` cameras into each face and reads it back by the direction it was at: a change to either backend's rows shows there.
@@ -464,5 +701,5 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **tidec:** `TY_CUBEMAP` (`tide_cubemap_ref`), a rendering resource wherever `DepthTexture` is one (`holds_render_resource`, `resource_type`, the reload's rebinding in `gen_resource_fields`: `tide_render_target_adopt`, or `tide_cubemap_recreate`). `check_cube_target` (from `check_window_target`, as `Cubemap(size)` is the owner `RenderTarget`'s; the two entries in `builtins.c` are for editors), `check_cube_sample`, and `cube.faces` as an index's object alone, through `checker.colors_indexed` and `expr.target_colors`, as `target.colors` is. `ASSET_CUBEMAP` (`asset_files.h`): `asset_resolve` wants a glob, reads each match as a PNG, and `order_cube` puts the six in the faces' order by how their names end (`cube_face_of`), or says what's wrong.
   - **In the shaders** (`ex_cube_sample` in `compiler/src/shader.c`): `READ_CUBE` is a `shader_sample`'s and a `shader_texture`'s `read`, a binding for each filter a cube is read with; `Filter.Trilinear` in a frag lifts the direction as a uv is lifted (`tide_uv<n>`, `tide_dx<n>`, `tide_dy<n>`, of three components), and what's read goes through `tide_straight`, as a texture's color does. `compiler/tests/shaders/cubemaps` pins both languages.
   - **Generated C is what it was for a game with no cubemap, byte for byte** (dev's tidec against this one over every game's source list, 248 of them, with `--layout` and without), and no shader's text moved (`compiler/tests/shaders/`). The two games that differ are the ones that use it.
-  - **Not built** (all in `docs/spec.md`): a level or a roughness a game picks; a cube of depth alone; a face's color or depth as a texture; several colors or samples on a cube; a cube as a draw's own texture or a frag's own parameter; files other than six PNGs; lists and maps of cubes; all six faces in one pass; a helper for the six cameras.
-  - **Tests:** `check_cubes` in `platform/tests/targets.c` at `gpu.h` (six faces uploaded and six drawn into, each read towards both of its quarters, blended at a face's middle, with no smaller images and with them, a face read back, a pass over what's there, a float cube, everything made twice); pass 17 of `platform/tests/shaders.tide` with `run_cube_checks` in `shaders.c` (from Tide: the asset by name and through a field, a painted cube, a face read between its smaller images made of what was just drawn, a float cube, no cube, a vert's read, and each face against a camera at its middle), the same pixels on OpenGL 3.3, WebGL 2 and WebGPU, where the device is then lost and found; `compiler/tests/e2e/cubemaps` (values, ids, faces as destinations, each binding's filter, a reload in the same memory and in other memory, Resize and Dispose, the pack gone), natively and under Node; `pack_cubemaps_are_six_images_named_as_one` (`tests/test_pack.c`); `compiler/tests/shaders/cubemaps`; `compiler/tests/errors/cubemap_*.tide`, a file a diagnostic (48, with wrong face files in `compiler/tests/e2e/cubes/`, which is outside `e2e/assets/` so the asset tests' globs don't match them); `lsp_cubemaps`. Not run: Android, whose apps of these tests are started by hand, and OpenGL on a Mac, which nothing runs.
+  - **Not built** (all in `docs/spec.md`; a level a game picks, `SampleLevel`, and a cube of depth alone were built since, 2026-11-13/14): a face's color or depth as a texture; several colors or samples on a cube; a cube as a draw's own texture or a frag's own parameter; files other than six PNGs; lists and maps of cubes; all six faces in one pass; a helper for the six cameras.
+  - **Tests:** `check_cubes` in `platform/tests/targets.c` at `gpu.h` (six faces uploaded and six drawn into, each read towards both of its quarters, blended at a face's middle, with no smaller images and with them, a face read back, a pass over what's there, a float cube, everything made twice); pass 17 of `platform/tests/shaders.tide` with `run_cube_checks` in `shaders.c` (from Tide: the asset by name and through a field, a painted cube, a face read between its smaller images made of what was just drawn, a float cube, no cube, a vert's read, and each face against a camera at its middle), the same pixels on OpenGL 3.3, WebGL 2 and WebGPU, where the device is then lost and found; `compiler/tests/e2e/cubemaps` (values, ids, faces as destinations, each binding's filter, a reload in the same memory and in other memory, Resize and Dispose, the pack gone), natively and under Node; `pack_cubemaps_are_six_images_named_as_one` (`tests/test_pack.c`); `compiler/tests/shaders/cubemaps`; `compiler/tests/errors/cubemap_*.tide`, a file a diagnostic (48, with wrong face files in `compiler/tests/e2e/cubes/`, which is outside `e2e/assets/` so the asset tests' globs don't match them); `lsp_cubemaps`. Android: the apps of these tests, in CI's Android job (`notes/android-and-mingw.md`, Every window fixture an app). Not run: OpenGL on a Mac, which nothing runs.

@@ -1,0 +1,4 @@
+// expect: Sample reads a depth cube on the GPU: in a frag or a vert
+scene Main { }
+local singleton Lamp { Cubemap cube; DepthCubemap shadows; }
+view Show(mut Lamp lamp) { lamp.cube=Cubemap(64,Format.Depth); lamp.shadows=lamp.cube.depth; var far=lamp.shadows.Sample(float3(1,0,0)); }

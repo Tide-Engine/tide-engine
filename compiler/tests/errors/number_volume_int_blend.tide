@@ -1,0 +1,5 @@
+// expect: an int volume reads its nearest cell: a GPU blends no integers. Use Filter.Point or leave the filter out
+scene Main { }
+local singleton Fog { [Raw(int)] Texture3D cells; }
+frag Read(Vertex vertex,out Color color,Fog fog) { color=Color(float(fog.cells.Sample(float3(vertex.uv,1),Filter.Bilinear)),0,0); }
+view Show(mut Fog fog) { fog.cells=Texture3D(int3(4),Format.R32i); List<Vertex> quad=[Vertex {position=float2(0)},Vertex {position=float2(1,0)},Vertex {position=float2(0,1)}]; Draw.Mesh(quad,[0,1,2],Read); }

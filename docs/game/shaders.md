@@ -77,7 +77,7 @@ frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun)
 }
 ```
 
-- **The vertex comes first.** It's the struct the mesh's list holds, and the frag gets it blended across the triangle: at each pixel, a mix of the triangle's three vertices by how near each is. It can't change it. Its ints don't blend, so a frag can't read them.
+- **The vertex comes first.** It's the struct the mesh's list holds, and the frag gets it blended across the triangle: at each pixel, a mix of the triangle's three vertices by how near each is. It can't change it. Its ints and int vectors don't blend: a frag reads them exactly as the triangle's first corner has them, as it reads [what a vert hands it](#from-a-vert-to-its-frag), so a per-face material or ID is the same whole number at every pixel of the face. Each field it reads is one of the 15 values carried from the corners.
 - **`this` is the pixel the frag runs for.** Its read-only fields say where it is, and `this.Discard()` leaves it undrawn: see [Where the pixel is](#where-the-pixel-is).
 - **`out Color color` is the pixel.** A frag writes its output through an [`out` parameter](../language/functions.md#out-parameters), and returns nothing. What it wrote there when it ends is the pixel's color, blended over what's behind it by its alpha.
 - **It starts with no value, so the frag writes it.** On every path that ends, and before reading it: `color.a = 1` alone, with nothing written first, is an error, and so is a frag whose only write is inside an `if` with no `else`. It isn't the pixel already on the screen either: a GPU doesn't let a frag read that. A path that ends in [`this.Discard()`](#where-the-pixel-is) draws no pixel, and owes it nothing.
@@ -207,14 +207,22 @@ float wide = images.mask.SampleLevel(vertex.uv, 3);                   // A small
 float2 moments = images.velocity.Sample(vertex.uv, Filter.Trilinear); // Between pixels and levels
 ```
 
-`Filter.Anisotropic` and `SampleGrad` work as they do for a color. `R32f` and `Rgba32f` read their nearest pixel
-on every device, because a GPU only blends 32-bit floats with an optional feature and the picture would differ
-by device: blending one is a compile error naming `R16f` or `Rgba16f`. `R32i` is always exact: a GPU blends no
-integers. Bare `[Raw]` retains its existing four-channel behavior.
+`Filter.Anisotropic` and `SampleGrad` work as they do for a color. `R32f` and `Rgba32f` blend too, with
+`Filter.Bilinear`: a GPU only blends 32-bit floats with an optional feature, so tidec loads the four pixels
+around the uv exactly and blends them in the shader, and the picture is the same bits on every device. They
+have no mipmaps, so `Filter.Trilinear`, `Filter.Anisotropic`, `SampleLevel` and `SampleGrad` on one are a
+compile error naming `R16f` or `Rgba16f`. `R32i` is always exact: a GPU blends no integers. Bare `[Raw]`
+retains its existing four-channel behavior.
 
-The typed role goes on `Texture` and `Texture3D` fields, on `TextureArray` and `Cubemap` fields (the three
-float roles, for layers and faces made with `R8`, `Rg8`, `R16f`, `Rg16f` or `Rgba16f`), and on read-only image
-parameters of synchronous GPU helpers. A caller supplies an image with the same role:
+```csharp
+float distance = images.distances.Sample(vertex.uv, Filter.Bilinear); // An R32f image: four exact loads, blended
+```
+
+The typed role goes on `Texture` and `Texture3D` fields, on `TextureArray` and `Cubemap` fields (any number
+format makes layers and faces: `[Raw(int)]` for `R32i`), and on read-only image parameters of synchronous GPU
+helpers. An array of `R32f` or `Rgba32f` is read at its nearest pixel as an exact load, and blends with
+`Filter.Bilinear` as above. A cube of `R32f`, `Rgba32f` or `R32i` is read at its nearest pixel: the face the
+direction points at and the pixel nearest it, loaded exactly. A caller supplies an image with the same role:
 
 ```csharp
 float Height([Raw(float)] Texture image, float2 uv)
@@ -226,6 +234,25 @@ float Height([Raw(float)] Texture image, float2 uv)
 An ordinary Texture parameter still samples Color; the explicit role keeps numeric types through helper chains.
 A frag's direct image source can carry the role too, such as `[Raw(int)] Texture source`; give that frag a
 matching numeric image in the draw's Texture argument.
+
+A CPU grid of numbers is an image of its role as well: a `Grid2<float>` reads through `[Raw(float)]` (or as a
+color's `r`), a `Grid2<float2>` through `[Raw(float2)]`, a `Grid2<float4>` through `[Raw(float4)]`, and a
+`Grid2<int>` or `Grid2<byte>` through `[Raw(int)]`. It goes into a field, a helper's parameter or a frag's source of
+that role, and a frag samples it by its name as those numbers (see [Grids of other
+numbers](./meshes-and-textures.md#grids-of-other-numbers)):
+
+```csharp
+local singleton Wind { Grid2<float2> flow = Grid2(128, 128); Grid2<int> zones = Grid2(128, 128); }
+
+float2 Push([Raw(float2)] Texture flow, float2 uv) { return flow.Sample(uv, Filter.Bilinear); }
+
+frag Drift(Vertex vertex, out Color color, Wind wind)
+{
+    float2 push = Push(wind.flow, vertex.uv);
+    int zone = wind.zones.Sample(vertex.uv);
+    color = Color(push.x, push.y, zone == 3 ? 1 : 0);
+}
+```
 
 R8, Rg8, R16f and Rg16f support multisampling and resolve each channel by its mean. R32f, Rgba32f and R32i
 require a single-sample target. Numeric `float4` into Rgba16f supports that format's ordinary mean resolve.
@@ -749,7 +776,7 @@ view Crates(Models models)
 }
 ```
 
-- **A field**: a `Texture`, a `Grid2<Color>` or a `Grid2<float>` of a component or a singleton the frag takes.
+- **A field**: a `Texture`, a `Grid2<Color>` or a `Grid2<float>` of a component or a singleton the frag takes (and a grid of other numbers, read as [its numbers](#number-images)).
 - **`Sample` gives the color itself**, with its alpha beside it, blended between pixels so that a clear pixel counts for none of the color (see [Alpha](./draw-settings.md#alpha)). A pixel with no alpha reads as `Color(0, 0, 0, 0)`. What a frag writes is a color as it is too: `Color(1, 0, 0, 0.5)` is red, half clear.
 - **An asset**, by its name, with no parameter for it: `asset Texture tiles = "art/tiles.png";` and then `tiles.Sample(uv)` (see [Assets](./assets.md#images-to-draw-with)).
 - **Its own `Texture` parameter**, one at the most, which is whatever texture the draw gives after its mesh: an asset, a target's color, a grid, a `Texture` a field holds. A [`Draw.Blit`](./render-targets.md#post-processing)'s source is its frag's.
@@ -1029,7 +1056,8 @@ view Reflect(mut Room room)
 - **`cube.faces[0]` to `cube.faces[5]`** are `RenderTarget`s, in the order `+x`, `-x`, `+y`, `-y`, `+z`, `-z`. Each has everything a target has: its own camera, clip and settings, `Clear`, `Mesh`, `Instanced` and the rest, and depth of its own.
 - **A face that's drawn again each frame is cleared first.** Its color and its depth stay from frame to frame, as any target's do: without a `Clear`, what was nearest in the frames before hides what's drawn now.
 - **A face is what a camera at the cube's middle sees along the face's axis,** with a field of view of 90: `+y` is up for the four around, and for the one above and the one below, `-z` and `+z`. That's six rotations, which the example below has as `Facing`.
-- `Cubemap(size, Format.Rgba16f)` holds floats, which keep what's brighter than 1, where the device draws into them.
+- `Cubemap(size, Format.Rgba16f)` holds floats, which keep what's brighter than 1, where the device draws into them. A [number format](#number-images) holds numbers, and `Cubemap(size, Format.Depth)` depth alone, for a lamp that shines every way: its frag reads `cube.depth`, a `DepthCubemap` kept in a field, with `Sample(direction)` and `Compare(direction, depth)` (see [A cube of depth alone](./render-targets.md#a-cube-of-depth-alone)).
+- **`cube.SampleLevel(direction, level)`** reads a smaller image, between the two nearest it: a blurred reflection's roughness, `room.around.SampleLevel(reflected, roughness * 5)`.
 - Its size is in pixels, whatever the display. `cube.Resize(size)` gives it another, with empty images, and `cube.Dispose()` lets it go. Copies share it, as a target's do.
 - **A draw into a face doesn't read that face's cube.** It's passed by, with a line that says so. What reflects itself in itself takes two cubes.
 - A face has no `color` or `depth` of its own to hand out: the cube is what's read.
@@ -1412,7 +1440,7 @@ view DrawMeadow(Meadow meadow, Models models)
 }
 ```
 
-A kernel takes what a frag does: components of the entity the calling view runs for, singletons, and one struct of values, which `GPU.Run` gives after what it runs over. It returns nothing, changes nothing it takes, and writes GPU lists. What a frag's code can do, a kernel's can: math, noise, lists, grids, maps, functions, and `Sample` at a texture's own level.
+A kernel takes what a frag does: components of the entity the calling view runs for, singletons, and one struct of values, which `GPU.Run` gives after what it runs over. It returns nothing, changes nothing it takes, and writes GPU lists. What a frag's code can do, a kernel's can: math, noise, lists, grids, maps, functions, `Sample` at a texture's own level and `SampleLevel` at the level it picks (see [Reading images](#reading-images)).
 
 ### Which invocation
 
@@ -1582,6 +1610,29 @@ view DrawSparks(Sparks sparks, Burst burst)
 
 A mesh whose indices are a GPU list's has its vertices in one too: they're picked on the GPU. Levels of detail (`lod:`) are made of the CPU's vertices, so they're not for a mesh of a GPU list's. Instances of such a mesh from a `List<T>` are frustum culled by the bounds [`Draw.Bounds`](./draw-settings.md) gives, a box around every vertex the kernel can make: the CPU has none of its own for them, and without them, every instance is drawn.
 
+### Reading images
+
+A kernel reads the images a frag reads, through the same fields: a `Texture`, a `DepthTexture`, a `Cubemap`, a `TextureArray` and a `DepthTextureArray`, a `Texture3D`, and the typed `[Raw(T)]` ones. A kernel has no neighbouring pixels to tell how small an image is drawn, so its `Sample` reads the image's own pixels; `SampleLevel` reads the level the kernel picks:
+
+```csharp
+local singleton Glow
+{
+    RenderTarget scene;
+    Texture image;          // scene.color
+    GPUList<Color> average; // What the whole frame comes to
+}
+
+[Group(1)]
+compute Average(Glow glow)
+{
+    glow.average[0] = glow.image.SampleLevel(float2(0.5), 10, Filter.Trilinear); // The frame's smallest image
+}
+```
+
+- **The smaller images are made of what was last drawn into the image,** before the run, as they are for a draw that reads them: a target's colors, a multisampled target's too, an array's layers and a cube's faces. A target drawn into again after the run, or written by a kernel, has them made again for the next read.
+- **A `Texture`'s own filter decides,** as in a frag: one that carries `Filter.Bilinear` (a target's color does) reads its own pixels at any level, so name `Filter.Trilinear` in the `SampleLevel`. A typed read that names no filter reads between levels.
+- **What it isn't given reads as in a frag:** a depth the far limit (and `Compare` gives 1), a cube black, an array and a texture white, and a typed image zeros. So does an image that was disposed, an image a target hasn't got, and the colors of an image of depth alone. A `TextureArray` or a target made with `Format.Depth` and read as colors is an error where the compiler can see it: read its depth through a `DepthTextureArray` or `DepthTexture` field instead.
+
 ### Writing images
 
 A kernel writes a render target's image or a [`Texture3D`](./meshes-and-textures.md#volumes) by cell:
@@ -1633,13 +1684,14 @@ Kernels run everywhere Tide draws: Vulkan (desktop and Android), WebGPU, and Uni
 
 ## Choosing a mip level
 
-`source.SampleLevel(uv, level, Filter.Trilinear)` reads a level you choose, including from a vert, kernel or GPU
-helper. Level 0 is the original image, level 1 halves its dimensions, and 1.5 blends levels 1 and 2. Levels clamp
-to the available images. Use Trilinear to read the mip chain; Point and Bilinear read the original image.
-A cubemap takes a direction: `sky.SampleLevel(direction, 2, Filter.Trilinear)`. An array takes its layer first:
-`images.SampleLevel(uv, layer, 2, Filter.Trilinear)`. Texture3D has no mipmaps; use its Sample method.
-Typed number images have no mipmaps and cannot use SampleLevel or SampleGrad. Use `Sample(uv)` to read
-their nearest pixel, with implicit or explicit `Filter.Point`.
+`source.SampleLevel(uv, level)` reads a level you choose, including from a vert, kernel or GPU helper. Level 0
+is the original image, level 1 halves its dimensions, and 1.5 blends levels 1 and 2. Levels clamp to the
+available images. A SampleLevel that names no filter reads between levels (`Filter.Trilinear`), on a color
+texture, a cube, an array and a number image alike; naming `Filter.Point` or `Filter.Bilinear` reads the original
+image. A cubemap takes a direction: `sky.SampleLevel(direction, roughness * 5)` for a blurred reflection. An array
+takes its layer first: `images.SampleLevel(uv, layer, 2)`. Texture3D has no mipmaps; use its Sample method.
+Number images in R8, Rg8, R16f, Rg16f and Rgba16f take SampleLevel and SampleGrad as colors do; R32f, Rgba32f
+and R32i have no mipmaps, and read with `Sample(uv)` (an R32f or Rgba32f one blended with `Filter.Bilinear`).
 Drawing into a selected mip level is not available.
 
 ## Writing a pixel's depth

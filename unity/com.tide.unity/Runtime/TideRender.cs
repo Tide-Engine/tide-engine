@@ -85,6 +85,10 @@ namespace Tide
             public RenderTexture resolved; // A multisampled one's depth, one sample a pixel, once asked for
             public RenderTexture cube; // A cube face's: the cube, and which face
             public CubemapFace face;
+            // ...and the image its passes draw into, copied into the face as each ends. Unity binds no depth beside a
+            // cube's face unless the depth is a cube's too, so a face drawn into directly had no depth test and its
+            // depth, which is read as an image of its own, was never written
+            public RenderTexture faceColor;
             public RenderTexture layers, layersDepth; // An array's layer: the array and its depth array (either may be null)...
             public int layer = -1;                    // ...and which layer
             public int width, height;
@@ -523,7 +527,7 @@ namespace Tide
                     DestroyImmediate(c);
                 }
             }
-            foreach (var rt in new[] { t.depth, t.resolved })
+            foreach (var rt in new[] { t.depth, t.resolved, t.faceColor })
             {
                 if (rt == null) continue;
                 rt.Release();
@@ -743,6 +747,7 @@ namespace Tide
                         if (target.colors != null) foreach (var c in target.colors) Doom(c);
                         Doom(target.depth);
                         Doom(target.resolved);
+                        Doom(target.faceColor);
                         targets.Remove(W(0));
                     }
                     break;
@@ -934,6 +939,7 @@ namespace Tide
             6 => GraphicsFormat.R32G32B32A32_SFloat,
             7 => GraphicsFormat.R32_SInt,
             8 => GraphicsFormat.R8G8B8A8_SRGB,
+            9 => GraphicsFormat.R16G16_SFloat, // A Grid2<float2>'s cells (tide_gpu_format's TIDE_GPU_RG16F)
             _ => GraphicsFormat.R8G8B8A8_UNorm,
         };
 
@@ -1071,7 +1077,8 @@ namespace Tide
 
         static Texture2D NewTexture(int format, int width, int height)
         {
-            var flags = format == 3 ? TextureCreationFlags.None : TextureCreationFlags.MipChain;
+            // Integer images (a list's numbers, a Grid2<int>'s cells) are read at their nearest pixel: no smaller images
+            var flags = IntegerImage(format) ? TextureCreationFlags.None : TextureCreationFlags.MipChain;
             return new Texture2D(Math.Max(1, width), Math.Max(1, height), TextureFormat(format), flags) { hideFlags = HideFlags.HideAndDontSave };
         }
 
@@ -1246,8 +1253,12 @@ namespace Tide
             depth.Create();
             if ((format & 15) == 0) // Depth alone: the array is its depth
             {
+                // ...read by the array's own id, and by its depth array's (gpu.h's array_depth), which is the id a
+                // draw or a kernel that reads its depth gives: one of its own here too, as the recorder numbers it
                 images[id] = new Image { texture = depth, element = RenderTextureSubElement.Depth, width = width, height = height,
-                                         owned = true, arrayDepth = depth, arrayDepthId = id };
+                                         owned = true, arrayDepth = depth, arrayDepthId = depthId != 0 ? depthId : id };
+                if (depthId != 0 && depthId != id)
+                    images[depthId] = new Image { texture = depth, element = RenderTextureSubElement.Depth, width = width, height = height };
                 return;
             }
             var color = new RenderTexture(width, height, AttachmentFormat((int)(format & 15)), GraphicsFormat.None)
@@ -1383,7 +1394,13 @@ namespace Tide
             if (srgbRefused.Contains(cube)) { srgbRefused.Add(id); return; }
             if (!images.TryGetValue(cube, out var image) || !(image.texture is RenderTexture rt)) return;
             var depth = DepthTexture(rt.width, rt.height, 1);
-            targets[id] = new Target { cube = rt, face = (CubemapFace)face, depth = depth, width = rt.width, height = rt.height, imageIds = new[] { depthId } };
+            var color = new RenderTexture(rt.width, rt.height, rt.graphicsFormat, GraphicsFormat.None) { hideFlags = HideFlags.HideAndDontSave };
+            color.Create();
+            targets[id] = new Target
+            {
+                cube = rt, face = (CubemapFace)face, faceColor = color, depth = depth, width = rt.width, height = rt.height,
+                imageIds = new[] { depthId },
+            };
             images[depthId] = new Image { texture = depth, element = RenderTextureSubElement.Depth, width = rt.width, height = rt.height };
         }
 
@@ -2059,6 +2076,7 @@ namespace Tide
         {
             var passHeight = camera != null ? camera.pixelHeight : 1;
             var own = true; // The pass is on the camera's own target
+            Target face = null; // ...or on a cube's face
             if (end < 0) end = r.commands.Count;
             for (var at = start; at < end; at++)
             {
@@ -2081,7 +2099,7 @@ namespace Tide
                                 cb.SetRenderTarget(new RenderTargetIdentifier(t.layers, 0, CubemapFace.Unknown, t.layer),
                                                    new RenderTargetIdentifier(t.layersDepth, 0, CubemapFace.Unknown, t.layer));
                             else if (t.layer >= 0) cb.SetRenderTarget(new RenderTargetIdentifier(t.layersDepth, 0, CubemapFace.Unknown, t.layer));
-                            else if (t.cube != null) cb.SetRenderTarget(new RenderTargetIdentifier(t.cube, 0, t.face), new RenderTargetIdentifier(t.depth));
+                            else if (t.cube != null) cb.SetRenderTarget(new RenderTargetIdentifier(t.faceColor), new RenderTargetIdentifier(t.depth));
                             else if (t.colors.Length == 0) cb.SetRenderTarget(new RenderTargetIdentifier(t.depth));
                             else if (t.colors.Length == 1) cb.SetRenderTarget(new RenderTargetIdentifier(t.colors[0]), new RenderTargetIdentifier(t.depth));
                             else
@@ -2097,10 +2115,13 @@ namespace Tide
                             cb.SetGlobalFloat(Linear, 0f);
                         }
                         own = c.target == null;
+                        face = c.target != null && c.target.cube != null ? c.target : null;
                         cb.SetGlobalFloat(Height, passHeight);
                         break;
                     case Kind.End:
                         cb.DisableScissorRect();
+                        if (face != null) cb.CopyTexture(face.faceColor, 0, 0, face.cube, (int)face.face, 0);
+                        face = null;
                         break;
                     case Kind.Scissor:
                         // Unity counts the camera's rows from the bottom. A target's are counted as they're stored, which

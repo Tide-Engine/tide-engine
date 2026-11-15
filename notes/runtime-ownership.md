@@ -1,3 +1,26 @@
+## Reads of parts and volumes, banded reads (2026-11-14)
+
+Within the owner-approved pixel readback (2026-11-13) and the owner's "make sure everything we can add or validate we
+do" (2026-11-14), agents maintain the new `tide_render_target_read_begin_part(target, image, kind, from, size)`
+(generated C calls it for a part of an image and for a Texture3D's box), the request's appended `from`, `size` and
+`depth`, `tide_gpu_read_result.depth`, a volume's read in `target_read_names`, and the Grid3 and row-run filling of
+`tide_render_target_read_grid`; the renderer's bands (`pixel_reads`, compute.inc) and four ReadVolume kernels in
+cull.tide. The shared read table changed layout: embed ABI 26, Unity's `TideLibrary.Abi`, and TIDE_HOST_SHAPE counts
+`sizeof(tide_gpu_reads)`, so a library of the other layout isn't loaded. Generated C's new grid helpers
+(`tide_grid_carry`, `tide_grid_mine`) and GPU-ticket forgetting (`tide_forget_gpu_<frame>`) are written into the game's
+C over the existing `tide_grid_set`, `tide_grid_copy`, `tide_handle_where`, `tide_pack_holds` and
+`tide_gpu_list_read_forget`: no other runtime function. Contracts and tests: render-targets.md, top section.
+
+## Grids of numbers as textures (2026-11-14)
+
+Within the owner's "make sure everything we can add or validate we do" (2026-11-14), agents maintain the
+grid-cells kinds of a grid's Texture (`TIDE_TEXTURE_CELLS_*`, `tide_texture_cells_bytes`,
+`tide_texture_of_grid_cells`, `tide_texture_grid_cells`, and `tide_texture_grid` taking kinds 1 to 6),
+`tide_draw_grid_number_texture`, `tide_draw_texture_source_raw` (what a `[Raw]`/`[Raw(T)]` Texture field's capture
+calls in generated C) and the texel formats `TIDE_TEXELS_HALF2`, `_HALF4`, `_INT`, with `TIDE_GPU_RG16F` in gpu.h.
+Generated C calls the first and the capture functions. No resource-reference layout change: the kind is in bits the
+reference had for its 1 or 2. Contracts and tests: textures.md (top); the Unity replay's format and ABI: unity.md.
+
 ## [Linear] image captures (2026-11-14)
 
 The same owner-approved task adds header-only `tide_tolinear_f`, `_f3`, `_c` and

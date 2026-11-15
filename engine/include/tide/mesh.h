@@ -46,16 +46,45 @@ typedef struct tide_mesh_lists {
 // took that place in the heap: the draw list reads what it names as bytes it
 // knows nothing of, within the heap's own pages (tide_draw_grid_texture), so
 // such a texture draws nothing or anything, and never reads outside the heap.
-static inline tide_texture_ref tide_texture_of_grid(const tide_grid grid, const tide_grid_shape *shape, const uint32_t sampling)
+// What a grid's Texture says its cells are (bits 32 to 39 of `image.version`): the two kinds any Texture takes, and
+// the grids of numbers only a typed [Raw(T)] role takes, a cell's bytes each (tide_texture_cells_bytes): a
+// Grid2<float2> (Rg16f on the GPU), a Grid2<float4> (Rgba16f), a Grid2<int> (R32i) and a Grid2<byte> (R32i, each
+// cell its 0 to 255).
+enum {
+    TIDE_TEXTURE_CELLS_COLORS = 1, TIDE_TEXTURE_CELLS_FLOATS, TIDE_TEXTURE_CELLS_FLOAT2S, TIDE_TEXTURE_CELLS_FLOAT4S,
+    TIDE_TEXTURE_CELLS_INTS, TIDE_TEXTURE_CELLS_BYTES
+};
+
+static inline uint32_t tide_texture_cells_bytes(const uint32_t cells)
 {
-    const bool colors = shape->cell == sizeof(tide_color);
-    if (shape->dims != 2u || (!colors && shape->cell != sizeof(float)) || shape->shift[0] > 15u || shape->shift[1] > 15u) {
+    switch (cells) {
+    case TIDE_TEXTURE_CELLS_COLORS: return (uint32_t)sizeof(tide_color);
+    case TIDE_TEXTURE_CELLS_FLOATS: case TIDE_TEXTURE_CELLS_INTS: return 4u;
+    case TIDE_TEXTURE_CELLS_FLOAT2S: return 8u;
+    case TIDE_TEXTURE_CELLS_FLOAT4S: return 16u;
+    case TIDE_TEXTURE_CELLS_BYTES: return 1u;
+    default: return 0u;
+    }
+}
+
+// The Texture of a grid whose cells are `cells` (TIDE_TEXTURE_CELLS_*): none where the shape isn't a Grid2 of them.
+static inline tide_texture_ref tide_texture_of_grid_cells(const tide_grid grid, const tide_grid_shape *shape, const uint32_t cells,
+                                                          const uint32_t sampling)
+{
+    const uint32_t bytes = tide_texture_cells_bytes(cells);
+    if (!bytes || shape->dims != 2u || shape->cell != bytes || shape->shift[0] > 15u || shape->shift[1] > 15u) {
         return (tide_texture_ref){0};
     }
-    const uint64_t named = (uint64_t)(uint32_t)grid.at | (uint64_t)(colors ? 1u : 2u) << 32 | (uint64_t)shape->shift[0] << 40
+    const uint64_t named = (uint64_t)(uint32_t)grid.at | (uint64_t)cells << 32 | (uint64_t)shape->shift[0] << 40
                          | (uint64_t)shape->shift[1] << 48;
     const int32_t high = (int32_t)(uint32_t)(grid.at >> 32);
     return tide_texture_sampled((tide_texture_ref){.image = {.width = high, .height = TIDE_TEXTURE_GRID, .version = named}}, sampling);
+}
+
+static inline tide_texture_ref tide_texture_of_grid(const tide_grid grid, const tide_grid_shape *shape, const uint32_t sampling)
+{
+    return tide_texture_of_grid_cells(grid, shape, shape->cell == sizeof(tide_color) ? TIDE_TEXTURE_CELLS_COLORS
+                                                   : TIDE_TEXTURE_CELLS_FLOATS, sampling);
 }
 
 // A Grid3 of colors or of floats as a TextureArray: its layers (z) as the array's, as it is whenever it's drawn. A
@@ -113,16 +142,24 @@ static inline bool tide_texture3d_grid_raw(const tide_texture3d_ref volume)
 tide_int3 tide_grid_volume_extent(tide_grid grid, const tide_grid_shape *shape);
 uint32_t tide_draw_grid_volume_texture(tide_draw_list *d, tide_grid grid, const tide_grid_shape *shape, bool raw);
 
+// What a grid's texture says its cells are (TIDE_TEXTURE_CELLS_*): 0 for a texture that's no grid's.
+static inline uint32_t tide_texture_grid_cells(const tide_texture_ref texture)
+{
+    if (texture.image.pixels || texture.target.id || texture.image.height != TIDE_TEXTURE_GRID) return 0u;
+    const uint32_t cells = (uint32_t)(texture.image.version >> 32) & 255u;
+    return tide_texture_cells_bytes(cells) ? cells : 0u;
+}
+
 // The grid a texture names, with its cells' shape: false for a texture that's
-// no grid's.
+// no grid's. A shape's cell bytes don't tell a Grid2<float4> from a Grid2<Color>,
+// or a Grid2<int> from a Grid2<float>: tide_texture_grid_cells does.
 static inline bool tide_texture_grid(const tide_texture_ref texture, tide_grid *grid, tide_grid_shape *shape)
 {
-    if (texture.image.pixels || texture.target.id || texture.image.height != TIDE_TEXTURE_GRID) return false;
+    const uint32_t cells = tide_texture_grid_cells(texture);
+    if (!cells) return false;
     const uint64_t named = texture.image.version;
-    const uint32_t cells = (uint32_t)(named >> 32) & 255u;
-    if (cells != 1u && cells != 2u) return false;
     *grid = (tide_grid){(tide_handle)(uint32_t)texture.image.width << 32 | (uint32_t)named};
-    *shape = (tide_grid_shape){.cell = cells == 1u ? (uint32_t)sizeof(tide_color) : (uint32_t)sizeof(float), .dims = 2u,
+    *shape = (tide_grid_shape){.cell = tide_texture_cells_bytes(cells), .dims = 2u,
                                .shift = {(uint32_t)(named >> 40) & 15u, (uint32_t)(named >> 48) & 15u, 0u}};
     return true;
 }
@@ -176,6 +213,12 @@ uint32_t tide_draw_grid_texture(tide_draw_list *d, tide_grid texture, const tide
 // list's copy has each channel as it is, with no alpha worked into it, which
 // is for a shader that reads it so and for nothing that blends it.
 uint32_t tide_draw_grid_texture_raw(tide_draw_list *d, tide_grid texture, const tide_grid_shape *shape);
+
+// The texture of a grid of numbers whose cells are `cells` (TIDE_TEXTURE_CELLS_FLOAT2S, _FLOAT4S, _INTS, _BYTES): halves
+// (TIDE_TEXELS_HALF2, TIDE_TEXELS_HALF4) or ints of 32 bits (TIDE_TEXELS_INT), written where its chunks changed as a
+// grid's colors are, for a typed [Raw(T)] read. 0 where the shape isn't a Grid2 of those cells, and as for
+// tide_draw_grid_texture.
+uint32_t tide_draw_grid_number_texture(tide_draw_list *d, tide_grid grid, const tide_grid_shape *shape, uint32_t cells);
 
 // The most cells a side a grid that's a texture has: a bigger one is none.
 #define TIDE_GRID_TEXTURE_MOST 16384

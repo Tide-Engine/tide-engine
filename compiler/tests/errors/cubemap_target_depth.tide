@@ -1,6 +1,0 @@
-// expect: a cube holds colors or numbers: its faces are Format.Rgba8, Rgba16f, R8, Rg8, R16f or Rg16f, and each has depth of its own to draw with
-// expect: a cube of depth alone, for a lamp that shines every way, isn't there yet
-// A cube holds colors
-scene Main { }
-local singleton Room { Cubemap reflection; RenderTarget side; List<Vertex3> ball; }
-view Show(mut Room room) { room.reflection = Cubemap(64, Format.Depth); }
