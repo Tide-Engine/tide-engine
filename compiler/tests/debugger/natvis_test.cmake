@@ -20,7 +20,7 @@ foreach(line IN LISTS lines)
         set(at_${CMAKE_MATCH_1} ${number})
     endif()
 endforeach()
-foreach(marker IN ITEMS sum gained recent call pairs)
+foreach(marker IN ITEMS sum gained recent call pairs packed)
     if(NOT at_${marker})
         message(FATAL_ERROR "${FIXTURE} has no line marked [${marker}]")
     endif()
@@ -54,6 +54,12 @@ g
 k 2
 dv
 dx -r1 values
+bc *
+bp `fixture.tide:${at_packed}` 8
+g
+k 1
+dx -r2 *bag
+dx -r0 bag->note.at >> 54 & 31
 ")
 execute_process(COMMAND "${DRIVE}" "${WORK}/commands.txt" "${PROGRAM}"
     RESULT_VARIABLE code OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 300)
@@ -124,6 +130,16 @@ expect("dx -r1 recent" 1 "\\[Type: tide_local_list[0-9]+\\]\n +\\[0x0\\] +: 1 \\
 expect("dx -r1 values" 1 "\\[Type: tide_local_list[0-9]+\\]\n +\\[0x0\\] +: 1 \\[Type: int\\]\n +\\[0x1\\] +: 2 \\[Type: int\\]"
     "a list parameter's elements are its element type, through its own type")
 expect("dv" 2 "\n +total = " "a mut local has its Tide name")
+
+# A system in runs (Pack, the last of its eight rows in a tick, so the highest run's): its row's text, list and
+# map were made in its run's heap, past its owner's first (tide/heap.h, A heap in runs), which the views find
+# through the run's bits of a handle (debug_views_codegen.inc, view_case)
+expect("k 1" 2 "tide_system_Pack\\+0x[0-9a-f]+ \\[[^]\n]*fixture\\.tide @ ${at_packed}\\]" "the stop is in the system in runs")
+expect("dx -r0 bag->note.at >> 54 & 31" 1 ": 0x[1-9a-f][0-9a-f]?\n" "the row's text is in a run's heap past the first")
+expect("dx -r2 *bag" 1 "\n +note +: \"bag [0-7]\"" "a text field in a run's heap is its text")
+expect("dx -r2 *bag" 1 "\n +items +: { count = 0x3 }\n +\\[0x0\\] +: 100[0-7] \\[Type: int\\]\n +\\[0x1\\] +: 200[0-7] \\[Type: int\\]"
+    "a list field in a run's heap says its count and its elements")
+expect("dx -r2 *bag" 1 "\n +counts +: { count = 0x1 }\n +\\[\"\\[7\\]\"\\] +: 7007 \\[Type: int\\]" "a map field in a run's heap shows its entries")
 
 expect("dx -r0 tide_debug_identity" 1 "Entity\\(0x12345678abcdef01:0xfedcba9876543210\\)" "an entity displays both complete logical words")
 expect("dx -r0 tide_debug_half" 1 "Entity\\(0x0:0xfedcba9876543210\\)" "a zero birth word alone is not null")

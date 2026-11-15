@@ -1,5 +1,14 @@
 # ECS and simulation state
 
+## A page's copy is counted before it's in the table (2026-11-15)
+
+A heap's `moves` (what a grid's or a list's cache checks, to hold what it found) counts a page's copy before the
+copy goes in the page table (`moved` in `engine/src/heap.c`, in `write_shared_in_runs`, `tide_heap_write_shared`
+and `tide_heap_write_over`), where it counted after: a thread that finds the copy (an acquire load of the table)
+then reads `moves` as counted or later, so a cache whose `moves` is unchanged never holds the old page. And a system
+in runs by identity has each task go through its own runs' keys alone. Both from a review: schedule-and-threads.md,
+top section.
+
 ## Grids in runs, and runs by identity (2026-11-14)
 
 A grid's directory and chunks are in one heap, its handle's, which for an owner changed in runs is the heap of the

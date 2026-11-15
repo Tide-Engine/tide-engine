@@ -170,6 +170,20 @@ static void unlock(tide_heap *h)
     __atomic_store_n(&h->lock, 0u, __ATOMIC_RELEASE);
 }
 
+// A page of `h` is about to be replaced with a copy: counted in `moves` before the copy goes in the table. The
+// copy is put there with a release store, and code finds a page with an acquire load (tide_heap_block,
+// tide_heap_write), so a thread that finds the copy then reads `moves` as counted, or later. A cache (a grid's
+// chunk, tide/grid.h; a list's block, tide/list.h) reads `moves` before it finds its block and holds while that
+// hasn't changed, so the order is what keeps it from holding a pointer into the old page: a thread that took
+// `moves` and then the old page, and has since found the copy itself (writing its own row's grid through another
+// function's cache, say), reads `moves` changed and finds its block again, where with the count after the store
+// it could read it unchanged and go on reading the old page, without the write. A count is a relaxed RMW, as
+// every reader's is a relaxed load: the release store after it is what orders it.
+static void moved(tide_heap *h)
+{
+    __atomic_add_fetch(&h->moves, 1u, __ATOMIC_RELAXED);
+}
+
 // A block of a page a snapshot shares, to change, while runs are on threads: the page is replaced with a copy,
 // by this thread or by another that got there first. The page it replaces keeps the heap's references until the
 // runs join: another thread may have read it from the table a moment ago, and would take it for the heap's own
@@ -190,6 +204,7 @@ static tide_block *write_shared_in_runs(tide_heap *h, const uint64_t block)
         lock(h);
         const bool mine = h->page[place] == p;
         if (mine) {
+            moved(h); // Before the copy is in the table (moved)
             for (uint32_t k = 0; k < places(copy); k++) __atomic_store_n(&h->page[copy->first + k], copy, __ATOMIC_RELEASE);
             if (h->retired_count == h->retired_room) {
                 const uint32_t room = h->retired_room ? h->retired_room * 2u : 16u;
@@ -199,10 +214,7 @@ static tide_block *write_shared_in_runs(tide_heap *h, const uint64_t block)
             h->retired[h->retired_count++] = p;
         }
         unlock(h);
-        if (mine) {
-            __atomic_add_fetch(&h->moves, 1u, __ATOMIC_RELAXED);
-            break;
-        }
+        if (mine) break;
         copy->refs = 0;
         tide_page_give(copy); // Another thread's copy is the heap's
     }
@@ -263,8 +275,8 @@ tide_block *tide_heap_write_shared(tide_heap *h, const uint64_t block)
     tide_page *p = h->page[block >> TIDE_HEAP_PAGE_SHIFT];
     tide_page *own = tide_page_own(p, places(p), in_use(h, p));
     if (own != p) { // Code reading the old page meanwhile reads the same bytes
+        moved(h); // Before the copy is in the table (moved)
         for (uint32_t k = 0; k < places(own); k++) __atomic_store_n(&h->page[own->first + k], own, __ATOMIC_RELEASE);
-        __atomic_add_fetch(&h->moves, 1u, __ATOMIC_RELAXED);
     }
     return tide_heap_block(h, block);
 }
@@ -277,8 +289,8 @@ tide_block *tide_heap_write_over(tide_heap *h, const uint64_t block, const uint3
     if (p->refs == places(p)) return tide_heap_write(h, block);
     const uint32_t from = (uint32_t)(block - ((uint64_t)p->first << TIDE_HEAP_PAGE_SHIFT)) + (uint32_t)sizeof(tide_block);
     tide_page *own = tide_page_own_copy_around(p, places(p), in_use(h, p), from, bytes);
+    moved(h); // Before the copy is in the table (moved)
     for (uint32_t k = 0; k < places(own); k++) __atomic_store_n(&h->page[own->first + k], own, __ATOMIC_RELEASE);
-    __atomic_add_fetch(&h->moves, 1u, __ATOMIC_RELAXED);
     return tide_heap_block(h, block);
 }
 

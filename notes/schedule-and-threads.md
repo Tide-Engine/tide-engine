@@ -1,5 +1,101 @@
 # The schedule and the tick on threads
 
+## Runs by identity, reviewed: each task's own keys, page moves, natvis (2026-11-15)
+
+A review of the section below confirmed four findings. What was done for each (internal, nothing a game's code can
+observe; no pin moved):
+
+**1. Each task walked every key.** A task of a system in runs by identity went through all the system's keys,
+hashing each one to skip those of other tasks' runs: the keys times the pieces, a tick.
+
+- **The keys sorted by run, once a tick** (`tide_run_keys_make`, a helper of the generated C beside
+  `tide_entity_run`): a counting sort, two passes, stable, so each run's keys are in the keys' order, with where each
+  run's start. A task goes through its own runs' keys alone, run by run (`tide_sorted`, `tide_by_run->starts`), with
+  every key its own (`tide_every_run`). With more than one task they're made before the tasks, in the system's
+  `tide_own_<System>` (the scheduler runs it once, on the first thread to get there, and no task starts until it's
+  done: `jobs.c`); with one task, by that task, so one thread goes run by run as the pool's tasks do. They're in an
+  array on the tick function's stack, one for each such system (`scattered_slot`), which the world points at while
+  its systems run (`tide_world.tide_run_keys`, tick-local, `NULL` in a world's bytes) and which is freed after them.
+- **Under 1024 keys none are made**: each task goes through them all, as before, a microsecond or two, where making
+  them costs a block and a step before the tasks. Measured: with every such system sorting, the gallery's server took
+  0.75 ms a second on the pool against 0.69-0.71 without; `row_heaps` (900 rows) and `row_grids` (300) were no faster
+  sorted (2.46 and 6.62 ms a tick against 2.38 and 6.22).
+- **The world is the same either way**: a run's rows go in the keys' order in both walks, and a run's heap is its
+  rows' alone. Every pin is as it was, and every fixture's world on the pool equals one thread's.
+- **Rows that go together** (consecutive rows of one chunk) are still about one row long on the pool and in a sorted
+  walk: by identity, a run's rows are spread through the table. That's runs by identity, not the walk. Under 1024
+  keys one thread walks in key order with every run, and rows go together a chunk at a time, as before. Over it,
+  sorting on one thread too was measured against key order there (the cheap rows below: `Tag` 3.79 ms against 4.08,
+  the tick 15.27 against 15.83).
+- **Not limited to grids' systems.** Runs by identity stay for every system in runs whose rows queue nothing.
+  Shares of the order lose to entities that come and go: rows change runs, their blocks are in other runs' heaps,
+  and the threads write each other's pages. The cheap rows' `Tag` on the pool took 2.45 ms with shares and 0.62 by
+  identity. Giving cheap systems shares again would give that back for the one-thread cost below.
+
+Measured (release, Windows, 24 threads, the machine shared with other work, so to about 5%; median of three rounds,
+alternating; before is 565048c04, from before the section below, merged is 834a7b231, after is this; ms a tick,
+a tick's systems from the jobs' profile):
+
+| | before, 1 thread | before, the pool | merged, 1 thread | merged, the pool | after, 1 thread | after, the pool |
+|---|---|---|---|---|---|---|
+| `row_heaps` (`TIDE_ROW_HEAPS_TIME`), the tick | 8.32 | 2.12 | 8.22 | 2.05 | 8.26 | 2.05 |
+| ...`Fill` | 7.77 | 1.35 | 7.70 | 1.30 | 7.70 | 1.22 |
+| `bench_gallery`, 16 players: the server's simulate, ms a second | 0.65 | 0.65 | 0.73 | 0.69 | 0.71 | 0.73 |
+| ...a client's | 6.09 | 6.01 | 6.71 | 6.42 | 6.24 | 6.30 |
+| `row_grids` (`TIDE_ROW_GRIDS_TIME`), the tick | 7.50 | 7.58 | 9.51 | 5.54 | 9.13 | 5.44 |
+| ...`Generate`, `Change`, `Spread` | 1.90, 2.62, 0.81 | 2.12, 2.71, 0.57 | 1.95, 3.64, 0.83 | 0.59, 1.44, 0.23 | 1.91, 3.44, 0.81 | 0.56, 1.42, 0.21 |
+| Cheap rows (scratch), the tick | 14.38 | 7.61 | 16.94 | 6.68 | 16.48 | 6.84 |
+| ...`Tag`, `Mark`, `Work` | 3.14, 2.51, 7.87 | 2.45, 2.58, 1.63 | 4.31, 3.34, 7.95 | 2.70, 1.52, 1.38 | 4.29, 3.29, 7.90 | 0.62, 1.34, 1.30 |
+| Streaming (scratch): `Generate` | 6.14 | 6.70 | 6.96 | 1.17 | 6.32 | 1.00 |
+
+`bench_gallery` is `--players 16 --join-every 0.5 --seconds 5`, `--threads 1` and `0`; its world at the end is
+tick 907 `0x44ae84ec7f42971a` merged and after on both (942 before: not the same run). `row_grids` before is its
+fixture built against 565048c04. The scratch games aren't in the tree: cheap rows is 20,000 `Bag { int id;
+List<int> items; string label; }` whose `Tag` adds to one list in eight and clears those past 16, 4,000 `Plot { int
+id; Grid2<byte> cells; }` whose `Mark` sets a cell, 2,000 `Heavy` whose `Work` does 200 sines and cosines and adds
+to a list one row in four, and a `Churn` destroying and spawning about 20 bags a tick, a snapshot taken every tick;
+streaming is 64 chunks spawned a tick, each a `Grid3<Block>(16, 16, 16)` made from its seed with `Math.Perlin`, gone
+40 ticks later (about 2,600 loaded). Both have more than 1024 rows a system and were measured before the threshold,
+which doesn't reach them.
+
+What it says: where a system has many rows, each task's own keys take the walk away (`Tag` 2.70 to 0.62 ms on the
+pool, `Generate` 1.17 to 1.00); with few, nothing changed. **One thread pays for runs by identity over shares**, as
+it did merged: cheap rows 14.4 to 16.5 ms (`Tag` 3.14 to 4.29, `Mark` 2.51 to 3.29), `row_grids` 7.5 to 9.1
+(`Change` 2.62 to 3.44), the gallery about 8%. A run's rows are spread through the table and the entities' slots,
+and its blocks through 32 heaps' pages where shares had a run's together. For `row_grids`, that's grids in runs too
+(the section below).
+
+**2. A page's copy was published before `moves` counted it.** `write_shared_in_runs`, `tide_heap_write_shared` and
+`tide_heap_write_over` (`engine/src/heap.c`) put a page's copy in the table with release stores, then added to the
+heap's `moves`. A cache (a grid's chunk, `tide_grid_cache_holds`; a list's block, `tide_list_cache`) reads `moves`
+before it finds its block and holds while that hasn't changed: a thread that had read `moves`, found the old page,
+and then found the copy itself (writing its row's grid through another function's cache) could read `moves`
+unchanged and go on reading the old page, without its own write. Now `moved(h)` counts first in all three, and
+the release stores after it order it for any thread that finds the copy with an acquire load (`tide_heap_block`,
+`tide_heap_write`): it reads `moves` as counted or later. The argument is in `moved`'s comment. **No test**: the
+window is between two stores on one thread and a reader's two loads on another, which no test of this runtime can
+place, and every access is atomic, so a race detector has nothing to report; a test would pass with the old order
+too.
+
+**3. Windows' debugger views and a run's heap past the first**: done, debugging.md (top section).
+
+**4. The web**: not run. The owner wants heavy runs on CI, not this machine (2026-11-15), so the web build and
+Windows ASan (and Linux, macOS, MinGW) are the Build workflow's, once it's on `dev`. Nothing here moved a pin; the
+five the section below moved (`rows`, `CHARS_HASH`, `JSON_HASH`, `OPTIONAL_FIELDS_HASH`, `bench_gallery`) are still
+to be seen equal on the web there.
+
+Tests: release, `tidec_e2e_row_grids`, `row_heaps`, `rows`, `chars`, `json`, `optional_fields`, `grids`,
+`parallel`, the five `lists*`, `bench_gallery`, `tide_tests` (the heap's and grids' among them), the 28
+`tidec_schedule_*` and `tidec_debugger_natvis`: 44 of 44. Each scratch game checked its pool's world against one thread's every
+tick. `row_heaps_time` now prints each system's time from the jobs' profile, and its one thread is a pool of one
+(`alone`), as `row_grids_time` does.
+
+Gaps:
+- **One thread costs more than with shares** (above), and a match hosted on one thread pays it. Not tried: a run's
+  rows in table order (a table sorted by run), or blocks of a run's rows together in fewer pages.
+- **Rows go together about one at a time** on the pool and over 1024 keys (above).
+- Web, Windows ASan and the other platforms: CI's (4).
+
 ## A system's own rows' grids across threads, and runs by identity (2026-11-14)
 
 A gap an endless voxel world needs (`notes/voxels.md` on `t3/minecraft-scale-world-readiness`, Gaps;
@@ -71,6 +167,8 @@ in runs, and of any system that splits in order: whatever is costly about new en
   row of another task's run. **Each row enters its own run** (`tide_heap_run_enter(tide_entity_run(tide_ent[i]))` in
   the rows function, before the call; `g->row_runs`), so on one thread rows still go together a chunk at a time, in
   key order as before, each in its run. The flush after each row is that run's heap's; the join is as before.
+  (Corrected 2026-11-15: from 1024 keys each task goes through its own runs' keys alone, sorted by run once a tick,
+  one thread too; the section above.)
 - **What it gives**: new entities are in every run, and **an entity is in the same run in every such system and
   tick**, so its grids, lists and text never move between runs again once they're in its run's heap (with shares,
   any entity past one that came or went changed runs).
@@ -155,7 +253,8 @@ Gaps:
 - **A move copies what the grid has**, once each time an entity's grid is first given a chunk in a run its heap isn't
   (after a spawn, which owns its values outside runs; after a system of the other kind).
 - Windows' debugger views (natvis) don't find a block in a run's heap past the first (debugging.md), grids' chunks
-  now too. LLDB's do.
+  now too. LLDB's do. (Done 2026-11-15 for text, lists, maps and sets, debugging.md; neither debugger has a view of
+  a grid.)
 - A world of a few entities spreads them over up to 32 runs' heaps, a page each, where shares used the first few.
 - **One thread pays a little more**: 2% on the streaming game, 7% on `row_grids`' systems with nothing moving back
   and forth, and beside a snapshot more pages are written a tick (above).
