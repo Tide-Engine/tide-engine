@@ -13028,6 +13028,42 @@ TIDE_TEST(lsp_grid_bytes_completes_hovers_and_checks)
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "FromBytes(List<byte> bytes)"));
 }
 
+// The server's store in match code: completion offers its calls, List among them; hover shows each form of a call
+// and Listed's fields; signature help has each form; a listing's arguments are named as the checker read them
+TIDE_TEST(lsp_storage_completes_hovers_and_names_listings)
+{
+    start();
+    const char *completion = complete("scene Main { }\nsystem S()\n{\n    Storage.$\n}\n");
+    TIDE_CHECK(offers(completion, "List") && offers(completion, "Load") && offers(completion, "Save") && offers(completion, "Delete")
+               && has(completion, "Storage.List(string prefix)"));
+    completion = complete("scene Main { }\nview V()\n{\n    Storage.$\n}\n"); // Local code: not the store's
+    TIDE_CHECK(!offers(completion, "List") && !offers(completion, "Save"));
+    open_document("scene Main { }\nsingleton Seen { int keys; }\n"
+                  "system S() { Storage.Li$st(\"chunks/\", \"chunks/9\"); }\n"
+                  "event(Listed listed) Count(mut Seen seen) { seen.keys += listed.keys.count; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "Storage.List(string prefix)") && has(hover, "Storage.List(string prefix, string after, Entity entity)")
+               && has(hover, "Listed"));
+    const char *hints = request_at("file:///test.tide", "textDocument/inlayHint", 0, 0,
+                                   "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":10,\"character\":0}}");
+    TIDE_CHECK(has(hints, "\"label\":\"prefix:\"") && has(hints, "\"label\":\"after:\"") && !has(hints, "\"label\":\"key:\""));
+    open_document("scene Main { }\ncomponent Shelf { int keys; }\n"
+                  "system S(Shelf shelf) { if (shelf.keys == 0) Storage.List(\"chunks/\", $this); }\n"
+                  "event(Listed listed) Count(mut Shelf shelf) { shelf.keys += listed.keys.count; }\n");
+    TIDE_CHECK(!has(last_sent(), "\"severity\":1")); // (Warned that nothing spawns a Shelf)
+    const char *help = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(help, "Storage.List(string prefix, Entity entity)") && has(help, "Storage.List(string prefix, string after)"));
+    open_document("scene Main { }\nsingleton Seen { int keys; }\nsystem S() { Storage.List(\"\"); }\n"
+                  "event(List$ed listed) Count(mut Seen seen) { seen.keys += listed.keys.count; }\n");
+    hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "List<string> keys") && has(hover, "bool more"));
+    // A program that never lists has no Listed
+    open_document("scene Main { }\nsingleton Seen { int keys; }\nsystem S() { Storage.Load(\"k\"); }\n"
+                  "event(Listed listed) Count(mut Seen seen) { seen.keys += 1; }\n");
+    TIDE_CHECK(has(last_sent(), "\"severity\":1"));
+}
+
 TIDE_TEST(lsp_humanoid_retargeting_completion_and_calibration_help)
 {
     start();

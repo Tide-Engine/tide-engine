@@ -1,0 +1,9 @@
+// expect: Storage.List is the match's: the machine that runs the match keeps what match code saves
+// expect: local code keeps this machine's own files with File and Directory
+scene Main { }
+local singleton Menu { int keys; }
+view Show(Menu menu)
+{
+    Storage.List("saves/");
+}
+event(Listed listed) Count() { }

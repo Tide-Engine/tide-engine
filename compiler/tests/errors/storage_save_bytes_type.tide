@@ -1,0 +1,3 @@
+// expect: Storage.Save takes its bytes as List<byte>, not string
+scene Main { }
+system Keep() { Storage.Save("chunks/0", "blocks"); }

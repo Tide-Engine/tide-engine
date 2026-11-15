@@ -102,7 +102,7 @@ static bool compile_inputs_impl(const compile_input *inputs, const int count, co
     for (int i = 0; i < count; i++) {
         if (inputs[i].package) lex_define_package(inputs[i].package);
     }
-    bool stored = false; // A file loads from the server's store, whose answer's event is Tide's own code too
+    unsigned stored = 0; // A file loads or lists from the server's store, whose answers' events are Tide's own code too
     bool web = false, overlay_found = false; // A file names Web.Request's types, which are Tide's own code
     const char **texts = arena_alloc(sizeof(char *) * (size_t)(count ? count : 1)); // ...or a fill's, which are too
     size_t *lens = arena_alloc(sizeof(size_t) * (size_t)(count ? count : 1));
@@ -156,7 +156,7 @@ static bool compile_inputs_impl(const compile_input *inputs, const int count, co
     if (stored) {
         source *src = NEW(source);
         src->path = STORAGE_PRELUDE_PATH;
-        src->text = storage_prelude(&src->len);
+        src->text = storage_prelude(stored, &src->len);
         diag_add_source(src);
         token *toks = lex(src);
         if (!toks || !parse_file(prog, src, toks, false)) return false;

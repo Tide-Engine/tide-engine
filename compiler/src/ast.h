@@ -1787,10 +1787,12 @@ typedef struct program {
     decl *prepared_players;
     decl *preparation_order;
     bool uses_prepared;
-    bool uses_storage;   // Match code uses the server's store (Storage.Save, Load or Delete), first at storage_at
+    bool uses_storage;   // Match code uses the server's store (Storage.Save, Load, Delete or List), first at storage_at
     loc storage_at;
     bool bare_load;      // ...and some Storage.Load names no entity, at bare_load_at
     loc bare_load_at;
+    bool bare_list;      // ...and some Storage.List names no entity, at bare_list_at
+    loc bare_list_at;
     decl *destroyed;
     decl *shown;          // Local availability transitions of match entities/components
     decl *hidden;

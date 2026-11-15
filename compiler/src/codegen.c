@@ -13689,64 +13689,91 @@ static void gen_moves(gen *g)
     }
 }
 
-// tide_command_fits: whether a queued change is as big as what it says it is
-// needs. One unpacked from bytes another machine sent could say it's a spawn
-// and be a few bytes long, and applying it would read past it.
-// The declaration a load's answer comes as: Tide's own (storage_prelude), in a program that loads.
-static const decl *storage_loaded_event(const program *prog)
+// The declaration a load's or a listing's answer comes as: Tide's own (storage_prelude), in a program that loads
+// or lists.
+static const decl *storage_answer_event(const program *prog, const char *event)
 {
     for (int i = 0; i < prog->decls.count; i++) {
         const decl *d = prog->decls.items[i];
-        if (d->kind == DECL_EVENT && str_eq_c(d->name, "Loaded") && d->unit && d->unit->src
+        if (d->kind == DECL_EVENT && str_eq_c(d->name, event) && d->unit && d->unit->src
             && strcmp(d->unit->src->path, STORAGE_PRELUDE_PATH) == 0) return d;
     }
     return NULL;
 }
 
-// The server's store (tide/storage.h): what match code's Storage.Save, Load
-// and Delete call, each a request beside the world that only the server's own
-// run of the tick has room for, and tide_game.stored, which takes what a load
-// found before a later tick and sends its Loaded event: to the entity the load
-// named, or to the world. Each answer is its own cause (its number), so what
-// two answers' handlers spawn in one tick are different entities.
+// The server's store (tide/storage.h): what match code's Storage.Save, Load,
+// Delete and List call, each a request beside the world that only the
+// server's own run of the tick has room for, and tide_game.stored, which takes
+// what a load or a listing found before a later tick and sends its Loaded or
+// Listed event: to the entity the request named, or to the world. Each answer
+// is its own cause (its number), so what two answers' handlers spawn in one
+// tick are different entities. An answer a match task waits for
+// (TIDE_STORAGE_TO_TASK) sends no event.
 static void gen_storage(gen *g)
 {
     const program *prog = g->prog;
     if (!prog->uses_storage) return;
     sb *o = &g->c;
     sb_put(o, "TIDE_HELPER void tide_storage_save(tide_world *w, const tide_str key, const tide_list bytes)\n{\n"
-              "    tide_storage_ask(w, TIDE_STORAGE_SAVE, key, bytes, (tide_entity){0});\n}\n\n"
+              "    tide_storage_ask(w, TIDE_STORAGE_SAVE, key, bytes, (tide_str){0}, TIDE_STORAGE_TO_EVENT, (tide_entity){0});\n}\n\n"
               "TIDE_HELPER void tide_storage_delete(tide_world *w, const tide_str key)\n{\n"
-              "    tide_storage_ask(w, TIDE_STORAGE_DELETE, key, (tide_list){0}, (tide_entity){0});\n}\n\n"
+              "    tide_storage_ask(w, TIDE_STORAGE_DELETE, key, (tide_list){0}, (tide_str){0}, TIDE_STORAGE_TO_EVENT, (tide_entity){0});\n}\n\n"
               "TIDE_HELPER void tide_storage_load(tide_world *w, const tide_str key)\n{\n"
-              "    tide_storage_ask(w, TIDE_STORAGE_LOAD, key, (tide_list){0}, (tide_entity){0});\n}\n\n"
+              "    tide_storage_ask(w, TIDE_STORAGE_LOAD, key, (tide_list){0}, (tide_str){0}, TIDE_STORAGE_TO_EVENT, (tide_entity){0});\n}\n\n"
               "TIDE_HELPER void tide_storage_load_to(tide_world *w, const tide_str key, const tide_entity target)\n{\n"
-              "    tide_storage_ask(w, TIDE_STORAGE_LOAD, key, (tide_list){0}, target);\n}\n\n");
-    const decl *loaded = storage_loaded_event(prog);
-    if (!loaded) { // A game that saves and never loads: its server still keeps what it saves (tide_game.stored says it has a store)
+              "    tide_storage_ask(w, TIDE_STORAGE_LOAD, key, (tide_list){0}, (tide_str){0}, TIDE_STORAGE_TO_EVENT, target);\n}\n\n"
+              "TIDE_HELPER void tide_storage_list(tide_world *w, const tide_str prefix)\n{\n"
+              "    tide_storage_ask(w, TIDE_STORAGE_LIST, prefix, (tide_list){0}, (tide_str){0}, TIDE_STORAGE_TO_EVENT, (tide_entity){0});\n}\n\n"
+              "TIDE_HELPER void tide_storage_list_to(tide_world *w, const tide_str prefix, const tide_entity target)\n{\n"
+              "    tide_storage_ask(w, TIDE_STORAGE_LIST, prefix, (tide_list){0}, (tide_str){0}, TIDE_STORAGE_TO_EVENT, target);\n}\n\n"
+              "TIDE_HELPER void tide_storage_list_after(tide_world *w, const tide_str prefix, const tide_str after)\n{\n"
+              "    tide_storage_ask(w, TIDE_STORAGE_LIST, prefix, (tide_list){0}, after, TIDE_STORAGE_TO_EVENT, (tide_entity){0});\n}\n\n"
+              "TIDE_HELPER void tide_storage_list_after_to(tide_world *w, const tide_str prefix, const tide_str after,\n"
+              "                                           const tide_entity target)\n{\n"
+              "    tide_storage_ask(w, TIDE_STORAGE_LIST, prefix, (tide_list){0}, after, TIDE_STORAGE_TO_EVENT, target);\n}\n\n");
+    const decl *loaded = storage_answer_event(prog, "Loaded"), *listed = storage_answer_event(prog, "Listed");
+    if (!loaded && !listed) { // A game that saves and never loads: its server still keeps what it saves (tide_game.stored says it has a store)
         sb_put(o, "static bool tide_game_stored(void *world, const uint8_t *data, uint32_t size)\n{\n"
                   "    (void)world;\n    (void)data;\n    (void)size;\n    return false;\n}\n\n");
         return;
     }
-    const char *name = type_cname(loaded);
     sb_put(o, "static bool tide_game_stored(void *world, const uint8_t *data, uint32_t size)\n{\n"
-              "    tide_world *w = world;\n    tide_entity target;\n    uint64_t number;\n    const char *key;\n"
-              "    uint32_t key_size, held_size;\n    const uint8_t *held;\n    uint8_t outcome;\n"
-              "    if (!tide_stored_read(data, size, &target, &number, &key, &key_size, &held, &held_size, &outcome)) return false;\n"
+              "    tide_world *w = world;\n    tide_stored answer;\n"
+              "    if (!tide_stored_read(data, size, &answer) || answer.to != TIDE_STORAGE_TO_EVENT) return false;\n"
               "    const uint64_t mark = tide_scratch_mark();\n    tide_text_use(&w->heap, NULL);\n"
-              "    int32_t chars = 0;\n    for (uint32_t i = 0; i < key_size; i++) chars += ((uint8_t)key[i] & 0xC0u) != 0x80u;\n"
-              "    tide_list bytes = {0};\n"
-              "    if (held_size) {\n"
-              "        tide_block *block = tide_scratch_block(held_size, \"loaded bytes\", &bytes.at);\n"
-              "        block->a = block->b = held_size;\n        memcpy(block + 1, held, held_size);\n    }\n");
-    sb_printf(o, "    const %s value = {.%s = tide_text_temp((tide_str){key, (int32_t)key_size, chars}), .%s = bytes,\n"
-                 "                      .%s = outcome == TIDE_STORED_FOUND, .%s = outcome == TIDE_STORED_FAILED};\n",
-              name, field_cname(&loaded->fields.items[0]), field_cname(&loaded->fields.items[1]), field_cname(&loaded->fields.items[2]),
-              field_cname(&loaded->fields.items[3]));
-    sb_printf(o, "    tide_cmd_send_%s_cause(w, target, value, tide_causal_mix(tide_causal_entity(UINT64_C(%llu), target), number));\n"
-                 "    tide_scratch_reset(mark);\n    return true;\n}\n\n", name, (unsigned long long)causal_code(loaded));
+              "    bool sent = false;\n");
+    if (loaded) {
+        const char *name = type_cname(loaded);
+        sb_put(o, "    if (answer.kind == TIDE_STORAGE_LOAD) {\n");
+        sb_printf(o, "        const %s value = {.%s = tide_text_temp(tide_stored_text(answer.key, answer.key_size)),\n"
+                     "                          .%s = tide_stored_bytes(&answer), .%s = answer.outcome == TIDE_STORED_FOUND,\n"
+                     "                          .%s = answer.outcome == TIDE_STORED_FAILED};\n",
+                  name, field_cname(&loaded->fields.items[0]), field_cname(&loaded->fields.items[1]),
+                  field_cname(&loaded->fields.items[2]), field_cname(&loaded->fields.items[3]));
+        sb_printf(o, "        tide_cmd_send_%s_cause(w, answer.target, value,\n"
+                     "                               tide_causal_mix(tide_causal_entity(UINT64_C(%llu), answer.target), answer.number));\n"
+                     "        sent = true;\n    }\n", name, (unsigned long long)causal_code(loaded));
+    }
+    if (listed) {
+        const char *name = type_cname(listed);
+        sb_put(o, "    if (answer.kind == TIDE_STORAGE_LIST) {\n");
+        sb_printf(o, "        const %s value = {.%s = tide_text_temp(tide_stored_text(answer.key, answer.key_size)),\n"
+                     "                          .%s = tide_text_temp(tide_stored_text(answer.after, answer.after_size)),\n"
+                     "                          .%s = tide_stored_keys(&answer), .%s = answer.more,\n"
+                     "                          .%s = answer.outcome == TIDE_STORED_FAILED};\n",
+                  name, field_cname(&listed->fields.items[0]), field_cname(&listed->fields.items[1]),
+                  field_cname(&listed->fields.items[2]), field_cname(&listed->fields.items[3]),
+                  field_cname(&listed->fields.items[4]));
+        sb_printf(o, "        tide_cmd_send_%s_cause(w, answer.target, value,\n"
+                     "                               tide_causal_mix(tide_causal_entity(UINT64_C(%llu), answer.target), answer.number));\n"
+                     "        sent = true;\n    }\n", name, (unsigned long long)causal_code(listed));
+    }
+    sb_put(o, "    tide_scratch_reset(mark);\n    return sent;\n}\n\n");
 }
 
+// tide_command_fits: whether a queued change is as big as what it says it is
+// needs. One unpacked from bytes another machine sent could say it's a spawn
+// and be a few bytes long, and applying it would read past it.
 static void gen_command_fits(gen *g)
 {
     const program *prog = g->prog;

@@ -1,0 +1,3 @@
+// expect: Storage.List takes the prefix of the keys it lists, the key to go on after if any, and the entity its Listed event goes to if not the world
+scene Main { }
+system Ask() { Storage.List(); }

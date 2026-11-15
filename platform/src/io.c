@@ -1130,6 +1130,105 @@ static void backend_flush_forget(void *user, const uint32_t ticket)
     unlock_io();
 }
 
+// The provider's own thread for work that calls it (tide_io.post), in the order it's posted: the server's store, a
+// tick's requests at a time, so a server's tick never waits for the disk. One for every caller: what's posted goes
+// after what was posted before it, whoever posted it.
+typedef struct io_post {
+    struct io_post *next;
+    void (*work)(void *context);
+    void *context;
+} io_post;
+
+static struct {
+    io_post *first, *last;
+    uint64_t posted, finished;
+    bool started;
+} posts;
+
+#ifdef _WIN32
+static SRWLOCK post_lock = SRWLOCK_INIT;
+static CONDITION_VARIABLE post_work = CONDITION_VARIABLE_INIT, post_done = CONDITION_VARIABLE_INIT;
+static void lock_posts(void) { AcquireSRWLockExclusive(&post_lock); }
+static void unlock_posts(void) { ReleaseSRWLockExclusive(&post_lock); }
+static void wait_for_work(void) { SleepConditionVariableSRW(&post_work, &post_lock, INFINITE, 0); }
+static void wait_for_done(void) { SleepConditionVariableSRW(&post_done, &post_lock, INFINITE, 0); }
+static void wake_for_work(void) { WakeConditionVariable(&post_work); }
+static void wake_for_done(void) { WakeAllConditionVariable(&post_done); }
+#else
+static pthread_mutex_t post_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t post_work = PTHREAD_COND_INITIALIZER, post_done = PTHREAD_COND_INITIALIZER;
+static void lock_posts(void) { pthread_mutex_lock(&post_lock); }
+static void unlock_posts(void) { pthread_mutex_unlock(&post_lock); }
+static void wait_for_work(void) { pthread_cond_wait(&post_work, &post_lock); }
+static void wait_for_done(void) { pthread_cond_wait(&post_done, &post_lock); }
+static void wake_for_work(void) { pthread_cond_signal(&post_work); }
+static void wake_for_done(void) { pthread_cond_broadcast(&post_done); }
+#endif
+
+#ifdef _WIN32
+static DWORD WINAPI post_worker(void *unused)
+#else
+static void *post_worker(void *unused)
+#endif
+{
+    (void)unused;
+    for (;;) {
+        lock_posts();
+        while (!posts.first) wait_for_work();
+        io_post *item = posts.first;
+        posts.first = item->next;
+        if (!posts.first) posts.last = NULL;
+        unlock_posts();
+        item->work(item->context);
+        free(item);
+        lock_posts();
+        posts.finished++;
+        wake_for_done();
+        unlock_posts();
+    }
+}
+
+static bool backend_post(void *user, void (*work)(void *context), void *context)
+{
+    (void)user;
+    io_post *item = malloc(sizeof *item);
+    if (!item) return false;
+    *item = (io_post){NULL, work, context};
+    lock_posts();
+    if (!posts.started) {
+#ifdef _WIN32
+        HANDLE thread = CreateThread(NULL, 0, post_worker, NULL, 0, NULL);
+        if (thread) CloseHandle(thread); // The worker lives with the platform provider
+        posts.started = thread != NULL;
+#else
+        pthread_t thread;
+        posts.started = pthread_create(&thread, NULL, post_worker, NULL) == 0;
+        if (posts.started) pthread_detach(thread);
+#endif
+        if (!posts.started) { // No thread: the caller does it
+            unlock_posts();
+            free(item);
+            return false;
+        }
+    }
+    if (posts.last) posts.last->next = item;
+    else posts.first = item;
+    posts.last = item;
+    posts.posted++;
+    wake_for_work();
+    unlock_posts();
+    return true;
+}
+
+static void backend_settle(void *user)
+{
+    (void)user;
+    lock_posts();
+    const uint64_t posted = posts.posted;
+    while (posts.finished < posted) wait_for_done();
+    unlock_posts();
+}
+
 static void switch_app(void)
 {
     lock_io();
@@ -1317,7 +1416,11 @@ const tide_io *tide_platform_io_init(const char *app_id, const char *directory)
 #endif
         return &state.provider;
     }
-    // A host has one app at a time. Same-app hot reload never enters here.
+    // A host has one app at a time. Same-app hot reload never enters here. Work on the provider's thread uses its
+    // folders: what was posted is done first.
+#ifndef __wasm__
+    backend_settle(&state);
+#endif
     free(state.app_id);
     free(state.persistent);
     free(state.temporary);
@@ -1354,6 +1457,11 @@ const tide_io *tide_platform_io_init(const char *app_id, const char *directory)
         .fetch_forget = backend_fetch_forget,
         .request_begin = backend_request_begin,
         .request_poll = backend_request_poll,
+#ifndef __wasm__
+        // The server's store off its ticks' thread. A page's files are the page's own thread's to call: none there
+        .post = backend_post,
+        .settle = backend_settle,
+#endif
     };
     return &state.provider;
 }

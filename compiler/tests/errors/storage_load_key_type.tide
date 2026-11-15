@@ -1,0 +1,5 @@
+// expect: Storage.Load takes its key as string, not int
+scene Main { }
+singleton Seen { int found; }
+system Ask() { Storage.Load(4); }
+event(Loaded loaded) Take(mut Seen seen) { seen.found += 1; }

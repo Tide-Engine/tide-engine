@@ -1570,9 +1570,10 @@ void analysis_run(const analysis_file *given, const int given_count)
     const analysis_file *files = given;
     int count = given_count;
     // ...and so are fills', for as long as it shows one
-    bool web = false, fills = false, baked = false, stored = false;
+    bool web = false, fills = false, baked = false;
+    unsigned stored = 0;
     for (int i = 0; i < given_count && !web; i++) web = web_prelude_wanted(given[i].text, given[i].len);
-    for (int i = 0; i < given_count && !stored; i++) stored = storage_prelude_wanted(given[i].text, given[i].len);
+    for (int i = 0; i < given_count; i++) stored |= storage_prelude_wanted(given[i].text, given[i].len);
     if (given_count > 0) {
         const char **texts = arena_alloc(sizeof(char *) * (size_t)given_count);
         size_t *lens = arena_alloc(sizeof(size_t) * (size_t)given_count);
@@ -1594,7 +1595,7 @@ void analysis_run(const analysis_file *given, const int given_count)
         }
         if (stored) {
             analysis_file prelude = {"tide:///storage.tide", STORAGE_PRELUDE_PATH, NULL, 0, NULL};
-            prelude.text = storage_prelude(&prelude.len);
+            prelude.text = storage_prelude(stored, &prelude.len);
             all[count++] = prelude;
         }
         if (fills) {
@@ -2241,6 +2242,18 @@ static const method_form storage_calls[] = {
     {"Load", "Storage.Load(string key, Entity entity)",
      "Asks for what is kept under the key, answered by a `Loaded` event to the entity in a later tick."},
     {"Delete", "Storage.Delete(string key)", "Asks the machine that runs the match to forget what it keeps under the key."},
+    {"List", "Storage.List(string prefix)",
+     "Asks for the keys the machine that runs the match keeps that start with the prefix. Its answer is a `Listed` event "
+     "in a later tick: the keys, sorted by their bytes, 1,024 at the most, whether there are `more` past the last, and "
+     "whether listing them `failed`."},
+    {"List", "Storage.List(string prefix, string after)",
+     "Asks for the keys that start with the prefix and come after `after`: the last key of the answer before, to go on "
+     "from it. Answered by a `Listed` event in a later tick."},
+    {"List", "Storage.List(string prefix, Entity entity)",
+     "Asks for the keys that start with the prefix, answered by a `Listed` event to the entity in a later tick."},
+    {"List", "Storage.List(string prefix, string after, Entity entity)",
+     "Asks for the keys that start with the prefix and come after `after`, answered by a `Listed` event to the entity "
+     "in a later tick."},
 };
 static const method_form audience_calls[] = {
     {"Add", "Add(PlayerID player)", "Adds a player to this writable audience value."},
@@ -4088,12 +4101,18 @@ static void describe(const occurrence *o, sb *out)
             break;
         }
         if (o->call == CALL_VISIBILITY && str_eq_c(o->owner, "Storage")) {
-            // Load's two forms: the one with as many arguments as the call, which the hover's occurrence doesn't keep
+            // Load's and List's forms, every one, as the hover's occurrence doesn't keep how many arguments the call
+            // has, and the first's words
+            const char *doc = NULL;
+            sb forms = {0};
             for (size_t i = 0; i < sizeof storage_calls / sizeof storage_calls[0]; i++) {
                 if (!str_eq_c(o->name, storage_calls[i].name)) continue;
-                code_block(out, storage_calls[i].form);
-                sb_printf(out, "\n\n%s", storage_calls[i].doc);
-                if (str_eq_c(o->name, "Load")) break;
+                sb_printf(&forms, "%s%s", forms.len ? "\n" : "", storage_calls[i].form);
+                if (!doc) doc = storage_calls[i].doc;
+            }
+            if (doc) {
+                code_block(out, forms.data);
+                sb_printf(out, "\n\n%s", doc);
             }
         } else if (o->call == CALL_VISIBILITY || str_eq_c(o->owner, "Audience")) {
             if (o->kind == OCC_CONSTANT) {
@@ -12741,9 +12760,14 @@ static int call_param_names(const expr *call, str *names, const int max)
     label_list list = {0};
     switch (call->call) {
     case CALL_VISIBILITY: {
-        if (call->visibility_operation & VISIBILITY_STORAGE) { // Storage.Save(key, bytes), Storage.Load(key, entity)
+        if (call->visibility_operation & VISIBILITY_STORAGE) { // Storage.Save(key, bytes), Load(key, entity), List(prefix, after, entity)
+            const bool list = str_eq_c(call->name, "List");
+            // A listing's second argument is `after` unless it's the entity, as the checker read it
+            const bool after = list && (call->args.count == 3 || (call->args.count == 2 && call->arg_want.count == 2
+                                                                  && call->arg_want.items[1].kind == TY_STRING));
             for (; count < call->args.count && count < max; count++) {
-                names[count] = str_from(count == 0 ? "key" : str_eq_c(call->name, "Save") ? "bytes" : "entity");
+                names[count] = str_from(count == 0 ? (list ? "prefix" : "key") : str_eq_c(call->name, "Save") ? "bytes"
+                                        : list && count == 1 && after ? "after" : "entity");
             }
             return count;
         }

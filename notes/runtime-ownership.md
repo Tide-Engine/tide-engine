@@ -1,3 +1,18 @@
+## The server's store: listings, its own thread, answers for tasks (2026-11-15)
+
+The store's runtime (`tide/storage.h`, `engine/src/storage.c`) is agent-maintained, as is the file provider
+(`platform/src/io.c`). Generated C now calls `tide_storage_ask(world, kind, key, bytes, after, to, target)` (two
+parameters more than before: a listing's `after` and whom the answer is for, `TIDE_STORAGE_TO_EVENT` or
+`TIDE_STORAGE_TO_TASK`) from its eight `tide_storage_*` helpers, and its `tide_game.stored` reads an answer with
+`tide_stored_read` into a `tide_stored` (where it took four out-parameters) and makes the event's values with the new
+`tide_stored_text`, `tide_stored_bytes` and `tide_stored_keys` (where it made the bytes' scratch block itself).
+`tide_stored_next_key`, `tide_storage_key`, the line (`tide_storage_line`, `_send`, `_receive`, `_forget`, `_finish`,
+`_waiting`) and `tide_io.post`/`settle` are the engine's and hosts'. `TIDE_STORED_MESSAGE`'s bytes changed (a kind and
+whom it's for after its first byte), which no wire version marks: an engine of other sources has another simulation
+identity (`TIDE_SIMULATION_RUNTIME` hashes them all), so no player of the old one joins. No layout,
+hash or snapshot change; `bench_voxels`' pinned hash is unchanged. Contracts and tests: notes/voxels.md, sections 3a to
+3c.
+
 ## Heaps per owner in games that hide state (2026-11-14, later)
 
 No runtime function is new or changed (schedule-and-threads.md, top section). Generated code for players now reads

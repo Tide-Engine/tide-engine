@@ -1,0 +1,6 @@
+// expect: Storage.List takes its after as string, not float
+// expect: a listing's second argument is the key it goes on after (a string) or the entity its Listed goes to
+scene Main { }
+singleton Seen { int keys; }
+system Ask() { Storage.List("chunks/", 2.5); }
+event(Listed listed) Count(mut Seen seen) { seen.keys += listed.keys.count; }

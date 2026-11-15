@@ -23631,6 +23631,13 @@ static void check_sends(const checker *c)
                    STR_ARG(loaded->needs_target->name));
         diag_note("name the entity its answer is for: 'Storage.Load(key, entity)'");
     }
+    // ...and a listing's Listed the same way
+    const decl *listed = storage_listed(c->prog);
+    if (c->prog->bare_list && listed && listed->needs_target) {
+        diag_error(c->prog->bare_list_at, "'" STR_FMT "' needs the entity a Listed is sent to, and this Storage.List names none",
+                   STR_ARG(listed->needs_target->name));
+        diag_note("name the entity its answer is for: 'Storage.List(prefix, entity)' or 'Storage.List(prefix, after, entity)'");
+    }
 }
 
 static void warn_unsent(const checker *c)

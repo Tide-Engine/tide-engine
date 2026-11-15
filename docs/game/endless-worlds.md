@@ -1,5 +1,5 @@
 ---
-description: "Build an endless world of blocks in Tide: chunks as entities with grids, each player sent only the chunks near them, dimensions as scenes, the server's store for what nobody is near, and far ground drawn from the seed."
+description: "Build an endless world of blocks in Tide: chunks as entities with grids, each player sent only the chunks near them, dimensions as scenes, the server's store for what nobody is near, read off the tick's thread and listed by prefix, and far ground drawn from the seed."
 ---
 
 # Endless worlds
@@ -140,6 +140,10 @@ event(Expire) Drop(Seen seen, Chunk chunk)
 
 `Idle` writes nothing while it waits: `emptied` is a tick, not a counter. A system that counts in every chunk every tick changes every chunk every tick, and the server's checks cost what changes.
 
+The server reads and writes the chunks' files on a thread of their own, after the tick that asked: a player's first view of fresh ground asks for hundreds of chunks in one tick, and the tick doesn't wait for the disk. Their answers come over the next ticks, 64 a tick.
+
+What a dimension has saved can be listed, a page of keys at a time, for a map of where players built or to move a world's saves elsewhere: `Storage.List($"chunks/{dimension.number}/", this)` answers with a `Listed` event, and the next page is asked for after its last key ([Saving the match](./files.md#saving-the-match)). Keys made of folders (`chunks/<dimension>/...`) keep a listing to the folder its prefix names.
+
 ## Drawing what's far
 
 A chunk's faces are made into a mesh by a `local worker`, off the frame, and kept in the chunk's `local` fields ([Local state](./local-state.md), [Async and tasks](./tasks.md)); they're made again when its blocks change. Meshes outside the view aren't drawn ([frustum culling](./3d.md#frustum-culling)).
@@ -148,4 +152,4 @@ Past the chunks a player has, the ground can be drawn from the dimension's seed 
 
 ## What it costs
 
-`bench/voxels`, 4 bots flying across fresh terrain with 845 chunks each, 60 ticks a second, 50 ms each way: the server's update takes 0.37 ms (median), each bot is sent about 20 KB a second, and a bot's machine holds the 850 entities near it. Standing still, the server spends 1 ms a second checking what each player has. The engine's notes (`notes/voxels.md`) have the rest, and what's still missing.
+`bench/voxels`, 4 bots flying across fresh terrain with 845 chunks each, 60 ticks a second, 50 ms each way: the server's update takes 0.37 ms (median), each bot is sent about 20 KB a second, and a bot's machine holds the 850 entities near it. Standing still, the server spends 1 ms a second checking what each player has. With its store as files, read on the files' own thread, the server's longest update is about 7 ms where it was 15 with them read as each tick ended. The engine's notes (`notes/voxels.md`) have the rest, and what's still missing.

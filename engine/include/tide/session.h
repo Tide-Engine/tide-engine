@@ -166,9 +166,10 @@ typedef struct tide_game {
                                     uint32_t *size);
     bool (*apply_client_changes)(void *world, const uint8_t *plan, uint32_t plan_size, const uint8_t *now, uint32_t now_size,
                                  const uint8_t *was, uint32_t was_size);
-    // A game whose match code uses the server's store (Storage.Load): what a
-    // load found, a TIDE_STORED_MESSAGE (tide/storage.h), for the coming tick,
-    // which sends its Loaded event. The server calls it as it runs the tick,
+    // A game whose match code uses the server's store (Storage.Load, List): what
+    // a load or a listing found, a TIDE_STORED_MESSAGE (tide/storage.h), for the
+    // coming tick, which sends its Loaded or Listed event (or, for an answer a
+    // match task waits for, hands it to the task). The server calls it as it runs the tick,
     // clients as they apply its frame, and a replay as it makes the tick
     // again. False when the bytes aren't one, which changes nothing. NULL: the
     // game loads nothing.
@@ -452,10 +453,13 @@ typedef struct tide_server_desc {
     const char (*ban_messages)[TIDE_MESSAGE_BYTES];
     bool closed;                 // Takes no one new from the start, only players coming back
     const tide_jobs *jobs;       // Threads to run ticks on (tide/jobs.h), or NULL: this one
-    // Where the match's store is kept (Storage.Save, Load and Delete in match
-    // code): files under this provider's persistent root, in `saved/`
-    // (tide/storage.h). It outlives the server. NULL: nothing is kept, so
-    // saves go nowhere and every load finds nothing.
+    // Where the match's store is kept (Storage.Save, Load, Delete and List in
+    // match code): files under this provider's persistent root, in `saved/`
+    // (tide/storage.h). A tick's requests are carried out on the provider's own
+    // thread where it has one (tide_io.post), after the tick, and else as the
+    // tick ends; the server waits for them as it's destroyed. It outlives the
+    // server. NULL: nothing is kept, so saves go nowhere and every load finds
+    // nothing.
     const struct tide_io *io;
     // 64 bits nobody could guess, from the system, for the seed of the match
     // it starts (tide_game.seeded): no two matches go the same. NULL: the seed

@@ -1001,8 +1001,8 @@ static void copy_message(char out[TIDE_MESSAGE_BYTES], const char *message, cons
 }
 
 struct tide_server {
-    tide_storage storage; // What its last tick asked of the match's store (tide/storage.h)
-    uint64_t stored_next; // The number the next load's answer has
+    tide_storage storage;     // What its last tick asked of the match's store (tide/storage.h)
+    tide_storage_line stored; // ...and what the ticks before asked, on its way: carried out off this thread
     tide_preparation *preparation;
     tide_event_log preparation_events;
     tide_event_log *preparation_journals;
@@ -2445,37 +2445,50 @@ static uint32_t dispatch_injected(tide_server *s, tide_writer *w, private_journa
     return g->client_state ? 0u : count;
 }
 
-// A message for the coming tick, in the order they're given: another shard's, or what a load found.
-static bool inject(tide_server *s, const uint8_t *data, const uint32_t size);
+// A message for the coming tick, in the order they're given: another shard's, or what a load or a listing found.
+// It takes `data` (malloc's), and frees it where it can't.
+static bool inject_taken(tide_server *s, uint8_t *data, const uint32_t size)
+{
+    if (!size || size > TIDE_SHARD_MESSAGE_LIMIT) {
+        free(data);
+        return false;
+    }
+    if (s->injected_count == s->injected_room) {
+        const uint32_t room = s->injected_room ? s->injected_room * 2u : 16u;
+        injected *grown = realloc(s->injected, (size_t)room * sizeof *grown);
+        if (!grown) {
+            free(data);
+            return false;
+        }
+        s->injected = grown;
+        s->injected_room = room;
+    }
+    s->injected[s->injected_count++] = (injected){data, size, 0u};
+    return true;
+}
 
 bool tide_server_inject(tide_server *s, const uint8_t *data, const uint32_t size)
 {
     if (!s->game->shards || !size || size > TIDE_SHARD_MESSAGE_LIMIT || data[0] == TIDE_STORED_MESSAGE) return false;
-    return inject(s, data, size);
-}
-
-// What a load found (tide_storage_serve): the coming tick's, or a later one's once that has its fill.
-static void stored_answer(void *user, uint8_t *message, const uint32_t size)
-{
-    (void)inject(user, message, size);
-    free(message);
-}
-
-static bool inject(tide_server *s, const uint8_t *data, const uint32_t size)
-{
-    if (!size || size > TIDE_SHARD_MESSAGE_LIMIT) return false;
-    if (s->injected_count == s->injected_room) {
-        const uint32_t room = s->injected_room ? s->injected_room * 2u : 16u;
-        injected *grown = realloc(s->injected, (size_t)room * sizeof *grown);
-        if (!grown) return false;
-        s->injected = grown;
-        s->injected_room = room;
-    }
     uint8_t *copy = malloc(size);
     if (!copy) return false;
     memcpy(copy, data, size);
-    s->injected[s->injected_count++] = (injected){copy, size, 0u};
-    return true;
+    return inject_taken(s, copy, size);
+}
+
+// What a load or a listing found (tide/storage.h): the coming tick's, or a later one's once that has its fill. A
+// build without the store (a reload took it away) has nobody to give it to.
+static void stored_answer(void *user, uint8_t *message, const uint32_t size)
+{
+    tide_server *s = user;
+    if (s->game->stored) (void)inject_taken(s, message, size);
+    else free(message);
+}
+
+// The store's answers that are ready since the last tick took them, in the order they were asked
+static void receive_stored(tide_server *s)
+{
+    if (s->stored.first) (void)tide_storage_receive(&s->stored, stored_answer, s);
 }
 
 uint32_t tide_server_injected(const tide_server *s)
@@ -2892,7 +2905,9 @@ static void tick_begin(tide_server *s, ticking *t)
         tide_write_varint(&w, command_count);
         tide_write_bytes(&w, commands.data, commands.size);
     }
-    // Shard messages after the commands, applied in the same order by players
+    // Shard messages after the commands, applied in the same order by players, and the store's answers with them:
+    // those that came while the ticks before ran
+    receive_stored(s);
     tide_writer shard_messages = {s->frame + frame_capacity(g), frame_capacity(g), 0, false, false};
     const uint32_t shard_count = dispatch_injected(s, &shard_messages, private);
     if (shard_count) {
@@ -2929,8 +2944,11 @@ static void tick_end(tide_server *s, ticking *t)
 {
     const tide_game *g = s->game;
     const uint32_t tick = t->tick;
-    // The store: saves and deletes now, and what each load found for the next tick
-    if (s->storage.count) tide_storage_serve(&s->storage, s->desc.io, &s->stored_next, stored_answer, s);
+    // The store: what the tick asked goes to the provider's own thread, carried out after what the ticks before
+    // asked, or here and now where it has none; what loads and listings found goes to the first tick after it's
+    // ready (receive_stored), which for one carried out here is the next
+    if (s->storage.count) tide_storage_send(&s->stored, &s->storage, s->desc.io, true);
+    receive_stored(s);
     private_journal *private = t->private;
     void *before = t->before;
     tide_event_log *journals = t->journals;
@@ -3639,6 +3657,10 @@ void tide_server_destroy(tide_server *s)
     free(s->flight);
     tide_profile_free(&s->flight_profile);
     tide_storage_unbind(s->world);
+    // What was asked of the store is still carried out, but what loads and listings would find, which no tick will
+    // take: a server that stops cleanly loses no save its ticks made, nor one its start or a preparation asked for
+    tide_storage_send(&s->stored, &s->storage, s->desc.io, false);
+    tide_storage_finish(&s->stored);
     tide_storage_free(&s->storage);
     discard_preparation(s);
     for (uint32_t i = 0; s->connections && i < s->players; i++) {
@@ -8445,9 +8467,11 @@ bool tide_session_rewind(tide_session *s, const void *world)
         g->copy_world(kept, server->world);
     }
     g->copy_world(server->world, world);
-    // What loads of the ticks let go found isn't the rewound world's to take: it asks again as it gets there. (A
-    // load the rewound world asked before and whose answer was still on its way is dropped with them.)
+    // What loads and listings of the ticks let go found isn't the rewound world's to take: it asks again as it gets
+    // there. (One the rewound world asked before, whose answer was still on its way, is dropped with them.) Those
+    // still being carried out are dropped as they come; what their ticks saved and deleted is done all the same.
     (void)tide_server_drop_injected(server, TIDE_STORED_MESSAGE);
+    tide_storage_forget(&server->stored);
     tide_storage_clear(&server->storage);
     if (kept) {
         g->keep_commands(server->world, kept);
