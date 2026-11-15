@@ -96,7 +96,7 @@ TIDE_TEST(grid_bytes_are_the_same_everywhere)
 TIDE_TEST(grid_bytes_in_views)
 {
     start();
-    tide_local local;
+    tide_local local = {0}; // tide_local_init lets go of what it had first
     tide_local_init(&local);
     tide_draw_list draw = {0};
     tide_gui gui = {0};

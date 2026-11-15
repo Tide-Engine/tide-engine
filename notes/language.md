@@ -195,6 +195,11 @@ bits and wrap (notes/memory-safety.md, Chunk counts past 64 bits), now saturated
 `LocalEntity` cells beside `Entity`, and says that bytes `ToBytes` wrote of an open grid filled at places chosen to collide
 can be refused when read back, as a world's own grid doesn't limit its probes.
 
+**Correction (2026-11-15)**: `grid_bytes_in_views` crashed on macOS and Android, nowhere else: its `tide_local` was
+on the stack unzeroed, and `tide_local_init` lets go of what a local world had first (`tide_entities_free` of whatever
+the stack held). The test's, not the runtime's; it's `= {0}` now, as every other test's is. A `lldb` backtrace from a
+scratch CI run found it: `tests/test_main.c` now flushes each test's line, so a crash's log shows the tests before it.
+
 **Gaps.** Bytes of another chunk geometry aren't read (a future format would say so), and the bytes don't name the cell's
 type, only its size. A field given what FromBytes made copies it from the scratch area (a read straight into a world's heap
 would save that). An open grid's hashed directory is slow for places chosen to collide (spec, Grids, Open).

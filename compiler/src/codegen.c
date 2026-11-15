@@ -25581,13 +25581,13 @@ static void gen_bits(gen *g, const char *at, const type t, const bits_mode mode,
     }
 }
 
+static bool client_hash_heapy(const gen *g); // client_state_codegen.inc
+
 // A world's storage as a whole, the match's or the local world's: letting it
 // go, and packing it into bytes and back. The bytes are the world's struct
 // with its storage zeroed, which tide/layout.h describes (its singletons and
 // inputs), then its entity table, each of its archetypes' tables in order, its
 // queue and its heap.
-static bool client_hash_heapy(const gen *g); // client_state_codegen.inc
-
 static void gen_world_bytes(gen *g, const bool local)
 {
     const program *prog = g->prog;
