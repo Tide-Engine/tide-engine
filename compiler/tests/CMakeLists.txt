@@ -567,6 +567,10 @@ tide_e2e_test(grids SOURCES e2e/grids.tide e2e/grids_c.c) # Grids
 tide_e2e_test(grid_values) # Grids code owns: locals, mut parameters, returns and Copy
 tide_e2e_test(grid_bytes) # cells.ToBytes() and Grid3<T>.FromBytes(bytes): round trips, repairs, refusals, the bytes pinned
 target_compile_definitions(tidec_e2e_grid_bytes PRIVATE GRID_BYTES_HASH=0xF9EAD962E215CDB8ull GRID_BYTES_SPOILED=3361)
+if(APPLE) # TEMPORARY diagnostic for a scratch CI run: where tidec_e2e_grid_bytes crashes on macOS
+    add_test(NAME tidec_e2e_grid_bytes_lldb COMMAND xcrun lldb --batch -o run -k "thread backtrace all" -k "quit 1"
+        -- $<TARGET_FILE:tidec_e2e_grid_bytes>)
+endif()
 tide_e2e_test(parallel) # Parallel loops over grids and lists
 tide_e2e_test(parallel_list_batch) # Independent output lanes preserve exact reductions, calls and snapshots
 tide_e2e_test(window_indices) # Task-local windows with global positions, offsets and partial writes
