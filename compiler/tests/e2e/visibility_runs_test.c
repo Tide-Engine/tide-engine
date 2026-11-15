@@ -18,12 +18,12 @@
 #include "tide/platform.h"
 #endif
 
-#define TICKS 14
+#define TICKS 20 // 12 of them past what the web's pool wakes its threads for (visibility_runs.tide, Stream)
 #define PLAYERS 4u
 // Every player's projection hash over TICKS ticks, hashed together, and the world's hash after them: the same on
 // every platform, build and thread count, memo on and off (the _memo_off and _checked variants pin them too)
-#define PROJECTIONS UINT64_C(0x7f45a59834dbf7e9)
-#define WORLD UINT64_C(0x6d0c8e3114ee5268)
+#define PROJECTIONS UINT64_C(0xf6f3458680485366)
+#define WORLD UINT64_C(0x6b6c361e1cf8925e)
 
 // A pool that's one thread saying it has eight: a round runs its work as
 // thread 1 first, which takes every task there is, and then as the caller's.

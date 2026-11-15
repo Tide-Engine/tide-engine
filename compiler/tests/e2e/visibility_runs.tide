@@ -26,7 +26,7 @@ enum Block : byte
 }
 
 const int SIZE = 16;
-const int LIFE = 9; // Ticks a chunk stays
+const int LIFE = 12; // Ticks a chunk stays
 
 component Chunk
 {
@@ -75,11 +75,12 @@ Block Natural(int3 cell, int ground)
     return cell.y == ground ? Block.Grass : Block.Dirt;
 }
 
-// Chunks come: 40 a tick, a group each, but each fifth pair shares one
+// Chunks come: 100 a tick, a group each, but each fifth pair shares one. So many that a tick's work passes what the web's
+// pool waits for before it wakes its threads (PARALLEL_WORK, three times the desktop's) on most ticks
 system Stream(mut Streams streams, Control control, Time time)
 {
     if (control.still) return;
-    for (var i = 0; i < 40; i++)
+    for (var i = 0; i < 100; i++)
     {
         var id = streams.next + i;
         mut var group = Visibility.CreateGroup(Audience.None);
@@ -92,7 +93,7 @@ system Stream(mut Streams streams, Control control, Time time)
                   visibility, Seen { group = group, player = (id + k) % 4 });
         }
     }
-    streams.next += 40;
+    streams.next += 100;
     streams.made.Add(streams.next);
 }
 

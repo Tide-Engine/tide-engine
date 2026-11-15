@@ -56,7 +56,7 @@ handlers are as they were.
 Tests (release, Windows; the owner had heavy suites go to CI for this task, so only what changed ran here):
 - `tidec_e2e_visibility_runs` (`compiler/tests/e2e/visibility_runs.tide`, `visibility_runs_test.c`), and the same game
   and test built with `TIDE_CLIENT_SPANS_CHECK` (`_checked`, every projection hash worked out twice) and with
-  `TIDE_CLIENT_MEMO_OFF` (`_memo_off`): 40 chunks a tick, each a `Grid3` of two chunks, a list and text, a group each
+  `TIDE_CLIENT_MEMO_OFF` (`_memo_off`): 100 chunks a tick (40 at first; 2026-11-15, as the web's pool goes to threads only past three times the desktop's work, `PARALLEL_WORK` in engine/src/jobs.c, and 40 never got there: CI's web runs failed the check that most ticks went to the pool), living 12 ticks over 20, each a `Grid3` of two chunks, a list and text, a group each
   but every fifth pair, which share one; `Generate` fills them and sets their groups, `Shift` hands chunks and groups to
   other players every third tick (a pair's two rows set their one group in one tick), `Grow` changes cells, the grid's
   second chunk, the list and the text on every machine, `Leave` destroys them. Checked: Chunk's and Streams' values
