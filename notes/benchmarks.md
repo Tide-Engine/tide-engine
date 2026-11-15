@@ -1,5 +1,14 @@
 # Benchmarks
 
+## What a server's projection checks read again (2026-11-15)
+
+`bench_voxels_counts` is `bench_voxels` built with `TIDE_CLIENT_COUNTS`: at the program's end it prints what the
+server's checks read again and why (pieces by their reason, rows, grids encoded, blocks hashed again and their bytes,
+pages looked at) and how long each part of a check took, over the whole run. The `bench_voxels_counts` test runs it
+quick with `bench_voxels`' pin (the counting changes no hash), so a counting build that breaks or crashes fails where
+it's built. The counting makes its timings no measure of the build without it: time with `bench_voxels`. The numbers it gave are in notes/netcode.md,
+top section.
+
 ## The server's store as files (2026-11-15)
 
 A benchmark of a game that uses the store (`bench_voxels`) takes `--files <folder>`: the server's store is the

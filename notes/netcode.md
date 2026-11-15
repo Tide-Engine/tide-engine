@@ -1,5 +1,106 @@
 # Netcode: sessions, prediction, commands
 
+## Projection hashes kept by blocks (2026-11-15, later)
+
+The pieces below left most of the check's reading to heap pages that changed for other entities' blocks: with 8 bots
+moving in `bench_voxels`, 62% of the pieces read were read for a heap page, 233k rows were read from the heap again for
+their pages alone and 14k grids encoded again for their directory's page. Now what's kept says which blocks it read
+(`client_state_codegen.inc`, `client_spans_codegen.inc`):
+
+- **A block, not a page** (`tide_client_item`: key, the page's hash, the block's own): a block smaller than a page in
+  a page of one place is kept by its key (`tide_client_key`: the page's place above 15 bits, below them its size class
+  plus one and its offset in 16 bytes; 0 there for a page whole, a list's chunk or a block of a page or more), with its
+  page's hash and the hash of its `16 << class` bytes (`tide_hash_wide`). Its class is its header's, or for a grid's
+  chunk, whose header is cells (grid.c), the one its reader says (`tide_grid_chunk_bytes`): the first build took a
+  chunk's class from its cells, hashed 16 bytes of a 4 KiB chunk and missed a cell written beyond them
+  (`visibility_pieces`, "a cell of a grid, where it is", caught it). `tide_client_item_same`: the page hashes as it did,
+  or it doesn't and the block's bytes do, in which case the page's hash now is kept in the item's place, so a page that
+  changed is hashed by its blocks once. Memo entries, rows' own pages and pieces' rows all keep items; a memo hit hands
+  its items (hashes and all) to the row that read the container, and `tide_client_memo_put` works out the rest.
+- **A piece**: its union of heap pages is as it was (sorted by heap and place now, so each heap is found once); a page
+  of it that hashes otherwise has each item of its rows in that page checked (`tide_client_piece_blocks_same`) and,
+  every one as it was, the page's new hash is kept and the piece passed over. In a piece read, a row's items are checked
+  as the piece's were, so a row is read from the heap again only where a block of its own changed.
+- **A slot's page** that changed (an entity of it came or went) has the snaps of the piece's rows whose slots are in it
+  looked at (`tide_client_piece_snaps_same`; each row keeps its slot and snaps as its identity was last hashed, and a
+  slot whose entity isn't the row's says it moved), so what says which entity a row is isn't hashed again for another
+  entity's turnover. 14.5k pieces were read for a slot page alone once the heap's reads stopped hiding them.
+- **The directory of groups** is copied entry by entry, as its list has them, live and dead
+  (`tide_client_groups_diff`): a chunk of the list whose page hashes as it did isn't read. An entry that moved (the map
+  packs its live entries once most are dead) takes both its old and new ids as changed: more audiences worked out
+  again, never fewer. The ids are sorted afterwards; the old merge's "ids go up" fallback is gone with it.
+- **What a piece's rows add to each player's sum** is kept with the piece (`route_players`, `route_sums`) while none of
+  its rows was read again or had its audience worked out again (`routed`); a piece adds it for the players asked.
+- A page's kept hash is read where it's of the bytes in use (`tide_client_page_hash`, as cached functions' keys read
+  it), with no call into heap.c (notes/runtime-ownership.md, Projection hashes kept by blocks).
+
+The hashes are of values, as before: no pin moved (`bench_voxels`' world hash, its bytes sent, every projection pin);
+`TIDE_CLIENT_SPANS_CHECK` (`bench_voxels_checked`, 8 bots and quick, `tidec_e2e_visibility_*_checked`) and
+`TIDE_CLIENT_MEMO_OFF` pass; kept rows are still exactly the world's at `tide_client_kept.tick`.
+
+**Measuring**: `TIDE_CLIENT_COUNTS` (`bench_voxels_counts`, built beside the bench and run quick as a test) counts what a server's
+checks read again and why, and how long each part took, printed at the program's end.
+
+**Measured** (`bench_voxels`, 8 bots, 30 s, 4 threads, release, Windows, BelowNormal, the machine shared with another
+agent's builds; three runs alternating before and after, medians, ranges in brackets): server hashing 18.1 to 9.5 ms
+a second (17.8–18.2 to 8.5–9.9), update median 1.08 to 0.96 ms (1.07–1.08 to 0.83–0.97), p99 6.48 to 5.71
+(6.27–6.73 to 5.54–5.81), simulate the same, the same bytes sent and world hash. Standing still (`--still 100
+--hop 0`, two runs each): hashing 1.56 to 0.80 ms a second, update median 0.11 to 0.10, p99 0.65 to 0.62. A bot's
+machine runs the same code for its own projection check (review, same day: three more alternating pairs, the same
+settings, before built from the parent commit's two codegen files): a client's hashing 1.41 to 0.82 ms a second
+(1.33–1.43 to 0.80–0.82), update median 0.17 to 0.17 ms (0.16–0.17 both), p99 2.63 to 2.33 (2.48–2.70 to 2.29–2.39);
+the server's hashing in those runs 17.8 to 9.8 (16.5–18.2 to 9.4–10.0); world hash 0x77babb9991dd25da and bytes sent
+the same in all six. Counted over a run (2,017 checks):
+
+| 8 bots moving | before | after |
+|---|---|---|
+| pieces read: a column's run / a heap page / a slot's page / nothing kept | 10,381 / 15,874 / 5,319 / 466 | 10,381 / 131 / 0 / 466 |
+| rows in pieces read | 1,845,659 | 533,328 |
+| rows read from the heap again (for their pages alone) | 284,188 (233,474) | 50,873 (159) |
+| grids encoded again | 14,026 | 4,472 |
+| blocks hashed again (found as they were) | 0 | 397k (391k), 209 MB |
+
+Rows fresh (something of them changed) 119,491 both. Where a check's 0.13 ms go now (a counting build, totals over
+the run): pieces checked 76 ms (blocks of changed pages 20, slots' snaps 8; 3.8M heap pages looked at, 25 a piece: a
+chunk's grid chunk is two to a page), rows of pieces read 118, audiences 27, sums 18 (41 before the routing kept),
+groups 12 (64 before the directory went by chunks), pieces kept 11. Standing still: 1.0 µs a check of rows read, 2.5 of
+pieces checked. `visibility_pieces_measure`: nothing changing 18.5 to 5.8 µs a check, every cell's `Cell` 803 to 745,
+every `Secret` 272 to 268.
+
+**Tests.** `tidec_e2e_visibility_blocks` (and `_checked`, `_memo_off`; `e2e/visibility_blocks.tide`, `_test.c`):
+1,200 plots each with a group, a grid of two chunks of 16 cubed (one in use), a map of 40 entries (the memo's) and one
+of 3, a small list; sixteen changes, each to a plot or the one made before it, whose blocks share its pages: the
+neighbour's grid chunk, then the plot's the tick after; the same for the small map and the big one, in place; the
+plot's grid gaining a chunk (its directory, among others'); its list let go, the neighbour given a list of the plot's
+old bytes where it was, then one of other bytes where the neighbour's own was; five groups of every eight destroyed, a
+group made (the directory packed), a group's audience whose entry moved; a plot snapped (`this.Snap()` in a system
+reading `Plot`: its slot's page changes by its snaps alone); a plot destroyed and another made in its slot.
+Quiet and with lists growing all over; each tick every player's hash against a copy's with nothing kept and repairs from
+what's kept against the rows'; each change shows, against a twin of the world without it, both hashed by copies and the
+twin given the world's `Control` (a public singleton, so before, every step "showed" by its step number:
+`visibility_pieces_test.c` had the same, fixed too; its quiet round shows every step that way). Pinned, the same in all
+three. Each of these fails it: a block's bytes not compared, a grid chunk's size from its header, a directory chunk
+taken as unchanged by its list alone, a piece's routing kept across its audiences worked out again, a piece's changed
+page taken as same without its blocks, a slot's page taken as same without its rows' snaps (the snap step). The pieces, runs, projection, hash memo, lists, groups, predicted and lifecycle
+fixtures, `tidec_e2e_grid_bytes` and `bench_voxels*` pass; `bench_voxels_checked` with 8 bots for 30 s too.
+
+**Corrections** (review, same day): the first version of this section said the snaps compare had no failing test,
+as `this.Snap()` on a plot changed no player's projection hash. It does: a snap of a live plot (step 16, run before
+the step that destroys the same target) shows against its twin, and with `|| slot->snaps != r->snaps[row]` removed
+from `tide_client_piece_snaps_same` the fixture fails at that step (player 0's kept hash isn't the world's, and its
+repair isn't the rows'). Snapping in `Change` (`mut Plot`) shows as well. The earlier attempt's cause wasn't kept; the
+likeliest is a snap of a target already destroyed by step 14. A row whose entity has no slot (`tide_entity_slot_index`
+gives `UINT32_MAX`: not on a server, whose tables hold no AWAY entities) gathered slot page `UINT32_MAX >> 10`, which
+hashes 0 forever, so the slot the entity got later went unseen while its row and entity column stayed; such a row now
+makes its piece not kept (`poisoned`), as a row that read outside the heaps does. No test reaches that state through
+the language. `bench_voxels_counts` runs as a test now (notes/benchmarks.md).
+
+**Left**: a container that changes is still encoded whole (`Streamer.chunks`, 6,490 entries, 105 µs): a tree of its chunks would
+be another function of its value, and every projection pin would move, so it isn't done here; resuming its hash from a
+kept prefix would need `tide_hash` to be resumable at a chunk's edge. Heap pages looked at are a piece's whole union
+each call (25 a piece in voxels); a heap's pages written since the last call, kept by the runtime, would let a piece
+look at none.
+
 ## Projection hashes kept 64 rows at a time (2026-11-15)
 
 The tick's check (`tide_game_client_hashes`, `client_spans_codegen.inc`) kept what a table chunk's 1,024 rows came to,
@@ -110,7 +211,8 @@ counting build): the chunks' table 0.20 (rows of pieces read 0.16, of which grid
 checks 0.02, their keeps 0.02), the directory's copy 0.03, routing 0.02, the dimensions' `Streamer` maps 0.02,
 audiences 0.01; the world's hash 0.03.
 
-**Left**: 62% of the pieces read (19k of 30k over the run) are read because a heap page of theirs changed under them:
+**Left** (taken on in the section above, Projection hashes kept by blocks): 62% of the pieces read (19k of 30k over
+the run) are read because a heap page of theirs changed under them:
 another entity's block in the same 16 KiB page (a grid's directory is a few hundred bytes, fifty to a page; a
 Visibility's policies are two small lists), so 248k rows were hashed again with nothing of theirs changed, and 17.6k
 grids encoded again for their directory's page. Next: keep, for blocks smaller than a page, their bytes' hash beside the

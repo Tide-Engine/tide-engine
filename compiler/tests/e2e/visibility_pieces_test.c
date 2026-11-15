@@ -144,9 +144,18 @@ TIDE_TEST(visibility_pieces_pass_over_only_what_is_as_it_was)
             world.Control.target = STEPS[i].target + noisy * 12;
             tick_and_check(STEPS[i].what);
             tide_world_tick(&twin);
+            // (Both hashed with nothing kept, by copies: worlds of their own, whose memos go with them; and the twin
+            // with the world's Control, a public singleton, so only what the step changed tells them apart)
+            twin.Control = world.Control;
             uint64_t with[PLAYERS], without[PLAYERS];
-            hashes(&world, with);
-            hashes(&twin, without);
+            memset(&fresh, 0, sizeof fresh);
+            tide_world_copy(&fresh, &world);
+            hashes(&fresh, with);
+            tide_world_free(&fresh);
+            memset(&fresh, 0, sizeof fresh);
+            tide_world_copy(&fresh, &twin);
+            hashes(&fresh, without);
+            tide_world_free(&fresh);
             bool shows = false;
             for (uint32_t p = 0; p < PLAYERS; p++) shows |= with[p] != without[p];
             if (!shows) printf("    %s: no player's projection changed\n", STEPS[i].what);

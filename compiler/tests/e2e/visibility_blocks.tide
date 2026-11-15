@@ -1,0 +1,106 @@
+// Projection hashes kept by blocks smaller than a page (client_state_codegen.inc, tide_client_item): a row, a
+// piece of 64 rows or a container in the memo whose heap page changed has the blocks of it that it read hashed
+// again, and is taken as it was where they're as they were. What could make that wrong, one change at a time: a
+// block changed in place beside a neighbour's that changed the tick before, in a page they share (a grid's chunk,
+// two to a page; a small map, a big one in the memo, a grid's directory); a block let go and another made in its
+// place with the same bytes, then with others; the directory of groups packed together, its entries moved; an
+// entity gone and another made in its slot. The test (visibility_blocks_test.c) checks each
+// tick that every player's projection hash is the one a copy of the world hashes to with nothing kept, and that a
+// repair by what changed is the same from what the tick's check kept as from the rows themselves.
+
+settings { maxPlayers = 4; }
+
+enum Block : byte
+{
+    Air,
+    Stone,
+    Sand
+}
+
+const int PLOTS = 1200; // Their groups' entries more than a chunk of the directory's list (682 to a chunk)
+
+component Plot
+{
+    int id;
+    VisibilityGroup group;
+    Grid3<Block> ground = Grid3(32, 16, 16); // One chunk of 16 cubed in use of two: two chunks to a heap page
+    Map<int, int> marks;                     // 40 entries: a container the memo keeps (256 bytes or more)
+    Map<int, int> few;                       // 3: read with its row
+    List<int> items;                         // Two, a small block each, hundreds to a page
+}
+
+// What the test asks of a tick (visibility_blocks_test.c, STEPS)
+singleton Control
+{
+    int step;
+    int target;     // The plot the step changes...
+    int other;      // ...and the one beside it, made just before it: their blocks share the target's pages
+    bool noise;     // Lists grow all over, so pages change under every piece
+}
+
+void MakePlot(int id)
+{
+    var group = Visibility.CreateGroup(Audience.Only(PlayerID(id % 4)));
+    Spawn(Plot { id = id, group = group }, Visibility { group = group });
+}
+
+event(Spawned) Fill(mut Plot plot)
+{
+    plot.ground[plot.id % 16, 0, 0] = Block.Stone;
+    for (var k = 0; k < 40; k++) plot.marks[k] = plot.id + k;
+    for (var k = 0; k < 3; k++) plot.few[k] = plot.id * k;
+    plot.items = [plot.id, plot.id + 1];
+}
+
+event(Spawned) Setup(with Main)
+{
+    for (var id = 0; id < PLOTS; id++) MakePlot(id);
+}
+
+scene Main { }
+
+// The step's change to its plot, or to the one beside it
+system Change(mut Plot plot, Control control)
+{
+    if (plot.id == control.other) {
+        if (control.step == 1) plot.ground[2, 3, 4] = Block.Sand;      // The neighbour's grid's chunk, in the target's page
+        if (control.step == 3) plot.few[1] = plot.few[1] + 5;          // The neighbour's small map, in place
+        if (control.step == 5) plot.marks[7] = plot.marks[7] + 1;      // The neighbour's big map, in place
+        if (control.step == 9) plot.items = [control.target, control.target + 1]; // What the target had, where it was
+        if (control.step == 10) plot.items = [plot.id * 3, 7];         // ...then other bytes, where this one's was
+    }
+    if (plot.id != control.target) return;
+    if (control.step == 2) plot.ground[2, 3, 4] = Block.Sand;          // Its grid's chunk, where it is
+    if (control.step == 4) plot.few[1] = plot.few[1] + 9;              // An entry of its small map, where it is
+    if (control.step == 6) plot.marks[7] = plot.marks[7] + 3;          // An entry of its big map, where it is
+    if (control.step == 7) plot.ground[20, 3, 4] = Block.Stone;        // Its grid gains a chunk: its directory changes
+    if (control.step == 8) plot.items = [];                            // Its list, let go
+    if (control.step == 13) Visibility.Set(plot.group, Audience.Only(PlayerID(2))); // A group's audience, its entry moved
+}
+
+// The directory of groups: most of them gone (five of every eight), then one made, which packs the live ones together
+system Thin(Plot plot, Control control)
+{
+    var kind = plot.id % 8;
+    if (control.step == 11 && kind != 0 && kind != 4 && kind != 7) Visibility.DestroyGroup(plot.group);
+}
+
+system Grow(Control control)
+{
+    if (control.step == 12) MakePlot(PLOTS + 1);
+    if (control.step == 15) MakePlot(PLOTS + 2);
+}
+
+// An entity snapped (its slot's snaps, in a slot page no other entity changed: only the snaps tell its piece), then
+// gone, and another made in its slot
+system Turnover(Plot plot, Control control)
+{
+    if (control.step == 16 && plot.id == control.target) this.Snap();
+    if (control.step == 14 && plot.id == control.target) this.Destroy();
+}
+
+// Pages that change under pieces: a list here and there grows, in blocks of the heap's beside other plots'
+system Noise(mut Plot plot, Control control, Time time)
+{
+    if (control.noise && (plot.id + time.tick) % 61 == 0) plot.items.Add(time.tick);
+}
