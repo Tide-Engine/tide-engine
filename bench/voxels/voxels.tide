@@ -38,6 +38,10 @@ enum Block : byte
 }
 
 const int SIZE = 16;        // Cells along a chunk's side
+// The box of chunks a player has, in a build that says another (--define VOXELS_NEAR=8): the version to play has
+// no flags, and a wider view is measured with one (notes/voxels.md, At scale). The bench sets its own (--near)
+const int NEAR = define(VOXELS_NEAR, 4);
+const int TALL = define(VOXELS_TALL, 2);
 const float SPEED = 12;     // Cells a second, flying
 const float WALK = 5;       // ...and on foot
 const float GRAVITY = 24;
@@ -73,8 +77,8 @@ component Streamer
 singleton Worlds
 {
     List<Entity> dimensions;
-    int near = 4;       // Chunks a player has around them, sideways...
-    int tall = 2;       // ...and up and down
+    int near = NEAR;    // Chunks a player has around them, sideways...
+    int tall = TALL;    // ...and up and down
     int count = 2;      // Dimensions
     int keep = 600;     // Ticks between saves of a chunk players changed, while it's held
     int linger = 120;   // Ticks a chunk nobody has stays before it goes

@@ -240,6 +240,8 @@ struct machine {
     double tick_ms, copy_ms, hash_ms, pack_ms, unpack_ms;
     uint64_t ticks, copies, hashes, packs, unpacks;
     uint64_t bytes;
+    // ...and of that, by what a datagram is (KINDS): bytes and datagrams
+    uint64_t kind_bytes[3], kind_count[3];
     counted **wires; // Its transports, counting
     uint32_t wire_count;
 };
@@ -456,10 +458,19 @@ static bool timed_unpack_delta(void *world, const void *base, const uint8_t *dat
     return ok;
 }
 
+// What a session's datagram is, from its header's fourth byte (session.c's MSG_*): a part of a world or of a repair
+// (MSG_CHUNK) or of a download (MSG_DOWNLOAD), a server's ticks or a client's inputs (MSG_SERVER, MSG_CLIENT), or
+// anything else. Only for the report: a protocol that numbers them otherwise counts them as other.
+enum { KIND_WORLD, KIND_TICKS, KIND_OTHER };
+
 static void counted_send(void *self, const tide_address to, const void *data, const uint32_t size)
 {
     counted *c = self;
     c->owner->bytes += size;
+    const uint8_t type = size >= 4u ? ((const uint8_t *)data)[3] : 0u;
+    const uint32_t kind = type == 4u || type == 11u ? KIND_WORLD : type == 5u || type == 6u ? KIND_TICKS : KIND_OTHER;
+    c->owner->kind_bytes[kind] += size;
+    c->owner->kind_count[kind]++;
     c->inner.send(c->inner.self, to, data, size);
 }
 
@@ -671,6 +682,7 @@ typedef struct side {
     double simulate_ms, hash_ms, snapshot_ms, pack_ms, unpack_ms;
     double ticks, hashes, snapshots, packs, unpacks; // Calls
     double sent;                                     // Bytes
+    double kind_sent[3], kind_datagrams[3];          // ...by what the datagrams are, and how many
     double update_ms;                                // All of its updates
 } side;
 
@@ -734,6 +746,8 @@ static side side_of(const machine *m, const double seconds)
         .packs = (double)m->packs / s,
         .unpacks = (double)m->unpacks / s,
         .sent = (double)m->bytes / s,
+        .kind_sent = {(double)m->kind_bytes[0] / s, (double)m->kind_bytes[1] / s, (double)m->kind_bytes[2] / s},
+        .kind_datagrams = {(double)m->kind_count[0] / s, (double)m->kind_count[1] / s, (double)m->kind_count[2] / s},
     };
 }
 
@@ -750,6 +764,10 @@ static void add_side(side *to, const side *from)
     to->packs += from->packs;
     to->unpacks += from->unpacks;
     to->sent += from->sent;
+    for (uint32_t k = 0; k < 3u; k++) {
+        to->kind_sent[k] += from->kind_sent[k];
+        to->kind_datagrams[k] += from->kind_datagrams[k];
+    }
 }
 
 static void collect(results *r, machine *bots_machines, const uint32_t bots, const bench_desc *d, const tide_shards *shards,
@@ -819,6 +837,10 @@ static void collect(results *r, machine *bots_machines, const uint32_t bots, con
         sum.copies += m->copies;
         sum.unpacks += m->unpacks;
         sum.bytes += m->bytes;
+        for (uint32_t k = 0; k < 3u; k++) {
+            sum.kind_bytes[k] += m->kind_bytes[k];
+            sum.kind_count[k] += m->kind_count[k];
+        }
         seconds += r->played - m->created;
         const tide_client *home = home_of(m);
         const tide_client_status s = tide_client_status_of(home);
@@ -971,6 +993,17 @@ static void print_results(const results *r, const uint32_t bots, const bool held
     }
     print_bytes(", a client ", r->client.sent);
     printf("\n");
+    if (bots && !r->sharded) {
+        // To each bot: the worlds and repairs it's sent in parts, and the ticks (their hashes, the players' inputs,
+        // events), each datagram with its header and whatever was sent again
+        const side *s = &r->server;
+        print_bytes("  to each bot: worlds and repairs ", s->kind_sent[KIND_WORLD] / bots);
+        printf(" (%.1f datagrams)", s->kind_datagrams[KIND_WORLD] / bots);
+        print_bytes(", ticks ", s->kind_sent[KIND_TICKS] / bots);
+        printf(" (%.1f)", s->kind_datagrams[KIND_TICKS] / bots);
+        print_bytes(", other ", s->kind_sent[KIND_OTHER] / bots);
+        printf(" a second\n");
+    }
     if (held) {
         printf("  a bot's machine held %.0f on average, %u at most", r->held_mean, r->held_most);
         if (r->sharded) printf(", following %.2f shards", r->followed);

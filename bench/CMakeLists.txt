@@ -47,6 +47,14 @@ add_test(NAME bench_voxels_counts COMMAND bench_voxels_counts --quick --expect 0
 # Voxels to play: `voxels` in a window, with its views, the mouse and the keys
 if(TIDE_PLATFORM)
     tide_add_game(voxels SOURCES voxels/voxels.tide voxels/play.tide TITLE "Tide voxels" STATS)
+    # The same with a wider view, and logging each frame what chunks it has and how many still have no faces
+    # (play.tide's Measure): -DTIDE_VOXELS_VIEWS="4;8;12" makes voxels_near4, voxels_near8 and voxels_near12.
+    # None by default (notes/voxels.md, At scale)
+    set(TIDE_VOXELS_VIEWS "" CACHE STRING "Chunks each way of the voxels_near<n> builds that measure a wider view")
+    foreach(near IN LISTS TIDE_VOXELS_VIEWS)
+        tide_add_game(voxels_near${near} SOURCES voxels/voxels.tide voxels/play.tide NAME voxels TITLE "Tide voxels" STATS
+                      DEFINES VOXELS_NEAR=${near} VOXELS_MEASURE=1)
+    endforeach()
     # Two players walking apart for 45 s, in a run with no window: chunks go from both machines as they walk, and
     # the faces beside them are made again (play.tide's Leaving), and the second digs through chunks' sides. No
     # chunk's faces stay made from a neighbour's side that has changed since (play.tide's own check logs it). Its
