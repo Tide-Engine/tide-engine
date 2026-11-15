@@ -397,6 +397,62 @@ TIDE_TEST(storage_await_waits_across_a_pack_and_a_rewind)
     forget_files();
 }
 
+// Hot reloading while the tasks wait: new code of the same layout, then another layout carried over by copying the
+// world. The tables swapped out are zeroed, so anything still using them would fail. The batches on their way are
+// taken by the build that runs when they're ready, and the tasks, carried over, get their answers once each
+static tide_game builds[3];
+static int migrations;
+
+static bool copy_over(void *user, const void *from, void *to)
+{
+    (void)user;
+    migrations++;
+    tide_world_copy(to, from);
+    return true;
+}
+
+TIDE_TEST(storage_await_waits_across_a_hot_reload)
+{
+    forget_files();
+    put_locked();
+    for (int i = 0; i < 3; i++) builds[i] = tide_game_api;
+    builds[2].hash ^= 1u; // Another layout
+    tide_session *alone = tide_session_create(&(tide_session_desc){.game = &builds[0], .tick_rate = 60, .sample = sample, .io = &deferred});
+    TIDE_REQUIRE(alone != NULL);
+    double t = 0.0;
+    tide_session_start(alone, NULL, t);
+    for (int frame = 0; frame < 60; frame++) {
+        t += 1.0 / 60.0;
+        tide_session_update(alone, t);
+        const tide_world *server = tide_session_server_world(alone);
+        if (server && server->Time.tick >= 8) break;
+    }
+    const tide_world *server = tide_session_server_world(alone);
+    TIDE_REQUIRE(server != NULL && server->Time.tick >= 8 && posted_count >= 3 && server->Vault.finished == 0);
+    TIDE_REQUIRE(tide_session_can_reload(alone));
+    tide_session_set_game(alone, &builds[1]);
+    memset(&builds[0], 0, sizeof builds[0]);
+    run_posted(); // Tick 2's saves and tick 4's asks, for the new build to take
+    for (int frame = 0; frame < 3; frame++) {
+        t += 1.0 / 60.0;
+        tide_session_update(alone, t);
+    }
+    migrations = 0;
+    TIDE_REQUIRE(tide_session_migrate(alone, &builds[2], copy_over, NULL));
+    TIDE_CHECK(migrations >= 1);
+    memset(&builds[1], 0, sizeof builds[1]);
+    for (int frame = 0; frame < 300; frame++) {
+        t += 1.0 / 60.0;
+        tide_session_update(alone, t);
+        if (frame % 3 == 2) run_posted();
+    }
+    server = tide_session_server_world(alone);
+    TIDE_REQUIRE(server != NULL);
+    check_world(server);
+    tide_session_destroy(alone);
+    forget_files();
+}
+
 // An answer whose task is gone (its entity went, or nothing ever waited for it) changes nothing
 TIDE_TEST(storage_await_answer_for_no_task_changes_nothing)
 {
