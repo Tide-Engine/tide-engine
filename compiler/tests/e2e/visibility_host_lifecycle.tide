@@ -6,8 +6,14 @@
 // hidden from the guest, then destroyed a second later; 3 is hidden from it and
 // destroyed in one tick, as a chunk nobody has goes (bench/voxels' Drop), by an
 // event the guest can't predict; 4 is only hidden; 5 is hidden and destroyed in
-// one tick by its own system, which the guest runs too. The clock that sends 3
-// its event is hidden from every player, so only the host hears its changes.
+// one tick by its own system, which the guest runs too; 6 only loses a
+// component (Mark). The clock that sends 3 its event is hidden from every
+// player, so only the host hears its changes. Pieces 1 and 3 are the host's
+// player's, 5 the guest's.
+//
+// What two scene preparations spawn, by their n: one the match's first tick
+// asks for, before the guest has joined, and one in play, which the guest's
+// partial world can't prepare itself.
 
 settings { maxPlayers = 2; }
 
@@ -17,6 +23,19 @@ component Piece
     VisibilityGroup group;
     local int weight; // What Forgotten counts, kept while the piece is there
 }
+
+// Piece 6's, taken away as 2 and 4 are hidden: its handlers alone hear Hidden
+component Mark { }
+
+component Prepared { int n; }
+
+scene Region
+{
+    int n;
+    prepare() { Spawn(Prepared { n = n }, Visibility); }
+}
+
+const int PREPARE = 150;
 
 // Nobody's to see: what sends kind 3 its Expire, so a guest's own ticks never do
 component Clock { int ticks; }
@@ -33,21 +52,27 @@ const int GO = 240;
 event(Spawned) Setup(with Main)
 {
     Spawn(Clock, Visibility { group = Visibility.CreateGroup(Audience.None) });
+    Scene.Load(Region { n = 1 });
 }
 
 system Begin(Time time, with Main)
 {
+    if (time.tick == PREPARE) Scene.Load(Region { n = 10 });
     if (time.tick != SPAWN) return;
-    for (var kind = 1; kind <= 5; kind++)
+    for (var kind = 1; kind <= 6; kind++)
     {
         var group = Visibility.CreateGroup(Audience.All);
-        Spawn(Piece { kind = kind, group = group }, Visibility { group = group });
+        var piece = Spawn(Piece { kind = kind, group = group }, Visibility { group = group });
+        if (kind == 1 || kind == 3) piece.Add(Owner { player = PlayerID(0) });
+        if (kind == 5) piece.Add(Owner { player = PlayerID(1) });
+        if (kind == 6) piece.Add(Mark);
     }
 }
 
 system Hide(Time time, Piece piece)
 {
     if (time.tick == HIDE && (piece.kind == 2 || piece.kind == 4)) Visibility.Set(piece.group, Audience.None);
+    if (time.tick == HIDE && piece.kind == 6) this.Remove(Mark);
 }
 
 system Retire(Time time, Piece piece)
@@ -96,6 +121,15 @@ local singleton Heard
     int forgotten;
     int changes;
     int sureChanges;
+    int destroyedMine; // ...of pieces this machine's player owns
+    int destroyedRows; // The pieces a Destroyed handler's query had, a digit a kind, summed over its runs
+    int destructions; // ...and its runs
+    int markShown;
+    int markHidden;
+    int sureMarkHidden;
+    int prepared; // What the preparations spawned, by their n
+    int surePrepared;
+    int preparedShown;
 }
 
 int Weight(int kind)
@@ -122,3 +156,17 @@ local event(verified Destroyed) SureDestroyed(Piece piece, mut Heard heard) { he
 local event(Forgotten) HearForgotten(Piece piece, mut Heard heard) { heard.forgotten += piece.weight; }
 local event(Changed<Clock.ticks> change) HearTick(mut Heard heard) { heard.changes += change.value - change.old; }
 local event(verified Changed<Clock.ticks> change) SureTick(mut Heard heard) { heard.sureChanges += change.value - change.old; }
+local event(Destroyed) DestroyedMine(Piece piece, mut Heard heard, with ownership) { heard.destroyedMine += Weight(piece.kind); }
+
+local event(Destroyed) DestroyedRows(with Piece, mut Heard heard, query (Piece p) pieces)
+{
+    heard.destructions += 1;
+    foreach (var row in pieces) heard.destroyedRows += Weight(row.p.kind);
+}
+
+local event(Shown) MarkShown(with Mark, mut Heard heard) { heard.markShown += 1; }
+local event(Hidden) MarkHidden(with Mark, mut Heard heard) { heard.markHidden += 1; }
+local event(verified Hidden) SureMarkHidden(with Mark, mut Heard heard) { heard.sureMarkHidden += 1; }
+local event(Spawned) HearPrepared(Prepared prepared, mut Heard heard) { heard.prepared += prepared.n; }
+local event(verified Spawned) SurePrepared(Prepared prepared, mut Heard heard) { heard.surePrepared += prepared.n; }
+local event(Shown) ShowPrepared(Prepared prepared, mut Heard heard) { heard.preparedShown += prepared.n; }

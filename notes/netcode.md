@@ -823,6 +823,14 @@ permitted match state. Leaving/restart/rewind/reload drain and discard private j
 Progress endpoints are available to views while initial baseline preparation is still connecting, without promoting
 them to verified state. Tests and validation: language.md, Deterministic scene preparation.
 
+Correction (2026-11-15): a projected client at a pending load asked for the server's world at `heard_tick`, the
+latest tick it had heard of, but the server answers a repair only of the endpoint just past what the client confirmed
+(`repair_tick == frame_ack + 1`), and the client asks once. Where frames past the preparation's tick had come by then
+(a hosted match, whose server goes on at once after a quick preparation), it waited at that tick for good, its
+prediction stopped. It asks for `verified + 1` now. `tidec_e2e_visibility_host_lifecycle` has a preparation in play:
+the guest stopped at tick 151 before, and now takes the prepared world once (one resync). That guest hears `Shown`
+for what the preparation spawned and no `Spawned`, as the frame whose journal has it is the one it doesn't run: open.
+
 ## Bans (2026-11-04)
 
 The owner's ask, from mount-and-rifle, whose host re-kicked banned PlayerIDs
@@ -1270,7 +1278,7 @@ Tests: `net_a_host_with_another_player_ticks_once` also checks the host's player
 
 What changes for games: the host's views and local code see the whole match, hidden entities included (the spec's State visibility now says so; whether its views should be masked by its player's audience is Open there). Its local handlers hear every match event, including events from hidden state, which `hears_match_events` no longer decides. `tide_client_status.run_ticks`/`ahead_ticks` stay 0 for the host. The other machines are unchanged.
 
-Correction (2026-11-15): in a game that hides state, `all` had the match's own events but no genuine `Spawned` or `Destroyed`, no destruction cause and no `Changed<...>`: the generated lifecycle hearing wrote only the players' journals while `tick_client_events` ran. So the host heard neither lifecycle event and ran `Hidden` for every entity the match destroyed. Fixed in the generated C (`tide_client_all`; notes/verified-and-local-handlers.md, top section), tested by `tidec_e2e_visibility_host_lifecycle`. `tick_begin` now also clears what a scene's preparation sent when no player of the server's own is level to take it, where it used to keep it for good.
+Correction (2026-11-15): in a game that hides state, `all` had the match's own events but no genuine `Spawned` or `Destroyed`, no destruction cause and no `Changed<...>`: the generated lifecycle hearing wrote only the players' journals while `tick_client_events` ran. So the host heard neither lifecycle event and ran `Hidden` for every entity the match destroyed. Fixed in the generated C (`tide_client_all`; notes/verified-and-local-handlers.md, top section), tested by `tidec_e2e_visibility_host_lifecycle`. `tick_begin` now also clears what a scene's preparation sent where no player of the server's machine takes what's heard (`heard_here`: a dedicated server, a shard, a host that doesn't call `tide_session_events`), where it used to keep it for good; for a host whose player is there but not level yet it waits, as before (the review's correction: the first cut cleared it there too).
 
 Gaps:
 - A lone developer no longer gets the twin's desync check (the host's client hashing its own run of each tick against the server's). Nondeterminism shows only with another machine in (`--players 2`, the networking tests). An opt-in check (running the twin again) was offered to the owner and isn't built.
