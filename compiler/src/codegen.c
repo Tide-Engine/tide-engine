@@ -22364,6 +22364,11 @@ static void gen_system_run(gen *g, const decl *sys)
             // One changed in runs: the run's own heap, which has what its rows let go of
             if (owner && owner->heap_runs) {
                 sb_printf(&flush, " tide_heap_flush(tide_heaps_of(&tide_w->heap, %uu | tide_heap_run_where >> TIDE_WHERE_HEAP_SHIFT));", id);
+            } else if (!owner && system_logs_groups(sys) && system_heap_runs(sys)) {
+                // The match's own heap, whose groups' audiences its rows set: on threads they log them (a row
+                // changes nothing of it, and the threads' rows mustn't flush it at once), on one thread they set
+                // them where they are
+                sb_printf(&flush, " if (!tide_task_gather) tide_heap_flush(tide_heaps_of(&tide_w->heap, %uu));", id);
             } else sb_printf(&flush, " tide_heap_flush(tide_heaps_of(&tide_w->heap, %uu));", id);
         }
         // A gathering system's runs on threads change no heap: the log does, a row at a time

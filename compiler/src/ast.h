@@ -883,6 +883,7 @@ typedef struct decl {
     // anything else of it changes the match's own heap (a NULL owner above), which keeps its rows in order
     bool sets_groups;
     bool match_heap_written;
+    bool writes_text_at_logged; // writes_text_at is a logged Set's, which keeps nothing in order: the next write's goes there
     // A component's, singleton's or event's: the id of the heap its text, lists and grids are in, 0 for the
     // match's own (assign_heaps in check.c), and whether C can write it, which keeps it there
     uint16_t heap_id;

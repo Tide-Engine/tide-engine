@@ -637,7 +637,7 @@ feature, not designed.
 - **No `SetPrevious`, and nothing for a system's own parameter** (`previous Body mine`): its own entity through
   the World (`world.GetPrevious<Body>(this)`) does it. Views, local handlers and tasks take none of it.
 - **A kept heap is its owner's whole heap**, copied (page references) every tick and its set made again.
-  Components C can write, and every component of a game with shards or hidden state, keep the match's one heap.
+  Components C can write, and every component of a game with shards or hidden state (hidden state: no longer, 2026-11-14, the top section), keep the match's one heap.
 - **A list or map of text in a `previous` row is copied to the scratch area for each row** whose lanes of it
   are read (as a `verified` value's is), and a `parallel` loop over rows of such a component stays on one
   thread whether or not its steps read them.
@@ -733,7 +733,7 @@ What it is:
   is grows the table under the same lock. `tide_heap_write` reads the table as `tide_heap_block` does.
 - **The compiler** (`rows_independent`, `system_splits_in_order`, `system_heap_runs` in `parallel.c`): a system
   that changes text or lists splits in order as one that queues does, unless one of its owners (`heap_owners`) is
-  in the match's one heap (C can write it, or the game has shards or hidden state: no runs there), or holds a grid
+  in the match's one heap (C can write it, or the game has shards or hidden state, the latter no longer since 2026-11-14: no runs there), or holds a grid
   (no longer, 2026-11-14), or it starts tasks. `tide schedule` and the editors say which (`system_one_thread`). `gen_system` wraps the
   ordered walk in the runs' loop, flushes the run's heap after each row, and joins in the task when it had every
   run, else in `tide_done_<System>`, which such a system now always has.
@@ -1193,7 +1193,7 @@ Built:
   and every owner that can't have its own: the engine's built-in types and scenes; **an owner C can write** (one a
   system written in C takes `mut`, or that code hands, whole or in part, to a `mut` or `out` parameter of a callee
   that reaches C: `c_lend`, `decl.c_written`), since C says `TIDE_IN_MATCH` for what it writes, so packages' and
-  games' C is as it was; and every owner of a game with shards or hidden state, whose generated code packs and reads
+  games' C is as it was; and every owner of a game with shards or hidden state (hidden state: no longer, 2026-11-14, the top section), whose generated code packs and reads
   one heap (`shard_*.inc`, `client_state_codegen.inc`). The generated header has `TIDE_WHERE_<Type>` for each owner,
   which C that writes a field of one it wasn't handed says instead of `TIDE_IN_MATCH` (tests that poke a world do).
 - **Generated code** (`decl_where`, `place_where` in `compiler/src/codegen.c`): a place in a component's or

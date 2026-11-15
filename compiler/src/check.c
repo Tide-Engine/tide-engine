@@ -1422,7 +1422,11 @@ static void note_heap_owner(decl *code, const decl *owner)
 
 static void note_heap_writer(decl *sys, const loc at, const decl *owner)
 {
-    if (!sys->writes_text) sys->writes_text_at = at; // The first: what the schedule names
+    // The first: what the schedule names, but a logged Set's (visibility_match), which keeps no rows in order
+    if (!sys->writes_text || sys->writes_text_at_logged) {
+        sys->writes_text_at = at;
+        sys->writes_text_at_logged = false;
+    }
     sys->writes_text = true;
     if (!owner) sys->match_heap_written = true;
     note_heap_owner(sys, owner);

@@ -40,7 +40,10 @@ static bool visibility_match(checker *c, const expr *e, const bool set, bool *lo
     if (set && sys && sys->kind == DECL_SYSTEM && !c->method && sys->per_entity && !sys->is_view && !sys->is_handler && !c->parallel
         && !c->block_depth && !c->prog->shards) {
         // The shared directory is in the match's own heap; what its rows set there is set from their log
-        if (!sys->writes_text) sys->writes_text_at = e->at;
+        if (!sys->writes_text) {
+            sys->writes_text_at = e->at;
+            sys->writes_text_at_logged = true; // ...until a write that does keep its rows in order (note_heap_writer)
+        }
         sys->writes_text = true;
         sys->sets_groups = true;
         note_heap_owner(sys, NULL);
