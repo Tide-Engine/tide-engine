@@ -1,5 +1,22 @@
 # The schedule and the tick on threads
 
+## From the review of heaps per owner in games that hide state (2026-11-15)
+
+- **Rows on threads flushed heap 0 at once.** A system whose rows log their `Visibility.Set` (`system_logs_groups`) has the
+  match's own heap as an owner (`visibility_match`'s NULL), and every row flushed it, on every thread: `tide_heap_flush` has
+  no lock, so where heap 0 had blocks waiting two threads could free one block twice. Now that owner's per-row flush is
+  `if (!tide_task_gather)`: on threads the rows log and change nothing of heap 0, and `done`'s `tide_heap_runs_join`
+  flushes it on one thread.
+- **What left heap 0 blocks waiting**: an extern system changing a C-writable owner's list (Box2D's `CheckTopology`)
+  had no edge to Tide systems changing heap 0, as `check_extern_system` listed no heap owners; it now lists each `mut`
+  owner that holds heap data (C-writable, so in heap 0), and waits for heap 0's other writers and they for it
+  (`schedule/extern_system`: `Read` and `Note` now after `Topo`). And a projection's load and reload ended with what
+  reading it outgrew still waiting; both flush now, as `apply_client_changes` did (`visibility_lists`' loaded world
+  hash moved to `0xfe749b4295d1dd8e`).
+- The schedule named a logged `Set` as where a system that stays on one thread first changes heap 0
+  (`writes_text_at`); it names the write that does keep it there (`writes_text_at_logged`). docs/game/schedule.md says
+  what keeps such a system on one thread.
+
 ## Keys by run and logged group sets, together (2026-11-15)
 
 The two sections below were built apart and broke merged: `tidec_e2e_visibility_runs` on the real pool gave another world
