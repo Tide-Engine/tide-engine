@@ -469,6 +469,12 @@ typedef struct tide_server_desc {
     // server. NULL: nothing is kept, so saves go nowhere and every load finds
     // nothing.
     const struct tide_io *io;
+    // A host that keeps the match's store itself, in place of `io`'s files (a
+    // managed match's service: tide/managed_run.h): each tick's requests go to
+    // it as the tick ends, in order, and it answers loads and listings later
+    // with tide_server_store_answer, which the server gives to ticks in the
+    // order they were asked. It outlives the server. NULL: `io` keeps it.
+    const struct tide_storage_host *store;
     // With `world`: what the match's start asked of the store where the host
     // ran the start itself, on the world it gives (a sharded world's root,
     // tide_shards; bound to it with tide_storage_bind as it ran), carried out
@@ -528,6 +534,14 @@ void tide_server_destroy(tide_server *s);
 // Reads what arrived, runs the ticks that are due, and sends each player what's new.
 void tide_server_update(tide_server *s, double now);
 const void *tide_server_world(const tide_server *s);
+// The answer of the host that keeps the store (tide_server_desc.store) to the
+// load or listing its requests numbered `number` (tide_storage_host): it goes
+// to the first tick after it and every answer asked before it are in.
+// tide_storage_answer says what's checked: false, and nothing changed, for one
+// that answers nothing waiting, or isn't the request's answer. Between
+// updates, on the thread that updates the server.
+bool tide_server_store_answer(tide_server *s, uint64_t number, uint32_t outcome, const uint8_t *data, uint32_t size,
+                              bool more);
 uint32_t tide_server_tick(const tide_server *s); // Ticks run so far
 uint32_t tide_server_player_count(const tide_server *s);
 // Host recovery metadata, separate from deterministic world bytes. Save together

@@ -165,17 +165,20 @@ void tide_storage_ask(const void *world, const uint32_t kind, const tide_str key
     *request_room(s) = r;
 }
 
+// A copy of `from`'s request `r` at the end of `to`'s
+static void copy_request(tide_storage *to, const tide_storage *from, const tide_storage_request *r)
+{
+    tide_storage_request moved = *r;
+    moved.key = room_for(to, r->key_size);
+    if (r->key_size) memcpy(to->bytes + moved.key, from->bytes + r->key, r->key_size);
+    moved.data = room_for(to, r->data_size);
+    if (r->data_size) memcpy(to->bytes + moved.data, from->bytes + r->data, r->data_size);
+    *request_room(to) = moved;
+}
+
 void tide_storage_take(tide_storage *to, tide_storage *from)
 {
-    for (uint32_t i = 0; i < from->count; i++) {
-        const tide_storage_request *r = &from->items[i];
-        tide_storage_request moved = *r;
-        moved.key = room_for(to, r->key_size);
-        if (r->key_size) memcpy(to->bytes + moved.key, from->bytes + r->key, r->key_size);
-        moved.data = room_for(to, r->data_size);
-        if (r->data_size) memcpy(to->bytes + moved.data, from->bytes + r->data, r->data_size);
-        *request_room(to) = moved;
-    }
+    for (uint32_t i = 0; i < from->count; i++) copy_request(to, from, &from->items[i]);
     tide_storage_clear(from);
 }
 
@@ -873,10 +876,14 @@ struct tide_storage_batch {
     uint64_t number;      // Its first answer's
     bool answers;         // Loads and listings are carried out
     bool forgotten;       // The sender's alone: its answers are dropped
+    // The line's host answers it (tide_storage_answer), into a slot each, `count` of them: `store` is then a copy of
+    // its loads and listings alone, slot k's request at k, which is all an answer is checked against and made from
+    bool hosted;
     uint32_t done;        // Atomic: carried out, by whichever thread did; nothing of it changes after
     uint8_t **messages;   // Its answers, in order
     uint32_t *sizes;
     uint32_t count, room;
+    uint32_t answered;    // A hosted batch's slots that have their answer
 };
 
 static void batch_answer(void *user, uint8_t *message, const uint32_t size)
@@ -910,9 +917,121 @@ static void free_batch(tide_storage_batch *b)
     free(b);
 }
 
+static bool answered_kind(const uint32_t kind)
+{
+    return kind == TIDE_STORAGE_LOAD || kind == TIDE_STORAGE_LIST;
+}
+
+// To the line's host: the requests as they are, with a slot on the line for each answer they'll have. The slots keep
+// copies of their loads and listings alone, so what the tick saved isn't held until its last answer comes: the host
+// has had it.
+static void send_hosted(tide_storage_line *line, tide_storage *store, const bool answers)
+{
+    const tide_storage_host *host = line->host;
+    uint32_t expected = 0;
+    for (uint32_t i = 0; i < store->count; i++) expected += answered_kind(store->items[i].kind);
+    const uint64_t number = line->next;
+    line->next += expected;
+    if (!answers && expected) {
+        // A server that stops hands its saves and deletes alone, as nobody will take what loads and listings would find
+        tide_storage kept = {0};
+        for (uint32_t i = 0; i < store->count; i++) {
+            if (!answered_kind(store->items[i].kind)) copy_request(&kept, store, &store->items[i]);
+        }
+        if (kept.count) host->keep(host->user, &kept, number);
+        tide_storage_free(&kept);
+        tide_storage_free(store);
+        return;
+    }
+    if (expected) {
+        tide_storage_batch *b = tide_alloc_zeroed(1, sizeof *b);
+        for (uint32_t i = 0; i < store->count; i++) {
+            if (answered_kind(store->items[i].kind)) copy_request(&b->store, store, &store->items[i]);
+        }
+        b->number = number;
+        b->answers = true;
+        b->hosted = true;
+        b->count = b->room = expected;
+        b->messages = tide_alloc_zeroed(expected, sizeof *b->messages);
+        b->sizes = tide_alloc_zeroed(expected, sizeof *b->sizes);
+        if (line->last) line->last->next = b;
+        else line->first = b;
+        line->last = b;
+    }
+    // A batch with nothing to answer isn't waited for. One with answers is on the line before the host has it, which
+    // may answer before it returns.
+    host->keep(host->user, store, number);
+    tide_storage_free(store);
+}
+
+// A listing's keys from a host, each a varint of its size and its bytes, checked as the listing's answer and written
+// again as tide_stored has them: false where they aren't.
+static bool hosted_keys(const tide_stored *asked, const uint8_t *data, const uint32_t size, tide_writer *out, uint32_t *count)
+{
+    tide_reader r = {data, size, 0, false};
+    const char *before = asked->after;
+    uint32_t before_size = asked->after_size, n = 0;
+    while (r.at < size) {
+        uint32_t key_size = 0;
+        const char *key = read_text(&r, 1u, &key_size);
+        if (!key || n == TIDE_STORAGE_LIST_MOST || key_size < asked->key_size || memcmp(key, asked->key, asked->key_size) != 0
+            || compare_keys(key, key_size, before, before_size) <= 0) return false;
+        tide_write_varint(out, key_size);
+        tide_write_bytes(out, key, key_size);
+        before = key;
+        before_size = key_size;
+        n++;
+    }
+    if (out->overflow) tide_out_of_memory();
+    *count = n;
+    return true;
+}
+
+bool tide_storage_answer(tide_storage_line *line, const uint64_t number, const uint32_t outcome, const uint8_t *data,
+                         const uint32_t size, const bool more)
+{
+    tide_storage_batch *b = line->first;
+    while (b && !(b->hosted && number >= b->number && number - b->number < b->count)) b = b->next;
+    if (!b || b->forgotten || (size && !data)) return false;
+    const uint32_t slot = (uint32_t)(number - b->number);
+    if (b->messages[slot]) return false; // Answered already
+    const tide_storage_request *r = &b->store.items[slot];
+    const bool list = r->kind == TIDE_STORAGE_LIST;
+    tide_stored answer = {.kind = (uint8_t)r->kind, .to = (uint8_t)r->to, .target = r->target, .number = number,
+                          .key = r->key_size ? (const char *)b->store.bytes + r->key : "", .key_size = r->key_size};
+    tide_writer keys = {.grows = true};
+    if (!list) {
+        if (outcome > TIDE_STORED_FAILED || more || (outcome != TIDE_STORED_FOUND && size) || size > TIDE_STORAGE_VALUE_MOST)
+            return false;
+        answer.data = data;
+        answer.data_size = size;
+    } else {
+        answer.after = r->data_size ? (const char *)b->store.bytes + r->data : "";
+        answer.after_size = r->data_size;
+        if ((outcome != TIDE_STORED_FOUND && outcome != TIDE_STORED_FAILED) || (outcome == TIDE_STORED_FAILED && (size || more))
+            || size > TIDE_STORAGE_VALUE_MOST || !hosted_keys(&answer, data, size, &keys, &answer.count)
+            || (more && answer.count != TIDE_STORAGE_LIST_MOST)) {
+            free(keys.data);
+            return false;
+        }
+        answer.more = more;
+        answer.data = keys.data;
+        answer.data_size = keys.size;
+    }
+    answer.outcome = (uint8_t)outcome;
+    b->messages[slot] = tide_stored_message(&answer, &b->sizes[slot]);
+    free(keys.data);
+    if (++b->answered == b->count) __atomic_store_n(&b->done, 1u, __ATOMIC_RELEASE);
+    return true;
+}
+
 void tide_storage_send(tide_storage_line *line, tide_storage *store, const tide_io *io, const bool answers)
 {
     if (!store->count) return;
+    if (line->host) {
+        send_hosted(line, store, answers);
+        return;
+    }
     tide_storage_batch *b = tide_alloc_zeroed(1, sizeof *b);
     b->store = *store;
     *store = (tide_storage){0};
@@ -960,12 +1079,22 @@ uint32_t tide_storage_receive(tide_storage_line *line, void (*answer)(void *user
 
 void tide_storage_forget(tide_storage_line *line)
 {
-    for (tide_storage_batch *b = line->first; b; b = b->next) b->forgotten = true;
+    for (tide_storage_batch *b = line->first; b; b = b->next) {
+        b->forgotten = true;
+        // Nothing waits for a host's answers to it, nor the answers after it for them: tide_storage_answer refuses them
+        if (b->hosted) __atomic_store_n(&b->done, 1u, __ATOMIC_RELEASE);
+    }
 }
 
 void tide_storage_finish(tide_storage_line *line)
 {
     for (tide_storage_batch *b = line->first; b;) {
+        if (b->hosted) { // The host's since it was sent: what it saves is saved, and nobody will take its answers
+            tide_storage_batch *next = b->next;
+            free_batch(b);
+            b = next;
+            continue;
+        }
         // Posted, so it has one: a wait for this batch, not for what other servers posted after it
         if (!__atomic_load_n(&b->done, __ATOMIC_ACQUIRE)) b->io->settle(b->io->user, b);
         while (!__atomic_load_n(&b->done, __ATOMIC_ACQUIRE)) {

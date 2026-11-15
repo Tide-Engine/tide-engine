@@ -1274,3 +1274,8 @@ if(TIDE_PLATFORM)
 endif()
 tide_e2e_test(storage_await_shards) # ...and ask again on the shard their entity crosses to while they wait
 tide_e2e_test(storage_await_hidden) # ...in a game that hides state, where the server's run of a task alone has its answer
+tide_e2e_test(managed_store) # A hosted match's store (tide/managed_run.h, built natively) against a fake service
+tide_e2e_test(managed_store_shards) # ...and a sharded world's shard: its start, and going on from its journal
+# The header alone: none of the platform layer it's beside, as a managed reactor has none
+target_include_directories(tidec_e2e_managed_store PRIVATE "${PROJECT_SOURCE_DIR}/platform/include")
+target_include_directories(tidec_e2e_managed_store_shards PRIVATE "${PROJECT_SOURCE_DIR}/platform/include")
