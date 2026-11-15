@@ -68,6 +68,9 @@ stage 3  Either  (per entity)
          after Changes: it writes Body.position, which this reads
          alongside Wrapped, Varying, NoGuard, ListLoop, Spots2, OneSided, OwnList, Chunks
 
+Views, every frame in this order (they only read, so nothing waits):
+         Patches
+
 Loops that skip rows, and whether an index finds the rest:
          Separate, line 49: indexed by o.other.position.x, o.other.position.y, o.other.position.z
          SquaredLocal, line 59: indexed by o.other.position.x, o.other.position.y, o.other.position.z
@@ -87,3 +90,4 @@ Loops that skip rows, and whether an index finds the rest:
          Chunks, line 206: indexed by row.chunk.dimension as one exact key, and by row.chunk.heat and row.chunk.at.y
          Chunks, line 211: indexed by row.chunk.kind
          Chunks, line 216: indexed by p.was.dimension as one exact key, as the tick started: its index is made once a tick
+         Patches, line 243: indexed by row.other.at.x, row.other.at.y and row.other.at.z as one exact key

@@ -1,0 +1,206 @@
+// Grids an async function takes (task_grid_params_test.c): each a copy of the task's own in its frame, made where the
+// call is, so what the caller changes after the call isn't the task's, and copied once however many waits it's kept
+// across; a pack's grid is copied whole. A match task's are in the match's heap, which snapshots, packed worlds, the
+// world's hash and a hot reload's migration take in; a local task's are in the local state's. And a view that hands
+// its chunk to a local task as `mut` changes only the chunk's local fields, so it finds the chunk's neighbour by an
+// indexed loop over the chunks' places.
+scene Main { }
+asset List<Grid2<Color>> run = "assets/run/*.png";
+
+// ---- Match tasks
+
+singleton Field
+{
+    Grid2<int> cells = Grid2(8, 8);
+    int first = 3;   // What the caller puts in (1, 1) before it starts the task
+    bool started;
+    int stage;
+    int seen;        // What the task read of its grid after a wait
+    int later;       // ...and of the other, a local's
+    int deep;        // ...through an async function it awaits with the grid
+    int copied;      // ...a copy it made of it, and changed
+    int ended;       // Tasks that read their grid after it was changed under them (none should)
+}
+
+// Awaited: its grid is a copy of its own too, in the awaiting task's frame
+async int Total(Grid2<int> cells, int round)
+{
+    await Wait.Ticks(1);
+    return cells[1, 1] * 1000 + cells[6, 6] * round;
+}
+
+async void Hold(mut Field field, Grid2<int> cells, Grid2<int> other)
+{
+    field.stage = 1;
+    await Wait.Ticks(1);
+    field.seen = cells[1, 1] + cells[6, 6] * 10;
+    field.later = other[0, 0] + other[3, 3] * 10;
+    field.stage = 2;
+    await Wait.Ticks(2);
+    field.deep = await Total(cells, 2);
+    mut Grid2<int> mine = cells.Copy();
+    mine[1, 1] += 1;
+    field.copied = mine[1, 1] * 100 + cells[1, 1];
+    if (cells[1, 1] != field.first || other[0, 0] != 7) field.ended += 1;
+    field.stage = 3;
+}
+
+system Begin(mut Field field)
+{
+    if (field.started) return;
+    field.started = true;
+    field.cells[1, 1] = field.first;
+    field.cells[6, 6] = 4;
+    mut Grid2<int> made = Grid2(4, 4);
+    made[0, 0] = 7;
+    made[3, 3] = 5;
+    Hold(field, field.cells, made);
+    // After the call: neither is the task's
+    field.cells[1, 1] = 99;
+    field.cells.Clear();
+    made[0, 0] = 8;
+}
+
+// A match task per entity, its grid the entity's field as the system read it
+component Plot
+{
+    int number;
+    Grid2<int> cells = Grid2(4, 4);
+    int read;
+    bool begun;
+}
+
+async void Survey(mut Plot plot, Grid2<int> cells)
+{
+    await Wait.Ticks(2);
+    plot.read = cells[2, 2] * 10 + cells[3, 3];
+}
+
+system Plant(mut Plot plot)
+{
+    if (plot.begun) return;
+    plot.begun = true;
+    plot.cells[2, 2] = plot.number;
+    plot.cells[3, 3] = 9;
+    Survey(plot, plot.cells);
+    plot.cells[2, 2] = 0;
+}
+
+// ...and one entity destroyed while its task waits, which takes the task, and the task's grid, with it
+system Uproot(Plot plot, Field field)
+{
+    if (field.stage == 2 && plot.number == 3) this.Destroy();
+}
+
+// ---- Local tasks
+
+local singleton Painted
+{
+    Grid2<int> cells = Grid2(8, 8);
+    bool started;
+    int stage;
+    int seen;
+    int deep;
+    int width;       // The pack's grid it was given, as it was
+    Color pixel;
+    Color want;      // ...as it was when the task began
+    bool startNow;   // The test asks for another, with run[1], after the pack is loaded again
+}
+
+// Awaited by a local task: its grid is the awaiting task's frame's too
+async int Peek(Grid2<int> cells, int round)
+{
+    await Wait.Frames(1);
+    return cells[1, 1] * 1000 + cells[6, 6] * round;
+}
+
+async void Show(mut Painted painted, Grid2<int> cells, Grid2<Color> picture)
+{
+    await Wait.Frames(1);
+    painted.seen = cells[1, 1] + cells[6, 6] * 10;
+    await Wait.Frames(2);
+    painted.width = picture.size.x;
+    painted.pixel = picture[1, 1];
+    painted.deep = await Peek(cells, 3);
+    painted.stage += 1;
+}
+
+view Start(mut Painted painted)
+{
+    if (painted.started && !painted.startNow) return;
+    painted.started = true;
+    painted.startNow = false;
+    painted.cells[1, 1] = 5;
+    painted.cells[6, 6] = 6;
+    painted.want = run[1][1, 1];
+    Show(painted, painted.cells, run[1]);
+    painted.cells[1, 1] = 98;
+}
+
+// ---- A view that hands its chunk to a local task, and finds its neighbour by an indexed loop
+
+component Chunk
+{
+    int3 at;
+    Grid3<int> blocks = Grid3(16, 16, 16);
+    local int seen;      // What the task worked out from its blocks and its neighbour's
+    local int asked;     // Frames it asked
+    local LocalTask job;
+}
+
+local worker int Count(Grid3<int> blocks, Grid3<int> east)
+{
+    mut var n = 0;
+    for (var y = 0; y < 16; y++)
+        for (var z = 0; z < 16; z++)
+            n += blocks[int3(15, y, z)] * 100 + east[int3(0, y, z)];
+    return n;
+}
+
+async void Look(mut Chunk chunk, Grid3<int> east)
+{
+    await Wait.Frames(1);
+    chunk.seen = await Count(chunk.blocks, east) + east[int3(0, 1, 1)] * 10000;
+}
+
+view Chunks(mut Chunk chunk, query (Chunk other) chunks)
+{
+    if (chunk.job.isRunning || chunk.asked > 0) return;
+    indexed foreach (var row in chunks)
+    {
+        if (row.other.at.x != chunk.at.x + 1 || row.other.at.y != chunk.at.y || row.other.at.z != chunk.at.z) continue;
+        chunk.asked += 1;
+        chunk.job = Look(chunk, row.other.blocks);
+    }
+}
+
+singleton Ground
+{
+    bool made;
+    bool dig;    // The test sets it while the views' tasks wait: the chunk at x = 1 changes, which they don't see
+}
+
+system Make(mut Ground ground)
+{
+    if (ground.made) return;
+    ground.made = true;
+    for (var x = 0; x < 3; x++)
+    {
+        mut Grid3<int> blocks = Grid3(16, 16, 16);
+        for (var y = 0; y < 16; y++)
+            for (var z = 0; z < 16; z++)
+            {
+                blocks[int3(0, y, z)] = x + 1;
+                blocks[int3(15, y, z)] = x + 4;
+            }
+        Spawn(Chunk { at = int3(x, 0, 0), blocks = blocks });
+    }
+    for (var i = 1; i <= 3; i++) Spawn(Plot { number = i });
+}
+
+system Dig(mut Chunk chunk, Ground ground)
+{
+    if (!ground.dig || chunk.at.x != 1) return;
+    for (var y = 0; y < 16; y++)
+        for (var z = 0; z < 16; z++) chunk.blocks[int3(0, y, z)] = 50;
+}

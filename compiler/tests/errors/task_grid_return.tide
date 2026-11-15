@@ -1,0 +1,8 @@
+// expect: this can't return a grid
+// expect: C, a task, an operator, a worker and code the GPU runs can't
+async Grid2<int> Make()
+{
+    await Wait.Ticks(1);
+    return Grid2(2, 2);
+}
+scene Main { }

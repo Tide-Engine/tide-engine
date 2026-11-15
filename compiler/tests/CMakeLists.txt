@@ -442,6 +442,13 @@ tide_e2e_test(render_depth) # What a target holds, said when it's made, and a ta
 tide_e2e_test(image_clears) # Typed image clear values and argument ordering
 tide_e2e_test(target_reads) # await target.Read<T>(image) and ReadDepth(): what each asks for, and the typed grid it owns
 tide_e2e_test(task_grids) # Grids a task keeps across its waits, local and match tasks', a read's and the pack's among them
+# Grids an async function takes: copies of its own made at the call, kept across waits, packed, migrated; and a view
+# that hands its chunk to a local task as mut, indexing its chunks by place
+tide_e2e_test(task_grid_params LAYOUT)
+if(TIDE_PLATFORM)
+    target_link_libraries(tidec_e2e_task_grid_params PRIVATE tide_platform) # tide_migrate_world, as a hot reload does
+    target_compile_definitions(tidec_e2e_task_grid_params PRIVATE TASK_GRID_MIGRATION=1)
+endif()
 tide_e2e_test(number_images SOURCES shaders/number_images.tide) # Numeric shader metadata and generated-C paths
 tide_e2e_test(render_colors) # Targets of several color images, a format each, and frags that write them all
 tide_e2e_test(render_samples) # A target's samples, said by name where it's made and kept in its id through a reload

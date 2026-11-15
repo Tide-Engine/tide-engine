@@ -220,4 +220,32 @@ system Chunks(Sight sight, query (Chunk chunk) chunks, query (previous Chunk was
     }
 }
 
+// A view hands its own component to a local task and to a helper as mut: they write its local fields alone, so
+// neither changes the place its loop finds the others by
+component Patch
+{
+    int3 at;
+    Grid3<int> cells = Grid3(4, 4, 4);
+    local int seen;
+    local LocalTask job;
+}
+
+async void Note(mut Patch patch, Grid3<int> beside)
+{
+    await Wait.Frames(1);
+    patch.seen = beside[int3(0, 0, 0)];
+}
+
+void Tally(mut Patch patch) { patch.seen += 1; }
+
+view Patches(mut Patch patch, query (Patch other) patches)
+{
+    foreach (var row in patches)
+    {
+        if (row.other.at.x != patch.at.x + 1 || row.other.at.y != patch.at.y || row.other.at.z != patch.at.z) continue;
+        Tally(patch);
+        if (!patch.job.isRunning) patch.job = Note(patch, row.other.cells);
+    }
+}
+
 scene Main { }

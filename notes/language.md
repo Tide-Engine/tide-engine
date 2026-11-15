@@ -1,3 +1,78 @@
+## Grids as async parameters; a component handed on for its local fields alone (2026-11-15)
+
+Two limits `bench/voxels`' mesher hit (`notes/voxels.md`, section 9 and 12): an async function couldn't take a grid,
+and a view that handed its chunk to a local task as `mut` was taken to change every field of it, so its loop over the
+other chunks by `chunk.at` wasn't indexed. Every rule is Provisional, Claude's picks (spec: Grids, Grids an async
+function takes; Indexed loops, A component handed on to change its local fields alone; Local state, Local tasks and
+local fields, What the call changes).
+
+**Grid parameters** (`check.c`). `check_signature` sets `grid_param` for an async function's parameters (still not its
+return: a task returns no grid), and `settle_grid_functions` leaves async functions out of the GPU-only guess (an
+async function that takes a grid and that nothing calls isn't the GPU's). `check_async_decl` refuses a `mut` grid with
+a message of its own ("a task can't keep the caller's grid 'cells' while it waits, so it can't change it", a note to
+drop `mut` or take the component or singleton the grid is in) and makes the parameter's type the error type, so its
+uses say nothing more: a task's `mut` parameters are its components and singletons alone (spec, Tasks), so a grid
+parameter is the task's copy and never the caller's variable. The note of "this can't take a grid" names who can't
+now (C, an operator, `Interpolate`, an audio declaration, a function that takes an Action).
+
+**Codegen** needed nothing new: a parameter is a frame field (`add_task`'s `frame_fields_for`), the start and an
+awaited call spill each argument into it with `gen_spill`, whose grid case is `tide_grid_carry` (a world's or the
+pack's grid copied whole first, a scratch grid moved into the task world's heap), the resume reads it back as the
+frame's handle (`gen_reload`: no copy), parameters are never in the live set (`task_declare`), so a wait doesn't spill
+them again, and `tide_release_<frame>` lets go of it with the frame. A grid parameter handed to a worker is captured
+as any grid is (`tide_worker_grid_capture`). So a parameter costs one copy at the call (two for a world's grid: into
+the scratch area, then the frame's heap, as `tide_grid_carry` does for any world grid), however many waits.
+
+**A component handed on for its local fields alone** (`indexing.c`). `changes_local_fields_alone(q)`: a `mut`
+parameter of a match component or singleton with a local part whose `match_write` is false (it writes none of its
+match fields, itself or through what it hands it to: `spread_local_field_use`, which runs before
+`plan_loop_indexes`). `walk_writes_expr` (what the loop changes) notes such an argument in `written_local`, which
+`loop_changes` counts only for a place read through a local field (`through_local_field`: a loop over `chunk.faces`,
+a local field's list, is changed by it), and `expr_changes_param` (the code changing the key's field of its own
+entity, `key_still`) skips it. No key or bound is a local field (`row_path`, `invariant_read`), so nothing a query's
+loop reads changes. The first version skipped the argument in `walk_writes_expr` too, which let an `indexed foreach`
+over a local field's list be indexed while a call in it added to the list (`indexed_local_list_handed_on`, which fails
+with that version). Local code can only hand its own to such a function (`check_local_field_calls`'s "a view can't
+change the match, and 'F' changes its 'c''s match fields"), and a match task that writes a match field after a wait has
+`match_write` set by `check_writable` as before, so a task never writes match fields from local code and a system's
+loop is refused as it was (`indexed_task_changes_key`).
+
+**Tests.** `tidec_e2e_task_grid_params` (`task_grid_params.tide`, four cases; `LAYOUT`, the platform linked where there
+is one for `tide_migrate_world`): match tasks `Hold` (a singleton's grid and a local's, both changed and cleared by
+the caller after the call; an awaited `Total` with the grid; a copy made of it and changed) and `Survey` (each entity's
+field, set back after the call; one entity destroyed while its task waits, its frame and grid let go of with it),
+whose frames' copies the world's hash takes in (two worlds differing only in the frame's copy hash apart), a snapshot
+rolled back to, a packed and unpacked world and a world carried through
+`tide_migrate_world` mid-wait all ticking to the same hashes and values; a local task `Show` given a local singleton's
+grid and the pack's `run[1]`, the pack loaded again (`run`'s grids 5 and 6 wide) as it waits, its copy as it was, and
+another task after it given the new pack's; the local state's bytes packed and unpacked with it waiting; and a view
+`Chunks(mut Chunk chunk, query (Chunk other) chunks)` whose `indexed foreach` finds the neighbour at `x + 1` and starts
+`Look(chunk, row.other.blocks)`, which awaits a worker over both grids after the match changed the neighbour (`Dig`):
+the task read the copy it was given. With the start's spill made a plain handle copy every case fails. Errors:
+`task_grid_mut`, `task_grid_return`, `task_grid_view_writes_match` (a task that writes the chunk's grid from a view),
+`indexed_task_changes_key` (a match task that changes the key's field of the system's own entity: still refused),
+`indexed_local_list_handed_on` (a view's loop over its component's local list, which a helper it hands the component
+to adds to: still refused). `schedule/indexed_loops.tide` pins `Patches`, a view that hands its own component to a
+local task and to a helper that writes its local fields alone, as indexed.
+
+**Generated C** of every game in `build/release` (579 source lists; the prototypes aren't configured in this tree),
+the base tidec against the new, `--no-line`, plain and `--layout`, the simulation identity left out: 1,146 the same;
+`voxels` (its new mesher) and this fixture compile only with the new one; 8 (`tidec_e2e_build_code`,
+`_scene_preparation_assets`, `_worker_values`, `_worker_values_visualizers`, which need more than their list) fail with
+both. So no loop of any other game changed its plan, and nothing else's code moved. That run was of the first version
+of `indexing.c`'s change (above), which plans every loop the final one does and more, and the final one every loop the
+base did, so it holds for the final one.
+
+**Gaps.** A grid parameter can't be `mut` (the spec's rule for every non-component parameter of a task). A world's
+grid handed to a task is copied twice at the call (scratch, then heap), as `tide_grid_carry` copies any world grid;
+a copy straight from one heap into another would save one, but `tide_grid_copy_from` refuses a copy within one heap
+(adding blocks can move the source's pages). An async function awaited with a grid parameter of the awaiting task gets
+a copy of its own (two frames, two copies) where a read-only parameter could be shared, which would need the child
+frame's release not to free it. A grid in a list or a map still can't be an argument (grids aren't elements). A
+sharded game's match task carries its grid parameters to another shard through the frame's value codec, as it carries
+its grid locals; no test makes one cross. Web, sanitizers and the other platforms are CI's (this was validated in
+`release` on Windows only).
+
 ## Awaited loads and listings of the server's store (2026-11-15)
 
 `await Storage.Load(key)` (`List<byte> fails IOError`) and `await Storage.List(prefix[, after])` (`StorageKeys fails

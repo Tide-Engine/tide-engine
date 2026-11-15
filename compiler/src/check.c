@@ -19744,7 +19744,8 @@ static type method_type(const checker *c, const type_ref *r, const loc at, const
                       "code the GPU runs can't");
         } else {
             diag_error(at, "this can't take a grid");
-            diag_note("a function or a method takes one to read its cells, in code the GPU runs");
+            diag_note("a function, a method, a task and a worker can, like 'int Count(Grid2<int> cells)'; C, an operator, "
+                      "Interpolate, an audio declaration and a function that takes an Action can't");
         }
         return T_ERR;
     case TY_ACTION:
@@ -19942,7 +19943,8 @@ static void check_signature(checker *c, decl *m)
             continue;
         }
         const bool world = names_type_as(c, p->type_name, "World") && !find_type(c, p->type_name, p->type_at);
-        c->grid_param = !m->is_extern && !m->is_async && !m->is_operator && !m->is_interpolate && !m->is_audio && !m->takes_action;
+        // A task takes one as a copy of its own, made where it's called and kept in its frame (docs/spec.md, Grids)
+        c->grid_param = !m->is_extern && !m->is_operator && !m->is_interpolate && !m->is_audio && !m->takes_action;
         p->type = world ? (type){TY_WORLD, NULL} : method_type(c, type_ref_or_text(p->type_ref, p->type_name), p->type_qual_at, false);
         const bool layered_role = p->type.kind == TY_TEXTURE_ARRAY || p->type.kind == TY_CUBEMAP;
         if (p->sample_role.len && ((p->type.kind != TY_TEXTURE && p->type.kind != TY_TEXTURE3D && !layered_role) || p->mode != PARAM_READ
@@ -20605,6 +20607,14 @@ static void check_async_decl(decl *fn)
         if (p->type.kind == TY_RECORD) {
             diag_error(p->at, "a task runs between frames, so it can't take the devices");
             diag_note("pass it what it needs of them instead, like 'bool jumped'");
+        } else if (p->mode == PARAM_MUT && p->type.kind == TY_GRID) {
+            // Its mut parameters are components and singletons alone (docs/spec.md, Tasks): a grid it takes is a copy
+            diag_error(p->at, "a task can't keep the caller's grid '" STR_FMT "' while it waits, so it can't change it",
+                       STR_ARG(p->name));
+            diag_note("drop 'mut': the task takes a copy of its own, made where it's called; to change a field's grid, "
+                      "take the component or singleton it's in, as 'mut Chunk chunk', and change 'chunk.blocks'");
+            p->mode = PARAM_READ;
+            p->type = T_ERR; // Said: what the code does with it says nothing more
         } else if (p->mode == PARAM_MUT && p->type.kind != TY_ERROR) {
             diag_error(p->at, "a task can't keep the caller's '" STR_FMT "' while it waits, so it can't change it",
                        STR_ARG(p->name));
@@ -25074,7 +25084,7 @@ static void settle_grid_functions(checker *c)
     VEC(decl *) gpu = {0};
     for (int i = 0; i < c->prog->decls.count; i++) {
         decl *d = c->prog->decls.items[i];
-        if (d->kind == DECL_FUNCTION && !d->is_build && !d->is_worker && !d->is_extern && !d->gpu_only && takes_grid(d))
+        if (d->kind == DECL_FUNCTION && !d->is_build && !d->is_worker && !d->is_async && !d->is_extern && !d->gpu_only && takes_grid(d))
             vec_push(gpu, d);
     }
     for (bool changed = true; changed;) {

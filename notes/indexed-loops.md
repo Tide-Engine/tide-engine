@@ -1,3 +1,27 @@
+## A component handed on for its local fields alone (2026-11-15)
+
+Found by `bench/voxels`' mesher (notes/voxels.md, sections 9 and 12): a view that starts a local task with its own
+`mut Chunk chunk` had its loop over the other chunks by `chunk.at` refused, "changes Chunk.at of its own entity as it
+goes" (or "its bound reads 'chunk', which the loop changes" where the bound read the view's chunk), though a local task
+changes only local fields. Both checks took every `mut` argument as a write of the whole argument.
+
+- **The rule** (`changes_local_fields_alone` in `indexing.c`): an argument to a `mut` parameter of a match component or
+  singleton with local fields, whose `param.match_write` is false, changes only what's read through its local fields.
+  `walk_writes_expr` notes it in `written_local`, which `loop_changes` counts only for a place read through a local
+  field (a loop over the component's local list), and `expr_changes_param` doesn't count it as the code changing its
+  own entity's key. Local fields are never keys or bounds, and `match_write` follows helper chains, task starts and awaits
+  (`spread_local_field_use`, before `plan_loop_indexes`), so a function or task that writes a match field of it, after
+  a wait too, counts as before. Spec: Indexed loops, A component handed on to change its local fields alone
+  (Provisional).
+- **Tests**: `schedule/indexed_loops.tide`'s `Patches` (a view handing its own component to a local task and to a
+  helper that writes a local field) is "indexed by row.other.at.x, row.other.at.y and row.other.at.z as one exact
+  key"; `tidec_e2e_task_grid_params`' `Chunks` view promises it with `indexed foreach`; `tidec_error_indexed_task_changes_key`
+  (a match task that changes the key's field of a system's own entity) is refused with the reason as before, and so
+  is `tidec_error_indexed_local_list_handed_on` (a view's `indexed foreach` over its component's local list, which a
+  helper it hands the component to adds to; a first version that skipped the argument altogether let it through).
+- Generated C of every game the build knows (579 source lists, plain and `--layout`), old and new tidec, is the same
+  but for the two that need the change (notes/language.md, top section): no other loop's plan moved.
+
 ## Exact keys (2026-11-14)
 
 Found by `bench/voxels` (on its own branch, notes/voxels.md, Gaps): a chunk is found by its place, an `int3`,

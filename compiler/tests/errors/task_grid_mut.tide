@@ -1,0 +1,10 @@
+// expect: a task can't keep the caller's grid 'cells' while it waits, so it can't change it
+// expect: drop 'mut': the task takes a copy of its own, made where it's called
+singleton Field { Grid2<int> cells = Grid2(4, 4); }
+async void Fill(mut Grid2<int> cells)
+{
+    await Wait.Ticks(1);
+    cells[0, 0] = 1;
+}
+system Go(mut Field field) { Fill(field.cells); }
+scene Main { }
