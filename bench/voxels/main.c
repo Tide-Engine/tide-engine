@@ -197,6 +197,8 @@ static bench_flag flags[] = {
     {"out", "1: each bot flies straight out a way of its own for the whole run (eight ways), never turning", 0, 0, 0, 0},
     {"fill", "the run fails where the whole box of a dimension a bot hopped into took more ticks than this to be on "
              "its machine, at the median, or where one never was; 0 doesn't check", 0, 0, 0, 0},
+    {"ask", "what a dimension spawns of chunks a tick at most: a box of more is asked for over the ticks it takes, "
+            "nearest first", 1024, 1024, 0, 1},
 };
 
 static uint32_t mix(uint32_t x)
@@ -224,6 +226,7 @@ static void make_world(const bench_flag *f, void *world, const float dt)
     w->Worlds.audit = (int32_t)f[12].value;
     w->Worlds.make = (int32_t)f[16].value;
     w->Worlds.spread = (int32_t)f[17].value;
+    w->Worlds.ask = (int32_t)f[21].value;
     w->Worlds.park = (int32_t)f[18].value;
     audit_every = f[12].value;
     fill_most = f[20].value;

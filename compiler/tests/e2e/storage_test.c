@@ -765,6 +765,61 @@ TIDE_TEST(storage_answers_that_arent_are_refused)
 
 // A server's line: each tick's requests carried out after the last's, answers taken in the order they were asked,
 // up to the first batch not yet carried out; a forgotten one's answers dropped, its saves done
+// A tick that asks for a view's worth: each load once, in the order asked, whatever was asked between, cleared or
+// taken from another tick's (the index a load is looked for in is made again where it isn't the requests')
+TIDE_TEST(storage_asks_a_views_worth_once_each)
+{
+    tide_storage store = {0};
+    tide_storage_bind(&the_world, &store);
+    char key[32];
+    for (uint32_t round = 0; round < 2u; round++) {
+        for (uint32_t i = 0; i < 3000u; i++) {
+            snprintf(key, sizeof key, "c/%u", i);
+            tide_storage_ask(&the_world, TIDE_STORAGE_LOAD, text(key), (tide_list){0}, (tide_str){0}, TIDE_STORAGE_TO_EVENT,
+                             (tide_entity){i + 1u, 7});
+            if (i % 500u == 0) save_key(&store, key); // Never looked for, and no load's place moves
+        }
+    }
+    TIDE_REQUIRE(store.count == 3000u + 12u);
+    uint32_t loads = 0;
+    bool ordered = true;
+    for (uint32_t i = 0; i < store.count; i++) {
+        const tide_storage_request *r = &store.items[i];
+        if (r->kind != TIDE_STORAGE_LOAD) continue;
+        snprintf(key, sizeof key, "c/%u", loads);
+        ordered = ordered && r->key_size == strlen(key) && memcmp(store.bytes + r->key, key, r->key_size) == 0
+            && r->target.birth == loads + 1u;
+        loads++;
+    }
+    TIDE_CHECK(loads == 3000u && ordered);
+    // The same key for another entity, for a task, and as a listing's prefix are each another request
+    const uint32_t before = store.count;
+    tide_storage_ask(&the_world, TIDE_STORAGE_LOAD, text("c/5"), (tide_list){0}, (tide_str){0}, TIDE_STORAGE_TO_EVENT, (tide_entity){6, 8});
+    tide_storage_ask(&the_world, TIDE_STORAGE_LOAD, text("c/5"), (tide_list){0}, (tide_str){0}, TIDE_STORAGE_TO_TASK, (tide_entity){6, 7});
+    tide_storage_ask(&the_world, TIDE_STORAGE_LIST, text("c/5"), (tide_list){0}, (tide_str){0}, TIDE_STORAGE_TO_EVENT, (tide_entity){6, 7});
+    tide_storage_ask(&the_world, TIDE_STORAGE_LIST, text("c/5"), (tide_list){0}, text("c/50"), TIDE_STORAGE_TO_EVENT, (tide_entity){6, 7});
+    TIDE_CHECK(store.count == before + 4u);
+    tide_storage_ask(&the_world, TIDE_STORAGE_LIST, text("c/5"), (tide_list){0}, text("c/50"), TIDE_STORAGE_TO_EVENT, (tide_entity){6, 7});
+    TIDE_CHECK(store.count == before + 4u);
+    // Cleared, nothing of the last tick is found; taken from another, everything of it is
+    tide_storage_clear(&store);
+    tide_storage_ask(&the_world, TIDE_STORAGE_LOAD, text("c/5"), (tide_list){0}, (tide_str){0}, TIDE_STORAGE_TO_EVENT, (tide_entity){6, 7});
+    TIDE_CHECK(store.count == 1u);
+    tide_storage other = {0};
+    tide_storage_take(&other, &store);
+    tide_storage_bind(&the_world, &other);
+    for (uint32_t i = 0; i < 100u; i++) {
+        snprintf(key, sizeof key, "d/%u", i);
+        tide_storage_ask(&the_world, TIDE_STORAGE_LOAD, text(key), (tide_list){0}, (tide_str){0}, TIDE_STORAGE_TO_EVENT, (tide_entity){6, 7});
+    }
+    tide_storage_ask(&the_world, TIDE_STORAGE_LOAD, text("c/5"), (tide_list){0}, (tide_str){0}, TIDE_STORAGE_TO_EVENT, (tide_entity){6, 7});
+    tide_storage_ask(&the_world, TIDE_STORAGE_LOAD, text("d/99"), (tide_list){0}, (tide_str){0}, TIDE_STORAGE_TO_EVENT, (tide_entity){6, 7});
+    TIDE_CHECK(other.count == 101u);
+    tide_storage_unbind(&the_world);
+    tide_storage_free(&store);
+    tide_storage_free(&other);
+}
+
 TIDE_TEST(storage_line_keeps_the_order_requests_were_asked_in)
 {
     forget_files();
