@@ -951,13 +951,14 @@ typedef struct decl {
     bool is_dev;
     loc dev_at;
     const struct decl *written_in; // A lambda's function: the declaration whose code it's written in
-    // `tweak float KickUp = 0.00012;`: a DECL_CONST whose value tweaks.json can change (its value, then, is the file's).
+    // `tweak float KickUp = 0.00012;`: a DECL_CONST whose value a .tweaks file can change (its value, then, is the file's).
     // A dev build reads it from the match's TideTweaks (BIND_TWEAK), which a tweak's change goes through
     bool is_tweak;
     loc tweak_at;
-    struct expr *code_value; // ...the value the code gives it, where tweaks.json gives another (then `value`)
-    loc tweaked_at;          // ...and where in tweaks.json
+    struct expr *code_value; // ...the value the code gives it, where a .tweaks file gives another (then `value`)
+    loc tweaked_at;          // ...and where, at its name
     const char *tweaked_text; // ...and its value there, as the file writes it
+    const char *tweaked_file; // ...in this .tweaks file, absolute
     const struct decl *tweak_owner; // A tweak field's type: `component Gun { tweak float kick = 0.1; }`, read as gun.kick
     VEC(struct decl *) tweaks;      // ...and a type's tweak fields, which are tweaks in a namespace of its name, Gun.kick
     bool is_audio;       // `audio Name(mut Samples samples, ...)`: a DECL_FUNCTION the audio thread runs once a block
@@ -1936,8 +1937,7 @@ typedef struct program {
     bool calls_as_written;    // ...or is to leave it as written (tidec --no-call-merging), for comparisons
     bool tweaks_live;         // A dev build with tweaks: code reads them from TideTweaks (BIND_TWEAK), which they change through
     VEC(decl *) left_out;     // `dev` declarations a build without dev left out, for code naming one to be told why
-    const char *tweaks_file;  // The tweaks.json the build read, if any
-    const char *tweaks_path;  // ...where it is or would be, absolute, for a dev build to read again and write (tide/tweaks.h)
+    VEC(const char *) tweak_files; // The .tweaks files the build read, absolute
     VEC(decl *) results; // Every T? and `T fails E` it uses, one per combination
     VEC(decl *) optional_fields; // What each T? a field has is kept as: a struct of the value and whether there is one (decl.optional_of)
     decl *owner;         // The built-in Owner component.
@@ -2159,6 +2159,15 @@ bool parse_file(program *prog, const source *src, token *toks, bool recover);
 decl *parse_generic_instance(const decl *generic);
 // --scene's text as one expression (Battle { side = 50 }), or NULL with the error said
 expr *parse_expression_text(program *prog, token *toks);
+// A .tweaks file's entries: `Name = value;`, each its qualified name, where it is, its value and that value's text
+typedef struct tweak_entry {
+    str name;
+    loc at;
+    expr *value;
+    str text;
+} tweak_entry;
+typedef VEC(tweak_entry) tweak_entries;
+bool parse_tweaks_file(program *prog, token *toks, tweak_entries *out);
 
 // Whether the attributes starting at toks[i] (a '[') belong to a field: after
 // the last ']' come a type name and a field name. Otherwise they belong to a

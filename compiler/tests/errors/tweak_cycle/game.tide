@@ -1,0 +1,6 @@
+// expect: is worked out from itself
+tweak float Up = 1;
+tweak float Down = 2;
+scene Main { }
+singleton Seen { float v; }
+system Read(mut Seen seen) { seen.v = Up + Down; }

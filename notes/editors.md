@@ -1,3 +1,11 @@
+## .tweaks files in editors (2026-11-16, later)
+
+Replaces the tweaks.json handling below: `tweaks_document` is a URI ending `.tweaks`; `tweaks_request` takes the
+qualified name the cursor is on (letters, digits, `_` and `.`), for a hover or a definition; lenses name the file
+(`combat.tweaks: <value>`) and open it at the name. VS Code's tide language and both TextMate grammars' packages take
+`.tweaks` (Tide highlighting); JetBrains maps `*.tweaks` to tidels as Tide. The analysis reads the files as tidec does
+(`tweaks_read`, deep with a game folder, else the first file's folder alone).
+
 ## Tweaks in editors (2026-11-16)
 
 The owner asked for the editor to show that tweaks.json overrides a tweak and to go between them.

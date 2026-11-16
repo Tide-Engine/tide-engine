@@ -1557,18 +1557,24 @@ static void initialize(lsp_server *s, const json *id, const json *params)
 }
 
 // Requests about one position or one document.
-// tweaks.json, which editors hand the server too (it isn't Tide): a hover on a tweak's name in it, and going to the
-// tweak's declaration, from the analysis of the game it's beside. Anything else of it has no answer.
+// A .tweaks file, which editors hand the server as Tide but which isn't a game's code: a hover on a tweak's name in
+// it, and going to the tweak's declaration, from the analysis of the game it's beside. Anything else of it has no
+// answer (the game reads it from disk as it's saved).
 static bool tweaks_document(const char *uri)
 {
     const size_t n = strlen(uri);
-    return n >= 12 && strcmp(uri + n - 12, "/tweaks.json") == 0;
+    return n >= 7 && strcmp(uri + n - 7, ".tweaks") == 0;
+}
+
+static bool name_char(const char ch)
+{
+    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '.';
 }
 
 static void tweaks_request(lsp_server *s, const char *method, const json *id, const lsp_document *d, const int line,
                            const int character)
 {
-    // The name between the quotes the position is in, on its line
+    // The qualified name the position is on, on its line
     char name[256] = "";
     const char *at = d->text, *end = d->text + d->len;
     for (int l = 0; l < line && at < end; at++) {
@@ -1578,11 +1584,12 @@ static void tweaks_request(lsp_server *s, const char *method, const json *id, co
     while (line_end < end && *line_end != '\n') line_end++;
     const char *cursor = at + character <= line_end ? at + character : line_end;
     const char *open = cursor;
-    while (open > at && open[-1] != '"') open--;
+    while (open > at && name_char(open[-1])) open--;
     const char *close = cursor;
-    while (close < line_end && *close != '"') close++;
-    const bool quoted = open > at && close < line_end && (size_t)(close - open) < sizeof name;
-    if (quoted) {
+    while (close < line_end && name_char(*close)) close++;
+    while (close > open && close[-1] == '.') close--;
+    const bool named = close > open && (size_t)(close - open) < sizeof name;
+    if (named) {
         memcpy(name, open, (size_t)(close - open));
         name[close - open] = '\0';
     }
@@ -1590,10 +1597,11 @@ static void tweaks_request(lsp_server *s, const char *method, const json *id, co
     const bool definition = strcmp(method, "textDocument/definition") == 0;
     jbuf b = {0};
     reply_start(&b, id);
-    if (quoted && (hover || definition)) {
+    if (named && (hover || definition)) {
         // The game beside it: the analysis there is, or a .tide file of its folder open in the editor
         if (!s->analyzed) {
-            const size_t folder = strlen(d->uri) - strlen("tweaks.json");
+            const char *slash = strrchr(d->uri, '/');
+            const size_t folder = slash ? (size_t)(slash - d->uri) + 1u : 0u;
             for (int k = 0; k < s->doc_count; k++) {
                 const char *u = s->docs[k].uri;
                 const size_t n = strlen(u);
@@ -1854,7 +1862,7 @@ void lsp_handle(lsp_server *s, const char *message, const size_t len)
             text = json_get(changes->items[changes->count - 1], "text"); // Full sync: the last change is the whole text
         }
         if (uri && text && text->kind == JSON_STRING && tweaks_document(uri)) {
-            set_doc(s, uri, text); // Not Tide: the game reads it from disk as it's saved (tweaks_request)
+            set_doc(s, uri, text); // Not the game's code: it reads it from disk as it's saved (tweaks_request)
         } else if (uri && text && text->kind == JSON_STRING) {
             const lsp_document *d = set_doc(s, uri, text);
             s->changes++;

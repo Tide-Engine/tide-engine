@@ -2,7 +2,7 @@
 // it, and it lists the game's dev views, each off until it's switched on there,
 // and its tweaks. The match paints the screen blue, or green once the tweak
 // Green is true, which it reads as the server applied it; the dev view paints
-// it red. The test builds a copy beside its run, whose tweaks.json the menu writes.
+// it red. The test builds a copy beside its run, whose dev_menu.tweaks the menu writes.
 
 tweak bool Green = false;
 

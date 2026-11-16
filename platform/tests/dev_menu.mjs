@@ -1,13 +1,19 @@
 // The dev menu, driven the way an agent plays (--interactive): its dev view is off, the key under Escape lists it among the GUI's
-// widgets, and a click on its switch shows it; its tweak, changed there, reaches the match and tweaks.json, and
-// tweaks.json saved elsewhere is read again.
+// widgets, and a click on its switch shows it; its tweak, changed there, reaches the match and its .tweaks file, and
+// its .tweaks file saved elsewhere and worked out again is taken.
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { readPng } from './png_read.mjs';
 
-const [programArg, scratchArg, tweaksFile] = process.argv.slice(2);
+const [programArg, scratchArg, gameFolder, tidec, generated, name] = process.argv.slice(2);
+const tweaksFile = join(gameFolder, 'dev_menu.tweaks'); // Beside the code that declares the tweak
+// What tide run does as a .tweaks file changes: the values worked out again, with no C built
+const workOut = () => {
+    const ran = spawnSync(tidec, [join(gameFolder, 'dev_menu.tide'), '-o', generated, '--name', name, '--dev'], { encoding: 'utf8' });
+    assert.equal(ran.status, 0, ran.stderr);
+};
 const scratch = resolve(scratchArg);
 mkdirSync(scratch, { recursive: true });
 const env = { ...process.env, TIDE_HIDDEN: '1' };
@@ -61,9 +67,14 @@ try {
     await command('step 4', 'ready');
     await command('capture green.png');
     assert.deepEqual(at('green.png'), [0, 255, 0]);
-    assert.equal(readFileSync(tweaksFile, 'utf8'), '{\n    "Green": true\n}\n');
-    // tweaks.json saved elsewhere: read again within half a second, and the match has it
-    writeFileSync(tweaksFile, '{ }\n');
+    assert.equal(readFileSync(tweaksFile, 'utf8'), 'Green = true;\n');
+    workOut(); // As tide run does once the menu wrote it: the same values, so nothing changes
+    await command('step 40', 'ready');
+    await command('capture still.png');
+    assert.deepEqual(at('still.png'), [0, 255, 0]);
+    // The file saved elsewhere, worked out again: taken within half a second, and the match has it
+    writeFileSync(tweaksFile, '// Back to blue\nGreen = !true;\n');
+    workOut();
     await command('step 40', 'ready');
     await command('capture saved.png');
     assert.deepEqual(at('saved.png'), [0, 0, 255]);
@@ -72,8 +83,8 @@ try {
     await command('capture on.png');
     assert.deepEqual(at('on.png'), [255, 0, 0]); // Shown: it runs
     // The key again hides the menu, and the view stays shown
-    await command('60 key backquote down');
-    await command('61 key backquote up');
+    await command('100 key backquote down');
+    await command('101 key backquote up');
     await command('step 15', 'ready');
     await command('controls');
     assert.deepEqual(said, ['tide: controls 0']);

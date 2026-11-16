@@ -83,9 +83,10 @@ The game's usual start doesn't load, so what only it sets up doesn't happen; wha
 
 ## Tweaks
 
-A tweak is a value someone tunes without touching code: how hard a gun kicks, how fast a horse runs, the fog's color. The code declares it with its value, and `tweaks.json`, beside the game's code, gives it another:
+A tweak is a value someone tunes without touching code: how hard a gun kicks, how fast a horse runs, the fog's color. The code declares it with its value, and a `.tweaks` file beside the game's code gives it another:
 
 ```csharp
+// combat.tide
 tweak float KickUp = 0.00012;
 tweak Color Fog = Color(0.6, 0.65, 0.7, 1);
 
@@ -98,17 +99,18 @@ namespace Combat
 system Recoil(mut Gun gun) { gun.kick += KickUp; }
 ```
 
-```json
-{
-    "KickUp": 0.00015,
-    "Fog": [0.5, 0.55, 0.6, 1],
-    "Combat.Pace": "Fast"
-}
+```csharp
+// combat.tweaks
+KickUp = 0.00015;   // Tuned with the new rifles
+Fog = Color(0.5, 0.55, 0.6, 1);
+Combat.Pace = Combat.Rate.Fast;
 ```
 
-- **The file holds only what differs from the code**, by each tweak's name with its namespace: a number, `true` or `false`, a list of numbers for a vector or a Color, or an enum member's name. A name no tweak has is a warning.
+- **A `.tweaks` file holds only what differs from the code**: a line `Name = value;` for each, the tweak's name with its namespace. Comments are as in code.
+- **A value is worked out**, as a constant's is: from numbers, other tweaks and constants, operators, constructors like `float3(...)` and `Color(...)`, and Math's functions. `Gun.kick = KickUp * 2000;` follows `KickUp`. A tweak worked out from itself, through others or not, is an error.
+- **The game can have as many `.tweaks` files as suits it**: every one in its folder and the folders in it is read, so each person on a team can tune in a file of their own. A tweak set in two of them is an error, and a name no tweak has is a warning.
 - **A tweak is a number, a bool, a vector, a Color or an enum.**
-- **A type can have tweaks of its own**, which read like its fields but are the same for every value of it, so no entity holds one. `tweaks.json` names one with its type's name:
+- **A type can have tweaks of its own**, which read like its fields but are the same for every value of it, so no entity holds one. A `.tweaks` file names one with its type's name:
 
   ```csharp
   component Gun
@@ -122,16 +124,16 @@ system Recoil(mut Gun gun) { gun.kick += KickUp; }
   system Fire(Gun gun) { ... gun.kick ... Gun.kick ... }
   ```
 
-  ```json
-  { "Gun.kick": 0.3 }
+  ```csharp
+  Gun.kick = 0.3;
   ```
 
   A value of the type, like `Gun { kick = 2 }`, can't give one, and code can't set one: it's tuned, not played.
 - **Code reads it as a constant**, and a field's default can be one. What has to be known while compiling can't: an array's size, a `case`, a setting or a constant's value take a `const`.
-- **A build without dev** has the file's values as constants: they cost what a constant does, and the file isn't shipped.
+- **A build without dev** has the files' values as constants: they cost what a constant does, and the files aren't shipped.
 - **A dev build** reads them from the match, so changing one changes it for everyone in the match at once, through the server. GPU and audio code read the value the build had.
-- **In the editor**, a tweak `tweaks.json` gives another value has a line above it with that value, which opens the file there, and its hover says so. In `tweaks.json`, a tweak's name goes to its declaration and hovers with the code's value.
-- **Changing them while the game runs**: save `tweaks.json` in any editor and the running game has the new values within half a second, without building again. Or open the dev menu, whose Tweaks section has an editor for each, a switch for a bool, a field for a number, a vector or a color, and a button that steps through an enum's members, and which writes `tweaks.json` as a value changes, so it's kept.
+- **Changing them while the game runs**: under `tide run`, save a `.tweaks` file in any editor and the running game has the new values within about a second, without its code built again. Or open the dev menu, whose Tweaks section has an editor for each tweak written plainly, a switch for a bool, a field for a number, a vector or a color, and a button that steps through an enum's members. It writes the value into the `.tweaks` file that sets it, or into the one beside the code that declares the tweak (`combat.tide`'s `combat.tweaks`), keeping everything else in the file. A tweak worked out from others is shown with its value, and changes when they do. A dev build run another way takes a saved file at its next build.
+- **In the editor**, a tweak a `.tweaks` file gives another value has a line above it with that value, which opens the file there, and its hover says so. In a `.tweaks` file, a tweak's name goes to its declaration and hovers with the code's value.
 
 ## The dev menu
 

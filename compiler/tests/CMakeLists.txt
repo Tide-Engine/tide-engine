@@ -551,8 +551,8 @@ target_include_directories(tidec_e2e_dev_scene_named PRIVATE "${PROJECT_SOURCE_D
 target_compile_definitions(tidec_e2e_dev_scene_named PRIVATE NAMED_ONLY)
 add_test(NAME tidec_e2e_dev_scene_named COMMAND tidec_e2e_dev_scene_named)
 # Tweaks with their tweaks.json, read as constants without dev and from the match with it
-tide_e2e_test(tweaks SOURCES e2e/tweaks/game.tide WARNINGS "tweaks.json sets 'Gone', which isn't a tweak of the game's")
-tide_add_game(tidec_e2e_tweaks_dev DEV SOURCES e2e/tweaks/game.tide NAME game WARNINGS "tweaks.json sets 'Gone', which isn't a tweak of the game's"
+tide_e2e_test(tweaks SOURCES e2e/tweaks/game.tide WARNINGS "'Gone' isn't a tweak of the game's")
+tide_add_game(tidec_e2e_tweaks_dev DEV SOURCES e2e/tweaks/game.tide NAME game WARNINGS "'Gone' isn't a tweak of the game's"
     HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/tweaks_test.c")
 target_include_directories(tidec_e2e_tweaks_dev PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 target_compile_definitions(tidec_e2e_tweaks_dev PRIVATE TWEAKS_LIVE)

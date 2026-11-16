@@ -1,3 +1,9 @@
+## Tweaks, the .tweaks files (2026-11-16, later)
+
+`tide/tweaks.h` changed with them (notes/language.md, Tweaks, step 5): `tide_tweaks_read`/`_write` (JSON) are gone;
+`tide_tweaks_load`, `_format`, `_save` are new; `tide_tweak` gained `type`, `file` and `plain`, and `tide_tweaks_api`
+`layout` and `values` in place of `code` and `path`. Generated code calls none of it.
+
 ## Tweaks (2026-11-16)
 
 New, the agent's: `engine/include/tide/tweaks.h`, `engine/src/tweaks.c` (notes/language.md, Tweaks, step 2). Generated

@@ -150,7 +150,7 @@ typedef struct tide_host_game {
     // lists, and tide_show_dev_views, which the host calls before each frame with a byte for each: nonzero, it runs
     const char *const *dev_views;
     void (*show_dev_views)(const uint8_t *shown);
-    // Optional: a dev build's tweaks (tide/tweaks.h, tidec's tide_game_tweaks), which the host reads tweaks.json for
+    // Optional: a dev build's tweaks (tide/tweaks.h, tidec's tide_game_tweaks), which the host takes the values tide run works out for
     // again as it changes and the dev menu shows and writes; NULL for none
     const struct tide_tweaks_api *(*tweaks)(void);
 } tide_host_game;
@@ -1097,57 +1097,62 @@ static inline void tide_run_dev_views(const tide_host_game *game)
 }
 
 // After the frame's views, in its GUI: the menu, over them
-// A dev build's tweaks (tide/tweaks.h): tweaks.json is read again as it changes, half a second at the most after it's
-// saved, and what it gives goes to this machine's copy and to the match (tide_tweaks_api.send). The menu writes the
-// file as a tweak is changed there. What the file last said, so a write of the menu's own isn't read back as news.
-static uint64_t tide_run_tweaks_text;
+// A dev build's tweaks (tide/tweaks.h): the values tide run works out again as a .tweaks file changes, with no C
+// built (tide_tweaks_api.values), taken half a second at the most after they're written, go to this machine's copy
+// and to the match (tide_tweaks_api.send). What the file last held, so the same values aren't taken twice.
+static uint64_t tide_run_tweaks_seen;
 static double tide_run_tweaks_at = -1.0;
 
-static inline uint64_t tide_run_text_hash(const char *text, const size_t length)
+static inline uint64_t tide_run_bytes_hash(const uint8_t *bytes, const size_t length)
 {
     uint64_t h = 0xCBF29CE484222325ull;
-    for (size_t i = 0; i < length; i++) h = (h ^ (uint8_t)text[i]) * 0x100000001B3ull;
-    return h | 1u; // Never 0, which is no file read yet
+    for (size_t i = 0; i < length; i++) h = (h ^ bytes[i]) * 0x100000001B3ull;
+    return h | 1u; // Never 0, which is nothing taken yet
 }
 
 static inline void tide_run_tweaks_poll(const tide_host_game *game)
 {
     const tide_tweaks_api *api = game->tweaks ? game->tweaks() : NULL;
-    if (!api || !api->path[0] || (tide_run_tweaks_at >= 0.0 && tide_run_now - tide_run_tweaks_at < 0.5)) return;
+    if (!api || !api->values[0] || (tide_run_tweaks_at >= 0.0 && tide_run_now - tide_run_tweaks_at < 0.5)) return;
     tide_run_tweaks_at = tide_run_now;
-    FILE *f = fopen(api->path, "rb");
+    FILE *f = fopen(api->values, "rb");
     if (!f) return;
-    char text[65536];
-    const size_t length = fread(text, 1, sizeof text, f);
+    static uint8_t bytes[8192];
+    const size_t length = fread(bytes, 1, sizeof bytes, f);
     fclose(f);
-    const uint64_t h = tide_run_text_hash(text, length);
-    if (h == tide_run_tweaks_text) return;
-    const bool first = !tide_run_tweaks_text;
-    tide_run_tweaks_text = h;
+    const uint64_t h = tide_run_bytes_hash(bytes, length);
+    if (h == tide_run_tweaks_seen) return;
+    const bool first = !tide_run_tweaks_seen;
     uint8_t values[4096];
-    if (api->size > sizeof values) return;
-    if (!tide_tweaks_read(api, values, text, length)) {
-        fprintf(stderr, "tide: %s isn't an object of tweaks' values: the tweaks stay as they were\n", api->path);
-        return;
-    }
+    if (api->size > sizeof values || !tide_tweaks_load(api, values, bytes, length)) return; // Another build's, or half written
+    tide_run_tweaks_seen = h;
     void *here = api->here(tide_run_local);
-    if (memcmp(here, values, api->size) == 0) return; // As the build had them
+    if (memcmp(here, values, api->size) == 0) return; // As this machine has them
     memcpy(here, values, api->size);
     api->send(tide_run_local);
-    if (!first) fprintf(stderr, "tide: tweaks read again from %s\n", api->path);
+    if (!first) fprintf(stderr, "tide: the tweaks' new values are in\n");
 }
 
-// The tweaks in the menu, from row `first`: an editor each, by its kind. Changed, the copy goes to the match and the file.
+// The tweaks in the menu, from row `first`: an editor each, by its kind, or a worked-out one's value. Changed, the copy
+// goes to the match, and the value into its .tweaks file.
 static inline uint32_t tide_run_dev_tweaks(const tide_tweaks_api *api, const float x, const float y, const float width, const float row)
 {
     uint8_t *values = api->here(tide_run_local);
-    bool changed = false;
     tide_gui_label(&tide_run_gui, (tide_rect){x, y, width, row}, "Tweaks");
     for (uint32_t i = 0; i < api->count; i++) {
         const tide_tweak *t = &api->tweaks[i];
         uint8_t *at = values + t->offset;
         const tide_rect r = {x, y + row * (float)(i + 1), width, row - 4.0f};
         const uint32_t id = 0xDE710000u + i * 8u;
+        bool changed = false;
+        if (!t->plain) {
+            // Worked out in its file from others: shown, and left to the file
+            char value[160], label[320];
+            tide_tweaks_format(t, values, value, sizeof value);
+            snprintf(label, sizeof label, "%s = %s (worked out)", t->name, value);
+            tide_gui_label(&tide_run_gui, r, label);
+            continue;
+        }
         if (t->kind == TIDE_TWEAK_BOOL) {
             bool v = *at != 0;
             if (tide_gui_toggle(&tide_run_gui, id, r, t->name, &v)) {
@@ -1208,17 +1213,10 @@ static inline uint32_t tide_run_dev_tweaks(const tide_tweaks_api *api, const flo
                 changed = true;
             }
         }
-    }
-    if (changed) {
+        if (!changed) continue;
+        // To the match at once, and into its .tweaks file, from which tide run works out the tweaks made from it
         api->send(tide_run_local);
-        static char text[65536];
-        const size_t length = tide_tweaks_write(api, values, text, sizeof text);
-        FILE *f = api->path[0] && length < sizeof text ? fopen(api->path, "wb") : NULL;
-        if (f) {
-            fwrite(text, 1, length, f);
-            fclose(f);
-            tide_run_tweaks_text = tide_run_text_hash(text, length); // The menu's own: not news
-        }
+        if (!tide_tweaks_save(t, values)) fprintf(stderr, "tide: can't write %s to %s\n", t->name, t->file);
     }
     return api->count + 1u;
 }
@@ -1911,7 +1909,7 @@ static inline int tide_run_frame(void *user, const float seconds)
         game->frame_shards(more, n < TIDE_SESSION_VIEWS ? n : TIDE_SESSION_VIEWS);
     }
     tide_run_dev_views(game);
-    tide_run_tweaks_poll(game); // tweaks.json saved since: this machine's copy and the match's
+    tide_run_tweaks_poll(game); // The tweaks' values tide run worked out since: this machine's copy and the match's
     game->frame(match, view.previous, view.alpha, view.verified, view.verified_previous, view.verified_alpha, tide_run_local, &tide_run_draw, &tide_run_gui);
     tide_loops_leave(loops_before);
     tide_run_dev_menu(game);

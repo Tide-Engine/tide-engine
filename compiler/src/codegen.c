@@ -1,6 +1,8 @@
 #include "codegen.h"
 #include "build_code.h"
 #include "builtins.h"
+#include "tweaks.h"
+#include "tide/tweaks.h"
 #include "build_report.h"
 
 #include "asset_files.h"
@@ -10836,7 +10838,7 @@ static void gen_header(gen *g)
               "// as tide_show_dev_views says before each tide_frame, a byte for each (nonzero: shown).\n"
               "extern const char *const tide_dev_view_names[];\n"
               "void tide_show_dev_views(const uint8_t *shown);\n\n");
-    sb_put(o, "// A dev build's tweaks, for a host to read tweaks.json again, show and write them (tide/tweaks.h); NULL in\n"
+    sb_put(o, "// A dev build's tweaks, for a host to take the values tide run works out again, show and write them (tide/tweaks.h); NULL in\n"
               "// a build without dev, or with no tweaks\n"
               "struct tide_tweaks_api;\nconst struct tide_tweaks_api *tide_game_tweaks(void);\n\n");
     if (prog->shards) {
@@ -15730,6 +15732,20 @@ static void gen_tweaks_api(gen *g)
         sb_put(o, "const struct tide_tweaks_api *tide_game_tweaks(void)\n{\n    return NULL;\n}\n\n");
         return;
     }
+    // TideTweakValues as C lays it out: each tweak's place, and the values the build works out, which tide run
+    // writes again as a .tweaks file changes, with no C built (tweak_value)
+    const decl *values = NULL;
+    for (int i = 0; i < prog->decls.count && !values; i++) {
+        const decl *d = prog->decls.items[i];
+        if (d->kind == DECL_STRUCT && str_eq_c(d->name, "TideTweakValues")) values = d;
+    }
+    if (!values) return;
+    int *pad = arena_alloc(sizeof(int) * (size_t)(values->fields.count + 1));
+    decl_layout_padded(values, pad);
+    const int size = type_layout((type){TY_STRUCT, (decl *)values}).size;
+    uint8_t *bytes = arena_alloc((size_t)(size > 0 ? size : 1));
+    memset(bytes, 0, (size_t)(size > 0 ? size : 1));
+    uint64_t layout = 0xCBF29CE484222325ull;
     int count = 0;
     for (int i = 0; i < prog->decls.count; i++) {
         const decl *k = prog->decls.items[i];
@@ -15742,10 +15758,19 @@ static void gen_tweaks_api(gen *g)
         sb_put(o, "};\n");
     }
     sb_put(o, "static const tide_tweak tide_tweak_table[] = {\n");
+    int offset = 0;
+    int field = 0;
     for (int i = 0; i < prog->decls.count; i++) {
         const decl *k = prog->decls.items[i];
         if (!k->is_tweak) continue;
         count++;
+        // Its field's place: the fields are the tweaks, in this order (tweaks_prelude)
+        offset += pad[field];
+        const int field_size = type_layout(values->fields.items[field].type).size;
+        const int at = offset;
+        offset += field_size;
+        field++;
+        if (at + field_size <= size) (void)tweak_value(k, bytes + at, (size_t)field_size);
         const type_kind t = k->return_type.kind;
         const char *kind = t == TY_BOOL ? "TIDE_TWEAK_BOOL" : t == TY_LONG ? "TIDE_TWEAK_LONG" : t == TY_BYTE ? "TIDE_TWEAK_BYTE"
             : t == TY_ENUM ? "TIDE_TWEAK_ENUM"
@@ -15753,37 +15778,49 @@ static void gen_tweaks_api(gen *g)
             : t == TY_DOUBLE || t == TY_DOUBLE2 || t == TY_DOUBLE3 || t == TY_DOUBLE4 ? "TIDE_TWEAK_DOUBLE" : "TIDE_TWEAK_FLOAT";
         const int components = t == TY_INT2 || t == TY_FLOAT2 || t == TY_DOUBLE2 ? 2 : t == TY_INT3 || t == TY_FLOAT3 || t == TY_DOUBLE3 ? 3
             : t == TY_INT4 || t == TY_FLOAT4 || t == TY_DOUBLE4 || t == TY_COLOR ? 4 : 1;
-        const int size = t == TY_BOOL || t == TY_BYTE ? 1 : t == TY_LONG || t == TY_DOUBLE || t == TY_DOUBLE2 || t == TY_DOUBLE3 || t == TY_DOUBLE4 ? 8
+        const int component = t == TY_BOOL || t == TY_BYTE ? 1 : t == TY_LONG || t == TY_DOUBLE || t == TY_DOUBLE2 || t == TY_DOUBLE3 || t == TY_DOUBLE4 ? 8
             : t == TY_ENUM ? k->return_type.decl->width : 4;
-        sb_put(o, "    {\"");
-        if (k->unit && k->unit->ns.len) sb_printf(o, STR_FMT ".", STR_ARG(k->unit->ns));
-        sb_printf(o, STR_FMT "\", %s, %du, (uint32_t)offsetof(TideTweakValues, ", STR_ARG(k->name), kind, components);
+        sb name = {0}, type_text = {0};
+        tweak_name_text(&name, k, '.');
+        tweak_type_text(&type_text, k);
+        for (size_t c = 0; c < name.len; c++) layout = (layout ^ (uint8_t)name.data[c]) * 0x100000001B3ull;
+        for (size_t c = 0; c < type_text.len; c++) layout = (layout ^ (uint8_t)type_text.data[c]) * 0x100000001B3ull;
+        layout = (layout ^ (uint64_t)at) * 0x100000001B3ull;
+        sb_put(o, "    {");
+        gen_c_literal(o, (str){name.data, (int)name.len}, false);
+        sb_printf(o, ", %s, %du, (uint32_t)offsetof(TideTweakValues, ", kind, components);
         put_tweak_name(o, k);
-        sb_printf(o, "), %du, %s, ", size, t == TY_COLOR ? "true" : "false");
-        if (t == TY_ENUM) sb_printf(o, "tide_tweak_names%d, tide_tweak_values%d, %du},\n", i, i, k->return_type.decl->members.count);
-        else sb_put(o, "NULL, NULL, 0},\n");
+        sb_printf(o, "), %du, %s, ", component, t == TY_COLOR ? "true" : "false");
+        if (t == TY_ENUM) sb_printf(o, "tide_tweak_names%d, tide_tweak_values%d, %du, ", i, i, k->return_type.decl->members.count);
+        else sb_put(o, "NULL, NULL, 0, ");
+        gen_c_literal(o, (str){type_text.data, (int)type_text.len}, false);
+        sb_put(o, ", ");
+        gen_c_literal(o, str_from(tweak_file(k)), false);
+        sb_printf(o, ", %s},\n", tweak_value_plain(k) ? "true" : "false");
     }
     sb_put(o, "};\n\n");
-    // The code's values: where tweaks.json gives another, its own (decl.code_value)
-    sb_put(o, "static const void *tide_tweaks_code(void)\n{\n    static TIDE_THREAD_LOCAL TideTweakValues tide_v;\n"
-              "    static TIDE_THREAD_LOCAL bool tide_made;\n    if (!tide_made) {\n");
-    for (int i = 0; i < prog->decls.count; i++) {
-        const decl *k = prog->decls.items[i];
-        if (!k->is_tweak) continue;
-        sb_put(o, "        tide_v.");
-        put_tweak_name(o, k);
-        sb_put(o, " = ");
-        gen_as(g, o, k->code_value ? k->code_value : k->value, k->return_type);
-        sb_put(o, ";\n");
+    // The values tidec worked out, beside the generated C, for a running dev build to take as they change
+    sb path = {0};
+    if (g->opts->out_dir && g->opts->name) {
+        sb_printf(&path, "%s/%s_tweaks.bin", g->opts->out_dir, g->opts->name);
+        FILE *f = fopen(path.data, "wb");
+        if (f) {
+            const uint32_t total = (uint32_t)size, zero = 0;
+            fwrite(TIDE_TWEAKS_MAGIC, 1, 8, f);
+            fwrite(&layout, 8, 1, f);
+            fwrite(&total, 4, 1, f);
+            fwrite(&zero, 4, 1, f);
+            fwrite(bytes, 1, (size_t)size, f);
+            fclose(f);
+        }
     }
-    sb_put(o, "        tide_made = true;\n    }\n    return &tide_v;\n}\n\n");
     sb_put(o, "static void *tide_tweaks_here(void *local)\n{\n    return &((tide_local *)local)->TideTweaksHere.values;\n}\n\n");
     sb_put(o, "static void tide_tweaks_send(void *local)\n{\n    TideSetTweaks tide_v;\n    memset(&tide_v, 0, sizeof tide_v);\n"
               "    tide_v.values = ((tide_local *)local)->TideTweaksHere.values;\n"
               "    tide_local_send_TideSetTweaks((tide_local *)local, (tide_entity){0, 0}, tide_v);\n}\n\n");
     sb_put(o, "static const tide_tweaks_api tide_tweaks = {\n    tide_tweak_table, ");
-    sb_printf(o, "%du, (uint32_t)sizeof(TideTweakValues), tide_tweaks_code,\n    ", count);
-    gen_c_literal(o, str_from(prog->tweaks_path ? prog->tweaks_path : ""), false);
+    sb_printf(o, "%du, (uint32_t)sizeof(TideTweakValues), UINT64_C(%llu),\n    ", count, (unsigned long long)layout);
+    gen_c_literal(o, str_from(path.data ? tweaks_absolute(path.data) : ""), false);
     sb_put(o, ",\n    tide_tweaks_here, tide_tweaks_send,\n};\nconst struct tide_tweaks_api *tide_game_tweaks(void)\n{\n    return &tide_tweaks;\n}\n\n");
 }
 
@@ -25458,7 +25495,7 @@ static void build_pack(gen *g)
                 for (int s = 0; s < d->asset->items[k].side_count; s++) note_watched(opts->info, d->asset->items[k].sides[s]);
             }
         }
-        if (prog->tweaks_file) note_watched(opts->info, prog->tweaks_file); // What the tweaks are: a build follows it
+        for (int i = 0; i < prog->tweak_files.count; i++) note_watched(opts->info, prog->tweak_files.items[i]); // The tweaks' values
     }
     if (!opts->pack && !opts->pack_c && !g->asset_dependencies.count && !g->skinned_fingerprints.count) return;
     const bool reported = build_report_current() && !opts->build_program;
@@ -30138,8 +30175,8 @@ bool codegen(program *prog, const codegen_options *opts)
         // A constant build code made is in the game's C, so a file its code reads changes the program, not the pack
         for (int i = 0; i < prog->build_roots.count; i++)
             opts->info->assets_affect_match |= prog->build_roots.items[i]->kind == DECL_CONST;
-        // ...and so are the tweaks tweaks.json gives
-        if (prog->tweaks_file && !prog->tweaks_live) opts->info->assets_affect_match = true; // A dev build reads it as it runs
+        // ...and so are the tweaks .tweaks files give
+        if (prog->tweak_files.count && !prog->tweaks_live) opts->info->assets_affect_match = true; // A dev build takes them as it runs
         for (int i = 0; i < prog->assets.count; i++)
             opts->info->assets_affect_match |= prog->assets.items[i]->asset_kind == ASSET_SKINNED
                                            || prog->assets.items[i]->asset_kind == ASSET_ANIMATIONS

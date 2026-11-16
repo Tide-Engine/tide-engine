@@ -1,0 +1,2 @@
+Up = Down * 2;
+Down = Up - 1;

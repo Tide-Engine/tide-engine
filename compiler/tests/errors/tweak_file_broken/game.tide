@@ -1,3 +1,3 @@
-// expect: tweaks.json: expected ':' after the tweak's name
+// expect: '=' after the tweak's name
 tweak float KickUp = 0.5;
 scene Main { }

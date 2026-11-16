@@ -2,8 +2,13 @@
 
 #include "game.h"
 #include "tide_test.h"
+#ifdef TWEAKS_LIVE
+#include <stdio.h>
 
-// tweaks/game.tide with its tweaks.json, built with dev (TWEAKS_LIVE) and without: both read the file's values,
+#include "tide/tweaks.h"
+#endif
+
+// tweaks/game.tide with its game.tweaks, built with dev (TWEAKS_LIVE) and without: both read the file's values,
 // and a dev build reads the match's TideTweaks and this machine's copy as they are now.
 
 static tide_draw_list draw;
@@ -26,6 +31,26 @@ TIDE_TEST(tweaks_read)
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(local.Drawn.kick == 0.75f);
 #ifdef TWEAKS_LIVE
+    // What tidec worked out beside the C, which a running dev build takes as a .tweaks file changes: the build's values
+    const tide_tweaks_api *api = tide_game_tweaks();
+    TIDE_REQUIRE(api != NULL && api->values[0]);
+#ifndef __wasm__ // A web build's sandbox has no files of this machine's: a page takes no tweaks as they change
+    FILE *f = fopen(api->values, "rb");
+    TIDE_REQUIRE(f != NULL);
+    static uint8_t bytes[1024];
+    const size_t n = fread(bytes, 1, sizeof bytes, f);
+    fclose(f);
+    TideTweakValues worked;
+    TIDE_CHECK(tide_tweaks_load(api, &worked, bytes, n) && memcmp(&worked, &world.TideTweaks.values, sizeof worked) == 0);
+#endif
+    // Written plainly in game.tweaks, the menu can write over it; worked out there, or the code's, it leaves it
+    for (uint32_t i = 0; i < api->count; i++) {
+        const tide_tweak *t = &api->tweaks[i];
+        if (strcmp(t->name, "KickUp") == 0) TIDE_CHECK(t->plain && strstr(t->file, "tweaks/game.tweaks"));
+        if (strcmp(t->name, "Rounds") == 0) TIDE_CHECK(!t->plain);
+        if (strcmp(t->name, "Gun.kick") == 0) TIDE_CHECK(!t->plain && strcmp(t->type, "float") == 0);
+        if (strcmp(t->name, "Gun.pace") == 0) TIDE_CHECK(t->plain && strcmp(t->type, "Combat.Rate") == 0);
+    }
     // Changed in the match, the match's code reads it; changed here, local code does
     world.TideTweaks.values.KickUp = 1.0f;
     world.TideTweaks.values.Combat_Speed = 0;

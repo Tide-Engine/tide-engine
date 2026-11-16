@@ -19,7 +19,8 @@
           "tide"
         ],
         "extensions": [
-          ".tide"
+          ".tide",
+          ".tweaks"
         ],
         "configuration": "./language-configuration.json"
       }
