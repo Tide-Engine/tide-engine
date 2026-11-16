@@ -848,6 +848,7 @@ tide run --frames 300 --capture menu.png --stats
 | `--microphone <file>` | A WAV or Ogg Vorbis file the microphone plays in the run, looped, where a window's run would hear the capture device (`Clip.Microphone`). Without it a run's microphone is silent |
 | `--frames <n>` | Ends the run after `n` frames |
 | `--frame-rate <n>` | How many frames make up a second of the run's time, from 1 to 1000 (60 without it). At another rate than the match's ticks, some frames have a tick and some have none, as in a window: `--frame-rate 144` profiles what a 144 Hz display's frames cost. A recorded GIF still plays 30 pictures a second |
+| `--paced` | Each frame waits out what's left of its length, as a display holds a window's, where a run with no window otherwise goes as fast as the machine takes it. The match and the pictures are the same either way; the run takes as long as it would in a window, and says as it ends how many frames took longer than one and how long the longest took. For measuring what a player would see: workers have a real frame's time |
 | `--script <file>` | Input by frame from a file, which also says when to capture and when to quit (see [Scripts](#scripts)) |
 | `--interactive <replay.txt>` | Keeps the game alive for [dynamic input and captures](#interactive-play), saving executed actions as a replay script |
 | `--profile <file.json>` | Writes a [profile report](debug-views.md#profile-captures) when the run ends. Combine with `--frames`, `--script` or `--interactive` |

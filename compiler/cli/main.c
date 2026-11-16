@@ -95,7 +95,7 @@ static const char *dispatch_folder(int argc, char **argv)
     const char *zero[] = {
         "--server", "--strip-server-assets", "--strip-assets", "--asset-sizes", "--anonymous", "--udp-only",
         "--no-open", "--release", "--distribution", "--web", "--single-file",
-        "--android", "--stats", "--debug-views", "--ticks-alongside"
+        "--android", "--stats", "--debug-views", "--ticks-alongside", "--paced"
     };
     for (int i = 2; i < argc; i++) {
         const char *a = argv[i];
@@ -391,7 +391,7 @@ static int command_main(const int argc, char **argv)
             }
             game_args[game_arg_count++] = a;
             game_args[game_arg_count++] = argv[++i];
-        } else if (run && strcmp(a, "--ticks-alongside") == 0) {
+        } else if (run && (strcmp(a, "--ticks-alongside") == 0 || strcmp(a, "--paced") == 0)) {
             game_args[game_arg_count++] = a;
         } else if (run && (strcmp(a, "--latency") == 0 || strcmp(a, "--jitter") == 0 || strcmp(a, "--loss") == 0)) {
             // The game says what's wrong with a value: a player's (2:120) needs its --players

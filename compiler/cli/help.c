@@ -251,6 +251,12 @@ static const argument_help arguments[] = {
      "a second unless this says, from 1 to 1000. At another rate than the\n"
      "match's ticks, some frames have a tick and some none, as in a window:\n"
      "--frame-rate 144 for a profile of what a 144 Hz display's frames cost.", RUN},
+    {"--paced", "--paced", "Hold a run with no window to the frames' own length",
+     "A run with --frames, --script or --capture goes as fast as the machine\n"
+     "takes it. With --paced each frame waits out what's left of its length,\n"
+     "as a display holds a window's, and the run says how many frames took\n"
+     "longer than one as it ends: for measuring what a player would see. The\n"
+     "match and the pictures are the same either way.", RUN},
     {"--report", "--report <file>", "Write where the build's time and bytes went",
      "Writes a report of the build: the time of each step and of the compiler's\n"
      "phases, each C/C++ file's compile time, each asset's import time and the\n"

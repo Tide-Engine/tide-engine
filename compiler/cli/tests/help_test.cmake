@@ -84,6 +84,7 @@ contains("${out}" "--profile <file.json>")
 contains("${out}" "--profile-warmup <n>")
 contains("${out}" "--ticks-alongside")
 contains("${out}" "--frame-rate <n>")
+contains("${out}" "--paced")
 contains("${out}" "--max-connections <n>")
 contains("${out}" "--shard-width <units>")
 excludes("${out}" "--nightly")
@@ -91,7 +92,7 @@ excludes("${out}" "--nightly")
 foreach(argument folder source package editor file.tprefab --release --distribution -O0 -O1 -O2 -O3 --web --android --define --title --scene --stats --debug-views --assets -o
         --no-open --host --join --connect --server --strip-server-assets --strip-assets --asset-sizes --anonymous --port --max-matches --max-connections
         --udp-only --shards --shard-width --shard-most --shard-journal --capture --capture-audio --microphone --frames --script
-        --scale --size --profile --profile-warmup --ticks-alongside --frame-rate
+        --scale --size --profile --profile-warmup --ticks-alongside --frame-rate --paced
         --seed --players --data-dir --project --single-file
         --server-only --bundle-only --check --preview --local-preview --nightly --stable --version setting --help -h)
     help(0 help "${argument}")

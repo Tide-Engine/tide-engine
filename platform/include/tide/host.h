@@ -811,6 +811,8 @@ static inline void tide_run_configure(const tide_run_desc *desc)
             tide_run_settings.debug_views = true;
         } else if (strcmp(arg, "--ticks-alongside") == 0) {
             tide_run_alongside = true;
+        } else if (strcmp(arg, "--paced") == 0) {
+            tide_run_headless_desc.paced = true;
         } else if (strcmp(arg, "--frame-rate") == 0) {
             const char *takes = "how many frames a second a run with no window makes up, from 1 to 1000, like --frame-rate 144";
             tide_run_headless_desc.frame_rate = (uint32_t)tide_run_number(&i, arg, 1.0, 1000.0, takes);
