@@ -130,7 +130,7 @@ system Generate(mut Chunk chunk, mut Seen seen)
 
 Each chunk's blocks are its own, and the groups' audiences its rows set are set after them, in the chunks' order, as one thread would. Making or ending groups in the same system keeps it on one thread, so a game makes a chunk's group where it spawns the chunk.
 
-Today the chunks of one box are still made by one thread: a system's entities are handed to threads in the order they were spawned, a range of them each, and chunks spawned together are next to each other, so one thread gets them all (the engine's notes have what would change that). A tick that made every chunk the store answered for would be as long as they are many, so the game says how much a tick makes (`seen.go` above):
+The chunks a tick makes go to every thread, wherever they are among the chunks: a system that starts with a test most of its entities fail (`if (...) return;`) hands out the ones that pass. A tick that made every chunk the store answered for would be as long as they are many, so the game says how much a tick makes (`seen.go` above):
 
 ```csharp
 // On each dimension's entity: the chunks the store had nothing for, in the order they were asked for, up to
@@ -158,7 +158,7 @@ system Pace(mut Streamer streamer, Worlds worlds, mut World world)
 }
 ```
 
-`bench/voxels` makes 480 a tick: 48 chunks with ground, about 7 ms of one thread.
+`bench/voxels` makes 480 a tick: 48 chunks with ground, about 7 ms of one thread, 1.5 ms across twelve.
 
 ## Keeping what nobody is near
 

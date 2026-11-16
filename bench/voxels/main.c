@@ -231,7 +231,7 @@ static void make_world(const bench_flag *f, void *world, const float dt)
     w->Worlds.audit = (int32_t)f[12].value;
     w->Worlds.make = (int32_t)f[16].value;
     w->Worlds.spread = (int32_t)f[17].value;
-    w->Worlds.ask = (int32_t)f[21].value;
+    w->Worlds.ask = (int32_t)f[22].value;
     w->Worlds.park = (int32_t)f[18].value;
     audit_every = f[12].value;
     fill_most = f[20].value;
