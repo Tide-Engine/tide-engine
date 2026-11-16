@@ -1,3 +1,110 @@
+## Indexes that follow what changed, and copies that keep them: written up, not built (2026-11-16)
+
+Asked for with the repairs' fix (notes/netcode.md, top section), which took the time there was; nothing below is
+built or measured beyond what `notes/voxels.md` (At scale, What costs a chunk that's only held) already has. It is
+the plan for its own task, as far as the code was read for it.
+
+**What it costs now.** A world's query index is one site's (`tide_ix_site`): its facts are, for each table chunk of
+each admitted archetype, the chunk's row count and the pages of its entity column, the filters' presence bytes and
+the key's lanes (`gen_ix_query_facts`), each page held. Any fact that differs makes the whole index again
+(`tide_ix_take`, then `gen_ix_begin`, `gen_ix_query_rows`, `tide_index_end`): about 10 µs for each 1,000 entries
+(102 µs for 10,000, Exact keys below). And each world has its own cache (`tide_world_copy` leaves it).
+
+- **A server** whose chunks come and go every tick makes `Has`, `Find` and `Firm`'s indexes of every chunk about
+  twice a tick: 5.3 of its 30.7 ms a second of simulating at the default view (6,490 chunks), 19.6 of 83.6 at twice
+  (17,599). It searches them a few times a tick. Sharing with copies does nothing for it: it ticks its own world.
+- **A client** ticks a copy of its world each tick (`world_at(c, tick + 1)`), and the copy's cache is whatever that
+  slot of its ring had the last time round: 1.7 indexes made a tick, 2.3 ms a second of the 9.6 a client simulates
+  at the default view, 9.8 of 29.4 at twice. Its tables change only when a repair lands (about four times a second),
+  so nearly all of that is the copy, not the world.
+
+So the two halves are two changes, and each measures best for one side: **copies that keep their source's indexes**
+for clients, **an index that takes in the table chunks that changed** for servers.
+
+### 1. A copy keeps its source's indexes (codegen only: `index_codegen.inc`, `tide_world_copy` in `codegen.c`)
+
+A site's facts are page identities, and a held page is never written (a writer copies it first), so an index whose
+facts hold is right for any world with those pages: nothing about it is the world's own. What to build:
+
+- `tide_ix_site.ix` shared by count: a `uint32_t *shared` beside it (NULL while the site is the only holder).
+  `tide_ix_site_free` gives its share back and frees the index with the last. `tide_ix_take`, where it would build
+  into `s->ix` (no readers), first lets go of a shared one and makes its own (`tide_index_make`): an index others
+  hold is never built into. Nothing else writes a site's index (every path goes through `tide_ix_take`; check
+  `gen_indexed_list` and `gen_ix_rows_search` when building it).
+- `tide_index_cache_share(&to->tide_index_cache, from->tide_index_cache)` at the end of `tide_world_copy`: a cache
+  for `to` of this build's sites (as `tide_index_cache_prepare` makes), and for each of `from`'s sites that is
+  `ready` with no build running (its lock taken for the copy): `to`'s site lets go of what it held, takes a copy of
+  the facts, a reference to each held page (under `tide_ix_refs`, as `tide_ix_page` does; a page whose count would
+  wrap leaves the site not shared), a share of the index, `plan`, `most` and `pass`; `valid` 0, so the copy's first
+  search in a tick's run walks the facts (a compare a chunk, not a build). Sites of `to` that aren't taken are
+  emptied.
+- **The trap**: a list's site (a singleton's list a system only reads) has the cache's `epoch` among its facts, and
+  each cache counts its own. A copied site with the source's epoch could match a later run of the copy's by
+  accident, for a list changed in place (same handle, same count). So the copy's cache takes the source's `epoch`
+  too (`to->epoch = from->epoch`): every fact it holds is then of a run at or before that number, and its next
+  `prepare` is past them all. Sites not shared must be emptied for the same reason, not left with `to`'s older
+  numbers.
+- Cost of a copy: for each site, its facts copied and its pages referenced (a few pages for each table chunk the
+  site reads): not measured. A server pays it too, for the worlds it keeps
+  (`tick_begin`'s `before`), which never tick; if that shows, share lazily (the copy keeps a reference to a
+  per-cache snapshot of the sites, taken up at its first `prepare`).
+- Threads: a world isn't copied while it ticks, so a copy never races its source's builds; two worlds that share an
+  index search it at once, which a built index allows (`tide_index_find` reads only), and the count is atomic.
+- Results can't change: the same index, the same facts check, candidates checked against the world's own table as
+  now.
+- Expected: a client's 1.7 builds a tick go to the ticks a repair lands in (about 0.07 a tick): 2.3 ms a second to
+  about 0.2 at the default view, 9.8 to under 1 at twice. Measure as `notes/voxels.md` does (a client's simulating).
+
+### 2. An index that takes in the table chunks that changed (runtime and codegen: `engine/src/index.c`, `index_codegen.inc`)
+
+The facts already say which table chunk changed (the walk compares them in chunk order and knows the first that
+differs; it would go on comparing instead of taking the rest anew). Three ways, cheapest first:
+
+- **a. No index for a search or two.** A site that's rebuilt nearly every run and searched a few times costs more
+  than the plain loop: about 66 µs to build 6,490 entries against about 3 µs a plain pass (102 µs and 4.69 µs for
+  10,000, Exact keys below). `tide_ix_site` already counts
+  searches that find most rows (`most`, `pass`); the same kind of count (searches since the last build, builds in a
+  row with fewer than a handful) would send such a loop through `gen_query_walk`, which is written beside it
+  already. Results are the plain loop's by the index's own contract. It is all a server of flying bots needs, and
+  nothing once many players walk (12 lookups each a tick in `Blocked`).
+- **b. An index for each table chunk.** One `tide_index` a table chunk, each with that chunk's facts; a search asks
+  each in order and the hits ascend as now (ordinals are `archetype << 32 | row`, chunks in order). A changed chunk
+  makes its own again, at what its own rows cost. But a search is then a lookup for each table chunk where it was
+  one (about 20 ns each, Exact keys below), which a client with hundreds of lookups a frame would pay. Only worth
+  it with a threshold on chunks, or under c.
+- **c. An exact-key index that adds and removes** (the one that keeps both costs low). `build_exact` lays entries
+  out by slot with a counting sort, which has no room to add. It would become an open table of slots, each a short
+  run of (hash, ordinal, keys) kept in ordinal order (an insertion into a run of one or two), with the entries of
+  each table chunk listed so a changed chunk can be diffed: for a chunk whose facts differ, read its rows' keys as
+  `gen_ix_query_rows` does, compare with the keys kept for that chunk's ordinals, remove the entries that went or
+  changed, add the ones that came or changed. `tide_index_find_exact`'s contract stays: the entries whose hash and
+  whole numbers are equal and whose doubles are in the widened bounds, ascending by ordinal, once each. Costs what
+  changed in the changed chunks; the table grows by rehashing when it's over half full (amortized). The kinds for
+  doubles (`build_sorted`, `build_grid`) keep making the whole: their layouts (a sorted run, a grid sized from the
+  bounding box) depend on every entry, and the games that have them (boids) change every key every tick anyway.
+  New runtime calls (`tide_index_update_begin`, `_remove`, `_add_exact`, `_update_end`, or one that takes a chunk's
+  keys whole) are the generated-C boundary's: `notes/runtime-ownership.md`, and the owner's to agree first.
+
+### Tests the task asked for, for whichever is built
+
+- **A key changing in place**: a row's key written with the same pages held elsewhere (the differential fixture's
+  `Shift` does it each tick); for c, a chunk in which one row's key changes and the rest stand, found by the new key
+  and no longer by the old.
+- **Spawn and destroy in one tick**: a row gone and another made in its place with another key, and with the same
+  key (`indexed_loops.tide`'s `Renew` and `Expire`); a table that shrinks by a chunk and grows again.
+- **A copy diverging from its source**: copy a world, tick both with different input for some ticks, each against
+  the plain build's (`tidec_indexed_loops_same` prints both builds' hashes: print the copy's too); the source
+  changing while the copy doesn't and the other way round, a copy of a copy, a copy freed before and after its
+  source, a copy made over a world that had other indexes (the ring), a list's site after a copy (the epoch trap:
+  change a singleton's list in place with its count the same, on the tick the copy's epoch reaches the source's).
+- A count of builds in a test's build (as `TIDE_CLIENT_CHANGES_STATS` is for the repairs) so a test can say a copy
+  built nothing and a changed chunk built only itself; without one every test passes with the sharing never taken.
+- Mutations to try: a shared index built into in place; the epoch not taken; a site not emptied; a page reference
+  not taken (the page freed under the copy: ASan's); for c, a removed entry left, an added one put out of ordinal
+  order, a chunk's kept keys not made the new ones.
+- Order is the thing to hold: the hits ascend by ordinal, then the generated code sorts candidates by identity
+  (Canonical logical entity order, below). Neither change touches that.
+
 ## A component handed on for its local fields alone (2026-11-15)
 
 Found by `bench/voxels`' mesher (notes/voxels.md, sections 9 and 12): a view that starts a local task with its own
