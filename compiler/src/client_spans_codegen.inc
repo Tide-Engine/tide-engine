@@ -250,7 +250,7 @@ static void gen_client_span_helpers(gen *g)
               "    if (drop) {\n"
               "        // (What the node before the first kept wrote is gone with it: a node's rows are how it differs from the one before)\n"
               "        const uint32_t base = drop < j->node_count ? j->nodes[drop].from : j->from;\n"
-              "        memmove(j->items, j->items + base, (size_t)(j->count - base) * sizeof *j->items);\n"
+              "        if (j->count > base) memmove(j->items, j->items + base, (size_t)(j->count - base) * sizeof *j->items); // (No rows written yet: no items)\n"
               "        j->count -= base;\n        j->from -= base;\n"
               "        for (uint32_t i = drop; i < j->node_count; i++) {\n"
               "            j->nodes[i - drop] = j->nodes[i];\n            j->nodes[i - drop].from -= base;\n        }\n"
