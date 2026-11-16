@@ -1405,6 +1405,43 @@ another, so its hops land on other ticks (all of a box 25 to 27 at the median).
 - `watch_server` (the server's side of a hop) watches bots 0 to 31 alone, as its masks are 32 bits; the bots' own
   fill times are every bot's.
 
+### Projection checks by the pages written (2026-11-17)
+
+5f's first half: the players' projection checks go by the pages written since the check before (netcode.md, top
+section; the runtime's part, which the owner agreed: runtime-ownership.md, top section). `bench_voxels`, 30 s, 1%
+lost, release, Windows, BelowNormal, one run at a time alternating with the build before (the machine shared with a
+game being played and another agent's builds, so whole runs moved by a tenth together); two runs each on 12 threads,
+one on one thread; before → after. The world's own hash is 0.00 ms a second in every run (it's part of the checks in
+a game that hides state, its timer inside them 2.5 to 3 ms a second), so the hashing column is the checks'. Bytes,
+ticks and every world hash the same in every pair.
+
+| 12 threads | 8 bots | 32 together | 32, `--spread 256` | 64 together |
+|---|---|---|---|---|
+| Server, hashing (the checks), ms a second | 6.50, 7.70 → 6.99, 7.01 | 24.99, 25.44 → 20.65, 20.64 | 85.78, 90.70 → 68.20, 72.75 | 40.04, 44.60 → 37.73, 39.56 |
+| ...in all | 26.0, 30.2 → 28.6, 29.1 | 101.1, 103.7 → 90.0, 91.1 | 243.2, 254.8 → 224.0, 238.2 | 179.1, 195.7 → 180.8, 193.6 |
+| Update, 99th percentile, ms | 2.78, 3.28 → 2.99, 3.15 | 7.16, 7.42 → 6.21, 6.21 | 17.26, 18.69 → 15.88, 16.55 | 13.56, 15.55 → 14.18, 14.62 |
+| ...longest | 7.1, 7.6 → 19.0, 9.8 | 12.5, 46.3 → 10.2, 10.2 | 28.0, 28.3 → 22.8, 23.5 | 22.0, 29.6 → 19.9, 24.7 |
+| Sent to each bot, KB a second | 22.3 | 25.3 | 24.4 | 28.0 |
+
+| 1 thread | 8 bots | 32 together | 32, `--spread 256` | 64 together |
+|---|---|---|---|---|
+| Server, hashing, ms a second | 6.83 → 6.95 | 24.52 → 21.51 | 95.52 → 73.26 | 43.82 → 38.56 |
+| ...in all | 32.8 → 34.7 | 110.6 → 107.0 | 305.7 → 280.2 | 208.4 → 202.4 |
+| Update, 99th percentile / longest, ms | 4.79 / 9.4 → 4.99 / 9.4 | 8.65 / 14.4 → 8.60 / 14.2 | 19.64 / 32.7 → 18.02 / 28.6 | 15.60 / 24.3 → 15.81 / 30.0 |
+
+32 apart split by update (`--worst 1`, one pair): hashing 0.84 → 0.74 ms an update with as many entities after, 2.72 →
+2.12 with some come or gone. Counted (`bench_voxels_counts`, the same run, alternating, ms over the run): the pieces'
+checks 2,119 → 871 (of it blocks hashed again for another's change 713 → 66, slots' snaps 439 → 80, the walk 57),
+keeping pieces 170 → 233 (their lines), the rest as it was (audiences 683 → 646, sums 326 → 318, rows of pieces read
+576 → 582); heap pages looked at 54.7M → 2.2M, blocks hashed again 7.75M → 236k (2.56 GB → 576 MB).
+
+- **A fifth off the checks where entities come and go** (32 apart, 32 together), and the server a tenth or less in
+  all; the default run and 64 together little (64 together's hashing is mostly the rows that changed: about 8%). The
+  owner's 100 players weren't run: `maxPlayers` is 64 here.
+- **Not the large cut hoped for**: the pieces' part fell to two fifths, but it was half the checks; what's left is
+  the rows that did change (audiences, sums, rows read again, grids encoded) and the ids of the pages each piece goes
+  through (netcode.md, top section, Left).
+
 ### What's left, most telling first
 
 1. ~~Inputs of every player, in every unacknowledged frame (section 5): 13 to 44 KB a second a player with real hands on the mice.~~ Cut the same day (section 5, the last paragraph of that bullet): 19.2 KB a second with 8 turning and standing, 10.6 flying; 32 are as they were (20.8 standing), each tick once, and a second copy of theirs is the owner's to weigh (netcode.md, Open).
@@ -1417,7 +1454,7 @@ another, so its hops land on other ticks (all of a box 25 to 27 at the median).
    - 5c. **Spares only once a connection's loss is counted** (netcode.md, Left): a join and a first hop have none.
    - 5d. ~~**The tick a box is spawned in is 2.8 µs a chunk**: 2.4 ms at the default view, 8.7 at twice, about 19 at three times, where it's a frame's worth by itself. A box asked for over a few ticks, nearest first, would bound it; the ring-a-tick variant (Tried and taken out) is that, and would pay now where it didn't.~~ Closed the same day (A wide view without a long update): 1,024 new chunks a tick, the store's part of each no longer going with how many were asked, and a box left going over as many ticks.
    - 5e. ~~**The tick a player joins or leaves the audiences of a whole view of chunks that are there** (hopping to where others are, or away from them): 6,845 chunks' `Seen` and group changed in one handler, 11 ms of handlers and 7 of hashing at three times the view (A wide view without a long update: its longest update now, 20 ms). The allowance of `Watch` counts spawns alone.~~ Partly closed (Audiences joined and left over ticks): a group's audience set with one lookup (the hop's tick 12 to 15% shorter), and joins and leaves under an allowance of their own, 8,192 a tick, which no lone view reaches. Left: a lone view at three times the radius is still one tick's (6.6 ms of handlers with the tick's spawns, 4.8 of hashing), as splitting it costs its player a repair and a round trip (5b); the hop's repairs are that view's longest updates (17 to 18 ms).
-   - 5f. **A tick in which entities come or go costs the server more than one in which none do**, whatever their number (seen where a border's row of chunks went over four ticks for one: simulating 28 to 40 ms a second at twice the view). Taken apart (The spread case taken apart): the orders were sorted again (fixed: 32 apart simulate 146 to 61 ms a second); what's left is the players' projection checks (+1.5 ms such a tick with 32 apart: slots and heap blocks written all over the world make most pieces read again) and the handlers (+1 ms: the spawn path, 5g, and `Drop`).
+   - 5f. **A tick in which entities come or go costs the server more than one in which none do**, whatever their number (seen where a border's row of chunks went over four ticks for one: simulating 28 to 40 ms a second at twice the view). Taken apart (The spread case taken apart): the orders were sorted again (fixed: 32 apart simulate 146 to 61 ms a second); what's left is the players' projection checks (+1.5 ms such a tick with 32 apart: slots and heap blocks written all over the world make most pieces read again) and the handlers (+1 ms: the spawn path, 5g, and `Drop`). The checks go by the pages written since (2026-11-17, Projection checks by the pages written): 2.72 to 2.12 ms of hashing such a tick; what's left of it is the rows that did change.
    - 5g. **A spawned chunk is 9,000 cycles** beside its load (the command with its grid and policies 3,240, its group and policy 2,000, the map 1,130, applying it 1,170): ~~`tide_visibility_set_group` looks its group up three times~~ (one lookup since, Audiences joined and left over ticks), and a Visibility's one policy is a map made in the scratch area and copied. In a hop's tick at three times the view a spawn is 16,000 to 33,000 (its command 9,000 to 16,000): the spawns are most of that tick's handlers.
 6. ~~A hosting player's frame of 9 to 60 ms when a box is asked for (section 4), not taken apart.~~ Taken apart (A whole view arriving): it's the store's files found missing on the tick's thread, 18 µs each, which only a run with no window does; in a window the same ticks are 2.5 and 12 ms. What's left is 5d. ~~And that **every chunk a player comes near is a file looked for** (567,041 loads in 20 minutes of 8 bots flying, none found): a dimension that knew which of its chunks were ever saved (a set kept with its far regions, or a listing as it starts) would ask for those alone.~~ Closed the same night in the store itself, for every game (section 3f): it lists its files once and a load of a key never saved reads nothing (14,551 reads to 49 in the default run; a hosting run with no window's longest update 4.6 to 2.3 ms at `--near 4`, 29 to 13 at `--near 12`).
 7. ~~The process grows about a hundred bytes for each chunk that came and went, in no world (The sweep again, 8): 3.4 MB a minute with 8 bots flying, not located; the projection checks' memos are the first place to look.~~ Located and fixed the same day (The process's growth): a grid read from bytes left the 64 bytes it was made in on its thread's scratch area, 1.84 MB a minute here. What's left is the bench's own (its timings and its store in memory) and what's in the next item.
@@ -1427,6 +1464,10 @@ another, so its hops land on other ticks (all of a box 25 to 27 at the median).
 
 ## Tests
 
+- 2026-11-17 (Projection checks by the pages written): `tidec_e2e_visibility_walks` (and `_checked`, `_memo_off`)
+  and the runtime's line tests (notes/ecs.md, top section); `bench_voxels_checked` for 30 s with 8 bots, 32 together,
+  32 apart, 8 at `--near 12` and 64 together, every hash worked out both ways, ending on the build before's hashes.
+  No pin moved.
 - 2026-11-17, the three merged (heaps a page a block size, orders that take in what came and went, audiences over ticks): every pin recomputed on the merge and each the same on 1 and 12 threads. `bench_voxels`, `_checked`, `_counts` `0x8a1e9bcebac9b565`, `_forgets` `0x49e77a975f78a7ec`, `_wide` `0xc037496666b19d9a`, `_arrives` `0x460d88205970b0c0` (21 ticks median, 29 at most), `_views` `0x5de551e459450cac`; `bench_earth` and `_diverge` `0x8b1ac38f4c2e65c8`, `_split` `0x0bb9bd2c308ff057`; `tidec_e2e_guarded_rows` `0x8c60494382950ea0`. Box2D's and Box3D's package tests' pins moved with the heaps' placement (notes/ecs.md, top section).
 
 - 2026-11-16, night (The spread case taken apart, which lists the pins that moved with `maxPlayers = 64`):
@@ -1475,7 +1516,7 @@ another, so its hops land on other ticks (all of a box 25 to 27 at the median).
 
 What a game of this kind still works around or lacks, most telling first.
 
-- **Hashing what changed** (rows kept 64 at a time, then by their blocks, then row by row with big containers as trees: section 2, 2026-11-15 and 16; 43 ms a second to 18.4, to 9.5, to 7.0, with 8 bots moving). Closed of it: pages changing for other entities' blocks, slots' pages for other entities' turnover, the directory of groups copied whole, each row's part of each player's sum added up every call, the rows of a piece read for one row's change, a big map encoded whole. What's left (`notes/netcode.md`, top section, Left): a piece looks at its whole union of heap pages each call (25 a piece here: two grid chunks to a page; 74 of a run's 172 ms of checks are the pieces'), where pages written since, kept by the runtime, would let a check go from the pages that changed to the pieces that read them: a runtime change, not made; a piece any row of which changed adds up every row's part of each player's sum again (16 ms a run).
+- **Hashing what changed** (rows kept 64 at a time, then by their blocks, then row by row with big containers as trees: section 2, 2026-11-15 and 16; 43 ms a second to 18.4, to 9.5, to 7.0, with 8 bots moving). Closed of it: pages changing for other entities' blocks, slots' pages for other entities' turnover, the directory of groups copied whole, each row's part of each player's sum added up every call, the rows of a piece read for one row's change, a big map encoded whole. What's left (`notes/netcode.md`, top section, Left): pages written since, kept by the runtime, are built (2026-11-17: a walk of the pages that changed since the check before, and the lines of each a piece's rows read; Projection checks by the pages written), and the pieces' part of 32 apart fell from 2.1 s a run to 0.9; a piece still goes through the ids of its pages (about 60) each call; a piece any row of which changed adds up every row's part of each player's sum again (16 ms a run).
 - **A system that writes grids ran on one thread in a game with visibility**: closed 2026-11-14 (section 5), `Generate` goes across threads. What's left of it: `Idle` stays on one thread (`Visibility.DestroyGroup` and `Storage.Save` change the match's own heap); on a tick with nothing to make `Generate` still goes out in 24 pieces, which cost a client about 15 µs a tick on threads (each finds no rows since 2026-11-16, last, and a client's simulating on threads is a sixth less: New chunks on every core); a tick's new chunks were one task's until then; a generator past a few milliseconds a chunk would still want a match `worker` (reserved, not built).
 - **Awaiting a load or a listing in a match task** was closed 2026-11-15 (section 3d), as were listing keys and reading and writing off the tick's thread (sections 3a, 3b). What's left of them:
   - No handle of a load: without `await` the call is the event's, so several loads awaited together are several tasks (the owner's to spell, spec Open). An answer walks the tables of tasks that await the store, one scan an answer; a game with tens of thousands of such tasks waiting would want an index by op.

@@ -1,5 +1,85 @@
 # Netcode: sessions, prediction, commands
 
+## Projection checks go by the pages written since the check before (2026-11-17)
+
+What was left of the projection checks (the sections below, Left; notes/voxels.md, The spread case taken apart, 5f):
+every check looked at every piece's heap pages and slots' pages, and where entities came and went, the writes
+scattered over the world (free slots and blocks are taken again) made most pieces find a page of theirs changed, so
+the blocks their rows read in it were hashed again and their rows' slots read again. Counted over a run of 32 players
+apart (`bench_voxels_counts --players 32 --spread 256`, 2,736 checks): 54.7M heap pages' and 9.3M slots' pages'
+hashes looked at (20k and 3.4k a check), 7.75M blocks hashed again (2.56 GB) of which 7.70M were as they were; the
+pieces' part 1.64 s of the run's 3.4 s of checks.
+
+**The runtime** (agreed with the owner 2026-11-17; runtime-ownership.md, top section; notes/ecs.md): a page keeps the
+lines of it (64 to a page) written since its hash was made, and when a hash is made, the hash before (`before`) and
+the lines written between (`wrote`). A heap's writes say their block's lines, a slot's change its slot's, everything
+else all of the page. `tide_page_same_since(p, kept, from, bytes)`: the bytes are those of when the page hashed to
+`kept`.
+
+**The checks** (`client_spans_codegen.inc`, `client_state_codegen.inc`; generated, no session change):
+
+- **A walk** (`tide_client_walk`, each check): every heap page and slots' page of the world, its hash now against the
+  one the walk before found at its place, and the walk it last changed in (`tide_client_kept.walked`,
+  `slots_walked`, a place's that comes or goes too). A piece keeps the walk as of which every one of its pages' kept
+  hashes was its page's (`tide_client_piece.valid`: set where the check went through all its pages, or kept them
+  anew), and passes over a page no walk since found changed without reading it: 20k pages a check looked at to 800.
+- **The lines a piece's rows read** (`tide_client_piece.page_lines`, made as the piece is kept: its rows' blocks'
+  lines in each heap page, its rows' slots' lines in each slots' page). A page that changed, whose hash before is the
+  one the piece kept and none of whose lines it read were written in between (another entity's block or slot), has
+  its new hash kept without its blocks or slots being read: 1.97M heap pages and 1.88M slots' pages a run, where each
+  was its blocks hashed again or its rows' snaps read.
+- **A block is as of the piece's hash of its page** (`tide_client_item_same_by`, `tide_client_piece_page_hash`): a
+  piece's rows' blocks are what they were as of its page's kept hash, which goes on where the page changed in other
+  lines, so a block of a page that changed is checked by the lines since that hash, else hashed again. And the pages
+  of a piece that changed are checked against its rows' blocks in one go (`tide_client_piece_blocks_moved`), where
+  each was a pass over them all.
+
+**Why every page passed over is as it was.** Everything goes by a page's hash, which says its bytes (as every kept
+hash already does), and nothing by which page or world it is. The walk: a place's hash is compared with the one the
+walk before found there, every check, so a piece's kept hash, equal to the place's as of its `valid` walk, is equal
+to it now while no walk since found it changed; `valid` is only set where every page of the piece was its page then.
+The lines: the page's hash before is the piece's kept one, so its bytes then were those the piece read; the runtime
+says every write's lines (a heap write its whole block's; a write that says nothing, all of it; a copy its source's
+and what it doesn't copy), so bytes in no line of `wrote` are those bytes; and the piece's lines are every one of its
+rows' blocks' (all of a page whole) and slots'. A slots' page is passed so only where no row's entity column changed
+(as the snaps check went). A page from a world taken back, read from bytes or copied carries its own hash before: it
+holds where that's the one kept, as the bytes then were the same. `TIDE_CLIENT_SPANS_CHECK` works every hash out
+again from the rows and stops on a difference: `bench_voxels_checked` for 30 s with 8 bots, 32 together, 32 apart, 8
+at `--near 12` and 64 together pass, ending on the hashes of the build before.
+
+**Pins**: none moved (the hashes are of values); `bench_voxels`' and every fixture's as they were.
+
+**Measured**: notes/voxels.md, Projection checks by the pages written (the table, both builds alternating).
+
+**Tests.** `tidec_e2e_visibility_walks` (and `_checked`, `_memo_off`; `e2e/visibility_walks.tide`, `_test.c`): 1,200
+plots, made a tick after another of their heap's, so a plot's grid's chunk shares its page with the next one made and
+plot 64k-1's with 64k's, in two pieces; sixteen rounds (noise every other one), each at the first row of a piece and
+the last of the one before: the target's and the neighbour's chunks in one tick; the neighbour's alone, then the
+target's the tick after; the target's small map and the tick after the neighbour's, checked once, the world hashed
+in between (its hash before isn't the kept one); the same after the neighbour's grid's chunk changed; the target's
+list in a world taken back two ticks; the target snapped as the neighbour in the slot beside it goes; a plot made in
+that slot; another of the piece before gone as a plot is made; the target snapped the tick after. Every check
+against a copy's with nothing kept and repairs from what's kept against the rows'; each step shows against a twin
+without it; pinned, the same in the three. The runtime's tests: notes/ecs.md, top section.
+
+Mutations (each alone, against the visibility fixtures `_blocks`, `_pieces`, `_trees`, `_runs_checked`,
+`_repairs_checked`, `_walks` and their `_checked`): a page held by its lines whatever they say (nine fail); held
+without its hash before being the kept one (`_walks`); a walk after the one kept as of passed over (nine). Not
+caught, and why: a block's lines taken as its first line alone, or its first 16 bytes' (a write says its whole
+block's lines, so the first is in them whenever any is); `valid` set where a page loop broke (such a piece is read and
+kept again, which sets it); places past a heap's end not found changed (a row whose block's page went changed its
+handle); slots' pages passed where a row's entity changed (those rows are hashed again for it); a row's blocks taken
+as of a piece's hash where the piece isn't kept; the slot after a row's taken for its lines (wrong only for the last
+slot of a line, which no run here met); the snaps check by lines without its hash before. The runtime's mutations:
+notes/ecs.md and the test names there.
+
+**Left.** The pieces' part is now the pages' ids a piece goes through (about 60, 0.3 µs a piece; a walk that knew
+which pieces read each page would go from the 800 that changed to theirs, but most pieces have about two changed a
+check in the spread case), and keeping a piece's lines costs about 0.6 µs a keep. What a check costs now is mostly
+the rows that did change: audiences worked out again, players' sums, rows read again and grids encoded. Big
+containers' chunks and the directory of groups still go by their pages' hashes, where the lines would say more; a
+memo entry's blocks by their own page hash.
+
 ## A whole view's repair: read in one update, packed on the pool, one big one an update; no protocol change (2026-11-16, wide views)
 
 What a whole view costs the server to send at wide view distances (notes/voxels.md, A wide view without a long

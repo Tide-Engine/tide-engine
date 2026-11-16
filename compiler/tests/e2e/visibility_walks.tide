@@ -1,0 +1,110 @@
+// Projection hashes that go by the pages written since the check before (client_spans_codegen.inc, tide_client_walk,
+// tide_client_piece.page_lines; tide/page.h, Lines written): a piece passes over each page no walk found changed since
+// its pages were last looked at, and a page that changed in none of the lines its rows read (another entity's block,
+// another entity's slot) without reading it. What could make that wrong, one change at a time: a block changed in the
+// same tick as a neighbour's in its page, or the tick after; a page changed twice between two checks, its own block
+// first; the world taken back to a tick before; an entity snapped beside others coming and going in its slots' page,
+// in the same tick and the tick after; entities gone and made in its slots' page with its own as it was. The test
+// (visibility_walks_test.c) checks each tick that every player's projection hash is the one a copy of the world
+// hashes to with nothing kept, and that a repair by what changed is the same from what the tick's check kept as from
+// the rows themselves.
+
+settings { maxPlayers = 4; }
+
+enum Block : byte
+{
+    Air,
+    Stone,
+    Sand
+}
+
+const int PLOTS = 1200;
+
+component Plot
+{
+    int id;
+    VisibilityGroup group;
+    Grid3<Block> ground = Grid3(32, 16, 16); // One chunk of 16 cubed in use: two chunks to a heap page
+    Map<int, int> few;                       // 3 entries: a small block, many to a page
+    List<int> items;                         // Two, a small block each
+}
+
+// What the test asks of a tick (visibility_walks_test.c, STEPS)
+singleton Control
+{
+    int step;
+    int target;     // The plot the step changes...
+    int other;      // ...and the one made just before it: their blocks share the target's pages, their slots its slot's
+    bool noise;     // Lists grow all over, so pages change under every piece
+}
+
+void MakePlot(int id)
+{
+    var group = Visibility.CreateGroup(Audience.Only(PlayerID(id % 4)));
+    Spawn(Plot { id = id, group = group }, Visibility { group = group });
+}
+
+event(Spawned) Fill(mut Plot plot)
+{
+    plot.ground[plot.id % 16, 0, 0] = Block.Stone;
+    for (var k = 0; k < 3; k++) plot.few[k] = plot.id * k;
+    plot.items = [plot.id, plot.id + 1];
+}
+
+// A plot of another table, whose blocks are made a tick before the rest: so each plot's grid's chunk shares its heap
+// page with the one made after it (two to a page), and plot 63's with plot 64's, which are in two pieces (64 rows of
+// the table each)
+component Apart { }
+
+event(Spawned) Setup(with Main)
+{
+    var group = Visibility.CreateGroup(Audience.Only(PlayerID(0)));
+    Spawn(Plot { id = -1, group = group }, Visibility { group = group }, Apart { });
+}
+
+system Populate(Time time)
+{
+    if (time.tick == 2) {
+        for (var id = 0; id < PLOTS; id++) MakePlot(id);
+    }
+}
+
+scene Main { }
+
+system Change(mut Plot plot, Control control)
+{
+    if (plot.id == control.other) {
+        if (control.step == 1 || control.step == 2) { // The neighbour's grid's chunk: another block each time
+            if (plot.ground[5, 6, 7] == Block.Sand) plot.ground[5, 6, 7] = Block.Stone;
+            else plot.ground[5, 6, 7] = Block.Sand;
+        }
+        if (control.step == 5) plot.few[2] = plot.few[2] + 11;                         // The neighbour's small map
+        if (control.step == 7) plot.items.Add(control.step);                           // The neighbour's list
+    }
+    if (plot.id != control.target) return;
+    if (control.step == 1) plot.ground[9, 9, 9] = Block.Sand;     // Its grid's chunk, in the same tick as the neighbour's
+    if (control.step == 3) plot.ground[1, 2, 3] = Block.Stone;    // ...and the tick after the neighbour's alone
+    if (control.step == 4) plot.few[1] = plot.few[1] + 9;         // Its small map, a tick before the neighbour's, both unchecked
+    if (control.step == 6) plot.items[0] = plot.items[0] + 1;     // Its list's element, in a world taken back
+}
+
+// Entities coming and going in the target's slots' page: the one made before it, and the one made before that
+system Turnover(Plot plot, Control control)
+{
+    if (control.step == 8 && plot.id == control.target) this.Snap();          // Snapped as its neighbour goes
+    if (control.step == 8 && plot.id == control.other) this.Destroy();
+    if (control.step == 10 && plot.id == control.other - 1) this.Destroy();   // Another goes, its own as it was
+    if (control.step == 11 && plot.id == control.target) this.Snap();         // ...and it's snapped the tick after
+}
+
+system Grow(Control control)
+{
+    if (control.step == 9) MakePlot(PLOTS + 1);  // In the slot the neighbour left
+    if (control.step == 10) MakePlot(PLOTS + 2); // ...and in the other, as it goes
+}
+
+// Pages that change under pieces: a list here and there grows, in blocks of the heap's beside other plots'
+system Noise(mut Plot plot, Control control, Time time)
+{
+    if (control.noise && (plot.id + time.tick) % 37 == 0) plot.items.Add(time.tick);
+}
