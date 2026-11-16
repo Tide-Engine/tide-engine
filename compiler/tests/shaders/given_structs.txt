@@ -45,18 +45,15 @@ struct tt_Entry_5int_7float_6 {
     m_key: i32,
     m_value: f32,
 }
-fn tide_f(x: f32) -> f32 {
-    return x;
-}
 fn tide_i(x: i32) -> i32 {
     return x;
 }
 fn tide_xxh_word(h: u32, w: i32) -> u32 {
-    var k: u32 = h + u32(w) * 0xC2B2AE3Du;
+    let k: u32 = h + u32(w) * 0xC2B2AE3Du;
     return ((k << 17) | (k >> 15)) * 0x27D4EB2Fu;
 }
 fn tide_xxh_lane(h: u32, w: i32) -> u32 {
-    var k: u32 = h + u32(w) * 0x85EBCA77u;
+    let k: u32 = h + u32(w) * 0x85EBCA77u;
     return ((k << 13) | (k >> 19)) * 0x9E3779B1u;
 }
 fn tide_xxh_end(h: u32) -> i32 {
@@ -178,7 +175,7 @@ fn tide_list3(tide_i: vec2i) -> i32 {
 fn tf_Pass_40(t_row: i32) -> mat4x4f {
     var t_up: f32 = 0.0;
     _ = tide_try2(t_row, &t_up);
-    var t_m: mat4x4f = tide_list1((t_row % max(tide_block.tide_v0.y, tide_i(1))));
+    var t_m: mat4x4f = tide_list1((t_row % max(tide_block.tide_v0.y, 1)));
     t_m[3].y = (t_m[3].y + (t_up + f32(tide_list3(vec2i((t_row % tide_i(4)), 0)))));
     return t_m;
 }
@@ -199,7 +196,7 @@ fn tf_Total_40() -> f32 {
 fn ts_Play(t_corner: ptr<function, tt_Boned>) {
     var t_m: mat4x4f = tf_Poses_2m1(tide_j0.x, tide_j0.y, (*t_corner).m_joints.x, tide_n4.x);
     var t_h: mat4x4f = tf_Hip_40(tide_j0.x);
-    (*t_corner).m_position = ((t_h * t_m) * vec4f((*t_corner).m_position, tide_f(1.0))).xyz;
+    (*t_corner).m_position = ((t_h * t_m) * vec4f((*t_corner).m_position, 1.0)).xyz;
     (*t_corner).m_position.y = ((*t_corner).m_position.y + tf_Total_40());
 }
 

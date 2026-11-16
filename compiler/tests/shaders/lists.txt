@@ -48,14 +48,8 @@ struct tt_Light {
     m_kind: i32,
     m_on: bool,
 }
-fn tide_nan(x: f32) -> bool {
-    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
-}
 fn tide_max1(a: f32, b: f32) -> f32 {
-    if (tide_nan(b)) { return a; }
-    if (tide_nan(a)) { return b; }
-    if (a > b) { return a; }
-    return b;
+    return select(select(select(b, a, a > b), b, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000), a, (bitcast<i32>(b) & 0x7fffffff) > 0x7f800000);
 }
 fn tide_list0(tide_i: i32) -> f32 {
     if (tide_i < 0 || tide_i >= tide_block.tide_v0.y) {

@@ -53,17 +53,11 @@ fn tide_f(x: f32) -> f32 {
 fn tide_i(x: i32) -> i32 {
     return x;
 }
-fn tide_nan(x: f32) -> bool {
-    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
-}
 fn tide_max1(a: f32, b: f32) -> f32 {
-    if (tide_nan(b)) { return a; }
-    if (tide_nan(a)) { return b; }
-    if (a > b) { return a; }
-    return b;
+    return select(select(select(b, a, a > b), b, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000), a, (bitcast<i32>(b) & 0x7fffffff) > 0x7f800000);
 }
 fn tide_normalize3(v: vec3f) -> vec3f {
-    var l: f32 = dot(v, v);
+    let l: f32 = dot(v, v);
     if (l > 1.17549435e-38) { return v * inverseSqrt(l); }
     return vec3f(0.0);
 }
@@ -77,7 +71,7 @@ fn tf_Brighten(t_rgb: ptr<function, vec3f>, t_by: f32) {
 
 fn ts_Wave(t_vertex: ptr<function, tt_BoxVertex>) {
     var t_height: f32 = select(0.2, 0.1, (((tide_block.tide_v0.x / tide_block.tide_v0.y) % tide_i(2)) == 0));
-    (*t_vertex).m_position.y = ((*t_vertex).m_position.y + (sin(((tide_block.tide_u0.x * tide_f(2.0)) + (*t_vertex).m_position.x)) * t_height));
+    (*t_vertex).m_position.y = ((*t_vertex).m_position.y + (sin(((tide_block.tide_u0.x * 2.0) + (*t_vertex).m_position.x)) * t_height));
     { var tide_set0: vec2f = ((*t_vertex).m_position.xz * (tide_f(1.0) + (tide_f(1.0) / tide_f(2.0)))); (*t_vertex).m_position.x = tide_set0.x; (*t_vertex).m_position.z = tide_set0.y; }
     (*t_vertex).m_normal = (mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3) * vec4f((*t_vertex).m_normal, 0.0)).xyz;
     {
@@ -88,7 +82,7 @@ fn ts_Wave(t_vertex: ptr<function, tt_BoxVertex>) {
 }
 
 fn tf_Lit(t_normal: vec3f, t_toward: vec3f) -> f32 {
-    return tide_max1(dot(tide_normalize3(t_normal), t_toward), tide_f(0.1));
+    return tide_max1(dot(tide_normalize3(t_normal), t_toward), 0.1);
 }
 
 fn tf_Direction(t_sun: tt_Sun) -> vec3f {

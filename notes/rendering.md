@@ -191,7 +191,8 @@ probe's host loading other SPIR-V for a shader from a folder (by the FNV of its 
 | Every helper `DontInline` | 9.0 s | 89 s |
 
   Warm, all four are the same (0.05-0.07 s). Not checked: that the optimized SPIR-V draws the same pixels.
-- Not tried, for the owner: the helpers written with fewer instructions for the same values (`tide_grad2/3`'s
+- Built since (shaders.md, Helpers that cost the driver less to compile): the cold step 4.72 s to 3.64 s.
+- Not tried then, for the owner: the helpers written with fewer instructions for the same values (`tide_grad2/3`'s
   branches as a table, `tide_smoothstep1`, `tide_max1`... without branches), which changes the shader goldens; and
   tidec doing what `spirv-opt -O` does, which it has no code for (SPIRV-Tools is C++).
 

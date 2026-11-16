@@ -19,11 +19,8 @@ struct tt_Vertex {
     m_uv: vec2f,
     m_color: vec4f,
 }
-fn tide_f(x: f32) -> f32 {
-    return x;
-}
 fn tf_Wave(t_x: f32) -> f32 {
-    return ((sin((t_x * tide_f(6.0))) * 0.5) + 0.5);
+    return ((sin((t_x * 6.0)) * 0.5) + 0.5);
 }
 
 fn tf_Ripple(t_x: f32) -> f32 {

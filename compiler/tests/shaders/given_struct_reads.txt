@@ -41,24 +41,14 @@ struct tt_Vertex3 {
     m_uv: vec2f,
     m_color: vec4f,
 }
-fn tide_nan(x: f32) -> bool {
-    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
-}
 fn tide_min1(a: f32, b: f32) -> f32 {
-    if (tide_nan(b)) { return a; }
-    if (tide_nan(a)) { return b; }
-    if (a < b) { return a; }
-    return b;
+    return select(select(select(b, a, a < b), b, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000), a, (bitcast<i32>(b) & 0x7fffffff) > 0x7f800000);
 }
 fn tide_max1(a: f32, b: f32) -> f32 {
-    if (tide_nan(b)) { return a; }
-    if (tide_nan(a)) { return b; }
-    if (a > b) { return a; }
-    return b;
+    return select(select(select(b, a, a > b), b, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000), a, (bitcast<i32>(b) & 0x7fffffff) > 0x7f800000);
 }
 fn tide_clamp1(a: f32, b: f32, c: f32) -> f32 {
-    if (tide_nan(a)) { return b; }
-    return tide_max1(b, tide_min1(c, a));
+    return select(tide_max1(b, tide_min1(c, a)), b, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000);
 }
 fn tide_straight(c: vec4f) -> vec4f {
     if (c.a == 0.0) { return vec4f(0.0); }
@@ -163,24 +153,14 @@ struct tt_Coated {
     m_lift: f32,
     m_shade: f32,
 }
-fn tide_nan(x: f32) -> bool {
-    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
-}
 fn tide_min1(a: f32, b: f32) -> f32 {
-    if (tide_nan(b)) { return a; }
-    if (tide_nan(a)) { return b; }
-    if (a < b) { return a; }
-    return b;
+    return select(select(select(b, a, a < b), b, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000), a, (bitcast<i32>(b) & 0x7fffffff) > 0x7f800000);
 }
 fn tide_max1(a: f32, b: f32) -> f32 {
-    if (tide_nan(b)) { return a; }
-    if (tide_nan(a)) { return b; }
-    if (a > b) { return a; }
-    return b;
+    return select(select(select(b, a, a > b), b, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000), a, (bitcast<i32>(b) & 0x7fffffff) > 0x7f800000);
 }
 fn tide_clamp1(a: f32, b: f32, c: f32) -> f32 {
-    if (tide_nan(a)) { return b; }
-    return tide_max1(b, tide_min1(c, a));
+    return select(tide_max1(b, tide_min1(c, a)), b, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000);
 }
 fn tide_straight(c: vec4f) -> vec4f {
     if (c.a == 0.0) { return vec4f(0.0); }

@@ -1,3 +1,37 @@
+## Helpers that cost the driver less to compile (2026-11-16)
+
+Owner, after the measurements in rendering.md (What the driver compiles cold): "lets start with 1", the helpers
+written with fewer instructions for the same values. A driver inlines every call, so a helper costs its size times
+its calls; Mount & Rifle's 139 shaders were 1.52 million instructions inlined, three quarters of them `tide_*`.
+All in `compiler/src/shader.c`; no runtime, binding, uniform or translator change.
+
+- **A helper's local is `let` unless the helper gives it a value again** (`helper_assigns`, in `put_helper`): `var`
+  before, a place the driver has to prove holds one value.
+- **The families pick with `select`**: `tide_min1`, `tide_max1`, `tide_clamp1`, `tide_saturate1`, `tide_smoothstep1`
+  and `tide_pow1` have no branch, and the NaN test is written where it's asked (`tide_nan` is no longer a call of
+  theirs; the families don't `need` it). `tide_pow1` uses `&` of bools, which doesn't short-circuit.
+- **The noise picks with `select`**: `tide_grad2`, `tide_grad3`, `tide_corner2`, `tide_corner3`, `tide_simplex_pick`
+  and the simplex order in `tide_simplex2`/`tide_simplex3` (`&` and `|` of the same comparisons). The float
+  expressions and their order are as they were. Branchless gradients were tried on 2026-10-25 (below) for frame
+  time and made no difference there; this is for the compile.
+- **`tide_f`/`tide_i` only where WGSL would work the call out**: `ex_math` wrapped every literal under a Math call;
+  it does now only when all the call's arguments are constants (`is_const`), which is when WGSL evaluates it and
+  refuses one out of range. A literal beside anything else is a literal. M&R had 20,939 `tide_f` calls inlined.
+
+Every value is the one the old text gave: a `select` takes one of two values worked out the same way, and what the
+untaken side computes is thrown away (a GPU has no trap). Measured with rendering.md's probe, cold, 11 threads,
+three interleaved pairs: the shader step 4.72 s to 3.64 s (-23%), the driver's time 46.4 s to 36.5 s; inlined
+instructions 1.52 million to 0.91 million. By step: `let` alone about -7%, with the branchless families and noise
+-17%, with the NaN test inline and `tide_f` narrowed -23%. Tried on top, not built: every game local `let` where it
+can be (`spirv-opt --ssa-rewrite`: about -5% more), all of `spirv-opt -O` (2.77 s, -19% more).
+
+Tests: 38 of the 80 `shaders/*.txt` goldens change, in their helpers and in literals that lost `tide_f`/`tide_i`;
+all 241 golden, spirv-val, FXC `/WX` and shader-name checks pass (native debug). `tide_platform_shaders` (which
+compares Min/Max/Clamp of NaN, SmoothStep's edges and signed zero edges, Pow's turned cases, Perlin, Simplex with
+its ties and orders against CPU values) and `tide_platform_images` pass on native Vulkan (debug tree, not ASan) and
+on web-debug WebGPU with both fallbacks, so Tint takes the WGSL. Not run: Unity, other OSes, the packages' pixel
+tests (CI's).
+
 ## Several textures a draw gives; textures of what a function is given (2026-11-14)
 
 Owner-approved 2026-11-14 ("go with your recommendations"), both Provisional in the spec (Views and drawing: Several

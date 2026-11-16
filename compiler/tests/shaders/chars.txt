@@ -42,11 +42,11 @@ fn tide_i(x: i32) -> i32 {
     return x;
 }
 fn tide_xxh_word(h: u32, w: i32) -> u32 {
-    var k: u32 = h + u32(w) * 0xC2B2AE3Du;
+    let k: u32 = h + u32(w) * 0xC2B2AE3Du;
     return ((k << 17) | (k >> 15)) * 0x27D4EB2Fu;
 }
 fn tide_xxh_lane(h: u32, w: i32) -> u32 {
-    var k: u32 = h + u32(w) * 0x85EBCA77u;
+    let k: u32 = h + u32(w) * 0x85EBCA77u;
     return ((k << 13) | (k >> 19)) * 0x9E3779B1u;
 }
 fn tide_xxh_end(h: u32) -> i32 {

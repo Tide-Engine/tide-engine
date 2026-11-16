@@ -113,15 +113,8 @@ struct tt_Corner {
     m_position: vec3f,
     m_uv: vec2f,
 }
-fn tide_f(x: f32) -> f32 {
-    return x;
-}
-fn tide_nan(x: f32) -> bool {
-    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
-}
 fn tide_saturate1(a: f32) -> f32 {
-    if (tide_nan(a)) { return 0.0; }
-    return clamp(a, 0.0, 1.0);
+    return select(clamp(a, 0.0, 1.0), 0.0, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000);
 }
 fn tide_straight(c: vec4f) -> vec4f {
     if (c.a == 0.0) { return vec4f(0.0); }
@@ -139,7 +132,7 @@ fn ts_Glowing(t_vertex: tt_Corner, t_color: ptr<function, vec4f>, t_glow: ptr<fu
     var t_alpha: f32 = tide_straight(textureSampleGrad(pixels0, sampler0, t_vertex.m_uv, tide_dx0, tide_dy0)).a;
     (*t_color) = vec4f(0.0, 1.0, 0.0, 1.0);
     if ((t_vertex.m_uv.x > 0.5)) {
-        tide_cover = tide_saturate1((((t_alpha - tide_f(0.3)) / tide_d1) + tide_f(0.5)));
+        tide_cover = tide_saturate1((((t_alpha - 0.3) / tide_d1) + 0.5));
     }
     (*t_glow) = vec4f(1.0, 0.5, 0.0, 0.5);
 }

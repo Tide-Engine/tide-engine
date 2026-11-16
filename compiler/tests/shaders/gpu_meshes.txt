@@ -122,11 +122,11 @@ struct tt_Dot {
     m_color: vec4f,
 }
 fn tide_xxh_word(h: u32, w: i32) -> u32 {
-    var k: u32 = h + u32(w) * 0xC2B2AE3Du;
+    let k: u32 = h + u32(w) * 0xC2B2AE3Du;
     return ((k << 17) | (k >> 15)) * 0x27D4EB2Fu;
 }
 fn tide_xxh_lane(h: u32, w: i32) -> u32 {
-    var k: u32 = h + u32(w) * 0x85EBCA77u;
+    let k: u32 = h + u32(w) * 0x85EBCA77u;
     return ((k << 13) | (k >> 19)) * 0x9E3779B1u;
 }
 fn tide_xxh_end(h: u32) -> i32 {
@@ -142,7 +142,7 @@ fn tide_hash3(v: vec3i) -> i32 {
 }
 fn tide_roll() -> u32 {
     tide_dice = tide_dice * 747796405u + 2891336453u;
-    var w: u32 = ((tide_dice >> ((tide_dice >> 28) + 4u)) ^ tide_dice) * 277803737u;
+    let w: u32 = ((tide_dice >> ((tide_dice >> 28) + 4u)) ^ tide_dice) * 277803737u;
     return (w >> 22) ^ w;
 }
 fn tide_roll_float() -> f32 {
@@ -449,17 +449,8 @@ struct tt_Point3 {
     m_normal: vec3f,
     m_kind: i32,
 }
-fn tide_f(x: f32) -> f32 {
-    return x;
-}
-fn tide_nan(x: f32) -> bool {
-    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
-}
 fn tide_max1(a: f32, b: f32) -> f32 {
-    if (tide_nan(b)) { return a; }
-    if (tide_nan(a)) { return b; }
-    if (a > b) { return a; }
-    return b;
+    return select(select(select(b, a, a > b), b, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000), a, (bitcast<i32>(b) & 0x7fffffff) > 0x7f800000);
 }
 fn tide_base1() -> u32 {
     return u32(tide_block.tide_v0.z);
@@ -515,7 +506,7 @@ fn tide_get0(tide_i: i32) -> tt_Point3 {
 }
 
 fn ts_Light(t_point: tt_Point3, t_color: ptr<function, vec4f>) {
-    var t_lit: f32 = tide_max1(dot(t_point.m_normal, vec3f(tide_f(0.0), tide_f(1.0), tide_f(0.0))), tide_f(0.0));
+    var t_lit: f32 = tide_max1(dot(t_point.m_normal, vec3f(0.0, 1.0, 0.0)), 0.0);
     (*t_color) = vec4f(t_lit, t_lit, t_lit, 1.0);
 }
 
@@ -581,17 +572,8 @@ struct tt_Point3 {
     m_normal: vec3f,
     m_kind: i32,
 }
-fn tide_f(x: f32) -> f32 {
-    return x;
-}
-fn tide_nan(x: f32) -> bool {
-    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
-}
 fn tide_max1(a: f32, b: f32) -> f32 {
-    if (tide_nan(b)) { return a; }
-    if (tide_nan(a)) { return b; }
-    if (a > b) { return a; }
-    return b;
+    return select(select(select(b, a, a > b), b, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000), a, (bitcast<i32>(b) & 0x7fffffff) > 0x7f800000);
 }
 fn ts_Raise(t_point: ptr<function, tt_Point3>) {
     if (((*t_point).m_kind == 2)) {
@@ -628,7 +610,7 @@ fn tide_get0(tide_i: i32) -> tt_Point3 {
 }
 
 fn ts_Light(t_point: tt_Point3, t_color: ptr<function, vec4f>) {
-    var t_lit: f32 = tide_max1(dot(t_point.m_normal, vec3f(tide_f(0.0), tide_f(1.0), tide_f(0.0))), tide_f(0.0));
+    var t_lit: f32 = tide_max1(dot(t_point.m_normal, vec3f(0.0, 1.0, 0.0)), 0.0);
     (*t_color) = vec4f(t_lit, t_lit, t_lit, 1.0);
 }
 

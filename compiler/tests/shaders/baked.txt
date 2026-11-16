@@ -50,15 +50,11 @@ struct tt_BakedFrame {
     m_rows: vec4i,
     m_blend: vec4f,
 }
-fn tide_nan(x: f32) -> bool {
-    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
-}
 fn tide_saturate1(a: f32) -> f32 {
-    if (tide_nan(a)) { return 0.0; }
-    return clamp(a, 0.0, 1.0);
+    return select(clamp(a, 0.0, 1.0), 0.0, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000);
 }
 fn tide_normalize3(v: vec3f) -> vec3f {
-    var l: f32 = dot(v, v);
+    let l: f32 = dot(v, v);
     if (l > 1.17549435e-38) { return v * inverseSqrt(l); }
     return vec3f(0.0);
 }
@@ -210,18 +206,8 @@ struct tt_BakedSocket {
     m_bone: i32,
     m_at: tt_BakedBone,
 }
-fn tide_f(x: f32) -> f32 {
-    return x;
-}
-fn tide_i(x: i32) -> i32 {
-    return x;
-}
-fn tide_nan(x: f32) -> bool {
-    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
-}
 fn tide_saturate1(a: f32) -> f32 {
-    if (tide_nan(a)) { return 0.0; }
-    return clamp(a, 0.0, 1.0);
+    return select(clamp(a, 0.0, 1.0), 0.0, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000);
 }
 fn tide_list1(tide_i: i32) -> tt_BakedSocket {
     if (tide_i < 0 || tide_i >= tide_block.tide_v0.z) {
@@ -287,7 +273,7 @@ fn tf_BakedPoses_2m10(t_frame: tt_BakedFrame, t_socket: i32) -> mat4x4f {
 }
 
 fn ts_Hold(t_corner: ptr<function, tt_Vertex3>) {
-    (*t_corner).m_position = (tf_BakedPoses_2m10(tt_BakedFrame(tide_j0, tide_n4), tide_i(0)) * vec4f((*t_corner).m_position, tide_f(1.0))).xyz;
+    (*t_corner).m_position = (tf_BakedPoses_2m10(tt_BakedFrame(tide_j0, tide_n4), 0) * vec4f((*t_corner).m_position, 1.0)).xyz;
 }
 
 @vertex fn vertex(@location(0) tide_a0: vec3f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f, @location(3) tide_in0: vec4f, @location(4) tide_in1: vec4f, @location(5) tide_in2: vec4f, @location(6) tide_in3: vec4f, @location(7) tide_in4: vec4f, @location(8) tide_ij0: vec4i) -> tide_corner {

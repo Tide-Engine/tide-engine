@@ -44,9 +44,6 @@ struct tt_Vertex3 {
 struct tt_Fog {
     m_thick: f32,
 }
-fn tide_f(x: f32) -> f32 {
-    return x;
-}
 fn tf_Soft_40(t_seen: vec3f) -> f32 {
     var t_lit: f32 = textureSampleCompareLevel(pixels0, sampler0, t_seen.xy, tide_depth(clamp((t_seen.z - 0.01), 0.0, 1.0)));
     if ((t_lit < 1.0)) {
@@ -56,7 +53,7 @@ fn tf_Soft_40(t_seen: vec3f) -> f32 {
 }
 
 fn tf_FromLamp(t_world: vec3f, t_toLamp: mat4x4f) -> vec3f {
-    var t_clip: vec4f = (t_toLamp * vec4f(t_world, tide_f(1.0)));
+    var t_clip: vec4f = (t_toLamp * vec4f(t_world, 1.0));
     return vec3f(((t_clip.x * 0.5) + 0.5), (0.5 - (t_clip.y * 0.5)), ((t_clip.z * 0.5) + 0.5));
 }
 
@@ -165,9 +162,6 @@ struct tt_Vertex3 {
 struct tt_Fog {
     m_thick: f32,
 }
-fn tide_f(x: f32) -> f32 {
-    return x;
-}
 fn tf_Soft_40(t_seen: vec3f) -> f32 {
     var t_lit: f32 = textureSampleCompareLevel(pixels0, sampler0, t_seen.xy, tide_depth(clamp((t_seen.z - 0.01), 0.0, 1.0)));
     if ((t_lit < 1.0)) {
@@ -181,7 +175,7 @@ fn ts_Sink(t_vertex: ptr<function, tt_Vertex3>) {
 }
 
 fn tf_FromLamp(t_world: vec3f, t_toLamp: mat4x4f) -> vec3f {
-    var t_clip: vec4f = (t_toLamp * vec4f(t_world, tide_f(1.0)));
+    var t_clip: vec4f = (t_toLamp * vec4f(t_world, 1.0));
     return vec3f(((t_clip.x * 0.5) + 0.5), (0.5 - (t_clip.y * 0.5)), ((t_clip.z * 0.5) + 0.5));
 }
 

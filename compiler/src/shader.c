@@ -872,6 +872,12 @@ static void put_zero(emit *em, const type t)
 // x) {`, a statement a line, a local declared with its type and a value, no
 // '?:', no parameter assigned to, GLSL's names for types, and atan2,
 // inversesqrt, floatBitsToInt and intBitsToFloat for WGSL's functions of them.
+//
+// A driver compiles a shader with every call written out where it's made, so
+// what a helper costs to compile is its size times its calls: a big game's
+// shaders were three quarters these functions. The ones called most (the
+// families, the noise) pick their values with select, and with & and | of
+// bools, rather than branch: the same values in a fraction of the code.
 
 static const char *const family_names[FAMILY_COUNT] = {"min", "max", "clamp", "saturate", "smoothstep", "pow", "atan2_"};
 static const int family_args[FAMILY_COUNT] = {2, 2, 3, 1, 3, 2, 2};
@@ -881,51 +887,33 @@ static const char *const family_scalars[FAMILY_COUNT] = {
     // With one NaN, the other. Each is asked, as a compiler that reckons without NaN may make the comparison its own
     // min or max, which says nothing of which it gives then
     "float tide_min1(float a, float b) {\n"
-    "    if (tide_nan(b)) { return a; }\n"
-    "    if (tide_nan(a)) { return b; }\n"
-    "    if (a < b) { return a; }\n"
-    "    return b;\n"
+    "    return select(select(select(b, a, a < b), b, (floatBitsToInt(a) & 0x7fffffff) > 0x7f800000), a, (floatBitsToInt(b) & 0x7fffffff) > 0x7f800000);\n"
     "}\n",
     "float tide_max1(float a, float b) {\n"
-    "    if (tide_nan(b)) { return a; }\n"
-    "    if (tide_nan(a)) { return b; }\n"
-    "    if (a > b) { return a; }\n"
-    "    return b;\n"
+    "    return select(select(select(b, a, a > b), b, (floatBitsToInt(a) & 0x7fffffff) > 0x7f800000), a, (floatBitsToInt(b) & 0x7fffffff) > 0x7f800000);\n"
     "}\n",
     // Always within its bounds: the lower one for NaN, and for bounds the wrong way around
     "float tide_clamp1(float a, float b, float c) {\n"
-    "    if (tide_nan(a)) { return b; }\n"
-    "    return tide_max1(b, tide_min1(c, a));\n"
+    "    return select(tide_max1(b, tide_min1(c, a)), b, (floatBitsToInt(a) & 0x7fffffff) > 0x7f800000);\n"
     "}\n",
     // 0 for NaN. Past that the languages' own clamp says what it does, between bounds the right way around
     "float tide_saturate1(float a) {\n"
-    "    if (tide_nan(a)) { return 0.0; }\n"
-    "    return clamp(a, 0.0, 1.0);\n"
+    "    return select(clamp(a, 0.0, 1.0), 0.0, (floatBitsToInt(a) & 0x7fffffff) > 0x7f800000);\n"
     "}\n",
     // The languages' own is undefined from an edge down to a lower one
     "float tide_smoothstep1(float a, float b, float c) {\n"
     "    float numerator = c - a;\n"
     "    float denominator = b - a;\n"
-    "    float divisor = denominator;\n"
-    "    if (divisor == 0.0) { divisor = 1.0; }\n"
-    "    float t = tide_saturate1(numerator / divisor);\n"
-    "    if (denominator == 0.0) {\n"
-    "        t = 0.0;\n"
-    "        if (floatBitsToInt(denominator) < 0) {\n"
-    "            if (numerator < 0.0) { t = 1.0; }\n"
-    "        } else if (numerator > 0.0) { t = 1.0; }\n"
-    "    }\n"
+    "    bool level = denominator == 0.0;\n"
+    "    float past = select(numerator, 0.0 - numerator, floatBitsToInt(denominator) < 0);\n"
+    "    float t = select(tide_saturate1(numerator / select(denominator, 1.0, level)), select(0.0, 1.0, past > 0.0), level);\n"
     "    return t * t * (3.0 - 2.0 * t);\n"
     "}\n",
     // The languages' own is undefined under 0: a whole power of a number under 0 is that of the number over 0, with its sign
     "float tide_pow1(float a, float b) {\n"
-    "    if (b == 0.0) { return 1.0; }\n"
-    "    bool w = a < 0.0 && floor(b) == b;\n"
-    "    float x = a;\n"
-    "    if (w) { x = -a; }\n"
-    "    float p = pow(x, b);\n"
-    "    if (w && floor(b * 0.5) * 2.0 != b) { return -p; }\n"
-    "    return p;\n"
+    "    bool w = (a < 0.0) & (floor(b) == b);\n"
+    "    float p = pow(select(a, -a, w), b);\n"
+    "    return select(select(p, -p, w & (floor(b * 0.5) * 2.0 != b)), 1.0, b == 0.0);\n"
     "}\n",
     // The languages' own is undefined at (0, 0)
     "float tide_atan2_1(float a, float b) {\n"
@@ -1086,33 +1074,19 @@ static const char *const helper_texts[H_COUNT] = {
                "}\n",
     // A unit gradient in 8 directions, the axes and the diagonals, dotted with (x, y)
     [H_GRAD2] = "float tide_grad2(int h, float x, float y) {\n"
-                "    float gx = 1.0;\n"
-                "    float gy = 0.0;\n"
-                "    if ((h & 4) != 0) {\n"
-                "        gx = 0.70710678;\n"
-                "        gy = 0.70710678;\n"
-                "        if ((h & 1) != 0) { gx = -0.70710678; }\n"
-                "        if ((h & 2) != 0) { gy = -0.70710678; }\n"
-                "    } else if ((h & 2) != 0) {\n"
-                "        gx = 0.0;\n"
-                "        gy = 1.0;\n"
-                "        if ((h & 1) != 0) { gy = -1.0; }\n"
-                "    } else if ((h & 1) != 0) {\n"
-                "        gx = -1.0;\n"
-                "    }\n"
+                "    bool one = (h & 1) != 0;\n"
+                "    bool two = (h & 2) != 0;\n"
+                "    bool four = (h & 4) != 0;\n"
+                "    float gx = select(select(select(1.0, -1.0, one), 0.0, two), select(0.70710678, -0.70710678, one), four);\n"
+                "    float gy = select(select(0.0, select(1.0, -1.0, one), two), select(0.70710678, -0.70710678, two), four);\n"
                 "    return gx * x + gy * y;\n"
                 "}\n",
     // A gradient along one of a cube's 12 edges (Perlin's 16, four of them twice), dotted with (x, y, z)
     [H_GRAD3] = "float tide_grad3(int h, float x, float y, float z) {\n"
                 "    int k = h & 15;\n"
-                "    float u = x;\n"
-                "    float v = y;\n"
-                "    if (k >= 8) { u = y; }\n"
-                "    if (k >= 4) { v = z; }\n"
-                "    if (k == 12 || k == 14) { v = x; }\n"
-                "    if ((k & 1) != 0) { u = -u; }\n"
-                "    if ((k & 2) != 0) { v = -v; }\n"
-                "    return u + v;\n"
+                "    float u = select(x, y, k >= 8);\n"
+                "    float v = select(select(y, z, k >= 4), x, (k == 12) | (k == 14));\n"
+                "    return select(u, -u, (k & 1) != 0) + select(v, -v, (k & 2) != 0);\n"
                 "}\n",
     [H_PERLIN2] = "float tide_perlin2(vec2 p, int seed) {\n"
                   "    vec2 f = floor(p);\n"
@@ -1159,9 +1133,8 @@ static const char *const helper_texts[H_COUNT] = {
     // A simplex's corner: its bump, times its gradient dotted with the offset from it
     [H_SIMPLEX2] = "float tide_corner2(int h, float x, float y) {\n"
                    "    float t = 0.5 - x * x - y * y;\n"
-                   "    if (t < 0.0) { return 0.0; }\n"
                    "    float tt = t * t;\n"
-                   "    return tt * tt * tide_grad2(h, x, y);\n"
+                   "    return select(tt * tt * tide_grad2(h, x, y), 0.0, t < 0.0);\n"
                    "}\n"
                    "float tide_simplex2(vec2 p, int seed) {\n"
                    "    float s = (p.x + p.y) * 0.36602540;\n"
@@ -1170,12 +1143,8 @@ static const char *const helper_texts[H_COUNT] = {
                    "    float t = (fi + fj) * 0.21132487;\n"
                    "    float x0 = p.x - (fi - t);\n"
                    "    float y0 = p.y - (fj - t);\n"
-                   "    int i1 = 0;\n"
-                   "    int j1 = 1;\n"
-                   "    if (x0 > y0) {\n"
-                   "        i1 = 1;\n"
-                   "        j1 = 0;\n"
-                   "    }\n"
+                   "    int i1 = select(0, 1, x0 > y0);\n"
+                   "    int j1 = 1 - i1;\n"
                    "    float x1 = x0 - float(i1) + 0.21132487;\n"
                    "    float y1 = y0 - float(j1) + 0.21132487;\n"
                    "    float x2 = x0 - 1.0 + 0.42264973;\n"
@@ -1196,15 +1165,12 @@ static const char *const helper_texts[H_COUNT] = {
                    "    return (v << r) | (v >> (32u - r));\n"
                    "}\n"
                    "uint tide_simplex_pick(uint a, uint b, int high) {\n"
-                   "    uint v = a;\n"
-                   "    if (high != 0) { v = b; }\n"
-                   "    return v;\n"
+                   "    return select(a, b, high != 0);\n"
                    "}\n"
                    "float tide_corner3(int h, float x, float y, float z) {\n"
                    "    float t = 0.6 - x * x - y * y - z * z;\n"
-                   "    if (t < 0.0) { return 0.0; }\n"
                    "    float tt = t * t;\n"
-                   "    return tt * tt * tide_grad3(h, x, y, z);\n"
+                   "    return select(tt * tt * tide_grad3(h, x, y, z), 0.0, t < 0.0);\n"
                    "}\n"
                    "float tide_simplex3(vec3 p, int seed) {\n"
                    "    float s = (p.x + p.y + p.z) * 0.33333334;\n"
@@ -1215,18 +1181,12 @@ static const char *const helper_texts[H_COUNT] = {
                    "    float x0 = p.x - (fi - t);\n"
                    "    float y0 = p.y - (fj - t);\n"
                    "    float z0 = p.z - (fk - t);\n"
-                   "    int i1 = 0;\n"
-                   "    int j1 = 0;\n"
-                   "    int k1 = 0;\n"
-                   "    int i2 = 0;\n"
-                   "    int j2 = 0;\n"
-                   "    int k2 = 0;\n"
-                   "    if (x0 >= y0 && x0 >= z0) { i1 = 1; }\n"
-                   "    if (y0 > x0 && y0 >= z0) { j1 = 1; }\n"
-                   "    if (z0 > x0 && z0 > y0) { k1 = 1; }\n"
-                   "    if (x0 >= y0 || x0 >= z0) { i2 = 1; }\n"
-                   "    if (y0 > x0 || y0 >= z0) { j2 = 1; }\n"
-                   "    if (z0 > x0 || z0 > y0) { k2 = 1; }\n"
+                   "    int i1 = select(0, 1, (x0 >= y0) & (x0 >= z0));\n"
+                   "    int j1 = select(0, 1, (y0 > x0) & (y0 >= z0));\n"
+                   "    int k1 = select(0, 1, (z0 > x0) & (z0 > y0));\n"
+                   "    int i2 = select(0, 1, (x0 >= y0) | (x0 >= z0));\n"
+                   "    int j2 = select(0, 1, (y0 > x0) | (y0 >= z0));\n"
+                   "    int k2 = select(0, 1, (z0 > x0) | (z0 > y0));\n"
                    "    float x1 = x0 - float(i1) + 0.16666667;\n"
                    "    float y1 = y0 - float(j1) + 0.16666667;\n"
                    "    float z1 = z0 - float(k1) + 0.16666667;\n"
@@ -1728,13 +1688,9 @@ static void need(emit *em, const int h)
         const int family = (h - H_FAMILIES) / 4;
         if ((h - H_FAMILIES) % 4 > 0) {
             need(em, family_helper(family, 1));
-        } else if (family == FAMILY_MIN || family == FAMILY_MAX) {
-            need(em, H_NAN);
         } else if (family == FAMILY_CLAMP) {
             need(em, family_helper(FAMILY_MIN, 1));
             need(em, family_helper(FAMILY_MAX, 1));
-        } else if (family == FAMILY_SATURATE) {
-            need(em, H_NAN);
         } else if (family == FAMILY_SMOOTHSTEP) {
             need(em, family_helper(FAMILY_SATURATE, 1));
         }
@@ -1887,9 +1843,24 @@ static void put_spelled(sb *o, const char *text, const size_t len)
     }
 }
 
+// Whether the rest of a helper's function, from `from`, gives the local a value again: `name = `, or a part of it
+// (`name.x = `, `name[i] = `).
+static bool helper_assigns(const char *from, const char *name, const size_t name_len)
+{
+    for (const char *p = from; *p && !(p[0] == '\n' && p[1] == '}'); p++) {
+        if (word_char(p[0]) || !word_char(p[1]) || strncmp(p + 1, name, name_len) != 0 || word_char(p[1 + name_len])) continue;
+        const char *after = p + 1 + name_len;
+        while (*after == '.' || *after == '[' || *after == ']' || word_char(*after)) after++;
+        if (after[0] == ' ' && after[1] == '=' && after[2] == ' ') return true;
+    }
+    return false;
+}
+
 // A helper, from the notation helper_text writes it in, as WGSL has it. WGSL
 // declares the other way around: a function's head is `fn name(a: T) -> T`,
-// and a local `var name: T = value`.
+// and a local `let name: T = value`, or `var` for one the function gives a
+// value again: a driver compiles a shader with every call written out where
+// it's made, and a `var` is a place it has to prove is one value first.
 static void put_helper(sb *o, const char *text)
 {
     for (const char *line = text; *line;) {
@@ -1918,7 +1889,8 @@ static void put_helper(sb *o, const char *text)
             sb_printf(o, ") -> %s {\n", type);
         } else if (type && name_len && strncmp(name + name_len, " = ", 3) == 0) {
             const char *value = name + name_len + 3;
-            sb_printf(o, "%.*svar %.*s: %s = ", (int)indent, line, (int)name_len, name, type);
+            sb_printf(o, "%.*s%s %.*s: %s = ", (int)indent, line, helper_assigns(end, name, name_len) ? "var" : "let", (int)name_len,
+                      name, type);
             put_spelled(o, value, (size_t)(end - value));
             sb_put(o, "\n");
         } else {
@@ -3502,8 +3474,12 @@ static void ex_math(emit *em, const expr *e)
                   "'low = int(x)' and 'high = int(x >> 32)'");
         return;
     }
-    // The compiler folds nothing here: a constant out of a function's range is an error to WGSL, not a value
-    em->defuse++;
+    // The compiler folds nothing here: a constant out of a function's range is an error to WGSL, not a value. WGSL
+    // only works out a call whose arguments are all constants, so a literal beside anything else goes as it is: each
+    // tide_f is a call the driver writes out, and a big game's shaders had twenty thousand
+    int folds = 1;
+    for (int i = 0; i < e->args.count; i++) folds = folds && is_const(e->args.items[i]);
+    em->defuse += folds;
     static const char *const eases[] = {"EaseIn", "EaseOut", "EaseInOut", "EaseInBack", "EaseOutBack"};
     for (int k = 0; k < 5; k++) {
         if (!str_eq_c(e->name, eases[k])) continue;
@@ -3511,7 +3487,7 @@ static void ex_math(emit *em, const expr *e)
         sb_put(em->o, "tide_ease(");
         put_arg(em, e, 0);
         sb_printf(em->o, ", %d)", k);
-        em->defuse--;
+        em->defuse -= folds;
         return;
     }
     if (str_eq_c(e->name, "ToLinear") || str_eq_c(e->name, "ToDisplay")) {
@@ -3660,7 +3636,7 @@ static void ex_math(emit *em, const expr *e)
             if (str_eq_c(e->name, same_math[i].name)) fn = same_math[i].wgsl;
         }
         if (!fn) { // A function Math gains goes here too, or says why it can't
-            em->defuse--;
+            em->defuse -= folds;
             refuse(em, e->at, "Math." STR_FMT " isn't on the GPU yet", STR_ARG(e->name));
             diag_note("work it out on the CPU, in the view, and keep the result in a component or a singleton the code reads");
             return;
@@ -3668,7 +3644,7 @@ static void ex_math(emit *em, const expr *e)
         if (helper >= 0) need(em, helper);
         put_call(em, e, fn);
     }
-    em->defuse--;
+    em->defuse -= folds;
 }
 
 // quaternion.AxisAngle, float4x4.TRS and the others: tide/math.h's, written out.

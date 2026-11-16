@@ -39,7 +39,7 @@ struct tt_Corner {
     m_normal: vec3f,
 }
 fn tide_normalize3(v: vec3f) -> vec3f {
-    var l: f32 = dot(v, v);
+    let l: f32 = dot(v, v);
     if (l > 1.17549435e-38) { return v * inverseSqrt(l); }
     return vec3f(0.0);
 }

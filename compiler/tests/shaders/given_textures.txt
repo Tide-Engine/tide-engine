@@ -299,12 +299,8 @@ struct tt_Part {
     m_normal: vec3f,
     m_uv: vec2f,
 }
-fn tide_nan(x: f32) -> bool {
-    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
-}
 fn tide_saturate1(a: f32) -> f32 {
-    if (tide_nan(a)) { return 0.0; }
-    return clamp(a, 0.0, 1.0);
+    return select(clamp(a, 0.0, 1.0), 0.0, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000);
 }
 fn tide_straight(c: vec4f) -> vec4f {
     if (c.a == 0.0) { return vec4f(0.0); }
@@ -465,12 +461,8 @@ struct tt_Part {
     m_normal: vec3f,
     m_uv: vec2f,
 }
-fn tide_nan(x: f32) -> bool {
-    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
-}
 fn tide_saturate1(a: f32) -> f32 {
-    if (tide_nan(a)) { return 0.0; }
-    return clamp(a, 0.0, 1.0);
+    return select(clamp(a, 0.0, 1.0), 0.0, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000);
 }
 fn tide_straight(c: vec4f) -> vec4f {
     if (c.a == 0.0) { return vec4f(0.0); }

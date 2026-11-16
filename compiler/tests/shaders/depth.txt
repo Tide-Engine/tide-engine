@@ -42,15 +42,12 @@ struct tt_Vertex3 {
     m_uv: vec2f,
     m_color: vec4f,
 }
-fn tide_f(x: f32) -> f32 {
-    return x;
-}
 fn tide_straight(c: vec4f) -> vec4f {
     if (c.a == 0.0) { return vec4f(0.0); }
     return vec4f(c.rgb / c.a, c.a);
 }
 fn tf_FromLamp(t_world: vec3f, t_toLamp: mat4x4f) -> vec3f {
-    var t_clip: vec4f = (t_toLamp * vec4f(t_world, tide_f(1.0)));
+    var t_clip: vec4f = (t_toLamp * vec4f(t_world, 1.0));
     return vec3f(((t_clip.x * 0.5) + 0.5), (0.5 - (t_clip.y * 0.5)), ((t_clip.z * 0.5) + 0.5));
 }
 
@@ -136,9 +133,6 @@ struct tt_Vertex3 {
     m_uv: vec2f,
     m_color: vec4f,
 }
-fn tide_f(x: f32) -> f32 {
-    return x;
-}
 fn tide_straight(c: vec4f) -> vec4f {
     if (c.a == 0.0) { return vec4f(0.0); }
     return vec4f(c.rgb / c.a, c.a);
@@ -148,7 +142,7 @@ fn ts_Sink(t_vertex: ptr<function, tt_Vertex3>) {
 }
 
 fn tf_FromLamp(t_world: vec3f, t_toLamp: mat4x4f) -> vec3f {
-    var t_clip: vec4f = (t_toLamp * vec4f(t_world, tide_f(1.0)));
+    var t_clip: vec4f = (t_toLamp * vec4f(t_world, 1.0));
     return vec3f(((t_clip.x * 0.5) + 0.5), (0.5 - (t_clip.y * 0.5)), ((t_clip.z * 0.5) + 0.5));
 }
 

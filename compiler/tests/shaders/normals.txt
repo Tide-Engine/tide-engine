@@ -38,27 +38,18 @@ struct tt_Corner {
     m_position: vec3f,
     m_normal: vec3f,
 }
-fn tide_f(x: f32) -> f32 {
-    return x;
-}
-fn tide_nan(x: f32) -> bool {
-    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
-}
 fn tide_max1(a: f32, b: f32) -> f32 {
-    if (tide_nan(b)) { return a; }
-    if (tide_nan(a)) { return b; }
-    if (a > b) { return a; }
-    return b;
+    return select(select(select(b, a, a > b), b, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000), a, (bitcast<i32>(b) & 0x7fffffff) > 0x7f800000);
 }
 fn tide_normalize3(v: vec3f) -> vec3f {
-    var l: f32 = dot(v, v);
+    let l: f32 = dot(v, v);
     if (l > 1.17549435e-38) { return v * inverseSqrt(l); }
     return vec3f(0.0);
 }
 fn tide_normals(m: mat4x4f) -> mat3x3f {
-    var a: vec3f = cross(m[1].xyz, m[2].xyz);
-    var b: vec3f = cross(m[2].xyz, m[0].xyz);
-    var c: vec3f = cross(m[0].xyz, m[1].xyz);
+    let a: vec3f = cross(m[1].xyz, m[2].xyz);
+    let b: vec3f = cross(m[2].xyz, m[0].xyz);
+    let c: vec3f = cross(m[0].xyz, m[1].xyz);
     if (dot(m[0].xyz, a) < 0.0) {
         return mat3x3f(-a, -b, -c);
     }
@@ -66,7 +57,7 @@ fn tide_normals(m: mat4x4f) -> mat3x3f {
 }
 fn ts_Lit(t_corner: tt_Corner, t_color: ptr<function, vec4f>) {
     var t_normal: vec3f = tide_normalize3(mat3x3f(tide_normals0, tide_normals1, tide_normals2) * (t_corner.m_normal));
-    (*t_color) = (vec4f(1.0, 1.0, 1.0, 1.0) * tide_max1(dot(t_normal, tide_block.tide_u0.xyz), tide_f(0.1)));
+    (*t_color) = (vec4f(1.0, 1.0, 1.0, 1.0) * tide_max1(dot(t_normal, tide_block.tide_u0.xyz), 0.1));
     (*t_color).a = 1.0;
 }
 
@@ -136,14 +127,14 @@ struct tt_Corner {
     m_normal: vec3f,
 }
 fn tide_normalize3(v: vec3f) -> vec3f {
-    var l: f32 = dot(v, v);
+    let l: f32 = dot(v, v);
     if (l > 1.17549435e-38) { return v * inverseSqrt(l); }
     return vec3f(0.0);
 }
 fn tide_normals(m: mat4x4f) -> mat3x3f {
-    var a: vec3f = cross(m[1].xyz, m[2].xyz);
-    var b: vec3f = cross(m[2].xyz, m[0].xyz);
-    var c: vec3f = cross(m[0].xyz, m[1].xyz);
+    let a: vec3f = cross(m[1].xyz, m[2].xyz);
+    let b: vec3f = cross(m[2].xyz, m[0].xyz);
+    let c: vec3f = cross(m[0].xyz, m[1].xyz);
     if (dot(m[0].xyz, a) < 0.0) {
         return mat3x3f(-a, -b, -c);
     }
@@ -232,14 +223,14 @@ struct tt_Corner {
     m_normal: vec3f,
 }
 fn tide_normalize3(v: vec3f) -> vec3f {
-    var l: f32 = dot(v, v);
+    let l: f32 = dot(v, v);
     if (l > 1.17549435e-38) { return v * inverseSqrt(l); }
     return vec3f(0.0);
 }
 fn tide_normals(m: mat4x4f) -> mat3x3f {
-    var a: vec3f = cross(m[1].xyz, m[2].xyz);
-    var b: vec3f = cross(m[2].xyz, m[0].xyz);
-    var c: vec3f = cross(m[0].xyz, m[1].xyz);
+    let a: vec3f = cross(m[1].xyz, m[2].xyz);
+    let b: vec3f = cross(m[2].xyz, m[0].xyz);
+    let c: vec3f = cross(m[0].xyz, m[1].xyz);
     if (dot(m[0].xyz, a) < 0.0) {
         return mat3x3f(-a, -b, -c);
     }
@@ -338,34 +329,25 @@ struct tt_Corner {
     m_position: vec3f,
     m_normal: vec3f,
 }
-fn tide_f(x: f32) -> f32 {
-    return x;
-}
-fn tide_nan(x: f32) -> bool {
-    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
-}
 fn tide_max1(a: f32, b: f32) -> f32 {
-    if (tide_nan(b)) { return a; }
-    if (tide_nan(a)) { return b; }
-    if (a > b) { return a; }
-    return b;
+    return select(select(select(b, a, a > b), b, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000), a, (bitcast<i32>(b) & 0x7fffffff) > 0x7f800000);
 }
 fn tide_normalize3(v: vec3f) -> vec3f {
-    var l: f32 = dot(v, v);
+    let l: f32 = dot(v, v);
     if (l > 1.17549435e-38) { return v * inverseSqrt(l); }
     return vec3f(0.0);
 }
 fn tide_normals(m: mat4x4f) -> mat3x3f {
-    var a: vec3f = cross(m[1].xyz, m[2].xyz);
-    var b: vec3f = cross(m[2].xyz, m[0].xyz);
-    var c: vec3f = cross(m[0].xyz, m[1].xyz);
+    let a: vec3f = cross(m[1].xyz, m[2].xyz);
+    let b: vec3f = cross(m[2].xyz, m[0].xyz);
+    let c: vec3f = cross(m[0].xyz, m[1].xyz);
     if (dot(m[0].xyz, a) < 0.0) {
         return mat3x3f(-a, -b, -c);
     }
     return mat3x3f(a, b, c);
 }
 fn ts_Stone(t_corner: tt_Corner, t_color: ptr<function, vec4f>) {
-    (*t_color) = (tide_f0 * tide_max1(tide_normalize3(mat3x3f(tide_normals0, tide_normals1, tide_normals2) * (t_corner.m_normal)).y, tide_f(0.2)));
+    (*t_color) = (tide_f0 * tide_max1(tide_normalize3(mat3x3f(tide_normals0, tide_normals1, tide_normals2) * (t_corner.m_normal)).y, 0.2));
     (*t_color).a = 1.0;
 }
 
@@ -425,7 +407,7 @@ struct tt_Flat {
     m_uv: vec2f,
 }
 fn tide_normalize3(v: vec3f) -> vec3f {
-    var l: f32 = dot(v, v);
+    let l: f32 = dot(v, v);
     if (l > 1.17549435e-38) { return v * inverseSqrt(l); }
     return vec3f(0.0);
 }
