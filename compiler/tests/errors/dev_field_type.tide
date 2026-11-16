@@ -1,0 +1,10 @@
+// expect: 'Tuning' is 'dev', which builds without dev leave out, so 'Gun' can't use it
+// build: dev
+dev struct Tuning { float kick; }
+
+component Gun
+{
+    int ammo;
+    Tuning tuning;
+}
+scene Main { }

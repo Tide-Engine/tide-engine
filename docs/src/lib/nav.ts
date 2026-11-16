@@ -123,6 +123,7 @@ export const sidebar: Group[] = [
             { text: 'Tide Motion', link: '/tools/motion' },
             { text: 'Debugging', link: '/tools/debugging' },
             { text: 'Debug views', link: '/tools/debug-views' },
+            { text: 'Dev tools', link: '/tools/dev-tools' },
             { text: 'Usage data', link: '/tools/telemetry' },
         ],
     },

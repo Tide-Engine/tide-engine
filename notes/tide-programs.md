@@ -1,5 +1,10 @@
 # `tide_add_game` and the generated header
 
+## DEV (2026-11-16)
+
+`tide_add_game(... DEV ...)` passes `--dev` to tidec: the game's `dev` declarations are in the build
+(notes/language.md, `dev` declarations).
+
 ## SPLIT_CODE (2026-11-05)
 
 2026-11-06: the generated outputs are now five, `<name>_data.c` (the large constants, notes/language.md) after

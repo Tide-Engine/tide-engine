@@ -95,6 +95,11 @@ var worker = 1;
 cached float Width(Catalog catalog, int part) { return 0; }
 virtual cached Box Bounds(Catalog catalog, int part) { return Box { }; }
 var cached = 1;
+dev view GunTools(Gun gun) { }
+dev command GiveAmmo { int amount; }
+dev command(GiveAmmo give, PlayerID sender) Give(mut Gun gun) { }
+dev scene GunRange { }
+var dev = 1;
 
 // fails after the parameters, or on a line of its own.
 int Parse(string text) fails ParseError

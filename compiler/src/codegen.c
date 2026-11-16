@@ -10759,6 +10759,10 @@ static void gen_header(gen *g)
     sb_put(o, "void tide_frame(const tide_world *w, const tide_world *previous, float alpha, const tide_world *verified,\n"
               "                const tide_world *verified_previous, float verified_alpha,\n"
               "                tide_local *local, tide_draw_list *draw, tide_gui *gui);\n\n");
+    sb_put(o, "// The game's `dev` views by name, and NULL after them: they run only while the host's dev menu shows them,\n"
+              "// as tide_show_dev_views says before each tide_frame, a byte for each (nonzero: shown).\n"
+              "extern const char *const tide_dev_view_names[];\n"
+              "void tide_show_dev_views(const uint8_t *shown);\n\n");
     if (prog->shards) {
         sb_put(o, "// What the next tide_frame draws beside `w`: the other shards' worlds this machine follows\n"
                   "// (tide_session_views). Views draw each entity once, from the world that owns it, or from the\n"
@@ -26042,6 +26046,24 @@ static void gen_api(gen *g)
         for (int i = 0; i < prog->views.count; i++) gen_profile_source(g, o, prog->views.items[i], "view");
         sb_put(o, "};\n\n");
     }
+    // `dev` views: off until the host's dev menu shows them
+    int dev_views = 0;
+    sb_put(o, "const char *const tide_dev_view_names[] = {");
+    for (int i = 0; i < prog->views.count; i++) {
+        const decl *view = prog->views.items[i];
+        if (!view->is_dev) continue;
+        dev_views++;
+        gen_c_literal(o, diagnostic_name(g, tool_name(view), "view", view->index), false);
+        sb_put(o, ", ");
+    }
+    sb_put(o, "NULL};\n");
+    if (dev_views) {
+        sb_printf(o, "static uint8_t tide_dev_shown[%d];\n\n", dev_views);
+        sb_printf(o, "void tide_show_dev_views(const uint8_t *shown)\n{\n"
+                     "    for (int i = 0; i < %d; i++) tide_dev_shown[i] = shown && shown[i] ? 1u : 0u;\n}\n\n", dev_views);
+    } else {
+        sb_put(o, "void tide_show_dev_views(const uint8_t *shown)\n{\n    (void)shown;\n}\n\n");
+    }
     sb_put(o, "void tide_frame(const tide_world *w, const tide_world *previous, float alpha, const tide_world *verified,\n"
               "                const tide_world *verified_previous, float verified_alpha,\n"
               "                tide_local *local, tide_draw_list *draw, tide_gui *gui)\n{\n");
@@ -26099,8 +26121,10 @@ static void gen_api(gen *g)
     const char *far_home = "    tide_far_verified = verified;\n    tide_far_vprev = verified ? verified_previous : NULL;\n"
                            "    tide_far_valpha = verified ? verified_alpha : 1.0f;\n";
     if (predicts_near(g)) sb_put(o, far_home);
+    int dev_view = 0;
     for (int i = 0; i < prog->views.count; i++) {
         const decl *view = prog->views.items[i];
+        if (view->is_dev) sb_printf(o, "    if (tide_dev_shown[%d]) { // A dev view, shown in the dev menu\n", dev_view++);
         sb_printf(o, "    if (draw && draw->diagnostics) draw->profile_source = &tide_view_sources[%d];\n", i);
         // With no verified world given, the one views draw is all there is: it's the confirmed one
         sb_printf(o, "    tide_run_view_%s(w, previous, alpha, %slocal, draw, gui);\n", decl_cname(view),
@@ -26122,6 +26146,7 @@ static void gen_api(gen *g)
             sb_put(o, "    if (tide_view_more_count) tide_view_switch(-1, local);\n");
             if (predicts_near(g)) sb_put(o, far_home);
         }
+        if (view->is_dev) sb_put(o, "    }\n");
         sb_printf(o, "    if (tide_p) tide_at = tide_profile_view(tide_p, %du, %du, ", i, prog->views.count);
         gen_c_literal(o, diagnostic_name(g, tool_name(view), "view", view->index), false);
         sb_put(o, ", tide_at);\n");

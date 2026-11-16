@@ -1,0 +1,4 @@
+// expect: 'dev' goes before a declaration, like 'dev command GiveAmmo { int amount; }'
+dev namespace Tools;
+
+scene Main { }

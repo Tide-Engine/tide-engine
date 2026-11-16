@@ -1,0 +1,54 @@
+// `dev` declarations: in a dev build (tidec --dev) and nowhere else. Dev views
+// run only while the host's dev menu shows them.
+
+component Gun
+{
+    int ammo = 3;
+}
+
+singleton Shots { int fired; }
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Gun { });
+}
+
+system Fire(mut Gun gun, mut Shots shots)
+{
+    if (gun.ammo <= 0) return;
+    gun.ammo -= 1;
+    shots.fired += 1;
+}
+
+// What a dev build has besides
+dev struct Refill { int amount; }
+
+dev int Topped(int ammo, Refill refill)
+{
+    return ammo + refill.amount;
+}
+
+dev command GiveAmmo { int amount; }
+
+dev command(GiveAmmo give, PlayerID sender) Give(mut Gun gun)
+{
+    gun.ammo = Topped(gun.ammo, Refill { amount = give.amount });
+}
+
+local singleton Drawn
+{
+    int game;
+    int tools;
+}
+
+view Show(mut Drawn drawn, with Gun)
+{
+    drawn.game += 1;
+}
+
+dev view GunTools(mut Drawn drawn, with Gun)
+{
+    drawn.tools += 1;
+}

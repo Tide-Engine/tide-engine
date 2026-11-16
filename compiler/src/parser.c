@@ -3117,10 +3117,14 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         const token *override = NULL;
         const token *build = NULL;
         const token *cached = NULL;
+        const token *dev = NULL; // `dev view GunTools(...)`: only in a dev build
         p.overriding = false;
         for (;;) {
             const tok_kind after = peek_at(&p, 1)->kind;
-            if (!local && t->kind == T_IDENT && str_eq_c(t->text, "local")
+            if (!dev && t->kind == T_IDENT && str_eq_c(t->text, "dev")
+                && (after == T_IDENT || after == T_MUT || after == T_COMPONENT || after == T_SINGLETON || after == T_SYSTEM)) {
+                dev = advance(&p);
+            } else if (!local && t->kind == T_IDENT && str_eq_c(t->text, "local")
                 && (after == T_IDENT || after == T_COMPONENT || after == T_SINGLETON || after == T_SYSTEM)) {
                 local = advance(&p);
             } else if (!async && t->kind == T_IDENT && str_eq_c(t->text, "async") && (after == T_IDENT || after == T_MUT)) {
@@ -3151,6 +3155,7 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         if (!alias && t->kind == T_IDENT && followed_by_name && (str_eq_c(t->text, "namespace") || str_eq_c(t->text, "using"))) {
             advance(&p);
             if (local) diag_error(local->at, "'local' goes before a declaration, like 'local singleton Fx { ... }'");
+            if (dev) diag_error(dev->at, "'dev' goes before a declaration, like 'dev command GiveAmmo { int amount; }'");
             if (replace_word) refuse_replace_word(replace_word, "a namespace is where names are, and has no code of its own");
             if (p.pending.count > 0 && str_eq_c(t->text, "namespace")) {
                 diag_error(p.pending.items[0].at, "attributes go right before a declaration, and a namespace takes none");
@@ -3170,6 +3175,7 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
             if (prefab_file) diag_error(t->at, ".tprefab files describe entity trees; put game settings and code in .tide files");
             advance(&p);
             if (local) diag_error(local->at, "the settings are the whole game's, so they can't be local");
+            if (dev) diag_error(dev->at, "the settings are every build's, so they can't be 'dev'");
             if (replace_word) refuse_replace_word(replace_word, "the settings are the game's own, and have no code to replace");
             if (p.pending.count > 0) {
                 diag_error(p.pending.items[0].at, "settings take no attributes");
@@ -3233,6 +3239,12 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
             }
         }
         if (virtual || override) mark_replace_words(d, virtual, override);
+        if (dev) {
+            d->is_dev = true;
+            d->dev_at = dev->at;
+            for (int m = 0; m < d->methods.count; m++) d->methods.items[m]->is_dev = true; // A dev type's methods are too
+            if (d->preparation) d->preparation->is_dev = true;
+        }
         if (worker) {
             if (d->kind != DECL_FUNCTION || d->is_extern) {
                 diag_error(worker->at, "'local worker' declares a calculation function: 'local worker Result Build(Input input) { ... }'");

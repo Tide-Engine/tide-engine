@@ -946,6 +946,9 @@ typedef struct decl {
     // (cached_codegen.inc). Only a pure function's can be.
     bool is_cached;
     loc cached_at;
+    // `dev command GiveAmmo { ... }`: only in a dev build (codegen_options.dev); code without it can't use it
+    bool is_dev;
+    loc dev_at;
     bool is_audio;       // `audio Name(mut Samples samples, ...)`: a DECL_FUNCTION the audio thread runs once a block
     int audio_state;     // ...the parameter that's its state (`mut`, kept between blocks), or -1
     int audio_knobs;     // ...and the one that's its knobs (read-only, a copy the frame gave), or -1
@@ -1919,6 +1922,7 @@ typedef struct program {
     bool asset_metadata_only; // tidels reads model names without importing geometry or fetching URLs.
     bool calls_merged;        // merge_pure_calls (purity.c) has gone through its code: repeated pure calls are one
     bool calls_as_written;    // ...or is to leave it as written (tidec --no-call-merging), for comparisons
+    VEC(decl *) left_out;     // `dev` declarations a build without dev left out, for code naming one to be told why
     VEC(decl *) results; // Every T? and `T fails E` it uses, one per combination
     VEC(decl *) optional_fields; // What each T? a field has is kept as: a struct of the value and whether there is one (decl.optional_of)
     decl *owner;         // The built-in Owner component.

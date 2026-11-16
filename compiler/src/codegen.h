@@ -66,6 +66,9 @@ typedef struct codegen_options {
     // The game's types alone: its systems, views, handlers, functions, frags and verts are left out before checking,
     // so code that doesn't build yet doesn't keep its types from building (tide unity --declarations)
     bool declarations_only;
+    // A dev build (tidec --dev): `dev` declarations are in it. Without it they're left out; code without `dev` can't
+    // use them either way
+    bool dev;
     // Build code (build_code.h): how its program is compiled, which a build that has none can't run. The C compiler,
     // as a command (NULL-terminated: {"clang"}, or {"tide", "cc"}), with flags for every compile and link (a target,
     // a sysroot) and for the link alone (its libraries), each NULL-terminated or NULL; and where the engine's

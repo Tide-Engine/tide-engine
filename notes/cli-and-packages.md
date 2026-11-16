@@ -1,5 +1,12 @@
 # `tide`, packages and the package
 
+## `--dev` and `--no-dev` (2026-11-16)
+
+`build_options.dev` (build.h) goes to `codegen_options.dev`. `main.c` sets it from `--dev`/`--no-dev` (`run` only),
+and without either to `run && !distribution`: `tide run` builds with dev, `tide build` without. The listing compile
+(schedule, shaders) passes `.dev = true`. Help has both options; docs/tools/cli.md and docs/tools/dev-tools.md say
+what they do. Tested: `tide_cli_help`, `tide_cli_run_exit`.
+
 ## Faster `tide run`: kept generates, kept run folders, the front end (2026-11-10)
 
 Owner: "look into optimizing `tide run`", with Mount & Rifle as the realistic case. Measured with this checkout's

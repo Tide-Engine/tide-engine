@@ -3026,7 +3026,7 @@ static bool generate_sources(build *b, const char *gen, const bool layout)
                                      .defines = b->opts->defines, .define_count = b->opts->define_count,
                                      .external_identity = has_external ? external_identity : NULL,
                                      .scene = b->opts->scene,
-                                     .declarations_only = b->opts->declarations};
+                                     .declarations_only = b->opts->declarations, .dev = b->opts->dev};
     compile_set_progress(tide_progress);
     const bool ok = compile_inputs(inputs, count, &codegen, NULL);
     compile_set_progress(NULL);
@@ -5781,7 +5781,7 @@ bool tide_schedule(const build_options *opts, const bool shaders)
     }
     const codegen_options codegen = {.name = game_name(folder), .line_directives = true, .shaders = shaders, .game_folder = folder,
                                      .defines = opts->defines, .define_count = opts->define_count,
-                                     .profile = shaders ? NULL : opts->measured};
+                                     .profile = shaders ? NULL : opts->measured, .dev = true}; // What a game has at most
     sb text = {0};
     const bool ok = compile_inputs(inputs, count, &codegen, &text);
     unity_sources_free(&unity);

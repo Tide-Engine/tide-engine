@@ -145,6 +145,10 @@ typedef struct tide_host_game {
     // Optional: tide_debug_log_to, which a host that shows the game's Debug.Log lines itself (tide/embed.h, for the
     // program it's inside of) calls as it loads the library, whose engine copy is the one that logs.
     void (*debug_log_to)(void (*heard)(const char *text));
+    // Optional: the game's `dev` views by name, NULL after them (tidec's tide_dev_view_names), which the dev menu
+    // lists, and tide_show_dev_views, which the host calls before each frame with a byte for each: nonzero, it runs
+    const char *const *dev_views;
+    void (*show_dev_views)(const uint8_t *shown);
 } tide_host_game;
 
 // A game's library exports this function, which returns its table.
@@ -1051,6 +1055,64 @@ static inline void tide_run_debug_views(void)
     tide_run_gui.profile = tide_run_profiling || tide_run_reporting ? profile : NULL;
 }
 
+// The dev menu: in a dev build with `dev` views, F1 shows it and hides it again, and it lists those views, each one
+// shown or not. Views are off until it shows them. What's shown is kept by name, so a reload keeps it. The game sees
+// the key too.
+#define TIDE_RUN_DEV_VIEWS 64
+static bool tide_run_dev_open;
+static bool tide_run_dev_f1; // F1 was held at the last frame
+static char tide_run_dev_on[TIDE_RUN_DEV_VIEWS][64]; // The views shown, by name
+static uint32_t tide_run_dev_on_count;
+
+static inline bool tide_run_dev_shown(const char *name)
+{
+    for (uint32_t i = 0; i < tide_run_dev_on_count; i++) {
+        if (strncmp(tide_run_dev_on[i], name, sizeof tide_run_dev_on[i]) == 0) return true;
+    }
+    return false;
+}
+
+static inline void tide_run_dev_show(const char *name, const bool shown)
+{
+    for (uint32_t i = 0; i < tide_run_dev_on_count; i++) {
+        if (strncmp(tide_run_dev_on[i], name, sizeof tide_run_dev_on[i]) != 0) continue;
+        if (!shown) memmove(tide_run_dev_on[i], tide_run_dev_on[i + 1], (size_t)(--tide_run_dev_on_count - i) * sizeof tide_run_dev_on[i]);
+        return;
+    }
+    if (!shown || tide_run_dev_on_count == TIDE_RUN_DEV_VIEWS) return;
+    snprintf(tide_run_dev_on[tide_run_dev_on_count++], sizeof tide_run_dev_on[0], "%s", name);
+}
+
+// Before the frame: which dev views run (tide_host_game.show_dev_views)
+static inline void tide_run_dev_views(const tide_host_game *game)
+{
+    if (!game->dev_views || !game->show_dev_views) return;
+    uint8_t shown[TIDE_RUN_DEV_VIEWS] = {0};
+    for (uint32_t i = 0; i < TIDE_RUN_DEV_VIEWS && game->dev_views[i]; i++) shown[i] = tide_run_dev_shown(game->dev_views[i]);
+    game->show_dev_views(shown);
+}
+
+// After the frame's views, in its GUI: the menu, over them
+static inline void tide_run_dev_menu(const tide_host_game *game)
+{
+    if (!game->dev_views || !game->dev_views[0]) return;
+    const bool f1 = tide_run_devices.keyboard.f1.held;
+    if (f1 && !tide_run_dev_f1) tide_run_dev_open = !tide_run_dev_open;
+    tide_run_dev_f1 = f1;
+    if (!tide_run_dev_open) return;
+    uint32_t count = 0;
+    while (count < TIDE_RUN_DEV_VIEWS && game->dev_views[count]) count++;
+    const float row = 32.0f, pad = 8.0f, width = 240.0f;
+    tide_gui_view(&tide_run_gui, UINT32_MAX); // Its own: no view's claims hide the devices from it
+    tide_gui_claim_pointer_at(&tide_run_gui, (tide_rect){pad, pad, width, row * (float)(count + 1) + pad});
+    tide_gui_label(&tide_run_gui, (tide_rect){pad, pad, width, row}, "Dev (F1)");
+    for (uint32_t i = 0; i < count; i++) {
+        bool shown = tide_run_dev_shown(game->dev_views[i]);
+        const tide_rect at = {pad, pad + row * (float)(i + 1), width, row - 4.0f};
+        if (tide_gui_toggle(&tide_run_gui, 0xDE700000u + i, at, game->dev_views[i], &shown)) tide_run_dev_show(game->dev_views[i], shown);
+    }
+}
+
 // Where the matches this machine hosts keep their store (Storage.Save and Load in match code): the game's own
 // files, once they're named (tide_run_bind_io), for a game whose match code uses it
 static const tide_io *tide_run_store;
@@ -1714,8 +1776,10 @@ static inline int tide_run_frame(void *user, const float seconds)
         const uint32_t n = tide_session_views(s, more, shards, TIDE_SESSION_VIEWS);
         game->frame_shards(more, n < TIDE_SESSION_VIEWS ? n : TIDE_SESSION_VIEWS);
     }
+    tide_run_dev_views(game);
     game->frame(match, view.previous, view.alpha, view.verified, view.verified_previous, view.verified_alpha, tide_run_local, &tide_run_draw, &tide_run_gui);
     tide_loops_leave(loops_before);
+    tide_run_dev_menu(game);
     if (game->voice) {
         const tide_voice_provider *voice = game->voice();
         if (voice) voice->frame(voice->self, s, &tide_run_audio, tide_run_now);

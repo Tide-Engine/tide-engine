@@ -1,0 +1,11 @@
+// expect: 'Cheat' is 'dev', and this build isn't a dev one, so it's left out
+// expect: code that uses it must be 'dev' too
+component Gun { int ammo; }
+scene Main { }
+
+dev int Cheat(int ammo) { return ammo + 100; }
+
+system Reload(mut Gun gun)
+{
+    gun.ammo = Cheat(gun.ammo);
+}

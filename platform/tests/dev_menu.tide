@@ -1,0 +1,16 @@
+// A dev build's menu (platform/tests/dev_menu.mjs): F1 shows it, and it lists
+// the game's dev views, each off until it's switched on there. The game's view
+// paints the screen blue; the dev view paints it red.
+
+scene Main { }
+
+view Backdrop()
+{
+    Draw.Clear(Color(0, 0, 1));
+}
+
+dev view Marker()
+{
+    Draw.SetScreen();
+    Draw.Rect(float2(0, 0), float2(1000, 1000), Color(1, 0, 0)); // The whole screen
+}

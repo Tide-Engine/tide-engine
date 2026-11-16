@@ -1,3 +1,32 @@
+## `dev` declarations (2026-11-16)
+
+Agreed with the owner (docs/spec.md, Dev tools, has what's decided and what's Claude's): `dev` before a declaration
+puts it in dev builds only, and code without `dev` can't use it in any build.
+
+- **Parser**: `dev` is a contextual word in `parse_file`'s modifier loop, before an identifier, `mut`, `component`,
+  `singleton` or `system`. It sets `decl.is_dev`/`dev_at`, on a type's methods and a scene's preparation too.
+  Before `namespace`/`using` or `settings` it's an error. `dev` inside a type's body isn't read.
+- **Leaving them out** (`leave_out_dev`, compile.c): a build without `codegen_options.dev` drops dev declarations
+  from `prog->decls` right after parsing, as `keep_declarations` does, and keeps them in `prog->left_out`.
+- **The rule** (`find_named`, check.c): a name found that's dev, looked up from code that isn't, is an error naming
+  both. The code is `c->method`, else `c->system`, else the new `checker.declaring`, which the main loops set while
+  they resolve and check fields (`resolve_field_types`, `check_fields`), signatures (`check_function_decl`,
+  `check_method_decls`) and systems' parameters (`check_params`, which now runs with `c.system` cleared rather than
+  the last system's). A checker made fresh for a part (a generic's instance, a lambda, constant folding) knows no
+  code, so it reports nothing: never a wrong error, sometimes no error in a dev build. A build without dev then
+  catches it: a name not found that's in `left_out` says it's dev and left out (after which the caller's own
+  "unknown" message may follow).
+- **Dev views** (codegen, beside `tide_frame`): `tide_dev_view_names[]` (NULL-terminated, the views' diagnostic
+  names) and `tide_show_dev_views(const uint8_t *)`, always generated and declared in the header; a dev view's call
+  in `tide_frame` is inside `if (tide_dev_shown[k])`, a static array, so it's off until a host shows it. No world,
+  local-state or layout change.
+- **Options**: tidec `--dev`, `codegen_options.dev`; `tide_add_game(... DEV)`; the CLI's (notes/cli-and-packages.md).
+- **Tests**: `tidec_e2e_dev_build` (built without dev: no dev view names, `tide_show_dev_views` changes nothing, the
+  match unchanged) and `tidec_e2e_dev_build_dev` (the same game and test with `DEV`: the view listed, run only while
+  shown); errors `dev_used_by_system`, `dev_field_type`, `dev_handler_trigger` (dev builds, `// build: dev`, which
+  expect_error.cmake now reads), `dev_left_out` (without dev) and `dev_namespace`. Native ASan and web debug pass.
+- Gaps: `dev` on a member of a type; the check's blind spots above; `tide schedule`/`shaders` always see dev code.
+
 ## Methods on the elements of a read-only list in a loop (2026-11-16)
 
 `for (...) plan.parts[F(k)].Send(E { ... })`, and any method called on an indexed element of a list a system only

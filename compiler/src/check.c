@@ -51,6 +51,7 @@ typedef struct checker {
     const unit *unit;         // The file being checked: its namespace and `using`s decide what names mean.
     decl *system;             // Whose parameters are in scope: a system or view, a method, or the input when checking its Sample.
     decl *method;             // The method or function being checked: a method's type's fields are in scope.
+    const decl *declaring;    // The declaration whose fields or signature are being checked, when neither of those is set
     bool in_input;      // Checking the input's constructor, which runs outside the simulation.
     bool in_sanitize;         // Checking the input's Sanitize; in_input is set too, for the fields.
     bool in_predict;          // Predict has Sanitize's input-only capabilities.
@@ -604,6 +605,23 @@ static decl *find_named(const checker *c, const str name, const loc at, const na
     }
     decl *other;
     decl *d = lookup(c->prog, c->unit, name, kind, &other);
+    // `dev` declarations: code without `dev` can't use them, in a dev build as in one they're left out of. Only
+    // code known not to be dev's is told (a checker made for a part of a declaration knows none of it).
+    const decl *from = c->method ? c->method : c->system ? c->system : c->declaring;
+    if (d && d->is_dev && from && !from->is_dev && !from->builtin) {
+        diag_error(at, "'" STR_FMT "' is 'dev', which builds without dev leave out, so '" STR_FMT "' can't use it",
+                   STR_ARG(name), STR_ARG(from->name));
+        diag_note("mark '" STR_FMT "' 'dev' too, or leave '" STR_FMT "' to dev code", STR_ARG(from->name), STR_ARG(name));
+    }
+    if (!d && c->prog->left_out.count) {
+        for (int i = 0; i < c->prog->left_out.count; i++) {
+            const decl *dev = c->prog->left_out.items[i];
+            if (!str_eq(dev->name, name) && !str_eq(dev->qualified, name)) continue;
+            diag_error(at, "'" STR_FMT "' is 'dev', and this build isn't a dev one, so it's left out", STR_ARG(name));
+            diag_note("code that uses it must be 'dev' too, or build with dev ('tide run' does; 'tide build --dev')");
+            break;
+        }
+    }
     if (!d && kind == NAME_TYPE && (str_eq_c(name, "ClipData") || str_eq_c(name, "MeshLevel"))) {
         // Built-in structs a game has once its code names them (build_check.inc)
         decl *builtin = str_eq_c(name, "ClipData") ? c->prog->clip_data : c->prog->mesh_level;
@@ -26968,10 +26986,12 @@ bool check(program *prog)
     for (int i = 0; i < prog->decls.count; i++) {
         const decl *d = prog->decls.items[i];
         c.unit = d->unit;
+        c.declaring = d;
         prog->quiet_names = d->builtin; // Sound's Effect, Samples' float[512]: in generated C once the game names them
         if (d->kind != DECL_SYSTEM) resolve_field_types(&c, d);
         prog->quiet_names = false;
     }
+    c.declaring = NULL;
     for (int i = 0; i < prog->local_parts.count; i++) {
         c.unit = prog->local_parts.items[i]->unit;
         resolve_field_types(&c, prog->local_parts.items[i]);
@@ -27077,8 +27097,10 @@ bool check(program *prog)
     for (int i = 0; i < prog->decls.count; i++) {
         const decl *d = prog->decls.items[i];
         c.unit = d->unit;
+        c.declaring = d;
         if (d->kind != DECL_SYSTEM) check_fields(&c, d);
     }
+    c.declaring = NULL;
     for (int i = 0; i < prog->local_parts.count; i++) {
         c.unit = prog->local_parts.items[i]->unit;
         check_fields(&c, prog->local_parts.items[i]);
@@ -27095,12 +27117,14 @@ bool check(program *prog)
     for (int i = 0; i < prog->decls.count; i++) {
         decl *d = prog->decls.items[i];
         c.unit = d->unit;
+        c.declaring = d;
         if (d->is_override && d->kind == DECL_FUNCTION) override_owner(&c, d); // `override bool Stats.IsDead()`: a method's
         if (d->kind == DECL_FUNCTION) check_function_decl(&c, d);
         else if (d->kind == DECL_SHADER) check_shader_decl(&c, d);
         else if (d->kind == DECL_METHOD) check_signature(&c, d); // An override of a method, outside its type until it's placed
         else if (d->kind != DECL_SYSTEM) check_method_decls(&c, d);
     }
+    c.declaring = NULL;
     // Overrides of functions, methods, frags and verts take their places before any body names one
     place_overrides(&c, false);
     check_long_arrays(&c);
@@ -27157,7 +27181,10 @@ bool check(program *prog)
             decl *d = prog->decls.items[i];
             if (d->kind != DECL_SYSTEM) continue;
             c.unit = d->unit;
+            c.system = NULL;
+            c.declaring = d;
             check_params(&c, d);
+            c.declaring = NULL;
             d->params_checked = true;
         }
         place_overrides(&c, true);
@@ -27166,7 +27193,10 @@ bool check(program *prog)
         decl *d = prog->decls.items[i];
         if (d->kind != DECL_SYSTEM) continue;
         c.unit = d->unit;
+        c.system = NULL;
+        c.declaring = d;
         if (!d->params_checked) check_params(&c, d);
+        c.declaring = NULL;
         c.system = d;
         if (d->extern_system) { // Its code is C's: there's nothing of it to check, or to warn about not using
             check_extern_system(&c, d);

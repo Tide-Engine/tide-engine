@@ -282,6 +282,8 @@ static const tide_host_game tide_host_game_api = {
     .screen_keyboard = tide_screen_keyboard_get,
     .gpu_reads_share = tide_gpu_reads_share,
     .debug_log_to = tide_debug_log_to,
+    .dev_views = tide_dev_view_names,
+    .show_dev_views = tide_show_dev_views,
     .shaders = tide_game_shaders,
 #ifdef TIDE_HAS_EMBED
     .layout = &tide_game_layout,

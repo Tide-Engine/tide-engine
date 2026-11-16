@@ -168,6 +168,14 @@ static const argument_help arguments[] = {
      "the game's code, which debug builds leave unoptimized. DEBUG is\n"
      "undefined. Standalone builds collect unused code and data, and Tide-only\n"
      "games omit unreferenced assets. Use --distribution for shipping cuts.", COMPILE},
+    {"--dev", "--dev", "Include the game's dev declarations",
+     "A dev build has what the game marks 'dev': its tools, cheats, dev scenes\n"
+     "and dev views, which F1's menu shows. tide run builds with dev unless\n"
+     "--distribution or --no-dev says otherwise; tide build adds it with --dev.\n"
+     "Code without 'dev' can't use what's dev, in either build.", RUN | BUILD},
+    {"--no-dev", "--no-dev", "Leave the game's dev declarations out of a run",
+     "tide run builds with them by default; this runs the game as tide build\n"
+     "would build it.", RUN},
     {"--distribution", "--distribution", "Build an optimized game for distribution",
      "Implies --release. Standalone builds also strip debug symbols and\n"
      "readable diagnostic/shader names, keeping a private game.names map in\n"

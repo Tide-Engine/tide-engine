@@ -60,6 +60,20 @@ static void keep_declarations(program *prog)
     prog->decls.count = kept;
 }
 
+// A build that isn't a dev one (codegen_options.dev) leaves `dev` declarations out before checking, as if they weren't
+// written. The checker holds code without `dev` to not using them in every build (find_named), so leaving them out
+// changes nothing else; what names one anyway is told why (prog->left_out).
+static void leave_out_dev(program *prog)
+{
+    int kept = 0;
+    for (int i = 0; i < prog->decls.count; i++) {
+        decl *const d = prog->decls.items[i];
+        if (d->is_dev) vec_push(prog->left_out, d);
+        else prog->decls.items[kept++] = d;
+    }
+    prog->decls.count = kept;
+}
+
 // For another program (tidec --embed): a local handler of each of the match's own events, as it's heard and once it's
 // verified, so the program hears what the game's local handlers would, once each under rollback. Their bodies are
 // generated (gen_heard: tide_embed_heard_<Event>); nothing of them is in the match, as for any local handler.
@@ -168,6 +182,7 @@ static bool compile_inputs_impl(const compile_input *inputs, const int count, co
     }
 
     diag_phase("lexing and parsing");
+    if (!opts->dev) leave_out_dev(prog);
     if (opts->declarations_only) keep_declarations(prog);
     if (opts->embed && !add_embed_taps(prog)) return false;
     prog->game_folder = opts->game_folder;

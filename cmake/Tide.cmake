@@ -148,7 +148,7 @@ function(tide_web_page target)
 endfunction()
 
 function(tide_add_game target)
-    cmake_parse_arguments(ARG "STATS;LAYOUT;EMBED;WINDOW;SERVER;STRIP_SERVER_ASSETS;VISUALIZERS;STRIP_NAMES;SPLIT_PLUMBING;SPLIT_CODE;NO_LOOP_INDEXES;NO_CALL_MERGING;NO_CACHED" "NAME;TITLE;SHELL" "SOURCES;HOST;WARNINGS;PACKAGES;DEFINES" ${ARGN})
+    cmake_parse_arguments(ARG "DEV;STATS;LAYOUT;EMBED;WINDOW;SERVER;STRIP_SERVER_ASSETS;VISUALIZERS;STRIP_NAMES;SPLIT_PLUMBING;SPLIT_CODE;NO_LOOP_INDEXES;NO_CALL_MERGING;NO_CACHED" "NAME;TITLE;SHELL" "SOURCES;HOST;WARNINGS;PACKAGES;DEFINES" ${ARGN})
     if(ARG_SERVER AND (TIDE_WEB OR TIDE_ANDROID OR ARG_HOST OR ARG_WINDOW OR ARG_LAYOUT))
         message(FATAL_ERROR "tide_add_game(${target} SERVER) is a standalone native server")
     endif()
@@ -381,6 +381,9 @@ function(tide_add_game target)
     # used for reloading; prune only ordinary standalone optimized games.
     set(strip_assets OFF)
     set(server_flags)
+    if(ARG_DEV) # A dev build: the game's `dev` declarations are in it
+        list(APPEND server_flags --dev)
+    endif()
     if(ARG_SERVER)
         list(APPEND server_flags --server)
         if(NOT c_sources OR ARG_STRIP_SERVER_ASSETS)

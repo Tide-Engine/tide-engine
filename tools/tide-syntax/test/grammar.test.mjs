@@ -258,6 +258,13 @@ const cases = {
         ['cached float Width(Catalog catalog, int part)', [['cached', 'storage.modifier'], ['float', 'storage.type.primitive'], ['Width', 'entity.name.function']]],
         ['virtual cached Box Bounds(', [['virtual', 'storage.modifier'], ['cached', 'storage.modifier'], ['Bounds', 'entity.name.function']]],
     ],
+    'dev declarations': [
+        ['dev view GunTools(Gun gun)', [['dev', 'storage.modifier'], ['view', 'storage.type'], ['GunTools', 'entity.name.function']]],
+        ['dev command GiveAmmo { int amount; }', [['dev', 'storage.modifier'], ['command', 'storage.type'], ['GiveAmmo', 'entity.name.type']]],
+        ['dev command(GiveAmmo give, PlayerID sender) Give(', [['dev', 'storage.modifier'], ['Give', 'entity.name.function']]],
+        ['dev scene GunRange { }', [['dev', 'storage.modifier'], ['scene', 'storage.type'], ['GunRange', 'entity.name.type']]],
+        ['var dev = 1;', [['dev', '!storage']]],
+    ],
     'local worker declarations': [
         ['local worker List<int> Build(', [['local', 'storage.modifier'], ['worker', 'storage.modifier'], ['Build', 'entity.name.function']]],
         ['worker local int Count(', [['local', 'storage.modifier'], ['worker', 'storage.modifier'], ['Count', 'entity.name.function']]],
@@ -737,7 +744,7 @@ const e2e = path.join(repo, 'compiler', 'tests', 'e2e');
 const programs = fs.readdirSync(e2e, { recursive: true })
     .filter(f => f.endsWith('.tide') && fs.statSync(path.join(e2e, f)).isFile()).sort();
 
-const modifiers = String.raw`(?:(?:local|async|worker|cached|virtual|override)\s+)*`;
+const modifiers = String.raw`(?:(?:dev|local|async|worker|cached|virtual|override)\s+)*`;
 const type = String.raw`[\w.]+(?:\s*<[\w.<>\s]*>)?\??`;
 const keywords = new Set(['return', 'if', 'else', 'var', 'await', 'fail', 'try', 'case', 'switch', 'while', 'for', 'foreach', 'parallel']);
 const declarations = [
@@ -805,6 +812,8 @@ for (const program of programs) {
                     `${program}:${line.number}: ${name} is ${piece.scopes.join(' ')}, not ${scope}\n  ${text}`);
             }
         }
-        assert.ok(found > 0 || program.includes('empty'), `${program} has declarations`);
+        // A file of settings alone goes with another's declarations (visibility_repairs_few.tide)
+        const settingsOnly = lines.every(l => /^\s*(\/\/.*|settings\s*\{.*\}\s*)?$/.test(l.text.replace(/\r$/, '')));
+        assert.ok(found > 0 || settingsOnly || program.includes('empty'), `${program} has declarations`);
     });
 }

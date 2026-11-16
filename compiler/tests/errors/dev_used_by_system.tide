@@ -1,0 +1,12 @@
+// expect: 'GiveAmmo' is 'dev', which builds without dev leave out, so 'Reload' can't use it
+// expect: mark 'Reload' 'dev' too, or leave 'GiveAmmo' to dev code
+// build: dev
+component Gun { int ammo; }
+scene Main { }
+
+dev command GiveAmmo { int amount; }
+
+system Reload(Gun gun)
+{
+    if (gun.ammo == 0) this.Send(GiveAmmo { amount = 30 });
+}

@@ -93,7 +93,7 @@ static const char *dispatch_folder(int argc, char **argv)
     };
     const char *zero[] = {
         "--server", "--strip-server-assets", "--strip-assets", "--asset-sizes", "--anonymous", "--udp-only",
-        "--no-open", "--release", "--distribution", "--web", "--single-file",
+        "--no-open", "--release", "--distribution", "--dev", "--no-dev", "--web", "--single-file",
         "--android", "--stats", "--debug-views", "--ticks-alongside", "--paced"
     };
     for (int i = 2; i < argc; i++) {
@@ -252,6 +252,7 @@ static int command_main(const int argc, char **argv)
     const char **defines = malloc((size_t)argc * sizeof *defines);
     if (!defines) abort();
     build_options opts = {.folder = ".", .defines = defines};
+    int dev = -1; // --dev (1) or --no-dev (0); the default is the command's (opts.dev)
     asset_sizes sizes = {0}; // --asset-sizes'
     // What the game's own command line takes (tide/run.h), which run passes on: --host [port], --join <code> or
     // --connect <address>, the window's size, its matches' seed, its data directory, a sharded game's regions, a
@@ -428,6 +429,8 @@ static int command_main(const int argc, char **argv)
             game_args[game_arg_count++] = argv[++i];
         } else if (run && strcmp(a, "--no-open") == 0) open_page = false;
         else if (strcmp(a, "--release") == 0) opts.release = true;
+        else if (strcmp(a, "--dev") == 0) dev = 1;
+        else if (run && strcmp(a, "--no-dev") == 0) dev = 0;
         else if (strcmp(a, "--distribution") == 0) opts.distribution = opts.release = true;
         else if (strncmp(a, "-O", 2) == 0) {
             if (strlen(a) != 3 || a[2] < '0' || a[2] > '3' || opts.optimization) {
@@ -507,6 +510,8 @@ static int command_main(const int argc, char **argv)
     // Whoever runs a game with --stats wants to read them: they start open. What a build shows its players
     // starts as one line.
     opts.stats_open = run && opts.stats;
+    // `dev` declarations: in what tide run builds, as a game is worked on, unless it says otherwise
+    opts.dev = dev >= 0 ? dev == 1 : run && !opts.distribution;
     // Interactive runs reload as files change. Runs with no window end once.
     opts.watch = (run && !headless && !opts.server) || (unity && !once && !opts.web && !opts.android); // A web or Android build is for a player: once
     opts.unity = unity;

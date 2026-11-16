@@ -42,6 +42,7 @@ static void usage(void)
             "  --embed        ...and what another program needs to run the game (tide/embed.h), as tide unity builds it\n"
             "  --declarations the game's types alone: its systems, views, handlers, functions, frags and verts\n"
             "                 left out, as tide unity builds them while the code doesn't build\n"
+            "  --dev          a dev build: 'dev' declarations are in it (without it they're left out)\n"
             "  --strip-unused-assets  leave unreferenced assets out of generated loaders and the pack\n"
             "  --strip-names          strip diagnostic/shader identifiers; write a private <name>.names map\n"
             "  --server               preserve the client identity and emit server build metadata\n"
@@ -236,6 +237,8 @@ int main(const int argc, char **argv)
             opts.scene = argv[++i];
         } else if (strcmp(argv[i], "--strip-unused-assets") == 0) {
             opts.strip_unused_assets = true;
+        } else if (strcmp(argv[i], "--dev") == 0) {
+            opts.dev = true;
         } else if (strcmp(argv[i], "--strip-names") == 0) {
             opts.strip_names = true;
         } else if (strcmp(argv[i], "--server") == 0) {

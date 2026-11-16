@@ -177,6 +177,7 @@ without those characters.
 |---|---|
 | `--release` | Optimizes game and package code for testing and profiling, keeping symbols and diagnostics; standalone builds leave out unused code, data and assets |
 | `--distribution` | Builds for shipping: `--release` plus symbol/name stripping, shader minification and packaging (smaller web pages, Android app bundles) |
+| `--dev`, `--no-dev` | Includes, or leaves out, what the game marks [`dev`](dev-tools.md): its tools, cheats and dev views. `run` includes them unless `--no-dev` or `--distribution` says otherwise; `build` includes them only with `--dev` |
 | `-O0`, `-O1`, `-O2`, `-O3` | Overrides engine, game and package C/C++ optimization; deterministic math and the chosen build mode stay unchanged |
 | `--web` | A web page (WebGPU), built with clang's WebAssembly target |
 | `--android` | An Android app, for phones and the emulator (see [Android](#android)) |

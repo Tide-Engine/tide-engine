@@ -1106,7 +1106,13 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     tide_add_game(tide_platform_players SOURCES tests/players.tide)
     tide_add_game(tide_platform_players_menu SOURCES tests/players_menu.tide)
     tide_add_game(tide_platform_players_leave SOURCES tests/players_leave.tide)
+    tide_add_game(tide_platform_dev_menu DEV SOURCES tests/dev_menu.tide) # A dev build: F1's menu shows its dev views
     if(TIDE_NODE)
+        add_test(NAME tide_platform_dev_menu
+            COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/dev_menu.mjs" $<TARGET_FILE:tide_platform_dev_menu>
+                "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_dev_menu-run")
+        set_tests_properties(tide_platform_dev_menu PROPERTIES TIMEOUT 120)
+        tide_gpu_test(tide_platform_dev_menu)
         add_test(NAME tide_platform_interactive
             COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/interactive.mjs" $<TARGET_FILE:tide_platform_capture>
                 $<TARGET_FILE:tide_platform_players> "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_interactive-run")

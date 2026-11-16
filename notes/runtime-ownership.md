@@ -1,3 +1,10 @@
+## Dev views (2026-11-16)
+
+Generated code gained `tide_dev_view_names` and `tide_show_dev_views` (notes/language.md, `dev` declarations), and
+`tide_host_game` two optional members at its end, `dev_views` and `show_dev_views`, which `tide/run.h` fills, so
+`TIDE_HOST_SHAPE` changes: hosts and game libraries rebuild together. No runtime function generated code calls is new.
+The menu is the standard host's (notes/standard-host.md, The dev menu).
+
 ## The server's store: the files a provider has (2026-11-16, night)
 
 `engine/src/storage.c`, `tide/storage.h` (notes/voxels.md, section 3f). Nothing generated code calls changed. Hosts

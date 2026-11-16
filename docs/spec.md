@@ -5976,6 +5976,24 @@ Packages that come with tide: a package in tide's installation, which a game opt
 - Packages from private repositories, and hosts other than those four.
 - Symbols for the packages a game has, so code can add to another package only when it's there (`#if PHYSICS`).
 
+## Dev tools
+
+Agreed 2026-11-16, from the owner's question of how a team's members get tools of their own (isolating a piece, jumping to a situation, inspecting entities), checked on paper against two of the owner's games before anything was built. The game provides its tools; the engine makes them easy to make, and never assumes how a game draws.
+
+Decided:
+- **`dev` before a declaration** (the owner's pick over a `[Dev]` attribute or a build value a game checks): `dev command GiveAmmo { ... }`, `dev view GunTools(...)`, `dev scene GunRange { }`. A build without dev doesn't have them at all, so a release server can't be sent a dev command.
+- **Code without `dev` can't use what's `dev`**, checked by the compiler in every build, so a build without dev fails nowhere a dev build passed.
+- **A dev build is a switch of its own**, apart from optimization and target: an optimized or a web build can be a dev one, for playtesters.
+- **A scenario is a dev scene**, which `--scene` starts in place of the start scene; one that wants the game's usual start loads it itself.
+- **The inspector's edits change the match for everyone**, applied by the server. What depends on a field follows it through match handlers of `Changed<...>` (Events), not an event of the inspector's own.
+- Order of the pieces: `dev` and the dev menu (built), dev scenes, the tweak file, the inspector, checkpoints, picking on screen, pausing and rewinding a run.
+
+Provisional (Claude's picks, built 2026-11-16):
+- `dev` goes before any declaration but settings and namespaces. A dev type's methods and a dev scene's preparation are dev too. `dev` inside a type's body isn't read yet.
+- **Which builds**: `tide run` builds with dev unless `--no-dev` or `--distribution`; `tide build` with `--dev`; tidec's `--dev`; `tide_add_game(... DEV)`. Schedule and shader listings see the dev declarations.
+- **The dev menu**: F1 in a dev build with `dev` views shows it over the views, listing them by name with a switch each; a dev view runs only while its switch is on, kept by name across hot reloads. The game sees F1 too. The menu is the standard host's (tide/host.h); another host shows dev views through `tide_show_dev_views`.
+- The compiler's check covers names code writes in declarations, signatures, fields and bodies; a name reached in a part of a declaration checked on its own (a generic's instance, a lambda) is checked only by a build without dev, which says the name is dev and left out.
+
 ## Mods
 
 **Decided** is what the owner agreed (2026-10-05); the design proposed for the rest is under **Open**. Of it all, two parts are built (**Provisional**, below): `virtual` and `override`, as the language has them for any package, and the service's first slice, for web games, with `tide publish`. What a mod may be, games that load builds, and the sandbox aren't.

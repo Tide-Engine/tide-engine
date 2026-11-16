@@ -1,3 +1,10 @@
+## `dev` in the grammar and the language server (2026-11-16)
+
+Both TextMate grammars take `dev` among the declaration modifiers (`storage.modifier`), the grammar test has
+`dev declarations` (probe.tide's lines), and the language server reads `dev` as a declaration's start
+(`starts_declaration`) and a contextual keyword. The grammar test also lets an e2e file that's settings alone pass
+(`visibility_repairs_few.tide`, `_wide.tide` failed it since 9f21e4d3d).
+
 ## The native scene editor removed (2026-11-16)
 
 The owner removed the native scene editor: "we have been trying to fight the fact that each game deals with its own rendering so there isnt a 'universal' way to draw a scene", and "the game itself should be the one providing tools an our job should mostly focus on making that process easy". Its decision is in `docs/spec.md`, Prefabs and authored scenes. The last commit with the editor is `ab0bc7d4d`; its sections in this file, `notes/cli-and-packages.md` and `notes/language.md` described it and went with it.
