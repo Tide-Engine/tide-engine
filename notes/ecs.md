@@ -1,5 +1,110 @@
 # ECS and simulation state
 
+## A heap gives back the pages whose blocks are all free (2026-11-16, night)
+
+A world's memory stayed at the most it ever held (notes/voxels.md, What's left, 8). Measured first (`bench_voxels
+--out 1 --back 40`: 8 bots fly out for 40 s, back for 40 and stay; the bench's new line of what a world's memory is
+made of, `bench_desc.parts`), with 8,242 entities at the most and 1,467 at the end:
+
+- **Tables already give their pages back**: 12 chunks at the most, 6 at the end. A table drops its last chunk as its
+  last row goes (`drop_last`) and fills holes from the end once they're a 32nd of its rows (`tide_table_settle`), so
+  it's within a 32nd and a chunk of what its rows need. Nothing to do.
+- **The entity table doesn't, and is 1.4% of the world**: 8,242 slots in 9 pages, 0.29 MB of 20.3. Its free slots are
+  a list through the slots, part of the world's state (which slot a spawn takes), so giving its last pages back would
+  change what every machine has to agree on. Left as it is.
+- **The heaps were the rest, 19.9 of 20.3 MB, and gave nothing back**: 1,214 pages at the most and at the end. A heap
+  hands out offsets from its start and takes blocks back into free lists that go through the blocks themselves, so a
+  page whose every block is free still holds each block's link, and stays.
+
+**What was built** (`tide/heap.h`, Pages given back; `engine/src/heap.c`). It changes how a heap is kept in memory and
+nothing of what it is: its hash, its packed bytes, its deltas and the blocks it hands out next are those of the heap
+with every page there. So no world hash moved and no two machines need agree about it.
+
+- **Which pages** (`tide_heap.live`, `idle`): a count for each page of its blocks handed out and not yet back on a
+  free list (`took` as `tide_heap_alloc` hands one out, `gave` as `tide_heap_flush_pending` and `tide_heap_runs_join`
+  free one; a block released and not yet flushed still counts). The heap's own thread's alone, as its free lists are;
+  a copy takes its source's. A page read from bytes is `LIVE_UNKNOWN`: nothing says which of its blocks are free (a
+  grid's chunk writes cells over its header), so a world that came as bytes gives back only pages made since.
+- **When** (`give_back`, from `tide_heaps_settle`, which generated `apply_commands` calls after a tick's changes
+  and the flush, with nothing else on the world): once the pages whose blocks are all free are a quarter of the
+  heap's pages in memory and at least `TIDE_HEAP_GIVE_LEAST` (2) places; each of a world's heaps and each run's heap
+  by itself. Never a heap's first page (offset 0 is no block), one it hasn't handed out to the end of, or a heap
+  with blocks waiting to be freed.
+- **What's kept of one** (`tide_heap_stub`): every word of it that isn't zero (a free block is zeros and its link) and
+  what it hashed to, shared by the world and its copies as a page is. A page with more than 256 such words (small
+  blocks, a link each) stays, marked `LIVE_KEPT` so it isn't looked at again until one of its blocks is handed out.
+  The page's place in the table is NULL meanwhile.
+- **Coming back** (`bring_back`): `tide_heap_alloc` taking a free block whose page is gone makes the page again from
+  its stub first, the same bytes, under the heap's lock where runs are on threads (as `add_page`).
+- **Everything that goes through a heap's pages reads one that's gone as it was** (`span_at`, `place_hash`,
+  `page_read`): the hash takes the stub's, the stale pages leave it out, a pack and a delta write the page made again
+  for the moment, a delta read over a base that gave a page back reads it the same (so the sender and the receiver
+  needn't have the same pages in memory), and the pages' hashes and needs say what they did.
+  `tide_heaps_pages` counts the pages in memory and `tide_heaps_gone` the places given back.
+- **Why nothing reads a page that's gone**: only a handle to a block that's handed out is read, and such a page has
+  none; a released block is free only after its code's flush, as before. The three places that look a page up by an
+  offset that could be anything already took NULL for no page (`mesh.c`'s `span` and its list check, generated
+  `tide_client_place_page`, where a kept hash of a page that's gone now reads as changed).
+
+**Measured** (release, Windows, 4 threads, the machine shared; the same hash at the end before and after, in each):
+
+| `--players 8 --out 1 --back 40 --hop 0 --builders 0`, 120 s | before | after |
+|---|---|---|
+| Entities at the most / at the end | 8,242 / 1,467 | the same |
+| The server's world, packed, at the most / at the end | 21.1 / 20.3 MB | the same: it's the same world |
+| Its heaps' pages in memory at the most / at the end | 1,214 / 1,214 (19.9 MB) | 1,214 / 745 (12.2 MB), 469 given back |
+| Its tables' chunks at the most / at the end | 12 / 6 | the same |
+| The process (the server and 8 machines) at 60 s / at 120 s | 254.8 / 152.1 MB | 255.7 / 142.0 MB |
+
+| One player hopping between two dimensions every 10 s (`--players 1 --still 100 --hop 10`) | before | after |
+|---|---|---|
+| The server's heaps' pages before the first hop | 141 | 135 (6 given back) |
+| ...while both dimensions are held | 263 to 269 | 253 to 255 |
+| ...after each of the first four hops, 1,018 entities again | 260, 263, 269, 269 | 215, 191, 215, 195 |
+
+| The default run (8 bots, a hop each every 20 s, 30 s), three alternating rounds | before | after |
+|---|---|---|
+| Server, in all, ms a second | 28.07, 28.43, 28.50 | 28.10, 29.10, 28.47 |
+| Server update, 99th percentile, ms | 3.20, 3.24, 3.28 | 3.27, 3.29, 3.25 |
+| Server, snapshots, ms a second | 0.97, 1.00, 1.01 | 1.05, 1.16, 1.08 |
+| The hash at the end | `0xd5237e620fb05ff1` | the same |
+
+Counted in a build made for it (not kept), the server's and the eight machines' worlds together over 30 s: flying
+with no hops, 5 times a heap gave pages back, 85 pages in all, 48 brought back; with the hops, 1,351 times, 2,402
+pages, 473 brought back. A page given back costs a read of its 16 KiB; one brought back a zeroed page and its few
+words. What a snapshot pays more is the counts' copy (two bytes a page).
+
+**What it doesn't do.**
+
+- **A page stays for one block.** A heap's pages hold blocks of every size, in the order they were first handed
+  out, and free blocks of each size are taken again last freed first: after the bots came back, 126 of the chunks'
+  heaps' 448 pages in memory had one block out and 55 none (under a quarter of their run's heap). The world of
+  1,467 entities had 745 pages where the first 2,932 it ever held had 373. Pages for one size of block each, or
+  free blocks taken lowest first, would pack them, and would change which block is handed out next: every heap's
+  layout and every pinned world hash with them. Not done here: the pins need every suite on every platform.
+- **The packed world is as big as it was**, 20.3 MB: what's packed is the heap as it is, free blocks and all (zeros
+  and links, which a delta from nothing sends as runs). A joiner of a game without visibility is sent that; a
+  game with visibility sends each player its own projection, made block by block on their machine.
+- **A world read from bytes** (a joiner's without visibility, a hot reload's, a server's from a save) gives back
+  none of the pages it came with.
+- **The process doesn't shrink by as much as the world**: pages let go of are kept spare for the next taker (8 MB a
+  thread and 32 shared, `engine/src/page.c`) and then are the C library's.
+
+**Tests** (`tests/test_heap.c`, each against a twin heap that never settles): `heap_gives_back_the_pages_whose_blocks_
+are_all_free` (600 blocks, 500 freed: the pages go only at a settle after the flush; the hash, what's handed out
+and the packed bytes are the twin's; a snapshot from before keeps every block, one taken with pages gone stays
+what it was while the world takes them again and after the world is freed; the blocks handed out next are the
+twin's, zeroed), `heap_gives_back_a_big_blocks_page_and_keeps_pages_of_small_blocks` (blocks of four places, and
+4,096 of 16 bytes whose pages stay and count again), `heap_with_pages_given_back_packs_and_makes_deltas_as_its_twin`
+(whole bytes read back, the pages' hashes, and deltas each way between a heap with pages gone and its twin, read
+over a base kept either way), `heap_giving_back_is_the_twin_through_any_blocks_coming_and_going` (30,000 random
+allocations and releases of eight sizes in waves, a settle every five, four snapshots kept on the way). Bringing a
+page back with a word missing fails three of them. Run under ASan too (`tide_tests heap`, `list`, `grid`,
+`snapshot`, `entity`, `table`, `page`, `visibility`, `text`, `map`, `session`: all pass), and `tide_tests` whole in
+release (787), `tidec_e2e_visibility_runs` (and `_checked`, `_memo_off`), `tidec_e2e_row_heaps`, `_row_grids`,
+`_guarded_rows`, `bench_voxels` (and `_forgets`, `_wide`, `_arrives`, `_checked`, `_counts`), `bench_gallery`,
+`bench_sand`: every pin where it was. Not run: the web build, and the other suites.
+
 ## A handler takes the lanes it changed (2026-11-16, later)
 
 An event's or a command's handler with a `mut` component took every lane of that component for writing in its

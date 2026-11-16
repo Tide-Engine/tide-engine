@@ -1,3 +1,21 @@
+## The server's store: the files a provider has (2026-11-16, night)
+
+`engine/src/storage.c`, `tide/storage.h` (notes/voxels.md, section 3f). Nothing generated code calls changed. Hosts
+have two new calls: `tide_storage_forget_files(io)` (the provider's files or folders changed behind the store: listed
+again at the next load; NULL for every provider's; `tide_platform_io_init` calls it as its app's folders change) and
+`tide_storage_loads` (counts, for tests and the bench). A provider's `list` is now also called by a load, once, from
+the thread that carries requests out.
+
+## A heap's pages given back (2026-11-16, night)
+
+`engine/src/heap.c`, `tide/heap.h` (notes/ecs.md, top section). No generated code changed and no runtime function it
+calls changed its contract: `tide_heaps_settle`, which `apply_commands` already called after a tick's changes and
+their flush, now also lets go of each heap's pages whose blocks are all free. Generated code and hosts that read
+`tide_heap.page[...]` for anything but a block they hold have to take NULL for a page that isn't in memory
+(`tide_client_place_page` did). New: `tide_heaps_gone` (the places given back), and `tide_heaps_pages` counts the
+pages in memory. `tide_heap` has four more fields at its end (`live`, `stub`, `gone`, `idle`), none of them part of
+a world's bytes or hash.
+
 ## A guard's few rows shared out (2026-11-16, last)
 
 No runtime function is new or changed (schedule-and-threads.md, top section). A system whose entities' order goes to

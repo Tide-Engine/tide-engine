@@ -147,6 +147,46 @@ Managed hosting gave its servers no `io`, so a hosted match kept nothing. Now th
 - **Tests, review**: `managed_store_a_host_may_answer_inside_keep` (a host that answers a load and a listing from inside `keep`: the answers are on the line when the send returns, a listing's keys are checked against the prefix and `after` the line copied, one before `after` refused, and the tick's requests, a 4,096-byte save among them, are freed). `tidec_e2e_managed_store_shards` (`managed_store_shards.tide`, `TIDE_GAME_SHARDED` with `TIDE_MANAGED_TEST`): a coordinator of a one-region world gives the root's start, `tide_managed_shard_new` makes the shard, its start's save is handed over with its first tick (it fails with `d->asked` taken out); its world packed at tick 3 and the journal since, in whose ticks the answer to an awaited load came; a new instance's `shard_stage`, `shard_replay` of every record and `shard_begin` has the same tick and hash, asks again for the one load still held and not for the answered one, and its task is answered there, once. A tick's answers are given together (a held load holds its tick's others), so the fixture asks the two in ticks of their own. The reactor compiles for wasm32-wasip1 with `-Wall -Wextra -Wpedantic -Werror` for both fixtures' headers (wasi-sdk 34's sysroot), its journal import still `tide_host.journal`.
 - **Gaps**: the service's answers are paced as files' are (64 a tick), so a world's first view of 845 loads waits for them over 14 ticks, plus the service's reads. A shard's saves in ticks a restart replays from its journal aren't asked again, so those the service hadn't written when it stopped are lost, as for a native shard's files. A world's store and its checkpoint are written apart; since the review the service records a normal match's checkpoint only once everything asked before it is written, so a match recovered from a save can find its store ahead of its world (as with a dedicated server's folder), never behind. A shard's journal is synced every step, so the same fence would put the store's disk on every world step: not done.
 
+### 3f. A load of a key never saved reads nothing (2026-11-16, night; `engine/src/storage.c`, The files a provider has)
+
+Every chunk a player comes near is a load, and nearly all of them find nothing (What's left, 6: 567,041 loads in 20
+minutes of 8 bots, none found), each a file looked for: 18 µs on the files' thread, or on the tick's in a run with no
+window.
+
+- **What's kept**: for each provider (its `user` and `read`, so the copies hosts make of a `tide_io` are one, and
+  every server and shard of a process that share a folder share it), the number each file's path under `saved/`
+  hashes to, letters small (a disk may take `A.bin` for `a.bin`). Listed once, folder by folder (the provider's
+  one-level listings, as a listing of keys walks them), by the first load, on the thread that carries it out: the
+  provider's own where it has one. Each save adds its path once it's written, whether or not the write worked. Deletes
+  take nothing out: such a load is read and finds nothing.
+- **What it answers**: a load whose path's number isn't there has no file, and is `MISSING` with no read. Any other
+  load is read as before, so `FOUND`, `FAILED` and a `MISSING` the disk says are what they were. A provider with no
+  `list`, or one a folder of which couldn't be listed, is read every time, as is one being listed by another thread.
+  Answers, their order and their ticks are the same: every pinned world is where it was.
+- **The rule it adds** (Claude's pick, Provisional; spec, The server's store): while servers run, `saved/` is the
+  store's to make. A file put there by anything else (the game's local file calls, a person, another process on the
+  same folder) may not be found until the process ends. A host that changes a provider's files or folders calls
+  `tide_storage_forget_files` (the platform does when its app's folders change; the storage tests' host does as it
+  empties its files), and the next load lists again. The owner's to confirm: the other way is the read for every load.
+- **Measured** (release, Windows, 4 threads). The default run (8 bots, 30 s, the bench's store in memory): 14,551
+  loads, 14,551 reads before and 49 after, all 49 found; the same hash. With the platform's files on the tick's
+  thread (`--players 1 --still 100 --hop 3 --builders 0 --files-here <folder>`, 20 s, two runs each): at `--near 4`
+  4,018 loads, each a file looked for before and none after, the server's longest update 4.57 and 4.64 ms to 2.14
+  and 2.48; at `--near 12` 23,058 loads, 29.8 and 28.3 ms to 13.0 and 12.9 (what's left is the tick a box is spawned
+  in: What's left, 5d). `--quick --files-here` from an empty folder ends on the quick run's pinned hash, 1,152 loads
+  and 10 reads, and again over the 9 files it left.
+- **Tests**: `storage_loads_of_keys_never_saved_read_nothing` in `tidec_e2e_storage` (the host's reads and listings
+  counted: 205 loads of keys never saved read nothing after one listing; a key saved through the store is read from
+  then on and its neighbours still aren't; a deleted one is read and gone; a file whose name differs by case is read;
+  a copy of the provider is the same provider; a file put behind the store is found once the host says its files
+  changed; no `list`, or a folder that can't be listed, reads every time). `tidec_e2e_storage` (17 tests),
+  `_storage_await`, `_storage_await_shards`, `_storage_await_hidden`, `tide_platform_store_headless` and
+  `bench_voxels` with its five variants pass. Not run: ASan and the web for this part, and the managed store's tests
+  (a hosted line has no provider: nothing changed for it).
+- **Left**: a store of very many files lists them all at the first load (one-level listings of every folder, once);
+  what's kept is 16 to 32 bytes a file. A game that wants files dropped into a running server's folder to count has no
+  call for it (`tide_storage_forget_files` is the host's).
+
 ### 4. Grids as bytes (`tide/grid.h`, `engine/src/grid.c`; `check_grid_from_bytes`, `gen_grid_bytes`)
 
 The game saved a chunk with Tide loops over its 4,096 cells (`Pack`: runs of one block, a count and the block, at most 255; `Unpack` the other way), which every game with a grid to keep would write again. Now `cells.ToBytes()` and `Grid3<Block>.FromBytes(bytes)` (`Grid3<Block> fails IOError`) are built in: spec, Grids, Provisional, Grids as bytes; how they're built is in `notes/language.md`, Grids as bytes, and what keeps them safe in `notes/memory-safety.md`.
@@ -840,6 +880,8 @@ it says; 32 parked two runs)
   2 s after a hop, and 1,018 again; its world in memory is 2.38 MB before the first hop, 4.51 while both are held,
   and 4.35, 5.23 and 5.32 MB after the first three hops with the same 1,018 entities: pages a table or a heap took
   are used again, not given back. A player's machine's world goes 1.53 to 3.00 MB at the first hop and stays.
+  (Since that night a heap gives back the pages whose blocks are all free: notes/ecs.md, top section. The packed
+  sizes here are as they were, as the world is the same; the pages in memory after a hop are a quarter fewer.)
 
 **8. A long run** (new: `--out 1 --hop 0`, 8 bots flying straight out eight ways, digging and building as they go;
 `--every 60`; 10 minutes, and 20 with `--watch 0`)
@@ -1045,9 +1087,9 @@ bytes and how long a box takes are the same before and after: the same chunks ar
    - 5b. **One repair at a time, each waiting for the last one's acknowledgement** (netcode.md, top section, Left): at twice the view the box is made over 26 ticks and goes in the repairs that fit in them, a round trip each, the last landing 6 ticks after its chunks are made.
    - 5c. **Spares only once a connection's loss is counted** (netcode.md, Left): a join and a first hop have none.
    - 5d. **The tick a box is spawned in is 2.8 µs a chunk**: 2.4 ms at the default view, 8.7 at twice, about 19 at three times, where it's a frame's worth by itself. A box asked for over a few ticks, nearest first, would bound it; the ring-a-tick variant (Tried and taken out) is that, and would pay now where it didn't.
-6. ~~A hosting player's frame of 9 to 60 ms when a box is asked for (section 4), not taken apart.~~ Taken apart (A whole view arriving): it's the store's files found missing on the tick's thread, 18 µs each, which only a run with no window does; in a window the same ticks are 2.5 and 12 ms. What's left is 5d, and that **every chunk a player comes near is a file looked for** (567,041 loads in 20 minutes of 8 bots flying, none found): a dimension that knew which of its chunks were ever saved (a set kept with its far regions, or a listing as it starts) would ask for those alone.
+6. ~~A hosting player's frame of 9 to 60 ms when a box is asked for (section 4), not taken apart.~~ Taken apart (A whole view arriving): it's the store's files found missing on the tick's thread, 18 µs each, which only a run with no window does; in a window the same ticks are 2.5 and 12 ms. What's left is 5d. ~~And that **every chunk a player comes near is a file looked for** (567,041 loads in 20 minutes of 8 bots flying, none found): a dimension that knew which of its chunks were ever saved (a set kept with its far regions, or a listing as it starts) would ask for those alone.~~ Closed the same night in the store itself, for every game (section 3f): it lists its files once and a load of a key never saved reads nothing (14,551 reads to 49 in the default run; a hosting run with no window's longest update 4.6 to 2.3 ms at `--near 4`, 29 to 13 at `--near 12`).
 7. ~~The process grows about a hundred bytes for each chunk that came and went, in no world (The sweep again, 8): 3.4 MB a minute with 8 bots flying, not located; the projection checks' memos are the first place to look.~~ Located and fixed the same day (The process's growth): a grid read from bytes left the 64 bytes it was made in on its thread's scratch area, 1.84 MB a minute here. What's left is the bench's own (its timings and its store in memory) and what's in the next item.
-8. **The world's memory doesn't go back down** (The sweep again, 7): a dimension left frees its entities and keeps its pages, so a server's world is as big as the most it ever held at once.
+8. ~~**The world's memory doesn't go back down** (The sweep again, 7): a dimension left frees its entities and keeps its pages, so a server's world is as big as the most it ever held at once.~~ Mostly the heaps', and partly closed the same night (notes/ecs.md, top section): a heap gives back the pages whose blocks are all free, with the world's bytes and hash as they were. Eight bots out and back (`--out 1 --back 40`): the server's heaps 1,214 pages at the most and 745 once they're back (1,214 before); one player hopping between two dimensions: 191 to 215 pages after a hop where it was 260 to 269. Tables already gave theirs back (12 chunks to 6); the entity table's slots stay (0.29 MB of 20). What's left of it: a page stays for one block that's out, as pages hold blocks of every size, so a world that shrank to a fifth keeps three fifths of its pages; packing them would change which block a heap hands out next, and every pinned hash. And the packed world (what `--every` prints) is as big as it was: it's the same world.
 9. `Idle`, `Keep`, `Retry` and `Tend` look at every chunk and far region each tick (What costs a chunk that's only held): a part, not split here, of the 202 ms a second of simulating that 32 players apart cost the server.
 10. Not measured: a second player's machine with its views (the bots have none), real disks under these sizes (section 3a has the store's files at the default), a real window (the paced run has none), more than 64 players.
 
