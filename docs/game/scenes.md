@@ -105,8 +105,7 @@ means the entity containing the value. Overrides do not create extra entities.
 loads into the local world. References must use the corresponding `Entity` or
 `LocalEntity` type. Prefab names are factories, so filters use explicit root
 components. The initial limits are 1024
-entities per instance and 128 nesting levels. Use `tide open Level.tprefab` for
-the [native scene editor](../tools/editors.md#native-scene-editor).
+entities per instance and 128 nesting levels.
 
 ## Startup scene
 
@@ -134,8 +133,6 @@ tide build . --scene Levels.Start
 ```
 
 This leaves project settings and any existing `Main` declaration unchanged.
-The [native scene editor](../tools/editors.md#native-scene-editor) also has
-**Play** for its current scene and **Set startup** to persist that choice.
 
 ## Main
 

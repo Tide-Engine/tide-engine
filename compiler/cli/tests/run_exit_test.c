@@ -10,7 +10,6 @@
 
 static char calls[16];
 int tide_hosting_command(const char *root, int argc, char **argv) { (void)root; (void)argc; (void)argv; abort(); }
-int tide_open(int argc, char **argv) { (void)argc; (void)argv; return 0; }
 char *tide_build_editor(const char *root, const build_options *opts) { (void)root; (void)opts; return NULL; }
 int tide_unity(const char *root, const build_options *opts) { (void)root; (void)opts; return 0; }
 static size_t call_count;
@@ -18,7 +17,7 @@ static const char *passed[128]; // What the last run was given for its game
 static int passed_count;
 static const char *passed_optimization;
 static bool passed_release, passed_distribution, passed_debug;
-static const char *passed_scene, *passed_source, *passed_draft, *passed_work;
+static const char *passed_scene;
 
 static void called(const char call)
 {
@@ -59,9 +58,6 @@ int tide_run_native(const char *root, const build_options *opts, const char *con
     for (int i = 0; i < opts->define_count; i++)
         if (strcmp(opts->defines[i], "DEBUG") == 0) passed_debug = true;
     passed_scene = opts->scene;
-    passed_source = opts->editor_source;
-    passed_draft = opts->editor_draft;
-    passed_work = opts->work;
     pass(args);
     called(opts->watch ? 'X' : 'N');
     return 13;
@@ -277,22 +273,17 @@ int main(void)
     }
     puts("ok: a run passes on every option of the game's command line, its files as paths from here");
 
-    char *startup[] = {"tide", "run", "game", "--scene", "Levels.First", "--source-overlay", "new.tprefab", "draft.txt",
-                       "--editor-cache", "private-cache", "--frames", "1"};
+    char *startup[] = {"tide", "run", "game", "--scene", "Levels.First", "--frames", "1"};
     call_count = 0;
     calls[0] = '\0';
     if (tide_command_main((int)(sizeof startup / sizeof startup[0]), startup) != 13
         || strcmp(calls, "UN") || passed_count != 2 || strcmp(passed[0], "--frames") || strcmp(passed[1], "1")
-        || !passed_scene || strcmp(passed_scene, "Levels.First")
-        || !passed_source || strcmp(passed_source, path_absolute("new.tprefab"))
-        || !passed_draft || strcmp(passed_draft, path_absolute("draft.txt"))
-        || !passed_work || strcmp(passed_work, "private-cache")) {
+        || !passed_scene || strcmp(passed_scene, "Levels.First")) {
         fputs("startup options must reach the compiler without entering the host command line\n", stderr);
         return 1;
     }
-    const char *invalid_options[] = {"--scene", "--source-overlay", "--editor-cache"};
-    for (size_t i = 0; i < sizeof invalid_options / sizeof invalid_options[0]; i++) {
-        char *invalid[] = {"tide", "run", (char *)invalid_options[i]};
+    {
+        char *invalid[] = {"tide", "run", "--scene"};
         call_count = 0;
         calls[0] = '\0';
         if (tide_command_main(3, invalid) != 2 || calls[0]) {
@@ -300,7 +291,7 @@ int main(void)
             return 1;
         }
     }
-    puts("ok: startup selection, original-path source overlay and isolated cache stay compiler options");
+    puts("ok: startup selection stays a compiler option");
 
     // More of them than that is said, never written past the room there is
     char *many[2 + 3 * 48] = {"tide", "run"};

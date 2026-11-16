@@ -28,8 +28,7 @@ pinned in its `tide.packages`. Unity projects follow their locked Tide package:
 open Unity once to resolve/install it, and the IDE uses Unity's selected
 installation. A `-tide-command <path>` development launch is followed only while
 that Unity process is alive; closing it or a crash restores the project pin.
-`tide` for runs/debugging and prefab
-editing comes from that installation too. Missing pinned versions give an error;
+`tide` for runs/debugging comes from that installation too. Missing pinned versions give an error;
 the plugin never silently substitutes another version. Package/lock changes
 restart the server. Different open projects can use different versions, sharing
 the `TIDE_VERSIONS` cache. An explicitly selected server or run command still
@@ -48,17 +47,6 @@ Tide's repo, the game `build/tools/games.txt` lists it in. For a file
 `tide run` can't play (one of a game CMake builds from a list of files, or
 of a package no game here lists), running says why. Errors and warnings in the Run console link to their
 place in the file.
-
-An existing `.tprefab` offers **Open Tide Prefab Editor** in the project/editor
-context menu. It requires project trust, saves that prefab and launches installed
-Tide's native app in the file's game context. The app is a separate window; save
-script changes in the IDE to refresh its compiled preview.
-
-**Edit Tide Prefab in IDE** hosts the same hidden native app in the **Tide Prefab**
-tool window. Its Swing canvas scales the fixed 1440×900 native image; no JCEF or
-browser server is needed. Mesh picking, Move/Rotate/Scale, validation, save/undo
-and recovery stay in the native backend. Closing a content tab/project closes
-its process. The standalone app remains available for a resizable window.
 
 ## Debugging
 
@@ -104,8 +92,8 @@ It needs a JDK 21 or later to build; Gradle downloads the JDK 21 it compiles
 with, and the IntelliJ Platform it compiles against, the first time.
 Clone this repository and run the commands from its root (`gradlew.bat` on
 Windows). No engine source checkout is required for the ordinary build/tests.
-Install [Tide](https://tide-engine.dev/guide/install) separately for `tidels`,
-running games and the native prefab editor.
+Install [Tide](https://tide-engine.dev/guide/install) separately for `tidels`
+and running games.
 
 ```sh
 ./gradlew buildPlugin                  # build/distributions/tide-<version>.zip
@@ -131,10 +119,6 @@ to the muted embedded-browser test:
 These checks use the Gradle test sandbox and its JBR; they do not install a
 plugin in, restart, or change settings in an existing IDE. The JCEF check uses
 offscreen rendering, executes page JavaScript and reloads the same browser.
-
-Add `-PtideTestEditor="<built tide-editor>"` to check actual native PNG rendering
-in the Swing prefab canvas and graceful backend shutdown. That check needs the
-native headless OpenGL context; it uses private temporary project files.
 
 ## License and maintenance
 

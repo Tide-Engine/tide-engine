@@ -80,22 +80,6 @@ typedef struct input_list {
 static const char *defines[256];
 static int define_count;
 
-static char *overlay_text(const char *path)
-{
-    FILE *f = fopen(path, "rb");
-    if (!f) return NULL;
-    fseek(f, 0, SEEK_END);
-    const long size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char *text = size >= 0 ? malloc((size_t)size + 1u) : NULL;
-    const size_t read = text ? fread(text, 1, (size_t)size, f) : 0u;
-    const bool ok = text && read == (size_t)size && !ferror(f);
-    fclose(f);
-    if (!ok) { free(text); return NULL; }
-    text[read] = '\0';
-    return text;
-}
-
 static bool add_define(const char *name)
 {
     if (!lex_define_ok(name)) {
@@ -250,14 +234,6 @@ int main(const int argc, char **argv)
             opts.name = argv[++i];
         } else if (strcmp(argv[i], "--scene") == 0 && i + 1 < argc && !opts.scene) {
             opts.scene = argv[++i];
-        } else if (strcmp(argv[i], "--source-overlay") == 0 && i + 2 < argc && !opts.editor_source) {
-            opts.editor_source = argv[++i];
-            const char *replacement = argv[++i];
-            opts.editor_text = overlay_text(replacement);
-            if (!opts.editor_text) {
-                fprintf(stderr, "tidec: can't read the source overlay replacement '%s'; check that it exists and is readable\n", replacement);
-                return 2;
-            }
         } else if (strcmp(argv[i], "--strip-unused-assets") == 0) {
             opts.strip_unused_assets = true;
         } else if (strcmp(argv[i], "--strip-names") == 0) {
@@ -308,10 +284,6 @@ int main(const int argc, char **argv)
             opts.embed = true;
         } else if (strcmp(argv[i], "--declarations") == 0) {
             opts.declarations_only = true;
-        } else if (strcmp(argv[i], "--editor-prefab") == 0 && i + 1 < argc) {
-            opts.editor_prefab = argv[++i];
-        } else if (strcmp(argv[i], "--editor-local") == 0) {
-            opts.editor_local = true;
         } else if (strcmp(argv[i], "--schedule") == 0) {
             schedule = true;
         } else if (strcmp(argv[i], "--measured") == 0 && i + 1 < argc) {
@@ -339,20 +311,17 @@ int main(const int argc, char **argv)
         } else if (strcmp(argv[i], "--define") == 0 && i + 1 < argc) {
             if (!add_define(argv[++i])) return 2;
         } else if (argv[i][0] == '-') {
-            static const char *const valued[] = {"-o", "--name", "--scene", "--game", "--depfile", "--editor-prefab",
+            static const char *const valued[] = {"-o", "--name", "--scene", "--game", "--depfile",
                                                 "--spirv", "--hlsl", "--kernels", "--package", "--define", "--build-cc",
                                                 "--build-flag", "--build-lib", "--build-include", "--build-engine"};
             bool takes_value = false;
             for (size_t j = 0; j < sizeof valued / sizeof valued[0]; j++) {
                 if (strcmp(argv[i], valued[j]) == 0) takes_value = true;
             }
-            if ((strcmp(argv[i], "--scene") == 0 && opts.scene) || (strcmp(argv[i], "--depfile") == 0 && depfile)
-                || (strcmp(argv[i], "--source-overlay") == 0 && opts.editor_source))
+            if ((strcmp(argv[i], "--scene") == 0 && opts.scene) || (strcmp(argv[i], "--depfile") == 0 && depfile))
                 fprintf(stderr, "tidec: '%s' can be specified only once; remove the duplicate option\n", argv[i]);
             else if (takes_value)
                 fprintf(stderr, "tidec: '%s' needs a value after it; see the usage below\n", argv[i]);
-            else if (strcmp(argv[i], "--source-overlay") == 0)
-                fprintf(stderr, "tidec: --source-overlay needs the original source path and a replacement file path\n");
             else
                 fprintf(stderr, "tidec: unknown option '%s'; check its spelling in the usage below\n", argv[i]);
             usage();

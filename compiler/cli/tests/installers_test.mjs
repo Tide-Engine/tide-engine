@@ -33,7 +33,6 @@ const cases = [
     { name: 'installed stable updater stays on stable', installed: true },
     { name: 'installed updater failure is reported, and the override restored', installed: true, failUpgrade: true },
     { name: 'checksum failure never invokes an installed updater', installed: true, damaged: true },
-    { name: 'optional Windows prefab Open With registration preserves defaults', installed: true, associate: true },
 ];
 
 const powershell = String.raw`
@@ -214,7 +213,7 @@ if (shells.includes('powershell')) before(() => {
         const script = join(work, 'warm.ps1');
         writeFileSync(script, powershell);
         const env = { ...process.env, GH_TOKEN: 'a-token-nobody-is-sent', GITHUB_TOKEN: 'another-token-nobody-is-sent',
-            TIDE_CHANNEL: '', TIDE_RELEASES_URL: 'file:///original-override.json', TIDE_ASSOCIATE_PREFABS: '',
+            TIDE_CHANNEL: '', TIDE_RELEASES_URL: 'file:///original-override.json',
             LOCALAPPDATA: join(work, 'local'), HOME: join(work, 'user'), TEMP: temporary, TMP: temporary,
             TEST_WORK: temporary, TEST_LOG: join(work, 'requests.jsonl'), TEST_LIST: join(work, 'list.json'),
             TEST_INSTALLER: join(source, 'install.ps1'), TEST_FAIL_UPGRADE: '', TEST_PAYLOAD: payload,
@@ -245,7 +244,6 @@ if (shells.includes('powershell')) before(() => {
 });
 
 for (const runtime of shells) for (const c of cases) {
-    if (c.associate && runtime !== 'powershell') continue;
     test(`${runtime}: ${c.name}`, () => {
         const work = mkdtempSync(join(tmpdir(), 'tide-installers-test-'));
         let passed = false;
@@ -264,12 +262,10 @@ for (const runtime of shells) for (const c of cases) {
                     chmodSync(join(installation, 'bin', 'tide'), 0o755);
                 } else {
                     writeFileSync(join(installation, 'bin', 'tide.exe'), '');
-                    writeFileSync(join(installation, 'bin', 'tide-editor.exe'), '');
                 }
             }
             const env = { ...process.env, GH_TOKEN: 'a-token-nobody-is-sent', GITHUB_TOKEN: 'another-token-nobody-is-sent',
                 TIDE_CHANNEL: c.channel || '', TIDE_RELEASES_URL: 'file:///original-override.json',
-                TIDE_ASSOCIATE_PREFABS: c.associate ? '1' : '',
                 LOCALAPPDATA: join(work, 'local'), HOME: join(work, 'user'),
                 TEST_LOG: join(work, 'requests.jsonl'), TEST_WORK: join(work, 'temporary'),
                 TEST_INSTALLER: join(source, `install.${runtime === 'powershell' ? 'ps1' : 'sh'}`),
@@ -319,16 +315,7 @@ for (const runtime of shells) for (const c of cases) {
             }
             if (runtime === 'powershell' && c.failUpgrade) assert.ok(said.includes('Upgrade refused.'), said);
             assert.equal(entries.filter((entry) => entry.op === 'editors').length, c.installed && !c.damaged && !c.failUpgrade ? 1 : 0);
-            const registry = entries.filter(entry => entry.op.startsWith('registry-'));
-            assert.equal(registry.length, runtime === 'powershell' && c.associate ? 6 : 0);
-            if (registry.length) {
-                const defaults = registry.filter(entry => entry.op === 'registry-default');
-                assert.ok(defaults.every(entry => entry.path.includes('Tide.Prefab')), 'never replace an extension default or UserChoice');
-                assert.equal(defaults.find(entry => entry.path.endsWith('command')).value,
-                    `"${join(installation, 'bin', 'tide-editor.exe')}" "%1"`);
-                const value = registry.find(entry => entry.op === 'registry-value');
-                assert.ok(value.path.endsWith('.tprefab\\OpenWithProgids')); assert.equal(value.name, 'Tide.Prefab');
-            }
+            assert.equal(entries.filter(entry => entry.op.startsWith('registry-')).length, 0);
             assert.equal(entries.filter((entry) => entry.op === 'unpack').length, !c.installed && !c.damaged ? 1 : 0);
             if (runtime === 'sh') assert.ok(!existsSync(env.TEST_WORK), 'The temporary downloads were not removed.');
             passed = true;

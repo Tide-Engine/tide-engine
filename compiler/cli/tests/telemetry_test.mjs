@@ -30,7 +30,7 @@ mkdirSync(work, { recursive: true });
 
 // What an event may hold, and nothing else.
 const fields = ["id", "command", "target", "version", "os", "arch", "ci", "ms", "outcome", "error", "files", "packages"];
-const commands = new Set(["add", "build", "deploy", "editors", "eject", "fetch", "help", "ide", "login", "logout", "open", "publish",
+const commands = new Set(["add", "build", "deploy", "editors", "eject", "fetch", "help", "ide", "login", "logout", "publish",
     "run", "schedule", "shaders", "unity", "update", "upgrade", "version", "other"]);
 const errors = new Set(["usage", "setup", "packages", "compile", "c", "link", "network", "game", "other"]);
 // Words of this machine and this test that must never be in what's sent.

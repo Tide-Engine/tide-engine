@@ -36,10 +36,7 @@ typedef struct build_options {
     // The symbols every file's #if conditions read as defined: --define's, and DEBUG without --release
     const char *const *defines; // Kept by the caller for the build and every watched rebuild
     int define_count;
-    const char *editor_prefab, *editor_source, *editor_draft;
     const char *scene; // Explicit startup override.
-    const char *work; // Private isolated build-cache root, or NULL for .tide/.
-    bool editor_local;
     bool unity; // For Unity's Tide package (tide unity): the game built for another program to run (tidec --embed)
     const char *measured; // tide schedule --measured: a run's profiling report to set the schedule against
     const char *unity_assets; // ...and the Unity project's Assets folder, whose prefabs and scenes it has (unity_assets.h)
@@ -56,7 +53,6 @@ typedef struct build_options {
 // what went wrong.
 char *tide_build(const char *root, const build_options *opts);
 // Internal authoring module build; output is a private directory owned by the editor.
-char *tide_build_editor(const char *root, const build_options *opts);
 
 // Builds a standalone program and runs it once (a run with no window). `args` go to the
 // game (--host, --join, --connect, --size, and a run with no window's), ending

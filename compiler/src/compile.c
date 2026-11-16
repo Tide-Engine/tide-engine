@@ -103,7 +103,7 @@ static bool compile_inputs_impl(const compile_input *inputs, const int count, co
         if (inputs[i].package) lex_define_package(inputs[i].package);
     }
     unsigned stored = 0; // A file loads or lists from the server's store, whose answers' events are Tide's own code too
-    bool web = false, overlay_found = false; // A file names Web.Request's types, which are Tide's own code
+    bool web = false; // A file names Web.Request's types, which are Tide's own code
     const char **texts = arena_alloc(sizeof(char *) * (size_t)(count ? count : 1)); // ...or a fill's, which are too
     size_t *lens = arena_alloc(sizeof(size_t) * (size_t)(count ? count : 1));
     for (int i = 0; i < count; i++) {
@@ -112,14 +112,7 @@ static bool compile_inputs_impl(const compile_input *inputs, const int count, co
         src->path = inputs[i].path;
         src->package = inputs[i].package;
         char *text;
-        const bool overlay = opts->editor_source && opts->editor_text &&
-#ifdef _WIN32
-            _stricmp(inputs[i].path, opts->editor_source) == 0;
-#else
-            strcmp(inputs[i].path, opts->editor_source) == 0;
-#endif
-        const char *given = overlay ? opts->editor_text : inputs[i].text;
-        overlay_found |= overlay;
+        const char *given = inputs[i].text;
         if (given) {
             src->len = strlen(given);
             text = arena_alloc(src->len + 1);
@@ -140,10 +133,6 @@ static bool compile_inputs_impl(const compile_input *inputs, const int count, co
         if (!toks) return false;
         if (!parse_file(prog, src, toks, false)) return false;
         compile_progress("Parsing Tide", inputs[i].path, i + 1, count);
-    }
-    if (opts->editor_source && !overlay_found) {
-        fprintf(stderr, "tide: source overlay is not in the selected project: %s; select the project containing this file or add it to the compiler inputs\n", opts->editor_source);
-        return false;
     }
     if (web) {
         source *src = NEW(source);
@@ -179,18 +168,6 @@ static bool compile_inputs_impl(const compile_input *inputs, const int count, co
     }
 
     diag_phase("lexing and parsing");
-    if (opts->editor_prefab) {
-        source *src = NEW(source);
-        src->path = "<tide-editor-preview>";
-        sb factory = {0};
-        sb_printf(&factory, "%s TideEditorPreviewCreate() { return %sSpawn(%s); }", opts->editor_local ? "LocalEntity" : "Entity", opts->editor_local ? "local " : "", opts->editor_prefab);
-        src->text = factory.data; src->len = factory.len;
-        diag_add_source(src);
-        const int before = prog->decls.count;
-        token *toks = lex(src);
-        if (!toks || !parse_file(prog, src, toks, false)) return false;
-        prog->editor_create = prog->decls.items[before];
-    }
     if (opts->declarations_only) keep_declarations(prog);
     if (opts->embed && !add_embed_taps(prog)) return false;
     prog->game_folder = opts->game_folder;

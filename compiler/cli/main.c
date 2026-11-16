@@ -11,7 +11,6 @@
 #include "install.h"
 #include "help.h"
 #include "lexer.h"
-#include "open.h"
 #include "packages.h"
 #include "packages_cmd.h"
 #include "publish.h"
@@ -90,7 +89,7 @@ static const char *dispatch_folder(int argc, char **argv)
         "--profile", "--profile-warmup", "--capture", "--capture-audio", "--record",
         "--script", "--microphone", "--interactive", "--frames", "--scale", "--frame-rate",
         "--latency", "--jitter", "--loss", "--players", "--seed", "--define",
-        "--scene", "--editor-cache", "--title", "-o", "--assets", "--report", "--measured"
+        "--scene", "--title", "-o", "--assets", "--report", "--measured"
     };
     const char *zero[] = {
         "--server", "--strip-server-assets", "--strip-assets", "--asset-sizes", "--anonymous", "--udp-only",
@@ -105,7 +104,7 @@ static const char *dispatch_folder(int argc, char **argv)
             if (strcmp(a, one[j]) == 0) values = 1;
         for (size_t j = 0; j < sizeof zero / sizeof *zero; j++)
             if (strcmp(a, zero[j]) == 0) values = 0;
-        if (strcmp(a, "--size") == 0 || strcmp(a, "--source-overlay") == 0) values = 2;
+        if (strcmp(a, "--size") == 0) values = 2;
         if (strncmp(a, "-O", 2) == 0) values = 0;
         if (strcmp(a, "--host") == 0)
             values = i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9' ? 1 : 0;
@@ -126,7 +125,6 @@ static int command_main(const int argc, char **argv)
         return tide_help(argc - 2, (const char *const *)argv + 2, TIDE_VERSION);
     if (argc == 3 && (strcmp(argv[2], "--help") == 0 || strcmp(argv[2], "-h") == 0))
         return tide_help(1, &command, TIDE_VERSION);
-    if (strcmp(command, "open") == 0) return tide_open(argc, argv);
     char *root = install_root();
     if (strcmp(command, "ide") == 0) {
         const int result = tide_ide(root, argc - 2, (const char *const *)argv + 2);
@@ -142,16 +140,6 @@ static int command_main(const int argc, char **argv)
     char *builtin = path_join(root, "src/packages");
     packages_set_builtin_folder(builtin);
     free(builtin);
-    if (strcmp(command, "_editor-preview") == 0) {
-        if (argc != 8 || (strcmp(argv[7], "match") && strcmp(argv[7], "local"))) return 2;
-        setvbuf(stdout, NULL, _IONBF, 0); setvbuf(stderr, NULL, _IONBF, 0);
-        const char *defines[] = {"DEBUG"};
-        const build_options opts = {.folder=argv[2], .editor_source=argv[3], .editor_draft=argv[4], .editor_prefab=argv[5],
-            .output=argv[6], .editor_local=strcmp(argv[7], "local") == 0, .defines=defines, .define_count=1};
-        char *built = tide_build_editor(root, &opts);
-        const int result = built ? 0 : 1;
-        free(built); free(root); return result;
-    }
     tide_cleanup(root);
 
     if (strcmp(command, "version") == 0 || strcmp(command, "--version") == 0) return version(root);
@@ -477,21 +465,6 @@ static int command_main(const int argc, char **argv)
                 return 2;
             }
             opts.scene = argv[++i];
-        } else if ((build || run) && strcmp(a, "--source-overlay") == 0) {
-            if (left < 2 || !argv[i + 1][0] || !argv[i + 2][0] || argv[i + 1][0] == '-' || argv[i + 2][0] == '-' || opts.editor_source) {
-                fputs("tide: --source-overlay takes an original source path and a replacement file\n", stderr);
-                free(defines);
-                return 2;
-            }
-            opts.editor_source = path_absolute(argv[++i]);
-            opts.editor_draft = path_absolute(argv[++i]);
-        } else if ((build || run) && strcmp(a, "--editor-cache") == 0) {
-            if (!left || !argv[i + 1][0] || argv[i + 1][0] == '-' || opts.work) {
-                fputs("tide: --editor-cache takes one private build-cache folder\n", stderr);
-                free(defines);
-                return 2;
-            }
-            opts.work = argv[++i];
         } else if (strcmp(a, "--title") == 0 && i + 1 < argc) opts.title = argv[++i];
         else if (strcmp(a, "-o") == 0 && i + 1 < argc && (build || unity)) opts.output = argv[++i];
         else if (build && strcmp(a, "--report") == 0) {

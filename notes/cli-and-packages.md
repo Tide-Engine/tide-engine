@@ -1355,52 +1355,8 @@ CLI help exposes --scene for build/run and describes hosting and several-player
 startup using the selected match/local entry. The help fixture pins the option,
 persisted-setting example and removal of the former Main-only requirements.
 
-The private editor flags `--source-overlay <original> <draft>` and
-`--editor-cache <directory>` build an applied unsaved document using its
-original source path, namespace/package context and relative asset paths. An
-original .tprefab not present on disk is included as a game input. The private
-cache isolates generated files and objects from ordinary builds and other
-editor runs; its configuration subdirectory keeps the usual target/mode
-separation. Neither the persisted source bytes nor its project startup setting
-are changed by this build. These flags are internal editor plumbing, separate
-from the public startup selection.
-
-`tools/tide-editor/play.h` exposes a zero-initialized editor_play, Start/Poll/
-Stop/Close and explicit STOPPED, BUILDING, RUNNING, FINISHED and FAILED states.
-Start copies the applied source, qualified selected prefab, project/path,
-revision and runtime arguments into a unique .tide/editor-play/<pid>-<serial>
-workspace. It first builds a standalone normal game, then Poll launches its
-executable through the ordinary game host. All normal views run, including
-unmarked ones; the game's own camera, devices, local player and session are
-used. This is distinct from the frozen authored-view preview. The UI must Stop
-before replacing or closing its document. Later authoring edits do not change
-the captured running build. Stop destroys the runtime process and its private
-artifacts; it does not copy simulation state into the authoring document.
-
-The compiler and game are each owned by sys_start_tree_logged: a Windows job
-assigned while the new process is suspended, or a POSIX process group set
-before exec. Cancellation kills descendants, and a completed parent also
-cleans up remaining descendants. Output is logged, windows remain suppressed
-under TIDE_HIDDEN, and the helper refuses hidden Play without bounded --frames,
---capture or --script arguments. Errors retain the workspace/log until Stop,
-Close or another Start. Tests use explicit scratch --data-dir paths.
-
-Focused Windows validation: tide_editor_play passes its actual executable/
-grandchild cancellation fixture, cleanup after a successful compiler exits,
-immutable unsaved revision, build/run/error states and hidden/conflict refusals.
-The installed-game test
-`node tools/tide-editor/tests/play.mjs <tide_editor_play_tests> <installed tide>
-<work>` passes against this checkout's debug CLI and freshly built MinGW
-platform/runtime. It builds a no-Main authored game twice, verifies unsaved
-values, Spawned, systems, unmarked views, scripted input and fresh runtime
-state after Stop, checks real camera/capture pixels, and preserves source
-bytes and the dirty authoring document. The standalone process test requires
-no GPU; the installed-game test does. POSIX process groups and other desktop
-hosts were not run here. The native scene_startup lifecycle fixture and compiler
-startup contract script pass on native and web. Full native/web builds and all
-engine checks pass; the final seven editor CTests and docs build pass. An
-external prototype hash-pin failure reproduces with the HEAD compiler; optional
-external browser playthroughs were stopped. Details: notes/editors.md.
+The private editor flags `--source-overlay` and `--editor-cache`, and the editor's
+Play helper, went with the native scene editor (2026-11-16, `notes/editors.md`).
 
 ## Bundled JetBrains installation (2026-10-21)
 
@@ -1981,37 +1937,6 @@ stable Build run 38584459544 confirms the fixture passes on Windows, macOS,
 Linux, MinGW and sanitizers. All platform tests/package checks passed and
 v0.3.0 published; the separate Marketplace upload failure and remaining setup
 are recorded in notes/releases-and-ci.md.
-
-## Native editor preview builds (2026-10-13)
-
-The native editor's private _editor-preview command takes project, original
-prefab source, draft file, qualified prefab, output directory and match/local
-placement. tide_build_editor reuses ordinary folder/package/generated C/native
-library compilation and asset packs, with DEBUG. The unsaved source overlay
-keeps its original path, checked against the selected project boundary. Engine
-objects reuse the ordinary native cache; revision modules have separate game
-outputs. The command is an internal transport, not advertised as a user build
-mode. Preview flags and lifecycle are documented under tide open and Editors.
-Installed packages include the private tide/editor_preview.h callback header.
-
-On Windows, logged/quiet children use CREATE_NO_WINDOW so preview compiler jobs
-create no console windows. Unredirected children explicitly inherit the caller's
-stdio handles, preserving --check/hidden-run output when tide-editor is a GUI
-subsystem app. Existing sys_run's output contract stays the same. Installed
-preview.mjs checks the real native build/asset/library path, shader captures,
-unsaved drafts/undo/redo and C link failure. Ordinary CLI/hidden/installer tests
-run in the full native suite. No browser or new runtime entry point is needed.
-
-## Native authoring command (2026-10-12)
-
-tide open forwards arguments to the sibling tide-editor executable and returns
-its exit code; it builds/runs no game and opens no browser. Native builds with
-the platform enabled install the app in bin beside tide/tidels. The CLI names
-the missing desktop installation/build target if the app is absent. Project
-discovery, --check, bounded captures/scripts and limits are in docs/tools/cli.md,
-docs/tools/editors.md and notes/editors.md. The app uses the shared package
-resolver without fetching, and checks with DEBUG/package symbols. Normal build,
-watch and package behavior is unchanged. CLI/UI fixtures exercise real dispatch.
 
 ## Optimized engine in development builds (2026-10-12)
 

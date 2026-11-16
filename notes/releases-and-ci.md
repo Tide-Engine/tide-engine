@@ -887,6 +887,9 @@ including playground staging/browser checks, and deployed successfully to Fly.
 
 ## Optional Windows prefab registration (2026-10-13)
 
+Removed 2026-11-16 with the native scene editor (`notes/editors.md`): install.ps1
+registers nothing now. What follows is what it was.
+
 With TIDE_ASSOCIATE_PREFABS=1, install.ps1 registers this user's Tide.Prefab
 ProgID, quoted tide-editor.exe open command and .tprefab/OpenWithProgids entry,
 after a fresh install or successful installer-driven upgrade. It checks that

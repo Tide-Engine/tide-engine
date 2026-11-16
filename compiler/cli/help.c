@@ -8,7 +8,7 @@ enum {
     RUN = 1u << 0, BUILD = 1u << 1, DEPLOY = 1u << 2, LOGIN = 1u << 3,
     LOGOUT = 1u << 4, SCHEDULE = 1u << 5, SHADERS = 1u << 6, ADD = 1u << 7,
     UPDATE = 1u << 8, EJECT = 1u << 9, FETCH = 1u << 10, PUBLISH = 1u << 11,
-    EDITORS = 1u << 12, OPEN = 1u << 13, UPGRADE = 1u << 14, VERSION = 1u << 15,
+    EDITORS = 1u << 12, UPGRADE = 1u << 14, VERSION = 1u << 15,
     HELP = 1u << 16, CC = 1u << 17, IDE = 1u << 18, UNITY = 1u << 19, TELEMETRY = 1u << 20, PIN = 1u << 21,
     COMPILE = RUN | BUILD | SCHEDULE | SHADERS | UNITY,
     FOLDERS = COMPILE | DEPLOY | FETCH | PUBLISH
@@ -113,12 +113,6 @@ static const command_help commands[] = {
      "Examples: tide ide emacs\n"
      "          tide ide vim\n"
      "          tide ide neovim", IDE},
-    {"open", "open <file.tprefab> [options]", "Open the native scene editor",
-     "Opens the desktop editor for an authored prefab or scene. The project\n"
-     "is the nearest enclosing tide.packages folder, or the prefab's folder.\n"
-     "Use --project when the game root is elsewhere. Packages must already\n"
-     "be available locally (tide fetch). --check validates without a window.\n"
-     "With TIDE_HIDDEN set, use --check or a bounded capture/script run.", OPEN},
     {"upgrade", "upgrade [options]", "Update Tide or change release channel",
      "Installs the newest version in the current channel unless --version\n"
      "selects one. --nightly and --stable save the channel for future upgrades.\n"
@@ -169,8 +163,6 @@ static const argument_help arguments[] = {
     {"package", "<package>", "Name of a package listed by this game",
      "Use the package's source name as listed in tide.packages.\n"
      "update accepts several names, or none for every git package; eject takes one.", UPDATE | EJECT},
-    {"file.tprefab", "<file.tprefab>", "Authored prefab or scene file",
-     "Selects the file to edit or validate. Use --project to choose the game root.", OPEN},
     {"--release", "--release", "Optimize game code for testing and profiling",
      "Keeps debug symbols, readable diagnostics and assertions, and optimizes\n"
      "the game's code, which debug builds leave unoptimized. DEBUG is\n"
@@ -351,7 +343,7 @@ static const argument_help arguments[] = {
      "Supports --players. Desktop only; cannot combine with --script.", RUN},
     {"--capture", "--capture <file.png>", "Save the last frame as a PNG",
      "Runs natively without a window; add --frames or a script's quit.\n"
-     "The output path is relative to the directory where tide was invoked.", RUN | OPEN},
+     "The output path is relative to the directory where tide was invoked.", RUN},
     {"--data-dir", "--data-dir <folder>", "Use a separate native save directory",
      "Overrides Application.persistentDataPath and relative file paths. Creates\n"
      "the directory and parents; paths are relative to where tide was invoked.\n"
@@ -372,21 +364,16 @@ static const argument_help arguments[] = {
     {"--frames", "--frames <n>", "End a native headless run after n frames",
      "Game captures use fixed 1/60-second frames. Also bounds dedicated server\n"
      "runs. Unavailable with run --web or --android.", RUN},
-    {"--frames", "--frames <n>", "End an editor run after n frames",
-     "Bounds the native editor's hidden input/capture loop. With preview\n"
-     "enabled, waits for its current build; a failed build returns 1.", OPEN},
     {"--script", "--script <file>", "Read frame-numbered input and capture actions",
      "Native only. Lines include: 120 key d down, 200 mouse 640 360,\n"
      "201 button left, 400 capture fight.png, 500 quit. Use --frames or quit\n"
-     "to end the run. The script path is relative to where tide was invoked.", RUN | OPEN},
+     "to end the run. The script path is relative to where tide was invoked.", RUN},
     {"--scale", "--scale <s>", "Headless display scale (default: 1)",
      "Native only. For example, --size 1280 720 --scale 2 draws 2560 by 1440\n"
      "pixels. Combine with --frames, --capture or --script.", RUN},
     {"--size", "--size <width> <height>", "Native window size (default: 960 by 540)",
      "Also controls headless capture size, before --scale.\n"
      "Unavailable with run --web or --android.", RUN},
-    {"--size", "--size <width> <height>", "Editor size (default: 1440 by 900)",
-     "Accepts widths from 1100 to 8192 and heights from 650 to 8192.", OPEN},
     {"--seed", "--seed <n>", "Choose the seed of matches the game starts",
      "A whole number from 0 to 2147483647. Defaults to 0 for headless runs\n"
      "and a different seed for every match in a window. The same seed and\n"
@@ -419,18 +406,6 @@ static const argument_help arguments[] = {
      "Omits the client build from the local release bundle.", DEPLOY},
     {"--bundle-only", "--bundle-only", "Build a deployment bundle without uploading",
      "Needs no login and ignores tide.deploy.json. Can combine with --server-only.", DEPLOY},
-    {"--project", "--project <folder>", "Choose the native editor's game root",
-     "Overrides discovery of the nearest enclosing tide.packages folder,\n"
-     "or the prefab's folder when none exists.", OPEN},
-    {"--check", "--check", "Validate a prefab without opening a window",
-     "Uses front-end validation and asset metadata, without a full game build,\n"
-     "even with --preview. Returns 1 for project errors.", OPEN},
-    {"--preview", "--preview", "Enable compiled views on authored match entities",
-     "Runs only RunInEditor and EditorOnly views, without gameplay\n"
-     "initialization or systems. Requires the full native build toolchain.\n"
-     "Bounded captures wait for the build and return 1 on failure.", OPEN},
-    {"--local-preview", "--local-preview", "Enable compiled views with local placement",
-     "Like --preview, using local entities instead of match placement.", OPEN},
     {"--nightly", "--nightly", "Follow nightly Tide versions",
      "Saves the nightly channel for future upgrades.", UPGRADE},
     {"--stable", "--stable", "Follow stable Tide versions",
@@ -444,7 +419,7 @@ static const argument_help arguments[] = {
      "where it goes, the install ID and the settings folder.", TELEMETRY},
     {"--help", "--help, -h", "Show help for a command",
      "Use tide <command> --help or tide <command> -h. For argument details,\n"
-     "use tide help <argument> or tide help <command> <argument>.", FOLDERS | LOGIN | LOGOUT | ADD | UPDATE | EJECT | PIN | EDITORS | OPEN | UPGRADE | VERSION | HELP | TELEMETRY},
+     "use tide help <argument> or tide help <command> <argument>.", FOLDERS | LOGIN | LOGOUT | ADD | UPDATE | EJECT | PIN | EDITORS | UPGRADE | VERSION | HELP | TELEMETRY},
 };
 
 static const command_help *find_command(const char *name)

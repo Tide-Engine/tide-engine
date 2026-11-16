@@ -7,13 +7,11 @@
 // runs: the server is the one that comes with tide, and games don't run.
 
 const { spawn, execFile } = require('child_process');
-const net = require('net');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const vscode = require('vscode');
 const { LanguageClient } = require('vscode-languageclient/node');
-const { editorPage } = require('./prefab-client.js');
 
 // Pinned client 10.1.2 cancels watched-file delivery on disposal, but leaves
 // full-document delivery scheduled. After a restart that timer tries to reuse
@@ -763,166 +761,6 @@ async function openDevTools() {
     await vscode.commands.executeCommand('workbench.action.webview.openDeveloperTools');
 }
 
-// The native authoring app remains open independently of this IDE window.
-async function openPrefab(resource) {
-    if (!vscode.workspace.isTrusted) {
-        vscode.window.showErrorMessage('Tide: prefab preview can run project code; trust this workspace before opening the editor.');
-        return;
-    }
-    const document = vscode.window.activeTextEditor?.document;
-    const uri = resource ?? document?.uri;
-    if (uri?.scheme !== 'file' || path.extname(uri.fsPath).toLowerCase() !== '.tprefab') {
-        vscode.window.showErrorMessage('Tide: select or open a .tprefab file.'); return;
-    }
-    const found = gameFolder(uri.fsPath);
-    if (found.error) { vscode.window.showErrorMessage(`Tide: ${found.error}`); return; }
-    const configured = await findTide(found.folder);
-    const tide = configured.file;
-    if (!tide) {
-        await missing(`Tide: ${configured.error}`, 'tide.path'); return;
-    }
-    if (document?.uri.fsPath === uri.fsPath && document.isDirty && !await document.save()) return;
-    if (deactivating) return;
-    const child = spawn(tide, ['open', uri.fsPath, '--project', found.folder],
-        { cwd: found.folder, windowsHide: true, detached: true, stdio: 'ignore' });
-    child.on('error', error => vscode.window.showErrorMessage(`Tide: couldn't open the prefab editor: ${error.message}`));
-    child.unref();
-}
-
-const prefabPanels = new Map();
-const prefabProcesses = new Set();
-class PrefabPanel {
-    constructor(executable, uri, folder) {
-        this.uri = uri;
-        this.panel = vscode.window.createWebviewPanel('tide.prefabEditor', path.basename(uri.fsPath), vscode.ViewColumn.Active,
-            { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [] });
-        this.buffer = Buffer.alloc(0); this.size = 0; this.busy = false; this.disposed = false;
-        const nonce = require('crypto').randomBytes(16).toString('hex');
-        prefabProcesses.add(this);
-        this.finished = new Promise(resolve => { this.finish = () => { prefabProcesses.delete(this); resolve(); }; });
-        this.connections = new Set();
-        this.server = net.createServer(socket => {
-            if (this.disposed || this.transport || this.connections.size >= 4) { socket.destroy(); return; }
-            this.connections.add(socket); socket.on('close', () => this.connections.delete(socket));
-            socket.on('error', () => {}); socket.setTimeout(5000, () => socket.destroy());
-            let hello = Buffer.alloc(0);
-            const authenticate = data => {
-                hello = Buffer.concat([hello,data]); const end = hello.indexOf(10);
-                if (end < 0) { if (hello.length > 256) socket.destroy(); return; }
-                if (hello.subarray(0,end).toString('ascii') !== `TIDEHELLO 1 ${nonce}` || this.disposed) { socket.destroy(); return; }
-                this.transport = socket; socket.setTimeout(0); this.server.close();
-                for (const other of this.connections) if (other !== socket) other.destroy();
-                socket.removeListener('data',authenticate); socket.on('data',bytes => this.read(bytes));
-                if (hello.length > end+1) this.read(hello.subarray(end+1));
-                socket.on('close', () => { if (!this.disposed && !this.ended) this.fail('Native prefab frame connection closed. See Tide output.'); });
-            };
-            socket.on('data',authenticate);
-        });
-        this.panel.onDidDispose(() => this.dispose());
-        this.ready = new Promise(resolve => {
-            this.server.on('error', error => { this.fail(`Couldn't open the native frame connection: ${error.message}`); resolve(); });
-            this.server.listen({host:'127.0.0.1',port:0}, () => {
-                if (this.disposed) { this.server.close(); this.finish(); resolve(); return; }
-                this.start(executable,uri,folder,this.server.address().port,nonce); resolve();
-            });
-        });
-    }
-    start(executable,uri,folder,port,nonce) {
-        this.child = spawn(executable, [uri.fsPath, '--project', folder, '--embed',String(port),nonce],
-            { cwd: folder, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] });
-        const child = this.child;
-        prefabProcesses.add(this);
-        child.once('close', () => { this.ended = true; this.transport?.destroy(); prefabProcesses.delete(this); clearTimeout(this.deadline); this.finish(); });
-        child.stdout.on('data', bytes => output?.appendLine(bytes.toString()));
-        child.stderr.on('data', bytes => output?.appendLine(bytes.toString()));
-        child.stdin.on('error', () => {});
-        child.on('error', error => this.fail(`Couldn't start the native prefab editor: ${error.message}`));
-        child.on('close', code => { if (!this.disposed) this.fail(`Native prefab editor stopped (${code ?? 'signal'}). See Tide output.`); });
-        this.panel.webview.onDidReceiveMessage(message => {
-            if (!this.disposed && message?.type === 'presented' && this.received && !this.presented) {
-                this.presented = true; output?.info(`Prefab editor displayed: ${uri.fsPath} (PID ${child.pid})`); return;
-            }
-            if (this.disposed || this.busy || message?.type !== 'frame' || !Array.isArray(message.events) || message.events.length > 200) return;
-            if (message.events.some(event => typeof event !== 'string' || Buffer.byteLength(event) > 4000 || /[\r\n\0]/.test(event) || !/^(mouse|button|key|text|scroll) /.test(event))) {
-                this.fail('Invalid prefab editor input.'); return;
-            }
-            this.busy = true;
-            child.stdin.write(message.events.map(event => `INPUT ${event}\n`).join('') + 'FRAME 1\n');
-        });
-        this.panel.webview.html = editorPage('const ide=acquireVsCodeApi();const send=message=>ide.postMessage(message);', nonce);
-    }
-    read(bytes) {
-        if (this.disposed) return;
-        if (this.buffer.length + bytes.length > 32*1024*1024+256) { this.fail('Prefab frame exceeded the transport limit.'); return; }
-        this.buffer = Buffer.concat([this.buffer, bytes]);
-        if (!this.size) {
-            const end = this.buffer.indexOf(10);
-            if (end < 0) { if (this.buffer.length > 256) this.fail('Invalid prefab frame header.'); return; }
-            const header = /^TIDEFRAME 1 (\d+) ([01]) (\d+) (\d+) (\d+)$/.exec(this.buffer.subarray(0,end).toString('ascii'));
-            if (!header || !this.busy || +header[1] <= 0 || +header[1] > 32*1024*1024) { this.fail('Incompatible prefab editor protocol. Rebuild or upgrade Tide and its extension together.'); return; }
-            this.size = +header[1]; this.dirty = header[2] === '1';
-            this.buffer = this.buffer.subarray(end+1);
-        }
-        if (this.buffer.length < this.size) return;
-        if (this.buffer.length !== this.size) { this.fail('Unexpected data after the prefab frame.'); return; }
-        const png = this.buffer.toString('base64');
-        this.buffer = Buffer.alloc(0); this.size = 0; this.busy = false;
-        this.received = true;
-        this.panel.title = path.basename(this.uri.fsPath) + (this.dirty ? ' *' : '');
-        this.panel.webview.postMessage({ type: 'frame', png });
-    }
-    fail(message) {
-        if (this.disposed) return;
-        this.panel.webview.postMessage({ type: 'error', message: `Tide: ${message}` });
-        this.dispose();
-    }
-    dispose() {
-        if (this.disposed) return this.finished;
-        this.disposed = true;
-        prefabPanels.delete(this.uri.fsPath);
-        try { this.server.close(); } catch {}
-        for (const socket of this.connections) if (socket !== this.transport) socket.destroy();
-        if (!this.child) { this.finish(); return this.finished; }
-        // EOF lets the native editor save recovery and join any compiler worker.
-        this.child.stdin.end();
-        if (!this.ended) this.deadline = setTimeout(() => {
-            if (this.ended) return;
-            if (process.platform === 'win32') {
-                const killer = spawn('taskkill', ['/pid', String(this.child.pid), '/T', '/F'], { windowsHide: true });
-                killer.on('error', error => output?.appendLine(`Prefab cleanup failed: ${error.message}`));
-                killer.on('close', code => { if (code) output?.appendLine(`Prefab cleanup failed (${code}).`); });
-            } else { try { process.kill(-this.child.pid, 'SIGKILL'); } catch (error) { output?.appendLine(`Prefab cleanup failed: ${error.message}`); } }
-        }, 2000);
-        return this.finished;
-    }
-}
-
-async function editPrefab(resource) {
-    if (deactivating) return;
-    if (!vscode.workspace.isTrusted) { vscode.window.showErrorMessage('Tide: trust this workspace before opening the prefab editor.'); return; }
-    const document = vscode.window.activeTextEditor?.document, uri = resource ?? document?.uri;
-    if (uri?.scheme !== 'file' || path.extname(uri.fsPath).toLowerCase() !== '.tprefab') { vscode.window.showErrorMessage('Tide: select or open a .tprefab file.'); return; }
-    const previous = prefabPanels.get(uri.fsPath);
-    if (previous && !previous.disposed) { previous.panel.reveal(); return; }
-    const found = gameFolder(uri.fsPath);
-    if (found.error) { vscode.window.showErrorMessage(`Tide: ${found.error}`); return; }
-    const configured = await findTide(found.folder);
-    const tide = configured.file;
-    if (!tide) { await missing(`Tide: ${configured.error}`, 'tide.path'); return; }
-    const executable = path.join(path.dirname(tide),'tide-editor'+suffix);
-    if (!isFile(executable)) { vscode.window.showErrorMessage('Tide: tide-editor is missing beside tide. Install a desktop Tide package.'); return; }
-    if (document?.uri.fsPath === uri.fsPath && document.isDirty && !await document.save()) return;
-    if (deactivating) return;
-    const opened = prefabPanels.get(uri.fsPath);
-    if (opened && !opened.disposed) { opened.panel.reveal(); return; }
-    const editor = new PrefabPanel(executable,uri,found.folder);
-    prefabPanels.set(uri.fsPath, editor); await editor.ready;
-}
-
-function prefabAction(action) {
-    for (const editor of prefabPanels.values()) if (editor.panel.active && !editor.disposed) editor.panel.webview.postMessage({type:'action',action});
-}
-
 function activate(context) {
     output = vscode.window.createOutputChannel('Tide', { log: true });
     trace = traceChannel();
@@ -934,11 +772,6 @@ function activate(context) {
         vscode.commands.registerCommand('tide.runWeb', () => run('web')),
         vscode.commands.registerCommand('tide.runAndroid', () => run('android')),
         vscode.commands.registerCommand('tide.openDevTools', openDevTools),
-        vscode.commands.registerCommand('tide.openPrefab', openPrefab),
-        vscode.commands.registerCommand('tide.editPrefab', editPrefab),
-        vscode.commands.registerCommand('tide.prefabSave', () => prefabAction('save')),
-        vscode.commands.registerCommand('tide.prefabUndo', () => prefabAction('undo')),
-        vscode.commands.registerCommand('tide.prefabRedo', () => prefabAction('redo')),
         vscode.workspace.onDidChangeConfiguration(e => {
             if (e.affectsConfiguration('tide.server.path') || e.affectsConfiguration('tide.path')) restartSoon();
         }),
@@ -946,7 +779,6 @@ function activate(context) {
         vscode.workspace.onDidGrantWorkspaceTrust(restart),
         vscode.workspace.onDidChangeWorkspaceFolders(() => { watchVersions(); restartSoon(); }),
         { dispose: () => Object.values(runs).forEach(r => r?.dispose()) },
-        { dispose: () => [...prefabProcesses].forEach(editor => editor.dispose()) },
         require('./debug.js').register(vscode, {
             output,
             // The game the active .tide file is in, as Tide: Run would play it
@@ -1000,7 +832,6 @@ async function deactivate() {
     clearTimeout(restartTimer);
     unitySessions.clear();
     await Promise.allSettled(Object.values(runs).map(r => r?.dispose()));
-    await Promise.allSettled([...prefabProcesses].map(editor => editor.dispose()));
     await serially(stop);
 }
 

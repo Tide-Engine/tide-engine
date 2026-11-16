@@ -61,7 +61,7 @@ project setting.
    must match the package, or Play explains how to return to the pin.
 
    Updated VS Code and JetBrains Tide plugins use the same selected installation
-   for their language server, runs and prefab editor. Unity writes its selection
+   for their language server and runs. Unity writes its selection
    to `Library/Tide/toolchain.json`, tied to the package lock; keep it out of
    source control. A development selection identifies the running editor process:
    closing it (or a crash) returns the IDE to the pin. Changing the package lock

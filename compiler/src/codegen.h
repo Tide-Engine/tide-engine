@@ -63,9 +63,6 @@ typedef struct codegen_options {
     int define_count;
     const uint8_t *external_identity; // Optional SHA-256 of game C/headers/libraries, independent of target.
     const char *scene; // Explicit startup prefab or scene, overriding settings.startScene and Main.
-    const char *editor_prefab; // Internal native-editor build: qualified prefab to instantiate without gameplay startup.
-    bool editor_local;
-    const char *editor_source, *editor_text; // Unsaved source overlay, retaining the original path and asset scope.
     // The game's types alone: its systems, views, handlers, functions, frags and verts are left out before checking,
     // so code that doesn't build yet doesn't keep its types from building (tide unity --declarations)
     bool declarations_only;

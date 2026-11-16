@@ -24,7 +24,6 @@ tide <command> [folder] [options]
 | `tide fetch [folder]` | Downloads the game's packages from git that this machine doesn't have yet, and builds nothing |
 | `tide editors` | Installs bundled plugins into detected VS Code family editors and existing JetBrains IDE profiles |
 | `tide ide <editor>` | Prints setup for Emacs, Vim or Neovim using the installed Tide files |
-| `tide open [file.tprefab \| folder]` | Opens the native [scene editor](editors.md#native-scene-editor), ready to open or create an authored tree |
 | `tide upgrade` | Updates tide to the newest version |
 | `tide version` | Shows tide's version and channel, where it's installed, and which compilers it found |
 | `tide telemetry on\|off\|status` | Turns anonymous [usage data](telemetry.md) on or off, or shows what's sent |
@@ -171,45 +170,6 @@ Tide installation, run the helper again and replace the old configuration.
 Vim/Neovim setup reports installation paths containing `*`, `?`, `[` or `]`:
 their runtime search treats these as wildcards. Use a Tide installation path
 without those characters.
-
-## open
-
-```sh
-tide open .
-tide open scenes/Level.tprefab
-tide open scenes/Level.tprefab --project .
-tide open scenes/Level.tprefab --check
-tide open scenes/Level.tprefab --preview
-```
-
-The desktop app edits rooted [prefabs and scenes](../game/scenes.md#authored-prefabs).
-With a project folder, or no argument for the current folder, it opens a workspace
-where New Scene/New Prefab creates the first authored file. `--check` and preview
-flags require an existing `.tprefab` argument.
-It uses the nearest enclosing `tide.packages` as the project root, or the
-prefab's folder if there is none. Use `--project <folder>` when scripts live
-elsewhere in your game's folder. The selected root is visible in the window.
-The app uses folder/package discovery; it does not read CMake game
-manifests. Packages must already be available locally (`tide fetch` downloads them).
-
-`tide open --check` runs the same authoring validation without opening a window and
-returns 1 for project errors. It inspects asset metadata, rather than compiling/importing
-the full game. For automated editor UI runs, `--frames`, `--capture` and `--script` use
-the normal [hidden input/capture loop](#scripts). The default editor size is
-1440 by 900; the editor's `--size W H` accepts 1100..8192 by 650..8192, unlike a
-game's `tide run --size`. `TIDE_HIDDEN` requires one of these bounded modes or `--check`.
-
-See [the editor controls and current limits](editors.md#native-scene-editor).
-New Scene/New Prefab create rooted authored files in that project; Play builds
-the selected tree with the normal game lifecycle. Set startup saves a persistent
-project selection separately from Play.
-
-`--preview` starts with compiled views enabled on authored match entities;
-`--local-preview` uses local placement. Only `[RunInEditor]` and `[EditorOnly]`
-views execute, with no gameplay initialization or systems. The full native build
-toolchain is required. Bounded captures/scripts wait for the current preview
-build and return 1 if it fails, rather than capturing stale state. `--check`
-still performs only front-end validation, even with a preview flag.
 
 ## run and build
 

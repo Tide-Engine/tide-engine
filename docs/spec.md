@@ -2340,9 +2340,8 @@ Picks made as `Mesh` assets were built (2026-10-08), awaiting the owner. That a 
 ### Decided
 
 Components may store checked references to named model assets. Prefab text assigns
-the asset name; the compiler validates the referenced asset and its type. The
-editor previews static model geometry, while game views decide how to render it (owner,
-2026-10-12).
+the asset name; the compiler validates the referenced asset and its type. Game
+views decide how to render it (owner, 2026-10-12).
 
 References of the same canonical asset-reference type support `==` and `!=` by
 stable declaration identity, independently of geometry reloads (owner, 2026-10-25).
@@ -2383,9 +2382,7 @@ to the stored identity are not supported.
 
 References name singular model declarations and static-mesh collection elements.
 Other resource types, JSON asset-name serialization and persistent
-identity migration across declaration renames are not implemented. The native
-editor previews static named references and constant aliases at each entity's composed
-Transform; preview materials and lighting are editor choices, not game rendering.
+identity migration across declaration renames are not implemented.
 
 ## Build code
 
@@ -3217,13 +3214,6 @@ input PlayerInput
 
 - Drawing is immediate mode: code records drawing commands every frame.
 - Views never change the match. They can change local state (see Local state).
-- `[RunInEditor]` on a view includes it in game frames and authored prefab
-  preview. `[EditorOnly]` includes it only in preview; unmarked views are game
-  only. Choose one, without arguments. Neither applies to systems or handlers.
-  The same view access rules apply in preview. The editor constructs the whole
-  selected prefab from authored values/defaults before running views, without
-  Main, gameplay event handlers or simulation systems. Local visual state is
-  isolated from authored data and starts fresh on a successful rebuild.
 - Views draw at whatever frame rate the game renders, not the tick rate, and see the match blended between its last two ticks, so motion is smooth even at 20 ticks per second. They draw up to a tick late for it.
 - Floats are blended by default: every float, vector, quaternion and color a view reads of the match, `Time.t` among them. Ints, bools, enums, entities and text are as they are at the latest tick. `[Snap]` on a field keeps it out of blending, for angles that wrap and values that jump:
 
@@ -5011,7 +5001,7 @@ Implemented, awaiting approval:
   produce a compiler/editor diagnostic rather than silently omit an object.
 - One rooted entity tree can serve as a reusable entity prefab or a loaded scene.
   Nested entities follow their parent's transform and lifetime. Reusable nested
-  prefabs use the same authoring format and editor.
+  prefabs use the same authoring format.
 - Values left out use component defaults. Authored overrides remain explicit in
   text, so ordinary source control diffs and merges are understandable.
 - A prefab has an explicit name. Entity references are checked against the
@@ -5033,12 +5023,11 @@ Implemented, awaiting approval:
   instance roots retain their existing component and child additions (approved
   2026-10-24). Reference scopes, defaults, construction order and entity counts
   are unchanged.
-- The native editor supports creating a scene, adding and arranging objects,
-  extracting an authored subtree as a prefab, placing instances and playing the
-  selected tree directly. Play runs the normal game lifecycle, camera and input;
-  Stop discards runtime state. Project startup is a separate persistent choice.
-  Existing `Main` code remains unchanged and is the default without a selection
-  (approved 2026-10-24).
+- Tide has no scene editor of its own (owner, 2026-11-16, removing the native
+  one built 2026-10-12). Each game draws in its own way, so an engine editor
+  can't show a game's scenes as the game does. Games provide their own tools,
+  and the engine's job is to make those easy to build. Authored files are
+  edited as text, or made in a Unity project through `tide unity`.
 
 ### Provisional
 
@@ -5155,78 +5144,6 @@ component Aim
   declarations are also accepted in `.tide` files. Every declaration is validated,
   including unused prefabs and required fields. Composition is initially bounded
   to 1024 entities per instance and 128 levels of nesting.
-- Native editor: `tide open <file.tprefab>` opens an authored file in a desktop
-  app; New Scene/New Prefab create another rooted `.tprefab` in the project.
-  `--project <folder>` explicitly selects its
-  game; otherwise the nearest enclosing tide.packages selects the root, with
-  the file's folder as the no-manifest fallback. The root is displayed. Only
-  that folder's sources and resolved packages provide components; arbitrary
-  ancestor scripts are not gathered. CMake manifest/shared-package consumer
-  selection are future work. Checking uses DEBUG and package symbols, matching
-  ordinary IDE analysis; custom build defines are not selected yet.
-- The app provides a composed hierarchy, component/default/override inspection,
-  direct bool/int/float/vector/Euler controls, checked entity/enum/asset choices
-  and optional inline Tide expressions. Authored objects support named child and
-  prefab insertion, deletion, rename, duplicate and drag reparenting. Checked
-  same-file references are rewritten; operations requiring edits in another
-  source file are refused. Reparenting preserves local TRS, so world placement
-  can change. Inherited descendants allow field overrides, while their structure
-  remains read-only; Open source prefab navigates to their definition.
-  Source-span edits retain untouched text and comments.
-  Syntax-invalid edits are rejected. Semantic/project errors remain visible and
-  may be saved; syntax errors in the current document and disk conflicts block Save.
-  Saving compares the original disk text before replacement. Undo/redo retain
-  64 edits; recovery drafts retain the original source baseline under .tide/editor.
-  This is front-end/asset-metadata authoring validation, not game compilation.
-- Save as Prefab extracts an ordinary authored child subtree into an exclusively
-  created new asset and replaces that child with an instance of it. Incoming
-  references keep their paths. Outgoing references beyond the subtree, descendant
-  references to the selected root (which the language cannot express in the new
-  prefab), an already-instanced selected root and consumer-sensitive cross-file
-  changes are refused. The source replacement is one current-document undo;
-  undo retains the new asset. New files never overwrite an existing destination.
-- Play checks the whole project, builds the selected prefab as the normal startup
-  scene with applied unsaved text, and launches the normal game host. It requires
-  no compiler errors or unresolved conflict/recovery. Gameplay runs in a separate
-  window with normal handlers, systems, views, game camera, input and services.
-  Stop ends the build/game process tree and discards runtime state; authored text
-  and project startup are retained. Authoring preview below remains separate.
-  Set startup writes `settings { startScene = Qualified.Name; }` in project code,
-  preserving other settings and existing `Main`. New Scene selects itself for
-  startup only when the project has neither a `Main` nor an explicit startup.
-- The viewport uses transform markers with local TRS/parent composition, XY or
-  isometric projection, zoom and pan. It interprets a limited set of constant
-  TRS expressions; unsupported transforms and their subtrees are visibly omitted.
-  The fixed preview draws named static mesh references with editor lighting.
-  `--check` validates without a window; bounded `--frames`/`--capture`/`--script`
-  modes use the native platform loop. UI details and controls remain provisional.
-- Compiled view preview (2026-10-13): off by default, enabled by Views or
-  `--preview`/`--local-preview`. Native modules use normal project/package/C
-  compilation and the current unsaved prefab as a source overlay at its original
-  path. Selected match/local placement retains normal component/reference checks.
-  The editor supplies initial 2D/3D cameras and viewport dimensions; views may
-  override them, but hierarchy markers use the editor camera. Device input is
-  neutral; audio/session/IO services are not hosted. Opted-in views can initialize
-  and change their isolated local state, including helper/task calls permitted
-  by normal view capabilities. Trusted extern C is not sandboxed. Successful
-  rebuilds replace the preview with fresh authored state; failures retain the
-  last successful state with diagnostics/stale status. Bounded previews wait
-  and fail instead of recording stale results. Closing waits for a current
-  compile; private cached builds/logs remain under .tide/editor-preview.
-- Mesh selection tests named static asset-reference triangles under composed
-  authored transforms, choosing nearest depth in the editor camera. It does not
-  derive proxies from arbitrary view draws, custom shader deformation or cameras.
-  Move/rotate/scale gizmos patch one local TRS field on release, with one undo
-  entry, cancellation and optional snapping. Inherited children receive ordinary
-  per-instance field overrides.
-  Compiled views refresh after release; overlays/fixed meshes follow the drag.
-- IDE launch actions open this native app for .tprefab files in a trusted
-  game context. VS Code also embeds its frames in an editor tab; JetBrains uses
-  a Swing tool window. Both own a hidden native process, with private pipe input
-  and authenticated loopback PNG output; the first canvas is fixed at 1440×900 and scaled
-  into the IDE. No second authoring implementation or browser server is hosted.
-  Optional Windows installer
-  registration adds Tide to Open With without replacing the user's default.
 
 ### Open
 
@@ -5234,18 +5151,13 @@ Further authoring/editor work:
 
 - Root identity filters. A prefab has no implicit component/type; use explicit
   root components for filters.
-- Language-server rename/completion for authored entity paths. Native hierarchy
-  refactors handle checked same-file paths; cross-file operations remain limited.
+- Language-server rename/completion for authored entity paths.
 - Authoring machine-local fields on match entities, including model/material
   selection, without putting rendering resources in match snapshots or trusting
   serialized executable code. A basic data tree alone does not solve this.
 - Defaults-versus-overrides during live editing/hot reload of existing instances.
   The first slice can instantiate new trees; automatic modification of existing
   gameplay instances needs a separate policy.
-- GPU/frame transport improvements, dynamic picking proxies and conflict merge
-  UI. The native app keeps conflicting drafts without merging them automatically.
-  CMake/consumer project selection and remembered context
-  remain open tooling work.
 
 ## Transform and entity parenting
 

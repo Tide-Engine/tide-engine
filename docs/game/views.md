@@ -28,13 +28,6 @@ that awaits a [local worker](./tasks.md#local-workers), and draw the last
 completed geometry while it works. A heavy calculation directly in a view
 blocks that frame.
 
-`[RunInEditor]` also runs a view in the native prefab editor's compiled preview.
-`[EditorOnly]` runs it only there; an unmarked view runs only in the game. Choose
-one attribute, without arguments. Both keep the ordinary view access rules.
-The preview has authored values/defaults and its own local visual state, with
-no gameplay handlers or systems. See [the native editor](../tools/editors.md#native-scene-editor)
-for initialization, camera and service limits.
-
 For see-through shapes, sprites and 3D meshes, see [Transparency](./draw-settings.md#transparency): alpha controls opacity, and 3D also needs the right depth setting and draw order.
 
 Tap a circle to select it, then change the camera's size. The grid and circles use world coordinates; the heading and slider keep their size in screen pixels. Pointer picking uses `ScreenToWorld` with that frame's camera.
