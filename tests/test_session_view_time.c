@@ -372,7 +372,7 @@ static tide_writer repair_header(repair_peer *p, uint8_t *bytes, uint8_t type)
 {
     tide_writer w = {bytes, TIDE_NET_MTU, 0, false, false};
     tide_write_u16(&w, 0x5449);
-    tide_write_u8(&w, 25); // PROTOCOL
+    tide_write_u8(&w, 26); // PROTOCOL
     tide_write_u8(&w, type);
     if (type != 1) {
         tide_write_u64(&w, p->cookie);
@@ -411,6 +411,7 @@ static void repair_claim(repair_peer *p, tide_view_time view, uint32_t ticks, bo
     tide_write_varint(&w, 0); // No chunk acknowledgement.
     tide_write_varint(&w, ack);
     tide_write_varint64(&w, 0);
+    tide_write_u8(&w, 0); // No SERVERs counted
     tide_write_varint(&w, ticks ? ticks - 1u : 0u); // Input runs at the last tick of this update.
     tide_write_u8(&w, ticks ? 1 : 0);
     if (ticks) {

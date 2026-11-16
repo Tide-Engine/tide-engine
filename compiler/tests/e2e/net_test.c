@@ -539,21 +539,21 @@ TIDE_TEST(net_a_match_costs_little_to_keep_going)
                                          .server = tide_loopback_address(1), .sample = sample, .user = &who[i], .lead = 2};
         clients[i] = tide_client_create(&client, now);
     }
-    run(1.0);
+    run(10.0); // Past the datagrams each player's loss is first measured over: until then every tick goes in eight
     memset(counted_bytes, 0, sizeof counted_bytes);
     memset(counted_proof_bytes, 0, sizeof counted_proof_bytes);
-    run(11.0);
+    run(20.0);
     for (int i = 0; i < 2; i++) TIDE_CHECK(tide_client_status_of(clients[i]).resyncs == 0);
-    // About 6.5 KB a second to each player and 2.5 KB a second from each, at 60 ticks a second, most of it the
-    // hashes of ticks sent again until a round trip says they came.
-    // Retain the original payload ceilings while accounting for the exact
-    // mandatory cookie/attempt bytes. WELCOME/HELLO sizes are unchanged.
+    // About 3 KB a second to each player and 2.7 KB a second from each, at 60 ticks a second: each tick's hash
+    // in two datagrams (it was every datagram until a round trip said it came, 7 KB a second), and from a
+    // player its inputs until the server says it has them. The ceilings are of what's sent less the cookie
+    // and attempt every datagram has, counted apart.
     printf("    wire bytes %llu/%llu/%llu, proof bytes %llu/%llu/%llu\n",
         (unsigned long long)counted_bytes[0], (unsigned long long)counted_bytes[1], (unsigned long long)counted_bytes[2],
         (unsigned long long)counted_proof_bytes[0], (unsigned long long)counted_proof_bytes[1],
         (unsigned long long)counted_proof_bytes[2]);
-    TIDE_CHECK(counted_bytes[0] - counted_proof_bytes[0] < 140000u);
-    TIDE_CHECK(counted_bytes[1] - counted_proof_bytes[1] < 28000u && counted_bytes[2] - counted_proof_bytes[2] < 28000u);
+    TIDE_CHECK(counted_bytes[0] - counted_proof_bytes[0] < 50000u);
+    TIDE_CHECK(counted_bytes[1] - counted_proof_bytes[1] < 22000u && counted_bytes[2] - counted_proof_bytes[2] < 22000u);
     finish();
 }
 

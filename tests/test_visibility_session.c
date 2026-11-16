@@ -570,7 +570,7 @@ TIDE_TEST(visibility_large_repairs_release_old_callbacks_on_compatible_reload)
         .sample = visibility_sample, .user = &sampled});
     tide_session *client = tide_session_create(&(tide_session_desc){.game = &games[active],
         .sample = visibility_sample, .user = &sampled});
-    tide_loopback *net = tide_loopback_create(61577);
+    tide_loopback *net = tide_loopback_create(61579);
     TIDE_REQUIRE(host && client && net);
     tide_loopback_set_conditions(net, (tide_net_conditions){.latency = 0.08, .jitter = 0.04, .loss = 0.1});
     tide_session_start(host, NULL, 0);
