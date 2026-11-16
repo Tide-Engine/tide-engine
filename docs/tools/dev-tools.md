@@ -137,6 +137,26 @@ Combat.Pace = Combat.Rate.Fast;
 
 ## The dev menu
 
-In a dev build with dev views or tweaks, the key under **Escape** (`` ` `` on a US keyboard, where Valve's games open their console) shows the dev menu, and again hides it. It lists the game's dev views, each with a switch, and its [tweaks](#tweaks). A dev view runs only while it's switched on, so a game's tools stay out of the way until someone wants one, and they don't each need a key of their own. What's on stays on across a hot reload.
+In a dev build, the key under **Escape** (`` ` `` on a US keyboard, where Valve's games open their console) shows the dev menu, and again hides it. It lists the game's dev views, each with a switch, its [tweaks](#tweaks), and the [inspector](#the-inspector). A dev view runs only while it's switched on, so a game's tools stay out of the way until someone wants one, and they don't each need a key of their own. What's on stays on across a hot reload.
 
 The game sees the key too. Interactive runs list the menu's switches among the GUI's widgets, so an agent can click one by name (see [Interactive play](./cli#interactive-play)).
+
+## The inspector
+
+The dev menu's **Inspector** shows the game's state while it runs, and changes it. Nothing has to be written for it: every dev build has one, made from the game's own types.
+
+- **Match** lists the match's singletons by name, and its entities grouped by the components they have (`Health, Gun x12`). A group opens to its entities, named by number (`#41`), and an entity to each of its components' fields, then its local fields.
+- **Local** lists this machine's local state the same way: its local singletons, and the local entities its views spawned.
+- **A field changes where it's shown**: a switch for a bool, a field for a number, a vector or a Color, a button that steps through an enum's members. Text, lists and maps are shown as they are, and an entity a field holds is a button that opens it.
+- **A change of the match's goes through the server**, so every machine of the match has it, and the field shows what was sent until it's back. The game's [`Changed<...>` handlers](../game/events.md#when-a-field-changes) hear it as they would a change of the game's own, so what follows from a field follows from an edit too:
+
+```csharp
+// The inspector sets a unit's hp; its handler does the rest, as for a hit
+event(Changed<Unit.hp> change) Down(mut Unit unit)
+{
+    unit.down = unit.hp <= 0;
+}
+```
+
+- **A change of the local world's** is this machine's, made at once.
+- Any player of a dev build can change a field. Only a value its field can hold is taken: a member of the enum, a bool that's true or false, a number that's a number. An entity that's gone by then is left alone.

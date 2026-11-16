@@ -218,7 +218,7 @@ static bool compile_inputs_impl(const compile_input *inputs, const int count, co
             if (!seen) folders[folder_count++] = dir;
         }
         if (!tweaks_read(prog, folders, folder_count, opts->game_folder != NULL)) return false;
-        if (opts->dev && !tweaks_prelude(prog)) return false;
+        if (opts->dev && (!tweaks_prelude(prog) || !inspect_prelude(prog))) return false;
     }
     if (opts->declarations_only) keep_declarations(prog);
     if (opts->embed && !add_embed_taps(prog)) return false;

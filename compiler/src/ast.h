@@ -955,6 +955,8 @@ typedef struct decl {
     // A dev build reads it from the match's TideTweaks (BIND_TWEAK), which a tweak's change goes through
     bool is_tweak;
     loc tweak_at;
+    // A dev build's TideSetField (inspect_prelude): its handler's body is the generated C's, tide_inspect_apply
+    bool inspect_set;
     struct expr *code_value; // ...the value the code gives it, where a .tweaks file gives another (then `value`)
     loc tweaked_at;          // ...and where, at its name
     const char *tweaked_text; // ...and its value there, as the file writes it

@@ -10841,6 +10841,9 @@ static void gen_header(gen *g)
     sb_put(o, "// A dev build's tweaks, for a host to take the values tide run works out again, show and write them (tide/tweaks.h); NULL in\n"
               "// a build without dev, or with no tweaks\n"
               "struct tide_tweaks_api;\nconst struct tide_tweaks_api *tide_game_tweaks(void);\n\n");
+    sb_put(o, "// A dev build's inspector, for a host to show the match's and this machine's state and change it (tide/inspect.h);\n"
+              "// NULL in a build without dev\n"
+              "struct tide_inspect_api;\nconst struct tide_inspect_api *tide_game_inspect(void);\n\n");
     if (prog->shards) {
         sb_put(o, "// What the next tide_frame draws beside `w`: the other shards' worlds this machine follows\n"
                   "// (tide_session_views). Views draw each entity once, from the world that owns it, or from the\n"
@@ -19006,6 +19009,10 @@ static void gen_dispatch_handlers(gen *g, const decl *event, const bool local)
         sb call = {0};
         sb_printf(&call, "tide_handler_%s(%s, tide_event", decl_cname(h), world);
         sb_printf(o, "    // " STR_FMT "\n", STR_ARG(h->qualified));
+        if (event->inspect_set && !local) { // A dev build's inspector's change (tide/inspect.h): its body is ours
+            sb_put(o, "    (void)tide_sender; // Any player of a dev build may\n    tide_inspect_apply(tide_w, tide_target, tide_event);\n");
+            continue;
+        }
         sb clear_text = {0};
         const bool its_text = touches_text(h);
         if (prog->uses_text && its_text) sb_put(&clear_text, " tide_scratch_reset(tide_mark);");
@@ -29037,6 +29044,7 @@ static void gen_layout(gen *g)
 }
 
 #include "embed_codegen.inc"
+#include "inspect_codegen.inc"
 #include "debug_views_codegen.inc"
 #include "plumbing_split.inc"
 
@@ -30466,6 +30474,7 @@ bool codegen(program *prog, const codegen_options *opts)
     for (int i = 0; i < prog->handlers.count; i++) {
         if (!prog->handlers.items[i]->is_async) gen_system_body(&g, prog->handlers.items[i]); // Those are tasks
     }
+    gen_inspect_apply(&g); // What a dev build's TideSetField's dispatcher calls
     for (int i = 0; i < prog->events.count; i++) {
         if (prog->events.items[i] == prog->forgotten) continue; // Its handlers run as local fields go
         for (int side = 0; side < 2; side++) {
@@ -30486,8 +30495,9 @@ bool codegen(program *prog, const codegen_options *opts)
     gen_rebind_resources(&g);
     gen_index_sites(&g);
     gen_previous_keep(&g);
-    if (opts->layout || opts->embed) gen_layout(&g);
+    if (opts->layout || opts->embed || inspect_set_command(prog)) gen_layout(&g); // A dev build's inspector reads it
     if (opts->embed) gen_embed(&g);
+    gen_inspect(&g);
     if (opts->build_program) gen_build_main(&g);
 
     sb h_path = {0};

@@ -365,20 +365,19 @@ static void gen_embed_heard(gen *g)
               "    tide_embed_heard_drop();\n}\n\n");
 }
 
-static void gen_embed(gen *g)
+// The view packet: what views see this frame (tide/embed_game.h says its bytes), as function `fn`. With `heard_wanted`,
+// the events this machine heard since the last one (tidec --embed's taps); a dev build's inspector has none
+static void gen_packet_view(gen *g, const char *fn, const bool heard_wanted)
 {
     const program *prog = g->prog;
     sb *o = &g->c;
     const layout_decls types = layout_types(prog);
-    sb_put(o, "// For another program (tide/embed.h): the view packet, commands and scenes by name\n\n");
-
-    // The view packet: what views see this frame (tide/embed_game.h says its bytes)
-    sb_put(o, "static void tide_embed_view(const void *world, const void *previous_world, float alpha, const void *local_state,\n"
+    sb_printf(o, "static void %s(const void *world, const void *previous_world, float alpha, const void *local_state,\n"
               "                            uint32_t verified_tick, tide_packet *out)\n{\n"
               "    const tide_world *w = world;\n    const tide_world *previous = previous_world;\n"
               "    const tide_local *l = local_state;\n    (void)previous;\n    (void)l;\n"
-              "    tide_packet_begin(out);\n");
-    const bool heard = embed_event_count(prog) > 0;
+              "    tide_packet_begin(out);\n", fn);
+    const bool heard = heard_wanted && embed_event_count(prog) > 0;
     sb_printf(o, "    if (!w) {\n%s        tide_packet_end(out, 0x%016llXull, false, 0, verified_tick, 1.0f, 0);\n        return;\n    }\n",
               heard ? "        tide_embed_heard_drop(); // Nothing's heard outside a match\n" : "", (unsigned long long)g->game_hash);
     sb_put(o, "    if (!(alpha >= 0.0f && alpha <= 1.0f)) alpha = 1.0f;\n");
@@ -504,6 +503,15 @@ static void gen_embed(gen *g)
     sb_printf(o, "    tide_scratch_reset(mark);\n"
                  "    tide_packet_end(out, 0x%016llXull, true, (uint32_t)w->Time.tick, verified_tick, alpha, n);\n}\n\n",
               (unsigned long long)g->game_hash);
+}
+
+static void gen_embed(gen *g)
+{
+    const program *prog = g->prog;
+    sb *o = &g->c;
+    const layout_decls types = layout_types(prog);
+    sb_put(o, "// For another program (tide/embed.h): the view packet, commands and scenes by name\n\n");
+    gen_packet_view(g, "tide_embed_view", true);
 
     // Commands and the events another program hears: their values' layout, after the layout's types; and sending a
     // command as local code does

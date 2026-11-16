@@ -1,0 +1,62 @@
+// A dev build's inspector (tide/inspect.h): the match's and this machine's state as packets, a field of the match
+// changed through the server, which its Changed handlers hear, and one of the local world's changed here.
+
+enum Mood : byte { Calm, Angry, Fled }
+
+struct Stats
+{
+    float3 speed;
+    int lives = 3;
+}
+
+component Health
+{
+    float value = 10;
+    bool alive = true;
+    Mood mood;
+    Stats stats;
+    string name;
+    Color tint;
+    local float shown = 1;
+}
+
+component Spark
+{
+    float size;
+}
+
+singleton Score
+{
+    int points;
+    double total;
+    int heard; // Changes of a Health's value the match heard
+    float last;
+}
+
+local singleton Panel
+{
+    float width = 200;
+    bool open;
+    bool made;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Health { name = "Ann" });
+    Spawn(Health { name = "Bo", value = 4 });
+}
+
+event(Changed<Health.value> change) Heard(mut Score score)
+{
+    score.heard += 1;
+    score.last = change.value;
+}
+
+view Make(mut Panel panel)
+{
+    if (panel.made) return;
+    panel.made = true;
+    local Spawn(Spark { size = 2 });
+}

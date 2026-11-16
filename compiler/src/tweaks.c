@@ -249,6 +249,27 @@ bool tweaks_prelude(program *prog)
     return true;
 }
 
+// A dev build's inspector (tide/inspect.h): the command that takes a field's new value to the server, a type of the
+// layout's, where in its value, and up to 32 bytes. Its handler's body is the generated C's (tide_inspect_apply),
+// which writes only a field tide_inspect_writable allows, of a component the target has or a singleton.
+bool inspect_prelude(program *prog)
+{
+    static const char text[] = "command TideSetField { int type; int offset; int size; long a; long b; long c; long d; }\n"
+                               "command(TideSetField set, PlayerID sender) TideApplyField()\n{\n}\n";
+    source *src = NEW(source);
+    src->path = INSPECT_PRELUDE_PATH;
+    src->text = text;
+    src->len = sizeof text - 1;
+    diag_add_source(src);
+    token *toks = lex(src);
+    if (!toks || !parse_file(prog, src, toks, false)) return false;
+    for (int i = 0; i < prog->decls.count; i++) {
+        decl *d = prog->decls.items[i];
+        if (d->unit && d->unit->src == src && d->kind == DECL_EVENT) d->inspect_set = true;
+    }
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // A tweak's value, worked out as the generated C would: the same operations on the same types in the same order,
 // with tide/math.h's functions, so a dev build that has a .tweaks file's new values from tide run (which works them

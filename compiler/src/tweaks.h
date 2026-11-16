@@ -18,6 +18,9 @@ bool tweaks_read(program *prog, const char *const *folders, int count, bool deep
 // game has tweaks.
 bool tweaks_prelude(program *prog);
 
+// A dev build's TideSetField, the inspector's change of a field of the match (tide/inspect.h), and its handler
+bool inspect_prelude(program *prog);
+
 // `path` from the root, with forward slashes
 const char *tweaks_absolute(const char *path);
 

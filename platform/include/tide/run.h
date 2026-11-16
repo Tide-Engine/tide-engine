@@ -285,6 +285,7 @@ static const tide_host_game tide_host_game_api = {
     .dev_views = tide_dev_view_names,
     .show_dev_views = tide_show_dev_views,
     .tweaks = tide_game_tweaks,
+    .inspect = tide_game_inspect,
     .shaders = tide_game_shaders,
 #ifdef TIDE_HAS_EMBED
     .layout = &tide_game_layout,

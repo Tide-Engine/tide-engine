@@ -1,6 +1,7 @@
 // The dev menu, driven the way an agent plays (--interactive): its dev view is off, the key under Escape lists it among the GUI's
 // widgets, and a click on its switch shows it; its tweak, changed there, reaches the match and its .tweaks file, and
-// its .tweaks file saved elsewhere and worked out again is taken.
+// its .tweaks file saved elsewhere and worked out again is taken. Its inspector lists the match's singletons and its
+// entities by their components, and a field changed there reaches the match through the server.
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -42,6 +43,15 @@ const command = async (text, expected = 'ok') => {
     child.stdin.write(text + '\n');
     const line = await next();
     assert.ok(line.startsWith(`tide: interactive ${expected} `), `${text}: ${line}; ${errors}`);
+    return line;
+};
+// The menu scrolled to its end, which grows as the inspector opens more: the wheel turned in two frames, as the scroll
+// goes as far as the list was tall a frame before, then a frame to draw it
+const bottom = async () => {
+    const frame = Number((await command('step 1', 'ready')).split(' ').pop());
+    await command(`${frame + 1} scroll 0 -400`);
+    await command(`${frame + 3} scroll 0 -400`);
+    await command('step 4', 'ready');
 };
 const color = (name, x, y) => readPng(readFileSync(join(scratch, name))).at(x, y).slice(0, 3);
 
@@ -88,22 +98,72 @@ try {
     await command('step 40', 'ready');
     await command('capture saved.png');
     assert.deepEqual(at('saved.png'), [0, 0, 255]);
+    // The inspector, at the list's end: a singleton's bool, then an entity's int, changed in the match
+    await bottom();
+    await command('click Inspector');
+    await bottom();
+    await command('controls');
+    assert.ok(said.some(line => /^tide: control \d+ button "Shade" /.test(line)), said.join('\n'));
+    await command('click Shade');
+    await bottom();
+    await command('controls');
+    assert.ok(said.some(line => /^tide: control \d+ toggle "dark" /.test(line)), said.join('\n'));
+    await command('click dark');
+    await command('step 4', 'ready');
+    await command('capture dark.png');
+    assert.deepEqual(at('dark.png'), [0, 0, 0]);
+    await command('click "< Back"');
+    await bottom();
+    await command('controls');
+    const group = said.find(line => /^tide: control \d+ button "\+ Lamp x1" /.test(line));
+    assert.ok(group, said.join('\n'));
+    await command('click "+ Lamp x1"');
+    await bottom();
+    await command('controls');
+    const lamp = said.map(line => line.match(/^tide: control \d+ button "(#\d+)" /)).find(m => m);
+    assert.ok(lamp, said.join('\n'));
+    await command(`click "${lamp[1]}"`);
+    await bottom();
+    await command('controls');
+    assert.ok(said.some(line => /^tide: control \d+ number "level" /.test(line)), said.join('\n'));
+    await command('click level');
+    const typing = Number((await command('step 1', 'ready')).split(' ').pop());
+    await command(`${typing + 1} text 5`);
+    await command(`${typing + 2} key enter`);
+    await command('step 6', 'ready');
+    await command('capture lit.png');
+    assert.deepEqual(color('lit.png', 3, 145), [255, 255, 255]);
+    // This machine's local world: its singleton, and its field, changed here at once
+    await command('click Local');
+    await bottom();
+    await command('controls');
+    assert.ok(said.some(line => /^tide: control \d+ button "Glow" /.test(line)), said.join('\n'));
+    assert.ok(!said.some(line => line.includes('TideTweaks')), said.join('\n'));
+    await command('click Glow');
+    await bottom();
+    await command('controls');
+    assert.ok(said.some(line => /^tide: control \d+ toggle "on" /.test(line)), said.join('\n'));
+    await command('click on');
+    await command('step 4', 'ready');
+    await command('capture glow.png');
+    assert.deepEqual(color('glow.png', 3, 120), [255, 255, 0]);
+    const top = Number((await command('step 1', 'ready')).split(' ').pop());
+    await command(`${top + 1} scroll 0 4000`);
+    await command('step 3', 'ready');
     await command('click Marker');
     await command('step 3', 'ready');
     await command('capture on.png');
     assert.deepEqual(at('on.png'), [255, 0, 0]); // Shown: it runs
     // The key again hides the menu, and the view stays shown
-    await command('100 key backquote down');
-    await command('101 key backquote up');
+    const hide = Number((await command('step 1', 'ready')).split(' ').pop());
+    await command(`${hide + 1} key backquote down`);
+    await command(`${hide + 2} key backquote up`);
     await command('step 15', 'ready');
     await command('controls');
     assert.deepEqual(said, ['tide: controls 0']);
     await command('capture kept.png');
     assert.deepEqual(at('kept.png'), [255, 0, 0]);
     child.stdin.end();
-    // Plainly as the code has it again, for the next build of the game: Green the menu can write over
-    writeFileSync(tweaksFile, 'Green = false;\n');
-    workOut();
     console.log('dev menu: ok');
 } catch (e) {
     console.error(e);
@@ -111,4 +171,8 @@ try {
     process.exitCode = 1;
 } finally {
     clearTimeout(timer);
+    // Plainly as the code has it again, for the next build of the game, however this run ended: Green the menu can
+    // write over
+    writeFileSync(tweaksFile, 'Green = false;\n');
+    workOut();
 }
