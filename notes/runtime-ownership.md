@@ -1,3 +1,9 @@
+## Tweaks (2026-11-16)
+
+New, the agent's: `engine/include/tide/tweaks.h`, `engine/src/tweaks.c` (notes/language.md, Tweaks, step 2). Generated
+code calls nothing of it; it fills the table (`tide_game_tweaks()`) that hosts read. `tide_host_game` gained
+`tweaks` at its end, so hosts and game libraries rebuild together (TIDE_HOST_SHAPE).
+
 ## Dev views (2026-11-16)
 
 Generated code gained `tide_dev_view_names` and `tide_show_dev_views` (notes/language.md, `dev` declarations), and

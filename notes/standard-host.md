@@ -1,5 +1,9 @@
 # The standard host: runs with no window, the stats, debug views
 
+## Tweaks in the dev menu, and tweaks.json read again (2026-11-16)
+
+`tide_run_tweaks_poll` and `tide_run_dev_tweaks` (notes/language.md, Tweaks, step 2, has what they do and their tests).
+
 ## The dev menu (2026-11-16)
 
 `tide/host.h`: `tide_run_dev_views(game)` before `game->frame` hands the game which of its dev views run

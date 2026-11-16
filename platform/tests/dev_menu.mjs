@@ -1,12 +1,13 @@
 // The dev menu, driven the way an agent plays (--interactive): its dev view is off, the key under Escape lists it among the GUI's
-// widgets, and a click on its switch shows it.
+// widgets, and a click on its switch shows it; its tweak, changed there, reaches the match and tweaks.json, and
+// tweaks.json saved elsewhere is read again.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { readPng } from './png_read.mjs';
 
-const [programArg, scratchArg] = process.argv.slice(2);
+const [programArg, scratchArg, tweaksFile] = process.argv.slice(2);
 const scratch = resolve(scratchArg);
 mkdirSync(scratch, { recursive: true });
 const env = { ...process.env, TIDE_HIDDEN: '1' };
@@ -39,30 +40,45 @@ const command = async (text, expected = 'ok') => {
 const color = (name, x, y) => readPng(readFileSync(join(scratch, name))).at(x, y).slice(0, 3);
 
 const timer = setTimeout(() => { console.error('dev menu test timed out'); process.exit(1); }, 60000);
+const at = name => color(name, 300, 190); // Under the menu's rows
 try {
+    rmSync(tweaksFile, { force: true });
     assert.equal(await next(), 'tide: interactive ready 1');
+    await command('step 2', 'ready'); // The match's first ticks
     await command('capture off.png');
-    assert.deepEqual(color('off.png', 280, 40), [0, 0, 255]); // The dev view doesn't run
+    assert.deepEqual(at('off.png'), [0, 0, 255]); // The dev view doesn't run, and Green is false
     await command('controls');
     assert.deepEqual(said, ['tide: controls 0']); // No menu yet
-    await command('2 key backquote down');
-    await command('3 key backquote up');
+    await command('4 key backquote down');
+    await command('5 key backquote up');
     await command('step 3', 'ready');
     await command('controls');
-    assert.equal(said.length, 2, said.join('\n'));
+    assert.equal(said.length, 3, said.join('\n'));
     assert.match(said[0], /^tide: control 1 toggle "Marker" /);
+    assert.match(said[1], /^tide: control 2 toggle "Green" /);
+    // A tweak changed in the menu: the match reads it once the server applied it, and tweaks.json has it
+    await command('click Green');
+    await command('step 4', 'ready');
+    await command('capture green.png');
+    assert.deepEqual(at('green.png'), [0, 255, 0]);
+    assert.equal(readFileSync(tweaksFile, 'utf8'), '{\n    "Green": true\n}\n');
+    // tweaks.json saved elsewhere: read again within half a second, and the match has it
+    writeFileSync(tweaksFile, '{ }\n');
+    await command('step 40', 'ready');
+    await command('capture saved.png');
+    assert.deepEqual(at('saved.png'), [0, 0, 255]);
     await command('click Marker');
     await command('step 3', 'ready');
     await command('capture on.png');
-    assert.deepEqual(color('on.png', 280, 40), [255, 0, 0]); // Shown: it runs
+    assert.deepEqual(at('on.png'), [255, 0, 0]); // Shown: it runs
     // The key again hides the menu, and the view stays shown
-    await command('8 key backquote down');
-    await command('9 key backquote up');
-    await command('step 3', 'ready');
+    await command('60 key backquote down');
+    await command('61 key backquote up');
+    await command('step 15', 'ready');
     await command('controls');
     assert.deepEqual(said, ['tide: controls 0']);
     await command('capture kept.png');
-    assert.deepEqual(color('kept.png', 280, 40), [255, 0, 0]);
+    assert.deepEqual(at('kept.png'), [255, 0, 0]);
     child.stdin.end();
     console.log('dev menu: ok');
 } catch (e) {

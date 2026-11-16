@@ -1934,6 +1934,7 @@ typedef struct program {
     bool tweaks_live;         // A dev build with tweaks: code reads them from TideTweaks (BIND_TWEAK), which they change through
     VEC(decl *) left_out;     // `dev` declarations a build without dev left out, for code naming one to be told why
     const char *tweaks_file;  // The tweaks.json the build read, if any
+    const char *tweaks_path;  // ...where it is or would be, absolute, for a dev build to read again and write (tide/tweaks.h)
     VEC(decl *) results; // Every T? and `T fails E` it uses, one per combination
     VEC(decl *) optional_fields; // What each T? a field has is kept as: a struct of the value and whether there is one (decl.optional_of)
     decl *owner;         // The built-in Owner component.

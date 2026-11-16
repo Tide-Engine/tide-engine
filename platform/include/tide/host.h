@@ -24,6 +24,7 @@
 #include "tide/sha256.h"
 #include "tide/stats.h"
 #include "tide/time.h"
+#include "tide/tweaks.h"
 #include "tide/voice.h"
 #include "tide/screen_keyboard.h"
 #include "tide/worker.h"
@@ -149,6 +150,9 @@ typedef struct tide_host_game {
     // lists, and tide_show_dev_views, which the host calls before each frame with a byte for each: nonzero, it runs
     const char *const *dev_views;
     void (*show_dev_views)(const uint8_t *shown);
+    // Optional: a dev build's tweaks (tide/tweaks.h, tidec's tide_game_tweaks), which the host reads tweaks.json for
+    // again as it changes and the dev menu shows and writes; NULL for none
+    const struct tide_tweaks_api *(*tweaks)(void);
 } tide_host_game;
 
 // A game's library exports this function, which returns its table.
@@ -1093,24 +1097,154 @@ static inline void tide_run_dev_views(const tide_host_game *game)
 }
 
 // After the frame's views, in its GUI: the menu, over them
+// A dev build's tweaks (tide/tweaks.h): tweaks.json is read again as it changes, half a second at the most after it's
+// saved, and what it gives goes to this machine's copy and to the match (tide_tweaks_api.send). The menu writes the
+// file as a tweak is changed there. What the file last said, so a write of the menu's own isn't read back as news.
+static uint64_t tide_run_tweaks_text;
+static double tide_run_tweaks_at = -1.0;
+
+static inline uint64_t tide_run_text_hash(const char *text, const size_t length)
+{
+    uint64_t h = 0xCBF29CE484222325ull;
+    for (size_t i = 0; i < length; i++) h = (h ^ (uint8_t)text[i]) * 0x100000001B3ull;
+    return h | 1u; // Never 0, which is no file read yet
+}
+
+static inline void tide_run_tweaks_poll(const tide_host_game *game)
+{
+    const tide_tweaks_api *api = game->tweaks ? game->tweaks() : NULL;
+    if (!api || !api->path[0] || (tide_run_tweaks_at >= 0.0 && tide_run_now - tide_run_tweaks_at < 0.5)) return;
+    tide_run_tweaks_at = tide_run_now;
+    FILE *f = fopen(api->path, "rb");
+    if (!f) return;
+    char text[65536];
+    const size_t length = fread(text, 1, sizeof text, f);
+    fclose(f);
+    const uint64_t h = tide_run_text_hash(text, length);
+    if (h == tide_run_tweaks_text) return;
+    const bool first = !tide_run_tweaks_text;
+    tide_run_tweaks_text = h;
+    uint8_t values[4096];
+    if (api->size > sizeof values) return;
+    if (!tide_tweaks_read(api, values, text, length)) {
+        fprintf(stderr, "tide: %s isn't an object of tweaks' values: the tweaks stay as they were\n", api->path);
+        return;
+    }
+    void *here = api->here(tide_run_local);
+    if (memcmp(here, values, api->size) == 0) return; // As the build had them
+    memcpy(here, values, api->size);
+    api->send(tide_run_local);
+    if (!first) fprintf(stderr, "tide: tweaks read again from %s\n", api->path);
+}
+
+// The tweaks in the menu, from row `first`: an editor each, by its kind. Changed, the copy goes to the match and the file.
+static inline uint32_t tide_run_dev_tweaks(const tide_tweaks_api *api, const float x, const float y, const float width, const float row)
+{
+    uint8_t *values = api->here(tide_run_local);
+    bool changed = false;
+    tide_gui_label(&tide_run_gui, (tide_rect){x, y, width, row}, "Tweaks");
+    for (uint32_t i = 0; i < api->count; i++) {
+        const tide_tweak *t = &api->tweaks[i];
+        uint8_t *at = values + t->offset;
+        const tide_rect r = {x, y + row * (float)(i + 1), width, row - 4.0f};
+        const uint32_t id = 0xDE710000u + i * 8u;
+        if (t->kind == TIDE_TWEAK_BOOL) {
+            bool v = *at != 0;
+            if (tide_gui_toggle(&tide_run_gui, id, r, t->name, &v)) {
+                *at = v ? 1u : 0u;
+                changed = true;
+            }
+        } else if (t->kind == TIDE_TWEAK_ENUM) {
+            int32_t v = 0;
+            memcpy(&v, at, t->size < 4u ? t->size : 4u); // Little-endian, as every target is
+            uint32_t m = 0;
+            while (m < t->member_count && t->member_values[m] != v) m++;
+            char label[160];
+            snprintf(label, sizeof label, "%s: %s", t->name, m < t->member_count ? t->members[m] : "?");
+            if (tide_gui_button(&tide_run_gui, id, r, label) && t->member_count) {
+                const int32_t next = t->member_values[m < t->member_count ? (m + 1u) % t->member_count : 0u];
+                memcpy(at, &next, t->size < 4u ? t->size : 4u);
+                changed = true;
+            }
+        } else if (t->color) {
+            changed |= tide_gui_color_field(&tide_run_gui, id, r, t->name, (tide_color *)(void *)at);
+        } else if (t->kind == TIDE_TWEAK_FLOAT) {
+            if (t->count == 1) changed |= tide_gui_float_field(&tide_run_gui, id, r, t->name, (float *)(void *)at);
+            else if (t->count == 2) changed |= tide_gui_float2_field(&tide_run_gui, id, r, t->name, (tide_float2 *)(void *)at);
+            else if (t->count == 3) changed |= tide_gui_float3_field(&tide_run_gui, id, r, t->name, (tide_float3 *)(void *)at);
+            else changed |= tide_gui_float4_field(&tide_run_gui, id, r, t->name, (tide_float4 *)(void *)at);
+        } else {
+            // A component at a time: ints, longs, bytes and doubles as the fields for ints and floats have them
+            const float part = width / (float)t->count;
+            for (uint32_t k = 0; k < t->count; k++) {
+                const tide_rect p = {r.x + part * (float)k, r.y, part - 2.0f, r.height};
+                const char *label = k ? "" : t->name;
+                if (t->kind == TIDE_TWEAK_DOUBLE) {
+                    double d;
+                    memcpy(&d, at + 8u * k, 8);
+                    float v = (float)d;
+                    if (tide_gui_float_field(&tide_run_gui, id + k, p, label, &v)) {
+                        d = v;
+                        memcpy(at + 8u * k, &d, 8);
+                        changed = true;
+                    }
+                    continue;
+                }
+                int32_t v = 0;
+                if (t->kind == TIDE_TWEAK_INT) memcpy(&v, at + 4u * k, 4);
+                else if (t->kind == TIDE_TWEAK_BYTE) v = at[k];
+                else {
+                    int64_t l;
+                    memcpy(&l, at + 8u * k, 8);
+                    v = l > INT32_MAX ? INT32_MAX : l < INT32_MIN ? INT32_MIN : (int32_t)l;
+                }
+                if (!tide_gui_int_field(&tide_run_gui, id + k, p, label, &v)) continue;
+                if (t->kind == TIDE_TWEAK_INT) memcpy(at + 4u * k, &v, 4);
+                else if (t->kind == TIDE_TWEAK_BYTE) at[k] = (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v);
+                else {
+                    const int64_t l = v;
+                    memcpy(at + 8u * k, &l, 8);
+                }
+                changed = true;
+            }
+        }
+    }
+    if (changed) {
+        api->send(tide_run_local);
+        static char text[65536];
+        const size_t length = tide_tweaks_write(api, values, text, sizeof text);
+        FILE *f = api->path[0] && length < sizeof text ? fopen(api->path, "wb") : NULL;
+        if (f) {
+            fwrite(text, 1, length, f);
+            fclose(f);
+            tide_run_tweaks_text = tide_run_text_hash(text, length); // The menu's own: not news
+        }
+    }
+    return api->count + 1u;
+}
+
 static inline void tide_run_dev_menu(const tide_host_game *game)
 {
-    if (!game->dev_views || !game->dev_views[0]) return;
+    const tide_tweaks_api *tweaks = game->tweaks ? game->tweaks() : NULL;
+    if (tweaks && !tweaks->count) tweaks = NULL;
+    if ((!game->dev_views || !game->dev_views[0]) && !tweaks) return;
     const bool key = tide_run_devices.keyboard.backquote.held;
     if (key && !tide_run_dev_key) tide_run_dev_open = !tide_run_dev_open;
     tide_run_dev_key = key;
     if (!tide_run_dev_open) return;
     uint32_t count = 0;
-    while (count < TIDE_RUN_DEV_VIEWS && game->dev_views[count]) count++;
-    const float row = 32.0f, pad = 8.0f, width = 240.0f;
+    while (game->dev_views && count < TIDE_RUN_DEV_VIEWS && game->dev_views[count]) count++;
+    const float row = 32.0f, pad = 8.0f, width = 320.0f;
+    const uint32_t rows = 1u + count + (tweaks ? tweaks->count + 1u : 0u);
     tide_gui_view(&tide_run_gui, UINT32_MAX); // Its own: no view's claims hide the devices from it
-    tide_gui_claim_pointer_at(&tide_run_gui, (tide_rect){pad, pad, width, row * (float)(count + 1) + pad});
+    tide_gui_claim_pointer_at(&tide_run_gui, (tide_rect){pad, pad, width, row * (float)rows + pad});
     tide_gui_label(&tide_run_gui, (tide_rect){pad, pad, width, row}, "Dev");
     for (uint32_t i = 0; i < count; i++) {
         bool shown = tide_run_dev_shown(game->dev_views[i]);
         const tide_rect at = {pad, pad + row * (float)(i + 1), width, row - 4.0f};
         if (tide_gui_toggle(&tide_run_gui, 0xDE700000u + i, at, game->dev_views[i], &shown)) tide_run_dev_show(game->dev_views[i], shown);
     }
+    if (tweaks) (void)tide_run_dev_tweaks(tweaks, pad, pad + row * (float)(count + 1), width, row);
 }
 
 // Where the matches this machine hosts keep their store (Storage.Save and Load in match code): the game's own
@@ -1777,6 +1911,7 @@ static inline int tide_run_frame(void *user, const float seconds)
         game->frame_shards(more, n < TIDE_SESSION_VIEWS ? n : TIDE_SESSION_VIEWS);
     }
     tide_run_dev_views(game);
+    tide_run_tweaks_poll(game); // tweaks.json saved since: this machine's copy and the match's
     game->frame(match, view.previous, view.alpha, view.verified, view.verified_previous, view.verified_alpha, tide_run_local, &tide_run_draw, &tide_run_gui);
     tide_loops_leave(loops_before);
     tide_run_dev_menu(game);

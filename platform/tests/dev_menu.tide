@@ -1,12 +1,23 @@
-// A dev build's menu (platform/tests/dev_menu.mjs): the key under Escape shows it, and it lists
-// the game's dev views, each off until it's switched on there. The game's view
-// paints the screen blue; the dev view paints it red.
+// A dev build's menu (platform/tests/dev_menu.mjs): the key under Escape shows
+// it, and it lists the game's dev views, each off until it's switched on there,
+// and its tweaks. The match paints the screen blue, or green once the tweak
+// Green is true, which it reads as the server applied it; the dev view paints
+// it red. The test builds a copy beside its run, whose tweaks.json the menu writes.
+
+tweak bool Green = false;
 
 scene Main { }
 
-view Backdrop()
+singleton Paint { bool green; }
+
+system Read(mut Paint paint)
 {
-    Draw.Clear(Color(0, 0, 1));
+    paint.green = Green;
+}
+
+view Backdrop(Paint paint)
+{
+    Draw.Clear(paint.green ? Color(0, 1, 0) : Color(0, 0, 1));
 }
 
 dev view Marker()

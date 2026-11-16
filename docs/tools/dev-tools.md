@@ -111,9 +111,10 @@ system Recoil(mut Gun gun) { gun.kick += KickUp; }
 - **Code reads it as a constant**, and a field's default can be one. What has to be known while compiling can't: an array's size, a `case`, a setting or a constant's value take a `const`.
 - **A build without dev** has the file's values as constants: they cost what a constant does, and the file isn't shipped.
 - **A dev build** reads them from the match, so changing one changes it for everyone in the match at once, through the server. GPU and audio code read the value the build had.
+- **Changing them while the game runs**: save `tweaks.json` in any editor and the running game has the new values within half a second, without building again. Or open the dev menu, whose Tweaks section has an editor for each, a switch for a bool, a field for a number, a vector or a color, and a button that steps through an enum's members, and which writes `tweaks.json` as a value changes, so it's kept.
 
 ## The dev menu
 
-In a dev build with dev views, the key under **Escape** (`` ` `` on a US keyboard, where Valve's games open their console) shows the dev menu, and again hides it. It lists the game's dev views, each with a switch. A dev view runs only while it's switched on, so a game's tools stay out of the way until someone wants one, and they don't each need a key of their own. What's on stays on across a hot reload.
+In a dev build with dev views or tweaks, the key under **Escape** (`` ` `` on a US keyboard, where Valve's games open their console) shows the dev menu, and again hides it. It lists the game's dev views, each with a switch, and its [tweaks](#tweaks). A dev view runs only while it's switched on, so a game's tools stay out of the way until someone wants one, and they don't each need a key of their own. What's on stays on across a hot reload.
 
 The game sees the key too. Interactive runs list the menu's switches among the GUI's widgets, so an agent can click one by name (see [Interactive play](./cli#interactive-play)).

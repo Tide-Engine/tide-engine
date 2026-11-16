@@ -1,11 +1,40 @@
+#if !defined(_WIN32) && !defined(__APPLE__)
+#define _DEFAULT_SOURCE // getcwd
+#endif
 #include "tweaks.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 #include "builtins.h"
 #include "lexer.h"
+
+// `path` from the root: a dev build reads the file again and writes it from wherever it runs
+static const char *absolute(const char *path)
+{
+#ifdef _WIN32
+    char *full = _fullpath(NULL, path, 0);
+    if (!full) return path;
+    char *copy = arena_alloc(strlen(full) + 1);
+    strcpy(copy, full);
+    free(full);
+    for (char *ch = copy; *ch; ch++) {
+        if (*ch == '\\') *ch = '/';
+    }
+    return copy;
+#else
+    if (path[0] == '/') return path;
+    char here[4096];
+    if (!getcwd(here, sizeof here)) return path;
+    sb full = {0};
+    sb_printf(&full, "%s/%s", here, path);
+    return full.data;
+#endif
+}
 
 // tweaks.json: an object of the game's tweaks that it gives other values than the code does, by their qualified
 // names, `{ "KickUp": 0.00015, "Combat.Fog": [0.6, 0.65, 0.7, 1] }`. A number, true or false, a list of numbers
@@ -142,6 +171,7 @@ bool tweaks_read(program *prog, const char *folder)
     sb path = {0};
     sb_printf(&path, "%s%s%s", folder && folder[0] ? folder : ".", folder && folder[0] && !strchr("/\\", folder[strlen(folder) - 1]) ? "/" : "",
               "tweaks.json");
+    if (any) prog->tweaks_path = absolute(path.data);
     FILE *f = fopen(path.data, "rb");
     if (!f) return true; // No file: every tweak has the code's value
     source *src = NEW(source);
@@ -214,7 +244,7 @@ bool tweaks_read(program *prog, const char *folder)
         d->value = e;
         d->tweaked_at = key_at;
     }
-    (void)any;
+
     return ok;
 }
 

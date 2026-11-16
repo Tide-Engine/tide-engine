@@ -1,3 +1,32 @@
+## Tweaks, step 2: changed while a dev build runs (2026-11-16)
+
+- **tide/tweaks.h, engine/src/tweaks.c** (new, Claude's, beside stats.c): `tide_tweak` describes one (qualified name,
+  kind, components, offset in TideTweakValues, component size, Color, an enum's member names and values);
+  `tide_tweaks_api` the game's (the table, the values' size, `code()` the code's values, `path` the absolute
+  tweaks.json, `here(local)` this machine's copy, `send(local)` the command). `tide_tweaks_read` reads text over the
+  code's values (a wrong shape skipped, text that isn't an object false with the code's values);
+  `tide_tweaks_write` writes what differs from the code's, `%.9g` floats and `%.17g` doubles, which read back the same.
+- **Codegen** (`gen_tweaks_api`): the table, `tide_tweaks_code` (each tweak's `code_value`, or its value where the file
+  gives none), `tide_tweaks_here`, `tide_tweaks_send` (`tide_local_send_TideSetTweaks` with the local copy) and
+  `tide_game_tweaks()`, which a build without dev or tweaks also has, returning NULL; the header declares it.
+  `prog->tweaks_path` (tweaks.c's `absolute`: `_fullpath`, or the working directory joined) is where the build read
+  the file or would have.
+- **Host** (`tide/host.h`): `tide_host_game.tweaks` (`tide/run.h` fills it). `tide_run_tweaks_poll` before the frame
+  reads the file at most every half second of `tide_run_now`, and on new text (an FNV hash) reads it over the code's
+  values; when that differs from the local copy, it sets the copy and sends. The dev menu (now shown for dev views or
+  tweaks, 320 px wide) has a Tweaks section after the views (`tide_run_dev_tweaks`): a toggle, an enum's button
+  stepping its members, a color field, float fields for floats and their vectors, and a field per component for ints,
+  bytes, longs and doubles (a double edited as a float); a change sends, writes the file and keeps its hash, so the
+  poll doesn't take it as news. The web builds it; fopen finds no file there, so nothing is read or written.
+- **CLI**: a dev build's file changes no longer rebuild (`assets_affect_match` only without dev); the watch makes the
+  pack again, as for an image.
+- Tests: `tide_tests tweaks_*` (reading over the code's, a wrong shape, broken text, `{}`, writing what differs, a
+  round trip, cutting short); `tide_platform_dev_menu` (label `gpu`) now builds a copy of its game in the build tree
+  and checks the Green tweak: listed in the menu, clicked, the match painting green after the server applied it,
+  tweaks.json written as `{ "Green": true }`, then `{ }` saved from outside and the match back to blue within 40 frames.
+  The rest of the menu test as before. Native ASan; web builds the host and runs the e2e tweaks tests.
+- Gaps: no scrolling in the menu for many tweaks; a web dev build can't read or write the file.
+
 ## Tweaks, step 1: declarations, tweaks.json, dev builds' reads (2026-11-16)
 
 docs/spec.md, Dev tools, Tweaks. Steps 2 (live changes, the dev menu's panel, writing the file), 3 (tweak fields) and
@@ -29,8 +58,8 @@ docs/spec.md, Dev tools, Tweaks. Steps 2 (live changes, the dev menu's panel, wr
   namespaced enum, an unchanged tweak, a helper, a field default, a view; the dev build changing the match's and the
   local copy and reading the new values; the unknown-name warning pinned), errors `tweak_bound`, `tweak_type`,
   `tweak_file_type`, `tweak_file_broken`. Native ASan and web debug; all `tidec_error_` tests; grammar 424; LSP tests.
-- Until step 2, a change of tweaks.json under `tide run` rebuilds the game: it makes `game_info.assets_affect_match`
-  true, so the watch builds the library rather than only making the pack again.
+- A change of tweaks.json under `tide run` rebuilds a build without dev: it makes `game_info.assets_affect_match`
+  true, so the watch builds the library rather than only making the pack again (step 2: not a dev build's).
 
 ## Scenarios: `--scene` with a scene's fields (2026-11-16)
 
