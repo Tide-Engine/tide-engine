@@ -76,6 +76,10 @@ struct tide_storage {
     uint32_t count, room;
     uint8_t *bytes;
     uint32_t size, capacity;
+    // Its loads and listings by what they ask, so one asked twice is found without going through the tick's others.
+    // tide_storage_ask's alone: `slots` holds a request's place plus one, and is right while `indexed` is `count`.
+    uint32_t *slots;
+    uint32_t slot_room, indexed;
 };
 
 // A server's, around its own run of a tick on `world`: what the tick asks

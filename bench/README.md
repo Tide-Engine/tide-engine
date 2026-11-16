@@ -47,7 +47,8 @@ box, had nine tenths of it made and had all of it, beside when the bot's machine
 (what a dimension makes of chunks a tick: `Worlds.make`), `--spread <cells>` (bots start that far apart on a square
 grid, where they started together), `--park 1` (the nth bot starts in dimension n of `--dimensions`), the store's line (the loads it served and those it answered with no read: `tide/storage.h`, The files a provider has), `--out 1`, `--back <s>` with it (out for that long, back as long, then still: a world that held many chunks and holds few; `--every` then also says what the server's world's memory is made of, its heaps' pages in memory and given back)
 (each flies straight out its own way for the whole run) and `--fill <ticks>` (the run fails where a hop's whole box
-took longer at the median: `bench_voxels_arrives`).
+took longer at the median: `bench_voxels_arrives`). `--ask` is what a dimension spawns of chunks a tick
+(`Worlds.ask`, 1,024: a box of more is asked for over the ticks it takes, and a box left goes over as many).
 
 ## Earth under load (2026-10-24)
 

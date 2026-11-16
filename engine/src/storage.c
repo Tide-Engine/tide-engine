@@ -89,6 +89,45 @@ static tide_storage_request *request_room(tide_storage *s)
     return &s->items[s->count++];
 }
 
+// What a load or a listing asks, as one number: its kind, whom its answer is for, its key and the key it goes on after
+static uint64_t asked_hash(const uint32_t kind, const uint32_t to, const tide_entity target, const char *key,
+                           const uint32_t key_size, const char *after, const uint32_t after_size)
+{
+    uint64_t hash = (key_size ? tide_hash(key, key_size) : 0u) ^ (after_size ? tide_hash(after, after_size) * 31u : 0u);
+    hash = (hash ^ target.birth) * UINT64_C(0xff51afd7ed558ccd);
+    hash = (hash ^ target.lineage) * UINT64_C(0xc4ceb9fe1a85ec53);
+    hash ^= ((uint64_t)kind << 8) | to;
+    return hash ^ (hash >> 29);
+}
+
+// The index of `s`'s loads and listings made again, with room for as many again. A tick that asks for a view's worth
+// of chunks compares each with the one or two in its slot, where it compared it with every one asked before it.
+static void index_requests(tide_storage *s)
+{
+    uint32_t room = s->slot_room ? s->slot_room : 64u;
+    while (room / 4u <= s->count) {
+        if (room > UINT32_MAX / 2u) tide_out_of_memory();
+        room *= 2u;
+    }
+    if (room != s->slot_room) {
+        free(s->slots);
+        s->slots = tide_alloc_zeroed(room, sizeof *s->slots);
+        s->slot_room = room;
+    } else memset(s->slots, 0, (size_t)room * sizeof *s->slots);
+    for (uint32_t i = 0; i < s->count; i++) {
+        const tide_storage_request *r = &s->items[i];
+        if (r->kind != TIDE_STORAGE_LOAD && r->kind != TIDE_STORAGE_LIST) continue;
+        // A tick whose only request is a listing of every key has no bytes at all
+        const char *key = r->key_size ? (const char *)s->bytes + r->key : NULL;
+        const char *after = r->data_size ? (const char *)s->bytes + r->data : NULL;
+        const uint64_t hash = asked_hash(r->kind, r->to, r->target, key, r->key_size, after, r->data_size);
+        uint32_t slot = (uint32_t)hash & (room - 1u);
+        while (s->slots[slot]) slot = (slot + 1u) & (room - 1u);
+        s->slots[slot] = i + 1u;
+    }
+    s->indexed = s->count;
+}
+
 static const char *kind_done(const uint32_t kind)
 {
     return kind == TIDE_STORAGE_SAVE ? "saved" : kind == TIDE_STORAGE_LOAD ? "loaded" : kind == TIDE_STORAGE_LIST ? "listed"
@@ -141,9 +180,12 @@ void tide_storage_ask(const void *world, const uint32_t kind, const tide_str key
         return;
     }
     const uint32_t whom = answered && to == TIDE_STORAGE_TO_TASK ? TIDE_STORAGE_TO_TASK : TIDE_STORAGE_TO_EVENT;
+    uint32_t slot = 0;
     if (answered) { // Asked once however often a tick asks
-        for (uint32_t i = 0; i < s->count; i++) {
-            const tide_storage_request *r = &s->items[i];
+        if (s->indexed != s->count || s->count >= s->slot_room / 2u) index_requests(s);
+        const uint64_t hash = asked_hash(kind, whom, target, key.ptr, (uint32_t)key.bytes, after.ptr, (uint32_t)after_size);
+        for (slot = (uint32_t)hash & (s->slot_room - 1u); s->slots[slot]; slot = (slot + 1u) & (s->slot_room - 1u)) {
+            const tide_storage_request *r = &s->items[s->slots[slot] - 1u];
             if (r->kind == kind && r->to == whom && r->key_size == (uint32_t)key.bytes && r->data_size == (uint32_t)after_size
                 && tide_entity_equal(r->target, target) && (!r->key_size || memcmp(s->bytes + r->key, key.ptr, r->key_size) == 0)
                 && (!r->data_size || memcmp(s->bytes + r->data, after.ptr, r->data_size) == 0)) return;
@@ -162,7 +204,12 @@ void tide_storage_ask(const void *world, const uint32_t kind, const tide_str key
         // Each byte from the list, wherever its chunks are
         for (int32_t i = 0; i < count; i++) s->bytes[r.data + (uint32_t)i] = *(const uint8_t *)tide_list_at(bytes, i, 1);
     }
+    const bool current = s->indexed == s->count;
     *request_room(s) = r;
+    // A load or a listing takes the empty slot its search ended at. A save or a delete, which nothing looks for,
+    // leaves the index as right as it was.
+    if (answered) s->slots[slot] = s->count;
+    if (current) s->indexed = s->count;
 }
 
 // A copy of `from`'s request `r` at the end of `to`'s
@@ -174,6 +221,7 @@ static void copy_request(tide_storage *to, const tide_storage *from, const tide_
     moved.data = room_for(to, r->data_size);
     if (r->data_size) memcpy(to->bytes + moved.data, from->bytes + r->data, r->data_size);
     *request_room(to) = moved;
+    to->indexed = UINT32_MAX; // Not in its index, which the next ask makes again
 }
 
 void tide_storage_take(tide_storage *to, tide_storage *from)
@@ -186,12 +234,14 @@ void tide_storage_clear(tide_storage *s)
 {
     s->count = 0;
     s->size = 0;
+    s->indexed = UINT32_MAX; // The index still holds what was asked: the next ask empties it
 }
 
 void tide_storage_free(tide_storage *s)
 {
     free(s->items);
     free(s->bytes);
+    free(s->slots);
     memset(s, 0, sizeof *s);
 }
 
