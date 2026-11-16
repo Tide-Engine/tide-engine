@@ -42,6 +42,89 @@ linear_textures E2E (pack replacement with a retained marked field). Full contra
 
 # Assets and local files
 
+## Compressed packs: what a release ships (2026-11-16)
+
+Owner: "the `pack` file can be further compressed it seems", then "lets try option 1" (compress release packs at
+rest, decompress at load, debug and `tide run` packs as they are). The codec is Claude's pick, changed from the
+zstd first recommended once the numbers were in: **LZ4 blocks, by the engine's own code**. The runtime has nobody
+else's code but musl's doubles, the engine is compiled with every game, and an LZ4 reader is one short function to audit
+(`lz_read`) where zstd's is thousands of lines; LZ4 gets most of what zstd does on these files and reads at three times the speed.
+zstd stays open if the owner wants the last points (it would be a vendored decoder in the runtime).
+
+Measured on packs on this machine, 4 MiB pieces each compressed alone (Python's lz4/zstd/zlib modules, one thread):
+
+| Pack | Raw | lz4 fast | lz4 hc9 | zlib 6 | zstd 3 | zstd 19 | the engine's |
+|---|---|---|---|---|---|---|---|
+| Mount & Rifle, native release | 446.7 MB | 64.1% | 56.3% | 50.4% | 51.3% | | 56.8% |
+| Gravewake, release | 35.4 MB | 55.2% | 51.3% | 44.2% | 42.3% | 38.6% | 51.5% |
+| Sidekick, release | 236.1 MB | 28.5% | 24.8% | 21.5% | 14.8% | 13.4% | 25.6% |
+
+Where the bytes are (zstd 3 of each kind alone): BC1 blocks 61% (262 MB of Mount & Rifle's 447), BC3 22-37%, mesh
+vertices 24-36%, 32-bit indices 36-39% (8% in Sidekick), skinned model bytes 15-25% (199 of Sidekick's 236 MB),
+RGBA images 63%, clips 84-88%. Making the contents smaller (the skinned models' keys, 16-bit indices) would cut
+memory too and is separate work, not done.
+
+- **The file** (`tide/pack.h`, A pack compressed): `tide_pack_compressed_header` (magic `TIDEPKLZ`, version 1,
+  the count of pieces, the pack file's size), a `uint32_t` a piece (its bytes in the file), then the pieces. A
+  piece is `TIDE_PACK_PIECE` (4 MiB) of the pack *file* (header, entries and region alike; the last piece is
+  what's left), as one LZ4 block, or as it is where that's no smaller (its size in the table is then the
+  piece's). The blocks are the format lz4's own tools read and write (the last 5 bytes literals, no match
+  starting in the last 12), so either side can be checked against them.
+- **`tide_pack_compress(bytes, size, each, &compressed)`** (pack.c, the builder's half): each piece alone, at
+  once through `each` (`tide_pack_each`) or one after another, to the same bytes. The match finder is a hash of 4
+  bytes to its last place and a chain of the places before it (64 tried, 64 KiB back), with one byte of lazy
+  matching under 128 bytes. One thread: 71 MB/s on Mount & Rifle (6.3 s), 106 and 121 MB/s on the other two, for a ratio within a point
+  of lz4's hc9; tide compresses the pieces on every processor (`build_threads_each`), which wasn't timed.
+- **`tide_pack_load` reads either file.** A compressed one (`load_compressed`, pack_load.c): the pieces that start
+  before the region (the header and entries: one piece, more only past ~75,000 entries) go into memory let go of
+  after; every other piece is read straight into the region's own allocation, so the pack is never in memory
+  twice and nothing copies it. The allocation is the file's region plus a slot (1 MiB), which holds what's laid
+  out after it (lists and maps of textures, clips and fonts); a pack whose laid-out blocks need more is
+  reallocated once its counts are read. The pack loaded before stays until all of the new one has been read and
+  checked, as for a raw pack. The loaded pack is the same in every byte, with the same digest (the raw header's):
+  nothing that reads a loaded pack can tell which file it came from, and asset-relative state transfers between
+  a machine with a compressed file and one with a raw file agree.
+- **A forged file reads nothing outside itself or the piece being written** (`compressed_is_whole`, `lz_read`):
+  the table must add up to the file's size exactly, a piece is never more than its bytes nor fewer than a 255th
+  of them (LZ4's limit, so the file's own size bounds the memory it asks for), a literal run stays in the block
+  and the piece, a match starts no earlier than its own piece's first byte and ends inside it, and a block must
+  fill its piece exactly. The 8-bytes-a-step match copy writes at most 7 bytes past a match, only where the
+  piece has 8 more.
+- **`tide_pack_expand(bytes, size, &pack_size)`**: the raw file a compressed one holds, for tools and tests.
+  `tide_pack_skinned_content` takes a raw pack only (its callers have tidec's file).
+- **What ships compressed** (`pack_ships_compressed`, compiler/cli/build.c): `tide build --release` and
+  `--distribution`, natively beside the program (`<name>.pack`, `<name>-server.pack`), a split web page's
+  `index.pack` (the page's `TIDE_FILES.pack.size` is the file's), and the APK's `assets/game.pack` (a
+  `game.pack.shipped` beside tidec's file). Not compressed: debug builds, `tide run` of any kind (watching, or a
+  run with no window: `build_options.run_pack`), a `--single-file` page (its gzip of the raw pack is smaller than
+  gzip of LZ4), managed hosting's `server.pack` (tide-services reads it), Unity's, and CMake's `tide_add_game`
+  copies in this repo. `gen/game.pack` is always tidec's raw file, so hot reload, `pack_file_is`, the fingerprint
+  and `<name>_pack.c` are untouched. `place_file(from, to, compressed)` is `place_pack` with the choice: its
+  marker's record says `compressed`, so a debug build after a release (same `.build/<name>.pack`) writes the raw
+  file again and a release after it compresses again; an unchanged pack is not compressed twice. The step shows as
+  "compressing assets". A build report's `pack.bytes` stays the pack's own size (what it is in memory); the
+  shipped file's size is under its outputs.
+
+Load time, release engine, best of 5 from bytes already in memory (so without the file read a smaller file
+saves): Gravewake 5 ms raw, 13 ms compressed; Sidekick 78 ms raw, 124 ms compressed. `tide_pack_expand` alone
+runs at 3.0-3.6 GB/s on one thread. Loading stays on one thread: the pack isn't what a game's start is (Pack
+format 5, below), and the runtime has no pool of its own before the host's.
+
+Tests: `pack_compressed_loads_as_the_pack_it_holds` (the test packs of text, grids, maps, textures in lists and
+maps, meshes, a 20 MiB blob, an empty pack, bytes that don't compress, and pieces of both kinds in one file: the
+same bytes whatever makes the pieces, expanded byte for byte, and loaded to the same digest and the same region
+with what's laid out after it), `pack_compressed_entries_past_its_first_piece_are_read` (80,000 entries, region
+in the last piece and before it), `pack_compressed_bytes_that_are_not_one_are_refused_and_the_loaded_pack_stays`
+(every truncation, a byte more, forged version/count/size/piece sizes, and every byte of a file flipped three
+ways under ASan, with the pack loaded before still there after each refusal); native ASan and the WASI suite.
+`tide_cli_build_report` checks the placed files: a release's `.build/<name>.pack` is `TIDEPKLZ` and smaller, a
+warm build doesn't compress again, a debug build writes `TIDEPACK` there and a release after it compresses again,
+and a web page's `index.pack` likewise with the page told the file's size. Checked by hand, not in the suite:
+lz4's own reader takes the engine's blocks and the engine's reader takes lz4's (fast and hc9) for all 173 pieces
+of the three packs above, and `sample_tag` run with no window draws the same capture, byte for byte, from its
+pack raw and compressed. Not run: an APK built with a compressed pack (the loader is the same code as
+desktop's; building and running one needs the Android setup, which this change didn't use).
+
 ## Pack format 5: built in place, a digest of pieces (2026-11-10)
 
 Owner, after the `tide run` work (notes/cli-and-packages.md): "feel free to change the pack format". An edit build of

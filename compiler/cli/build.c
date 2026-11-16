@@ -28,7 +28,9 @@
 #include "unity_assets.h"
 #include "unity_code.h"
 #include "unity_shaders.h"
+#include "tide/pack.h"
 #include "tide/sha256.h"
+#include "build_threads.h"
 
 #ifdef TIDE_EMBEDDED_CLANG
 #include <zlib.h>
@@ -2439,12 +2441,28 @@ static bool page_file(const char *page, const char *extension, const char *data,
     return ok;
 }
 
+// The pack's pieces compressed on every processor (tide_pack_compress)
+static void pack_each(const uint32_t count, void (*work)(void *context, uint32_t i), void *context)
+{
+    build_threads_each(count, 0u, work, context);
+}
+
+// Whether a build's pack ships compressed (tide/pack.h, A pack compressed): a release's or a distribution's,
+// which is built to be handed on. A debug build's, a watched run's and a run's with no window stay as tidec
+// wrote them, copied with no pass over their bytes. Managed hosting takes the pack as it is.
+static bool pack_ships_compressed(const build_options *opts)
+{
+    return opts->release && !opts->watch && !opts->run_pack && !opts->managed && !opts->unity;
+}
+
 // The page. Split (tide build --web): the program and its pack beside it, as
 // <page>.wasm and <page>.pack, which it downloads, showing how much has come,
 // and a browser caches between visits. Single (--single-file): both inside
-// it as base64, gzipped in a release, so it opens straight from disk.
+// it as base64, gzipped in a release, so it opens straight from disk. With
+// `compressed_pack`, a split page's pack is compressed (a single page's is
+// gzipped with the rest of it, which makes fewer bytes of the pack as it is).
 static bool make_page(const char *root, const char *folder, const char *program, const char *page, const char *pack,
-                      const char *const *args, const bool release, const bool single_file)
+                      const char *const *args, const bool release, const bool single_file, const bool compressed_pack)
 {
     char *script_path = path_join(root, release ? "web/tide.release.js" : "web/tide.js");
     char *shell = page_shell(root, folder);
@@ -2455,6 +2473,13 @@ static bool make_page(const char *root, const char *folder, const char *program,
     char *wasm = sys_read_file(program, &wasm_len);
     size_t pack_len = 0;
     char *packed = pack ? sys_read_file(pack, &pack_len) : NULL; // The game's assets
+    if (packed && compressed_pack && !single_file) { // The file the page downloads (tide/pack.h, A pack compressed)
+        size_t compressed_len = 0;
+        char *compressed = (char *)tide_pack_compress((const uint8_t *)packed, pack_len, pack_each, &compressed_len);
+        free(packed);
+        packed = compressed;
+        pack_len = compressed_len;
+    }
     const char *slot = shell ? strstr(shell, "{{{ SCRIPT }}}") : NULL;
     bool ok = false;
     FILE *f = NULL;
@@ -3197,16 +3222,38 @@ static bool place_debug_views(const build *b, const char *output, const char *st
 }
 
 // What a marker beside `from` says of its last copy to `to` (place_pack): where it went, and both files' stamps
-// after it.
-static char *placed_record(const char *from, const char *to)
+// after it, and whether it went there compressed (place_file).
+static char *placed_record(const char *from, const char *to, const bool compressed)
 {
     char stamps[64];
-    snprintf(stamps, sizeof stamps, "\n%016llx %016llx\n", (unsigned long long)sys_file_stamp(from),
-             (unsigned long long)sys_file_stamp(to));
+    snprintf(stamps, sizeof stamps, "%s\n%016llx %016llx\n", compressed ? "\ncompressed" : "",
+             (unsigned long long)sys_file_stamp(from), (unsigned long long)sys_file_stamp(to));
     return format("%s%s", to, stamps);
 }
 
+// The pack at `from` written compressed at `to`.
+static bool write_compressed_pack(const char *from, const char *to)
+{
+    size_t size = 0, compressed_size = 0;
+    char *bytes = sys_read_file(from, &size);
+    if (!bytes) return false;
+    build_step("compressing assets");
+    uint8_t *compressed = tide_pack_compress((const uint8_t *)bytes, size, pack_each, &compressed_size);
+    free(bytes);
+    const bool ok = sys_write_file(to, (const char *)compressed, compressed_size);
+    free(compressed);
+    return ok;
+}
+
+static bool place_file(const char *from, const char *to, bool compressed);
+
 static bool place_pack(const char *from, const char *to)
+{
+    return place_file(from, to, false);
+}
+
+// `from` copied to `to`, or with `compressed` (a pack) written there compressed.
+static bool place_file(const char *from, const char *to, const bool compressed)
 {
     // A big game's pack is hundreds of megabytes, which tidec leaves alone when it comes out the same: copied again
     // only when it or the copy changed since the last copy. A marker for each place it goes, so a build's copy and
@@ -3214,7 +3261,7 @@ static bool place_pack(const char *from, const char *to)
     char place[32];
     snprintf(place, sizeof place, "%016llx", (unsigned long long)hash_text(0xCBF29CE484222325ull, to));
     char *marker = format("%s.placed-%s", from, place);
-    char *record = placed_record(from, to);
+    char *record = placed_record(from, to, compressed);
     char *last = sys_read_file(marker, NULL);
     const bool same = last && strcmp(last, record) == 0 && sys_exists(to);
     free(last);
@@ -3229,10 +3276,10 @@ static bool place_pack(const char *from, const char *to)
         sys_remove(to);
         return true;
     }
-    const bool ok = sys_copy_file(from, to);
+    const bool ok = compressed ? write_compressed_pack(from, to) : sys_copy_file(from, to);
     if (!ok) fprintf(stderr, "tide: can't write %s\n", to);
     if (ok) {
-        record = placed_record(from, to);
+        record = placed_record(from, to, compressed);
         sys_write_text(marker, record);
         free(record);
     }
@@ -3339,14 +3386,17 @@ static char *build_game(const char *root, const build_options *opts, const char 
     char *pack = pack_of(gen);
     if (opts->web && !opts->managed) {
         build_step("packaging web page");
-        if (!make_page(root, b.folder, program, output, pack, args, opts->distribution && !opts->watch, opts->single_file)) return NULL;
+        if (!make_page(root, b.folder, program, output, pack, args, opts->distribution && !opts->watch, opts->single_file,
+                       pack_ships_compressed(opts))) {
+            return NULL;
+        }
     }
     if (!opts->web || opts->managed) { // Beside the program, as <name>.pack, which tide/run.h loads
         char file[512];
         snprintf(file, sizeof file, "%s.pack", opts->managed ? "server" : b.name);
         if (opts->server && !opts->managed) snprintf(file, sizeof file, "%s-server.pack", b.name);
         char *beside = path_join(output_dir, file);
-        const bool placed = place_pack(pack, beside);
+        const bool placed = place_file(pack, beside, pack_ships_compressed(opts));
         free(beside);
         if (!placed) return NULL;
     }
@@ -3861,6 +3911,7 @@ int tide_run_native(const char *root, const build_options *opts, const char *con
     build_options standalone = *opts;
     standalone.output = output; // Another run never links over this one's executable
     standalone.keep_output = r.kept_folder;
+    standalone.run_pack = true;
     char *program = tide_build(root, &standalone);
     int code = 1;
     if (program) {
@@ -5576,6 +5627,12 @@ static char *build_android_work(const char *root, const build_options *opts, cha
     }
     desc.icon = sys_exists(icon) ? icon : NULL;
     char *pack = pack_of(gen);
+    if (sys_exists(pack) && pack_ships_compressed(opts)) { // The app's is a compressed copy of it, made beside it
+        char *shipped = format("%s.shipped", pack, NULL);
+        if (!place_file(pack, shipped, true)) return NULL;
+        free(pack);
+        pack = shipped;
+    }
     desc.pack = sys_exists(pack) ? pack : NULL; // The game's assets, as assets/game.pack
     desc.microphone = b.info.microphone;
     char error[512];
