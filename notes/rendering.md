@@ -168,6 +168,33 @@ emptying that folder or raising NVIDIA's shader cache size fixes this machine; w
 driver a folder of the game's own (`__GL_SHADER_DISK_CACHE_PATH`, set before Vulkan loads: NVIDIA's alone, and a
 folder that's emptied when `pipelines.vulkan` starts over) is the owner's to decide.
 
+### What the driver compiles cold: mostly tidec's helpers (2026-11-16, later)
+
+Owner: "sure look into that" (the shaders' size). Each shader's SPIR-V and WGSL read out of the generated C, the
+probe's host loading other SPIR-V for a shader from a folder (by the FNV of its own words). Nothing built.
+
+- **Cold time goes by the code once every call is inlined, not by the file's size.** Over the game's 155 graphics
+  pipelines made one at a time: r = 0.89 with inlined instructions (about 11 ms a thousand), 0.77 with words.
+  `LandVert and GroundLit`'s fragment stage is 6,323 instructions as written and 96,795 inlined; the game's
+  shaders are 398 thousand instructions as written and 1.5 million inlined.
+- **Three quarters of that is helpers tidec writes** (shader.c's `tide_*`), by times inlined times size: noise
+  40.6% (`tide_simplex3` 1,167 instructions a call, 365 calls; `tide_grad3`, `tide_grad2`, the xxh hash steps),
+  the forgiving math 35.2% (`tide_smoothstep1` 7.3%, `tide_nan` 6.3% over 15,835 calls, `tide_max1` 5.6%, `tide_f`
+  4.1% over 20,939 calls, `tide_pow1`, `tide_saturate1`, `tide_min1`), the game's own functions 24.2%.
+- **The same pipelines cold, by what SPIR-V they're given** (11 threads; base twice):
+
+| SPIR-V | Step | Driver time |
+|---|---|---|
+| As tidec writes it | 4.6-5.0 s | 43-45 s |
+| `spirv-opt -O` (every call inlined, then cleaned: 21% more words) | 3.2 s | 32 s |
+| Cleaned with no inlining (`--ssa-rewrite`, dead code, CCP...: 31% fewer words) | 4.3 s | 40 s |
+| Every helper `DontInline` | 9.0 s | 89 s |
+
+  Warm, all four are the same (0.05-0.07 s). Not checked: that the optimized SPIR-V draws the same pixels.
+- Not tried, for the owner: the helpers written with fewer instructions for the same values (`tide_grad2/3`'s
+  branches as a table, `tide_smoothstep1`, `tide_max1`... without branches), which changes the shader goldens; and
+  tidec doing what `spirv-opt -O` does, which it has no code for (SPIRV-Tools is C++).
+
 ## Why a warm shader step still takes 5 s on Mount & Rifle, and keys that age (2026-11-10)
 
 Owner: "5s vs 7.7s for cached shaders still seems high no?" Measured with the hidden-loader setup of the entry
