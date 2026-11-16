@@ -1,22 +1,193 @@
 # The schedule and the tick on threads
 
-## Gap: rows just spawned are one run's, so a system that works on new rows works on one thread (2026-11-16)
+## A guard's few rows shared out across threads (2026-11-16, last)
 
-Measured, not changed (notes/voxels.md, A whole view arriving). A per-entity system in runs gives each task a
-range of the 32 runs, and a run is a range of the entities' keys in identity's order
-(`tide_key_count * run / tide_runs` in a generated task): entities spawned together are next to each other in that
-order, so they're one run's, or two's. `bench_voxels`' `Generate` makes a tick's new chunks, which are always the
-last spawned: its 24 pieces go out every tick, and one of them does all the work. 64 chunks with ground in them
-take 9.0 to 9.4 ms on 1, 4 and 12 threads alike (`--worst`, the same ticks of the same run), and that was the
-server's longest update. It shows nowhere a system's rows all do something (the flock, the grids' fixtures); it
-shows wherever a guard lets through a few rows that came together.
+The gap that stood here that morning ("rows just spawned are one run's, so a system that works on new rows works on
+one thread"), taken apart and closed for the systems it named. Compiler only; nothing a game's code can observe; my
+picks, Provisional in `docs/spec.md` (Grids).
 
-What would close it is a run's rows chosen among the rows the guard lets through: tidec already has the marks for
-a system in one piece (`tide_live_<System>`), and with pieces the marks would be made once in the system's `own`
-and each run be a range of the live keys, the same on one thread (the runs' heaps go by which run a row is in, so
-one thread has to choose the same). That's a change to every such system's heap layout, and to the hashes pinned
-on them. Until then a game bounds such a system's work a tick itself: voxels' `Pace` lets `Generate` make 48
-chunks with ground in them a tick, about 7 ms on one thread.
+**What was happening** (the generated `tide_task_Generate` of `bench_voxels`, and the runtime's `pieces_for`):
+
+- `Generate` changes its rows' grids and queues (`Survey` sends `Top`), so it's in runs that are **shares of the
+  order** (`system_heap_runs` and not `system_heap_runs_scattered`): `tide_runs = min(keys, 32)`, run `r` is keys
+  `[count * r / runs, count * (r + 1) / runs)`, and a task of `pieces` is runs `[runs * task / pieces, ...)`. On 12
+  threads the runtime asks for 24 pieces (`pieces_for(1, work, 12)`: twice the threads, as its 6,490 rows are reckoned
+  at 65,143 units each), so a task is one or two runs, and a run is a thirty-second of the chunks: 203 of 6,490.
+- The keys are in identity's order, whose first word is the birth clock. The 48 to 64 chunks `Pace` lets through are
+  among the last spawned, so they're in the last run or two: **one task's, two's at a boundary**. The other 22 tasks
+  walked their keys and called rows that returned on their first line.
+- With more than one piece the marks of live rows weren't used at all (`LIVE_PIECED`: every row marked, as a task
+  can't make them while other tasks' rows change), so `tide_own_Generate` began and copied the written lanes of every
+  chunk, every tick.
+- The morning's write-up said "a per-entity system in runs". It's the ones whose rows **queue**: one in runs whose
+  rows queue nothing has been by identity since 2026-11-14 and its new entities are in every run. A system that only
+  queues (no heap) had the same: its task is keys `[count * task / pieces, ...)`.
+- Measured before (release, Windows, 7900X; the same ticks of the same run): `Generate`'s longest 7.0 to 7.4 ms on
+  1, 4 and 12 threads alike at the default view, 9.2 to 10.8 at twice and three times the view, 13.3 to 15.7 with 32
+  players apart, and 22.8 with `--make 1920` on 1 and 12 threads.
+
+**What was built** (`compiler/src/codegen.c`: `shares_live_rows`, `gen_live_keys_make`, `gen_live_keys_marks`,
+`gen_canonical_live`'s `LIVE_KEPT`, `gen_system`; no runtime function new or changed):
+
+- **Which systems** (`shares_live_rows`): a per-entity system that splits in order (`system_splits_in_order`: it
+  queues, or changes its rows' text, lists or grids in runs that are shares; one that gathers too), is not by
+  identity, and has marks (`rows_live`: it starts with `if (...) return;` tests of its own row and of singletons it
+  doesn't change, so a row's answer before any row runs is its answer when its turn comes). 33 of the 596 games the
+  release tree builds have one (the generated C of the others is byte for byte what it was, the simulation
+  identity apart: old and new tidec over every game's sources).
+- **The marks are made once, before any row runs**: by the one task where there's one (as before), and in
+  `tide_own_<System>` where there are more, which the runtime calls before the first task (such a system has one now
+  whether or not it changes a component). Counted (`popcount`): where the marked rows are **at most a quarter of the
+  system's entities** (`TIDE_LIVE_FEW`), their keys and slots are kept, in the keys' order (`tide_live_keys`: one walk
+  of the keys, only on ticks with something marked), in a tick-local array the world points at while its systems run
+  (`tide_world.tide_live_keys`, beside `tide_run_keys`; `NULL` in a world's bytes).
+- **The few are what's shared out.** The task takes `tide_keys`, `tide_key_slots` and `tide_key_count` from the kept
+  keys, and everything after is as it was: a heap's runs are `min(live, TIDE_LIVE_RUNS)` shares of the live keys, a
+  task its share of the runs; a system with no heap has `[live * task / pieces, ...)`. So 64 new chunks are 16 runs of
+  4 and 24 tasks have one run or none, where one task had 64.
+- **Where they aren't few, nothing changed**: runs and tasks are shares of every key, the tasks mark every row, and a
+  row stays in its run from tick to tick whichever rows the guard lets through. That's why there's a threshold: with
+  shares of the live rows always, a guard that lets through another half of the rows each tick would move most rows
+  to another run each tick, their lists and grids with them (a grid moves whole when another run adds a chunk to it).
+- **One thread shares out the same.** A heap's runs are a row's heap, so the one task of a system in runs counts its
+  marks and keeps the few's keys itself (a local, freed at its end) and goes through the same runs. One that only
+  queues has no need on one task: it goes through every key and the marks leave the others out, in the same order.
+- **Lanes.** `tide_own_` begins the written lanes of the chunks the few are in and no others (it began and copied
+  every chunk's); `tide_done_` ends those: it marks them again from the kept keys (`gen_live_keys_marks`; no row
+  moves while a system's tasks run). Not few: every chunk, both, as before.
+- **16 runs for the few, not 32** (`TIDE_LIVE_RUNS`). Each run's rows write its heap's last page, which is hashed and
+  copied whole beside a snapshot. With 32, a tick's 64 new chunks' blocks (4 KB each, 16 KB pages) were in 32 pages
+  where one run had them in 17: the server's hashing went 14.7 to 15.4 ms a second at twice the view and 29.0 to 32.7
+  at three times (19.2 to 20.6 and 29.0 to 31.4 on one thread). With 16 it's 14.8 to 14.75 and 29.1 to 30.3, and
+  `Generate`'s longest tick no longer (1.8 and 1.9 ms with 32 at the default view and twice it, 1.5 and 1.85 with 16,
+  in another sitting: 12 threads have 16 runs to share).
+
+**Why the world is the same on any count of threads.** The marks are a function of the world as the system starts
+(its own rows' bytes and singletons nothing changes while it runs), made by one thread before any row. The count,
+`few`, the kept keys and so each row's run follow from them and the keys' order alone. Tasks take runs, and keys
+within a run, in the keys' order, so the queues joined in task order are one thread's, the logs of a gathering system
+and of `Visibility.Set` are in their entities' order, and a run's heap is its rows' alone, in their order.
+
+**Tests.**
+
+- `tidec_e2e_guarded_rows` (`compiler/tests/e2e/guarded_rows.tide`, `guarded_rows_test.c`): 700 chunks in four
+  archetypes (and some left out) and 1,300 units; 7, 48 or 90 chunks spawned a tick and gone 14 ticks later, units
+  spawned and destroyed by their own system. `Make` (grids, a list, text, a world event through a function, an entity
+  event, a spawn, a destroy) makes a chunk the tick after it's spawned, and half of all chunks again one tick in six
+  (not few then: both ways and the change between them, and grids moving between runs' heaps); `Wake` only queues and
+  writes its row; `Enlist` gathers into a singleton (a float sum); `Call` only sends (a `tide_own_` and no `tide_done_`).
+  Checked: after the first tick with work, on one thread, every one of the 16 runs' heaps has blocks (they were the
+  last two runs'); 16 ticks on a pool that's one thread saying it has eight, and five runs of 16 on the platform's,
+  a snapshot taken every tick: hash, packed bytes, the float sum's bits and the logs equal one thread's every tick,
+  every tick worth threads, and no page left begun (`tide_page.was`); a pack, a delta over an unpacked base and a
+  snapshot rolled back and run again on one thread give the same world; the world is pinned
+  (`0x8137b7e272d7a4ac`). `TIDE_GUARDED_ROWS_TIME` times it.
+- **Mutations** (each fails the fixture; scratch script, not kept): no sharing at all (`shares_live_rows` false:
+  the runs check and the pin); one task never making its keys (the pool's world isn't one thread's); the kept keys
+  leaving the last marked row out; `few` by another measure in `tide_own_` than in one task; `tide_done_` ending no
+  chunk, and `tide_own_` beginning every chunk while `tide_done_` ends the live ones (pages left begun: caught only
+  once the fixture looked at `was`; hashes and bytes don't show it, the page is a leaked copy).
+- Run, release, Windows: `tidec_e2e_guarded_rows`, `row_grids`, `row_heaps`, `rows`, `ordered_split`, `gather`,
+  `heaps`, `grids`, the five `lists*`, the ten `parallel*`, `visibility_runs` (and `_checked`, `_memo_off`),
+  `visibility_repairs` (four), `visibility_lists`, `previous*`, `rolls`, `arrays`, `function_acts`, `kept_lanes`,
+  `row_lanes`, `view_reads`, `world_edit`, the 29 `tidec_schedule_*`, `tidec_row_lanes_codegen`, `tide_tests` (three),
+  `bench_voxels` (six), `bench_gallery`, `bench_sand`, `bench_earth` (three), `earth_tests`, `towers_tests`,
+  `tide_box2d_parts`, `tide_box3d_parts`, and the private prototypes' `banked_test` and `gravewake_test` (their
+  generated C changed): 90 of 90. Every game whose generated C changed is among them but `sample_asteroids` and the playable `voxels`, which were
+  built.
+- **Pins moved**: `bench_voxels`, `_checked` and `_counts` `0x66c02ffc1011cc8f` to `0x3dc3bff0071473c0`;
+  `bench_voxels_forgets` `0xc810e7b2b6568f95` to `0x2c97d3472753d585`; `bench_voxels_wide` `0x4ed657a4bc93d5c3` to
+  `0xb5d63358d8e6f42a`; `bench_voxels_arrives` `0x7f07c9d38e49fd83` to `0xbfaff20756dbd116`. World hashes, which cover
+  each heap's pages, and new chunks' blocks are in other runs' heaps. Each the same on 1, 4 and 12 threads, the three
+  `--quick` builds alike. No other pin among the tests run moved (a queue's order doesn't change, and the other fixtures' few were never
+  in a heap's runs, or never few).
+
+**Measured** (release, Windows, 7900X, 12 cores; BelowNormal, before and after alternating, one run at a time; the
+machine was shared with another agent's builds for part of it, so rows are from one sitting each; `bench_voxels`
+30 s with 1% lost as notes/voxels.md's sweep; medians of two or three runs; before is the base commit's build):
+
+| `bench_voxels`, 12 threads | 8 bots | 8, `--near 12` | 8, `--near 18` (one run) | 32 bots | 32, `--spread 256` (one run) |
+|---|---|---|---|---|---|
+| `Generate`, its longest tick, ms | 7.08 to 1.48 | 9.32 to 1.85 | 10.8 to 2.58 | 8.52 to 1.68 | 13.3 to 2.85 |
+| Server, simulating, ms a second | 18.9 to 11.5 | 49.1 to 27.5 | 93.4 to 50.0 | 46.2 to 30.5 | 201.6 to 139.4 |
+| ...in all | 33.8 to 26.3 | 86.0 to 63.9 | 165.2 to 122.7 | 104.6 to 89.4 | 344.2 to 277.1 |
+| Server update, median, ms | 0.27 to 0.24 | 0.69 to 0.59 | 1.59 to 1.34 | 1.50 to 1.33 | 6.21 to 5.02 |
+| ...99th percentile | 4.62 to 3.12 | 11.45 to 9.64 | 25.3 to 24.7 | 8.07 to 6.39 | 17.8 to 15.2 |
+| ...longest | 9.15 to 6.05 | 22.4 to 19.3 | 41.0 to 41.2 | 14.8 to 14.3 | 29.7 to 32.7 |
+| Server, hashing, ms a second | 5.75 to 5.68 | 14.78 to 14.75 | 29.1 to 30.3 | 17.0 to 17.3 | 69.3 to 68.0 |
+| A client, simulating, ms a second | 4.06 to 3.41 | 9.78 to 8.12 | 15.6 to 12.1 | 5.79 to 5.13 | |
+
+| The same, 1 thread | 8 bots | 8, `--near 12` | 8, `--near 18` | 32 bots | 32, `--spread 256` |
+|---|---|---|---|---|---|
+| `Generate`, its longest tick, ms | 7.35 to 7.11 | 9.20 to 8.06 | 9.87 to 9.92 | 8.26 to 8.09 | 15.7 to 13.2 |
+| Server, in all, ms a second | 34.2 to 34.3 | 84.6 to 85.0 | 164.2 to 166.2 | 101.6 to 101.9 | 331.6 to 326.6 |
+| ...hashing | 5.62 to 5.70 | 14.41 to 14.57 | 28.7 to 30.3 | 16.9 to 16.9 | 71.0 to 69.3 |
+| Server update, 99th percentile / longest, ms | 4.62 / 9.70 to 4.63 / 9.34 | 11.3 / 22.1 to 11.5 / 22.6 | 24.7 / 40.9 to 25.3 / 41.7 | 8.05 / 15.4 to 8.04 / 14.4 | 17.4 / 27.8 to 16.8 / 22.9 |
+
+On 4 threads: 8 bots `Generate` 7.01 to 2.00 ms, simulating 18.8 to 12.5 ms a second, the update's 99th percentile
+4.62 to 3.22 and longest 9.20 to 6.85; at twice the view `Generate` 9.55 to 2.56, in all 89.0 to 69.6 (one run).
+Ticks, bytes sent and how long a box takes to arrive are the same before and after in every run.
+
+| Others, ms a tick unless it says | before, 1 thread | before, the pool | after, 1 thread | after, the pool |
+|---|---|---|---|---|
+| `guarded_rows` (`TIDE_GUARDED_ROWS_TIME`; before is this compiler with no sharing): `Make` | 0.66-0.68 | 0.59-0.77 | 0.68-0.74 | **0.22-0.27** |
+| ...`Wake`, `Enlist`, `Call` | 2.58, 1.50, 0.65 | 0.54-0.66, 1.10-1.49, 0.21-0.24 | 2.58, 1.50, 0.65 | 0.38-0.58, 0.63-1.09, 0.19-0.29 |
+| ...the tick with a snapshot and the hash | 6.13-6.27 | 2.50-3.05 | 6.19-6.44 | 2.37-3.00 |
+| `row_heaps` (`TIDE_ROW_HEAPS_TIME`), the tick | 7.89-8.01 | 1.83-2.04 | 7.87-8.17 | 1.84-2.07 |
+| ...`Fill` (no guard: its code is as it was), `Whisper` (a guard, one row in 29) | 7.43-7.52, 0.063-0.066 | 1.07-1.22, 0.070-0.086 | 7.39-7.65, 0.063-0.068 | 1.07-1.22, 0.051-0.059 |
+| `row_grids` (`TIDE_ROW_GRIDS_TIME`; its generated C is as it was), the tick | 8.51-9.06 | 4.93-5.33 | 8.53-8.98 | 4.85-5.29 |
+| `visibility_runs` (`TIDE_VISIBILITY_RUNS_TIME`; as it was), the tick | 7.79-7.98 | 5.38-5.64 | 7.78-8.04 | 5.35-5.66 |
+| `bench_gallery`, 16 players, the server's simulate, ms a second (as it was; world `0x6b61091853f6cb7d` at tick 878 both) | 0.68 | 0.67-0.68 | 0.67-0.68 | 0.67-0.71 |
+| `bench_sand`, the server's simulate, ms a second (as it was; world `0xfbfaac0f0fd4579c` at tick 736 both) | 2.53-2.58 | 1.42-1.56 | 2.53-2.54 | 1.42-1.45 |
+
+What it says:
+
+- **A tick's new chunks are made on every core**: 4.8 times faster on 12 threads at the default view, 5 at twice the
+  view, 4.2 at three times; 3.5 on 4 threads. The server simulates two fifths less at the default view and at twice it, and its
+  update at the 99th percentile is a third shorter at the default view (a sixth at twice). The longest update is no
+  longer `Generate`'s: at the default view the longest are repairs (`--worst`: 2.0 to 2.8 ms of packing and 2.2 to
+  4.2 of "the rest", with at most 1.9 of `Generate` beside them), and at wide views the whole view's repair and the tick a box is spawned in (notes/voxels.md, What's left, 5a, 5d),
+  which is why the longest at three times the view and with 32 apart didn't move.
+- **Not 12 times.** Shares are of rows, not of what they cost: a chunk with ground is ten of air, and a run is the
+  rows next to each other in the order. With `--make 1920` (four times the chunks a tick) the same ticks go 22.8 to
+  4.5 ms.
+- **One thread pays little**: the fixture's `Make` 0.67 to 0.70 ms (its few rows' blocks in 16 heaps where two had
+  them), the server's hashing at three times the view 28.7 to 30.3 ms a second (one run); the rest is within the
+  runs' spread.
+- **Systems with no guard, or whose guard lets most rows through, are as they were**: their generated C is the same
+  (no guard), or takes the same path with one count of the marks more.
+- A client's simulating on threads is a sixth less: `Generate` there has no row to do, and its 24 tasks now find no
+  keys where each walked its share and called every row (the "pieces for a guarded system with nothing to do" gap
+  below, mostly: the pieces still go out).
+
+Gaps:
+
+- **A system that splits by chunks is still one thread's for rows that came together** (found here, not closed; the
+  most common kind of system: no heap, nothing queued). Its tasks are its tables' chunks (in pieces where there are
+  fewer chunks than twice the threads), new rows are at a table's end, and so the rows a guard lets through are the
+  last chunk's last piece. Measured with a scratch game (not in the tree): 20,000 cells, 64 spawned dirty a tick,
+  `system Think(mut Cell cell, Time time) { if (!cell.dirty) return; ... 3,000 sines ... }`: `Think` 3.22 to 3.35 ms a
+  tick on one thread and **3.22 to 3.33 on the pool** (12 threads; 20 chunks, so one piece each). What would close it:
+  the marks made before the tasks for such a system too, and where the marked rows are few its tasks taking shares of
+  them across chunks (the canonical walk this section's systems have, over the kept keys, in place of the chunk
+  walk; lanes begun and ended for the marked chunks as here). That needs `own` and `done` called for a system in one
+  piece a chunk (the runtime calls them only for pieces: `engine/src/jobs.c`, agent-maintained) and both walks
+  generated for one system. Nothing of it is observable (no queue, no heap), so no pin would move. Cheaper and
+  partial: a chunk's pieces as shares of its marked rows, with more pieces for a system whose measured time is far
+  over its reckoning even where chunks outnumber threads; that's the runtime's cost model for every game.
+- **Shares are by count** (above). Work-stealing within a run isn't possible (a run's heap is one thread's while it
+  runs); finer runs are (the few could go in up to 32 again where their rows write no heap pages, which the compiler
+  can't tell).
+- **A system by identity with a guard** (rows queue nothing) still has each task go through its runs' keys calling
+  rows that return; with fewer than 1,024 keys, all the keys. Not measured here.
+- **The schedule doesn't say it** (`tide schedule` and the editors): a line for a system whose few rows are shared
+  out would tell a game why a guard's form matters (a test inside the body, or of a query, isn't a guard).
+- **Only a leading guard counts** (`rows_live`'s rule): a system that does its costly work under an `if` further
+  down, reads a singleton it changes in its tests, or is joined, is shared out by entity as before.
+- **The threshold is a step**: a system whose guard lets about a quarter through changes between the two ways from
+  tick to tick, and its rows change runs each time (correct, and copies of lists and grids that grow then).
+- Web, Windows ASan (`TIDE_HEAP_CHECKS`), Linux, macOS, MinGW: not run here (CI's). The moved pins are still to be
+  seen equal on the web there.
 
 ## Worker priorities (2026-11-15)
 
@@ -195,7 +366,9 @@ tick. Two costs came with it:
 Gaps:
 - **Pieces for a guarded system with nothing to do** (above). Fixes, not built: a system with marks
   (`rows_live`) reckoning only the rows its guard lets through, or pieces taken from measured time where it's less
-  than the reckoning. Both are the runtime's cost model for every game.
+  than the reckoning. Both are the runtime's cost model for every game. (2026-11-16: the pieces still go out, but
+  each finds no keys where it walked its share and called every row, and `tide_own_` begins no chunk: a client's
+  simulating on threads 4.06 to 3.41 ms a second in `bench_voxels`; the top section.)
 - **Only `Visibility.Set` in a system's own code is logged.** `CreateGroup` (it numbers the group from a counter in the
   directory, read back by the next) and `DestroyGroup` keep a system's rows in order, as do a `Set` through a function
   (it reaches the system as a heap-0 write through the function's `heap_owners`) and a `Visibility` value's `Set<T>`
@@ -447,7 +620,9 @@ session's work either way (a session hashes on the pool's threads, `hash_world_o
 
 Gaps:
 - **A system in runs whose rows queue still has runs that are shares of the order**, so a generator that also
-  spawns, sends or destroys has a tick's new entities on its last task. A merge of the tasks' queues by each
+  spawns, sends or destroys has a tick's new entities on its last task. (Closed 2026-11-16 for one that starts with a
+  guard, which `bench/voxels`' `Generate` is: where the guard lets few through, the shares are of those. The top
+  section. One with no guard is as it was.) A merge of the tasks' queues by each
   command's row (its place in the order) would let every system in runs go by identity.
 - **An owner's grids that get new chunks from systems of both kinds move between their runs' heaps** (0.5 ms a tick
   in `row_grids` on one thread). A record's `unused` word could say its chunk's run, so chunks stay where they were

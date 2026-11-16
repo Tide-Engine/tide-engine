@@ -725,7 +725,7 @@ passes the 60 a client predicts ahead of.
 | A client's update, median / p99, ms | 0.03 / 0.94 | 0.03 / 0.83 | 0.03 / 0.83 | 0.02 / 0.69 | 0.03 / 0.95 | 0.03 / 0.82 | 0.02 / 0.70 |
 | A client, simulating, ms a second | 4.0 | 3.3 | 3.3 | 1.9 | 4.1 | 3.3 | 1.9 |
 
-The same on every count: the tick is still one thread's work, and a server for this game wants one fast core.
+The same on every count: the tick is still one thread's work, and a server for this game wants one fast core. (No longer for the making of chunks: New chunks on every core, below.)
 
 **4. A player's own frame** (`voxels_near4`, `8`, `12` at 1920 by 1080 with no window, its server in the same
 process; standing 600 frames, and walking 1,100 with a hop at frame 500; `--profile`; three runs, their range)
@@ -903,6 +903,41 @@ on this machine's one core (threads don't change it), 1% lost, 50 ms each way:
   machine), a long run's worlds (level), a player's own frame at 60 Hz (no frame over 16.7 ms at the default view of
   the version to play; the long ones measured are a windowless run's).
 
+### New chunks on every core (2026-11-16, last)
+
+Item 5 of What's left, closed for `Generate` (notes/schedule-and-threads.md, top section, has what was happening,
+what was built, the tests and every table). `Generate` queues (`Survey` sends), so its runs were shares of the chunks
+in the order they were spawned, and the chunks `Pace` lets through in a tick, spawned together, were the last run's:
+one task of 24 made them all. A system that starts with a guard now has the rows the guard lets through shared out
+where they're at most a quarter of its entities, in at most 16 runs. The game is as it was.
+
+| 12 threads, before to after (30 s, 1% lost; the sweep's runs) | 8 bots | 8, `--near 12` | 8, `--near 18` | 32 bots | 32, `--spread 256` |
+|---|---|---|---|---|---|
+| `Generate`, its longest tick, ms | 7.08 to 1.48 | 9.32 to 1.85 | 10.8 to 2.58 | 8.52 to 1.68 | 13.3 to 2.85 |
+| Server, simulating / in all, ms a second | 18.9 / 33.8 to 11.5 / 26.3 | 49.1 / 86.0 to 27.5 / 63.9 | 93.4 / 165.2 to 50.0 / 122.7 | 46.2 / 104.6 to 30.5 / 89.4 | 201.6 / 344.2 to 139.4 / 277.1 |
+| Server update, 99th percentile / longest, ms | 4.62 / 9.15 to 3.12 / 6.05 | 11.45 / 22.4 to 9.64 / 19.3 | 25.3 / 41.0 to 24.7 / 41.2 | 8.07 / 14.8 to 6.39 / 14.3 | 17.8 / 29.7 to 15.2 / 32.7 |
+
+On 4 threads the default run's `Generate` is 7.01 to 2.00 ms and its update's 99th percentile 4.62 to 3.22; on one
+thread everything is as it was (34.2 to 34.3 ms a second in all at the default view, 84.6 to 85.0 at twice). Ticks,
+bytes and how long a box takes are the same before and after: the same chunks are made in the same ticks.
+
+- **A server for this game no longer wants one fast core for the making**: section 3's "the same on every count" was
+  `Generate`. What's one thread's still is the handlers (a box spawned in one tick), the checks' part that isn't on
+  the pool, and the repairs.
+- **The longest update is no longer `Generate`'s** at any view: at the default view it's a repair (2 to 2.8 ms of
+  packing and 2 to 4 of the rest), at twice the view a whole view's repair or the tick a box is spawned in (10 ms of
+  handlers for 3,125 chunks, the hopping player's run), which is why the longest didn't move at three times the view
+  or with 32 apart.
+- **`make` could be several times what it is, on a server with cores**: `--make 1920` (192 chunks with ground a
+  tick) makes the default run's same ticks 22.8 ms before, on 1 and 12 threads alike, and 4.5 after on 12; the
+  hopping player's box at twice the view is made 22 ticks after the hop for 34 and on its machine after 39 for 47,
+  with `Generate`'s longest tick 2.3 ms on 12 threads (6.9 on one, which is what a host on one thread would pay: the
+  default stays 480, the owner's to choose).
+- Pins moved (world hashes: new chunks' blocks are in other runs' heaps; each the same on 1, 4 and 12 threads and in
+  `_checked` and `_counts`): `bench_voxels` `0x66c02ffc1011cc8f` to `0x3dc3bff0071473c0`, `_forgets`
+  `0xc810e7b2b6568f95` to `0x2c97d3472753d585`, `_wide` `0x4ed657a4bc93d5c3` to `0xb5d63358d8e6f42a`, `_arrives`
+  `0x7f07c9d38e49fd83` to `0xbfaff20756dbd116`.
+
 ### Tried and taken out
 
 - **A box that grows a ring of chunks a tick** from the player's own chunk (`Watch` with a `reach` for each player), so no tick spawns a whole box and the nearest are asked for first. The server's longest update was no shorter (near 6: 14.6 to 20.6 ms; near 12: 26.4 to 32.7; near 18: 57.0 to 48.8), its p99 a little longer (5.8 to 6.3, 14.7 to 16.1), its hashing more (9.7 to 10.7, 24.4 to 31.0 ms a second: more ticks in which something becomes someone's), and a hop's box later (nine tenths in 34 ticks for 28, 54 for 40, 76 for 62). The spawning isn't what the longest update is made of on a dedicated server; it wasn't taken apart further. (Taken apart later the same day, A whole view arriving: the longest update was `Generate` making 64 chunks on one thread, which a ring a tick doesn't change; a box spawned in one tick is 2.7 ms at the default view. The box is asked for nearest first since, all in one tick.)
@@ -917,7 +952,7 @@ on this machine's one core (threads don't change it), 1% lost, 50 ms each way:
 2. (Fixed, above: a repair walked the whole server's world for one player.) What a server's update is made of at 32 players now: simulating 77 ms a second, the rest 29, hashing 24, repairs 23.
 3. ~~Loops' indexes made again whole as chunks come and go, and for every copy of a client's world (above): a fifth of a server's and a client's simulating.~~ Fixed the same day (What was fixed, the bullet on loops' indexes): a server's simulating 28.1 to 19.6 ms a second at the default view and 78.9 to 50.5 at twice, a client's 7.9 to 4.4 and 26.7 to 10.5; 0.3 to 1 ms a second of it was left, made by handlers taking every lane of their components for writing, which they no longer do (What was fixed, the last bullet: a server's simulating to 18.4 and 49.2, a client's to 3.9 and 9.7).
 4. ~~A whole view at once: the store's 64 answers a tick and the repairs' stream gap put a client 41 to 70 ticks behind, past what it predicts at three times the view; and a lost part of a long repair sends the parts after it twice (section 5).~~ Mostly closed the same day (A whole view arriving): a box on a player's machine in 20 ticks for 28 (21 for 36 at 1% lost), a client 36 to 54 ticks behind at most, and repairs' chunks within 1% of what a machine gets. What's left of it is 5a to 5d.
-5. The tick is one thread's work (section 3), and **new chunks are made on one thread though `Generate` goes across them** (A whole view arriving; notes/schedule-and-threads.md, top section): a run of a per-entity system is a range of the entities in the order they were spawned, and chunks spawned together are one run's. It is the server's longest update at the default view (7 ms for 48 chunks with ground, `Pace`'s allowance; 9.6 for the store's 64 before) and most of its simulating at wide views (93 of 165 ms a second at three times the view). Runs chosen among the rows a system's guard lets through would spread them: tidec's and the runtime's, and every such system's heap layout and pinned hash with it. With it, `make` could be several times what it is, and a box made in a tick or two.
+5. ~~The tick is one thread's work (section 3), and **new chunks are made on one thread though `Generate` goes across them** (A whole view arriving; notes/schedule-and-threads.md, top section): a run of a per-entity system is a range of the entities in the order they were spawned, and chunks spawned together are one run's. It is the server's longest update at the default view (7 ms for 48 chunks with ground, `Pace`'s allowance; 9.6 for the store's 64 before) and most of its simulating at wide views (93 of 165 ms a second at three times the view). Runs chosen among the rows a system's guard lets through would spread them: tidec's and the runtime's, and every such system's heap layout and pinned hash with it. With it, `make` could be several times what it is, and a box made in a tick or two.~~ Closed the same day for `Generate` (New chunks on every core): its longest tick 7.1 to 1.5 ms on 12 threads at the default view, the server's simulating 18.9 to 11.5 ms a second. Left of it: `make` is still 480 (with 1920 a box at twice the view is made in 22 ticks for 34); a system with no heap and no queue whose guard lets through rows that came together is still one thread's (notes/schedule-and-threads.md, top section, Gaps: none of voxels' is costly); and 5a to 5d, which are now the longest updates.
    - 5a. **A whole view's repair is packed and squeezed in one update**: 8 ms and 8 to 10 at twice the view (430 KB), the server's longest update there (22 ms) and at three times (43). In pieces over a few updates, or on another thread, it wouldn't be one update's.
    - 5b. **One repair at a time, each waiting for the last one's acknowledgement** (netcode.md, top section, Left): at twice the view the box is made over 26 ticks and goes in the repairs that fit in them, a round trip each, the last landing 6 ticks after its chunks are made.
    - 5c. **Spares only once a connection's loss is counted** (netcode.md, Left): a join and a first hop have none.
@@ -930,6 +965,7 @@ on this machine's one core (threads don't change it), 1% lost, 50 ms each way:
 
 ## Tests
 
+- Pins moved 2026-11-16, last (New chunks on every core, which lists them): all four of `bench_voxels`' and so `_checked`'s and `_counts`'; `_arrives` is `0xbfaff20756dbd116` now.
 - `bench_voxels_arrives` (2026-11-16, last; A whole view arriving): one player standing, hopping every three seconds for a minute at 1% lost; the run fails where the whole box takes more than 23 ticks to be on its machine at the median (`--fill`; it takes 21), and its world is pinned (`0x7f07c9d38e49fd83`, the same on 1 and 12 threads). It fails with the store's answers back at 64 a tick or unbounded, with no repair as the world is now, with `client_came` never saying, and with `Pace`'s allowance unbounded (by its pin). The session's tests of the spare chunks and the 512 chunks said, and `client_came`'s, are in notes/netcode.md, top section.
 - Pins after the game's changes of that section (nearest first, `Pace` and its fields, `spread` and `park`): `bench_voxels`, `_checked` and `_counts` `0x4ebcc443d78e978b` to `0x66c02ffc1011cc8f`; `_forgets` `0xa199531280421472` to `0xc810e7b2b6568f95`; `_wide` `0xf5f8baa91878a156` to `0x4ed657a4bc93d5c3`; each the same on 1, 4 and 12 threads and with every projection hash worked out twice. `voxels_walk` passes; the audits of the far regions find nothing wrong.
 - `tidec_e2e_handler_lanes`, `tidec_e2e_handler_lanes_net` and `tidec_handler_lanes_codegen` (2026-11-16, later still; `notes/ecs.md`, top section): a handler takes for writing only the lanes it changed. After it, release, Windows, all passing with every pinned hash where it was: `bench_voxels`, `_forgets`, `_wide`, `_checked` and `_counts`, `voxels_walk`, `bench_gallery`, `bench_sand`, `bench_earth` (and `_split`, `_diverge`), `earth_tests`, `tide_tests`, the `tidec_e2e_visibility_*`, `_previous*`, `_fields`, `_rows`, `_indexed_loops*`, `_index_follow`, events', commands', tasks', `world_set*`, `world_edit` and prediction fixtures, and the tests of every other game whose generated C changed (Box2D's and Box3D's courses and shards, towers, sumo, duel, the safety fixtures): 172 tests. The 30 s runs of 8 bots, 8 at `--near 12` and 32, on 12 threads and on one, end on the hashes of the build before.
@@ -959,7 +995,7 @@ on this machine's one core (threads don't change it), 1% lost, 50 ms each way:
 What a game of this kind still works around or lacks, most telling first.
 
 - **Hashing what changed** (rows kept 64 at a time, then by their blocks, then row by row with big containers as trees: section 2, 2026-11-15 and 16; 43 ms a second to 18.4, to 9.5, to 7.0, with 8 bots moving). Closed of it: pages changing for other entities' blocks, slots' pages for other entities' turnover, the directory of groups copied whole, each row's part of each player's sum added up every call, the rows of a piece read for one row's change, a big map encoded whole. What's left (`notes/netcode.md`, top section, Left): a piece looks at its whole union of heap pages each call (25 a piece here: two grid chunks to a page; 74 of a run's 172 ms of checks are the pieces'), where pages written since, kept by the runtime, would let a check go from the pages that changed to the pieces that read them: a runtime change, not made; a piece any row of which changed adds up every row's part of each player's sum again (16 ms a run).
-- **A system that writes grids ran on one thread in a game with visibility**: closed 2026-11-14 (section 5), `Generate` goes across threads. What's left of it: `Idle` stays on one thread (`Visibility.DestroyGroup` and `Storage.Save` change the match's own heap); on a tick with nothing to make `Generate` still goes out in 24 pieces, which costs a client about 15 µs a tick on threads (schedule-and-threads.md, top section, Gaps); a generator past a few milliseconds a chunk would still want a match `worker` (reserved, not built).
+- **A system that writes grids ran on one thread in a game with visibility**: closed 2026-11-14 (section 5), `Generate` goes across threads. What's left of it: `Idle` stays on one thread (`Visibility.DestroyGroup` and `Storage.Save` change the match's own heap); on a tick with nothing to make `Generate` still goes out in 24 pieces, which cost a client about 15 µs a tick on threads (each finds no rows since 2026-11-16, last, and a client's simulating on threads is a sixth less: New chunks on every core); a tick's new chunks were one task's until then; a generator past a few milliseconds a chunk would still want a match `worker` (reserved, not built).
 - **Awaiting a load or a listing in a match task** was closed 2026-11-15 (section 3d), as were listing keys and reading and writing off the tick's thread (sections 3a, 3b). What's left of them:
   - No handle of a load: without `await` the call is the event's, so several loads awaited together are several tasks (the owner's to spell, spec Open). An answer walks the tables of tasks that await the store, one scan an answer; a game with tens of thousands of such tasks waiting would want an index by op.
   - In a game that hides state, players' frames don't carry a task's answer, and a match task's continuation is the server's alone there (netcode.md): a player's machine's own run of a task that awaits the store never gets its answer, and what the server's changes reaches players through its state, as any hidden-state task's does (`tidec_e2e_storage_await_hidden`, 2026-11-15).

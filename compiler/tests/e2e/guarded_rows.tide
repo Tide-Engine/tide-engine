@@ -1,0 +1,232 @@
+// A per-entity system whose first line lets few rows through, and those are the costly ones: chunks to make the
+// tick after they're spawned, units to wake. Entities spawned together are next to each other in the order a
+// system's runs and tasks are shares of, so the rows with work were one share's: one thread made every new chunk
+// while the others had none. Where the rows a guard lets through are few among a system's entities, its runs and
+// tasks are shares of those rows instead (the marks made once, before any row runs), and where they aren't few,
+// of all its entities as before. Either way the world is one thread's: the same handles, the same bytes in every
+// heap, the same events in the same order, tick by tick.
+//
+// Make changes its rows' grids, lists and text and queues (heaps in runs that are shares); Wake only queues;
+// Enlist only adds to a singleton (a gathering system); Call only sends. Each has few rows to do on most ticks and half of them on
+// some (Mark, Stir), chunks and units come and go every tick, and chunks are in several archetypes with some left
+// out.
+
+component Chunk
+{
+    int id;
+    int seed;
+    bool made;                            // Make's guard: a chunk is made once, the first tick it's there for
+    bool again;                           // ...and again where Mark says: half of them on a tick in six
+    Grid3<byte> blocks = Grid3(8, 8, 8);  // Sized: one chunk, made by its first cell that isn't zero
+    Grid2<byte> marks;                    // Open: chunks anywhere
+    List<int> notes;
+    string name;
+    int sum;
+}
+
+component Deep { }      // Its chunks are an archetype of their own
+component Wet { }       // ...and these
+component Resting { }   // ...and these are left out
+
+component Unit
+{
+    int id;
+    bool dirty;         // Wake's and Enlist's guard
+    float heat;
+    int[4] seen;
+    int woke;
+}
+
+component Spark
+{
+    int from;
+    int at;
+}
+
+singleton Tally
+{
+    int next;
+    int ticks;
+}
+
+singleton Crowd
+{
+    int woken;
+    float total;        // A float sum: the order it's added in is its value
+    List<int> ids;
+}
+
+singleton Log
+{
+    List<int> made;     // Chunks, as the world heard each made
+    List<int> heard;    // ...and as each chunk heard its own
+    List<int> woke;
+    int woken;
+    int sparks;
+}
+
+event Made
+{
+    int id;
+    int sum;
+}
+
+event Heard
+{
+    int note;
+}
+
+event Woke
+{
+    int id;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main, mut Tally tally)
+{
+    for (var i = 0; i < 700; i++)
+    {
+        var e = Spawn(Chunk { id = i, seed = 100 + i % 3 * 77, made = true });
+        if (i % 4 == 1) e.Add(Deep { });
+        if (i % 6 == 2) e.Add(Wet { });
+        if (i % 11 == 5) e.Add(Resting { });
+    }
+    for (var i = 0; i < 1300; i++) Spawn(Unit { id = i, dirty = i % 40 == 0, heat = float(i) * 0.37 });
+    tally.next = 700;
+}
+
+// A few chunks every tick, more on some, in every archetype; and the ones spawned 14 ticks ago go, so chunks
+// anywhere in the order have work and the ones after them change places in it
+system Churn(mut Tally tally, Time time)
+{
+    tally.ticks++;
+    var count = time.tick % 5 == 3 ? 7 : time.tick % 4 == 1 ? 90 : 48;
+    for (var i = 0; i < count; i++)
+    {
+        var e = Spawn(Chunk { id = tally.next, seed = 100 + tally.next % 5 * 31 });
+        if (tally.next % 4 == 1) e.Add(Deep { });
+        if (tally.next % 6 == 2) e.Add(Wet { });
+        if (tally.next % 11 == 5) e.Add(Resting { });
+        tally.next++;
+    }
+}
+
+// Half the chunks made again on a tick in six: the rows Make's guard lets through aren't few then
+[After(Churn)]
+system Mark(mut Chunk chunk, Time time)
+{
+    chunk.again = time.tick % 6 == 4 && chunk.id % 2 == 0;
+}
+
+// Sends through a function: the system's own, in the same order
+void Tell(int id, int sum)
+{
+    Send(Made { id = id, sum = sum });
+}
+
+// In runs, and queueing: a chunk's blocks from its seed, a cell of an open grid, a list, text, events and a spawn
+[After(Mark)]
+system Make(mut Chunk chunk, without Resting, Time time)
+{
+    if (chunk.made && !chunk.again) return;
+    chunk.made = true;
+    mut var sum = 0;
+    for (var z = 0; z < 8; z++)
+    {
+        for (var x = 0; x < 8; x++)
+        {
+            var top = int(Math.Floor(Math.Perlin(float2((chunk.id * 8 + x) * 0.05, z * 0.05), chunk.seed) * 5)) + 4;
+            for (var y = 0; y < 8; y++)
+            {
+                if (y > top) continue;
+                chunk.blocks[x, y, z] = byte(1 + (x + y + z + chunk.seed) % 5);
+                sum += y + 1;
+            }
+        }
+    }
+    chunk.sum = sum;
+    chunk.marks[int2(chunk.id % 190 - 95, time.tick * 37 % 160 - 80)] = byte(chunk.id % 200 + 1);
+    chunk.notes.Add(sum);
+    chunk.notes.Add(time.tick);
+    if (chunk.notes.count > 6) chunk.notes.RemoveAt(0);
+    chunk.name = $"chunk {chunk.id} made on tick {time.tick}: {sum}";
+    Tell(chunk.id, sum);
+    this.Send(Heard { note = sum % 97 + time.tick });
+    if (chunk.id % 5 == 0) Spawn(Spark { from = chunk.id, at = time.tick });
+    if (chunk.id % 9 == 4 && time.tick > 6) this.Destroy();
+}
+
+// A chunk goes 14 ticks after the last of its kind was spawned before it: by its id, as Churn hands them out
+[After(Make)]
+system Leave(Chunk chunk, Tally tally)
+{
+    if (chunk.id < 700 ? (chunk.id * 3 + tally.ticks) % 41 != 0 : tally.next - chunk.id < 800) return;
+    this.Destroy();
+}
+
+// A few units dirty every tick, half of them on a tick in seven
+system Stir(mut Unit unit, Time time)
+{
+    if ((unit.id + time.tick * 13) % 29 == 0) unit.dirty = true;
+    if (time.tick % 7 == 5 && unit.id % 2 == 0) unit.dirty = true;
+}
+
+// It only adds to a singleton: its rows on threads, their changes from a log in their order
+[After(Stir)]
+system Enlist(Unit unit, mut Crowd crowd, Time time)
+{
+    if (!unit.dirty) return;
+    mut var y = (unit.heat + float(time.tick)) * 0.001;
+    for (var i = 0; i < 200; i++) y = Math.Sin(y * 1.3 + 0.7) + Math.Cos(y * 0.9);
+    crowd.woken += 1;
+    crowd.total += y;
+    if (unit.id % 3 == 0) crowd.ids.Add(unit.id);
+}
+
+// It only sends: nothing of its rows to write or end
+[After(Enlist)]
+system Call(Unit unit, Time time)
+{
+    if (!unit.dirty) return;
+    mut var y = unit.heat * 0.001;
+    for (var i = 0; i < 100; i++) y = Math.Sin(y * 1.3 + 0.7) + Math.Cos(y * 0.9);
+    if ((unit.id + time.tick) % 3 == 0 || y > 1.5) Send(Woke { id = -unit.id - 1 });
+}
+
+// It only queues, and writes its row: no heap of its own
+[After(Call)]
+system Wake(mut Unit unit, Time time)
+{
+    if (!unit.dirty) return;
+    unit.dirty = false;
+    mut var heat = (unit.heat + float(time.tick)) * 0.001;
+    for (var i = 0; i < 400; i++) heat = Math.Sin(heat * 1.3 + 0.7) + Math.Cos(heat * 0.9);
+    unit.heat = heat;
+    unit.seen[time.tick % 4] = unit.seen[time.tick % 4] + unit.id;
+    unit.woke++;
+    Send(Woke { id = unit.id });
+    if (unit.id % 7 == 3 && unit.id < 100000) Spawn(Unit { id = unit.id + 100000 * (time.tick + 1), dirty = true, heat = heat });
+    if (unit.woke > 1 && unit.id % 5 == 1) this.Destroy();
+}
+
+event(Made made) OnMade(mut Log log)
+{
+    log.made.Add(made.id * 1000 + made.sum % 1000);
+}
+
+event(Heard heard) OnHeard(Chunk chunk, mut Log log)
+{
+    log.heard.Add(chunk.id * 256 + heard.note % 256);
+}
+
+event(Woke woke) OnWoke(mut Log log)
+{
+    log.woke.Add(woke.id);
+    if (woke.id >= 0) log.woken++;
+}
+
+system Count(Spark spark, mut Log log)
+{
+    log.sparks += 1 + spark.from % 3;
+}

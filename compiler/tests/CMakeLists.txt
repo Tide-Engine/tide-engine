@@ -699,6 +699,11 @@ if(TIDE_PLATFORM)
     target_link_libraries(tidec_e2e_row_grids PRIVATE tide_platform)
     target_compile_definitions(tidec_e2e_row_grids PRIVATE TIDE_ROW_GRIDS_THREADS=1)
 endif()
+tide_e2e_test(guarded_rows) # ...and one whose guard lets few rows through shares those out, not its entities: every run and task has some, one thread's world
+if(TIDE_PLATFORM)
+    target_link_libraries(tidec_e2e_guarded_rows PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_guarded_rows PRIVATE TIDE_GUARDED_ROWS_THREADS=1)
+endif()
 tide_e2e_test(previous) # `previous` query bindings: the tick's start whatever ran since, on threads one thread's world, no part of the world
 # ...and the same game with every loop gone through plainly (NO_LOOP_INDEXES), which prints the same tick by tick
 tide_add_game(tidec_e2e_previous_plain NO_LOOP_INDEXES SOURCES e2e/previous.tide NAME game
