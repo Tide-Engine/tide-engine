@@ -168,7 +168,7 @@ TIDE_TEST(task_grids_pack_loaded_again_as_a_task_waits)
 static uint64_t local_heap_used(void)
 {
     uint64_t used = 0;
-    for (uint32_t i = 0; local.heap.all && i < tide_heap_count; i++) used += local.heap.all[i].used;
+    for (uint32_t i = 0; local.heap.all && i < tide_heap_count; i++) used += local.heap.all[i].most;
     return used;
 }
 
