@@ -1,0 +1,4 @@
+// expect: 'Slots' is a tweak, which a dev build changes while it runs, so it isn't known while compiling
+tweak int Slots = 4;
+singleton Bag { int[Slots] items; }
+scene Main { }

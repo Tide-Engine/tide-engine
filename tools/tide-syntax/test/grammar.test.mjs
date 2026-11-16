@@ -215,6 +215,7 @@ const cases = {
         ]],
         ['const List<int> NONE', [['const', 'storage.modifier'], ['List', 'support.class'], ['NONE', 'variable.other.constant']]],
         ['const int MAX_HEALTH', [['const', 'storage.modifier'], ['MAX_HEALTH', 'variable.other.constant']]],
+        ['tweak float KickUp', [['tweak', 'storage.modifier'], ['KickUp', 'variable.other.constant']]],
         ['asset Texture logo', [['asset', 'storage.modifier'], ['Texture', 'storage.type.primitive'], ['logo', 'variable.other'], ['logo', '!variable.other.constant']]],
         ['[Filter(Filter.Point)] asset Grid2<Color> tiles', [['asset', 'storage.modifier'], ['Grid2', 'support.class'], ['tiles', 'variable.other'], ['tiles', '!variable.other.constant']]],
         ['asset Map<string, Texture> frames', [['asset', 'storage.modifier'], ['Map', 'support.class'], ['frames', 'variable.other'], ['frames', '!variable.other.constant']]],

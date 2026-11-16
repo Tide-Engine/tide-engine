@@ -1,3 +1,37 @@
+## Tweaks, step 1: declarations, tweaks.json, dev builds' reads (2026-11-16)
+
+docs/spec.md, Dev tools, Tweaks. Steps 2 (live changes, the dev menu's panel, writing the file), 3 (tweak fields) and
+4 (editor hints) follow.
+
+- **Parser**: `tweak` before a type and a name (not before `=`, `;` or `(`) reads a constant (`parse_const`) with
+  `decl.is_tweak`.
+- **tweaks.json** (`tweaks.c`, `tweaks_read`, from `compile_inputs_impl` after `leave_out_dev`): a small reader of an
+  object; each value becomes Tide text by its JSON kind (number, `true`/`false`, `[...]` as `Type(...)`, a string as
+  `Type.Member`, the type qualified with the tweak's namespace) read by `parse_expression_text`, every node placed at
+  the value in the file. It replaces the constant's `value`; `code_value` keeps the code's, which `check_tweak` also
+  checks. An unknown name warns. `prog->tweaks_file` goes into the depfile (`build_pack`'s `note_watched`).
+- **Checker** (`use_tweak`, from `use_constant`): in a constant context (`constants_only` without `assets_constant`)
+  it's an error in every build; field defaults read the value (BIND_CONST); code that runs gets BIND_TWEAK, except
+  GPU and audio code (BIND_CONST, the build's value), and in a dev build marks `reads_tweaks`, which
+  `mark_roll_callers` carries to callers as `reads_seed` is. `check_tweak` refuses types tweaks.json can't give.
+- **Dev builds** (`tweaks_prelude`, parsed as `<tide>/tweaks.tide`): `struct TideTweakValues` (a field per tweak,
+  named by its qualified name with `_`, defaulting to the tweak, which the prelude's own unit reads as a constant),
+  `singleton TideTweaks`, `local singleton TideTweaksHere`, `command TideSetTweaks` and its handler, which sets the
+  match's. Sets `prog->tweaks_live`. Being a singleton, the match's tweaks are snapshotted, hashed and sent with
+  everything else.
+- **Codegen**: BIND_TWEAK without dev is `tide_tweak_<Name>()`, one inline function each returning the value
+  (`gen_tweaks_built`): an inlined value compared with an enum's member was C's self-comparison warning. With dev it's
+  `tweaks_of(g)->Name`: the world's `TideTweaks.values`, local state's `TideTweaksHere.values`, Sample's local state's
+  or `tide_tweaks_built()`, or a routine's `tide_tw` (`const TideTweakValues *`), handed through calls, operator calls,
+  blocks and job captures beside the seed. `shader.c` emits BIND_TWEAK as its constant. Purity: a dev build's read is
+  impure.
+- Tests: `tidec_e2e_tweaks` and `_dev` (e2e/tweaks/ with its tweaks.json: an int, a float, a Color, a bool, a
+  namespaced enum, an unchanged tweak, a helper, a field default, a view; the dev build changing the match's and the
+  local copy and reading the new values; the unknown-name warning pinned), errors `tweak_bound`, `tweak_type`,
+  `tweak_file_type`, `tweak_file_broken`. Native ASan and web debug; all `tidec_error_` tests; grammar 424; LSP tests.
+- Until step 2, a change of tweaks.json under `tide run` rebuilds the game: it makes `game_info.assets_affect_match`
+  true, so the watch builds the library rather than only making the pack again.
+
 ## Scenarios: `--scene` with a scene's fields (2026-11-16)
 
 docs/spec.md, Dev tools. `check_startup`: a `--scene` text holding `{` is lexed as a source named `--scene` and read by

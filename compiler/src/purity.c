@@ -355,6 +355,7 @@ static void check_flags(pctx *c)
     }
     if (d->rolls) impure(c, d->rolls_at, "rolls with Random");
     if (d->reads_seed) impure(c, d->reads_seed_at, "reads Random.seed");
+    if (d->reads_tweaks) impure(c, d->at, "reads tweaks, which a dev build changes while it runs");
     if (d->frame_time) impure(c, d->frame_time_at, "reads Frame.dt");
     if (d->draws) impure(c, d->draws_at, d->frame_devices ? "reads Devices" : d->frame_cursor ? "uses the Cursor" : "draws");
     if (d->plays) impure(c, d->plays_at, "plays sound");

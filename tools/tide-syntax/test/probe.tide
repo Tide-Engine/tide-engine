@@ -104,6 +104,7 @@ struct Magazine
     dev int Doubled() { return 0; }
 }
 var dev = 1;
+tweak float KickUp = 0.5;
 
 // fails after the parameters, or on a line of its own.
 int Parse(string text) fails ParseError

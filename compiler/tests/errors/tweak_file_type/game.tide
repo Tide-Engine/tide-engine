@@ -1,0 +1,5 @@
+// expect: is float, not bool
+tweak float KickUp = 0.5;
+scene Main { }
+singleton Seen { float kick; }
+system Read(mut Seen seen) { seen.kick = KickUp; }

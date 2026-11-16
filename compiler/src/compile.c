@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "builtins.h"
+#include "tweaks.h"
 #include "asset_cache.h"
 #include "asset_files.h"
 #include "build_code.h"
@@ -194,6 +195,25 @@ static bool compile_inputs_impl(const compile_input *inputs, const int count, co
 
     diag_phase("lexing and parsing");
     if (!opts->dev) leave_out_dev(prog);
+    // The game's tweaks.json (beside its code: the game's folder, or the first file's), and a dev build's TideTweaks
+    if (!opts->declarations_only) {
+        const char *folder = opts->game_folder;
+        if (!folder && count) {
+            const char *first = inputs[0].path;
+            const char *slash = NULL;
+            for (const char *ch = first; *ch; ch++) {
+                if (*ch == '/' || *ch == '\\') slash = ch;
+            }
+            if (slash) {
+                char *dir = arena_alloc((size_t)(slash - first) + 1);
+                memcpy(dir, first, (size_t)(slash - first));
+                dir[slash - first] = '\0';
+                folder = dir;
+            }
+        }
+        if (!tweaks_read(prog, folder)) return false;
+        if (opts->dev && !tweaks_prelude(prog)) return false;
+    }
     if (opts->declarations_only) keep_declarations(prog);
     if (opts->embed && !add_embed_taps(prog)) return false;
     prog->game_folder = opts->game_folder;

@@ -878,6 +878,7 @@ typedef struct decl {
     bool rolls;           // Rolls with Random.NextInt and the like, directly or through helpers: it's handed a generator
     loc rolls_at;
     bool reads_seed;      // Reads Random.seed, directly or through helpers: a function is handed the match's seed
+    bool reads_tweaks;    // Reads a tweak in a dev build (BIND_TWEAK), directly or through helpers: a function is handed them
     loc reads_seed_at;
     bool frame_devices;  // ...and whether that's reading this frame's Devices, not drawing
     bool frame_cursor;   // ...or using its cursor: Cursor.Lock and Cursor.locked
@@ -950,6 +951,12 @@ typedef struct decl {
     bool is_dev;
     loc dev_at;
     const struct decl *written_in; // A lambda's function: the declaration whose code it's written in
+    // `tweak float KickUp = 0.00012;`: a DECL_CONST whose value tweaks.json can change (its value, then, is the file's).
+    // A dev build reads it from the match's TideTweaks (BIND_TWEAK), which a tweak's change goes through
+    bool is_tweak;
+    loc tweak_at;
+    struct expr *code_value; // ...the value the code gives it, where tweaks.json gives another (then `value`)
+    loc tweaked_at;          // ...and where in tweaks.json
     bool is_audio;       // `audio Name(mut Samples samples, ...)`: a DECL_FUNCTION the audio thread runs once a block
     int audio_state;     // ...the parameter that's its state (`mut`, kept between blocks), or -1
     int audio_knobs;     // ...and the one that's its knobs (read-only, a copy the frame gave), or -1
@@ -1238,6 +1245,7 @@ typedef enum binding_kind {
     BIND_NAMESPACE, // `Combat` in Combat.Health
     BIND_DEVICES,   // `Devices`: this machine's devices, in views and the input's Sample
     BIND_CONST,     // A constant, MAX_HEALTH or Combat.MAX_HEALTH: `constant` is it
+    BIND_TWEAK,     // A tweak, in a dev build's code that runs: read from the match's TideTweaks or this machine's copy; `constant` is it
     BIND_SHADER,    // A frag or vert named at mesh draw: `type_decl` is it
     BIND_ASSET,     // An asset, hero or Art.hero: `constant` is its declaration, read as a value of its type
 } binding_kind;
@@ -1923,7 +1931,9 @@ typedef struct program {
     bool asset_metadata_only; // tidels reads model names without importing geometry or fetching URLs.
     bool calls_merged;        // merge_pure_calls (purity.c) has gone through its code: repeated pure calls are one
     bool calls_as_written;    // ...or is to leave it as written (tidec --no-call-merging), for comparisons
+    bool tweaks_live;         // A dev build with tweaks: code reads them from TideTweaks (BIND_TWEAK), which they change through
     VEC(decl *) left_out;     // `dev` declarations a build without dev left out, for code naming one to be told why
+    const char *tweaks_file;  // The tweaks.json the build read, if any
     VEC(decl *) results; // Every T? and `T fails E` it uses, one per combination
     VEC(decl *) optional_fields; // What each T? a field has is kept as: a struct of the value and whether there is one (decl.optional_of)
     decl *owner;         // The built-in Owner component.

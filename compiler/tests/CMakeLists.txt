@@ -550,6 +550,13 @@ tide_add_game(tidec_e2e_dev_scene_named DEV SCENE Battle SOURCES e2e/dev_scene.t
 target_include_directories(tidec_e2e_dev_scene_named PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 target_compile_definitions(tidec_e2e_dev_scene_named PRIVATE NAMED_ONLY)
 add_test(NAME tidec_e2e_dev_scene_named COMMAND tidec_e2e_dev_scene_named)
+# Tweaks with their tweaks.json, read as constants without dev and from the match with it
+tide_e2e_test(tweaks SOURCES e2e/tweaks/game.tide WARNINGS "tweaks.json sets 'Gone', which isn't a tweak of the game's")
+tide_add_game(tidec_e2e_tweaks_dev DEV SOURCES e2e/tweaks/game.tide NAME game WARNINGS "tweaks.json sets 'Gone', which isn't a tweak of the game's"
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/tweaks_test.c")
+target_include_directories(tidec_e2e_tweaks_dev PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_compile_definitions(tidec_e2e_tweaks_dev PRIVATE TWEAKS_LIVE)
+add_test(NAME tidec_e2e_tweaks_dev COMMAND tidec_e2e_tweaks_dev)
 tide_e2e_test(changed_match) # ...and taken by match handlers, in rounds while their own changes go on
 # ...whose handlers changing what they watch without end stop the program
 tide_add_game(tidec_e2e_changed_endless SOURCES e2e/changed_match.tide NAME game DEFINES ENDLESS

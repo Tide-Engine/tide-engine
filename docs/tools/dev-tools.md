@@ -81,6 +81,37 @@ tide run --scene "Battle { side = 50, alone = true }"
 
 The game's usual start doesn't load, so what only it sets up doesn't happen; what the game sets up elsewhere, like as players join, still does. A scenario that wants the usual start too loads it, `Scene.Load(Main { })`. A build without dev doesn't have dev scenes, so `--scene` can't name one there.
 
+## Tweaks
+
+A tweak is a value someone tunes without touching code: how hard a gun kicks, how fast a horse runs, the fog's color. The code declares it with its value, and `tweaks.json`, beside the game's code, gives it another:
+
+```csharp
+tweak float KickUp = 0.00012;
+tweak Color Fog = Color(0.6, 0.65, 0.7, 1);
+
+namespace Combat
+{
+    enum Rate { Slow, Fast }
+    tweak Rate Pace = Rate.Slow;
+}
+
+system Recoil(mut Gun gun) { gun.kick += KickUp; }
+```
+
+```json
+{
+    "KickUp": 0.00015,
+    "Fog": [0.5, 0.55, 0.6, 1],
+    "Combat.Pace": "Fast"
+}
+```
+
+- **The file holds only what differs from the code**, by each tweak's name with its namespace: a number, `true` or `false`, a list of numbers for a vector or a Color, or an enum member's name. A name no tweak has is a warning.
+- **A tweak is a number, a bool, a vector, a Color or an enum.**
+- **Code reads it as a constant**, and a field's default can be one. What has to be known while compiling can't: an array's size, a `case`, a setting or a constant's value take a `const`.
+- **A build without dev** has the file's values as constants: they cost what a constant does, and the file isn't shipped.
+- **A dev build** reads them from the match, so changing one changes it for everyone in the match at once, through the server. GPU and audio code read the value the build had.
+
 ## The dev menu
 
 In a dev build with dev views, the key under **Escape** (`` ` `` on a US keyboard, where Valve's games open their console) shows the dev menu, and again hides it. It lists the game's dev views, each with a switch. A dev view runs only while it's switched on, so a game's tools stay out of the way until someone wants one, and they don't each need a key of their own. What's on stays on across a hot reload.

@@ -3133,10 +3133,14 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         const token *build = NULL;
         const token *cached = NULL;
         const token *dev = NULL; // `dev view GunTools(...)`: only in a dev build
+        const token *tweak = NULL; // `tweak float KickUp = 0.1;`: a value tweaks.json can change (decl.is_tweak)
         p.overriding = false;
         for (;;) {
             const tok_kind after = peek_at(&p, 1)->kind;
-            if (!dev && t->kind == T_IDENT && str_eq_c(t->text, "dev")
+            if (!tweak && t->kind == T_IDENT && str_eq_c(t->text, "tweak") && after == T_IDENT && peek_at(&p, 2)->kind != T_ASSIGN
+                && peek_at(&p, 2)->kind != T_SEMI && peek_at(&p, 2)->kind != T_LPAREN) {
+                tweak = advance(&p);
+            } else if (!dev && t->kind == T_IDENT && str_eq_c(t->text, "dev")
                 && (after == T_IDENT || after == T_MUT || after == T_COMPONENT || after == T_SINGLETON || after == T_SYSTEM)) {
                 dev = advance(&p);
             } else if (!local && t->kind == T_IDENT && str_eq_c(t->text, "local")
@@ -3209,9 +3213,14 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
             virtual = override = NULL;
         }
         decl *d;
-        const bool function = at_method_from(&p, 0, p.overriding);
-        if (!function) advance(&p);
-        if (alias) d = parse_alias(&p);
+        const bool function = !tweak && at_method_from(&p, 0, p.overriding);
+        if (!function && !tweak) advance(&p);
+        if (tweak) {
+            d = parse_const(&p); // Read as a constant is: its type, its name and its value in the code
+            d->is_tweak = true;
+            d->tweak_at = tweak->at;
+        }
+        else if (alias) d = parse_alias(&p);
         else if (function) d = parse_method(&p, NULL);
         else if (t->kind == T_COMPONENT) d = parse_data_decl(&p, DECL_COMPONENT, false);
         else if (t->kind == T_SINGLETON) d = parse_data_decl(&p, DECL_SINGLETON, false);

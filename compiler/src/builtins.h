@@ -35,6 +35,7 @@ void builtins_use_io(const decl *bytes, const decl *paths);
 // struct with text and a list has; the compiler knows two things of it,
 // Web.Request(url), which is WEB_REQUEST_MAKER's call, and a request's Send.
 #define WEB_PRELUDE_PATH "<tide>/web.tide"
+#define TWEAKS_PRELUDE_PATH "<tide>/tweaks.tide" // A dev build's TideTweaks, made from the game's tweaks
 #define WEB_REQUEST_MAKER "WebRequestTo"
 const char *web_prelude(size_t *len);
 bool web_prelude_wanted(const char *text, size_t len);

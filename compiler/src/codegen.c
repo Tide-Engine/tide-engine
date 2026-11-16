@@ -1714,6 +1714,64 @@ static const char *match_seed(const gen *g)
     return "tide_w->Time.seed";
 }
 
+// A dev build's tweaks (BIND_TWEAK), as the code being generated has them: the match's code reads its world's
+// TideTweaks, local code this machine's copy, Sample its local state's (or the build's values, where a host gives it
+// none), and a function is handed them.
+static const char *tweaks_of(const gen *g)
+{
+    if (g->task) return g->task->local ? "(&tide_l->TideTweaksHere.values)" : "(&tide_w->TideTweaks.values)";
+    if (g->in_input) return "(tide_l ? &tide_l->TideTweaksHere.values : tide_tweaks_built())";
+    if (g->routine) return "tide_tw";
+    if (g->code && (g->code->is_view || g->code->is_local)) return "(&tide_l->TideTweaksHere.values)";
+    return "(&tide_w->TideTweaks.values)";
+}
+
+static void gen_value(gen *g, sb *o, const decl *d, const field_init *inits, const int init_count);
+
+// A tweak's name in C: its qualified name, with '_' for '.'
+static void put_tweak_name(sb *o, const decl *k)
+{
+    if (k->unit && k->unit->ns.len) {
+        for (int i = 0; i < k->unit->ns.len; i++) sb_putn(o, k->unit->ns.ptr[i] == '.' ? "_" : &k->unit->ns.ptr[i], 1);
+        sb_put(o, "_");
+    }
+    sb_printf(o, STR_FMT, STR_ARG(k->name));
+}
+
+static void gen_as(gen *g, sb *o, expr *e, type want);
+
+// The tweaks' values as the build has them: a build without dev reads each through a function of its own, which C
+// works out while compiling as it would the value (a value compared with itself would be one C warns of); a dev build
+// has TideTweakValues' (tweaks.tide), for code a host gives no local state.
+static void gen_tweaks_built(gen *g)
+{
+    const program *prog = g->prog;
+    if (!prog->tweaks_live) {
+        for (int i = 0; i < prog->decls.count; i++) {
+            const decl *k = prog->decls.items[i];
+            if (!k->is_tweak || k->return_type.kind == TY_ERROR) continue;
+            sb_printf(&g->c, "TIDE_HELPER %s tide_tweak_", c_type(k->return_type));
+            put_tweak_name(&g->c, k);
+            sb_put(&g->c, "(void)\n{\n    return ");
+            gen_as(g, &g->c, k->value, k->return_type);
+            sb_put(&g->c, ";\n}\n\n");
+        }
+        return;
+    }
+    const decl *values = NULL;
+    for (int i = 0; i < prog->decls.count && !values; i++) {
+        const decl *d = prog->decls.items[i];
+        if (d->kind == DECL_STRUCT && str_eq_c(d->name, "TideTweakValues")) values = d;
+    }
+    if (!values) return;
+    sb *o = &g->c;
+    sb_printf(o, "TIDE_HELPER const %s *tide_tweaks_built(void)\n{\n    static TIDE_THREAD_LOCAL %s tide_v;\n"
+                 "    static TIDE_THREAD_LOCAL bool tide_made;\n    if (!tide_made) {\n        tide_v = ",
+              type_cname(values), type_cname(values));
+    gen_value(g, o, values, NULL, 0);
+    sb_put(o, ";\n        tide_made = true;\n    }\n    return &tide_v;\n}\n\n");
+}
+
 // Whether code rolls with Random, itself or through a function it calls: a
 // loop's steps and a comparison that do have a generator of their own.
 static bool stmt_rolls(const stmt *s);
@@ -1868,6 +1926,7 @@ static void gen_operator_call(gen *g, sb *o, const decl *m, expr *l, expr *r)
     sb_printf(o, "%s(", routine_cname(m));
     if (m->rolls) sb_put(o, "tide_dice, "); // What the code around it rolls with, and the match's seed, as a function is handed them
     if (m->reads_seed) sb_printf(o, "%s, ", match_seed(g));
+    if (m->reads_tweaks) sb_printf(o, "%s, ", tweaks_of(g));
     gen_as(g, o, l, m->params.items[0].type);
     if (r) {
         sb_put(o, ", ");
@@ -4304,6 +4363,7 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
     if (takes_cause(m)) sb_printf(o, "%stide_causal_next(&tide_causal, %uu)", args++ ? ", " : "", e->causal_site);
     if (m->rolls) sb_printf(o, "%stide_dice", args++ ? ", " : ""); // The generator this code rolls with
     if (m->reads_seed) sb_printf(o, "%s%s", args++ ? ", " : "", match_seed(g));
+    if (m->reads_tweaks) sb_printf(o, "%s%s", args++ ? ", " : "", tweaks_of(g));
     if (m->owner && args > 0) sb_put(o, ", "); // After what it's handed, its value
     if (m->owner && e->kind == E_CALL) { // IsDead() inside another method: the same value
         const bool have_address = g->routine->is_mut_method || g->routine->c_self_indirect;
@@ -4829,6 +4889,13 @@ static void gen_expr(gen *g, sb *o, const expr *e)
     }
     if (e->hoisted) {
         sb_put(o, e->hoisted); // Already ran, or was read, before the statement (see hoist_ordered)
+        return;
+    }
+    if (e->bind == BIND_TWEAK) { // A dev build's tweak as it is now (tweaks_of), or the build's (gen_tweak_values)
+        if (g->prog->tweaks_live) sb_printf(o, "(%s->", tweaks_of(g));
+        else sb_put(o, "tide_tweak_");
+        put_tweak_name(o, e->constant);
+        sb_put(o, g->prog->tweaks_live ? ")" : "()");
         return;
     }
     if (e->bind == BIND_CONST && e->constant->build_fn) { // Made by build code (gen_build_constants)
@@ -8728,6 +8795,11 @@ static void gen_inline(gen *g, const expr *e)
     line(g, o, "{ // " STR_FMT, STR_ARG(fn->qualified));
     g->indent++;
     // The match's seed, under the name a function has it by (Random.seed), for its code and its block's
+    // ...and the tweaks
+    if (strcmp(tweaks_of(g), "tide_tw") != 0 && (fn->reads_tweaks || (g->code && g->code->reads_tweaks))) {
+        line(g, o, "const %s *tide_tw = %s;", "TideTweakValues", tweaks_of(g));
+        line(g, o, "(void)tide_tw;");
+    }
     if (strcmp(match_seed(g), "tide_match_seed") != 0 && (fn->reads_seed || (g->code && g->code->reads_seed))) {
         line(g, o, "const int32_t tide_match_seed = %s;", match_seed(g));
         line(g, o, "(void)tide_match_seed;");
@@ -16329,6 +16401,7 @@ static capture_list sort_captures(gen *g, const expr *sort)
         if (takes_local(fn)) capture(&out, "tide_local *", "tide_l");
         if (takes_world(fn)) capture(&out, changes_world(fn) ? "tide_world *" : "const tide_world *", "tide_w");
         if (fn->reads_seed) capture(&out, "int32_t", "tide_match_seed");
+        if (fn->reads_tweaks) capture(&out, "const TideTweakValues *", "tide_tw");
         if (fn->draws) {
             capture(&out, "tide_draw_list *", "tide_draw");
             capture(&out, "tide_gui *", "tide_ui");
@@ -19441,6 +19514,7 @@ static void gen_routine_signature(gen *g, sb *o, const decl *m)
     if (takes_cause(m)) sb_printf(o, "%suint64_t tide_cause_path", n++ ? ", " : "");
     if (m->rolls) sb_printf(o, "%stide_random *tide_dice", n++ ? ", " : "");
     if (m->reads_seed) sb_printf(o, "%sconst int32_t tide_match_seed", n++ ? ", " : "");
+    if (m->reads_tweaks) sb_printf(o, "%sconst TideTweakValues *tide_tw", n++ ? ", " : "");
     if (m->owner && !m->is_operator && !m->is_interpolate) {
         if (n > 0) sb_put(o, ", "); // After what it's handed
         sb_printf(o, m->is_mut_method ? "%s *tide_self, const uint32_t tide_self_where"
@@ -19527,6 +19601,7 @@ static void gen_routine(gen *g, const decl *m)
     if (task_either(m)) line(g, o, "(void)tide_task_w; (void)tide_task_local;");
     if (m->rolls) line(g, o, "(void)tide_dice;");
     if (m->reads_seed) line(g, o, "(void)tide_match_seed;");
+    if (m->reads_tweaks) line(g, o, "(void)tide_tw;");
     for (int i = 0; i < m->params.count; i++) {
         if (m->params.items[i].type.kind == TY_WORLD) continue;
         line(g, o, "(void)%s;", local_cname(g, m->params.items[i].name));
@@ -25312,6 +25387,7 @@ static void build_pack(gen *g)
                 for (int s = 0; s < d->asset->items[k].side_count; s++) note_watched(opts->info, d->asset->items[k].sides[s]);
             }
         }
+        if (prog->tweaks_file) note_watched(opts->info, prog->tweaks_file); // What the tweaks are: a build follows it
     }
     if (!opts->pack && !opts->pack_c && !g->asset_dependencies.count && !g->skinned_fingerprints.count) return;
     const bool reported = build_report_current() && !opts->build_program;
@@ -29991,6 +30067,8 @@ bool codegen(program *prog, const codegen_options *opts)
         // A constant build code made is in the game's C, so a file its code reads changes the program, not the pack
         for (int i = 0; i < prog->build_roots.count; i++)
             opts->info->assets_affect_match |= prog->build_roots.items[i]->kind == DECL_CONST;
+        // ...and so are the tweaks tweaks.json gives
+        if (prog->tweaks_file) opts->info->assets_affect_match = true;
         for (int i = 0; i < prog->assets.count; i++)
             opts->info->assets_affect_match |= prog->assets.items[i]->asset_kind == ASSET_SKINNED
                                            || prog->assets.items[i]->asset_kind == ASSET_ANIMATIONS
@@ -30204,6 +30282,7 @@ bool codegen(program *prog, const codegen_options *opts)
     gen_causal_helpers(&g);
     gen_shard_prelude(&g);
     gen_result_types(&g); // Before routine signatures and maps' Get helpers.
+    gen_tweaks_built(&g);
     for (int i = 0; i < prog->systems.count; i++) gen_query_row_types(&g, prog->systems.items[i]);
     for (int i = 0; i < prog->views.count; i++) gen_query_row_types(&g, prog->views.items[i]);
     for (int i = 0; i < prog->handlers.count; i++) gen_query_row_types(&g, prog->handlers.items[i]);

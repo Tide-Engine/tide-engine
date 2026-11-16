@@ -838,6 +838,7 @@ static void walk_value(const expr *e)
             o.owner = e->name;
             break;
         case BIND_CONST:
+        case BIND_TWEAK: // A tweak read in code: its declaration, as a constant's
         case BIND_ASSET: // An asset read by name: its declaration, as a constant's
             o.kind = OCC_CONST;
             o.decl = e->constant;
@@ -9805,7 +9806,7 @@ static bool starts_declaration(const int i)
         return true; // event(Hit hit) TakeHit(...)
     }
     if (t->kind == T_IDENT && t->at.col == decl_col_at(t->at) && DOC->toks[i + 1].kind == T_IDENT
-        && (str_eq_c(t->text, "async") || str_eq_c(t->text, "cached") || str_eq_c(t->text, "dev"))) {
+        && (str_eq_c(t->text, "async") || str_eq_c(t->text, "cached") || str_eq_c(t->text, "dev") || str_eq_c(t->text, "tweak"))) {
         return true; // async void Countdown(), async event(...), cached float Width(...), dev view Tools(...)
     }
     if (t->kind == T_IDENT && t->at.col == decl_col_at(t->at) && DOC->toks[i + 1].kind == T_LBRACE && str_eq_c(t->text, "settings")) {
@@ -11620,7 +11621,7 @@ static const char *check_new_name(const occurrence *target, const str name)
     // goes, though the lexer reads them as names. The first ones only start
     // declarations, so parameters and locals can still take them.
     static const char *const contextual[] = {"input", "view", "struct", "event", "command", "enum", "scene", "local", "namespace",
-                                             "using", "extern", "const", "frag", "vert", "compute", "async", "cached", "dev", "settings",
+                                             "using", "extern", "const", "frag", "vert", "compute", "async", "cached", "dev", "tweak", "settings",
                                              "operator", "virtual", "override",
                                              "fails", "in", "by", "offset", "void"};
     enum { DECL_WORDS = 16 };

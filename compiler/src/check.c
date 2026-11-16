@@ -17818,6 +17818,28 @@ static void settle_list_constant(checker *c, decl *k)
 // const int MAX_HEALTH = 100;: its type, and a value worked out from constants
 // alone. A constant is checked before anything reads it: one that names
 // another checks that one first (index: 0 not yet, 1 checking, 2 done).
+// A tweak is a value tweaks.json can give in place of the code's: a number, a bool, a vector, a Color or an enum's
+// member. The code's value is checked too where the file gives another, which then the build has.
+static void check_tweak(checker *c, decl *k)
+{
+    const type_kind kind = k->return_type.kind;
+    const bool takes = kind == TY_BOOL || kind == TY_INT || kind == TY_LONG || kind == TY_BYTE || kind == TY_FLOAT
+        || kind == TY_DOUBLE || kind == TY_FLOAT2 || kind == TY_FLOAT3 || kind == TY_FLOAT4 || kind == TY_INT2
+        || kind == TY_INT3 || kind == TY_INT4 || kind == TY_DOUBLE2 || kind == TY_DOUBLE3 || kind == TY_DOUBLE4
+        || kind == TY_COLOR || kind == TY_ENUM || kind == TY_ERROR;
+    if (!takes) {
+        diag_error(k->return_type_at, "a tweak is a number, a bool, a vector, a Color or an enum, which tweaks.json can "
+                                      "give, not %s", type_name(k->return_type));
+        diag_note("a value made of more is made of tweaks of those, or is a 'const'");
+        return;
+    }
+    if (!k->code_value || kind == TY_ERROR || !is_constant(c, k->code_value)) return;
+    const type t = check_constant_expr(c, k->code_value, true, k->return_type);
+    if (t.kind != TY_ERROR && !type_assignable(k->return_type, t)) {
+        diag_error(k->code_value->at, "tweak '" STR_FMT "' is %s, not %s", STR_ARG(k->name), type_name(k->return_type), type_name(t));
+    }
+}
+
 static void check_constant(checker *c, decl *k)
 {
     if (k->index != 0) return;
@@ -17856,6 +17878,7 @@ static void check_constant(checker *c, decl *k)
             settle_list_constant(c, k);
         }
     }
+    if (k->is_tweak) check_tweak(c, k);
     c->unit = outer;
     c->assets_constant = assets;
     k->index = 2;
@@ -18301,6 +18324,26 @@ static decl *far_filter(const checker *c, const param *p, const decl *found)
     return prog->far_absent;
 }
 
+// A tweak read as a value. What has to be known while compiling (a case label, a bound, a setting, a constant's
+// value) can't read one: it changes while a dev build runs, and every build says so. A field's default can, as it can
+// an asset: the build's value. In a dev build, code that runs reads the match's TideTweaks (BIND_TWEAK), or this
+// machine's copy in local code, which a change of tweaks.json goes through; GPU and audio code read the build's value.
+static type use_tweak(checker *c, expr *e, decl *k)
+{
+    const bool prelude = c->unit && c->unit->src && strcmp(c->unit->src->path, TWEAKS_PRELUDE_PATH) == 0;
+    if (c->constants_only && !c->assets_constant && !prelude) {
+        diag_error(e->at, "'" STR_FMT "' is a tweak, which a dev build changes while it runs, so it isn't known while "
+                          "compiling", STR_ARG(k->qualified));
+        diag_note("what has to be, like a case label, a bound, a setting or a constant's value, takes a 'const'");
+        return T_ERR;
+    }
+    if (c->constants_only || prelude || gpu_code(c) || (c->method && c->method->is_audio)) return k->return_type;
+    e->bind = BIND_TWEAK; // Code that runs: the tweak as it is now, or as the build has it (gen_tweak_values)
+    decl *code = c->method ? c->method : c->system;
+    if (c->prog->tweaks_live && code) code->reads_tweaks = true;
+    return k->return_type;
+}
+
 static type use_constant(checker *c, expr *e, decl *k)
 {
     e->bind = BIND_CONST;
@@ -18322,6 +18365,7 @@ static type use_constant(checker *c, expr *e, decl *k)
         diag_note("pass its value to the frag or vert in the draw's values");
         return T_ERR;
     }
+    if (k->is_tweak) return use_tweak(c, e, k);
     return k->return_type;
 }
 
@@ -25504,6 +25548,11 @@ static void mark_roll_callers(const checker *c)
             if (site->to->reads_seed && !site->from->reads_seed) {
                 site->from->reads_seed = true;
                 site->from->reads_seed_at = site->call->at;
+                changed = true;
+            }
+            // ...and a dev build's tweaks, which it reads from the world or local state it's handed them from
+            if (site->to->reads_tweaks && !site->from->reads_tweaks && site->from->kind != DECL_SHADER && !site->from->is_audio) {
+                site->from->reads_tweaks = true;
                 changed = true;
             }
         }

@@ -3023,6 +3023,7 @@ static void ex_name(emit *em, const expr *e)
         put_self(em);
         sb_printf(em->o, ".%s", field_name(e->field));
         return;
+    case BIND_TWEAK: // A function the GPU runs too reads a tweak as the build has it
     case BIND_CONST:
         if (e->constant->return_type.kind == TY_LIST) {
             refuse_whole_list(em, e);
