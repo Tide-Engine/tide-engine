@@ -272,6 +272,18 @@ release (787), `tidec_e2e_visibility_runs` (and `_checked`, `_memo_off`), `tidec
 `_guarded_rows`, `bench_voxels` (and `_forgets`, `_wide`, `_arrives`, `_checked`, `_counts`), `bench_gallery`,
 `bench_sand`: every pin where it was. Not run: the web build, and the other suites.
 
+## A map's index made again in one go; a group's audience set with one lookup (2026-11-16, audiences)
+
+`notes/voxels.md` (Audiences joined and left over ticks) has the measurements. `rebuild_index` (`engine/src/map.c`)
+added a map's index slots one `tide_list_add` each, for a directory of groups of tens of thousands every time it
+grows or packs; `tide_list_add_zeros(l, more, size, where)` (`tide/list.h`) adds them in one call: grown as one more
+element grows the list (`reserve` for one, so its blocks and chunks are made in the order `tide_list_add` makes
+them), then as many as the room it has takes, zeroed where the memory isn't already (the scratch area's: a world's
+list has zeros past its count). The same handle, heap use and bytes; `list_add_zeros_leaves_what_adding_one_by_one_does`
+(`tests/test_list.c`). `tide_visibility_set_group` (`visibility_codegen.inc`) finds the group's entry once
+(`tide_map_find`) and writes it where it is after `tide_list_prepare`, as a map's `cset` does, where it was `has`,
+`get` and `set`; a group that isn't there is left alone as before, and nothing is added. Every pin stayed.
+
 ## A handler takes the lanes it changed (2026-11-16, later)
 
 An event's or a command's handler with a `mut` component took every lane of that component for writing in its

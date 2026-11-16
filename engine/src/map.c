@@ -45,10 +45,9 @@ static uint32_t empty_slot(const tide_map m, const uint32_t h)
 static void rebuild_index(tide_map *m, const tide_map_kind *k, const uint32_t count, const uint32_t where)
 {
     tide_list_clear(&m->index, sizeof(uint32_t));
-    for (uint32_t s = 0; s < count; s++) {
-        uint32_t *p = tide_list_add(&m->index, sizeof(uint32_t), where);
-        if (p) *p = 0u;
-    }
+    // (Its slots in one go, as adding them one by one leaves it: a directory of tens of thousands of groups is
+    // built again as it grows and as it packs, in the tick that spawned into it)
+    tide_list_add_zeros(&m->index, count, sizeof(uint32_t), where);
     const int32_t n = tide_list_count(m->entries);
     for (int32_t i = 0; i < n; i++) {
         const void *e = tide_list_at(m->entries, i, k->entry_size);

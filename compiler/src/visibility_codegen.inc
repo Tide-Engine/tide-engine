@@ -70,12 +70,19 @@ static void gen_visibility(gen *g)
         "    tide_map%d_set(&w->tide_visibility_state.groups, group.id, tide_audience_intersect(audience, TIDE_AUDIENCE_ALL), TIDE_IN_MATCH);\n"
         "    return group;\n}\n\n"
         "TIDE_HELPER void tide_visibility_set_group(tide_world *w, VisibilityGroup group, Audience audience)\n{\n"
-        "    if (w->tide_visibility_state.client || group.id <= 0 || !tide_map%d_has(w->tide_visibility_state.groups, group.id)) return;\n"
+        "    if (w->tide_visibility_state.client || group.id <= 0) return;\n"
+        "    // Found once, and written where it is: a group that's there keeps its entry (nothing is added, so no\n"
+        "    // list grows or moves), and a game that changes a whole view's groups in a tick looks each up in a\n"
+        "    // directory of tens of thousands\n"
+        "    const int32_t found = tide_map_find(w->tide_visibility_state.groups, &tide_map%d_kind, &group.id);\n"
+        "    if (found < 0) return;\n"
         "%s"
         "    audience = tide_audience_intersect(audience, TIDE_AUDIENCE_ALL);\n"
-        "    const Audience old = tide_map%d_get(w->tide_visibility_state.groups, group.id);\n"
-        "    if (memcmp(&old, &audience, sizeof audience) == 0) return;\n"
-        "    tide_map%d_set(&w->tide_visibility_state.groups, group.id, audience, TIDE_IN_MATCH);\n}\n\n"
+        "    const tide_map%d_entry *const old = tide_map_entry(w->tide_visibility_state.groups, found, &tide_map%d_kind);\n"
+        "    if (!old || memcmp(&old->value, &audience, sizeof audience) == 0) return;\n"
+        "    tide_list_prepare(&w->tide_visibility_state.groups.entries, sizeof(tide_map%d_entry), TIDE_IN_MATCH);\n"
+        "    tide_map%d_entry *const entry = tide_map_entry_mut(w->tide_visibility_state.groups, found, &tide_map%d_kind);\n"
+        "    if (entry) entry->value = audience;\n}\n\n"
         "TIDE_HELPER void tide_visibility_destroy_group(tide_world *w, VisibilityGroup group)\n{\n"
         "%s"
         "    if (!w->tide_visibility_state.client && group.id > 0)\n"
@@ -83,7 +90,7 @@ static void gen_visibility(gen *g)
         "TIDE_HELPER Audience tide_visibility_group_audience(const tide_world *w, VisibilityGroup group)\n{\n"
         "    if (!group.id) return TIDE_AUDIENCE_ALL;\n"
         "    return group.id > 0 ? tide_map%d_get(w->tide_visibility_state.groups, group.id) : (Audience){0};\n}\n\n",
-        create_border, groups, groups, border_void, groups, groups, border_void, groups, groups);
+        create_border, groups, groups, border_void, groups, groups, groups, groups, groups, border_void, groups, groups);
     // A system in runs whose rows set groups' audiences (system_logs_groups): where its rows are on threads
     // (tide_task_gather, tide/jobs.h) each logs what it sets, and its `done` sets them in its entities' order, its
     // tasks' logs (each in its rows' order) merged by entity. Nothing of the system reads the directory, so the

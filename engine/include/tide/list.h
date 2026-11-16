@@ -407,6 +407,11 @@ const void *tide_list_read(const tide_heaps *heaps, tide_list l, int32_t i, uint
 // gets (INT32_MAX elements: its count is an int).
 void *tide_list_add(tide_list *l, uint32_t size, uint32_t where);
 
+// `more` new elements at the end, zeroed: what as many calls of tide_list_add
+// leave, the list's blocks and chunks made in the same order, without a call
+// for each. Stops where the list is as big as one gets.
+void tide_list_add_zeros(tide_list *l, uint32_t more, uint32_t size, uint32_t where);
+
 // A new element at `i` (clamped to the list), zeroed, the ones after it moved
 // along; or NULL when the list is as big as one gets.
 void *tide_list_insert(tide_list *l, int32_t i, uint32_t size, uint32_t where);

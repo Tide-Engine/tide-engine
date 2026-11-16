@@ -274,6 +274,56 @@ TIDE_TEST(list_resize_in_the_scratch_area)
     tide_scratch_reset(mark);
 }
 
+// What a world's list is after `more` zeros added to the `first` it has (numbered), one by one or in one go
+typedef struct grown_list {
+    tide_handle at;
+    uint64_t used;
+    int32_t count;
+    bool chunked, right;
+} grown_list;
+
+static grown_list grow_list(const int32_t first, const uint32_t more, const bool at_once)
+{
+    start();
+    const uint32_t size = sizeof(int32_t);
+    for (int32_t i = 0; i < first; i++) add(&world.scores, i, TIDE_IN_MATCH);
+    if (at_once) tide_list_add_zeros(&world.scores, more, size, TIDE_IN_MATCH);
+    else
+        for (uint32_t i = 0; i < more; i++) (void)tide_list_add(&world.scores, size, TIDE_IN_MATCH);
+    tide_heaps_flush(&world.heap);
+    const int32_t count = tide_list_count(world.scores);
+    return (grown_list){world.scores.at, tide_heaps_of(&world.heap, 0u)->used, count, chunked(world.scores),
+                        counts_up(world.scores, 0, first, 0) && zeros(world.scores, first, count)};
+}
+
+TIDE_TEST(list_add_zeros_leaves_what_adding_one_by_one_does)
+{
+    const int32_t per = (int32_t)(TIDE_LIST_CHUNK / sizeof(int32_t));
+    const int32_t firsts[] = {0, 3, 4, per - 1, per, per + 1, 3 * per + 5};
+    const uint32_t mores[] = {0, 1, 5, (uint32_t)per, (uint32_t)per + 1, 4u * (uint32_t)per + 3};
+    bool same = true;
+    for (size_t f = 0; f < sizeof firsts / sizeof firsts[0]; f++)
+        for (size_t m = 0; m < sizeof mores / sizeof mores[0]; m++) {
+            const grown_list one = grow_list(firsts[f], mores[m], false);
+            const grown_list all = grow_list(firsts[f], mores[m], true);
+            same &= one.right && all.right && one.at == all.at && one.used == all.used && one.count == all.count &&
+                    one.chunked == all.chunked && all.count == firsts[f] + (int32_t)mores[m];
+        }
+    TIDE_CHECK(same);
+
+    // In the scratch area, whose memory is whatever was there
+    start();
+    const uint64_t mark = tide_scratch_mark();
+    memset(tide_scratch_memory(1u << 16), 0xEE, 1u << 16);
+    tide_scratch_reset(mark);
+    tide_list local = {0};
+    add(&local, 7, TIDE_IN_SCRATCH);
+    tide_list_add_zeros(&local, 3000, sizeof(int32_t), TIDE_IN_SCRATCH);
+    TIDE_CHECK(tide_list_count(local) == 3001 && at(local, 0) == 7 && zeros(local, 1, 3001));
+    TIDE_CHECK(tide_handle_where(local.at) == TIDE_IN_SCRATCH);
+    tide_scratch_reset(mark);
+}
+
 static void make(tide_list *l, const uint32_t where, const uint32_t count, const int32_t first, const uint32_t said)
 {
     tide_list_out out;

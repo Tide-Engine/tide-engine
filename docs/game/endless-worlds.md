@@ -101,7 +101,7 @@ event(Want want) Watch(mut Streamer streamer, Worlds worlds, Time time, mut Worl
     mut var full = false;
     // for each place of the box, nearest first, while !full:
     //     place++; if (place <= (moved ? 0 : gone)) continue;
-    //     a chunk that's there: the player joins its audience
+    //     a chunk that's there: the player joins its audience, while the tick's joins are under their allowance
     //     none, and streamer.asked < worlds.ask: Spawn it, ask the store for it, streamer.asked += 1
     //     none, and the tick's allowance is spent: place--; full = true;
     if (full) streamer.asking[want.player] = place;
@@ -110,9 +110,25 @@ event(Want want) Watch(mut Streamer streamer, Worlds worlds, Time time, mut Worl
 }
 ```
 
-The allowance costs a player nothing while it's more than the store answers in a tick (256): the box is asked for faster than it can be made, in the same order. `bench/voxels` spawns 1,024 a tick, so the default view is still asked for at once. A chunk that's already there costs none of it: a player who comes where others are joins every chunk's audience in the first tick.
+The allowance costs a player nothing while it's more than the store answers in a tick (256): the box is asked for faster than it can be made, in the same order. `bench/voxels` spawns 1,024 a tick, so the default view is still asked for at once.
 
-The server finds its chunks in `Streamer.chunks`, not with a query: a spawn joins the tables only once its tick's changes are applied, so two players who come near one place in one tick would otherwise make two chunks there. `Spawn` gives the entity at once.
+Chunks that are already there cost a tick something too: each one a player joins or leaves is its `Seen` and its group's audience changed, and the world's check of that change, about a microsecond each. A player who comes where others are joins a whole view of them in one tick, and one who goes leaves one; several players coming or going in one tick are several views. So joins have an allowance of their own, and so have leaves, eight times the spawns' in `bench/voxels` (8,192 a tick for a dimension), the box's places gone through the same way. A box left goes in a list (`Streamer.leaving`, the player and the chunk they were in), and each tick takes the allowance's worth of its chunks from the oldest box first, passing over those inside the box the player has now, so one who comes back keeps what they came back to:
+
+```csharp
+void Depart(mut Streamer streamer, mut World world, Worlds worlds, int tick)
+{
+    // for each box in streamer.leaving, oldest first, while the tick's leaves are under the allowance:
+    //     for each of its places from box.place on: the chunk there, if it's outside where the player is now
+    //     (streamer.watching) and has them, loses them
+    //     a box gone through leaves the list; one that isn't keeps its place
+}
+```
+
+The handler that sees the move runs it, and so does a system each tick, as a player who left the dimension sends it nothing more to go on by. What the game chooses here is the audience: a chunk is a leaving player's a few ticks longer than their box says, never a tick less than it, and a player who joins has the nearest of a box first.
+
+A player's view taken in or let go over two ticks costs that player a round trip: what they're sent of it is a second repair, which waits for the first to be acknowledged. With an allowance of four times the spawns' (4,096), a view at three times the default radius (6,845 chunks) went over two ticks, and with eight bots hopping the server's longest updates lost their handlers' share (6 to 9 ms), but a player hopping to where another is had all of their box 2 ticks later (40 for 38), and a bot's verified world was 69 ticks behind the server's at most, for 59. At 8,192 no lone view is split: the allowance holds the ticks in which several players come or go at once.
+
+The server finds its chunks in `Streamer.chunks`, not with a query: a spawn joins the tables only once its tick's changes are applied, so two players who come near one place in one tick would otherwise make two chunks there. `Spawn` gives the entity at once, but its components are there only once the tick's changes are applied: `world.Has<Seen>(chunk)` is false for a chunk another player's coming spawned this tick, and what's set on it is lost. The handler stops there for the tick, as if its allowance were spent, and goes on from that place in the next, when the chunk takes the player.
 
 ## Making chunks on every core
 

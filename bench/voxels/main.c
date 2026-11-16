@@ -37,7 +37,7 @@ static uint64_t store_bytes, store_writes, store_reads, store_found, store_far_f
 // --forget: chunks' saves aren't kept (far regions' are), as a server that stopped before it saved its chunks
 // would have lost them
 static bool forget_chunks;
-// --audit: the far regions' checks ran (Streamer.audits) and found nothing wrong, or the run fails
+// --audit: the checks of far regions and audiences ran (Streamer.audits) and found nothing wrong, or the run fails
 static uint32_t audit_every;
 static bool audit_failed;
 // --fill: the ticks a hop's whole box may take to be there, at the median, or the run fails
@@ -185,7 +185,8 @@ static bench_flag flags[] = {
     {"pace", "far columns a dimension's changes are sent in each time, at most", 64, 64, 0, 1},
     {"gap", "ticks between sendings of a dimension's far changes; 0 every tick", 30, 30, 0, 0},
     {"audit", "ticks between checks that the far regions say what the chunks the server has do, and are the right "
-              "players'; the run fails on what they find; 0 never", 0, 60, 0, 0},
+              "players', and that chunks are the players' whose boxes they're in; the run fails on what they find; 0 "
+              "never", 0, 60, 0, 0},
     {"forget", "1: the store keeps no chunk's save, and keeps the far regions', as a server that stopped before it "
                "saved its chunks would have", 0, 0, 0, 0},
     {"watch", "1: counts the chunks that come to each bot's machine and times the box of a dimension it hops into, "
@@ -203,7 +204,8 @@ static bench_flag flags[] = {
     {"back", "with --out: seconds after which each bot flies back the way it came, for as long, and then stays there: "
              "a world that held many chunks and holds few; 0 never", 0, 0, 0, 0},
     {"ask", "what a dimension spawns of chunks a tick at most: a box of more is asked for over the ticks it takes, "
-            "nearest first", 1024, 1024, 0, 1},
+            "nearest first; eight times as many that are there take a player, and lose one, a tick at most (the quick "
+            "run's 8 has boxes asked for, joined and left over a few)", 1024, 8, 0, 1},
 };
 
 static uint32_t mix(uint32_t x)
@@ -364,10 +366,11 @@ static void describe(const void *world)
     if (forget_chunks) printf("  chunks' saves forgotten (--forget): %llu\n", (unsigned long long)store_forgot);
     describe_watched();
     if (!audit_every) return;
-    printf("  far checks every %u ticks (--audit): %llu, %llu wrong\n", audit_every, (unsigned long long)audits,
-           (unsigned long long)wrong);
+    printf("  checks of far regions and audiences every %u ticks (--audit): %llu, %llu wrong\n", audit_every,
+           (unsigned long long)audits, (unsigned long long)wrong);
     if (!audits || wrong) {
-        fprintf(stderr, "voxels: the far regions' checks %s\n", audits ? "found what's wrong above" : "never ran");
+        fprintf(stderr, "voxels: the checks of far regions and audiences %s\n",
+                audits ? "found what's wrong above" : "never ran");
         audit_failed = true;
     }
 }

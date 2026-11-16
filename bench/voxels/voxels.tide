@@ -50,6 +50,10 @@ const int REACH = 60;       // Tenths of a cell a player digs and builds from
 const int SEA = 0;          // Water fills up to here
 const int RETRY = 300;      // Ticks before a load that hasn't been answered, or failed, is asked again
 const int DEAR = 10;        // What a chunk with ground in it costs to make, against one of air or water (Pace)
+const int JOINS = 8;        // Chunks that are there a dimension has take or lose a player in a tick, to each it spawns
+                            // (Worlds.ask; Watch, Depart): 8,192, more than a view at three times the default radius,
+                            // as a player's view taken in or let go over two ticks is a repair more, a round trip
+                            // later, for them. Players coming or going together go over a few ticks
 const int SQUARE = 8;       // Cells along a far column's side...
 const int COLUMNS = 16;     // ...and far columns along a far region's: 16 by 16 of them, 8 by 8 chunks
 
@@ -60,6 +64,14 @@ scene Dimension
 {
     int number;
     int seed;
+}
+
+// A box a player left: the chunk they were in, and the places of the box gone through (Depart)
+struct Left
+{
+    PlayerID player;
+    int3 from;
+    int place;
 }
 
 // A dimension's own, the server's alone: the chunk each player there is in, as last looked at, and the chunks
@@ -77,7 +89,11 @@ component Streamer
     int asked;                  // Chunks spawned in the tick `askedAt`, of Worlds.ask
     int askedAt;
     int emptying;               // The tick the chunks a player leaves now say they emptied in, and how many have:
-    int emptied;                // Worlds.ask a tick, so a box left whole goes over a few (Watch)
+    int emptied;                // Worlds.ask a tick, so a box left whole goes over a few (Depart)
+    int joined;                 // Chunks that were there and took a player in the tick `askedAt`, of Worlds.ask * JOINS
+    List<Left> leaving;         // Boxes players left whose chunks haven't all lost them yet, oldest first (Depart)
+    int left;                   // Chunks that lost a player in the tick `leftAt`, of Worlds.ask * JOINS
+    int leftAt;
     int audits;                 // The bench's checks of its far regions (Audit), and what they found wrong
     int wrong;
 }
@@ -98,7 +114,9 @@ singleton Worlds
     int make = 480;     // What a dimension makes of chunks a tick at most (Pace): a chunk of air or water counts 1,
                         // one with ground in it DEAR, so 48 of those, about 7 ms of one thread
     int ask = 1024;     // What a dimension spawns of chunks a tick at most (Watch): four times what the store answers in
-                        // one, so a box is asked for faster than it could be made, and no tick spawns a whole view
+                        // one, so a box is asked for faster than it could be made, and no tick spawns a whole view.
+                        // JOINS times as many chunks that are there take a player (Watch), and as many lose one
+                        // (Depart): a whole view joined or left where others hold it goes over a few ticks too
     int spread;         // Cells between players' starts, on a square grid, for the bench: 0 has them start together
     int park;           // 1: the bench's players start a dimension each (the nth in dimension n of `count`, around)
     bool ready;
@@ -294,7 +312,8 @@ system Setup(mut Worlds worlds)
 // The bench's check of the far regions, every Worlds.audit ticks (0 never), the server's alone: what it finds wrong is
 // counted in Streamer.wrong, which the bench fails on. Each column the server can work out from the chunks it has is
 // as its region says; a region that has sent all it has has it in Far, and is shown where it has columns; its
-// audience is the players whose square it's in; and each chunk someone has is in a region. Declared before Generate,
+// audience is the players whose square it's in; each chunk someone has is in a region; and a chunk's audience is the
+// players whose box it's in, where none is still being joined or left. Declared before Generate,
 // so it sees the regions as the last tick's events left them, every chunk's word taken
 system Audit(mut Streamer streamer, Dimension dimension, Worlds worlds, Time time,
              query (Far far, Summary summary, Seen seen) regions, query (Chunk chunk) chunks, query (Chunk chunk, Seen seen) held)
@@ -329,9 +348,21 @@ system Audit(mut Streamer streamer, Dimension dimension, Worlds worlds, Time tim
             if (!Agrees(row.far, row.summary, place, low, high, chunks)) streamer.wrong += 1;
         }
     }
+    // Where no box is still being joined or left (Watch, Depart), each chunk's audience is the players whose box it's in
+    var settled = streamer.asking.count == 0 && streamer.leaving.count == 0;
     foreach (var row in held)
     {
-        if (row.chunk.dimension != dimension.number || row.seen.audience == Audience.None) continue;
+        if (row.chunk.dimension != dimension.number) continue;
+        if (settled)
+        {
+            mut var audience = Audience.None;
+            foreach (var entry in streamer.watching)
+            {
+                if (Within(row.chunk.at, entry.value, worlds.near, worlds.tall)) audience.Add(entry.key);
+            }
+            if (row.seen.audience != audience) streamer.wrong += 1;
+        }
+        if (row.seen.audience == Audience.None) continue;
         if (!streamer.regions.Has(KeyOfRegion(RegionOf(row.chunk.at)))) streamer.wrong += 1;
     }
 }
@@ -551,8 +582,10 @@ event(Loaded loaded) Fill(mut Chunk chunk, mut Seen seen, query (Far far, Summar
 // (nearest their player first, Watch), up to Worlds.make of them by what each costs. The store answers faster than
 // chunks can be made, and a tick that made every chunk it heard of would be as long as they are many. One still
 // asked for, or whose load failed (Retry asks again), keeps its place
-system Pace(mut Streamer streamer, Worlds worlds, mut World world)
+system Pace(mut Streamer streamer, Worlds worlds, Time time, mut World world)
 {
+    // What's left of the boxes players left: one who hopped away sends this dimension no Want to go on by
+    Depart(streamer, world, worlds, time.tick);
     if (streamer.making.count == 0) return;
     mut var left = worlds.make;
     mut var kept = 0;
@@ -766,6 +799,77 @@ Entity Find(int dimension, int3 at, query (Chunk chunk) chunks)
     return found;
 }
 
+// The chunks of the boxes players left lose them: Worlds.ask * JOINS of a dimension's chunks a tick, the oldest box
+// first. A whole view left where others hold it (6,845 chunks at three times the default radius) was a tick as long
+// as they are many. Only what's outside the box the player has now goes, so one who came back keeps what they came
+// back to, and a chunk is some player's a few ticks longer than their box says, never less: the game's own choice,
+// as what a player may have is whatever the group's audience says.
+//
+// A box left whole would also go whole, a linger later, in one tick: 3,125 chunks saved, forgotten and destroyed
+// were 12 ms of it. Each Worlds.ask of a dimension's chunks that empty say they did a tick after the ones before
+// (Streamer.emptying), so a box goes over the ticks it was asked for in, whoever else leaves with its player
+void Depart(mut Streamer streamer, mut World world, Worlds worlds, int tick)
+{
+    if (streamer.leaving.count == 0) return;
+    if (streamer.leftAt != tick)
+    {
+        streamer.leftAt = tick;
+        streamer.left = 0;
+    }
+    var near = worlds.near;
+    var tall = worlds.tall;
+    var wide = 2 * near + 1;
+    var high = 2 * tall + 1;
+    var places = wide * high * wide;
+    var most = worlds.ask * JOINS;
+    mut var done = 0;
+    while (done < streamer.leaving.count && streamer.left < most)
+    {
+        mut var box = streamer.leaving[done];
+        var here = streamer.watching.TryGet(box.player, out var now);
+        while (box.place < places && streamer.left < most)
+        {
+            var place = box.place;
+            box.place++;
+            var at = int3(box.from.x - near + place % wide, box.from.y - tall + place / wide % high,
+                          box.from.z - near + place / (wide * high));
+            if (here && Within(at, now, near, tall)) continue;
+            if (!streamer.chunks.TryGet(KeyOf(at), out var chunk)) continue;
+            mut var seen = world.Get<Seen>(chunk);
+            // (A box that wasn't all asked for has chunks that were never the player's)
+            if (!seen.audience.Contains(box.player)) continue;
+            seen.audience.Remove(box.player);
+            if (seen.audience == Audience.None)
+            {
+                if (streamer.emptying < tick)
+                {
+                    streamer.emptying = tick;
+                    streamer.emptied = 0;
+                }
+                seen.emptied = streamer.emptying;
+                streamer.emptied += 1;
+                if (streamer.emptied >= worlds.ask)
+                {
+                    streamer.emptying += 1;
+                    streamer.emptied = 0;
+                }
+            }
+            if (seen.shown) Visibility.Set(seen.group, seen.audience);
+            world.Set<Seen>(chunk, seen);
+            streamer.left += 1;
+        }
+        if (box.place < places)
+        {
+            streamer.leaving[done] = box;
+            break;
+        }
+        done++;
+    }
+    if (done == 0) return;
+    for (var i = done; i < streamer.leaving.count; i++) streamer.leaving[i - done] = streamer.leaving[i];
+    for (var i = 0; i < done; i++) streamer.leaving.RemoveAt(streamer.leaving.count - 1);
+}
+
 // The chunks a player has are a box around the one they're in. As that moves,
 // the chunks the box left lose the player and those it took in get them, made
 // first where there's none. Only the server's machine has a Streamer, so only
@@ -785,41 +889,14 @@ event(Want want) Watch(mut Streamer streamer, Dimension dimension, Worlds worlds
     if (!moved && !going) return;
     var near = worlds.near;
     var tall = worlds.tall;
+    // The box left loses the player over the ticks it takes (Depart), what the box now takes in aside: the tick's
+    // worth of it first, as the player is where they are now
     if (moved && known)
     {
-        // A box left whole would go whole, a linger later, in one tick: 3,125 chunks saved, forgotten and destroyed
-        // were 12 ms of it. Each Worlds.ask of a dimension's chunks that empty say they did a tick after the ones
-        // before (Streamer.emptying), so a box goes over the ticks it was asked for in, whoever else leaves with
-        // its player, and a border's row of chunks still goes together
-        for (var z = from.z - near; z <= from.z + near; z++)
-            for (var y = from.y - tall; y <= from.y + tall; y++)
-                for (var x = from.x - near; x <= from.x + near; x++)
-                {
-                    var at = int3(x, y, z);
-                    if (want.has && Within(at, want.to, near, tall)) continue;
-                    if (!streamer.chunks.TryGet(KeyOf(at), out var chunk)) continue;
-                    mut var seen = world.Get<Seen>(chunk);
-                    // (A box that wasn't all asked for has chunks that were never the player's)
-                    if (going && !seen.audience.Contains(want.player)) continue;
-                    seen.audience.Remove(want.player);
-                    if (seen.audience == Audience.None)
-                    {
-                        if (streamer.emptying < time.tick)
-                        {
-                            streamer.emptying = time.tick;
-                            streamer.emptied = 0;
-                        }
-                        seen.emptied = streamer.emptying;
-                        streamer.emptied += 1;
-                        if (streamer.emptied >= worlds.ask)
-                        {
-                            streamer.emptying += 1;
-                            streamer.emptied = 0;
-                        }
-                    }
-                    if (seen.shown) Visibility.Set(seen.group, seen.audience);
-                    world.Set<Seen>(chunk, seen);
-                }
+        streamer.leaving.Add(Left { player = want.player, from = from });
+        if (want.has) streamer.watching[want.player] = want.to;
+        else streamer.watching.Remove(want.player);
+        Depart(streamer, world, worlds, time.tick);
     }
     if (!want.has)
     {
@@ -843,6 +920,7 @@ event(Want want) Watch(mut Streamer streamer, Dimension dimension, Worlds worlds
     {
         streamer.askedAt = time.tick;
         streamer.asked = 0;
+        streamer.joined = 0;
     }
     // Nearest first, a square ring around the player's chunk at a time, and in each the player's own height before
     // the ones above and below: the store answers in the order it's asked, and chunks are made in it (Pace), so what
@@ -874,11 +952,27 @@ event(Want want) Watch(mut Streamer streamer, Dimension dimension, Worlds worlds
                     if (sure && Within(at, before, near, tall)) continue;
                     if (streamer.chunks.TryGet(KeyOf(at), out var chunk))
                     {
+                        if (!world.Has<Seen>(chunk))
+                        {
+                            // Spawned this tick, by another player's coming, or gone and not yet forgotten (Forget):
+                            // it can't take the player until it's there, so the next tick goes on here
+                            place--;
+                            full = true;
+                            continue;
+                        }
                         mut var seen = world.Get<Seen>(chunk);
                         if (seen.audience.Contains(want.player)) continue;
+                        if (streamer.joined >= worlds.ask * JOINS)
+                        {
+                            // The tick's worth of chunks that are there have the player: the next goes on here
+                            place--;
+                            full = true;
+                            continue;
+                        }
                         seen.audience.Add(want.player);
                         if (seen.shown) Visibility.Set(seen.group, seen.audience);
                         world.Set<Seen>(chunk, seen);
+                        streamer.joined += 1;
                     }
                     else if (streamer.asked >= worlds.ask)
                     {
