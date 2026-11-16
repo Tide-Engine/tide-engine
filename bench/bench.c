@@ -20,6 +20,8 @@
 // behind the server's (in ticks: half a second at 60 a second), and falls
 // behind, failing the run, when they're further than twice that.
 #define CAUGHT_UP 30u
+#define LAG_MOST 255u // Ticks behind counted apart (lags)...
+#define LAG_SETTLED 5.0 // ...from this long after a bot caught up: its first view is still coming until then
 
 static void out_of_memory(void)
 {
@@ -223,6 +225,7 @@ struct machine {
     double connected; // ...when it had the world; 0 until then
     double caught_up; // ...and when it caught up with the match: it's in
     uint32_t max_lag; // Ticks it was behind the server at most, once in
+    uint64_t lags[LAG_MOST + 1u]; // ...and in how many frames it was each number of ticks behind (the last: that or more), once settled
     bool failed;
     uint32_t first_tick; // Its predicted tick once connected
     // A bot's machine's home's counts, which start again with each home (with
@@ -704,6 +707,8 @@ typedef struct results {
     timing world;       // Seconds until a bot had the world...
     timing caught_up;   // ...and until it caught up with the match
     uint32_t max_lag;   // Ticks a client was behind the server at most, once in
+    double lag_mean;    // ...on average over every bot's frames once settled (LAG_SETTLED), and in the worst of each hundred and thousand of them
+    uint32_t lag_p99, lag_p999;
     double repairs;     // Bytes of worlds a second each bot's machine got, once in: its first, and repairs
     double pack_ms;     // Packing the world, each time
     uint32_t sent_size; // The world at the end, as sent...
@@ -826,6 +831,7 @@ static void collect(results *r, machine *bots_machines, const uint32_t bots, con
     double ping = 0.0;
     uint32_t pinged = 0, holders = 0;
     samples steady = {0}, joining = {0}, worlds = {0}, joins = {0};
+    uint64_t lags[LAG_MOST + 1u] = {0};
     for (uint32_t i = 0; i < bots; i++) {
         const machine *m = &bots_machines[i];
         sum.tick_ms += m->tick_ms;
@@ -854,6 +860,7 @@ static void collect(results *r, machine *bots_machines, const uint32_t bots, con
         }
         if (m->caught_up > 0.0 && m->catching == 0.0) add_sample(&joins, m->caught_up - m->created);
         if (m->max_lag > r->max_lag) r->max_lag = m->max_lag;
+        for (uint32_t k = 0; k <= LAG_MOST; k++) lags[k] += m->lags[k];
         r->resyncs += m->resyncs;
         r->rejoins += m->rejoins;
         add_samples(&steady, &m->steady);
@@ -881,6 +888,14 @@ static void collect(results *r, machine *bots_machines, const uint32_t bots, con
     r->late = advanced ? (double)late / (double)advanced : 0.0;
     r->repairs = seconds > 0.0 ? (double)worlds_bytes / seconds : 0.0;
     r->ping_ms = pinged ? ping / pinged : 0.0;
+    uint64_t lag_frames = 0, lag_ticks = 0;
+    for (uint32_t k = 0; k <= LAG_MOST; k++) {
+        lag_frames += lags[k];
+        lag_ticks += lags[k] * k;
+    }
+    r->lag_mean = lag_frames ? (double)lag_ticks / (double)lag_frames : 0.0;
+    for (uint64_t under = 0; r->lag_p99 < LAG_MOST && (under += lags[r->lag_p99]) * 100u < lag_frames * 99u;) r->lag_p99++;
+    for (uint64_t under = 0; r->lag_p999 < LAG_MOST && (under += lags[r->lag_p999]) * 1000u < lag_frames * 999u;) r->lag_p999++;
     r->held_mean = holders ? (double)held / holders : 0.0;
     r->followed = bots ? (double)followed / bots : 0.0;
     r->world = timing_of(&worlds);
@@ -1017,6 +1032,8 @@ static void print_results(const results *r, const uint32_t bots, const bool held
            r->ping_ms);
     print_bytes("  worlds a bot's machine got (its first, and repairs): ", r->repairs);
     printf(" a second; its verified world was %u ticks behind the server's at most\n", r->max_lag);
+    printf("  ...%.2f ticks behind on average over its frames from %g s after it caught up, %u or fewer in 99 of 100, %u in 999 of 1000\n",
+           r->lag_mean, LAG_SETTLED, r->lag_p99, r->lag_p999);
     if (r->world.count) {
         printf("  joining: the world took %.2f s median, %.2f s at most", r->world.median, r->world.max);
         if (r->caught_up.count) printf("; catching up, %.2f s median, %.2f s at most", r->caught_up.median, r->caught_up.max);
@@ -1138,7 +1155,8 @@ static void write_record(FILE *f, const bench_desc *d, const bench_options *o, c
             r->played);
     json_side(f, "server", &r->server);
     json_side(f, "client", &r->client);
-    fprintf(f, ",\"replays\":%.6g,\"pack_ms_each\":%.6g,\"max_lag_ticks\":%u", r->replays, r->pack_ms, r->max_lag);
+    fprintf(f, ",\"replays\":%.6g,\"pack_ms_each\":%.6g,\"max_lag_ticks\":%u,\"lag_mean_ticks\":%.6g,\"lag_p99_ticks\":%u,\"lag_p999_ticks\":%u",
+            r->replays, r->pack_ms, r->max_lag, r->lag_mean, r->lag_p99, r->lag_p999);
     json_timing(f, "world_s", &r->world);
     json_timing(f, "caught_up_s", &r->caught_up);
     fprintf(f, ",\"late_share\":%.6g,\"ping_ms\":%.6g,\"client_world_bytes\":%.6g", r->late, r->ping_ms, r->repairs);
@@ -1592,6 +1610,7 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
             }
             if (in && m->caught_up == 0.0 && lag <= CAUGHT_UP) m->caught_up = now;
             if (m->caught_up > 0.0 && lag > m->max_lag) m->max_lag = lag;
+            if (in && m->caught_up > 0.0 && now - m->caught_up >= LAG_SETTLED) m->lags[lag < LAG_MOST ? lag : LAG_MOST]++;
             if (s.state == TIDE_SESSION_OFFLINE) {
                 printf("  bot %u went offline (reason %d) at %.2f s; stopping\n", m->bot, (int)s.reason, now);
                 m->failed = failed = true;
