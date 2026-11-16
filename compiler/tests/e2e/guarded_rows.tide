@@ -65,6 +65,14 @@ singleton Log
     int sparks;
 }
 
+// What Marked and Plain came to: the chunks each went through, in the order it went through them
+singleton Order
+{
+    int marked;
+    int plain;
+    int count;
+}
+
 event Made
 {
     int id;
@@ -117,6 +125,24 @@ system Churn(mut Tally tally, Time time)
 system Mark(mut Chunk chunk, Time time)
 {
     chunk.again = time.tick % 6 == 4 && chunk.id % 2 == 0;
+}
+
+// On one task, in the entities' order (it changes a singleton by its rows' order), with marks: where the rows its
+// guard lets through are few it goes through their keys alone, gathered from the marked rows of each archetype and
+// sorted, which have to come in the order going through every key gives. Plain, beside it, has no guard (its test
+// isn't a leading return), so it goes through every key: the two come to the same number every tick
+[After(Mark), Before(Make)]
+system Marked(Chunk chunk, mut Order order)
+{
+    if (chunk.made && !chunk.again) return;
+    order.marked = order.marked * 31 + chunk.id;
+    order.count++;
+}
+
+[After(Marked), Before(Make)]
+system Plain(Chunk chunk, mut Order order)
+{
+    if (!chunk.made || chunk.again) { order.plain = order.plain * 31 + chunk.id; }
 }
 
 // Sends through a function: the system's own, in the same order

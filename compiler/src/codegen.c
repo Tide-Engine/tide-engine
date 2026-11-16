@@ -12664,6 +12664,7 @@ static bool blend_prev_words(const gen *g, const decl *d, sb *words);
 // A system's guard (row_lanes_codegen.inc)
 #define GUARD_TERMS_MOST 32
 static int system_guard_terms(const decl *sys, const expr **terms);
+static int leading_plain_returns(const decl *sys);
 // A view's rows made when its code first reaches them (lane_reads_codegen.inc)
 static bool view_rows_lazy(const gen *g, const decl *sys);
 static int view_rows_from(const decl *sys);
@@ -17730,12 +17731,15 @@ static void gen_system_body_variant(gen *g, const decl *sys, const body_variant 
         return;
     }
     gen_world_bindings(g, sys);
+    // Its cause (what its spawns' and sends' identities are made from) is two hashes of its entity: worked out
+    // after the tests its code starts with, which can't spawn or send, so a row they turn away pays none of it
+    const int causal_after = leading_plain_returns(sys);
+    sb causal_path = {0};
     {
-        sb path = {0};
-        sb_printf(&path, "tide_causal_entity(UINT64_C(%llu), %s)", (unsigned long long)causal_code(sys), sys->per_entity ? "tide_this" : "(tide_entity){0}");
-        if (!sys->per_entity && !sys->is_local && !sys->is_view && sharded(g)) { sb fork = {0}; sb_printf(&fork, "tide_causal_mix(%s, (uint32_t)tide_w->tide_shard_state.shard)", path.data); path = fork; }
-        if (sys->is_handler) { sb fork = {0}; sb_printf(&fork, "tide_causal_mix(%s, tide_event_cause)", path.data); path = fork; }
-        gen_causal_local(g, sys, path.data);
+        sb_printf(&causal_path, "tide_causal_entity(UINT64_C(%llu), %s)", (unsigned long long)causal_code(sys), sys->per_entity ? "tide_this" : "(tide_entity){0}");
+        if (!sys->per_entity && !sys->is_local && !sys->is_view && sharded(g)) { sb fork = {0}; sb_printf(&fork, "tide_causal_mix(%s, (uint32_t)tide_w->tide_shard_state.shard)", causal_path.data); causal_path = fork; }
+        if (sys->is_handler) { sb fork = {0}; sb_printf(&fork, "tide_causal_mix(%s, tide_event_cause)", causal_path.data); causal_path = fork; }
+        if (!causal_after) gen_causal_local(g, sys, causal_path.data);
     }
     if (g->has_scene) line(g, o, "(void)tide_scene;");
     if (sys->per_entity) line(g, o, "(void)tide_this;");
@@ -17774,6 +17778,7 @@ static void gen_system_body_variant(gen *g, const decl *sys, const body_variant 
     g->gather_hit = 0;
     const int statements = sys->body->stmts.count - (destroying ? 1 : 0);
     for (int i = 0; i < statements; i++) {
+        if (causal_after && i == causal_after) gen_causal_local(g, sys, causal_path.data);
         if (sys->preparation_cpu) gen_worker_checkpoint(g);
         if (lazy_rows && i == rows_from) { // Its queries' rows, which its code names from here on
             for (int k = 0; k < sys->params.count; k++) {
@@ -17797,6 +17802,7 @@ static void gen_system_body_variant(gen *g, const decl *sys, const body_variant 
             line(g, o, "tide_preparation_publish(tide_w);");
         }
     }
+    if (causal_after && causal_after >= statements) gen_causal_local(g, sys, causal_path.data);
     if (destroying) {
         const stmt *tail = sys->body->stmts.items[statements];
         line_directive(g, tail->at);
@@ -21769,6 +21775,15 @@ static bool shares_live_rows(const gen *g, const decl *sys)
     return false;
 }
 
+// Whether a system marks the rows its guard lets through for any archetype it goes through (rows_live)
+static bool system_marks_rows(const gen *g, const decl *sys)
+{
+    for (int a = 0; a < g->prog->archetypes.count; a++) {
+        if (rows_live(g, sys, a)) return true;
+    }
+    return false;
+}
+
 // Each such system has a slot of the tick's live keys (tide_world.tide_live_keys), and how many there are
 static int live_keys_slot(const gen *g, const decl *sys)
 {
@@ -22911,16 +22926,18 @@ static void gen_canonical_live_every(gen *g, const decl *sys, const char *pad)
     sb_printf(&g->c, "%stide_busy = true;\n", pad);
 }
 
-// The keys of the rows a system's guard lets through (shares_live_rows), into the tide_live_keys `to`, from the
-// marks just made (gen_canonical_live) and the system's keys (gen_canonical_system_keys): `few` when the marked
-// rows are at most one in TIDE_LIVE_FEW of its entities, and then their keys and slots, in the keys' order. The
-// marks are counted first, so nothing is walked or kept where they aren't few, and with none marked there are no
-// keys at all. An archetype with no marks (rows_live) has every row count.
+// The keys of the rows a system's guard lets through, into the tide_live_keys `to`, from the marks just made
+// (gen_canonical_live): `few` when the marked rows are at most one in TIDE_LIVE_FEW of the system's keys
+// (gen_canonical_system_keys), and then their keys and slots, in the keys' order. The marks are counted first, so
+// nothing is gathered where they aren't few, and with none marked there are no keys at all. An archetype with no
+// marks (rows_live) has every row count. The keys are gathered from the marked rows (tide_live_key_take: a row
+// whose entity is alive there; a hole's mark is whatever its bytes said) and sorted: what going through every key
+// and keeping those whose row is marked gives, for the marked rows' worth of work rather than every key's.
 static void gen_live_keys_make(gen *g, const decl *sys, const char *to)
 {
     sb *o = &g->c;
     const program *prog = g->prog;
-    sb_put(o, "    {\n        uint64_t tide_marked = 0u;\n");
+    sb_put(o, "    {\n        (void)tide_keys; // (The marked rows say which keys: their count is the keys')\n        uint64_t tide_marked = 0u;\n");
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (!runs_on(g, sys, a)) continue;
         if (rows_live(g, sys, a)) {
@@ -22929,24 +22946,32 @@ static void gen_live_keys_make(gen *g, const decl *sys, const char *to)
     }
     sb_printf(o, "        %s.few = tide_marked * TIDE_LIVE_FEW <= tide_key_count;\n"
                  "        if (%s.few && tide_marked) {\n"
-                 "            if (tide_marked * (sizeof *%s.keys + sizeof *%s.slots) > SIZE_MAX) tide_out_of_memory();\n"
+                 "            if (tide_marked * (sizeof *%s.keys + sizeof *%s.slots + sizeof(tide_live_key)) > SIZE_MAX) tide_out_of_memory();\n"
                  "            %s.keys = tide_alloc((size_t)tide_marked * (sizeof *%s.keys + sizeof *%s.slots));\n"
                  "            %s.slots = (uint32_t *)(void *)(%s.keys + tide_marked);\n"
-                 "            uint32_t tide_n = 0u;\n"
-                 "            for (uint32_t tide_i = 0; tide_i < tide_key_count && tide_n < tide_marked; tide_i++) {\n"
-                 "                const tide_location tide_at = tide_entity_location_at(&tide_w->entities, tide_key_slots[tide_i], tide_keys[tide_i]);\n"
-                 "                bool tide_is = false;\n                switch (tide_at.archetype) {\n",
+                 "            tide_live_key *const tide_found = tide_alloc((size_t)tide_marked * sizeof *tide_found);\n"
+                 "            uint32_t tide_n = 0u;\n",
               to, to, to, to, to, to, to, to, to);
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (!runs_on(g, sys, a)) continue;
+        const char *arch = arch_name(g, a);
         if (rows_live(g, sys, a)) {
-            sb_printf(o, "                case %d: tide_is = tide_at.row < tide_live_rows_%d && (tide_live_%d[tide_at.row >> 6] >> (tide_at.row & 63u) & 1u); break;\n", a, a, a);
-        } else sb_printf(o, "                case %d: tide_is = true; break;\n", a);
+            sb_printf(o, "            for (size_t tide_word = 0; tide_word < ((size_t)tide_live_rows_%d + 63u) / 64u; tide_word++) {\n"
+                         "                for (uint64_t tide_bits = tide_live_%d[tide_word]; tide_bits; tide_bits &= tide_bits - 1u)\n"
+                         "                    tide_live_key_take(&tide_w->entities, &tide_w->%s, &tide_columns_%s, %du, (uint32_t)(tide_word * 64u) + (uint32_t)__builtin_ctzll(tide_bits), tide_found, &tide_n, tide_marked);\n"
+                         "            }\n",
+                      a, a, arch, arch, a);
+        } else {
+            sb_printf(o, "            for (uint32_t tide_row = 0; tide_row < tide_w->%s.count; tide_row++)\n"
+                         "                tide_live_key_take(&tide_w->entities, &tide_w->%s, &tide_columns_%s, %du, tide_row, tide_found, &tide_n, tide_marked);\n",
+                      arch, arch, arch, a);
+        }
     }
-    sb_printf(o, "                default: break;\n                }\n"
-                 "                if (!tide_is) continue;\n"
-                 "                %s.keys[tide_n] = tide_keys[tide_i];\n"
-                 "                %s.slots[tide_n++] = tide_key_slots[tide_i];\n            }\n"
+    sb_printf(o, "            if (tide_n > 1u) qsort(tide_found, tide_n, sizeof *tide_found, tide_live_key_compare);\n"
+                 "            for (uint32_t tide_i = 0; tide_i < tide_n; tide_i++) {\n"
+                 "                %s.keys[tide_i] = tide_found[tide_i].key;\n"
+                 "                %s.slots[tide_i] = tide_found[tide_i].slot;\n            }\n"
+                 "            free(tide_found);\n"
                  "            %s.count = tide_n;\n        }\n    }\n", to, to, to);
 }
 
@@ -23331,9 +23356,11 @@ static void gen_system_run(gen *g, const decl *sys)
                   "        r->keys[to] = keys[i];\n        r->slots[to] = slots[i];\n    }\n"
                   "    r->count = count;\n}\n\n");
     }
-    // One that shares out the rows its guard lets through, where they're few (shares_live_rows)
+    // One that shares out the rows its guard lets through, where they're few (shares_live_rows); and one that
+    // goes through its entities in their order on one task, with marks: it goes through the few's keys alone
     const bool guarded = ordered && shares_live_rows(g, sys);
-    if (guarded && !g->live_keys_made) {
+    const bool few_alone = canonical && !ordered && system_marks_rows(g, sys);
+    if ((guarded || few_alone) && !g->live_keys_made) {
         g->live_keys_made = true;
         sb_put(o, "// The keys of the rows that get past the tests a system starts with, in the keys' order, where those rows are few\n"
                   "// among its entities (at most one in TIDE_LIVE_FEW): what its runs and its tasks are shares of then, so that the\n"
@@ -23352,7 +23379,23 @@ static void gen_system_run(gen *g, const decl *sys)
                   "    uint32_t *slots;\n"
                   "    uint32_t count;\n"
                   "    bool few;\n"
-                  "} tide_live_keys;\n\n");
+                  "} tide_live_keys;\n\n"
+                  "// They're gathered from the marked rows, each with its slot, and sorted by key\n"
+                  "typedef struct tide_live_key {\n    tide_entity key;\n    uint32_t slot;\n} tide_live_key;\n\n"
+                  "TIDE_HELPER int tide_live_key_compare(const void *a, const void *b)\n{\n"
+                  "    return tide_entity_compare(((const tide_live_key *)a)->key, ((const tide_live_key *)b)->key);\n}\n\n"
+                  "// Row `row` of archetype `arch`'s table, where its entity is alive and there (a hole's mark is whatever its\n"
+                  "// bytes said): its key and slot, as one of the system's keys whose row is marked\n"
+                  "TIDE_HELPER void tide_live_key_take(const tide_entities *es, const tide_table *t, const tide_columns *c, const uint32_t arch,\n"
+                  "                                    const uint32_t row, tide_live_key *found, uint32_t *n, const uint64_t most)\n{\n"
+                  "    if (row >= t->count || *n >= most) return;\n"
+                  "    const tide_entity *e = tide_table_get(t, c, row, 0);\n"
+                  "    if (tide_row_gone(e)) return;\n"
+                  "    const uint32_t slot = tide_entity_slot_index(es, *e);\n"
+                  "    if (slot == UINT32_MAX) return;\n"
+                  "    const tide_location at = tide_entity_location_at(es, slot, *e);\n"
+                  "    if (at.archetype != arch || at.row != row) return;\n"
+                  "    found[(*n)++] = (tide_live_key){*e, slot};\n}\n\n");
     }
     g->row_runs = scattered;
     for (int a = 0; !view && sys->per_entity && a < prog->archetypes.count; a++) {
@@ -23536,19 +23579,25 @@ static void gen_system_run(gen *g, const decl *sys)
         if (canonical) {
             gen_canonical_system_keys(g, sys);
             if (marked) sb_put(o, "    if (!tide_busy) tide_key_count = 0u; // No row gets past its tests: no walk\n");
+            // One on one task whose marked rows are few goes through their keys alone, in the keys' order: what
+            // going through every key would come to, as the others' marks leave them out (gen_live_keys_make)
+            if (few_alone) {
+                sb_put(o, "    tide_live_keys tide_live_mine = {0};\n    if (tide_busy && tide_pieces == 1u)\n");
+                gen_live_keys_make(g, sys, "tide_live_mine");
+                sb_put(o, "    if (tide_live_mine.few) {\n        tide_keys = tide_live_mine.keys;\n        tide_key_slots = tide_live_mine.slots;\n"
+                          "        tide_key_count = tide_live_mine.count;\n    }\n");
+            }
             // One that shares out the rows its guard lets through (shares_live_rows): where those are few, their
             // keys are the order its runs and this task's share are of. With more than one task tide_own_ made
-            // them, before any row ran. One task makes them itself where its runs are heaps' (a row's heap is its
-            // run's, on one thread as on several); else it has no need, as it goes through every key and the marks
-            // leave the others out
+            // them, before any row ran. One task makes them itself: where its runs are heaps' a row's heap is its
+            // run's, on one thread as on several; else it goes through the few's keys where it would have gone
+            // through every key for the marks to leave the others out, in the same order
             if (guarded) {
                 sb_printf(o, "    tide_live_keys tide_live_own = {0};\n"
                              "    const tide_live_keys *const tide_by_live = tide_pieces > 1u ? &tide_w->tide_live_keys[%d] : &tide_live_own;\n",
                           live_keys_slot(g, sys));
-                if (heap_runs) {
-                    sb_put(o, "    if (tide_pieces == 1u)\n");
-                    gen_live_keys_make(g, sys, "tide_live_own");
-                }
+                sb_put(o, "    if (tide_pieces == 1u)\n");
+                gen_live_keys_make(g, sys, "tide_live_own");
                 sb_put(o, "    if (tide_by_live->few) {\n        tide_keys = tide_by_live->keys;\n        tide_key_slots = tide_by_live->slots;\n"
                           "        tide_key_count = tide_by_live->count;\n    }\n");
             }
@@ -23660,7 +23709,8 @@ static void gen_system_run(gen *g, const decl *sys)
         if (heap_runs) gen_heap_runs_join(g, sys); // Every run was this task's
         if (prepared && around) sb_put(o, "    }\n");
         if (marked) gen_canonical_live_done(g, sys);
-        if (guarded && heap_runs) sb_put(o, "    free(tide_live_own.keys);\n");
+        if (guarded) sb_put(o, "    free(tide_live_own.keys);\n");
+        if (few_alone) sb_put(o, "    free(tide_live_mine.keys);\n");
         if (!any) {
             sb_printf(o, "    (void)tide_w;%s // No entity matches this %s.\n",
                       view ? " (void)tide_l; (void)tide_draw; (void)tide_ui;" : "", view ? "view" : "system");

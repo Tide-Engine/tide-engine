@@ -1,5 +1,51 @@
 # The schedule and the tick on threads
 
+## A guard's few rows without going through every key, and a cause worked out after the guard (2026-11-16, night)
+
+From the voxels server with 32 players apart (notes/voxels.md, The spread case taken apart): `Idle`, whose code is
+a guard and a `Send`, was 24.8 ms a second of the server's 270 on one thread with 28,500 chunks, nearly all of them
+turned away by its first test. Three costs, each paid for every key: compiler only, nothing a game can observe.
+
+- **The guard wasn't one.** `seen.audience != Audience.None`: `Audience.None` is a static member whose C is
+  `((Audience){0})`, and a guard's terms refuse static members (`guard_plain`: some, as `Mouse.locked` or the
+  invite text, read a machine's state or allocate). `Audience.All` and `Audience.None` are values, and count now
+  (`row_lanes_codegen.inc`), so `Idle` marks its rows (`rows_live`) as `Keep` and `Retry` do, and as it queues (its
+  sends) its few rows are what its tasks share (`shares_live_rows`, the section below).
+- **The few's keys were found by going through every key** (`gen_live_keys_make`): one `tide_entity_location_at`
+  for each of the system's keys to ask whether its row was marked, where a system's marked rows are few (at most
+  one in `TIDE_LIVE_FEW`). Now the marked rows give their keys: each set bit's row, its entity where it's alive and
+  there (`tide_live_key_take`: a hole's mark is whatever its bytes said, and the slot is the entity's own,
+  `tide_entity_slot_index`), every row of an archetype that has no marks, sorted by key (`tide_live_key_compare`).
+  The same keys in the same order as before, for the marked rows' worth of work.
+- **...and only systems in runs that are shares used them.** A system on one task with marks (it writes a
+  singleton, takes the World: `canonical && !ordered`) went through every key, the marks leaving the others out;
+  one that splits in order on a single piece (one thread) did too unless its runs were heaps'. Both now go through
+  the few's keys where they're few (`tide_live_mine`, `tide_live_own`, made on one piece). Where they aren't few,
+  or with more than one piece, nothing changed.
+- **A cause worked out before the guard.** A system or handler that spawns or sends works its cause out first
+  (`tide_causal_entity`: two `tide_causal_mix`, hashes of its entity), so every row a guard turns away paid two
+  hashes. Now the cause is declared after the leading `if (<test>) return;` statements whose tests only read
+  (`leading_plain_returns`, `reads_alone`: names, fields, constants and operators, no call, method or property),
+  which can't spawn or send. The cause is the same number, worked out later.
+
+**Why nothing can tell.** Marks are the guard's answer before any row runs, which is its answer when the row's turn
+comes (`rows_live`'s rule, unchanged), so the few's keys are exactly the keys going through every key would have
+run, in the keys' order: the same rows, events, queues and heaps' blocks. The cause is a pure function of the
+entity and the code. No world hash in the tree moved but the fixture's below, which has a singleton more.
+
+**Tests.** `tidec_e2e_guarded_rows` gained `Marked` and `Plain`: the first a one-task system with a guard (it
+changes a singleton by its rows' order, `order.marked * 31 + id`), the second the same without one (its test isn't
+a leading return), over the fixture's chunks in eight archetypes, made few at a time and half at once, with holes
+and rows moved every tick; the two singletons are equal every tick on one thread and on eight. With the few's keys
+left unsorted it fails there, and in `guarded_rows`' other checks and `bench_voxels`' pins. Pin moved (the
+singleton): `0x8137b7e272d7a4ac` to `0x13f5eda06ddbd2a5`, the same on one thread, the fake eight and the pool. Every
+game's generated C the release tree builds (499 of 597 `.sources` lists; 98 are stale, naming files since removed)
+compiles with `-Wall -Wextra -Wpedantic -Werror`.
+
+**Measured** (`bench_voxels --players 32 --spread 256`, 30 s, one thread, release, Windows): `Idle` 24.8 ms a
+second to 17.3 with the cause after the guard, to 2.9 with the few's keys; the world hash the same in each. The
+whole run, before and after: notes/voxels.md, The spread case taken apart.
+
 ## A guard's few rows shared out across threads (2026-11-16, last)
 
 The gap that stood here that morning ("rows just spawned are one run's, so a system that works on new rows works on
