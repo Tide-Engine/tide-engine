@@ -1,3 +1,11 @@
+## The server's store: the files a provider has (2026-11-16, night)
+
+`engine/src/storage.c`, `tide/storage.h` (notes/voxels.md, section 3f). Nothing generated code calls changed. Hosts
+have two new calls: `tide_storage_forget_files(io)` (the provider's files or folders changed behind the store: listed
+again at the next load; NULL for every provider's; `tide_platform_io_init` calls it as its app's folders change) and
+`tide_storage_loads` (counts, for tests and the bench). A provider's `list` is now also called by a load, once, from
+the thread that carries requests out.
+
 ## A heap's pages given back (2026-11-16, night)
 
 `engine/src/heap.c`, `tide/heap.h` (notes/ecs.md, top section). No generated code changed and no runtime function it

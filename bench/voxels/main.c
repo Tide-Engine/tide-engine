@@ -19,6 +19,7 @@
 
 #include "bench.h"
 #include "tide/io.h"
+#include "tide/storage.h"
 #include "voxels.h"
 
 // The server's store, kept in memory: each chunk a player changed, saved as
@@ -339,9 +340,14 @@ static void describe(const void *world)
     printf("  chunks %u (%u changed by players, %llu changes), avatars %u\n", chunks, edited, (unsigned long long)edits, avatars);
     printf("  far regions %u (%u with columns players changed, sent %llu times); %u kept in the store, %llu loaded back\n",
            regions, sent, (unsigned long long)sendings, far, (unsigned long long)store_far_found);
-    printf("  the store: %u chunks and far regions saved in %llu bytes (%llu saves); %llu loads, %llu of them found\n",
-           store_count, (unsigned long long)store_bytes, (unsigned long long)store_writes, (unsigned long long)store_reads,
-           (unsigned long long)store_found);
+    // The loads the store served, wherever it keeps them, and those it answered from what it knows is there, with
+    // no read (tide/storage.h, The files a provider has); the reads and what they found are this store's in memory
+    uint64_t loads, unread;
+    tide_storage_loads(&loads, &unread);
+    printf("  the store: %u chunks and far regions saved in %llu bytes (%llu saves); %llu loads, %llu of them answered "
+           "with no read; %llu reads of this store, %llu of them found\n",
+           store_count, (unsigned long long)store_bytes, (unsigned long long)store_writes, (unsigned long long)loads,
+           (unsigned long long)unread, (unsigned long long)store_reads, (unsigned long long)store_found);
     if (forget_chunks) printf("  chunks' saves forgotten (--forget): %llu\n", (unsigned long long)store_forgot);
     describe_watched();
     if (!audit_every) return;

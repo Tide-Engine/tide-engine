@@ -246,3 +246,26 @@ void tide_storage_forget(tide_storage_line *line);
 void tide_storage_finish(tide_storage_line *line);
 // Batches handed over and not yet received.
 uint32_t tide_storage_waiting(const tide_storage_line *line);
+
+// ---------------------------------------------------------------------------
+// The files a provider has
+//
+// Most loads of a world that makes itself from a seed find nothing: a chunk
+// nobody changed was never saved. So that such a load asks the disk nothing,
+// the store remembers which files each provider's saved/ has (a provider being
+// its `user` and `read`, whatever copies of the tide_io there are): listed
+// once, folder by folder, at the provider's first load, and added to at every
+// save any server of the process carries out. A load of a key whose file isn't
+// among them is answered "not found" with no read; any other is read as
+// before, and says what the read finds. A provider with no `list`, or one a
+// folder of which couldn't be listed, is read every time.
+//
+// So while servers run, the files in a provider's saved/ are the store's to
+// make: one put there by anything else (the game's own file calls, a person,
+// another process) may not be found until tide_storage_forget_files or the
+// process's end. A host that changes what a provider's folder is, or its files
+// behind the store, calls this: `io` NULL forgets every provider's.
+void tide_storage_forget_files(const tide_io *io);
+// For tests and measurements: the loads served since the process started, and
+// those of them answered with no read.
+void tide_storage_loads(uint64_t *loads, uint64_t *unread);

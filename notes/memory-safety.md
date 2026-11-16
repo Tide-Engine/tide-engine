@@ -1,3 +1,14 @@
+## The store's list of a provider's files (2026-11-16, night)
+
+What a load consults before it reads (notes/voxels.md, section 3f) is numbers of paths, never the paths: a table of
+64-bit numbers that grows under one lock, which every server's thread and the provider's take for each look and
+each add. The walk that fills it writes each folder's name into one buffer of `TIDE_STORAGE_PATH_MOST + 1` bytes
+and leaves out any name that wouldn't fit (no key's file is that long), so its depth is bounded by the buffer
+whatever links the folders have. A wrong "no file" can lose a save (the game makes the chunk again and saves over
+it), so it's said only of a path whose number isn't there after a whole listing with no folder that failed, with
+every save since added after its write: never from a listing another thread is still making, nor one forgotten
+meanwhile.
+
 ## A heap's pages given back (2026-11-16, night)
 
 A heap lets go of the pages whose blocks are all free and keeps what makes each again (notes/ecs.md, top section), so
