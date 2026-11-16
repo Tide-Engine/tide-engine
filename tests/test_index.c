@@ -696,6 +696,29 @@ TIDE_TEST(index_of_exact_keys_begins_again_and_mixes_safely)
     tide_index_free(ix);
 }
 
+TIDE_TEST(index_held_by_several_lasts_until_the_last_lets_go)
+{
+    tide_index *ix = tide_index_make();
+    TIDE_CHECK(!tide_index_shared(ix));
+    tide_index_begin(ix, 1);
+    const double key = 4;
+    tide_index_add(ix, &key, 9);
+    tide_index_end(ix);
+    tide_index_share(ix);
+    tide_index_share(ix);
+    TIDE_CHECK(tide_index_shared(ix));
+    tide_index_free(ix);
+    TIDE_CHECK(tide_index_shared(ix));
+    tide_index_free(ix);
+    TIDE_CHECK(!tide_index_shared(ix));
+    tide_index_hits h;
+    tide_index_hits_init(&h);
+    tide_index_find(ix, &key, &key, &h); // Still there for its last holder (the sanitizer's to say otherwise)
+    TIDE_CHECK(h.count == 1 && h.items[0] == 9);
+    tide_index_hits_free(&h);
+    tide_index_free(ix);
+}
+
 TIDE_TEST(index_lock_opens_again)
 {
     uint32_t lock = 0;

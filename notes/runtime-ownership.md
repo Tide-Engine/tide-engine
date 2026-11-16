@@ -470,6 +470,12 @@ indexed loop gets a `struct tide_index_cache *` at the end of `tide_world` and `
 before the library is unloaded, for the indexes kept outside the worlds. Contracts: notes/indexed-loops.md, Code
 generation.
 
+Added 2026-11-16, within the task that asked for them (notes/indexed-loops.md, top sections): an index several
+hold, `tide_index_share` and `tide_index_shared`, with `tide_index_free` freeing it for the last holder (a copied
+world's sites take their source's indexes). Generated `tide_world_copy` calls the generated
+`tide_index_cache_share`; a world's `tide_index_cache` is counted by its holders and may outlive its world while a
+copy has yet to take its sites.
+
 ## Meshes over GPU lists, moved runs (2026-11-05)
 
 Under compute's pre-approved boundary: `tide_draw_mesh_fill_pulled` (draw.h, a pulled shader's stand-in mesh, which

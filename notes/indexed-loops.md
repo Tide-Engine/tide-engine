@@ -1,3 +1,60 @@
+## Copies that keep their source's indexes (2026-11-16, built)
+
+The first half of the plan below (its section 1), built as written but for three things, each said here.
+
+- **What a copy takes, and when.** `tide_world_copy` ends with `tide_index_cache_share(&to->tide_index_cache,
+  from->tide_index_cache)`, which only notes the source's cache in the copy's (`tide_index_cache.from`, the cache
+  counted by its holders: its world and each copy yet to take from it). The copy takes the sites when it next runs
+  (`tide_index_cache_prepare`, serial): for each of the source's sites that is `ready` and `portable`, under the
+  source site's lock (its world may be ticking on another thread), `tide_ix_site_share` copies its facts, takes a
+  reference to each page it holds (under `tide_ix_refs`; a page whose count would wrap leaves the copy's site as it
+  was), and takes the index itself, held by both (`tide_index_share`, a count in the runtime's `tide_index`), with
+  `plan`, `most` and `pass`; `valid` 0, so the copy's first search of a tick walks the facts, a compare a chunk.
+  A site the source can't give leaves the copy's own as it was, of its own facts.
+- **Departure 1: when the copy runs, not when it's made.** The plan took the sites in `tide_world_copy` and kept
+  "share lazily" for later. A server copies its world every tick for worlds that never run (`tick_begin`'s
+  `before`), which would have paid for every site each tick, and would have left the server's own index held by
+  two, so never changed where it is (the second half, below). So it's lazy from the start: a world kept and never
+  run costs its source an increment. A source that was itself copied and hasn't run since passes on the cache it
+  was to take from (a copy of a copy takes the first's), and a world copied back from its own copy takes nothing.
+- **Departure 2: a list's site is never taken**, where the plan had the copy take the source's `epoch` too. A
+  list's facts are the cache's run (`epoch`), the list's handle and its count: only good for one run of one cache,
+  so there is nothing to gain from taking it, and taking it is the trap the plan names (the copy's own count
+  reaching the source's with the list changed where it is). `tide_ix_site.portable` says a site's facts are pages
+  and their rows alone (`tide_ix_walk_begin`'s third argument: true for a world's query, false for lists and a
+  view's rows), and only such sites are taken. The copy's own list sites keep its own numbers, which only go up,
+  so they needn't be emptied either.
+- **Departure 3: the count of holders is the runtime's** (`tide_index_share`, `tide_index_shared`; `tide_index_free`
+  frees with the last), not a `uint32_t *shared` beside the site's pointer: one allocation fewer, and the index
+  can't be freed by a holder that forgot the count. New runtime calls: `notes/runtime-ownership.md`.
+- **An index others hold is never built into**: `tide_ix_take`, where it would build into the site's index, first
+  lets go of one `tide_index_shared` says others hold and makes its own. That is the only place a site's index is
+  written (every path goes through it: checked for `gen_indexed_list` and `gen_ix_rows_search`, whose sites are
+  never shared anyway).
+- **Threads**: a copy takes sites under each source site's lock, so a source ticking on another thread is safe; two
+  worlds that hold one index search it at once, which a built index allows; both counts are atomic.
+  `TIDE_INDEX_CACHE_ABI` is 3 (the site's and the cache's layout). A cache of another ABI (met after a reload
+  across builds of tidec) is now left where it is rather than freed with this build's layout.
+- **Tests** (`tidec_e2e_index_follow`: `compiler/tests/e2e/index_follow.tide`, `index_follow_test.c`). The game
+  has a plain loop beside each indexed one (it starts with an effect, so it goes through every row) and the test
+  requires the two to find the same rows in the same order every tick; the build counts how each loop's start
+  found its index (`TIDE_INDEX_STATS`: `tide_index_stats[5]`, as it was / followed / made whole / table chunks
+  taken in / sites a copy took), without which every test would pass with the sharing never taken.
+  `index_copy_runs_on_its_sources_indexes`: a copy makes no index but its list's and takes 3 sites, and takes none
+  until it runs; a copy of a copy; copied back from its own copy; copied over a world with other indexes; the
+  source freed before its copies, one of which never ran. `index_copy_and_its_source_part_ways`: 14 ticks of
+  different orders each (rows come, go and move in one, then the other), each ending where a world nobody copied
+  gets with the same orders. `index_ring_of_copies_makes_an_index_only_when_rows_change`: a ring of five worlds
+  each ticking a copy of the one before, as a predicting client, with rows changing every ninth tick, and three
+  ticks run again. `index_of_a_list_is_never_a_copys`: the epoch trap, with a copy one tick behind its source, and
+  a world from bytes. `index_held_by_several_lasts_until_the_last_lets_go` in `tide_tests`.
+- **Mutations** (each built and run): the unsharing in `tide_ix_take` off (an index others hold built into) fails
+  two tests; a list's site taken fails three, the trap's among them; a copy of a copy not passing on its source
+  fails one; the pages' references not taken crashes the test. Not caught: taking a site that isn't `ready` (it
+  only happens when a build ran beside searches on other threads, or a page's references were about to wrap).
+- **Gap**: a copy whose rows then change makes its indexes whole (it can't change one its source holds); a
+  followed index (below) could be copied and changed for less.
+
 ## Indexes that follow what changed, and copies that keep them: written up, not built (2026-11-16)
 
 Asked for with the repairs' fix (notes/netcode.md, top section), which took the time there was; nothing below is

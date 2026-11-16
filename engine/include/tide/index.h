@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 
 // Indexes for indexed loops: a loop whose guard bounds a few numbers of each
@@ -42,7 +43,7 @@ typedef struct tide_index_hits {
 } tide_index_hits;
 
 tide_index *tide_index_make(void);
-// NULL does nothing.
+// NULL does nothing. An index others hold too (tide_index_share) lives on for them.
 void tide_index_free(tide_index *ix);
 
 // Starts the index again, empty, with `dims` keys an entry (1 to 3; others are
@@ -89,6 +90,13 @@ void tide_index_add_exact(tide_index *ix, const int64_t *whole, const double *ke
 // lo[d] .. hi[d], as above, into `out`.
 void tide_index_find_exact(const tide_index *ix, const int64_t *whole, const double *lo, const double *hi,
                            tide_index_hits *out);
+
+// An index several hold (a world's and its copies'): tide_index_share counts
+// another holder, each of which calls tide_index_free once, and the last
+// frees it. One that tide_index_shared says others hold is only searched,
+// never begun again or changed: its holders make their own instead.
+void tide_index_share(tide_index *ix);
+bool tide_index_shared(const tide_index *ix);
 
 // A lock for building an index the first thread to need it builds: 0 is open.
 // A waiting thread yields its core, as a build can take a while.

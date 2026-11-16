@@ -10496,7 +10496,7 @@ static void gen_header(gen *g)
     if (rows_cache_count(g)) {
         sb_put(o, "    struct tide_rows_cache *tide_rows_cache; // Derived selection, never copied, hashed or packed\n");
     }
-    if (g->ix_any) sb_put(o, "    struct tide_index_cache *tide_index_cache; // Indexes of loops (notes/indexed-loops.md): derived, never copied, hashed or packed\n");
+    if (g->ix_any) sb_put(o, "    struct tide_index_cache *tide_index_cache; // Indexes of loops (notes/indexed-loops.md): derived, never hashed or packed; a copy takes its source's\n");
     if (prog->keeps_previous) sb_put(o, "    struct tide_previous *tide_previous; // Components as the tick started, for `previous` bindings, while its systems run: never copied, hashed or packed\n");
     sb_put(o, "} tide_world;\n\n");
     if (g->ix_any) sb_put(o, "// Lets go of the indexes indexed loops keep outside the worlds, before the game's library is unloaded\n"
@@ -10621,7 +10621,7 @@ static void gen_header(gen *g)
                   "    tide_outgoing_item tide_outgoing[TIDE_COMMAND_OUTBOX];\n"
                   "    uint32_t tide_outgoing_count;\n");
     }
-    if (g->ix_any) sb_put(o, "    struct tide_index_cache *tide_index_cache; // Indexes of loops (notes/indexed-loops.md): derived, never copied, hashed or packed\n");
+    if (g->ix_any) sb_put(o, "    struct tide_index_cache *tide_index_cache; // Indexes of loops (notes/indexed-loops.md): derived, never hashed or packed; a copy takes its source's\n");
     sb_put(o, "} tide_local;\n\n");
 
     if (startup_is_local(g)) {
@@ -26772,6 +26772,8 @@ static void gen_world_copy(gen *g)
         sb_put(o, "    memcpy(to->previous_inputs, from->previous_inputs, sizeof to->previous_inputs);\n");
     }
     if (prog->uses_heap) sb_put(o, "    tide_heaps_copy(&to->heap, &from->heap);\n");
+    // The loops' indexes: the copy takes its source's when it next runs (index_codegen.inc)
+    if (g->ix_any) sb_put(o, "    tide_index_cache_share(&to->tide_index_cache, from->tide_index_cache);\n");
     sb_put(o, "}\n\n");
 
     sb_put(o, "uint64_t tide_world_hash(const tide_world *w)\n{\n    uint64_t h = tide_hash_more(TIDE_HASH_START, &w->tide_identity_clock, sizeof w->tide_identity_clock);\n");

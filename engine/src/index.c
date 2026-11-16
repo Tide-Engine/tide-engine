@@ -52,6 +52,8 @@ struct tide_index {
     int64_t *whole;
     int64_t *built_whole;
     uint64_t *built_hashes;
+
+    uint32_t holders; // Whoever holds it (tide_index_share): the last to free it does
 };
 
 static size_t bytes(const size_t count, const size_t size)
@@ -74,12 +76,24 @@ tide_index *tide_index_make(void)
 {
     tide_index *ix = tide_alloc_zeroed(1, sizeof *ix);
     ix->dims = 1;
+    ix->holders = 1;
     return ix;
+}
+
+void tide_index_share(tide_index *ix)
+{
+    __atomic_add_fetch(&ix->holders, 1u, __ATOMIC_ACQ_REL);
+}
+
+bool tide_index_shared(const tide_index *ix)
+{
+    return __atomic_load_n(&ix->holders, __ATOMIC_ACQUIRE) > 1u;
 }
 
 void tide_index_free(tide_index *ix)
 {
     if (!ix) return;
+    if (__atomic_sub_fetch(&ix->holders, 1u, __ATOMIC_ACQ_REL) != 0u) return;
     free(ix->ordinals);
     free(ix->finite_ordinals);
     free(ix->always_ordinals);

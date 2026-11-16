@@ -1,0 +1,204 @@
+// Loops' indexes that take in what changed, and copies of a world that keep its indexes (notes/indexed-loops.md,
+// Followed indexes and copies). Every indexed loop below has a plain one beside it that starts with an effect, so
+// it goes through every row with no index: index_follow_test.c gives the orders, tick by tick, and checks the
+// two found the same rows in the same order, and how the indexes came to be right (TIDE_INDEX_STATS).
+
+component Item
+{
+    int number;
+    int3 at;
+    int kind;
+}
+
+// Some items have one: a second table of the same query
+component Crate
+{
+    int weight;
+    int wrong;
+}
+
+// What the test asks for, written from C between ticks
+singleton Orders
+{
+    int spawn;   // Items that come each tick
+    int crates;  // ...of which this many with a crate
+    int destroy; // Items whose number is `phase` modulo this go; 0 none
+    int shift;   // ...and modulo this, move to another place; 0 none
+    int phase;
+    int below;   // Only items numbered below this move or go; 0 any
+    int clear;   // 1: every item goes
+}
+
+singleton Made
+{
+    int count;
+}
+
+singleton Probe
+{
+    int seen;
+    int found;
+    long sum;
+    int plain;
+    long plain_sum;
+    int kinds;
+    long kind_sum;
+    int kinds_plain;
+    long kind_plain_sum;
+    int listed;
+    long list_sum;
+    int list_plain;
+    long list_plain_sum;
+    int wrong;
+    long weights;
+}
+
+struct Stock
+{
+    int slot;
+    int weight;
+}
+
+singleton Shelf
+{
+    List<Stock> items;
+}
+
+scene Main { }
+
+// 4,096 places
+int3 Place(int p)
+{
+    return int3(p % 16 - 8, p / 256 % 16, p / 16 % 16 - 8);
+}
+
+system Arrive(mut Made made, Orders orders)
+{
+    for (var i = 0; i < orders.spawn; i++)
+    {
+        var n = made.count;
+        made.count += 1;
+        if (i < orders.crates) Spawn(Item { number = n, at = Place(n * 5), kind = n % 3 }, Crate { weight = n });
+        else Spawn(Item { number = n, at = Place(n * 5), kind = n % 3 });
+    }
+}
+
+// Items go, and move to other places where they are (a key changed in its row)
+system Churn(mut Item item, Orders orders, Time time)
+{
+    if (orders.clear == 1)
+    {
+        this.Destroy();
+        return;
+    }
+    if (orders.below > 0 && item.number >= orders.below) return;
+    if (orders.destroy > 0 && item.number % orders.destroy == orders.phase)
+    {
+        this.Destroy();
+        return;
+    }
+    if (orders.shift > 0 && item.number % orders.shift == orders.phase) item.at = Place(item.number * 3 + time.tick * 17);
+}
+
+// Items found by their place (one or two at each), and by their kind and x (dozens in a slot)
+system Seek(mut Probe probe, Time time, query (Item item) items)
+{
+    probe.seen = 0;
+    probe.found = 0;
+    probe.plain = 0;
+    probe.kinds = 0;
+    probe.kinds_plain = 0;
+    for (var k = 0; k < 24; k++)
+    {
+        var at = Place(k * 37 + time.tick * 11);
+        indexed foreach (var row in items)
+        {
+            if (row.item.at.x != at.x || row.item.at.y != at.y || row.item.at.z != at.z) continue;
+            probe.found += 1;
+            probe.sum = probe.sum * 31 + row.item.number;
+        }
+        foreach (var row in items)
+        {
+            probe.seen += 1;
+            if (row.item.at.x != at.x || row.item.at.y != at.y || row.item.at.z != at.z) continue;
+            probe.plain += 1;
+            probe.plain_sum = probe.plain_sum * 31 + row.item.number;
+        }
+    }
+    for (var k = 0; k < 6; k++)
+    {
+        var kind = k % 3;
+        var x = (k * 5 + time.tick) % 16 - 8;
+        indexed foreach (var row in items)
+        {
+            if (row.item.kind != kind || row.item.at.x != x) continue;
+            probe.kinds += 1;
+            probe.kind_sum = probe.kind_sum * 31 + row.item.number;
+        }
+        foreach (var row in items)
+        {
+            probe.seen += 1;
+            if (row.item.kind != kind || row.item.at.x != x) continue;
+            probe.kinds_plain += 1;
+            probe.kind_plain_sum = probe.kind_plain_sum * 31 + row.item.number;
+        }
+    }
+}
+
+// Each crate looks for the items at its place: one site searched by every crate, on threads
+system Near(mut Crate crate, Item item, query (Item other) items)
+{
+    mut var n = 0;
+    mut var p = 0;
+    mut var seen = 0;
+    indexed foreach (var row in items)
+    {
+        if (row.other.at.x != item.at.x || row.other.at.y != item.at.y || row.other.at.z != item.at.z) continue;
+        n = n * 7 + row.other.number;
+    }
+    foreach (var row in items)
+    {
+        seen += 1;
+        if (row.other.at.x != item.at.x || row.other.at.y != item.at.y || row.other.at.z != item.at.z) continue;
+        p = p * 7 + row.other.number;
+    }
+    crate.weight = n;
+    crate.wrong = n == p && seen > 0 ? 0 : 1; // (Its own item is among them)
+}
+
+system Tally(mut Probe probe, Crate crate)
+{
+    probe.wrong += crate.wrong;
+    probe.weights = probe.weights * 31 + crate.weight;
+}
+
+// A singleton's list changed where it is every tick, its count the same...
+system Restock(mut Shelf shelf, Time time)
+{
+    if (shelf.items.count == 0)
+    {
+        for (var i = 0; i < 96; i++) shelf.items.Add(Stock { slot = i % 16, weight = i });
+    }
+    for (var i = 0; i < shelf.items.count; i++) shelf.items[i] = Stock { slot = (i * 7 + time.tick) % 16, weight = i + time.tick };
+}
+
+// ...and read through an index kept for the system's run alone
+system Browse(mut Probe probe, Shelf shelf, Time time)
+{
+    probe.listed = 0;
+    probe.list_plain = 0;
+    var want = time.tick % 16;
+    indexed foreach (var s in shelf.items)
+    {
+        if (s.slot != want) continue;
+        probe.listed += 1;
+        probe.list_sum = probe.list_sum * 31 + s.weight;
+    }
+    foreach (var s in shelf.items)
+    {
+        probe.seen += 1;
+        if (s.slot != want) continue;
+        probe.list_plain += 1;
+        probe.list_plain_sum = probe.list_plain_sum * 31 + s.weight;
+    }
+}
