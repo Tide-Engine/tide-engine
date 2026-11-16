@@ -12,6 +12,7 @@
 #include "model_metadata.h"
 #include "ast.h"
 #include "builtins.h"
+#include "tweaks.h"
 #include "tide/audio.h" // How many bytes an audio declaration's state and knobs have
 #include "tide/devices.h"
 #include "tide/heap.h" // How many ids a world's heaps have
@@ -52,6 +53,7 @@ typedef struct checker {
     decl *system;             // Whose parameters are in scope: a system or view, a method, or the input when checking its Sample.
     decl *method;             // The method or function being checked: a method's type's fields are in scope.
     const decl *declaring;    // The declaration whose fields or signature are being checked, when neither of those is set
+    bool tweak_value;         // Checking a tweak's value, which can read other tweaks' (check_constant)
     bool in_input;      // Checking the input's constructor, which runs outside the simulation.
     bool in_sanitize;         // Checking the input's Sanitize; in_input is set too, for the fields.
     bool in_predict;          // Predict has Sanitize's input-only capabilities.
@@ -3624,7 +3626,7 @@ static type check_literal(checker *c, expr *e)
                 continue;
             }
             if (owned_tweak(d, init->name)) { // Gun { kick = 2 }: a tweak field, every Gun's
-                diag_error(init->at, "'" STR_FMT "' is a tweak field of '" STR_FMT "', which no value holds: tweaks.json "
+                diag_error(init->at, "'" STR_FMT "' is a tweak field of '" STR_FMT "', which no value holds: .tweaks files "
                                      "and the dev menu change it", STR_ARG(init->name), STR_ARG(d->name));
                 continue;
             }
@@ -15307,7 +15309,7 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
     }
     for (const expr *part = target;; part = part->object) {
         if (part->bind == BIND_TWEAK || (part->bind == BIND_CONST && part->constant->is_tweak)) {
-            diag_error(target->at, "'" STR_FMT "' is a tweak: tweaks.json and the dev menu change it, and code reads it",
+            diag_error(target->at, "'" STR_FMT "' is a tweak: .tweaks files and the dev menu change it, and code reads it",
                        STR_ARG(part->constant->name));
             diag_note("a value the game changes as it plays is a field");
             return false;
@@ -17860,9 +17862,9 @@ static void settle_list_constant(checker *c, decl *k)
 // const int MAX_HEALTH = 100;: its type, and a value worked out from constants
 // alone. A constant is checked before anything reads it: one that names
 // another checks that one first (index: 0 not yet, 1 checking, 2 done).
-// A tweak is a value tweaks.json can give in place of the code's: a number, a bool, a vector, a Color or an enum's
+// A tweak is a value a .tweaks file can give in place of the code's: a number, a bool, a vector, a Color or an enum's
 // member. The code's value is checked too where the file gives another, which then the build has.
-static void check_tweak(checker *c, decl *k)
+static void check_tweak(checker *c, decl *k, const int errors)
 {
     const type_kind kind = k->return_type.kind;
     const bool takes = kind == TY_BOOL || kind == TY_INT || kind == TY_LONG || kind == TY_BYTE || kind == TY_FLOAT
@@ -17870,13 +17872,25 @@ static void check_tweak(checker *c, decl *k)
         || kind == TY_INT3 || kind == TY_INT4 || kind == TY_DOUBLE2 || kind == TY_DOUBLE3 || kind == TY_DOUBLE4
         || kind == TY_COLOR || kind == TY_ENUM || kind == TY_ERROR;
     if (!takes) {
-        diag_error(k->return_type_at, "a tweak is a number, a bool, a vector, a Color or an enum, which tweaks.json can "
-                                      "give, not %s", type_name(k->return_type));
+        diag_error(k->return_type_at, "a tweak is a number, a bool, a vector, a Color or an enum, which a .tweaks file "
+                                      "can give, not %s", type_name(k->return_type));
         diag_note("a value made of more is made of tweaks of those, or is a 'const'");
         return;
     }
-    if (!k->code_value || kind == TY_ERROR || !is_constant(c, k->code_value)) return;
+    if (kind == TY_ERROR) return;
+    // What a dev build's tide run works out with no C built, when a .tweaks file changes (tweak_value): the same in
+    // every build, so one that builds is one that runs
+    uint8_t bytes[32];
+    if (diag_error_count() == errors && !tweak_value(k, bytes, sizeof bytes)) {
+        diag_error(k->value->at, "a tweak's value is worked out from numbers, other tweaks and constants, operators, "
+                                 "constructors like float3(...) and Color(...), and Math's functions");
+        diag_note("this one uses something else; a 'const' can, and the tweak can't read it");
+    }
+    if (!k->code_value || !is_constant(c, k->code_value)) return;
+    const bool reading = c->tweak_value;
+    c->tweak_value = true;
     const type t = check_constant_expr(c, k->code_value, true, k->return_type);
+    c->tweak_value = reading;
     if (t.kind != TY_ERROR && !type_assignable(k->return_type, t)) {
         diag_error(k->code_value->at, "tweak '" STR_FMT "' is %s, not %s", STR_ARG(k->name), type_name(k->return_type), type_name(t));
     }
@@ -17886,6 +17900,9 @@ static void check_constant(checker *c, decl *k)
 {
     if (k->index != 0) return;
     k->index = 1;
+    const int errors = diag_error_count();
+    const bool was_tweak = c->tweak_value;
+    c->tweak_value = k->is_tweak; // A tweak's value reads other tweaks', as the build has them
     const unit *const outer = c->unit;
     const bool assets = c->assets_constant; // A default that names this constant names no asset through it
     c->unit = k->unit;
@@ -17920,7 +17937,8 @@ static void check_constant(checker *c, decl *k)
             settle_list_constant(c, k);
         }
     }
-    if (k->is_tweak) check_tweak(c, k);
+    if (k->is_tweak) check_tweak(c, k, errors);
+    c->tweak_value = was_tweak;
     c->unit = outer;
     c->assets_constant = assets;
     k->index = 2;
@@ -18369,11 +18387,11 @@ static decl *far_filter(const checker *c, const param *p, const decl *found)
 // A tweak read as a value. What has to be known while compiling (a case label, a bound, a setting, a constant's
 // value) can't read one: it changes while a dev build runs, and every build says so. A field's default can, as it can
 // an asset: the build's value. In a dev build, code that runs reads the match's TideTweaks (BIND_TWEAK), or this
-// machine's copy in local code, which a change of tweaks.json goes through; GPU and audio code read the build's value.
+// machine's copy in local code, which a change of a .tweaks file goes through; GPU and audio code read the build's value.
 static type use_tweak(checker *c, expr *e, decl *k)
 {
     const bool prelude = c->unit && c->unit->src && strcmp(c->unit->src->path, TWEAKS_PRELUDE_PATH) == 0;
-    if (c->constants_only && !c->assets_constant && !prelude) {
+    if (c->constants_only && !c->assets_constant && !prelude && !c->tweak_value) {
         diag_error(e->at, "'" STR_FMT "' is a tweak, which a dev build changes while it runs, so it isn't known while "
                           "compiling", STR_ARG(k->qualified));
         diag_note("what has to be, like a case label, a bound, a setting or a constant's value, takes a 'const'");

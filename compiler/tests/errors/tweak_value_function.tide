@@ -1,0 +1,6 @@
+// expect: a tweak's value is worked out from numbers, other tweaks and constants
+float Twice(float x) { return x * 2; }
+tweak float KickUp = Twice(0.5);
+scene Main { }
+singleton Seen { float v; }
+system Read(mut Seen seen) { seen.v = KickUp; }

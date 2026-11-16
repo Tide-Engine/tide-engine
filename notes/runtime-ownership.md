@@ -1,3 +1,15 @@
+## The inspector (2026-11-16)
+
+New, the agent's: `engine/include/tide/inspect.h`, `engine/src/inspect.c` (notes/standard-host.md, The inspector).
+Generated code calls `tide_inspect_writable` (a dev build's TideSetField handler) and fills `tide_game_inspect()`;
+`tide_host_game` gained `inspect`, and `tide_tweaks_write` (a value as text into a .tweaks file) is new in tweaks.c.
+
+## Tweaks, the .tweaks files (2026-11-16, later)
+
+`tide/tweaks.h` changed with them (notes/language.md, Tweaks, step 5): `tide_tweaks_read`/`_write` (JSON) are gone;
+`tide_tweaks_load`, `_format`, `_save` are new; `tide_tweak` gained `type`, `file` and `plain`, and `tide_tweaks_api`
+`layout` and `values` in place of `code` and `path`. Generated code calls none of it.
+
 ## Tweaks (2026-11-16)
 
 New, the agent's: `engine/include/tide/tweaks.h`, `engine/src/tweaks.c` (notes/language.md, Tweaks, step 2). Generated

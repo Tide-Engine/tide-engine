@@ -1,3 +1,50 @@
+## Tweaks, step 5: .tweaks files in place of tweaks.json (2026-11-16)
+
+The owner asked for the file not to be JSON, then for several to a game and values worked out with math and constants;
+my picks are in docs/spec.md, Dev tools, Tweaks. The tweaks.json sections below describe what this replaced.
+
+- **Reading** (`tweaks_read(prog, folders, count, deep)`, tweaks.c): only a game with tweaks reads any. With a game
+  folder (tide, editors) every `.tweaks` file in it and its folders (`folder_find_own`); otherwise the folders of the
+  game's own files tidec is given, not their subfolders (a folder of many test games mustn't share them). Sorted by
+  path. Each is lexed as Tide and read by `parse_tweaks_file` (parser.c): `Name.With.Dots = expression;` entries,
+  each with its name, place, value and the value's text. The value replaces the tweak's (`code_value` keeps the
+  code's; `tweaked_at`, `_text`, `_file`); set twice is an error with both places; an unknown name warns. The files
+  go into `prog->tweak_files` (watched, and in the depfile).
+- **Checking**: `checker.tweak_value`, set by `check_constant` for a tweak, lets its value read other tweaks (as
+  their build values, BIND_CONST); a cycle is the existing "worked out from itself". `check_tweak` then works the
+  value out with `tweak_value` and errors where it can't: in every build, so a game that builds is one tide run can
+  work out again.
+- **Working out** (`tweak_value`, tweaks.c): an evaluator over the checked tree, as the generated C computes it:
+  literals (floats parsed as C would, `deg` literals as their radians, `d` doubles), constants and tweaks through
+  their values, enum members, unary `-`/`!`, `+ - * / %` (ints wrapping, division by zero 0), comparisons, `&&`/`||`,
+  `?:`, constructors (float/int/double vectors, Color with an opaque fourth, `float(x)`/`int(x)` conversions,
+  saturating), and Math's float functions componentwise through tide/math.h's own (`tide_sin_f`, `tide_pow_f`, ...), so
+  the bits match. Bytes as the tweak's C type (an enum's width). `tweak_value_plain`: a literal, a negated one, an enum
+  member or a constructor of numbers, which the menu may write over.
+- **Codegen**: `gen_tweaks_api` writes `<out>/<name>_tweaks.bin` (`TIDE_TWEAKS_MAGIC`, a layout hash of the tweaks'
+  names, types and offsets, the size, then TideTweakValues as `decl_layout_padded` places it) and the table: each
+  tweak's type text, its file (`tweak_file`: where it's set, else the `.tweaks` beside its declaring `.tide`), and
+  `plain`; the api's `values` is the bin's absolute path, `layout` the hash. `tide_tweaks_code` is gone.
+- **Engine** (tide/tweaks.h): `tide_tweaks_load` (the bin, refused for another layout or size), `tide_tweaks_format`
+  (a value as Tide writes it: shortest digits with no exponent, a double's `d`, `Type(...)`, `Type.Member`) and
+  `tide_tweaks_save` (over the value on the line that sets the name, from past `=` to its `;`, keeping the rest of the
+  file; else a line at the end, the file made). The JSON reader and writer are gone.
+- **Host**: `tide_run_tweaks_poll` reads the bin (at most every half second) and takes it when its bytes are new and
+  load; the menu shows a worked-out tweak's value read-only and saves a plain one's into its file as it changes.
+- **CLI**: unchanged: the `.tweaks` files are among the watched paths; a dev build's change makes the pack and the
+  generated files again (tidec writes the bin) without compiling C; without dev it builds.
+- Tests: e2e tweaks with `game.tweaks` (comments, a constant, another tweak, the unknown-name warning); the dev build
+  also loads the bin and compares it with the world's values, and checks `plain`, `file` and `type` in the table;
+  errors `tweak_file_type`, `tweak_file_broken`, `tweak_file_twice`, `tweak_cycle`, `tweak_value_function`;
+  `tide_tests tweaks_*` (load, format, save keeping comments and spacing, a new file); `tide_platform_dev_menu` runs
+  tidec as tide run would after the menu writes `dev_menu.tweaks` and after an outside save; `lsp_tweaks_file`.
+- `tide run`'s watch (`asset_stamp`, cli/build.c) also stamps every `.tweaks` file in the game's folder, so one made
+  or removed since counts as a change; and a game with tweaks rebuilds without dev on such a change
+  (`assets_affect_match` for any tweak, a file or not).
+- The dev menu is a scroll area as tall as the screen (`tide_gui_begin_scroll`, the wheel or a drag), its rows laid out
+  (`tide_gui_layout_*`); the pointer is claimed over the list's height, measured as an empty place reserved after it.
+  `tide_platform_dev_menu` has seven tweaks, more than its 200 pixels show, and scrolls to the last and back.
+
 ## Tweaks, step 3: tweak fields (2026-11-16)
 
 `component Gun { tweak float kick = 0.1; }` (docs/spec.md, Dev tools, Tweaks: what it means is Claude's pick, a value

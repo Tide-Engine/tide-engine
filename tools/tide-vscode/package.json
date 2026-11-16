@@ -40,7 +40,8 @@
         ],
         "extensions": [
           ".tide",
-          ".tprefab"
+          ".tprefab",
+          ".tweaks"
         ],
         "icon": {
           "light": "./icons/tide.svg",

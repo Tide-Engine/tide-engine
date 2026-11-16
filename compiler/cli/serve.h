@@ -14,7 +14,8 @@ typedef struct serve_reply {
     size_t size;
 } serve_reply;
 
-// Fills `reply` for a request of `path`, like "/" or "/build".
+// Fills `reply` for a request of `path`, like "/" or "/build". A query (`?...`) stays on the path only for a request
+// with an X-Tide header, which only the page itself sends.
 typedef void (*serve_fn)(void *user, const char *path, serve_reply *reply);
 
 typedef struct serve serve;

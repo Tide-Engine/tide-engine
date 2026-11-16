@@ -2455,7 +2455,7 @@ static decl *parse_data_decl(parser *p, const decl_kind kind, const bool is_scen
             continue;
         }
         // `tweak float kick = 0.1;`: a tweak of the type's, which every value of it reads (gun.kick), in a namespace
-        // of the type's name, so tweaks.json names it Gun.kick
+        // of the type's name, so a .tweaks file names it Gun.kick
         if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "tweak") && peek_at(p, 1)->kind == T_IDENT && peek_at(p, 2)->kind != T_ASSIGN
             && peek_at(p, 2)->kind != T_SEMI && peek_at(p, 2)->kind != T_LPAREN) {
             const token *word = advance(p);
@@ -3152,7 +3152,7 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         const token *build = NULL;
         const token *cached = NULL;
         const token *dev = NULL; // `dev view GunTools(...)`: only in a dev build
-        const token *tweak = NULL; // `tweak float KickUp = 0.1;`: a value tweaks.json can change (decl.is_tweak)
+        const token *tweak = NULL; // `tweak float KickUp = 0.1;`: a value a .tweaks file can change (decl.is_tweak)
         p.overriding = false;
         for (;;) {
             const tok_kind after = peek_at(&p, 1)->kind;
@@ -3389,4 +3389,36 @@ expr *parse_expression_text(program *prog, token *toks)
         return NULL;
     }
     return e;
+}
+
+// A .tweaks file: `Name = value;` entries, a tweak's qualified name and a constant expression, with comments
+// (tweaks.c). False, with the error said, at the first that isn't one.
+bool parse_tweaks_file(program *prog, token *toks, tweak_entries *out)
+{
+    parser p = {.toks = toks, .prog = prog};
+    p.unit = NEW(unit);
+    p.unit->decl_col = 1;
+    if (setjmp(p.fail)) return false;
+    while (!at(&p, T_EOF)) {
+        tweak_entry entry = {0};
+        const token *first = expect_ident(&p, "a tweak's name, like 'KickUp' or 'Gun.kick'");
+        entry.at = first->at;
+        sb name = {0};
+        sb_printf(&name, STR_FMT, STR_ARG(first->text));
+        while (at(&p, T_DOT)) {
+            advance(&p);
+            const token *part = expect_ident(&p, "the rest of the tweak's name after '.'");
+            sb_printf(&name, "." STR_FMT, STR_ARG(part->text));
+        }
+        entry.name = (str){name.data, (int)name.len};
+        expect(&p, T_ASSIGN, "'=' after the tweak's name: 'KickUp = 0.5;'");
+        const token *from = peek(&p);
+        entry.value = parse_expr(&p);
+        const token *semi = expect(&p, T_SEMI, "';' after the tweak's value");
+        entry.text = (str){from->text.ptr, (int)(semi->text.ptr - from->text.ptr)};
+        while (entry.text.len > 0 && (entry.text.ptr[entry.text.len - 1] == ' ' || entry.text.ptr[entry.text.len - 1] == '\t'))
+            entry.text.len--;
+        vec_push(*out, entry);
+    }
+    return true;
 }

@@ -144,21 +144,22 @@ try {
     }
     assert(!existsSync(join(warned, ".tide", "native-debug", "gen", "generation")), "a generate that warned leaves no record");
 
-    // A run with no window keeps its folder: its program is linked again, and its pack copied, when they changed
+    // A run with no window keeps its folder: its program is linked again, and its pack copied, when they changed. Not
+    // a dev build, so the builds' generate is kept (a dev build's is its own)
     const once = join(game, ".tide", "native-debug", "run", "once-1");
-    const first = await run(["run", game, "--frames", "1"]);
+    const first = await run(["run", game, "--frames", "1", "--no-dev"]);
     assert.equal(first.code, 0, first.said);
     assert.match(first.said, kept, first.said);
     assert.match(first.said, /tide: linking/, first.said);
     const program = join(once, `kept${suffix}`), pack = join(once, "kept.pack");
     assert(existsSync(program) && existsSync(pack), `the run's program and pack stay in ${once}: ${first.said}`);
     const linked = statSync(program, { bigint: true }).mtimeNs;
-    const second = await run(["run", game, "--frames", "1"]);
+    const second = await run(["run", game, "--frames", "1", "--no-dev"]);
     assert.equal(second.code, 0, second.said);
     assert.match(second.said, /tide: linked output is up to date/, second.said);
     assert.equal(statSync(program, { bigint: true }).mtimeNs, linked, "an unchanged run links nothing");
     put(join(game, "rules.txt"), "the run's own rules\n", new Date("2021-04-01T00:00:00Z"));
-    const third = await run(["run", game, "--frames", "1"]);
+    const third = await run(["run", game, "--frames", "1", "--no-dev"]);
     assert.equal(third.code, 0, third.said);
     assert.match(third.said, generated, third.said);
     assert.equal(readFileSync(pack).includes("the run's own rules"), true, "the run's pack is the game's new one");
@@ -167,6 +168,13 @@ try {
     await build(game, "a build after the run keeps the run's generate", kept);
     assert.equal(readFileSync(join(game, ".build", "kept.pack")).includes("the run's own rules"), true,
         "...and places its pack");
+
+    // A dev build is another generate, and a .tweaks file made since is no file the last one watched
+    const dev = await run(["run", game, "--frames", "1"]);
+    assert.equal(dev.code, 0, dev.said);
+    assert.match(dev.said, generated, `a dev run generates its own: ${dev.said}`);
+    put(join(game, "new.tweaks"), "// Nothing set\n");
+    await build(game, "a build after a new .tweaks file generates", generated);
     console.log("generation: ok");
 } finally {
     rmSync(root, { recursive: true, force: true });
