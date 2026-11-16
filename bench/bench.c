@@ -400,6 +400,7 @@ struct machine {
     samples joining;     // ...and while somebody does
     // What its updates spent in the game's functions
     double tick_ms, copy_ms, hash_ms, pack_ms, unpack_ms;
+    double world_hash_ms; // ...of hash_ms, the world's own hash (the rest is players' projections')
     uint64_t ticks, copies, hashes, packs, unpacks;
     uint64_t bytes;
     // ...and of that, by what a datagram is (KINDS): bytes and datagrams
@@ -577,7 +578,9 @@ static uint64_t timed_hash(const void *world)
 {
     const uint64_t start = tide_time_now_ns();
     const uint64_t hash = real->hash_world(world);
-    current->hash_ms += since(start);
+    const double ms = since(start);
+    current->hash_ms += ms;
+    current->world_hash_ms += ms;
     current->hashes++;
     return hash;
 }
@@ -1455,7 +1458,7 @@ static void note_update(const uint32_t most, const long_update u)
 // entities the server holds changed (bench_desc.held) and the ones in which it didn't
 typedef struct run_part {
     uint32_t updates;
-    double ms, tick_ms, hash_ms, copy_ms, pack_ms, systems_ms, changes_ms;
+    double ms, tick_ms, hash_ms, world_hash_ms, copy_ms, pack_ms, systems_ms, changes_ms;
 } run_part;
 static run_part run_parts[2];
 
@@ -1476,13 +1479,15 @@ static void print_systems(const tide_profile *p, const double seconds)
         printf("  %33s %8.2f\n", next->name, next->measured_ms / seconds);
     }
     static const char *const names[2] = {"with as many entities after as before", "with entities come or gone"};
-    printf("  the server's updates                    count   ms each  simulate (systems, the rest)     hash snapshot     pack\n");
+    printf("  the server's updates                    count   ms each  simulate (systems, the rest)  hash (world, players')"
+           " snapshot     pack\n");
     for (uint32_t k = 0; k < 2; k++) {
         const run_part *r = &run_parts[k];
         if (!r->updates) continue;
         const double n = (double)r->updates;
-        printf("  %37s %7u %9.2f %9.2f (%.2f, %.2f) %12.2f %8.2f %8.2f\n", names[k], r->updates, r->ms / n, r->tick_ms / n,
-               r->systems_ms / n, r->changes_ms / n, r->hash_ms / n, r->copy_ms / n, r->pack_ms / n);
+        printf("  %37s %7u %9.2f %9.2f (%.2f, %.2f) %9.2f (%.2f, %.2f) %8.2f %8.2f\n", names[k], r->updates, r->ms / n,
+               r->tick_ms / n, r->systems_ms / n, r->changes_ms / n, r->hash_ms / n, r->world_hash_ms / n,
+               (r->hash_ms - r->world_hash_ms) / n, r->copy_ms / n, r->pack_ms / n);
     }
 }
 
@@ -1829,6 +1834,7 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
             const long_update before = {.tick_ms = h->tick_ms, .hash_ms = h->hash_ms, .copy_ms = h->copy_ms,
                                         .pack_ms = h->pack_ms, .packs = (uint32_t)h->packs};
             if (o.worst) tide_profile_clear(&server_profile);
+            const double world_hash_before = h->world_hash_ms;
             const uint32_t held_before = o.worst && d->held && !shards ? d->held(tide_server_world(h->server)) : 0u;
             const uint64_t t = tide_time_now_ns();
             tide_server_update(h->server, now);
@@ -1839,6 +1845,7 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
                 r->ms += ms;
                 r->tick_ms += h->tick_ms - before.tick_ms;
                 r->hash_ms += h->hash_ms - before.hash_ms;
+                r->world_hash_ms += h->world_hash_ms - world_hash_before;
                 r->copy_ms += h->copy_ms - before.copy_ms;
                 r->pack_ms += h->pack_ms - before.pack_ms;
                 r->systems_ms += server_profile.systems_ms;
