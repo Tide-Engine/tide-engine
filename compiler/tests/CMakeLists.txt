@@ -193,6 +193,26 @@ foreach(variant checked memo_off)
 endforeach()
 target_compile_definitions(tidec_e2e_visibility_trees_checked PRIVATE TIDE_CLIENT_SPANS_CHECK TIDE_CLIENT_ONCE_MOST=4u)
 target_compile_definitions(tidec_e2e_visibility_trees_memo_off PRIVATE TIDE_CLIENT_MEMO_OFF)
+# Repairs from the rows the ticks' checks wrote down: a change a tick at random, every player's repair from worlds 1
+# to 36 ticks old against the one from every row of both, and which way each went (a journal of 32 checks here, so
+# worlds older than it are reached); with 4 players, and with 160
+tide_e2e_test(visibility_repairs SOURCES e2e/visibility_repairs.tide e2e/visibility_repairs_few.tide)
+foreach(variant checked memo_off wide)
+    set(players few)
+    if(variant STREQUAL "wide") # 160 players: an Audience too big to keep with each row written down
+        set(players wide)
+    endif()
+    tide_add_game(tidec_e2e_visibility_repairs_${variant} SOURCES e2e/visibility_repairs.tide e2e/visibility_repairs_${players}.tide
+        NAME game HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/visibility_repairs_test.c")
+    target_include_directories(tidec_e2e_visibility_repairs_${variant} PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    add_test(NAME tidec_e2e_visibility_repairs_${variant} COMMAND tidec_e2e_visibility_repairs_${variant})
+endforeach()
+foreach(variant "" _checked _memo_off _wide)
+    target_compile_definitions(tidec_e2e_visibility_repairs${variant} PRIVATE TIDE_CLIENT_CHANGES_STATS TIDE_CLIENT_NODES=32u)
+endforeach()
+target_compile_definitions(tidec_e2e_visibility_repairs_checked PRIVATE TIDE_CLIENT_SPANS_CHECK)
+target_compile_definitions(tidec_e2e_visibility_repairs_memo_off PRIVATE TIDE_CLIENT_MEMO_OFF)
+target_compile_definitions(tidec_e2e_visibility_repairs_wide PRIVATE TIDE_CLIENT_SPANS_CHECK VISIBILITY_REPAIRS_WIDE)
 tide_e2e_test(shards) # One world split across shards: moving, ghosts, waiting on borders, checkpoints and splits
 tide_e2e_test(shards_players) # A player's machine following their avatar from shard to shard
 tide_e2e_test(shards_visibility) # A visibility group the root keeps, read on every shard and changed from a region

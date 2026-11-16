@@ -62,6 +62,23 @@ identity (`TIDE_SIMULATION_RUNTIME` hashes them all), so no player of the old on
 hash or snapshot change; `bench_voxels`' pinned hash is unchanged. Contracts and tests: notes/voxels.md, sections 3a to
 3c.
 
+## Repairs from the rows a check wrote down (2026-11-16, later)
+
+No runtime function is new or changed, and `tide_game`'s `client_hashes` and `client_changes` take and give what
+they did (netcode.md, top section). What generated code relies on now, all of it existing:
+
+- **A world's hash says what the world holds** (`tide_world_hash`, generated; `tide_page_hash` and the tables',
+  heaps' and entities' hashes under it): a server's check calls it once more a tick, and a repair once for the world
+  the player confirmed, to know a world as the one a check left. It relies on a copy of a world hashing as its
+  source (pages shared, their hashes kept), on the hash taking in everything a projection reads (tables, heaps, the
+  entity table's slots, the singletons), and on a kept hash of a page being right while the page is as it was.
+- **A check's memo is the world's** (by its address, emptied by `tide_world_free`): the rows written down are kept
+  with it, so they go where it goes.
+- **A test's symbol**: a build that defines `TIDE_CLIENT_CHANGES_STATS` gets a global `tide_client_changes_stats[3]`
+  in the game's C (repairs by the journal, repairs that walked, rows the first looked at). No other build has it.
+- Not done, and the owner's to agree: the session handing the tick's hash to `client_hashes` and each world's to
+  `client_changes`, which would save the hashes above (netcode.md, top section, Left).
+
 ## Projection hashes: rows by their bytes, big containers by their chunks (2026-11-16)
 
 No runtime function is new or changed (netcode.md, top section). What generated code for players relies on now, all

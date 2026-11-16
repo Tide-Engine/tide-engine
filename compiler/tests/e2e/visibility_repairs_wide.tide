@@ -1,0 +1,3 @@
+// visibility_repairs.tide with 160 players: an Audience of five words, past the four a row written down keeps one
+// of, so every row written between two worlds is every recipient's to look at
+settings { maxPlayers = 160; }

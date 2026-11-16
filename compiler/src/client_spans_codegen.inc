@@ -55,6 +55,13 @@
 static int client_deniable(const gen *g, int a, int *out); // client_state_codegen.inc
 static bool client_codec_heapy(const program *prog, type t, int depth);
 
+// Whether a change written down for the repairs says which players it could be another for: where an Audience is
+// small enough to keep one with each (128 players). Past that every change is every recipient's to look at.
+static bool client_changes_masked(const program *prog)
+{
+    return prog->audience && prog->audience->fields.count <= 4;
+}
+
 static bool arch_scene_root(const gen *g, const int a)
 {
     for (int c = 0; c < g->prog->components.count; c++) {
@@ -161,7 +168,96 @@ static void gen_client_span_helpers(gen *g)
               "    uint8_t *flags;\n"
               "    uint32_t room, parts, denials, was;  // (was: the table's rows the call before)\n    tide_client_span *spans;\n    uint32_t span_room;\n"
               "} tide_client_rows;\n\n");
-    sb_printf(o, "struct tide_client_kept {\n    tide_client_rows rows[%d];\n"
+    // What each check found changed, written down for the repairs (client_changes_codegen.inc)
+    const bool masked = client_changes_masked(prog);
+    if (masked) {
+        static const char *const ops[2][2] = {{"or", "|="}, {"xor", "^="}};
+        for (int op = 0; op < 2; op++) {
+            sb_printf(o, "TIDE_HELPER Audience tide_client_audience_%s(Audience a, const Audience b)\n{\n", ops[op][0]);
+            for (int i = 0; i < prog->audience->fields.count; i++) {
+                const char *name = str_to_cstr(prog->audience->fields.items[i].name);
+                sb_printf(o, "    a.%s %s b.%s;\n", name, ops[op][1], name);
+            }
+            sb_put(o, "    return a;\n}\n\n");
+        }
+        sb_put(o, "TIDE_HELPER bool tide_client_audience_any(const Audience a)\n{\n    return (");
+        for (int i = 0; i < prog->audience->fields.count; i++)
+            sb_printf(o, "%sa.%s", i ? " | " : "", str_to_cstr(prog->audience->fields.items[i].name));
+        sb_put(o, ") != 0;\n}\n\n"
+                  "// Who had a kept row: its audience, everyone where that wasn't worked out, nobody where nothing was kept of it\n"
+                  "#define TIDE_CLIENT_WAS(r, row) ((r)->flags[row] & TIDE_CLIENT_SEEN ? (r)->audience[row] : (r)->flags[row] ? TIDE_AUDIENCE_ALL : (Audience){0})\n\n");
+    }
+    sb_printf(o, "// The rows a check found changed since the check before, for a repair to look at them alone (tide_game_client_changes):\n"
+                 "// a row is written down where anything a recipient's part of it goes by came out another (which entity it is, a\n"
+                 "// term of its sum, which components it has, who may have it or a component of it), or it came or went%s.\n"
+                 "// A check is a node: the world's hash as the check left it, and its rows. Two worlds that hash as two nodes do\n"
+                 "// differ, for a recipient, only in the rows written down between them. A check writes two rows at most for each\n"
+                 "// row of the world; a world most of whose rows change every tick (a battle) would write them all each check for\n"
+                 "// repairs that then walk anyway, so after four checks in a row that each wrote more than half the world's rows\n"
+                 "// (and TIDE_CLIENT_CHANGES_LEAST), a check writes none and says only that everything may have changed, but\n"
+                 "// each sixteenth, which writes, and ends the run if it wrote few. One or two such checks (a player joining,\n"
+                 "// a whole view asked for) are kept as they are: most of their rows are one player's\n"
+                 "#ifndef TIDE_CLIENT_NODES\n#define TIDE_CLIENT_NODES 256u\n#endif\n"
+                 "#ifndef TIDE_CLIENT_CHANGES_MOST\n#define TIDE_CLIENT_CHANGES_MOST (1u << 19)\n#endif\n"
+                 "#ifndef TIDE_CLIENT_CHANGES_LEAST\n#define TIDE_CLIENT_CHANGES_LEAST 64u\n#endif\n"
+                 "typedef struct tide_client_change { uint32_t archetype, row;%s } tide_client_change;\n"
+                 "// ...and one of the rows' part of a check, until who may have it is worked out: the components that can be denied\n"
+                 "// whose terms moved (`parts`, a bit each), whether anything else of it did (`whole`), and who had it\n"
+                 "typedef struct tide_client_pending { uint64_t parts; uint32_t archetype, row; bool whole;%s } tide_client_pending;\n"
+                 "typedef struct tide_client_node { uint64_t world; uint32_t from, count; bool all; } tide_client_node;\n"
+                 "typedef struct tide_client_journal {\n"
+                 "    tide_client_change *items;\n    uint32_t count, room;\n"
+                 "    tide_client_pending *pending;\n    uint32_t pending_count, pending_room;\n"
+                 "    tide_client_node nodes[TIDE_CLIENT_NODES];\n    uint32_t node_count;\n"
+                 "    uint32_t from, heavy; // This check's: where its rows start, and how many are half the world's and some\n"
+                 "    bool on, lost;        // ...whether it writes any (a server's, after its first), or none for the run it's in\n"
+                 "    uint32_t heavy_run;   // The checks in a row that wrote more, or none for it\n"
+                 "} tide_client_journal;\n\n",
+              masked ? ", each with the players it could be another for" : "",
+              masked ? " Audience who;" : "", masked ? " Audience was;" : "");
+    sb_put(o, "TIDE_HELPER void tide_client_journal_begin(tide_client_journal *j, const bool on, const uint64_t rows)\n{\n"
+              "    j->on = on && j->node_count;\n    j->from = j->count;\n    j->pending_count = 0;\n"
+              "    j->lost = j->on && j->heavy_run >= 4u && (j->heavy_run & 15u) != 0u;\n"
+              "    j->heavy = (uint32_t)(rows / 2u < UINT32_MAX / 4u ? rows / 2u : UINT32_MAX / 4u) + TIDE_CLIENT_CHANGES_LEAST;\n}\n\n");
+    sb_printf(o, "TIDE_HELPER void tide_client_journal_row(tide_client_journal *j, const uint32_t archetype, const uint32_t row, const uint64_t parts,\n"
+                 "                                         const bool whole%s)\n{\n"
+                 "    if (!j->on || j->lost) return;\n"
+                 "    if (j->pending_count == j->pending_room) {\n"
+                 "        j->pending_room = j->pending_room ? j->pending_room * 2u : 256u;\n"
+                 "        j->pending = realloc(j->pending, (size_t)j->pending_room * sizeof *j->pending);\n"
+                 "        if (!j->pending) tide_out_of_memory();\n    }\n"
+                 "    j->pending[j->pending_count++] = (tide_client_pending){.parts = parts, .archetype = archetype, .row = row, .whole = whole%s};\n}\n\n",
+              masked ? ", const Audience was" : "", masked ? ", .was = was" : "");
+    sb_printf(o, "TIDE_HELPER void tide_client_journal_add(tide_client_journal *j, const uint32_t archetype, const uint32_t row%s)\n{\n"
+                 "    if (!j->on || j->lost) return;\n"
+                 "    if (j->count == j->room) {\n"
+                 "        j->room = j->room ? j->room * 2u : 256u;\n"
+                 "        j->items = realloc(j->items, (size_t)j->room * sizeof *j->items);\n"
+                 "        if (!j->items) tide_out_of_memory();\n    }\n"
+                 "    j->items[j->count++] = (tide_client_change){.archetype = archetype, .row = row%s};\n}\n\n",
+              masked ? ", const Audience who" : "", masked ? ", .who = who" : "");
+    sb_put(o, "// The check is a node, the world hashing to `world` as it left it; the oldest go once there are too many nodes or\n"
+              "// rows\n"
+              "TIDE_HELPER void tide_client_journal_end(tide_client_journal *j, const uint64_t world)\n{\n"
+              "    const bool all = j->lost;\n"
+              "    // (The same world checked again, as a hash asked for one player at a time is: the node it is already, and no\n"
+              "    // check of a run's)\n"
+              "    if (j->node_count && j->count == j->from && j->nodes[j->node_count - 1u].world == world) return;\n"
+              "    if (j->on) j->heavy_run = !all && j->count - j->from <= j->heavy ? 0u : j->heavy_run == UINT32_MAX ? 16u : j->heavy_run + 1u;\n"
+              "    uint32_t drop = j->node_count == TIDE_CLIENT_NODES ? TIDE_CLIENT_NODES / 2u : 0u;\n"
+              "    if (j->count > TIDE_CLIENT_CHANGES_MOST) {\n"
+              "        while (drop < j->node_count && j->count - (drop ? j->nodes[drop].from : 0u) > TIDE_CLIENT_CHANGES_MOST / 2u) drop++;\n    }\n"
+              "    if (drop) {\n"
+              "        // (What the node before the first kept wrote is gone with it: a node's rows are how it differs from the one before)\n"
+              "        const uint32_t base = drop < j->node_count ? j->nodes[drop].from : j->from;\n"
+              "        memmove(j->items, j->items + base, (size_t)(j->count - base) * sizeof *j->items);\n"
+              "        j->count -= base;\n        j->from -= base;\n"
+              "        for (uint32_t i = drop; i < j->node_count; i++) {\n"
+              "            j->nodes[i - drop] = j->nodes[i];\n            j->nodes[i - drop].from -= base;\n        }\n"
+              "        j->node_count -= drop;\n    }\n"
+              "#ifdef TIDE_CLIENT_COUNTS\n    __atomic_add_fetch(&tide_client_counts[27], j->count - j->from, __ATOMIC_RELAXED);\n#endif\n"
+              "    j->nodes[j->node_count++] = (tide_client_node){.world = world, .from = j->from, .count = j->count - j->from, .all = all};\n}\n\n");
+    sb_printf(o, "struct tide_client_kept {\n    tide_client_rows rows[%d];\n    tide_client_journal journal;\n"
                  "    uint64_t directory;     // The groups' audiences, as a hash of the pages they're kept in\n"
                  "    void *group_entries;    // ...and a copy of the directory's entries, as they are in its list, live and dead\n"
                  "    uint32_t group_count, group_room;\n"
@@ -184,6 +280,7 @@ static void gen_client_span_helpers(gen *g)
                  "        free(r->spans);\n        free(r->audience);\n        free(r->has);\n        free(r->denied);\n        free(r->terms);\n"
                  "        free(r->groups);\n        free(r->policies);\n        free(r->page_from);\n        free(r->page_count);\n"
                  "        free(r->fresh);\n        free(r->snaps);\n        free(r->slot);\n        free(r->flags);\n    }\n"
+                 "    free(k->journal.items);\n    free(k->journal.pending);\n"
                  "    free(k->group_entries);\n    free(k->chunk_hashes);\n    free(k->changed);\n    free(k->route_sums);\n    free(k->route_touched);\n"
                  "    memset(k, 0, sizeof *k);\n}\n\n", archetypes > 0 ? archetypes : 1);
     sb_put(o, "TIDE_HELPER void *tide_client_grow(void *p, const size_t had, const size_t room, const size_t each)\n{\n"
@@ -630,6 +727,23 @@ static void gen_client_span_helpers(gen *g)
     gen_client_part_tables(g);
 }
 
+// Where component `c` is among an archetype's components that can be denied (`deniable`, `n` of them), or -1
+static int client_deniable_at(const int *deniable, const int n, const int c)
+{
+    for (int k = 0; k < n; k++) {
+        if (deniable[k] == c) return k;
+    }
+    return -1;
+}
+
+// A term worked out again (`now`, against term[t]) that came out another, for the repairs: a component that can be
+// denied (`k` among them) is another for those who may have it, any other for everyone who has the row
+static void gen_client_term_moved(sb *o, const int t, const int k, const char *pad)
+{
+    if (k >= 0) sb_printf(o, "%sif (now != term[%d]) parts_moved |= 1ull << %d;\n", pad, t, k);
+    else sb_printf(o, "%sif (now != term[%d]) whole_moved = true;\n", pad, t);
+}
+
 // The rows' part of tide_game_client_hashes for a game whose values hold anything in the heap: declares, for each
 // archetype `a`, rows<a>, audience<a>, has<a> and, where some component can be denied, denied<a> and terms<a> (every
 // component's term, the archetype's parts a row), as the loops after it read them, and the input slots' audiences.
@@ -648,6 +762,15 @@ static void gen_client_hash_rows(gen *g, int *deniable, int *parts)
         const int m = arch_parts(g, a, parts);
         if (m > most_parts) most_parts = m;
     }
+    const bool masked = client_changes_masked(prog);
+    // What changed is written down for the repairs: by a server's check with its world's memo
+    sb_put(o, "    tide_client_journal *const journal = &kept->journal;\n"
+              "    const bool journaling = !own && !client && !again;\n"
+              "    tide_client_journal_begin(journal, journaling, 0u");
+    for (int a = 0; a < prog->archetypes.count; a++) {
+        if (!arch_local(g, a)) sb_printf(o, " + (uint64_t)w->%s.count", arch_name(g, a));
+    }
+    sb_put(o, ");\n");
     sb_printf(o, "    // Each entity's hash and what it has: again only for what changed\n"
                  "    const uint32_t call = ++kept->call;\n    (void)call;\n"
                  "    tide_client_gathered reached = {0}, slots = {0}, store = {0};\n"
@@ -702,6 +825,9 @@ static void gen_client_hash_rows(gen *g, int *deniable, int *parts)
                   (unsigned)(m ? m : 1));
         sb_printf(o, "                if (tide_row_gone(%s)) { // A hole (tide_table_remove): nothing kept of it\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         if (root) sb_printf(o, "                    if (kept%d->flags[row]) roots_fresh = true;\n", a);
+        // (The entity that was there went: whoever had it)
+        if (masked) sb_printf(o, "                    if (kept%d->flags[row]) tide_client_journal_row(journal, %du, row, 0u, true, TIDE_CLIENT_WAS(kept%d, row));\n", a, a, a);
+        else sb_printf(o, "                    if (kept%d->flags[row]) tide_client_journal_row(journal, %du, row, 0u, true);\n", a, a);
         sb_printf(o, "                    kept%d->flags[row] = 0;\n                    kept%d->page_count[row] = UINT32_MAX;\n                    continue;\n                }\n",
                   a, a);
         sb_printf(o, "                const tide_entity e = *%s;\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
@@ -716,7 +842,10 @@ static void gen_client_hash_rows(gen *g, int *deniable, int *parts)
                      "                uint64_t *const term = &terms%d[(size_t)row * %du];\n"
                      "                bool fresh = all;\n"
                      "                uint64_t moved_by = 0; // What the terms worked out again add to its sum\n"
-                     "                const bool ids_again = all || (ids_rows >> bit & 1u) || (slots_moved && !tide_client_row_slot_same(kept%d, w, row, e));\n",
+                     "                const bool ids_again = all || (ids_rows >> bit & 1u) || (slots_moved && !tide_client_row_slot_same(kept%d, w, row, e));\n"
+                     "                // For the repairs: whether anything of it every recipient's part goes by came out another, and\n"
+                     "                // which of the components that can be denied had their terms move\n"
+                     "                bool whole_moved = ids_again;\n                uint64_t parts_moved = 0;\n",
                   a, a, (unsigned)(m ? m : 1), a);
         if (root) sb_put(o, "                if (all) roots_fresh = true;\n");
         // Each component: whether a lane of it (or its presence byte, for a sparse one) changed in the row
@@ -763,6 +892,7 @@ static void gen_client_hash_rows(gen *g, int *deniable, int *parts)
                 sb_printf(o, "                    {\n                        const uint64_t now = tide_client_term%d_%d(w, e, loc, %s, hs);\n",
                           a, c, comp_sparse(g, c) ? presence_cell(g, "w", a, c, "row", false) : "true");
                 if (t == root_visibility) sb_printf(o, "                        if (now != term[%d] || lanes%d) roots_fresh = true;\n", t, t);
+                gen_client_term_moved(o, t, client_deniable_at(deniable, n, c), "                        ");
                 sb_printf(o, "                        moved_by += now - term[%d];\n                        term[%d] = now;\n                    }\n",
                           t, t);
             }
@@ -798,10 +928,12 @@ static void gen_client_hash_rows(gen *g, int *deniable, int *parts)
             const int c = parts[t];
             if (client_codec_heapy(prog, (type){TY_COMPONENT, prog->components.items[c]}, 0)) continue;
             sb_printf(o, "                if (lanes%d) {\n"
-                         "                    const uint64_t now = tide_client_term%d_%d(w, e, loc, %s, &hs->out);\n"
-                         "                    moved_by += now - term[%d];\n                    term[%d] = now;\n"
+                         "                    const uint64_t now = tide_client_term%d_%d(w, e, loc, %s, &hs->out);\n",
+                      t, a, c, comp_sparse(g, c) ? presence_cell(g, "w", a, c, "row", false) : "true");
+            gen_client_term_moved(o, t, client_deniable_at(deniable, n, c), "                    ");
+            sb_printf(o, "                    moved_by += now - term[%d];\n                    term[%d] = now;\n"
                          "                    fresh = true;\n",
-                      t, a, c, comp_sparse(g, c) ? presence_cell(g, "w", a, c, "row", false) : "true", t, t);
+                      t, t);
             if (t == root_visibility) sb_put(o, "                    roots_fresh = true;\n");
             sb_put(o, "                }\n");
         }
@@ -820,6 +952,10 @@ static void gen_client_hash_rows(gen *g, int *deniable, int *parts)
                      "                else if (!inplace) {\n"
                      "                    const uint64_t slot = kept%d->slot[row] >> TIDE_ENTITY_PAGE_SHIFT;\n"
                      "                    tide_client_gather_numbers(&slots, &slot, 1u);\n                }\n", a, a);
+        // (Which of those components it has, changing, is their terms' and their audiences' to say: a term moves, and who
+        // may have each is worked out again below)
+        if (masked) sb_printf(o, "                if (whole_moved || parts_moved) tide_client_journal_row(journal, %du, row, parts_moved, whole_moved, TIDE_CLIENT_WAS(kept%d, row));\n", a, a);
+        else sb_printf(o, "                if (whole_moved || parts_moved) tide_client_journal_row(journal, %du, row, parts_moved, whole_moved);\n", a);
         sb_printf(o, "                if (sum != has%d[row * 2u + 1u]) fresh = true;\n"
                      "                if (mask != has%d[row * 2u]) fresh = seen = true;\n"
                      "                has%d[row * 2u] = mask;\n                has%d[row * 2u + 1u] = sum;\n"
@@ -842,6 +978,8 @@ static void gen_client_hash_rows(gen *g, int *deniable, int *parts)
                      "    for (uint32_t row = rows%d; row < kept%d->was && row < kept%d->room; row++) {\n",
                   table, a, a, a, a, a);
         if (root) sb_printf(o, "        if (kept%d->flags[row]) roots_fresh = true;\n", a);
+        if (masked) sb_printf(o, "        if (kept%d->flags[row]) tide_client_journal_row(journal, %du, row, 0u, true, TIDE_CLIENT_WAS(kept%d, row));\n", a, a, a);
+        else sb_printf(o, "        if (kept%d->flags[row]) tide_client_journal_row(journal, %du, row, 0u, true);\n", a, a);
         sb_printf(o, "        kept%d->flags[row] = 0;\n    }\n"
                      "    kept%d->was = rows%d;\n", a, a, a);
     }
@@ -886,20 +1024,55 @@ static void gen_client_hash_rows(gen *g, int *deniable, int *parts)
                   a, a, a);
         sb_printf(o, "                const tide_entity e = *%s;\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         sb_printf(o, "                const tide_location loc = {%du, row};\n                Visibility policy = {0};\n                bool has_policy = false;\n"
+                     "                const Audience seen_was = audience%d[row];\n"
                      "                audience%d[row] = !client ? tide_visibility_base_at(w, e, loc, &policy, &has_policy, &walk, groups)\n"
                      "                    : tide_visibility_client_hidden(w, e) ? (Audience){0} : TIDE_AUDIENCE_ALL;\n"
                      "                kept%d->flags[row] = (uint8_t)((flags & TIDE_CLIENT_HASHED) | TIDE_CLIENT_SEEN\n"
                      "                    | (!client && has_policy && tide_visibility_by_groups(&policy) ? TIDE_CLIENT_BY_GROUP : 0u));\n"
                      "                tide_client_piece_groups_add(piece, kept%d->flags[row], groups);\n",
-                  a, a, a, a);
+                  a, a, a, a, a);
+        // For the repairs: the players it came to or left, or a component of it did. (A row never seen is written down
+        // already, as its terms were worked out: who has it now is added to it once every row's audience is known)
+        if (masked) sb_printf(o, "                Audience who = tide_client_audience_xor(seen_was, audience%d[row]);\n", a);
+        else sb_printf(o, "                bool who = journal->on && (flags & TIDE_CLIENT_SEEN) && !tide_audience_equal(seen_was, audience%d[row]);\n", a);
         for (int k = 0; k < n; k++) {
-            sb_printf(o, "                denied%d[row * %du + %du] = client || !((has%d[row * 2u] >> %d) & 1u) ? TIDE_AUDIENCE_ALL\n"
-                         "                    : tide_visibility_denied_at(w, &policy, has_policy, audience%d[row], %du);\n",
-                      a, (unsigned)n, (unsigned)k, a, k, a, (unsigned)deniable[k]);
+            sb_printf(o, "                {\n                    const Audience to = client || !((has%d[row * 2u] >> %d) & 1u) ? TIDE_AUDIENCE_ALL\n"
+                         "                        : tide_visibility_denied_at(w, &policy, has_policy, audience%d[row], %du);\n",
+                      a, k, a, (unsigned)deniable[k]);
+            if (masked) sb_printf(o, "                    who = tide_client_audience_or(who, tide_client_audience_xor(denied%d[row * %du + %du], to));\n", a, (unsigned)n, (unsigned)k);
+            else sb_printf(o, "                    who = who || (journal->on && (flags & TIDE_CLIENT_SEEN) && !tide_audience_equal(denied%d[row * %du + %du], to));\n", a, (unsigned)n, (unsigned)k);
+            sb_printf(o, "                    denied%d[row * %du + %du] = to;\n                }\n", a, (unsigned)n, (unsigned)k);
         }
+        if (masked) sb_printf(o, "                if ((flags & TIDE_CLIENT_SEEN) && tide_client_audience_any(who)) tide_client_journal_add(journal, %du, row, who);\n", a);
+        else sb_printf(o, "                if (who) tide_client_journal_add(journal, %du, row);\n", a);
         sb_put(o, "            }\n        }\n    }\n");
     }
-    sb_put(o, "    TIDE_CLIENT_MARK(3);\n");
+    // The rows written down as their terms were worked out, now that who may have each is: the players each could be
+    // another for. Then the check is a node of the journal, by the world's hash
+    sb_put(o, "    for (uint32_t i = 0; journal->on && !journal->lost && i < journal->pending_count; i++) {\n"
+              "        const tide_client_pending *c = &journal->pending[i];\n        switch (c->archetype) {\n");
+    for (int a = 0; a < prog->archetypes.count; a++) {
+        if (arch_local(g, a)) continue;
+        const int n = client_deniable(g, a, deniable);
+        sb_printf(o, "        case %d: {\n", a);
+        if (masked) {
+            sb_printf(o, "            const bool here = c->row < rows%d && (kept%d->flags[c->row] & TIDE_CLIENT_SEEN);\n"
+                         "            const Audience now = here ? audience%d[c->row] : (Audience){0};\n"
+                         "            Audience who = c->whole ? tide_client_audience_or(c->was, now) : tide_client_audience_xor(c->was, now);\n",
+                      a, a, a);
+            // (A term that moved is another's who may have that component, and nobody else's)
+            for (int k = 0; k < n; k++) {
+                sb_printf(o, "            if (here && (c->parts >> %d & 1u)) who = tide_client_audience_or(who, denied%d[c->row * %du + %du]);\n",
+                          k, a, (unsigned)n, (unsigned)k);
+            }
+            sb_printf(o, "            if (tide_client_audience_any(who)) tide_client_journal_add(journal, %du, c->row, who);\n", a);
+        } else sb_printf(o, "            tide_client_journal_add(journal, %du, c->row);\n", a);
+        sb_put(o, "            break;\n        }\n");
+    }
+    sb_put(o, "        default: break;\n        }\n    }\n"
+              "    if (journaling) {\n        uint64_t node;\n        TIDE_CLIENT_TIMED(14, node = tide_world_hash(w));\n"
+              "        tide_client_journal_end(journal, node);\n    }\n"
+              "    TIDE_CLIENT_MARK(3);\n");
     if (!prog->input) return;
     // Each input slot's audience: every row's, which are kept, so this only reads them
     for (int a = 0; a < prog->archetypes.count; a++) {

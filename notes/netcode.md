@@ -1,5 +1,152 @@
 # Netcode: sessions, prediction, commands
 
+## Repairs from the rows a check wrote down (2026-11-16, later)
+
+A repair by changes (`tide_game.client_changes`, `client_changes_codegen.inc`) listed, for one player, every entity
+that player may have in the world it confirmed and in the world now, to find the few that differ: every row of the
+first had its audience worked out and its hash made (`tide_client_see`), every row of the second read from what the
+tick's check kept. 70 to 95 ns for each entity the server has, for each player, about four times a second: a third of
+a server's update with 8 players in `bench_voxels`, half at 64 (notes/voxels.md, At scale). Now a repair looks at the
+rows that changed for its recipient between the two worlds, and at no others.
+
+- **Each check writes down the rows it found changed** (`tide_client_journal`, in `tide_client_kept`, so it's the
+  memo's and goes where the memo goes: `tide_client_memo_forget`, a memo given to another world). The check already
+  knows them: a row is written down where what a recipient's part of it goes by came out another than was kept.
+  In the rows' part of a check (`gen_client_hash_rows`): the row is new, another entity or other snaps
+  (`ids_again`), a term of its sum moved (`gen_client_term_moved`), it's a hole where a row was kept, or it's past
+  the table's end now. In the audiences' part: who may have the row, or one of its components, is another than was
+  kept. Rows, not entities: a check knows a row whose entity went only as a hole.
+- **Each with the players it could be another for** (`tide_client_change.who`, an `Audience`; where an `Audience` is
+  4 words or fewer, 128 players: `client_changes_masked`, past that every change is everyone's to look at). A row
+  that's another entity, has other snaps or a term everyone has: who had it and who has it now. A term of a
+  component that can be denied: who may have that component now. An audience that changed: the players it came to or
+  left, and the same of each component's. So a chunk whose `Seen` changed (denied everyone) is nobody's, and a chunk
+  that came to one player is that player's alone. The rows' part doesn't know who has a row yet, so it keeps what it
+  found (`tide_client_pending`: which terms, whether anything else, who had it) and the masks are made once the
+  audiences are (the end of `gen_client_hash_rows`).
+- **A check is a node**: the world's hash as the check left it (`tide_world_hash`) and the rows it wrote. Two worlds
+  that hash as two nodes differ, for any player, only in rows written by the nodes after the earlier, up to the
+  later, whichever way round. So worlds are known by what they hold, not by their address or their tick: a world
+  changed outside a tick, or a copy ticked on its own, hashes as no node and its repair walks every row as before.
+  The world the match ticks, at the tick its rows were kept at, is the last node without hashing it (it is the
+  world those rows are already trusted to be: `current`).
+- **A repair** (`tide_client_changes_work`): `tide_client_journal_between` finds the two nodes (the base is hashed:
+  one `tide_world_hash` a repair), `tide_client_journal_mark` sets a bit for each row between them whose `who` has
+  the recipient, and `tide_client_see` and `tide_client_see_kept` go through the rows with a bit
+  (`tide_client_bit_from`) in each world. The lists they make leave out rows that are the same for the recipient in
+  both worlds, which no plan names; everything after (the matching by entity, the plan, `now`, `was`) is the code it
+  was, so the bytes are the same. Kept rows are used as before, only for the world at `tide_client_kept.tick`.
+- **Bounds.** 256 checks (`TIDE_CLIENT_NODES`; the older half goes when it's full) and 2^19 rows
+  (`TIDE_CLIENT_CHANGES_MOST`, 6 MB with a 4-byte audience; the oldest checks go). A check writes two rows at most
+  for each row of the world. A repair whose nodes hold more than 8 rows for each row of the world and 4,096 walks.
+- **A world most of whose rows change every tick** (a battle) would write them all each check for repairs that then
+  walk. A check that writes more than half the world's rows and 64 (`TIDE_CLIENT_CHANGES_LEAST`) counts
+  (`heavy_run`); after four in a row, a check writes none and says only that everything may have changed
+  (`tide_client_node.all`: a repair across it walks), but each sixteenth of the run, which writes, and ends the run
+  if it wrote few. One to three such checks in a row are written like any other: a player joining or a whole view
+  asked for writes most of a small world's rows, nearly all of them one player's, and the other players' repairs
+  across it look at none of them. (The first build wrote nothing in any check past half the world's rows: with 32
+  bots 576 of 5,157 repairs walked, the ones across a join or a hop.) Not measured on Mount & Rifle, which isn't in
+  this repository: by this rule a battle's checks write one tick in sixteen. A world checked again as it is (the same
+  hash as the last node, nothing written) is no check of a run. A game with `TIDE_CLIENT_MEMO_OFF` finds every row
+  changed in every check, so most of its checks write none.
+- **`TIDE_CLIENT_SPANS_CHECK`** works every repair that went by the journal out again from every row and stops the
+  program where a byte of the plan, `now` or `was` differs, as it does a tick's hashes. `TIDE_CLIENT_COUNTS` counts
+  the repairs each way, the rows the first looked at, the rows written down, and why a repair walked (the world, or
+  the one it was, hashed as no node; too many rows between), and times the check's `tide_world_hash`.
+  `TIDE_CLIENT_CHANGES_STATS` (a test's) makes the first three a global, `tide_client_changes_stats`.
+- No session change, no runtime change, no protocol or simulation identity change (the bytes are the same):
+  notes/runtime-ownership.md, Repairs from the rows a check wrote down.
+
+**Measured** (`bench_voxels`, release, Windows, 12 threads, BelowNormal, one run at a time, three runs each
+alternating with the build before; medians, the repairs' ranges in brackets). The same bytes sent, ticks and world
+hash in every pair (186.8, 383.0, 850.3 and 583.5 KB a second; `0x77babb9991dd25da`, `0x7b460b72bce7184a`,
+`0x55da5c44144f9d4f`, `0xe756c4ee9cf79012`). Another agent's builds and tests ran on the machine through this set, so
+the runs spread more than usual and a column nothing here touches moves with them (16 bots' simulating: the three
+runs after fell in busier stretches than the three before).
+
+| | 8 bots | 16 | 32 | 8, `--near 12` |
+|---|---|---|---|---|
+| Chunks the server has | 6,490 | 7,717 | 12,669 | 17,599 |
+| Repairs, ms a second | 19.3 to 3.78 (18.4–20.5 to 3.27–3.82) | 39.3 to 8.63 (38.9–43.0 to 7.47–8.69) | 103.3 to 22.6 (86.8–109.0 to 18.6–25.3) | 66.7 to 9.35 (55.5–76.5 to 8.70–10.07) |
+| ...each (33, 63, 113 and 33 a second) | 0.58 to 0.11 ms | 0.62 to 0.14 | 0.91 to 0.20 | 2.05 to 0.29 |
+| Server update, median, ms | 0.86 to 0.63 | 1.61 to 1.26 | 3.57 to 2.56 | 2.37 to 1.62 |
+| ...p99 | 5.37 to 5.20 | 7.89 to 6.48 | 15.23 to 10.49 | 15.55 to 12.59 |
+| ...longest | 14.9 to 12.9 | 14.0 to 13.5 | 29.8 to 18.0 | 31.5 to 24.7 |
+| Server, hashing, ms a second | 6.80 to 8.27 | 10.4 to 14.0 | 23.7 to 24.4 | 19.6 to 19.8 |
+| Server, simulating | 31.9 to 33.3 | 46.6 to 51.2 | 76.2 to 77.5 | 87.6 to 85.5 |
+| Server, in all | 66.4 to 54.3 | 110.0 to 90.3 | 237.7 to 158.6 | 191.7 to 130.5 |
+| A client, simulating | 9.55 to 9.92 | 9.86 to 10.64 | 11.56 to 11.54 | 28.05 to 28.07 |
+
+Three pairs an hour earlier, on a quieter machine, of a build that differed only in which checks write (it wrote
+none past half the world's rows and 4,096): repairs 16.5 to 3.17, 47.3 to 8.69, 97.5 to 20.1 and 66.4 to 12.5 ms a
+second; hashing 5.99 to 6.70, 12.8 to 14.1, 22.2 to 22.0 and 19.0 to 21.8; in all 58.7 to 45.9, 128.1 to 90.4,
+227.4 to 145.0 and 191.3 to 139.6; simulating and a client's within 3% each way.
+
+A repair now costs the chunks it sends (`tide_client_put_record` of each) and one hash of the base world (12 µs at
+6,490 chunks; a world's hash goes through every page's kept hash). What the checks pay for it: a `tide_world_hash`
+a check and the writing, about 0.7 to 1.5 ms a second of the hashing row at 8 and 16 bots (the hash 0.7 of it at 8:
+24 ms of 2,017 checks). Counted (`bench_voxels_counts`): with 8 bots 1,114 repairs by the journal and none walked
+(the other 8 packs are the bots' first worlds); 81,584 rows looked at, 73 a repair, where each walked 6,490 rows
+twice; 153,864 rows written down by 2,017 checks, 76 a check. With 32 bots 5,157 by the journal and none walked,
+96 rows a repair of 12,669, 265 written a check.
+
+**Tests.** `tidec_e2e_visibility_repairs` (and `_checked`, `_memo_off`, `_wide`; `e2e/visibility_repairs.tide`, `_test.c`):
+1,400 cells of their own groups, each with a `Secret` its Visibility restricts and a `[Sparse]` `Badge` one player
+may have, 200 more in a scene that goes by its root's group, 48 pebbles all alike. 240 ticks, each with one change
+picked at random of thirty: a group's audience and back (an entity coming into and leaving a player's sight with
+nothing of its row changed), a lane everyone has, a lane some have, a grid's cell, a list grown, a policy set, reset
+and set to nobody, a cell given another group and its own again, a `Tag` (another table) and back, a `Badge` given,
+taken and changed, a cell destroyed, one made, one destroyed as another is made, forty made at once, a sixteenth of
+the first 700 destroyed (holes the tick's end fills from the table's end: rows moved between pieces, and the table
+shorter), the scene's group's audience, its root's group, the other group's audience, a group destroyed, a cell
+snapped, every pebble destroyed as 48 are made (other entities in the same rows with the same values), and every
+cell's value (most of the world's rows in one check). Each tick, every player's repair from the worlds 1, 2, 3, 5,
+9, 14, 20 and 36 ticks old is worked out by the journal and by a lineage with nothing kept (every row), the two
+byte for byte alike; and which way the first went is checked (`tide_client_changes_stats`): by the journal up to
+14 ticks, walked at 36 (a journal of 32 checks here), and walked from a world before its own check and from a
+world of a tick the match had but ticked on its own with another change (same tick, another world). Two worlds of
+the past are repaired from each other both ways round, by the journal, though neither is the world the match
+ticks. Then six ticks in a row that change every cell and twenty that change nothing, each checked twice (as a
+hash asked for one player checks the same world again): the first four checks write their rows, the twelve after
+write none (repairs across them walk), the sixteenth of the run writes and ends it.
+6,772 repairs by the journal, 1,444 walked; their bytes and the world pinned, the same in the three variants with 4
+players (`_memo_off`: which way each goes isn't checked). `_wide` is the same game with 160 players
+(`visibility_repairs_wide.tide` in place of `_few.tide`: an `Audience` of five words, so no row written down keeps
+one), every hash and every repair by the journal worked out twice; the same counts, its own pins. Every other visibility fixture's repairs from what's kept (one
+tick old) go by the journal now too, against the rows' as before.
+
+Each of these fails `tidec_e2e_visibility_repairs` (run one at a time against the final code and fixture): new
+rows and other entities not written down; other entities alone (the pebbles); other snaps alone; a denied
+component's term; any other term; a hole; rows past the table's end; an audience that changed; a component's
+audience; who had a row that changed left out; who had a row that went left out; who may have a component whose
+term moved left out; a check that wrote none taken as one with nothing to write; kept rows and the last node taken
+for the world at any tick; a check with nothing to write made no node; nodes kept after the older half went left
+where they were; the base taken as the node before without its hash; the world taken as the last node without its
+hash; a run of checks that wrote most rows never ended; never begun (every check writes); no check counted as one;
+the same world checked again ending a run, or counted as another check of it.
+Two lines of the first build failed nothing and were taken out: writing a row down for which components it has
+(their terms and audiences say it), and a never-seen row's audience in the audiences' part (the rows' part has it).
+
+`bench_voxels_checked` at full length (8 bots, 32 bots, and 8 at `--near 12`, 30 s each: every repair by the
+journal worked out again from every row) passes with the worlds and bytes above. Also passing, release on Windows:
+all of `tidec_e2e_visibility_*`, `tidec_e2e_task_visibility`, `_scene_preparation_visibility`, `_shards_visibility`,
+`_net_alone_seen`, `_storage_await_hidden`, `bench_voxels*`, `voxels_walk`, `bench_earth*`, `earth_tests`,
+`tide_tests visibility` and `session`. Sanitizers, the web and the other platforms are CI's.
+
+**Left.**
+- The world is hashed once more a tick, and once for each repair's base, to know them by what they hold. The
+  session has both numbers already (the tick's hash it sends; a kept world's is the tick before's), so handing them
+  to `client_hashes` and `client_changes` would take that away: a change to `tide_game` and `session.c`, trusting
+  the session to say which world it means, so not made here. About 1% of a server's update at 8 bots, 2% at twice
+  the view.
+- A repair's own cost is its records: each chunk's grid encoded again for each player it comes to
+  (`tide_client_put_record`), though the bytes are the same for all of them where nothing is denied.
+- A game whose `Audience` is more than 128 players keeps no mask: every row written between two worlds is looked
+  at for every recipient (still not the world; `_wide` is that path's test, not a measurement).
+- The hash offer (`start_client_repair`'s fallback for repairs that are mostly entities the player has) still
+  serializes the player's whole projection; nothing here touches it.
+
 ## Projection hashes: the rows that changed, and big containers by their chunks (2026-11-16)
 
 Two costs the blocks (the section below) left in a tick's check of a world of thousands of chunks: a piece of 64 rows

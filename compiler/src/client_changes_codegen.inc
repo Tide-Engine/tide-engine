@@ -139,6 +139,9 @@ static void gen_client_changes(gen *g)
     }
     sb_put(o, "    default: break;\n    }\n}\n\n");
 
+    // For tests (a build that says TIDE_CLIENT_CHANGES_STATS): the repairs worked out from the rows written down, those
+    // that walked every row, and the rows the first looked at
+    sb_put(o, "#ifdef TIDE_CLIENT_CHANGES_STATS\nuint64_t tide_client_changes_stats[3];\n#endif\n\n");
     // The entities a recipient may have, each with what it hashes to as permitted
     sb_put(o, "typedef struct tide_client_seen { tide_entity e; uint64_t hash; uint32_t archetype, row; } tide_client_seen;\n"
               "typedef struct tide_client_seen_list { tide_client_seen *items; uint32_t count, room; } tide_client_seen_list;\n\n"
@@ -170,11 +173,22 @@ static void gen_client_changes(gen *g)
         }
         sb_printf(o, "    tide_client_seen_push(seen, e, %du, row, tide_client_mix(sum));\n}\n\n", a);
     }
-    sb_printf(o, "TIDE_HELPER void tide_client_see(const tide_world *w, const tide_player_id recipient, %shs, tide_client_seen_list *seen)\n{\n"
+    // The rows to look at where only some are (`bits`, a bit a row for each archetype): the first at or after `from`,
+    // or `end`
+    sb_put(o, "TIDE_HELPER uint32_t tide_client_bit_from(const uint64_t *bits, uint32_t from, const uint32_t end)\n{\n"
+              "    while (from < end) {\n"
+              "        const uint64_t word = bits[from >> 6] >> (from & 63u);\n"
+              "        if (word) {\n            from += (uint32_t)__builtin_ctzll(word);\n            return from < end ? from : end;\n        }\n"
+              "        if ((from | 63u) == UINT32_MAX) return end;\n"
+              "        from = (from | 63u) + 1u;\n    }\n"
+              "    return end;\n}\n\n");
+    sb_printf(o, "TIDE_HELPER void tide_client_see(const tide_world *w, const tide_player_id recipient, %shs, tide_client_seen_list *seen,\n"
+                 "                                 uint64_t *const *bits)\n{\n"
                  "    tide_visibility_walk walk = {0};\n    tide_map_view_none(&walk.groups);\n", hasher_type);
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a)) continue;
         sb_printf(o, "    for (uint32_t row = 0; row < w->%s.count; row++) {\n", arch_name(g, a));
+        sb_printf(o, "        if (bits && (row = tide_client_bit_from(bits[%d], row, w->%s.count)) >= w->%s.count) break;\n", a, arch_name(g, a), arch_name(g, a));
         sb_printf(o, "        if (tide_row_gone(%s)) continue; // A hole (tide_table_remove)\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         sb_printf(o, "        tide_client_see_row%d(w, recipient, row, hs, &walk, seen);\n    }\n", a);
     }
@@ -183,7 +197,7 @@ static void gen_client_changes(gen *g)
         // The world the tick's check last hashed, with what it kept of each row (client_spans_codegen.inc): who may
         // have it and the terms of its sum, read rather than worked out again. A row with nothing kept is read.
         sb_put(o, "TIDE_HELPER void tide_client_see_kept(const tide_world *w, const tide_player_id recipient, struct tide_client_kept *kept,\n"
-                  "                                      tide_client_hasher *hs, tide_client_seen_list *seen)\n{\n"
+                  "                                      tide_client_hasher *hs, tide_client_seen_list *seen, uint64_t *const *bits)\n{\n"
                   "    tide_visibility_walk walk = {0};\n    tide_map_view_none(&walk.groups);\n");
         for (int a = 0; a < prog->archetypes.count; a++) {
             if (arch_local(g, a)) continue;
@@ -193,6 +207,7 @@ static void gen_client_changes(gen *g)
             if (!m) m = 1;
             sb_printf(o, "    {\n        const tide_client_rows *r = &kept->rows[%d];\n", a);
             sb_printf(o, "        for (uint32_t row = 0; row < w->%s.count; row++) {\n", arch_name(g, a));
+            sb_printf(o, "            if (bits && (row = tide_client_bit_from(bits[%d], row, w->%s.count)) >= w->%s.count) break;\n", a, arch_name(g, a), arch_name(g, a));
             sb_printf(o, "            if (tide_row_gone(%s)) continue;\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
             sb_printf(o, "            if (row >= r->room || r->parts != %du || (r->flags[row] & (TIDE_CLIENT_HASHED | TIDE_CLIENT_SEEN)) != (TIDE_CLIENT_HASHED | TIDE_CLIENT_SEEN)) {\n"
                          "                tide_client_see_row%d(w, recipient, row, hs, &walk, seen);\n                continue;\n            }\n", (unsigned)m, a);
@@ -211,31 +226,100 @@ static void gen_client_changes(gen *g)
     sb_put(o, "TIDE_HELPER uint32_t tide_client_seen_slot(const tide_entity e, const uint32_t slots)\n{\n"
               "    return (uint32_t)tide_client_mix(e.birth * 0x9e3779b97f4a7c15ull ^ e.lineage) & (slots - 1u);\n}\n\n");
 
-    // The server's side: the plan, `now` and `was`
-    sb_put(o, "static uint8_t *tide_game_client_changes(const void *world, const void *before, const void *lineage, const tide_player_id recipient,\n"
+    // The server's side: the plan, `now` and `was`. Every row of both worlds is looked at (`walk`, or nothing better is
+    // known), or only the rows the ticks' checks wrote down as changed between the two (`found`): the lists of what
+    // the recipient may have then leave out rows that are the same in both, which no plan names, so the plan, `now`
+    // and `was` are the same bytes either way
+    const bool masked = heapy && client_changes_masked(prog);
+    const int archetypes = prog->archetypes.count > 0 ? prog->archetypes.count : 1; // (C has no empty arrays)
+    if (heapy) {
+        // Where two worlds are in the journal (by their hashes, so by what they hold: not a world's address or its
+        // tick, which a world changed outside a tick would still have), the nodes between them: every row that differs
+        // for anyone is in those after the earlier, up to the later. Not where a check between them wrote none (one of
+        // a run that each wrote most of the world's rows), or they're more in all than it's worth. The world the match ticks, at the tick its check last kept its
+        // rows at (`current`), is the last node, as it is the world those rows are trusted to be (tide_client_see_kept)
+        sb_put(o, "#ifdef TIDE_CLIENT_COUNTS\n#define TIDE_CLIENT_WALKED(i) __atomic_add_fetch(&tide_client_counts[i], 1u, __ATOMIC_RELAXED)\n"
+                  "#else\n#define TIDE_CLIENT_WALKED(i) ((void)0)\n#endif\n");
+        sb_put(o, "TIDE_HELPER bool tide_client_journal_between(const tide_client_journal *j, const tide_world *w, const tide_world *b,\n"
+                  "                                             const bool current, const uint64_t rows, uint32_t *after, uint32_t *upto)\n{\n"
+                  "    if (!j->node_count) return false;\n"
+                  "    int64_t at = current ? (int64_t)j->node_count - 1 : -1, base = -1;\n"
+                  "    if (at < 0) {\n"
+                  "        const uint64_t now = tide_world_hash(w);\n"
+                  "        for (uint32_t i = j->node_count; i-- > 0 && at < 0;) if (j->nodes[i].world == now) at = i;\n    }\n"
+                  "    if (at < 0) {\n        TIDE_CLIENT_WALKED(28);\n        return false;\n    }\n"
+                  "    const uint64_t was = tide_world_hash(b);\n"
+                  "    for (uint32_t i = j->node_count; i-- > 0 && base < 0;) if (j->nodes[i].world == was) base = i;\n"
+                  "    if (base < 0) {\n        TIDE_CLIENT_WALKED(29);\n        return false;\n    }\n"
+                  "    *after = (uint32_t)(at < base ? at : base);\n    *upto = (uint32_t)(at < base ? base : at);\n"
+                  "    uint64_t all = 0;\n"
+                  "    for (uint32_t i = *after + 1u; i <= *upto; i++) {\n"
+                  "        if (j->nodes[i].all) all = UINT64_MAX;\n        else if (all != UINT64_MAX) all += j->nodes[i].count;\n    }\n"
+                  "    if (all > 8u * rows + 4096u) {\n        TIDE_CLIENT_WALKED(30);\n        return false;\n    }\n"
+                  "    return true;\n}\n\n");
+        sb_printf(o, "// ...and a bit for each of their rows that could be another for `recipient` (`bits`, of `rows` rows an archetype)\n"
+                     "TIDE_HELPER void tide_client_journal_mark(const tide_client_journal *j, const uint32_t after, const uint32_t upto,\n"
+                     "                                          const tide_player_id recipient, uint64_t *const *bits, const uint32_t *rows)\n{\n"
+                     "    (void)recipient;\n"
+                     "    const tide_client_change *c = j->items + j->nodes[after + 1u].from;\n"
+                     "    const tide_client_change *const end = j->items + j->nodes[upto].from + j->nodes[upto].count;\n"
+                     "    for (; c < end; c++) {\n"
+                     "        if (c->archetype >= %du || c->row >= rows[c->archetype]%s) continue;\n"
+                     "        bits[c->archetype][c->row >> 6] |= 1ull << (c->row & 63u);\n    }\n}\n\n",
+                  archetypes, masked ? " || !tide_audience_contains(c->who, recipient)" : "");
+    }
+    sb_put(o, "static uint8_t *tide_client_changes_work(const void *world, const void *before, const void *lineage, const tide_player_id recipient,\n"
               "                                        uint32_t *plan_size, uint8_t **now, uint32_t *now_size, uint8_t **was, uint32_t *was_size,\n"
-              "                                        uint32_t *changed_size)\n{\n"
-              "    const tide_world *w = world, *b = before;\n    (void)lineage;\n"
+              "                                        uint32_t *changed_size, const bool walk, bool *found)\n{\n"
+              "    const tide_world *w = world, *b = before;\n    (void)lineage;\n    (void)walk;\n    *found = false;\n"
               "    if (w->tide_visibility_state.client || b->tide_visibility_state.client) return NULL;\n"
               "    tide_client_seen_list ln = {0}, lb = {0};\n");
     if (heapy) {
-        sb_put(o, "    // Both worlds are one match's, sharing their pages: one memo, the match's own (the world it ticks)\n"
-                  "    tide_client_memo *memo = tide_client_memo_for(lineage);\n"
-                  "    tide_client_hasher hasher = {.out = {.grows = true}, .memo = memo};\n    tide_client_hasher *hs = &hasher;\n"
-                  "    tide_text_use((tide_heaps *)&b->heap, NULL);\n"
-                  "    hs->heaps = (tide_heaps *)(uintptr_t)&b->heap;\n    tide_client_see(b, recipient, hs, &lb);\n"
+        sb_printf(o, "    // Both worlds are one match's, sharing their pages: one memo, the match's own (the world it ticks)\n"
+                     "    tide_client_memo *memo = tide_client_memo_for(lineage);\n"
+                     "    tide_client_hasher hasher = {.out = {.grows = true}, .memo = memo};\n    tide_client_hasher *hs = &hasher;\n"
+                     "    // The rows to look at, where the match's checks wrote down what changed between the two worlds\n"
+                     "    uint64_t *bits[%d] = {0}, *marks = NULL;\n    uint32_t after = 0, upto = 0;\n"
+                     "    const uint32_t rows[%d] = {", archetypes, archetypes);
+        for (int a = 0; a < prog->archetypes.count; a++) {
+            if (arch_local(g, a)) sb_printf(o, "%s0u", a ? ", " : "");
+            else sb_printf(o, "%sw->%s.count > b->%s.count ? w->%s.count : b->%s.count", a ? ", " : "", arch_name(g, a), arch_name(g, a),
+                           arch_name(g, a), arch_name(g, a));
+        }
+        if (!prog->archetypes.count) sb_put(o, "0u");
+        sb_printf(o, "};\n    uint64_t every = 0;\n    size_t words = 0;\n"
+                     "    for (uint32_t a = 0; a < %du; a++) {\n        every += rows[a];\n        words += (rows[a] + 63u) >> 6;\n    }\n"
+                     "    // (The world the match ticks, as this tick's check left it: below)\n"
+                     "    const bool current = w == lineage && memo && memo->world == lineage && memo->rows && memo->rows->any\n"
+                     "        && memo->rows->tick == (uint32_t)w->Time.tick;\n"
+                     "    if (!walk && memo && memo->world == lineage && memo->rows\n"
+                     "        && tide_client_journal_between(&memo->rows->journal, w, b, current, every, &after, &upto)) {\n"
+                     "        marks = calloc(words ? words : 1u, sizeof *marks);\n        if (!marks) tide_out_of_memory();\n"
+                     "        words = 0;\n"
+                     "        for (uint32_t a = 0; a < %du; a++) {\n            bits[a] = marks + words;\n            words += (rows[a] + 63u) >> 6;\n        }\n"
+                     "        if (upto > after) tide_client_journal_mark(&memo->rows->journal, after, upto, recipient, bits, rows);\n"
+                     "        *found = true;\n"
+                     "#if defined(TIDE_CLIENT_COUNTS) || defined(TIDE_CLIENT_CHANGES_STATS)\n"
+                     "        uint64_t looked = 0;\n        for (size_t i = 0; i < words; i++) looked += (uint64_t)__builtin_popcountll(marks[i]);\n#endif\n"
+                     "#ifdef TIDE_CLIENT_COUNTS\n        __atomic_add_fetch(&tide_client_counts[26], looked, __ATOMIC_RELAXED);\n#endif\n"
+                     "#ifdef TIDE_CLIENT_CHANGES_STATS\n        tide_client_changes_stats[2] += looked;\n#endif\n"
+                     "    }\n"
+                     "    uint64_t *const *const some = *found ? bits : NULL;\n",
+                  archetypes, archetypes);
+        sb_put(o, "    tide_text_use((tide_heaps *)&b->heap, NULL);\n"
+                  "    hs->heaps = (tide_heaps *)(uintptr_t)&b->heap;\n    tide_client_see(b, recipient, hs, &lb, some);\n"
                   "    tide_text_use((tide_heaps *)&w->heap, NULL);\n"
                   "    hs->heaps = (tide_heaps *)(uintptr_t)&w->heap;\n"
                   "    // The world the match ticks, as this tick's check left it: what it kept of each row. Kept at another tick\n"
                   "    // (no check since the world last ticked), what it kept is of another world, and each row is read\n"
-                  "    if (w == lineage && memo && memo->world == lineage && memo->rows && memo->rows->any\n"
-                  "        && memo->rows->tick == (uint32_t)w->Time.tick) tide_client_see_kept(w, recipient, memo->rows, hs, &ln);\n"
-                  "    else tide_client_see(w, recipient, hs, &ln);\n"
+                  "    if (current) tide_client_see_kept(w, recipient, memo->rows, hs, &ln, some);\n"
+                  "    else tide_client_see(w, recipient, hs, &ln, some);\n"
+                  "    free(marks);\n"
                   "    tide_client_memo_done(memo, hs->heaps);\n    free(hs->out.data);\n    free(hs->reach);\n");
     } else {
         sb_put(o, "    tide_writer scratch = {.grows = true};\n"
-                  "    tide_text_use((tide_heaps *)&b->heap, NULL);\n    tide_client_see(b, recipient, &scratch, &lb);\n"
-                  "    tide_text_use((tide_heaps *)&w->heap, NULL);\n    tide_client_see(w, recipient, &scratch, &ln);\n"
+                  "    tide_text_use((tide_heaps *)&b->heap, NULL);\n    tide_client_see(b, recipient, &scratch, &lb, NULL);\n"
+                  "    tide_text_use((tide_heaps *)&w->heap, NULL);\n    tide_client_see(w, recipient, &scratch, &ln, NULL);\n"
                   "    free(scratch.data);\n");
     }
     sb_put(o, "    // Each of the world's against the one it was: 0 the same, 1 another value of it, 2 new to the recipient\n"
@@ -282,6 +366,28 @@ static void gen_client_changes(gen *g)
               "    if (plan.overflow || nw.overflow || ws.overflow) tide_out_of_memory();\n"
               "    *plan_size = plan.size;\n    *now = nw.data;\n    *now_size = nw.size;\n    *was = ws.data;\n    *was_size = ws.size;\n"
               "    if (changed_size) *changed_size = changed;\n    return plan.data;\n}\n\n");
+    // TIDE_CLIENT_SPANS_CHECK works a repair from the rows written down out again from every row, and stops the program
+    // where a byte differs, as it does a tick's hashes
+    sb_put(o, "static uint8_t *tide_game_client_changes(const void *world, const void *before, const void *lineage, const tide_player_id recipient,\n"
+              "                                        uint32_t *plan_size, uint8_t **now, uint32_t *now_size, uint8_t **was, uint32_t *was_size,\n"
+              "                                        uint32_t *changed_size)\n{\n"
+              "    bool found = false;\n"
+              "    uint8_t *plan = tide_client_changes_work(world, before, lineage, recipient, plan_size, now, now_size, was, was_size, changed_size,\n"
+              "                                             false, &found);\n"
+              "#ifdef TIDE_CLIENT_COUNTS\n    if (plan) __atomic_add_fetch(&tide_client_counts[found ? 24 : 25], 1u, __ATOMIC_RELAXED);\n#endif\n"
+              "#ifdef TIDE_CLIENT_CHANGES_STATS\n    if (plan) tide_client_changes_stats[found ? 0 : 1]++;\n#endif\n"
+              "#ifdef TIDE_CLIENT_SPANS_CHECK\n"
+              "    if (plan && found) {\n"
+              "        uint32_t plan_all = 0, now_all = 0, was_all = 0, changed_all = 0;\n        uint8_t *nows = NULL, *wass = NULL;\n        bool again = false;\n"
+              "        uint8_t *all = tide_client_changes_work(world, before, lineage, recipient, &plan_all, &nows, &now_all, &wass, &was_all, &changed_all,\n"
+              "                                                true, &again);\n"
+              "        if (!all || plan_all != *plan_size || memcmp(all, plan, plan_all) != 0 || now_all != *now_size || memcmp(nows, *now, now_all) != 0\n"
+              "            || was_all != *was_size || memcmp(wass, *was, was_all) != 0 || (changed_size && changed_all != *changed_size)) {\n"
+              "            fprintf(stderr, \"tide: player %u's repair from the rows written down isn't the one from every row\\n\", recipient.id);\n"
+              "            abort();\n        }\n"
+              "        free(all);\n        free(nows);\n        free(wass);\n    }\n"
+              "#endif\n"
+              "    return plan;\n}\n\n");
 
     // The recipient's side: `was` again, from the world it confirmed
     sb_put(o, "static uint8_t *tide_game_client_changes_base(const void *world, const tide_player_id recipient, const uint8_t *plan,\n"
