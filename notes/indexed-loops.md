@@ -1,3 +1,147 @@
+## Indexes that take in what changed (2026-11-16, built)
+
+The second half of the plan below (its section 2), built as its way c, with the row-by-row part done another way
+and one thing the plan had wrong, which is why the first half alone gained a voxels client nothing.
+
+**What the plan had wrong.** "A client's tables change only when a repair lands" is true of its rows and not of
+their pages, which are what a site's facts are. An event handler with a `mut` component takes every lane of that
+component for writing in the table chunk its entity is in (`tide_table_column_mut` for each, then
+`tide_scatter_some_*` of the lanes it wrote), and a page others hold is copied by whoever takes it for writing:
+so in voxels a chunk's `at.x` page is another page after any `Change` or `Loaded` handled in its table chunk
+(1,024 rows), with every byte the same. Counted in a 30 s run of 8 bots: the first key page of the chunks' sites
+differed, with the rows and the entity column the same, in 36,278 of a client's 41,351 index builds, and in 3,770
+of the server's 4,272. So a copy that took its source's index found its facts differing about once a tick and
+made its own, as before. And "a plain pass is about 3 µs" (way a) is `bench_index`'s scan of an array: the
+generated plain loop over a query goes through rows in identity's order at about 8 ns a row (77 ms for 1,000
+lookups of 10,000 chunks, Exact keys below), 50 µs for 6,490, no cheaper than making the index. Way a wasn't built.
+
+**What a loop's start does now** (a world's query by an exact key; `gen_ix_query_follow`, `tide_ix_follow_*` in
+`index_codegen.inc`). A site's facts are, for each admitted table in turn, its chunks, then for each table chunk
+its rows and the pages the index read of it (the entity column, the filters' presence bytes, the key's lanes, each
+once), as many numbers for every chunk of a table.
+
+1. **Looking**: the facts are compared, nothing written. All the same: the index is searched as it is.
+2. **Taking** (any differs): the tables are gone through again. A chunk whose facts are the same keeps them, its
+   page references moving over. One that differs has its new pages held, and its rows compared with the pages the
+   site still holds of it, column by column, 64 rows at a time (`tide_ix_differs`): only a row whose bytes differ
+   in a column the index reads, and the rows past the fewer of its rows then and now, are looked at. Such a row
+   that is a hole, past the chunk's rows or kept out by the query's filters has its entry dropped
+   (`tide_index_drop`); any other is put with its keys (`tide_index_put`, which leaves an entry whose numbers are
+   the same, and moves one whose numbers changed). Then the old pages are let go. A chunk the table no longer has
+   is cleared (`tide_index_clear`); one it didn't have is all new rows. So a tick costs the pages that were
+   written (a compare) and the rows that changed (an entry each), not the rows there are.
+3. **Whole** is the same code with nothing known (`fresh`): a site never made, another plan (a reload), a page
+   that couldn't be held. Every chunk is "new".
+
+- **An index others hold** (a copied world's and its source's, above) is never changed. Its site still takes the
+  new pages for the old where the rows are the same (`tide_ix_follow.frozen`), which is most ticks; at the first row
+  that differs it takes a copy of the index for its own (`tide_index_copy`: its groups and entries as they are, a
+  few memcpys) and the walk goes on with that. So a client's copy searches its source's index on the ticks nothing
+  changed, and pays a copy and the rows that changed on the others.
+- **Searches running** (`readers`) when a site's index has to change: the loop makes one of its own, whole, and
+  the site is left as it is, index and facts, for a later start to take in (before, the site's facts were taken
+  and the site marked not ready, to be made whole next time).
+- **A system's own loop** (`fast`, `valid`) is as before: found to hold once in a tick's run, then searched with no
+  lock. `valid` is cleared before anything is changed.
+- **Other kinds of index are as they were**: one of doubles (a sorted run, a grid sized from every entry) is
+  checked by `tide_ix_walk` and made whole when a fact differs, a list's and a view's rows' likewise. A copy still
+  takes a doubles index, and makes its own when a page differs.
+
+**The runtime** (`tide/index.h`, `engine/src/index.c`): a **followed index**, a third kind beside the sorted or
+grid one and the exact one built whole. `tide_index_begin_followed(ix, exact, dims, room)`; `tide_index_group(ix,
+first, span)` names a run of ordinals (a table chunk's rows: `archetype << 32 | chunk << shift`, `1 << shift`
+long), made the first time it's named; `tide_index_put`, `tide_index_drop`, `tide_index_clear` change the entries
+of the group last named; `tide_index_end` makes it searchable again; `tide_index_followed(ix, exact, dims)` says
+whether an index is one, built, of that shape; `tide_index_copy`; `tide_index_changes` counts entries made, moved
+and dropped (tests). How it's kept:
+- Each group has a run of **places**, one an ordinal, so an entry is found by its ordinal with no search (a
+  directory of groups by their first ordinal, open addressing; groups are few). A place has its hash, ordinal,
+  whole numbers and doubles.
+- The entries whose hash is in a slot are a **ring** (`next`, `prev`: places), ascending by ordinal once built, so
+  `tide_index_find_exact` walks one ring and its hits ascend with no sort, as the whole-built kind's do. Slots are
+  a power of two, at least the entries (doubled, every entry linked again, when there are more).
+- A put goes at its ring's end when its ordinal is past the last (always, for a first build, which comes in
+  order). Otherwise it **waits**, and `tide_index_end` sorts the waiting entries by slot and ordinal and goes
+  through each ring once for all of its; with more waiting than a quarter of the entries and 64, it links every
+  entry again in order instead (groups by their first ordinal, places in turn), which is what bounds a slot most
+  entries share (a bool key): never more than a pass over the entries.
+- Contracts: a search gives exactly what an index built whole from the same entries gives, in the same order
+  (`tide_index_find_exact`: equal whole numbers, doubles within the widened bounds or no number, ascending, once
+  each), whatever order entries were put in. Between a change and `tide_index_end` a search gives every entry.
+  `tide_index_find` (doubles) gives every entry, ascending. `tide_index_ordinals` gives none (it keeps no such
+  list); `tide_index_count` its entries. Groups mustn't overlap (the caller's: a search would give an ordinal
+  twice, never a memory error); an ordinal outside the group last named, anything before a group is named, and
+  any of these calls on an index that isn't followed, do nothing; `tide_index_add`/`add_exact` on a followed
+  index are puts. Places are 2^31 at most; sizes are checked (`bytes`), memory is `tide_alloc`'s.
+- Threads: changed by one thread with no search running (the site's lock, no readers), searched by many once
+  ended. `tide_index_end` on one that's built writes nothing, so a site that changed nothing may call it on an
+  index others search. `tide_index_copy` only reads its source.
+
+**What a stale entry can and can't do.** The generated loop checks every candidate again (its row below the
+table's count, not a hole, the filters) and runs the guard on it, so an entry that shouldn't be there costs a
+candidate and changes nothing; only a missing entry is a wrong result. The walk drops what it should anyway (a
+count that's right, memory that's bounded), but the tests below can only catch the missing kind through the
+game, and catch the other kind in the runtime's own (a followed index against one built whole, to the ordinal).
+
+**Tests.**
+- `tide_tests index_` (`tests/test_index.c`): `index_followed_gives_what_one_built_whole_gives`: 1 to 8 whole
+  numbers with 0 to 3 doubles, in groups of 16, 64 and 1,024 ordinals of two tables, keys of three values (most
+  entries in a slot), of a box, and any long, NaN and -inf doubles; 30 rounds each of entries made, moved, put
+  again as they were, dropped, a group cleared and partly refilled, a group more, half of everything at once;
+  told in any order of groups and backwards within one, only what changed or every entry; after each round every
+  search (numbers entries have and numbers none has, bounds open, NaN and inside out) gives the hits of an index
+  built whole from the same entries, and no more entries changed than were told. Before `tide_index_end`, a
+  search gives every entry. `index_followed_keeps_its_order_when_most_entries_share_a_slot`: 6,000 entries of two
+  values told backwards, then 30 and 2,000 moved a round (sorted in, and all linked again).
+  `index_followed_copy_is_its_own`, `index_followed_refuses_what_it_cant_take_and_begins_again` (not followed,
+  no group, outside the group, a group of none, more hits than a search's own room, begun again as each kind).
+- `tidec_e2e_index_follow` (the game and its counts are described above): `index_takes_in_the_rows_that_changed`:
+  a key changed where it is (2 table chunks taken in a site, the 200 rows that moved looked at); 40 spawned and a
+  ninth destroyed in one tick, the holes filled from the tables' ends; half destroyed (a table a chunk shorter);
+  2,000 spawned (two chunks more, exactly the new rows looked at); every item destroyed and as many spawned again;
+  no index made whole anywhere, and each quiet tick after finds every index as it was.
+  `index_takes_in_a_row_made_where_one_went_with_its_key`: an item destroyed and one spawned into its hole with
+  the same key bytes, so only the entity column says an entry went and came (one row of one chunk looked at).
+  `index_follows_a_world_rolled_back_and_one_copied_every_tick`: eight ticks of changes run again from a kept
+  copy, the same hashes, with no index made whole or copied; a world copied each tick into one that never runs
+  (a server's `before`) changes its indexes where they are; a world from bytes makes its indexes once.
+  `index_follows_on_threads_as_on_one`: 36 ticks on one thread and on four, the world on four a copy of itself
+  every third tick; every crate's search (one site, searched from every thread) right.
+  `index_ring_of_copies_makes_an_index_only_when_rows_change` now requires no whole index on any tick, and a
+  copied one for each site on the ticks rows changed.
+- `tidec_e2e_indexed_loops`, `_plain` and `tidec_indexed_loops_same` (the differential: `Shift` changes every
+  seventh cell's place where it is each tick and destroys some, `Renew` and `Expire` spawn and destroy in another
+  table), `tidec_e2e_previous`: pass, as before.
+- **Mutations**, each built and run against `tidec_e2e_index_follow` and `tidec_e2e_indexed_loops`, or `tide_tests
+  index_` for the runtime's. The walk: an index others hold changed where it is (no copy taken) fails 3 tests;
+  the compare looking at only the first row of each 64 that differ, 7 and the differential's; the entity column
+  left out of the compare, the row made where one went with its key; rows past the chunk's old count not put, 4
+  and the differential's; a chunk taken as the same by its rows and entity page alone, 5; the looking pass saying
+  "as it was" whatever differs, 6 and the differential's; every row of a taken chunk looked at, the two tests that
+  count rows; made whole rather than followed, 5 by their counts. The runtime: an entry moved without leaving
+  its old ring, and a dropped one left in its ring, never end (a ring broken: the test's time runs out); an entry
+  put at its ring's end out of order fails 4; one with other doubles taken as the same, 1; a waiting entry put
+  before its ring's first without becoming the first, 3; an ordinal past its group taken, a crash.
+- **Not caught by any test**: a gone chunk's entries not cleared and a hole's entry not dropped, through the game
+  (stale entries change nothing, above; the runtime's own tests fail a drop that leaves its entry); the path for
+  searches running when an index has to change (threads at the wrong moment: not something a test can place).
+
+**Gaps.**
+- An index of doubles is made whole when a page differs, though no row does: the same handlers' writes cost a
+  loop by distance over rows that don't move an index a tick. Comparing the pages first, as above, would keep it
+  (not built: no game measured has one over rows that are written and don't move).
+- A handler takes every lane of a `mut` component for writing in its entity's table chunk, written or not
+  (`tide_table_column_mut` of each): that is what makes the pages differ, and it copies them (12 pages of 4 KB for
+  a voxels chunk's handler, once a tick for each table chunk a handler runs in). Taking only the lanes it scatters
+  (`tide_scatter_some_*` has the mask) would save the copies and the compares both. The ECS's, not this task's.
+- A followed index never gives memory back: a group's places stay when its table chunk goes (a table that was
+  once large keeps places for its largest), and its slots don't shrink. Bounded by the most rows the tables had.
+- `tide_index_copy` copies every entry for one row's change (a client whose copy's rows changed: about 4,100
+  copies in a 30 s run of 8 bots, each of a table of 845 chunks, or 3,125 at twice the view).
+- Rows' keys are found changed by their bytes in the lanes the index reads, a lane being 4 bytes of the
+  component: a write to another field in the same lane (two `byte` fields side by side) looks at the row and
+  finds its numbers the same (`tide_index_put` leaves it), which is right and costs a row.
+
 ## Copies that keep their source's indexes (2026-11-16, built)
 
 The first half of the plan below (its section 1), built as written but for three things, each said here.
@@ -40,7 +184,10 @@ The first half of the plan below (its section 1), built as written but for three
   requires the two to find the same rows in the same order every tick; the build counts how each loop's start
   found its index (`TIDE_INDEX_STATS`: `tide_index_stats[5]`, as it was / followed / made whole / table chunks
   taken in / sites a copy took), without which every test would pass with the sharing never taken.
-  `index_copy_runs_on_its_sources_indexes`: a copy makes no index but its list's and takes 3 sites, and takes none
+  The game: 3,000 items and 500 with crates found by their place and by kind and x (exact keys, three sites, one
+  searched by every crate on threads), 200 lamps found by a float (an index of doubles), and a singleton's list
+  rewritten where it is each tick; the test orders spawns, destroys and moves from C between ticks.
+  `index_copy_runs_on_its_sources_indexes`: a copy makes no index but its list's and takes 4 sites, and takes none
   until it runs; a copy of a copy; copied back from its own copy; copied over a world with other indexes; the
   source freed before its copies, one of which never ran. `index_copy_and_its_source_part_ways`: 14 ticks of
   different orders each (rows come, go and move in one, then the other), each ending where a world nobody copied
@@ -49,13 +196,23 @@ The first half of the plan below (its section 1), built as written but for three
   ticks run again. `index_of_a_list_is_never_a_copys`: the epoch trap, with a copy one tick behind its source, and
   a world from bytes. `index_held_by_several_lasts_until_the_last_lets_go` in `tide_tests`.
 - **Mutations** (each built and run): the unsharing in `tide_ix_take` off (an index others hold built into) fails
-  two tests; a list's site taken fails three, the trap's among them; a copy of a copy not passing on its source
-  fails one; the pages' references not taken crashes the test. Not caught: taking a site that isn't `ready` (it
-  only happens when a build ran beside searches on other threads, or a page's references were about to wrap).
-- **Gap**: a copy whose rows then change makes its indexes whole (it can't change one its source holds); a
-  followed index (below) could be copied and changed for less.
+  `index_copy_and_its_source_part_ways` (by the lamps' index of doubles, the one kind still made whole there; two
+  tests before the exact keys' sites stopped going through `tide_ix_take`); a list's site taken fails three, the
+  trap's among them; a copy of a copy not passing on its source fails one; the pages' references not taken
+  crashes the test. Not caught: taking a site that isn't `ready` (it only happens when a build ran beside searches
+  on other threads, or a page's references were about to wrap).
+- **On its own this gained voxels nothing** (a client's simulating 5.4 to 5.6 ms a second, within the runs'
+  spread): the copy's facts differ from its source's about once a tick though no row does (Indexes that take in
+  what changed, above, says why), so it made its own index as before. With that section's walk a copy keeps the
+  index while the rows are the same and copies it when one changes.
+- An index of doubles (a grid, a sorted run) is still made whole by a copy whose pages differ.
 
-## Indexes that follow what changed, and copies that keep them: written up, not built (2026-11-16)
+## Indexes that follow what changed, and copies that keep them: the plan (2026-11-16)
+
+Built the same day: the two sections above say what was built and where it departs from this (copies take sites
+when they run, not when they're made; a list's site is never taken; rows are compared by their pages, not kept
+keys; way a wasn't built, its plain pass being 50 µs, not 3; and a client's pages change though its rows don't).
+Kept as it was written, for the reasoning.
 
 Asked for with the repairs' fix (notes/netcode.md, top section), which took the time there was; nothing below is
 built or measured beyond what `notes/voxels.md` (At scale, What costs a chunk that's only held) already has. It is

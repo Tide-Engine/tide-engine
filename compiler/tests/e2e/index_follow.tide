@@ -15,6 +15,14 @@ component Crate
 {
     int weight;
     int wrong;
+    int work;
+}
+
+// Lamps found by how bright they are, a float: an index of doubles, which is made whole when its rows change
+component Lamp
+{
+    int number;
+    float glow;
 }
 
 // What the test asks for, written from C between ticks
@@ -27,6 +35,10 @@ singleton Orders
     int phase;
     int below;   // Only items numbered below this move or go; 0 any
     int clear;   // 1: every item goes
+    int only;    // The one item of this number goes; 0 none
+    int again;   // An item of this number comes, at the place the first of that number had; 0 none
+    int look;    // The place of the item of this number is searched too; 0 none
+    int dim;     // 1: every lamp's glow changes
 }
 
 singleton Made
@@ -51,6 +63,12 @@ singleton Probe
     long list_plain_sum;
     int wrong;
     long weights;
+    int looked;
+    int looked_plain;
+    int lit;
+    long lit_sum;
+    int lit_plain;
+    long lit_plain_sum;
 }
 
 struct Stock
@@ -74,6 +92,10 @@ int3 Place(int p)
 
 system Arrive(mut Made made, Orders orders)
 {
+    if (made.count == 0 && orders.spawn > 0)
+    {
+        for (var i = 0; i < 200; i++) Spawn(Lamp { number = i, glow = float(i * 13 % 100) * 0.5f });
+    }
     for (var i = 0; i < orders.spawn; i++)
     {
         var n = made.count;
@@ -81,12 +103,18 @@ system Arrive(mut Made made, Orders orders)
         if (i < orders.crates) Spawn(Item { number = n, at = Place(n * 5), kind = n % 3 }, Crate { weight = n });
         else Spawn(Item { number = n, at = Place(n * 5), kind = n % 3 });
     }
+    if (orders.again > 0) Spawn(Item { number = orders.again, at = Place(orders.again * 5), kind = orders.again % 3 });
 }
 
 // Items go, and move to other places where they are (a key changed in its row)
 system Churn(mut Item item, Orders orders, Time time)
 {
     if (orders.clear == 1)
+    {
+        this.Destroy();
+        return;
+    }
+    if (orders.only > 0 && item.number == orders.only)
     {
         this.Destroy();
         return;
@@ -101,13 +129,30 @@ system Churn(mut Item item, Orders orders, Time time)
 }
 
 // Items found by their place (one or two at each), and by their kind and x (dozens in a slot)
-system Seek(mut Probe probe, Time time, query (Item item) items)
+system Seek(mut Probe probe, Orders orders, Time time, query (Item item) items)
 {
     probe.seen = 0;
     probe.found = 0;
     probe.plain = 0;
     probe.kinds = 0;
     probe.kinds_plain = 0;
+    probe.looked = 0;
+    probe.looked_plain = 0;
+    if (orders.look > 0)
+    {
+        var at = Place(orders.look * 5);
+        indexed foreach (var row in items)
+        {
+            if (row.item.at.x != at.x || row.item.at.y != at.y || row.item.at.z != at.z) continue;
+            if (row.item.number == orders.look) probe.looked += 1;
+        }
+        foreach (var row in items)
+        {
+            probe.seen += 1;
+            if (row.item.at.x != at.x || row.item.at.y != at.y || row.item.at.z != at.z) continue;
+            if (row.item.number == orders.look) probe.looked_plain += 1;
+        }
+    }
     for (var k = 0; k < 24; k++)
     {
         var at = Place(k * 37 + time.tick * 11);
@@ -145,6 +190,31 @@ system Seek(mut Probe probe, Time time, query (Item item) items)
     }
 }
 
+system Dim(mut Lamp lamp, Orders orders, Time time)
+{
+    if (orders.dim == 1) lamp.glow = float((lamp.number * 13 + time.tick * 7) % 100) * 0.5f;
+}
+
+system Glow(mut Probe probe, Time time, query (Lamp lamp) lamps)
+{
+    probe.lit = 0;
+    probe.lit_plain = 0;
+    var low = float(time.tick * 7 % 50);
+    indexed foreach (var row in lamps)
+    {
+        if (row.lamp.glow < low || row.lamp.glow > low + 1.0f) continue;
+        probe.lit += 1;
+        probe.lit_sum = probe.lit_sum * 31 + row.lamp.number;
+    }
+    foreach (var row in lamps)
+    {
+        probe.seen += 1;
+        if (row.lamp.glow < low || row.lamp.glow > low + 1.0f) continue;
+        probe.lit_plain += 1;
+        probe.lit_plain_sum = probe.lit_plain_sum * 31 + row.lamp.number;
+    }
+}
+
 // Each crate looks for the items at its place: one site searched by every crate, on threads
 system Near(mut Crate crate, Item item, query (Item other) items)
 {
@@ -164,6 +234,10 @@ system Near(mut Crate crate, Item item, query (Item other) items)
     }
     crate.weight = n;
     crate.wrong = n == p && seen > 0 ? 0 : 1; // (Its own item is among them)
+    // Work enough for the tick to take threads
+    mut var h = crate.work;
+    for (var i = 0; i < 4096; i++) h = (h * 17 + i) % 65521;
+    crate.work = h;
 }
 
 system Tally(mut Probe probe, Crate crate)

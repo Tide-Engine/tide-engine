@@ -55,9 +55,10 @@ void tide_index_add(tide_index *ix, const double *keys, uint64_t ordinal);
 // Builds the index from the entries added. Until then, a search gives every entry.
 void tide_index_end(tide_index *ix);
 
-// The entries added since tide_index_begin.
+// The entries added since tide_index_begin (a followed index's: the entries it has).
 uint32_t tide_index_count(const tide_index *ix);
-// Every entry's ordinal, ascending: `count` of them.
+// Every entry's ordinal, ascending: `count` of them. A followed index (below)
+// keeps no such list: NULL and 0, and a search gives them.
 const uint64_t *tide_index_ordinals(const tide_index *ix, uint32_t *count);
 
 void tide_index_hits_init(tide_index_hits *h);
@@ -90,6 +91,44 @@ void tide_index_add_exact(tide_index *ix, const int64_t *whole, const double *ke
 // lo[d] .. hi[d], as above, into `out`.
 void tide_index_find_exact(const tide_index *ix, const int64_t *whole, const double *lo, const double *hi,
                            tide_index_hits *out);
+
+// Followed indexes: an index of exact keys that takes in what changed instead
+// of being made again, for entries that mostly stay from one use to the next
+// (a world's rows, of which a tick changes a few). Its ordinals are in groups,
+// each a run of them `span` long from `first` (a chunk of a table's rows),
+// which the caller keeps to: groups never overlap, and an entry is put or
+// dropped within the group last named. A search of one (tide_index_find_exact)
+// gives what one of an index built with tide_index_add_exact from the same
+// entries gives, ascending whatever order they were put in. It is changed by
+// one thread with no search running, and searched by many once
+// tide_index_end has been called; between a change and tide_index_end a search
+// gives every entry.
+
+// Starts the index again, empty, as a followed one, with room for about
+// `room` entries before it grows.
+void tide_index_begin_followed(tide_index *ix, uint32_t exact, uint32_t dims, uint32_t room);
+// Whether the index is a followed one with these numbers an entry, built: one
+// whose groups can be changed as they are. Otherwise it's begun again.
+bool tide_index_followed(const tide_index *ix, uint32_t exact, uint32_t dims);
+// The group the entries put and dropped next are in: ordinals `first` to
+// `first + span - 1`. One not seen before is made, empty. On an index that
+// isn't followed, nothing.
+void tide_index_group(tide_index *ix, uint64_t first, uint32_t span);
+// The entry of this ordinal is one of these numbers: made if there was none,
+// moved if its numbers were others, left if they're the same. An ordinal
+// outside the group last named isn't taken.
+void tide_index_put(tide_index *ix, const int64_t *whole, const double *keys, uint64_t ordinal);
+// There is no entry of this ordinal (in the group last named) any more.
+void tide_index_drop(tide_index *ix, uint64_t ordinal);
+// ...nor any of the group last named.
+void tide_index_clear(tide_index *ix);
+// Entries made, moved and dropped since the index was made: what following
+// it has cost, for tests and counts.
+uint64_t tide_index_changes(const tide_index *ix);
+// Another index with a followed index's groups and entries as they are, for
+// whoever has to change one others hold: only read, so it can be searched
+// meanwhile. Of an index that isn't followed, an empty one.
+tide_index *tide_index_copy(const tide_index *ix);
 
 // An index several hold (a world's and its copies'): tide_index_share counts
 // another holder, each of which calls tide_index_free once, and the last
