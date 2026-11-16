@@ -303,6 +303,23 @@ void *tide_list_add(tide_list *l, const uint32_t size, const uint32_t where)
     return tide_list_insert(l, tide_list_count(*l), size, where);
 }
 
+void tide_list_add_zeros(tide_list *l, uint32_t more, const uint32_t size, const uint32_t where)
+{
+    while (more && size) {
+        // Grown as one more element grows it, so its blocks and chunks are made in the order tide_list_add
+        // makes them; then as many as the room it has now takes
+        if (!reserve(l, 1, size, where)) return;
+        tide_block *b = tide_block_write(l->at);
+        const bool chunked = (b->b & TIDE_LIST_CHUNKED) != 0;
+        const uint64_t capacity = chunked ? (uint64_t)(b->b & ~TIDE_LIST_CHUNKED) * (TIDE_LIST_CHUNK / size) : b->b;
+        const uint32_t take = capacity - b->a < more ? (uint32_t)(capacity - b->a) : more;
+        // (A world's list has zeros past its count, as tide_list_resize says; one in chunks is a world's)
+        if (!chunked && !in_world(where)) memset((char *)items(b) + (size_t)b->a * size, 0, (size_t)take * size);
+        b->a += take;
+        more -= take;
+    }
+}
+
 void *tide_list_insert(tide_list *l, int32_t i, const uint32_t size, const uint32_t where)
 {
     if (!reserve(l, 1, size, where)) return NULL;
