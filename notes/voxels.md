@@ -1427,6 +1427,8 @@ another, so its hops land on other ticks (all of a box 25 to 27 at the median).
 
 ## Tests
 
+- 2026-11-17, the three merged (heaps a page a block size, orders that take in what came and went, audiences over ticks): every pin recomputed on the merge and each the same on 1 and 12 threads. `bench_voxels`, `_checked`, `_counts` `0x8a1e9bcebac9b565`, `_forgets` `0x49e77a975f78a7ec`, `_wide` `0xc037496666b19d9a`, `_arrives` `0x460d88205970b0c0` (21 ticks median, 29 at most), `_views` `0x5de551e459450cac`; `bench_earth` and `_diverge` `0x8b1ac38f4c2e65c8`, `_split` `0x0bb9bd2c308ff057`; `tidec_e2e_guarded_rows` `0x8c60494382950ea0`. Box2D's and Box3D's package tests' pins moved with the heaps' placement (notes/ecs.md, top section).
+
 - 2026-11-16, night (The spread case taken apart, which lists the pins that moved with `maxPlayers = 64`):
   `entity_orders_take_in_what_came_and_went` (`tide_tests`, notes/ecs.md) and `tidec_e2e_guarded_rows`' `Marked` and
   `Plain` (notes/schedule-and-threads.md). Release, Windows: `bench_voxels` (all seven), `bench_gallery`,

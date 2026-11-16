@@ -292,7 +292,7 @@ static grown_list grow_list(const int32_t first, const uint32_t more, const bool
         for (uint32_t i = 0; i < more; i++) (void)tide_list_add(&world.scores, size, TIDE_IN_MATCH);
     tide_heaps_flush(&world.heap);
     const int32_t count = tide_list_count(world.scores);
-    return (grown_list){world.scores.at, tide_heaps_of(&world.heap, 0u)->used, count, chunked(world.scores),
+    return (grown_list){world.scores.at, tide_heaps_of(&world.heap, 0u)->taken, count, chunked(world.scores),
                         counts_up(world.scores, 0, first, 0) && zeros(world.scores, first, count)};
 }
 
