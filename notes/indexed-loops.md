@@ -126,6 +126,18 @@ game, and catch the other kind in the runtime's own (a followed index against on
   (stale entries change nothing, above; the runtime's own tests fail a drop that leaves its entry); the path for
   searches running when an index has to change (threads at the wrong moment: not something a test can place).
 
+**Measured** (`notes/voxels.md`, At scale, What was fixed, has the tables: `bench_voxels`, three runs each
+alternating with the build before, medians, the same hash and bytes sent in every pair). Server simulating 28.1 to
+19.6 ms a second with 8 bots, 78.9 to 50.5 at twice the view, 67.7 to 48.5 with 32 bots; its update's median 0.50
+to 0.32, 1.46 to 0.88 and 2.11 to 1.67 ms, its p99 4.45 to 4.23, 12.2 to 11.4 and 8.9 to 8.1. A client simulating
+7.87 to 4.42, 26.7 to 10.5 and 10.5 to 6.6 ms a second, its update's p99 1.32 to 1.01, 4.33 to 2.79 and 1.81 to
+1.47 ms. Left: 0.3 ms a second of a server's simulating at the default view, 0.6 at twice, and 0.3 and 1.0 of a
+client's, which is comparing pages handlers took for writing and wrote nothing new to, an entry for each row that
+did change, and on a client a copy of the index about fifteen times a second. An index that never changes is
+searched as fast as the whole-built kind was: `bench_loops --n 0 --chunks 10000 --lookers 1000 --threads 1`,
+1,000 lookups a tick, 0.061 to 0.063 ms by place and 0.055 to 0.057 by a long (three runs each, alternating; the
+hashes the same).
+
 **Gaps.**
 - An index of doubles is made whole when a page differs, though no row does: the same handlers' writes cost a
   loop by distance over rows that don't move an index a tick. Comparing the pages first, as above, would keep it
@@ -472,8 +484,9 @@ Gaps:
 - `Entity`, `PlayerID` and `LocalEntity` aren't keys: `row.chunk.owner == player` and `row.target == this` go
   through every row.
 - Two or three integer components bounded both ways (a box of cells, not one) aren't a grid: one of them is the key.
-- A key is rebuilt whole when any page of its lanes changes, as other indexes are; a world whose chunks come and go
-  each tick builds it each tick (102 µs for 10,000 at the runtime's level).
+- ~~A key is rebuilt whole when any page of its lanes changes, as other indexes are; a world whose chunks come and go
+  each tick builds it each tick (102 µs for 10,000 at the runtime's level).~~ Since 2026-11-16 a world's query by
+  an exact key takes in the rows that changed (top section).
 - Keys made to share a slot (a hash flood) cost a pass over that slot, which is at most the plain loop; never a
   wrong result.
 
