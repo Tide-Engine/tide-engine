@@ -230,6 +230,11 @@ typedef struct tide_game {
     // Lets go of what a world has, before its memory goes; NULL for worlds of
     // plain data.
     void (*free_world)(void *world);
+    // Says that nothing changes `world` until it's let go of (free_world) or
+    // another is copied over it (copy_world): a server's kept ticks. Its hash
+    // is then worked out once, however many players' repairs it's the base of.
+    // NULL where the game's hash keeps nothing.
+    void (*freeze_world)(const void *world);
     // The world as bytes, to carry it over to another build: written into
     // `out` when they fit in `capacity` (NULL to ask), and how many there are.
     // Unpacking makes a world from them, false if they aren't one.

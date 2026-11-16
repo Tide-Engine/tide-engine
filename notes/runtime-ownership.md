@@ -45,6 +45,15 @@ before any task starts and `done` after the last, on one thread each, nothing mo
 (`tide_entity_location_at` gives in `done` what it gave in `own`), and `tide_table_lanes_end_pieces` called for
 exactly the chunks `tide_table_lanes_begin_pieces` was.
 
+## Frozen worlds (2026-11-17)
+
+`tide_game` gained `freeze_world(world)` (`tide/session.h`; optional, generated for a game whose servers repair by
+what changed: tidec's `world_freezes`): the session (agent-maintained) says nothing will change a world until it's
+let go of or copied over, and generated `tide_world_hash` keeps what it hashes to the first time (a table by address
+in the generated C, under a lock; `tide_world_free` and `tide_world_copy` take a world out of it). The session freezes
+each kept tick's world and each player's copied confirmed world, which nothing changes. No runtime function is new
+or changed, and nothing generated calls the runtime that it didn't (netcode.md, top section).
+
 ## Whom entities came to (2026-11-16, last)
 
 `tide_game` gained `client_came(world, recipients, count, out)` (`tide/session.h`; optional, generated for a game

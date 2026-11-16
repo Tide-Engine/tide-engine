@@ -1,5 +1,63 @@
 # Netcode: sessions, prediction, commands
 
+## A hundred players: repairs packed while the next are read, confirmed worlds by tick, kept ticks hashed once; no protocol change (2026-11-17)
+
+What a server's update is made of with 100 players (notes/voxels.md, A hundred players, has the game's side and every
+table), and three changes in `engine/src/session.c` (agent-maintained) and one in tidec (`codegen.c`). **Nothing on
+the wire changed** (`PROTOCOL` stays 27), and nothing of a world: the same datagrams in the same updates, the same
+hashes (`bench_voxels` at 100 players together and apart ends on the build before's hash, bytes and ticks).
+
+**Where the time was** (`bench_voxels --players 100`, 12 threads, timers put into `tide_server_update` and into
+`client_changes`' generated C for the run and taken out; seconds over an 80-second run, 4,789 updates): repairs read
+(`client_changes`) 8.8, packed (`tide_recipient_delta_pack`) 6.0, the players' projection hashes 6.0, the tick 5.5,
+taking in what players sent 3.4 (of which the copies below about 1.7), a kept tick's world let go of 0.7. The longest
+updates were an update's 20 to 32 repairs: read 15 to 20 ms and packed 15 to 17, one after the other on one thread.
+Of a repair's read: `put_record` of each chunk it sends 60% (124 chunks a repair on average: other players' edits),
+`tide_world_hash` of the world the player confirmed 18% (56 µs at 25,000 chunks, 311 at 79,000 apart), the rows of
+that world it looks at 16%.
+
+- **An update's repairs are three steps** (`repair_read`, `repair_post`/`repairs_packed`, `repair_send`; the
+  `repair_start` of each): read in the connections' order with the same allowance (`REPAIR_UPDATE_MOST`) as before,
+  each handed to the pool's threads for work in the background as soon as it's read (a helper, as `REPAIR_HEAVY`'s
+  packing is), so it's packed while the next player's is read; then each is sent, or its world started again, or the
+  hash offer made, in the connections' order, where the update's loop comes to its player. What a player is sent and
+  when is what it was: the reads and their order are, packing is a function of the bytes read, and nothing between a
+  player's read and its sending reads what another player's sending changes (each connection's own state). With no
+  pool (or one thread) each is packed where the update waits for them. A repair put off this update
+  (`connection.making`) is sent in a later one (`repair_making.update`): the loop that starts and sends is two loops
+  now. Packing went from 6.0 s of the run to 1.2 s waited for.
+- **A player's confirmed world is a kept tick's, by its tick** (`connection.verified_kept`, `verified_of`,
+  `keep_verified`): every acknowledgement of a newer tick copied the server's kept world of that tick into the
+  connection's `verified_world` (about 440 copies a second at 100 players, each a pass over every page, and the old
+  copy let go of), for a base hardly ever used. Now a tick before the server's is held by its tick: the kept world of
+  a tick doesn't change until the ring lets it go, and as it's let go (`tick_end`) the players still on it get their
+  copy then. A tick that is the server's own (its world changes with the next tick) is copied as before. A hot reload,
+  which lets go of the kept worlds, clears it with the copies. The copies went from 500 a second to 60 (the ticks'
+  own), taking in what players sent 2.9 s to 1.3.
+- **A kept tick's world is hashed once** (`tide_game.freeze_world`, tidec's `gen_world_frozen`): every repair hashes
+  the world its player confirmed to find it in the checks' journal (`tide_client_journal_between`), and most players'
+  repairs in an update confirmed the same few ticks. The session says a world won't change (each kept tick's, and
+  each `verified_world` copy) and `tide_world_hash` keeps what such a world hashes to the first time: a table by
+  address under a lock, a world leaving it as it's let go of (`tide_world_free`) or copied over (`tide_world_copy`).
+  Generated for a game whose servers repair by what changed (`world_freezes`: visibility and a heap the hashes keep);
+  NULL for the others, which keep nothing. `TIDE_CLIENT_SPANS_CHECK` (`bench_voxels_checked`) hashes a frozen world
+  again each time and stops where it differs. The base's hash went from 1.29 s of the run to 0.33 together and 7.2 to
+  1.9 apart; part of it came back as the rows of that world read colder (the hash had brought its pages in).
+
+**Tests.** `bench_voxels_views` (several players' megabyte repairs, put off, on 1, 4 and 12 threads), `_checked` and
+the 100-player runs above ending on the hashes of the build before; `tidec_e2e_visibility_*` (repairs by changes and
+the hash offer, `visibility_repairs` against every row), `tidec_e2e_net*`, `tide_tests session` and `visibility`
+(release and ASan); `sumo_tests`, `earth_tests`, `towers_tests`. Listed with results in notes/voxels.md, Tests.
+
+**Left.**
+- The reads are one thread's: `client_changes` takes the match's memo (`busy`), and a second at once would take
+  another, with nothing kept, and walk every row. 60% of a read is its records, each chunk's grid written again for
+  each player it goes to though the bytes are the same for all of them where nothing is denied: a record kept by its
+  entity and value hash for the update would make a repair to 100 players one record and 99 copies. Both are in
+  `client_changes_codegen.inc`, the projection checks' (another task's at the time).
+- A kept tick's world let go of is a pass over all its pages (`free_world`, 0.53 s of the 100-player run together and
+  11.2 apart, 2.3 ms a tick): page counts aren't atomic, so it can't go on another thread while the tick copies pages.
+
 ## A whole view's repair: read in one update, packed on the pool, one big one an update; no protocol change (2026-11-16, wide views)
 
 What a whole view costs the server to send at wide view distances (notes/voxels.md, A wide view without a long
