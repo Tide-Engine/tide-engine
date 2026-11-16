@@ -1416,6 +1416,57 @@ const char *tide_platform_cache_folder(void)
     return named_cache && named_cache[0] ? named_cache : NULL;
 }
 
+#ifndef __wasm__
+// A folder's files' bytes, those of the folders in it too.
+static void add_size(void *user, const char *path)
+{
+    uint64_t *total = user;
+#ifdef _WIN32
+    wchar_t *wide = wide_path(path);
+    WIN32_FILE_ATTRIBUTE_DATA data;
+    if (wide && GetFileAttributesExW(wide, GetFileExInfoStandard, &data)) {
+        *total += ((uint64_t)data.nFileSizeHigh << 32) | data.nFileSizeLow;
+    }
+    free(wide);
+#else
+    struct stat data;
+    if (lstat(path, &data) == 0 && S_ISREG(data.st_mode)) *total += (uint64_t)data.st_size;
+#endif
+}
+
+enum { DRIVER_CACHE_MOST = 256 << 20 };
+
+void tide_platform_driver_cache(void)
+{
+    const char *folder = tide_platform_cache_folder();
+    const char *said = getenv("__GL_SHADER_DISK_CACHE_PATH"), *on = getenv("__GL_SHADER_DISK_CACHE");
+    // The machine's settings, or what an earlier window of this program set, stand
+    if (!folder || (said && *said) || (on && strcmp(on, "0") == 0)) return;
+    char *driver = join(folder, "driver");
+    io_state scratch = {0};
+    uint64_t bytes = 0;
+    int type = 0;
+    bool link = false;
+    if (path_type(driver, &type, &link) == TIDE_IO_NONE && type == 2 && !link) {
+        (void)walk(driver, false, true, add_size, &bytes);
+        // It only grows: what's there of shaders that changed stays. Past this it starts over, a cold start once
+        if (bytes > DRIVER_CACHE_MOST) (void)remove_full(&scratch, driver, true, true);
+    }
+    const bool there = mkdir_parents(&scratch, driver) == TIDE_IO_NONE;
+    for (uint32_t i = 0; i < scratch.dirty_count; i++) free(scratch.dirty[i].path);
+    free(scratch.dirty);
+    if (there) {
+#ifdef _WIN32
+        for (char *c = driver; *c; c++) if (*c == '/') *c = '\\'; // As the system writes a path
+        _putenv_s("__GL_SHADER_DISK_CACHE_PATH", driver); // The process's environment too, which the driver reads
+#else
+        setenv("__GL_SHADER_DISK_CACHE_PATH", driver, 1);
+#endif
+    }
+    free(driver);
+}
+#endif
+
 const tide_io *tide_platform_io_init(const char *app_id, const char *directory)
 {
     if (!app_id || !*app_id) app_id = "dev.tide.game";

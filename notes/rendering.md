@@ -134,6 +134,32 @@ are provisional, within that approved work:
   configurations actually used on the second run. The web prewarm test passes with both checks retained.
 
 
+## The driver's cache in a folder of the game's (2026-11-16, later)
+
+Owner: "lets do option 2" (the entry below: NVIDIA's machine-wide folder was full and took nothing new). Desktop.
+
+- **`tide_platform_driver_cache`** (`platform/src/io.c`, declared in `files.h`), called first in glfw.c's
+  `tide_window_open`: where a game is named it makes `<cache folder>/driver` and sets
+  `__GL_SHADER_DISK_CACHE_PATH` to it, with backslashes on Windows (`_putenv_s`, which sets the process's
+  environment too; `setenv` elsewhere). Nothing where the environment already names a folder (the machine's own
+  setting, or an earlier window of the same program) or says `__GL_SHADER_DISK_CACHE=0`. A folder over
+  `DRIVER_CACHE_MOST` (256 MiB; M&R's is 17 MB) is removed first and made again: the driver only adds, as
+  `pipelines.vulkan` does, and that costs one cold start. Other vendors' drivers ignore the variable; Mesa evicts
+  on its own, AMD's and Intel's Windows caches weren't looked at.
+- **Before Vulkan starts, or not at all.** Measured with the probe host: set before `tide_platform_open` the driver
+  wrote 20 MB into the folder; set after the window opened (instance and device made), nothing. So
+  **`tide_run_open` (`tide/host.h`) names the game before it opens the window** (`tide_run_name_game`, declared
+  ahead of it): its folders, its log and background pipelines are set a step earlier, and naming again later
+  changes nothing, as before. A host that names the game after `tide_platform_open` (`platform/tests/prewarm.c`,
+  `pipeline_cache.c`) gets the driver's default folder, as before; `docs/c/hosts.md` says to name it first.
+- **Both caches are wanted**: with the driver's folder warm and no `pipelines.vulkan`, the step took 0.84 s; with
+  `pipelines.vulkan` alone 0.78-0.93 s (below); with both 0.05 s.
+- Checked with the probe (M&R's shaders, debug tree): a fresh game 2.74 s cold and the folder made (17.3 MB); the
+  next run 0.048 s; with `__GL_SHADER_DISK_CACHE_PATH` set by the caller, its folder used and the game's untouched;
+  the folder padded past 256 MiB, removed and made again (0.70 s, `pipelines.vulkan` still warm), then 0.045 s.
+  Through the standard host: `tide_platform_capture --frames 3 --capture` made `dev.tide.tide_platform_capture/driver`.
+  Not checked: Linux's NVIDIA driver (the same variables; CI has no GPU), a visible window.
+
 ## The shader step measured again: NVIDIA's own cache folder was full (2026-11-16)
 
 Owner: "i have a suspicion that shader compilation stage is slower than it should be". Measured, nothing built.
@@ -167,6 +193,17 @@ today, so it may still be answered from there; a build whose shaders changed sin
 emptying that folder or raising NVIDIA's shader cache size fixes this machine; whether the engine should give the
 driver a folder of the game's own (`__GL_SHADER_DISK_CACHE_PATH`, set before Vulkan loads: NVIDIA's alone, and a
 folder that's emptied when `pipelines.vulkan` starts over) is the owner's to decide.
+
+### What an optimizer would add, after the new helpers (2026-11-16, later still)
+
+Owner: "do we not optimize the spirv code?" No: `spirv.c` translates tidec's WGSL as it is, and the driver inlines
+and cleans up. `spirv-opt` passes over the game's SPIR-V with the new helpers, cold, two runs each, the probe's
+variants keyed by the hash of the game's current shaders (the first try's were keyed by the old ones and loaded none,
+which the probe's "0 of 139" line said): as built 2.96/3.03 s; every call inlined first
+(`--inline-entry-points-exhaustive --eliminate-dead-functions`) 2.58/2.74; then SSA 2.51/2.77; then folding and dead
+code 2.86/2.64; all of `-O` 2.74/2.36; before the helpers 4.27/4.32. So inlining is most of what an optimizer gives,
+about 11% of its 15%. tidec has no inliner, and SPIRV-Tools is C++ that tidec (and the playground's wasm tidec)
+would then build with: the owner's to pick.
 
 ### What the driver compiles cold: mostly tidec's helpers (2026-11-16, later)
 

@@ -1,5 +1,12 @@
 # The standard host: runs with no window, the stats, debug views
 
+## The game named before its window opens (2026-11-16)
+
+`tide_run_open` calls `tide_run_name_game` before `tide_platform_open` (and before a run with no window opens its
+hidden one), so the window's Vulkan can tell NVIDIA's driver to keep its cache in the game's folder
+(`tide_platform_driver_cache`; why and how measured: rendering.md, The driver's cache in a folder of the game's).
+Naming again later (`tide_run_bind_io`, the loader's first frame) changes nothing, as before.
+
 ## A managed match's store (2026-11-15)
 
 - `managed_run.h` gives every server it makes (`init`, `restore`, a shard's) the hosting service's store when the

@@ -11,6 +11,7 @@
 #endif
 
 #include "window.h"
+#include "files.h" // tide_platform_driver_cache
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -298,6 +299,7 @@ bool tide_window_open(const tide_window_desc *desc)
 {
     // In a run nobody watches (TIDE_HIDDEN), no window shows, whatever asked for it
     const bool hidden = desc->hidden || tide_hidden();
+    tide_platform_driver_cache(); // Before Vulkan starts, which is when the driver reads where its cache is
     glfwSetErrorCallback(on_error);
 #ifdef __APPLE__
     find_vulkan(); // Before GLFW starts, which looks for Vulkan as it does

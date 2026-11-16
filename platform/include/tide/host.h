@@ -988,10 +988,16 @@ static inline void tide_run_close(void)
     if (tide_run_session) tide_run_end();
 }
 
+static inline const char *tide_run_name_game(const tide_host_game *game, char *fallback, size_t size);
+
 static inline void tide_run_open(const tide_run_desc *desc)
 {
     tide_platform_on_close(tide_run_close);
     tide_run_configure(desc);
+    // Named before its window opens: the GPU driver is told where the game's own cache of compiled shaders is as
+    // Vulkan starts, and not after (tide_platform_driver_cache)
+    char fallback[512];
+    (void)tide_run_name_game(tide_run_game, fallback, sizeof fallback);
     if (tide_run_headless) {
         tide_platform_open_headless(&tide_run_headless_desc);
         return;

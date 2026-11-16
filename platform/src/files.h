@@ -12,6 +12,17 @@
 // once another game is named.
 const char *tide_platform_cache_folder(void);
 
+// The GPU driver's own cache of compiled shaders, kept in a folder of the
+// game's cache folder (`driver`) where the host named the game before its
+// window opened: NVIDIA's driver reads __GL_SHADER_DISK_CACHE_PATH as Vulkan
+// starts and not after. Its own folder is the machine's, shared by every
+// program, and once full it keeps nothing new, so a game whose shaders changed
+// compiled them again at every start. The driver only adds to it: past 256
+// MiB the folder starts over. Nothing where the environment already says
+// where the driver keeps it, or that it keeps none (__GL_SHADER_DISK_CACHE=0).
+// Desktop: before Vulkan starts (tide_window_open).
+void tide_platform_driver_cache(void);
+
 #ifndef __wasm__
 // A whole file, of `limit` bytes at most (tide_alloc's, which the caller
 // frees), or NULL where there's none or it's bigger.
