@@ -25,6 +25,9 @@ typedef struct build_options {
     // Internal (tide run with no window): `output` is in a folder that keeps what this build last made there, so
     // the program is linked again only when what it's made of changed
     bool keep_output;
+    // Internal (tide run with no window): the pack beside the program is tidec's file as it is, where a release
+    // build's is compressed for whoever it's handed to (tide/pack.h)
+    bool run_pack;
     const char *report; // tide build --report: where the build's report goes (build_report.h), or NULL for none
     const char *title;  // The window's title, over the game's title setting; NULL for that, or else the folder's name
     bool stats;         // Show the stats, whether or not the game's stats setting does: a drawer of one line, in a corner

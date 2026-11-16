@@ -94,7 +94,13 @@ try {
     assert.equal(resolve(assets.rules.files[0]), join(game, "rules.txt"));
     assert(assets.rules.importMs >= 0);
     const packFile = join(game, ".build", "reported.pack");
-    assert.equal(report.pack.bytes, statSync(packFile).size, "the pack's size is the file's");
+    // A release's pack ships compressed (tide/pack.h): the report's bytes are the pack's, as it is in memory
+    const generatedPack = join(game, ".tide", "native-release", "gen", "game.pack");
+    assert.equal(report.pack.bytes, statSync(generatedPack).size, "the pack's size is the generated file's");
+    assert.equal(readFileSync(generatedPack).subarray(0, 8).toString(), "TIDEPACK");
+    assert.equal(readFileSync(packFile).subarray(0, 8).toString(), "TIDEPKLZ", "the release's pack is compressed");
+    assert(statSync(packFile).size < report.pack.bytes, "...and smaller");
+    assert(stages.includes("compressing assets"), `${stages}`);
     assert(report.pack.bytes >= report.pack.assetBytes);
 
     assert.equal(report.leftOut.length, 1);
@@ -114,6 +120,8 @@ try {
     const warm = await run(["build", game, "--release", "--report", textPath]);
     assert.equal(warm.code, 0, warm.said);
     const table = readFileSync(textPath, "utf8");
+    assert(!/compressing assets/.test(table), "an unchanged pack isn't compressed again");
+    assert.equal(readFileSync(packFile).subarray(0, 8).toString(), "TIDEPKLZ");
     assert.match(table, /^reported: release native build, [\d.]+ s \(tide /);
     assert.match(table, /C\/C\+\+: 0 compiled \(0 ms of compiler time\), [1-9]\d* up to date/);
     assert.match(table, /Pack: .* 2 assets/);
@@ -131,6 +139,28 @@ try {
     assert.equal(debugReport.leftOut.length, 0);
     assert.equal(debugReport.pack.assets.length, 3);
     assert(debugReport.cuts.some(cut => /every asset is packed/.test(cut)), `${debugReport.cuts}`);
+    // ...as tidec wrote it, in the place the release's was: and a release after it is compressed there again
+    assert.equal(readFileSync(packFile).subarray(0, 8).toString(), "TIDEPACK", "a debug build's pack isn't compressed");
+    assert.equal(debugReport.pack.bytes, statSync(packFile).size);
+    assert(!debugReport.stages.some(stage => stage.name === "compressing assets"));
+    const again = await run(["build", game, "--release"]);
+    assert.equal(again.code, 0, again.said);
+    assert.equal(readFileSync(packFile).subarray(0, 8).toString(), "TIDEPKLZ");
+
+    // A release's web page downloads a compressed pack too, whose size the page is told; a debug page's is as it is
+    put(join(installation, "lib", "web", "libtide_platform.a"), "!<arch>\n");
+    put(join(installation, "wasi", "libclang_rt.builtins.a"), "fixture");
+    put(join(installation, "web", "shell.html"), "<html><body>{{{ SCRIPT }}}</body></html>\n");
+    put(join(installation, "web", "tide.js"), "// page runtime\n");
+    put(join(installation, "web", "tide.release.js"), "// page runtime\n");
+    for (const [mode, magic] of [[["--release"], "TIDEPKLZ"], [[], "TIDEPACK"]]) {
+        const page = await run(["build", game, "--web", ...mode]);
+        assert.equal(page.code, 0, page.said);
+        const pagePack = readFileSync(join(game, ".build", "web", "index.pack"));
+        assert.equal(pagePack.subarray(0, 8).toString(), magic, `a page built with ${mode}`);
+        assert.match(readFileSync(join(game, ".build", "web", "index.html"), "utf8"),
+            new RegExp(`pack: \\{ url: "index\\.pack\\?v=[0-9a-f]+", size: ${pagePack.length} \\}`));
+    }
 
     // A server's pack has what its match code reads
     const serverPath = join(root, "reports", "server.json");

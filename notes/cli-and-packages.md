@@ -50,6 +50,11 @@ What changed, in order of what it gave:
   A folder whose program can't be opened for writing (a game left running by a tide that ended) is passed over.
   A run that finds no folder free still uses `run/<pid>`, removed after. The copies stay on disk: Mount & Rifle's
   once-1 is 1.5 GB.
+- **A release's placed pack is compressed** (2026-11-16; notes/assets-and-files.md, Compressed packs):
+  `place_file(from, to, compressed)` is `place_pack` with that choice (`pack_ships_compressed`: release or
+  distribution, not a run, managed hosting or Unity). It reads tidec's file, compresses its pieces on every
+  processor and writes the result, under the step "compressing assets"; the marker's record says `compressed`, so
+  the same destination is rewritten when the mode changes and left alone when nothing did.
 - **`place_pack`'s marker is per destination** (`<from>.placed-<hash of to>`), so `tide build`'s copy in `.build/`
   and a run's copy don't take each other's, and it copies with `sys_copy_file` (Windows' CopyFile: 0.3 s for
   1.4 GB against 1.1 s read and written; elsewhere 4 MB at a time, without holding the file).

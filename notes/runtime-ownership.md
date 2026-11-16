@@ -402,6 +402,15 @@ unless a host sets it. Generated C calls no new function: `tide/run.h` puts it i
 tidec: a host refuses a library whose number isn't its own (notes/hot-reload.md). Hosts and libraries rebuild
 together, as for any change to `tide_host_game`.
 
+## Compressed packs (2026-11-16)
+
+Owner-approved ("lets try option 1": release packs compressed at rest and decompressed at load; the LZ4 codec is
+Claude's pick, notes/assets-and-files.md, Compressed packs). New in `tide/pack.h`: `tide_pack_compress` (pack.c,
+for tools), `tide_pack_expand` (pack_load.c, for tools and tests), `tide_pack_compressed_header` and its
+constants. `tide_pack_load` takes a compressed file as well as a raw one and loads the same pack from either;
+its raw path is the code it was, split into `file_is_whole` and `take_region`. Generated C calls no new runtime
+function and no host changes: each hands `tide_assets_load` the file's bytes as before.
+
 ## Pack format 5 (2026-11-10)
 
 Owner-approved ("feel free to change the pack format"): `engine/src/pack.c`'s builder makes the region in place

@@ -32,6 +32,25 @@ a place in its page table can be NULL. What keeps that from being read:
 Entities' slots and the tables are as they were: a slot's pages aren't given back, so nothing about a stale Entity
 changed.
 
+## A compressed pack's bytes (2026-11-16)
+
+A pack file can be compressed (notes/assets-and-files.md, Compressed packs), and its bytes are no more trusted
+than a raw pack's: a release's `<name>.pack` is a file beside the program. What keeps reading one in bounds:
+
+- **The table is checked whole before a byte is decoded** (`compressed_is_whole`): the piece count is the size's,
+  the pieces' bytes add up to the file's size exactly, and each is 1 to its piece's bytes and no fewer than a
+  255th of them, so the memory a file asks for is at most 255 times its own size.
+- **`lz_read` checks every count against both sides**: a literal run against the block's bytes left and the
+  piece's room left, a match's distance against the bytes already written to *this piece* (a piece reads nothing
+  of another, nor of the allocation before it), its length against the room left, and the block must end having
+  filled the piece exactly. The two wide copies (16 bytes of literals, 8-byte match steps) run only where both
+  sides have that many bytes.
+- **The pack inside is then checked as any is**: the raw header and entries by `file_is_whole`, and the blocks by
+  the loader's existing checks. A refused file leaves the pack loaded before in place.
+
+`pack_compressed_bytes_that_are_not_one_are_refused_and_the_loaded_pack_stays` flips every byte of a file three
+ways and cuts it at every length under ASan.
+
 ## The server's store: listings and answers (2026-11-15)
 
 `Storage.List` takes a prefix and a key to go on after from match code, a provider lists names anyone could have put in

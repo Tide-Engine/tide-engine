@@ -263,11 +263,41 @@ void tide_pack_reserve(tide_pack_builder *b, uint64_t bytes);
 void tide_pack_digest_of(const uint8_t *bytes, uint64_t size, tide_pack_each each, uint8_t digest[32]);
 
 // ---------------------------------------------------------------------------
+// A pack compressed
+//
+// What a build ships where a smaller file is worth a pass over it: the pack file's bytes in pieces of
+// TIDE_PACK_PIECE (the last one what's left), each compressed alone as an LZ4 block (the format lz4's own tools
+// read and write, by the engine's own code), or kept as it is where that's no smaller. The file is a
+// tide_pack_compressed_header, then a uint32_t for each piece, the bytes it takes in the file (as many as the piece
+// has for one kept as it is), then the pieces. tide_pack_load reads either file, and the pack it loads is the same
+// one, with the same digest: nothing that reads a loaded pack can tell which it came from.
+
+#define TIDE_PACK_COMPRESSED_MAGIC "TIDEPKLZ"
+#define TIDE_PACK_COMPRESSED_VERSION 1u
+#define TIDE_PACK_PIECE (4u << 20)
+
+typedef struct tide_pack_compressed_header {
+    char magic[8];
+    uint32_t version;
+    uint32_t pieces;
+    uint64_t size; // The pack file's bytes
+} tide_pack_compressed_header;
+
+// A pack file's bytes compressed (to free()), and how many they are. The pieces are compressed at once (`each`, or
+// NULL for one after another), to the same bytes either way.
+uint8_t *tide_pack_compress(const uint8_t *bytes, size_t size, tide_pack_each each, size_t *compressed);
+
+// The pack file a compressed one holds (to free()), and its size: NULL for bytes that aren't a whole compressed
+// pack. For tools and tests; loading one makes no such copy.
+uint8_t *tide_pack_expand(const uint8_t *bytes, size_t size, size_t *pack_size);
+
+// ---------------------------------------------------------------------------
 // Loading one
 
 // Loads a pack: its region into memory of its own, which handles then reach,
 // in place of the one loaded before. False for bytes that aren't a pack, with
-// the one before still loaded. The bytes themselves aren't kept.
+// the one before still loaded. The bytes themselves aren't kept. A compressed
+// pack's pieces are read straight into that memory.
 bool tide_pack_load(const uint8_t *bytes, size_t size);
 
 // Lets go of the loaded pack: before a game's library is unloaded.
@@ -403,7 +433,7 @@ tide_skinned_lists tide_pack_skinned_of(const tide_pack_entry *e, uint32_t verte
 tide_map tide_pack_skinned_map_of(const tide_pack_entry *e);
 void *tide_pack_skinned_open(const tide_pack_entry *e, uint32_t k, uint32_t vertex, uint32_t *count);
 
-// Check a raw pack before loading it: this declaration's models must have
+// Check a raw pack (never a compressed one) before loading it: this declaration's models must have
 // the build's layout, count and content SHA-256s, in source order. Singleton
 // and list hashes cover canonical bytes; map hashes cover key bytes followed
 // by canonical bytes, so changing a gameplay lookup key changes its identity.
