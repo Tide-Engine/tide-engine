@@ -45,7 +45,7 @@ since the last line, on average and at most; and every report ends with the most
 says with it where a hop's time goes: how many ticks after the bot's machine hopped the server had asked for its
 box, had nine tenths of it made and had all of it, beside when the bot's machine had them. Its new flags: `--make`
 (what a dimension makes of chunks a tick: `Worlds.make`), `--spread <cells>` (bots start that far apart on a square
-grid, where they started together), `--park 1` (the nth bot starts in dimension n of `--dimensions`), `--out 1`
+grid, where they started together), `--park 1` (the nth bot starts in dimension n of `--dimensions`), `--out 1`, `--back <s>` with it (out for that long, back as long, then still: a world that held many chunks and holds few; `--every` then also says what the server's world's memory is made of, its heaps' pages in memory and given back)
 (each flies straight out its own way for the whole run) and `--fill <ticks>` (the run fails where a hop's whole box
 took longer at the median: `bench_voxels_arrives`).
 

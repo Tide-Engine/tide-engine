@@ -70,6 +70,89 @@ static uint32_t places(const tide_page *p)
 }
 
 // ---------------------------------------------------------------------------
+// Pages given back (tide/heap.h): what's kept of one
+
+#define LIVE_UNKNOWN 0xFFFFu // A page read from bytes: which of its blocks are handed out isn't known
+#define LIVE_KEPT 0xFFFEu    // No block of it is handed out, and it has too much in it to be worth giving back
+#define STUB_WORDS 256u      // The words of a page that aren't zero, at most, for it to be given back
+
+typedef struct stub_word {
+    uint64_t word;
+    uint64_t at; // In words from the page's start
+} stub_word;
+
+// A page that's gone: every word of it that wasn't zero, and what it hashed to. Shared by the heaps that have it
+// (a world and its snapshots), as a page is, and never changed.
+typedef struct tide_heap_stub {
+    uint32_t refs;
+    uint32_t places;
+    uint32_t count;
+    uint64_t hash;
+    stub_word words[];
+} tide_heap_stub;
+
+static void stub_release(tide_heap_stub *s)
+{
+    if (s && --s->refs == 0) free(s);
+}
+
+// What `p` would be brought back from, or NULL where it holds too much.
+static tide_heap_stub *stub_of(tide_page *p)
+{
+    const uint64_t *words = tide_page_data(p);
+    const size_t count = p->size / sizeof *words;
+    stub_word found[STUB_WORDS];
+    uint32_t n = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (!words[i]) continue;
+        if (n == STUB_WORDS) return NULL;
+        found[n++] = (stub_word){words[i], i};
+    }
+    tide_heap_stub *s = tide_alloc(sizeof *s + n * sizeof *s->words);
+    *s = (tide_heap_stub){1u, places(p), n, tide_page_hash(p, p->size)};
+    if (n) memcpy(s->words, found, n * sizeof *s->words);
+    return s;
+}
+
+// The page a stub was made of, starting at `place`, with `refs` references: the same bytes.
+static tide_page *stub_page(const tide_heap_stub *s, const uint32_t place, const uint32_t refs)
+{
+    tide_page *p = tide_page_new(s->places << TIDE_HEAP_PAGE_SHIFT);
+    p->first = place;
+    p->refs = refs;
+    uint64_t *words = tide_page_data(p);
+    for (uint32_t i = 0; i < s->count; i++) words[s->words[i].at] = s->words[i].word;
+    return p;
+}
+
+// The stub of the page that started at `place` and is gone, or NULL.
+static tide_heap_stub *stub_at(const tide_heap *h, const uint32_t place)
+{
+    return h && h->stub && place < h->pages && !h->page[place] ? h->stub[place] : NULL;
+}
+
+// How many places the page that starts at `place` takes, in memory or gone.
+static uint32_t span_at(const tide_heap *h, const uint32_t place)
+{
+    return h->page[place] ? places(h->page[place]) : h->stub[place]->places;
+}
+
+// The page that starts at `place` to read, or NULL where none does. One that's gone is made again for the
+// caller alone, in `made`, to let go of (tide_page_release, one reference) once it's read.
+static tide_page *page_read(const tide_heap *h, const uint32_t place, tide_page **made)
+{
+    *made = NULL;
+    if (!h || place >= h->pages) return NULL;
+    tide_page *p = h->page[place];
+    if (p) return p->first == place ? p : NULL;
+    const tide_heap_stub *s = stub_at(h, place);
+    return s ? (*made = stub_page(s, place, 1u)) : NULL;
+}
+
+// What the page that starts at `place` hashes to, as the heap's hash takes it.
+static uint64_t place_hash(const tide_heap *h, const uint32_t place);
+
+// ---------------------------------------------------------------------------
 // A heap in runs (tide/heap.h)
 
 TIDE_THREAD_LOCAL uint32_t tide_heap_run_where;
@@ -241,7 +324,80 @@ static void make_room(tide_heap *h, const uint32_t pages)
     if (h->pages) memcpy(grown, h->page, h->pages * sizeof *grown);
     base[0] = h->page ? (tide_page *)(void *)(h->page - 1) : NULL;
     __atomic_store_n(&h->page, grown, __ATOMIC_RELEASE);
+    // What says which pages can be given back, the heap's own thread's alone
+    h->live = tide_realloc(h->live, h->room * sizeof *h->live, room * sizeof *h->live);
+    memset(h->live + h->room, 0, (room - h->room) * sizeof *h->live);
+    if (h->stub) {
+        h->stub = tide_realloc(h->stub, h->room * sizeof *h->stub, room * sizeof *h->stub);
+        memset(h->stub + h->room, 0, (room - h->room) * sizeof *h->stub);
+    }
     h->room = room;
+}
+
+static uint64_t place_hash(const tide_heap *h, const uint32_t place)
+{
+    tide_page *p = h->page[place];
+    return p ? tide_page_hash(p, in_use(h, p)) : h->stub[place]->hash;
+}
+
+// A block of the page at its place was handed out; and one went back to its free list.
+static void took(tide_heap *h, const uint64_t block)
+{
+    const uint32_t place = (uint32_t)(block >> TIDE_HEAP_PAGE_SHIFT);
+    uint16_t *live = &h->live[place];
+    if (*live == LIVE_UNKNOWN) return;
+    if (*live == LIVE_KEPT) *live = 0;
+    else if (!*live) h->idle -= places(h->page[place]);
+    ++*live;
+}
+
+static void gave(tide_heap *h, const uint64_t block)
+{
+    const uint32_t place = (uint32_t)(block >> TIDE_HEAP_PAGE_SHIFT);
+    uint16_t *live = &h->live[place];
+    if (*live >= LIVE_KEPT || !*live) return;
+    if (--*live == 0) h->idle += places(h->page[place]);
+}
+
+// The page that started at `place` and went, there again as it was, for a block of it about to be handed out.
+static void bring_back(tide_heap *h, const uint32_t place)
+{
+    tide_heap_stub *s = h->stub[place];
+    tide_page *p = stub_page(s, place, s->places);
+    const bool shared = in_runs; // Other runs' threads give this heap's pages copies of their own meanwhile
+    if (shared) lock(h);
+    for (uint32_t k = 0; k < s->places; k++) __atomic_store_n(&h->page[place + k], p, __ATOMIC_RELEASE);
+    if (shared) unlock(h);
+    h->stub[place] = NULL;
+    h->gone -= s->places;
+    h->idle += s->places;
+    h->live[place] = 0;
+    stub_release(s);
+}
+
+// Lets go of the pages whose blocks are all free, once they're a quarter of the pages it has in memory: only
+// while nothing else runs on the heap, and nothing of it waits to be freed. Never its first page (offset 0 is
+// no block) nor one it hasn't handed out to the end of.
+static void give_back(tide_heap *h)
+{
+    if (h->idle < TIDE_HEAP_GIVE_LEAST || (uint64_t)h->idle * 4u < h->pages - h->gone) return;
+    if (h->pending || h->away || h->held || h->retired_count) return;
+    if (!h->stub) h->stub = tide_alloc_zeroed(h->room, sizeof *h->stub);
+    for (uint32_t i = 1; i < h->pages; i += span_at(h, i)) {
+        tide_page *p = h->page[i];
+        if (!p || h->live[i] || (((uint64_t)i + places(p)) << TIDE_HEAP_PAGE_SHIFT) > h->used) continue;
+        const uint32_t count = places(p);
+        h->idle -= count;
+        tide_heap_stub *s = stub_of(p);
+        if (!s) { // Small blocks, a link each: it stays, and isn't looked at again until one is handed out
+            h->live[i] = LIVE_KEPT;
+            continue;
+        }
+        for (uint32_t k = 0; k < count; k++) __atomic_store_n(&h->page[i + k], NULL, __ATOMIC_RELEASE);
+        h->stub[i] = s;
+        h->gone += count;
+        tide_page_release(p, count);
+    }
 }
 
 void tide_heap_settle(tide_heap *h)
@@ -264,7 +420,10 @@ static void add_page(tide_heap *h, const uint32_t count)
     tide_page *p = tide_page_new(count << TIDE_HEAP_PAGE_SHIFT);
     p->first = h->pages;
     p->refs = count;
-    for (uint32_t k = 0; k < count; k++) h->page[h->pages + k] = p;
+    for (uint32_t k = 0; k < count; k++) {
+        h->page[h->pages + k] = p;
+        h->live[h->pages + k] = 0;
+    }
     h->pages += count;
 }
 
@@ -311,6 +470,8 @@ uint64_t tide_heap_alloc(tide_heap *h, const uint32_t bytes)
     if (block_size < size) tide_out_of_memory(); // Bigger than any block
     if (h->free[c]) {
         const uint64_t block = h->free[c];
+        if (h->gone && !h->page[block >> TIDE_HEAP_PAGE_SHIFT]) bring_back(h, (uint32_t)(block >> TIDE_HEAP_PAGE_SHIFT));
+        took(h, block);
         tide_block *b = tide_heap_write(h, block);
         h->free[c] = tide_block_next(b);
         b->link = tide_block_link(c, 0);
@@ -332,6 +493,9 @@ uint64_t tide_heap_alloc(tide_heap *h, const uint32_t bytes)
             add_page(h, block_size > PAGE ? (uint32_t)(block_size >> TIDE_HEAP_PAGE_SHIFT) : 1u);
         }
         if (shared) unlock(h);
+        h->live[at >> TIDE_HEAP_PAGE_SHIFT] = 1u; // Its page's first block
+    } else {
+        took(h, at);
     }
     __atomic_store_n(&h->used, at + block_size, __ATOMIC_RELAXED); // Read by those threads, for how much of a page to copy
     tide_block *b = tide_heap_write(h, at);
@@ -371,6 +535,7 @@ void tide_heap_flush_pending(tide_heap *h)
         memset(b, 0, (size_t)16u << c); // Freed memory is zero, so it hashes the same everywhere
         b->link = tide_block_link(c, h->free[c]);
         h->free[c] = block;
+        gave(h, block);
     }
     // Other runs' blocks this run's rows let go of: zeroed here, on its thread, and kept for the join
     while (h->away) {
@@ -425,6 +590,7 @@ void tide_heap_runs_join(tide_heap *base)
             const uint32_t c = tide_block_class(b);
             b->link = tide_block_link(c, home->free[c]);
             home->free[c] = block;
+            gave(home, block);
         }
     }
     for (uint32_t run = 0; run < TIDE_HEAP_RUNS; run++) {
@@ -444,12 +610,26 @@ void tide_heap_copy(tide_heap *to, const tide_heap *from)
     tide_asset_pool_retain(from->assets);
     tide_asset_pool_release(to->assets);
     to->assets = from->assets;
-    // Its pages first, then letting go of to's: they can be the same ones.
-    for (uint32_t i = 0; i < from->pages; i++) tide_page_retain(from->page[i]);
+    // Its pages first, and what's kept of the ones it gave back, then letting go of to's: they can be the same ones.
+    for (uint32_t i = 0; i < from->pages; i++) {
+        if (from->page[i]) tide_page_retain(from->page[i]);
+        else if (from->stub[i]) from->stub[i]->refs++;
+    }
     for (uint32_t i = 0; i < to->pages; i++) tide_page_release(to->page[i], 1);
+    for (uint32_t i = 0; to->gone && i < to->pages; i++) {
+        stub_release(to->stub[i]);
+        to->stub[i] = NULL;
+    }
     make_room(to, from->pages);
     tide_heap_settle(to); // Snapshots are taken while nothing else runs on it
     if (from->pages) memcpy(to->page, from->page, from->pages * sizeof *to->page);
+    if (from->pages) memcpy(to->live, from->live, from->pages * sizeof *to->live);
+    if (from->gone) {
+        if (!to->stub) to->stub = tide_alloc_zeroed(to->room, sizeof *to->stub);
+        memcpy(to->stub, from->stub, from->pages * sizeof *to->stub);
+    }
+    to->gone = from->gone;
+    to->idle = from->idle;
     to->pages = from->pages;
     to->used = from->used;
     memcpy(to->free, from->free, sizeof to->free);
@@ -461,8 +641,8 @@ uint64_t tide_heap_hash(uint64_t h, const tide_heap *heap)
     h = tide_hash_more(h, &heap->used, sizeof heap->used);
     h = tide_hash_more(h, heap->free, sizeof heap->free);
     h = tide_hash_more(h, &heap->pending, sizeof heap->pending);
-    for (uint32_t i = 0; i < heap->pages; i += places(heap->page[i])) {
-        const uint64_t page = tide_page_hash(heap->page[i], in_use(heap, heap->page[i]));
+    for (uint32_t i = 0; i < heap->pages; i += span_at(heap, i)) {
+        const uint64_t page = place_hash(heap, i);
         h = tide_hash_more(h, &page, sizeof page);
     }
     // Authenticate the descriptor registry too: omitting a lease from received
@@ -477,7 +657,9 @@ uint64_t tide_heap_hash(uint64_t h, const tide_heap *heap)
 
 void tide_heap_stale(const tide_heap *heap, tide_stale_pages *s)
 {
-    for (uint32_t i = 0; i < heap->pages; i += places(heap->page[i])) tide_page_stale(s, heap->page[i], in_use(heap, heap->page[i]));
+    for (uint32_t i = 0; i < heap->pages; i += span_at(heap, i)) {
+        if (heap->page[i]) tide_page_stale(s, heap->page[i], in_use(heap, heap->page[i]));
+    }
 }
 
 uint64_t tide_heap_block_hash(tide_heap *h, const uint64_t block)
@@ -492,7 +674,12 @@ void tide_heap_free(tide_heap *h)
 {
     tide_asset_origins_release(h->origins);
     tide_asset_pool_release(h->assets);
-    for (uint32_t i = 0; i < h->pages; i++) tide_page_release(h->page[i], 1);
+    for (uint32_t i = 0; i < h->pages; i++) {
+        tide_page_release(h->page[i], 1);
+        if (h->stub && h->stub[i]) stub_release(h->stub[i]);
+    }
+    free(h->live);
+    free(h->stub);
     tide_heap_settle(h);
     if (h->page) free(h->page - 1);
     for (uint32_t i = 0; i < h->retired_count; i++) tide_page_release(h->retired[i], places(h->retired[i]));
@@ -514,7 +701,9 @@ void tide_heap_free(tide_heap *h)
 uint32_t tide_heap_packed_size(const tide_heap *h)
 {
     uint64_t size = (uint64_t)tide_asset_packed_size(h) + sizeof h->used + sizeof h->free + sizeof h->pending;
-    for (uint32_t i = 0; i < h->pages; i += places(h->page[i])) size += 4u + in_use(h, h->page[i]);
+    for (uint32_t i = 0; i < h->pages; i += span_at(h, i)) {
+        size += 4u + (h->page[i] ? in_use(h, h->page[i]) : h->stub[i]->places << TIDE_HEAP_PAGE_SHIFT);
+    }
     if (size > UINT32_MAX) tide_out_of_memory();
     return (uint32_t)size;
 }
@@ -525,10 +714,12 @@ void tide_heap_pack(const tide_heap *h, tide_writer *w)
     tide_write_u64(w, h->used);
     for (uint32_t c = 0; c < TIDE_HEAP_CLASSES; c++) tide_write_u64(w, h->free[c]);
     tide_write_u64(w, h->pending);
-    for (uint32_t i = 0; i < h->pages; i += places(h->page[i])) {
-        const tide_page *p = h->page[i];
+    for (uint32_t i = 0; i < h->pages; i += span_at(h, i)) {
+        tide_page *made;
+        const tide_page *p = page_read(h, i, &made);
         tide_write_u32(w, places(p));
         tide_write_bytes(w, tide_page_data(p), in_use(h, p));
+        tide_page_release(made, 1);
     }
 }
 
@@ -599,6 +790,7 @@ bool tide_heap_unpack(tide_heap *h, tide_reader *r)
         }
         add_page(h, count);
         tide_page *p = h->page[h->pages - 1u];
+        h->live[p->first] = LIVE_UNKNOWN;
         const uint32_t bytes = in_use(h, p);
         const uint8_t *data = tide_read_bytes(r, bytes);
         if (data) memcpy(tide_page_data(p), data, bytes);
@@ -611,14 +803,6 @@ bool tide_heap_unpack(tide_heap *h, tide_reader *r)
 // Packed as part of a delta: its numbers, each page's places as runs of pages
 // that take as many, then its pages as regions.
 
-// The base's page that starts at place `at`, or NULL.
-static tide_page *base_page(const tide_heap *base, const uint32_t at)
-{
-    if (!base || at >= base->pages) return NULL;
-    tide_page *b = base->page[at];
-    return b->first == at ? b : NULL;
-}
-
 void tide_heap_pack_delta(const tide_heap *h, const tide_heap *base, tide_delta_writer *d)
 {
     tide_asset_pack_heap(h, &d->bytes, d->assets, d->xor ? base : NULL);
@@ -627,8 +811,8 @@ void tide_heap_pack_delta(const tide_heap *h, const tide_heap *base, tide_delta_
     tide_delta_number64(d, h->pending);
     uint32_t run = 0;
     uint32_t count = 0;
-    for (uint32_t i = 0; i < h->pages; i += places(h->page[i])) {
-        if (run && places(h->page[i]) == count) {
+    for (uint32_t i = 0; i < h->pages; i += span_at(h, i)) {
+        if (run && span_at(h, i) == count) {
             run++;
             continue;
         }
@@ -637,17 +821,22 @@ void tide_heap_pack_delta(const tide_heap *h, const tide_heap *base, tide_delta_
             tide_delta_number(d, count);
         }
         run = 1;
-        count = places(h->page[i]);
+        count = span_at(h, i);
     }
     if (run) {
         tide_delta_number(d, run);
         tide_delta_number(d, count);
     }
-    for (uint32_t i = 0; i < h->pages; i += places(h->page[i])) {
-        const tide_page *p = h->page[i];
-        const tide_page *b = base_page(base, i);
+    for (uint32_t i = 0; i < h->pages; i += span_at(h, i)) {
+        // A page that's gone is read as it was; the same as the base's where both are gone the same
+        tide_page *made, *base_made;
+        const tide_page *p = page_read(h, i, &made);
+        const tide_page *b = page_read(base, i, &base_made);
+        const bool same = made ? base_made && stub_at(base, i) == h->stub[i] : b == p;
         tide_delta_asset_region(d, tide_page_data(p), in_use(h, p), b ? tide_page_data(b) : NULL, b ? in_use(base, b) : 0u,
-                          b == p, tide_asset_origin_page(h, i));
+                          same, tide_asset_origin_page(h, i));
+        tide_page_release(made, 1);
+        tide_page_release(base_made, 1);
     }
     tide_delta_close(d);
 }
@@ -680,7 +869,8 @@ bool tide_heap_unpack_delta(tide_heap *h, const tide_heap *base, tide_delta_read
         }
         run--;
         make_room(h, h->pages + count);
-        tide_page *b = base_page(base, h->pages);
+        tide_page *base_made; // The base's page as it was, where the base gave it back: shared if it's the same
+        tide_page *b = page_read(base, h->pages, &base_made);
         const uint32_t size = count << TIDE_HEAP_PAGE_SHIFT;
         const uint64_t left = h->used - ((uint64_t)h->pages << TIDE_HEAP_PAGE_SHIFT);
         const tide_asset_origin *previous = base ? tide_asset_origin_page(base, h->pages) : NULL;
@@ -688,12 +878,17 @@ bool tide_heap_unpack_delta(tide_heap *h, const tide_heap *base, tide_delta_read
         tide_page *p = tide_delta_asset_page(d, left < size ? (uint32_t)left : size, size, count, b, b ? in_use(base, b) : 0u,
                                        b && b->size == size, &origin);
         if (!p) {
+            tide_page_release(base_made, 1);
             tide_heap_settle(h);
             return false;
         }
         if (origin.data) tide_asset_origin_set(h, h->pages, origin);
         if (p != b) p->first = h->pages;
-        for (uint32_t k = 0; k < count; k++) h->page[h->pages + k] = p;
+        tide_page_release(base_made, 1);
+        for (uint32_t k = 0; k < count; k++) {
+            h->page[h->pages + k] = p;
+            h->live[h->pages + k] = LIVE_UNKNOWN;
+        }
         h->pages += count;
     }
     tide_heap_settle(h);
@@ -703,11 +898,11 @@ bool tide_heap_unpack_delta(tide_heap *h, const tide_heap *base, tide_delta_read
 void tide_heap_hash_pages(const tide_heap *h, tide_writer *w)
 {
     uint32_t count = 0;
-    for (uint32_t i = 0; i < h->pages; i += places(h->page[i])) count++;
+    for (uint32_t i = 0; i < h->pages; i += span_at(h, i)) count++;
     tide_write_varint(w, count);
-    for (uint32_t i = 0; i < h->pages; i += places(h->page[i])) {
-        tide_write_varint(w, places(h->page[i]));
-        tide_write_u64(w, tide_page_hash(h->page[i], in_use(h, h->page[i])));
+    for (uint32_t i = 0; i < h->pages; i += span_at(h, i)) {
+        tide_write_varint(w, span_at(h, i));
+        tide_write_u64(w, place_hash(h, i));
     }
 }
 
@@ -718,8 +913,9 @@ void tide_heap_need_pages(const tide_heap *base, tide_needs *n)
     for (uint32_t i = 0; i < count; i++) {
         const uint32_t taking = tide_read_varint(&n->list);
         if (!places_hold(at, taking)) n->list.failed = true;
-        tide_page *b = n->list.failed ? NULL : base_page(base, at);
-        tide_needs_put(n, b != NULL, b ? tide_page_hash(b, in_use(base, b)) : 0u);
+        const bool have = !n->list.failed && base && at < base->pages
+            && (base->page[at] ? base->page[at]->first == at : stub_at(base, at) != NULL);
+        tide_needs_put(n, have, have ? place_hash(base, at) : 0u);
         if (!n->list.failed) at += taking;
     }
 }
@@ -813,7 +1009,7 @@ static bool same_heap(const tide_heap *h, const tide_heap *base)
         return false;
     }
     for (uint32_t i = 0; i < h->pages; i++) {
-        if (h->page[i] != base->page[i]) return false;
+        if (h->page[i] != base->page[i] || stub_at(h, i) != stub_at(base, i)) return false;
     }
     return true;
 }
@@ -864,7 +1060,11 @@ void tide_heaps_settle(tide_heaps *hs)
     tide_heap *all = slot_heap(hs, 0);
     for (uint32_t i = 0; all && i < tide_heap_count; i++) {
         tide_heap_settle(&all[i]);
-        for (uint32_t run = 1; all[i].runs && run < TIDE_HEAP_RUNS; run++) tide_heap_settle(&all[i].runs[run - 1u]);
+        give_back(&all[i]);
+        for (uint32_t run = 1; all[i].runs && run < TIDE_HEAP_RUNS; run++) {
+            tide_heap_settle(&all[i].runs[run - 1u]);
+            give_back(&all[i].runs[run - 1u]);
+        }
     }
 }
 
@@ -1011,9 +1211,19 @@ uint32_t tide_heaps_pages(const tide_heaps *hs)
     uint32_t pages = 0;
     for (uint32_t number = 0; number < NUMBERS; number = after(hs, NULL, number)) {
         const tide_heap *heap = numbered(hs, number);
-        if (heap) pages += heap->pages;
+        if (heap) pages += heap->pages - heap->gone;
     }
     return pages;
+}
+
+uint32_t tide_heaps_gone(const tide_heaps *hs)
+{
+    uint32_t gone = 0;
+    for (uint32_t number = 0; number < NUMBERS; number = after(hs, NULL, number)) {
+        const tide_heap *heap = numbered(hs, number);
+        if (heap) gone += heap->gone;
+    }
+    return gone;
 }
 
 uint32_t tide_heaps_pages_apart(const tide_heaps *hs, const tide_heaps *other)

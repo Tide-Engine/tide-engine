@@ -1841,6 +1841,7 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
             if (held_now) printf(", the process %7.1f MB", (double)held_now / 1e6);
             printf("; server updates since the last %.2f ms on average, %.2f at most\n",
                    stretch_updates ? stretch_ms / (double)stretch_updates : 0.0, stretch_most);
+            if (world && d->parts) d->parts(world);
             fflush(stdout);
             alloc_report();
             stretch_next = now + o.every;

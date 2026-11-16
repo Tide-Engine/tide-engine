@@ -1,3 +1,26 @@
+## A heap's pages given back (2026-11-16, night)
+
+A heap lets go of the pages whose blocks are all free and keeps what makes each again (notes/ecs.md, top section), so
+a place in its page table can be NULL. What keeps that from being read:
+
+- **Only a block that's handed out is read through a handle**, and a page goes only when it has none: counted as
+  blocks are handed out and as they're freed (not as they're released: a released block is readable until its
+  code's flush, as before, and counts until then). A page whose blocks can't be told apart (read from bytes) never
+  goes.
+- **A block handed out of a page that's gone has its page made again first**, the same bytes, so `tide_heap_alloc`
+  gives what it gave before: a zeroed block.
+- **Code that looks a page up by any offset checked for NULL already**: `mesh.c`'s `span` and its list check (a
+  Texture's kept names), and generated `tide_client_place_page`. A hostile packed world could always name an offset
+  with no block; a handle in a world that came as bytes is trusted as far as it was.
+- **Nothing of it comes from bytes**: a packed heap and a delta are those of the heap with every page there, and what
+  reads them makes every page. The counts and the kept words are this machine's own.
+- **Pages go only while nothing else is on the world** (`tide_heaps_settle`, after a tick's changes), and not from a
+  heap with blocks waiting to be freed or pages its runs replaced.
+
+`tests/test_heap.c`'s four `heap_giv*`/`heap_with_pages_given_back*` tests run it against a twin under ASan.
+Entities' slots and the tables are as they were: a slot's pages aren't given back, so nothing about a stale Entity
+changed.
+
 ## The server's store: listings and answers (2026-11-15)
 
 `Storage.List` takes a prefix and a key to go on after from match code, a provider lists names anyone could have put in

@@ -106,6 +106,15 @@ typedef struct tide_heap {
     struct tide_heap_later *later;
     uint32_t later_count;
     uint32_t later_room;
+    // Pages given back (below). None of it is the world's state: a heap hashes and packs as it would with every
+    // page in memory. `live`: for each place a page starts at, the blocks of it handed out and not yet free
+    // again (or that it isn't known, for a page read from bytes). `stub`: for each place a page given back
+    // started at, what brings it back; NULL until one is. `gone`: the places given back. `idle`: the places of
+    // pages in memory whose blocks are all free.
+    uint16_t *live;
+    struct tide_heap_stub **stub;
+    uint32_t gone;
+    uint32_t idle;
 } tide_heap;
 
 // A block with room for `bytes` bytes after its header. Offsets are never 0.
@@ -260,6 +269,29 @@ void tide_heap_drop_later(tide_heap *h, const uint8_t id[32], uint64_t block);
 tide_heap *tide_heap_run_of(tide_heap *base, uint32_t run);
 
 // ---------------------------------------------------------------------------
+// Pages given back
+//
+// A heap's blocks are never moved and its offsets never handed out twice over,
+// so what it has handed out is as much as it ever held at once. The memory
+// isn't: a page all of whose blocks are free holds zeros and each block's
+// place in its free list, and once a quarter of a heap's pages in memory are
+// such pages (TIDE_HEAP_GIVE_LEAST places of them at least), tide_heaps_settle
+// lets go of them, keeping the few words of each that aren't zero. A block
+// handed out of one again brings its page back first, as it was.
+//
+// This is how the heap is kept in memory, and no part of what it is: its hash,
+// its packed bytes and its deltas are those of the heap with every page there,
+// and the blocks it hands out next are the same ones. So two machines needn't
+// agree about it, and a world read from bytes, whose blocks' pages it can't
+// tell free from handed out, gives back only pages made since.
+//
+// Nothing reads a place whose page is gone: only a handle to a block that's
+// handed out is read, and such a page has none. Code that looks a page up by
+// an offset that could be anything checks for NULL first.
+
+#define TIDE_HEAP_GIVE_LEAST 2u
+
+// ---------------------------------------------------------------------------
 // A world's heaps
 //
 // What a component's, a singleton's or an event's fields hold is in that
@@ -342,10 +374,12 @@ void tide_heaps_need_pages(const tide_heaps *base, tide_needs *n);
 uint64_t tide_heaps_used(const tide_heaps *hs);
 bool tide_heaps_pending(const tide_heaps *hs);
 
-// How many pages its heaps have between them, and how many of them aren't
-// `other`'s pages in the same places: what a world and its snapshot don't
-// share.
+// How many pages its heaps have between them in memory (the places it gave
+// back aren't counted: tide_heaps_gone says how many those are), and how many
+// of its places aren't `other`'s pages in the same places: what a world and
+// its snapshot don't share.
 uint32_t tide_heaps_pages(const tide_heaps *hs);
+uint32_t tide_heaps_gone(const tide_heaps *hs);
 uint32_t tide_heaps_pages_apart(const tide_heaps *hs, const tide_heaps *other);
 
 // The heaps the code this thread runs may change, for builds that check

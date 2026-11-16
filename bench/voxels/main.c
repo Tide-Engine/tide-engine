@@ -8,7 +8,9 @@
 // climbs, building a tower, all in the first dimension: what each builds is far
 // from the others, who see it in their far regions. With `audit`, the server
 // checks its far regions against its chunks every that many ticks (Audit in
-// voxels.tide), and the run fails on what it finds wrong.
+// voxels.tide), and the run fails on what it finds wrong. With `out` and
+// `back`, each flies straight out, comes back the way it went and stays: a
+// world that held many chunks and holds few.
 
 #include <stdio.h>
 #include <string.h>
@@ -197,6 +199,8 @@ static bench_flag flags[] = {
     {"out", "1: each bot flies straight out a way of its own for the whole run (eight ways), never turning", 0, 0, 0, 0},
     {"fill", "the run fails where the whole box of a dimension a bot hopped into took more ticks than this to be on "
              "its machine, at the median, or where one never was; 0 doesn't check", 0, 0, 0, 0},
+    {"back", "with --out: seconds after which each bot flies back the way it came, for as long, and then stays there: "
+             "a world that held many chunks and holds few; 0 never", 0, 0, 0, 0},
 };
 
 static uint32_t mix(uint32_t x)
@@ -260,6 +264,11 @@ static void sample(const bench_flag *f, const uint32_t bot, const uint32_t tick,
     const uint32_t h = mix(bot * 2654435761u ^ leg);
     c->move = (tide_float3){ways[h & 7u][0], (float)((h >> 3) % 3u) * 0.1f - 0.1f, ways[h & 7u][1]};
     if (f[19].value) c->move = (tide_float3){ways[bot & 7u][0], 0, ways[bot & 7u][1]}; // --out
+    if (f[19].value && f[21].value) { // --back: out for that long, back as long, then still, digging and building nothing
+        const uint32_t back = f[21].value * 60u;
+        if (tick >= back) c->move = tick < 2u * back ? (tide_float3){-ways[bot & 7u][0], 0, -ways[bot & 7u][1]} : (tide_float3){0, 0, 0};
+        if (tick >= 2u * back) return;
+    }
     c->dig = builds && (tick / 30u + bot) % 4u == 0u;
     c->build = builds && (tick / 45u + bot) % 6u == 0u;
 }
@@ -274,6 +283,29 @@ static uint32_t held(const void *world)
     uint32_t count = 0;
     EACH(w, e) count++;
     return count;
+}
+
+// What a world's memory is made of (bench_desc.parts): the pages its entity table, its tables and its heaps
+// have, as their sizes together, whoever else shares them
+static void parts(const void *world)
+{
+    const tide_world *w = world;
+    const tide_table *tables[] = {&w->arch0_Far_Visibility, &w->arch1_Dimension_Visibility, &w->arch2_Owner_Avatar,
+                                  &w->arch3_Chunk_Visibility, &w->arch4_Main};
+    uint64_t rows = 0, holes = 0, chunks = 0;
+    for (uint32_t i = 0; i < sizeof tables / sizeof tables[0]; i++) {
+        rows += tables[i]->count;
+        holes += tables[i]->holes;
+        chunks += tables[i]->chunks;
+    }
+    printf("    its entity table %u slots in %u pages (%.2f MB); tables %llu rows, %llu of them holes, in %llu chunks; "
+           "heaps %u pages in memory (%.2f MB) and %u given back, %.2f MB handed out",
+           w->entities.next_unused, w->entities.pages, (double)w->entities.pages * 32768.0 / 1e6, (unsigned long long)rows,
+           (unsigned long long)holes, (unsigned long long)chunks, tide_heaps_pages(&w->heap),
+           (double)tide_heaps_pages(&w->heap) * 16384.0 / 1e6, tide_heaps_gone(&w->heap),
+           (double)tide_heaps_used(&w->heap) / 1e6);
+    printf("; packed: entities %.2f MB, heaps %.2f MB\n", (double)tide_entities_packed_size(&w->entities) / 1e6,
+           (double)tide_heaps_packed_size(&w->heap) / 1e6);
 }
 
 static void describe_watched(void);
@@ -547,6 +579,7 @@ int main(int argc, char **argv)
         .sample = sample,
         .describe = describe,
         .held = held,
+        .parts = parts,
         .tick_of = tick_of,
         .watch = watch,
         .watch_server = watch_server,
