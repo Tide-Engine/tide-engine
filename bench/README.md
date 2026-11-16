@@ -41,7 +41,8 @@ three longest systems (the server ticks with a `tide_profile` for it, which read
 those runs' times are a little longer). Under that list it gives each of the server's systems in ms a second over
 the run, longest first, and the server's updates split in two, those after which it held as many entities as before
 and those in which some came or went (`bench_desc.held`), each with its count and what an update of it took on
-average: in all, simulating (its systems, and the handlers and changes after them), hashing, snapshots, packing.
+average: in all, simulating (its systems, and the handlers and changes after them), hashing (the world's own hash
+and its players' projections': a game that hides state hashes the world as part of the second), snapshots, packing.
 `--every <s>` prints a line every so many made-up seconds: the server's
 world in memory and what it holds, bot 0's, the process's memory (Windows and Linux), and the server's updates
 since the last line, on average and at most; and every report ends with the most the process held.
