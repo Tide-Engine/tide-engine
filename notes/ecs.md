@@ -1,5 +1,102 @@
 # ECS and simulation state
 
+## A handler takes the lanes it changed (2026-11-16, later)
+
+An event's or a command's handler with a `mut` component took every lane of that component for writing in its
+entity's table chunk before its code ran (`tide_table_column_mut` for each, in `gen_chunk_columns`), then put back
+the lanes its code can write whatever they held (`tide_scatter_some_<C>`). Whoever takes a page a snapshot shares
+copies it, so each handled event copied every lane's page of the chunk (voxels' `Chunk`: 12 lanes, 48 KB) for the
+world and every later copy to carry, with every byte the same but the few it wrote; and on a page the table had
+alone it threw the kept hash away, so the tick's hash read it again. That was most of what the loops' indexes had
+left to do (notes/indexed-loops.md, top section: pages that differ with the same bytes) and a tenth of a voxels
+client's simulating.
+
+- **Now** (`gen_dispatch_handlers`, `gen.row_single`; `gen_chunk_columns`, `gen_row_puts` in
+  `compiler/src/codegen.c`): the dispatch reads the row from the lanes where they are (`tide_table_column`, as a
+  read-only parameter's), runs the handler on the copy as before, and puts back the lanes its code can write
+  (`written_runs`: the analysis systems' rows go by, through the functions a place is handed to; every lane for
+  C, a task or anything it can't see through), each only where its bytes are no longer the table's:
+  `if (memcmp(<the lane's bytes>, &copy + offset, 4) != 0) memcpy(tide_table_column_mut(...) + row, ...)`, a line
+  a lane, so a lane that came out as it was keeps its page (shared, and hashed as it was) and one that differs
+  has its page made the table's own and is written. A page is another page after a handler exactly when its
+  bytes are other bytes. More than 16 lanes (`HANDLER_PUTS_INLINE`) go through `tide_table_scatter`, which does
+  the same a run of lanes a call. No new runtime function.
+- **What a lane is compared with.** The table's bytes as they are once the code ran. Where nothing but the put
+  can have written the component's lanes meanwhile, that's the page the row was read from (`tide_col_<C>[k]`, no
+  page looked up again: in `versus_events` that is 9.83 to 9.62 ms a tick, where asking again was 9.85 to
+  10.07 and a call of `tide_table_scatter` a put 9.77 to 10.8). A page's place in the table changes only when a
+  page others share is
+  written, so it's asked for again (`again`: `tide_table_column` at the put) where the handler's code can have
+  had the row written another way: it starts a task (which gets the entity's components and puts them back
+  itself, before its first wait), it reaches C (which might Set through a world it holds), or the component
+  keeps preparation state. A Set or an Edit of the component by the code itself was `tide_store_<C>` already, by
+  the entity. The page read from is never gone, only old: whoever shared it still has it.
+- **Why nothing can tell.** The copy is gathered from the same bytes. What's put back is the copy, in every lane
+  the old code put back: where the old code stored a lane unseen, this stores it when it differs from what the
+  table has (so what something else wrote to the row meanwhile is written over, as it was). The lanes outside
+  the mask were never written and still aren't. Order, the heap's flush before the put and structural changes
+  (queued) are as they were. Every world hash pinned in the tree is what it was.
+- **The other single-entity paths already did this**, checked rather than changed: a task's copies
+  (`gen_entity_copies`), `world.Set`, `world.Edit`'s end and `tide_set_<C>` all go through `tide_store_<C>`
+  (`tide_table_scatter` over every lane), and a spawn writes its row by the same call. The fixture below holds them
+  to "another page exactly when other bytes" too. A view's loop and a system that reads its own writes through
+  its World (`gen_chunk`, in place) still take their lanes whole: the local world has no snapshots, and the second
+  has to see its earlier rows' writes.
+- **Not changed, and still copies pages whose bytes don't change**: filling a hole an entity left (the row is
+  zeroed and written whole: an entity that comes back to its table with the same values, `handler_lanes`' Leave
+  step); a system written in C, whose chunks' pages are made its own before it runs (`gen_system_own`); and
+  anything that writes a value and writes the old one back (the fixture's Undo and Sly steps).
+- **Tests** (`compiler/tests/e2e/handler_lanes.tide`, `handler_lanes_test.c`, `handler_lanes_c.c`;
+  `handler_lanes_net.tide`, `handler_lanes_net_test.c`; `compiler/tests/handler_lanes_codegen.cmake`):
+  - `tidec_e2e_handler_lanes`, `handler_lanes_each_handler_takes_the_pages_it_changed_and_no_other`: 2,500
+    entities in two archetypes (three table chunks), 34 ticks each beside a snapshot of the tick before. Handlers
+    that write one field; one its code can write and doesn't for half its events; one whose five writes leave what
+    was there (no page taken at all); through functions handed the component and places of it (a struct's field,
+    an array's element, a vector's part); a list and text (the second element is in the block the first made:
+    the list's lanes stay); a sparse component; a component added by the handler that writes another, and removed
+    by one that writes it; a Set of its own through the World and then its parameter; another entity's by
+    `world.Edit` and `world.Set`; one handed to C; a task across a wait; a task the handler starts between its
+    own two writes; one that puts a field back over what the task it started wrote; C that Sets the entity
+    through a world it holds, which the handler's copy is put over; a grid; and 21 lanes through a function
+    (`tide_table_scatter`). After every tick: every entity's every field against a model worked out in C, the
+    snapshot's against the model of the tick before, the snapshot's hash as it was, every page of the four tables
+    another page exactly when its bytes differ (and still hashed when it isn't), and for each step which lanes
+    may differ at all (Poke: lane `a` in exactly the chunks its ten entities are in).
+  - `handler_lanes_same_alone_beside_snapshots_and_run_again`: 24 ticks, most with every handler at once, alone,
+    beside a snapshot of each tick, and again from a snapshot kept on the way with a ring of three worlds beside
+    it: the same hash every tick, and the kept ones as they were.
+  - `tidec_e2e_handler_lanes_net`: a server and two clients 100 ms away over a network losing 3% with jitter,
+    each striking posts every few ticks by its input; the clients predict both players, guess the other's strikes
+    wrong, and run more than 300 ticks again each: no world is ever sent again (`resyncs` 0), and what each shows
+    and has confirmed at the end is the server's, field by field.
+  - `tidec_handler_lanes_codegen` pins the puts (which lanes each handler puts back, which are compared with
+    the page read from and which with one asked for again, the wide one's call) and that no handler takes its
+    lanes with `tide_table_column_mut` before its code or puts one back unseen.
+  - **Mutations**, each built and run against the three: every lane taken before the code, as it was, fails the
+    pages in 16 of the 34 ticks (40 checks) and the codegen check; a handler's first lane not put back fails the
+    values every tick and the net test (the strikes are lost); the written lanes stored whatever they hold fails
+    the pages for the handlers that write what's there, don't write, or hand C all of it; a put of every lane
+    whatever the code can write is caught by the codegen check alone (the bytes and pages are the same: the mask
+    only saves compares); a function's writes not followed into what it's handed (`writes_through`) loses
+    `OnDeep`'s and the net test's; the put into the table's first chunk whichever the row's fails the values
+    past it; the wide put left out fails its values; compared with the page read from where a task or C wrote
+    meanwhile (both, and each alone) fails the values and the differential; and `tide_table_scatter` writing
+    without comparing (the runtime) fails the pages of the Set, Edit and task steps and `tide_tests
+    table_scatter`.
+  - **Not caught by any test**: `again` for a component with preparation state (kept because such a row's hidden
+    fields are put back from the table's own; nothing here makes its page another meanwhile).
+- **Measured**: notes/voxels.md, At scale, What was fixed (the last bullet): pages copied a frame 87 to 20 on a
+  voxels server and 667 to 59 on its eight clients, a client's simulating 4.49 to 3.86 ms a second, the
+  server's hashing 6.14 to 5.64, its simulating 19.7 to 18.4. `versus_events` (200,000 events a tick to 50,000
+  entities, one field written each, one thread, three runs each, alternating): 9.83 to 9.62 ms a tick, and with
+  each tick's world kept beside it (`--kept 1`) 9.93 to 9.63. `bench_gallery` and `bench_sand` are as they were.
+- **Found on the way, not fixed** (the compiler's loop views, not this task's): `for (...) plan.parts[F(k)].Send(E
+  { ... });` over a list of a singleton the system takes read-only generates `tide_list_prepare(&(plan->parts),
+  ...)` before the loop, a write's preparation for a loop that only reads the list, through a `const` pointer:
+  clang refuses the C (`discards qualifiers`). `handler_lanes.tide` reads the entity through a function (`At`).
+- **For the owner**: nothing to decide. The programs are no bigger for a put that's a line a lane (`bench_voxels`
+  1,541 to 1,524 KB, `bench_gallery` and `versus_events` the same to within a kilobyte).
+
 ## A copied table keeps its entities' orders (2026-11-16)
 
 `tide_entities_copy` threw away the sorted keys `tide_entities_ordered` and `tide_entities_ordered_archetypes(_slots)`

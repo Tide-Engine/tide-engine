@@ -1,0 +1,77 @@
+// Handlers on a client that predicts: each player's input strikes one of forty posts every few ticks, and the
+// handlers write some fields of the post and of the player's body. A client runs them ahead of what the server
+// confirmed, beside the worlds of its last ticks (every page shared), guesses the other player's strikes, and runs
+// them again when a guess was wrong. Its handlers take only the lanes they change (notes/ecs.md), and its worlds
+// have to stay the server's: handler_lanes_net_test.c.
+
+component Body
+{
+    float2 at;
+    int strikes;
+    int felt;
+    int last;
+    int quiet;
+}
+
+component Post
+{
+    int id;
+    int struck;
+    int by;
+    int twice;
+    int still;
+}
+
+input Controls
+{
+    float2 move;
+    int strike;     // Past 0: the post to strike, from 1
+}
+
+singleton Field
+{
+    List<Entity> posts;
+}
+
+event Strike { int by; bool again; }
+event Felt { int post; }
+
+const int POSTS = 40;
+
+scene Main { }
+
+event(Spawned) Setup(with Main, mut Field field)
+{
+    for (int i = 0; i < POSTS; i++) field.posts.Add(Spawn(Post { id = i, still = i * 7 }));
+}
+
+event(PlayerJoined joined) Join()
+{
+    Spawn(Body { quiet = 3 }, Owner { player = joined.player });
+}
+
+system Act(Controls input, mut Body body, with Owner, Field field)
+{
+    body.at += input.move;
+    if (input.strike <= 0 || field.posts.count < POSTS) return;
+    var post = (input.strike - 1) % POSTS;
+    body.strikes += 1;
+    field.posts[post].Send(Strike { by = input.strike, again = input.strike % 4 == 0 });
+    this.Send(Felt { post = post });
+}
+
+void Count(mut Post post) { post.struck += 1; }
+
+// Two of a post's five lanes, a third for some strikes
+event(Strike strike) OnStrike(mut Post post)
+{
+    Count(post);
+    post.by = strike.by;
+    if (strike.again) post.twice += 1;
+}
+
+event(Felt felt) OnFelt(mut Body body)
+{
+    body.felt += 1;
+    body.last = felt.post;
+}

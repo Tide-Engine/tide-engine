@@ -236,6 +236,12 @@ tide_e2e_test(queries) # Read-only iteration over a separate entity set
 tide_e2e_test(query_narrow WARNINGS "'value' is never used") # Zero-demand binding intentionally exercises an entity-only row
 tide_e2e_test(query_read_paths) # Properties and composed swizzles do not masquerade as direct storage paths
 tide_e2e_test(handler_queries) # Current-world queries at match event/command turns, with ordinary deferred changes
+# A handler takes for writing only the lanes it changed: each page another exactly when its bytes are, beside a snapshot
+tide_e2e_test(handler_lanes SOURCES e2e/handler_lanes.tide e2e/handler_lanes_c.c)
+add_test(NAME tidec_handler_lanes_codegen
+    COMMAND "${CMAKE_COMMAND}" "-DGAME_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_handler_lanes/game.c"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/handler_lanes_codegen.cmake")
+tide_e2e_test(handler_lanes_net) # ...and a client that predicts them, guesses wrong and runs them again has the server's world
 tide_e2e_test(query_borrows) # Borrowed helper queries retain selection, row projection, order and caller capabilities
 tide_e2e_test(query_local_fields) # Current attached local fields through read-only and mutable query bindings
 tide_e2e_test(event_containers) # Selectively retained container values in local event journals

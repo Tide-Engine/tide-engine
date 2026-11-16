@@ -138,14 +138,21 @@ searched as fast as the whole-built kind was: `bench_loops --n 0 --chunks 10000 
 1,000 lookups a tick, 0.061 to 0.063 ms by place and 0.055 to 0.057 by a long (three runs each, alternating; the
 hashes the same).
 
+**Since** (the same day, later): the handlers no longer take pages they don't change (notes/ecs.md, top section),
+so "comparing pages handlers took for writing and wrote nothing new to" above is gone: three in four of a
+server's walks and seven in eight of a client's.
+
 **Gaps.**
 - An index of doubles is made whole when a page differs, though no row does: the same handlers' writes cost a
   loop by distance over rows that don't move an index a tick. Comparing the pages first, as above, would keep it
   (not built: no game measured has one over rows that are written and don't move).
-- A handler takes every lane of a `mut` component for writing in its entity's table chunk, written or not
+- ~~A handler takes every lane of a `mut` component for writing in its entity's table chunk, written or not
   (`tide_table_column_mut` of each): that is what makes the pages differ, and it copies them (12 pages of 4 KB for
-  a voxels chunk's handler, once a tick for each table chunk a handler runs in). Taking only the lanes it scatters
-  (`tide_scatter_some_*` has the mask) would save the copies and the compares both. The ECS's, not this task's.
+  a voxels chunk's handler, once a tick for each table chunk a handler runs in).~~ Closed later the same day
+  (notes/ecs.md, A handler takes the lanes it changed): a handler's put leaves a lane whose bytes are the table's,
+  so a page is another page only when a row of it changed. In the 30 s run of 8 bots a server's loops' starts
+  that took in what changed went from 4,272 to 1,024 and the clients' from 41,340 to 5,062, with the same rows
+  looked at (notes/voxels.md, At scale, What was fixed, the last bullet).
 - A followed index never gives memory back: a group's places stay when its table chunk goes (a table that was
   once large keeps places for its largest), and its slots don't shrink. Bounded by the most rows the tables had.
 - `tide_index_copy` copies every entry for one row's change (a client whose copy's rows changed: about 4,100

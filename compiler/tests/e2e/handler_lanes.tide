@@ -1,0 +1,259 @@
+// The lanes a handler takes for writing (notes/ecs.md, A handler takes the lanes it changed): of a component it
+// takes `mut`, only the lanes whose bytes it changed are written, so the others' pages stay the ones a snapshot
+// shares. Each handler here writes another way; handler_lanes_test.c works out what each leaves, and which pages
+// of the tables are still the snapshot's.
+
+scene Main { }
+
+struct Inner
+{
+    int x;
+    int y;
+}
+
+component Part
+{
+    int id;
+    int a;
+    int b;
+    float2 pos;
+    Inner inner;
+    int[4] slots;
+    List<int> items;
+    string label = "part";
+    int quiet;      // Nothing writes it
+}
+
+// What C is handed, and what a Set through the World replaces
+component Plain
+{
+    int p;
+    int q;
+    float r;
+    int s;
+}
+
+component Kept { int value; }
+[Sparse] component Mark { int hits; int other; }
+component Extra { int n; int m; }
+component Field { Grid2<int> cells; int marks; int still; }
+component Wide { int[20] cells; int sum; }    // More lanes than a handler's put compares in line
+
+enum Step { Quiet, Poke, Maybe, Same, Deep, Grow, Tap, Join, Leave, Reset, Far, Native, Slow, Paint, Start, Undo, Sly, All }
+
+singleton Plan
+{
+    Step step;
+    List<Entity> parts;
+    Entity field;
+}
+
+event Poke { int by; }
+event Maybe { int by; bool really; }
+event Same { }
+event Deep { int by; }
+event Grow { int value; }
+event Tap { int by; }
+event Join { int n; }
+event Leave { int by; }
+event Reset { int to; }
+event Far { Entity other; int by; }
+event Native { int by; }
+event Slow { int by; }
+event Paint { int value; }
+event Start { int by; }
+event Undo { int by; }
+event Sly { }
+
+extern void c_handler_lanes_touch(mut Plain plain, int by);
+extern void c_handler_lanes_sly(Plain plain, Entity entity);
+
+const int PARTS = 2500;
+
+event(Spawned) Setup(with Main, mut Plan plan)
+{
+    for (int i = 0; i < PARTS; i++)
+    {
+        mut Entity e;
+        if (i % 3 == 0) e = Spawn(Part { id = i, quiet = i * 3 }, Plain { p = i });
+        else e = Spawn(Part { id = i, quiet = i * 3 }, Plain { p = i }, Kept { value = i });
+        if (i % 5 == 0) e.Add(Mark { other = i });
+        plan.parts.Add(e);
+    }
+    plan.field = Spawn(Field { still = 7 }, Wide);
+}
+
+// The k-th entity a step sends to: another each time
+int Pick(int k) { return (k * 97 + 5) % PARTS; }
+Entity At(Plan plan, int k) { return plan.parts[Pick(k)]; }
+
+system Drive(Plan plan)
+{
+    var step = plan.step;
+    if (plan.parts.count < PARTS) return;
+    var all = step == Step.All;
+    if (step == Step.Poke || all) for (int k = 0; k < 10; k++) At(plan, k).Send(Poke { by = k + 1 });
+    if (step == Step.Maybe || all) for (int k = 0; k < 20; k++) At(plan, k).Send(Maybe { by = 3, really = k % 2 == 0 });
+    if (step == Step.Same || all) for (int k = 0; k < 10; k++) At(plan, k).Send(Same { });
+    if (step == Step.Deep || all) for (int k = 0; k < 10; k++) At(plan, k + 3).Send(Deep { by = k + 2 });
+    if (step == Step.Grow || all) for (int k = 0; k < 6; k++) At(plan, k * 2).Send(Grow { value = 100 + k });
+    if (step == Step.Tap || all) for (int k = 0; k < 40; k++) At(plan, k).Send(Tap { by = 1 });
+    if (step == Step.Join || all) for (int k = 0; k < 6; k++) At(plan, k + 20).Send(Join { n = k + 1 });
+    if (step == Step.Leave || all) for (int k = 0; k < 6; k++) At(plan, k + 20).Send(Leave { by = 2 });
+    if (step == Step.Reset || all) for (int k = 0; k < 8; k++) At(plan, k + 1).Send(Reset { to = 50 + k });
+    if (step == Step.Far || all) for (int k = 0; k < 5; k++) At(plan, k).Send(Far { other = plan.parts[Pick(k + 40)], by = k + 1 });
+    if (step == Step.Native || all) for (int k = 0; k < 8; k++) At(plan, k + 2).Send(Native { by = k });
+    if (step == Step.Slow || all) for (int k = 0; k < 4; k++) At(plan, k + 7).Send(Slow { by = 5 });
+    if (step == Step.Paint || all) plan.field.Send(Paint { value = 9 });
+    if (step == Step.Start || all) for (int k = 0; k < 3; k++) At(plan, k + 30).Send(Start { by = k + 2 });
+    if (step == Step.Undo || all) for (int k = 0; k < 3; k++) At(plan, k + 33).Send(Undo { by = k + 4 });
+    if (step == Step.Sly || all) for (int k = 0; k < 2; k++) At(plan, k + 36).Send(Sly { });
+}
+
+// One field
+event(Poke poke) OnPoke(mut Part part)
+{
+    part.a += poke.by;
+}
+
+// A field its code can write, and doesn't for every event
+event(Maybe maybe) OnMaybe(mut Part part)
+{
+    if (!maybe.really) return;
+    part.b += maybe.by;
+}
+
+// Writes that leave what was there
+event(Same) OnSame(mut Part part)
+{
+    part.b = part.b + 0;
+    part.pos = part.pos * 1;
+    part.slots[1] = part.slots[1] * 1;
+    part.inner.x -= 0;
+}
+
+void Lift(mut Inner inner, int by) { inner.y += by; }
+void Slide(mut float2 at, int by) { at.x += float(by); }
+
+void Deepen(mut Part part, int by)
+{
+    Lift(part.inner, by);
+    part.slots[2] += by;
+}
+
+// Through functions handed the component and places of it, a struct's field, an array's element, a vector's part
+event(Deep deep) OnDeep(mut Part part)
+{
+    Deepen(part, deep.by);
+    Slide(part.pos, deep.by);
+    part.pos.y -= 1;
+}
+
+// A list and text: their handles are lanes of the component, their elements the heap's
+event(Grow grow) OnGrow(mut Part part)
+{
+    part.items.Add(grow.value);
+    part.label = $"grown {part.items.count}";
+}
+
+// A sparse component: only the entities that have it
+event(Tap tap) OnTap(mut Mark mark)
+{
+    mark.hits += tap.by;
+}
+
+// A component added by the handler that writes another...
+event(Join join) OnJoin(mut Part part, without Extra)
+{
+    part.b += join.n;
+    this.Add(Extra { n = join.n });
+}
+
+// ...and removed by one that writes it
+event(Leave leave) OnLeave(mut Extra extra, mut Part part)
+{
+    extra.m += leave.by;
+    part.a += extra.n;
+    this.Remove(Extra);
+}
+
+// A Set of its own through the World, then its parameter
+event(Reset reset) OnReset(mut Plain plain, mut World world)
+{
+    world.Set<Plain>(this, Plain { p = plain.p, q = reset.to, r = plain.r, s = plain.s });
+    plain.s += 1;
+}
+
+// Another entity's, edited where it is and Set, beside its own
+event(Far far) OnFar(mut Part part, mut World world)
+{
+    part.a += 1;
+    world.Edit<Part>(far.other, other) { other.inner.x += far.by; }
+    var seen = world.Get<Plain>(far.other);
+    world.Set<Plain>(far.other, Plain { p = seen.p, q = seen.q, r = seen.r + 0.5, s = seen.s });
+}
+
+// Handed to C, which may write any of it
+event(Native native) OnNative(mut Plain plain)
+{
+    c_handler_lanes_touch(plain, native.by);
+}
+
+// A task: it puts the component back as it waits and as it ends
+async event(Slow slow) OnSlow(mut Part part)
+{
+    part.a += slow.by;
+    await Wait.Ticks(2);
+    part.b += slow.by;
+}
+
+// A task a handler starts gets the entity's component itself, and puts it back as it first waits: the row is
+// written while the handler's code runs
+async void Later(mut Plain plain, int by)
+{
+    plain.s += by;
+    await Wait.Ticks(1);
+    plain.s += by;
+}
+
+event(Start start) OnStart(mut Plain plain)
+{
+    plain.q += 1;
+    Later(plain, start.by);
+    plain.r += 1;
+}
+
+// ...and a handler that then puts a field back as it was writes that over what the task left
+event(Undo undo) OnUndo(mut Plain plain)
+{
+    var was = plain.s;
+    Later(plain, undo.by);
+    plain.s = was;
+}
+
+// C that Sets the entity's component through a world it holds, behind the handler's back: what the handler's copy
+// has of the field its code can write is put over that, as it always was
+event(Sly) OnSly(mut Plain plain)
+{
+    c_handler_lanes_sly(plain, this);
+    plain.s += 0;
+}
+
+// A grid: its cells are the heap's
+event(Paint paint) OnPaint(mut Field field)
+{
+    field.cells[field.marks * 70, 0] = paint.value + field.marks;
+    field.marks += 1;
+}
+
+void Fill(mut Wide wide, int from)
+{
+    for (int i = 0; i < 20; i++) wide.cells[i] = from + i;
+}
+
+// Every lane of a wide component, through a function: put back a run of lanes a call
+event(Paint paint) OnWide(mut Wide wide)
+{
+    Fill(wide, paint.value + wide.sum);
+    wide.sum += 1;
+}
