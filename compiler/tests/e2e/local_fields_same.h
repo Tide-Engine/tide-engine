@@ -25,11 +25,11 @@
 // Since tags move entities (2026-10-29) this game's tag is an archetype's, so
 // it has no sparse filter and no derived cache slot.
 #if UINTPTR_MAX > 0xFFFFFFFFu
-#define SAME_PACKED_SIZE 909u
-#define SAME_PACKED UINT64_C(0x412EDECFC63C2907)
+#define SAME_PACKED_SIZE 917u
+#define SAME_PACKED UINT64_C(0x58D4BFE06C89A967)
 #else
-#define SAME_PACKED_SIZE 837u
-#define SAME_PACKED UINT64_C(0xCD767AC24606FCE7)
+#define SAME_PACKED_SIZE 845u
+#define SAME_PACKED UINT64_C(0x421608ED490A0C47)
 #endif
 
 static uint64_t same_bytes_hash(const uint8_t *bytes, const uint32_t size)
