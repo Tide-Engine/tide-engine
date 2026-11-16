@@ -47,6 +47,10 @@ typedef struct bench_options {
     // together), which every platform has to agree on: the run fails if it's
     // another. 0 checks nothing.
     uint64_t expect;
+    // What the bots' machines took of what they were sent (projections and repairs by what changed, each with the
+    // ticks the machine had played then), hashed in bots' order: the run fails if it's another. 0 checks nothing.
+    // A server's datagrams carry its keys, which are a run's own; what they carry is the same whatever its threads.
+    uint64_t expect_taken;
     // A sharded game's world, split into this many regions along x to start
     // with; 0 runs it on one server, as a world one server holds.
     uint32_t split;

@@ -407,6 +407,9 @@ struct machine {
     uint64_t kind_bytes[3], kind_count[3];
     counted **wires; // Its transports, counting
     uint32_t wire_count;
+    // What a bot's machine was sent and took, in the order it took them: every projection and repair by what changed
+    // (their bytes), each with the ticks it had played then. One run's is another's whatever the server's threads
+    uint64_t taken;
 };
 
 // The game, with its functions timed for the machine updating now. Machines
@@ -468,6 +471,7 @@ static bool timed_load_client_state(void *world, const uint8_t *data, const uint
 {
     const uint64_t start = tide_time_now_ns();
     const bool ok = real->load_client_state(world, data, size);
+    current->taken = tide_hash_more(tide_hash_more(current->taken, &current->advanced, sizeof current->advanced), data, size);
     current->unpack_ms += since(start);
     current->unpacks++;
     return ok;
@@ -480,8 +484,14 @@ static bool timed_client_changes(const void *world, const void *base, const void
 {
     const uint64_t start = tide_time_now_ns();
     const bool made = real->client_changes(world, base, lineage, recipient, plan, now, was, changed_size);
-    current->pack_ms += since(start);
+    const double ms = since(start);
+    // (A server reads several players' at once, on its pool's threads: their sum, so the column is the threads' time)
+    static uint32_t lock;
+    while (__atomic_exchange_n(&lock, 1u, __ATOMIC_ACQUIRE)) {
+    }
+    current->pack_ms += ms;
     current->packs++;
+    __atomic_store_n(&lock, 0u, __ATOMIC_RELEASE);
     return made;
 }
 
@@ -499,6 +509,8 @@ static bool timed_apply_client_changes(void *world, const uint8_t *plan, const u
 {
     const uint64_t start = tide_time_now_ns();
     const bool ok = real->apply_client_changes(world, plan, plan_size, now, now_size, was, was_size);
+    current->taken = tide_hash_more(tide_hash_more(tide_hash_more(current->taken, &current->advanced, sizeof current->advanced), plan, plan_size),
+                                    now, now_size);
     current->unpack_ms += since(start);
     current->unpacks++;
     return ok;
@@ -871,6 +883,7 @@ typedef struct results {
     double lag_mean;    // ...on average over every bot's frames once settled (LAG_SETTLED), and in the worst of each hundred and thousand of them
     uint32_t lag_p99, lag_p999;
     double repairs;     // Bytes of worlds a second each bot's machine got, once in: its first, and repairs
+    uint64_t taken;     // What the bots' machines took, hashed (machine.taken, bench_options.expect_taken)
     double pack_ms;     // Packing the world, each time
     uint32_t sent_size; // The world at the end, as sent...
     uint32_t size;      // ...and in memory
@@ -996,8 +1009,10 @@ static void collect(results *r, machine *bots_machines, const uint32_t bots, con
     uint32_t pinged = 0, holders = 0;
     samples steady = {0}, joining = {0}, worlds = {0}, joins = {0};
     uint64_t lags[LAG_MOST + 1u] = {0};
+    r->taken = TIDE_HASH_START;
     for (uint32_t i = 0; i < bots; i++) {
         const machine *m = &bots_machines[i];
+        r->taken = tide_hash_more(r->taken, &m->taken, sizeof m->taken);
         sum.tick_ms += m->tick_ms;
         sum.hash_ms += m->hash_ms;
         sum.copy_ms += m->copy_ms;
@@ -1228,8 +1243,11 @@ static void print_results(const results *r, const uint32_t bots, const bool held
 #endif
 }
 
-static void print_verdict(const results *r, const uint64_t expect)
+static void print_verdict(const results *r, const uint64_t expect, const uint64_t expect_taken)
 {
+    printf("\n  what the bots' machines took of what they were sent hashes to 0x%016llx", (unsigned long long)r->taken);
+    if (expect_taken) printf(r->taken == expect_taken ? " as expected" : ", but 0x%016llx was expected", (unsigned long long)expect_taken);
+    printf("\n");
     printf("\n  tick %u, hash 0x%016llx", r->tick, (unsigned long long)r->hash);
     if (expect) printf(r->hash == expect ? " as expected" : ", but 0x%016llx was expected", (unsigned long long)expect);
     printf("\n");
@@ -1409,6 +1427,7 @@ static void usage(const bench_desc *d)
     printf("  --every <s>         a line every so many seconds: what the server's world, a bot's and the process hold,\n"
            "                      and the server's updates since the last (0: none)\n");
     printf("  --expect <hash>     the server's world's hash at the end; fails on another\n");
+    printf("  --expect-taken <hash>  what the bots' machines took of what they were sent, hashed; fails on another\n");
     printf("  --save <label>      adds the results to bench/results/%s.jsonl (see bench/compare.mjs)\n", d->name);
     if (d->game->stored) {
         printf("  --files <folder>    keeps the server's store as files in the folder's saved/ (emptied first), as the\n"
@@ -1542,6 +1561,10 @@ static bool parse(const bench_desc *d, const int argc, char **argv, bench_option
         } else if (strcmp(arg, "--expect") == 0) {
             errno = 0;
             o->expect = strtoull(value, &end, 0);
+            if (*value < '0' || *value > '9' || end == value || *end != '\0' || errno == ERANGE) known = false;
+        } else if (strcmp(arg, "--expect-taken") == 0) {
+            errno = 0;
+            o->expect_taken = strtoull(value, &end, 0);
             if (*value < '0' || *value > '9' || end == value || *end != '\0' || errno == ERANGE) known = false;
         } else if (!numeric) {
             known = false;
@@ -2000,7 +2023,8 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
     collect(&r, bots_machines, bots, d, shards, &orchestra);
     r.scratch_left[0] = scratch_left[0];
     r.scratch_left[1] = scratch_left[1];
-    r.ok = r.joined && r.resyncs == 0 && (!o.expect || r.hash == o.expect) && !scratch_left[0] && !scratch_left[1];
+    r.ok = r.joined && r.resyncs == 0 && (!o.expect || r.hash == o.expect) && (!o.expect_taken || r.taken == o.expect_taken)
+        && !scratch_left[0] && !scratch_left[1];
     print_results(&r, bots, d->held != NULL);
     if (d->describe) {
         for (uint32_t i = 0; i < host_room; i++) {
@@ -2016,7 +2040,7 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
         process_memory(&held_now, &held_most);
         if (held_most) printf("  the process held %.0f MB at most (the server and every bot's machine)\n", (double)held_most / 1e6);
     }
-    print_verdict(&r, o.expect);
+    print_verdict(&r, o.expect, o.expect_taken);
     if (save) save_results(d, &o, thread_count(jobs), save, &r);
 
     for (uint32_t i = 0; i < bots; i++) {

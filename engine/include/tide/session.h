@@ -167,7 +167,9 @@ typedef struct tide_game {
     // (`client_changes_base`), so `now` goes as what differs from it, and a
     // copy of that world takes the plan and `now` (`apply_client_changes`):
     // false, with the world in no state to keep, for bytes that aren't one.
-    // NULL: repairs go as whole projections (client_state).
+    // `client_changes` is called on several threads at once, for several
+    // recipients of one match, outside its ticks and checks: no call writes
+    // what another reads. NULL: repairs go as whole projections (client_state).
     bool (*client_changes)(const void *world, const void *base, const void *lineage, tide_player_id recipient,
                            tide_writer *plan, tide_writer *now, tide_writer *was, uint32_t *changed_size);    uint8_t *(*client_changes_base)(const void *world, tide_player_id recipient, const uint8_t *plan, uint32_t plan_size,
                                     uint32_t *size);

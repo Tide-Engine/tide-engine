@@ -1,5 +1,70 @@
 # Netcode: sessions, prediction, commands
 
+## Repairs read on every thread; no protocol change (2026-11-17)
+
+What was left of the hundred players (the section below, Left): an update's 20 to 32 repairs were read one after
+another on the update's thread (10 to 12 ms), as `client_changes` took the match's memo for itself (`busy`), and a
+second reader at once would have had another memo with nothing kept. Three changes (`engine/src/session.c`,
+`recipient_delta.c`, agent-maintained; tidec's `client_state_codegen.inc`, `client_changes_codegen.inc`). **Nothing on
+the wire changed** (`PROTOCOL` stays 27), nor any world or hash.
+
+- **A repair's read writes nothing another reads** (generated). `client_changes` takes the match's memo with
+  `tide_client_memo_share`, which any number of threads hold at once (`tide_client_memo.readers`; none while a check
+  hashes with it, `busy`, and none is taken from its world or cleared while one holds it), and hashes with it read
+  and never written (`tide_client_hasher.shared`, `reading`): `tide_client_memo_get` finds an entry and checks its
+  blocks and pages by `tide_client_item_holds`, which writes nothing, not even the entry's page hashes, and works a
+  page's hash out where it isn't kept without keeping it; `tide_client_memo_put` keeps nothing and
+  `tide_client_memo_sums` gives none. The journal and the kept rows were only read already. So where a repair's base
+  rows used to put their containers' hashes into the memo (over the current world's, which the next check then hashed
+  again), now nothing is put; a read is what it was otherwise. What a read writes: its own lists, hasher and writers,
+  the thread's heaps for text (`tide_text_use`, thread-local) and, under a lock, the frozen worlds' hashes and the
+  session's rooms. Every page it reads is hashed already (a tick's world is hashed as it ends, `hash_of`; a kept
+  tick's and a confirmed copy's pages are those of a world that was), so `tide_page_hash` only reads.
+  `tide_client_changes_stats` (a test's) is counted with atomics.
+- **An update reads its repairs on the pool and starts them in the connections' order** (`repairs_read`,
+  `repairs_read_work`, `repair_take`, `repair_drop`). The players whose repair is due are listed in the connections'
+  order (`repair_start` with its `c` and `tick`, nothing of the connection changed yet); with a pool of two threads or
+  more (`tide_jobs.run`) and two or more due, every thread takes them and reads each (`repair_read`, which now changes
+  nothing but its `repair_start` and the rooms: what it reads counts in `work`, and a big one says it's to be put off,
+  `put_off`) and packs it (`repair_pack`). Then the update starts them in order exactly as one thread did: each while
+  the update's reads are under `REPAIR_UPDATE_MOST` (its pending cleared, its stream's tick set, its `work` counted,
+  put off if it said so); the rest are let go and wait for the next update, as before. What's sent goes by the bytes
+  read, in the connections' order, never by which thread read what or when. Threads read ahead of knowing where the
+  allowance ends (each read is a function of the worlds and its connection alone, so reading one that's then let go
+  changes nothing); they stop taking reads past it once the reads before it are in (`stop`, `settled`), or once those
+  before it read so far already make the allowance, so a crowd of views arriving at once reads a few too many, not
+  all of them. They take views arriving first (`connection.came_at`), the longest to read, so the update doesn't wait
+  for one begun last. With one thread, or one repair due, it's read, started and packed where it is, as before.
+- **A pack's index of spans in kept room** (`tide_recipient_delta_pack_with`, `TIDE_RECIPIENT_INDEX_BYTES`): each pack
+  that looks for spans took a 512 KiB index fresh from the system (`calloc`, past the heap's size for its own pages on
+  Windows: mapped, faulted, zeroed and unmapped each time), and packs on twelve threads waited on each other for the
+  address space: with the reads on the pool, 29 repairs' reads took 82 to 122 ms of threads' time where one thread took
+  10. The session gives it room from its rooms (`client_changes_pack`, `read_rooms`), cleared for each pack: the same
+  bytes. 29 reads then take 10 to 20 ms of threads' time, 4 to 6 ms of the update's.
+
+**Why every datagram is the same**: which repairs an update starts, and what each is, is what one thread reading them
+in turn made of them: the reads are functions of the server's worlds and each player's connection (nothing a read
+writes is read by another, and nothing of a connection changes until the update starts its repair), and the update
+starts them in the connections' order by the bytes each read. `bench_voxels_reads_1`, `_4` and `_12` (16 players joining
+and hopping together every second at twice the view, the allowance met several times) pin what the bots' machines
+took of what they were sent, each with the ticks the machine had played then (`--expect-taken`, bench/bench.c), the
+same on 1, 4 and 12 threads; with the allowance left out of the update's choice where it reads on the pool, `_12`
+fails (`0xf5c53a516c89022e`), its world's hash as it was. `bench_voxels_views` pins it too. `bench_voxels` at 8, 64 and
+100 together, 100 apart and on one thread ends on the base's hash, bytes a bot and box arrival ticks in every pair
+(notes/voxels.md, Repairs read on every thread).
+
+**Threads, checked**: the read's state is listed above; the session's `repair_start` of each is one thread's from its
+taking until `done` (`repair_reads.done`, `works`, released; the update reads them after `run` returns). ASan
+(`sanitize`): `tide_tests session`, `visibility`, `page`, `tidec_e2e_visibility_*` and `bench_voxels_reads_*`
+(notes/voxels.md, Tests). There's no ThreadSanitizer on this machine; Linux CI's UBSan runs the same.
+
+**Left.**
+- An update's longest read is now one big repair (a view arriving, 2 to 3 MB: read and packed in 4 to 7 ms, the view
+  as it is now and the tick asked for one after the other on one thread). Those two are apart and could go on two
+  threads; a view's records could be written by ranges.
+- The base's rows are still hashed again for every repair whose base they are; with the reads on the pool it's no
+  longer the update's length.
+- Packing's output and the envelope are still fresh memory (small: a repair's bytes as sent).
 ## A repair's read writes into room a read had before; no protocol change (2026-11-17)
 
 What was left of the hundred players (the section below, Left; notes/voxels.md, A hundred players): an update's 20 to
@@ -33,14 +98,13 @@ with it (8.8 G cycles of records without, 9.6 to 9.8 with: working out the recip
 what it saved). Not kept, so no new hook.
 
 **Left.**
-- The reads are still one thread's (`client_changes` takes the match's memo): an update of 29 repairs reads in 10 to
-  12 ms where it was 32 (notes/voxels.md). Reading them on the pool needs the memo's journal and kept rows shared
-  read-only between readers and a hasher without the memo's entries for each, and the repairs an update starts chosen
-  by bytes read in connection order after the reads (read speculatively, those past `REPAIR_UPDATE_MOST` dropped).
+- ~~The reads are still one thread's (`client_changes` takes the match's memo): an update of 29 repairs reads in 10 to
+  12 ms where it was 32 (notes/voxels.md).~~ Read on the pool since (Repairs read on every thread, above).
 - A record is still about 2,500 cycles; the base's rows are hashed again for each repair whose base they are (a
   quarter of a read now): their terms are the recipient's only by the audience, so a kept tick's could be kept once.
 - The pool's packing still writes into fresh memory (`tide_recipient_delta_pack`'s output and the envelope), off the
-  reading thread; the update waits for it at the end of its reads.
+  reading thread; the update waits for it at the end of its reads. (Its index of spans is kept room since, and a
+  repair read on the pool is packed by the thread that read it: above.)
 
 ## Projection checks go by the pages written since the check before (2026-11-17)
 

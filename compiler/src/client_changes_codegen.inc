@@ -275,9 +275,10 @@ static void gen_client_changes(gen *g)
               "    if (w->tide_visibility_state.client || b->tide_visibility_state.client) return false;\n"
               "    tide_client_seen_list ln = {0}, lb = {0};\n");
     if (heapy) {
-        sb_printf(o, "    // Both worlds are one match's, sharing their pages: one memo, the match's own (the world it ticks)\n"
-                     "    tide_client_memo *memo = tide_client_memo_for(lineage);\n"
-                     "    tide_client_hasher hasher = {.out = {.grows = true}, .memo = memo};\n    tide_client_hasher *hs = &hasher;\n"
+        sb_printf(o, "    // Both worlds are one match's, sharing their pages: one memo, the match's own (the world it ticks), read and\n"
+                     "    // not written, so the server can read several players' repairs at once (each on its own thread)\n"
+                     "    const tide_client_memo *memo = tide_client_memo_share(lineage);\n"
+                     "    tide_client_hasher hasher = {.out = {.grows = true}, .shared = memo, .reading = true};\n    tide_client_hasher *hs = &hasher;\n"
                      "    // The rows to look at, where the match's checks wrote down what changed between the two worlds\n"
                      "    uint64_t *bits[%d] = {0}, *marks = NULL;\n    uint32_t after = 0, upto = 0;\n"
                      "    const uint32_t rows[%d] = {", archetypes, archetypes);
@@ -302,7 +303,7 @@ static void gen_client_changes(gen *g)
                      "#if defined(TIDE_CLIENT_COUNTS) || defined(TIDE_CLIENT_CHANGES_STATS)\n"
                      "        uint64_t looked = 0;\n        for (size_t i = 0; i < words; i++) looked += (uint64_t)__builtin_popcountll(marks[i]);\n#endif\n"
                      "#ifdef TIDE_CLIENT_COUNTS\n        __atomic_add_fetch(&tide_client_counts[26], looked, __ATOMIC_RELAXED);\n#endif\n"
-                     "#ifdef TIDE_CLIENT_CHANGES_STATS\n        tide_client_changes_stats[2] += looked;\n#endif\n"
+                     "#ifdef TIDE_CLIENT_CHANGES_STATS\n        __atomic_add_fetch(&tide_client_changes_stats[2], looked, __ATOMIC_RELAXED);\n#endif\n"
                      "    }\n"
                      "    uint64_t *const *const some = *found ? bits : NULL;\n",
                   archetypes, archetypes);
@@ -315,7 +316,7 @@ static void gen_client_changes(gen *g)
                   "    if (current) tide_client_see_kept(w, recipient, memo->rows, hs, &ln, some);\n"
                   "    else tide_client_see(w, recipient, hs, &ln, some);\n"
                   "    free(marks);\n"
-                  "    tide_client_memo_done(memo, hs->heaps);\n    free(hs->out.data);\n    free(hs->reach);\n");
+                  "    tide_client_memo_unshare(memo);\n    free(hs->out.data);\n    free(hs->reach);\n");
     } else {
         sb_put(o, "    tide_writer scratch = {.grows = true};\n"
                   "    tide_text_use((tide_heaps *)&b->heap, NULL);\n    tide_client_see(b, recipient, &scratch, &lb, NULL);\n"
@@ -376,7 +377,7 @@ static void gen_client_changes(gen *g)
               "    bool found = false;\n"
               "    const bool made = tide_client_changes_work(world, before, lineage, recipient, plan, now, was, changed_size, false, &found);\n"
               "#ifdef TIDE_CLIENT_COUNTS\n    if (made) __atomic_add_fetch(&tide_client_counts[found ? 24 : 25], 1u, __ATOMIC_RELAXED);\n#endif\n"
-              "#ifdef TIDE_CLIENT_CHANGES_STATS\n    if (made) tide_client_changes_stats[found ? 0 : 1]++;\n#endif\n"
+              "#ifdef TIDE_CLIENT_CHANGES_STATS\n    if (made) __atomic_add_fetch(&tide_client_changes_stats[found ? 0 : 1], 1u, __ATOMIC_RELAXED);\n#endif\n"
               "#ifdef TIDE_CLIENT_SPANS_CHECK\n"
               "    if (made && found) {\n"
               "        uint32_t changed_all = 0;\n        tide_writer plan_all = {0}, now_all = {0}, was_all = {0};\n        bool again = false;\n"

@@ -46,7 +46,17 @@ add_test(NAME bench_voxels_arrives COMMAND bench_voxels --players 1 --still 100 
 # view a repair of megabytes, read in one update and packed and sent in the next (the session's REPAIR_HEAVY), on the
 # pool's own threads where it has them. One world whichever packs it (the same with --threads 1 and 12)
 add_test(NAME bench_voxels_views COMMAND bench_voxels --near 18 --lag 1200 --players 4 --seconds 4
-                                         --expect 0x8efe0e110d3ee6d1)
+                                         --expect 0x8efe0e110d3ee6d1 --expect-taken 0x2ca98e5b0c0035b5)
+# Sixteen players joining together and hopping together every second at twice the view: an update's repairs are read
+# on the pool's threads at once, then started in the connections' order until the update has read its allowance
+# (the session's REPAIR_UPDATE_MOST, met several times here), the rest read for nothing and read again later. What
+# the bots' machines took of what they were sent, and when, is the same on 1, 4 and 12 threads (--expect-taken), as
+# is the world (notes/netcode.md, Repairs read on every thread)
+foreach(threads 1 4 12)
+    add_test(NAME bench_voxels_reads_${threads} COMMAND bench_voxels --players 16 --join-every 0 --hop 1 --near 12
+                                                        --far 1 --seconds 5 --lag 1200 --threads ${threads}
+                                                        --expect 0xec783e57193243bb --expect-taken 0xcbf6ede233a6a86c)
+endforeach()
 # The same with every projection hash worked out twice, from what's kept of the rows that didn't change and from
 # the rows themselves: the run stops where the two differ (TIDE_CLIENT_SPANS_CHECK)
 tide_add_game(bench_voxels_checked SOURCES voxels/voxels.tide NAME voxels HOST voxels/main.c)

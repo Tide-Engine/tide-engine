@@ -14,6 +14,7 @@
 #include "tide/shards.h"
 #include "tide/preparation.h"
 #include "tide/storage.h"
+#include "tide/text.h"
 #include "tide/time.h"
 #include "tide/worker.h"
 #include "recipient_delta.h"
@@ -598,7 +599,18 @@ static bool may_be_mostly_changed(const repair_made *m)
 static uint8_t *client_changes_pack(repair_made *m, uint32_t *size, bool *mostly_changed)
 {
     uint32_t packed_size = 0;
-    uint8_t *packed = tide_recipient_delta_pack(m->now.data, m->now.size, m->was.data, m->was.size, &packed_size);
+    // (Its index of spans in kept room too: half a megabyte fresh from the system for each, as players' repairs are
+    // packed on several threads at once, had them wait on each other for it)
+    tide_writer index = read_room_take(m->rooms);
+    if (index.capacity < TIDE_RECIPIENT_INDEX_BYTES) {
+        free(index.data);
+        index.data = malloc(TIDE_RECIPIENT_INDEX_BYTES);
+        if (!index.data) tide_out_of_memory();
+        index.capacity = TIDE_RECIPIENT_INDEX_BYTES;
+    }
+    uint8_t *packed = tide_recipient_delta_pack_with(m->now.data, m->now.size, m->was.data, m->was.size, &packed_size,
+                                                     (uint32_t *)(void *)index.data);
+    read_room_give(m->rooms, &index);
     if (!packed) {
         free_repair_made(m);
         return NULL;
@@ -1605,14 +1617,25 @@ typedef struct repair_start {
     tide_event_log events;
     repair_made made, made_now;
     bool read, arriving;
+    // What it read counts against REPAIR_UPDATE_MOST: bytes of `now` (tide_server.repair_work)
+    uint64_t work;
+    // Read but too big for this update to pack (REPAIR_HEAVY): put off (put_off_repair) as it's started, `made_now`
+    // (as it is now) or `made`
+    enum { PUT_OFF_NONE, PUT_OFF_NOW, PUT_OFF_READ } put_off;
     // Packed (repairs_pack)
     uint8_t *bytes, *now;
     uint32_t size, size_now;
     bool mostly_changed, mostly_now;
+    bool packed;
     tide_background job; // Packing it on the pool (repair_post), where `posted`
     bool posted;
+    bool read_done; // Read on the pool (repairs_read)
 } repair_start;
 
+// Reads what changed for a player (`c`, a repair to `tick`). It changes nothing but `r` and the room it reads into
+// (tide_server.read_rooms, under its lock), and what it reads is a function of the server's worlds and the player's
+// connection alone, so the repairs of several players are read on several threads at once (repairs_read): the
+// update then starts them in the connections' order (repair_take), as it would have read them one after another.
 static void repair_read(tide_server *s, connection *c, const uint32_t tick, repair_start *r)
 {
     *r = (repair_start){.c = c, .tick = tick, .kind = REPAIR_NONE};
@@ -1651,35 +1674,56 @@ static void repair_read(tide_server *s, connection *c, const uint32_t tick, repa
     // tick asked for is then no more than a part of it, and isn't read at all.
     r->arriving = tick < s->tick && c->came_at > tick && repair_as_it_is_now(s, c, base, player, &r->made_now);
     if (r->arriving) {
-        s->repair_work += r->made_now.now.size;
+        r->work += r->made_now.now.size;
         if (r->made_now.now.size >= REPAIR_HEAVY && !may_be_mostly_changed(&r->made_now)) {
             tide_event_log_free(&r->events);
-            put_off_repair(s, c, &r->made_now, s->tick, true);
-            *r = (repair_start){.c = c, .tick = tick, .kind = REPAIR_NONE};
+            r->put_off = PUT_OFF_NOW;
             return;
         }
     }
     r->read = client_changes_read(s->game, world, base, s->world, &r->events, player, c->frame_ack, hash, &s->read_rooms,
                                   &r->made);
     if (r->read) {
-        s->repair_work += r->made.now.size;
+        r->work += r->made.now.size;
         // A big one is packed and sent in the next update, where it can't turn out to be one for the hash
         // offer, which needs this update's worlds
         if (r->made.now.size >= REPAIR_HEAVY && !r->arriving && !may_be_mostly_changed(&r->made)) {
             tide_event_log_free(&r->events);
-            put_off_repair(s, c, &r->made, tick, false);
-            *r = (repair_start){.c = c, .tick = tick, .kind = REPAIR_NONE};
+            r->put_off = PUT_OFF_READ;
             return;
         }
     }
     r->kind = REPAIR_READ;
 }
 
+// What a repair read and its update didn't start lets go (repairs_read: read past what the update reads).
+static void repair_drop(repair_start *r)
+{
+    tide_event_log_free(&r->events);
+    free_repair_made(&r->made);
+    free_repair_made(&r->made_now);
+    free(r->bytes);
+    free(r->now);
+    r->bytes = r->now = NULL;
+    r->kind = REPAIR_NONE;
+}
+
+// A repair read is started, in the connections' order: what it read counts against the update's allowance, and a big
+// one is put off to the next update. Its kind is then REPAIR_NONE where it has nothing to send in this one.
+static void repair_take(tide_server *s, repair_start *r)
+{
+    s->repair_work += r->work;
+    if (r->put_off == PUT_OFF_NOW) put_off_repair(s, r->c, &r->made_now, s->tick, true);
+    else if (r->put_off == PUT_OFF_READ) put_off_repair(s, r->c, &r->made, r->tick, false);
+    if (r->put_off != PUT_OFF_NONE) *r = (repair_start){.c = r->c, .tick = r->tick, .kind = REPAIR_NONE};
+}
+
 // Packs what was read for one repair: on any thread, as it reads no world. `made_now` is packed whatever `made`
 // comes to, where it was read, though it goes only where `made` is a repair by changes: the same bytes either way.
 static void repair_pack(repair_start *r)
 {
-    if (r->kind != REPAIR_READ) return;
+    if (r->kind != REPAIR_READ || r->packed) return;
+    r->packed = true;
     if (r->read) r->bytes = client_changes_pack(&r->made, &r->size, &r->mostly_changed);
     if (r->arriving) r->now = client_changes_pack(&r->made_now, &r->size_now, &r->mostly_now);
 }
@@ -1753,6 +1797,100 @@ static void repairs_packed(const tide_server *s, repair_start *starts, const uin
         }
         r->posted = false;
     }
+}
+
+// The repairs an update may start, read on the pool's threads (repairs_read): `starts` are the players whose repair is
+// due, in the connections' order, each with its `c` and `tick`. Which of them the update starts is the longest run of
+// them, from the first, whose reads before each are under REPAIR_UPDATE_MOST: as one thread reading them in turn
+// would start them. Threads read them ahead of knowing which; `stop` is where that run ends once the reads before it
+// are all in (`settled`, `work`), and none past it is begun after, nor one that those before it read so far are
+// already that much for. What's read past it is let go. A read's `r` is its thread's alone until it's `done`.
+typedef struct repair_reads {
+    tide_server *s;
+    repair_start *starts;
+    uint32_t count;
+    // The order they're taken in: views arriving first (connection.came_at), most likely the longest to read, so
+    // the update doesn't wait for one begun last. Only when each is read goes by it, never which are started
+    uint32_t *order;
+    uint32_t *done;  // Each: read (atomic, set with release once its `works` is)
+    uint64_t *works; // ...and what it read (repair_start.work)
+    uint32_t next;    // The next of `order` to take (atomic)
+    uint32_t stop;    // The first the update doesn't start, once it's known; `count` until then (atomic)
+    uint32_t settled; // Every one before it is read, and `work` is what they read (under `lock`)
+    uint64_t work;
+    uint32_t lock;
+} repair_reads;
+
+static void repairs_read_work(void *context, const uint32_t thread)
+{
+    (void)thread;
+    repair_reads *rr = context;
+    // (The thread's heaps for text, which the reads set to their worlds', are as they were after: a thread of the
+    // pool may be in the midst of other work of its own)
+    tide_heaps *const heaps[4] = {tide_world_heaps[0], tide_world_heaps[1], tide_world_heaps[2], tide_world_heaps[3]};
+    for (;;) {
+        const uint32_t taken = __atomic_fetch_add(&rr->next, 1u, __ATOMIC_RELAXED);
+        if (taken >= rr->count) break;
+        const uint32_t i = rr->order[taken];
+        if (i >= __atomic_load_n(&rr->stop, __ATOMIC_ACQUIRE)) continue; // Past what the update starts
+        // ...or known to be, by what those before it that are read so far read (where several views arrive at once)
+        uint64_t before = 0;
+        for (uint32_t j = 0; j < i; j++) {
+            if (__atomic_load_n(&rr->done[j], __ATOMIC_ACQUIRE)) before += rr->works[j];
+        }
+        if (before >= REPAIR_UPDATE_MOST) continue;
+        repair_start *r = &rr->starts[i];
+        repair_read(rr->s, r->c, r->tick, r);
+        repair_pack(r); // (Its bytes are those it read: packed here, so the update waits for nothing after its reads)
+        rr->works[i] = r->work;
+        __atomic_store_n(&rr->done[i], 1u, __ATOMIC_RELEASE);
+        while (__atomic_exchange_n(&rr->lock, 1u, __ATOMIC_ACQUIRE)) tide_yield();
+        while (rr->settled < rr->count && __atomic_load_n(&rr->done[rr->settled], __ATOMIC_ACQUIRE)) {
+            if (rr->work >= REPAIR_UPDATE_MOST) {
+                __atomic_store_n(&rr->stop, rr->settled, __ATOMIC_RELEASE);
+                break;
+            }
+            rr->work += rr->works[rr->settled];
+            rr->settled++;
+        }
+        __atomic_store_n(&rr->lock, 0u, __ATOMIC_RELEASE);
+    }
+    for (uint32_t k = 0; k < 4u; k++) tide_world_heaps[k] = heaps[k];
+}
+
+// Reads the repairs of `count` players (`starts`, each with its `c` and `tick`) on the pool's threads, as many at once
+// as there are threads, so far as the update starts them (repair_reads); each read says so in its `read_done`. Every
+// world they read is one whose pages' hashes are kept (each tick's, as it's hashed after it), and nothing of the
+// match's memo is written (tide_client_memo_share), so they read and write nothing another reads.
+static void repairs_read(tide_server *s, repair_start *starts, const uint32_t count)
+{
+    const tide_jobs *jobs = s->desc.jobs;
+    // The worlds they compare that a frozen world's hash is kept for (each kept tick's, each player's confirmed one),
+    // hashed here first: two threads then never work one out at once, the first time it's asked for
+    for (uint32_t i = 0; s->game->freeze_world && i < count; i++) {
+        const connection *c = starts[i].c;
+        const void *world = server_world_at(s, starts[i].tick);
+        const void *verified = verified_of(s, c);
+        const void *base = verified && c->verified_tick == c->frame_ack ? verified : server_world_at(s, c->frame_ack);
+        if (world && world != s->world) (void)s->game->hash_world(world);
+        if (base && base != s->world) (void)s->game->hash_world(base);
+    }
+    repair_reads rr = {.s = s, .starts = starts, .count = count, .stop = count};
+    rr.order = tide_alloc_zeroed(count, sizeof *rr.order);
+    rr.done = tide_alloc_zeroed(count, sizeof *rr.done);
+    rr.works = tide_alloc_zeroed(count, sizeof *rr.works);
+    uint32_t taken = 0;
+    for (uint32_t pass = 0; pass < 2u; pass++) {
+        for (uint32_t i = 0; i < count; i++) {
+            const bool arriving = starts[i].tick < s->tick && starts[i].c->came_at > starts[i].tick;
+            if (arriving == (pass == 0u)) rr.order[taken++] = i;
+        }
+    }
+    jobs->run(jobs->self, repairs_read_work, &rr);
+    for (uint32_t i = 0; i < count; i++) starts[i].read_done = rr.done[i] != 0u;
+    free(rr.order);
+    free(rr.done);
+    free(rr.works);
 }
 
 // A repair by the hash offer (the player's own run of the tick compared block by block), or failing that a whole
@@ -4565,18 +4703,36 @@ void tide_server_update(tide_server *s, const double now)
     // (A streamed repair waits for its stream's gap since the last; it's asked for again meanwhile, and the next is
     // the latest endpoint. A big repair read in the last update is sent, and those still to start wait for the next
     // update once this one has read REPAIR_UPDATE_MOST.)
-    uint32_t started = 0;
+    // The players whose repair is due, in the connections' order: each is started, until the update has read
+    // REPAIR_UPDATE_MOST. With threads they're read at once (repairs_read) and then started in that order, as many
+    // as reading them one after another would have, the rest read for nothing: the same repairs, read the same.
+    uint32_t due = 0;
     for (uint32_t i = 0; !s->ended && i < s->players; i++) {
         connection *c = &s->connections[i];
-        if (!c->used || c->welcoming || c->making || !c->repair_pending || s->repair_work >= REPAIR_UPDATE_MOST
+        if (!c->used || c->welcoming || c->making || !c->repair_pending
             || (c->repair_pending_stream && c->repair_gap > 1u && s->tick - c->repair_streamed < c->repair_gap)) continue;
-        const uint32_t tick = c->repair_pending_stream ? s->tick : c->repair_pending;
-        if (c->repair_pending_stream) c->repair_streamed = tick;
-        c->repair_pending = 0;
         if (!s->repair_starts) s->repair_starts = tide_alloc_zeroed(s->players, sizeof *s->repair_starts);
-        repair_read(s, c, tick, &s->repair_starts[started]);
-        if (s->repair_starts[started].kind == REPAIR_NONE) continue;
-        repair_post(s, &s->repair_starts[started]);
+        s->repair_starts[due++] = (repair_start){.c = c, .tick = c->repair_pending_stream ? s->tick : c->repair_pending};
+    }
+    const tide_jobs *jobs = s->desc.jobs;
+    const bool together = due > 1u && jobs && jobs->run && jobs->threads >= 2u;
+    if (together) repairs_read(s, s->repair_starts, due);
+    uint32_t started = 0;
+    for (uint32_t i = 0; i < due; i++) {
+        repair_start *r = &s->repair_starts[i];
+        if (s->repair_work >= REPAIR_UPDATE_MOST) { // Waits for the next update
+            if (together) repair_drop(r);
+            continue;
+        }
+        connection *c = r->c;
+        if (c->repair_pending_stream) c->repair_streamed = r->tick;
+        c->repair_pending = 0;
+        // (Read already where they were read together: every one before `stop` is; and packed below if it wasn't)
+        if (!together || !r->read_done) repair_read(s, c, r->tick, r);
+        repair_take(s, r);
+        if (r->kind == REPAIR_NONE) continue;
+        if (started != i) s->repair_starts[started] = *r;
+        if (!together) repair_post(s, &s->repair_starts[started]);
         started++;
     }
     if (started) repairs_packed(s, s->repair_starts, started);

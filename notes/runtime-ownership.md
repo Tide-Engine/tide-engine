@@ -1,3 +1,15 @@
+## Repairs read on several threads at once (2026-11-17, later)
+
+**For the owner to confirm**: what the session asks of `tide_game.client_changes` (tide/session.h) is now that it can
+be called on several threads at once for one match (one `lineage`), outside ticks and checks, and writes nothing
+another call reads; the session reads an update's repairs on the pool (notes/netcode.md, top section). Its signature
+and bytes are as they were. Generated code (`client_state_codegen.inc`, `client_changes_codegen.inc`) gained, for
+itself alone, `tide_client_memo_share` / `_unshare` (the match's memo held to read, by any number of threads:
+`tide_client_memo.readers`), a hasher that reads it and writes nothing (`tide_client_hasher.shared`, `reading`) and
+`tide_client_item_holds`; it calls no runtime function that's new. The session's side: `tide_recipient_delta_pack_with`
+(engine/src/recipient_delta.h, the session's own codec) takes its index's room from the caller. No new hook or
+`tide_game` member.
+
 ## A repair's read into the session's writers (2026-11-17)
 
 **For the owner to confirm**: `tide_game.client_changes` (tide/session.h), a hook between the session and generated
