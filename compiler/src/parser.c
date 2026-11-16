@@ -2454,6 +2454,17 @@ static decl *parse_data_decl(parser *p, const decl_kind kind, const bool is_scen
             advance(p);
             continue;
         }
+        // `dev void Refill() { ... }`: a method only dev builds have
+        const token *dev = NULL;
+        if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "dev") && (peek_at(p, 1)->kind == T_IDENT || peek_at(p, 1)->kind == T_MUT)) {
+            dev = advance(p);
+            if (!at_method(p) && !at_replace_word(p, true)) {
+                diag_error(dev->at, "'dev' goes before a method of a type, or before a whole declaration");
+                diag_note("a field is in every build: keep what dev code needs in a dev component or singleton of its own");
+                if (!p->recover) longjmp(p->fail, 1);
+                dev = NULL;
+            }
+        }
         // `virtual bool IsDead() { ... }`: a method another package can replace. Its override is written
         // outside the type, in that package: `override bool Stats.IsDead() { ... }`
         const token *virtual = NULL;
@@ -2487,6 +2498,10 @@ static decl *parse_data_decl(parser *p, const decl_kind kind, const bool is_scen
             if (virtual && d->methods.count > before) {
                 d->methods.items[before]->is_virtual = true;
                 d->methods.items[before]->virtual_at = virtual->at;
+            }
+            if (dev && d->methods.count > before) {
+                d->methods.items[before]->is_dev = true;
+                d->methods.items[before]->dev_at = dev->at;
             }
             continue;
         }

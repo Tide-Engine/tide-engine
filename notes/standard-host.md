@@ -4,13 +4,13 @@
 
 `tide/host.h`: `tide_run_dev_views(game)` before `game->frame` hands the game which of its dev views run
 (`tide_host_game.show_dev_views`), and `tide_run_dev_menu(game)` after the frame's views, in the frame's GUI, shows
-the menu while F1 has it open: a label and a `tide_gui_toggle` per name in `tide_host_game.dev_views` (IDs
+the menu while the key under Escape (`keyboard.backquote`, the owner's pick) has it open: a label and a `tide_gui_toggle` per name in `tide_host_game.dev_views` (IDs
 `0xDE700000 + i`, its own `tide_gui_view(UINT32_MAX)`, the pointer claimed over its rows). What's on is kept by name
-(`tide_run_dev_on`, up to 64), so a reload keeps it. Only a game with dev views has the menu; the game sees F1.
+(`tide_run_dev_on`, up to 64), so a reload keeps it. Only a game with dev views has the menu; the game sees the key.
 `--interactive` lists its switches (`controls`), so `click Marker` works. Test: `tide_platform_dev_menu`
-(`dev_menu.tide`/`.mjs`, label `gpu`): the view off, F1, the switch listed, clicked, the view drawing, F1 hiding the
+(`dev_menu.tide`/`.mjs`, label `gpu`): the view off, the key, the switch listed, clicked, the view drawing, the key hiding the
 menu with the view kept on. It's `tide_run_frame`'s, so the web has it too (untested there: no web test presses
-F1). Frames the embed draws itself (time travel's `show_frame`, tide/embed.h) don't call it, so dev views stay off
+the key). Frames the embed draws itself (time travel's `show_frame`, tide/embed.h) don't call it, so dev views stay off
 there. Decisions are in docs/spec.md, Dev tools.
 
 ## The game named before its window opens (2026-11-16)

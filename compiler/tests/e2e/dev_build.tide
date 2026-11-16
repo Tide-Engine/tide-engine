@@ -25,9 +25,20 @@ system Fire(mut Gun gun, mut Shots shots)
 // What a dev build has besides
 dev struct Refill { int amount; }
 
+// A type every build has, with a method only dev builds have
+struct Magazine
+{
+    int rounds;
+
+    int Rounds() { return rounds; }
+    dev int Doubled() { return Rounds() * 2; }
+}
+
+dev T Either<T>(bool first, T a, T b) { return first ? a : b; }
+
 dev int Topped(int ammo, Refill refill)
 {
-    return ammo + refill.amount;
+    return Either(true, ammo + refill.amount, 0) + Magazine { rounds = 0 }.Doubled();
 }
 
 dev command GiveAmmo { int amount; }

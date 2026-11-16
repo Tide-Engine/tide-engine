@@ -5,17 +5,20 @@ puts it in dev builds only, and code without `dev` can't use it in any build.
 
 - **Parser**: `dev` is a contextual word in `parse_file`'s modifier loop, before an identifier, `mut`, `component`,
   `singleton` or `system`. It sets `decl.is_dev`/`dev_at`, on a type's methods and a scene's preparation too.
-  Before `namespace`/`using` or `settings` it's an error. `dev` inside a type's body isn't read.
+  Before `namespace`/`using` or `settings` it's an error. In a type's body (`parse_data_decl`), `dev` before a
+  method marks it; before anything else it's an error saying fields are in every build.
 - **Leaving them out** (`leave_out_dev`, compile.c): a build without `codegen_options.dev` drops dev declarations
-  from `prog->decls` right after parsing, as `keep_declarations` does, and keeps them in `prog->left_out`.
-- **The rule** (`find_named`, check.c): a name found that's dev, looked up from code that isn't, is an error naming
-  both. The code is `c->method`, else `c->system`, else the new `checker.declaring`, which the main loops set while
+  from `prog->decls` right after parsing, as `keep_declarations` does, and the dev methods of the types kept, and
+  keeps them in `prog->left_out` (a method with its `owner`).
+- **The rule** (`dev_used`, from `find_named` and the method calls, `find_method`'s two callers): a name or method
+  found that's dev, used by code that isn't, is an error naming both. The code is `c->method`, else `c->system`, else the new `checker.declaring`, which the main loops set while
   they resolve and check fields (`resolve_field_types`, `check_fields`), signatures (`check_function_decl`,
   `check_method_decls`) and systems' parameters (`check_params`, which now runs with `c.system` cleared rather than
-  the last system's). A checker made fresh for a part (a generic's instance, a lambda, constant folding) knows no
-  code, so it reports nothing: never a wrong error, sometimes no error in a dev build. A build without dev then
-  catches it: a name not found that's in `left_out` says it's dev and left out (after which the caller's own
-  "unknown" message may follow).
+  the last system's). A generic's instance is dev as its generic is and checks with itself as `declaring`; a method
+  copied for a placement keeps its source's `is_dev`; a lambda's generated function (builtin) has `written_in`,
+  the code it's written in, which `dev_used` goes by and whose dev it takes. A checker made fresh with no code
+  (constant folding) reports nothing: never a wrong error. A build without dev catches the rest: a name or method
+  not found that's in `left_out` says it's dev and left out (`dev_left_out`), and for a method that's all it says.
 - **Dev views** (codegen, beside `tide_frame`): `tide_dev_view_names[]` (NULL-terminated, the views' diagnostic
   names) and `tide_show_dev_views(const uint8_t *)`, always generated and declared in the header; a dev view's call
   in `tide_frame` is inside `if (tide_dev_shown[k])`, a static array, so it's off until a host shows it. No world,
@@ -24,8 +27,11 @@ puts it in dev builds only, and code without `dev` can't use it in any build.
 - **Tests**: `tidec_e2e_dev_build` (built without dev: no dev view names, `tide_show_dev_views` changes nothing, the
   match unchanged) and `tidec_e2e_dev_build_dev` (the same game and test with `DEV`: the view listed, run only while
   shown); errors `dev_used_by_system`, `dev_field_type`, `dev_handler_trigger` (dev builds, `// build: dev`, which
-  expect_error.cmake now reads), `dev_left_out` (without dev) and `dev_namespace`. Native ASan and web debug pass.
-- Gaps: `dev` on a member of a type; the check's blind spots above; `tide schedule`/`shaders` always see dev code.
+  expect_error.cmake now reads), `dev_generic_body`, `dev_lambda`, `dev_method_used`, `dev_method_left_out`
+  (without dev), `dev_left_out`, `dev_field` and `dev_namespace`; dev_build.tide has a dev method of a kept struct,
+  a dev generic and dev code using both, built with and without dev. Native ASan and web debug pass, and all 2,770
+  `tidec_error_` tests with the check's new context.
+- `tide schedule`/`shaders` always see dev code.
 
 ## Methods on the elements of a read-only list in a loop (2026-11-16)
 

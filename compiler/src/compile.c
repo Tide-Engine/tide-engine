@@ -68,8 +68,19 @@ static void leave_out_dev(program *prog)
     int kept = 0;
     for (int i = 0; i < prog->decls.count; i++) {
         decl *const d = prog->decls.items[i];
-        if (d->is_dev) vec_push(prog->left_out, d);
-        else prog->decls.items[kept++] = d;
+        if (d->is_dev) {
+            vec_push(prog->left_out, d);
+            continue;
+        }
+        prog->decls.items[kept++] = d;
+        // ...and a type's dev methods
+        int methods = 0;
+        for (int m = 0; m < d->methods.count; m++) {
+            decl *const method = d->methods.items[m];
+            if (method->is_dev) vec_push(prog->left_out, method);
+            else d->methods.items[methods++] = method;
+        }
+        d->methods.count = methods;
     }
     prog->decls.count = kept;
 }

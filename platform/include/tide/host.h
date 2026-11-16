@@ -1055,12 +1055,12 @@ static inline void tide_run_debug_views(void)
     tide_run_gui.profile = tide_run_profiling || tide_run_reporting ? profile : NULL;
 }
 
-// The dev menu: in a dev build with `dev` views, F1 shows it and hides it again, and it lists those views, each one
-// shown or not. Views are off until it shows them. What's shown is kept by name, so a reload keeps it. The game sees
-// the key too.
+// The dev menu: in a dev build with `dev` views, the key under Escape (backquote, ` on a US keyboard, where Valve's
+// games open their console) shows it and hides it again, and it lists those views, each one shown or not. Views are
+// off until it shows them. What's shown is kept by name, so a reload keeps it. The game sees the key too.
 #define TIDE_RUN_DEV_VIEWS 64
 static bool tide_run_dev_open;
-static bool tide_run_dev_f1; // F1 was held at the last frame
+static bool tide_run_dev_key; // Its key was held at the last frame
 static char tide_run_dev_on[TIDE_RUN_DEV_VIEWS][64]; // The views shown, by name
 static uint32_t tide_run_dev_on_count;
 
@@ -1096,16 +1096,16 @@ static inline void tide_run_dev_views(const tide_host_game *game)
 static inline void tide_run_dev_menu(const tide_host_game *game)
 {
     if (!game->dev_views || !game->dev_views[0]) return;
-    const bool f1 = tide_run_devices.keyboard.f1.held;
-    if (f1 && !tide_run_dev_f1) tide_run_dev_open = !tide_run_dev_open;
-    tide_run_dev_f1 = f1;
+    const bool key = tide_run_devices.keyboard.backquote.held;
+    if (key && !tide_run_dev_key) tide_run_dev_open = !tide_run_dev_open;
+    tide_run_dev_key = key;
     if (!tide_run_dev_open) return;
     uint32_t count = 0;
     while (count < TIDE_RUN_DEV_VIEWS && game->dev_views[count]) count++;
     const float row = 32.0f, pad = 8.0f, width = 240.0f;
     tide_gui_view(&tide_run_gui, UINT32_MAX); // Its own: no view's claims hide the devices from it
     tide_gui_claim_pointer_at(&tide_run_gui, (tide_rect){pad, pad, width, row * (float)(count + 1) + pad});
-    tide_gui_label(&tide_run_gui, (tide_rect){pad, pad, width, row}, "Dev (F1)");
+    tide_gui_label(&tide_run_gui, (tide_rect){pad, pad, width, row}, "Dev");
     for (uint32_t i = 0; i < count; i++) {
         bool shown = tide_run_dev_shown(game->dev_views[i]);
         const tide_rect at = {pad, pad + row * (float)(i + 1), width, row - 4.0f};

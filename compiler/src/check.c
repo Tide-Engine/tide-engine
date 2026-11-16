@@ -192,7 +192,8 @@ static decl *local_method(checker *c, decl *owner, decl *source)
     m->qualified = (str){name.data, (int)name.len};
     m->c_name = name.data;
     vec_push(c->prog->decls, m);
-    checker nested = {.prog = c->prog, .fields_ordered = c->fields_ordered, .unit = source->unit};
+    m->is_dev = source->is_dev;
+    checker nested = {.prog = c->prog, .fields_ordered = c->fields_ordered, .unit = source->unit, .declaring = m};
     check_signature(&nested, m);
     return m;
 }
@@ -595,6 +596,32 @@ static decl *lookup(const program *prog, const unit *from, const str text, const
 
 static void build_struct_ready(checker *c, decl *d);
 
+// `dev` declarations: code without `dev` can't use them, in a dev build as in one they're left out of. Only code
+// known not to be dev's is told (a checker made for a part of a declaration that knows none of it says nothing).
+static void dev_used(const checker *c, const decl *d, const str name, const loc at)
+{
+    const decl *from = c->method ? c->method : c->system ? c->system : c->declaring;
+    if (from && from->written_in) from = from->written_in; // A lambda: the code it's written in
+    if (!d->is_dev || !from || from->is_dev || from->builtin) return;
+    diag_error(at, "'" STR_FMT "' is 'dev', which builds without dev leave out, so '" STR_FMT "' can't use it",
+               STR_ARG(name), STR_ARG(from->name));
+    diag_note("mark '" STR_FMT "' 'dev' too, or leave '" STR_FMT "' to dev code", STR_ARG(from->name), STR_ARG(name));
+}
+
+// ...and in a build without dev, a name that isn't found because it's dev (leave_out_dev): a declaration, or with
+// `owner`, that type's method. True when it was.
+static bool dev_left_out(const checker *c, const decl *owner, const str name, const loc at)
+{
+    for (int i = 0; i < c->prog->left_out.count; i++) {
+        const decl *dev = c->prog->left_out.items[i];
+        if (owner ? dev->owner != owner || !str_eq(dev->name, name) : dev->owner || (!str_eq(dev->name, name) && !str_eq(dev->qualified, name))) continue;
+        diag_error(at, "'" STR_FMT "' is 'dev', and this build isn't a dev one, so it's left out", STR_ARG(name));
+        diag_note("code that uses it must be 'dev' too, or build with dev ('tide run' does; 'tide build --dev')");
+        return true;
+    }
+    return false;
+}
+
 static decl *find_named(const checker *c, const str name, const loc at, const name_kind kind)
 {
     if (c->generic && (kind == NAME_TYPE || kind == NAME_PREFAB)) { // An instantiation's T: the type it's bound to
@@ -605,23 +632,8 @@ static decl *find_named(const checker *c, const str name, const loc at, const na
     }
     decl *other;
     decl *d = lookup(c->prog, c->unit, name, kind, &other);
-    // `dev` declarations: code without `dev` can't use them, in a dev build as in one they're left out of. Only
-    // code known not to be dev's is told (a checker made for a part of a declaration knows none of it).
-    const decl *from = c->method ? c->method : c->system ? c->system : c->declaring;
-    if (d && d->is_dev && from && !from->is_dev && !from->builtin) {
-        diag_error(at, "'" STR_FMT "' is 'dev', which builds without dev leave out, so '" STR_FMT "' can't use it",
-                   STR_ARG(name), STR_ARG(from->name));
-        diag_note("mark '" STR_FMT "' 'dev' too, or leave '" STR_FMT "' to dev code", STR_ARG(from->name), STR_ARG(name));
-    }
-    if (!d && c->prog->left_out.count) {
-        for (int i = 0; i < c->prog->left_out.count; i++) {
-            const decl *dev = c->prog->left_out.items[i];
-            if (!str_eq(dev->name, name) && !str_eq(dev->qualified, name)) continue;
-            diag_error(at, "'" STR_FMT "' is 'dev', and this build isn't a dev one, so it's left out", STR_ARG(name));
-            diag_note("code that uses it must be 'dev' too, or build with dev ('tide run' does; 'tide build --dev')");
-            break;
-        }
-    }
+    if (d) dev_used(c, d, name, at);
+    else dev_left_out(c, NULL, name, at);
     if (!d && kind == NAME_TYPE && (str_eq_c(name, "ClipData") || str_eq_c(name, "MeshLevel"))) {
         // Built-in structs a game has once its code names them (build_check.inc)
         decl *builtin = str_eq_c(name, "ClipData") ? c->prog->clip_data : c->prog->mesh_level;
@@ -6131,6 +6143,8 @@ static decl *generic_instance(checker *c, decl *g, const type *args, const loc a
     d->generic_of = g;
     d->is_cached = g->is_cached;
     d->cached_at = g->cached_at;
+    d->is_dev = g->is_dev; // A dev generic's instances are dev
+    d->dev_at = g->dev_at;
     d->generic_depth = depth;
     d->generic_at = at;
     d->generic_name = name.data;
@@ -6154,7 +6168,7 @@ static decl *generic_instance(checker *c, decl *g, const type *args, const loc a
         vec_push(d->type_arg_decls, t);
     }
     vec_push(g->generic_instances, d);
-    checker nested = {.prog = c->prog, .fields_ordered = c->fields_ordered, .unit = g->unit, .generic = d};
+    checker nested = {.prog = c->prog, .fields_ordered = c->fields_ordered, .unit = g->unit, .generic = d, .declaring = d};
     check_function_decl(&nested, d);
     // Its name in generated C: the generic's, then its type arguments', Max_float (and its parameters', where
     // generics share the name)
@@ -6198,7 +6212,7 @@ static void place_generic_instance(checker *c, decl *d)
         diag_note("rename one of them");
         break;
     }
-    checker nested = {.prog = c->prog, .fields_ordered = c->fields_ordered, .unit = d->unit, .generic = d};
+    checker nested = {.prog = c->prog, .fields_ordered = c->fields_ordered, .unit = d->unit, .generic = d, .declaring = d};
     const int errors = diag_error_count();
     check_method_body(&nested, d);
     if (diag_error_count() > errors) diag_note_at(d->generic_at, "in '%s', which this call instantiates", d->generic_name);
@@ -7101,7 +7115,14 @@ static type check_call(checker *c, expr *e)
     if (block && block->type.kind == TY_ACTION) return check_block_call(c, e, block);
 
     decl *const own = c->method && !c->method->is_operator && !c->method->is_interpolate ? find_method(c->method->owner, e->name) : NULL;
-    if (own) return check_self_call(c, e, own);
+    if (own) {
+        dev_used(c, own, e->name, e->at);
+        return check_self_call(c, e, own);
+    }
+    if (c->method && c->method->owner && dev_left_out(c, c->method->owner, e->name, e->at)) { // Its type's dev method
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        return T_ERR;
+    }
     if (!call_local && !call_param && c->system && c->system->preparation_owner
         && find_method(c->system->preparation_owner, e->name)) {
         expr *self = NEW(expr);
@@ -11050,6 +11071,11 @@ static type check_method(checker *c, expr *e)
     // stats.IsDead(), unit.Heal(5), physics.Raycast(...): explicit value receivers.
     if (obj.kind == TY_STRUCT || obj.kind == TY_COMPONENT || obj.kind == TY_SINGLETON) {
         decl *m = find_method(obj.decl->placement_of ? obj.decl->placement_of : obj.decl, e->name);
+        if (m) dev_used(c, m, e->name, e->at);
+        else if (dev_left_out(c, obj.decl->placement_of ? obj.decl->placement_of : obj.decl, e->name, e->at)) {
+            for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+            return T_ERR;
+        }
         if (!m) {
             for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
             diag_error(e->at, "%s has no method '" STR_FMT "'", type_name(obj), STR_ARG(e->name));

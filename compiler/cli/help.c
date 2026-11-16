@@ -170,7 +170,7 @@ static const argument_help arguments[] = {
      "games omit unreferenced assets. Use --distribution for shipping cuts.", COMPILE},
     {"--dev", "--dev", "Include the game's dev declarations",
      "A dev build has what the game marks 'dev': its tools, cheats, dev scenes\n"
-     "and dev views, which F1's menu shows. tide run builds with dev unless\n"
+     "and dev views, which the menu under Escape shows. tide run builds with dev unless\n"
      "--distribution or --no-dev says otherwise; tide build adds it with --dev.\n"
      "Code without 'dev' can't use what's dev, in either build.", RUN | BUILD},
     {"--no-dev", "--no-dev", "Leave the game's dev declarations out of a run",

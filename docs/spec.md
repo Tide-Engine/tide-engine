@@ -5989,10 +5989,10 @@ Decided:
 - Order of the pieces: `dev` and the dev menu (built), dev scenes, the tweak file, the inspector, checkpoints, picking on screen, pausing and rewinding a run.
 
 Provisional (Claude's picks, built 2026-11-16):
-- `dev` goes before any declaration but settings and namespaces. A dev type's methods and a dev scene's preparation are dev too. `dev` inside a type's body isn't read yet.
-- **Which builds**: `tide run` builds with dev unless `--no-dev` or `--distribution`; `tide build` with `--dev`; tidec's `--dev`; `tide_add_game(... DEV)`. Schedule and shader listings see the dev declarations.
-- **The dev menu**: F1 in a dev build with `dev` views shows it over the views, listing them by name with a switch each; a dev view runs only while its switch is on, kept by name across hot reloads. The game sees F1 too. The menu is the standard host's (tide/host.h); another host shows dev views through `tide_show_dev_views`.
-- The compiler's check covers names code writes in declarations, signatures, fields and bodies; a name reached in a part of a declaration checked on its own (a generic's instance, a lambda) is checked only by a build without dev, which says the name is dev and left out.
+- `dev` goes before any declaration but settings and namespaces, and before a type's method. A dev type's methods, a dev scene's preparation, a dev generic's instances and a lambda written in dev code are dev too. A field can't be dev: it's in every build, and a dev component or singleton holds what dev code needs.
+- **Which builds** (the owner agreed): `tide run` builds with dev unless `--no-dev` or `--distribution`; `tide build` with `--dev`; tidec's `--dev`; `tide_add_game(... DEV)`. Schedule and shader listings see the dev declarations.
+- **The dev menu**: the key under Escape (backquote, the owner's pick, where Valve's games open their console) in a dev build with `dev` views shows it over the views, listing them by name with a switch each; a dev view runs only while its switch is on (the owner agreed), kept by name across hot reloads. The game sees the key too. The menu is the standard host's (tide/host.h); another host shows dev views through `tide_show_dev_views`.
+- The compiler's check covers names and methods code writes in declarations, signatures, fields and bodies, generic instances' and lambdas' too. A build without dev says of a name it doesn't find, when it's a dev one, that it's dev and left out.
 
 ## Mods
 

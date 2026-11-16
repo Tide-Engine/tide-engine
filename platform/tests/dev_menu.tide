@@ -1,4 +1,4 @@
-// A dev build's menu (platform/tests/dev_menu.mjs): F1 shows it, and it lists
+// A dev build's menu (platform/tests/dev_menu.mjs): the key under Escape shows it, and it lists
 // the game's dev views, each off until it's switched on there. The game's view
 // paints the screen blue; the dev view paints it red.
 

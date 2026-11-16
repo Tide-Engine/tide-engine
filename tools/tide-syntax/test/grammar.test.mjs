@@ -263,6 +263,7 @@ const cases = {
         ['dev command GiveAmmo { int amount; }', [['dev', 'storage.modifier'], ['command', 'storage.type'], ['GiveAmmo', 'entity.name.type']]],
         ['dev command(GiveAmmo give, PlayerID sender) Give(', [['dev', 'storage.modifier'], ['Give', 'entity.name.function']]],
         ['dev scene GunRange { }', [['dev', 'storage.modifier'], ['scene', 'storage.type'], ['GunRange', 'entity.name.type']]],
+        ['dev int Doubled()', [['dev', 'storage.modifier'], ['Doubled', 'entity.name.function']]],
         ['var dev = 1;', [['dev', '!storage']]],
     ],
     'local worker declarations': [

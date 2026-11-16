@@ -949,6 +949,7 @@ typedef struct decl {
     // `dev command GiveAmmo { ... }`: only in a dev build (codegen_options.dev); code without it can't use it
     bool is_dev;
     loc dev_at;
+    const struct decl *written_in; // A lambda's function: the declaration whose code it's written in
     bool is_audio;       // `audio Name(mut Samples samples, ...)`: a DECL_FUNCTION the audio thread runs once a block
     int audio_state;     // ...the parameter that's its state (`mut`, kept between blocks), or -1
     int audio_knobs;     // ...and the one that's its knobs (read-only, a copy the frame gave), or -1

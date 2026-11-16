@@ -1,0 +1,8 @@
+// expect: 'dev' goes before a method of a type, or before a whole declaration
+// expect: a field is in every build
+component Gun
+{
+    int ammo;
+    dev int hits;
+}
+scene Main { }

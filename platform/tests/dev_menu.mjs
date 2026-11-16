@@ -1,4 +1,4 @@
-// The dev menu, driven the way an agent plays (--interactive): its dev view is off, F1 lists it among the GUI's
+// The dev menu, driven the way an agent plays (--interactive): its dev view is off, the key under Escape lists it among the GUI's
 // widgets, and a click on its switch shows it.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -45,8 +45,8 @@ try {
     assert.deepEqual(color('off.png', 280, 40), [0, 0, 255]); // The dev view doesn't run
     await command('controls');
     assert.deepEqual(said, ['tide: controls 0']); // No menu yet
-    await command('2 key f1 down');
-    await command('3 key f1 up');
+    await command('2 key backquote down');
+    await command('3 key backquote up');
     await command('step 3', 'ready');
     await command('controls');
     assert.equal(said.length, 2, said.join('\n'));
@@ -55,9 +55,9 @@ try {
     await command('step 3', 'ready');
     await command('capture on.png');
     assert.deepEqual(color('on.png', 280, 40), [255, 0, 0]); // Shown: it runs
-    // F1 again hides the menu, and the view stays shown
-    await command('8 key f1 down');
-    await command('9 key f1 up');
+    // The key again hides the menu, and the view stays shown
+    await command('8 key backquote down');
+    await command('9 key backquote up');
     await command('step 3', 'ready');
     await command('controls');
     assert.deepEqual(said, ['tide: controls 0']);

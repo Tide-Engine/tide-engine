@@ -1,0 +1,13 @@
+// expect: 'Cheat' is 'dev', which builds without dev leave out, so 'Show' can't use it
+// build: dev
+scene Main { }
+
+dev float Cheat(float x) { return x + 100; }
+
+local singleton Seen { float x; }
+
+view Show(mut Seen seen)
+{
+    Func<float, float> more = (float a) => Cheat(a);
+    seen.x = more(1);
+}

@@ -99,6 +99,10 @@ dev view GunTools(Gun gun) { }
 dev command GiveAmmo { int amount; }
 dev command(GiveAmmo give, PlayerID sender) Give(mut Gun gun) { }
 dev scene GunRange { }
+struct Magazine
+{
+    dev int Doubled() { return 0; }
+}
 var dev = 1;
 
 // fails after the parameters, or on a line of its own.
