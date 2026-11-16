@@ -1451,6 +1451,41 @@ static void note_update(const uint32_t most, const long_update u)
     worst[at] = u;
 }
 
+// ...and, over the whole run, each of its systems and what follows them, apart for the updates in which the count of
+// entities the server holds changed (bench_desc.held) and the ones in which it didn't
+typedef struct run_part {
+    uint32_t updates;
+    double ms, tick_ms, hash_ms, copy_ms, pack_ms, systems_ms, changes_ms;
+} run_part;
+static run_part run_parts[2];
+
+static void print_systems(const tide_profile *p, const double seconds)
+{
+    if (seconds <= 0.0) return;
+    printf("\n  the server's systems, ms a second over the run (each from its first task's start to its last one's end)\n");
+    double under = INFINITY;
+    for (uint32_t done = 0; done < p->systems.count; done++) {
+        // Longest first: the one with the most of those under the last one said
+        const tide_profile_time *next = NULL;
+        for (uint32_t k = 0; k < p->systems.count; k++) {
+            const tide_profile_time *t = &p->systems.items[k];
+            if (t->measured_ms < under && (!next || t->measured_ms > next->measured_ms)) next = t;
+        }
+        if (!next || next->measured_ms / seconds < 0.005) break;
+        under = next->measured_ms;
+        printf("  %33s %8.2f\n", next->name, next->measured_ms / seconds);
+    }
+    static const char *const names[2] = {"with as many entities after as before", "with entities come or gone"};
+    printf("  the server's updates                    count   ms each  simulate (systems, the rest)     hash snapshot     pack\n");
+    for (uint32_t k = 0; k < 2; k++) {
+        const run_part *r = &run_parts[k];
+        if (!r->updates) continue;
+        const double n = (double)r->updates;
+        printf("  %37s %7u %9.2f %9.2f (%.2f, %.2f) %12.2f %8.2f %8.2f\n", names[k], r->updates, r->ms / n, r->tick_ms / n,
+               r->systems_ms / n, r->changes_ms / n, r->hash_ms / n, r->copy_ms / n, r->pack_ms / n);
+    }
+}
+
 static void print_worst(void)
 {
     if (!worst_count) return;
@@ -1794,9 +1829,21 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
             const long_update before = {.tick_ms = h->tick_ms, .hash_ms = h->hash_ms, .copy_ms = h->copy_ms,
                                         .pack_ms = h->pack_ms, .packs = (uint32_t)h->packs};
             if (o.worst) tide_profile_clear(&server_profile);
+            const uint32_t held_before = o.worst && d->held && !shards ? d->held(tide_server_world(h->server)) : 0u;
             const uint64_t t = tide_time_now_ns();
             tide_server_update(h->server, now);
             const double ms = since(t);
+            if (o.worst && !shards && all_in >= 0.0) {
+                run_part *r = &run_parts[d->held && d->held(tide_server_world(h->server)) != held_before];
+                r->updates++;
+                r->ms += ms;
+                r->tick_ms += h->tick_ms - before.tick_ms;
+                r->hash_ms += h->hash_ms - before.hash_ms;
+                r->copy_ms += h->copy_ms - before.copy_ms;
+                r->pack_ms += h->pack_ms - before.pack_ms;
+                r->systems_ms += server_profile.systems_ms;
+                r->changes_ms += server_profile.changes_ms;
+            }
             add_sample(joining ? &h->joining : &h->steady, ms);
             h->busy = ms / (FRAME * 1e3);
             if (o.worst && (worst_count < o.worst || ms > worst[o.worst - 1u].ms)) {
@@ -1957,6 +2004,7 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
         }
     }
     print_worst();
+    if (o.worst && !o.split) print_systems(&server_profile, now);
     {
         uint64_t held_now, held_most;
         process_memory(&held_now, &held_most);
