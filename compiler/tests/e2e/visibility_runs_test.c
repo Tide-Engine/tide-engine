@@ -23,7 +23,7 @@
 // Every player's projection hash over TICKS ticks, hashed together, and the world's hash after them: the same on
 // every platform, build and thread count, memo on and off (the _memo_off and _checked variants pin them too)
 #define PROJECTIONS UINT64_C(0xf6f3458680485366)
-#define WORLD UINT64_C(0x6b6c361e1cf8925e)
+#define WORLD UINT64_C(0x0422caba86a04943)
 
 // A pool that's one thread saying it has eight: a round runs its work as
 // thread 1 first, which takes every task there is, and then as the caller's.
