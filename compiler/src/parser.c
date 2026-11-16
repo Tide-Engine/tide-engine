@@ -2454,6 +2454,25 @@ static decl *parse_data_decl(parser *p, const decl_kind kind, const bool is_scen
             advance(p);
             continue;
         }
+        // `tweak float kick = 0.1;`: a tweak of the type's, which every value of it reads (gun.kick), in a namespace
+        // of the type's name, so tweaks.json names it Gun.kick
+        if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "tweak") && peek_at(p, 1)->kind == T_IDENT && peek_at(p, 2)->kind != T_ASSIGN
+            && peek_at(p, 2)->kind != T_SEMI && peek_at(p, 2)->kind != T_LPAREN) {
+            const token *word = advance(p);
+            decl *t = parse_const(p);
+            t->is_tweak = true;
+            t->tweak_at = word->at;
+            t->tweak_owner = d;
+            unit *u = NEW(unit);
+            *u = *p->unit;
+            sb ns = {0};
+            if (p->unit->ns.len) sb_printf(&ns, STR_FMT ".", STR_ARG(p->unit->ns));
+            sb_printf(&ns, STR_FMT, STR_ARG(d->name));
+            u->ns = (str){ns.data, (int)ns.len};
+            t->unit = u;
+            vec_push(d->tweaks, t);
+            continue;
+        }
         // `dev void Refill() { ... }`: a method only dev builds have
         const token *dev = NULL;
         if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "dev") && (peek_at(p, 1)->kind == T_IDENT || peek_at(p, 1)->kind == T_MUT)) {
@@ -3316,6 +3335,10 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         p.pending.count = p.pending.cap = 0;
         p.seen_decl = true;
         vec_push(prog->decls, d);
+        for (int k = 0; k < d->tweaks.count; k++) { // Its tweak fields, which are the program's tweaks
+            d->tweaks.items[k]->is_dev |= d->is_dev;
+            vec_push(prog->decls, d->tweaks.items[k]);
+        }
         if (d->preparation) {
             d->preparation->unit = d->unit;
             if (d->is_local) diag_error(d->preparation->at, "prepare runs deterministic match code; local scenes use Spawned handlers");

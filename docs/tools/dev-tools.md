@@ -108,6 +108,25 @@ system Recoil(mut Gun gun) { gun.kick += KickUp; }
 
 - **The file holds only what differs from the code**, by each tweak's name with its namespace: a number, `true` or `false`, a list of numbers for a vector or a Color, or an enum member's name. A name no tweak has is a warning.
 - **A tweak is a number, a bool, a vector, a Color or an enum.**
+- **A type can have tweaks of its own**, which read like its fields but are the same for every value of it, so no entity holds one. `tweaks.json` names one with its type's name:
+
+  ```csharp
+  component Gun
+  {
+      int ammo = 30;
+      tweak float kick = 0.1;
+
+      float Kicked() { return kick * 2; } // By name in its methods
+  }
+
+  system Fire(Gun gun) { ... gun.kick ... Gun.kick ... }
+  ```
+
+  ```json
+  { "Gun.kick": 0.3 }
+  ```
+
+  A value of the type, like `Gun { kick = 2 }`, can't give one, and code can't set one: it's tuned, not played.
 - **Code reads it as a constant**, and a field's default can be one. What has to be known while compiling can't: an array's size, a `case`, a setting or a constant's value take a `const`.
 - **A build without dev** has the file's values as constants: they cost what a constant does, and the file isn't shipped.
 - **A dev build** reads them from the match, so changing one changes it for everyone in the match at once, through the server. GPU and audio code read the value the build had.

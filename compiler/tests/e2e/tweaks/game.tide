@@ -54,3 +54,32 @@ view Show(mut Drawn drawn)
 {
     drawn.kick = KickUp + Doubled();
 }
+
+// Tweak fields: every Gun's, read through a Gun or its type, and by name in its methods
+component Gun
+{
+    int ammo = 3;
+    tweak float kick = 0.1;
+    tweak Combat.Rate pace = Combat.Rate.Slow;
+
+    float Kicked() { return kick * 2; }
+}
+
+event(Spawned) Arm(with Main)
+{
+    Spawn(Gun { });
+}
+
+singleton Fired
+{
+    float kick;
+    float kicked;
+    int fast;
+}
+
+system Fire(Gun gun, mut Fired fired)
+{
+    fired.kick = gun.kick;
+    fired.kicked = gun.Kicked();
+    fired.fast = Gun.pace == Combat.Rate.Fast ? 1 : 0;
+}

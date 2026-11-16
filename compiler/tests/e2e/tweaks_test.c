@@ -20,6 +20,8 @@ TIDE_TEST(tweaks_read)
     TIDE_CHECK(s->kick == 0.25f && s->rounds == 5 && s->auto_ && s->fast == 1 && s->unchanged == 2.0f);
     TIDE_CHECK(s->fog.r == 0.5f && s->fog.a == 1.0f);
     TIDE_CHECK(s->doubled == 0.5f && s->start == 5);
+    const Fired *fired = &world.Fired; // Tweak fields
+    TIDE_CHECK(fired->kick == 0.3f && fired->kicked == 0.6f && fired->fast == 1);
     tide_draw_reset(&draw);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     TIDE_CHECK(local.Drawn.kick == 0.75f);
@@ -27,8 +29,10 @@ TIDE_TEST(tweaks_read)
     // Changed in the match, the match's code reads it; changed here, local code does
     world.TideTweaks.values.KickUp = 1.0f;
     world.TideTweaks.values.Combat_Speed = 0;
+    world.TideTweaks.values.Gun_kick = 1.5f;
     tide_world_tick(&world);
     TIDE_CHECK(s->kick == 1.0f && s->doubled == 2.0f && s->fast == 0);
+    TIDE_CHECK(fired->kick == 1.5f && fired->kicked == 3.0f);
     local.TideTweaksHere.values.KickUp = 2.0f;
     tide_draw_reset(&draw);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);

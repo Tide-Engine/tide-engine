@@ -957,6 +957,8 @@ typedef struct decl {
     loc tweak_at;
     struct expr *code_value; // ...the value the code gives it, where tweaks.json gives another (then `value`)
     loc tweaked_at;          // ...and where in tweaks.json
+    const struct decl *tweak_owner; // A tweak field's type: `component Gun { tweak float kick = 0.1; }`, read as gun.kick
+    VEC(struct decl *) tweaks;      // ...and a type's tweak fields, which are tweaks in a namespace of its name, Gun.kick
     bool is_audio;       // `audio Name(mut Samples samples, ...)`: a DECL_FUNCTION the audio thread runs once a block
     int audio_state;     // ...the parameter that's its state (`mut`, kept between blocks), or -1
     int audio_knobs;     // ...and the one that's its knobs (read-only, a copy the frame gave), or -1

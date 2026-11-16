@@ -314,6 +314,15 @@ static const str global_ns = {"", 0};
 
 // The namespace a declaration's name is in: its file's, or for an override in
 // place, that of what it replaced (decl_home).
+// A type's tweak field named `name` (component Gun { tweak float kick = 0.1; }), or NULL
+static decl *owned_tweak(const decl *owner, const str name)
+{
+    for (int i = 0; owner && i < owner->tweaks.count; i++) {
+        if (str_eq(owner->tweaks.items[i]->name, name)) return owner->tweaks.items[i];
+    }
+    return NULL;
+}
+
 static str decl_ns(const decl *d)
 {
     return decl_home(d) ? decl_home(d)->ns : global_ns;
@@ -3612,6 +3621,11 @@ static type check_literal(checker *c, expr *e)
                 suggestion s = suggest_start(init->name);
                 suggest_fields(&s, d);
                 suggest_note(&s);
+                continue;
+            }
+            if (owned_tweak(d, init->name)) { // Gun { kick = 2 }: a tweak field, every Gun's
+                diag_error(init->at, "'" STR_FMT "' is a tweak field of '" STR_FMT "', which no value holds: tweaks.json "
+                                     "and the dev menu change it", STR_ARG(init->name), STR_ARG(d->name));
                 continue;
             }
             diag_error(init->at, "%s '" STR_FMT "' has no field '" STR_FMT "'",
@@ -12177,6 +12191,21 @@ static type check_member(checker *c, expr *e)
         return member;
     }
 
+    // Gun.kick: a type's tweak field, read through its type
+    str type_text;
+    if (qualified_text(e->object, &type_text)
+        && !(e->object->kind == E_NAME && (find_local(c, e->object->name) || find_param(c, e->object->name) || field_in_scope(c, e->object->name)))) {
+        decl *other;
+        decl *owner = lookup(c->prog, c->unit, type_text, NAME_TYPE, &other);
+        decl *tweak = owner ? owned_tweak(owner, e->member) : NULL;
+        if (tweak) {
+            e->object->bind = BIND_TYPE;
+            e->object->type_decl = owner;
+            if (e->object->kind == E_MEMBER) mark_namespaces(e->object->object);
+            return use_constant(c, e, tweak);
+        }
+    }
+
     // Combat.Health: a namespace, not a variable, on the left. Combat.ORIGIN.x
     // is a member of a constant, which checking Combat.ORIGIN finds.
     const expr *root = chain_root(e);
@@ -12632,6 +12661,11 @@ static type check_member(checker *c, expr *e)
         }
         field *local = (obj.kind == TY_COMPONENT || obj.kind == TY_SINGLETON) ? local_field_of(obj.decl, e->member) : NULL;
         if (local) return check_local_field(c, e, local, obj);
+        // gun.kick: a tweak field, every Gun's, which no value holds
+        decl *tweak = owned_tweak(obj.decl, e->member);
+        if (tweak) {
+            return use_constant(c, e, tweak);
+        }
         if (obj.kind == TY_RECORD && obj.decl == c->prog->pixel && str_eq_c(e->member, "clip") && e->object->kind == E_THIS) {
             diag_error(e->at, "a frag's pixel has no 'clip': it has 'position', 'depth' and 'world'");
             diag_note("'this.clip' is a vert's, where the engine would put its vertex; a frag's pixel is where it landed, "
@@ -12793,6 +12827,8 @@ static type check_name(checker *c, expr *e)
     if (c->method && c->method->owner) {
         property *prop = find_property(c->method->owner, e->name);
         if (prop) return check_property(c, e, prop, c->method->owner);
+        decl *tweak = owned_tweak(c->method->owner, e->name); // A tweak field of its type's, as a field is
+        if (tweak) return use_constant(c, e, tweak);
     }
     // A method's own local fields aren't in scope: a value has none
     if (c->method && c->method->owner && local_field_of(c->method->owner, e->name)) {
@@ -15270,6 +15306,12 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
         }
     }
     for (const expr *part = target;; part = part->object) {
+        if (part->bind == BIND_TWEAK || (part->bind == BIND_CONST && part->constant->is_tweak)) {
+            diag_error(target->at, "'" STR_FMT "' is a tweak: tweaks.json and the dev menu change it, and code reads it",
+                       STR_ARG(part->constant->name));
+            diag_note("a value the game changes as it plays is a field");
+            return false;
+        }
         if (part->bind == BIND_CONST) {
             diag_error(target->at, "'" STR_FMT "' is a constant, so it can't change", STR_ARG(part->constant->name));
             if (called) diag_note("copy it into a 'mut var' first");

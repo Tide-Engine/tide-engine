@@ -1,3 +1,17 @@
+## Tweaks, step 3: tweak fields (2026-11-16)
+
+`component Gun { tweak float kick = 0.1; }` (docs/spec.md, Dev tools, Tweaks: what it means is Claude's pick, a value
+of the type's that no value holds, not a per-entity default). The parser's data body reads `tweak` before a type and a
+name as a constant (`parse_const`) with `tweak_owner` the type, in a unit of its own whose namespace is the type's
+qualified name (`Gun`, `Combat.Gun`), kept in `decl.tweaks` and pushed to the program after its type (dev with it).
+Everything that names a tweak by its namespace then names it `Gun.kick` unchanged: tweaks.json, TideTweakValues'
+`Gun_kick`, the table, the C function of a build without dev. `put_type` qualifies an enum's type with the owner's
+namespace. Reading: `owned_tweak` after a type's fields and local fields in a member access (`gun.kick`, the object
+not evaluated), before the namespace check for `Gun.kick` (the type looked up quietly), and after properties for a
+bare name in the type's methods. Writing any tweak (`check_writable`) and giving one in a value of the type are errors.
+Tests: e2e tweaks has `Gun.kick` and `Gun.pace` from tweaks.json, read three ways, and changed in the dev build's match;
+errors `tweak_field_write`, `tweak_field_value`.
+
 ## Tweaks, step 2: changed while a dev build runs (2026-11-16)
 
 - **tide/tweaks.h, engine/src/tweaks.c** (new, Claude's, beside stats.c): `tide_tweak` describes one (qualified name,

@@ -129,7 +129,8 @@ static void put_type(sb *o, const decl *d)
     const str t = d->return_type_name;
     bool dotted = false;
     for (int i = 0; i < t.len; i++) dotted |= t.ptr[i] == '.';
-    if (!builtin_type(t) && !dotted && d->unit && d->unit->ns.len) sb_printf(o, STR_FMT ".", STR_ARG(d->unit->ns));
+    const unit *home = d->tweak_owner ? d->tweak_owner->unit : d->unit; // A tweak field's types are its type's namespace's
+    if (!builtin_type(t) && !dotted && home && home->ns.len) sb_printf(o, STR_FMT ".", STR_ARG(home->ns));
     sb_printf(o, STR_FMT, STR_ARG(t));
 }
 

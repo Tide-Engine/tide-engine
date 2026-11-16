@@ -1,0 +1,5 @@
+// expect: 'kick' is a tweak: tweaks.json and the dev menu change it, and code reads it
+component Gun { int ammo; tweak float kick = 0.1; }
+scene Main { }
+event(Spawned) Arm(with Main) { Spawn(Gun { }); }
+system Fire(mut Gun gun) { gun.kick = 2; }

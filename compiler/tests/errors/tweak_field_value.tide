@@ -1,0 +1,4 @@
+// expect: 'kick' is a tweak field of 'Gun', which no value holds: tweaks.json and the dev menu change it
+component Gun { int ammo; tweak float kick = 0.1; }
+scene Main { }
+event(Spawned) Arm(with Main) { Spawn(Gun { kick = 2 }); }
