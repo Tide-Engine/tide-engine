@@ -19,7 +19,7 @@
 // Every check's projection hashes, hashed together, and the world's hash at the end: the same on every platform and
 // build, memo on, memo off and with every hash worked out twice (the _checked and _memo_off variants pin them too)
 #define PROJECTIONS UINT64_C(0x230be0b68a6e203a)
-#define WORLD UINT64_C(0x2bc19948b77f769a)
+#define WORLD UINT64_C(0xbb897ae601bdf63e)
 
 // The changes a tick can be asked for (visibility_pieces.tide, Control.step), in the order they're made, each of a
 // cell of its own in a piece of its own (and 12 on, which has the same player and policy, with the noise). A cell

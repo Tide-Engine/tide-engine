@@ -1,6 +1,134 @@
 # ECS and simulation state
 
+## A heap's blocks in the lowest places with room (2026-11-16, night, later)
+
+What the section below left (notes/voxels.md, What's left, 8): a page stayed for one block out, as pages held blocks
+of every size; the packed world stayed at the most it ever held, as a heap handed out offsets from its start and
+packed its free blocks; a world read from bytes gave back none of its pages. Measured first, out and back
+(`bench_voxels --players 8 --out 1 --back 40 --hop 0 --builders 0 --seconds 120 --threads 4`): of the chunks' heaps'
+448 pages in memory once the bots were back, 126 had one block out; the server's world packed 21.1 MB at the most
+and 20.3 at the end, its heaps 19.8 of it.
+
+**What was chosen** (`tide/heap.h`, Places; `engine/src/heap.c`), over the alternatives the task named:
+
+- **A page for each size of block, and a block in the lowest place with room for it.** A heap is places of a page
+  each, place 0 none's. A place is free (no page), a page of one class's blocks (classes 0 to 9, up to 8 KiB, two
+  to 1,024 to a page), or a place of a block's own page (a page or more). A small block goes in the lowest page of
+  its class with one to spare (in it, the last of its blocks freed, else the next it hasn't made), else the lowest
+  free place, else a new one at the end; a block of several places takes the lowest run of free places. A page goes
+  the moment its last block is freed, its place free for any class, and free places at the end aren't the heap's:
+  so what's handed out stays at the start, and a heap that empties is an empty heap (`pages == 0`, `blank`). Pages
+  of one class each is what lets an emptied page be any class's again; lowest first is what makes the emptied pages
+  the last ones. Free lists through every block (the old design) can't tell which page a free block is in cheaply,
+  nor drop a page whose blocks are on a list.
+- **What's at each place is the heap's state** (`tide_heap_place`, 8 bytes: kind, a block's places as a shift, and for
+  a class's page the blocks it has made, the last freed and how many are out), with `pages` and `pending`: hashed,
+  packed and sent. So a heap read from bytes knows which of its blocks are free, and gives its pages back as any
+  other does: item 3 closed with no counts to rebuild. `used` and `free[]` are gone; `taken` (bytes of blocks out)
+  and `most` (`tide_heaps_used`, the most there ever was, which only grows) are worked out, as is the index.
+- **Inside a page, freed blocks are a list through them, last freed first** (`free`, the number + 1 of the first;
+  each free block's link names the next, with `0x80` beside its class: `FREE_MARK`). Freeing the last block a page
+  made makes the page shorter (`made`), and so do the free blocks below it that were freed last, while each is the
+  last again: a page's bytes in use (`tide_heap_page_used`, what its hash covers) shrink with it. Lowest-first
+  within a page (a bitmap a page) was weighed: it would keep pages shorter in more orders of freeing, but its bits
+  are 128 bytes a page of state to copy on every snapshot, where the place is 8, and what a page holds in memory is
+  the same.
+- **The packed form carries no free space** (`pack_page`): a class's page is its free blocks' numbers, two bytes
+  each, then the bytes of the blocks out, in runs. Reading it back makes each free block zeros and its link again,
+  having checked the numbers say each block once, below what the page made, the first the place's. A delta's pages
+  stay whole regions (paired with the base's page at the same place, zeros as runs), with what's at the places a
+  region of its own before them, XOR'd with the base's (stride 8); a base that lacks it is told by its hash
+  (`tide_heap_hash_pages` lists it first, then each page with how far its place is past the one before).
+- **Index** (`tide_heap.index`, `low`): a bit a place in eleven rows, the free places and each class's pages with
+  one to spare, and the lowest of each, so the fast path is a load of `low[1 + class]`. A row's lowest is looked for
+  again only when the page that was it fills or goes. Rebuilt from the places as a heap is read.
+- **Not done**: compaction (moving live blocks), as a block's offset is in handles everywhere; trimming the entity
+  table's slots (unchanged, 0.29 MB here).
+
+**Why it's deterministic**: where a block goes is a function of the places and the pages' free lists, which are the
+heap's state, changed only by `tide_heap_alloc` and by freeing (a flush, a join), in the order the code runs; a
+heap read from bytes or a delta has them as they were, and the index is worked out from them. Each run of a system
+has its own heap as before (A heap in runs), so threads don't change one heap's places at once; what a page's memory
+is (a new one, a dropped one taken again, which thread let go of it) is no part of the state. Pinned by
+`heap_hands_out_the_lowest_places_and_its_copies_go_on_the_same` (below).
+
+**Threads and the table.** Other threads may hold a page they read from the table a moment ago (a cached function's
+key reads a heap's pages while another system changes it, cached_codegen.inc), so a page whose place is freed isn't
+let go of then: it goes on `dropped`, taken again (zeroed) for the next place a page of its size is needed, and let
+go of at `tide_heap_settle`. A page a snapshot shares is let go of at once (the snapshot keeps it). The table's
+entries are stored atomically and under the heap's lock while runs are on threads, as a new page's were;
+`write_shared_in_runs` copies a page whole now, as how much of it is in use is the heap's own run's thread's to know.
+`pages` is stored relaxed-atomically, as another run's thread reads it in `tide_heap_has`.
+
+**Measured** (release, Windows, the machine shared; before is the build at b22ef821d with the section below's giving
+back, after this one):
+
+| Out and back, `--players 8 --out 1 --back 40 --hop 0 --builders 0 --seconds 120 --threads 4` | before | after |
+|---|---|---|
+| The server's world packed, at the most (40 or 60 s) / at the end | 21.13 / 20.32 MB | 17.62 / 3.27 MB |
+| Its heaps packed at the end | 19.82 MB | 2.78 MB (2.75 MB of blocks out) |
+| Its heaps' pages in memory at the most / at the end | 1,167 / 740 (12.12 MB) | 1,018 / 453 (7.42 MB) |
+| Pages with one block out at the end | 126 of the chunks' heaps' 448 | 125 of 453, all heaps |
+| Free places between pages at the end (8 bytes each packed) | | 315 |
+| The process at the most / at the end | 258 / 144.0 MB | 260 / 137.4 MB |
+
+| One player hopping between two dimensions every 10 s (`--players 1 --still 100 --hop 10 --seconds 60 --threads 4`) | before | after |
+|---|---|---|
+| The server's world packed, 1,018 entities held, after each hop back (15 to 55 s) | 4.34, 4.42, 4.50, 4.50, 4.50 MB | 2.11, 2.09, 2.13, 2.09, 2.13 MB |
+| ...its heaps' pages in memory then | 197, 171, 197, 175, 198 | 167, 158, 182, 171, 193 |
+| ...both dimensions held (2,032 entities), 20 to 60 s: packed | 4.58 to 4.66 MB | 3.08 to 3.86 MB |
+
+| The default runs, three alternating rounds (12 threads, the machine shared) | before | after |
+|---|---|---|
+| Voxels: server, in all, ms a second | 33.41, 29.79, 33.28 | 32.48, 33.23, 28.65 |
+| Voxels: server update, 99th percentile, ms | 3.12, 2.94, 3.25 | 3.26, 3.20, 2.82 |
+| Voxels: server, snapshots, ms a second | 1.79, 1.42, 1.80 | 1.87, 1.93, 1.49 |
+| Voxels: sent to each bot a second; the world in memory / as sent at the end | 22.3 KB; 19.18 / 1.79 MB | 22.3 KB; 15.92 / 1.71 MB |
+| Sand: server / a client, in all, ms a second | 3.02 / 21.10, 2.57 / 17.15, 2.58 / 17.16 | 3.02 / 22.33, 2.47 / 16.83, 2.54 / 17.56 |
+| Gallery: server / a client, in all, ms a second | 2.74 / 5.01, 2.78 / 4.96, 2.85 / 5.42 | 2.86 / 5.55, 2.51 / 4.83, 2.32 / 4.22 |
+| Gallery: sent to each bot a second (joiners' worlds, mostly) | 183.1 KB | 183.4 KB |
+
+What's left of a world that shrank: its heaps are 453 pages for 2.75 MB of blocks out, as each run's heap of each
+owner keeps a part-filled page of each class it holds (32 runs, notes/schedule-and-threads.md, A run's heap costs
+memory), and two grid chunks share a page (a chunk of 4,096 bytes and its header is a block of 8 KiB, half of it
+empty: `grid.c`'s, not the heap's). A block that stays where its neighbours went keeps its page (no compaction).
+
+**Changed with it.** `tide/heap.h`: `tide_heap` lost `used`, `free`, `live`, `stub`, `gone`, `idle` and gained
+`place`, `index`, `low`, `taken`, `most`, `dropped`; new `tide_heap_page_used`, `tide_heap_has` (whether bytes from
+any offset are in a page the heap has now, for code that looks up an offset kept from before) and
+`tide_heap_handed_out` (for checking received asset leases). `tide_heaps_gone` counts the free places between
+pages. `tide_heap_release` ignores an offset in no page or a block freed already; a flush stops at a pending list
+that came as bytes and went round. `asset_store.c` checks leases with them; `mesh.c`'s kept-handle checks use
+`tide_heap_has`; generated code: `tide_client_page_hash` and `tide_client_page_block` (client_state_codegen.inc) take
+a page's bytes in use from `tide_heap_page_used`, and `tide_cached_pages` (cached_codegen.inc) folds in a free place
+where it gave up on a NULL page. The bench's line of a world's parts says the pages with one block out and the free
+places. Every pinned world hash moved (an empty world's too: an empty heap hashes its places and pending now).
+
+**Tests** (`tests/test_heap.c`): `heap_that_held_much_and_holds_little_is_small_again` (3,000 blocks of eight sizes,
+all but the first 32 freed: the same bytes, hash and pages as a heap that only had those 32, under a twentieth of
+its packed size at the most; taken again in another order and freed in a scattered one, the same pages; all freed,
+an empty heap's hash and bytes, handing out from the start again; a snapshot from the most keeps every block),
+`heap_read_from_bytes_gives_back_the_pages_it_came_with` (a heap's bytes and a delta from nothing, read back, free
+the same blocks into the same pages and bytes and hand out the same next), `heap_hands_out_the_lowest_places_and_
+its_copies_go_on_the_same` (24,000 random allocations and frees of ten sizes, 0 bytes to 100,000, in waves: every
+block where a reference of the policy worked out from the places says, zeroed; the heap holding together at each
+tick's end; every 1,000 steps three twins, a snapshot, its bytes read back and a delta from the last snapshot read
+over that snapshot's bytes, each given the same steps and checked for the same offsets, hash and bytes; it grows past
+300 pages and goes under a quarter of that), `heap_bytes_that_arent_a_heap_are_refused` (a heap's bytes spoilt 23
+ways, each refused: place 0, kinds, counts out of range, a block's places past the end, the last place free, free
+blocks' numbers twice, past what's made or not the place's first, pending blocks past the places, not where a block
+starts or free; cut at every length; 3,000 single bits flipped and 3,000 more in a delta from nothing, each refused
+or a heap that blocks then come and go in). The older tests take the new layout (a heap's first block is at 16 KiB;
+an emptied run's heap has no pages). Run: `tide_tests` whole in release (790), and under ASan with heap checks (`sanitize`; `heap`, `list`, `grid`, `text`, `snapshot`, `pack`, `delta`, `asset`, `map`, `session`: all pass); `tidec_e2e_row_heaps`,
+`_row_grids`, `_guarded_rows`, `_visibility_runs` (and `_checked`, `_memo_off`), `_grid_bytes`, `_storage` (and the
+`_await`s), `_heaps`, `_textures`, `_pure_calls` (and `_plain`), `bench_voxels` (and `_forgets`, `_wide`, `_arrives`,
+`_views`, `_checked`, `_counts`), `bench_gallery`, `bench_sand`, `sumo_tests`, `towers_tests`, `earth_tests`, and the
+e2e games that pin a world (listed with the pins in the commit). Not run: the web build, Box2D's and Box3D's
+package tests (their pins will move), and the other suites.
+
 ## A heap gives back the pages whose blocks are all free (2026-11-16, night)
+
+Replaced later the same night by the section above, which hands blocks out so that whole pages empty and go.
 
 A world's memory stayed at the most it ever held (notes/voxels.md, What's left, 8). Measured first (`bench_voxels
 --out 1 --back 40`: 8 bots fly out for 40 s, back for 40 and stay; the bench's new line of what a world's memory is

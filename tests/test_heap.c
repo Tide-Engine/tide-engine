@@ -14,6 +14,9 @@ typedef struct fake_world {
 
 static fake_world world;
 
+// Where a heap's first block is: place 0 is no block's
+#define HEAP_FIRST (UINT64_C(1) << TIDE_HEAP_PAGE_SHIFT)
+
 static bool reads(const tide_text t, const char *expected)
 {
     const tide_str s = tide_text_view(t);
@@ -105,7 +108,7 @@ TIDE_TEST(heap_starts_with_a_block_of_a_page)
         const uint64_t block = tide_heap_alloc(tide_heaps_of(&world.heap, 0u), bytes);
         TIDE_REQUIRE(block != 0);
         TIDE_CHECK(tide_heaps_of(&world.heap, 0u)->pages == places + 1u);
-        for (uint32_t i = 0; i < tide_heaps_of(&world.heap, 0u)->pages; i++) TIDE_REQUIRE(tide_heaps_of(&world.heap, 0u)->page[i] != NULL);
+        for (uint32_t i = 1; i < tide_heaps_of(&world.heap, 0u)->pages; i++) TIDE_REQUIRE(tide_heaps_of(&world.heap, 0u)->page[i] != NULL);
         uint8_t *data = (uint8_t *)(tide_heap_write(tide_heaps_of(&world.heap, 0u), block) + 1);
         data[0] = 1;
         data[bytes - 1u] = 2;
@@ -154,12 +157,12 @@ TIDE_TEST(heap_snapshots_share_until_changed)
     fake_world snapshot = {0};
     snapshot.name = world.name;
     tide_heaps_copy(&snapshot.heap, &world.heap);
-    TIDE_CHECK(tide_heaps_of(&snapshot.heap, 0u)->page[0] == tide_heaps_of(&world.heap, 0u)->page[0]);
+    TIDE_CHECK(tide_heaps_of(&snapshot.heap, 0u)->page[1] == tide_heaps_of(&world.heap, 0u)->page[1]);
     TIDE_CHECK(tide_heaps_hash(1, &snapshot.heap) == tide_heaps_hash(1, &world.heap));
 
     tide_text_set(&world.name, text("dog"), TIDE_IN_MATCH);
     tide_heaps_flush(&world.heap);
-    TIDE_CHECK(tide_heaps_of(&snapshot.heap, 0u)->page[0] != tide_heaps_of(&world.heap, 0u)->page[0]);
+    TIDE_CHECK(tide_heaps_of(&snapshot.heap, 0u)->page[1] != tide_heaps_of(&world.heap, 0u)->page[1]);
     TIDE_CHECK(strcmp(tide_text_read(&snapshot.heap, snapshot.name).ptr, "cat") == 0);
     TIDE_CHECK(strcmp(tide_text_read(&world.heap, world.name).ptr, "dog") == 0);
     TIDE_CHECK(tide_heaps_hash(1, &snapshot.heap) != tide_heaps_hash(1, &world.heap));
@@ -307,11 +310,11 @@ TIDE_TEST(heaps_keep_each_owners_blocks_apart)
     TIDE_CHECK(reads(world.name, "cat") && reads(world.title, "captain"));
     // A handle says which heap its block is in, below its offset there
     TIDE_CHECK(tide_handle_where(world.name.at) == IN_SEVEN && tide_handle_where(world.title.at) == IN_NINE);
-    TIDE_CHECK(tide_handle_world(world.name.at) == TIDE_IN_MATCH && tide_handle_offset(world.name.at) == 16u);
-    TIDE_CHECK(tide_handle_offset(world.title.at) == 16u); // Each heap hands its own blocks out from its start
-    TIDE_CHECK(tide_heaps_of(&world.heap, 0u)->used == 0 && tide_heaps_used(&world.heap) > 0);
+    TIDE_CHECK(tide_handle_world(world.name.at) == TIDE_IN_MATCH && tide_handle_offset(world.name.at) == HEAP_FIRST);
+    TIDE_CHECK(tide_handle_offset(world.title.at) == HEAP_FIRST); // Each heap hands its own blocks out from its start
+    TIDE_CHECK(tide_heaps_of(&world.heap, 0u)->pages == 0 && tide_heaps_used(&world.heap) > 0);
     TIDE_CHECK(tide_heaps_of(&world.heap, 7u) != tide_heaps_of(&world.heap, 900u) && tide_heaps_of(&world.heap, 0u) == tide_heaps_of(&world.heap, 0u));
-    TIDE_CHECK(tide_heaps_of(&world.heap, 7u)->used != 0 && tide_heaps_of(&world.heap, 900u)->used != 0);
+    TIDE_CHECK(tide_heaps_of(&world.heap, 7u)->pages != 0 && tide_heaps_of(&world.heap, 900u)->pages != 0);
     // An id the game hasn't is the world's own heap
     TIDE_CHECK(tide_heaps_of(&world.heap, 8u) == tide_heaps_of(&world.heap, 0u));
 
@@ -328,10 +331,10 @@ TIDE_TEST(heaps_keep_each_owners_blocks_apart)
     TIDE_CHECK(!tide_heaps_pending(&world.heap));
 
     // One heap's blocks come and go without the other's moving
-    const uint64_t nines = tide_heaps_of(&world.heap, 900u)->used;
+    const uint64_t nines = tide_heap_hash(0, tide_heaps_of(&world.heap, 900u));
     for (int i = 0; i < 100; i++) tide_text_set(&world.name, text(i % 2 ? "a longer cat than before" : "cat"), IN_SEVEN);
     tide_heaps_flush(&world.heap);
-    TIDE_CHECK(tide_heaps_of(&world.heap, 900u)->used == nines && reads(world.title, "captain"));
+    TIDE_CHECK(tide_heap_hash(0, tide_heaps_of(&world.heap, 900u)) == nines && reads(world.title, "captain"));
     end_three(NULL, 0);
 }
 
@@ -432,7 +435,8 @@ TIDE_TEST(heaps_deltas_carry_only_the_heaps_that_changed)
     TIDE_CHECK(tide_heaps_hash(0, &back.heap) == tide_heaps_hash(0, &world.heap));
     TIDE_CHECK(strcmp(tide_text_read(&back.heap, world.title).ptr, "admiral of the fleet, with a longer title than a captain's") == 0);
     TIDE_CHECK(strcmp(tide_text_read(&back.heap, world.name).ptr, "cat") == 0);
-    TIDE_CHECK(tide_heaps_pages_apart(&back.heap, &back_base.heap) == 1u); // Seven's page is the base's own
+    TIDE_CHECK(tide_heaps_pages_apart(&back.heap, &back_base.heap) == 2u); // Nine's place it left and its new one
+    TIDE_CHECK(tide_heaps_of(&back.heap, 7u)->page[1] == tide_heaps_of(&back_base.heap, 7u)->page[1]); // Seven's is the base's
 
     // With no base, every heap that handed anything out
     tide_heaps_free(&back.heap);
@@ -470,11 +474,11 @@ TIDE_TEST(heap_runs_hand_out_their_own_blocks)
     tide_text_set(&world.name, text("cat"), TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u));
     tide_heap_run_leave(was);
     TIDE_CHECK(TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u) == IN_SEVEN); // Outside runs: the owner's first
-    TIDE_CHECK(tide_handle_where(world.name.at) == SEVEN_RUN(3) && tide_handle_offset(world.name.at) == 16u);
+    TIDE_CHECK(tide_handle_where(world.name.at) == SEVEN_RUN(3) && tide_handle_offset(world.name.at) == HEAP_FIRST);
     TIDE_CHECK(tide_handle_in(world.name.at, IN_SEVEN) && !tide_handle_in(world.name.at, IN_NINE) && !tide_handle_in(world.name.at, TIDE_IN_MATCH));
-    TIDE_CHECK(seven(0)->used == 0 && seven(3)->used != 0 && seven(3)->run == 3u && seven(3)->base == seven(0));
+    TIDE_CHECK(seven(0)->pages == 0 && seven(3)->pages != 0 && seven(3)->run == 3u && seven(3)->base == seven(0));
     tide_text_set(&world.title, text("dog"), IN_SEVEN);
-    TIDE_CHECK(tide_handle_offset(world.title.at) == 16u && world.title.at != world.name.at);
+    TIDE_CHECK(tide_handle_offset(world.title.at) == HEAP_FIRST && world.title.at != world.name.at);
     TIDE_CHECK(reads(world.name, "cat") && reads(world.title, "dog"));
     const tide_handle threes = world.name.at;
 
@@ -484,13 +488,13 @@ TIDE_TEST(heap_runs_hand_out_their_own_blocks)
     const tide_text old = world.name;
     tide_text_set(&world.name, text("a bird"), TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u));
     TIDE_CHECK(tide_handle_where(world.name.at) == SEVEN_RUN(5) && reads(world.name, "a bird") && reads(old, "cat"));
-    TIDE_CHECK(seven(3)->pending == 0 && seven(3)->free[1] == 0 && seven(5)->away != 0 && seven(5)->held == 0);
+    TIDE_CHECK(seven(3)->pending == 0 && seven(3)->taken == 32u && seven(5)->away != 0 && seven(5)->held == 0);
     tide_heap_flush(seven(5));
-    TIDE_CHECK(seven(5)->away == 0 && seven(5)->held != 0 && seven(3)->free[1] == 0);
+    TIDE_CHECK(seven(5)->away == 0 && seven(5)->held != 0 && seven(3)->taken == 32u);
     TIDE_CHECK(tide_text_view(old).bytes == 0); // Freed memory is zero
     tide_heap_run_leave(was);
     tide_heap_runs_join(seven(0));
-    TIDE_CHECK(seven(5)->held == 0 && seven(3)->free[1] == 16u);
+    TIDE_CHECK(seven(5)->held == 0 && seven(3)->taken == 0 && seven(3)->pages == 0); // Its page went with its one block
     was = tide_heap_run_enter(3u);
     tide_text again = {0};
     tide_text_set(&again, text("cow"), TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u));
@@ -502,7 +506,7 @@ TIDE_TEST(heap_runs_hand_out_their_own_blocks)
     tide_text_release(&world.name, IN_SEVEN);
     TIDE_CHECK(again.at == 0 && world.name.at == 0 && tide_heaps_pending(&world.heap) && seven(0)->pending == 0);
     tide_heaps_flush(&world.heap);
-    TIDE_CHECK(!tide_heaps_pending(&world.heap) && seven(3)->free[1] == 16u && seven(5)->free[1] == 16u && seven(0)->free[1] == 0);
+    TIDE_CHECK(!tide_heaps_pending(&world.heap) && seven(3)->pages == 0 && seven(5)->pages == 0 && seven(0)->taken == 32u);
     TIDE_CHECK(reads(world.title, "dog"));
     end_three(NULL, 0);
 }
@@ -517,7 +521,7 @@ TIDE_TEST(heap_runs_move_a_list_in_chunks_whole)
     tide_heap_run_leave(was);
     tide_heap_runs_join(seven(0));
     TIDE_CHECK(tide_handle_where(l.at) == SEVEN_RUN(1) && (tide_block_at(l.at)->b & TIDE_LIST_CHUNKED));
-    const uint64_t ones = seven(1)->used;
+    const uint64_t ones = seven(1)->most;
 
     // Written and cut where it is from another run, and added to within its room
     was = tide_heap_run_enter(2u);
@@ -525,10 +529,10 @@ TIDE_TEST(heap_runs_move_a_list_in_chunks_whole)
     *(int32_t *)tide_list_at_mut(l, 10, sizeof(int32_t)) = -10;
     tide_list_resize(&l, 5990, sizeof(int32_t), TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u));
     *(int32_t *)tide_list_add(&l, sizeof(int32_t), TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u)) = 5990;
-    TIDE_CHECK(l.at == at && seven(2)->used == 0);
+    TIDE_CHECK(l.at == at && seven(2)->pages == 0);
     // More chunks: they'd be run 2's, which a block in run 1's heap can't list. The list moves there whole
     for (int32_t i = 5991; i < 12000; i++) *(int32_t *)tide_list_add(&l, sizeof(int32_t), TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u)) = i;
-    TIDE_CHECK(tide_handle_where(l.at) == SEVEN_RUN(2) && seven(1)->used == ones && seven(2)->away != 0);
+    TIDE_CHECK(tide_handle_where(l.at) == SEVEN_RUN(2) && seven(1)->most == ones && seven(2)->away != 0);
     tide_heap_flush(seven(2));
     tide_heap_run_leave(was);
     tide_heap_runs_join(seven(0));
@@ -543,7 +547,7 @@ TIDE_TEST(heap_runs_move_a_list_in_chunks_whole)
     tide_heap_flush(seven(1));
     tide_heap_run_leave(was);
     tide_heap_runs_join(seven(0));
-    TIDE_CHECK(seven(1)->used == ones && tide_list_count(second) == 6000);
+    TIDE_CHECK(seven(1)->most == ones && tide_list_count(second) == 6000);
     // Outside runs, one that needs more chunks moves to the owner's first heap
     for (int32_t i = 6000; i < 12000; i++) *(int32_t *)tide_list_add(&second, sizeof(int32_t), IN_SEVEN) = i;
     tide_heaps_flush(&world.heap);
@@ -582,14 +586,14 @@ TIDE_TEST(heap_runs_move_a_grid_whole)
     tide_heap_run_leave(was);
     tide_heap_runs_join(seven(0));
     TIDE_CHECK(tide_handle_where(g.at) == SEVEN_RUN(1) && tide_grid_dir_of(g)->records == 3u);
-    const uint64_t ones = seven(1)->used;
+    const uint64_t ones = seven(1)->most;
 
     // From another run: cells of its chunks written where they are, and zero where it has none makes none
     was = tide_heap_run_enter(2u);
     const tide_handle at = g.at;
     grid_put(&g, 1, 3, 15, TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u));
     grid_put(&g, 500, 500, 0, TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u));
-    TIDE_CHECK(g.at == at && seven(2)->used == 0 && grid_cell(g, 1, 3) == 15 && tide_grid_dir_of(g)->records == 3u);
+    TIDE_CHECK(g.at == at && seven(2)->pages == 0 && grid_cell(g, 1, 3) == 15 && tide_grid_dir_of(g)->records == 3u);
     // ...through a cache too, which holds the grid's own heap
     tide_grid_cache cache = {0};
     *(int32_t *)tide_grid_cached_poke(&cache, &g, 2, 3, 0, &grid_ints, true, TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u)) = 16;
@@ -597,7 +601,7 @@ TIDE_TEST(heap_runs_move_a_grid_whole)
     // A chunk it hasn't: run 2's rows make blocks in run 2's heap alone, and a directory names its chunks by their
     // offsets in its own, so the grid moves there whole, every cell with it. Run 1's blocks wait for the join
     grid_put(&g, 200, 200, 17, TIDE_WHERE_RUN(TIDE_IN_MATCH, 7u));
-    TIDE_CHECK(tide_handle_where(g.at) == SEVEN_RUN(2) && seven(1)->used == ones && seven(2)->away != 0);
+    TIDE_CHECK(tide_handle_where(g.at) == SEVEN_RUN(2) && seven(1)->most == ones && seven(2)->away != 0);
     TIDE_CHECK(tide_grid_dir_of(g)->records == 4u && grid_cell(g, 1, 2) == 12 && grid_cell(g, 100, 3) == 13);
     TIDE_CHECK(grid_cell(g, -5, -70) == 14 && grid_cell(g, 1, 3) == 15 && grid_cell(g, 2, 3) == 16 && grid_cell(g, 200, 200) == 17);
     TIDE_CHECK(!tide_grid_cache_holds(&cache, g.at, 0, 0, 0)); // The grid it held is gone
@@ -615,12 +619,12 @@ TIDE_TEST(heap_runs_move_a_grid_whole)
     tide_heap_flush(seven(1));
     tide_heap_run_leave(was);
     tide_heap_runs_join(seven(0));
-    TIDE_CHECK(seven(1)->used == ones && grid_cell(again, -5, -70) == 1);
+    TIDE_CHECK(seven(1)->most == ones && grid_cell(again, -5, -70) == 1);
 
     // Outside runs, a chunk it hasn't is made in its own heap, whichever run's that is
     const tide_handle twos = g.at;
     grid_put(&g, -300, 0, 18, IN_SEVEN);
-    TIDE_CHECK(g.at == twos && grid_cell(g, -300, 0) == 18 && seven(0)->used == 0);
+    TIDE_CHECK(g.at == twos && grid_cell(g, -300, 0) == 18 && seven(0)->pages == 0);
 
     // A parallel loop from run 3: its steps read the grid where it is, and its end makes the chunks they wrote in
     // run 3's heap, the grid moved there first
@@ -665,7 +669,7 @@ TIDE_TEST(heap_runs_pages_keep_their_references_until_the_join)
     tide_text_set(&world.title, text("captain"), IN_SEVEN);
     tide_heaps_copy(&snapshot.heap, &world.heap);
     const uint64_t before = tide_heaps_hash(0, &snapshot.heap);
-    tide_page *shared = seven(0)->page[0];
+    tide_page *shared = seven(0)->page[1];
     const uint32_t refs = shared->refs;
     TIDE_CHECK(refs == 2u);
 
@@ -673,9 +677,9 @@ TIDE_TEST(heap_runs_pages_keep_their_references_until_the_join)
     // thread that read it from the table a moment ago still sees a page that isn't the heap's to write
     const uint32_t was = tide_heap_run_enter(4u);
     tide_block_write(world.name.at)->b = 3u;
-    TIDE_CHECK(seven(0)->page[0] != shared && shared->refs == refs && seven(0)->retired_count == 1u);
+    TIDE_CHECK(seven(0)->page[1] != shared && shared->refs == refs && seven(0)->retired_count == 1u);
     tide_block_write(world.title.at)->b = 7u; // The copy is the heap's own: written where it is
-    TIDE_CHECK(seven(0)->retired_count == 1u && seven(0)->page[0]->refs == 1u);
+    TIDE_CHECK(seven(0)->retired_count == 1u && seven(0)->page[1]->refs == 1u);
     tide_heap_run_leave(was);
     tide_heap_runs_join(seven(0));
     TIDE_CHECK(shared->refs == 1u && seven(0)->retired_count == 0u);
@@ -738,7 +742,8 @@ TIDE_TEST(heap_runs_copy_hash_and_pack_with_their_owner)
     TIDE_CHECK(tide_heaps_hash(0, &back.heap) == tide_heaps_hash(0, &world.heap));
     TIDE_CHECK(strcmp(tide_text_read(&back.heap, world.name).ptr, "a cat with a longer name") == 0);
     TIDE_CHECK(strcmp(tide_text_read(&back.heap, world.title).ptr, "captain") == 0);
-    TIDE_CHECK(tide_heaps_pages_apart(&back.heap, &back_base.heap) == 1u); // Nine's page is the base's own
+    TIDE_CHECK(tide_heaps_pages_apart(&back.heap, &back_base.heap) == 2u); // Run 6's place it left and its new one
+    TIDE_CHECK(tide_heaps_of(&back.heap, 900u)->page[1] == tide_heaps_of(&back_base.heap, 900u)->page[1]); // Nine's is the base's
     free(delta);
 
     // A snapshot with no runs taken over one that has them leaves none
@@ -759,8 +764,8 @@ TIDE_TEST(heaps_keep_one_owners_heap)
     tide_text_set(&world.title, text("captain"), IN_NINE);
     tide_heaps_flush(&world.heap);
     tide_heaps_keep(&kept.heap, &world.heap, 7u);
-    TIDE_CHECK(tide_heaps_of(&kept.heap, 7u)->used == tide_heaps_of(&world.heap, 7u)->used);
-    TIDE_CHECK(tide_heaps_of(&kept.heap, 900u)->used == 0 && tide_heaps_pages(&kept.heap) == 1u);
+    TIDE_CHECK(tide_heap_hash(0, tide_heaps_of(&kept.heap, 7u)) == tide_heap_hash(0, tide_heaps_of(&world.heap, 7u)));
+    TIDE_CHECK(tide_heaps_of(&kept.heap, 900u)->pages == 0 && tide_heaps_pages(&kept.heap) == 1u);
     // What a value read then names is the kept heap's block, whatever the world's becomes
     const tide_text was = {tide_confirmed(world.name.at)};
     tide_text_use_verified(&kept.heap);
@@ -790,10 +795,12 @@ TIDE_TEST(heaps_keep_one_owners_heap)
     end_three(NULL, 0);
 }
 
+
 // ---------------------------------------------------------------------------
-// Pages given back (tide/heap.h). Each test does the same to two heaps, one
-// settled as a world's is after a tick's changes and a twin that never is: the
-// first gives pages back, and is otherwise the twin, byte for byte.
+// Places (tide/heap.h): what a heap hands out goes in the lowest places that
+// have room, so one that held much and holds little is small again, and where
+// it puts a block depends on what it holds alone, so a copy, its bytes and a
+// delta of it go on as it does.
 
 static uint8_t *packed_heaps(const tide_heaps *hs, uint32_t *size)
 {
@@ -815,7 +822,33 @@ static bool same_packed(const tide_heaps *a, const tide_heaps *b)
     return same;
 }
 
-// A block's bytes say which block it is.
+// `hs` read back from its bytes into `back` (empty).
+static bool unpacks(const tide_heaps *hs, tide_heaps *back)
+{
+    uint32_t size = 0;
+    uint8_t *bytes = packed_heaps(hs, &size);
+    tide_reader r = {bytes, size, 0, false};
+    const bool ok = tide_heaps_unpack(back, &r) && r.at == size;
+    free(bytes);
+    return ok;
+}
+
+// A delta of `now` from `base`, read back over `read_base` (the same heaps as `base`) into `back` (empty).
+static bool delta_into(const tide_heaps *now, const tide_heaps *base, const tide_heaps *read_base, tide_heaps *back)
+{
+    tide_delta_writer d;
+    tide_delta_begin(&d, base != NULL, NULL, 0, 42);
+    tide_heaps_pack_delta(now, base, &d);
+    uint32_t size = 0;
+    uint8_t *delta = tide_delta_end(&d, &size);
+    tide_delta_reader dr;
+    uint64_t hash = 0;
+    const bool ok = tide_delta_open(&dr, delta, size, base != NULL, &hash) && tide_heaps_unpack_delta(back, read_base, &dr);
+    free(delta);
+    return ok;
+}
+
+// A block's first bytes say which block it is.
 static void fill_block(tide_heaps *hs, const uint64_t block, const uint32_t bytes, const uint32_t which)
 {
     uint8_t *data = (uint8_t *)(tide_heap_write(tide_heaps_of(hs, 0u), block) + 1);
@@ -840,317 +873,382 @@ static bool block_zero(const tide_heaps *hs, const uint64_t block, const uint32_
     return true;
 }
 
-TIDE_TEST(heap_gives_back_the_pages_whose_blocks_are_all_free)
+static tide_heap *first_heap(tide_heaps *hs)
 {
-    enum { BLOCKS = 600, KEPT = 100, BYTES = 4000 };
-    tide_heaps world_heaps = {0}, twin = {0};
+    return tide_heaps_of(hs, 0u);
+}
+
+static const uint32_t mixed_sizes[] = {24, 100, 1000, 4000, 9000, 40000, 24, 200};
+#define MIXED_SIZES (sizeof mixed_sizes / sizeof mixed_sizes[0])
+
+TIDE_TEST(heap_that_held_much_and_holds_little_is_small_again)
+{
+    enum { BLOCKS = 3000, KEPT = 32 };
+    tide_heaps hs = {0}, fresh = {0}, empty = {0};
     static uint64_t at[BLOCKS];
     for (uint32_t i = 0; i < BLOCKS; i++) {
-        at[i] = tide_heap_alloc(tide_heaps_of(&world_heaps, 0u), BYTES);
-        TIDE_REQUIRE(at[i] && tide_heap_alloc(tide_heaps_of(&twin, 0u), BYTES) == at[i]);
-        fill_block(&world_heaps, at[i], BYTES, i);
-        fill_block(&twin, at[i], BYTES, i);
+        at[i] = tide_heap_alloc(first_heap(&hs), mixed_sizes[i % MIXED_SIZES]);
+        fill_block(&hs, at[i], 24, i);
+        if (i < KEPT) {
+            TIDE_REQUIRE(tide_heap_alloc(first_heap(&fresh), mixed_sizes[i % MIXED_SIZES]) == at[i]);
+            fill_block(&fresh, at[i], 24, i);
+        }
     }
-    tide_heaps_settle(&world_heaps);
-    TIDE_CHECK(tide_heaps_gone(&world_heaps) == 0 && tide_heaps_pages(&world_heaps) == tide_heaps_pages(&twin));
-    const uint32_t most = tide_heaps_pages(&world_heaps);
-    TIDE_CHECK(most >= BLOCKS / 4u);
-
-    // A snapshot from before anything went: it keeps every block, whatever the world gives back
+    const uint32_t most_pages = tide_heaps_pages(&hs), most_packed = tide_heaps_packed_size(&hs);
+    TIDE_CHECK(most_pages > 1000u && most_packed > 1000u * 16384u);
+    // A snapshot from then keeps every block
     tide_heaps before = {0};
-    tide_heaps_copy(&before, &world_heaps);
+    tide_heaps_copy(&before, &hs);
     const uint64_t before_hash = tide_heaps_hash(1, &before);
 
-    for (uint32_t i = KEPT; i < BLOCKS; i++) {
-        tide_heap_release(tide_heaps_of(&world_heaps, 0u), at[i]);
-        tide_heap_release(tide_heaps_of(&twin, 0u), at[i]);
-    }
-    // Released and not yet freed: nothing goes
-    tide_heaps_settle(&world_heaps);
-    TIDE_CHECK(tide_heaps_gone(&world_heaps) == 0);
-    tide_heaps_flush(&world_heaps);
-    tide_heaps_flush(&twin);
-    TIDE_CHECK(tide_heaps_gone(&world_heaps) == 0); // Only a settle gives back
-    tide_heaps_settle(&world_heaps);
-    tide_heaps_settle(&world_heaps); // Again: nothing more to do
-    const uint32_t gone = tide_heaps_gone(&world_heaps);
-    TIDE_CHECK(gone >= (BLOCKS - KEPT) / 4u - 2u && tide_heaps_pages(&world_heaps) + gone == most);
-    TIDE_CHECK(tide_heaps_pages(&world_heaps) <= KEPT / 4u + 3u);
-    TIDE_CHECK(tide_heaps_pages(&twin) == most && tide_heaps_gone(&twin) == 0);
-    // The same heap: its hash, what it's handed out, its bytes
-    const uint64_t freed_hash = tide_heaps_hash(1, &twin);
-    TIDE_CHECK(tide_heaps_hash(1, &world_heaps) == freed_hash && freed_hash != before_hash);
-    TIDE_CHECK(tide_heaps_used(&world_heaps) == tide_heaps_used(&twin));
-    TIDE_CHECK(same_packed(&world_heaps, &twin));
-    for (uint32_t i = 0; i < KEPT; i++) TIDE_CHECK(block_filled(&world_heaps, at[i], BYTES, i));
-    // The snapshot from before has every block still
-    TIDE_CHECK(tide_heaps_hash(1, &before) == before_hash && tide_heaps_gone(&before) == 0);
-    for (uint32_t i = 0; i < BLOCKS; i += 7u) TIDE_CHECK(block_filled(&before, at[i], BYTES, i));
-
-    // A snapshot of the world with pages gone is the same heap too, and stays so when the world takes them again
-    tide_heaps after = {0};
-    tide_heaps_copy(&after, &world_heaps);
-    TIDE_CHECK(tide_heaps_gone(&after) == gone && tide_heaps_hash(1, &after) == freed_hash);
-    TIDE_CHECK(tide_heaps_pages_apart(&world_heaps, &after) == 0);
-    tide_heaps twin_after = {0};
-    tide_heaps_copy(&twin_after, &twin);
-
-    // The blocks handed out next are the ones the twin hands out, zeroed, their pages back
-    static uint64_t again[BLOCKS];
-    for (uint32_t i = KEPT; i < BLOCKS; i++) {
-        again[i] = tide_heap_alloc(tide_heaps_of(&world_heaps, 0u), BYTES);
-        TIDE_REQUIRE(again[i] && tide_heap_alloc(tide_heaps_of(&twin, 0u), BYTES) == again[i]);
-        TIDE_CHECK(block_zero(&world_heaps, again[i], BYTES));
-        fill_block(&world_heaps, again[i], BYTES, i + 1000u);
-        fill_block(&twin, again[i], BYTES, i + 1000u);
-    }
-    TIDE_CHECK(tide_heaps_gone(&world_heaps) == 0 && tide_heaps_pages(&world_heaps) == most);
-    TIDE_CHECK(tide_heaps_hash(1, &world_heaps) == tide_heaps_hash(1, &twin) && same_packed(&world_heaps, &twin));
-    for (uint32_t i = 0; i < KEPT; i++) TIDE_CHECK(block_filled(&world_heaps, at[i], BYTES, i));
-    for (uint32_t i = KEPT; i < BLOCKS; i++) TIDE_CHECK(block_filled(&world_heaps, again[i], BYTES, i + 1000u));
-    TIDE_CHECK(tide_heaps_hash(1, &after) == freed_hash && tide_heaps_gone(&after) == gone && same_packed(&after, &twin_after));
+    // The ones made last let go of, the last first: what's left is what a heap that only ever had those has
+    for (uint32_t i = BLOCKS; i-- > KEPT;) tide_heap_release(first_heap(&hs), at[i]);
+    TIDE_CHECK(tide_heaps_pages(&hs) == most_pages); // Released, not yet freed
+    tide_heaps_flush(&hs);
+    tide_heaps_settle(&hs);
+    TIDE_CHECK(tide_heaps_pages(&hs) == tide_heaps_pages(&fresh) && tide_heaps_gone(&hs) == 0);
+    TIDE_CHECK(tide_heaps_hash(1, &hs) == tide_heaps_hash(1, &fresh) && same_packed(&hs, &fresh));
+    TIDE_CHECK(tide_heaps_packed_size(&hs) < most_packed / 20u);
+    for (uint32_t i = 0; i < KEPT; i++) TIDE_CHECK(block_filled(&hs, at[i], 24, i));
     TIDE_CHECK(tide_heaps_hash(1, &before) == before_hash);
+    for (uint32_t i = 0; i < BLOCKS; i += 97u) TIDE_CHECK(block_filled(&before, at[i], 24, i));
 
-    // Everything let go of: all but the first page and the last go
-    for (uint32_t i = 0; i < KEPT; i++) tide_heap_release(tide_heaps_of(&world_heaps, 0u), at[i]);
-    for (uint32_t i = KEPT; i < BLOCKS; i++) tide_heap_release(tide_heaps_of(&world_heaps, 0u), again[i]);
-    tide_heaps_flush(&world_heaps);
-    tide_heaps_settle(&world_heaps);
-    TIDE_CHECK(tide_heaps_pages(&world_heaps) <= 2u);
-    // The world freed first, the snapshots keep what they shared with it
-    tide_heaps_free(&world_heaps);
-    TIDE_CHECK(tide_heaps_hash(1, &after) == freed_hash && same_packed(&after, &twin_after));
-    for (uint32_t i = 0; i < KEPT; i++) TIDE_CHECK(block_filled(&after, at[i], BYTES, i));
-    TIDE_CHECK(tide_heaps_hash(1, &before) == before_hash);
-    tide_heaps_free(&after);
+    // Taken again in another order, and let go of in any: the pages left are the few the kept blocks are in
+    for (uint32_t i = KEPT; i < BLOCKS; i++) {
+        at[i] = tide_heap_alloc(first_heap(&hs), mixed_sizes[(i * 7u) % MIXED_SIZES]);
+        TIDE_CHECK(block_zero(&hs, at[i], 24));
+    }
+    for (uint32_t i = KEPT; i < BLOCKS; i++) tide_heap_release(first_heap(&hs), at[(i * 1543u) % (BLOCKS - KEPT) + KEPT]);
+    tide_heaps_flush(&hs);
+    TIDE_CHECK(tide_heaps_pages(&hs) == tide_heaps_pages(&fresh));
+    TIDE_CHECK(tide_heaps_packed_size(&hs) < most_packed / 20u);
+    for (uint32_t i = 0; i < KEPT; i++) TIDE_CHECK(block_filled(&hs, at[i], 24, i));
+
+    // Everything let go of: an empty heap, as one that never had anything
+    for (uint32_t i = 0; i < KEPT; i++) tide_heap_release(first_heap(&hs), at[i]);
+    tide_heaps_flush(&hs);
+    tide_heaps_settle(&hs);
+    (void)first_heap(&empty);
+    TIDE_CHECK(first_heap(&hs)->pages == 0 && tide_heaps_pages(&hs) == 0 && first_heap(&hs)->taken == 0);
+    TIDE_CHECK(tide_heaps_hash(1, &hs) == tide_heaps_hash(1, &empty) && same_packed(&hs, &empty));
+    TIDE_CHECK(tide_heaps_hash(1, &before) == before_hash && block_filled(&before, at[0], 24, 0));
+    // ...which hands out from its start again
+    TIDE_CHECK(tide_heap_alloc(first_heap(&hs), 24) == HEAP_FIRST);
     tide_heaps_free(&before);
-    tide_heaps_free(&twin_after);
-    tide_heaps_free(&twin);
+    tide_heaps_free(&hs);
+    tide_heaps_free(&fresh);
+    tide_heaps_free(&empty);
 }
 
-TIDE_TEST(heap_gives_back_a_big_blocks_page_and_keeps_pages_of_small_blocks)
+TIDE_TEST(heap_read_from_bytes_gives_back_the_pages_it_came_with)
 {
-    enum { BIG = 24, SMALL = 4096 };
-    tide_heaps world_heaps = {0}, twin = {0};
-    static uint64_t big[BIG], small[SMALL];
-    // Blocks of four places each, then small ones, a link each when free: too many to a page for it to go
-    for (uint32_t i = 0; i < BIG; i++) {
-        big[i] = tide_heap_alloc(tide_heaps_of(&world_heaps, 0u), 60000);
-        TIDE_REQUIRE(big[i] && tide_heap_alloc(tide_heaps_of(&twin, 0u), 60000) == big[i]);
-        fill_block(&world_heaps, big[i], 60000, i);
-        fill_block(&twin, big[i], 60000, i);
-    }
-    for (uint32_t i = 0; i < SMALL; i++) {
-        small[i] = tide_heap_alloc(tide_heaps_of(&world_heaps, 0u), 16);
-        TIDE_REQUIRE(small[i] && tide_heap_alloc(tide_heaps_of(&twin, 0u), 16) == small[i]);
-    }
-    const uint32_t most = tide_heaps_pages(&world_heaps);
-    for (uint32_t i = 2; i < BIG; i++) {
-        tide_heap_release(tide_heaps_of(&world_heaps, 0u), big[i]);
-        tide_heap_release(tide_heaps_of(&twin, 0u), big[i]);
-    }
-    for (uint32_t i = 0; i < SMALL; i++) {
-        tide_heap_release(tide_heaps_of(&world_heaps, 0u), small[i]);
-        tide_heap_release(tide_heaps_of(&twin, 0u), small[i]);
-    }
-    tide_heaps_flush(&world_heaps);
-    tide_heaps_flush(&twin);
-    tide_heaps_settle(&world_heaps);
-    TIDE_CHECK(tide_heaps_gone(&world_heaps) == (BIG - 2u) * 4u);
-    TIDE_CHECK(tide_heaps_pages(&world_heaps) == most - (BIG - 2u) * 4u);
-    TIDE_CHECK(tide_heaps_hash(1, &world_heaps) == tide_heaps_hash(1, &twin) && same_packed(&world_heaps, &twin));
-    tide_heaps_settle(&world_heaps); // The small blocks' pages aren't looked at again
-    TIDE_CHECK(tide_heaps_gone(&world_heaps) == (BIG - 2u) * 4u);
-    // Blocks of each kind again: the twin's, and the small ones' pages count again once they're free
-    for (uint32_t round = 0; round < 3; round++) {
-        for (uint32_t i = 2; i < BIG; i++) {
-            big[i] = tide_heap_alloc(tide_heaps_of(&world_heaps, 0u), 60000);
-            TIDE_REQUIRE(big[i] && tide_heap_alloc(tide_heaps_of(&twin, 0u), 60000) == big[i]);
-            TIDE_CHECK(block_zero(&world_heaps, big[i], 60000));
-            fill_block(&world_heaps, big[i], 60000, i + round);
-            fill_block(&twin, big[i], 60000, i + round);
-        }
-        for (uint32_t i = 0; i < SMALL; i++) {
-            small[i] = tide_heap_alloc(tide_heaps_of(&world_heaps, 0u), 16);
-            TIDE_REQUIRE(small[i] && tide_heap_alloc(tide_heaps_of(&twin, 0u), 16) == small[i]);
-        }
-        TIDE_CHECK(tide_heaps_gone(&world_heaps) == 0 && tide_heaps_pages(&world_heaps) == most);
-        TIDE_CHECK(block_filled(&world_heaps, big[0], 60000, 0) && block_filled(&world_heaps, big[1], 60000, 1));
-        for (uint32_t i = 2; i < BIG; i++) {
-            tide_heap_release(tide_heaps_of(&world_heaps, 0u), big[i]);
-            tide_heap_release(tide_heaps_of(&twin, 0u), big[i]);
-        }
-        for (uint32_t i = 0; i < SMALL; i++) {
-            tide_heap_release(tide_heaps_of(&world_heaps, 0u), small[i]);
-            tide_heap_release(tide_heaps_of(&twin, 0u), small[i]);
-        }
-        tide_heaps_flush(&world_heaps);
-        tide_heaps_flush(&twin);
-        tide_heaps_settle(&world_heaps);
-        TIDE_CHECK(tide_heaps_gone(&world_heaps) == (BIG - 2u) * 4u);
-        TIDE_CHECK(tide_heaps_hash(1, &world_heaps) == tide_heaps_hash(1, &twin) && same_packed(&world_heaps, &twin));
-    }
-    tide_heaps_free(&world_heaps);
-    tide_heaps_free(&twin);
-}
-
-// A delta of `now` from `base`, read back over `read_base`, which is the same heap as `base` kept another way.
-static bool delta_reads(const tide_heaps *now, const tide_heaps *base, const tide_heaps *read_base)
-{
-    tide_delta_writer d;
-    tide_delta_begin(&d, true, NULL, 0, 42);
-    tide_heaps_pack_delta(now, base, &d);
-    uint32_t size = 0;
-    uint8_t *delta = tide_delta_end(&d, &size);
-    tide_delta_reader dr;
-    uint64_t hash = 0;
-    tide_heaps back = {0};
-    bool ok = tide_delta_open(&dr, delta, size, true, &hash) && tide_heaps_unpack_delta(&back, read_base, &dr);
-    ok = ok && tide_heaps_hash(1, &back) == tide_heaps_hash(1, now) && same_packed(&back, now);
-    free(delta);
-    tide_heaps_free(&back);
-    return ok;
-}
-
-TIDE_TEST(heap_with_pages_given_back_packs_and_makes_deltas_as_its_twin)
-{
-    enum { BLOCKS = 400, BYTES = 4000 };
-    tide_heaps world_heaps = {0}, twin = {0};
+    enum { BLOCKS = 2000 };
+    tide_heaps hs = {0}, back = {0}, from_delta = {0};
     static uint64_t at[BLOCKS];
     for (uint32_t i = 0; i < BLOCKS; i++) {
-        at[i] = tide_heap_alloc(tide_heaps_of(&world_heaps, 0u), BYTES);
-        TIDE_REQUIRE(at[i] && tide_heap_alloc(tide_heaps_of(&twin, 0u), BYTES) == at[i]);
-        fill_block(&world_heaps, at[i], BYTES, i);
-        fill_block(&twin, at[i], BYTES, i);
+        at[i] = tide_heap_alloc(first_heap(&hs), mixed_sizes[i % MIXED_SIZES]);
+        fill_block(&hs, at[i], 24, i);
     }
-    for (uint32_t i = 40; i < BLOCKS; i++) {
-        tide_heap_release(tide_heaps_of(&world_heaps, 0u), at[i]);
-        tide_heap_release(tide_heaps_of(&twin, 0u), at[i]);
+    TIDE_REQUIRE(unpacks(&hs, &back) && delta_into(&hs, NULL, NULL, &from_delta));
+    TIDE_CHECK(tide_heaps_hash(1, &back) == tide_heaps_hash(1, &hs) && tide_heaps_hash(1, &from_delta) == tide_heaps_hash(1, &hs));
+    TIDE_CHECK(tide_heaps_used(&back) == tide_heaps_used(&hs));
+    tide_heaps *all[] = {&hs, &back, &from_delta};
+    for (uint32_t k = 0; k < 3; k++) {
+        for (uint32_t i = 10; i < BLOCKS; i++) tide_heap_release(first_heap(all[k]), at[i]);
+        tide_heaps_flush(all[k]);
+        tide_heaps_settle(all[k]);
     }
-    tide_heaps_flush(&world_heaps);
-    tide_heaps_flush(&twin);
-    tide_heaps_settle(&world_heaps);
-    TIDE_REQUIRE(tide_heaps_gone(&world_heaps) >= 80u);
-
-    // Whole: bytes of the twin's, which read back into a heap with every page, none of which it gives back (it
-    // can't tell which of their blocks are free)
-    uint32_t size = 0;
-    uint8_t *bytes = packed_heaps(&world_heaps, &size);
-    tide_heaps back = {0};
-    tide_reader r = {bytes, size, 0, false};
-    TIDE_REQUIRE(tide_heaps_unpack(&back, &r) && r.at == size);
-    TIDE_CHECK(tide_heaps_hash(1, &back) == tide_heaps_hash(1, &twin) && tide_heaps_gone(&back) == 0);
-    tide_heaps_settle(&back);
-    TIDE_CHECK(tide_heaps_gone(&back) == 0 && tide_heaps_pages(&back) == tide_heaps_pages(&twin));
-    // ...and hands out the twin's blocks, and gives back the pages it makes from then on
-    const uint64_t next = tide_heap_alloc(tide_heaps_of(&back, 0u), BYTES);
-    tide_heaps twin_next = {0};
-    tide_heaps_copy(&twin_next, &twin);
-    TIDE_CHECK(next == tide_heap_alloc(tide_heaps_of(&twin_next, 0u), BYTES));
-    tide_heaps_free(&twin_next);
-    free(bytes);
+    TIDE_CHECK(tide_heaps_pages(&hs) < 40u);
+    for (uint32_t k = 1; k < 3; k++) {
+        TIDE_CHECK(tide_heaps_pages(all[k]) == tide_heaps_pages(&hs) && same_packed(all[k], &hs));
+        TIDE_CHECK(tide_heaps_hash(1, all[k]) == tide_heaps_hash(1, &hs));
+        for (uint32_t i = 0; i < 10; i++) TIDE_CHECK(block_filled(all[k], at[i], 24, i));
+    }
+    const uint64_t next = tide_heap_alloc(first_heap(&hs), 4000);
+    TIDE_CHECK(tide_heap_alloc(first_heap(&back), 4000) == next && tide_heap_alloc(first_heap(&from_delta), 4000) == next);
+    tide_heaps_free(&hs);
     tide_heaps_free(&back);
-
-    // The pages' hashes one by one, as a machine says what it has
-    uint8_t ours[16384], theirs[16384];
-    tide_writer wa = {ours, sizeof ours, 0, false, false}, wb = {theirs, sizeof theirs, 0, false, false};
-    tide_heaps_hash_pages(&world_heaps, &wa);
-    tide_heaps_hash_pages(&twin, &wb);
-    TIDE_CHECK(!wa.overflow && wa.size == wb.size && memcmp(ours, theirs, wa.size) == 0);
-
-    // Deltas: from a base with the pages gone and from the twin's with them there, read over either
-    tide_heaps base = {0}, twin_base = {0};
-    tide_heaps_copy(&base, &world_heaps);
-    tide_heaps_copy(&twin_base, &twin);
-    TIDE_CHECK(delta_reads(&world_heaps, &base, &base) && delta_reads(&world_heaps, &base, &twin_base));
-    for (uint32_t i = 40; i < 120; i++) {
-        at[i] = tide_heap_alloc(tide_heaps_of(&world_heaps, 0u), BYTES);
-        TIDE_REQUIRE(at[i] && tide_heap_alloc(tide_heaps_of(&twin, 0u), BYTES) == at[i]);
-        fill_block(&world_heaps, at[i], BYTES, i + 500u);
-        fill_block(&twin, at[i], BYTES, i + 500u);
-    }
-    for (uint32_t i = 0; i < 20; i++) {
-        tide_heap_release(tide_heaps_of(&world_heaps, 0u), at[i]);
-        tide_heap_release(tide_heaps_of(&twin, 0u), at[i]);
-    }
-    tide_heaps_flush(&world_heaps);
-    tide_heaps_flush(&twin);
-    tide_heaps_settle(&world_heaps);
-    TIDE_CHECK(tide_heaps_gone(&world_heaps) > 0 && tide_heaps_gone(&world_heaps) != tide_heaps_gone(&base));
-    TIDE_CHECK(tide_heaps_hash(1, &world_heaps) == tide_heaps_hash(1, &twin));
-    TIDE_CHECK(delta_reads(&world_heaps, &base, &base));
-    TIDE_CHECK(delta_reads(&world_heaps, &base, &twin_base));
-    TIDE_CHECK(delta_reads(&world_heaps, &twin_base, &base));
-    TIDE_CHECK(delta_reads(&twin, &twin_base, &base));
-    TIDE_CHECK(delta_reads(&twin, &base, &twin_base));
-    // And back the other way: the base from what the world became
-    TIDE_CHECK(delta_reads(&base, &world_heaps, &twin) && delta_reads(&twin_base, &world_heaps, &world_heaps));
-    tide_heaps_free(&base);
-    tide_heaps_free(&twin_base);
-    tide_heaps_free(&world_heaps);
-    tide_heaps_free(&twin);
+    tide_heaps_free(&from_delta);
 }
 
-TIDE_TEST(heap_giving_back_is_the_twin_through_any_blocks_coming_and_going)
+// The size class of a block with room for `bytes`.
+static uint32_t class_of(const uint32_t bytes)
 {
-    enum { MOST = 1500, STEPS = 30000, SNAPSHOTS = 4 };
-    static const uint32_t sizes[] = {24, 200, 1000, 4000, 4000, 4000, 9000, 40000};
-    tide_heaps world_heaps = {0}, twin = {0};
+    uint32_t c = 0;
+    while (((uint64_t)16 << c) < (uint64_t)bytes + sizeof(tide_block)) c++;
+    return c;
+}
+
+// The block the policy says one of `bytes` is, worked out from what's at each place: in the lowest page of its
+// class with one to spare (the last of its blocks freed, else the next it hasn't made), else in the lowest free
+// place (the lowest run of them for a block of several), else at the end.
+static uint64_t expected_block(const tide_heap *h, const uint32_t bytes)
+{
+    const uint32_t c = class_of(bytes);
+    const uint32_t end = h->pages ? h->pages : 1u;
+    if (c >= TIDE_HEAP_SMALL) {
+        const uint32_t count = 1u << (c - TIDE_HEAP_SMALL);
+        for (uint32_t i = 1; i < h->pages; i++) {
+            uint32_t k = 0;
+            while (k < count && i + k < h->pages && h->place[i + k].kind == TIDE_PLACE_FREE) k++;
+            if (k == count) return (uint64_t)i << TIDE_HEAP_PAGE_SHIFT;
+        }
+        return (uint64_t)end << TIDE_HEAP_PAGE_SHIFT;
+    }
+    for (uint32_t i = 1; i < h->pages; i++) {
+        const tide_heap_place pl = h->place[i];
+        if (pl.kind != 1u + c || pl.out == 1u << (TIDE_HEAP_PAGE_SHIFT - c - 4u)) continue;
+        const uint32_t index = pl.free ? pl.free - 1u : pl.made;
+        return (uint64_t)i << TIDE_HEAP_PAGE_SHIFT | (uint64_t)index << (c + 4u);
+    }
+    for (uint32_t i = 1; i < h->pages; i++) {
+        if (h->place[i].kind == TIDE_PLACE_FREE) return (uint64_t)i << TIDE_HEAP_PAGE_SHIFT;
+    }
+    return (uint64_t)end << TIDE_HEAP_PAGE_SHIFT;
+}
+
+// What holds of any heap once its blocks are freed: no page of a class's without a block out, the last place
+// not free, a page at every place in use and none at a free one, and what's handed out the bytes of the blocks
+// held.
+static bool heap_holds_together(const tide_heap *h, const uint64_t taken)
+{
+    if (h->taken != taken || h->pages == 1u || (h->pages && h->place[h->pages - 1u].kind == TIDE_PLACE_FREE)) return false;
+    for (uint32_t i = 1; i < h->pages; i++) {
+        const tide_heap_place pl = h->place[i];
+        if (pl.kind - 1u < TIDE_HEAP_SMALL && !pl.out) return false;
+        if ((pl.kind == TIDE_PLACE_FREE) != (h->page[i] == NULL)) return false;
+    }
+    return true;
+}
+
+TIDE_TEST(heap_hands_out_the_lowest_places_and_its_copies_go_on_the_same)
+{
+    enum { MOST = 1500, STEPS = 24000, TWINS = 3 };
+    static const uint32_t sizes[] = {0, 24, 200, 1000, 4000, 4000, 9000, 16368, 40000, 100000};
+    tide_heaps hs = {0}, twins[TWINS] = {{0}}, kept = {0};
     static uint64_t at[MOST];
-    static uint32_t bytes_of[MOST];
-    uint32_t held = 0;
-    tide_heaps snapshots[SNAPSHOTS] = {{0}};
-    uint64_t snapshot_hashes[SNAPSHOTS] = {0};
-    uint32_t state = 12345u, gave = 0, back = 0, most_gone = 0;
+    static uint32_t which[MOST], size_of[MOST];
+    uint32_t held = 0, state = 777u, most_pages = 0, least_after = UINT32_MAX;
+    uint64_t taken = 0, kept_hash = 0;
+    bool twinned = false;
     for (uint32_t step = 0; step < STEPS; step++) {
         state = state * 1664525u + 1013904223u;
         const uint32_t roll = state >> 8;
-        // Growing, then shrinking, in long waves: a world that fills and empties
-        const bool grow = held == 0 || (held < MOST && ((step / 3000u) & 1u ? roll % 10u < 3u : roll % 10u < 7u));
+        // Waves: it fills, empties nearly, and fills again
+        const bool grow = held == 0 || (held < MOST && ((step / 4000u) & 1u ? roll % 10u < 3u : roll % 10u < 7u));
         if (grow) {
             const uint32_t bytes = sizes[(roll >> 4) % (sizeof sizes / sizeof sizes[0])];
-            const uint32_t gone_was = tide_heaps_gone(&world_heaps);
-            at[held] = tide_heap_alloc(tide_heaps_of(&world_heaps, 0u), bytes);
-            TIDE_REQUIRE(at[held] && tide_heap_alloc(tide_heaps_of(&twin, 0u), bytes) == at[held]);
-            back += tide_heaps_gone(&world_heaps) < gone_was;
-            const uint32_t marked = bytes < 64u ? bytes : 64u; // Its start says which it is; the rest stays zero
-            TIDE_CHECK(block_zero(&world_heaps, at[held], bytes));
-            fill_block(&world_heaps, at[held], marked, step);
-            fill_block(&twin, at[held], marked, step);
-            bytes_of[held++] = step;
+            const uint64_t expected = expected_block(first_heap(&hs), bytes);
+            at[held] = tide_heap_alloc(first_heap(&hs), bytes);
+            TIDE_REQUIRE(at[held] == expected);
+            for (uint32_t k = 0; twinned && k < TWINS; k++) TIDE_REQUIRE(tide_heap_alloc(first_heap(&twins[k]), bytes) == at[held]);
+            TIDE_CHECK(block_zero(&hs, at[held], bytes));
+            const uint32_t marked = bytes < 24u ? bytes : 24u;
+            fill_block(&hs, at[held], marked, step);
+            for (uint32_t k = 0; twinned && k < TWINS; k++) fill_block(&twins[k], at[held], marked, step);
+            size_of[held] = (uint32_t)16 << class_of(bytes);
+            taken += size_of[held];
+            which[held++] = step;
         } else {
-            const uint32_t which = (roll >> 4) % held;
-            TIDE_CHECK(block_filled(&world_heaps, at[which], 24, bytes_of[which]));
-            tide_heap_release(tide_heaps_of(&world_heaps, 0u), at[which]);
-            tide_heap_release(tide_heaps_of(&twin, 0u), at[which]);
-            at[which] = at[--held];
-            bytes_of[which] = bytes_of[held];
+            const uint32_t i = (roll >> 4) % held;
+            TIDE_CHECK(block_filled(&hs, at[i], size_of[i] > 40u ? 24u : 0u, which[i]));
+            tide_heap_release(first_heap(&hs), at[i]);
+            for (uint32_t k = 0; twinned && k < TWINS; k++) tide_heap_release(first_heap(&twins[k]), at[i]);
+            taken -= size_of[i];
+            at[i] = at[--held];
+            which[i] = which[held];
+            size_of[i] = size_of[held];
         }
         if (step % 5u == 4u) { // A tick's end
-            tide_heaps_flush(&world_heaps);
-            tide_heaps_flush(&twin);
-            const uint32_t gone_was = tide_heaps_gone(&world_heaps);
-            tide_heaps_settle(&world_heaps);
-            gave += tide_heaps_gone(&world_heaps) > gone_was;
-            if (tide_heaps_gone(&world_heaps) > most_gone) most_gone = tide_heaps_gone(&world_heaps);
+            tide_heaps_flush(&hs);
+            tide_heaps_settle(&hs);
+            for (uint32_t k = 0; twinned && k < TWINS; k++) {
+                tide_heaps_flush(&twins[k]);
+                tide_heaps_settle(&twins[k]);
+            }
+            TIDE_REQUIRE(heap_holds_together(first_heap(&hs), taken));
+            if (tide_heaps_pages(&hs) > most_pages) most_pages = tide_heaps_pages(&hs);
+            if (step > 6000u && (step / 4000u) & 1u && tide_heaps_pages(&hs) < least_after) least_after = tide_heaps_pages(&hs);
         }
-        if (step % 250u == 249u) {
-            TIDE_REQUIRE(tide_heaps_hash(1, &world_heaps) == tide_heaps_hash(1, &twin));
-            TIDE_CHECK(tide_heaps_used(&world_heaps) == tide_heaps_used(&twin));
-            // A snapshot, kept a while: it's what it was when the world has given back and taken pages since
-            const uint32_t slot = (step / 250u) % SNAPSHOTS;
-            if (snapshot_hashes[slot]) TIDE_CHECK(tide_heaps_hash(1, &snapshots[slot]) == snapshot_hashes[slot]);
-            tide_heaps_copy(&snapshots[slot], &world_heaps);
-            snapshot_hashes[slot] = tide_heaps_hash(1, &world_heaps);
+        if (step % 1000u == 999u) {
+            // Its twins again: a snapshot, its bytes read back, and a delta from the snapshot kept last read over
+            // that snapshot's bytes. Each goes on as it does
+            const uint64_t hash = tide_heaps_hash(1, &hs);
+            for (uint32_t k = 0; twinned && k < TWINS; k++) {
+                TIDE_CHECK(tide_heaps_hash(1, &twins[k]) == hash && same_packed(&twins[k], &hs));
+            }
+            if (kept_hash) TIDE_CHECK(tide_heaps_hash(1, &kept) == kept_hash);
+            tide_heaps kept_back = {0};
+            TIDE_REQUIRE(!kept_hash || unpacks(&kept, &kept_back));
+            for (uint32_t k = 0; k < TWINS; k++) tide_heaps_free(&twins[k]);
+            tide_heaps_copy(&twins[0], &hs);
+            TIDE_REQUIRE(unpacks(&hs, &twins[1]));
+            TIDE_REQUIRE(delta_into(&hs, kept_hash ? &kept : NULL, kept_hash ? &kept_back : NULL, &twins[2]));
+            tide_heaps_free(&kept_back);
+            for (uint32_t k = 0; k < TWINS; k++) TIDE_REQUIRE(tide_heaps_hash(1, &twins[k]) == hash);
+            tide_heaps_copy(&kept, &hs);
+            kept_hash = hash;
+            twinned = true;
         }
-        if (step % 2500u == 2499u) TIDE_CHECK(same_packed(&world_heaps, &twin) && delta_reads(&world_heaps, &snapshots[0], &snapshots[0]));
     }
-    TIDE_CHECK(gave > 5u && back > 5u && most_gone > 20u);
-    for (uint32_t i = 0; i < held; i++) TIDE_CHECK(block_filled(&world_heaps, at[i], 24, bytes_of[i]));
-    for (uint32_t i = 0; i < SNAPSHOTS; i++) {
-        TIDE_CHECK(tide_heaps_hash(1, &snapshots[i]) == snapshot_hashes[i]);
-        tide_heaps_free(&snapshots[i]);
+    // It grew, and gave back most of it when it held little
+    TIDE_CHECK(most_pages > 300u && least_after < most_pages / 4u);
+    for (uint32_t i = 0; i < held; i++) TIDE_CHECK(block_filled(&hs, at[i], size_of[i] > 40u ? 24u : 0u, which[i]));
+    TIDE_CHECK(tide_heaps_hash(1, &kept) == kept_hash);
+    for (uint32_t k = 0; k < TWINS; k++) tide_heaps_free(&twins[k]);
+    tide_heaps_free(&kept);
+    tide_heaps_free(&hs);
+}
+
+// The bytes of a page in a heap's packed bytes: a class's page's free blocks as their numbers, then the blocks out.
+static uint32_t page_packed(const tide_heap *h, const uint32_t at)
+{
+    const tide_heap_place pl = h->place[at];
+    if (pl.kind - 1u >= TIDE_HEAP_SMALL) return tide_heap_page_used(h, h->page[at]);
+    return (uint32_t)(pl.made - pl.out) * 2u + ((uint32_t)pl.out << (pl.kind + 3u));
+}
+
+// One heap's bytes as tide_heap_pack has them, and where its places start in them.
+static uint8_t *one_heap_bytes(const tide_heap *h, uint32_t *size, uint32_t *places_at)
+{
+    *size = tide_heap_packed_size(h);
+    uint8_t *bytes = malloc(*size);
+    tide_writer w = {bytes, *size, 0, false, false};
+    tide_heap_pack(h, &w);
+    TIDE_CHECK(!w.overflow && w.size == *size);
+    uint32_t pages_bytes = 0;
+    for (uint32_t i = 1; i < h->pages; i++) {
+        if (h->page[i] && h->page[i]->first == i) pages_bytes += page_packed(h, i);
     }
-    tide_heaps_free(&world_heaps);
-    tide_heaps_free(&twin);
+    *places_at = *size - pages_bytes - h->pages * (uint32_t)sizeof(tide_heap_place);
+    return bytes;
+}
+
+static bool one_heap_unpacks(const uint8_t *bytes, const uint32_t size)
+{
+    tide_heap h = {0};
+    tide_reader r = {bytes, size, 0, false};
+    const bool ok = tide_heap_unpack(&h, &r) && r.at == size;
+    if (ok) { // Whatever it took for a heap is one: blocks come and go in it
+        uint64_t got[64];
+        for (uint32_t i = 0; i < 64; i++) got[i] = tide_heap_alloc(&h, (i * 97u) % 5000u);
+        for (uint32_t i = 0; i < 64; i += 2) tide_heap_release(&h, got[i]);
+        tide_heap_flush(&h);
+        tide_heap_settle(&h);
+    }
+    tide_heap_free(&h);
+    return ok;
+}
+
+TIDE_TEST(heap_bytes_that_arent_a_heap_are_refused)
+{
+    tide_heaps hs = {0};
+    tide_heap *h = first_heap(&hs);
+    static uint64_t at[400];
+    for (uint32_t i = 0; i < 400; i++) at[i] = tide_heap_alloc(h, mixed_sizes[i % MIXED_SIZES]);
+    for (uint32_t i = 0; i < 399; i += 3) tide_heap_release(h, at[i]); // Free blocks in pages that stay
+    tide_heap_flush(h);
+    tide_heap_release(h, at[1]); // And two waiting to be freed
+    tide_heap_release(h, at[4]);
+    uint32_t size = 0, places_at = 0;
+    uint8_t *bytes = one_heap_bytes(h, &size, &places_at);
+    TIDE_REQUIRE(one_heap_unpacks(bytes, size));
+    uint8_t *spoilt = malloc(size);
+    const uint32_t pages = h->pages;
+    tide_heap_place *places = (tide_heap_place *)(void *)(spoilt + places_at);
+    // A class's page with free blocks, and where its bytes are
+    uint32_t paged = 0, bytes_at = places_at + pages * (uint32_t)sizeof(tide_heap_place), page_bytes_at = 0;
+    for (uint32_t i = 1; i < pages; i++) {
+        if (!h->page[i] || h->page[i]->first != i) continue;
+        if (!paged && h->place[i].kind - 1u < TIDE_HEAP_SMALL && h->place[i].free) {
+            paged = i;
+            page_bytes_at = bytes_at;
+        }
+        bytes_at += page_packed(h, i);
+    }
+    TIDE_REQUIRE(paged && bytes_at == size);
+    const tide_heap_place was = h->place[paged];
+    uint32_t refused = 0, tried = 0;
+#define SPOIL(change)                                                                                                  \
+    do {                                                                                                               \
+        memcpy(spoilt, bytes, size);                                                                                   \
+        change;                                                                                                        \
+        tried++;                                                                                                       \
+        refused += !one_heap_unpacks(spoilt, size);                                                                    \
+    } while (0)
+    SPOIL(memcpy(spoilt + places_at - 4u, &(uint32_t){1u}, 4u));          // A heap of place 0 alone
+    SPOIL(memcpy(spoilt + places_at - 4u, &(uint32_t){UINT32_MAX}, 4u)); // More places than bytes
+    SPOIL(memcpy(spoilt + places_at - 4u, &(uint32_t){pages + 1u}, 4u)); // ...or one more
+    SPOIL(places[0].kind = 1u);                                            // Place 0 a page
+    SPOIL(places[paged].kind = (uint8_t)(TIDE_HEAP_SMALL + 1u));           // No kind
+    SPOIL(places[paged].kind = 14u);
+    SPOIL(places[paged].kind = TIDE_PLACE_MORE); // Another's place, alone
+    SPOIL(places[paged].kind = 255u);
+    SPOIL(places[paged].out = (uint16_t)(was.made + 1u)); // More out than made
+    SPOIL(places[paged].out = 0u);                        // A page with none out
+    SPOIL(places[paged].made = (uint16_t)((1u << TIDE_HEAP_PAGE_SHIFT) / (16u << (was.kind - 1u)) + 1u));
+    SPOIL(places[paged].free = (uint16_t)(was.made + 1u)); // A free block past what's made
+    SPOIL(places[paged].free = 0u);                        // Free blocks with no list
+    SPOIL(places[paged].shift = 1u);
+    SPOIL(places[pages - 1u] = (tide_heap_place){0});                         // The last place free
+    const tide_heap_place past = {TIDE_PLACE_BLOCK, 12u, 0, 0, 0};
+    SPOIL(places[paged] = past); // A block past the heap's end
+    // Its free blocks' numbers: none, one past what's made, another first than its place's, one twice
+    TIDE_REQUIRE(was.made - was.out >= 2u);
+    uint16_t second = 0;
+    memcpy(&second, bytes + page_bytes_at + 2u, 2u);
+    SPOIL(memcpy(spoilt + page_bytes_at, &(uint16_t){0}, 2u));
+    SPOIL(memcpy(spoilt + page_bytes_at, &(uint16_t){(uint16_t)(was.made + 1u)}, 2u));
+    SPOIL(memcpy(spoilt + page_bytes_at, &second, 2u));
+    SPOIL(memcpy(spoilt + page_bytes_at + 2u, &(uint16_t){was.free}, 2u));
+    // The blocks waiting to be freed: one past the heap's places, one not where a block starts, one that's free
+    SPOIL(memcpy(spoilt + places_at - 12u, &(uint64_t){(uint64_t)pages << TIDE_HEAP_PAGE_SHIFT}, 8u));
+    SPOIL(memcpy(spoilt + places_at - 12u, &(uint64_t){at[4] + 16u}, 8u));
+    SPOIL(memcpy(spoilt + places_at - 12u, &(uint64_t){((uint64_t)paged << TIDE_HEAP_PAGE_SHIFT) + ((uint64_t)(was.free - 1u) << (was.kind + 3u))}, 8u));
+    TIDE_CHECK(refused == tried);
+    // Cut anywhere
+    bool cut_refused = true;
+    for (uint32_t cut = 0; cut < size; cut += cut < places_at + 64u ? 1u : 61u) {
+        tide_heap cut_heap = {0};
+        tide_reader r = {bytes, cut, 0, false};
+        cut_refused &= !tide_heap_unpack(&cut_heap, &r);
+        tide_heap_free(&cut_heap);
+    }
+    TIDE_CHECK(cut_refused);
+    // Any bit at all: refused or a heap, and never anything else (ASan and the heap's own use say)
+    uint32_t state = 99u;
+    for (uint32_t i = 0; i < 3000; i++) {
+        memcpy(spoilt, bytes, size);
+        state = state * 1664525u + 1013904223u;
+        const uint32_t where = i % 2u ? places_at + (state >> 8) % (pages * (uint32_t)sizeof(tide_heap_place)) : (state >> 8) % size;
+        spoilt[where] ^= (uint8_t)(1u << (state >> 4 & 7u));
+        (void)one_heap_unpacks(spoilt, size);
+    }
+    // And a delta from nothing, spoilt the same way
+    tide_delta_writer d;
+    tide_delta_begin(&d, false, NULL, 0, 42);
+    tide_heaps_pack_delta(&hs, NULL, &d);
+    uint32_t delta_size = 0;
+    uint8_t *delta = tide_delta_end(&d, &delta_size);
+    for (uint32_t i = 0; i < 3000; i++) {
+        uint8_t *copy = malloc(delta_size);
+        memcpy(copy, delta, delta_size);
+        state = state * 1664525u + 1013904223u;
+        copy[(state >> 8) % delta_size] ^= (uint8_t)(1u << (state >> 4 & 7u));
+        tide_delta_reader dr;
+        uint64_t hash = 0;
+        tide_heaps back = {0};
+        if (tide_delta_open(&dr, copy, delta_size, false, &hash) && tide_heaps_unpack_delta(&back, NULL, &dr)) {
+            const uint64_t got = tide_heap_alloc(first_heap(&back), 100);
+            tide_heap_release(first_heap(&back), got);
+            tide_heaps_flush(&back);
+        }
+        tide_heaps_free(&back);
+        free(copy);
+    }
+    free(delta);
+#undef SPOIL
+    free(spoilt);
+    free(bytes);
+    tide_heaps_free(&hs);
 }

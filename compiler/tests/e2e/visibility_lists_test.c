@@ -12,7 +12,7 @@
 // hides state got a heap for each owner: Bulk's and Carried's values are read
 // into their own heaps, each block where one at a time leaves it there. Moved again 2026-11-15, as a load ends
 // by freeing what reading it let go of: the heap's pending blocks are its free ones.)
-#define LOADED_WORLD_HASH UINT64_C(0xfe749b4295d1dd8e)
+#define LOADED_WORLD_HASH UINT64_C(0xda5f6bd9c04459d2)
 
 static uint8_t *project(const tide_world *w, uint32_t *size)
 {

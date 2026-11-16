@@ -15,7 +15,7 @@
 #endif
 
 #define TICKS 16
-#define GUARDED_ROWS_HASH UINT64_C(0x8137b7e272d7a4ac)
+#define GUARDED_ROWS_HASH UINT64_C(0x82f737b09c131ac4)
 #define LIVE_RUNS 16u // TIDE_LIVE_RUNS, of the generated C: the runs a guard's few rows go in at most
 
 // A pool that's one thread saying it has eight: a round runs its work as
@@ -54,7 +54,7 @@ static uint32_t runs_used(tide_world *w, const uint32_t where)
 {
     uint32_t used = 0;
     for (uint32_t run = 1; run < TIDE_HEAP_RUNS; run++) {
-        used += tide_heaps_of(&w->heap, where >> TIDE_WHERE_HEAP_SHIFT | run << TIDE_HEAP_ID_BITS)->used != 0;
+        used += tide_heaps_of(&w->heap, where >> TIDE_WHERE_HEAP_SHIFT | run << TIDE_HEAP_ID_BITS)->most != 0;
     }
     return used;
 }

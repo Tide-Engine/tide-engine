@@ -61,11 +61,11 @@ TIDE_TEST(asset_lists_share_immutable_values_detach_and_survive_pack_unload)
     tide_list lists[100] = {{0}};
     const tide_list source = packed_bytes();
     for (uint32_t i = 0; i < 100u; i++) tide_list_set(&lists[i], source, 1u, TIDE_IN_MATCH);
-    TIDE_CHECK(tide_heaps_of(&heap, 0u)->used < 8192u);
+    TIDE_CHECK(tide_heaps_of(&heap, 0u)->taken < 8192u);
     const tide_handle kept_at = lists[0].at;
-    const uint64_t kept_used = tide_heaps_of(&heap, 0u)->used;
+    const uint64_t kept_used = tide_heaps_of(&heap, 0u)->most;
     for (uint32_t i = 0; i < 100u; i++) tide_list_set(&lists[0], source, 1u, TIDE_IN_MATCH);
-    TIDE_CHECK(lists[0].at == kept_at && tide_heaps_of(&heap, 0u)->used == kept_used && !tide_heaps_of(&heap, 0u)->pending);
+    TIDE_CHECK(lists[0].at == kept_at && tide_heaps_of(&heap, 0u)->most == kept_used && !tide_heaps_of(&heap, 0u)->pending);
     const void *shared = tide_list_at(lists[0], 0, 1u);
     for (uint32_t i = 0; i < 100u; i++) TIDE_CHECK(tide_list_at(lists[i], 0, 1u) == shared);
     TIDE_CHECK(!tide_list_at_mut(lists[0], 0, 1u));

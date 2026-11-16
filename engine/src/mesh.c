@@ -60,12 +60,9 @@ uint16_t tide_half_from_float(const float value)
 static const uint8_t *span(const tide_heap *heap, const uint64_t offset, const uint64_t bytes)
 {
     if (!heap) return tide_pack_span(offset, bytes);
-    if (!offset || offset > heap->used || bytes > heap->used - offset || offset >> TIDE_HEAP_PAGE_SHIFT >= heap->pages) return NULL;
+    if (!tide_heap_has(heap, offset, bytes)) return NULL;
     const tide_page *p = heap->page[offset >> TIDE_HEAP_PAGE_SHIFT];
-    if (!p) return NULL;
-    const uint64_t first = (uint64_t)p->first << TIDE_HEAP_PAGE_SHIFT;
-    if (offset < first || offset + bytes > first + p->size) return NULL;
-    return (const uint8_t *)tide_page_data(p) + (size_t)(offset - first);
+    return (const uint8_t *)tide_page_data(p) + (size_t)(offset - ((uint64_t)p->first << TIDE_HEAP_PAGE_SHIFT));
 }
 
 // ---------------------------------------------------------------------------
@@ -749,18 +746,16 @@ static bool list_data_page(const tide_list list, tide_list_data_entry *seen)
     if (!list.at || tide_handle_where(list.at) == TIDE_IN_SCRATCH) return false;
     const tide_heap *heap = tide_heap_read(tide_handle_where(list.at));
     const uint64_t offset = tide_handle_offset(list.at);
-    if (!heap || (offset >> TIDE_HEAP_PAGE_SHIFT) >= heap->pages
-        || offset > heap->used || sizeof(tide_block) > heap->used - offset) return false;
+    if (!heap || !tide_heap_has(heap, offset, sizeof(tide_block))) return false;
     tide_page *const *pages = __atomic_load_n(&heap->page, __ATOMIC_ACQUIRE);
     const tide_page *page = __atomic_load_n(&pages[offset >> TIDE_HEAP_PAGE_SHIFT], __ATOMIC_ACQUIRE);
-    if (!page || page->hashed == UINT32_MAX) return false;
+    if (page->hashed == UINT32_MAX) return false;
     const uint64_t first = (uint64_t)page->first << TIDE_HEAP_PAGE_SHIFT;
-    if (offset < first || offset - first > page->size || sizeof(tide_block) > page->size - (offset - first)) return false;
     const tide_block *block = (const tide_block *)(const void *)((const uint8_t *)tide_page_data(page)
         + (size_t)(offset - first));
     if (block->b & (TIDE_LIST_CHUNKED | TIDE_LIST_ASSET)) return false;
     seen->heap = (uintptr_t)heap;
-    seen->heap_used = heap->used;
+    seen->heap_used = tide_heap_page_used(heap, page);
     seen->page_hash = page->hash;
     seen->hashed = page->hashed;
     return true;
@@ -1131,14 +1126,14 @@ static bool list_readable(const tide_list l)
     const tide_heap *heap = tide_heap_read(tide_handle_where(l.at));
     if (!heap) return false;
     const uint64_t block = tide_handle_offset(l.at);
-    if (block > heap->used || heap->used - block < sizeof(tide_block)) return false;
+    if (!tide_heap_has(heap, block, sizeof(tide_block))) return false;
     const tide_block *b = tide_heap_block(heap, block);
     if (!(b->b & TIDE_LIST_CHUNKED)) return true;
     const uint64_t chunks = b->b & ~TIDE_LIST_CHUNKED;
-    if ((heap->used - block - sizeof *b) / sizeof(uint64_t) < chunks) return false;
+    if (!tide_heap_has(heap, block, sizeof *b + chunks * sizeof(uint64_t))) return false;
     const uint64_t *at = (const uint64_t *)(const void *)(b + 1);
     for (uint64_t i = 0; i < chunks; i++) {
-        if (at[i] > heap->used || heap->used - at[i] < sizeof(tide_block)) return false;
+        if (!tide_heap_has(heap, at[i], sizeof(tide_block))) return false;
     }
     return true;
 }

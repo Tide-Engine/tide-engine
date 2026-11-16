@@ -77,7 +77,7 @@ TIDE_TEST(heaps_owners_have_heaps_of_their_own)
     TIDE_REQUIRE(name != NULL);
     TIDE_CHECK(tide_handle_where(name->at) == TIDE_WHERE_Roster);
     // Nothing of the match's own: every block is an owner's
-    TIDE_CHECK(tide_heaps_of(&world.heap, 0u)->used == 0);
+    TIDE_CHECK(tide_heaps_of(&world.heap, 0u)->most == 0);
     TIDE_CHECK(tide_heaps_used(&world.heap) > 0 && !tide_heaps_pending(&world.heap));
     tide_world_free(&world);
 }

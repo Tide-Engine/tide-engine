@@ -302,12 +302,22 @@ static void parts(const void *world)
         holes += tables[i]->holes;
         chunks += tables[i]->chunks;
     }
+    // The heaps' pages of small blocks with one block out, and the bytes of blocks out
+    uint32_t lone = 0;
+    uint64_t taken = 0;
+    for (uint32_t slot = 0; w->heap.all && slot < tide_heap_count; slot++) {
+        for (uint32_t run = 0; run < TIDE_HEAP_RUNS; run++) {
+            const tide_heap *h = run ? (w->heap.all[slot].runs ? &w->heap.all[slot].runs[run - 1u] : NULL) : &w->heap.all[slot];
+            if (!h) break;
+            taken += h->taken;
+            for (uint32_t i = 1; i < h->pages; i++) lone += h->place[i].kind - 1u < TIDE_HEAP_SMALL && h->place[i].out == 1u;
+        }
+    }
     printf("    its entity table %u slots in %u pages (%.2f MB); tables %llu rows, %llu of them holes, in %llu chunks; "
-           "heaps %u pages in memory (%.2f MB) and %u given back, %.2f MB handed out",
+           "heaps %u pages in memory (%.2f MB, %u with one block out), %u places free between them, %.2f MB handed out",
            w->entities.next_unused, w->entities.pages, (double)w->entities.pages * 32768.0 / 1e6, (unsigned long long)rows,
            (unsigned long long)holes, (unsigned long long)chunks, tide_heaps_pages(&w->heap),
-           (double)tide_heaps_pages(&w->heap) * 16384.0 / 1e6, tide_heaps_gone(&w->heap),
-           (double)tide_heaps_used(&w->heap) / 1e6);
+           (double)tide_heaps_pages(&w->heap) * 16384.0 / 1e6, lone, tide_heaps_gone(&w->heap), (double)taken / 1e6);
     printf("; packed: entities %.2f MB, heaps %.2f MB\n", (double)tide_entities_packed_size(&w->entities) / 1e6,
            (double)tide_heaps_packed_size(&w->heap) / 1e6);
 }
