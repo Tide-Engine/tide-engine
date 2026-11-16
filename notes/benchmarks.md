@@ -22,6 +22,31 @@ the chunks that come and times a hop's box; `--watch 0` for a profiler); `--look
 tick. Profiling a whole run with `tide_sample` sees the counting unless it's switched off: a first profile had
 `watch` and the entity lookups under it as a tenth of the samples.
 
+## What the process holds, by who asked for it (2026-11-16)
+
+For finding what grows in a long run (notes/voxels.md, The process's growth, is what it found). Two things, in
+`bench/bench.c` for every session benchmark:
+
+- **A run whose updates leave anything in their thread's scratch area fails** (`results.scratch_left`, said under
+  the hash: the bots' machines' updates' bytes and the server's). The scratch mark is read around the bots' updates
+  and around the server's each frame; a handler, a system and a view go back to their own marks, so what an update
+  leaves is never given back. In every build, at the cost of two reads a frame.
+- **A counting build**: `bench/alloc_count.h` in front of every C file of a tree of its own
+  (`cmake --preset release -B build/count "-DCMAKE_C_FLAGS=-include <checkout>/bench/alloc_count.h"`, then the
+  benchmark's target). It makes `malloc`, `calloc`, `realloc` and `free` macros that keep every block in a table
+  by its address (16 M slots, one lock: a counting run's timings aren't a run's), with its size and its caller: the
+  file and line, ten return addresses (`RtlCaptureStackBackTrace`) and whose work it was (`tide_alloc_tag`, which
+  the bench sets to the bots' or the server's around their updates; a worker's blocks are whoever's update is
+  running). After each `--every` line the bench prints what malloc holds in all and for each side, the sixteen
+  callers holding the most and the sixteen that grew the most since the line before, each with its functions by
+  name (dbghelp, from the program's own symbols); `TIDE_ALLOC_ALL=1` in the environment prints every caller, to
+  take two lines apart afterwards. Pages aren't kept spare in such a build (`spare_size` in `engine/src/page.c`
+  says none: notes/runtime-ownership.md), so a page is counted as whoever took it last and not as whoever first
+  asked the system for one that has been through a thread's spares since. A block freed by code the header isn't
+  in front of is freed uncounted and said (none in `bench_voxels`). Windows and clang only. Limits: "the process
+  has ... of its own" in its line includes the table (256 MB of address space, touched as blocks come and go), so
+  the process's own size is an ordinary build's to say; a page shared by several worlds is its taker's alone.
+
 ## What a server's projection checks read again (2026-11-15)
 
 `bench_voxels_counts` is `bench_voxels` built with `TIDE_CLIENT_COUNTS`: at the program's end it prints what the

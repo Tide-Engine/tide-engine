@@ -97,6 +97,97 @@ static void page_stats_add(const int who)
 #define page_stats_add(who) ((void)0)
 #endif
 
+// In a build with bench/alloc_count.h in front of every file: what malloc's callers hold, after an --every line.
+// The callers holding the most, then those that grew the most since the line before, each with whose work it was
+// (the bots' machines' or the server's) and the functions it was called through, innermost first.
+#ifdef TIDE_ALLOC_COUNT
+#include <dbghelp.h>
+#pragma comment(lib, "dbghelp")
+#define ALLOC_SAID 16u
+
+static int alloc_by_held(const void *a, const void *b)
+{
+    const int64_t x = tide_alloc_sites[*(const uint32_t *)a].bytes, y = tide_alloc_sites[*(const uint32_t *)b].bytes;
+    return x < y ? 1 : x > y ? -1 : 0;
+}
+
+static int alloc_by_growth(const void *a, const void *b)
+{
+    const tide_alloc_site *p = &tide_alloc_sites[*(const uint32_t *)a], *q = &tide_alloc_sites[*(const uint32_t *)b];
+    const int64_t x = p->bytes - p->bytes_before, y = q->bytes - q->bytes_before;
+    return x < y ? 1 : x > y ? -1 : 0;
+}
+
+static void alloc_say(const tide_alloc_site *s)
+{
+    static const char *const whose[] = {"other", "bots", "server"};
+    const char *file = s->file;
+    for (const char *c = s->file; *c; c++) if (*c == '/' || *c == '\\') file = c + 1;
+    printf("    %10.3f MB %+10.3f, %8lld blocks, %10lld ever, %-6s %s:%u", (double)s->bytes / 1e6,
+           (double)(s->bytes - s->bytes_before) / 1e6, (long long)s->blocks, (long long)s->allocs,
+           whose[s->tag < 3u ? s->tag : 0u], file, s->line);
+    const HANDLE process = GetCurrentProcess();
+    for (uint32_t i = 0; i < s->depth; i++) {
+        union {
+            SYMBOL_INFO info;
+            char room[sizeof(SYMBOL_INFO) + 128];
+        } symbol = {.info = {.SizeOfStruct = sizeof(SYMBOL_INFO), .MaxNameLen = 127}};
+        DWORD64 off = 0;
+        if (!SymFromAddr(process, (DWORD64)(uintptr_t)s->frames[i], &off, &symbol.info)) continue;
+        if (strcmp(symbol.info.Name, "main") == 0) break;
+        IMAGEHLP_LINE64 where = {.SizeOfStruct = sizeof where};
+        DWORD column = 0;
+        if (SymGetLineFromAddr64(process, (DWORD64)(uintptr_t)s->frames[i], &column, &where)) {
+            printf(" < %s:%lu", symbol.info.Name, (unsigned long)where.LineNumber);
+        } else {
+            printf(" < %s", symbol.info.Name);
+        }
+    }
+    printf("\n");
+}
+
+static void alloc_report(void)
+{
+    static bool started;
+    static uint32_t order[TIDE_ALLOC_COUNT_SITES];
+    if (!started) {
+        SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME);
+        SymInitialize(GetCurrentProcess(), NULL, TRUE);
+        started = true;
+    }
+    uint32_t count = 0;
+    int64_t by[3] = {0}, blocks_by[3] = {0};
+    for (uint32_t i = 0; i < TIDE_ALLOC_COUNT_SITES; i++) {
+        const tide_alloc_site *s = &tide_alloc_sites[i];
+        if (!s->key) continue;
+        order[count++] = i;
+        by[s->tag < 3u ? s->tag : 0u] += s->bytes;
+        blocks_by[s->tag < 3u ? s->tag : 0u] += s->blocks;
+    }
+    PROCESS_MEMORY_COUNTERS_EX counters = {.cb = sizeof counters};
+    GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS *)&counters, sizeof counters);
+    printf("   malloc holds %.3f MB in %lld blocks (the server's work %.3f MB in %lld, the bots' %.3f in %lld, other %.3f "
+           "in %lld), from %u callers; the process has %.1f MB of its own; %lld frees of blocks not counted\n",
+           (double)tide_alloc_held / 1e6, (long long)tide_alloc_held_blocks, (double)by[2] / 1e6, (long long)blocks_by[2],
+           (double)by[1] / 1e6, (long long)blocks_by[1], (double)by[0] / 1e6, (long long)blocks_by[0], count,
+           (double)counters.PrivateUsage / 1e6, (long long)tide_alloc_uncounted);
+    // TIDE_ALLOC_ALL in the environment: every caller, to take two lines' apart afterwards
+    const uint32_t said = getenv("TIDE_ALLOC_ALL") ? count : ALLOC_SAID;
+    printf("   holding the most:\n");
+    qsort(order, count, sizeof *order, alloc_by_held);
+    for (uint32_t i = 0; i < count && i < said; i++) alloc_say(&tide_alloc_sites[order[i]]);
+    printf("   grew the most since the last:\n");
+    qsort(order, count, sizeof *order, alloc_by_growth);
+    for (uint32_t i = 0; i < count && i < ALLOC_SAID; i++) alloc_say(&tide_alloc_sites[order[i]]);
+    for (uint32_t i = 0; i < TIDE_ALLOC_COUNT_SITES; i++) tide_alloc_sites[i].bytes_before = tide_alloc_sites[i].bytes;
+    fflush(stdout);
+}
+#define alloc_whose(tag) (tide_alloc_tag = (tag))
+#else
+#define alloc_report() ((void)0)
+#define alloc_whose(tag) ((void)0)
+#endif
+
 // Wall-clock times, in milliseconds, to take percentiles of.
 typedef struct samples {
     float *ms;
@@ -786,6 +877,9 @@ typedef struct results {
     uint32_t resyncs;
     bool joined; // Every bot joined
     bool ok;
+    // Bytes the bots' machines' updates left in this thread's scratch area, and the server's: a thread a session is
+    // updated on keeps whatever an update doesn't give back, so any at all fails the run
+    uint64_t scratch_left[2];
     // What the bots' machines held at the end (bench_desc.held), on average and at most
     double held_mean;
     uint32_t held_most;
@@ -1138,6 +1232,11 @@ static void print_verdict(const results *r, const uint64_t expect)
     if (expect) printf(r->hash == expect ? " as expected" : ", but 0x%016llx was expected", (unsigned long long)expect);
     printf("\n");
     if (r->resyncs) printf("  FAILED: clients' worlds went wrong %u times, and the server sent them again\n", r->resyncs);
+    if (r->scratch_left[0] || r->scratch_left[1]) {
+        printf("  FAILED: updates left %llu bytes in their thread's scratch area for good (the bots' machines' %llu, the "
+               "server's %llu)\n", (unsigned long long)(r->scratch_left[0] + r->scratch_left[1]),
+               (unsigned long long)r->scratch_left[0], (unsigned long long)r->scratch_left[1]);
+    }
     if (!r->joined) printf("  FAILED: not every bot joined\n");
     else if (!r->ok) printf("  FAILED\n");
 }
@@ -1638,6 +1737,7 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
     double all_in = -1.0; // When the last one caught up
     bool failed = false;
     const uint32_t most_lag = o.lag ? o.lag : 2u * CAUGHT_UP;
+    uint64_t scratch_left[2] = {0, 0}; // results.scratch_left
     double stretch_next = o.every, stretch_ms = 0.0, stretch_most = 0.0; // --every
     uint32_t stretch_updates = 0;
     while (true) {
@@ -1672,6 +1772,8 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
         for (uint32_t i = 0; i < bots; i++) joining |= bots_machines[i].caught_up == 0.0 && !bots_machines[i].failed;
 
         page_stats_mark();
+        alloc_whose(1);
+        uint64_t scratch = tide_scratch_mark();
         for (uint32_t i = 0; i < bots; i++) {
             machine *m = &bots_machines[i];
             if (m->failed) continue;
@@ -1681,7 +1783,10 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
             else tide_client_update(m->client, now);
             if (m->connected > 0.0) add_sample(joining ? &m->joining : &m->steady, since(t));
         }
+        scratch_left[0] += tide_scratch_mark() - scratch;
+        scratch = tide_scratch_mark();
         page_stats_add(1);
+        alloc_whose(2);
         for (uint32_t i = 0; i < host_room; i++) {
             machine *h = hosts[i];
             if (!h || !h->server) continue;
@@ -1717,7 +1822,9 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
             stretch_ms += ms;
             stretch_updates++;
         }
+        scratch_left[1] += tide_scratch_mark() - scratch;
         page_stats_add(0);
+        alloc_whose(0);
         if (d->watch_server && !shards && hosts[0]->server) d->watch_server(d->flags, tide_server_world(hosts[0]->server));
         if (o.every > 0.0 && now >= stretch_next) {
             // Outside every timing: the sizes are worked out here, not kept
@@ -1735,6 +1842,7 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
             printf("; server updates since the last %.2f ms on average, %.2f at most\n",
                    stretch_updates ? stretch_ms / (double)stretch_updates : 0.0, stretch_most);
             fflush(stdout);
+            alloc_report();
             stretch_next = now + o.every;
             stretch_ms = stretch_most = 0.0;
             stretch_updates = 0;
@@ -1836,7 +1944,9 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
     }
     results r = {.played = now, .joined = !failed};
     collect(&r, bots_machines, bots, d, shards, &orchestra);
-    r.ok = r.joined && r.resyncs == 0 && (!o.expect || r.hash == o.expect);
+    r.scratch_left[0] = scratch_left[0];
+    r.scratch_left[1] = scratch_left[1];
+    r.ok = r.joined && r.resyncs == 0 && (!o.expect || r.hash == o.expect) && !scratch_left[0] && !scratch_left[1];
     print_results(&r, bots, d->held != NULL);
     if (d->describe) {
         for (uint32_t i = 0; i < host_room; i++) {

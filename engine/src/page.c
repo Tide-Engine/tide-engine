@@ -258,8 +258,13 @@ static void unlock_shared(void)
 // Which of them pages of `size` bytes are kept in; SPARE_SIZES for none.
 static uint32_t spare_size(const uint32_t size)
 {
+#ifdef TIDE_ALLOC_COUNT // bench/alloc_count.h: no page is kept spare, so each is counted as whoever took it last
+    (void)size;
+    return SPARE_SIZES;
+#else
     if (size < 1u << SPARE_LEAST || size > 1u << (SPARE_LEAST + SPARE_SIZES - 1u) || (size & (size - 1u))) return SPARE_SIZES;
     return (uint32_t)__builtin_ctz(size) - SPARE_LEAST;
+#endif
 }
 
 #ifdef TIDE_PAGE_STATS
