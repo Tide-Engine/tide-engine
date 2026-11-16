@@ -42,8 +42,8 @@ foreach(refused IN ITEMS
     endif()
 endforeach()
 # Lane `b` is put back by the handlers that can write it and no other: OnMaybe and OnSame in four tables, OnJoin
-# in the two an entity without Extra is in
-string(REGEX MATCHALL "tide_c, 4\\) \\+ \\(size_t\\)tide_i \\* 4, \\(const uint8_t \\*\\)&tide_v1 \\+ 8, 4\\);" lane_b "${generated}")
+# in the two an entity without Extra is in. (No `;` in the pattern: a match with one is two of a list in some CMakes)
+string(REGEX MATCHALL "tide_c, 4\\) \\+ \\(size_t\\)tide_i \\* 4, \\(const uint8_t \\*\\)&tide_v1 \\+ 8, 4\\)" lane_b "${generated}")
 list(LENGTH lane_b count)
 if(NOT count EQUAL 10)
     message(FATAL_ERROR "handler_lanes puts back lane b in ${count} places, not OnMaybe's and OnSame's four each and OnJoin's two")

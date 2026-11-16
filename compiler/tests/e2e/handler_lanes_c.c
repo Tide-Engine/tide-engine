@@ -12,9 +12,9 @@ void c_handler_lanes_touch(Plain *plain, const int32_t by)
 // while the handler that called holds its own copy of the row.
 tide_world *handler_lanes_world;
 
-void c_handler_lanes_sly(const Plain *plain, const tide_entity entity)
+void c_handler_lanes_sly(const Plain plain, const tide_entity entity) // By value, as its Tide declaration says
 {
-    Plain other = *plain;
+    Plain other = plain;
     other.s += 1000;
     if (handler_lanes_world) tide_set_Plain(handler_lanes_world, entity, other);
 }
