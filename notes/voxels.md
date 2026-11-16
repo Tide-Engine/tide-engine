@@ -1503,6 +1503,72 @@ keeping pieces 170 → 233 (their lines), the rest as it was (audiences 683 → 
   the rows that did change (audiences, sums, rows read again, grids encoded) and the ids of the pages each piece goes
   through (netcode.md, top section, Left).
 
+### The spread tick: spawns, destroys and kept worlds let go of (2026-11-17)
+
+What's left 5g and the kept world let go of, at 100 players apart (`--players 100 --spread 256`). **Where the time
+was** (timers put into the generated C and the engine for the runs and taken out; cycles a call, `rdtsc`, the
+server's own, at 100 apart and again at 32 apart for the finer split, which agreed):
+
+- **A chunk destroyed: 53,000 cycles applied**, of which **34,500 the journal of its destruction for players'
+  local handlers** (`tide_client_destroyed` asked `tide_visibility_entity` for each of the game's 128 players, a walk
+  to the chunk, its scene and their groups each time), its grid let go of 7,200, its Visibility 3,600, its slot
+  3,800, its row 670. Before that, `Drop` 3,500 (its group out of the directory 3,000) and its dispatch 3,900, and
+  `Gone` at the dimension 4,700 (the whole `Streamer`, 56 lanes, gathered for `Forget`, which reads one map).
+- **A chunk spawned: 25,700 cycles in `Watch`** (the command 16,300: the entity's key 7,600, its grid made the
+  match's 2,200, its Visibility's policy map copied in 2,500; the group 3,950; `Streamer.chunks` 2,660; the load
+  asked 1,000; the policy set in the scratch area 820) and 2,100 applied. Most of it is pages written for the first
+  time this tick, which every kept tick's world shares: a page's copy was 5,000 cycles on average over the run
+  (640,000 copies), and a spawn writes its slot's page, two of the entity index's, the born page, and the heap pages
+  of its grid's directory, its policy map's two lists and the group directory's entries.
+- **A kept tick's world let go of: 0.7 M cycles on average, 1.6 M the large ones** (its heaps' pages 56%, the entity
+  table's pages and index 25%, its tables' pages 18%; memos, frozen hashes, rows and indexes' caches under 2%), on
+  the thread that ends the tick, every tick.
+- Applying a tick's commands, with its handlers: 5.6 M cycles a tick at 100 apart, of which the `Want`s (and their
+  spawns) 2.3 M and the destructions 2.3 M.
+
+**What changed** (notes/netcode.md, top section, has both; runtime-ownership.md, top section, the contract):
+
+- **A destruction is journaled from one audience**: worked out once, each player's records as before. A chunk
+  destroyed is 15,500 cycles (the journal 1,300).
+- **The kept world is let go of on the pool's threads**, beside the players' checks, the repairs and the next tick,
+  with page references counted atomically.
+
+Not changed, and why: a spawn's and a destruction's page copies are what sharing pages with the kept worlds costs
+(smaller slot pages would copy less and walk more in the checks; pinned hashes would move with them, the trade not
+measured); `Gone`'s and `Want`'s whole `Streamer` gathered is the handlers' codegen (systems gather only the lanes
+they read; handlers don't yet: 3,000 to 4,000 cycles a call here); freed heap blocks are zeroed and linked, so a
+destroyed chunk's grid writes its pages whatever is done before.
+
+**Before and after** (`bench_voxels`, 30 s, 1% lost, release, Windows, BelowNormal, the machine shared; two runs each,
+before and after alternating; the world hash, bytes, ticks, lags and fill times the same in every pair):
+
+| 12 threads | 8 bots | 32, `--spread 256` | 100, `--spread 256` |
+|---|---|---|---|
+| Server, ms a second: simulate | 12.6, 10.2 → 9.4, 8.6 | 81.7, 73.4 → 67.3, 54.5 | 407, 397 → 321, 350 |
+| ...hash | 8.3, 6.5 → 7.0, 6.3 | 76.5, 64.3 → 76.6, 54.7 | 362, 343 → 309, 353 |
+| ...snapshot | 1.27, 0.86 → 0.98, 0.85 | 5.7, 4.8 → 5.8, 3.0 | 29.9, 28.4 → 26.3, 28.8 |
+| ...repairs read (pack) | 3.6, 2.9 → 3.1, 2.7 | 30.2, 25.6 → 29.8, 24.0 | 277, 278 → 261, 284 |
+| ...in all | 32.7, 26.1 → 25.9, 23.2 | 220.9, 191.2 → 197.9, 151.8 | 1,320, 1,280 → 1,001, 1,106 |
+| Update, median / p99, ms | 0.32 / 3.29, 0.24 / 2.86 → 0.25 / 2.73, 0.22 / 2.71 | 3.44 / 20.0, 3.02 / 16.9 → 3.16 / 13.9, 2.39 / 10.8 | 23.9 / 125, 21.9 / 117 → 17.2 / 94, 19.3 / 101 |
+| ...longest | 18.3, 9.9 → 6.9, 4.2 | 29.1, 22.0 → 21.2, 15.9 | 237, 229 → 212, 214 |
+| An update with entities come or gone: in all / simulating, ms | 1.26 / 0.63, 1.04 / 0.53 → 0.93 / 0.39, 0.84 / 0.36 | 5.82 / 2.24, 4.92 / 1.95 → 5.08 / 1.73, 3.78 / 1.36 | 42.0 / 12.6, 38.7 / 11.7 → 30.4 / 9.8, 33.4 / 10.8 |
+| Sent to each bot, KB a second | 22.7 | 24.7 | 27.8 |
+| After a hop, all of the box, ticks (median) | 27 | 31 | 31 |
+
+| 1 thread, 8 bots | before | after |
+|---|---|---|
+| Server, ms a second: simulate / in all | 16.7 / 33.8, 16.5 / 33.4 | 14.6 / 30.7, 14.6 / 30.4 |
+| Update, p99 / longest, ms | 4.81 / 11.7, 4.84 / 9.5 | 4.08 / 9.2, 4.12 / 9.3 |
+
+- **100 apart: the server's time a seventh to a quarter less** (1.30 s of work a second to 1.0 to 1.1), p99 117 to 125 ms
+  to 94 to 101. Still six times past a tick at the 99th percentile on this machine, whose 12 cores also run the 100
+  bots' machines: the updates are hashing (the checks, 5f, a third), repairs read (a quarter, another task's), and
+  the tick (simulating, a quarter to a third: `Generate` 70 ms a second, handlers and changes 7 to 8 ms an update in
+  which chunks come and go).
+- **32 apart: p99 17 to 20 ms to 11 to 14**, inside a tick; the server a tenth to a fifth less. The default run a
+  tenth to a fifth less, on one thread a tenth.
+- The world, what's sent and when are the same: the changes touch nobody's bytes. `bench_voxels_arrives`: 21 ticks.
+
 ### What's left, most telling first
 
 1. ~~Inputs of every player, in every unacknowledged frame (section 5): 13 to 44 KB a second a player with real hands on the mice.~~ Cut the same day (section 5, the last paragraph of that bullet): 19.2 KB a second with 8 turning and standing, 10.6 flying; 32 are as they were (20.8 standing), each tick once, and a second copy of theirs is the owner's to weigh (netcode.md, Open).
@@ -1516,7 +1582,7 @@ keeping pieces 170 → 233 (their lines), the rest as it was (audiences 683 → 
    - 5d. ~~**The tick a box is spawned in is 2.8 µs a chunk**: 2.4 ms at the default view, 8.7 at twice, about 19 at three times, where it's a frame's worth by itself. A box asked for over a few ticks, nearest first, would bound it; the ring-a-tick variant (Tried and taken out) is that, and would pay now where it didn't.~~ Closed the same day (A wide view without a long update): 1,024 new chunks a tick, the store's part of each no longer going with how many were asked, and a box left going over as many ticks.
    - 5e. ~~**The tick a player joins or leaves the audiences of a whole view of chunks that are there** (hopping to where others are, or away from them): 6,845 chunks' `Seen` and group changed in one handler, 11 ms of handlers and 7 of hashing at three times the view (A wide view without a long update: its longest update now, 20 ms). The allowance of `Watch` counts spawns alone.~~ Partly closed (Audiences joined and left over ticks): a group's audience set with one lookup (the hop's tick 12 to 15% shorter), and joins and leaves under an allowance of their own, 8,192 a tick, which no lone view reaches. Left: a lone view at three times the radius is still one tick's (6.6 ms of handlers with the tick's spawns, 4.8 of hashing), as splitting it costs its player a repair and a round trip (5b); the hop's repairs are that view's longest updates (17 to 18 ms).
    - 5f. **A tick in which entities come or go costs the server more than one in which none do**, whatever their number (seen where a border's row of chunks went over four ticks for one: simulating 28 to 40 ms a second at twice the view). Taken apart (The spread case taken apart): the orders were sorted again (fixed: 32 apart simulate 146 to 61 ms a second); what's left is the players' projection checks (+1.5 ms such a tick with 32 apart: slots and heap blocks written all over the world make most pieces read again) and the handlers (+1 ms: the spawn path, 5g, and `Drop`). The checks go by the pages written since (2026-11-17, Projection checks by the pages written): 2.72 to 2.12 ms of hashing such a tick; what's left of it is the rows that did change.
-   - 5g. **A spawned chunk is 9,000 cycles** beside its load (the command with its grid and policies 3,240, its group and policy 2,000, the map 1,130, applying it 1,170): ~~`tide_visibility_set_group` looks its group up three times~~ (one lookup since, Audiences joined and left over ticks), and a Visibility's one policy is a map made in the scratch area and copied. In a hop's tick at three times the view a spawn is 16,000 to 33,000 (its command 9,000 to 16,000): the spawns are most of that tick's handlers.
+   - 5g. (Taken apart again at 100 apart and partly closed, 2026-11-17: The spread tick. A destruction 53,000 cycles to 15,500; a spawn is still 25,000 to 28,000, most of it pages copied from the kept worlds'.) **A spawned chunk is 9,000 cycles** beside its load (the command with its grid and policies 3,240, its group and policy 2,000, the map 1,130, applying it 1,170): ~~`tide_visibility_set_group` looks its group up three times~~ (one lookup since, Audiences joined and left over ticks), and a Visibility's one policy is a map made in the scratch area and copied. In a hop's tick at three times the view a spawn is 16,000 to 33,000 (its command 9,000 to 16,000): the spawns are most of that tick's handlers.
 6. ~~A hosting player's frame of 9 to 60 ms when a box is asked for (section 4), not taken apart.~~ Taken apart (A whole view arriving): it's the store's files found missing on the tick's thread, 18 µs each, which only a run with no window does; in a window the same ticks are 2.5 and 12 ms. What's left is 5d. ~~And that **every chunk a player comes near is a file looked for** (567,041 loads in 20 minutes of 8 bots flying, none found): a dimension that knew which of its chunks were ever saved (a set kept with its far regions, or a listing as it starts) would ask for those alone.~~ Closed the same night in the store itself, for every game (section 3f): it lists its files once and a load of a key never saved reads nothing (14,551 reads to 49 in the default run; a hosting run with no window's longest update 4.6 to 2.3 ms at `--near 4`, 29 to 13 at `--near 12`).
 7. ~~The process grows about a hundred bytes for each chunk that came and went, in no world (The sweep again, 8): 3.4 MB a minute with 8 bots flying, not located; the projection checks' memos are the first place to look.~~ Located and fixed the same day (The process's growth): a grid read from bytes left the 64 bytes it was made in on its thread's scratch area, 1.84 MB a minute here. What's left is the bench's own (its timings and its store in memory) and what's in the next item.
 8. ~~**The world's memory doesn't go back down** (The sweep again, 7): a dimension left frees its entities and keeps its pages, so a server's world is as big as the most it ever held at once.~~ Mostly the heaps', and partly closed the same night (notes/ecs.md, top section): a heap gives back the pages whose blocks are all free, with the world's bytes and hash as they were. Eight bots out and back (`--out 1 --back 40`): the server's heaps 1,214 pages at the most and 745 once they're back (1,214 before); one player hopping between two dimensions: 191 to 215 pages after a hop where it was 260 to 269. Tables already gave theirs back (12 chunks to 6); the entity table's slots stay (0.29 MB of 20). What's left of it: a page stays for one block that's out, as pages hold blocks of every size, so a world that shrank to a fifth keeps three fifths of its pages; packing them would change which block a heap hands out next, and every pinned hash. And the packed world (what `--every` prints) is as big as it was: it's the same world. Closed later the same night (notes/ecs.md, A heap's blocks in the lowest places with room): a heap's blocks go in the lowest places with room, a page for each size, a page goes with its last block and a packed heap carries no free blocks. Out and back, the server's world packed 20.3 MB at the end to 3.3 (17.6 at the most, where it was 21.1), its heaps' pages in memory 740 to 453 (7.4 MB for 2.75 of blocks out); hopping, 4.3 to 4.5 MB after each hop back to 2.1. What's left: each run's heap of each owner keeps a part-filled page of each size it holds, a chunk's grid block is 8 KiB for 4 KiB of cells, a block that stays keeps its page (125 pages with one out at the end), and the entity table's slots (0.29 MB).
@@ -1524,6 +1590,15 @@ keeping pieces 170 → 233 (their lines), the rest as it was (audiences 683 → 
 10. Not measured: a second player's machine with its views (the bots have none), real disks under these sizes (section 3a has the store's files at the default), a real window (the paced run has none). More than 64 players: measured (A hundred players): 100 together are past a tick at the 99th percentile only, 100 apart past a core.
 
 ## Tests
+
+- 2026-11-17 (The spread tick): no pin moved. Every 30 s run above ends on the build before's hash (8 bots on 1 and 12
+  threads alike); `page_references_hold_while_another_thread_lets_snapshots_go` (notes/netcode.md, top section).
+  Release, Windows: the 100 tests of `bench_*`, `tidec_e2e_visibility*`, `_guarded_rows`, `_row_grids`, `_row_heaps`,
+  `_storage*`, `_destroy*`, `_spawn*`, `_local_fields`, `_local_events`, `_net*`, `_handler_lanes*`, `_index*`,
+  `sumo_tests`, `earth_tests`, `towers_tests`, and the 45 of Box2D's and Box3D's packages; `tide_tests page_`, `heap`,
+  `table`, `entity`, `snapshot`, `visibility`, `session`, `delta`, `resident` in release and under ASan
+  (`sanitize`); every native release target builds. Web (`web-debug`): `tide_tests`, `tidec_e2e_visibility_runs`,
+  `_pieces`, `_walks`, `_repairs`, `tidec_e2e_local_events`, `tidec_e2e_net_alone_seen` pass.
 
 - 2026-11-17 (Projection checks by the pages written): `tidec_e2e_visibility_walks` (and `_checked`, `_memo_off`)
   and the runtime's line tests (notes/ecs.md, top section); `bench_voxels_checked` for 30 s with 8 bots, 32 together,
