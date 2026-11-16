@@ -61,13 +61,26 @@
 // Nothing is sent reliably as such: each side says what it has, and the other
 // sends what's missing again until it does.
 //
+// A tick goes to a player in a few datagrams in a row, so a lost datagram
+// costs nothing: as many as keep a tick from being lost in all of them more
+// than once in FRAME_LOST_ONE_IN, by the share of the server's datagrams the
+// player's CLIENTs say it didn't read (each says how many SERVERs it has read
+// so far, and echoes the time of the last). After those a tick goes again
+// only once a CLIENT shows it lost: the player read a datagram of a later
+// update than the tick's last and still says it hasn't the tick (the ticks it
+// has: the one it's at and the 63 after, a bit each). So a tick lost in every
+// copy costs a round trip, and one whose acknowledgements are lost too goes
+// again once it should have been acknowledged (resend_after). See send_frames.
+//
 // A tick, as the server sends it (a "frame"): the hash of the world after it,
 // which of the rest it has (FRAME_*), the players who joined or left before
 // it, and the inputs that changed for it: a bit per slot (players, then the
 // server: a set of them, as a varint of as many bits as it takes, so a match
 // of a few players takes a byte) and each input in slot order, as what differs from the slot's input
 // as the world keeps it before the tick (tide_game.write_input_delta). A
-// CLIENT's inputs go the same way, each but the first from the one before it.
+// CLIENT's inputs go the same way, each but the first from the one before it:
+// the ones the server hasn't said it has that can still be in time for their
+// ticks, by how long it says this machine's inputs wait (send_client).
 // A slot without one keeps its last input, on every machine, whether it didn't
 // change or didn't arrive in time; a second set of bits says which ones were
 // late, so a client knows whether its prediction held.
@@ -98,7 +111,7 @@
 // the world's pages, says which of them its world lacks, and gets those.
 
 #define MAGIC 0x5449u // "TI"
-#define PROTOCOL 25u
+#define PROTOCOL 26u
 
 enum { MSG_HELLO = 1, MSG_WELCOME, MSG_REFUSE, MSG_CHUNK, MSG_CLIENT, MSG_SERVER, MSG_BYE, MSG_HANDOVER, MSG_COMMAND,
        MSG_UPLOAD, MSG_DOWNLOAD, MSG_LOCAL_INTEREST, MSG_LOCAL_DATA };
@@ -170,6 +183,15 @@ enum { START_UNKNOWN = 0, START_MAIN = 1, START_GIVEN = 2 };
 #define PUBLISHED_MOST 64u // Players' big commands a server keeps, dispatched or on their way to the players
 #define DOWNLOADS_MOST 64u // ...and a client keeps, whole or coming, for the ticks that name them: as many
 #define PACKETS_PER_UPDATE 8u
+#define FRAME_COPIES 2u      // Datagrams in a row a tick goes to a player in, at the least...
+#define FRAME_COPIES_MOST 8u // ...and at most, which is also how many until its first SERVERs are counted
+#define FRAME_LOST_ONE_IN 100000.0 // How seldom a tick may be lost in every datagram it went in, by the loss measured
+#define LOSS_SERVERS 512u    // SERVERs whose loss is measured at a time: ticks then go in as many datagrams as that takes
+#define LOSS_SOON 256u       // ...and in more at once where what's lost of this many, counted apart, takes more
+#define SAID_KEPT 64u        // Updates' times a server remembers how many SERVERs it had sent a player by
+#define FRAMES_SAID 64u      // Ticks a CLIENT says whether it has, from the one it's at
+#define FRAME_COPIES_ROOM (TIDE_NET_MTU / 4u) // Bytes of a datagram ticks' further copies may take: 18 KB a second at 60 updates
+#define INPUTS_SPARE 3u      // Ticks' inputs a CLIENT carries beyond those the server's word says can still be in time
 #define EVENTS_PER_PLAYER 4u    // Joins and leaves kept before a tick, for each player the game takes
 #define PLAYER_SET_BYTES ((TIDE_PLAYER_SET_BITS + 6u) / 7u) // Seven bits per wire byte
 #define HANDOVER_PART 1000u     // Bytes of a handover record per datagram
@@ -820,9 +842,19 @@ typedef struct stored_frame {
 
 typedef struct sent_mark {
     uint32_t tick;
-    double at;
+    double at;     // When it last went whole; 0 while only its first pieces have
     uint32_t next; // Continue a frame larger than the per-update packet allowance.
+    uint16_t said; // The time its last datagram said (millis16): a CLIENT that echoes that or later was sent it by then
+    uint8_t sends; // Times it went whole, 255 at most
+    bool lost;     // It was shown lost: what that says of the next ticks' copies it says once (connection.frame_copies)
 } sent_mark;
+
+// How many SERVERs a player had been sent by the end of the update that said `said`
+typedef struct said_mark {
+    uint16_t said;
+    bool used;
+    uint32_t sent;
+} said_mark;
 
 // A tick's whole world, packed to send: every player who joined in that tick
 // is sent these bytes, and they go with the last of them.
@@ -879,8 +911,29 @@ typedef struct connection {
 
     // Ticks
     uint32_t frame_ack;  // It has every tick before this one
-    uint64_t frame_mask; // ...and these after it: the next 64, a second of ticks at 60 a second
+    uint64_t frame_mask; // ...and these from it on: FRAMES_SAID of them, a second of ticks at 60 a second
     sent_mark *frame_sent;
+    // The newest of the server's times its CLIENTs echoed: it had read a
+    // datagram sent then when it said which ticks it has. And the last time
+    // the server said to it, which no echo can be past.
+    uint16_t heard_said, said;
+    bool heard_any, said_any;
+    // Datagrams in a row each tick goes in (send_frames, servers_read): what
+    // the share of SERVERs it didn't read takes, and one more from a tick its
+    // acknowledgements show lost in all of them until that's measured again
+    uint8_t frame_copies;
+    // The SERVERs it was sent, and by which update (said_mark); how many of
+    // them it had read as of its newest CLIENT, and how many it had been sent
+    // by the update that CLIENT echoes; and of the ones sent since the
+    // measuring began (loss_sent), those it didn't read (loss_lost), of which
+    // the last CLIENT's (loss_fresh) may be ones that came out of order. The
+    // same of the last LOSS_SOON or fewer (soon_sent, soon_lost).
+    uint32_t servers_sent;
+    said_mark *said_marks;
+    uint32_t said_next;
+    bool loss_known;
+    uint8_t loss_read;
+    uint32_t loss_at, loss_sent, loss_lost, loss_fresh, soon_sent, soon_lost;
     stored_frame *client_frames; // Recipient-specific frames; NULL without projections.
     void *verified_world; // Last acknowledged full server endpoint, retained for recovery causes.
     uint32_t verified_tick;
@@ -1474,6 +1527,7 @@ static void free_connection(tide_server *s, connection *c)
     free(c->input_size);
     free(c->input_arrived);
     free(c->frame_sent);
+    free(c->said_marks);
     for (uint32_t i = 0; c->client_frames && i < s->w.history; i++) {
         free(c->client_frames[i].data);
         tide_event_log_free(&c->client_frames[i].events);
@@ -1765,7 +1819,8 @@ static void on_hello(tide_server *s, const uint32_t transport, const tide_addres
     const uint32_t bytes = s->game->max_input_bytes ? s->game->max_input_bytes : 1u;
     *c = (connection){.used = true, .transport = transport, .address = from, .nonce = nonce, .last_heard = s->now,
                       .their_time = their_time, .their_arrived = s->arrived, .new_player = new_player, .welcoming = true,
-                      .has_world = (flags & HELLO_HAS_WORLD) != 0, .can_start = (flags & HELLO_CAN_START) != 0};
+                      .has_world = (flags & HELLO_HAS_WORLD) != 0, .can_start = (flags & HELLO_CAN_START) != 0,
+                      .frame_copies = (uint8_t)FRAME_COPIES_MOST};
     memcpy(c->asset_pack, asset_pack, 32);
     c->local = s->desc.local_first && transport == 0;
     c->inputs = malloc((size_t)(s->w.inputs + 1u) * bytes);
@@ -1773,8 +1828,9 @@ static void on_hello(tide_server *s, const uint32_t transport, const tide_addres
     c->input_size = calloc(s->w.inputs, sizeof *c->input_size);
     c->input_arrived = calloc(s->w.inputs, sizeof *c->input_arrived);
     c->frame_sent = calloc(s->w.history, sizeof *c->frame_sent);
+    c->said_marks = calloc(SAID_KEPT, sizeof *c->said_marks);
     if (s->game->client_state) c->client_frames = calloc(s->w.history, sizeof *c->client_frames);
-    if (!c->inputs || !c->input_tick || !c->input_size || !c->input_arrived || !c->frame_sent
+    if (!c->inputs || !c->input_tick || !c->input_size || !c->input_arrived || !c->frame_sent || !c->said_marks
         || (s->game->client_state && !c->client_frames)) {
         free_connection(s, c);
         if (new_player) s->cookies[player] = s->digests[player] = 0;
@@ -1805,6 +1861,79 @@ static void greet(tide_server *s, connection *c)
     }
 }
 
+// What a CLIENT says of the ticks it has: every one before `frame_ack`, and of
+// the FRAMES_SAID from it on, those with a bit in `mask`. Its newest CLIENT's
+// mask is the one kept (they come in any order), or that of one that has more
+// ticks in a row.
+static void frames_had(const tide_server *s, connection *c, const uint32_t frame_ack, const uint64_t mask, const bool newest)
+{
+    if (frame_ack > s->tick || frame_ack < c->frame_ack) return;
+    if (frame_ack > c->frame_ack) {
+        c->frame_ack = frame_ack;
+        c->frame_mask = mask;
+    } else if (newest) {
+        c->frame_mask = mask;
+    }
+}
+
+// How many datagrams in a row a tick has to go in for it to be lost in all of
+// them no more than once in FRAME_LOST_ONE_IN, where `lost` of `sent` are
+static uint8_t copies_for(const uint32_t lost, const uint32_t sent)
+{
+    const double share = sent ? (double)(lost < sent ? lost : sent) / (double)sent : 0.0;
+    uint32_t copies = 1;
+    double all = share; // The share of ticks lost in every one of `copies` datagrams
+    while (copies < FRAME_COPIES || (all * FRAME_LOST_ONE_IN > 1.0 && copies < FRAME_COPIES_MOST)) {
+        all *= share;
+        copies++;
+    }
+    return (uint8_t)copies;
+}
+
+// A CLIENT, its newest, says it has read `read` SERVERs so far (a count that
+// wraps), the last of them the one that said `echo`. Of the SERVERs sent
+// between the update its CLIENT before echoed and this one, those it didn't
+// count were lost, or come yet, out of order: one that comes makes the next
+// CLIENT count more than were sent, and is taken back. LOSS_SERVERS at a
+// time, ticks go in as many datagrams as their share lost takes; and in more
+// at once where what's lost of the last LOSS_SOON or fewer (but for the last
+// CLIENT's, which may come yet) already takes more, as when a network turns
+// bad. Whatever a peer says, that's between FRAME_COPIES and FRAME_COPIES_MOST.
+static void servers_read(connection *c, const uint16_t echo, const uint8_t read)
+{
+    const said_mark *mark = NULL;
+    for (uint32_t i = 0; i < SAID_KEPT && !mark; i++) {
+        if (c->said_marks[i].used && c->said_marks[i].said == echo) mark = &c->said_marks[i];
+    }
+    if (!mark) return; // Of an update too long ago, or of none
+    if (!c->loss_known) {
+        c->loss_known = true;
+        c->loss_at = mark->sent;
+        c->loss_read = read;
+        return;
+    }
+    const uint32_t sent = mark->sent - c->loss_at;
+    if (sent == 0 || sent > UINT32_MAX / 2u) return; // No later update than the last CLIENT echoed
+    const uint32_t had = (uint8_t)(read - c->loss_read);
+    c->loss_at = mark->sent;
+    c->loss_read = read;
+    // What the CLIENT before left lost, less what this one read beyond what was sent since, stands as lost
+    const uint32_t back = had > sent ? had - sent : 0u;
+    c->loss_fresh = c->loss_fresh > back ? c->loss_fresh - back : 0u;
+    c->loss_lost += c->loss_fresh;
+    c->soon_lost += c->loss_fresh;
+    c->loss_fresh = sent > had ? sent - had : 0u;
+    c->loss_sent += sent;
+    c->soon_sent += sent;
+    if (c->loss_sent >= LOSS_SERVERS) {
+        c->frame_copies = copies_for(c->loss_lost, c->loss_sent);
+        c->loss_sent = c->loss_lost = 0;
+    }
+    const uint8_t soon = copies_for(c->soon_lost, LOSS_SOON);
+    if (soon > c->frame_copies) c->frame_copies = soon;
+    if (c->soon_sent >= LOSS_SOON) c->soon_sent = c->soon_lost = 0;
+}
+
 static void on_client(tide_server *s, connection *c, tide_reader *r)
 {
     const uint16_t their_time = tide_read_u16(r);
@@ -1818,6 +1947,7 @@ static void on_client(tide_server *s, connection *c, tide_reader *r)
     const uint64_t chunk_mask = chunk_number && have ? tide_read_u64(r) : 0u;
     const uint32_t frame_ack = tide_read_varint(r);
     const uint64_t frame_mask = tide_read_varint64(r);
+    const uint8_t servers = tide_read_u8(r); // SERVERs it has read so far
     const uint32_t repair_tick = flags & CLIENT_REPAIR ? tide_read_varint(r) : 0u;
     uint32_t lacks_number = 0;
     uint32_t lacks_size = 0;
@@ -1895,6 +2025,13 @@ static void on_client(tide_server *s, connection *c, tide_reader *r)
         c->their_arrived = s->arrived;
     }
     if (echo) c->rtt_ms = millis_since(s->now, echo);
+    // What its newest CLIENT echoes, which says the ticks it has too (frames_had): never a time the server didn't say
+    if (echo && newest && c->said_any && (int16_t)(uint16_t)(c->said - echo) >= 0
+        && (!c->heard_any || (int16_t)(uint16_t)(echo - c->heard_said) > 0)) {
+        c->heard_said = echo;
+        c->heard_any = true;
+        servers_read(c, echo, servers);
+    }
     if (c->welcoming) c->view_start = s->tick;
     c->welcoming = false;
     if (!c->greeted) greet(s, c);
@@ -1910,7 +2047,7 @@ static void on_client(tide_server *s, connection *c, tide_reader *r)
             c->has_world = true;
         }
     }
-    if (s->game->client_state && frame_ack > c->frame_ack && frame_ack <= s->tick) c->frame_ack = frame_ack;
+    if (s->game->client_state) frames_had(s, c, frame_ack, frame_mask, newest);
 
     const bool was_sending = c->sending;
     if (newest && wants && !repair_tick && (c->snapshot_kind == SEND_CLIENT_HASHES || c->snapshot_kind == SEND_CLIENT_PATCH)) {
@@ -1958,8 +2095,7 @@ static void on_client(tide_server *s, connection *c, tide_reader *r)
         c->can_start = (flags & CLIENT_CAN_START) != 0;
         start_snapshot(s, c); // Its world went wrong, or never came: sent again
     } else if (!was_sending) {
-        if (frame_ack > c->frame_ack && frame_ack <= s->tick) c->frame_ack = frame_ack;
-        if (frame_ack == c->frame_ack) c->frame_mask = frame_mask;
+        frames_had(s, c, frame_ack, frame_mask, newest);
     }
 
     // Commit only the completely validated packet's canonical inputs.
@@ -3357,6 +3493,8 @@ static void send_welcome(tide_server *s, connection *c)
     tide_write_u64(&w, s->cookies[c - s->connections]);
     send_packet(&s->desc.transports[c->transport], c->address, &w, &s->traffic);
     c->view_limit = s->tick;
+    c->said = millis16(s->now);
+    c->said_any = true;
 }
 
 static void send_chunks(tide_server *s, connection *c)
@@ -3476,7 +3614,43 @@ static uint32_t piece_header(const tide_server *s, const uint32_t tick, const ui
     return varint_size(s->tick - tick) + varint_size(size) + (size > PIECE ? varint_size((size - 1u) / PIECE) : 0u);
 }
 
-// The ticks it lacks, in pieces, as many packets as it takes (up to a limit).
+// A tick's bytes in SERVERs, its pieces' own with it
+static uint32_t frame_pieces_bytes(const tide_server *s, const uint32_t tick, const uint32_t size)
+{
+    return size + piece_header(s, tick, size) * ((size + PIECE - 1u) / PIECE);
+}
+
+// Whether its last CLIENT said it has `tick` (frames_had)
+static bool frame_said_had(const connection *c, const uint32_t tick)
+{
+    return tick >= c->frame_ack && tick - c->frame_ack < FRAMES_SAID && (c->frame_mask >> (tick - c->frame_ack) & 1u);
+}
+
+// Whether a tick the player hasn't said it has goes in this update's datagrams, and why:
+enum {
+    FRAME_STAYS, // It went as often as ticks go, and nothing says it was lost
+    FRAME_FIRST, // It never went whole
+    FRAME_LOST,  // The player read a datagram of an update after the one its last went in, and said then that it
+                 // hasn't it: that one was lost, and the ones before it. Only of the ticks a CLIENT speaks of,
+                 // which a client keeps whatever it's doing; a datagram that came that far out of order makes
+                 // this a copy too many
+    FRAME_COPY,  // It went in fewer datagrams than ticks go in (connection.frame_copies): once more, where there's room
+                 // (send_frames)
+    FRAME_AGAIN, // Nothing was heard of it for as long as an acknowledgement takes
+};
+static int frame_goes(const tide_server *s, const connection *c, const uint32_t tick, const sent_mark *mark, const double again)
+{
+    if (mark->tick != tick || mark->at <= 0.0) return FRAME_FIRST;
+    const uint32_t kept = windows_for(s->desc.tick_rate).history; // What a client keeps ahead, however long the server's history
+    const bool spoken_of = tick - c->frame_ack < (kept < FRAMES_SAID ? kept : FRAMES_SAID);
+    if (spoken_of && c->heard_any && (int16_t)(uint16_t)(c->heard_said - mark->said) > 0) return FRAME_LOST;
+    if (mark->sends < c->frame_copies) return FRAME_COPY;
+    return s->now - mark->at >= again ? FRAME_AGAIN : FRAME_STAYS;
+}
+
+// The ticks it lacks, in pieces, as many packets as it takes (up to a limit):
+// each in a few datagrams in a row, then only once it's shown lost or nothing
+// is heard of it (frame_goes).
 static void send_frames(tide_server *s, connection *c)
 {
     if (mirrors(s, c)) { // It has every tick: the server's world is its own. Its times, inputs' wait and uploads
@@ -3500,35 +3674,65 @@ static void send_frames(tide_server *s, connection *c)
     // Caught up with the world it was sent: from here, a player that falls
     // behind gets the world again, rather than the server keeping every tick
     if (c->catching_up && s->tick - c->frame_ack <= windows_for(s->desc.tick_rate).history / 2u) c->catching_up = false;
-    // While what it lacks fits in one datagram, each one carries all of it:
-    // a lost one costs a frame, not a round trip. Beyond that, what was sent
-    // goes again once it should have been acknowledged.
-    uint32_t lacking = 0;
-    for (uint32_t tick = c->frame_ack; tick < s->tick && lacking <= TIDE_NET_MTU; tick++) {
-        const stored_frame *f = &(c->client_frames ? c->client_frames : s->frames)[tick % s->w.history];
-        if (f->tick == tick) lacking += f->size + piece_header(s, tick, f->size) * ((f->size + PIECE - 1u) / PIECE);
-    }
-    const double again = lacking + 32u <= TIDE_NET_MTU ? 0.0 : resend_after(c->rtt_ms);
+    const stored_frame *frames = c->client_frames ? c->client_frames : s->frames;
+    const double again = resend_after(c->rtt_ms);
     const tide_transport *t = &s->desc.transports[c->transport];
     tide_writer w;
     uint32_t count_at;
     uint32_t pieces = 0;
     uint32_t packets = 0;
     start_server_packet(s, c, &w, &count_at);
+    c->said = millis16(s->now);
+    c->said_any = true;
+    // What has to go now (frame_goes), and so the room this update's datagram
+    // has beside it for ticks' further copies: they never make another
+    // datagram, nor take more than a quarter of one, so ticks too big for
+    // that go once, as they did when what a player lacked didn't fit a datagram
+    uint32_t needed = w.size;
+    for (uint32_t tick = c->frame_ack; tick < s->tick && needed <= TIDE_NET_MTU; tick++) {
+        const stored_frame *f = &frames[tick % s->w.history];
+        if (frame_said_had(c, tick) || f->tick != tick || !f->data) continue;
+        const int goes = frame_goes(s, c, tick, &c->frame_sent[tick % s->w.history], again);
+        if (goes != FRAME_STAYS && goes != FRAME_COPY) needed += frame_pieces_bytes(s, tick, f->size);
+    }
+    uint32_t room = needed <= TIDE_NET_MTU ? TIDE_NET_MTU - needed : 0u;
+    if (room > FRAME_COPIES_ROOM) room = FRAME_COPIES_ROOM;
+    // The room goes to the newest ticks first, which went least: a tick's second datagram is worth more than
+    // an older one's fourth, and where they don't all fit the older ones' would hold every newer one's back.
+    // Of the last FRAMES_SAID ticks only: an older one the player hasn't is no datagram's loss
+    uint64_t copying = 0; // Bit i: the tick i before the last one made
+    for (uint32_t i = 0; i < FRAMES_SAID && i < s->tick - c->frame_ack && room; i++) {
+        const uint32_t tick = s->tick - 1u - i;
+        const stored_frame *f = &frames[tick % s->w.history];
+        if (frame_said_had(c, tick) || f->tick != tick || !f->data) continue;
+        if (frame_goes(s, c, tick, &c->frame_sent[tick % s->w.history], again) != FRAME_COPY) continue;
+        const uint32_t bytes = frame_pieces_bytes(s, tick, f->size);
+        if (bytes > room) continue;
+        room -= bytes;
+        copying |= 1ull << i;
+    }
     for (uint32_t tick = c->frame_ack; tick < s->tick && packets < PACKETS_PER_UPDATE; tick++) {
-        if (tick > c->frame_ack && tick - c->frame_ack <= 64u && (c->frame_mask >> (tick - c->frame_ack - 1u) & 1u)) continue;
+        if (frame_said_had(c, tick)) continue;
         sent_mark *mark = &c->frame_sent[tick % s->w.history];
-        if (mark->tick == tick && mark->at > 0.0 && s->now - mark->at < again) continue;
-        const stored_frame *f = &(c->client_frames ? c->client_frames : s->frames)[tick % s->w.history];
+        const stored_frame *f = &frames[tick % s->w.history];
         if (f->tick != tick || !f->data) continue;
+        const int goes = frame_goes(s, c, tick, mark, again);
+        if (goes == FRAME_STAYS) continue;
+        if (goes == FRAME_COPY && !(s->tick - 1u - tick < FRAMES_SAID && (copying >> (s->tick - 1u - tick) & 1u))) continue;
+        const bool sent = mark->tick == tick;
+        // Lost in as many datagrams as ticks go in: the next go in one more, until the loss is measured again
+        if (goes == FRAME_LOST && !mark->lost && mark->sends >= c->frame_copies && c->frame_copies < FRAME_COPIES_MOST) {
+            c->frame_copies++;
+        }
         const uint32_t count = (f->size + PIECE - 1u) / PIECE;
-        uint32_t k = mark->tick == tick ? mark->next : 0u;
+        uint32_t k = sent ? mark->next : 0u;
         for (; k < count && packets < PACKETS_PER_UPDATE; k++) {
             const uint32_t from = k * PIECE;
             const uint32_t size = f->size - from < PIECE ? f->size - from : PIECE;
             if (w.size + piece_header(s, tick, f->size) + size > TIDE_NET_MTU || pieces == 255u) {
                 s->packet[count_at] = (uint8_t)pieces;
                 send_packet(t, c->address, &w, &s->traffic);
+                c->servers_sent++;
                 packets++;
                 if (packets == PACKETS_PER_UPDATE) break;
                 start_server_packet(s, c, &w, &count_at);
@@ -3540,11 +3744,18 @@ static void send_frames(tide_server *s, connection *c)
             tide_write_bytes(&w, f->data + from, size);
             pieces++;
         }
+        const uint8_t sends = sent ? mark->sends : 0u;
         *mark = (sent_mark){.tick = tick, .at = k == count ? (s->now > 0.0 ? s->now : 1e-9) : 0.0,
-                            .next = k == count ? 0u : k};
+                            .next = k == count ? 0u : k, .said = c->said,
+                            .sends = (uint8_t)(k == count && sends < UINT8_MAX ? sends + 1u : sends),
+                            .lost = (sent && mark->lost) || goes == FRAME_LOST};
     }
     s->packet[count_at] = (uint8_t)pieces;
-    if (packets < PACKETS_PER_UPDATE) send_packet(t, c->address, &w, &s->traffic); // Always one, for the times and its inputs' wait
+    if (packets < PACKETS_PER_UPDATE) { // Always one, for the times and its inputs' wait
+        send_packet(t, c->address, &w, &s->traffic);
+        c->servers_sent++;
+    }
+    c->said_marks[c->said_next++ % SAID_KEPT] = (said_mark){.said = c->said, .used = true, .sent = c->servers_sent};
 }
 
 tide_server *tide_server_create(const tide_server_desc *desc, const double now)
@@ -4226,6 +4437,7 @@ struct tide_client {
     double client_sent;
     uint32_t client_sent_size;
     bool heard_since_sent;
+    uint8_t servers_read; // SERVERs it has read, a count that wraps: each CLIENT says it
     // The first of the inputs it sampled in a row up to `sampled`: it sampled
     // none for the ticks before, which the server runs without one (skip_inputs)
     uint32_t sampled_from;
@@ -4867,6 +5079,7 @@ static void on_server(tide_client *c, tide_reader *r)
     }
     const uint8_t pieces = tide_read_u8(r);
     if (r->failed) return;
+    c->servers_read++;
     c->their_time = their_time;
     measure(c, echo, held);
     if (server_tick >= c->heard_tick) { // The newest it said, as datagrams come in any order
@@ -6673,13 +6886,17 @@ static void send_client(tide_client *c)
     tide_write_varint(&w, chunk_number);
     if (chunk_number) tide_write_varint(&w, chunk_ack == UINT32_MAX ? 0u : chunk_ack + 1u);
     if (chunk_number && chunk_ack != UINT32_MAX) tide_write_u64(&w, chunk_mask);
+    // The ticks it has every piece of, of the FRAMES_SAID from the one it's at (which it may have and not have
+    // run yet): what the server needn't send again. A download one of them names is acknowledged on its own, below.
     uint64_t frame_mask = 0;
-    for (uint32_t i = 0; i < 64u && i < c->w.history; i++) {
-        const uint32_t tick = c->verified + 1u + i;
-        if (frame_complete(c, &c->frames[tick % c->w.history], tick)) frame_mask |= 1ull << i;
+    for (uint32_t i = 0; i < FRAMES_SAID && i < c->w.history; i++) {
+        const uint32_t tick = c->verified + i;
+        const pending_frame *f = &c->frames[tick % c->w.history];
+        if (f->tick == tick && f->data && f->had == f->pieces && !f->invalid) frame_mask |= 1ull << i;
     }
     tide_write_varint(&w, c->verified);
     tide_write_varint64(&w, frame_mask);
+    tide_write_u8(&w, c->servers_read); // How many SERVERs it has read, for the server to tell how many are lost
     if (c->repair_tick) tide_write_varint(&w, c->repair_tick);
     if (lacks) { // Until the world comes
         tide_write_varint(&w, c->answered_number);
@@ -6724,6 +6941,15 @@ static void send_client(tide_client *c)
     uint32_t first = c->input_ack > c->verified ? c->input_ack : c->verified;
     if (first < c->sampled_from) first = c->sampled_from; // It sampled none for the ticks before (skip_inputs)
     if (first > c->sampled) first = c->sampled;
+    // ...and of those, the ones that can still be in time: the server says how long this machine's inputs wait
+    // for their ticks (note_wait), so one sampled more ticks ago than that, and INPUTS_SPARE, has had its tick
+    // run whichever datagram brings it. Without this every input went until the server said it had a newer one:
+    // a round trip's worth in each datagram, and all of them while a world or a repair was on its way
+    if (c->waited_known && c->tick_rate) {
+        const double waited = c->waited > 0 ? (double)c->waited * (double)c->tick_rate / WAITS : 0.0;
+        const uint32_t kept = (uint32_t)waited + 1u + INPUTS_SPARE;
+        if (c->sampled > kept && first < c->sampled - kept) first = c->sampled - kept;
+    }
     tide_write_varint(&w, first - c->verified); // From the ticks it has
     const uint32_t count_at = w.size;
     tide_write_u8(&w, 0);

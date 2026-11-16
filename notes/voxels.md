@@ -289,7 +289,7 @@ What the bench gained for it (bench/README.md): the server's repairs are timed (
 
 - **It runs.** The default (8 players, 845 chunks each) holds 60 ticks a second with room: the server's update 0.97 ms median and 5.8 ms p99, on one thread as on twelve, and held to two cores; a player's machine 0.09 ms median and 1.7 ms p99 for its ticks, and its whole frame at 1080p 0.2 ms median, 12 ms at worst. 32 players hold it barely (p99 15.7 ms); 64 don't (p99 43 to 47 ms). Twice the view holds it barely (p99 14.7 ms); three times doesn't (30 ms, and a client's verified world falls 70 ticks behind, past the 60 it predicts ahead).
 - **Chunks cost 137 to 147 bytes each as sent**, a thirtieth of their cells, whatever the view or the player count. That part of the bandwidth is not high.
-- **What is high is every player's input in every tick's frame, sent again in each datagram until it's acknowledged** (below, Bandwidth): nothing with bots, whose inputs change every five seconds; 13 to 44 KB a second to each player once all eight turn every tick as a mouse does. And a part lost from a repair of more than 64 parts has the parts after it sent twice: 2% more at the default view, 28% at twice, 40% at three times, with 1% lost.
+- **What is high is every player's input in every tick's frame, sent again in each datagram until it's acknowledged** (below, Bandwidth): nothing with bots, whose inputs change every five seconds; 13 to 44 KB a second to each player once all eight turn every tick as a mouse does (cut the same day, to 19.2 KB a second standing: Bandwidth, below). And a part lost from a repair of more than 64 parts has the parts after it sent twice: 2% more at the default view, 28% at twice, 40% at three times, with 1% lost.
 - **What limits players** is the server's repairs: each walks every entity the server has, for each player, four times a second, so their cost goes with players times all chunks (half the server's update at 64 players). **What limits the view** is the same walk and the loops' indexes, made again whole whenever a chunk comes or goes, and on a client the ticks it runs again while a whole view arrives.
 - **Fixed here**: a predicting client sorted every entity it has again for each system and query, every tick, because a world's copy dropped its orders: half a client's simulating (18.4 to 9.6 ms a second at the default view, 122 to 55 at three times; its update's p99 2.5 to 1.7 ms).
 
@@ -393,6 +393,18 @@ What a player is sent at the default view, 23.4 KB a second: 18.4 of repairs' pa
   | What it sends, as they are / turning | 7.1 / 11.7 | 4.9 / 8.0 | 7.2 / 11.9 | 4.9 / 8.0 |
 
   Eight players who only look around cost each other 44 KB a second each, 790 bytes a datagram, where what's new in a tick is about 80 bytes by the same sum (eight inputs of two floats; not counted apart): the same frames eight or nine times over. With 32 the frames no longer fit a datagram together, so each goes once (385 bytes a datagram), which is why 32 players standing cost each other less than 8 do; and with repairs coming (flying) fewer ticks are sent at all (22 datagrams a second, not 56). This is the one number here that is abnormally high, and it's the one a real session would have: one run each, the bots' turns random, a hand's smoother. It's the session's way of losing no tick to a lost datagram: a frame that goes once and is lost comes 1.5 round trips late, and the others' inputs are guessed meanwhile. What would change it is the owner's to weigh: a frame sent a set number of times (twice loses one tick in ten thousand to 1% loss, for two copies rather than nine), a smaller size past which frames go once, or inputs only of the players a machine has.
+
+  **Cut (2026-11-16, later; notes/netcode.md, Ticks in as many datagrams as the loss takes; session protocol 26).** A tick now goes in as many datagrams in a row as the loss a player's machine counts takes (two with none lost, three to 2%, four to 5.6%), then only once the machine's word shows it lost; the copies take a quarter of a datagram at most, so 32 players' ticks (385 bytes) go once, as they did. And a machine's inputs go while they can still be in time for their ticks, where every one went until the server said it had a newer. The same runs, 120 s with 8 bots and 60 s with 32, before to after, 1% lost:
+
+  | KB a second | 8 players, flying | 8, standing | 32, flying | 32, standing |
+  |---|---|---|---|---|
+  | Ticks to each player, bots as they are | 3.5 to 2.4 | 6.7 to 3.8 | 4.1 to 3.0 | 6.1 to 3.6 |
+  | Ticks, every bot turning every tick | 18.0 to 10.6 | 46.9 to 19.2 | 15.1 to 16.1 | 20.5 to 20.8 |
+  | All it's sent, turning | 37.6 to 30.4 | 47.7 to 20.0 | 41.2 to 42.2 | 21.8 to 22.1 |
+  | What it sends, turning | 11.8 to 9.0 | 8.0 to 7.4 | 11.8 to 9.0 | 8.0 to 7.3 |
+  | Its verified world behind the server's on average, turning, ticks | 9.58 to 9.52 | 4.01 to 4.01 | 10.52 to 10.46 | 4.88 to 4.47 |
+
+  With none lost the turning 8 standing are sent 13.7 KB a second of ticks, with 5% lost 24.2; a client's verified world is as far behind the server's as it was at each (the tables in netcode.md have 99 frames of 100 and 999 of 1,000). What's left of it is the copies of every player's input the loss asks for (two with none lost, three with 1%), and one where 32 turn at once.
 - **Far regions, repairs against first sends**: as section 10 has them (0.5 to 1 KB a second where bots build); a repair here is almost all first sends, as a client can't predict a chunk it hasn't. The server's own count of what a player's machine got and the parts it sent agree within 2% at the default view.
 
 ### What costs a chunk that's only held
@@ -422,7 +434,7 @@ Three things make a tick cost what the world holds rather than what changed, fou
 
 ### What's left, most telling first
 
-1. Inputs of every player, in every unacknowledged frame (section 5): 13 to 44 KB a second a player with real hands on the mice. The owner's to decide.
+1. ~~Inputs of every player, in every unacknowledged frame (section 5): 13 to 44 KB a second a player with real hands on the mice.~~ Cut the same day (section 5, the last paragraph of that bullet): 19.2 KB a second with 8 turning and standing, 10.6 flying; 32 are as they were (20.8 standing), each tick once, and a second copy of theirs is the owner's to weigh (netcode.md, Open).
 2. A repair walks the whole server's world for one player (section 2): what caps players at about 32 here, fewer spread out.
 3. Loops' indexes made again whole as chunks come and go, and for every copy of a client's world (above): a fifth of a server's and a client's simulating.
 4. A whole view at once: the store's 64 answers a tick and the repairs' stream gap put a client 41 to 70 ticks behind, past what it predicts at three times the view; and a lost part of a long repair sends the parts after it twice (section 5).

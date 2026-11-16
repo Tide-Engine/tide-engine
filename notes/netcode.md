@@ -1,5 +1,262 @@
 # Netcode: sessions, prediction, commands
 
+## Ticks in as many datagrams as the loss takes; inputs while they can be in time; protocol 26 (2026-11-16)
+
+The largest bandwidth item of a real game (notes/voxels.md, At scale, Bandwidth): while the ticks a player hadn't
+acknowledged fit one datagram together, the server sent all of them in every datagram (`again` was 0 while
+`lacking + 32 <= TIDE_NET_MTU`), so each tick, with every player's changed input in it, went about as many times as
+a round trip has updates: eight or nine at 133 ms. That was the session's way of losing no tick to a lost datagram:
+the next datagram had it too. Once they didn't fit (32 players turning), each went once, and a lost one came 1.5 round
+trips later. A player's own inputs went up the same way, every one until the server said it had a newer.
+
+What a lost tick costs is more than the wait: a client's confirmed presentation clock (`verified_view`) advances with
+real time and is held at the newest confirmed tick, so after the confirmed ticks stop for a round trip and come in a
+burst it stays that far behind for good (until a repair, a reload or a resync sets it). What's drawn from the
+confirmed world, and the view times a rewind goes by, are that much older from then on:
+`tide_box3d_rewind_network`'s 20 frames a second with 10% lost had every stamp expire (350 ms old) with a first cut
+of this that learned a network's loss by losing ticks. So ticks have to be lost in every copy almost never, not
+merely seldom; that's what the rule below is sized by. Whether that clock should catch up is the owner's
+(Confirmed presentation, 2026-10-11, below).
+
+### What's built (`engine/src/session.c`; agent-maintained, no generated code or `tide_game` member involved)
+
+- **A tick goes in a few datagrams in a row** (`send_frames`, `frame_goes`): `connection.frame_copies` of them, 2 at
+  the least (`FRAME_COPIES`) and 8 at most (`FRAME_COPIES_MOST`). Each update's datagram has the tick just made and
+  the ones before it that went fewer times than that (`sent_mark.sends`). So a lost datagram still costs nothing: the
+  tick is in the next one.
+- **How many is what the loss measured takes** (`servers_read`, `copies_for`): the fewest datagrams for a tick to be
+  lost in all of them no more than once in 100,000 (`FRAME_LOST_ONE_IN`: once in 28 minutes at 60 ticks a second), by
+  the share of the server's datagrams the player didn't read. 2 up to 0.3% lost, 3 to 2.1%, 4 to 5.6%, 5 to 10%, 6 to
+  14.7%, 7 to 19.3%, 8 beyond. The loss is the client's own count, an authority, not a guess from timing: each CLIENT
+  says how many SERVERs it has read so far (a byte that wraps) and echoes the time of the last, and the server
+  remembers how many it had sent by each update's time (`said_marks`, the last 64 updates), so between two CLIENTs it
+  knows how many it sent and how many came. One that came out of order shows as lost in one CLIENT and as one too
+  many in the next, and is taken back (`loss_fresh`). The count is taken 512 SERVERs at a time (`LOSS_SERVERS`, 8.5 s),
+  and sets the copies either way; and of the last 256 or fewer counted apart (`LOSS_SOON`), what's lost so far raises
+  them at once, so a network that turns bad has four copies within a second and eight within a few. A connection
+  starts at eight, as it was, until its first 512 are counted.
+- **A tick lost in every copy goes again when a CLIENT shows it lost** (`FRAME_LOST`), not after a wait: the player
+  read a datagram of a later update than the tick's last (`heard_said` past `sent_mark.said`) and still says it
+  hasn't the tick. So it costs a round trip, where a tick sent once used to cost 1.5 (`resend_after`); and it adds a
+  copy for the ticks after until the loss is measured again (a burst the average doesn't show). That it hasn't the
+  tick is exact now: a CLIENT's bits are of the 64 ticks from the one it's at (`FRAMES_SAID`; they were of the 64
+  after it), by their pieces, so a client that has a tick and hasn't run it yet (its clock, a repair, `Delay`) says
+  so and isn't sent it again; before, that one tick went in every datagram. The mask is its newest CLIENT's (older
+  ones come late), in games with projections too, where it was left as it was while a repair was asked for.
+  With no word at all a tick still goes again after `resend_after`, as before.
+- **Further copies never make a datagram, and take a quarter of one at most** (`FRAME_COPIES_ROOM`, 300 bytes: 18 KB
+  a second at 60 updates), the newest ticks first: a tick's second datagram is worth more than an older one's fourth,
+  and where they don't all fit, oldest first held every newer tick's copy back by a round trip (measured: 5% lost,
+  verified worlds 4.69 ticks behind on average where 4.06 is what before had). Ticks too big for the quarter go once,
+  as they did when what a player lacked didn't fit a datagram: 32 players turning every tick are 385 bytes a tick, and
+  a second copy of that would be 15 KB a second more to each player than before. They gain the round trip in place of
+  1.5.
+- **A client's inputs go while they can be in time** (`send_client`, `INPUTS_SPARE`): the server says with every
+  SERVER how long this machine's inputs wait for their ticks (`waited`, the same word `keep_early` goes by); an input
+  sampled more ticks ago than that, one, and three to spare has had its tick run whichever datagram brings it, and
+  isn't sent. Before, a CLIENT had every input since the newest the server said it had: a round trip's worth (9 or 10
+  where 6 go now, at 100 ms and two ticks early), and all of them, to 255 or a datagram's room, while a world or a
+  repair was on its way and no SERVER came. Tried with a fixed number first (a build not kept): the newest 4 gave the
+  same share of late inputs as all of them at 1% and 5% lost and with 40 ms of jitter (0.00, 0.01 and 0.02%), 3 a
+  little more (0.00, 0.02, 0.04%), 2 clearly more (0.02, 0.28, 0.35%).
+- **The wire is `PROTOCOL` 26** (`session.c`, and the tests that write it by hand: `tests/test_commands.c`,
+  `test_session_packets.c`, `test_session_view_time.c`, `packages/voice/test/voice_test.c`): a CLIENT's bits start at
+  the tick it's at, and a byte follows them, the SERVERs it has read. Nothing else moved; a SERVER is as it was. No
+  world, hash, snapshot, layout or generated code changed: this is what's sent of the same ticks.
+- **Whatever a peer says** (hostile acknowledgements): the copies stay between 2 and 8; an echo of a time the server
+  didn't say (past its last) is not taken; a tick goes at most once an update, in at most `PACKETS_PER_UPDATE`
+  datagrams; a tick number past the server's is refused as before; bits for ticks that aren't made are the peer's own
+  loss. A peer that says it never has anything, though it reads every datagram, is sent each tick it lacks once an
+  update: what every player was sent before.
+
+### What was weighed
+
+The task's options, with 8 players standing and turning every tick (`bench_voxels --look 100 --still 100 --hop 0`,
+120 s, 50 ms each way, 10 ms of jitter; KB a second of ticks to each player, then its verified world's ticks behind
+the server's: on average / in 99 frames of 100 / in 999 of 1,000; measured with builds not kept, the room for
+copies a whole datagram's):
+
+| | none lost | 1% | 5% | 10% |
+|---|---|---|---|---|
+| Before: every unacknowledged tick in every datagram | 46.8, 4.00 / 4 / 4 | 46.9, 4.01 / 5 / 5 | 47.4, 4.05 / 5 / 6 | 48.0, 4.11 / 5 / 6 |
+| Each tick once, again when shown lost | 7.2, 4.00 / 4 / 4 | 7.3, 4.49 / 13 / 14 | 7.5, 6.37 / 19 / 27 | 7.9, 8.52 / 24 / 36 |
+| ...twice | 12.9, 4.00 / 4 / 4 | 12.9, 4.01 / 5 / 5 | 12.9, 4.23 / 12 / 19 | 13.0, 4.76 / 15 / 23 |
+| ...three times | 18.5, 4.00 / 4 / 4 | 18.5, 4.01 / 5 / 5 | 18.6, 4.06 / 5 / 7 | 18.6, 4.19 / 7 / 17 |
+| Twice, and once more for each tick lost in every copy, one fewer for each 4,096 acknowledged | 12.9, 4.00 / 4 / 4 | 14.2, 4.01 / 5 / 5 | 19.6, 4.07 / 5 / 11 | 23.6, 4.14 / 6 / 14 |
+| As built: by the loss counted | 13.7, 4.00 / 4 / 4 | 19.2, 4.01 / 5 / 5 | 24.2, 4.06 / 5 / 6 | 24.2, 4.13 / 6 / 11 |
+
+- **A set number of times** is right for one loss and wrong for the others: twice is as good as before at 1% and
+  stalls one tick in 400 at 5%; three times pays for 5% on every network.
+- **Sized by the ticks lost** (the fifth row; built first): it learns a network's loss by losing ticks, each a round
+  trip's stall that the presentation clock then keeps, and it has to lose one now and then to know it can go down.
+  With the loss counted, the copies are right before a tick is lost.
+- **Older ticks every other update** is a set number of times spread out: the same bytes as half as many copies in a
+  row, each a tick later.
+- **Deltas between consecutive ticks' inputs**: a tick's inputs are deltas already, each from the slot's input before
+  the tick; what repeated was the tick.
+- **Not sending inputs of players a machine hasn't**: a slot any of whose entities is hidden from a recipient is
+  withheld already (`client_input_masks`); voxels' avatars are public, so every machine runs every avatar and needs
+  its input, or its own tick differs and a repair is sent in its place.
+
+### Measured (`bench_voxels`; release, Windows, one run each: bytes, ticks and lags are the same every run of a build)
+
+To each player and from it, KB a second, and how far behind the server's its verified world is, in ticks (on average
+/ 99 frames of 100 / 999 of 1,000 / at most, from 5 s after it caught up: `bench.c` says so now, bench/README.md),
+the share of its inputs that came too late, and ticks run for each played. 50 ms each way, 10 ms of jitter; 120 s
+once everyone's in with 8 bots, 60 s with 32; before and after alternating.
+
+| 8 players | | Ticks to each | All to each | From each | Behind: average / 99 of 100 / 999 of 1,000 / most | Late inputs | Ticks run a tick |
+|---|---|---|---|---|---|---|---|
+| Turning every tick, standing, none lost | before | 46.8 | 47.5 | 8.0 | 4.00 / 4 / 4 / 25 | 0.00% | 10.9 |
+| | after | 13.7 | 14.4 | 6.8 | 4.00 / 4 / 4 / 25 | 0.00% | 10.9 |
+| Turning every tick, standing, 1% lost | before | 46.9 | 47.7 | 8.0 | 4.01 / 5 / 5 / 32 | 0.00% | 11.8 |
+| | after | 19.2 | 20.0 | 7.4 | 4.01 / 5 / 5 / 32 | 0.00% | 11.8 |
+| Turning every tick, standing, 5% lost | before | 47.4 | 48.2 | 8.1 | 4.05 / 5 / 6 / 34 | 0.01% | 12.1 |
+| | after | 24.2 | 25.0 | 7.8 | 4.06 / 5 / 6 / 37 | 0.00% | 12.1 |
+| Turning every tick, standing, 10% lost | before | 48.0 | 48.9 | 8.2 | 4.11 / 5 / 6 / 46 | 0.01% | 12.2 |
+| | after | 24.2 | 25.2 | 7.9 | 4.13 / 6 / 11 / 51 | 0.01% | 12.1 |
+| Turning every tick, flying, none lost | before | 19.0 | 38.0 | 11.4 | 9.08 / 17 / 18 / 25 | 0.00% | 2.8 |
+| | after | 9.6 | 28.6 | 8.5 | 9.08 / 17 / 18 / 25 | 0.00% | 2.8 |
+| Turning every tick, flying, 1% lost | before | 18.0 | 37.6 | 11.8 | 9.58 / 23 / 31 / 41 | 0.00% | 3.0 |
+| | after | 10.6 | 30.4 | 9.0 | 9.52 / 23 / 29 / 37 | 0.00% | 3.0 |
+| Turning every tick, flying, 5% lost | before | 15.5 | 36.8 | 12.9 | 11.54 / 33 / 43 / 60 | 0.00% | 3.0 |
+| | after | 9.7 | 31.4 | 9.3 | 11.11 / 32 / 47 / 59 | 0.00% | 3.0 |
+| As they are, standing, none lost | before | 6.7 | 7.5 | 4.9 | 4.00 / 4 / 4 / 25 | 0.00% | 2.0 |
+| | after | 3.1 | 3.9 | 4.6 | 4.00 / 4 / 4 / 25 | 0.00% | 2.0 |
+| As they are, standing, 1% lost | before | 6.7 | 7.5 | 4.9 | 4.01 / 5 / 5 / 32 | 0.00% | 2.9 |
+| | after | 3.8 | 4.5 | 4.7 | 4.01 / 5 / 5 / 32 | 0.00% | 2.9 |
+| As they are, standing, 5% lost | before | 6.8 | 7.7 | 4.9 | 4.05 / 5 / 6 / 34 | 0.00% | 3.6 |
+| | after | 4.7 | 5.5 | 4.8 | 4.05 / 5 / 6 / 34 | 0.00% | 3.6 |
+| As they are, flying, none lost | before | 3.7 | 21.7 | 7.1 | 9.08 / 17 / 18 / 25 | 0.00% | 2.0 |
+| | after | 2.0 | 20.1 | 6.3 | 9.08 / 17 / 18 / 25 | 0.00% | 2.0 |
+| As they are, flying, 1% lost | before | 3.5 | 22.4 | 7.2 | 9.48 / 23 / 31 / 42 | 0.00% | 2.1 |
+| | after | 2.4 | 21.2 | 6.4 | 9.52 / 23 / 29 / 37 | 0.00% | 2.1 |
+| As they are, flying, 5% lost | before | 3.2 | 23.6 | 7.6 | 11.34 / 33 / 43 / 64 | 0.00% | 2.2 |
+| | after | 2.6 | 23.4 | 6.6 | 11.30 / 31 / 41 / 64 | 0.00% | 2.2 |
+
+| 32 players | | Ticks to each | All to each | From each | Behind: average / 99 of 100 / 999 of 1,000 / most | Late inputs | Ticks run a tick |
+|---|---|---|---|---|---|---|---|
+| Turning every tick, standing, none lost | before | 20.2 | 21.4 | 8.0 | 4.00 / 4 / 4 / 25 | 0.00% | 10.9 |
+| | after | 20.7 | 21.9 | 6.8 | 4.00 / 4 / 4 / 25 | 0.00% | 10.9 |
+| Turning every tick, standing, 1% lost | before | 20.5 | 21.8 | 8.0 | 4.88 / 16 / 19 / 33 | 0.00% | 10.7 |
+| | after | 20.8 | 22.1 | 7.3 | 4.47 / 13 / 16 / 33 | 0.00% | 11.0 |
+| Turning every tick, standing, 5% lost | before | 21.6 | 23.0 | 8.1 | 8.11 / 26 / 34 / 48 | 0.01% | 8.2 |
+| | after | 21.6 | 23.0 | 7.7 | 6.25 / 19 / 25 / 41 | 0.00% | 9.1 |
+| Turning every tick, flying, none lost | before | 16.8 | 41.8 | 11.4 | 9.70 / 17 / 18 / 25 | 0.00% | 2.4 |
+| | after | 17.0 | 42.0 | 8.6 | 9.70 / 17 / 18 / 25 | 0.00% | 2.4 |
+| Turning every tick, flying, 1% lost | before | 15.1 | 41.2 | 11.8 | 10.52 / 24 / 30 / 42 | 0.00% | 2.4 |
+| | after | 16.1 | 42.2 | 9.0 | 10.46 / 24 / 30 / 42 | 0.00% | 2.4 |
+| Turning every tick, flying, 5% lost | before | 11.5 | 39.4 | 13.3 | 13.14 / 36 / 46 / 60 | 0.00% | 2.5 |
+| | after | 13.6 | 41.3 | 9.4 | 13.08 / 36 / 49 / 75 | 0.00% | 2.5 |
+| As they are, standing, 1% lost | before | 6.1 | 7.4 | 4.9 | 4.01 / 5 / 5 / 39 | 0.00% | 3.0 |
+| | after | 3.6 | 4.9 | 4.7 | 4.01 / 5 / 5 / 39 | 0.00% | 3.0 |
+| As they are, flying, 1% lost | before | 4.1 | 27.6 | 7.3 | 10.37 / 24 / 30 / 42 | 0.00% | 2.0 |
+| | after | 3.0 | 26.4 | 6.5 | 10.34 / 24 / 30 / 42 | 0.00% | 2.0 |
+
+- **Ticks cost three tenths to three fifths of what they did** wherever a second copy fits, at every loss: 8 players
+  turning, standing, 46.9 to 19.2 KB a second with 1% lost (13.7 with none, 24.2 with 5%); flying, 18.0 to 10.6.
+  With bots as they are (inputs that change every five seconds) 6.7 to 3.8 and 3.5 to 2.4. The runs' first 8.5 s for
+  each bot are at eight copies, as before, so a longer match's average is a little under these.
+- **Lossy play is as it was** to 5% lost: standing, the same ticks behind on average, in 99 frames of 100 and in 999
+  of 1,000, the same share of late inputs, the same ticks run again; flying, where repairs decide how far behind a
+  client is, within what they vary by. With 10% lost the quarter of a datagram holds 8 players' ticks to four copies
+  where the loss asks six: 4.13 ticks behind on average for 4.11, 6 for 5 in 99 of 100, 11 for 6 in 999 of 1,000.
+- **32 players turning** were sent each tick once before, and are now (385 bytes a tick is past the quarter), with a
+  lost tick back in a round trip where it took 1.5: standing, with 1% lost, 4.88 ticks behind on average to 4.47 and
+  16 in 99 frames of 100 to 13; with 5%, 8.11 to 6.25 and 26 to 19, for the same bytes within half a kilobyte a
+  second. Flying, where a repair often overtook a lost tick before the server's wait for it ran out, sending it at
+  once costs more and gains nothing: 15.1 to 16.1 KB a second of ticks with 1% lost, 11.5 to 13.6 with 5% (39.4 to
+  41.3 in all), as far behind as before. A second copy of each tick (a whole datagram's room, measured standing with the build
+  before the quarter) made 4.88 and 16 into 4.02 and 5 with 1% lost, for 33.7 KB a second where it was 18.9: the
+  owner's to weigh (`FRAME_COPIES_ROOM`).
+- **From a player**: 8.0 to 7.4 KB a second standing and turning, 11.8 to 9.0 flying (a CLIENT had every input
+  since the last SERVER while a repair came, which is much of the time there), with the same share late. The bots'
+  inputs wait three ticks, so they keep seven; a session's player, a frame early, keeps five.
+- **A match that's quiet** (`net_a_match_costs_little_to_keep_going`, two players, a tick's hash and little else): 7
+  KB a second to each player before, 3.0 now (60,100 bytes on the wire in 10 s for 141,092), and 2.5 from each
+  (25,462 for 25,955: a byte more a CLIENT, fewer inputs in it). The test measures from the tenth second now, past
+  the first 512 SERVERs, and its ceilings are 50,000 and 22,000 bytes of payload where they were 140,000 and 28,000.
+- `bench_gallery` (8 players, a world with no projections, 30 s): ticks 16.9 to 8.9 KB a second to each with 1%
+  lost, 17.0 to 11.3 with 5%; 4.01 and 4.06 ticks behind on average before, 4.01 and 4.05 after; late inputs 0.03%
+  both, and 0.19% to 0.06%.
+
+### Tests
+
+`tests/test_session_packets.c`, a raw peer that says what it likes of the ticks and datagrams it has and counts how
+often each tick comes, and a real client whose server's datagrams a transport loses:
+
+- `session_frames_go_in_two_datagrams_then_wait_for_word_of_them`: with the loss counted and none lost, every tick
+  twice, one datagram an update whatever the peer lacks; with no word of it for 1.5 round trips, once more.
+- `session_frames_go_in_eight_datagrams_until_the_loss_is_measured`.
+- `session_frames_shown_lost_go_again_at_once_and_once`: a tick the peer says it hasn't goes in the next update's
+  datagram, once; not for a CLIENT that echoes the update its last copy went in, nor for the same word again, nor for
+  an older CLIENT come late; the tick it's at, which it has and hasn't run, doesn't; two ticks lost at once add one
+  copy, and one shown lost twice counts once.
+- `session_frames_copies_follow_the_loss_measured`: 1 in 100 lost, three copies; 1 in 8, six; none, two again; 1 in
+  5 counted a CLIENT late (out of order), two; 1 in 4, four or more within 64 updates; all lost, eight and no more.
+- `session_frames_hostile_acknowledgements_cost_a_bounded_number_of_datagrams`: an echo from the future, tick
+  numbers past the server's, every bit set, any count of datagrams, a peer that never has the last twenty ticks.
+- `session_frames_further_copies_take_a_quarter_of_a_datagram_at_most`: ninety ticks owed a copy get it a quarter
+  of a datagram at a time in the one datagram an update sends, the newest first, and the ones older than 64 ticks
+  don't.
+- `session_frames_a_lost_datagram_stalls_nobody_and_two_cost_a_round_trip`: 50 ms each way; a datagram lost leaves
+  the client's verified world no further behind than a tick more; two in a row lose a tick in both its copies, which
+  comes within nine ticks, after which two in a row stall nobody (the raw peer's tests are what tell a tick shown
+  lost from one the server stopped waiting for).
+- `session_inputs_go_only_while_they_can_be_in_time`: a CLIENT has the newest six inputs (two ticks' wait, the next,
+  three to spare) where it had nine or ten; with every SERVER lost for half a second it has no more, and no input is
+  late for it.
+
+Each of these fails one of them (25, with the code changed back afterwards): no tick shown lost going before the
+wait; shown lost whatever the echo, or by the same update's; one copy at the least; every tick every update as
+before; any echo taken; a lost tick adding no copy, or one each time; the tick it's at never said; the client's bits
+from the tick after; copies whatever the loss, past eight, never sooner than a whole count, never lowered, two before
+anything is counted; copies in a whole datagram's room, in any room, to the oldest first; datagrams out of order
+counted as lost; an older CLIENT's bits taken; SERVERs not counted by either side; every unacknowledged input in a
+CLIENT, or none to spare; nothing again when no word comes.
+
+**Pins.** No world hash moved: `bench_gallery`, `bench_voxels` (and `_forgets`, `_wide`, `_checked`, `_counts`),
+`bench_earth` (`_split`, `_diverge`), `bench_sand`, `bench_flock` and every e2e hash as they were. Bytes on the wire
+did, on purpose: `tidec_e2e_local_events_same` and `_plain`'s clients' 15,332 to 15,254 (352 CLIENTs a byte more
+each, fewer inputs in them; the server's 33,428 the same, as three seconds are within the first 512 SERVERs), and
+`net_a_match_costs_little_to_keep_going` above. `visibility_large_repairs_release_old_callbacks_on_compatible_reload`
+(`tests/test_visibility_session.c`) goes by which datagrams its network loses, and its seed moved from 61577 to
+61579: over 61 seeds (1 to 40, 61570 to 61590) it passed 22 with the session before and passes 47 now; see Open,
+below, for the 4 and 3 where it stops.
+
+**Validation** (release, Windows; sanitizers, the web and the other platforms are CI's): `tide_tests` (766),
+`tidec_e2e_net`, `_net_no_input`, `_net_ended`, `_net_alone_seen`, `_net_join_big`, `_seen`, `_guess`, `_predict`
+(and `_near`, `_near_split`, `_kept`, `_owned`, `_owned_split`, `_range_control`, `_fields`, `_method`), `_view_time`,
+`_handover`, `_players`, `_players_ceiling`, `_commands`, `_commands_channels`, `_command_lists`, `_local_events`
+(`_same`, `_plain`), `_visibility_lifecycle`, `_host_lifecycle`, `_projection`, `_predicted`, `_lists`, `_groups`,
+`_runs`, `_pieces`, `_blocks`, `_trees`, `_hash_memo`, `_shards`, `_shards_players`, `_shards_visibility`,
+`_task_visibility`, `_storage_await` (`_shards`, `_hidden`), `_asset_sharing`, `_scene_preparation_visibility`,
+`_optional_fields`, the benches above, `earth_tests`, `tide_voice`, `tide_voice_host`, `tide_box2d_rewind_network`,
+`tide_box3d_rewind_network`, `tide_box3d_projected`, `tide_platform_travel`, `tide_server_smoke`, `_pack`, `_room`,
+`_shards`, `_shards_room`, `_shards_journal`, `_entry`, `tide_network_udp`, `tide_network_hosted`, `tide_rooms_lobby`,
+`tide_lobby_own`, `tide_lobby_relay`: 78 CTests, all pass.
+
+### Open
+
+- **A hosted match of the build before refuses this one** (`PROTOCOL` 26): the docs' Earth and anything on managed
+  hosting need deploying again with it.
+- **The quarter of a datagram** (`FRAME_COPIES_ROOM`) is a pick: with it nothing measured is sent more than 2 KB a
+  second over what it was. A whole datagram's room gives 32 players turning a second copy (33.7 KB a second for
+  18.9, no stall for a lost datagram) and 8 players at 10% lost their sixth. So are once in 100,000 ticks, 512 and 256 SERVERs, the
+  eight a connection starts with, and three inputs to spare.
+- **The confirmed presentation clock keeps a stall** (top of this section): with it catching up, a tick lost in
+  every copy would cost a moment and not the rest of the match, and fewer copies would do.
+- **A reload during a stream of repairs can stop a client for good**, before this change and after
+  (`visibility_large_repairs_release_old_callbacks_on_compatible_reload` with seeds 14, 25, 61572 and 61584 on the
+  session before; 25, 61572 and 61577 now): the server starts the world again for the new build (`SEND_CLIENT_WORLD`)
+  and sends it for the rest of the run, the client acknowledges no chunk of it and its verified tick stays where the
+  reload found it (141 to 177 of 750). Not looked into further: it's the reload's and the repairs', not the ticks'.
+- A big command's download that a tick names and the client hasn't whole no longer makes the server send that tick
+  again (the client says it has the tick's pieces; the download is acknowledged on its own). No test has a download
+  later than its tick.
+- A client more than a second's round trip from its server echoes updates the server no longer remembers
+  (`SAID_KEPT` 64), so its loss isn't counted and its ticks go in eight datagrams, as before.
+
 ## Projection hashes: the rows that changed, and big containers by their chunks (2026-11-16)
 
 Two costs the blocks (the section below) left in a tick's check of a world of thousands of chunks: a piece of 64 rows
@@ -2669,7 +2926,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 
 - How late other players see you is the priority (the owner, 2026-10-05: "the entire point"; a player's own input was never the issue, and a change that made views draw the tick in progress was built by mistake and reverted the same day, as it also made each machine guess the others a tick further). What's between a key read on one machine and another's view showing it, beside the network: the wait for a tick to sample it, how early the client sends its inputs (the server holds each until its tick), the server's frame, and the watcher's.
   - A client sends its inputs as early as they have to be, and no earlier (`keep_early` in `engine/src/session.c`). The server says with everything it sends how long the player's inputs waited before their ticks ran (`note_wait`: from when each arrived, by its transport's clock, to the update that ran its tick, the least of the ticks an update ran; under 0 by a tick for each input missing when a tick ran, counted from the newest input the player sent, one that came too late among them: `connection.newest_sent`). It's said in 960ths of a second (`WAITS`), a signed varint after the newest input, which is a byte while the wait is under 65 ms; the tick before them went from 32 bits to a varint, so a SERVER is no bigger than it was for a match's first 9 hours at 60 ticks a second (a byte more after), and `PROTOCOL` went to 10. The least of those waits over a while is what counts, as being early is for the input that's nearly late.
-  - What the client keeps that least at (`early_wanted`): its lead in ticks (`tide_client_desc.lead`: 0 on the server's machine, whose inputs go straight in), or, with `lead_frame`, which a session's player over a network has, one of its own frames where that's less (the owner, 2026-10-06, of what it saves: "1 tick would be huge"). A frame because inputs are read and sent a frame at a time, and every unacknowledged input goes again in each: so a frame that came late, or a datagram that was lost, still leaves the input in time. A machine's frame is the time between its updates, on the whole, the last while it watched (`frame`), and counts as a 60th of a second where it's shorter (`EARLY_FRAME`): that's what a match of 60 ticks a second has with a tick, so a fast display gets no less. Hosts that say `lead` alone keep whole ticks, as tests and benchmarks do.
+  - What the client keeps that least at (`early_wanted`): its lead in ticks (`tide_client_desc.lead`: 0 on the server's machine, whose inputs go straight in), or, with `lead_frame`, which a session's player over a network has, one of its own frames where that's less (the owner, 2026-10-06, of what it saves: "1 tick would be huge"). A frame because inputs are read and sent a frame at a time, and every unacknowledged input goes again in each: so a frame that came late, or a datagram that was lost, still leaves the input in time. (Since 2026-11-16 the ones that can still be in time go again, not every unacknowledged one: the top section.) A machine's frame is the time between its updates, on the whole, the last while it watched (`frame`), and counts as a 60th of a second where it's shorter (`EARLY_FRAME`): that's what a match of 60 ticks a second has with a tick, so a fast display gets no less. Hosts that say `lead` alone keep whole ticks, as tests and benchmarks do.
   - It watches a while at a time. Under what's wanted, its clock goes ahead at once by what was missing (`clock_start`, to a 960th of a second, where it used to be whole ticks). Over it for the whole while by as much again (a tick at the most), its clock loses the difference, a tenth of the time that passes (`CLOCK_SLOW`, in `update_client`), so no tick stands still. The while is 2 seconds (`EARLY_LOOK`), and 10 after an input was nearly late (`EARLY_KEEP`): what made it so may come again, and has to stay away that long. One that was nearly late in the client's first second in the match (`EARLY_START`) doesn't count for that, as a machine starting up stutters, and that doesn't come again. After a change it watches again once what the server says is about the clock as it is now (below).
   - **What the server says only counts when it's about inputs the client sent by its clock as it is** (2026-10-06, found with Alley, the game Sumo took the place of: a player who joined a world of 160 KB mid-match ran the 60 ticks ahead a client may, its inputs waiting 0.9 seconds at the server, for ten seconds and more, and ran 2,736 predicted ticks again where the others ran 80). Two things made it so, and both are fixed:
     - The server ran ticks for the player while its world was on its way, 53 of them there, and said each was a tick the player's input was late for, counted from the tick it joined. They're ticks the player had no world to sample an input for. A server says nothing of a player's waits before the player's first input (`connection.sent_input`; `WAIT_UNKNOWN` on the wire, 3 bytes while it lasts, and `PROTOCOL` went to 11), and how late a player is goes by the newest input it sent, late ones too (`newest_sent`), where it went by the newest that came in time: a player whose inputs all come two ticks late is two ticks late, however long that has gone on.
