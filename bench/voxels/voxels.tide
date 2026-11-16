@@ -21,7 +21,7 @@
 
 settings
 {
-    maxPlayers = 32;
+    maxPlayers = 64;
 }
 
 enum Block : byte

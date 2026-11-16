@@ -126,6 +126,45 @@ an emptied run's heap has no pages). Run: `tide_tests` whole in release (790), a
 e2e games that pin a world (listed with the pins in the commit). Not run: the web build, Box2D's and Box3D's
 package tests (their pins will move), and the other suites.
 
+## An order takes in what came and went (2026-11-16, night)
+
+A table that changes which entities it has (one comes, goes or changes archetype) put every order it kept aside
+(`order_invalidate`, `filtered_invalidate`), and the next asking scanned every slot and sorted every entity of that
+subset again. A voxels server with 28,500 chunks has a few dozen come and go in most ticks, and each of its
+systems' subsets was sorted again each such tick: half its simulating with 32 players apart (notes/voxels.md, The
+spread case taken apart).
+
+- **What's kept** (`struct tide_entity_order_log`, `engine/src/entity.c`): from the first change after an order
+  exists, each change as `(key, slot, archetype before, archetype after)`, `ORDER_ABSENT` for not alive here. Every
+  place that put an order aside writes one instead (`order_changed`, under the order lock as before): a spawn, an
+  install, a destroy, an erase, a forget and a `tide_entity_set_location` that changes the archetype. Each order
+  says how many of the table's changes it has taken in (`at`; the whole-table order's is `full_at`).
+- **An order asked for after changes** (`order_follow`): the changes it lacks that move an entity into or out of its
+  archetypes, sorted by key and then by when; an entity's first says whether the order has it, its last whether it
+  stays and in which slot. The new order is the old one copied with those keys taken out and put in where they go,
+  a binary search for each: a copy, no sort. Where none of the changes is the subset's, the order is itself (the same
+  array). The one it replaces is retired until the table settles, as a put-aside order was, so a borrowed array
+  stays valid. Anything that doesn't fit (a key said to be there that isn't, counts that don't add up) gives no
+  order, and the order is made from the slots as before: the log can only save a sort, never decide what's alive.
+- **Bounded**: at a settle the changes every order has taken in go; an order nobody asked for in 4 settles while it
+  lacks changes is dropped (`ORDER_IDLE_MOST`) so it doesn't keep them; past 65,536 changes kept every order is put
+  aside as before (`ORDER_LOG_MOST`). A copy (`tide_entities_copy`) shares its source's orders that have taken in
+  everything, and those that lack at most 4,096 changes with a copy of those changes (`ORDER_COPY_MOST`); the rest it
+  makes on demand. A table with no order keeps no log.
+- **Why nothing can tell**: an order is the sorted keys of the slots that are alive in its archetypes; the merge
+  gives that list from the old one and every change since, in the order made, and the test below compares it with a
+  scan and sort after each step. None of it is in a hash, a pack or a delta, and nothing reads it outside the order
+  lock. No world hash moves.
+- **Tests**: `entity_orders_take_in_what_came_and_went` (`tests/test_entity.c`): 400 rounds of random spawns (keys
+  of older and newer clocks), destroys, archetype changes, erases with the key installed again in another slot
+  (with another key taking the old one first), forgets and returns, each round's orders against a scan and sort of
+  the slots, asked for every round or only now and then, in copies made between a change and the next asking, a
+  subset let go while nobody asked and made again, a subset that changes leave as it was keeping its array, one key
+  in and out before anything asks, and 70,000 changes past what's kept. It fails with the slot of an entity's first
+  change in place of its last, and with a copy that has its source's orders without the log. Under ASan with
+  `tide_tests entity`, `order`, `table`, `snapshot`, `world`.
+- **Measured**: notes/voxels.md, The spread case taken apart.
+
 ## A heap gives back the pages whose blocks are all free (2026-11-16, night)
 
 Replaced later the same night by the section above, which hands blocks out so that whole pages empty and go.
@@ -357,7 +396,8 @@ with 860 entities, half of a client's simulating; with 6,900, 25 ms a second (no
   9.6 ms. A server ticks its own world, whose orders it kept, so its ticks are as they were. No world hash moves.
 - **Left**: a table that does change sorts every entity of each subset again, once for each tick something came or
   went (a server of chunks: 3.4 of its 30.7 ms a second of simulating with 6,900 entities, 8.2 of 83.6 with
-  18,000); what came and went merged into the order it had would cost what changed. The loops' indexes are lost to
+  18,000); what came and went merged into the order it had would cost what changed (built 2026-11-16, night: An
+  order takes in what came and went, above). The loops' indexes are lost to
   a copy the same way, and aren't shared yet (notes/voxels.md, At scale, What costs a chunk that's only held).
 
 ## A guard's few rows in runs of their own (2026-11-16, last)

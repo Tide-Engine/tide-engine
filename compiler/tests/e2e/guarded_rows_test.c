@@ -111,7 +111,10 @@ TIDE_TEST(guarded_rows_on_threads_are_one_threads)
         TIDE_CHECK(one.Crowd.woken == eight.Crowd.woken && one.Log.sparks == eight.Log.sparks);
         TIDE_CHECK(memcmp(&one.Crowd.total, &eight.Crowd.total, sizeof one.Crowd.total) == 0);
         TIDE_CHECK(all_ended(&eight)); // The chunks whose lanes were begun for the tasks are the ones ended after them
+        // A system on one task went through its few marked rows' keys in the order every key's walk gives
+        TIDE_CHECK(one.Order.marked == one.Order.plain && eight.Order.marked == eight.Order.plain);
     }
+    TIDE_CHECK(one.Order.count > 700);
     TIDE_CHECK(rounds >= (uint32_t)TICKS); // Every tick was worth threads
     // Everything happened: chunks made few at a time and half of them at once, units woken, spawned and gone
     TIDE_CHECK(one.Tally.next > 700 + TICKS * 7 && tide_list_count(one.Log.made) > 700 && tide_list_count(one.Log.heard) == tide_list_count(one.Log.made));

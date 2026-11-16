@@ -49,8 +49,32 @@ struct tide_entity_filtered_order
 {
     struct tide_entity_filtered_order *next;
     struct tide_entity_order *order;
+    uint64_t at;   // The table's changes `order` has taken in (tide_entity_order_log)
+    uint32_t idle; // Settles since it was asked for, while it lacked some
     uint32_t count;
     uint32_t archetypes[];
+};
+
+// What came, went or changed archetype since an order was made. A world with tens of thousands of entities has a
+// few dozen come and go in a tick, and sorting every one of them again for each set of archetypes its systems go
+// through was most of such a tick: an order asked for after changes is the one before with those taken in
+// (order_follow), which costs a copy. The table's own, as its orders are: nothing of it is in the hash or the bytes.
+#define ORDER_ABSENT 0xFFFFFFFDu // The archetype of one that isn't alive here, in a change
+#define ORDER_LOG_MOST 65536u    // Changes kept at most: past them every order is made from the slots again
+#define ORDER_IDLE_MOST 4u       // Settles an order nobody asks for keeps the changes it lacks
+#define ORDER_COPY_MOST 4096u    // Changes a copy of the table takes with the orders that lack them
+typedef struct order_change
+{
+    tide_entity key;
+    uint32_t slot, was, now; // Its slot, and the archetype it had and has
+} order_change;
+struct tide_entity_order_log
+{
+    uint64_t first; // Changes there were before entries[0]
+    uint32_t count, room;
+    order_change *entries;
+    uint64_t full_at; // What `ordered` has taken in, as a subset's `at`
+    uint32_t full_idle;
 };
 
 static struct tide_entity_order *order_retain(struct tide_entity_order *order)
@@ -107,6 +131,190 @@ static void order_invalidate(tide_entities *t)
     order_retire(t, t->ordered);
     t->ordered = NULL;
 }
+
+static uint64_t order_log_end(const tide_entities *t)
+{
+    return t->order_log ? t->order_log->first + t->order_log->count : 0u;
+}
+static void order_log_free(tide_entities *t)
+{
+    if (t->order_log)
+        free(t->order_log->entries);
+    free(t->order_log);
+    t->order_log = NULL;
+}
+
+// The entity in `slot` came, went or changed archetype (ORDER_ABSENT for one not alive): written down for the
+// orders there are, which take it in when they're next asked for. Under the order lock, as every change is.
+static void order_changed(tide_entities *t, const tide_entity key, const uint32_t slot, const uint32_t was,
+                          const uint32_t now)
+{
+    if (was == now)
+        return;
+    struct tide_entity_order_log *log = t->order_log;
+    if (!log)
+    {
+        bool any = t->ordered != NULL;
+        for (const struct tide_entity_filtered_order *f = t->filtered_order; f && !any; f = f->next)
+            any = f->order != NULL;
+        if (!any)
+            return; // No order to keep right: one made later is made of the slots as they are then
+        log = t->order_log = tide_alloc_zeroed(1, sizeof *log);
+    }
+    if (log->count == ORDER_LOG_MOST)
+    {
+        // More than an order would take in: they're all made again
+        order_invalidate(t);
+        log->first += log->count;
+        log->count = 0;
+        return;
+    }
+    if (log->count == log->room)
+    {
+        const uint32_t room = log->room ? log->room * 2u : 64u;
+        order_change *grown = tide_alloc((size_t)room * sizeof *grown);
+        if (log->count)
+            memcpy(grown, log->entries, (size_t)log->count * sizeof *grown);
+        free(log->entries);
+        log->entries = grown;
+        log->room = room;
+    }
+    log->entries[log->count++] = (order_change){key, slot, was, now};
+}
+
+static bool admitted_archetype(const uint32_t *arches, uint32_t n, uint32_t arch);
+
+// A change that puts an entity into an order or takes it out, in the order the changes were made
+typedef struct order_event
+{
+    tide_entity key; // First: compared as the keys are
+    uint32_t slot, seq;
+    bool add;
+} order_event;
+static int order_event_compare(const void *a, const void *b)
+{
+    const order_event *x = a, *y = b;
+    const int keys = tide_entity_compare(x->key, y->key);
+    return keys ? keys : x->seq < y->seq ? -1 : x->seq > y->seq;
+}
+
+// `old`, which has taken in `at` of the table's changes, with the later ones: the entities of `arches` (every
+// alive one for none) in the keys' order, as sorting the slots would give them. `old` itself where none of the
+// changes is its own; NULL where the changes don't fit it, and it's made from the slots.
+static struct tide_entity_order *order_follow(const tide_entities *t, struct tide_entity_order *old, const uint64_t at,
+                                              const uint32_t *arches, const uint32_t n)
+{
+    const struct tide_entity_order_log *log = t->order_log;
+    const uint32_t from = (uint32_t)(at - log->first), pending = log->count - from;
+    order_event *events = tide_alloc((size_t)pending * sizeof *events);
+    uint32_t count = 0;
+    for (uint32_t i = from; i < log->count; i++)
+    {
+        const order_change *c = &log->entries[i];
+        const bool before = c->was != ORDER_ABSENT && (!arches || admitted_archetype(arches, n, c->was));
+        const bool after = c->now != ORDER_ABSENT && (!arches || admitted_archetype(arches, n, c->now));
+        if (before != after)
+            events[count++] = (order_event){c->key, c->slot, i, after};
+    }
+    if (!count)
+    {
+        free(events);
+        return old;
+    }
+    if (count > 1u)
+        qsort(events, count, sizeof *events, order_event_compare);
+    // An entity's first change says whether the order has it, its last whether it stays
+    uint32_t gone = 0, come = 0;
+    for (uint32_t i = 0; i < count; i++)
+    {
+        gone += (!i || !tide_entity_equal(events[i - 1u].key, events[i].key)) && !events[i].add;
+        come += (i + 1u == count || !tide_entity_equal(events[i + 1u].key, events[i].key)) && events[i].add;
+    }
+    if (gone > old->count || (!gone && !come))
+    {
+        free(events);
+        return gone ? NULL : old; // (Came and went again between two askings: as it was)
+    }
+    const uint32_t made = old->count - gone + come;
+    const bool slotted = old->slots != NULL;
+    const uint64_t each = sizeof(tide_entity) + (slotted ? sizeof(uint32_t) : 0u);
+    if ((uint64_t)made * each > SIZE_MAX - sizeof(struct tide_entity_order))
+        tide_out_of_memory();
+    struct tide_entity_order *order = tide_alloc(sizeof *order + (size_t)made * (size_t)each);
+    uint32_t *slots = slotted ? (uint32_t *)(order->keys + made) : NULL;
+    order->refs = 1u;
+    order->count = made;
+    order->slots = slots;
+    uint32_t in = 0, out = 0;
+    bool fits = true;
+    for (uint32_t i = 0; i < count && fits;)
+    {
+        uint32_t last = i;
+        while (last + 1u < count && tide_entity_equal(events[last + 1u].key, events[i].key))
+            last++;
+        const tide_entity key = events[i].key;
+        // The keys before it are as they were
+        uint32_t begin = in, end = old->count;
+        while (begin < end)
+        {
+            const uint32_t mid = begin + (end - begin) / 2u;
+            if (tide_entity_compare(old->keys[mid], key) < 0)
+                begin = mid + 1u;
+            else
+                end = mid;
+        }
+        const uint32_t kept = begin - in;
+        const bool has = begin < old->count && tide_entity_equal(old->keys[begin], key);
+        fits = has == !events[i].add && out + kept + events[last].add <= made;
+        if (!fits)
+            break;
+        if (kept)
+        {
+            memcpy(order->keys + out, old->keys + in, (size_t)kept * sizeof *order->keys);
+            if (slotted)
+                memcpy(slots + out, old->slots + in, (size_t)kept * sizeof *slots);
+            out += kept;
+        }
+        in = begin + has;
+        if (events[last].add)
+        {
+            order->keys[out] = key;
+            if (slotted)
+                slots[out] = events[last].slot;
+            out++;
+        }
+        i = last + 1u;
+    }
+    fits = fits && out + (old->count - in) == made;
+    if (fits && in < old->count)
+    {
+        memcpy(order->keys + out, old->keys + in, (size_t)(old->count - in) * sizeof *order->keys);
+        if (slotted)
+            memcpy(slots + out, old->slots + in, (size_t)(old->count - in) * sizeof *slots);
+    }
+    free(events);
+    if (!fits)
+    {
+        free(order);
+        return NULL;
+    }
+    return order;
+}
+
+// The order at `*order`, which has taken in `at` changes, as the table is now: itself, the one that follows it,
+// or none where it has to be made from the slots. One it replaces stays until the table settles, as borrowed.
+static void order_update(tide_entities *t, struct tide_entity_order **order, const uint64_t at, const uint32_t *arches,
+                         const uint32_t n)
+{
+    const struct tide_entity_order_log *log = t->order_log;
+    if (!*order || !log || at == log->first + log->count)
+        return;
+    struct tide_entity_order *next = at >= log->first ? order_follow(t, *order, at, arches, n) : NULL;
+    if (next == *order)
+        return;
+    order_retire(t, *order);
+    *order = next;
+}
 static void retired_free(struct tide_entity_retired_order *retired)
 {
     while (retired)
@@ -124,6 +332,13 @@ const tide_entity *tide_entities_ordered(const tide_entities *entities, uint32_t
     // This cache is derived machine-local metadata, as page hash caches are.
     tide_entities *t = (tide_entities *)entities;
     order_lock(t);
+    if (t->order_log)
+        order_update(t, &t->ordered, t->order_log->full_at, NULL, 0);
+    if (t->order_log)
+    {
+        t->order_log->full_at = order_log_end(t);
+        t->order_log->full_idle = 0;
+    }
     if (!t->ordered)
     {
         uint32_t n = 0;
@@ -195,6 +410,9 @@ const tide_entity *tide_entities_ordered_archetypes_slots(const tide_entities *e
         memcpy(f->archetypes, arches, (size_t)n * sizeof *arches);
         t->filtered_order = f;
     }
+    order_update(t, &f->order, f->at, f->archetypes, n);
+    f->at = order_log_end(t);
+    f->idle = 0;
     if (!f->order)
     {
         uint32_t selected = 0;
@@ -465,6 +683,44 @@ void tide_entities_settle(tide_entities *t)
     order_lock(t);
     retired_free(t->retired_order);
     t->retired_order = NULL;
+    struct tide_entity_order_log *log = t->order_log;
+    if (log)
+    {
+        // The changes every order has taken in go. An order that lacks some and wasn't asked for in a while goes
+        // itself, so that it doesn't keep them: it's made from the slots if it's asked for again
+        const uint64_t end = log->first + log->count;
+        uint64_t least = end;
+        if (t->ordered && log->full_at != end)
+        {
+            if (log->full_at < log->first || ++log->full_idle > ORDER_IDLE_MOST)
+            {
+                order_release(t->ordered);
+                t->ordered = NULL;
+            }
+            else
+                least = log->full_at;
+        }
+        for (struct tide_entity_filtered_order *f = t->filtered_order; f; f = f->next)
+        {
+            if (!f->order || f->at == end)
+                continue;
+            if (f->at < log->first || ++f->idle > ORDER_IDLE_MOST)
+            {
+                order_release(f->order);
+                f->order = NULL;
+            }
+            else if (f->at < least)
+                least = f->at;
+        }
+        const uint32_t taken = (uint32_t)(least - log->first);
+        if (taken)
+        {
+            log->count -= taken;
+            if (log->count)
+                memmove(log->entries, log->entries + taken, (size_t)log->count * sizeof *log->entries);
+            log->first = least;
+        }
+    }
     order_unlock(t);
     if (t->page)
     {
@@ -542,7 +798,6 @@ bool tide_entity_alive(const tide_entities *t, tide_entity e) { return tide_enti
 
 static tide_entity create_unchecked(tide_entities *t, tide_entity key)
 {
-    order_invalidate(t);
     uint32_t at;
     if (t->free_head)
         at = t->free_head - 1u;
@@ -558,6 +813,7 @@ static tide_entity create_unchecked(tide_entities *t, tide_entity key)
         }
         __atomic_store_n(&t->next_unused, at + 1u, __ATOMIC_RELEASE);
     }
+    order_changed(t, key, at, ORDER_ABSENT, TIDE_ARCHETYPE_NONE);
     tide_entity_slot *slot = slot_to_change(t, at);
     if (t->free_head)
     {
@@ -619,8 +875,8 @@ bool tide_entity_destroy(tide_entities *t, tide_entity e)
         order_unlock(t);
         return false;
     }
-    order_invalidate(t);
     tide_entity_slot *slot = slot_to_change(t, at);
+    order_changed(t, e, at, slot->archetype, ORDER_ABSENT);
     __atomic_store_n(&slot->state, TIDE_ENTITY_FREE, __ATOMIC_RELEASE);
     slot->archetype = TIDE_ARCHETYPE_NONE;
     slot->row = t->free_head;
@@ -645,8 +901,8 @@ bool tide_entity_erase(tide_entities *t, tide_entity e)
         order_unlock(t);
         return false;
     }
-    order_invalidate(t);
     tide_entity_slot *slot = slot_to_change(t, at);
+    order_changed(t, e, at, slot->archetype, ORDER_ABSENT);
     __atomic_store_n(&slot->state, TIDE_ENTITY_FREE, __ATOMIC_RELEASE);
     // No key stays in the slot or the index: nothing says it was here, and it can be installed again
     index_remove(t->index, e);
@@ -674,7 +930,7 @@ bool tide_entity_install(tide_entities *t, tide_entity e)
             order_unlock(t);
             return false;
         }
-        order_invalidate(t);
+        order_changed(t, e, at, ORDER_ABSENT, TIDE_ARCHETYPE_NONE);
         tide_entity_slot *slot = slot_to_change(t, at);
         slot->archetype = TIDE_ARCHETYPE_NONE;
         slot->row = 0;
@@ -699,8 +955,8 @@ void tide_entity_forget(tide_entities *t, tide_entity e, bool away)
     const uint32_t at = tide_entity_slot_index(t, e);
     if (at != UINT32_MAX)
     {
-        order_invalidate(t);
         tide_entity_slot *slot = slot_to_change(t, at);
+        order_changed(t, e, at, slot->archetype, ORDER_ABSENT);
         slot->state = TIDE_ENTITY_AWAY;
         slot->archetype = TIDE_ARCHETYPE_AWAY;
         slot->row = 0;
@@ -743,8 +999,7 @@ void tide_entity_set_location(tide_entities *t, tide_entity e, tide_location loc
     if (at != UINT32_MAX)
     {
         tide_entity_slot *slot = slot_to_change(t, at);
-        if (slot->archetype != loc.archetype)
-            filtered_invalidate(t);
+        order_changed(t, e, at, slot->archetype, loc.archetype);
         slot->archetype = loc.archetype;
         slot->row = loc.row;
     }
@@ -827,21 +1082,53 @@ void tide_entities_copy(tide_entities *to, const tide_entities *from)
     tide_entities_settle(to);
     order_release(to->ordered);
     filtered_free(to->filtered_order);
+    order_log_free(to);
     // The orders made of `from` as it is are the copy's too: the same entities in the same slots. A world that's
     // copied each tick (a predicting client's, a server's kept ticks) would otherwise sort every entity it has
     // again for each system and query, each tick, though nothing came or went.
     tide_entities *source = (tide_entities *)from; // Its orders are derived: see tide_entities_ordered
     order_lock(source);
-    to->ordered = order_retain(source->ordered);
+    // ...and so are the ones that have yet to take in changes made since, with those changes, where they're few
+    // (ORDER_COPY_MOST): the copy takes them in as its source would. A copy of a table nothing settles (a world
+    // kept and changed, never ticked) copies no more than that of them.
+    const struct tide_entity_order_log *had = source->order_log;
+    const uint64_t end = order_log_end(source);
+    uint64_t least = end;
+    if (had)
+    {
+        if (source->ordered && had->full_at >= had->first)
+            least = had->full_at;
+        for (const struct tide_entity_filtered_order *f = source->filtered_order; f; f = f->next)
+        {
+            if (f->order && f->at >= had->first && f->at < least)
+                least = f->at;
+        }
+        if (end - least > ORDER_COPY_MOST)
+            least = end;
+        struct tide_entity_order_log *log = to->order_log = tide_alloc_zeroed(1, sizeof *log);
+        log->first = least;
+        log->full_at = had->full_at;
+        log->full_idle = had->full_idle;
+        const uint32_t count = (uint32_t)(end - least);
+        if (count)
+        {
+            log->entries = tide_alloc((size_t)count * sizeof *log->entries);
+            memcpy(log->entries, had->entries + (had->count - count), (size_t)count * sizeof *log->entries);
+            log->count = log->room = count;
+        }
+    }
+    to->ordered = !had || had->full_at >= least ? order_retain(source->ordered) : NULL;
     to->filtered_order = NULL;
     struct tide_entity_filtered_order **last = &to->filtered_order;
     for (const struct tide_entity_filtered_order *f = source->filtered_order; f; f = f->next)
     {
-        if (!f->order)
+        if (!f->order || (had && f->at < least))
             continue;
         struct tide_entity_filtered_order *mine = tide_alloc(sizeof *mine + (size_t)f->count * sizeof *f->archetypes);
         mine->next = NULL;
         mine->order = order_retain(f->order);
+        mine->at = f->at;
+        mine->idle = f->idle;
         mine->count = f->count;
         memcpy(mine->archetypes, f->archetypes, (size_t)f->count * sizeof *f->archetypes);
         *last = mine;
@@ -911,6 +1198,7 @@ void tide_entities_free(tide_entities *t)
     tide_entities_settle(t);
     order_release(t->ordered);
     filtered_free(t->filtered_order);
+    order_log_free(t);
     if (t->page)
         free(t->page - 1);
     index_free(t->index);
