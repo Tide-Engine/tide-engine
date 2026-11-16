@@ -457,6 +457,75 @@ static uint8_t *pack_client_state(const tide_game *g, const void *world, const v
     return tide_delta_end(&d, size);
 }
 
+// Room for what repairs read, used again. What a repair reads is written once, a few hundred kilobytes at a time, and
+// fresh memory comes a page at a time from the system, each page's first write a fault, and goes back to it as it's
+// let go of: on a busy server most of a read's time was those faults (notes/netcode.md, top section). The room of
+// what was read and packed comes back here, from whichever thread packed it, and the next read writes into it. What
+// it holds has no part in what's read or sent: only where the bytes are written.
+#define READ_ROOMS 64u                        // Rooms kept at most...
+#define READ_ROOM_BYTES (64u * 1024u * 1024u) // ...and bytes of them
+typedef struct read_room {
+    uint8_t *data[READ_ROOMS];
+    uint32_t capacity[READ_ROOMS];
+    uint32_t count;
+    uint64_t bytes;
+    uint32_t lock;
+} read_room;
+
+static void read_room_lock(read_room *s)
+{
+    while (__atomic_exchange_n(&s->lock, 1u, __ATOMIC_ACQUIRE)) tide_yield();
+}
+
+static void read_room_unlock(read_room *s)
+{
+    __atomic_store_n(&s->lock, 0u, __ATOMIC_RELEASE);
+}
+
+// An empty writer that grows, in kept room where there is some (NULL `s`: none)
+static tide_writer read_room_take(read_room *s)
+{
+    tide_writer w = {.grows = true};
+    if (!s) return w;
+    read_room_lock(s);
+    if (s->count) { // The last given back, the likeliest to be in a cache still
+        s->count--;
+        w.data = s->data[s->count];
+        w.capacity = s->capacity[s->count];
+        s->bytes -= w.capacity;
+    }
+    read_room_unlock(s);
+    return w;
+}
+
+// A writer's room back (NULL `s`: let go of), emptied
+static void read_room_give(read_room *s, tide_writer *w)
+{
+    uint8_t *data = w->data;
+    const uint32_t capacity = w->capacity;
+    *w = (tide_writer){0};
+    if (!data) return;
+    if (s && capacity) {
+        read_room_lock(s);
+        const bool kept = s->count < READ_ROOMS && s->bytes + capacity <= READ_ROOM_BYTES;
+        if (kept) {
+            s->data[s->count] = data;
+            s->capacity[s->count] = capacity;
+            s->count++;
+            s->bytes += capacity;
+            data = NULL;
+        }
+        read_room_unlock(s);
+    }
+    free(data);
+}
+
+static void read_room_free(read_room *s)
+{
+    for (uint32_t i = 0; i < s->count; i++) free(s->data[i]);
+    *s = (read_room){0};
+}
+
 // A repair as what changed for the player since the world it confirmed, entity
 // by entity (tide_game.client_changes), in pack_client_state's envelope: what
 // it costs to make and to send goes by what changed, never by how much the
@@ -470,29 +539,34 @@ static uint8_t *pack_client_state(const tide_game *g, const void *world, const v
 // can come an update later (connection.making).
 typedef struct repair_made {
     tide_delta_writer d;            // The envelope as far as the packed bytes
-    uint8_t *plan, *now, *was;
-    uint32_t plan_size, now_size, was_size;
+    tide_writer plan, now, was;     // What was read (tide_game.client_changes)
     uint32_t changed;               // Bytes of `now` that are another value of an entity the player had
+    read_room *rooms;               // Where their room goes once they're packed, or NULL
 } repair_made;
 
 static void free_repair_made(repair_made *m)
 {
     free(m->d.bytes.data);
     free(m->d.scratch);
-    free(m->plan);
-    free(m->now);
-    free(m->was);
+    read_room_give(m->rooms, &m->plan);
+    read_room_give(m->rooms, &m->now);
+    read_room_give(m->rooms, &m->was);
     memset(m, 0, sizeof *m);
 }
 
 static bool client_changes_read(const tide_game *g, const void *world, const void *base, const void *lineage,
                                 const tide_event_log *events, const tide_player_id player, const uint32_t base_tick,
-                                const uint64_t hash, repair_made *m)
+                                const uint64_t hash, read_room *rooms, repair_made *m)
 {
     memset(m, 0, sizeof *m);
-    m->plan = g->client_changes(world, base, lineage, player, &m->plan_size, &m->now, &m->now_size, &m->was, &m->was_size,
-        &m->changed);
-    if (!m->plan) return false;
+    m->rooms = rooms;
+    m->plan = read_room_take(rooms);
+    m->now = read_room_take(rooms);
+    m->was = read_room_take(rooms);
+    if (!g->client_changes(world, base, lineage, player, &m->plan, &m->now, &m->was, &m->changed)) {
+        free_repair_made(m);
+        return false;
+    }
     tide_delta_begin(&m->d, true, NULL, 0, hash);
     tide_delta_number(&m->d, base_tick);
     tide_delta_number(&m->d, 0u);
@@ -517,14 +591,14 @@ static bool client_changes_read(const tide_game *g, const void *world, const voi
 // then can client_changes_pack say `mostly_changed`
 static bool may_be_mostly_changed(const repair_made *m)
 {
-    return (uint64_t)m->changed * 2u > m->now_size;
+    return (uint64_t)m->changed * 2u > m->now.size;
 }
 
 // The repair's bytes (to free()) from what was read, which is freed; NULL where they can't be made.
 static uint8_t *client_changes_pack(repair_made *m, uint32_t *size, bool *mostly_changed)
 {
     uint32_t packed_size = 0;
-    uint8_t *packed = tide_recipient_delta_pack(m->now, m->now_size, m->was, m->was_size, &packed_size);
+    uint8_t *packed = tide_recipient_delta_pack(m->now.data, m->now.size, m->was.data, m->was.size, &packed_size);
     if (!packed) {
         free_repair_made(m);
         return NULL;
@@ -533,9 +607,9 @@ static uint8_t *client_changes_pack(repair_made *m, uint32_t *size, bool *mostly
     tide_delta_number(&m->d, 2u);
     tide_delta_number(&m->d, packed_size);
     tide_write_bytes(&m->d.bytes, packed, packed_size);
-    tide_delta_number(&m->d, m->plan_size);
-    tide_write_bytes(&m->d.bytes, m->plan, m->plan_size);
-    tide_delta_number(&m->d, m->now_size);
+    tide_delta_number(&m->d, m->plan.size);
+    tide_write_bytes(&m->d.bytes, m->plan.data, m->plan.size);
+    tide_delta_number(&m->d, m->now.size);
     free(packed);
     tide_delta_close(&m->d);
     uint8_t *bytes = tide_delta_end(&m->d, size);
@@ -1132,6 +1206,7 @@ struct tide_server {
     // still to start wait for the next update
     uint64_t repair_work;
     struct repair_start *repair_starts; // The repairs an update starts (a player's room each), or NULL before the first
+    read_room read_rooms; // Room for what they read, used again
     bool started;
     bool ended; // The match ran out of scenes (tide_game.ended): no more ticks
     bool closed; // Takes no one new, but the players on this machine (tide_session_close)
@@ -1353,7 +1428,7 @@ static void packed_making(repair_making *m)
             if (!m->jobs->help(m->jobs->self, true)) tide_yield();
         }
         m->jobs = NULL;
-    } else if (m->made.plan) pack_making(m);
+    } else if (m->made.plan.data) pack_making(m);
 }
 
 static void drop_making(connection *c)
@@ -1475,7 +1550,8 @@ static bool repair_as_it_is_now(tide_server *s, const connection *c, const void 
     }
     tide_reader named = {last->data, last->size, 0, false};
     const uint64_t hash = tide_read_u64(&named);
-    const bool read = client_changes_read(s->game, s->world, base, s->world, &events, player, c->frame_ack, hash, made);
+    const bool read = client_changes_read(s->game, s->world, base, s->world, &events, player, c->frame_ack, hash,
+                                          &s->read_rooms, made);
     tide_event_log_free(&events);
     return read;
 }
@@ -1575,20 +1651,21 @@ static void repair_read(tide_server *s, connection *c, const uint32_t tick, repa
     // tick asked for is then no more than a part of it, and isn't read at all.
     r->arriving = tick < s->tick && c->came_at > tick && repair_as_it_is_now(s, c, base, player, &r->made_now);
     if (r->arriving) {
-        s->repair_work += r->made_now.now_size;
-        if (r->made_now.now_size >= REPAIR_HEAVY && !may_be_mostly_changed(&r->made_now)) {
+        s->repair_work += r->made_now.now.size;
+        if (r->made_now.now.size >= REPAIR_HEAVY && !may_be_mostly_changed(&r->made_now)) {
             tide_event_log_free(&r->events);
             put_off_repair(s, c, &r->made_now, s->tick, true);
             *r = (repair_start){.c = c, .tick = tick, .kind = REPAIR_NONE};
             return;
         }
     }
-    r->read = client_changes_read(s->game, world, base, s->world, &r->events, player, c->frame_ack, hash, &r->made);
+    r->read = client_changes_read(s->game, world, base, s->world, &r->events, player, c->frame_ack, hash, &s->read_rooms,
+                                  &r->made);
     if (r->read) {
-        s->repair_work += r->made.now_size;
+        s->repair_work += r->made.now.size;
         // A big one is packed and sent in the next update, where it can't turn out to be one for the hash
         // offer, which needs this update's worlds
-        if (r->made.now_size >= REPAIR_HEAVY && !r->arriving && !may_be_mostly_changed(&r->made)) {
+        if (r->made.now.size >= REPAIR_HEAVY && !r->arriving && !may_be_mostly_changed(&r->made)) {
             tide_event_log_free(&r->events);
             put_off_repair(s, c, &r->made, tick, false);
             *r = (repair_start){.c = c, .tick = tick, .kind = REPAIR_NONE};
@@ -4361,6 +4438,7 @@ void tide_server_destroy(tide_server *s)
     free(s->handover);
     for (uint32_t i = 0; i < s->injected_count; i++) free(s->injected[i].data);
     free(s->injected);
+    read_room_free(&s->read_rooms);
     free(s);
 }
 

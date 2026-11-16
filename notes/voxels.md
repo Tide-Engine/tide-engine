@@ -1503,6 +1503,40 @@ keeping pieces 170 → 233 (their lines), the rest as it was (audiences 683 → 
   the rows that did change (audiences, sums, rows read again, grids encoded) and the ids of the pages each piece goes
   through (netcode.md, top section, Left).
 
+### Repair reads into kept room (2026-11-17)
+
+The longest updates at 100 together were reads of 20 to 32 repairs on one thread, and most of a read was its writes
+landing on fresh pages (netcode.md, top section, has the breakdown and the change: the session keeps the room of
+packed repairs and the next read writes into it; `tide_game.client_changes` takes the caller's writers). The same hash,
+bytes and ticks in every pair below.
+
+`bench_voxels`, 30 s once everyone's in, 1% lost, release, Windows, BelowNormal, the machine shared (another agent's
+work and a busy desktop); before and after in turn; "before" is t3/wf-integrate10. "Read" is `client_changes`' ms a
+second (the bench's pack column). One run of each pair was disturbed by the machine (a 5.4 s and a 1.7 s stall
+outside the server's work, marked *): given as they came.
+
+| 12 threads | 8 bots (two runs) | 64 together (two runs) | 100 together (two runs) | 100, `--spread 256` |
+|---|---|---|---|---|
+| Server, ms a second: simulate | 11.8, 15.4 to 14.6, 18.5 | 35.4, 31.4 to 152*, 36.6 | 52.1, 52.4 to 50.6, 62.1* | 376 to 388 |
+| ...hash | 7.9, 10.3 to 9.9, 12.0 | 43.1, 34.6 to 97.2*, 41.9 | 64.2, 66.3 to 61.2, 64.7* | 316 to 323 |
+| ...snapshot | 1.2, 1.7 to 1.6, 2.0 | 3.5, 2.3 to 8.0*, 3.7 | 4.7, 4.9 to 4.2, 4.8* | 27.3 to 27.4 |
+| ...read | 3.6, 4.2 to 3.6, 4.5 | 49.6, 44.9 to 84.3*, 34.5 | 101.1, 101.3 to 57.6, 84.0* | 253 to 156 |
+| ...in all | 31.3, 39.8 to 37.6, 46.4 | 168, 146 to 534*, 154 | 276, 279 to 230, 281* | 1,191 to 1,125 |
+| Update, median / p99 / longest, ms | 0.31 / 3.4 / 11, 0.41 / 4.2 / 13 to 0.39 / 3.7 / 12, 0.47 / 4.7 / 16 | 2.8 / 12.1 / 19, 2.3 / 11.4 / 17 to 2.8 / 86* / 5381*, 2.7 / 10.0 / 18 | 4.5 / 25.9 / 46, 4.6 / 26.9 / 73 to 4.2 / 15.4 / 24, 4.2 / 18.8 / 1698* | 20.8 / 111 / 210 to 20.5 / 93 / 204 |
+| Sent to each bot, KB a second | 22.7 | 28.1 | 30.7 | 27.8 |
+| After a hop, all of the box, ticks (median) | 27 | 25 | 25 | 31 |
+
+| 1 thread | 8 bots | 100 together |
+|---|---|---|
+| Server, ms a second: read / in all | 2.6 / 30.0 to 2.4 / 30.1 | 77.3 / 317 to 59.0 / 297 |
+| Update, median / p99 / longest, ms | 0.20 / 4.39 / 9.3 to 0.20 / 4.43 / 9.6 | 4.9 / 30.3 / 50 to 4.8 / 25.3 / 40 |
+
+The longest update at 100 together, the same 29 repairs at tick 4,777 in both builds: read 32.1 ms to 12.1. 100
+together's reads are two fifths cheaper over a run and its 99th percentile 26 to 27 ms down to 15 to 19 on this machine
+(near the 16.7 of a tick, not under it with room); 64 together's 11 to 12 to 10; 8 bots and one thread the same within
+the noise; apart, reads 253 to 156 ms a second and the 99th percentile 111 to 93, still far past a tick (the tick and
+the checks: another task's).
+
 ### What's left, most telling first
 
 1. ~~Inputs of every player, in every unacknowledged frame (section 5): 13 to 44 KB a second a player with real hands on the mice.~~ Cut the same day (section 5, the last paragraph of that bullet): 19.2 KB a second with 8 turning and standing, 10.6 flying; 32 are as they were (20.8 standing), each tick once, and a second copy of theirs is the owner's to weigh (netcode.md, Open).
@@ -1524,6 +1558,10 @@ keeping pieces 170 → 233 (their lines), the rest as it was (audiences 683 → 
 10. Not measured: a second player's machine with its views (the bots have none), real disks under these sizes (section 3a has the store's files at the default), a real window (the paced run has none). More than 64 players: measured (A hundred players): 100 together are past a tick at the 99th percentile only, 100 apart past a core.
 
 ## Tests
+
+- 2026-11-17 (Repair reads into kept room): `tidec_e2e_visibility_repairs` (and `_checked`, `_memo_off`, `_wide`)
+  writes every walked repair into writers used again and compares it byte for byte with the one written fresh. No pin
+  moved; the runs above end on the base's hashes.
 
 - 2026-11-17 (Projection checks by the pages written): `tidec_e2e_visibility_walks` (and `_checked`, `_memo_off`)
   and the runtime's line tests (notes/ecs.md, top section); `bench_voxels_checked` for 30 s with 8 bots, 32 together,

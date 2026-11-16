@@ -1,5 +1,47 @@
 # Netcode: sessions, prediction, commands
 
+## A repair's read writes into room a read had before; no protocol change (2026-11-17)
+
+What was left of the hundred players (the section below, Left; notes/voxels.md, A hundred players): an update's 20 to
+32 repairs read on one thread, 15 to 32 ms. **Where the time was** (`bench_voxels --players 100`, 12 threads, timers
+put into `client_changes`' generated C and taken out; cycles over a 15 s run's 17,000 reads): writing each entity's
+record 76% (`now` 51, `was` 25), the base's rows looked at (`tide_client_see(b, ...)`) 14%, finding the two worlds in
+the journal 7%. A record was about 8,000 cycles for 570 bytes, and it wasn't the encoding: **writing into fresh
+memory was**. `now` and `was` (86 and 30 KB a read on average, megabytes for a view) were `malloc`ed and grown each
+read and `free`d after packing on the pool, so each read's pages came from the system and faulted at their first write
+(0.8 M page faults in the reads of that run, one for nearly every 4 KiB written), each far dearer in a busy process of
+25 threads than in a test of one. Copying a kept record cost as much as reading it again (3,000 cycles for 200 bytes).
+
+- **The session keeps the room** (`session.c`, `read_room`, `tide_server.read_rooms`): a repair's plan, `now` and
+  `was` are written into writers taken from the room of repairs already packed (handed back in `free_repair_made`
+  from whichever thread packed them, under a lock), at most 64 rooms and 64 MiB a server, let go of with it. Which
+  room a read gets has no part in what it writes.
+- **`tide_game.client_changes` writes into the caller's writers** (tide/session.h; runtime-ownership.md, top section,
+  for the owner to confirm): each from its start, growing as needed; it returns whether it made one. Generated code
+  (`client_changes_codegen.inc`) writes the same bytes it wrote into writers of its own.
+
+**Why the datagrams are the same**: the bytes written are a function of the two worlds and the recipient alone, as
+before; only where they're written moved. `bench_voxels` at 8, 64 and 100 together, 100 apart and on one thread ends
+on the base's hash, bytes a bot and box arrival ticks in every pair (notes/voxels.md). `tidec_e2e_visibility_repairs`
+(and `_checked`, `_memo_off`, `_wide`) works every repair from the rows written down into fresh writers and every walked
+one into writers used again, bigger or smaller and holding the last repair's bytes, and fails on a byte's difference.
+
+**Tried and taken out**: an update's records shared between its repairs (a cache by world, entity and which of its
+sparse components the recipient may have, through a hook the session began and ended around its reads): 60% of
+records came from it, but with fresh memory a copy cost what a read did, and with kept room the reads were no faster
+with it (8.8 G cycles of records without, 9.6 to 9.8 with: working out the recipient's components for the key cost
+what it saved). Not kept, so no new hook.
+
+**Left.**
+- The reads are still one thread's (`client_changes` takes the match's memo): an update of 29 repairs reads in 10 to
+  12 ms where it was 32 (notes/voxels.md). Reading them on the pool needs the memo's journal and kept rows shared
+  read-only between readers and a hasher without the memo's entries for each, and the repairs an update starts chosen
+  by bytes read in connection order after the reads (read speculatively, those past `REPAIR_UPDATE_MOST` dropped).
+- A record is still about 2,500 cycles; the base's rows are hashed again for each repair whose base they are (a
+  quarter of a read now): their terms are the recipient's only by the audience, so a kept tick's could be kept once.
+- The pool's packing still writes into fresh memory (`tide_recipient_delta_pack`'s output and the envelope), off the
+  reading thread; the update waits for it at the end of its reads.
+
 ## Projection checks go by the pages written since the check before (2026-11-17)
 
 What was left of the projection checks (the sections below, Left; notes/voxels.md, The spread case taken apart, 5f):

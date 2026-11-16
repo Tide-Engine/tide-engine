@@ -268,11 +268,11 @@ static void gen_client_changes(gen *g)
                      "        bits[c->archetype][c->row >> 6] |= 1ull << (c->row & 63u);\n    }\n}\n\n",
                   archetypes, masked ? " || !tide_audience_contains(c->who, recipient)" : "");
     }
-    sb_put(o, "static uint8_t *tide_client_changes_work(const void *world, const void *before, const void *lineage, const tide_player_id recipient,\n"
-              "                                        uint32_t *plan_size, uint8_t **now, uint32_t *now_size, uint8_t **was, uint32_t *was_size,\n"
-              "                                        uint32_t *changed_size, const bool walk, bool *found)\n{\n"
+    sb_put(o, "static bool tide_client_changes_work(const void *world, const void *before, const void *lineage, const tide_player_id recipient,\n"
+              "                                     tide_writer *plan_out, tide_writer *now_out, tide_writer *was_out, uint32_t *changed_size,\n"
+              "                                     const bool walk, bool *found)\n{\n"
               "    const tide_world *w = world, *b = before;\n    (void)lineage;\n    (void)walk;\n    *found = false;\n"
-              "    if (w->tide_visibility_state.client || b->tide_visibility_state.client) return NULL;\n"
+              "    if (w->tide_visibility_state.client || b->tide_visibility_state.client) return false;\n"
               "    tide_client_seen_list ln = {0}, lb = {0};\n");
     if (heapy) {
         sb_printf(o, "    // Both worlds are one match's, sharing their pages: one memo, the match's own (the world it ticks)\n"
@@ -340,7 +340,10 @@ static void gen_client_changes(gen *g)
               "        const tide_client_seen *h = &lb.items[found - 1u];\n"
               "        left[found - 1u] = 1u;\n        gone--;\n        match[i] = found - 1u;\n"
               "        if (h->archetype != n->archetype || h->hash != n->hash) { kind[i] = 1u; records++; }\n    }\n"
-              "    tide_writer plan = {.grows = true}, nw = {.grows = true}, ws = {.grows = true};\n"
+              "    // Into the caller's writers, from their starts, in the room they have\n"
+              "    tide_writer plan = *plan_out, nw = *now_out, ws = *was_out;\n"
+              "    plan.size = nw.size = ws.size = 0;\n    plan.overflow = nw.overflow = ws.overflow = false;\n"
+              "    plan.grows = nw.grows = ws.grows = true;\n"
               "    tide_write_u32(&plan, 0x32445654u);\n    tide_write_varint(&plan, records);\n"
               "    for (uint32_t i = 0; i < ln.count; i++) {\n        if (!kind[i]) continue;\n"
               "        tide_write_u8(&plan, kind[i] == 1u ? 1u : 0u);\n        tide_write_varint(&plan, ln.items[i].archetype);\n"
@@ -363,31 +366,30 @@ static void gen_client_changes(gen *g)
     sb_put(o, ""
               "    tide_text_use((tide_heaps *)&w->heap, NULL);\n"
               "    free(table);\n    free(left);\n    free(kind);\n    free(match);\n    free(ln.items);\n    free(lb.items);\n"
+              "    *plan_out = plan;\n    *now_out = nw;\n    *was_out = ws;\n"
               "    if (plan.overflow || nw.overflow || ws.overflow) tide_out_of_memory();\n"
-              "    *plan_size = plan.size;\n    *now = nw.data;\n    *now_size = nw.size;\n    *was = ws.data;\n    *was_size = ws.size;\n"
-              "    if (changed_size) *changed_size = changed;\n    return plan.data;\n}\n\n");
+              "    if (changed_size) *changed_size = changed;\n    return true;\n}\n\n");
     // TIDE_CLIENT_SPANS_CHECK works a repair from the rows written down out again from every row, and stops the program
     // where a byte differs, as it does a tick's hashes
-    sb_put(o, "static uint8_t *tide_game_client_changes(const void *world, const void *before, const void *lineage, const tide_player_id recipient,\n"
-              "                                        uint32_t *plan_size, uint8_t **now, uint32_t *now_size, uint8_t **was, uint32_t *was_size,\n"
-              "                                        uint32_t *changed_size)\n{\n"
+    sb_put(o, "static bool tide_game_client_changes(const void *world, const void *before, const void *lineage, const tide_player_id recipient,\n"
+              "                                     tide_writer *plan, tide_writer *now, tide_writer *was, uint32_t *changed_size)\n{\n"
               "    bool found = false;\n"
-              "    uint8_t *plan = tide_client_changes_work(world, before, lineage, recipient, plan_size, now, now_size, was, was_size, changed_size,\n"
-              "                                             false, &found);\n"
-              "#ifdef TIDE_CLIENT_COUNTS\n    if (plan) __atomic_add_fetch(&tide_client_counts[found ? 24 : 25], 1u, __ATOMIC_RELAXED);\n#endif\n"
-              "#ifdef TIDE_CLIENT_CHANGES_STATS\n    if (plan) tide_client_changes_stats[found ? 0 : 1]++;\n#endif\n"
+              "    const bool made = tide_client_changes_work(world, before, lineage, recipient, plan, now, was, changed_size, false, &found);\n"
+              "#ifdef TIDE_CLIENT_COUNTS\n    if (made) __atomic_add_fetch(&tide_client_counts[found ? 24 : 25], 1u, __ATOMIC_RELAXED);\n#endif\n"
+              "#ifdef TIDE_CLIENT_CHANGES_STATS\n    if (made) tide_client_changes_stats[found ? 0 : 1]++;\n#endif\n"
               "#ifdef TIDE_CLIENT_SPANS_CHECK\n"
-              "    if (plan && found) {\n"
-              "        uint32_t plan_all = 0, now_all = 0, was_all = 0, changed_all = 0;\n        uint8_t *nows = NULL, *wass = NULL;\n        bool again = false;\n"
-              "        uint8_t *all = tide_client_changes_work(world, before, lineage, recipient, &plan_all, &nows, &now_all, &wass, &was_all, &changed_all,\n"
-              "                                                true, &again);\n"
-              "        if (!all || plan_all != *plan_size || memcmp(all, plan, plan_all) != 0 || now_all != *now_size || memcmp(nows, *now, now_all) != 0\n"
-              "            || was_all != *was_size || memcmp(wass, *was, was_all) != 0 || (changed_size && changed_all != *changed_size)) {\n"
+              "    if (made && found) {\n"
+              "        uint32_t changed_all = 0;\n        tide_writer plan_all = {0}, now_all = {0}, was_all = {0};\n        bool again = false;\n"
+              "        const bool all = tide_client_changes_work(world, before, lineage, recipient, &plan_all, &now_all, &was_all, &changed_all, true,\n"
+              "                                                  &again);\n"
+              "        if (!all || plan_all.size != plan->size || memcmp(plan_all.data, plan->data, plan->size) != 0 || now_all.size != now->size\n"
+              "            || memcmp(now_all.data, now->data, now->size) != 0 || was_all.size != was->size\n"
+              "            || memcmp(was_all.data, was->data, was->size) != 0 || (changed_size && changed_all != *changed_size)) {\n"
               "            fprintf(stderr, \"tide: player %u's repair from the rows written down isn't the one from every row\\n\", recipient.id);\n"
               "            abort();\n        }\n"
-              "        free(all);\n        free(nows);\n        free(wass);\n    }\n"
+              "        free(plan_all.data);\n        free(now_all.data);\n        free(was_all.data);\n    }\n"
               "#endif\n"
-              "    return plan;\n}\n\n");
+              "    return made;\n}\n\n");
 
     // The recipient's side: `was` again, from the world it confirmed
     sb_put(o, "static uint8_t *tide_game_client_changes_base(const void *world, const tide_player_id recipient, const uint8_t *plan,\n"

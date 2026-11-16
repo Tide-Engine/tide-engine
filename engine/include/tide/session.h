@@ -156,20 +156,20 @@ typedef struct tide_game {
     // Optional, together: a repair that costs what changed for a recipient,
     // not what it has. `client_changes` compares two worlds of one match
     // (`lineage`: the world the match ticks, whose kept hashes both share) as
-    // `recipient` may have them: a plan (returned, to free) naming the
-    // entities whose permitted values differ or that came into its sight and
-    // those that left it; `now`, what a projection starts with and those
-    // entities' records; and `was`, the same of `base`. `changed_size` is how
-    // much of `now` is entities the recipient already had. The recipient makes
-    // `was` again from the world it confirmed (`client_changes_base`), so
-    // `now` goes as what differs from it, and a copy of that world takes the
-    // plan and `now` (`apply_client_changes`): false, with the world in no
-    // state to keep, for bytes that aren't one. NULL: repairs go as whole
-    // projections (client_state).
-    uint8_t *(*client_changes)(const void *world, const void *base, const void *lineage, tide_player_id recipient,
-                               uint32_t *plan_size, uint8_t **now, uint32_t *now_size, uint8_t **was, uint32_t *was_size,
-                               uint32_t *changed_size);
-    uint8_t *(*client_changes_base)(const void *world, tide_player_id recipient, const uint8_t *plan, uint32_t plan_size,
+    // `recipient` may have them: a plan naming the entities whose permitted
+    // values differ or that came into its sight and those that left it;
+    // `now`, what a projection starts with and those entities' records; and
+    // `was`, the same of `base`. Each is written into the caller's writer
+    // from its start, growing it, so room it already has is used again (the
+    // bytes stay the caller's); false where it can't be made. `changed_size`
+    // is how much of `now` is entities the recipient already had. The
+    // recipient makes `was` again from the world it confirmed
+    // (`client_changes_base`), so `now` goes as what differs from it, and a
+    // copy of that world takes the plan and `now` (`apply_client_changes`):
+    // false, with the world in no state to keep, for bytes that aren't one.
+    // NULL: repairs go as whole projections (client_state).
+    bool (*client_changes)(const void *world, const void *base, const void *lineage, tide_player_id recipient,
+                           tide_writer *plan, tide_writer *now, tide_writer *was, uint32_t *changed_size);    uint8_t *(*client_changes_base)(const void *world, tide_player_id recipient, const uint8_t *plan, uint32_t plan_size,
                                     uint32_t *size);
     bool (*apply_client_changes)(void *world, const uint8_t *plan, uint32_t plan_size, const uint8_t *now, uint32_t now_size,
                                  const uint8_t *was, uint32_t was_size);

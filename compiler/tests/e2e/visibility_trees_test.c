@@ -85,7 +85,19 @@ static changes changes_of(const tide_world *w, const tide_world *base, const uin
 {
     changes c = {0};
     uint32_t changed = 0;
-    c.plan = tide_game_api.client_changes(w, base, w, player(p), &c.plan_size, &c.now, &c.now_size, &c.was, &c.was_size, &changed);
+    tide_writer plan = {0}, now = {0}, was = {0};
+    if (!tide_game_api.client_changes(w, base, w, player(p), &plan, &now, &was, &changed)) {
+        free(plan.data);
+        free(now.data);
+        free(was.data);
+        return c;
+    }
+    c.plan = plan.data;
+    c.plan_size = plan.size;
+    c.now = now.data;
+    c.now_size = now.size;
+    c.was = was.data;
+    c.was_size = was.size;
     return c;
 }
 

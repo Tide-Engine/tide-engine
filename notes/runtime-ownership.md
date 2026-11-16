@@ -1,3 +1,14 @@
+## A repair's read into the session's writers (2026-11-17)
+
+**For the owner to confirm**: `tide_game.client_changes` (tide/session.h), a hook between the session and generated
+code, now takes three `tide_writer *` (plan, `now`, `was`) and returns a `bool`, where it returned the plan and gave
+`now` and `was` back as `malloc`ed bytes with their sizes. Generated code (`client_changes_codegen.inc`) writes each
+from its writer's start, growing it as any growing writer does; the bytes stay the caller's. The session
+(`engine/src/session.c`, `read_room`) hands it writers with room from repairs already packed, so a read writes into
+memory it wrote before rather than fresh pages (notes/netcode.md, top section). No new runtime function; what's
+written is byte for byte what was. Callers: `session.c`, `bench/bench.c`'s timing wrapper, and seven
+`compiler/tests/e2e/visibility_*_test.c`.
+
 ## Tweaks (2026-11-16)
 
 New, the agent's: `engine/include/tide/tweaks.h`, `engine/src/tweaks.c` (notes/language.md, Tweaks, step 2). Generated

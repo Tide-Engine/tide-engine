@@ -475,15 +475,14 @@ static bool timed_load_client_state(void *world, const uint8_t *data, const uint
 
 // A repair that says only what changed for a player (tide_game.client_changes): working it out is the server's
 // packing, and making its base again and applying it a client's unpacking
-static uint8_t *timed_client_changes(const void *world, const void *base, const void *lineage, const tide_player_id recipient,
-                                     uint32_t *plan_size, uint8_t **now, uint32_t *now_size, uint8_t **was, uint32_t *was_size,
-                                     uint32_t *changed_size)
+static bool timed_client_changes(const void *world, const void *base, const void *lineage, const tide_player_id recipient,
+                                 tide_writer *plan, tide_writer *now, tide_writer *was, uint32_t *changed_size)
 {
     const uint64_t start = tide_time_now_ns();
-    uint8_t *plan = real->client_changes(world, base, lineage, recipient, plan_size, now, now_size, was, was_size, changed_size);
+    const bool made = real->client_changes(world, base, lineage, recipient, plan, now, was, changed_size);
     current->pack_ms += since(start);
     current->packs++;
-    return plan;
+    return made;
 }
 
 static uint8_t *timed_client_changes_base(const void *world, const tide_player_id recipient, const uint8_t *plan,

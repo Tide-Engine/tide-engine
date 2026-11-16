@@ -255,10 +255,11 @@ TIDE_TEST(visibility_runs_a_players_world_is_its_projection)
         if (still && t > TICKS) TIDE_CHECK(tide_game_api.client_hash(&predicted, me) == want);
         tide_world_free(&predicted);
         // The repair: what changed for it since the world it has, which it makes again itself
-        uint32_t plan_size = 0, now_size = 0, was_size = 0, changed = 0;
-        uint8_t *now = NULL, *was = NULL;
-        uint8_t *plan = tide_game_api.client_changes(&server, &before, &server, me, &plan_size, &now, &now_size, &was, &was_size, &changed);
-        TIDE_REQUIRE(plan != NULL);
+        uint32_t changed = 0;
+        tide_writer plan_w = {0}, now_w = {0}, was_w = {0};
+        TIDE_REQUIRE(tide_game_api.client_changes(&server, &before, &server, me, &plan_w, &now_w, &was_w, &changed));
+        uint8_t *plan = plan_w.data, *now = now_w.data, *was = was_w.data;
+        const uint32_t plan_size = plan_w.size, now_size = now_w.size, was_size = was_w.size;
         uint32_t mine_size = 0;
         uint8_t *mine = tide_game_api.client_changes_base(&client, me, plan, plan_size, &mine_size);
         TIDE_REQUIRE(mine != NULL);
