@@ -10,6 +10,7 @@
 
 #include "android.h"
 #include "apk.h"
+#include "assets.h"
 #include "asset_sizes.h"
 #include "build_report.h"
 #include "common.h"
@@ -30,6 +31,7 @@
 #include "unity_shaders.h"
 #include "tide/pack.h"
 #include "tide/sha256.h"
+#include "tide/tweaks.h"
 #include "build_threads.h"
 
 #ifdef TIDE_EMBEDDED_CLANG
@@ -2619,6 +2621,8 @@ static void key_number(tide_sha256 *h, const uint64_t n)
 }
 
 // What a generate is made of, but its assets' files: 64 hex digits. Empty when tide can't stamp itself.
+static uint64_t tweaks_stamp(const build *b);
+
 static void generation_key(const build *b, const char *gen, const bool layout, char out[65])
 {
     out[0] = '\0';
@@ -2638,7 +2642,8 @@ static void generation_key(const build *b, const char *gen, const bool layout, c
     key_text(&h, gen);
     const uint8_t flags[] = {layout, b->library, (uint8_t)b->abi, o->release, o->distribution, o->web, o->single_file,
                              o->android, o->server, o->managed, o->server_strip_assets, o->strip_assets, o->watch,
-                             splits_plumbing(b), debug_views(o), strip_server_assets(b), strip_game_assets(b, layout)};
+                             splits_plumbing(b), debug_views(o), strip_server_assets(b), strip_game_assets(b, layout),
+                             o->dev};
     tide_sha256_add(&h, flags, sizeof flags);
     key_text(&h, o->optimization);
     key_text(&h, o->scene);
@@ -2650,6 +2655,7 @@ static void generation_key(const build *b, const char *gen, const bool layout, c
         key_text(&h, b->packages.items[i].folder); // One from git is in a folder named for its commit
     }
     key_number(&h, game_stamp(b));
+    key_number(&h, tweaks_stamp(b)); // A new .tweaks file is no file the last generation watched
     uint8_t digest[32];
     tide_sha256_end(&h, digest);
     for (int i = 0; i < 32; i++) snprintf(out + i * 2, 3, "%02x", digest[i]);
@@ -3531,13 +3537,19 @@ static void stamp_file(void *user, const char *path);
 // in a folder a glob names: the paths the last generate listed. And whenever
 // one of the game's .tweaks files does, or one comes or goes (tweaks.c): a new
 // one is read as the game's next values are worked out.
-static uint64_t asset_stamp(const build *b)
+// The game's .tweaks files, in its folder and the folders in it: one made or removed changes it, as an edit does
+static uint64_t tweaks_stamp(const build *b)
 {
-    uint64_t h = stamp_assets(b->info.asset_paths, b->info.asset_count);
+    uint64_t h = 0;
     char *dir = path_join(b->folder, "");
     folder_find_own(dir, ".tweaks", stamp_file, &h);
     free(dir);
     return h;
+}
+
+static uint64_t asset_stamp(const build *b)
+{
+    return stamp_assets(b->info.asset_paths, b->info.asset_count) ^ tweaks_stamp(b);
 }
 
 // The same for the `count` paths a generate listed (game_info.asset_paths): a folder's ends in a slash.
@@ -5155,6 +5167,9 @@ typedef struct web_run {
     char *pack;    // The newest pack of assets, likewise
     size_t pack_size;
     uint32_t pack_number;
+    char *tweaks; // A dev build's tweaks as tidec last worked them out (<gen>/game_tweaks.bin), and a hash of them
+    size_t tweaks_size;
+    uint32_t tweaks_stamp;
     // Without watching, the built page's program and pack beside it, and their paths
     char *files[2];
     size_t file_sizes[2];
@@ -5227,6 +5242,67 @@ static char *web_page(const char *root, const char *folder, const char *const *a
     return page;
 }
 
+// What a query's `key=` holds, %-decoded, into `out`: false if it isn't there or doesn't fit
+static bool query_value(const char *query, const char *key, char *out, const size_t size)
+{
+    const size_t n = strlen(key);
+    for (const char *at = query; at && *at; at = strchr(at, '&') ? strchr(at, '&') + 1 : NULL) {
+        if (strncmp(at, key, n) != 0 || at[n] != '=') continue;
+        size_t o = 0;
+        for (const char *c = at + n + 1; *c && *c != '&'; c++) {
+            int byte = (unsigned char)*c;
+            if (byte == '%' && isxdigit((unsigned char)c[1]) && isxdigit((unsigned char)c[2])) {
+                const char hex[3] = {c[1], c[2], '\0'};
+                byte = (int)strtol(hex, NULL, 16);
+                c += 2;
+            } else if (byte == '+') {
+                byte = ' ';
+            }
+            if (o + 1 >= size) return false;
+            out[o++] = (char)byte;
+        }
+        out[o] = '\0';
+        return true;
+    }
+    return false;
+}
+
+// The dev menu of a page, which has no files of this machine, writing a tweak's value into its .tweaks file:
+// `/tweak?file=...&name=...&value=...`. The file is a .tweaks file in the game's folder, the name a tweak's, and
+// the value one expression, as tide_tweaks_save writes it; the watch loop then works the tweaks out again.
+static bool write_page_tweak(const web_run *w, const char *query)
+{
+    char file[1024], name[256], value[512];
+    if (!query_value(query, "file", file, sizeof file) || !query_value(query, "name", name, sizeof name)
+        || !query_value(query, "value", value, sizeof value))
+        return false;
+    const size_t n = strlen(file);
+    if (n < 8 || strcmp(file + n - 7, ".tweaks") != 0 || strstr(file, "..") || !asset_path_under(file, w->r.b.folder))
+        return false;
+    for (const char *c = name; *c; c++)
+        if (!isalnum((unsigned char)*c) && *c != '_' && *c != '.') return false;
+    for (const char *c = value; *c; c++)
+        if (*c == ';' || *c == '\n' || *c == '\r' || *c == '/') return false; // One value, with nothing after it
+    return tide_tweaks_write(file, name, value);
+}
+
+// The tweaks' values file tidec last wrote, read again when it changed: its stamp, 0 for none
+static uint32_t read_page_tweaks(web_run *w)
+{
+    char *path = path_join(w->r.gen, "game_tweaks.bin");
+    size_t size = 0;
+    char *bytes = sys_read_file(path, &size);
+    free(path);
+    if (!bytes) return w->tweaks_stamp = 0;
+    uint32_t h = 2166136261u;
+    for (size_t i = 0; i < size; i++) h = (h ^ (uint8_t)bytes[i]) * 16777619u;
+    h |= 1u;
+    free(w->tweaks);
+    w->tweaks = bytes;
+    w->tweaks_size = size;
+    return w->tweaks_stamp = h;
+}
+
 static void answer_web(void *user, const char *path, serve_reply *reply)
 {
     web_run *w = user;
@@ -5244,9 +5320,16 @@ static void answer_web(void *user, const char *path, serve_reply *reply)
         }
     }
     if (w->r.b.opts->watch && strcmp(path, "/build") == 0) {
-        // The newest build, how often to start over, and the newest pack of assets (0 for none)
-        snprintf(w->status, sizeof w->status, "%u %u %u", (unsigned)w->r.builds, (unsigned)w->restarts, (unsigned)w->r.packs);
+        // The newest build, how often to start over, the newest pack of assets (0 for none), and the tweaks' values
+        // (0 for none)
+        snprintf(w->status, sizeof w->status, "%u %u %u %u", (unsigned)w->r.builds, (unsigned)w->restarts,
+                 (unsigned)w->r.packs, (unsigned)read_page_tweaks(w));
         *reply = (serve_reply){200, "text/plain; charset=utf-8", w->status, strlen(w->status)};
+    } else if (w->r.b.opts->watch && strcmp(path, "/tweaks") == 0) {
+        if (w->tweaks) *reply = (serve_reply){200, "application/octet-stream", w->tweaks, w->tweaks_size};
+    } else if (w->r.b.opts->watch && strncmp(path, "/tweak?", 7) == 0) {
+        if (write_page_tweak(w, path + 7)) *reply = (serve_reply){200, "text/plain; charset=utf-8", "", 0};
+        else fprintf(stderr, "tide: the page's tweak couldn't be written\n");
     } else if (w->r.packs && strcmp(path, pack) == 0) {
         if (w->pack_number != w->r.packs) {
             char *file = path_join(w->r.dir, pack + 1);

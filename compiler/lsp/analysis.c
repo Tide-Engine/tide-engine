@@ -1479,6 +1479,7 @@ static void index_program(void)
                                  .name = d->name, .type = d->return_type});
             type_place(d->return_type_ref, d->return_type_qual_at, d->return_type_at, d->return_type_name, d->return_type);
             walk_expr(d->value);
+            if (d->code_value) walk_expr(d->code_value); // A tweak's own, where a .tweaks file gives another
             continue;
         }
         add_occ((occurrence){.at = d->at, .len = d->name.len, .kind = OCC_TYPE, .declaration = true, .decl = d,
@@ -1557,6 +1558,14 @@ static void index_program(void)
     }
 
     // In source order, one per position: the first found there.
+    // A .tweaks file's entry names its tweak, as code does: going to it, renaming it, finding it
+    for (int i = 0; i < A.prog->decls.count; i++) {
+        decl *d = A.prog->decls.items[i];
+        if (!d->is_tweak || !d->tweaked_file || d->tweaked_at.file < 0 || d->tweaked_at.file >= A.file_count) continue;
+        const int prefix = d->unit && d->unit->ns.len ? d->unit->ns.len + 1 : 0; // Gun.kick's kick
+        add_occ((occurrence){.at = {d->tweaked_at.line, d->tweaked_at.col + prefix, d->tweaked_at.file}, .len = d->name.len,
+                             .kind = OCC_CONST, .decl = d, .name = d->name});
+    }
     if (A.occs.count > 0) qsort(A.occs.items, (size_t)A.occs.count, sizeof(occurrence), occ_order); // None is no array to hand it
     int n = 0;
     for (int i = 0; i < A.occs.count; i++) {
@@ -1658,7 +1667,10 @@ void analysis_run(const analysis_file *given, const int given_count)
         }
         while (f->toks[f->tok_count].kind != T_EOF) f->tok_count++;
         f->query_keywords = arena_alloc(sizeof(bool) * ((size_t)f->tok_count + 1));
-        parse_file(A.prog, &f->src, f->toks, true);
+        // A .tweaks file is the game's too, but not its code: tweaks_read reads it as the checker begins
+        const size_t path_len = strlen(files[i].path);
+        if (path_len >= 7 && strcmp(files[i].path + path_len - 7, ".tweaks") == 0) vec_push(A.prog->given_tweaks, &f->src);
+        else parse_file(A.prog, &f->src, f->toks, true);
     }
     A.syntax_errors = diag_error_count();
     // The values the .tweaks files give, for lenses and hovers: beside the game's code, in its folder, or the first file's
@@ -4796,38 +4808,6 @@ static void write_tweaks_location(jbuf *out, const char *path, const loc at, con
               at.line - 1, at.col - 1, at.line - 1, at.col - 1 + len);
 }
 
-// A .tweaks file, open in the editor: the tweak a name in it is, for a hover or to go to its declaration. `name` is the
-// qualified name the cursor is on. Writes null where it's no tweak.
-void analysis_tweak(const char *name, const bool hover, jbuf *out)
-{
-    const decl *found = NULL;
-    for (int i = 0; A.prog && i < A.prog->decls.count && !found; i++) {
-        const decl *d = A.prog->decls.items[i];
-        if (!d->is_tweak) continue;
-        sb q = {0};
-        if (d->unit && d->unit->ns.len) sb_printf(&q, STR_FMT ".", STR_ARG(d->unit->ns));
-        sb_printf(&q, STR_FMT, STR_ARG(d->name));
-        if (strcmp(q.data, name) == 0) found = d;
-    }
-    if (!found || found->at.file < 0 || found->at.file >= A.file_count) {
-        jb_put(out, "null");
-        return;
-    }
-    if (!hover) {
-        write_location(out, found->at, found->name.len);
-        return;
-    }
-    sb text = {0};
-    sb code = {0};
-    sb_printf(&code, "tweak " STR_FMT " " STR_FMT, STR_ARG(found->return_type_name), STR_ARG(found->name));
-    format_value_after(found->at, &code);
-    code_block(&text, code.data);
-    sb_put(&text, "\n\nThe code's value, which a .tweaks file can give another in place of.");
-    jb_put(out, "{\"contents\":{\"kind\":\"markdown\",\"value\":");
-    jb_string(out, text.data);
-    jb_put(out, "}}");
-}
-
 // A lens with `title` over the name at `at`, up to what its click does.
 static void open_lens(jbuf *out, int *written, const loc at, const int len, const char *title)
 {
@@ -5067,8 +5047,10 @@ void analysis_code_lenses(jbuf *out)
         sb_printf(&title, "%s: %s", file, d->tweaked_text);
         open_lens(out, &written, d->at, d->name.len, title.data);
         open_lens_command(out, "editor.action.goToLocations", d->at);
-        // The name it gives the value under, with its quotes
-        write_tweaks_location(out, d->tweaked_file, d->tweaked_at, (d->unit && d->unit->ns.len ? d->unit->ns.len + 1 : 0) + d->name.len);
+        // The name it gives the value under
+        const int named = (d->unit && d->unit->ns.len ? d->unit->ns.len + 1 : 0) + d->name.len;
+        if (d->tweaked_at.file >= 0 && d->tweaked_at.file < A.file_count) write_location(out, d->tweaked_at, named);
+        else write_tweaks_location(out, d->tweaked_file, d->tweaked_at, named);
         jb_put(out, "],\"goto\"]}}");
     }
     loop_lenses lenses = {out, &written};
@@ -10750,6 +10732,27 @@ void analysis_completion(const int line, const int character, jbuf *out)
         }
         if (inside && t->kind == T_INTERP_FORMAT) goto done;
         if (inside && is_word(t)) last--;
+    }
+
+    // A .tweaks file: a tweak's name where a line starts, and after its '=', a value as code's are
+    const size_t path_len = strlen(DOC->src.path);
+    if (path_len >= 7 && strcmp(DOC->src.path + path_len - 7, ".tweaks") == 0) {
+        bool value = false;
+        for (int i = last; i >= 0 && DOC->toks[i].at.line == at.line && !value; i--) value = DOC->toks[i].kind == T_ASSIGN;
+        if (value) {
+            complete_expression(&c, at, false);
+            goto done;
+        }
+        for (int i = 0; i < A.prog->decls.count; i++) {
+            const decl *d = A.prog->decls.items[i];
+            if (!d->is_tweak) continue;
+            sb name = {0}, detail = {0}, snippet = {0};
+            tweak_name_text(&name, d, '.');
+            sb_printf(&detail, "tweak " STR_FMT, STR_ARG(d->return_type_name));
+            sb_printf(&snippet, "%s = $0;", name.data);
+            item(&c, name.data, 21, detail.data, d->tweaked_file ? "Set in a .tweaks file already" : NULL, snippet.data);
+        }
+        goto done;
     }
 
     // Every consumed token can open at most one frame, plus the top level.

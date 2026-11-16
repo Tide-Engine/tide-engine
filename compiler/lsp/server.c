@@ -672,23 +672,81 @@ static void register_assets_of(lsp_server *s, const path_list *list, const char 
 // none, the file at `alone` by itself. Files open in the editor use its text;
 // the others are read from disk. The analysis points to the paths, so they're
 // kept until the next one, with `alone` (or NULL), and `list` is emptied.
+typedef struct tweak_paths {
+    char **items;
+    int count;
+} tweak_paths;
+
+static void found_tweaks(void *user, const char *path)
+{
+    tweak_paths *t = user;
+    t->items = realloc(t->items, sizeof(char *) * (size_t)(t->count + 1));
+    if (!t->items) abort();
+    t->items[t->count] = malloc(strlen(path) + 1);
+    if (!t->items[t->count]) abort();
+    strcpy(t->items[t->count++], path);
+}
+
+typedef struct tweak_folder {
+    tweak_paths *found;
+    const char *folder; // Ending in '/'
+} tweak_folder;
+
+static void found_tweaks_entry(void *user, const char *name, const bool is_folder)
+{
+    const tweak_folder *f = user;
+    const size_t n = strlen(name);
+    if (is_folder || n < 8 || strcmp(name + n - 7, ".tweaks") != 0) return;
+    char *path = malloc(strlen(f->folder) + n + 1);
+    if (!path) abort();
+    strcpy(path, f->folder);
+    strcat(path, name);
+    found_tweaks(f->found, path);
+    free(path);
+}
+
+// A game's .tweaks files, as tidec finds them: in its folder and the folders in it, or beside its first file alone.
+// They go to the analysis with its code (tweaks_read reads them there, analysis.c), not into its list of files.
+static tweak_paths game_tweaks(const path_list *list)
+{
+    tweak_paths found = {0};
+    if (list->count == 0) return found;
+    if (list->game_folder) {
+        folder_find_own(list->game_folder, ".tweaks", found_tweaks, &found);
+        return found;
+    }
+    const char *first = list->items[0];
+    const char *slash = strrchr(first, '/');
+    if (!slash) return found;
+    char *folder = malloc((size_t)(slash - first) + 2);
+    if (!folder) abort();
+    memcpy(folder, first, (size_t)(slash - first) + 1);
+    folder[slash - first + 1] = '\0';
+    const tweak_folder f = {&found, folder};
+    folder_list(folder, found_tweaks_entry, (void *)&f);
+    free(folder);
+    return found;
+}
+
 static void run_game(lsp_server *s, path_list *list, char *alone)
 {
     free_kept(s);
     const int count = list->count;
     char **paths = list->items;
-    const int n = count > 0 ? count : 1;
+    const tweak_paths tweaks = game_tweaks(list);
+    const int n = (count > 0 ? count : 1) + tweaks.count;
     analysis_file *files = calloc((size_t)n, sizeof(analysis_file));
     char **uris = calloc((size_t)n, sizeof(char *)); // Made here for files not open
     for (int i = 0; i < n; i++) {
-        const char *path = count > 0 ? paths[i] : alone;
+        const bool tweak = i >= (count > 0 ? count : 1);
+        const char *path = tweak ? tweaks.items[i - (count > 0 ? count : 1)] : count > 0 ? paths[i] : alone;
         const lsp_document *open = NULL;
         for (int k = 0; k < s->doc_count && !open; k++) {
             char *open_path = uri_to_path(s->docs[k].uri);
             if (same_path(open_path, path)) open = &s->docs[k];
             free(open_path);
         }
-        const char *package = count > 0 ? list->packages[i] : NULL;
+        const char *package = count > 0 && !tweak ? list->packages[i] : NULL;
         if (open) {
             files[i] = (analysis_file){open->uri, path, open->text, open->len, package};
         } else {
@@ -720,6 +778,8 @@ static void run_game(lsp_server *s, path_list *list, char *alone)
         keep(s, paths[i]);
         if (list->packages[i]) keep(s, list->packages[i]);
     }
+    for (int i = 0; i < tweaks.count; i++) keep(s, tweaks.items[i]);
+    free(tweaks.items);
     free(list->items);
     free(list->packages);
     free_roots(list);
@@ -850,9 +910,11 @@ static bool unsettle_consumers(lsp_server *s, const char *closed_uri)
 }
 
 // Diagnostics for one file: of the analysed game, or none (`file` < 0).
+static bool tweaks_document(const char *uri);
+
 static void publish_diagnostics(lsp_server *s, const char *uri, const int file)
 {
-    if (file >= 0) {
+    if (file >= 0 && !tweaks_document(uri)) { // A .tweaks file is the game's it was analysed with
         // Other games can include this open file with different active #if
         // branches. Its editor diagnostics belong to its selected context.
         const path_list *game = open_context_of(s, uri);
@@ -1557,70 +1619,37 @@ static void initialize(lsp_server *s, const json *id, const json *params)
 }
 
 // Requests about one position or one document.
-// A .tweaks file, which editors hand the server as Tide but which isn't a game's code: a hover on a tweak's name in
-// it, and going to the tweak's declaration, from the analysis of the game it's beside. Anything else of it has no
-// answer (the game reads it from disk as it's saved).
+// A .tweaks file, which editors hand the server as Tide: the game's, but not its code. An analysis of the game it's
+// beside has it as a file of its own (game_tweaks), where its names go to their tweaks as code's do, its errors are
+// said, and a rename of a tweak reaches it: the analysis there is, or one of a .tide file of its folder open in the
+// editor. False, with none selected, where there's no such game.
 static bool tweaks_document(const char *uri)
 {
     const size_t n = strlen(uri);
     return n >= 7 && strcmp(uri + n - 7, ".tweaks") == 0;
 }
 
-static bool name_char(const char ch)
-{
-    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '.';
-}
+static void analyze(lsp_server *s, const char *uri);
 
-static void tweaks_request(lsp_server *s, const char *method, const json *id, const lsp_document *d, const int line,
-                           const int character)
+static bool select_tweaks(lsp_server *s, const char *uri)
 {
-    // The qualified name the position is on, on its line
-    char name[256] = "";
-    const char *at = d->text, *end = d->text + d->len;
-    for (int l = 0; l < line && at < end; at++) {
-        if (*at == '\n') l++;
-    }
-    const char *line_end = at;
-    while (line_end < end && *line_end != '\n') line_end++;
-    const char *cursor = at + character <= line_end ? at + character : line_end;
-    const char *open = cursor;
-    while (open > at && name_char(open[-1])) open--;
-    const char *close = cursor;
-    while (close < line_end && name_char(*close)) close++;
-    while (close > open && close[-1] == '.') close--;
-    const bool named = close > open && (size_t)(close - open) < sizeof name;
-    if (named) {
-        memcpy(name, open, (size_t)(close - open));
-        name[close - open] = '\0';
-    }
-    const bool hover = strcmp(method, "textDocument/hover") == 0;
-    const bool definition = strcmp(method, "textDocument/definition") == 0;
-    jbuf b = {0};
-    reply_start(&b, id);
-    if (named && (hover || definition)) {
-        // The game beside it: the analysis there is, or a .tide file of its folder open in the editor
-        if (!s->analyzed) {
-            const char *slash = strrchr(d->uri, '/');
-            const size_t folder = slash ? (size_t)(slash - d->uri) + 1u : 0u;
-            for (int k = 0; k < s->doc_count; k++) {
-                const char *u = s->docs[k].uri;
-                const size_t n = strlen(u);
-                if (n > folder && strncmp(u, d->uri, folder) == 0 && n >= 5 && strcmp(u + n - 5, ".tide") == 0) {
-                    analyze(s, u);
-                    break;
-                }
-            }
+    if (s->analyzed && s->analyzed_changes == s->changes && select_uri(uri)) return true;
+    const char *slash = strrchr(uri, '/');
+    const size_t folder = slash ? (size_t)(slash - uri) + 1u : 0u;
+    for (int k = 0; k < s->doc_count; k++) {
+        const char *u = s->docs[k].uri;
+        const size_t n = strlen(u);
+        if (n > folder && strncmp(u, uri, folder) == 0 && n >= 5 && strcmp(u + n - 5, ".tide") == 0) {
+            analyze(s, u);
+            return select_uri(uri);
         }
-        if (s->analyzed) analysis_tweak(name, hover, &b);
-        else jb_put(&b, "null");
-    } else if (strcmp(method, "textDocument/semanticTokens/full") == 0) {
-        jb_put(&b, "{\"data\":[]}");
-    } else {
-        jb_put(&b, "null");
     }
-    jb_put(&b, "}");
-    send_buf(s, &b);
-    jb_free(&b);
+    // The game last analysed, again, if it has this file
+    if (!s->analyzed_context || s->analyzed_context->game.count == 0) return false;
+    char *first = path_to_uri(s->analyzed_context->game.items[0]);
+    analyze(s, first);
+    free(first);
+    return select_uri(uri);
 }
 
 static void document_request(lsp_server *s, const char *method, const json *id, const json *params)
@@ -1633,11 +1662,20 @@ static void document_request(lsp_server *s, const char *method, const json *id, 
     }
     const int line = json_int(json_path(params, "position", "line", NULL), 0);
     const int character = json_int(json_path(params, "position", "character", NULL), 0);
+    const bool formatting = strcmp(method, "textDocument/formatting") == 0 || strcmp(method, "textDocument/rangeFormatting") == 0
+        || strcmp(method, "textDocument/onTypeFormatting") == 0;
     if (tweaks_document(d->uri)) {
-        tweaks_request(s, method, id, d, line, character);
-        return;
+        if (formatting || !select_tweaks(s, d->uri)) { // Not code to lay out; or no game of its to answer from
+            jbuf none = {0};
+            reply_start(&none, id);
+            jb_put(&none, strcmp(method, "textDocument/semanticTokens/full") == 0 ? "{\"data\":[]}}" : "null}");
+            send_buf(s, &none);
+            jb_free(&none);
+            return;
+        }
+    } else {
+        analyze(s, d->uri);
     }
-    analyze(s, d->uri);
 
     jbuf b = {0};
     reply_start(&b, id);
@@ -1862,7 +1900,10 @@ void lsp_handle(lsp_server *s, const char *message, const size_t len)
             text = json_get(changes->items[changes->count - 1], "text"); // Full sync: the last change is the whole text
         }
         if (uri && text && text->kind == JSON_STRING && tweaks_document(uri)) {
-            set_doc(s, uri, text); // Not the game's code: it reads it from disk as it's saved (tweaks_request)
+            // The game's, though not its code: analysed with it, its errors said as it's typed
+            set_doc(s, uri, text);
+            s->changes++;
+            if (!s->defer && select_tweaks(s, uri)) publish_game_diagnostics(s);
         } else if (uri && text && text->kind == JSON_STRING) {
             const lsp_document *d = set_doc(s, uri, text);
             s->changes++;

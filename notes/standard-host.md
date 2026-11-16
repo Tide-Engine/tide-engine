@@ -4,6 +4,21 @@
 
 `tide_run_tweaks_poll` and `tide_run_dev_tweaks` (notes/language.md, Tweaks, step 2, has what they do and their tests).
 
+**On the web (later the same day)**, under `tide run --web`: the page has no files of this machine, so tide's server
+carries both ways. `/build` gains a 4th number, a hash of `<gen>/game_tweaks.bin` (0 for none); tide.js fetches
+`/tweaks` when it changes and keeps the bytes, which `tide_run_tweaks_poll` copies with the `tide.tweaks_copy` import.
+The menu's change goes through `tide.tweak_write(file, name, value)` (the value as `tide_tweaks_format` writes it) to
+`/tweak?file=&name=&value=`, which tide writes with `tide_tweaks_write` (engine/src/tweaks.c, linked into the CLI).
+The server keeps a query only on requests with an `X-Tide` header (a cross-site page can't send one without a CORS
+preflight, never allowed), and writes only a `.tweaks` file under the game's folder, a dotted name, and a value with
+no `;`, newline or `/`. Writes go one after another (a promise chain), their strings read at once. Then the watch
+loop's `asset_stamp` sees the file, repacks, and the new bin reaches the page as a native run's file does. A built
+page (no `tide run`) has no-op imports. Tests: `reload_web.mjs` (fetched once per stamp, copied, writes in order with
+the header); end to end checked by hand with a scratch installation.
+
+**New `.tweaks` files**: `asset_stamp` also hashes every `.tweaks` under the game's folder (`folder_find_own`), so one
+made or removed starts a repack, as an edit does.
+
 ## The dev menu (2026-11-16)
 
 `tide/host.h`: `tide_run_dev_views(game)` before `game->frame` hands the game which of its dev views run

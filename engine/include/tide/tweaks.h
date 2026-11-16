@@ -62,3 +62,7 @@ size_t tide_tweaks_format(const tide_tweak *t, const void *values, char *out, si
 // Writes one tweak's value into its file: over the value on the line that sets it, keeping the rest of the line and
 // of the file as it is, or as a line of its own at the end (the file made if it isn't there). False when it can't.
 bool tide_tweaks_save(const tide_tweak *t, const void *values);
+
+// The same for a value already written as text: `name = value;` in `file`. What tide run --web does for the menu of
+// a page, which has no files of this machine to write.
+bool tide_tweaks_write(const char *file, const char *name, const char *value);

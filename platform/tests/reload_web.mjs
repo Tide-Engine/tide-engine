@@ -8,6 +8,10 @@ import vm from 'node:vm';
 const source = await readFile(new URL('../web/tide.js', import.meta.url), 'utf8');
 const block = source.slice(source.indexOf('    // <tide run>'), source.indexOf('    // </tide run>'));
 assert.ok(block.includes('if (config.reload)'), 'the production reload block is present');
+// ...and the page's tweaks, which every page has and the block fills in
+const tweakEnd = 'platform.tweak_write = () => {};';
+const tweaks = source.slice(source.indexOf('    let tweakBytes = null;'), source.indexOf(tweakEnd) + tweakEnd.length);
+assert.ok(tweaks.includes('platform.tweaks_copy'), 'the production tweak functions are present');
 const settle = async () => { for (let i = 0; i < 32; i++) await Promise.resolve(); };
 
 function deferred() {
@@ -21,10 +25,12 @@ async function runtime(watch = true, notReady = null) {
     const memory = new Uint8Array(32);
     new DataView(memory.buffer).setUint32(8, 8, true);
     let saves = 0, rooms = 0, active = 0, maximum = 0, fetchGate = null, instantiateGate = null, asked = 0;
-    let build = 1, restarts = 0, offline = false;
+    let build = 1, restarts = 0, offline = false, tweaked = 0;
+    const strings = new Map(), writes = [];
     const context = {
         config: { reload: watch }, platform: {}, gl: null, device: null, exports: null, performance,
-        stopped: false, failed: false, packBytes: null,
+        stopped: false, failed: false, packBytes: null, URLSearchParams,
+        string: ptr => strings.get(ptr),
         keyIndex: new Map([['KeyR', 0]]), keysHeld: [1], keysTapped: [1],
         u8: () => memory, view: () => new DataView(memory.buffer),
         print: message => messages.push(message), printErr: error => errors.push(error),
@@ -35,10 +41,15 @@ async function runtime(watch = true, notReady = null) {
             assert.equal(milliseconds, 250);
             timers.push(callback);
         },
-        async fetch(path) {
+        async fetch(path, init) {
             requests.push(path);
             if (offline) throw new context.TypeError('the watching server has stopped');
-            if (path === 'build') return { async text() { return `${build} ${restarts} 0`; } };
+            if (path === 'build') return { async text() { return `${build} ${restarts} 0 ${tweaked}`; } };
+            if (path === 'tweaks') return { ok: true, async arrayBuffer() { return Uint8Array.of(tweaked).buffer; } };
+            if (path.startsWith('tweak?')) {
+                writes.push({ query: Object.fromEntries(new URLSearchParams(path.slice(6))), headers: init.headers });
+                return { ok: true };
+            }
             assert.match(path, /^game-\d+\.wasm$/);
             const gate = fetchGate;
             fetchGate = null;
@@ -63,13 +74,15 @@ async function runtime(watch = true, notReady = null) {
     // Errors raised by fetch must belong to the page's realm: production
     // recognizes a failed network request by its TypeError.
     vm.runInNewContext('globalThis.TypeError = TypeError;', context);
-    await vm.runInNewContext(`(async () => { ${block}\n})()`, context);
+    await vm.runInNewContext(`(async () => { ${tweaks}\n${block}\n})()`, context);
     await settle();
     return {
         context, programs, errors, messages, requests,
         get saves() { return saves; }, get rooms() { return rooms; }, get maximum() { return maximum; },
         get asked() { return asked; },
         latest(next, restart = restarts) { build = next; restarts = restart; },
+        tweak(stamp) { tweaked = stamp; },
+        writes, strings,
         offline() { offline = true; },
         holdFetch() { fetchGate = deferred(); return fetchGate; },
         holdInstantiate() { instantiateGate = deferred(); return instantiateGate; },
@@ -233,4 +246,28 @@ async function runtime(watch = true, notReady = null) {
     assert.equal(test.programs.at(-1).resumed, 0, 'Reset code can install a build fresh');
     assert.equal(test.requests.length, 0);
 }
-console.log('ok: Ctrl/Cmd+R starts web instances fresh and serializes with watched builds; plain pages keep browser reload');
+// A dev build's tweaks: the page takes tide's values as they change, for the program to copy, and the menu's writes
+// go to tide one after another, read from the program's memory at once, with the header that lets them through
+{
+    const test = await runtime();
+    assert.equal(test.context.platform.tweaks_copy(0, 16), 0, 'no values before tide has any');
+    test.tweak(7);
+    await test.tick();
+    assert.equal(test.requests.filter(path => path === 'tweaks').length, 1);
+    assert.equal(test.context.platform.tweaks_copy(0, 16), 1);
+    assert.equal(test.context.u8()[0], 7, 'the values are copied into the program');
+    await test.tick();
+    assert.equal(test.requests.filter(path => path === 'tweaks').length, 1, 'the same values are fetched once');
+    test.strings.set(1, 'D:/game/game.tweaks').set(2, 'KickUp').set(3, '0.75');
+    test.context.platform.tweak_write(1, 2, 3);
+    test.strings.set(3, '1');
+    test.context.platform.tweak_write(1, 2, 3);
+    test.strings.clear();
+    await settle();
+    assert.deepEqual(test.writes.map(w => w.query), [
+        { file: 'D:/game/game.tweaks', name: 'KickUp', value: '0.75' },
+        { file: 'D:/game/game.tweaks', name: 'KickUp', value: '1' }], 'writes go in order, with the text as it was');
+    assert.ok(test.writes.every(w => w.headers['X-Tide'] === '1'));
+    assert.deepEqual(test.errors, []);
+}
+console.log('ok: Ctrl/Cmd+R starts web instances fresh and serializes with watched builds; plain pages keep browser reload; tweaks come and go through tide');

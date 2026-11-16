@@ -1,10 +1,24 @@
 ## .tweaks files in editors (2026-11-16, later)
 
-Replaces the tweaks.json handling below: `tweaks_document` is a URI ending `.tweaks`; `tweaks_request` takes the
-qualified name the cursor is on (letters, digits, `_` and `.`), for a hover or a definition; lenses name the file
-(`combat.tweaks: <value>`) and open it at the name. VS Code's tide language and both TextMate grammars' packages take
-`.tweaks` (Tide highlighting); JetBrains maps `*.tweaks` to tidels as Tide. The analysis reads the files as tidec does
-(`tweaks_read`, deep with a game folder, else the first file's folder alone).
+Replaces the tweaks.json handling below. The owner: "ide support is important".
+- **A `.tweaks` file is a file of the game's analysis, though not its code.** `game_tweaks` (server.c) finds them as
+  tidec does (deep with a game folder, else the first file's folder alone) and `run_game` adds them to the analysed
+  files; analysis.c lexes them (no parse) and hands their text to `prog->given_tweaks`, which `tweaks_read` takes
+  instead of reading the disk. So locations, references and diagnostics are ordinary ones: each entry's name is an
+  `OCC_CONST` occurrence of its tweak (offset past a namespace prefix), and its value's names are walked
+  (`walk_expr(d->code_value)`).
+- **Server**: `tweaks_document` (a URI ending `.tweaks`); `select_tweaks` picks the analysis that has the file (the
+  current one, a `.tide` of its folder open in the editor, else the last game). Opening or changing one bumps
+  `changes` and publishes, exempt from the open-context check, so a wrong value is said as it's typed. Formatting
+  answers null (no formatter for the file).
+- **Features**: lens over an overridden tweak (`combat.tweaks: <value>`, to its name in the file); hovers both ways;
+  definition from the file to the declaration; rename of a tweak edits its `.tweaks` entries; completion in the file:
+  tweak names at a line's start (snippet `Name = $0;`), expressions after `=`.
+- **Editors**: VS Code's tide language and both TextMate packages take `.tweaks`; JetBrains maps `*.tweaks` to tidels
+  as Tide (`fileNamePatternMapping`). `analysis_tweak` went.
+- Tests: `tidels_tests lsp_tweaks_file` (lens and place, hover, diagnostics on open, definition, hover in the file,
+  null formatting, completion at a line's start and after `=`, rename reaching the file, an error as typed);
+  VS Code `npm test` (36) and JetBrains `gradlew test buildPlugin` pass (JDK: CLion's `jbr`).
 
 ## Tweaks in editors (2026-11-16)
 

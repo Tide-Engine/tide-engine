@@ -3489,6 +3489,16 @@
     platform.pack_size = () => packBytes ? packBytes.length : 0;
     platform.pack_copy = ptr => { if (packBytes) u8().set(packBytes, ptr); };
 
+    // A dev build's tweaks (tide/tweaks.h) as tide run works them out from the game's .tweaks files, which it
+    // serves, and a value the dev menu changed, which tide writes into its file. A page without tide has neither.
+    let tweakBytes = null;
+    platform.tweaks_copy = (ptr, capacity) => {
+        if (!tweakBytes) return 0;
+        if (tweakBytes.length <= capacity) u8().set(tweakBytes, ptr);
+        return tweakBytes.length;
+    };
+    platform.tweak_write = () => {};
+
     // The files TIDE_FILES names ({ url, size } each, the url with the file's hash in its query, so a
     // browser's cache keeps a build's files until another build's page names others), all at once, counting
     // what's come of them all together.
@@ -3629,8 +3639,17 @@
     // Asks tide for the newest build, and whether to start over, 4 times a
     // second. When tide has stopped, the page stays as it is.
     if (config.reload) {
-        let build = 0, restarts = 0, bytes = null, pack = 0;
+        let build = 0, restarts = 0, bytes = null, pack = 0, tweaks = 0;
         let busy = false, freshRequested = false;
+        // The menu's changes, one after another so the file ends with the last
+        let writes = Promise.resolve();
+        platform.tweak_write = (file, name, value) => {
+            const tweak = string(name); // Read now: the program's strings are gone by the time the fetch goes
+            const query = new URLSearchParams({ file: string(file), name: tweak, value: string(value) });
+            writes = writes.then(() => fetch(`tweak?${query}`, { cache: 'no-store', headers: { 'X-Tide': '1' } }))
+                .then(response => { if (!response.ok) printErr(`tide: couldn't write ${tweak} to its file`); },
+                      () => {});
+        };
         const startFresh = async () => {
             freshRequested = false;
             await replace(bytes, true);
@@ -3640,8 +3659,16 @@
             if (busy) return;
             busy = true;
             try {
-                const [newest, restart, packs] = (await (await fetch('build', { cache: 'no-store' })).text())
+                const [newest, restart, packs, tweaked] = (await (await fetch('build', { cache: 'no-store' })).text())
                     .trim().split(' ').map(Number);
+                // The tweaks' new values, which the running program takes when it next looks (tide/host.h)
+                if (tweaked && tweaked !== tweaks) {
+                    const response = await fetch('tweaks', { cache: 'no-store' });
+                    if (response.ok) {
+                        tweakBytes = new Uint8Array(await response.arrayBuffer());
+                        tweaks = tweaked;
+                    }
+                }
                 // A new pack first (a named file changed, or a build has one), so a new build starts with it
                 if (packs && packs !== pack) {
                     const response = await fetch(`pack-${packs}`, { cache: 'no-store' });

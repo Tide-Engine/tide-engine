@@ -126,7 +126,9 @@ bool tweaks_read(program *prog, const char *const *folders, const int count, con
     for (int i = 0; i < prog->decls.count && !any; i++) any = prog->decls.items[i]->is_tweak;
     if (!any) return true; // A game with no tweaks has no .tweaks of its own
     found files = {0};
-    for (int i = 0; i < (count ? count : 1); i++) {
+    // The language server's own (its open texts among them), or what the folders have
+    for (int i = 0; i < prog->given_tweaks.count; i++) vec_push(files.paths, prog->given_tweaks.items[i]->path);
+    for (int i = 0; !prog->given_tweaks.count && i < (count ? count : 1); i++) {
         const char *folder = count ? folders[i] : NULL;
         sb root = {0};
         sb_printf(&root, "%s", folder && folder[0] ? folder : ".");
@@ -141,19 +143,25 @@ bool tweaks_read(program *prog, const char *const *folders, const int count, con
     bool ok = true;
     for (int f = 0; f < files.paths.count; f++) {
         const char *path = files.paths.items[f];
-        FILE *file = fopen(path, "rb");
-        if (!file) continue;
-        source *src = NEW(source);
-        src->path = path;
-        fseek(file, 0, SEEK_END);
-        const long size = ftell(file);
-        fseek(file, 0, SEEK_SET);
-        char *text = arena_alloc((size_t)(size > 0 ? size : 0) + 1);
-        src->len = size > 0 ? fread(text, 1, (size_t)size, file) : 0;
-        text[src->len] = '\0';
-        fclose(file);
-        src->text = text;
-        diag_add_source(src);
+        source *src = NULL;
+        for (int k = 0; k < prog->given_tweaks.count && !src; k++) {
+            if (prog->given_tweaks.items[k]->path == path) src = prog->given_tweaks.items[k]; // Its file already
+        }
+        if (!src) {
+            FILE *file = fopen(path, "rb");
+            if (!file) continue;
+            src = NEW(source);
+            src->path = path;
+            fseek(file, 0, SEEK_END);
+            const long size = ftell(file);
+            fseek(file, 0, SEEK_SET);
+            char *text = arena_alloc((size_t)(size > 0 ? size : 0) + 1);
+            src->len = size > 0 ? fread(text, 1, (size_t)size, file) : 0;
+            text[src->len] = '\0';
+            fclose(file);
+            src->text = text;
+            diag_add_source(src);
+        }
         vec_push(prog->tweak_files, tweaks_absolute(path));
         token *toks = lex(src);
         tweak_entries entries = {0};

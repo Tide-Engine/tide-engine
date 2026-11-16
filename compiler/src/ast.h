@@ -1938,6 +1938,7 @@ typedef struct program {
     bool tweaks_live;         // A dev build with tweaks: code reads them from TideTweaks (BIND_TWEAK), which they change through
     VEC(decl *) left_out;     // `dev` declarations a build without dev left out, for code naming one to be told why
     VEC(const char *) tweak_files; // The .tweaks files the build read, absolute
+    VEC(source *) given_tweaks;     // The language server's: the .tweaks files it has, read in place of the folders'
     VEC(decl *) results; // Every T? and `T fails E` it uses, one per combination
     VEC(decl *) optional_fields; // What each T? a field has is kept as: a struct of the value and whether there is one (decl.optional_of)
     decl *owner;         // The built-in Owner component.

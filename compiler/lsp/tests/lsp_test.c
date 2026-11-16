@@ -13853,8 +13853,9 @@ TIDE_TEST(lsp_linear_textures)
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]")); // A function's read-only image parameter keeps the mark
 }
 
-// A game's .tweaks file: a lens on each tweak it gives another value, going there; a hover that says so; and, in the
-// file itself, a tweak's name hovers and goes to its declaration.
+// A game's .tweaks file, a file of the game's analysis though not its code: a lens on each tweak it gives another
+// value, going there, and a hover that says so; in the file, a tweak's name goes to its declaration and hovers; its
+// errors are said as it's typed; and renaming a tweak in code renames it there.
 TIDE_TEST(lsp_tweaks_file)
 {
     if (!find_game_dir()) return;
@@ -13884,13 +13885,30 @@ TIDE_TEST(lsp_tweaks_file)
     TIDE_CHECK(count(lenses, "game.tweaks:") == 1); // Rounds is as the code has it
     TIDE_CHECK(has(request_at(uri_game, "textDocument/hover", 4, 44, ""), "Its .tweaks file gives it `0.25 * 1`"));
 
+    // Open, it's analysed with the game: no errors of its own
     open_uri(uri_tweaks, tweaks);
-    TIDE_CHECK(sent_count == 0); // Not the game's code: no analysis or diagnostics of its own
+    bool said = false;
+    for (int i = 0; i < sent_count; i++) said |= has(sent[i], uri_tweaks) && has(sent[i], "\"diagnostics\":[]");
+    TIDE_CHECK(said);
     const char *definition = request_at(uri_tweaks, "textDocument/definition", 1, 3, "");
     TIDE_CHECK(has(definition, "lsp_tweaks/game.tide\",\"range\":{\"start\":{\"line\":0,\"character\":12}"));
     TIDE_CHECK(has(request_at(uri_tweaks, "textDocument/hover", 1, 3, ""), "tweak float KickUp"));
-    TIDE_CHECK(has(request_at(uri_tweaks, "textDocument/definition", 1, 9, ""), "\"result\":null")); // On 0.25
-    TIDE_CHECK(has(request_at(uri_tweaks, "textDocument/semanticTokens/full", 0, 0, ""), "{\"data\":[]}"));
+    TIDE_CHECK(has(request_at(uri_tweaks, "textDocument/formatting", 0, 0, "\"options\":{\"tabSize\":4}"), "\"result\":null"));
+    // Where a line starts, the tweaks' names; after '=', values as code has them, other tweaks among them
+    const char *names = request_at(uri_tweaks, "textDocument/completion", 2, 0, "");
+    TIDE_CHECK(has(names, "\"label\":\"Rounds\"") && has(names, "tweak int") && !has(names, "\"label\":\"system\""));
+    TIDE_CHECK(has(request_at(uri_tweaks, "textDocument/completion", 1, 9, ""), "\"label\":\"Rounds\""));
+
+    // Renamed in code, renamed in its file too
+    const char *renamed = request_at(uri_game, "textDocument/rename", 0, 13, "\"newName\":\"Recoil\"");
+    TIDE_CHECK(has(renamed, "lsp_tweaks/game.tweaks"));
+    TIDE_CHECK(has(renamed, "{\"range\":{\"start\":{\"line\":1,\"character\":0},\"end\":{\"line\":1,\"character\":6}},\"newText\":\"Recoil\"}"));
+
+    // A wrong value is said as it's typed, at its place in the file
+    open_uri(uri_tweaks, "// Recoil\nKickUp = true;\n");
+    said = false;
+    for (int i = 0; i < sent_count; i++) said |= has(sent[i], uri_tweaks) && has(sent[i], "is float, not bool");
+    TIDE_CHECK(said);
 
     remove_game_file("lsp_tweaks/game.tide");
     remove_game_file("lsp_tweaks/game.tweaks");

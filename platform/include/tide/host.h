@@ -1110,16 +1110,29 @@ static inline uint64_t tide_run_bytes_hash(const uint8_t *bytes, const size_t le
     return h | 1u; // Never 0, which is nothing taken yet
 }
 
+#ifdef __wasm__
+// On a page, under tide run --web, which has the values from tide's server (tide.js): copies them if they fit in
+// `capacity` bytes, returning their size, 0 for none. And a value the menu changed, for tide to write into its file.
+__attribute__((import_module("tide"), import_name("tweaks_copy"))) uint32_t tide_web_tweaks_copy(void *to, uint32_t capacity);
+__attribute__((import_module("tide"), import_name("tweak_write"))) void tide_web_tweak_write(const char *file, const char *name,
+                                                                                            const char *value);
+#endif
+
 static inline void tide_run_tweaks_poll(const tide_host_game *game)
 {
     const tide_tweaks_api *api = game->tweaks ? game->tweaks() : NULL;
     if (!api || !api->values[0] || (tide_run_tweaks_at >= 0.0 && tide_run_now - tide_run_tweaks_at < 0.5)) return;
     tide_run_tweaks_at = tide_run_now;
+    static uint8_t bytes[8192];
+#ifdef __wasm__
+    const size_t length = tide_web_tweaks_copy(bytes, sizeof bytes);
+    if (!length || length > sizeof bytes) return;
+#else
     FILE *f = fopen(api->values, "rb");
     if (!f) return;
-    static uint8_t bytes[8192];
     const size_t length = fread(bytes, 1, sizeof bytes, f);
     fclose(f);
+#endif
     const uint64_t h = tide_run_bytes_hash(bytes, length);
     if (h == tide_run_tweaks_seen) return;
     const bool first = !tide_run_tweaks_seen;
@@ -1216,7 +1229,12 @@ static inline void tide_run_dev_tweaks(const tide_tweaks_api *api)
         if (!changed) continue;
         // To the match at once, and into its .tweaks file, from which tide run works out the tweaks made from it
         api->send(tide_run_local);
+#ifdef __wasm__
+        char value[256]; // Written by tide, which has the files
+        if (tide_tweaks_format(t, values, value, sizeof value) < sizeof value) tide_web_tweak_write(t->file, t->name, value);
+#else
         if (!tide_tweaks_save(t, values)) fprintf(stderr, "tide: can't write %s to %s\n", t->name, t->file);
+#endif
     }
 }
 

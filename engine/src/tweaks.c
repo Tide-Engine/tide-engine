@@ -171,12 +171,17 @@ static bool find_entry(const char *text, const size_t length, const char *name, 
 
 bool tide_tweaks_save(const tide_tweak *t, const void *values)
 {
-    if (!t->file || !t->file[0]) return false;
     char value[256];
     if (tide_tweaks_format(t, values, value, sizeof value) >= sizeof value) return false;
+    return tide_tweaks_write(t->file, t->name, value);
+}
+
+bool tide_tweaks_write(const char *file, const char *name, const char *value)
+{
+    if (!file || !file[0] || !name || !name[0] || !value) return false;
     char *text = NULL;
     size_t length = 0;
-    FILE *f = fopen(t->file, "rb");
+    FILE *f = fopen(file, "rb");
     if (f) {
         fseek(f, 0, SEEK_END);
         const long size = ftell(f);
@@ -190,8 +195,8 @@ bool tide_tweaks_save(const tide_tweak *t, const void *values)
         fclose(f);
     }
     size_t from, to;
-    const bool found = text && find_entry(text, length, t->name, &from, &to);
-    f = fopen(t->file, "wb");
+    const bool found = text && find_entry(text, length, name, &from, &to);
+    f = fopen(file, "wb");
     if (!f) {
         free(text);
         return false;
@@ -202,7 +207,7 @@ bool tide_tweaks_save(const tide_tweak *t, const void *values)
     } else {
         if (length) ok = fwrite(text, 1, length, f) == length;
         if (length && text[length - 1] != '\n') ok = ok && fputc('\n', f) != EOF;
-        ok = ok && fprintf(f, "%s = %s;\n", t->name, value) > 0;
+        ok = ok && fprintf(f, "%s = %s;\n", name, value) > 0;
     }
     if (fclose(f) != 0) ok = false;
     free(text);
