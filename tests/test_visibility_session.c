@@ -34,6 +34,7 @@ static uint32_t visibility_hides;
 static uint32_t visibility_bulk_filters;
 static uint32_t visibility_slot_filters;
 static bool visibility_continuous;
+static uint32_t visibility_differs_from = 90, visibility_differs_to = 570; // The ticks a continuous match's differ in
 static bool visibility_large_spread;
 static bool visibility_large_far;
 static uint32_t visibility_far_full_ticks, visibility_far_held_ticks;
@@ -71,7 +72,7 @@ static void visibility_tick(void *world, const tide_jobs *jobs)
     }
     // A consequence of genuinely hidden state cannot be reproduced locally.
     if (w->tick == 90 && w->secret) w->health -= 17;
-    if (visibility_continuous && w->secret && w->tick >= 90 && w->tick < 570) w->health++;
+    if (visibility_continuous && w->secret && w->tick >= visibility_differs_from && w->tick < visibility_differs_to) w->health++;
     if (w->tick == 150 && w->secret) w->reveal = 1;
     if (w->tick == 210 && w->secret) w->reveal = 0;
     if (w->tick == 260 && w->secret) w->token_alive = 0;
@@ -576,6 +577,19 @@ typedef struct visibility_wire {
     bool again; // The held one is what's read next
     bool lose_hashes;     // No chunk comes of the next repair's hashes a WELCOME names, nor of any after it
     uint32_t lose_number; // ...which is this one, the last so far
+    // For the spare chunks' tests: every `lose_servers`th SERVER is lost (so the server counts a network that loses
+    // datagrams); of the transfer `watch`, the chunk `lose_index` is lost `lose_times` times and its spares are
+    // lost with `lose_spares`; and what came of it is counted, lost or not
+    uint32_t lose_servers, servers;
+    uint32_t watch, watch_chunks, lose_index, lose_times;
+    bool lose_spares;
+    uint32_t chunks_seen, index_seen, spares_seen, spares_all; // (spares_all: of any transfer)
+    uint32_t worlds_again; // Whole projections named after it
+    uint8_t spare[1100]; // Its spare that's of the lost chunk, as it came
+    uint32_t spare_size;
+    tide_address spare_from;
+    uint8_t forged[1100]; // A datagram a test made, read next
+    uint32_t forged_size;
 } visibility_wire;
 
 static void visibility_wire_send(void *self, tide_address to, const void *data, uint32_t size)
@@ -593,12 +607,48 @@ static uint32_t visibility_wire_receive(void *self, tide_address *from, void *da
         *from = w->held_from;
         return w->held_size;
     }
+    if (w->forged_size && w->forged_size <= capacity) {
+        memcpy(data, w->forged, w->forged_size);
+        *from = w->spare_from;
+        const uint32_t forged = w->forged_size;
+        w->forged_size = 0;
+        return forged;
+    }
     uint32_t size = w->inner.receive(w->inner.self, from, data, capacity);
     const uint8_t *bytes = data;
-    // A CHUNK: its header, the cookie, a nonce, then what it's a chunk of
-    for (uint32_t number = 0; size >= 20u && bytes[3] == 4u; size = w->inner.receive(w->inner.self, from, data, capacity)) {
-        memcpy(&number, bytes + 16, 4);
-        if (!w->lose_number || number != w->lose_number) break;
+    // A CHUNK: its header, the cookie, a nonce, then what it's a chunk of and which. A SPARE: the same, then its
+    // block's first chunk, its stride and its group. A SERVER is the sixth kind
+    for (; size >= 4u; size = w->inner.receive(w->inner.self, from, data, capacity)) {
+        uint32_t number = 0, index = 0;
+        if (size >= 24u && (bytes[3] == 4u || bytes[3] == 14u)) {
+            memcpy(&number, bytes + 16, 4);
+            memcpy(&index, bytes + 20, 4);
+        }
+        if (bytes[3] == 6u && w->lose_servers && ++w->servers % w->lose_servers == 0u) continue;
+        if (bytes[3] == 4u && w->lose_number && number == w->lose_number) continue;
+        if (bytes[3] == 4u && w->watch && number == w->watch) {
+            w->chunks_seen++;
+            if (index == w->lose_index) {
+                w->index_seen++;
+                if (w->lose_times) {
+                    w->lose_times--;
+                    continue;
+                }
+            }
+        }
+        if (bytes[3] == 14u) w->spares_all++;
+        if (bytes[3] == 14u && w->watch && number == w->watch) {
+            w->spares_seen++;
+            // (The block the lost chunk is in, and the spare of that block it's in: its stride at 24, its group at 25)
+            if (size >= 26u && size <= sizeof w->spare && index == w->lose_index / 64u * 64u && bytes[24]
+                && bytes[25] == w->lose_index % 64u % bytes[24]) {
+                memcpy(w->spare, bytes, size);
+                w->spare_size = size;
+                w->spare_from = *from;
+            }
+            if (w->lose_spares) continue;
+        }
+        break;
     }
     // A WELCOME: its header, a nonce, the player, flags, the tick rate, the server's tick, then what's sent
     if (size >= 27u && size <= sizeof w->held && bytes[3] == 2u) {
@@ -606,10 +656,12 @@ static uint32_t visibility_wire_receive(void *self, tide_address *from, void *da
         memcpy(&tick, bytes + 18, 4);
         memcpy(&number, bytes + 22, 4);
         if (number > w->number) {
+            w->worlds_again += w->watch && number > w->watch && bytes[26] == 2u;
             w->number = number;
             w->tick = tick;
             w->kind = bytes[26];
             if (w->lose_hashes && w->kind == 4u) w->lose_number = number;
+            if (number == w->watch && size >= 35u) memcpy(&w->watch_chunks, bytes + 31, 4);
         }
         if (number && bytes[26] == w->hold && number >= w->held_number) {
             memcpy(w->held, bytes, size);
@@ -720,6 +772,8 @@ static void visibility_match_end(visibility_match *m)
     tide_session_destroy(m->host);
     tide_loopback_destroy(m->net);
     visibility_continuous = false;
+    visibility_differs_from = 90;
+    visibility_differs_to = 570;
 }
 
 // From `first` to `last`, every `every` steps (120 a second), on a network
@@ -893,6 +947,148 @@ TIDE_TEST(visibility_reload_late_welcome_of_the_repair_it_ended_costs_no_chunk)
     TIDE_CHECK(visibility_match_client(m).world_bytes - before < 700000u);
     while (m->step < 1800u) visibility_match_step(m);
     TIDE_CHECK(visibility_match_caught_up(m, 30u));
+    visibility_match_end(m);
+    free(m);
+}
+
+// Spare chunks (session.c, MSG_SPARE). The large game's client on a network the test makes lose one SERVER in
+// `lose_servers` (20: the server counts 5% lost) and nothing else. Its ticks differ from 400 on, so the loss is
+// counted first (800 updates). Then the server's build swaps under a repair, which starts the whole projection
+// (half a megabyte, 545 chunks): the transfer the wire watches. `lose_times` of its chunk 7 are lost. The match is
+// at step 2,200 after.
+enum { FORGE_NONE, FORGE_REFUSED, FORGE_OTHER_BYTES };
+
+static void visibility_spares_run(visibility_match *m, const uint32_t lose_servers, const uint32_t lose_times,
+                                  const bool lose_spares, const uint32_t forge)
+{
+    // (Forged spares have to come before the lost chunk is sent again: a longer round trip gives them the time)
+    visibility_match_start(m, 7, (tide_net_conditions){.latency = forge ? 0.12 : 0.03}, true);
+    visibility_differs_from = 400;
+    visibility_differs_to = 880;
+    m->wire.lose_servers = lose_servers;
+    uint32_t repairs = 0;
+    bool found = false;
+    while (!found && m->step < 1500u) {
+        visibility_match_step(m);
+        const tide_client_status status = visibility_match_client(m);
+        found = m->step >= 1000u && status.repairs > repairs && m->wire.kind == 5u;
+        repairs = status.repairs;
+    }
+    TIDE_REQUIRE(found);
+    m->wire.watch = m->wire.number + 1u;
+    m->wire.lose_index = 7u;
+    m->wire.lose_times = lose_times;
+    m->wire.lose_spares = lose_spares;
+    visibility_match_reload(m, RELOAD_HOST);
+    for (uint32_t i = 0; i < 120u && m->wire.number < m->wire.watch; i++) visibility_match_step(m);
+    TIDE_REQUIRE(m->wire.number == m->wire.watch && m->wire.kind == 2u && m->wire.watch_chunks >= 400u);
+    const uint32_t world = m->wire.tick, forgeries = forge == FORGE_REFUSED ? 7u : forge == FORGE_OTHER_BYTES ? 1u : 0u;
+    uint32_t forged = 0;
+    for (uint32_t i = 0; i < 480u && (visibility_match_client(m).verified_tick < world || forged < forgeries); i++) {
+        // What isn't a spare of this transfer, each read once before a step, once every other chunk has come and
+        // while the lost one hasn't been sent again (its own spares are lost with it): the one chunk a spare taken
+        // would make. Each is the lost chunk's own spare as it came (the cookie and the nonce are the connection's)
+        // with one thing of it another. Offsets: the transfer's number at 16, the block's first chunk at 20, the
+        // stride at 24, the group at 25, then a chunk's bytes
+        const bool forging = m->wire.spare_size && forged < forgeries && m->wire.chunks_seen >= m->wire.watch_chunks;
+        const uint64_t had = visibility_match_client(m).world_bytes;
+        if (forging) {
+            TIDE_CHECK(m->wire.index_seen == 1u); // Not sent again yet: what's forged comes first
+            memcpy(m->wire.forged, m->wire.spare, m->wire.spare_size);
+            m->wire.forged_size = m->wire.spare_size;
+            uint8_t *f = m->wire.forged;
+            const uint32_t chunks = m->wire.watch_chunks, next = m->wire.watch + 1u, uneven = 7u, past = chunks / 64u * 64u + 64u;
+            if (forge == FORGE_OTHER_BYTES) memset(f + 26, 0xA5, 1000); // Its own spare, with other bytes
+            else switch (forged) {
+            case 0: f[24] = 0; break;                                   // No stride
+            case 1: f[24] = 17; f[25] = 7; break;                       // More spares than a block has
+            case 2: f[25] = f[24]; break;                               // A group past its stride
+            case 3: memcpy(f + 20, &uneven, 4); break;                  // A block that starts where none does
+            case 4: memcpy(f + 20, &past, 4); break;                    // ...and past the transfer's last chunk
+            case 5: m->wire.forged_size -= 1u; break;                   // A chunk's bytes cut short
+            default: memcpy(f + 16, &next, 4); break;                   // Of another transfer
+            }
+            forged++;
+        }
+        visibility_match_step(m);
+        // Refused, it made no chunk: the client has the bytes it had
+        if (forging && forge == FORGE_REFUSED) TIDE_CHECK(visibility_match_client(m).world_bytes == had);
+    }
+    TIDE_CHECK(visibility_match_client(m).verified_tick >= world);
+    TIDE_CHECK(forged == forgeries);
+    while (m->step < 2200u) visibility_match_step(m);
+    TIDE_CHECK(visibility_match_caught_up(m, 30u));
+}
+
+static visibility_match *visibility_spares_case(const uint32_t lose_servers, const uint32_t lose_times, const bool lose_spares,
+                                                const uint32_t forge)
+{
+    visibility_match *m = malloc(sizeof *m);
+    if (!m) abort();
+    visibility_spares_run(m, lose_servers, lose_times, lose_spares, forge);
+    return m;
+}
+
+// A chunk lost once is made again from its block's spare: the server never sends it a second time. Without the
+// spares (lost too), it does.
+TIDE_TEST(visibility_spares_make_a_lost_chunk_again_before_its_asked_for)
+{
+    visibility_match *m = visibility_spares_case(20, 1, false, FORGE_NONE);
+    // Five in a hundred lost: a spare for each 8 chunks, so 8 to a block of 64
+    const uint32_t blocks = m->wire.watch_chunks / 64u, rest = m->wire.watch_chunks % 64u;
+    TIDE_CHECK(m->wire.spares_seen == blocks * 8u + (rest + 7u) / 8u);
+    // ...and none of anything else: the first world came before the loss was counted, and what's a few chunks has none
+    TIDE_CHECK(m->wire.spares_all == m->wire.spares_seen);
+    TIDE_CHECK(m->wire.index_seen == 1u);
+    TIDE_CHECK(m->wire.chunks_seen == m->wire.watch_chunks);
+    visibility_match_end(m);
+    free(m);
+    m = visibility_spares_case(20, 1, true, FORGE_NONE);
+    TIDE_CHECK(m->wire.index_seen == 2u);
+    visibility_match_end(m);
+    free(m);
+}
+
+// A network that loses nothing gets no spares, and a chunk it does lose is sent again
+TIDE_TEST(visibility_spares_go_only_where_datagrams_are_lost)
+{
+    visibility_match *m = visibility_spares_case(0, 1, false, FORGE_NONE);
+    TIDE_CHECK(m->wire.spares_all == 0u && m->wire.index_seen == 2u);
+    visibility_match_end(m);
+    free(m);
+}
+
+// Spares that aren't ones are left: each is the lost chunk's own spare with one thing of it another, and taken it
+// would make the chunk, or a chunk of other bytes (so the world would fail its check and be sent again). None makes
+// one: the chunk comes when it's sent again, and the world once.
+TIDE_TEST(visibility_spares_that_arent_ones_are_refused)
+{
+    visibility_match *m = visibility_spares_case(20, 1, true, FORGE_REFUSED);
+    TIDE_CHECK(m->wire.index_seen == 2u);
+    TIDE_CHECK(m->wire.worlds_again == 0u);
+    visibility_match_end(m);
+    free(m);
+}
+
+// The lost chunk's own spare with other bytes is taken (nothing says they aren't the server's), and makes a chunk of
+// them: the world fails its check, is asked for and sent again, and the client has it
+TIDE_TEST(visibility_a_spare_of_other_bytes_costs_the_world_again_and_no_more)
+{
+    visibility_match *m = visibility_spares_case(20, 1, true, FORGE_OTHER_BYTES);
+    TIDE_CHECK(m->wire.worlds_again == 1u);
+    visibility_match_end(m);
+    free(m);
+}
+
+// A CLIENT says which chunks it has for 512 past the first it lacks, where it said 64: with a chunk lost twice (as
+// it first goes, and as it's sent again at the first word of it), the chunks after it aren't sent again while the
+// server waits for it. They were, every one past the 64th, a round trip and a half after they first went.
+TIDE_TEST(visibility_chunks_past_a_lost_one_arent_sent_again)
+{
+    visibility_match *m = visibility_spares_case(0, 2, false, FORGE_NONE);
+    TIDE_CHECK(m->wire.index_seen == 3u);
+    // (The 25 chunks past the 512 it says go again as before, and the lost one twice)
+    TIDE_CHECK(m->wire.chunks_seen <= m->wire.watch_chunks + 40u);
     visibility_match_end(m);
     free(m);
 }

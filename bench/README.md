@@ -32,6 +32,21 @@ A build of everything that says `TIDE_PAGE_STATS` (a tree of its own: `cmake --p
 
 Every session benchmark's report gained three things with it (2026-11-16). The `pack` and `unpack` columns take in a game's repairs by what changed (`tide_game.client_changes`, and a client's `client_changes_base` and `apply_client_changes`), which were in no column: a third of a voxels server's update. A line under the table gives each side's updates in all, in ms a second, and what the columns leave of it (sending and receiving, the store, the session's own work). And under what's sent, what each bot is sent by kind of datagram, with how many datagrams: a world's or a repair's parts and downloads, ticks, and the rest, each with its header and whatever was sent again, so parts sent twice show against "worlds a bot's machine got", which counts each once. Under that, how far behind the server's a bot's verified world was over its frames from five seconds after it caught up (its first view is still coming until then): on average, in 99 frames of 100 and in 999 of 1,000, in ticks, beside the most it ever was; `lag_mean_ticks`, `lag_p99_ticks` and `lag_p999_ticks` in a saved row. It's what a lost datagram costs a player (notes/netcode.md, Ticks in as many datagrams as the loss takes). `bench_desc.watch`, if a game gives one, is called for each bot in the match after every frame with the world its machine has, outside every timing. Its server keeps chunks nobody is near in a store kept in memory; `--files <folder>` keeps them as the platform's own files in that folder's `saved/` instead, read and written on the files' own thread as the standard hosts do, and `--files-here <folder>` the same as each tick ends, to see what that costs a server's update. Any benchmark of a game that uses the store takes both, natively (a web bench has no platform files).
 
+Later the same day, for what a server's worst update is made of and for long runs. `--worst <n>` (any session
+benchmark) lists the server's n longest updates after the report, each with when it was, its tick, what it spent
+simulating, hashing, snapshotting and packing, and of its simulating what its handlers and changes took and its
+three longest systems (the server ticks with a `tide_profile` for it, which reads the clock around each system, so
+those runs' times are a little longer). `--every <s>` prints a line every so many made-up seconds: the server's
+world in memory and what it holds, bot 0's, the process's memory (Windows and Linux), and the server's updates
+since the last line, on average and at most; and every report ends with the most the process held.
+`bench_desc.watch_server` is `watch` for the server's world, called before the bots' of the frame. Voxels' report
+says with it where a hop's time goes: how many ticks after the bot's machine hopped the server had asked for its
+box, had nine tenths of it made and had all of it, beside when the bot's machine had them. Its new flags: `--make`
+(what a dimension makes of chunks a tick: `Worlds.make`), `--spread <cells>` (bots start that far apart on a square
+grid, where they started together), `--park 1` (the nth bot starts in dimension n of `--dimensions`), `--out 1`
+(each flies straight out its own way for the whole run) and `--fill <ticks>` (the run fails where a hop's whole box
+took longer at the median: `bench_voxels_arrives`).
+
 ## Earth under load (2026-10-24)
 
 `bench_earth` plays the home page's planet (`examples/earth`, with room for 256 players) with bots that land in towns, walk, drive, wave and go to other towns: `--towns 1` puts everyone in one, `--drivers` and `--hop` say how many drive and how often they travel. As any benchmark of a sharded game, `--split <n>` runs its world split into `n` regions, each shard timed apart (`--most` and `--busiest` let regions split and merge); `--lag <ticks>` lets bots fall further behind before the run fails; and with visibility, `--diverge <bot>` says what differs between that bot's world and what the server says it is, tick by tick. Results and what they mean: `notes/benchmarks.md`, Earth under load.

@@ -14,6 +14,13 @@
 #include "tide/storage.h"
 #include "tide/time.h"
 
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define PSAPI_VERSION 2 // GetProcessMemoryInfo from kernel32: nothing more to link
+#include <windows.h>
+#include <psapi.h>
+#endif
+
 #define FRAME (1.0 / 60.0) // Made-up seconds between updates
 #define JOIN_TIMEOUT 30.0  // Seconds a bot gets to join before the run fails
 // A client has caught up when the ticks it has from the server are this close
@@ -22,6 +29,28 @@
 #define CAUGHT_UP 30u
 #define LAG_MOST 255u // Ticks behind counted apart (lags)...
 #define LAG_SETTLED 5.0 // ...from this long after a bot caught up: its first view is still coming until then
+
+// What the process holds now and held at most, in bytes; 0 where the platform doesn't say
+static void process_memory(uint64_t *now, uint64_t *most)
+{
+    *now = *most = 0;
+#if defined(_WIN32)
+    PROCESS_MEMORY_COUNTERS counters = {.cb = sizeof counters};
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof counters)) {
+        *now = counters.WorkingSetSize;
+        *most = counters.PeakWorkingSetSize;
+    }
+#elif defined(__linux__)
+    FILE *f = fopen("/proc/self/status", "r");
+    char line[128];
+    while (f && fgets(line, sizeof line, f)) {
+        unsigned long long kb = 0;
+        if (sscanf(line, "VmRSS: %llu", &kb) == 1) *now = kb * 1024u;
+        if (sscanf(line, "VmHWM: %llu", &kb) == 1) *most = kb * 1024u;
+    }
+    if (f) fclose(f);
+#endif
+}
 
 static void out_of_memory(void)
 {
@@ -501,7 +530,7 @@ static bool timed_unpack_delta(void *world, const void *base, const uint8_t *dat
 }
 
 // What a session's datagram is, from its header's fourth byte (session.c's MSG_*): a part of a world or of a repair
-// (MSG_CHUNK) or of a download (MSG_DOWNLOAD), a server's ticks or a client's inputs (MSG_SERVER, MSG_CLIENT), or
+// (MSG_CHUNK, MSG_SPARE) or of a download (MSG_DOWNLOAD), a server's ticks or a client's inputs (MSG_SERVER, MSG_CLIENT), or
 // anything else. Only for the report: a protocol that numbers them otherwise counts them as other.
 enum { KIND_WORLD, KIND_TICKS, KIND_OTHER };
 
@@ -510,7 +539,7 @@ static void counted_send(void *self, const tide_address to, const void *data, co
     counted *c = self;
     c->owner->bytes += size;
     const uint8_t type = size >= 4u ? ((const uint8_t *)data)[3] : 0u;
-    const uint32_t kind = type == 4u || type == 11u ? KIND_WORLD : type == 5u || type == 6u ? KIND_TICKS : KIND_OTHER;
+    const uint32_t kind = type == 4u || type == 11u || type == 14u ? KIND_WORLD : type == 5u || type == 6u ? KIND_TICKS : KIND_OTHER;
     c->owner->kind_bytes[kind] += size;
     c->owner->kind_count[kind]++;
     c->inner.send(c->inner.self, to, data, size);
@@ -1275,6 +1304,9 @@ static void usage(const bench_desc *d)
     if (d->differ && d->game->client_state) {
         printf("  --diverge <bot>     says what differs, each tick, between that bot's world and what the server says it is\n");
     }
+    printf("  --worst <n>         says the server's n longest updates, each with what it spent where (0)\n");
+    printf("  --every <s>         a line every so many seconds: what the server's world, a bot's and the process hold,\n"
+           "                      and the server's updates since the last (0: none)\n");
     printf("  --expect <hash>     the server's world's hash at the end; fails on another\n");
     printf("  --save <label>      adds the results to bench/results/%s.jsonl (see bench/compare.mjs)\n", d->name);
     if (d->game->stored) {
@@ -1297,6 +1329,41 @@ static bool read_number(const char *text, uint32_t *out)
     if (errno == ERANGE || *end || number > UINT32_MAX) return false;
     *out = (uint32_t)number;
     return true;
+}
+
+// --worst: the server's longest updates, longest first, each with what it spent in the game's functions
+#define WORST_MOST 64u
+#define WORST_SYSTEMS 3u
+typedef struct long_update {
+    double ms, at, tick_ms, hash_ms, copy_ms, pack_ms;
+    uint32_t tick, packs;
+    // Of its simulating: what follows a tick's systems (changes, handlers, tasks), and its longest systems
+    double changes_ms, system_ms[WORST_SYSTEMS];
+    char system[WORST_SYSTEMS][TIDE_PROFILE_NAME];
+} long_update;
+static long_update worst[WORST_MOST];
+static uint32_t worst_count;
+
+static void note_update(const uint32_t most, const long_update u)
+{
+    if (!most || (worst_count == most && u.ms <= worst[most - 1u].ms)) return;
+    uint32_t at = worst_count < most ? worst_count++ : most - 1u;
+    for (; at && worst[at - 1u].ms < u.ms; at--) worst[at] = worst[at - 1u];
+    worst[at] = u;
+}
+
+static void print_worst(void)
+{
+    if (!worst_count) return;
+    printf("\n  the server's longest updates (ms)   at (s)     tick   simulate     hash snapshot     pack (calls)    the rest\n");
+    for (uint32_t i = 0; i < worst_count; i++) {
+        const long_update *u = &worst[i];
+        printf("  %33.2f %8.2f %8u %10.2f %8.2f %8.2f %8.2f (%u) %11.2f\n", u->ms, u->at, u->tick, u->tick_ms, u->hash_ms,
+               u->copy_ms, u->pack_ms, u->packs, u->ms - u->tick_ms - u->hash_ms - u->copy_ms - u->pack_ms);
+        printf("  %33s simulating: handlers and changes %.2f", "", u->changes_ms);
+        for (uint32_t k = 0; k < WORST_SYSTEMS && u->system[k][0]; k++) printf(", %s %.2f", u->system[k], u->system_ms[k]);
+        printf("\n");
+    }
 }
 
 // --files and --files-here: the platform's own files in a folder, for the server's store
@@ -1364,6 +1431,11 @@ static bool parse(const bench_desc *d, const int argc, char **argv, bench_option
             if (known) o->most = integer;
         } else if (strcmp(arg, "--busiest") == 0 && d->game->shards) {
             o->busiest = number / 1e2;
+        } else if (strcmp(arg, "--worst") == 0) {
+            known = whole && integer <= WORST_MOST;
+            if (known) o->worst = integer;
+        } else if (strcmp(arg, "--every") == 0) {
+            o->every = number;
         } else if (strcmp(arg, "--lag") == 0) {
             known = whole && integer > 0;
             if (known) o->lag = integer;
@@ -1449,6 +1521,16 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
     if (real->apply_client_changes) timed.apply_client_changes = timed_apply_client_changes;
 
     const tide_jobs *jobs = jobs_for(o.threads);
+    // --worst: the server ticks with a profile, which says what each of its systems took (it reads the clock around
+    // each, so its times are a little longer than without)
+    static tide_profile server_profile;
+    static tide_jobs profiled;
+    const tide_jobs *server_jobs = jobs;
+    if (o.worst && !o.split) {
+        profiled = jobs ? *jobs : (tide_jobs){.threads = 1}; // One thread's is never asked to run anything
+        profiled.profile = &server_profile;
+        server_jobs = &profiled;
+    }
     diverging = o.diverge ? d : NULL;
 
 #if defined(__OPTIMIZE__)
@@ -1540,7 +1622,7 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
             .game = &timed,
             .dt = (float)FRAME,
             .transports = {count(h, wire_endpoint(the_net, &h->port))},
-            .jobs = jobs,
+            .jobs = server_jobs,
             .world = first,
             .io = io,
             .asked = &asked,
@@ -1556,6 +1638,8 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
     double all_in = -1.0; // When the last one caught up
     bool failed = false;
     const uint32_t most_lag = o.lag ? o.lag : 2u * CAUGHT_UP;
+    double stretch_next = o.every, stretch_ms = 0.0, stretch_most = 0.0; // --every
+    uint32_t stretch_updates = 0;
     while (true) {
         if (bots < o.players && now >= (double)bots * o.join_every) {
             machine *m = &bots_machines[bots];
@@ -1602,13 +1686,59 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
             machine *h = hosts[i];
             if (!h || !h->server) continue;
             current = h;
+            const long_update before = {.tick_ms = h->tick_ms, .hash_ms = h->hash_ms, .copy_ms = h->copy_ms,
+                                        .pack_ms = h->pack_ms, .packs = (uint32_t)h->packs};
+            if (o.worst) tide_profile_clear(&server_profile);
             const uint64_t t = tide_time_now_ns();
             tide_server_update(h->server, now);
             const double ms = since(t);
             add_sample(joining ? &h->joining : &h->steady, ms);
             h->busy = ms / (FRAME * 1e3);
+            if (o.worst && (worst_count < o.worst || ms > worst[o.worst - 1u].ms)) {
+                long_update u = {.ms = ms, .at = now, .tick = tide_server_tick(h->server),
+                                 .tick_ms = h->tick_ms - before.tick_ms, .hash_ms = h->hash_ms - before.hash_ms,
+                                 .copy_ms = h->copy_ms - before.copy_ms, .pack_ms = h->pack_ms - before.pack_ms,
+                                 .packs = (uint32_t)h->packs - before.packs, .changes_ms = server_profile.changes_ms};
+                for (uint32_t k = 0; k < server_profile.systems.count; k++) {
+                    const tide_profile_time *system = &server_profile.systems.items[k];
+                    uint32_t at = WORST_SYSTEMS;
+                    while (at && system->total > u.system_ms[at - 1u]) at--;
+                    if (at == WORST_SYSTEMS || system->total <= 0.0) continue;
+                    for (uint32_t move = WORST_SYSTEMS - 1u; move > at; move--) {
+                        u.system_ms[move] = u.system_ms[move - 1u];
+                        memcpy(u.system[move], u.system[move - 1u], sizeof u.system[move]);
+                    }
+                    u.system_ms[at] = system->total;
+                    memcpy(u.system[at], system->name, sizeof u.system[at]);
+                }
+                note_update(o.worst, u);
+            }
+            if (ms > stretch_most) stretch_most = ms;
+            stretch_ms += ms;
+            stretch_updates++;
         }
         page_stats_add(0);
+        if (d->watch_server && !shards && hosts[0]->server) d->watch_server(d->flags, tide_server_world(hosts[0]->server));
+        if (o.every > 0.0 && now >= stretch_next) {
+            // Outside every timing: the sizes are worked out here, not kept
+            const void *world = hosts[0] && hosts[0]->server ? tide_server_world(hosts[0]->server) : NULL;
+            const void *bot = bots && !bots_machines[0].failed && bots_machines[0].connected > 0.0
+                ? tide_client_view(home_of(&bots_machines[0])).current : NULL;
+            uint64_t held_now, held_most;
+            process_memory(&held_now, &held_most);
+            printf("  at %6.0f s, tick %7u: the server's world %7.2f MB", now, world ? tide_server_tick(hosts[0]->server) : 0u,
+                   world ? (double)real->pack_world(world, NULL, 0) / 1e6 : 0.0);
+            if (world && d->held) printf(" (%u held)", d->held(world));
+            if (bot) printf(", bot 0's %6.2f MB", (double)real->pack_world(bot, NULL, 0) / 1e6);
+            if (bot && d->held) printf(" (%u)", d->held(bot));
+            if (held_now) printf(", the process %7.1f MB", (double)held_now / 1e6);
+            printf("; server updates since the last %.2f ms on average, %.2f at most\n",
+                   stretch_updates ? stretch_ms / (double)stretch_updates : 0.0, stretch_most);
+            fflush(stdout);
+            stretch_next = now + o.every;
+            stretch_ms = stretch_most = 0.0;
+            stretch_updates = 0;
+        }
         if (shards) {
             current = &orchestra;
             const uint64_t t = tide_time_now_ns();
@@ -1714,6 +1844,12 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
             if (shards) printf("  shard %u:\n", i);
             d->describe(tide_server_world(hosts[i]->server));
         }
+    }
+    print_worst();
+    {
+        uint64_t held_now, held_most;
+        process_memory(&held_now, &held_most);
+        if (held_most) printf("  the process held %.0f MB at most (the server and every bot's machine)\n", (double)held_most / 1e6);
     }
     print_verdict(&r, o.expect);
     if (save) save_results(d, &o, thread_count(jobs), save, &r);

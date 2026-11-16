@@ -1343,6 +1343,20 @@ static void gen_client_hashes(gen *g)
               "    free(rows);\n#endif\n}\n\n"
               "static uint64_t tide_game_client_hash(const void *world, tide_player_id recipient)\n{\n"
               "    uint64_t hash;\n    tide_game_client_hashes(world, &recipient, 1u, &hash);\n    return hash;\n}\n\n");
+    // Whom entities came to (tide_game.client_came): the players a visibility group's audience gained in the checks
+    // of this world since this was last asked, as the checks' own comparison of the directory found them
+    sb_put(o, "static void tide_game_client_came(const void *world, const tide_player_id *recipients, const uint32_t count, bool *out)\n{\n"
+              "    for (uint32_t i = 0; i < count; i++) out[i] = false;\n");
+    if (heapy) {
+        sb_put(o, "    while (__atomic_exchange_n(&tide_client_memo_lock, 1u, __ATOMIC_ACQUIRE)) {\n    }\n"
+                  "    for (uint32_t m = 0; m < tide_client_memo_count; m++) {\n"
+                  "        tide_client_memo *memo = tide_client_memos[m];\n"
+                  "        if (memo->world != world || memo->busy || !memo->rows) continue;\n"
+                  "        for (uint32_t i = 0; i < count; i++) out[i] = tide_audience_contains(memo->rows->came, recipients[i]);\n"
+                  "        memo->rows->came = (Audience){0};\n    }\n"
+                  "    __atomic_store_n(&tide_client_memo_lock, 0u, __ATOMIC_RELEASE);\n");
+    } else sb_put(o, "    (void)world; (void)recipients;\n");
+    sb_put(o, "}\n\n");
     free(deniable);
 }
 

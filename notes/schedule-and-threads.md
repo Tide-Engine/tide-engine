@@ -1,5 +1,23 @@
 # The schedule and the tick on threads
 
+## Gap: rows just spawned are one run's, so a system that works on new rows works on one thread (2026-11-16)
+
+Measured, not changed (notes/voxels.md, A whole view arriving). A per-entity system in runs gives each task a
+range of the 32 runs, and a run is a range of the entities' keys in identity's order
+(`tide_key_count * run / tide_runs` in a generated task): entities spawned together are next to each other in that
+order, so they're one run's, or two's. `bench_voxels`' `Generate` makes a tick's new chunks, which are always the
+last spawned: its 24 pieces go out every tick, and one of them does all the work. 64 chunks with ground in them
+take 9.0 to 9.4 ms on 1, 4 and 12 threads alike (`--worst`, the same ticks of the same run), and that was the
+server's longest update. It shows nowhere a system's rows all do something (the flock, the grids' fixtures); it
+shows wherever a guard lets through a few rows that came together.
+
+What would close it is a run's rows chosen among the rows the guard lets through: tidec already has the marks for
+a system in one piece (`tide_live_<System>`), and with pieces the marks would be made once in the system's `own`
+and each run be a range of the live keys, the same on one thread (the runs' heaps go by which run a row is in, so
+one thread has to choose the same). That's a change to every such system's heap layout, and to the hashes pinned
+on them. Until then a game bounds such a system's work a tick itself: voxels' `Pace` lets `Generate` make 48
+chunks with ground in them a tick, about 7 ms on one thread.
+
 ## Worker priorities (2026-11-15)
 
 A local worker call's `priority:` (notes/language.md; spec, Local workers, Priorities). Provisional, Claude's picks.

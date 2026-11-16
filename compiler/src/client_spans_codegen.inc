@@ -259,6 +259,7 @@ static void gen_client_span_helpers(gen *g)
               "    j->nodes[j->node_count++] = (tide_client_node){.world = world, .from = j->from, .count = j->count - j->from, .all = all};\n}\n\n");
     sb_printf(o, "struct tide_client_kept {\n    tide_client_rows rows[%d];\n    tide_client_journal journal;\n"
                  "    uint64_t directory;     // The groups' audiences, as a hash of the pages they're kept in\n"
+                 "    Audience came;          // The players a group's audience gained since they were last asked for (tide_game_client_came)\n"
                  "    void *group_entries;    // ...and a copy of the directory's entries, as they are in its list, live and dead\n"
                  "    uint32_t group_count, group_room;\n"
                  "    uint64_t group_list;    // ...the list as it was (its handle), 0 where its chunks' hashes aren't kept\n"
@@ -695,9 +696,19 @@ static void gen_client_span_helpers(gen *g)
                  "        for (uint32_t i = lo; i < hi; i++) {\n"
                  "            const entry *now = tide_list_cached_at(&cache, l, (int32_t)i, sizeof *now);\n"
                  "            if (!now) continue;\n"
-                 "            if (i < had && memcmp(&kept[i], now, sizeof *now) == 0) continue;\n"
+                 "            if (i < had && memcmp(&kept[i], now, sizeof *now) == 0) continue;\n",
+              groups);
+    sb_put(o,
                  "            if (i < had && kept[i].tide_order > 0) tide_client_changed_add(k, kept[i].key); // Gone, or its audience another\n"
-                 "            if (now->tide_order > 0) tide_client_changed_add(k, now->key); // New, or its audience another\n"
+                 "            if (now->tide_order > 0) {\n"
+                 "                tide_client_changed_add(k, now->key); // New, or its audience another\n"
+                 "                // Who it came to: what a group's entities are now theirs that weren't. (An entry that moved as the\n"
+                 "                // map packed counts whole: said of more players, never of fewer)\n"
+                 "                const bool was = i < had && kept[i].tide_order > 0 && kept[i].key == now->key;\n"
+                 "                const uint8_t *to = (const uint8_t *)&now->value, *from = (const uint8_t *)&kept[i].value;\n"
+                 "                uint8_t *came = (uint8_t *)&k->came;\n"
+                 "                for (size_t at = 0; at < sizeof(Audience); at++) came[at] |= (uint8_t)(to[at] & (was ? ~from[at] : 0xFFu));\n"
+                 "            }\n"
                  "            kept[i] = *now;\n"
                  "        }\n    }\n"
                  "    for (uint32_t i = n; i < had; i++) if (kept[i].tide_order > 0) tide_client_changed_add(k, kept[i].key);\n"
@@ -706,7 +717,7 @@ static void gen_client_span_helpers(gen *g)
                  "        qsort(k->changed, k->changed_count, sizeof *k->changed, tide_client_id_order);\n"
                  "        uint32_t unique = 0;\n"
                  "        for (uint32_t i = 0; i < k->changed_count; i++) if (!unique || k->changed[unique - 1u] != k->changed[i]) k->changed[unique++] = k->changed[i];\n"
-                 "        k->changed_count = unique;\n    }\n}\n\n", groups);
+                 "        k->changed_count = unique;\n    }\n}\n\n");
     sb_put(o, "TIDE_HELPER bool tide_client_changed_has(const struct tide_client_kept *k, const int64_t id)\n{\n"
                  "    if (id <= 0) return false; // All players, or a client's own: no group's audience\n"
                  "    uint32_t lo = 0, hi = k->changed_count;\n"
