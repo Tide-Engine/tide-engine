@@ -425,34 +425,51 @@ static int32_t hops_at(const bench_flag *f, const uint32_t bot, const uint32_t t
 // The server's side of each hop a bot's machine is waiting on: the chunks of the dimension it hopped into that are
 // its player's (bot n is player n: they join in order), asked for and made. It runs before the bots' `watch` of
 // the frame, so a hop that one saw is a frame older here.
+// An Audience is a 32-bit word for each 32 players the game takes (players, players1, ...)
+#define AUDIENCE_WORDS (sizeof(Audience) / sizeof(uint32_t))
+#define SERVER_WATCHED (AUDIENCE_WORDS * 32u < WATCHED ? AUDIENCE_WORDS * 32u : WATCHED)
+
 static void watch_server(const bench_flag *f, const void *world)
 {
     if (!f[14].value) return;
     const tide_world *w = world;
-    uint32_t waiting = 0;
-    for (uint32_t i = 0; i < WATCHED && i < 32u; i++) waiting |= watchers[i].frames && watchers[i].from >= 0 && !watchers[i].made_all ? 1u << i : 0u;
-    if (!waiting) return;
+    uint32_t waiting[AUDIENCE_WORDS] = {0};
+    bool any = false;
+    for (uint32_t i = 0; i < SERVER_WATCHED; i++) {
+        if (watchers[i].frames && watchers[i].from >= 0 && !watchers[i].made_all) {
+            waiting[i >> 5] |= 1u << (i & 31u);
+            any = true;
+        }
+    }
+    if (!any) return;
     const int32_t dimensions = w->Worlds.count;
-    static uint32_t asked[32], made[32];
+    static uint32_t asked[SERVER_WATCHED], made[SERVER_WATCHED];
     memset(asked, 0, sizeof asked);
     memset(made, 0, sizeof made);
     EACH(w, e)
     {
         if (!tide_has_Chunk(w, e) || !tide_has_Seen(w, e)) continue;
-        const uint32_t audience = (uint32_t)tide_get_Seen(w, e).audience.players & waiting;
-        if (!audience) continue;
+        const Audience seen = tide_get_Seen(w, e).audience;
+        uint32_t audience[AUDIENCE_WORDS];
+        memcpy(audience, &seen, sizeof audience);
+        bool some = false;
+        for (uint32_t k = 0; k < AUDIENCE_WORDS; k++) {
+            audience[k] &= waiting[k];
+            some = some || audience[k];
+        }
+        if (!some) continue;
         const Chunk chunk = tide_get_Chunk(w, e);
-        for (uint32_t i = 0; i < 32u; i++) {
-            if (!(audience >> i & 1u) || chunk.dimension != (watchers[i].from + 1) % dimensions) continue;
+        for (uint32_t i = 0; i < SERVER_WATCHED; i++) {
+            if (!(audience[i >> 5] >> (i & 31u) & 1u) || chunk.dimension != (watchers[i].from + 1) % dimensions) continue;
             asked[i]++;
             made[i] += chunk.stage == Stage_Made;
         }
     }
     const uint32_t near = f[0].value, tall = f[1].value;
     const uint32_t box = (2u * near + 1u) * (2u * near + 1u) * (2u * tall + 1u);
-    for (uint32_t i = 0; i < 32u; i++) {
+    for (uint32_t i = 0; i < SERVER_WATCHED; i++) {
         watcher *me = &watchers[i];
-        if (!(waiting >> i & 1u)) continue;
+        if (!(waiting[i >> 5] >> (i & 31u) & 1u)) continue;
         const float since = (float)(me->since + 1u);
         if (!me->asked && asked[i] >= box) {
             me->asked = true;

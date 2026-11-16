@@ -26850,6 +26850,60 @@ static bool client_hash_heapy(const gen *g); // client_state_codegen.inc
 // with its storage zeroed, which tide/layout.h describes (its singletons and
 // inputs), then its entity table, each of its archetypes' tables in order, its
 // queue and its heap.
+// A game whose servers repair players by what changed (client_changes_codegen.inc), each repair hashing the world its
+// player confirmed: tide_game.freeze_world, and tide_world_hash keeping the hashes of frozen worlds
+static bool world_freezes(const gen *g)
+{
+    return g->prog->visibility_state && client_hash_heapy(g);
+}
+
+// Frozen worlds (tide_game.freeze_world): a table by address, under a lock, as worlds of several matches are hashed
+// on several threads. A world leaves it as it's let go of or copied over (tide_world_thaw); one past the table's room
+// isn't kept, and is hashed every time as before.
+static void gen_world_frozen(gen *g)
+{
+    if (!world_freezes(g)) return;
+    sb_put(&g->c, "#define TIDE_FROZEN_ROOM 1024u\n"
+                  "static struct { const tide_world *w; uint64_t hash; bool known; } tide_frozen[TIDE_FROZEN_ROOM];\n"
+                  "static uint32_t tide_frozen_count, tide_frozen_lock;\n\n"
+                  "static void tide_frozen_take(void)\n{\n"
+                  "    while (__atomic_exchange_n(&tide_frozen_lock, 1u, __ATOMIC_ACQUIRE)) {\n    }\n}\n\n"
+                  "static void tide_frozen_give(void)\n{\n    __atomic_store_n(&tide_frozen_lock, 0u, __ATOMIC_RELEASE);\n}\n\n"
+                  "static uint32_t tide_frozen_home(const tide_world *w)\n{\n"
+                  "    return (uint32_t)(((uint64_t)(uintptr_t)w >> 4) * 0x9e3779b97f4a7c15ull >> 40) & (TIDE_FROZEN_ROOM - 1u);\n}\n\n"
+                  "// Its slot, or the empty one where it would go (the lock held)\n"
+                  "static uint32_t tide_world_frozen_at(const tide_world *w)\n{\n"
+                  "    uint32_t i = tide_frozen_home(w);\n"
+                  "    while (tide_frozen[i].w && tide_frozen[i].w != w) i = (i + 1u) & (TIDE_FROZEN_ROOM - 1u);\n"
+                  "    return i;\n}\n\n"
+                  "// Its slot and 1 with the lock held, or 0 where it isn't frozen\n"
+                  "static uint32_t tide_world_frozen(const tide_world *w)\n{\n"
+                  "    if (!__atomic_load_n(&tide_frozen_count, __ATOMIC_RELAXED)) return 0;\n"
+                  "    tide_frozen_take();\n"
+                  "    const uint32_t i = tide_world_frozen_at(w);\n"
+                  "    if (tide_frozen[i].w) return i + 1u;\n"
+                  "    tide_frozen_give();\n    return 0;\n}\n\n"
+                  "static void tide_game_freeze(const void *world)\n{\n"
+                  "    const tide_world *w = world;\n"
+                  "    tide_frozen_take();\n"
+                  "    const uint32_t i = tide_world_frozen_at(w);\n"
+                  "    if (!tide_frozen[i].w && tide_frozen_count < TIDE_FROZEN_ROOM / 2u) {\n"
+                  "        tide_frozen[i].w = w;\n        tide_frozen[i].known = false;\n"
+                  "        __atomic_store_n(&tide_frozen_count, tide_frozen_count + 1u, __ATOMIC_RELAXED);\n    }\n"
+                  "    tide_frozen_give();\n}\n\n"
+                  "// Out of the table, where it is: the entries after it move up to where a search would find them\n"
+                  "static void tide_world_thaw(const tide_world *w)\n{\n"
+                  "    uint32_t i = tide_world_frozen(w);\n"
+                  "    if (!i--) return;\n"
+                  "    tide_frozen[i].w = NULL;\n"
+                  "    for (uint32_t j = (i + 1u) & (TIDE_FROZEN_ROOM - 1u); tide_frozen[j].w; j = (j + 1u) & (TIDE_FROZEN_ROOM - 1u)) {\n"
+                  "        const uint32_t home = tide_frozen_home(tide_frozen[j].w);\n"
+                  "        if (((j - home) & (TIDE_FROZEN_ROOM - 1u)) < ((j - i) & (TIDE_FROZEN_ROOM - 1u))) continue;\n"
+                  "        tide_frozen[i] = tide_frozen[j];\n        tide_frozen[j].w = NULL;\n        i = j;\n    }\n"
+                  "    __atomic_store_n(&tide_frozen_count, tide_frozen_count - 1u, __ATOMIC_RELAXED);\n"
+                  "    tide_frozen_give();\n}\n\n");
+}
+
 static void gen_world_bytes(gen *g, const bool local)
 {
     const program *prog = g->prog;
@@ -26861,6 +26915,7 @@ static void gen_world_bytes(gen *g, const bool local)
     if (memo) sb_put(o, "TIDE_HELPER void tide_client_memo_forget(const void *world);\n\n");
     sb_printf(o, "void %sfree(%s *w)\n{\n    tide_entities_free(&w->entities);\n", prefix, world);
     if (memo) sb_put(o, "    tide_client_memo_forget(w);\n");
+    if (!local && world_freezes(g)) sb_put(o, "    tide_world_thaw(w);\n");
     if (!local && rows_cache_count(g)) sb_put(o, "    tide_rows_cache_free(w->tide_rows_cache);\n    w->tide_rows_cache = NULL;\n");
     if (g->ix_any) sb_put(o, "    tide_index_cache_free(w->tide_index_cache);\n    w->tide_index_cache = NULL;\n");
     if (!local && g->prog->keeps_previous) sb_put(o, "    tide_previous_release(w, true);\n");
@@ -27266,6 +27321,7 @@ static void gen_world_copy(gen *g)
 {
     const program *prog = g->prog;
     sb *o = &g->c;
+    gen_world_frozen(g);
     sb_put(o, "void tide_world_copy(tide_world *restrict to, const tide_world *restrict from)\n{\n");
     resident_field residents[RESIDENTS_MOST];
     const int resident_count = resident_fields(prog, residents, RESIDENTS_MOST);
@@ -27297,9 +27353,31 @@ static void gen_world_copy(gen *g)
     if (prog->uses_heap) sb_put(o, "    tide_heaps_copy(&to->heap, &from->heap);\n");
     // The loops' indexes: the copy takes its source's when it next runs (index_codegen.inc)
     if (g->ix_any) sb_put(o, "    tide_index_cache_share(&to->tide_index_cache, from->tide_index_cache);\n");
+    if (world_freezes(g)) sb_put(o, "    tide_world_thaw(to);\n");
     sb_put(o, "}\n\n");
 
-    sb_put(o, "uint64_t tide_world_hash(const tide_world *w)\n{\n    uint64_t h = tide_hash_more(TIDE_HASH_START, &w->tide_identity_clock, sizeof w->tide_identity_clock);\n");
+    sb_put(o, world_freezes(g) ? "static uint64_t tide_world_hash_whole(const tide_world *w);\n\n"
+                                    "uint64_t tide_world_hash(const tide_world *w)\n{\n"
+                                    "    const uint32_t frozen = tide_world_frozen(w);\n"
+                                    "    if (frozen && tide_frozen[frozen - 1u].known) {\n"
+                                    "        const uint64_t kept = tide_frozen[frozen - 1u].hash;\n"
+                                    "        tide_frozen_give();\n"
+                                    "#ifdef TIDE_CLIENT_SPANS_CHECK\n"
+                                    "        if (kept != tide_world_hash_whole(w)) {\n"
+                                    "            fprintf(stderr, \"tide: a frozen world changed (tide_game.freeze_world)\\n\");\n"
+                                    "            abort();\n        }\n"
+                                    "#endif\n"
+                                    "        return kept;\n    }\n"
+                                    "    if (frozen) tide_frozen_give();\n"
+                                    "    const uint64_t h = tide_world_hash_whole(w);\n"
+                                    "    const uint32_t still = frozen ? tide_world_frozen(w) : 0u;\n"
+                                    "    if (still) {\n"
+                                    "        tide_frozen[still - 1u].hash = h;\n        tide_frozen[still - 1u].known = true;\n"
+                                    "        tide_frozen_give();\n    }\n"
+                                    "    return h;\n}\n\n"
+                                    "static uint64_t tide_world_hash_whole(const tide_world *w)\n{\n"
+                                  : "uint64_t tide_world_hash(const tide_world *w)\n{\n");
+    sb_put(o, "    uint64_t h = tide_hash_more(TIDE_HASH_START, &w->tide_identity_clock, sizeof w->tide_identity_clock);\n");
     for (int i = 0; i < prog->singletons.count; i++) {
         const decl *d = prog->singletons.items[i];
         if (d->is_local) continue;
@@ -28590,6 +28668,7 @@ static void gen_game_api(gen *g)
     sb_put(o, "    .copy_world = tide_game_copy,\n    .hash_world = tide_game_hash,\n");
     sb_put(o, "    .hash_world_on = tide_game_hash_on,\n");
     sb_put(o, "    .free_world = tide_game_free,\n    .pack_world = tide_game_pack,\n    .unpack_world = tide_game_unpack,\n");
+    if (world_freezes(g)) sb_put(o, "    .freeze_world = tide_game_freeze,\n");
     sb_put(o, "    .pack_delta = tide_game_pack_delta,\n    .unpack_delta = tide_game_unpack_delta,\n");
     if (prog->visibility_state) {
         sb_put(o, "    .client_state = tide_game_client_state,\n"
