@@ -13,10 +13,12 @@
 // memory does: past that, or past a block's size, tide_heap_alloc ends the
 // program, as running out of memory does (tide_out_of_memory).
 //
-// Deterministic: blocks come from size classes, reused in a fixed order, so
-// the same allocations and releases give the same offsets on every machine.
-// A released block is only reused once the code running now is done (see
-// tide_heap_flush), so text read before the release stays readable until then.
+// Deterministic: a block's place is worked out from what the heap holds (see
+// Places, below), which is the world's state, so the same allocations and
+// releases give the same offsets on every machine, and so do the ones after
+// a heap was read from bytes. A released block is only reused once the code
+// running now is done (see tide_heap_flush), so text read before the release
+// stays readable until then.
 //
 // One system at a time changes a heap, while others may read it on other
 // threads: the heap's page table is read as a whole, and when it grows, the
@@ -39,8 +41,9 @@
 
 // Every block starts with its header: what it holds after it.
 typedef struct tide_block {
-    // Its size class in the low 8 bits, and above them the next block, in a
-    // free list or the pending list (tide_block_class, tide_block_next)
+    // Its size class in the low 8 bits, and above them the next block, in the
+    // pending list or (with 0x80 beside the class) its page's free blocks
+    // (tide_block_class, tide_block_next)
     uint64_t link;
     uint32_t a; // Text: its bytes
     uint32_t b; // Text: its characters
@@ -59,9 +62,41 @@ static inline uint64_t tide_block_link(const uint32_t size_class, const uint64_t
     return next << 8 | size_class;
 }
 
+// ---------------------------------------------------------------------------
+// Places
+//
+// A heap is places of a page each, numbered from 1 (place 0 is never used:
+// offset 0 means no block). A place is free, or has a page of blocks of one
+// class (the classes below TIDE_HEAP_SMALL, at most half a page each), or is
+// one of the places of a block's own page (a block of a page or more). A new
+// block goes in the lowest place that has room for one of its class: the
+// lowest page of its class with a block to spare, in which blocks never yet
+// handed out go in order and freed ones last freed first, else the lowest free
+// place, else a new place at the end; a block of several places takes the
+// lowest run of free places that holds it. A page whose last block is freed
+// makes its place free again, for any class, and free places at the end are
+// no longer the heap's. So what's handed out stays together at the heap's
+// start, and a heap that held much and holds little is small again: in
+// memory (a free place has no page), in its hash and in its bytes.
+//
+// tide_heap_place is what's at each place, and with `pages` and `pending` it's
+// all of the heap's state outside its pages: hashed, packed and sent as it is.
+
+#define TIDE_HEAP_SMALL (TIDE_HEAP_PAGE_SHIFT - 4u) // The classes that share pages
+#define TIDE_PLACE_FREE 0u                          // 1 + class: a page of that class's blocks
+#define TIDE_PLACE_BLOCK 15u                        // The first place of a block's own page
+#define TIDE_PLACE_MORE 16u                         // ...and each of its others
+#define TIDE_HEAP_ROWS (TIDE_HEAP_SMALL + 1u)
+
+typedef struct tide_heap_place {
+    uint8_t kind;
+    uint8_t shift; // A block's own page: 1 << this places
+    uint16_t made; // A class's page: the blocks of it handed out so far from its start, in order
+    uint16_t free; // ...the last of them freed, as 1 + its number in the page (each links the one before); 0: none
+    uint16_t out;  // ...and how many of them are handed out
+} tide_heap_place;
+
 typedef struct tide_heap {
-    uint64_t used;                    // Bytes handed out from the start, headers included
-    uint64_t free[TIDE_HEAP_CLASSES]; // Released blocks of each class, most recent first
     uint64_t pending;                 // Blocks released while code runs, freed when it's done
     // A heap in runs (below), beside `pending` as a flush looks at all three: the blocks of other runs' heaps
     // this run's rows released while runs are on threads, until its row is done (tide_heap_flush); and, an
@@ -69,8 +104,21 @@ typedef struct tide_heap {
     // part of the world's state: `away` is empty whenever nothing runs
     uint64_t away;
     uint32_t runs_pending;
-    uint32_t pages;                   // Pages as far as `used` goes
-    uint32_t room;                    // Pages `page` has room for
+    uint32_t pages;                   // Places as far as it goes, place 0 counted (the last is never free); 0: none
+    uint32_t room;                    // Places `page` and `place` have room for
+    tide_heap_place *place;           // What's at each place (Places, above)
+    // Worked out from `place`, and no state of its own. For each 64 places TIDE_HEAP_ROWS words, a bit a place:
+    // the free places, then for each class the pages with a block to spare; `low` is the lowest of each (0:
+    // none). `taken`: the bytes of the blocks handed out, and `most` the most that ever was (tide_heaps_used).
+    uint64_t *index;
+    uint32_t low[TIDE_HEAP_ROWS];
+    uint64_t taken;
+    uint64_t most;
+    // The pages of places freed while code may still be reading the table (another thread can hold a page it
+    // read a moment ago): handed out again, zeroed, for the next places taken, or let go of when it's settled
+    tide_page **dropped;
+    uint32_t dropped_count;
+    uint32_t dropped_room;
     // Counts the times a block may have moved or gone: a page copied to be
     // changed, or blocks released; and the times a page's hash was asked for
     // (tide_heap_block_hash), after which a change has to say so again. Code
@@ -79,9 +127,9 @@ typedef struct tide_heap {
     // and read atomically, as other threads may read it while one system
     // changes the heap.
     uint32_t moves;
-    // The page each page-sized piece of the heap is in. A page bigger than
-    // that is at each of its places, with a reference for each. Before the
-    // first, page[-1] holds the table this one replaced, until it's settled.
+    // The page at each place: NULL at a free one and at place 0. A page bigger
+    // than a place is at each of its places, with a reference for each. Before
+    // the first, page[-1] holds the table this one replaced, until it's settled.
     tide_page **page;
     // Immutable asset payloads named by content IDs in list blocks. These
     // pools are shared by snapshots. Logical descriptor leases are checked
@@ -106,16 +154,16 @@ typedef struct tide_heap {
     struct tide_heap_later *later;
     uint32_t later_count;
     uint32_t later_room;
-    // Pages given back (below). None of it is the world's state: a heap hashes and packs as it would with every
-    // page in memory. `live`: for each place a page starts at, the blocks of it handed out and not yet free
-    // again (or that it isn't known, for a page read from bytes). `stub`: for each place a page given back
-    // started at, what brings it back; NULL until one is. `gone`: the places given back. `idle`: the places of
-    // pages in memory whose blocks are all free.
-    uint16_t *live;
-    struct tide_heap_stub **stub;
-    uint32_t gone;
-    uint32_t idle;
 } tide_heap;
+
+// The bytes of a page of `h` that are in use, which its hash covers and a
+// packed heap has: a class's page as far as its blocks were handed out, a
+// block's own page whole. The rest of a page is zeros.
+static inline uint32_t tide_heap_page_used(const tide_heap *h, const tide_page *p)
+{
+    const tide_heap_place at = h->place[p->first];
+    return at.kind - 1u < TIDE_HEAP_SMALL ? (uint32_t)at.made << (at.kind + 3u) : p->size;
+}
 
 // A block with room for `bytes` bytes after its header. Offsets are never 0.
 // A zeroed heap is empty.
@@ -145,8 +193,9 @@ void tide_heap_pack(const tide_heap *h, tide_writer *w);
 bool tide_heap_unpack(tide_heap *h, tide_reader *r);
 
 // The same as part of a delta (tide/delta.h), from `base` (NULL for none):
-// what it's handed out, how many places each page takes, then its pages as
-// regions, each paired with the base's page that starts at the same place.
+// its places and its pending blocks, what's at each place as a region, then
+// its pages as regions, each paired with the base's page that starts at the
+// same place.
 // Unpacking `h` (empty) shares the pages that are the same as the base's.
 void tide_heap_pack_delta(const tide_heap *h, const tide_heap *base, tide_delta_writer *d);
 bool tide_heap_unpack_delta(tide_heap *h, const tide_heap *base, tide_delta_reader *d);
@@ -269,27 +318,29 @@ void tide_heap_drop_later(tide_heap *h, const uint8_t id[32], uint64_t block);
 tide_heap *tide_heap_run_of(tide_heap *base, uint32_t run);
 
 // ---------------------------------------------------------------------------
-// Pages given back
+// Free places
 //
-// A heap's blocks are never moved and its offsets never handed out twice over,
-// so what it has handed out is as much as it ever held at once. The memory
-// isn't: a page all of whose blocks are free holds zeros and each block's
-// place in its free list, and once a quarter of a heap's pages in memory are
-// such pages (TIDE_HEAP_GIVE_LEAST places of them at least), tide_heaps_settle
-// lets go of them, keeping the few words of each that aren't zero. A block
-// handed out of one again brings its page back first, as it was.
-//
-// This is how the heap is kept in memory, and no part of what it is: its hash,
-// its packed bytes and its deltas are those of the heap with every page there,
-// and the blocks it hands out next are the same ones. So two machines needn't
-// agree about it, and a world read from bytes, whose blocks' pages it can't
-// tell free from handed out, gives back only pages made since.
-//
-// Nothing reads a place whose page is gone: only a handle to a block that's
-// handed out is read, and such a page has none. Code that looks a page up by
-// an offset that could be anything checks for NULL first.
+// Nothing reads a free place, which has no page: only a handle to a block
+// that's handed out is read, and a place is free once it has none. Code that
+// looks a page up by an offset that could be anything (one kept from before,
+// whose block may have gone since) asks first:
 
-#define TIDE_HEAP_GIVE_LEAST 2u
+// Whether `bytes` bytes from `offset` are in one page the heap has now.
+static inline bool tide_heap_has(const tide_heap *h, const uint64_t offset, const uint64_t bytes)
+{
+    if (!offset || offset >> TIDE_HEAP_PAGE_SHIFT >= h->pages) return false;
+    tide_page *const *pages = __atomic_load_n(&h->page, __ATOMIC_ACQUIRE);
+    const tide_page *p = __atomic_load_n(&pages[offset >> TIDE_HEAP_PAGE_SHIFT], __ATOMIC_ACQUIRE);
+    if (!p) return false;
+    const uint64_t in = offset - ((uint64_t)p->first << TIDE_HEAP_PAGE_SHIFT);
+    return bytes <= p->size && in <= p->size - bytes;
+}
+
+// Whether `block` is a block of class `size_class` that's handed out: where one
+// starts in a page of that class's, and not free (it may be released, waiting
+// to be freed). For checking what came as bytes; it goes through the page's
+// free blocks.
+bool tide_heap_handed_out(const tide_heap *h, uint64_t block, uint32_t size_class);
 
 // ---------------------------------------------------------------------------
 // A world's heaps
@@ -368,16 +419,18 @@ bool tide_heaps_unpack_delta(tide_heaps *hs, const tide_heaps *base, tide_delta_
 void tide_heaps_hash_pages(const tide_heaps *hs, tide_writer *w);
 void tide_heaps_need_pages(const tide_heaps *base, tide_needs *n);
 
-// What its heaps have handed out between them, and whether any has blocks
-// waiting to be freed: for code that keeps something worked out from a world's
-// text and lists while neither changes.
+// The most its heaps' blocks have taken at once, each heap's by itself, in
+// bytes (it only grows, and not for a block that takes the room of ones
+// freed), and whether any has blocks waiting to be freed: for code that keeps
+// something worked out from a world's text and lists while neither changes,
+// and for tests that nothing was left behind.
 uint64_t tide_heaps_used(const tide_heaps *hs);
 bool tide_heaps_pending(const tide_heaps *hs);
 
-// How many pages its heaps have between them in memory (the places it gave
-// back aren't counted: tide_heaps_gone says how many those are), and how many
-// of its places aren't `other`'s pages in the same places: what a world and
-// its snapshot don't share.
+// How many places of its heaps have a page between them (tide_heaps_gone: how
+// many are free, with places in use past them), and how many of its places
+// aren't `other`'s pages in the same places: what a world and its snapshot
+// don't share.
 uint32_t tide_heaps_pages(const tide_heaps *hs);
 uint32_t tide_heaps_gone(const tide_heaps *hs);
 uint32_t tide_heaps_pages_apart(const tide_heaps *hs, const tide_heaps *other);

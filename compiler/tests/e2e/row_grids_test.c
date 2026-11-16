@@ -57,7 +57,7 @@ static tide_heap *run_heap(tide_world *w, const uint32_t where, const uint32_t r
 static uint32_t runs_used(tide_world *w, const uint32_t where)
 {
     uint32_t used = 0;
-    for (uint32_t run = 1; run < TIDE_HEAP_RUNS; run++) used += run_heap(w, where, run)->used != 0;
+    for (uint32_t run = 1; run < TIDE_HEAP_RUNS; run++) used += run_heap(w, where, run)->most != 0;
     return used;
 }
 

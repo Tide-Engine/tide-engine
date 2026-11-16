@@ -54,7 +54,7 @@ static uint32_t runs_used(tide_world *w, const uint32_t where)
 {
     uint32_t used = 0;
     for (uint32_t run = 1; run < TIDE_HEAP_RUNS; run++) {
-        used += tide_heaps_of(&w->heap, where >> TIDE_WHERE_HEAP_SHIFT | run << TIDE_HEAP_ID_BITS)->used != 0;
+        used += tide_heaps_of(&w->heap, where >> TIDE_WHERE_HEAP_SHIFT | run << TIDE_HEAP_ID_BITS)->most != 0;
     }
     return used;
 }
