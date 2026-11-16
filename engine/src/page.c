@@ -262,8 +262,21 @@ static uint32_t spare_size(const uint32_t size)
     return (uint32_t)__builtin_ctz(size) - SPARE_LEAST;
 }
 
+#ifdef TIDE_PAGE_STATS
+uint64_t tide_page_stats[4];
+
+static void stat_page(const uint32_t which, const uint32_t size)
+{
+    __atomic_fetch_add(&tide_page_stats[which], 1u, __ATOMIC_RELAXED);
+    __atomic_fetch_add(&tide_page_stats[which + 1u], size, __ATOMIC_RELAXED);
+}
+#else
+#define stat_page(which, size) ((void)0)
+#endif
+
 tide_page *tide_page_take(const uint32_t size)
 {
+    stat_page(0u, size);
     const uint32_t k = spare_size(size);
     if (k == SPARE_SIZES) return tide_alloc(sizeof(tide_page) + size);
     if (!spares[k] && __atomic_load_n(&shared_spares[k], __ATOMIC_RELAXED)) {
@@ -335,6 +348,7 @@ void tide_page_release(tide_page *p, const uint32_t refs)
 tide_page *tide_page_copy(const tide_page *p, const uint32_t refs, const uint32_t keep)
 {
     tide_page *copy = tide_page_take(p->size);
+    stat_page(2u, p->size);
     const uint32_t kept = keep < p->size ? keep : p->size;
     *copy = (tide_page){refs, p->size, p->first, UINT32_MAX, 0, 0};
     memcpy(tide_page_data(copy), tide_page_data(p), kept);
@@ -352,6 +366,7 @@ tide_page *tide_page_own_copy(tide_page *p, const uint32_t mine, const uint32_t 
 tide_page *tide_page_own_copy_around(tide_page *p, const uint32_t mine, const uint32_t keep, const uint32_t from, const uint32_t bytes)
 {
     tide_page *copy = tide_page_take(p->size);
+    stat_page(2u, p->size);
     const uint32_t kept = keep < p->size ? keep : p->size;
     const uint32_t start = from < p->size ? from : p->size; // The part left alone: start to end
     const uint32_t end = bytes < p->size - start ? start + bytes : p->size;

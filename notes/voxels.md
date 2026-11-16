@@ -487,6 +487,55 @@ Three things make a tick cost what the world holds rather than what changed, fou
   The copy alone (a client's copy taking its source's index, without the taking in) gained nothing: a client's
   simulating 5.4 to 5.6 ms a second on one thread, one run each, because the pages differ about once a tick.
 - **The bench says where a server's time and bytes go** (above; bench/README.md).
+- **A handler takes the lanes it changed** (later still the same day; `notes/ecs.md`, top section, has how and
+  the tests). `Loaded`, `Change` and the other handlers took all 12 lanes of `Chunk` (28 of `Streamer`, 8 of
+  `Seen`, `Far` and `Summary`) for writing in the table chunk of each entity an event came to, a copy of each
+  page a snapshot shared, and wrote two or three. Now a handler's row is read where it is and only a lane whose
+  bytes changed has its page made the table's own. Three runs each, alternating with the build before, medians;
+  the same world hash and bytes sent in every pair:
+
+  | | 8 bots | 8, `--near 12` | 32 bots | 8, one thread | 8, `--near 12`, one thread |
+  |---|---|---|---|---|---|
+  | Server, simulating, ms a second | 19.70 to 18.36 | 50.0 to 49.2 | 48.5 to 46.1 | 20.3 to 19.4 | 50.0 to 49.2 |
+  | ...hashing | 6.14 to 5.64 | 16.0 to 15.2 | 18.6 to 16.9 | 5.62 to 5.28 | 13.7 to 13.3 |
+  | ...repairs | 2.92 to 2.76 | 8.42 to 8.22 | 17.5 to 17.0 | 2.88 to 2.74 | 8.30 to 8.16 |
+  | Server update, median / p99, ms | 0.32 / 4.15 to 0.28 / 4.01 | 0.87 / 11.4 to 0.83 / 11.3 | 1.67 / 8.54 to 1.55 / 8.08 | 0.32 / 4.17 to 0.28 / 4.14 | 0.87 / 11.3 to 0.83 / 11.0 |
+  | Server, in all, ms a second | 35.3 to 32.9 | 87.4 to 85.2 | 108.8 to 102.9 | 35.0 to 33.3 | 84.7 to 82.9 |
+  | A client, simulating, ms a second | 4.49 to 3.86 | 10.6 to 9.7 | 6.59 to 5.76 | 2.36 to 1.90 | 6.79 to 6.10 |
+  | A client's update, median / p99, ms | 0.04 / 1.01 to 0.03 / 0.92 | 0.08 / 2.80 to 0.08 / 2.70 | 0.06 / 1.47 to 0.05 / 1.35 | 0.02 / 0.76 to 0.02 / 0.69 | 0.05 / 2.25 to 0.05 / 2.16 |
+  | A client, in all, ms a second | 6.34 to 5.53 | 15.6 to 14.4 | 9.41 to 8.33 | 4.11 to 3.49 | 11.3 to 10.4 |
+
+  The runs of a cell are within 1.5% of each other (19.54 to 19.86 and 18.26 to 18.46 for the first). A server's
+  p99 hardly moves: its long updates are the ticks a box of chunks is spawned in. A client simulates in six
+  sevenths of the time at the default view (four fifths on one thread), and the server's hashing is a twelfth
+  less: a page a handler took and didn't change was hashed again too.
+
+  Counted in a build that says `TIDE_PAGE_STATS` and `TIDE_INDEX_STATS` (bench/README.md; one run each, the
+  counts are the same every run), a frame's pages for the server, and for the eight clients (32 in the third
+  column) together:
+
+  | | 8 bots | 8, `--near 12` | 32 bots |
+  |---|---|---|---|
+  | Server: pages taken a frame (new, copied or written apart) | 130 to 63 | 174 to 101 | 210 to 100 |
+  | ...of them copies of a page a snapshot shares, and their bytes | 87 to 20, 368 to 211 KB | 101 to 29, 499 to 320 KB | 154 to 45, 791 to 464 KB |
+  | Clients: pages taken a frame | 954 to 347 | 1,268 to 590 | 3,416 to 1,255 |
+  | ...copies, and their bytes | 667 to 59, 1,051 to 370 KB | 788 to 110, 1,776 to 822 KB | 2,425 to 264, 4,371 to 1,745 KB |
+  | Server: loops' starts that took in what changed (of 52,764, 70,221 and 211,098) | 4,272 to 1,024 | 4,345 to 1,176 | 6,350 to 2,343 |
+  | ...table chunks compared in those | 8,934 to 1,606 | 10,569 to 2,049 | 26,112 to 4,310 |
+  | Clients: starts that took in what changed | 41,340 to 5,062 | 43,892 to 5,249 | 217,843 to 23,825 |
+  | ...table chunks compared | 41,574 to 5,296 | 70,388 to 19,762 | 219,683 to 25,665 |
+
+  The rows looked at, the indexes copied and the ones made whole are the same before and after (82,239 rows for
+  the server at the default view, 930,536 and 4,128 copies for the clients): what went is every start that
+  compared pages to find no row had changed, three in four of the server's and seven in eight of a client's. A
+  page copied and not changed also stayed in each of a client's ring of worlds until the ring came round; the
+  copies' bytes above are what a frame no longer adds to them. What the server still copies (20 pages a frame,
+  211 KB) is pages that did change: the grids' and lists' heap pages, the entity table's, a spawned row's lanes.
+  `bench_gallery` (its `Stroke` handler's C changed) and `bench_sand` (no C changed) are as they were, three
+  and five runs each the same way: gallery's server 2.23 to 2.22 ms a second in all and a client 3.34 to 3.36,
+  sand's 2.16 to 2.16 and 14.31 to 14.36. `versus_events`, which is nothing but handlers (200,000 events a tick
+  to 50,000 entities, a field written each), 9.83 to 9.62 ms a tick on one thread, and 9.93 to 9.63 with each
+  tick's world kept beside it.
 
 ### Tried and taken out
 
@@ -496,7 +545,7 @@ Three things make a tick cost what the world holds rather than what changed, fou
 
 1. ~~Inputs of every player, in every unacknowledged frame (section 5): 13 to 44 KB a second a player with real hands on the mice.~~ Cut the same day (section 5, the last paragraph of that bullet): 19.2 KB a second with 8 turning and standing, 10.6 flying; 32 are as they were (20.8 standing), each tick once, and a second copy of theirs is the owner's to weigh (netcode.md, Open).
 2. (Fixed, above: a repair walked the whole server's world for one player.) What a server's update is made of at 32 players now: simulating 77 ms a second, the rest 29, hashing 24, repairs 23.
-3. ~~Loops' indexes made again whole as chunks come and go, and for every copy of a client's world (above): a fifth of a server's and a client's simulating.~~ Fixed the same day (What was fixed, the bullet before the last): a server's simulating 28.1 to 19.6 ms a second at the default view and 78.9 to 50.5 at twice, a client's 7.9 to 4.4 and 26.7 to 10.5; 0.3 to 1 ms a second of it is left. What makes even that: a handler takes every lane of its component for writing (`notes/indexed-loops.md`, Gaps).
+3. ~~Loops' indexes made again whole as chunks come and go, and for every copy of a client's world (above): a fifth of a server's and a client's simulating.~~ Fixed the same day (What was fixed, the bullet on loops' indexes): a server's simulating 28.1 to 19.6 ms a second at the default view and 78.9 to 50.5 at twice, a client's 7.9 to 4.4 and 26.7 to 10.5; 0.3 to 1 ms a second of it was left, made by handlers taking every lane of their components for writing, which they no longer do (What was fixed, the last bullet: a server's simulating to 18.4 and 49.2, a client's to 3.9 and 9.7).
 4. A whole view at once: the store's 64 answers a tick and the repairs' stream gap put a client 41 to 70 ticks behind, past what it predicts at three times the view; and a lost part of a long repair sends the parts after it twice (section 5).
 5. The tick is one thread's work (section 3).
 6. A hosting player's frame of 9 to 60 ms when a box is asked for (section 4), not taken apart.
@@ -504,6 +553,7 @@ Three things make a tick cost what the world holds rather than what changed, fou
 
 ## Tests
 
+- `tidec_e2e_handler_lanes`, `tidec_e2e_handler_lanes_net` and `tidec_handler_lanes_codegen` (2026-11-16, later still; `notes/ecs.md`, top section): a handler takes for writing only the lanes it changed. After it, release, Windows, all passing with every pinned hash where it was: `bench_voxels`, `_forgets`, `_wide`, `_checked` and `_counts`, `voxels_walk`, `bench_gallery`, `bench_sand`, `bench_earth` (and `_split`, `_diverge`), `earth_tests`, `tide_tests`, the `tidec_e2e_visibility_*`, `_previous*`, `_fields`, `_rows`, `_indexed_loops*`, `_index_follow`, events', commands', tasks', `world_set*`, `world_edit` and prediction fixtures, and the tests of every other game whose generated C changed (Box2D's and Box3D's courses and shards, towers, sumo, duel, the safety fixtures): 172 tests. The 30 s runs of 8 bots, 8 at `--near 12` and 32, on 12 threads and on one, end on the hashes of the build before.
 - `tidec_e2e_index_follow` and `tide_tests index_followed_*` (2026-11-16, later; `notes/indexed-loops.md`, top two sections): loops' indexes that take in the rows that changed and copies of a world that keep its indexes, each indexed loop against a plain one beside it, with the build's own counts of how each index came to be right. After it: `bench_voxels`, `_forgets`, `_wide`, `_checked` and `_counts` with their pins where they were (quick, and 8 bots, 8 at `--near 12` and 32 for 30 s on 12 threads and on one, the same hashes as the build before), `voxels_walk`, `tidec_e2e_visibility_runs` (and `_checked`, `_memo_off`), `earth_tests`, `bench_earth` (and `_split`, `_diverge`), `bench_gallery`, `tidec_e2e_indexed_loops`, `tidec_e2e_previous` and their differentials: pass, release, Windows.
 - `tidec_e2e_visibility_repairs` (and `_checked`, `_memo_off`, `_wide`; 2026-11-16): repairs from the rows the checks wrote down against repairs from every row, for worlds 1 to 36 ticks old, through 240 ticks of changes picked at random, and which way each went (`notes/netcode.md`, top section). `bench_voxels_checked` works every such repair out both ways too: 8 bots, 32, and 8 at `--near 12` for 30 s pass, the hashes and bytes where they were.
 - `entity_orders_are_shared_with_copies_until_either_changes` (`tests/test_entity.c`, in `tide_tests`; At scale, What was fixed, 2026-11-16): a copied table has its source's orders, each side's changes its own. The two older order tests said a copy's order was another array; they say it's the same one now.

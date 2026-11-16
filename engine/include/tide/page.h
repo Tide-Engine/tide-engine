@@ -144,6 +144,14 @@ void tide_page_release(tide_page *p, uint32_t refs);
 // in the CPU's caches; else it's new.
 tide_page *tide_page_take(uint32_t size);
 
+#ifdef TIDE_PAGE_STATS
+// For measuring, in a build of everything that says TIDE_PAGE_STATS: since the program started, on every thread,
+// the pages taken (tide_page_take: a new page, a copy, or one written apart from a shared one) and their bytes,
+// then those of them that were copies of a page another holder shares (tide_page_copy, tide_page_own_copy_around)
+// and theirs. bench/bench.c prints them for the server and the clients.
+extern uint64_t tide_page_stats[4];
+#endif
+
 // Lets go of a page nothing refers to: it's kept for the next page of its
 // size, this thread's or another's, or freed when enough are kept.
 void tide_page_give(tide_page *p);

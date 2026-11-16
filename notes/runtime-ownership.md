@@ -1,3 +1,24 @@
+## A handler's put, and pages counted (2026-11-16, later)
+
+No new runtime function. A match or local handler's dispatch took every lane of a `mut` component with
+`tide_table_column_mut` before its code and stored through the pointers; it now reads them with
+`tide_table_column` and, after the code, calls `tide_table_column_mut` for a lane only where the row's bytes
+changed (notes/ecs.md, top section). A put of more than 16 lanes calls `tide_table_scatter` (tide/table.h,
+engine/src/table.c, agent-maintained with tests/test_table.c) a run of lanes, by the row's number in its table
+(`tide_loc.row`). What generated code leans on, as `tide_store_<C>` already did: `tide_table_scatter` leaves a
+lane whose bytes are the value's with its page and its kept hash, and makes the page of one that differs the
+table's own (a copy when another holder shares it) before the write: one that wrote without comparing would be
+right and would cost a page copy a lane again (`tidec_e2e_handler_lanes` and `tide_tests table_scatter` fail it).
+And of pages: a page's place in a table is another page only once a page others hold is written (or the table
+grows, is unpacked or freed, none of which a handler's code can do), and a page replaced is still its other
+holders' to read: a handler compares against the page it read the row from unless its code can have had the row
+written another way. A system written in C and the far-entity marks (`predict_far_codegen.inc`) still take whole
+lanes with `tide_table_column_mut`.
+
+`TIDE_PAGE_STATS` (a define for a measuring build, nothing in an ordinary one): `tide_page_stats[4]` in page.c,
+declared in tide/page.h, counts pages taken and pages copied from a shared one with their bytes
+(`tide_page_take`, `tide_page_copy`, `tide_page_own_copy_around`); bench/bench.c prints them for each side.
+
 ## Worker priorities (2026-11-15)
 
 Within the worker maintenance exception (Local worker runtime, Worker admission, below): `tide/worker.h` gained

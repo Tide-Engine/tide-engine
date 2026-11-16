@@ -29,6 +29,45 @@ static void out_of_memory(void)
     exit(1);
 }
 
+// In a build of everything that says TIDE_PAGE_STATS (tide/page.h): the pages the server's updates took, and the
+// clients', a frame: what a tick's writes cost beside the snapshots that share its pages. With TIDE_INDEX_STATS
+// too (the game's own counts of its loops' indexes, index_codegen.inc), those for each side as well.
+#ifdef TIDE_PAGE_STATS
+#ifdef TIDE_INDEX_STATS
+extern uint64_t tide_index_stats[7];
+#define PAGE_STATS 11
+#else
+#define PAGE_STATS 4
+#endif
+static uint64_t page_stats_of[2][PAGE_STATS], page_stats_from[PAGE_STATS], page_stats_frames;
+
+static uint64_t page_stat(const int k)
+{
+#ifdef TIDE_INDEX_STATS
+    if (k >= 4) return __atomic_load_n(&tide_index_stats[k - 4], __ATOMIC_RELAXED);
+#endif
+    return __atomic_load_n(&tide_page_stats[k], __ATOMIC_RELAXED);
+}
+
+static void page_stats_mark(void)
+{
+    for (int k = 0; k < PAGE_STATS; k++) page_stats_from[k] = page_stat(k);
+}
+
+static void page_stats_add(const int who)
+{
+    for (int k = 0; k < PAGE_STATS; k++) {
+        const uint64_t now = page_stat(k);
+        page_stats_of[who][k] += now - page_stats_from[k];
+        page_stats_from[k] = now;
+    }
+    if (!who) page_stats_frames++;
+}
+#else
+#define page_stats_mark() ((void)0)
+#define page_stats_add(who) ((void)0)
+#endif
+
 // Wall-clock times, in milliseconds, to take percentiles of.
 typedef struct samples {
     float *ms;
@@ -1048,6 +1087,20 @@ static void print_results(const results *r, const uint32_t bots, const bool held
     print_bytes("  the world: ", (double)r->sent_size);
     print_bytes(" as sent, ", (double)r->size);
     printf(" in memory\n");
+#ifdef TIDE_PAGE_STATS
+    for (int who = 0; who < 2; who++) {
+        const uint64_t *n = page_stats_of[who];
+        const double frames = page_stats_frames ? (double)page_stats_frames : 1.0;
+        printf("  pages %s took in their updates: %.1f a frame (%.1f KB), of them copies of a shared page %.1f (%.1f KB)\n",
+               who ? "the clients" : "the server", (double)n[0] / frames, (double)n[1] / frames / 1e3, (double)n[2] / frames,
+               (double)n[3] / frames / 1e3);
+#ifdef TIDE_INDEX_STATS
+        printf("  ...loops' indexes: %llu starts found theirs as it was, %llu took in what changed (%llu table chunks compared, "
+               "%llu rows looked at), %llu made whole, %llu copied\n", (unsigned long long)n[4], (unsigned long long)n[5],
+               (unsigned long long)n[7], (unsigned long long)n[9], (unsigned long long)n[6], (unsigned long long)n[10]);
+#endif
+    }
+#endif
 }
 
 static void print_verdict(const results *r, const uint64_t expect)
@@ -1534,6 +1587,7 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
         bool joining = false; // Somebody is, as this frame starts
         for (uint32_t i = 0; i < bots; i++) joining |= bots_machines[i].caught_up == 0.0 && !bots_machines[i].failed;
 
+        page_stats_mark();
         for (uint32_t i = 0; i < bots; i++) {
             machine *m = &bots_machines[i];
             if (m->failed) continue;
@@ -1543,6 +1597,7 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
             else tide_client_update(m->client, now);
             if (m->connected > 0.0) add_sample(joining ? &m->joining : &m->steady, since(t));
         }
+        page_stats_add(1);
         for (uint32_t i = 0; i < host_room; i++) {
             machine *h = hosts[i];
             if (!h || !h->server) continue;
@@ -1553,6 +1608,7 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
             add_sample(joining ? &h->joining : &h->steady, ms);
             h->busy = ms / (FRAME * 1e3);
         }
+        page_stats_add(0);
         if (shards) {
             current = &orchestra;
             const uint64_t t = tide_time_now_ns();

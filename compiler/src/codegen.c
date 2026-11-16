@@ -242,6 +242,8 @@ typedef struct gen {
     bool entity_run_made;  // tide_entity_run is defined
     bool view_frame_made;  // tide_view_frame is declared: what a view makes its queries' rows from, when it first reaches them
     bool lanes_in;         // In a loop over a chunk's rows: the lanes it changes are read as tide_in_<Component> (gen_chunk)
+    bool row_single;       // In a handler's dispatch (gen_dispatch_handlers): its one row, tide_loc.row of archetype row_single_arch
+    int row_single_arch;
     const char *row_born;  // What the entity a row's local fields are made for was born as, as C; NULL: the view's world says
     const char *row_queries; // Before the view being generated first runs for an entity: its queries' rows, made once (gen_query_fill)
     const char *view_rows;   // In a sharded game, the world a view's loop takes rows of (tide_view_hides)
@@ -18161,8 +18163,9 @@ static void gen_lanes_places(gen *g, const decl *sys, const int a, const char *p
 // The lanes of the chunk's components a system reads or changes, as
 // tide_col_<Component>. The ones a loop over the chunk's rows changes
 // (`staged`) go through tide_table_lanes_begin, so a page its snapshots share
-// is only copied if a row changed (gen_chunk_lanes_end); a handler, which
-// changes one row, writes its pages as the table's own.
+// is only copied if a row changed (gen_chunk_lanes_end). A handler, which
+// changes one row, takes none for writing here: it reads them where they are,
+// and puts back the lanes that came out other than they were (gen_row_puts).
 static void gen_chunk_columns(gen *g, const decl *sys, const int a, const char *pad, const bool read_only, const bool staged,
                               const char *apart)
 {
@@ -18201,10 +18204,13 @@ static void gen_chunk_columns(gen *g, const decl *sys, const int a, const char *
                       arch_column(g, a, c), comp_lanes(d), apart, comp, comp);
             continue;
         }
-        sb_printf(o, "%s%suint8_t *const tide_col_%s[%d] = {", pad, change ? "" : "const ", comp, comp_lanes(d));
+        // Taken for writing only by a loop that writes its rows where they are (a view's, or one that reads its own
+        // writes through its World): whoever takes a page a snapshot shares copies it, written or not
+        const bool taken = change && !g->row_single;
+        sb_printf(o, "%s%suint8_t *const tide_col_%s[%d] = {", pad, taken ? "" : "const ", comp, comp_lanes(d));
         for (int k = 0; k < comp_lanes(d); k++) {
-            sb_printf(o, "%s(%suint8_t *)tide_table_column%s(tide_t, %s, tide_c, %d)", k ? ", " : "", change ? "" : "const ",
-                      change ? "_mut" : "", columns, arch_column(g, a, c) + k);
+            sb_printf(o, "%s(%suint8_t *)tide_table_column%s(tide_t, %s, tide_c, %d)", k ? ", " : "", taken ? "" : "const ",
+                      taken ? "_mut" : "", columns, arch_column(g, a, c) + k);
         }
         sb_put(o, "};\n");
     }
@@ -18539,6 +18545,8 @@ static void gen_row_field_puts(gen *g, const decl *sys, const char *pad)
     }
 }
 
+#define HANDLER_PUTS_INLINE 16 // Lanes a handler's dispatch compares and writes in line (gen_row_puts); past that, a call a run
+
 static void gen_row_puts(gen *g, const decl *sys, const char *pad, const bool read_only)
 {
     // Local fields a view wrote for an entity that had none: a row of its own
@@ -18559,6 +18567,48 @@ static void gen_row_puts(gen *g, const decl *sys, const char *pad, const bool re
                 if (v->hidden) sb_printf(&g->c, "%stide_v%d.%.*s = tide_preparation_was%d.%.*s;\n", pad, i,
                                         v->name.len, v->name.ptr, i, v->name.len, v->name.ptr);
             }
+        }
+        if (g->row_single) {
+            // A handler's one row: of the lanes its code can write (written_runs), those whose bytes are no longer
+            // the table's are written, each page made the table's own as it is. So a lane that came out as it was
+            // keeps its page, shared with the snapshots that have it and hashed as it was, whether the code could
+            // have written it or not. A few lanes are compared and written in line, as an event sent to every
+            // entity each tick is a put each; more go through tide_table_scatter, which does the same a run of
+            // lanes a call.
+            //
+            // What a lane is compared with is the table's bytes as they are after the code ran. Where nothing
+            // but this put can have written the component's lanes meanwhile, that's the page the row was read
+            // from (tide_col_<Component>, no page looked up again: a page's place in the table changes only when
+            // a page others share is written). Where something can (a task the code started puts the row back
+            // itself, C might Set through a world it holds, preparation state is put back whole), the page is
+            // asked for again: the old one would still be there to read, the snapshot's, with the bytes from
+            // before. (A Set or an Edit of the component by the code itself is tide_store_<Component>, above.)
+            const decl *d = p->type.decl;
+            const int a = g->row_single_arch, width = comp_width(d);
+            const bool again = sys->starts_tasks || sys->reaches_extern || d->has_preparation_state;
+            lane_run runs[LANE_MASK_MOST];
+            const int n = written_runs(g, sys, d->index, runs);
+            int put = 0;
+            for (int r = 0; r < n; r++) put += runs[r].count;
+            for (int r = 0; r < n; r++) {
+                const int column = arch_column(g, a, d->index) + runs[r].first;
+                if (put > HANDLER_PUTS_INLINE) {
+                    sb_printf(&g->c, "%stide_table_scatter(tide_t, %s, tide_loc.row, %d, %du, %du, (const uint8_t *)&tide_v%d + %d);\n",
+                              pad, arch_columns(g, a), column, runs[r].count, width, i, runs[r].first * width);
+                    continue;
+                }
+                for (int k = 0; k < runs[r].count; k++) {
+                    sb value = {0}, at = {0}, now = {0};
+                    sb_printf(&value, "(const uint8_t *)&tide_v%d + %d", i, (runs[r].first + k) * width);
+                    sb_printf(&at, "tide_table_column_mut(tide_t, %s, tide_c, %d) + (size_t)tide_i * %d", arch_columns(g, a), column + k,
+                              width);
+                    if (again) sb_printf(&now, "(const uint8_t *)tide_table_column(tide_t, %s, tide_c, %d)", arch_columns(g, a), column + k);
+                    else sb_printf(&now, "tide_col_%s[%d]", type_cname(d), runs[r].first + k);
+                    sb_printf(&g->c, "%sif (memcmp(%s + (size_t)tide_i * %d, %s, %d) != 0) memcpy((uint8_t *)%s, %s, %d);\n", pad,
+                              now.data, width, value.data, width, at.data, value.data, width);
+                }
+            }
+            continue;
         }
         if (lanes_partial(g, sys, p->type.decl->index)) {
             const lane_mask mask = written_lanes(g, sys, p->type.decl->index);
@@ -18754,6 +18804,8 @@ static void gen_dispatch_handlers(gen *g, const decl *event, const bool local)
             sb_printf(o, "        tide_table *tide_t = &%s->%s;\n", world, arch_name(g, a));
             sb_printf(o, "        const uint32_t tide_c = tide_loc.row >> %d;\n", shift);
             sb_printf(o, "        const uint32_t tide_i = tide_loc.row & %du;\n", (1 << shift) - 1);
+            g->row_single = true;
+            g->row_single_arch = a;
             gen_chunk_columns(g, h, a, "        ", false, false, NULL);
             gen_row_columns(g, h, a, "        ");
             gen_row_filter(g, h, a, "        ", "break");
@@ -18762,6 +18814,7 @@ static void gen_dispatch_handlers(gen *g, const decl *event, const bool local)
             gen_system_args(g, h, a);
             sb_printf(o, ");%s\n", clear);
             gen_row_puts(g, h, "        ", false);
+            g->row_single = false;
             sb_put(o, "        break;\n    }\n");
         }
         sb_put(o, "    default: break;\n    }\n");
