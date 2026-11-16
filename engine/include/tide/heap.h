@@ -75,9 +75,11 @@ static inline uint64_t tide_block_link(const uint32_t size_class, const uint64_t
 // place, else a new place at the end; a block of several places takes the
 // lowest run of free places that holds it. A page whose last block is freed
 // makes its place free again, for any class, and free places at the end are
-// no longer the heap's. So what's handed out stays together at the heap's
-// start, and a heap that held much and holds little is small again: in
-// memory (a free place has no page), in its hash and in its bytes.
+// no longer the heap's; a page whose last-made block is freed is in use only
+// as far as the blocks before it. So what's handed out stays together at the
+// heap's start, and a heap that held much and holds little is small again: in
+// memory (a free place has no page), in its hash and in its bytes, which have
+// a free block as its number alone.
 //
 // tide_heap_place is what's at each place, and with `pages` and `pending` it's
 // all of the heap's state outside its pages: hashed, packed and sent as it is.
@@ -91,10 +93,12 @@ static inline uint64_t tide_block_link(const uint32_t size_class, const uint64_t
 typedef struct tide_heap_place {
     uint8_t kind;
     uint8_t shift; // A block's own page: 1 << this places
-    uint16_t made; // A class's page: the blocks of it handed out so far from its start, in order
+    uint16_t made; // A class's page: the blocks of it made from its start, in order, as far as one is still in use
     uint16_t free; // ...the last of them freed, as 1 + its number in the page (each links the one before); 0: none
     uint16_t out;  // ...and how many of them are handed out
 } tide_heap_place;
+// Hashed and packed as its bytes: no padding
+_Static_assert(sizeof(tide_heap_place) == 8, "a place is 8 bytes");
 
 typedef struct tide_heap {
     uint64_t pending;                 // Blocks released while code runs, freed when it's done

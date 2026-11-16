@@ -6,7 +6,24 @@ again at the next load; NULL for every provider's; `tide_platform_io_init` calls
 `tide_storage_loads` (counts, for tests and the bench). A provider's `list` is now also called by a load, once, from
 the thread that carries requests out.
 
+## A heap's places (2026-11-16, night, later)
+
+`engine/src/heap.c`, `tide/heap.h` (notes/ecs.md, top section), under the heap maintenance. No runtime function
+generated code calls changed its contract, but `tide_heap` did: `used`, `free` (and the next section's `live`,
+`stub`, `gone`, `idle`) are gone; `place` (what's at each place), `index`, `low`, `taken`, `most` and `dropped` are
+new, and `pages` counts places with place 0, 0 for an empty heap. A heap's first block is at 16 KiB (place 1).
+Generated code changed with it: `tide_client_page_hash` and `tide_client_page_block` (client_state_codegen.inc)
+take a page's bytes in use from the new inline `tide_heap_page_used` where they worked it out from `used`, and
+`tide_cached_pages` (cached_codegen.inc) mixes in the place count and each free place where it read `used` and gave
+up at a NULL page. Also new: `tide_heap_has` (inline, bytes from an offset in a page the heap has now) and
+`tide_heap_handed_out` (asset_store.c's lease check). A heap's packed bytes, its delta, its hash and every world hash
+are another format: no world from before reads into this build. If the owner takes heap.c over: generated code relies
+on `tide_heap_page_used` being what a page's kept hash covers, on a free place's table entry being NULL, and on a
+page in the table staying allocated while a system that may read the heap runs (`dropped`).
+
 ## A heap's pages given back (2026-11-16, night)
+
+Replaced by the section above (its four fields are gone).
 
 `engine/src/heap.c`, `tide/heap.h` (notes/ecs.md, top section). No generated code changed and no runtime function it
 calls changed its contract: `tide_heaps_settle`, which `apply_commands` already called after a tick's changes and

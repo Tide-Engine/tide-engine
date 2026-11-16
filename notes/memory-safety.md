@@ -9,7 +9,46 @@ it), so it's said only of a path whose number isn't there after a whole listing 
 every save since added after its write: never from a listing another thread is still making, nor one forgotten
 meanwhile.
 
+## A heap's places, and what reads them from bytes (2026-11-16, night, later)
+
+A heap's blocks go in the lowest places with room, a page for each size, and a place's page goes with its last
+block (notes/ecs.md, top section), so a place in the table can be NULL wherever a page went, and what's at each
+place now comes as bytes. What keeps that safe:
+
+- **Only a block that's handed out is read through a handle**, and a page goes only once none of its blocks is out
+  (`out` counts a block released and not yet flushed, which stays readable until its code's flush, as before).
+- **Pages go only where no thread can be reading them**: one a snapshot shares is let go of (the snapshot keeps it);
+  one that was the heap's alone goes on `dropped` and is let go of at `tide_heap_settle`, as another thread may hold
+  it from the table a moment ago (a cached function's key reads every page of a heap while another system changes
+  it). Taken again before then, it's zeroed first.
+- **What's at the places is checked whole before anything else is read** (`places_hold`): place 0 none's and the last
+  in use, every kind known, a class's page's counts within it (made no more than a page holds, out from 1 to made, a
+  free list exactly when not all are out), a block's own page's places all there and inside the heap, nothing else.
+  Memory taken is bounded by the bytes: 8 a place, and a page made only once its packed bytes are known to be there.
+- **A page's free blocks from bytes**: in a packed heap, as their numbers, each checked below what the page made,
+  never twice, the first the place's own, and the links made from them; in a delta, as the page's bytes, walked for
+  exactly as many as aren't out, each marked as free (`FREE_MARK`) and of the page's class, the last linking none
+  (`chains_hold`): so a list never goes round and a block handed out of it is in its page. The blocks waiting to be
+  freed are walked, at most as many as there are blocks, each where a block starts and not marked free.
+- **Freeing takes nothing it can't check**: `free_block` frees only where a block starts (a class's page, below what
+  it made, a block's own page's first byte) with blocks out; `tide_heap_release` ignores an offset in no page the
+  heap has now (`tide_heap_has`) or a block marked free; a flush stops at a pending block that isn't where a block
+  starts. So a handle from bytes that names a free place, a freed block or the middle of one can't free a page
+  under a block that's out, nor link a block twice. A handle from bytes that names the start of a block that's out
+  is trusted as far as it was (its owner's text is whatever is there).
+- **Code that looks a page up by any offset** asks `tide_heap_has` first (`mesh.c`'s `span`, `list_data_page`,
+  `list_readable`, where the last read a kept handle's block without checking its page was there), and generated
+  `tide_client_place_page` and `tide_cached_pages` take NULL for a free place.
+- **A run's thread copying another run's page** copies it whole (`write_shared_in_runs`), reading nothing of the
+  places that run's thread changes meanwhile.
+
+`tests/test_heap.c`'s `heap_bytes_that_arent_a_heap_are_refused` (23 spoilt forms, every cut, 3,000 bits flipped in a
+packed heap and 3,000 in a delta, each refused or a heap that blocks then come and go in) and the random test against
+the policy, under ASan (the `sanitize` preset's `tide_tests heap`, with `list`, `grid`, `text`, `snapshot`, `pack`, `delta`, `asset`, `map`, `session`: all pass).
+
 ## A heap's pages given back (2026-11-16, night)
+
+Replaced later the same night by the section above. As it was:
 
 A heap lets go of the pages whose blocks are all free and keeps what makes each again (notes/ecs.md, top section), so
 a place in its page table can be NULL. What keeps that from being read:
