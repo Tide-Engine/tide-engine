@@ -134,6 +134,40 @@ are provisional, within that approved work:
   configurations actually used on the second run. The web prewarm test passes with both checks retained.
 
 
+## The shader step measured again: NVIDIA's own cache folder was full (2026-11-16)
+
+Owner: "i have a suspicion that shader compilation stage is slower than it should be". Measured, nothing built.
+Setup (scratch, not kept): Mount & Rifle's sources through `tide_add_game` in a debug tree with a host that only
+calls `tide_platform_prewarm` over `tide_game_shaders` in a hidden window with background pipelines on, a copy of
+the owner's `pipelines.keys` (136 keys) put back before each run (a run that draws nothing ages them), and
+`make_work` timing each `vkCreate*Pipelines`. RTX 4080 SUPER, 24 threads, 11 making pipelines. Today's game: 139
+shaders, 267 pipelines of 208 modules.
+
+| Run | Step | Driver time in the calls |
+|---|---|---|
+| Nothing cached anywhere (`__GL_SHADER_DISK_CACHE_PATH` an empty folder, no `pipelines.vulkan`) | 4.8 s | 44 s on 11 threads; 30 s one at a time (30.2 s step) |
+| Warm, the driver's cache in a folder with room | 0.05 s | 0.15 s |
+| Warm, the driver's default folder (this machine's) | 0.77 s | 7.8 s on 11 threads; 0.71-0.78 s one at a time |
+| Warm, the driver's cache off (`__GL_SHADER_DISK_CACHE=0`), `pipelines.vulkan` alone | 0.78-0.93 s | 8.2-9.7 s |
+
+- **`%LOCALAPPDATA%\NVIDIA\GLCache` is at its 1024 MB limit and takes nothing new.** The driver keeps a file per
+  program there; the probe's stayed at 113 KB over every run, where the same run with the folder elsewhere wrote
+  21 MB. Its oldest files are from 2026-10-20: nothing is put out to make room. The third and fourth rows are the
+  same: with the folder full the driver's cache answers nothing, and `pipelines.vulkan` is all that does.
+- **`pipelines.vulkan` alone is the slow kind of hit**: about 3 ms a pipeline, and one at a time whatever the
+  threads (eleven threads take eleven times the thread time for the same wall time). The driver's own cache is
+  fifteen times faster. So our file doesn't stand in for the driver's.
+- **Every graphics pipeline is in the cache now** (251 of 251 by `FAIL_ON_PIPELINE_COMPILE_REQUIRED`); the 216 that
+  never were on 2026-11-10 (below) are gone. Not explained; a full driver folder that day is a guess.
+- Cold, threads still help (30 s of work in 4.8 s), and one shader is a tenth of it: `LandVert and GroundLit`,
+  65,585 words, 1.8-2.7 s.
+
+Not measured: the owner's own `game.exe` in a window (its file in the driver's folder is 147 MB and was written
+today, so it may still be answered from there; a build whose shaders changed since can't add to it). For the owner:
+emptying that folder or raising NVIDIA's shader cache size fixes this machine; whether the engine should give the
+driver a folder of the game's own (`__GL_SHADER_DISK_CACHE_PATH`, set before Vulkan loads: NVIDIA's alone, and a
+folder that's emptied when `pipelines.vulkan` starts over) is the owner's to decide.
+
 ## Why a warm shader step still takes 5 s on Mount & Rifle, and keys that age (2026-11-10)
 
 Owner: "5s vs 7.7s for cached shaders still seems high no?" Measured with the hidden-loader setup of the entry
