@@ -152,7 +152,7 @@ static inline bool tide_table_lanes_shared(const tide_table *t, const tide_colum
                                            const uint32_t lanes)
 {
     for (uint32_t k = 0; k < lanes; k++) {
-        if (t->pages[chunk * c->count + first + k]->refs != 1u) return true;
+        if (tide_page_refs(t->pages[chunk * c->count + first + k]) != 1u) return true;
     }
     return false;
 }
@@ -180,7 +180,7 @@ static inline void tide_table_lanes_begin(tide_table *t, const tide_columns *c, 
 {
     for (uint32_t k = 0; k < lanes; k++) {
         tide_page *p = t->pages[chunk * c->count + first + k];
-        if (!apart && p->refs == 1u) { // This table's alone: in place, and what it hashed to is out of date
+        if (!apart && tide_page_refs(p) == 1u) { // This table's alone: in place, and what it hashed to is out of date
             tide_page_dirty(p);
             in[k] = out[k] = tide_page_data(p);
             continue;
@@ -204,8 +204,7 @@ static inline __attribute__((noinline)) void tide_table_lane_end_apart(tide_tabl
     memset(out + bytes, 0, own->size - bytes); // Past its rows a page is zeros, and this one was whatever it was
     tide_page *was = *p;
     *p = own;
-    if (was->refs == 1u) tide_page_give(was); // The table's alone, as when it wrote apart from a page of its own
-    else was->refs--;
+    tide_page_release(was, 1); // Given where the table's alone, as when it wrote apart from a page of its own
 }
 
 static inline void tide_table_lanes_end(tide_table *t, const tide_columns *c, const uint32_t chunk, const uint32_t first,
@@ -246,7 +245,7 @@ static inline void *tide_table_column_mut(tide_table *t, const tide_columns *c, 
 {
     tide_page **p = &t->pages[chunk * c->count + column];
     tide_page *page = *p;
-    if (__builtin_expect(page->refs == 1u, 1)) { // This table's alone, as tide_page_own leaves it, with nothing written back
+    if (__builtin_expect(tide_page_refs(page) == 1u, 1)) { // This table's alone, as tide_page_own leaves it, with nothing written back
         tide_page_dirty(page);
         return tide_page_data(page);
     }

@@ -25,7 +25,8 @@
 // hashed.
 //
 // Pages hold plain data, with no pointers, and the world and its snapshots
-// are used from one thread at a time.
+// are used from one thread at a time, but for their references (below), which
+// one world's being let go of on another thread may change meanwhile.
 
 typedef struct tide_page {
     uint32_t refs;   // References to it: one from each world or snapshot that has it, or more (see tide_heap)
@@ -216,9 +217,23 @@ static inline void *tide_page_data(const tide_page *p)
     return (void *)(uintptr_t)(p + 1);
 }
 
+// A page's references are counted atomically: a world can be let go of on another thread (a server's kept tick's,
+// on the pool's background threads) while the worlds sharing its pages are copied, written and let go of. Whoever
+// sees as many references as it holds has the page alone, and nobody else can change that until it shares it again.
+static inline uint32_t tide_page_refs(const tide_page *p)
+{
+    return __atomic_load_n(&p->refs, __ATOMIC_ACQUIRE);
+}
+
 static inline void tide_page_retain(tide_page *p)
 {
-    p->refs++;
+    __atomic_add_fetch(&p->refs, 1u, __ATOMIC_RELAXED);
+}
+
+// `refs` more references to it, as a world or a delta shares it.
+static inline void tide_page_retain_more(tide_page *p, const uint32_t refs)
+{
+    __atomic_add_fetch(&p->refs, refs, __ATOMIC_RELAXED);
 }
 
 // Lets go of `refs` references; the last one lets go of the page
@@ -261,7 +276,7 @@ tide_page *tide_page_own_copy_around(tide_page *p, uint32_t mine, uint32_t keep,
 // it may be written (tide_page_dirty).
 static inline tide_page *tide_page_own(tide_page *p, const uint32_t mine, const uint32_t keep)
 {
-    tide_page *own = p->refs != mine ? tide_page_own_copy(p, mine, keep) : p;
+    tide_page *own = tide_page_refs(p) != mine ? tide_page_own_copy(p, mine, keep) : p;
     tide_page_dirty(own);
     return own;
 }
@@ -271,7 +286,7 @@ static inline tide_page *tide_page_own(tide_page *p, const uint32_t mine, const 
 static inline tide_page *tide_page_own_for(tide_page *p, const uint32_t mine, const uint32_t keep, const uint32_t from,
                                            const uint32_t bytes)
 {
-    tide_page *own = p->refs != mine ? tide_page_own_copy(p, mine, keep) : p;
+    tide_page *own = tide_page_refs(p) != mine ? tide_page_own_copy(p, mine, keep) : p;
     tide_page_wrote(own, from, bytes);
     return own;
 }

@@ -1132,6 +1132,10 @@ struct tide_server {
     // still to start wait for the next update
     uint64_t repair_work;
     struct repair_start *repair_starts; // The repairs an update starts (a player's room each), or NULL before the first
+    // A kept tick's world the ring let go of, being let go of on the pool's threads (let_go): a pass over every page
+    // it has, which goes on beside what follows the tick. NULL: none
+    void *letting_go;
+    tide_background letting;
     bool started;
     bool ended; // The match ran out of scenes (tide_game.ended): no more ticks
     bool closed; // Takes no one new, but the players on this machine (tide_session_close)
@@ -3470,6 +3474,47 @@ static void tick_run(tide_server *s, ticking *t)
     t->hash = hash_of(g, s->world, t->jobs);
 }
 
+static void let_go_job(void *context)
+{
+    tide_server *s = context;
+    free_world(s->game, s->letting_go);
+    free(s->letting_go);
+}
+
+// Waits for the kept world being let go of on the pool's threads, helping, if one is.
+static void let_go_settle(tide_server *s)
+{
+    if (!s->letting_go) return;
+    const tide_jobs *jobs = s->desc.jobs;
+    while (!__atomic_load_n(&s->letting.done, __ATOMIC_ACQUIRE)) {
+        if (!jobs->help(jobs->self, true)) tide_yield();
+    }
+    s->letting_go = NULL;
+}
+
+// Lets go of a kept tick's world the ring no longer holds (and its memory): on the pool's background threads where
+// it has two or more, as it's a pass over every page the world has (a world of 80,000 chunks, 2 ms), and nothing
+// waits for it but the next one, a hot reload and the server's end. It shares its pages with the server's world and
+// the kept worlds after it, which the tick, the players' checks and their repairs read, copy and write meanwhile:
+// pages' references are counted atomically (tide/page.h), and what the world has alone is nobody else's. Its address
+// isn't another world's until it's freed, so nothing kept by address (the projections' memos, frozen worlds' hashes)
+// is taken for it.
+static void let_go(tide_server *s, void *world)
+{
+    if (!world) return;
+    let_go_settle(s);
+    const tide_jobs *jobs = s->desc.jobs;
+    if (!jobs || !jobs->background || !jobs->help || jobs->threads < 2u) {
+        free_world(s->game, world);
+        free(world);
+        return;
+    }
+    // (A helper, as a repair's packing is: before the pool's other work, and what a thread waiting for one runs)
+    s->letting_go = world;
+    s->letting = (tide_background){.work = let_go_job, .context = s, .helper = true};
+    jobs->background(jobs->self, &s->letting);
+}
+
 static void tick_end(tide_server *s, ticking *t)
 {
     const tide_game *g = s->game;
@@ -3511,9 +3556,8 @@ static void tick_end(tide_server *s, ticking *t)
     }
     memcpy(data, s->frame, w.size);
     if (f->data) keep_verified(s, f->tick, f->world);
-    free_world(g, f->world);
-    free(f->world);
-    *f = (stored_frame){.tick = tick, .size = w.size, .data = data, .world = before};
+    let_go(s, f->world);
+    *f =(stored_frame){.tick = tick, .size = w.size, .data = data, .world = before};
     // Nothing changes a kept tick's world (server_world_at) until it's let go of: what it hashes to is worked out
     // once, for every repair of a player who confirmed it
     if (before && g->freeze_world) g->freeze_world(before);
@@ -4309,6 +4353,7 @@ void tide_server_destroy(tide_server *s)
 {
     if (!s) return;
     land(s);
+    let_go_settle(s);
     free(s->repair_starts);
     free(s->flight);
     tide_profile_free(&s->flight_profile);
@@ -8998,6 +9043,7 @@ static bool prepare_server(const tide_server *s, const tide_game *g, const tide_
 // last ones stand for them until new ones arrive.
 static void commit_server(tide_server *s, const tide_game *g, server_migration *m)
 {
+    let_go_settle(s); // The old build's code lets it go
     for (uint32_t i = 0; i < s->w.history; i++) {
         free_world(s->game, s->frames[i].world);
         free(s->frames[i].world);

@@ -1,5 +1,15 @@
 # ECS and simulation state
 
+## A page's references are counted atomically (2026-11-17)
+
+A world can be let go of on another thread while the worlds sharing its pages are copied, written and let go of
+(a server's kept tick's world, netcode.md, top section). `tide_page.refs` is read through `tide_page_refs` and changed
+through `tide_page_retain`, `tide_page_retain_more` and `tide_page_release`, all atomic; the copies that own a shared
+page let go of the source's references through `tide_page_release`, which gives it back where the other holder let
+go meanwhile. Whoever sees as many references as it holds has the page alone. A resident's table of pages and a heap's
+asset origins count theirs atomically too. The contract and who relies on it: runtime-ownership.md, top section. No
+byte of a world changed. Test: `page_references_hold_while_another_thread_lets_snapshots_go` (`tests/test_page.c`).
+
 ## A page says where it was written (2026-11-17)
 
 Every page (`tide/page.h`, Lines written) keeps the lines of it (64 to a page) written since its hash was made, and

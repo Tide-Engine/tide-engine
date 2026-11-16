@@ -71,7 +71,7 @@ static uint8_t *lane_write(tide_rows *rows, const char *function, const tide_row
 {
     tide_page **p = page_of(rows, c, lane);
     tide_page *page = *p;
-    if (page->refs == 1u) {
+    if (tide_page_refs(page) == 1u) {
         if (page->hashed != UINT32_MAX) page->hashed = UINT32_MAX; // What it hashed to is out of date
         return (uint8_t *)tide_page_data(page) + (size_t)rows->first * width;
     }

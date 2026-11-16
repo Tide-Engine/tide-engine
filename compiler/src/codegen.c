@@ -15474,13 +15474,17 @@ static void gen_hear(gen *g)
                       "        r->born = tide_entity_born(&w->entities, target);\n"
                       "        r->tick = (uint32_t)w->Time.tick;\n    }\n");
         }
+        // Who sees it, worked out once (each player's walk to its groups was most of an entity's destruction in
+        // a server of a hundred players)
         if (journals_clients(prog)) sb_put(o, "    if (!tide_client_listening) return;\n"
+                  "    const tide_visibility_seers seers = tide_visibility_seers_of(w, target);\n"
+                  "    const uint32_t born = tide_entity_born(&w->entities, target);\n"
                   "    for (uint32_t player = 0; player < TIDE_GAME_PLAYERS; player++) {\n"
-                  "        if (!tide_visibility_entity(w, target, tide_player_from_index(player))) continue;\n"
+                  "        if (!tide_visibility_seer(&seers, tide_player_from_index(player))) continue;\n"
                   "        r = tide_event_log_push(&tide_client_listening[player], sizeof *r, TIDE_HEARD_BUILD);\n"
                   "        r->event = TIDE_HEARD_DESTROYED_CAUSE;\n"
                   "        r->target = target;\n"
-                  "        r->born = tide_entity_born(&w->entities, target);\n"
+                  "        r->born = born;\n"
                   "        r->tick = (uint32_t)w->Time.tick;\n"
                   "    }\n");
         sb_put(o, "}\n\n");
@@ -15511,8 +15515,9 @@ static void gen_hear(gen *g)
                       "        tide_event_log *const logs = tide_client_listening;\n"
                       "        tide_event_log *const saved = tide_listening;\n"
                       "        tide_client_listening = NULL;\n"
+                      "        const tide_visibility_seers seers = tide_visibility_seers_of(w, target); // (Nothing below changes it)\n"
                       "        for (uint32_t player = 0; player < TIDE_GAME_PLAYERS; player++) {\n"
-                      "            if (!tide_visibility_entity(w, target, tide_player_from_index(player))) continue;\n"
+                      "            if (!tide_visibility_seer(&seers, tide_player_from_index(player))) continue;\n"
                       "            tide_client_recipient = (int32_t)player;\n"
                       "            tide_listening = &logs[player];\n");
             if (g->heard_rows.count) {
@@ -23375,9 +23380,9 @@ static void gen_system_cached_task(gen *g, const decl *sys, const rows_set *rows
                     const lane_mask mask = written_lanes(g, sys, c);
                     sb_put(o, "                if (");
                     lane_test_c(o, &mask, lanes, "tide_lane");
-                    sb_printf(o, " && tide_pages_%s[tide_lane]->refs != 1u) goto tide_fallback;\n", comp);
+                    sb_printf(o, " && tide_page_refs(tide_pages_%s[tide_lane]) != 1u) goto tide_fallback;\n", comp);
                 } else {
-                    sb_printf(o, "                if (tide_pages_%s[tide_lane]->refs != 1u) goto tide_fallback;\n", comp);
+                    sb_printf(o, "                if (tide_page_refs(tide_pages_%s[tide_lane]) != 1u) goto tide_fallback;\n", comp);
                 }
             }
             for (int c = 0; c < prog->components.count; c++) {

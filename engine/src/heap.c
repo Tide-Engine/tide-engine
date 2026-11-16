@@ -380,7 +380,7 @@ static tide_block *write_shared_in_runs(tide_heap *h, const uint64_t block)
     for (;;) {
         tide_page *const *pages = __atomic_load_n(&h->page, __ATOMIC_ACQUIRE);
         tide_page *p = __atomic_load_n(&pages[place], __ATOMIC_ACQUIRE);
-        if (p->refs == places(p)) {
+        if (tide_page_refs(p) == places(p)) {
             tide_heap_wrote(p, block);
             break;
         }
@@ -466,7 +466,7 @@ static tide_page *new_page(tide_heap *h, const uint32_t count)
 // cached_codegen.inc's keys do), unless a place taken first has it again.
 static void drop(tide_heap *h, tide_page *p, const uint32_t count)
 {
-    if (p->refs != count) {
+    if (tide_page_refs(p) != count) {
         tide_page_release(p, count);
         return;
     }
@@ -590,7 +590,7 @@ static void free_block(tide_heap *h, const uint64_t block)
 void tide_heap_settle(tide_heap *h)
 {
     tide_asset_settle(h);
-    for (uint32_t i = 0; i < h->dropped_count; i++) tide_page_release(h->dropped[i], h->dropped[i]->refs);
+    for (uint32_t i = 0; i < h->dropped_count; i++) tide_page_release(h->dropped[i], tide_page_refs(h->dropped[i]));
     h->dropped_count = 0;
     if (!h->page) return;
     void *old = h->page[-1];
@@ -607,7 +607,7 @@ tide_block *tide_heap_write_shared(tide_heap *h, const uint64_t block)
     check_allowed(h);
     if (in_runs) return write_shared_in_runs(h, block);
     tide_page *p = h->page[block >> TIDE_HEAP_PAGE_SHIFT];
-    tide_page *own = p->refs != places(p) ? tide_page_own_copy(p, places(p), in_use(h, p)) : p;
+    tide_page *own = tide_page_refs(p) != places(p) ? tide_page_own_copy(p, places(p), in_use(h, p)) : p;
     tide_heap_wrote(own, block);
     if (own != p) { // Code reading the old page meanwhile reads the same bytes
         moved(h); // Before the copy is in the table (moved)
@@ -621,7 +621,7 @@ tide_block *tide_heap_write_over(tide_heap *h, const uint64_t block, const uint3
     check_allowed(h);
     if (in_runs) return tide_heap_write(h, block); // Copied whole: the page it replaces is kept (write_shared_in_runs)
     tide_page *p = h->page[block >> TIDE_HEAP_PAGE_SHIFT];
-    if (p->refs == places(p)) return tide_heap_write(h, block);
+    if (tide_page_refs(p) == places(p)) return tide_heap_write(h, block);
     const uint32_t from = (uint32_t)(block - ((uint64_t)p->first << TIDE_HEAP_PAGE_SHIFT)) + (uint32_t)sizeof(tide_block);
     tide_page *own = tide_page_own_copy_around(p, places(p), in_use(h, p), from, bytes);
     tide_heap_wrote(own, block);

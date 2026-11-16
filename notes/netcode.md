@@ -1,5 +1,33 @@
 # Netcode: sessions, prediction, commands
 
+## A kept tick's world let go of on the pool; a destruction journaled once for every player (2026-11-17)
+
+What a server's tick costs where chunks come and go every tick (notes/voxels.md, The spread tick, has the
+measurements). Two changes; **nothing on the wire or in a world changed** (`PROTOCOL` stays 27; every pin as it was).
+
+- **A kept tick's world is let go of on the pool's background threads** (`session.c`'s `let_go`, `let_go_settle`;
+  `tide_server.letting_go`): the world the ring no longer holds was let go of in `tick_end`, a pass over every page
+  it has (at 100 players apart, 80,000 chunks: 0.6 to 1.8 M cycles each, its heaps' pages half of it, the entity
+  table's a quarter, the tables' a fifth). It's handed to the pool as a helper where the pool has two threads or
+  more (as a repair's packing is), and goes on beside the players' checks, the repairs and the next tick. One at a
+  time: the next `tick_end` waits for it, helping, as do `tide_server_destroy` and a hot reload's `commit_server`
+  (the old build's code lets it go). Safe because page references are atomic (runtime-ownership.md, top section):
+  the world shares its pages with the server's world and the kept worlds after it, which are read, copied and
+  written meanwhile, and only its references are touched; what it has alone (its tables' and heaps' own arrays, the
+  memory of the world) is nobody else's; and its address isn't another world's until it's freed, so nothing kept by
+  a world's address (the projections' memos, frozen worlds' hashes, both under their locks) is taken for it.
+- **A destruction is journaled for each player who sees it from one audience** (`codegen.c`'s
+  `tide_client_destroyed` and a lifecycle event's `tide_hear_*`; `tide_visibility_seers_of`, `tide_visibility_seer`
+  in `visibility_codegen.inc`): a server journaling its players' local handlers asked `tide_visibility_entity` for
+  each of the game's players, a walk to the entity, its scene and their groups each, 128 times for a game of 128
+  (34,000 cycles a chunk destroyed, two thirds of a destruction). It's worked out once, and the same players get the
+  same records.
+
+**Tests.** `page_references_hold_while_another_thread_lets_snapshots_go` (`tests/test_page.c`, Windows: a thread
+lets go of 400 kept copies of a table while this one copies it and writes it; every page is the table's alone at the
+end and it hashes as a twin that shared nothing; with `tide_page_release` not atomic the process stops on a corrupt
+heap). The bench's runs on 12 threads end on the hashes of 1 thread's (notes/voxels.md, Tests).
+
 ## Projection checks go by the pages written since the check before (2026-11-17)
 
 What was left of the projection checks (the sections below, Left; notes/voxels.md, The spread case taken apart, 5f):
@@ -135,8 +163,9 @@ the hash offer, `visibility_repairs` against every row), `tidec_e2e_net*`, `tide
   each player it goes to though the bytes are the same for all of them where nothing is denied: a record kept by its
   entity and value hash for the update would make a repair to 100 players one record and 99 copies. Both are in
   `client_changes_codegen.inc`, the projection checks' (another task's at the time).
-- A kept tick's world let go of is a pass over all its pages (`free_world`, 0.53 s of the 100-player run together and
-  11.2 apart, 2.3 ms a tick): page counts aren't atomic, so it can't go on another thread while the tick copies pages.
+- ~~A kept tick's world let go of is a pass over all its pages (`free_world`, 0.53 s of the 100-player run together and
+  11.2 apart, 2.3 ms a tick): page counts aren't atomic, so it can't go on another thread while the tick copies pages.~~
+  Page counts are atomic since, and it's let go of on the pool's threads (the section above).
 
 ## A whole view's repair: read in one update, packed on the pool, one big one an update; no protocol change (2026-11-16, wide views)
 

@@ -199,8 +199,7 @@ void tide_table_lanes_end_pieces(tide_table *t, const tide_columns *c, const uin
             continue;
         }
         memset((uint8_t *)tide_page_data(own) + bytes, 0, own->size - bytes); // Past its rows a page is zeros
-        if (was->refs == 1u) tide_page_give(was);
-        else was->refs--;
+        tide_page_release(was, 1);
     }
 }
 
