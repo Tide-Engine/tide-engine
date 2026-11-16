@@ -332,8 +332,6 @@ async function startFolder(folder) {
         documentSelector: [
             // Client options use the protocol's RelativePattern (baseUri), not VS Code's RelativePattern.
             { scheme: 'file', language: 'tide', ...(folder ? { pattern: { baseUri: vscode.Uri.file(folder).toString(), pattern: '**/*' } } : {}) },
-            // tweaks.json: a tweak's name in it hovers and goes to the tweak's declaration
-            { scheme: 'file', language: 'json', pattern: folder ? { baseUri: vscode.Uri.file(folder).toString(), pattern: '**/tweaks.json' } : '**/tweaks.json' },
             ...(!folder || folder === openFolders()[0] ? [{ scheme: 'untitled', language: 'tide' }] : []),
         ],
         ...(folder ? { workspaceFolder: vscode.workspace.workspaceFolders.find(f => f.uri.fsPath === folder) } : {}),

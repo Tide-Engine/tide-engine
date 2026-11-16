@@ -30,8 +30,8 @@
         <!-- By file name, so the TextMate grammar keeps coloring the text. -->
         <fileNamePatternMapping patterns="*.tide" serverId="tidels" languageId="tide"/>
         <fileNamePatternMapping patterns="*.tprefab" serverId="tidels" languageId="tide"/>
-        <!-- tweaks.json: a tweak's name in it hovers and goes to the tweak's declaration -->
-        <fileNamePatternMapping patterns="tweaks.json" serverId="tidels" languageId="json"/>
+        <!-- .tweaks files: a tweak's name in one hovers and goes to the tweak's declaration -->
+        <fileNamePatternMapping patterns="*.tweaks" serverId="tidels" languageId="tide"/>
     </extensions>
 
     <extensions defaultExtensionNs="com.intellij">

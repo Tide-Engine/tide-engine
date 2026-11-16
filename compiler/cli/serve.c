@@ -4,6 +4,7 @@
 
 #include "serve.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -111,14 +112,28 @@ static bool send_all(const sock s, const char *data, size_t size)
     return true;
 }
 
+// Whether the request has an X-Tide header, its name in any case
+static bool tide_header(const char *request)
+{
+    for (const char *line = strstr(request, "\r\n"); line; line = strstr(line + 2, "\r\n")) {
+        const char *name = line + 2, *want = "x-tide:";
+        size_t i = 0;
+        while (want[i] && tolower((unsigned char)name[i]) == want[i]) i++;
+        if (!want[i]) return true;
+    }
+    return false;
+}
+
 static void reply(connection *c, const serve_fn answer, void *user)
 {
     char method[8] = "";
-    char path[256] = "";
+    char path[2048] = "";
     serve_reply r = {404, "text/plain; charset=utf-8", "Not found\n", 10};
-    if (sscanf(c->request, "%7s %255s", method, path) == 2 && strcmp(method, "GET") == 0) {
+    if (sscanf(c->request, "%7s %2047s", method, path) == 2 && strcmp(method, "GET") == 0) {
+        // The query goes to `answer` only from the page's own requests, with their X-Tide header: another site's
+        // page can't send one here without asking first (CORS), which this server never allows
         char *query = strchr(path, '?');
-        if (query) *query = '\0';
+        if (query && !tide_header(c->request)) *query = '\0';
         answer(user, path, &r);
     }
     // The page is cross-origin isolated, so the game can share its memory with

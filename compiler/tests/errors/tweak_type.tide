@@ -1,3 +1,3 @@
-// expect: a tweak is a number, a bool, a vector, a Color or an enum, which tweaks.json can give, not string
+// expect: a tweak is a number, a bool, a vector, a Color or an enum, which a .tweaks file can give, not string
 tweak string Title = "Hi";
 scene Main { }

@@ -25,6 +25,7 @@
 #include "tide/stats.h"
 #include "tide/time.h"
 #include "tide/tweaks.h"
+#include "tide/inspect.h"
 #include "tide/voice.h"
 #include "tide/screen_keyboard.h"
 #include "tide/worker.h"
@@ -150,9 +151,12 @@ typedef struct tide_host_game {
     // lists, and tide_show_dev_views, which the host calls before each frame with a byte for each: nonzero, it runs
     const char *const *dev_views;
     void (*show_dev_views)(const uint8_t *shown);
-    // Optional: a dev build's tweaks (tide/tweaks.h, tidec's tide_game_tweaks), which the host reads tweaks.json for
+    // Optional: a dev build's tweaks (tide/tweaks.h, tidec's tide_game_tweaks), which the host takes the values tide run works out for
     // again as it changes and the dev menu shows and writes; NULL for none
     const struct tide_tweaks_api *(*tweaks)(void);
+    // Optional: a dev build's inspector (tide/inspect.h, tidec's tide_game_inspect), which the dev menu shows the match's
+    // and this machine's state with and changes them through; NULL for none
+    const struct tide_inspect_api *(*inspect)(void);
 } tide_host_game;
 
 // A game's library exports this function, which returns its table.
@@ -1097,154 +1101,565 @@ static inline void tide_run_dev_views(const tide_host_game *game)
 }
 
 // After the frame's views, in its GUI: the menu, over them
-// A dev build's tweaks (tide/tweaks.h): tweaks.json is read again as it changes, half a second at the most after it's
-// saved, and what it gives goes to this machine's copy and to the match (tide_tweaks_api.send). The menu writes the
-// file as a tweak is changed there. What the file last said, so a write of the menu's own isn't read back as news.
-static uint64_t tide_run_tweaks_text;
+// A dev build's tweaks (tide/tweaks.h): the values tide run works out again as a .tweaks file changes, with no C
+// built (tide_tweaks_api.values), taken half a second at the most after they're written, go to this machine's copy
+// and to the match (tide_tweaks_api.send). What the file last held, so the same values aren't taken twice.
+static uint64_t tide_run_tweaks_seen;
 static double tide_run_tweaks_at = -1.0;
 
-static inline uint64_t tide_run_text_hash(const char *text, const size_t length)
+static inline uint64_t tide_run_bytes_hash(const uint8_t *bytes, const size_t length)
 {
     uint64_t h = 0xCBF29CE484222325ull;
-    for (size_t i = 0; i < length; i++) h = (h ^ (uint8_t)text[i]) * 0x100000001B3ull;
-    return h | 1u; // Never 0, which is no file read yet
+    for (size_t i = 0; i < length; i++) h = (h ^ bytes[i]) * 0x100000001B3ull;
+    return h | 1u; // Never 0, which is nothing taken yet
 }
+
+#ifdef __wasm__
+// On a page, under tide run --web, which has the values from tide's server (tide.js): copies them if they fit in
+// `capacity` bytes, returning their size, 0 for none. And a value the menu changed, for tide to write into its file.
+__attribute__((import_module("tide"), import_name("tweaks_copy"))) uint32_t tide_web_tweaks_copy(void *to, uint32_t capacity);
+__attribute__((import_module("tide"), import_name("tweak_write"))) void tide_web_tweak_write(const char *file, const char *name,
+                                                                                            const char *value);
+#endif
 
 static inline void tide_run_tweaks_poll(const tide_host_game *game)
 {
     const tide_tweaks_api *api = game->tweaks ? game->tweaks() : NULL;
-    if (!api || !api->path[0] || (tide_run_tweaks_at >= 0.0 && tide_run_now - tide_run_tweaks_at < 0.5)) return;
+    if (!api || !api->values[0] || (tide_run_tweaks_at >= 0.0 && tide_run_now - tide_run_tweaks_at < 0.5)) return;
     tide_run_tweaks_at = tide_run_now;
-    FILE *f = fopen(api->path, "rb");
+    static uint8_t bytes[8192];
+#ifdef __wasm__
+    const size_t length = tide_web_tweaks_copy(bytes, sizeof bytes);
+    if (!length || length > sizeof bytes) return;
+#else
+    FILE *f = fopen(api->values, "rb");
     if (!f) return;
-    char text[65536];
-    const size_t length = fread(text, 1, sizeof text, f);
+    const size_t length = fread(bytes, 1, sizeof bytes, f);
     fclose(f);
-    const uint64_t h = tide_run_text_hash(text, length);
-    if (h == tide_run_tweaks_text) return;
-    const bool first = !tide_run_tweaks_text;
-    tide_run_tweaks_text = h;
+#endif
+    const uint64_t h = tide_run_bytes_hash(bytes, length);
+    if (h == tide_run_tweaks_seen) return;
+    const bool first = !tide_run_tweaks_seen;
     uint8_t values[4096];
-    if (api->size > sizeof values) return;
-    if (!tide_tweaks_read(api, values, text, length)) {
-        fprintf(stderr, "tide: %s isn't an object of tweaks' values: the tweaks stay as they were\n", api->path);
-        return;
-    }
+    if (api->size > sizeof values || !tide_tweaks_load(api, values, bytes, length)) return; // Another build's, or half written
+    tide_run_tweaks_seen = h;
     void *here = api->here(tide_run_local);
-    if (memcmp(here, values, api->size) == 0) return; // As the build had them
+    if (memcmp(here, values, api->size) == 0) return; // As this machine has them
     memcpy(here, values, api->size);
     api->send(tide_run_local);
-    if (!first) fprintf(stderr, "tide: tweaks read again from %s\n", api->path);
+    if (!first) fprintf(stderr, "tide: the tweaks' new values are in\n");
 }
 
-// The tweaks in the menu, from row `first`: an editor each, by its kind. Changed, the copy goes to the match and the file.
-static inline uint32_t tide_run_dev_tweaks(const tide_tweaks_api *api, const float x, const float y, const float width, const float row)
+// One value's editor in the dev menu, by its kind (tide_tweak_kind): a switch for a bool, a button that steps through
+// an enum's members, a field for a number, a vector or a Color, ints, longs, bytes and doubles as the fields for ints
+// and floats have them; `count` components of `size` bytes at `at`. True when it changed.
+static inline bool tide_run_dev_value(const uint32_t id, const char *name, const uint32_t kind, const uint32_t count,
+                                      const uint32_t size, const bool color, const char *const *members,
+                                      const int32_t *member_values, const uint32_t member_count, uint8_t *at)
 {
-    uint8_t *values = api->here(tide_run_local);
+    tide_gui *g = &tide_run_gui;
     bool changed = false;
-    tide_gui_label(&tide_run_gui, (tide_rect){x, y, width, row}, "Tweaks");
+    if (kind == TIDE_TWEAK_BOOL) {
+        bool v = *at != 0;
+        if (tide_gui_layout_toggle(g, id, name, &v)) {
+            *at = v ? 1u : 0u;
+            changed = true;
+        }
+    } else if (kind == TIDE_TWEAK_ENUM) {
+        int32_t v = 0;
+        memcpy(&v, at, size < 4u ? size : 4u); // Little-endian, as every target is
+        uint32_t m = 0;
+        while (m < member_count && member_values[m] != v) m++;
+        char label[160];
+        snprintf(label, sizeof label, "%s: %s", name, m < member_count ? members[m] : "?");
+        if (tide_gui_layout_button(g, id, label) && member_count) {
+            const int32_t next = member_values[m < member_count ? (m + 1u) % member_count : 0u];
+            memcpy(at, &next, size < 4u ? size : 4u);
+            changed = true;
+        }
+    } else if (color) {
+        changed = tide_gui_layout_color_field(g, id, name, (tide_color *)(void *)at);
+    } else if (kind == TIDE_TWEAK_FLOAT) {
+        if (count == 1) changed = tide_gui_layout_float_field(g, id, name, (float *)(void *)at);
+        else if (count == 2) changed = tide_gui_layout_float2_field(g, id, name, (tide_float2 *)(void *)at);
+        else if (count == 3) changed = tide_gui_layout_float3_field(g, id, name, (tide_float3 *)(void *)at);
+        else changed = tide_gui_layout_float4_field(g, id, name, (tide_float4 *)(void *)at);
+    } else {
+        // A component at a time, side by side: ints, longs, bytes and doubles as the fields for ints and floats have them
+        const int row = tide_gui_begin_horizontal(g, id + 7u);
+        for (uint32_t k = 0; k < count; k++) {
+            const char *label = k ? "" : name;
+            if (kind == TIDE_TWEAK_DOUBLE) {
+                double d;
+                memcpy(&d, at + 8u * k, 8);
+                float v = (float)d;
+                if (tide_gui_layout_float_field(g, id + k, label, &v)) {
+                    d = v;
+                    memcpy(at + 8u * k, &d, 8);
+                    changed = true;
+                }
+                continue;
+            }
+            int32_t v = 0;
+            if (kind == TIDE_TWEAK_INT) memcpy(&v, at + 4u * k, 4);
+            else if (kind == TIDE_TWEAK_BYTE) v = at[k];
+            else {
+                int64_t l;
+                memcpy(&l, at + 8u * k, 8);
+                v = l > INT32_MAX ? INT32_MAX : l < INT32_MIN ? INT32_MIN : (int32_t)l;
+            }
+            if (!tide_gui_layout_int_field(g, id + k, label, &v)) continue;
+            if (kind == TIDE_TWEAK_INT) memcpy(at + 4u * k, &v, 4);
+            else if (kind == TIDE_TWEAK_BYTE) at[k] = (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v);
+            else {
+                const int64_t l = v;
+                memcpy(at + 8u * k, &l, 8);
+            }
+            changed = true;
+        }
+        tide_gui_close(g, row);
+    }
+    return changed;
+}
+
+// The tweaks in the menu, laid out one under another: an editor each, by its kind, or a worked-out one's value.
+// Changed, the copy goes to the match, and the value into its .tweaks file.
+static inline void tide_run_dev_tweaks(const tide_tweaks_api *api)
+{
+    tide_gui *g = &tide_run_gui;
+    uint8_t *values = api->here(tide_run_local);
+    tide_gui_layout_label(g, "Tweaks");
     for (uint32_t i = 0; i < api->count; i++) {
         const tide_tweak *t = &api->tweaks[i];
         uint8_t *at = values + t->offset;
-        const tide_rect r = {x, y + row * (float)(i + 1), width, row - 4.0f};
         const uint32_t id = 0xDE710000u + i * 8u;
-        if (t->kind == TIDE_TWEAK_BOOL) {
-            bool v = *at != 0;
-            if (tide_gui_toggle(&tide_run_gui, id, r, t->name, &v)) {
-                *at = v ? 1u : 0u;
-                changed = true;
-            }
-        } else if (t->kind == TIDE_TWEAK_ENUM) {
-            int32_t v = 0;
-            memcpy(&v, at, t->size < 4u ? t->size : 4u); // Little-endian, as every target is
-            uint32_t m = 0;
-            while (m < t->member_count && t->member_values[m] != v) m++;
-            char label[160];
-            snprintf(label, sizeof label, "%s: %s", t->name, m < t->member_count ? t->members[m] : "?");
-            if (tide_gui_button(&tide_run_gui, id, r, label) && t->member_count) {
-                const int32_t next = t->member_values[m < t->member_count ? (m + 1u) % t->member_count : 0u];
-                memcpy(at, &next, t->size < 4u ? t->size : 4u);
-                changed = true;
-            }
-        } else if (t->color) {
-            changed |= tide_gui_color_field(&tide_run_gui, id, r, t->name, (tide_color *)(void *)at);
-        } else if (t->kind == TIDE_TWEAK_FLOAT) {
-            if (t->count == 1) changed |= tide_gui_float_field(&tide_run_gui, id, r, t->name, (float *)(void *)at);
-            else if (t->count == 2) changed |= tide_gui_float2_field(&tide_run_gui, id, r, t->name, (tide_float2 *)(void *)at);
-            else if (t->count == 3) changed |= tide_gui_float3_field(&tide_run_gui, id, r, t->name, (tide_float3 *)(void *)at);
-            else changed |= tide_gui_float4_field(&tide_run_gui, id, r, t->name, (tide_float4 *)(void *)at);
-        } else {
-            // A component at a time: ints, longs, bytes and doubles as the fields for ints and floats have them
-            const float part = width / (float)t->count;
-            for (uint32_t k = 0; k < t->count; k++) {
-                const tide_rect p = {r.x + part * (float)k, r.y, part - 2.0f, r.height};
-                const char *label = k ? "" : t->name;
-                if (t->kind == TIDE_TWEAK_DOUBLE) {
-                    double d;
-                    memcpy(&d, at + 8u * k, 8);
-                    float v = (float)d;
-                    if (tide_gui_float_field(&tide_run_gui, id + k, p, label, &v)) {
-                        d = v;
-                        memcpy(at + 8u * k, &d, 8);
-                        changed = true;
-                    }
-                    continue;
-                }
-                int32_t v = 0;
-                if (t->kind == TIDE_TWEAK_INT) memcpy(&v, at + 4u * k, 4);
-                else if (t->kind == TIDE_TWEAK_BYTE) v = at[k];
-                else {
-                    int64_t l;
-                    memcpy(&l, at + 8u * k, 8);
-                    v = l > INT32_MAX ? INT32_MAX : l < INT32_MIN ? INT32_MIN : (int32_t)l;
-                }
-                if (!tide_gui_int_field(&tide_run_gui, id + k, p, label, &v)) continue;
-                if (t->kind == TIDE_TWEAK_INT) memcpy(at + 4u * k, &v, 4);
-                else if (t->kind == TIDE_TWEAK_BYTE) at[k] = (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v);
-                else {
-                    const int64_t l = v;
-                    memcpy(at + 8u * k, &l, 8);
-                }
-                changed = true;
-            }
+        bool changed = false;
+        if (!t->plain) {
+            // Worked out in its file from others: shown, and left to the file
+            char value[160], label[320];
+            tide_tweaks_format(t, values, value, sizeof value);
+            snprintf(label, sizeof label, "%s = %s (worked out)", t->name, value);
+            tide_gui_layout_label(g, label);
+            continue;
         }
-    }
-    if (changed) {
+        changed = tide_run_dev_value(id, t->name, t->kind, t->count, t->size, t->color, t->members, t->member_values,
+                                     t->member_count, at);
+        if (!changed) continue;
+        // To the match at once, and into its .tweaks file, from which tide run works out the tweaks made from it
         api->send(tide_run_local);
-        static char text[65536];
-        const size_t length = tide_tweaks_write(api, values, text, sizeof text);
-        FILE *f = api->path[0] && length < sizeof text ? fopen(api->path, "wb") : NULL;
-        if (f) {
-            fwrite(text, 1, length, f);
-            fclose(f);
-            tide_run_tweaks_text = tide_run_text_hash(text, length); // The menu's own: not news
-        }
+#ifdef __wasm__
+        char value[256]; // Written by tide, which has the files
+        if (tide_tweaks_format(t, values, value, sizeof value) < sizeof value) tide_web_tweak_write(t->file, t->name, value);
+#else
+        if (!tide_tweaks_save(t, values)) fprintf(stderr, "tide: can't write %s to %s\n", t->name, t->file);
+#endif
     }
-    return api->count + 1u;
 }
 
-static inline void tide_run_dev_menu(const tide_host_game *game)
+// The dev menu's inspector (tide/inspect.h): the match's or this machine's local world, as packets made while it's
+// open, its singletons and its entities by the components they have, and one of them open with its fields. A field of
+// the match changes through the server, so the field shows what was sent until the match has it; the local world's
+// changes here.
+static bool tide_run_inspect_shown;       // Its part of the menu is open
+static bool tide_run_inspect_local;       // The local world's, not the match's
+static uint32_t tide_run_inspect_what;    // 0: the lists; 1: a singleton; 2: an entity
+static int32_t tide_run_inspect_type;     // The singleton's layout type
+static uint32_t tide_run_inspect_kind;    // ...and its section's kind
+static tide_entity tide_run_inspect_entity;
+static uint64_t tide_run_inspect_group;   // The group of entities open in the list, by its components; 0 for none
+static tide_packet tide_run_inspect_packets[2];
+static uint64_t *tide_run_inspect_keys;   // Each entity's components, hashed
+static uint32_t tide_run_inspect_key_capacity;
+
+// A change sent to the match and not back yet: shown as sent, a second at the most
+typedef struct tide_run_inspect_sent {
+    tide_entity target;
+    int32_t type;
+    uint32_t offset, size;
+    uint8_t bytes[TIDE_INSPECT_BYTES];
+    double at;
+} tide_run_inspect_sent;
+static tide_run_inspect_sent tide_run_inspect_pending[16];
+
+// Its widgets' ids, one after another in the frame
+static uint32_t tide_run_inspect_id;
+
+#define TIDE_RUN_INSPECT_GROUPS 128u
+#define TIDE_RUN_INSPECT_ROWS 500u // An open group's entities listed, the most
+
+static inline const char *tide_run_inspect_type_name(const tide_layout *layout, const uint32_t type)
+{
+    return type < layout->type_count ? layout->types[type].name : "?";
+}
+
+// An entity as the menu names it: by its birth, which stays what it is
+static inline void tide_run_inspect_entity_name(const tide_entity e, char *out, const size_t size)
+{
+    snprintf(out, size, "#%llu", (unsigned long long)(e.birth ? e.birth : e.lineage));
+}
+
+static inline uint32_t tide_run_inspect_place(const tide_packet *p, const tide_entity e)
+{
+    const uint32_t n = tide_packet_entities(p->bytes, p->size);
+    for (uint32_t i = 0; i < n; i++) {
+        const tide_entity at = tide_packet_entity(p->bytes, p->size, i, NULL);
+        if (at.birth == e.birth && at.lineage == e.lineage) return i;
+    }
+    return UINT32_MAX;
+}
+
+// A field that's no value an editor changes, said as it is: text, an entity (a button that opens it), how much a
+// list or a map holds
+static inline void tide_run_inspect_shown_value(const tide_packet *p, const tide_layout_field *f, const char *name,
+                                                const uint8_t *at)
+{
+    tide_gui *g = &tide_run_gui;
+    char line[256];
+    const char *type = f->type ? f->type : "";
+    if (strcmp(type, "Entity") == 0 || strcmp(type, "LocalEntity") == 0) {
+        tide_entity e;
+        memcpy(&e, at, sizeof e);
+        char who[48];
+        tide_run_inspect_entity_name(e, who, sizeof who);
+        snprintf(line, sizeof line, "%s: %s", name, tide_entity_is_null(e) ? "none" : who);
+        if (tide_gui_layout_button(g, tide_run_inspect_id++, line) && !tide_entity_is_null(e)) {
+            tide_run_inspect_what = 2;
+            tide_run_inspect_entity = e;
+        }
+        return;
+    }
+    const bool text = strcmp(type, "string") == 0;
+    const bool list = strncmp(type, "List<", 5) == 0;
+    const bool map = strncmp(type, "Map<", 4) == 0 || strncmp(type, "Set<", 4) == 0;
+    if (text || list || map) {
+        uint64_t handle = 0;
+        if (map) {
+            uint32_t h;
+            memcpy(&h, at, sizeof h);
+            handle = h;
+        } else memcpy(&handle, at, sizeof handle);
+        uint32_t length = 0;
+        const uint8_t *bytes = tide_packet_text_of(p->bytes, p->size, handle, &length);
+        if (text) snprintf(line, sizeof line, "%s: \"%.*s\"", name, (int)(length < 200u ? length : 200u), bytes ? (const char *)bytes : "");
+        else if (map) {
+            uint32_t count = 0;
+            if (bytes && length >= 4u) memcpy(&count, bytes, 4);
+            snprintf(line, sizeof line, "%s: %s, %u", name, type, count);
+        } else snprintf(line, sizeof line, "%s: %s, %u bytes", name, type, length);
+    } else {
+        snprintf(line, sizeof line, "%s: %s", name, type);
+    }
+    tide_gui_layout_label(g, line);
+}
+
+// A changed field: to the server (the match's own), or here (the local world's, or the local fields of the match's)
+static inline void tide_run_inspect_write(const tide_inspect_api *api, const uint32_t kind, const tide_entity target,
+                                          const int32_t type, const uint32_t offset, const uint8_t *bytes,
+                                          const uint32_t size)
+{
+    if (!tide_run_inspect_local && (kind == TIDE_PACKET_COMPONENT || kind == TIDE_PACKET_SINGLETON)) {
+        api->set(tide_run_local, target, type, offset, bytes, size);
+        // Shown as sent till the match has it
+        uint32_t slot = 0;
+        for (uint32_t i = 0; i < 16u; i++) {
+            const tide_run_inspect_sent *s = &tide_run_inspect_pending[i];
+            const bool same = s->type == type && s->offset == offset && s->target.birth == target.birth
+                           && s->target.lineage == target.lineage;
+            if (same || s->at < tide_run_inspect_pending[slot].at) slot = i;
+            if (same) break;
+        }
+        tide_run_inspect_sent *s = &tide_run_inspect_pending[slot];
+        *s = (tide_run_inspect_sent){target, type, offset, size, {0}, tide_run_now};
+        memcpy(s->bytes, bytes, size);
+        return;
+    }
+    if (!api->set_local(tide_run_local, target, type, offset, bytes, size)) fprintf(stderr, "tide: that field can't be changed\n");
+}
+
+// The fields of `type` at `base` in `value` (the root type's, `root`), an editor each or a line, structs' fields
+// under their names
+static inline void tide_run_inspect_fields(const tide_inspect_api *api, const tide_packet *p, const uint32_t kind,
+                                           const tide_entity target, const int32_t root, const int32_t type,
+                                           uint8_t *value, const uint32_t base, const char *prefix, const int depth)
+{
+    const tide_layout *layout = api->layout;
+    if (type < 0 || (uint32_t)type >= layout->type_count || depth > 8) return;
+    const tide_layout_type *t = &layout->types[type];
+    for (uint32_t i = 0; i < t->field_count; i++) {
+        const tide_layout_field *f = &t->fields[i];
+        char name[160];
+        snprintf(name, sizeof name, "%s%s%s", prefix, prefix[0] ? "." : "", f->name);
+        const uint32_t offset = base + f->offset;
+        if (f->kind == TIDE_LAYOUT_STRUCT) {
+            tide_run_inspect_fields(api, p, kind, target, root, f->decl, value, offset, name, depth + 1);
+            continue;
+        }
+        if (!tide_inspect_field(layout, root, offset, f->size)) {
+            tide_run_inspect_shown_value(p, f, name, value + offset);
+            continue;
+        }
+        // Its editor, by what the layout says it is
+        uint32_t edit_kind = TIDE_TWEAK_INT, count = f->dim ? f->dim : 1u, size = f->size / count;
+        bool color = false;
+        const char *names[64];
+        int32_t values[64];
+        uint32_t members = 0;
+        switch (f->kind) {
+        case TIDE_LAYOUT_FLOAT: edit_kind = TIDE_TWEAK_FLOAT; break;
+        case TIDE_LAYOUT_DOUBLE: edit_kind = TIDE_TWEAK_DOUBLE; break;
+        case TIDE_LAYOUT_LONG: edit_kind = TIDE_TWEAK_LONG; break;
+        case TIDE_LAYOUT_BYTE: edit_kind = TIDE_TWEAK_BYTE; break;
+        case TIDE_LAYOUT_ENUM: {
+            edit_kind = TIDE_TWEAK_ENUM;
+            count = 1;
+            size = f->size;
+            const tide_layout_enum *e = f->decl >= 0 && (uint32_t)f->decl < layout->enum_count ? &layout->enums[f->decl] : NULL;
+            for (uint32_t m = 0; e && m < e->member_count && m < 64u; m++) {
+                names[m] = e->members[m].name;
+                values[m] = e->members[m].value;
+                members++;
+            }
+            break;
+        }
+        case TIDE_LAYOUT_PLAIN: // A bool, or a Color
+            if (f->size == 1) edit_kind = TIDE_TWEAK_BOOL;
+            else {
+                edit_kind = TIDE_TWEAK_FLOAT;
+                color = true;
+                count = 4;
+                size = 4;
+            }
+            break;
+        default: break;
+        }
+        uint64_t field[TIDE_INSPECT_BYTES / 8u]; // Aligned for the editors
+        memcpy(field, value + offset, f->size);
+        const uint32_t id = tide_run_inspect_id;
+        tide_run_inspect_id += 8u;
+        if (tide_run_dev_value(id, name, edit_kind, count, size, color, names, values, members, (uint8_t *)field)
+            && memcmp(field, value + offset, f->size) != 0) {
+            memcpy(value + offset, field, f->size);
+            tide_run_inspect_write(api, kind, target, root, offset, (const uint8_t *)field, f->size);
+        }
+    }
+}
+
+// A value of a section, with what was sent of it and isn't back yet over it, then its fields
+static inline void tide_run_inspect_value(const tide_inspect_api *api, const tide_packet *p, const tide_packet_part *part,
+                                          const uint32_t index, const tide_entity target)
+{
+    uint8_t value[4096];
+    if (part->stride > sizeof value) {
+        tide_gui_layout_label(&tide_run_gui, "(too big to show)");
+        return;
+    }
+    memcpy(value, part->values + (size_t)index * part->stride, part->stride);
+    for (uint32_t i = 0; i < 16u && !tide_run_inspect_local; i++) {
+        tide_run_inspect_sent *s = &tide_run_inspect_pending[i];
+        if (!s->size || s->type != (int32_t)part->type || s->target.birth != target.birth || s->target.lineage != target.lineage
+            || s->offset + s->size > part->stride)
+            continue;
+        if (memcmp(value + s->offset, s->bytes, s->size) == 0 || tide_run_now - s->at > 1.0) s->size = 0; // Back, or never
+        else memcpy(value + s->offset, s->bytes, s->size);
+    }
+    tide_run_inspect_fields(api, p, part->kind, target, (int32_t)part->type, (int32_t)part->type, value, 0, "", 0);
+}
+
+static inline void tide_run_inspect_lists(const tide_inspect_api *api, const tide_packet *p)
+{
+    tide_gui *g = &tide_run_gui;
+    const tide_layout *layout = api->layout;
+    // Singletons, by name
+    tide_packet_part part;
+    uint32_t at = 0;
+    bool any = false;
+    while (tide_packet_next(p->bytes, p->size, &at, &part)) {
+        if (part.kind != TIDE_PACKET_SINGLETON && part.kind != TIDE_PACKET_SINGLETON_LOCAL) continue;
+        const char *type = tide_run_inspect_type_name(layout, part.type);
+        if (strcmp(type, "TideTweaks") == 0 || strcmp(type, "TideTweaksHere") == 0) continue; // The tweaks', above
+        if (!any) tide_gui_layout_label(g, "Singletons");
+        any = true;
+        char label[160];
+        snprintf(label, sizeof label, "%s%s", tide_run_inspect_type_name(layout, part.type),
+                 part.kind == TIDE_PACKET_SINGLETON_LOCAL && !tide_run_inspect_local ? " (local fields)" : "");
+        if (tide_gui_layout_button(g, tide_run_inspect_id++, label)) {
+            tide_run_inspect_what = 1;
+            tide_run_inspect_type = (int32_t)part.type;
+            tide_run_inspect_kind = part.kind;
+        }
+    }
+    // Entities, a group for each set of components: the hash of their types, each entity's
+    const uint32_t n = tide_packet_entities(p->bytes, p->size);
+    if (!n) return;
+    if (n > tide_run_inspect_key_capacity) {
+        uint64_t *keys = realloc(tide_run_inspect_keys, (size_t)n * sizeof *keys);
+        if (!keys) return;
+        tide_run_inspect_keys = keys;
+        tide_run_inspect_key_capacity = n;
+    }
+    uint64_t *keys = tide_run_inspect_keys;
+    for (uint32_t i = 0; i < n; i++) keys[i] = 0xCBF29CE484222325ull;
+    at = 0;
+    while (tide_packet_next(p->bytes, p->size, &at, &part)) {
+        if (part.kind != TIDE_PACKET_COMPONENT) continue;
+        for (uint32_t r = 0; r < part.count; r++) {
+            if (part.rows[r] < n) keys[part.rows[r]] = (keys[part.rows[r]] ^ (part.type + 1u)) * 0x100000001B3ull;
+        }
+    }
+    uint64_t group_keys[TIDE_RUN_INSPECT_GROUPS];
+    uint32_t group_first[TIDE_RUN_INSPECT_GROUPS], group_count[TIDE_RUN_INSPECT_GROUPS], groups = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t k = 0;
+        while (k < groups && group_keys[k] != keys[i]) k++;
+        if (k == groups) {
+            if (groups == TIDE_RUN_INSPECT_GROUPS) continue;
+            group_keys[groups] = keys[i];
+            group_first[groups] = i;
+            group_count[groups++] = 0;
+        }
+        group_count[k]++;
+    }
+    tide_gui_layout_label(g, "Entities");
+    for (uint32_t k = 0; k < groups; k++) {
+        // Named by the components its first entity has
+        char label[512];
+        size_t used = 0;
+        label[0] = '\0';
+        at = 0;
+        while (tide_packet_next(p->bytes, p->size, &at, &part)) {
+            if (part.kind != TIDE_PACKET_COMPONENT) continue;
+            bool has = false;
+            for (uint32_t r = 0; r < part.count && !has; r++) has = part.rows[r] == group_first[k];
+            if (has && used < sizeof label) {
+                used += (size_t)snprintf(label + used, sizeof label - used, "%s%s", used ? ", " : "",
+                                         tide_run_inspect_type_name(layout, part.type));
+            }
+        }
+        if (used < sizeof label) snprintf(label + used, sizeof label - used, "%s x%u", used ? "" : "(none)", group_count[k]);
+        const bool open = tide_run_inspect_group == group_keys[k];
+        char button[520];
+        snprintf(button, sizeof button, "%s %s", open ? "-" : "+", label);
+        if (tide_gui_layout_button(g, tide_run_inspect_id++, button)) tide_run_inspect_group = open ? 0 : group_keys[k];
+        if (!open) continue;
+        uint32_t listed = 0;
+        for (uint32_t i = 0; i < n; i++) {
+            if (keys[i] != group_keys[k]) continue;
+            if (listed++ == TIDE_RUN_INSPECT_ROWS) {
+                char more[64];
+                snprintf(more, sizeof more, "...and %u more", group_count[k] - TIDE_RUN_INSPECT_ROWS);
+                tide_gui_layout_label(g, more);
+                break;
+            }
+            const tide_entity e = tide_packet_entity(p->bytes, p->size, i, NULL);
+            char name[48];
+            tide_run_inspect_entity_name(e, name, sizeof name);
+            if (tide_gui_layout_button(g, tide_run_inspect_id++, name)) {
+                tide_run_inspect_what = 2;
+                tide_run_inspect_entity = e;
+            }
+        }
+    }
+}
+
+static inline void tide_run_dev_inspect(const tide_inspect_api *api, const void *match)
+{
+    tide_gui *g = &tide_run_gui;
+    tide_run_inspect_id = 0xDE720000u;
+    tide_gui_layout_toggle(g, tide_run_inspect_id++, "Inspector", &tide_run_inspect_shown);
+    if (!tide_run_inspect_shown) return;
+    // Which world
+    const int row = tide_gui_begin_horizontal(g, tide_run_inspect_id++);
+    if (tide_gui_layout_button(g, tide_run_inspect_id++, tide_run_inspect_local ? "Match" : "[Match]") && tide_run_inspect_local) {
+        tide_run_inspect_local = false;
+        tide_run_inspect_what = 0;
+    }
+    if (tide_gui_layout_button(g, tide_run_inspect_id++, tide_run_inspect_local ? "[Local]" : "Local") && !tide_run_inspect_local) {
+        tide_run_inspect_local = true;
+        tide_run_inspect_what = 0;
+    }
+    tide_gui_close(g, row);
+    api->view(match, tide_run_local, &tide_run_inspect_packets[0], &tide_run_inspect_packets[1]);
+    const tide_packet *p = &tide_run_inspect_packets[tide_run_inspect_local ? 1 : 0];
+    if (!tide_run_inspect_what) {
+        tide_run_inspect_lists(api, p);
+        return;
+    }
+    if (tide_gui_layout_button(g, tide_run_inspect_id++, "< Back")) {
+        tide_run_inspect_what = 0;
+        return;
+    }
+    tide_packet_part part;
+    uint32_t at = 0;
+    if (tide_run_inspect_what == 1) { // A singleton
+        while (tide_packet_next(p->bytes, p->size, &at, &part)) {
+            if (part.kind != tide_run_inspect_kind || (int32_t)part.type != tide_run_inspect_type || !part.count) continue;
+            tide_gui_layout_label(g, tide_run_inspect_type_name(api->layout, part.type));
+            tide_run_inspect_value(api, p, &part, 0, (tide_entity){0, 0});
+            return;
+        }
+        tide_gui_layout_label(g, "(not here)");
+        return;
+    }
+    // An entity: each component it has, then its local fields
+    const uint32_t place = tide_run_inspect_place(p, tide_run_inspect_entity);
+    char name[48];
+    tide_run_inspect_entity_name(tide_run_inspect_entity, name, sizeof name);
+    if (place == UINT32_MAX) {
+        char gone[96];
+        snprintf(gone, sizeof gone, "%s isn't here", name);
+        tide_gui_layout_label(g, gone);
+        return;
+    }
+    tide_gui_layout_label(g, name);
+    while (tide_packet_next(p->bytes, p->size, &at, &part)) {
+        if (part.kind != TIDE_PACKET_COMPONENT && part.kind != TIDE_PACKET_COMPONENT_LOCAL) continue;
+        for (uint32_t r = 0; r < part.count; r++) {
+            if (part.rows[r] != place) continue;
+            char heading[160];
+            snprintf(heading, sizeof heading, "%s", tide_run_inspect_type_name(api->layout, part.type));
+            tide_gui_layout_label(g, heading);
+            tide_run_inspect_value(api, p, &part, r, tide_run_inspect_entity);
+            break;
+        }
+    }
+}
+
+// Where the menu's list is scrolled to, from its top, and how tall it last was
+static tide_float2 tide_run_dev_offset;
+static float tide_run_dev_height = 64.0f;
+
+static inline void tide_run_dev_menu(const tide_host_game *game, const void *match)
 {
     const tide_tweaks_api *tweaks = game->tweaks ? game->tweaks() : NULL;
     if (tweaks && !tweaks->count) tweaks = NULL;
-    if ((!game->dev_views || !game->dev_views[0]) && !tweaks) return;
+    const tide_inspect_api *inspect = game->inspect ? game->inspect() : NULL;
+    if ((!game->dev_views || !game->dev_views[0]) && !tweaks && !inspect) return;
     const bool key = tide_run_devices.keyboard.backquote.held;
     if (key && !tide_run_dev_key) tide_run_dev_open = !tide_run_dev_open;
     tide_run_dev_key = key;
     if (!tide_run_dev_open) return;
-    uint32_t count = 0;
-    while (game->dev_views && count < TIDE_RUN_DEV_VIEWS && game->dev_views[count]) count++;
-    const float row = 32.0f, pad = 8.0f, width = 320.0f;
-    const uint32_t rows = 1u + count + (tweaks ? tweaks->count + 1u : 0u);
-    tide_gui_view(&tide_run_gui, UINT32_MAX); // Its own: no view's claims hide the devices from it
-    tide_gui_claim_pointer_at(&tide_run_gui, (tide_rect){pad, pad, width, row * (float)rows + pad});
-    tide_gui_label(&tide_run_gui, (tide_rect){pad, pad, width, row}, "Dev");
-    for (uint32_t i = 0; i < count; i++) {
+    tide_gui *g = &tide_run_gui;
+    const float pad = 8.0f, width = 320.0f;
+    const tide_float2 screen = tide_platform_screen_size();
+    // Down the screen's height, which a longer list scrolls past (the wheel, or a drag on a touchscreen). The pointer
+    // is its over the list alone, as tall as it last was: below it, the game's
+    const float most = screen.y - 2.0f * pad > 0.0f ? screen.y - 2.0f * pad : 0.0f;
+    const tide_rect panel = {pad, pad, width, most};
+    tide_gui_view(g, UINT32_MAX); // Its own: no view's claims hide the devices from it
+    tide_gui_claim_pointer_at(g, (tide_rect){pad, pad, width, tide_run_dev_height < most ? tide_run_dev_height : most});
+    const int depth = tide_gui_begin_scroll(g, 0xDE6F0000u, panel, &tide_run_dev_offset);
+    tide_gui_layout_label(g, "Dev");
+    for (uint32_t i = 0; game->dev_views && i < TIDE_RUN_DEV_VIEWS && game->dev_views[i]; i++) {
         bool shown = tide_run_dev_shown(game->dev_views[i]);
-        const tide_rect at = {pad, pad + row * (float)(i + 1), width, row - 4.0f};
-        if (tide_gui_toggle(&tide_run_gui, 0xDE700000u + i, at, game->dev_views[i], &shown)) tide_run_dev_show(game->dev_views[i], shown);
+        if (tide_gui_layout_toggle(g, 0xDE700000u + i, game->dev_views[i], &shown)) tide_run_dev_show(game->dev_views[i], shown);
     }
-    if (tweaks) (void)tide_run_dev_tweaks(tweaks, pad, pad + row * (float)(count + 1), width, row);
+    if (tweaks) tide_run_dev_tweaks(tweaks);
+    if (inspect) tide_run_dev_inspect(inspect, match);
+    // Where the list ends, as an empty place after it: its height, wherever it's scrolled to
+    const tide_rect end = tide_gui_layout_reserve(g, (tide_float2){0.0f, 0.0f});
+    tide_gui_close(g, depth);
+    const float height = end.y + tide_run_dev_offset.y - panel.y;
+    if (height > 0.0f) tide_run_dev_height = height + pad;
 }
 
 // Where the matches this machine hosts keep their store (Storage.Save and Load in match code): the game's own
@@ -1911,10 +2326,10 @@ static inline int tide_run_frame(void *user, const float seconds)
         game->frame_shards(more, n < TIDE_SESSION_VIEWS ? n : TIDE_SESSION_VIEWS);
     }
     tide_run_dev_views(game);
-    tide_run_tweaks_poll(game); // tweaks.json saved since: this machine's copy and the match's
+    tide_run_tweaks_poll(game); // The tweaks' values tide run worked out since: this machine's copy and the match's
     game->frame(match, view.previous, view.alpha, view.verified, view.verified_previous, view.verified_alpha, tide_run_local, &tide_run_draw, &tide_run_gui);
     tide_loops_leave(loops_before);
-    tide_run_dev_menu(game);
+    tide_run_dev_menu(game, match);
     if (game->voice) {
         const tide_voice_provider *voice = game->voice();
         if (voice) voice->frame(voice->self, s, &tide_run_audio, tide_run_now);

@@ -83,9 +83,10 @@ The game's usual start doesn't load, so what only it sets up doesn't happen; wha
 
 ## Tweaks
 
-A tweak is a value someone tunes without touching code: how hard a gun kicks, how fast a horse runs, the fog's color. The code declares it with its value, and `tweaks.json`, beside the game's code, gives it another:
+A tweak is a value someone tunes without touching code: how hard a gun kicks, how fast a horse runs, the fog's color. The code declares it with its value, and a `.tweaks` file beside the game's code gives it another:
 
 ```csharp
+// combat.tide
 tweak float KickUp = 0.00012;
 tweak Color Fog = Color(0.6, 0.65, 0.7, 1);
 
@@ -98,17 +99,18 @@ namespace Combat
 system Recoil(mut Gun gun) { gun.kick += KickUp; }
 ```
 
-```json
-{
-    "KickUp": 0.00015,
-    "Fog": [0.5, 0.55, 0.6, 1],
-    "Combat.Pace": "Fast"
-}
+```csharp
+// combat.tweaks
+KickUp = 0.00015;   // Tuned with the new rifles
+Fog = Color(0.5, 0.55, 0.6, 1);
+Combat.Pace = Combat.Rate.Fast;
 ```
 
-- **The file holds only what differs from the code**, by each tweak's name with its namespace: a number, `true` or `false`, a list of numbers for a vector or a Color, or an enum member's name. A name no tweak has is a warning.
+- **A `.tweaks` file holds only what differs from the code**: a line `Name = value;` for each, the tweak's name with its namespace. Comments are as in code.
+- **A value is worked out**, as a constant's is: from numbers, other tweaks and constants, operators, constructors like `float3(...)` and `Color(...)`, and Math's functions. `Gun.kick = KickUp * 2000;` follows `KickUp`. A tweak worked out from itself, through others or not, is an error.
+- **The game can have as many `.tweaks` files as suits it**: every one in its folder and the folders in it is read, so each person on a team can tune in a file of their own. A tweak set in two of them is an error, and a name no tweak has is a warning.
 - **A tweak is a number, a bool, a vector, a Color or an enum.**
-- **A type can have tweaks of its own**, which read like its fields but are the same for every value of it, so no entity holds one. `tweaks.json` names one with its type's name:
+- **A type can have tweaks of its own**, which read like its fields but are the same for every value of it, so no entity holds one. A `.tweaks` file names one with its type's name:
 
   ```csharp
   component Gun
@@ -122,19 +124,39 @@ system Recoil(mut Gun gun) { gun.kick += KickUp; }
   system Fire(Gun gun) { ... gun.kick ... Gun.kick ... }
   ```
 
-  ```json
-  { "Gun.kick": 0.3 }
+  ```csharp
+  Gun.kick = 0.3;
   ```
 
   A value of the type, like `Gun { kick = 2 }`, can't give one, and code can't set one: it's tuned, not played.
 - **Code reads it as a constant**, and a field's default can be one. What has to be known while compiling can't: an array's size, a `case`, a setting or a constant's value take a `const`.
-- **A build without dev** has the file's values as constants: they cost what a constant does, and the file isn't shipped.
+- **A build without dev** has the files' values as constants: they cost what a constant does, and the files aren't shipped.
 - **A dev build** reads them from the match, so changing one changes it for everyone in the match at once, through the server. GPU and audio code read the value the build had.
-- **In the editor**, a tweak `tweaks.json` gives another value has a line above it with that value, which opens the file there, and its hover says so. In `tweaks.json`, a tweak's name goes to its declaration and hovers with the code's value.
-- **Changing them while the game runs**: save `tweaks.json` in any editor and the running game has the new values within half a second, without building again. Or open the dev menu, whose Tweaks section has an editor for each, a switch for a bool, a field for a number, a vector or a color, and a button that steps through an enum's members, and which writes `tweaks.json` as a value changes, so it's kept.
+- **Changing them while the game runs**: under `tide run`, save a `.tweaks` file in any editor and the running game has the new values within about a second, without its code built again. Or open the dev menu, whose Tweaks section has an editor for each tweak written plainly, a switch for a bool, a field for a number, a vector or a color, and a button that steps through an enum's members. It writes the value into the `.tweaks` file that sets it, or into the one beside the code that declares the tweak (`combat.tide`'s `combat.tweaks`), keeping everything else in the file. A tweak worked out from others is shown with its value, and changes when they do. A new `.tweaks` file counts as soon as it's saved. All of this works the same in the browser under `tide run --web`, where tide writes the menu's changes into the files. A dev build run another way takes a saved file at its next build.
+- **In the editor**, a `.tweaks` file is read with the game's code: a wrong value or an unknown name is underlined as you type, a tweak's name completes at a line's start, and a value completes like code. A tweak's name goes to its declaration and hovers with the code's value, and renaming a tweak renames it in its `.tweaks` files too. In the code, a tweak a `.tweaks` file gives another value has a line above it with that value, which opens the file there, and its hover says so.
 
 ## The dev menu
 
-In a dev build with dev views or tweaks, the key under **Escape** (`` ` `` on a US keyboard, where Valve's games open their console) shows the dev menu, and again hides it. It lists the game's dev views, each with a switch, and its [tweaks](#tweaks). A dev view runs only while it's switched on, so a game's tools stay out of the way until someone wants one, and they don't each need a key of their own. What's on stays on across a hot reload.
+In a dev build, the key under **Escape** (`` ` `` on a US keyboard, where Valve's games open their console) shows the dev menu, and again hides it. It lists the game's dev views, each with a switch, its [tweaks](#tweaks), and the [inspector](#the-inspector). A dev view runs only while it's switched on, so a game's tools stay out of the way until someone wants one, and they don't each need a key of their own. What's on stays on across a hot reload.
 
 The game sees the key too. Interactive runs list the menu's switches among the GUI's widgets, so an agent can click one by name (see [Interactive play](./cli#interactive-play)).
+
+## The inspector
+
+The dev menu's **Inspector** shows the game's state while it runs, and changes it. Nothing has to be written for it: every dev build has one, made from the game's own types.
+
+- **Match** lists the match's singletons by name, and its entities grouped by the components they have (`Health, Gun x12`). A group opens to its entities, named by number (`#41`), and an entity to each of its components' fields, then its local fields.
+- **Local** lists this machine's local state the same way: its local singletons, and the local entities its views spawned.
+- **A field changes where it's shown**: a switch for a bool, a field for a number, a vector or a Color, a button that steps through an enum's members. Text, lists and maps are shown as they are, and an entity a field holds is a button that opens it.
+- **A change of the match's goes through the server**, so every machine of the match has it, and the field shows what was sent until it's back. The game's [`Changed<...>` handlers](../game/events.md#when-a-field-changes) hear it as they would a change of the game's own, so what follows from a field follows from an edit too:
+
+```csharp
+// The inspector sets a unit's hp; its handler does the rest, as for a hit
+event(Changed<Unit.hp> change) Down(mut Unit unit)
+{
+    unit.down = unit.hp <= 0;
+}
+```
+
+- **A change of the local world's** is this machine's, made at once.
+- Any player of a dev build can change a field. Only a value its field can hold is taken: a member of the enum, a bool that's true or false, a number that's a number. An entity that's gone by then is left alone.

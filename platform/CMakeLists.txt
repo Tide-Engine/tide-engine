@@ -1113,7 +1113,9 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     if(TIDE_NODE)
         add_test(NAME tide_platform_dev_menu
             COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/dev_menu.mjs" $<TARGET_FILE:tide_platform_dev_menu>
-                "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_dev_menu-run" "${CMAKE_CURRENT_BINARY_DIR}/dev_menu_game/tweaks.json")
+                "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_dev_menu-run" "${CMAKE_CURRENT_BINARY_DIR}/dev_menu_game"
+                # What tide run does as a .tweaks file changes: tidec works the values out again, beside the game's C
+                "${TIDEC_PATH}" "${CMAKE_CURRENT_BINARY_DIR}/tide/tide_platform_dev_menu" tide_platform_dev_menu)
         set_tests_properties(tide_platform_dev_menu PROPERTIES TIMEOUT 120)
         tide_gpu_test(tide_platform_dev_menu)
         add_test(NAME tide_platform_interactive

@@ -2,7 +2,8 @@
 # front end in-process and calls clang.
 add_executable(tide_cli main.c help.c android.c build.c deploy.c editors.c jetbrains.c fetch.c install.c libraries.c line.c packages_cmd.c publish.c release.c
     serve.c sys.c telemetry.c toolchain.c unity_assets.c unity_code.c unity_mapping.c unity_shaders.c unity_yaml.c unzip.c upgrade.c versions.c ${TIDE_APK_SOURCES}
-    "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/json.c" "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/packages.c" "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/unity_names.c")
+    "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/json.c" "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/packages.c" "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/unity_names.c"
+    "${PROJECT_SOURCE_DIR}/engine/src/tweaks.c") # Writes a page's tweaks into their .tweaks files (tide run --web)
 # Android apps are signed with the platform layer's crypto (apk.c).
 target_include_directories(tide_cli PRIVATE . ../lsp "${PROJECT_SOURCE_DIR}/platform/src/rtc")
 target_link_libraries(tide_cli PRIVATE tidec_core)

@@ -195,24 +195,30 @@ static bool compile_inputs_impl(const compile_input *inputs, const int count, co
 
     diag_phase("lexing and parsing");
     if (!opts->dev) leave_out_dev(prog);
-    // The game's tweaks.json (beside its code: the game's folder, or the first file's), and a dev build's TideTweaks
+    // The game's .tweaks files: in its folder and the folders in it, or beside the files of its own named one by one;
+    // and a dev build's TideTweaks
     if (!opts->declarations_only) {
-        const char *folder = opts->game_folder;
-        if (!folder && count) {
-            const char *first = inputs[0].path;
+        const char **folders = arena_alloc(sizeof(char *) * (size_t)(count ? count : 1));
+        int folder_count = 0;
+        if (opts->game_folder) folders[folder_count++] = opts->game_folder;
+        for (int i = 0; !opts->game_folder && i < count; i++) {
+            if (inputs[i].package) continue; // A package's files are its own
+            const char *path = inputs[i].path;
             const char *slash = NULL;
-            for (const char *ch = first; *ch; ch++) {
+            for (const char *ch = path; *ch; ch++) {
                 if (*ch == '/' || *ch == '\\') slash = ch;
             }
+            char *dir = arena_alloc(slash ? (size_t)(slash - path) + 1 : 2);
             if (slash) {
-                char *dir = arena_alloc((size_t)(slash - first) + 1);
-                memcpy(dir, first, (size_t)(slash - first));
-                dir[slash - first] = '\0';
-                folder = dir;
-            }
+                memcpy(dir, path, (size_t)(slash - path));
+                dir[slash - path] = '\0';
+            } else strcpy(dir, ".");
+            bool seen = false;
+            for (int k = 0; k < folder_count && !seen; k++) seen = strcmp(folders[k], dir) == 0;
+            if (!seen) folders[folder_count++] = dir;
         }
-        if (!tweaks_read(prog, folder)) return false;
-        if (opts->dev && !tweaks_prelude(prog)) return false;
+        if (!tweaks_read(prog, folders, folder_count, opts->game_folder != NULL)) return false;
+        if (opts->dev && (!tweaks_prelude(prog) || !inspect_prelude(prog))) return false;
     }
     if (opts->declarations_only) keep_declarations(prog);
     if (opts->embed && !add_embed_taps(prog)) return false;

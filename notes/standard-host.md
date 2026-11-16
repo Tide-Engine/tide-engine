@@ -1,8 +1,60 @@
 # The standard host: runs with no window, the stats, debug views
 
+## The inspector (2026-11-16)
+
+The owner's picks list (agreed "go with your picks for now"): numbers/vectors/bools/Colors/enums edited; text, lists,
+maps, entities shown (an entity a button); no game labels; a Local tab; any player of a dev build edits.
+
+- **Runtime** (`engine/include/tide/inspect.h`, `engine/src/inspect.c`, the agent's): `tide_inspect_api` {layout,
+  view (the match's and the local world's packets), set (to the server), set_local}; `tide_inspect_field` (the leaf
+  field at an offset, through STRUCT fields: INT/FLOAT/LONG/BYTE/DOUBLE/ENUM, PLAIN `bool` (1 byte) and `Color` (16);
+  never Entity/text/lists/PlayerID, all PLAIN); `tide_inspect_writable` (that, and a finite float/double, a bool 0/1,
+  an enum member, zero-extended for byte/ushort enums); a bounds-checked packet reader (`tide_packet_entities`,
+  `_entity`, `_next`, `_text_of`).
+- **Compiler**: a dev build parses `inspect_prelude` (`<tide>/inspect.tide`, tweaks.c): `command TideSetField { int type;
+  int offset; int size; long a, b, c, d; }` and an empty handler (it must name its sender), `decl.inspect_set`. The
+  dispatcher calls `tide_inspect_apply` (inspect_codegen.inc, before the dispatchers) in the handler's place: the
+  value's bytes, `tide_inspect_writable` against `tide_game_layout`, then `tide_load_<C>`/`tide_store_<C>` for a match
+  component or a memcpy into a match singleton (target null). Dev builds always generate the layout. The match packet
+  is the embed one (`gen_packet_view`, moved out of `gen_embed` with `heard_wanted`), no births needed
+  (`tide_entity_born` gives 0); the local packet (`tide_inspect_local`) has local archetypes' entities, their
+  components (a locally spawned component's twin, `tide_local_component_X`, named as X in the layout) and local
+  singletons. `set_local` covers local components, local parts of match components (`tide_get/set_X_local`) and
+  local singletons (a match singleton's local fields are one). `gen_embed_packers` when not `--embed`.
+- **Host** (`tide_run_dev_inspect`, host.h): an "Inspector" switch in the menu, `[Match]`/`Local` buttons, lists
+  (singletons, then groups by an FNV of each entity's component types, 128 groups, 500 rows of an open group), an
+  entity's/singleton's fields through `tide_run_dev_value` (the tweaks' editors, moved out of `tide_run_dev_tweaks`).
+  Sent changes are kept (16) and shown over the packet's value until it matches, a second at most. Packets are made
+  only while the inspector is open. `TideTweaks`/`TideTweaksHere` are left out of the lists. `tide_run_dev_menu`
+  takes the frame's match world; the menu shows in every dev build now.
+- Tests: `tidec_e2e_inspect` (native and web: packets' entities, components, text, local fields, local entities and
+  singletons; set through `tide_game_api.command` for a float heard by a `Changed` handler, an enum, a bool, a nested
+  struct's int and float3, a Color, a singleton's double; refused: a non-member, bool 2, NaN, part of a vector, a text
+  handle, a wrong size, a singleton with a target, an entity without the component; set_local for each kind and never
+  the match's). `tide_platform_dev_menu`: the Inspector at the scrolled end, a singleton's bool (black screen), a
+  group, an entity, an int typed and entered (white square), the Local tab's singleton (yellow square). The test now
+  resets its .tweaks file in `finally`, so a failed run doesn't leave Green worked out for the next.
+- Gaps: no game-chosen entity label; text/lists/maps/entities read-only; very large worlds pay a whole packet per
+  frame while the inspector is open; sharded games get the edit on the shard that dispatches it, untested.
+
 ## Tweaks in the dev menu, and tweaks.json read again (2026-11-16)
 
 `tide_run_tweaks_poll` and `tide_run_dev_tweaks` (notes/language.md, Tweaks, step 2, has what they do and their tests).
+
+**On the web (later the same day)**, under `tide run --web`: the page has no files of this machine, so tide's server
+carries both ways. `/build` gains a 4th number, a hash of `<gen>/game_tweaks.bin` (0 for none); tide.js fetches
+`/tweaks` when it changes and keeps the bytes, which `tide_run_tweaks_poll` copies with the `tide.tweaks_copy` import.
+The menu's change goes through `tide.tweak_write(file, name, value)` (the value as `tide_tweaks_format` writes it) to
+`/tweak?file=&name=&value=`, which tide writes with `tide_tweaks_write` (engine/src/tweaks.c, linked into the CLI).
+The server keeps a query only on requests with an `X-Tide` header (a cross-site page can't send one without a CORS
+preflight, never allowed), and writes only a `.tweaks` file under the game's folder, a dotted name, and a value with
+no `;`, newline or `/`. Writes go one after another (a promise chain), their strings read at once. Then the watch
+loop's `asset_stamp` sees the file, repacks, and the new bin reaches the page as a native run's file does. A built
+page (no `tide run`) has no-op imports. Tests: `reload_web.mjs` (fetched once per stamp, copied, writes in order with
+the header); end to end checked by hand with a scratch installation.
+
+**New `.tweaks` files**: `asset_stamp` also hashes every `.tweaks` under the game's folder (`folder_find_own`), so one
+made or removed starts a repack, as an edit does.
 
 ## The dev menu (2026-11-16)
 

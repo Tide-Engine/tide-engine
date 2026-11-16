@@ -1,0 +1,6 @@
+// expect: 'KickUp' is set twice
+// expect: it's set here too: a tweak has one value, in one .tweaks file
+tweak float KickUp = 0.5;
+scene Main { }
+singleton Seen { float kick; }
+system Read(mut Seen seen) { seen.kick = KickUp; }
