@@ -245,6 +245,24 @@ tide_block *tide_heap_write_shared(tide_heap *h, uint64_t block);
 // a block nothing else reads meanwhile.
 tide_block *tide_heap_write_over(tide_heap *h, uint64_t block, uint32_t bytes);
 
+// A block of page `p`, the one `block` is in (an offset anywhere in it), is
+// about to be written: what it hashed to is out of date, and the lines its
+// block is in say so (tide/page.h, Lines written). A page of blocks of one
+// size knows their size (`grain`, set as its place takes it, the same in its
+// copies); any other page is one block. Code that writes a block always says
+// so first, here (tide_heap_write and its kin): never through a block it was
+// handed for another.
+static inline void tide_heap_wrote(tide_page *p, const uint64_t block)
+{
+    const uint32_t grain = p->grain;
+    if (!grain) {
+        tide_page_dirty(p);
+        return;
+    }
+    const uint32_t in = (uint32_t)(block - ((uint64_t)p->first << TIDE_HEAP_PAGE_SHIFT)) & ~((1u << grain) - 1u);
+    tide_page_wrote(p, in, 1u << grain);
+}
+
 static inline tide_block *tide_heap_write(tide_heap *h, const uint64_t block)
 {
     // Read as tide_heap_block reads them: while a system's runs are on threads, another run's thread may be
@@ -254,7 +272,7 @@ static inline tide_block *tide_heap_write(tide_heap *h, const uint64_t block)
     // A page bigger than one place has a reference for each (see tide_heap)
     const uint32_t places = p->size > (1u << TIDE_HEAP_PAGE_SHIFT) ? p->size >> TIDE_HEAP_PAGE_SHIFT : 1u;
     if (p->refs != places) return tide_heap_write_shared(h, block);
-    p->hashed = UINT32_MAX; // What it hashed to is out of date
+    tide_heap_wrote(p, block); // What it hashed to is out of date, where
     return (tide_block *)(uintptr_t)((uint8_t *)tide_page_data(p) + (size_t)(block - ((uint64_t)p->first << TIDE_HEAP_PAGE_SHIFT)));
 }
 

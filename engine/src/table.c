@@ -162,7 +162,7 @@ void tide_table_lanes_begin_pieces(tide_table *t, const tide_columns *c, const u
             continue;
         }
         tide_page *own = tide_page_take((*p)->size);
-        *own = (tide_page){1, (*p)->size, (*p)->first, UINT32_MAX, 0, (uint64_t)(uintptr_t)*p};
+        tide_page_start(own, 1, (*p)->size, (*p)->first, (uint64_t)(uintptr_t)*p);
         *p = own; // Its reference to the page it was goes with `was`
     }
 }

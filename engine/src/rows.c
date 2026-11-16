@@ -79,7 +79,7 @@ static uint8_t *lane_write(tide_rows *rows, const char *function, const tide_row
     // table's own before any of them starts
     if (!rows->whole) stop(rows, function, "a piece of a chunk found a page it writes shared with a snapshot");
     tide_page *own = tide_page_take(page->size);
-    *own = (tide_page){1, page->size, page->first, UINT32_MAX, 0, 0};
+    tide_page_start(own, 1, page->size, page->first, 0);
     memcpy(tide_page_data(own), tide_page_data(page), (size_t)tide_table_rows(rows->table, rows->columns->shift, rows->chunk) * width);
     rows->held[(uint32_t)c->held + lane] = page;
     *p = own;

@@ -384,11 +384,7 @@ void tide_arena_commit(tide_arena *a, tide_resident *r, const uint64_t stamp, co
         if (!a->touched[i]) continue;
         a->touched[i] = 0;
         tide_page *p = tide_page_take(TIDE_ARENA_PAGE);
-        p->refs = 1;
-        p->size = TIDE_ARENA_PAGE;
-        p->first = 0;
-        p->hashed = UINT32_MAX;
-        p->was = 0;
+        tide_page_start(p, 1, TIDE_ARENA_PAGE, 0, 0);
         memcpy(tide_page_data(p), a->base + ((size_t)i << TIDE_ARENA_PAGE_SHIFT), TIDE_ARENA_PAGE);
         tide_page_release(t->page[i], 1);
         t->page[i] = p;

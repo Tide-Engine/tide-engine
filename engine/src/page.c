@@ -340,6 +340,7 @@ tide_page *tide_page_new(const uint32_t size)
     p->refs = 1;
     p->size = size;
     p->hashed = UINT32_MAX;
+    p->written = TIDE_PAGE_ALL_LINES; // Nothing says what it was before
     return p;
 }
 
@@ -350,12 +351,22 @@ void tide_page_release(tide_page *p, const uint32_t refs)
     if (p->refs == 0) tide_page_give(p);
 }
 
+// A copy's header: `p`'s hash, its lines written and those of the bytes `from` to `from + bytes` that aren't
+// copied (Lines written, tide/page.h)
+static tide_page copied_header(const tide_page *p, const uint32_t refs, const uint32_t from, const uint32_t bytes)
+{
+    return (tide_page){.refs = refs, .size = p->size, .first = p->first, .hashed = UINT32_MAX,
+                       .hash = __atomic_load_n(&p->hash, __ATOMIC_RELAXED),
+                       .written = __atomic_load_n(&p->written, __ATOMIC_RELAXED) | tide_page_lines(p->size, from, bytes),
+                       .grain = p->grain};
+}
+
 tide_page *tide_page_copy(const tide_page *p, const uint32_t refs, const uint32_t keep)
 {
     tide_page *copy = tide_page_take(p->size);
     stat_page(2u, p->size);
     const uint32_t kept = keep < p->size ? keep : p->size;
-    *copy = (tide_page){refs, p->size, p->first, UINT32_MAX, 0, 0};
+    *copy = copied_header(p, refs, kept, p->size - kept);
     memcpy(tide_page_data(copy), tide_page_data(p), kept);
     memset((uint8_t *)tide_page_data(copy) + kept, 0, p->size - kept);
     return copy;
@@ -375,7 +386,8 @@ tide_page *tide_page_own_copy_around(tide_page *p, const uint32_t mine, const ui
     const uint32_t kept = keep < p->size ? keep : p->size;
     const uint32_t start = from < p->size ? from : p->size; // The part left alone: start to end
     const uint32_t end = bytes < p->size - start ? start + bytes : p->size;
-    *copy = (tide_page){mine, p->size, p->first, UINT32_MAX, 0, 0};
+    *copy = copied_header(p, mine, start, end - start);
+    copy->written |= kept < p->size ? tide_page_lines(p->size, kept, p->size - kept) : 0u;
     uint8_t *to = tide_page_data(copy);
     const uint8_t *as_it_was = tide_page_data(p);
     // What's kept is copied and the rest is zeros, as in any copy, on each side of that part
@@ -392,6 +404,13 @@ tide_page *tide_page_own_copy_around(tide_page *p, const uint32_t mine, const ui
 uint64_t tide_page_hash(tide_page *p, const uint32_t bytes)
 {
     if (p->hashed != bytes) {
+        // Where it was written since the hash it had (tide/page.h, Lines written): out of date with nothing said
+        // is a write that didn't say where (code that only makes `hashed` UINT32_MAX), so all of it
+        const uint64_t written = __atomic_load_n(&p->written, __ATOMIC_RELAXED);
+        const bool out_of_date = __atomic_load_n(&p->hashed, __ATOMIC_RELAXED) == UINT32_MAX;
+        __atomic_store_n(&p->wrote, out_of_date && !written ? TIDE_PAGE_ALL_LINES : written, __ATOMIC_RELAXED);
+        __atomic_store_n(&p->before, __atomic_load_n(&p->hash, __ATOMIC_RELAXED), __ATOMIC_RELAXED);
+        __atomic_store_n(&p->written, 0u, __ATOMIC_RELAXED);
         // The hash, then that it's there, in that order for whoever reads them on another thread: a cached
         // function's key takes a page's hash only once `hashed` says it has one (tidec, cached_codegen.inc)
         const uint64_t hash = tide_hash_wide(tide_page_data(p), bytes);

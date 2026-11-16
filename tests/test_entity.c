@@ -826,3 +826,96 @@ TIDE_TEST(entity_ordered_cache_publishes_safely_to_concurrent_readers)
     tide_entities_free(&t);
 }
 #endif
+
+
+// Lines written (tide/page.h): a page of slots says which of its slots were written between the hash it had before and
+// the one it has, as each change writes its slot alone (a projection's check of its rows' snaps goes by it)
+#define SLOT_PAGE ((1u << TIDE_ENTITY_PAGE_SHIFT) * (uint32_t)sizeof(tide_entity_slot))
+#define SLOT_PAGES_KEPT 8u
+
+typedef struct kept_slots {
+    uint64_t hash;
+    uint32_t used;
+    uint8_t bytes[SLOT_PAGE];
+} kept_slots;
+
+static uint32_t slot_used_on(const tide_entities *t, const uint32_t p)
+{
+    const uint32_t left = t->next_unused - (p << TIDE_ENTITY_PAGE_SHIFT);
+    return (left < (1u << TIDE_ENTITY_PAGE_SHIFT) ? left : 1u << TIDE_ENTITY_PAGE_SHIFT) * (uint32_t)sizeof(tide_entity_slot);
+}
+
+TIDE_TEST(entity_pages_say_which_slots_were_written)
+{
+    kept_slots *kept = calloc(SLOT_PAGES_KEPT, sizeof *kept);
+    TIDE_REQUIRE(kept != NULL);
+    tide_entities t = {0}, snapshot = {0}, old = {0};
+    static tide_entity alive[6000], old_alive[6000];
+    uint32_t count = 0, old_count = 0, state = 99u, told = 0;
+    bool held = true;
+    for (uint32_t tick = 0; tick < 300u; tick++) {
+        for (uint32_t op = 0; op < 40u; op++) {
+            state = state * 1664525u + 1013904223u;
+            const uint32_t roll = state >> 8, what = roll % 9u;
+            if ((what < 4u || !count) && count < 6000u) {
+                alive[count++] = tide_entity_create(&t);
+            } else if (what == 4u) {
+                const uint32_t i = (roll >> 4) % count;
+                TIDE_CHECK(tide_entity_destroy(&t, alive[i]));
+                alive[i] = alive[--count];
+            } else if (what == 5u) {
+                tide_entity_snap(&t, alive[(roll >> 4) % count]);
+            } else if (what == 6u) {
+                const uint32_t i = (roll >> 4) % count;
+                TIDE_CHECK(tide_entity_erase(&t, alive[i]));
+                alive[i] = alive[--count];
+            } else {
+                tide_entity_set_location(&t, alive[(roll >> 4) % count], (tide_location){roll % 5u, roll >> 12});
+            }
+        }
+        if (tick % 3u == 0u) tide_entities_copy(&snapshot, &t); // (Before the hash: its pages are copied written)
+        (void)tide_entities_hash(0, &t);
+        if (tick % 3u != 0u) tide_entities_copy(&snapshot, &t);
+        // Every page that hashes to what was kept of it, now or before, is those bytes in the lines it doesn't say
+        for (uint32_t p = 0; p < t.pages && p < SLOT_PAGES_KEPT; p++) {
+            const tide_page *page = t.page[p];
+            if (!page || !kept[p].hash) continue;
+            uint64_t wrote;
+            if (page->hash == kept[p].hash) wrote = 0;
+            else if (page->before == kept[p].hash) wrote = page->wrote;
+            else continue;
+            if (wrote && wrote != TIDE_PAGE_ALL_LINES) told++;
+            for (uint32_t line = 0; line < 64u; line++) {
+                const uint32_t from = line * (SLOT_PAGE / 64u), to = from + SLOT_PAGE / 64u < kept[p].used ? from + SLOT_PAGE / 64u : kept[p].used;
+                if (wrote >> line & 1u || from >= to) continue;
+                if (memcmp((const uint8_t *)tide_page_data(page) + from, kept[p].bytes + from, to - from) != 0) held = false;
+            }
+        }
+        TIDE_REQUIRE(held);
+        // Now and then a world of ticks before (a rollback), whose pages are older ones
+        if (tick % 40u == 10u) {
+            tide_entities_free(&old);
+            tide_entities_copy(&old, &t);
+            memcpy(old_alive, alive, count * sizeof *alive);
+            old_count = count;
+        } else if (tick % 40u == 30u) {
+            tide_entities_free(&t);
+            tide_entities_copy(&t, &old);
+            memcpy(alive, old_alive, old_count * sizeof *alive);
+            count = old_count;
+            (void)tide_entities_hash(0, &t);
+        }
+        for (uint32_t p = 0; p < SLOT_PAGES_KEPT; p++) {
+            const tide_page *page = p < t.pages ? t.page[p] : NULL;
+            kept[p].hash = page ? page->hash : 0u;
+            if (!page) continue;
+            kept[p].used = slot_used_on(&t, p);
+            memcpy(kept[p].bytes, tide_page_data(page), SLOT_PAGE);
+        }
+    }
+    TIDE_CHECK(told > 300u);
+    tide_entities_free(&t);
+    tide_entities_free(&snapshot);
+    tide_entities_free(&old);
+    free(kept);
+}
