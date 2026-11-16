@@ -3525,11 +3525,19 @@ static void stamp_asset_file(void *user, const char *path, const unsigned long l
     stamp_file(user, path);
 }
 
+static void stamp_file(void *user, const char *path);
+
 // Changes whenever a file the game's assets name does, or one comes or goes
-// in a folder a glob names: the paths the last generate listed.
+// in a folder a glob names: the paths the last generate listed. And whenever
+// one of the game's .tweaks files does, or one comes or goes (tweaks.c): a new
+// one is read as the game's next values are worked out.
 static uint64_t asset_stamp(const build *b)
 {
-    return stamp_assets(b->info.asset_paths, b->info.asset_count);
+    uint64_t h = stamp_assets(b->info.asset_paths, b->info.asset_count);
+    char *dir = path_join(b->folder, "");
+    folder_find_own(dir, ".tweaks", stamp_file, &h);
+    free(dir);
+    return h;
 }
 
 // The same for the `count` paths a generate listed (game_info.asset_paths): a folder's ends in a slash.

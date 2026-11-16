@@ -30175,8 +30175,8 @@ bool codegen(program *prog, const codegen_options *opts)
         // A constant build code made is in the game's C, so a file its code reads changes the program, not the pack
         for (int i = 0; i < prog->build_roots.count; i++)
             opts->info->assets_affect_match |= prog->build_roots.items[i]->kind == DECL_CONST;
-        // ...and so are the tweaks .tweaks files give
-        if (prog->tweak_files.count && !prog->tweaks_live) opts->info->assets_affect_match = true; // A dev build takes them as it runs
+        // A dev build takes the .tweaks files' values as it runs; another has them in its C, one made since too
+        for (int i = 0; i < prog->decls.count && !prog->tweaks_live; i++) opts->info->assets_affect_match |= prog->decls.items[i]->is_tweak;
         for (int i = 0; i < prog->assets.count; i++)
             opts->info->assets_affect_match |= prog->assets.items[i]->asset_kind == ASSET_SKINNED
                                            || prog->assets.items[i]->asset_kind == ASSET_ANIMATIONS

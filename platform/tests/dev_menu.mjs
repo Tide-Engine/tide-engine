@@ -46,7 +46,7 @@ const command = async (text, expected = 'ok') => {
 const color = (name, x, y) => readPng(readFileSync(join(scratch, name))).at(x, y).slice(0, 3);
 
 const timer = setTimeout(() => { console.error('dev menu test timed out'); process.exit(1); }, 60000);
-const at = name => color(name, 300, 190); // Under the menu's rows
+const at = name => color(name, 3, 190); // Left of the menu
 try {
     rmSync(tweaksFile, { force: true });
     assert.equal(await next(), 'tide: interactive ready 1');
@@ -59,9 +59,19 @@ try {
     await command('5 key backquote up');
     await command('step 3', 'ready');
     await command('controls');
-    assert.equal(said.length, 3, said.join('\n'));
-    assert.match(said[0], /^tide: control 1 toggle "Marker" /);
-    assert.match(said[1], /^tide: control 2 toggle "Green" /);
+    assert.ok(said.some(line => /^tide: control \d+ toggle "Marker" /.test(line)), said.join('\n'));
+    assert.ok(said.some(line => /^tide: control \d+ toggle "Green" /.test(line)), said.join('\n'));
+    // Longer than the screen: Far is out of sight until the wheel scrolls the menu to it, and back
+    assert.ok(!said.some(line => line.includes('"Far"')), said.join('\n'));
+    await command('7 mouse 100 100');
+    await command('8 scroll 0 -40');
+    await command('step 3', 'ready');
+    await command('controls');
+    assert.ok(said.some(line => line.includes('"Far"') && !line.includes('covered')), said.join('\n'));
+    await command('10 scroll 0 40');
+    await command('step 3', 'ready');
+    await command('controls');
+    assert.ok(said.some(line => line.includes('"Green"')), said.join('\n'));
     // A tweak changed in the menu: the match reads it once the server applied it, and tweaks.json has it
     await command('click Green');
     await command('step 4', 'ready');
@@ -91,6 +101,9 @@ try {
     await command('capture kept.png');
     assert.deepEqual(at('kept.png'), [255, 0, 0]);
     child.stdin.end();
+    // Plainly as the code has it again, for the next build of the game: Green the menu can write over
+    writeFileSync(tweaksFile, 'Green = false;\n');
+    workOut();
     console.log('dev menu: ok');
 } catch (e) {
     console.error(e);

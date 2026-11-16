@@ -1133,16 +1133,16 @@ static inline void tide_run_tweaks_poll(const tide_host_game *game)
     if (!first) fprintf(stderr, "tide: the tweaks' new values are in\n");
 }
 
-// The tweaks in the menu, from row `first`: an editor each, by its kind, or a worked-out one's value. Changed, the copy
-// goes to the match, and the value into its .tweaks file.
-static inline uint32_t tide_run_dev_tweaks(const tide_tweaks_api *api, const float x, const float y, const float width, const float row)
+// The tweaks in the menu, laid out one under another: an editor each, by its kind, or a worked-out one's value.
+// Changed, the copy goes to the match, and the value into its .tweaks file.
+static inline void tide_run_dev_tweaks(const tide_tweaks_api *api)
 {
+    tide_gui *g = &tide_run_gui;
     uint8_t *values = api->here(tide_run_local);
-    tide_gui_label(&tide_run_gui, (tide_rect){x, y, width, row}, "Tweaks");
+    tide_gui_layout_label(g, "Tweaks");
     for (uint32_t i = 0; i < api->count; i++) {
         const tide_tweak *t = &api->tweaks[i];
         uint8_t *at = values + t->offset;
-        const tide_rect r = {x, y + row * (float)(i + 1), width, row - 4.0f};
         const uint32_t id = 0xDE710000u + i * 8u;
         bool changed = false;
         if (!t->plain) {
@@ -1150,12 +1150,12 @@ static inline uint32_t tide_run_dev_tweaks(const tide_tweaks_api *api, const flo
             char value[160], label[320];
             tide_tweaks_format(t, values, value, sizeof value);
             snprintf(label, sizeof label, "%s = %s (worked out)", t->name, value);
-            tide_gui_label(&tide_run_gui, r, label);
+            tide_gui_layout_label(g, label);
             continue;
         }
         if (t->kind == TIDE_TWEAK_BOOL) {
             bool v = *at != 0;
-            if (tide_gui_toggle(&tide_run_gui, id, r, t->name, &v)) {
+            if (tide_gui_layout_toggle(g, id, t->name, &v)) {
                 *at = v ? 1u : 0u;
                 changed = true;
             }
@@ -1166,29 +1166,28 @@ static inline uint32_t tide_run_dev_tweaks(const tide_tweaks_api *api, const flo
             while (m < t->member_count && t->member_values[m] != v) m++;
             char label[160];
             snprintf(label, sizeof label, "%s: %s", t->name, m < t->member_count ? t->members[m] : "?");
-            if (tide_gui_button(&tide_run_gui, id, r, label) && t->member_count) {
+            if (tide_gui_layout_button(g, id, label) && t->member_count) {
                 const int32_t next = t->member_values[m < t->member_count ? (m + 1u) % t->member_count : 0u];
                 memcpy(at, &next, t->size < 4u ? t->size : 4u);
                 changed = true;
             }
         } else if (t->color) {
-            changed |= tide_gui_color_field(&tide_run_gui, id, r, t->name, (tide_color *)(void *)at);
+            changed = tide_gui_layout_color_field(g, id, t->name, (tide_color *)(void *)at);
         } else if (t->kind == TIDE_TWEAK_FLOAT) {
-            if (t->count == 1) changed |= tide_gui_float_field(&tide_run_gui, id, r, t->name, (float *)(void *)at);
-            else if (t->count == 2) changed |= tide_gui_float2_field(&tide_run_gui, id, r, t->name, (tide_float2 *)(void *)at);
-            else if (t->count == 3) changed |= tide_gui_float3_field(&tide_run_gui, id, r, t->name, (tide_float3 *)(void *)at);
-            else changed |= tide_gui_float4_field(&tide_run_gui, id, r, t->name, (tide_float4 *)(void *)at);
+            if (t->count == 1) changed = tide_gui_layout_float_field(g, id, t->name, (float *)(void *)at);
+            else if (t->count == 2) changed = tide_gui_layout_float2_field(g, id, t->name, (tide_float2 *)(void *)at);
+            else if (t->count == 3) changed = tide_gui_layout_float3_field(g, id, t->name, (tide_float3 *)(void *)at);
+            else changed = tide_gui_layout_float4_field(g, id, t->name, (tide_float4 *)(void *)at);
         } else {
-            // A component at a time: ints, longs, bytes and doubles as the fields for ints and floats have them
-            const float part = width / (float)t->count;
+            // A component at a time, side by side: ints, longs, bytes and doubles as the fields for ints and floats have them
+            const int row = tide_gui_begin_horizontal(g, id + 7u);
             for (uint32_t k = 0; k < t->count; k++) {
-                const tide_rect p = {r.x + part * (float)k, r.y, part - 2.0f, r.height};
                 const char *label = k ? "" : t->name;
                 if (t->kind == TIDE_TWEAK_DOUBLE) {
                     double d;
                     memcpy(&d, at + 8u * k, 8);
                     float v = (float)d;
-                    if (tide_gui_float_field(&tide_run_gui, id + k, p, label, &v)) {
+                    if (tide_gui_layout_float_field(g, id + k, label, &v)) {
                         d = v;
                         memcpy(at + 8u * k, &d, 8);
                         changed = true;
@@ -1203,7 +1202,7 @@ static inline uint32_t tide_run_dev_tweaks(const tide_tweaks_api *api, const flo
                     memcpy(&l, at + 8u * k, 8);
                     v = l > INT32_MAX ? INT32_MAX : l < INT32_MIN ? INT32_MIN : (int32_t)l;
                 }
-                if (!tide_gui_int_field(&tide_run_gui, id + k, p, label, &v)) continue;
+                if (!tide_gui_layout_int_field(g, id + k, label, &v)) continue;
                 if (t->kind == TIDE_TWEAK_INT) memcpy(at + 4u * k, &v, 4);
                 else if (t->kind == TIDE_TWEAK_BYTE) at[k] = (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v);
                 else {
@@ -1212,14 +1211,18 @@ static inline uint32_t tide_run_dev_tweaks(const tide_tweaks_api *api, const flo
                 }
                 changed = true;
             }
+            tide_gui_close(g, row);
         }
         if (!changed) continue;
         // To the match at once, and into its .tweaks file, from which tide run works out the tweaks made from it
         api->send(tide_run_local);
         if (!tide_tweaks_save(t, values)) fprintf(stderr, "tide: can't write %s to %s\n", t->name, t->file);
     }
-    return api->count + 1u;
 }
+
+// Where the menu's list is scrolled to, from its top, and how tall it last was
+static tide_float2 tide_run_dev_offset;
+static float tide_run_dev_height = 64.0f;
 
 static inline void tide_run_dev_menu(const tide_host_game *game)
 {
@@ -1230,19 +1233,27 @@ static inline void tide_run_dev_menu(const tide_host_game *game)
     if (key && !tide_run_dev_key) tide_run_dev_open = !tide_run_dev_open;
     tide_run_dev_key = key;
     if (!tide_run_dev_open) return;
-    uint32_t count = 0;
-    while (game->dev_views && count < TIDE_RUN_DEV_VIEWS && game->dev_views[count]) count++;
-    const float row = 32.0f, pad = 8.0f, width = 320.0f;
-    const uint32_t rows = 1u + count + (tweaks ? tweaks->count + 1u : 0u);
-    tide_gui_view(&tide_run_gui, UINT32_MAX); // Its own: no view's claims hide the devices from it
-    tide_gui_claim_pointer_at(&tide_run_gui, (tide_rect){pad, pad, width, row * (float)rows + pad});
-    tide_gui_label(&tide_run_gui, (tide_rect){pad, pad, width, row}, "Dev");
-    for (uint32_t i = 0; i < count; i++) {
+    tide_gui *g = &tide_run_gui;
+    const float pad = 8.0f, width = 320.0f;
+    const tide_float2 screen = tide_platform_screen_size();
+    // Down the screen's height, which a longer list scrolls past (the wheel, or a drag on a touchscreen). The pointer
+    // is its over the list alone, as tall as it last was: below it, the game's
+    const float most = screen.y - 2.0f * pad > 0.0f ? screen.y - 2.0f * pad : 0.0f;
+    const tide_rect panel = {pad, pad, width, most};
+    tide_gui_view(g, UINT32_MAX); // Its own: no view's claims hide the devices from it
+    tide_gui_claim_pointer_at(g, (tide_rect){pad, pad, width, tide_run_dev_height < most ? tide_run_dev_height : most});
+    const int depth = tide_gui_begin_scroll(g, 0xDE6F0000u, panel, &tide_run_dev_offset);
+    tide_gui_layout_label(g, "Dev");
+    for (uint32_t i = 0; game->dev_views && i < TIDE_RUN_DEV_VIEWS && game->dev_views[i]; i++) {
         bool shown = tide_run_dev_shown(game->dev_views[i]);
-        const tide_rect at = {pad, pad + row * (float)(i + 1), width, row - 4.0f};
-        if (tide_gui_toggle(&tide_run_gui, 0xDE700000u + i, at, game->dev_views[i], &shown)) tide_run_dev_show(game->dev_views[i], shown);
+        if (tide_gui_layout_toggle(g, 0xDE700000u + i, game->dev_views[i], &shown)) tide_run_dev_show(game->dev_views[i], shown);
     }
-    if (tweaks) (void)tide_run_dev_tweaks(tweaks, pad, pad + row * (float)(count + 1), width, row);
+    if (tweaks) tide_run_dev_tweaks(tweaks);
+    // Where the list ends, as an empty place after it: its height, wherever it's scrolled to
+    const tide_rect end = tide_gui_layout_reserve(g, (tide_float2){0.0f, 0.0f});
+    tide_gui_close(g, depth);
+    const float height = end.y + tide_run_dev_offset.y - panel.y;
+    if (height > 0.0f) tide_run_dev_height = height + pad;
 }
 
 // Where the matches this machine hosts keep their store (Storage.Save and Load in match code): the game's own

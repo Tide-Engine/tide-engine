@@ -38,8 +38,12 @@ my picks are in docs/spec.md, Dev tools, Tweaks. The tweaks.json sections below 
   errors `tweak_file_type`, `tweak_file_broken`, `tweak_file_twice`, `tweak_cycle`, `tweak_value_function`;
   `tide_tests tweaks_*` (load, format, save keeping comments and spacing, a new file); `tide_platform_dev_menu` runs
   tidec as tide run would after the menu writes `dev_menu.tweaks` and after an outside save; `lsp_tweaks_file`.
-- Gaps: a `.tweaks` file made by the menu where none was isn't watched by a running `tide run` until its next build;
-  the menu doesn't scroll; no web dev build reads or writes the files.
+- `tide run`'s watch (`asset_stamp`, cli/build.c) also stamps every `.tweaks` file in the game's folder, so one made
+  or removed since counts as a change; and a game with tweaks rebuilds without dev on such a change
+  (`assets_affect_match` for any tweak, a file or not).
+- The dev menu is a scroll area as tall as the screen (`tide_gui_begin_scroll`, the wheel or a drag), its rows laid out
+  (`tide_gui_layout_*`); the pointer is claimed over the list's height, measured as an empty place reserved after it.
+  `tide_platform_dev_menu` has seven tweaks, more than its 200 pixels show, and scrolls to the last and back.
 
 ## Tweaks, step 3: tweak fields (2026-11-16)
 

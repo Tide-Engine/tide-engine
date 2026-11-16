@@ -5,6 +5,13 @@
 // it red. The test builds a copy beside its run, whose dev_menu.tweaks the menu writes.
 
 tweak bool Green = false;
+// More than the menu shows at once in the test's 200 pixels: it scrolls to Far
+tweak float Near1 = 1;
+tweak float Near2 = 2;
+tweak float Near3 = 3;
+tweak float Near4 = 4;
+tweak float Near5 = 5;
+tweak float Far = 6;
 
 scene Main { }
 
