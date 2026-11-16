@@ -225,9 +225,13 @@ TIDE_TEST(visibility_runs_a_players_world_is_its_projection)
     for (int i = 0; i < 3; i++) tide_world_tick_on(&server, &fake);
     const tide_player_id me = player(1);
     uint32_t size = 0;
+    // Nothing a machine does with what it's sent stays in its thread's scratch area, which nothing after it gives
+    // back: a grid read left the 64 bytes it was made in, for each chunk that ever came (notes/netcode.md, top section)
+    const uint64_t scratch = tide_scratch_mark();
     uint8_t *bytes = tide_game_api.client_state(&server, me, &size);
     TIDE_REQUIRE(bytes && tide_game_api.load_client_state(&client, bytes, size));
     free(bytes);
+    TIDE_CHECK(tide_scratch_mark() == scratch);
     TIDE_CHECK(tide_game_api.client_hash(&client, me) == tide_game_api.client_hash(&server, me));
     // What it loaded is in its owners' heaps, as its own code would have made it
     census c = census_of(&client);
@@ -281,6 +285,7 @@ TIDE_TEST(visibility_runs_a_players_world_is_its_projection)
         tide_world_free(&fresh);
         free(whole);
         tide_world_free(&before);
+        TIDE_CHECK(tide_scratch_mark() == scratch); // The ticks, the hashes, the repair made and taken, the load
     }
     c = census_of(&client);
     TIDE_CHECK(repairs >= TICKS && in_runs > 0 && c.elsewhere == 0);

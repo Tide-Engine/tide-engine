@@ -869,7 +869,9 @@ it says; 32 parked two runs)
   a second with eight bots), outside every world (their sizes above), not the
   store (the same with the platform's files in place of the bench's memory) and not the bench's watching (off). The
   projection checks' memos keep an entry for a container until its pages change, which a freed chunk's may never
-  do: the first place to look. A day of 8 players flying would be 5 GB by this.
+  do: the first place to look. A day of 8 players flying would be 5 GB by this. (Located and fixed the same day,
+  The process's growth, below: not the memos, which hold half a megabyte, but 64 bytes of a thread's scratch area
+  for every chunk a player's machine was sent.)
 
 **What holds 60 Hz today, plainly.** By the server's update at the 99th percentile against the 16.7 ms of a frame,
 on this machine's one core (threads don't change it), 1% lost, 50 ms each way:
@@ -903,6 +905,93 @@ on this machine's one core (threads don't change it), 1% lost, 50 ms each way:
   machine), a long run's worlds (level), a player's own frame at 60 Hz (no frame over 16.7 ms at the default view of
   the version to play; the long ones measured are a windowless run's).
 
+### The process's growth, located (2026-11-16, after the sweep)
+
+The long run of The sweep again, 8 (`bench_voxels --out 1 --hop 0 --watch 0 --threads 4 --every 60`: 8 bots flying
+straight out, digging and building; release, Windows, the machine shared with another build, BelowNormal, one run
+at a time). What grew was found by counting, not guessed: a tree with `bench/alloc_count.h` in front of every C
+file (notes/benchmarks.md, What the process holds) keeps every block malloc gives by its caller, and the bench says
+after each `--every` line who holds what.
+
+**What it was: 64 bytes of a thread's scratch area for every chunk a player's machine was sent.** A grid read from
+a world's bytes is made in the scratch area and taken into the heap, and nothing gave back the block it was made
+in, on a thread nothing resets (notes/netcode.md, top section, has the code and the fix: one mark in the generated
+reader). 472 chunks a second come to the eight machines: 1.81 MB a minute by that, and the scratch pieces counted
+were 7.3, 11.5, 14.7, 18.9 and 22.0 MB at minutes 2 to 10 (1.84 MB a minute). In the bench it's one thread's (the
+bots and the server are updated on the same one); in a game it's each player's own machine, 64 bytes a chunk that
+comes into view, and a server's wherever it reads grids from a heard event or a shard's messages. Not the memos,
+and nothing of the server's checks.
+
+**Every structure, counted** (the fixed build, MB held at minutes 4, 8, 12, 16 and 20; a block is counted on the
+side whose update was running when it was asked for, a page on whoever took it last, and a page several worlds
+share once):
+
+| | The server's updates | The eight machines' updates |
+|---|---|---|
+| Heaps' pages (the worlds a session keeps share them: the one it ticks, each tick's of its history, each player's base) | 189.3, 182.7, 210.5, 192.7, 192.2 | 22.7, 23.8, 25.4, 26.8, 24.2 |
+| Entity slots' and their index's pages | 26.0, 23.2, 26.9, 24.0, 23.3 | 4.4, 4.6, 4.3, 4.3, 4.3 |
+| Tables' pages | 15.6, 15.2, 18.4, 15.6, 15.0 | 9.8, 9.5, 9.7, 10.1, 8.6 |
+| The projection checks' memo: its slots and its entries' items and sums | 0.33, 0.61, 0.57, 0.61, 0.64 | 0.83, 0.63, 0.56, 0.70, 0.70 |
+| ...kept rows and pieces, the repair journal, the groups' entries | 5.04, 5.08, 5.10, 5.13, 5.14 | 4.10, 4.11, 4.11, 4.11, 4.12 |
+| Loops' indexes (followed ones and the copies' own) | 1.59 at each | 12.5, 12.6, 11.7, 12.0, 11.9 |
+| Entities' orders | 7.1, 7.1, 8.1, 7.7, 7.3 | 0.9, 0.9, 0.9, 0.9, 0.9 |
+| Heaps' own tables | 4.09 at each | 0.83, 0.83, 0.83, 0.90, 0.96 |
+| Command queues | 1.9, 2.1, 2.1, 2.1, 2.1 | 0.25, 0.09, 0.03, 0.02, 0.09 |
+| The session's own (frames, connections, inputs) | 1.02 at each | 2.88 at each |
+| Scratch pieces (all on the one thread) | 4.2 at each (11.5 and 18.9 at minutes 4 and 8 before the fix) | |
+| The bench's own: its timings, and its store in memory | 0.07, 0.14, 0.27, 0.27, 0.53 and 0.13, 0.26, 0.43, 0.51, 0.79 | 0.55, 1.08, 2.13, 2.13, 4.22 |
+| Everything malloc holds | 339.5, 331.7, 369.2, 347.7, 344.0 together | |
+
+- **Level**: entity slots (a slot is taken again: the pages don't grow), the memo (half a megabyte a side, swept
+  when it doubles: an entry of a container that's gone goes at the next sweep after its page is written again, and
+  pages here are), loops' indexes, the heaps' tables, the queues, the session's own. The store's line holds a tick's
+  answers at most (65 of them, 17 KB, or none, at each minute).
+- **Up and down with no trend**: the heaps' pages, by 30 MB, with how many pages the kept worlds no longer share
+  (more in a minute all eight bots cross chunk borders in). It is why a process's size steps up for a while
+  after the worlds are level: what was once held stays the process's (the C library's, and the pages kept spare,
+  which were 6 to 24 MB over a 24-minute run, of 8 MB a thread and 32 shared at most: `engine/src/page.c`).
+- **Creeping, by its design**: kept rows and pieces have room for the most rows a table ever had and the most pages a
+  piece ever read (0.10 MB in 16 minutes on the server, slower each minute: one piece more, 154, in the last ten); the bots' heaps'
+  tables likewise (0.13 MB). The world itself is as big as the most it ever held (What's left, 8): 24.0 MB to 24.9
+  over an hour, in two steps.
+- **Growing for good, and the bench's**: a float for every update of every machine (4.75 MB by the twentieth
+  minute, its room doubling as it fills), and its store in memory, which grows with what's built (70 bytes and a key for
+  each saved chunk besides its bytes).
+
+**The process, minute by minute** (an ordinary release build; working set, MB; the same run before and after, both
+ending on hash `0x1d2026427b0aaadd` at tick 36,229):
+
+| Minute | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | at most |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Before | 304.3 | 367.5 | 384.8 | 396.5 | 398.0 | 406.6 | 401.5 | 408.9 | 411.4 | 410.8 | 421 |
+| After | 299.3 | 360.8 | 379.1 | 388.4 | 388.1 | 393.8 | 386.0 | 393.4 | 395.3 | 391.8 | 402 |
+
+From the fourth minute, when the server's world is level: 2.4 MB a minute before, 0.6 after. Longer, after (one
+run of 30 minutes and one of 60):
+
+| Minute | 5 | 10 | 15 | 20 | 25 | 30 | 35 | 40 | 45 | 50 | 55 | 60 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 30 minutes | 386.1 | 389.3 | 401.6 | 410.7 | 404.0 | 410.5 | | | | | | |
+| 60 minutes | 388.3 | 397.3 | 400.6 | 415.7 | 406.1 | 411.8 | 417.2 | 413.2 | 421.0 | 419.4 | 423.3 | 423.3 |
+| ...the server's world | 23.96 | 23.99 | 24.02 | 24.02 | 24.05 | 24.02 | 24.02 | 24.11 | 24.11 | 24.12 | 24.85 | 24.86 |
+
+- **To the twentieth minute it still rises, 25 MB in all** (it was 55 from the fourth to the twentieth yesterday:
+  414 to 469): the bench's timings and store are 5 of it, the pages kept spare 7 (15 MB to 22, in a run of a build
+  made to count them and not kept), and the rest is the
+  process keeping what the heaps' pages reached at their most (above: what malloc holds is 30 MB more in one
+  minute than in another, with no trend over the twenty).
+- **From the twentieth to the sixtieth it's 7.6 MB, 0.19 MB a minute**, of which the bench's timings are 4.7 and
+  its store about 1.0 (868 KB of saves for 431 at half an hour, and a key and an entry for each of 12,381); what's
+  left, 1.9 MB in 40 minutes, is inside one minute's difference from the next (4 to 10 MB). A minute's readings
+  are 404 to 417 over the 30-minute run's last ten, 413 to 423 over the hour's last twenty.
+- So a server and its players' machines no longer grow with the chunks that came and went. What grows with time in
+  an engine's own structures is the rooms of "the most there ever was" above: tenths of a megabyte an hour here.
+
+**Not done.** The process's size by itself can't tell the C library keeping freed memory from something growing:
+only the counted run can, and it was 20 minutes long. A real client (a window, its views) and a dedicated server
+alone in its process weren't run for long; the counted table's two columns are the nearest to them. The web build
+wasn't built for this change (notes/netcode.md, top section).
+
 ### Tried and taken out
 
 - **A box that grows a ring of chunks a tick** from the player's own chunk (`Watch` with a `reach` for each player), so no tick spawns a whole box and the nearest are asked for first. The server's longest update was no shorter (near 6: 14.6 to 20.6 ms; near 12: 26.4 to 32.7; near 18: 57.0 to 48.8), its p99 a little longer (5.8 to 6.3, 14.7 to 16.1), its hashing more (9.7 to 10.7, 24.4 to 31.0 ms a second: more ticks in which something becomes someone's), and a hop's box later (nine tenths in 34 ticks for 28, 54 for 40, 76 for 62). The spawning isn't what the longest update is made of on a dedicated server; it wasn't taken apart further. (Taken apart later the same day, A whole view arriving: the longest update was `Generate` making 64 chunks on one thread, which a ring a tick doesn't change; a box spawned in one tick is 2.7 ms at the default view. The box is asked for nearest first since, all in one tick.)
@@ -923,13 +1012,14 @@ on this machine's one core (threads don't change it), 1% lost, 50 ms each way:
    - 5c. **Spares only once a connection's loss is counted** (netcode.md, Left): a join and a first hop have none.
    - 5d. **The tick a box is spawned in is 2.8 µs a chunk**: 2.4 ms at the default view, 8.7 at twice, about 19 at three times, where it's a frame's worth by itself. A box asked for over a few ticks, nearest first, would bound it; the ring-a-tick variant (Tried and taken out) is that, and would pay now where it didn't.
 6. ~~A hosting player's frame of 9 to 60 ms when a box is asked for (section 4), not taken apart.~~ Taken apart (A whole view arriving): it's the store's files found missing on the tick's thread, 18 µs each, which only a run with no window does; in a window the same ticks are 2.5 and 12 ms. What's left is 5d, and that **every chunk a player comes near is a file looked for** (567,041 loads in 20 minutes of 8 bots flying, none found): a dimension that knew which of its chunks were ever saved (a set kept with its far regions, or a listing as it starts) would ask for those alone.
-7. **The process grows about a hundred bytes for each chunk that came and went, in no world** (The sweep again, 8): 3.4 MB a minute with 8 bots flying, not located; the projection checks' memos are the first place to look.
+7. ~~The process grows about a hundred bytes for each chunk that came and went, in no world (The sweep again, 8): 3.4 MB a minute with 8 bots flying, not located; the projection checks' memos are the first place to look.~~ Located and fixed the same day (The process's growth): a grid read from bytes left the 64 bytes it was made in on its thread's scratch area, 1.84 MB a minute here. What's left is the bench's own (its timings and its store in memory) and what's in the next item.
 8. **The world's memory doesn't go back down** (The sweep again, 7): a dimension left frees its entities and keeps its pages, so a server's world is as big as the most it ever held at once.
 9. `Idle`, `Keep`, `Retry` and `Tend` look at every chunk and far region each tick (What costs a chunk that's only held): a part, not split here, of the 202 ms a second of simulating that 32 players apart cost the server.
 10. Not measured: a second player's machine with its views (the bots have none), real disks under these sizes (section 3a has the store's files at the default), a real window (the paced run has none), more than 64 players.
 
 ## Tests
 
+- The process's growth (2026-11-16, after the sweep): every session benchmark fails a run whose updates leave bytes in their thread's scratch area (`bench_voxels` and its variants, `bench_gallery`, `bench_sand`, `bench_earth*`), and `tidec_e2e_visibility_runs` (and `_checked`, `_memo_off`) checks the mark around a load and each repair; both fail with the fix out (`notes/netcode.md`, top section). After it, release on Windows, every pin where it was: `bench_voxels`, `_forgets`, `_wide`, `_arrives`, `_checked`, `_counts`, `voxels_walk`, `tide_tests`, the 26 `tidec_e2e_visibility_*`, `tidec_e2e_index_follow`, `earth_tests`, `bench_gallery`, `bench_sand`, `bench_earth` (and `_split`, `_diverge`): 42 tests.
 - `bench_voxels_arrives` (2026-11-16, last; A whole view arriving): one player standing, hopping every three seconds for a minute at 1% lost; the run fails where the whole box takes more than 23 ticks to be on its machine at the median (`--fill`; it takes 21), and its world is pinned (`0x7f07c9d38e49fd83`, the same on 1 and 12 threads). It fails with the store's answers back at 64 a tick or unbounded, with no repair as the world is now, with `client_came` never saying, and with `Pace`'s allowance unbounded (by its pin). The session's tests of the spare chunks and the 512 chunks said, and `client_came`'s, are in notes/netcode.md, top section.
 - Pins after the game's changes of that section (nearest first, `Pace` and its fields, `spread` and `park`): `bench_voxels`, `_checked` and `_counts` `0x4ebcc443d78e978b` to `0x66c02ffc1011cc8f`; `_forgets` `0xa199531280421472` to `0xc810e7b2b6568f95`; `_wide` `0xf5f8baa91878a156` to `0x4ed657a4bc93d5c3`; each the same on 1, 4 and 12 threads and with every projection hash worked out twice. `voxels_walk` passes; the audits of the far regions find nothing wrong.
 - `tidec_e2e_handler_lanes`, `tidec_e2e_handler_lanes_net` and `tidec_handler_lanes_codegen` (2026-11-16, later still; `notes/ecs.md`, top section): a handler takes for writing only the lanes it changed. After it, release, Windows, all passing with every pinned hash where it was: `bench_voxels`, `_forgets`, `_wide`, `_checked` and `_counts`, `voxels_walk`, `bench_gallery`, `bench_sand`, `bench_earth` (and `_split`, `_diverge`), `earth_tests`, `tide_tests`, the `tidec_e2e_visibility_*`, `_previous*`, `_fields`, `_rows`, `_indexed_loops*`, `_index_follow`, events', commands', tasks', `world_set*`, `world_edit` and prediction fixtures, and the tests of every other game whose generated C changed (Box2D's and Box3D's courses and shards, towers, sumo, duel, the safety fixtures): 172 tests. The 30 s runs of 8 bots, 8 at `--near 12` and 32, on 12 threads and on one, end on the hashes of the build before.

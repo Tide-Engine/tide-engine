@@ -247,8 +247,13 @@ static void gen_client_codec_value(gen *g, const client_codec *codec, const int 
                   "    int32_t size[3];\n    memcpy(size, sizes, sizeof size);\n"
                   "    if (size[0] < 0 || size[1] < 0 || size[2] < 0) return false;\n");
         if (t.decl->dims == 2) sb_put(o, "    if (size[2]) return false;\n");
-        sb_printf(o, "    *v = tide_grid_new(%du, size[0], size[1], size[2]);\n", t.decl->dims);
-        sb_printf(o, "    tide_grid_own(v, &%s, where);\n", grid_shape_name(t.decl));
+        // The grid is made in the scratch area and taken into the heap: what it was made in goes back at once, as
+        // nothing after a load, a repair or a message does (64 bytes a grid read, on that thread for good:
+        // notes/netcode.md, top section). One read where there's no heap is the scratch area's own, and stays
+        sb_printf(o, "    const uint64_t made = tide_scratch_mark();\n"
+                     "    *v = tide_grid_new(%du, size[0], size[1], size[2]);\n", t.decl->dims);
+        sb_printf(o, "    tide_grid_own(v, &%s, where);\n"
+                     "    if (tide_handle_where(v->at) != TIDE_IN_SCRATCH) tide_scratch_reset(made);\n", grid_shape_name(t.decl));
         sb_put(o, "    const uint32_t count = tide_read_varint(in);\n");
         sb_printf(o, "    const tide_grid_shape *shape = &%s;\n", grid_shape_name(t.decl));
         sb_put(o, "    const uint32_t bytes = tide_grid_chunk_bytes(shape);\n");
