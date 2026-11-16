@@ -130,6 +130,7 @@ system Recoil(mut Gun gun) { gun.kick += KickUp; }
 - **Code reads it as a constant**, and a field's default can be one. What has to be known while compiling can't: an array's size, a `case`, a setting or a constant's value take a `const`.
 - **A build without dev** has the file's values as constants: they cost what a constant does, and the file isn't shipped.
 - **A dev build** reads them from the match, so changing one changes it for everyone in the match at once, through the server. GPU and audio code read the value the build had.
+- **In the editor**, a tweak `tweaks.json` gives another value has a line above it with that value, which opens the file there, and its hover says so. In `tweaks.json`, a tweak's name goes to its declaration and hovers with the code's value.
 - **Changing them while the game runs**: save `tweaks.json` in any editor and the running game has the new values within half a second, without building again. Or open the dev menu, whose Tweaks section has an editor for each, a switch for a bool, a field for a number, a vector or a color, and a button that steps through an enum's members, and which writes `tweaks.json` as a value changes, so it's kept.
 
 ## The dev menu

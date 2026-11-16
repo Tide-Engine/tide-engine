@@ -1,3 +1,21 @@
+## Tweaks in editors (2026-11-16)
+
+The owner asked for the editor to show that tweaks.json overrides a tweak and to go between them.
+- **Analysis** (`analysis_run`): `tweaks_read` after parsing, from the game's folder or the first file's, so the
+  program has each tweak's file value (`decl.tweaked_text`, the value as the file writes it; `tweaked_at`, its name).
+  The file isn't one of the analysis's files: its diagnostics aren't published, and places in it are written with
+  `write_tweaks_location` (a `file://` URI from `prog->tweaks_path`, byte columns).
+- **Lens** (`analysis_code_lenses`): `tweaks.json: <value>` over an overridden tweak, `editor.action.goToLocations` to
+  its name in the file. **Hover**: a tweak's says `tweak T Name = <code's value>` and what the file gives.
+- **tweaks.json in the server** (`tweaks_document`, `tweaks_request` in server.c): opening or changing it stores the
+  text and analyses nothing (it isn't Tide; the game reads it from disk as it's saved). A hover or a definition reads
+  the quoted name under the cursor and answers from the game's analysis (`analysis_tweak`), running one for a `.tide`
+  file of its folder open in the editor when there's none; semantic tokens are empty and the rest null.
+- **Editors**: VS Code's document selector adds `**/tweaks.json` (language json); JetBrains' plugin maps `tweaks.json`
+  to tidels with languageId json, so the IDE's own JSON support stays. The JetBrains plugin wasn't built here.
+- Tests: `tidels_tests lsp_tweaks_file` (the lens and its place, one lens for one override, the hover, nothing sent
+  for opening tweaks.json, its definition and hover, null off a name, empty semantic tokens); the extension's tests.
+
 ## `dev` in the grammar and the language server (2026-11-16)
 
 Both TextMate grammars take `dev` among the declaration modifiers (`storage.modifier`), the grammar test has

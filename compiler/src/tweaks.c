@@ -199,6 +199,7 @@ bool tweaks_read(program *prog, const char *folder)
         sb key = {0};
         if (!read_string(&r, &key) || !expect_char(&r, ':', "':' after the tweak's name")) return false;
         const loc value_at = (blank(&r), here(&r));
+        const size_t value_from = r.at;
         sb value = {0};
         decl *d = key.data ? tweak_named(prog, key.data) : NULL;
         if (at_char(&r, '[')) {
@@ -244,6 +245,10 @@ bool tweaks_read(program *prog, const char *folder)
         d->code_value = d->value;
         d->value = e;
         d->tweaked_at = key_at;
+        char *raw = arena_alloc(r.at - value_from + 1); // As the file writes it, for editors
+        memcpy(raw, &r.text[value_from], r.at - value_from);
+        raw[r.at - value_from] = '\0';
+        d->tweaked_text = raw;
     }
 
     return ok;

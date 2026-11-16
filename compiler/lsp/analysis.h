@@ -35,6 +35,8 @@ void analysis_diagnostics(int file, jbuf *out);                              // 
 // of the game (definitions, references, renames).
 void analysis_completion(int line, int character, jbuf *out);                // CompletionList
 void analysis_hover(int line, int character, jbuf *out);                     // Hover or null
+// tweaks.json open in the editor: the tweak `name` is, as a hover or (not `hover`) its declaration's place; null for none
+void analysis_tweak(const char *name, bool hover, jbuf *out);
 void analysis_definition(const char *uri, int line, int character, jbuf *out); // Location or null
 void analysis_type_definition(int line, int character, jbuf *out);           // Location or null
 void analysis_implementation(int line, int character, jbuf *out);            // Location[] or null

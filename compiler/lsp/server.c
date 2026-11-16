@@ -1557,6 +1557,64 @@ static void initialize(lsp_server *s, const json *id, const json *params)
 }
 
 // Requests about one position or one document.
+// tweaks.json, which editors hand the server too (it isn't Tide): a hover on a tweak's name in it, and going to the
+// tweak's declaration, from the analysis of the game it's beside. Anything else of it has no answer.
+static bool tweaks_document(const char *uri)
+{
+    const size_t n = strlen(uri);
+    return n >= 12 && strcmp(uri + n - 12, "/tweaks.json") == 0;
+}
+
+static void tweaks_request(lsp_server *s, const char *method, const json *id, const lsp_document *d, const int line,
+                           const int character)
+{
+    // The name between the quotes the position is in, on its line
+    char name[256] = "";
+    const char *at = d->text, *end = d->text + d->len;
+    for (int l = 0; l < line && at < end; at++) {
+        if (*at == '\n') l++;
+    }
+    const char *line_end = at;
+    while (line_end < end && *line_end != '\n') line_end++;
+    const char *cursor = at + character <= line_end ? at + character : line_end;
+    const char *open = cursor;
+    while (open > at && open[-1] != '"') open--;
+    const char *close = cursor;
+    while (close < line_end && *close != '"') close++;
+    const bool quoted = open > at && close < line_end && (size_t)(close - open) < sizeof name;
+    if (quoted) {
+        memcpy(name, open, (size_t)(close - open));
+        name[close - open] = '\0';
+    }
+    const bool hover = strcmp(method, "textDocument/hover") == 0;
+    const bool definition = strcmp(method, "textDocument/definition") == 0;
+    jbuf b = {0};
+    reply_start(&b, id);
+    if (quoted && (hover || definition)) {
+        // The game beside it: the analysis there is, or a .tide file of its folder open in the editor
+        if (!s->analyzed) {
+            const size_t folder = strlen(d->uri) - strlen("tweaks.json");
+            for (int k = 0; k < s->doc_count; k++) {
+                const char *u = s->docs[k].uri;
+                const size_t n = strlen(u);
+                if (n > folder && strncmp(u, d->uri, folder) == 0 && n >= 5 && strcmp(u + n - 5, ".tide") == 0) {
+                    analyze(s, u);
+                    break;
+                }
+            }
+        }
+        if (s->analyzed) analysis_tweak(name, hover, &b);
+        else jb_put(&b, "null");
+    } else if (strcmp(method, "textDocument/semanticTokens/full") == 0) {
+        jb_put(&b, "{\"data\":[]}");
+    } else {
+        jb_put(&b, "null");
+    }
+    jb_put(&b, "}");
+    send_buf(s, &b);
+    jb_free(&b);
+}
+
 static void document_request(lsp_server *s, const char *method, const json *id, const json *params)
 {
     const char *uri = json_str(json_path(params, "textDocument", "uri", NULL));
@@ -1565,9 +1623,13 @@ static void document_request(lsp_server *s, const char *method, const json *id, 
         reply_error(s, id, INVALID_PARAMS, "unknown document");
         return;
     }
-    analyze(s, d->uri);
     const int line = json_int(json_path(params, "position", "line", NULL), 0);
     const int character = json_int(json_path(params, "position", "character", NULL), 0);
+    if (tweaks_document(d->uri)) {
+        tweaks_request(s, method, id, d, line, character);
+        return;
+    }
+    analyze(s, d->uri);
 
     jbuf b = {0};
     reply_start(&b, id);
@@ -1791,7 +1853,9 @@ void lsp_handle(lsp_server *s, const char *message, const size_t len)
         if (!text && changes && changes->kind == JSON_ARRAY && changes->count > 0) {
             text = json_get(changes->items[changes->count - 1], "text"); // Full sync: the last change is the whole text
         }
-        if (uri && text && text->kind == JSON_STRING) {
+        if (uri && text && text->kind == JSON_STRING && tweaks_document(uri)) {
+            set_doc(s, uri, text); // Not Tide: the game reads it from disk as it's saved (tweaks_request)
+        } else if (uri && text && text->kind == JSON_STRING) {
             const lsp_document *d = set_doc(s, uri, text);
             s->changes++;
             if (s->defer) {

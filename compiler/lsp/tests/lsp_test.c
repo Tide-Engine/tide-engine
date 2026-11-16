@@ -13852,3 +13852,50 @@ TIDE_TEST(lsp_linear_textures)
     open_document("scene Main { }\nint2 Size([Linear] Texture image) { return image.size; }\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]")); // A function's read-only image parameter keeps the mark
 }
+
+// A game's tweaks.json: a lens on each tweak it gives another value, going there; a hover that says so; and, in
+// tweaks.json itself, a tweak's name hovers and goes to its declaration.
+TIDE_TEST(lsp_tweaks_file)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_tweaks");
+    static const char game[] = "tweak float KickUp = 0.5;\n"
+                               "tweak int Rounds = 3;\n"
+                               "scene Main { }\n"
+                               "singleton Seen { float kick; }\n"
+                               "system Read(mut Seen seen) { seen.kick = KickUp + Rounds; }\n";
+    static const char tweaks[] = "{\n    \"KickUp\": 0.25\n}\n";
+    write_file("lsp_tweaks/game.tide", game);
+    write_file("lsp_tweaks/tweaks.json", tweaks);
+    char manifest[640], manifest_text[1400], uri_game[700], uri_tweaks[700];
+    game_path(manifest, sizeof manifest, "lsp_tweaks_manifest.txt");
+    snprintf(manifest_text, sizeof manifest_text, "game\t%s/lsp_tweaks/\n", game_dir);
+    write_file("lsp_tweaks_manifest.txt", manifest_text);
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    snprintf(uri_game, sizeof uri_game, "file:///%s/lsp_tweaks/game.tide", dir);
+    snprintf(uri_tweaks, sizeof uri_tweaks, "file:///%s/lsp_tweaks/tweaks.json", dir);
+
+    start();
+    server.manifest = manifest;
+    open_uri(uri_game, game);
+    const char *lenses = request_at(uri_game, "textDocument/codeLens", 0, 0, "");
+    TIDE_CHECK(has(lenses, "\"title\":\"tweaks.json: 0.25\""));
+    TIDE_CHECK(has(lenses, "lsp_tweaks/tweaks.json\",\"range\":{\"start\":{\"line\":1,\"character\":4}"));
+    TIDE_CHECK(count(lenses, "tweaks.json:") == 1); // Rounds is as the code has it
+    TIDE_CHECK(has(request_at(uri_game, "textDocument/hover", 4, 44, ""), "tweaks.json gives it `0.25`"));
+
+    open_uri(uri_tweaks, tweaks);
+    TIDE_CHECK(sent_count == 0); // Not Tide: no analysis or diagnostics of its own
+    const char *definition = request_at(uri_tweaks, "textDocument/definition", 1, 7, "");
+    TIDE_CHECK(has(definition, "lsp_tweaks/game.tide\",\"range\":{\"start\":{\"line\":0,\"character\":12}"));
+    TIDE_CHECK(has(request_at(uri_tweaks, "textDocument/hover", 1, 7, ""), "tweak float KickUp"));
+    TIDE_CHECK(has(request_at(uri_tweaks, "textDocument/definition", 0, 0, ""), "\"result\":null"));
+    TIDE_CHECK(has(request_at(uri_tweaks, "textDocument/semanticTokens/full", 0, 0, ""), "{\"data\":[]}"));
+
+    remove_game_file("lsp_tweaks/game.tide");
+    remove_game_file("lsp_tweaks/tweaks.json");
+    remove_folder("lsp_tweaks");
+    remove(manifest);
+    clear_sent();
+    lsp_free(&server);
+}
