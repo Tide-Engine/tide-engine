@@ -134,7 +134,7 @@ static void gen_index_helpers(gen *g)
     if (!g->ix_any) return;
     sb *o = &g->c;
     sb_printf(o, "// Indexed loops (notes/indexed-loops.md): where an index is kept, and what it was made from\n"
-                 "#define TIDE_INDEX_CACHE_ABI 2u\n#define TIDE_IX_LEAST %du\n#define TIDE_IX_MOST %du\n", IX_LEAST, IX_MOST);
+                 "#define TIDE_INDEX_CACHE_ABI 3u\n#define TIDE_IX_LEAST %du\n#define TIDE_IX_MOST %du\n", IX_LEAST, IX_MOST);
     sb_put(o,
         "typedef struct tide_ix_site {\n"
         "    uint32_t lock;      // Checking and building (tide_index_lock)\n"
@@ -143,17 +143,39 @@ static void gen_index_helpers(gen *g)
         "    uint32_t facts, fact_room, holds, hold_room;\n"
         "    uint32_t most;      // Searches in a row that found most of the rows (tide_ix_most)\n"
         "    uint32_t pass;      // Runs of the loop still to go through every row without searching\n"
+        "    uint32_t portable;  // Its facts are pages and their rows alone: it's right for any world that has them, so a\n"
+        "                        // copy of the world takes it (tide_ix_site_share). A list's has its cache's run among them\n"
         "    uint64_t plan;      // What the code that made it reads, which a reload can change\n"
         "    uint64_t valid;     // A system's own loop's: the tick's run (epoch) its index was found to hold in\n"
         "    uint64_t *fact;     // What it was made from: numbers, and pages as numbers, in the order they're checked\n"
         "    tide_page **held;   // The pages among them, each with a reference of the site's (NULL: none taken)\n"
-        "    tide_index *ix;\n"
+        "    tide_index *ix;     // The site's, or one it holds with the sites it was copied from and to (tide_index_shared):\n"
+        "                        // such a one is only searched, and a site that needs another makes its own\n"
+        "    // A site whose index follows its tables (tide_ix_follow): the facts and pages its walk writes, which\n"
+        "    // become the site's when the walk ends, the site's then kept for the next\n"
+        "    uint64_t *fact_next;\n"
+        "    tide_page **held_next;\n"
+        "    uint32_t fact_next_room, hold_next_room;\n"
         "} tide_ix_site;\n"
         "struct tide_index_cache {\n"
         "    uint32_t abi, sites;\n"
         "    uint64_t epoch; // The tick's run (a world's) or the frame (the local state's) whose lists a site holds for\n"
         "    tide_ix_site *site;\n"
+        "    uint32_t holders; // Its world, and each copy of the world that has yet to take its sites\n"
+        "    // A copied world's: the cache of the world it was copied from, whose sites it takes when it next runs\n"
+        "    // (tide_index_cache_prepare). A world kept and never run takes none, and costs its source nothing\n"
+        "    struct tide_index_cache *from;\n"
         "};\n"
+        "#ifdef TIDE_INDEX_STATS\n"
+        "// For tests (a build that says TIDE_INDEX_STATS): loops' starts that found their site's index as it was, that\n"
+        "// took in the table chunks that changed, and that made it whole; the table chunks taken in; the sites a\n"
+        "// copied world took from its source; the rows looked at in the chunks taken in (and in whole ones); and\n"
+        "// the indexes copied for a site whose rows changed while others held its index\n"
+        "uint64_t tide_index_stats[7];\n"
+        "#define TIDE_IX_STAT(i, n) __atomic_add_fetch(&tide_index_stats[i], (uint64_t)(n), __ATOMIC_RELAXED)\n"
+        "#else\n"
+        "#define TIDE_IX_STAT(i, n) ((void)0)\n"
+        "#endif\n"
         "static uint32_t tide_index_sites(void);\n"
         "// A loop's site of its own, outside the worlds (a view's rows, a local's list): tide_loop_indexes_free lets go\n"
         "static struct tide_ix_site *tide_ix_static(uint32_t id) __attribute__((unused));\n"
@@ -172,22 +194,81 @@ static void gen_index_helpers(gen *g)
         "    tide_index_unlock(&tide_ix_refs);\n}\n\n"
         "TIDE_HELPER void tide_ix_site_free(tide_ix_site *s)\n{\n"
         "    tide_ix_let_go(s->held, 0u, s->holds);\n"
-        "    free(s->held);\n    free(s->fact);\n    tide_index_free(s->ix);\n    memset(s, 0, sizeof *s);\n}\n\n"
+        "    free(s->held);\n    free(s->fact);\n    free(s->held_next);\n    free(s->fact_next);\n"
+        "    tide_index_free(s->ix);\n    memset(s, 0, sizeof *s);\n}\n\n"
+        "// A world lets go of its cache, or a copy of the cache it was to take sites from: freed with its last holder\n"
         "TIDE_HELPER void tide_index_cache_free(struct tide_index_cache *c)\n{\n"
-        "    if (!c) return;\n"
-        "    for (uint32_t i = 0; i < c->sites; i++) tide_ix_site_free(&c->site[i]);\n"
-        "    free(c->site);\n    free(c);\n}\n\n"
+        "    // (One of another build of tidec, met after a reload, is laid out some other way: left where it is)\n"
+        "    while (c && c->abi == TIDE_INDEX_CACHE_ABI && __atomic_sub_fetch(&c->holders, 1u, __ATOMIC_ACQ_REL) == 0u) {\n"
+        "        struct tide_index_cache *const from = c->from;\n"
+        "        for (uint32_t i = 0; i < c->sites; i++) tide_ix_site_free(&c->site[i]);\n"
+        "        free(c->site);\n        free(c);\n        c = from;\n    }\n}\n\n"
+        "TIDE_HELPER struct tide_index_cache *tide_index_cache_make(void)\n{\n"
+        "    struct tide_index_cache *c = tide_alloc_zeroed(1u, sizeof *c);\n"
+        "    c->abi = TIDE_INDEX_CACHE_ABI;\n    c->sites = tide_index_sites();\n    c->holders = 1u;\n"
+        "    c->site = tide_alloc_zeroed(c->sites ? c->sites : 1u, sizeof *c->site);\n"
+        "    return c;\n}\n\n");
+    sb_put(o,
+        "// A copy of a world (tide_world_copy): its cache is to take the sites of the world it was copied from, when\n"
+        "// it next runs. A source that was itself copied and hasn't run since passes on the cache it was to take from\n"
+        "TIDE_HELPER void tide_index_cache_share(struct tide_index_cache **slot, struct tide_index_cache *from)\n{\n"
+        "    struct tide_index_cache *to = *slot;\n"
+        "    if (to && to->abi != TIDE_INDEX_CACHE_ABI) return; // Another build's: tide_index_cache_prepare's to let go\n"
+        "    if (from && from->abi != TIDE_INDEX_CACHE_ABI) from = NULL;\n"
+        "    if (from && from->from) from = from->from;\n"
+        "    if (from == to) from = NULL; // Copied back from its own copy: what it has is the source's\n"
+        "    if (!to && !from) return;\n"
+        "    if (!to) *slot = to = tide_index_cache_make();\n"
+        "    if (to->from == from) return;\n"
+        "    if (from) __atomic_add_fetch(&from->holders, 1u, __ATOMIC_ACQ_REL);\n"
+        "    tide_index_cache_free(to->from);\n"
+        "    to->from = from;\n}\n\n"
+        "// A copy's site takes its source's: what it was made from, a reference to each page, and the index itself,\n"
+        "// which both then hold and neither changes. Under the source's lock, as its world may be running; the copy's\n"
+        "// isn't. A site the source can't give (not made, a list's, a page that can take no more references) leaves\n"
+        "// the copy's as it was: its own, of its own facts\n"
+        "TIDE_HELPER void tide_ix_site_share(tide_ix_site *to, tide_ix_site *from)\n{\n"
+        "    tide_index_lock(&from->lock);\n"
+        "    bool can = from->ready && from->portable && from->ix;\n"
+        "    if (can) {\n"
+        "        tide_index_lock(&tide_ix_refs);\n"
+        "        for (uint32_t i = 0; i < from->holds; i++) can &= from->held[i] && from->held[i]->refs < UINT32_MAX - 1u;\n"
+        "        for (uint32_t i = 0; can && i < from->holds; i++) tide_page_retain(from->held[i]);\n"
+        "        tide_index_unlock(&tide_ix_refs);\n    }\n"
+        "    if (can) {\n"
+        "        tide_ix_let_go(to->held, 0u, to->holds);\n"
+        "        tide_index_free(to->ix);\n"
+        "        if (from->facts > to->fact_room) {\n"
+        "            to->fact = tide_realloc(to->fact, (size_t)to->fact_room * sizeof *to->fact, (size_t)from->facts * sizeof *to->fact);\n"
+        "            to->fact_room = from->facts;\n        }\n"
+        "        if (from->holds > to->hold_room) {\n"
+        "            to->held = tide_realloc(to->held, (size_t)to->hold_room * sizeof *to->held, (size_t)from->holds * sizeof *to->held);\n"
+        "            to->hold_room = from->holds;\n        }\n"
+        "        if (from->facts) memcpy(to->fact, from->fact, (size_t)from->facts * sizeof *to->fact);\n"
+        "        if (from->holds) memcpy(to->held, from->held, (size_t)from->holds * sizeof *to->held);\n"
+        "        to->facts = from->facts;\n        to->holds = from->holds;\n"
+        "        to->plan = from->plan;\n        to->portable = 1u;\n"
+        "        to->ix = from->ix;\n        tide_index_share(to->ix);\n"
+        "        to->ready = 1u;\n"
+        "        to->most = __atomic_load_n(&from->most, __ATOMIC_RELAXED);\n"
+        "        to->pass = __atomic_load_n(&from->pass, __ATOMIC_RELAXED);\n"
+        "        __atomic_store_n(&to->valid, 0u, __ATOMIC_RELEASE);\n"
+        "        TIDE_IX_STAT(4, 1);\n    }\n"
+        "    tide_index_unlock(&from->lock);\n}\n\n");
+    sb_put(o,
         "// Serial, before code runs: a cache for this build's sites, and the next run of the tick or frame\n"
         "TIDE_HELPER void tide_index_cache_prepare(struct tide_index_cache **slot)\n{\n"
         "    const uint32_t sites = tide_index_sites();\n"
         "    struct tide_index_cache *c = *slot;\n"
         "    if (c && (c->abi != TIDE_INDEX_CACHE_ABI || c->sites != sites)) {\n"
         "        tide_index_cache_free(c);\n        c = NULL;\n    }\n"
-        "    if (!c) {\n"
-        "        c = tide_alloc_zeroed(1u, sizeof *c);\n"
-        "        c->abi = TIDE_INDEX_CACHE_ABI;\n        c->sites = sites;\n"
-        "        c->site = tide_alloc_zeroed(sites ? sites : 1u, sizeof *c->site);\n"
-        "        *slot = c;\n    }\n"
+        "    if (!c) *slot = c = tide_index_cache_make();\n"
+        "    if (c->from) { // The world was copied since it last ran: its source's sites, while they're this build's\n"
+        "        struct tide_index_cache *const from = c->from;\n"
+        "        c->from = NULL;\n"
+        "        if (from->abi == TIDE_INDEX_CACHE_ABI && from->sites == sites) {\n"
+        "            for (uint32_t i = 0; i < sites; i++) tide_ix_site_share(&c->site[i], &from->site[i]);\n        }\n"
+        "        tide_index_cache_free(from);\n    }\n"
         "    c->epoch++;\n}\n\n"
         "// A local's declaration's run: a number no other has\n"
         "TIDE_HELPER uint64_t tide_ix_call(void)\n{\n"
@@ -199,11 +280,12 @@ static void gen_index_helpers(gen *g)
         "// Checking a site's facts, under its lock: they're compared as they come, and from the first that differs\n"
         "// they're taken anew, its pages held\n"
         "typedef struct tide_ix_walk {\n    tide_ix_site *s;\n    uint32_t at, held;\n    bool same, full;\n} tide_ix_walk;\n\n"
-        "TIDE_HELPER tide_ix_walk tide_ix_walk_begin(tide_ix_site *s, const uint64_t plan)\n{\n"
+        "TIDE_HELPER tide_ix_walk tide_ix_walk_begin(tide_ix_site *s, const uint64_t plan, const bool portable)\n{\n"
         "    if (s->plan != plan) {\n"
         "        tide_ix_let_go(s->held, 0u, s->holds);\n"
         "        s->holds = s->facts = s->ready = 0u;\n        s->plan = plan;\n"
         "        __atomic_store_n(&s->valid, 0u, __ATOMIC_RELEASE);\n    }\n"
+        "    s->portable = portable;\n"
         "    return (tide_ix_walk){s, 0u, 0u, true, false};\n}\n\n"
         "TIDE_HELPER void tide_ix_differ(tide_ix_walk *w)\n{\n"
         "    tide_ix_site *s = w->s;\n"
@@ -252,9 +334,12 @@ static void gen_index_helpers(gen *g)
         "TIDE_HELPER tide_index *tide_ix_take(tide_ix_site *s, tide_ix_walk *w, bool *own, bool *build)\n{\n"
         "    *own = true;\n    *build = true;\n"
         "    if (!s) return tide_index_make();\n"
-        "    if (tide_ix_walk_end(w)) {\n        *own = *build = false;\n        return s->ix;\n    }\n"
+        "    if (tide_ix_walk_end(w)) {\n        *own = *build = false;\n        TIDE_IX_STAT(0, 1);\n        return s->ix;\n    }\n"
+        "    TIDE_IX_STAT(2, 1);\n"
         "    __atomic_store_n(&s->valid, 0u, __ATOMIC_RELEASE);\n"
         "    if (__atomic_load_n(&s->readers, __ATOMIC_ACQUIRE) == 0u) {\n"
+        "        if (s->ix && tide_index_shared(s->ix)) { // Others hold it as it is: the site's own from here\n"
+        "            tide_index_free(s->ix);\n            s->ix = NULL;\n        }\n"
         "        if (!s->ix) s->ix = tide_index_make();\n"
         "        s->ready = !w->full;\n        *own = false;\n        return s->ix;\n    }\n"
         "    s->ready = 0u;\n    return tide_index_make();\n}\n\n"
@@ -297,6 +382,198 @@ static void gen_index_helpers(gen *g)
         "    __atomic_store_n(&s->most, n, __ATOMIC_RELAXED);\n"
         "    __atomic_store_n(&s->pass, (1u << n) - 1u, __ATOMIC_RELAXED);\n"
         "    return true;\n}\n\n");
+    sb_put(o,
+        "// A site whose index follows its tables (a query's, by an exact key). Its facts are, for each table in turn, its\n"
+        "// chunks, then for each chunk its rows and the pages the index read of it, as many for every chunk of a table.\n"
+        "// A loop's start goes through them once only looking; if any differs it goes through them again, taking in\n"
+        "// each chunk that differs: the rows of it that changed, found by comparing the pages the site holds of it\n"
+        "// with the table's (tide_ix_differs), are put in the index or dropped from it, and the site holds the new\n"
+        "// pages. One never made, and one a page couldn't be held for, are made whole instead, by the same code: every\n"
+        "// chunk taken with nothing known of it. An index others hold (a copied world's and its source's) is never\n"
+        "// changed: its site still takes the chunks' new pages for the ones it held while their rows are the same,\n"
+        "// which is most ticks (a page is another page once anything is written to it, whatever was written), and at\n"
+        "// the first row that differs takes a copy of the index for its own (tide_index_copy) and goes on with that.\n"
+        "typedef struct tide_ix_follow {\n"
+        "    tide_ix_site *s;          // NULL: an index of the loop's own, whole\n"
+        "    tide_index *ix;\n"
+        "    uint32_t exact, dims, room;\n"
+        "    uint32_t at, held;        // Where it is in the site's facts and pages as they were\n"
+        "    uint32_t next, next_held; // ...and in the ones it writes\n"
+        "    uint32_t chunks, chunk;   // The table's chunks as the site had them, and the one it's at\n"
+        "    uint32_t was;             // A taken chunk's rows as the site had them (0: none known)\n"
+        "    tide_page **pages;        // ...and its pages, held until tide_ix_follow_taken (NULL: none known)\n"
+        "    bool looking, differs, fresh, own, full;\n"
+        "    bool frozen;              // Others hold the index: no entry of it is changed (tide_ix_follow_thaw)\n"
+        "} tide_ix_follow;\n\n"
+        "typedef struct tide_ix_column {\n"
+        "    const uint8_t *was, *is; // A chunk's rows of a column: as the site held them, and as they are\n"
+        "    uint32_t width;\n"
+        "} tide_ix_column;\n\n"
+        "// The first row from `from` and below `to` whose bytes differ in any of the columns, or `to`\n"
+        "TIDE_HELPER uint32_t tide_ix_differs(const tide_ix_column *cols, const uint32_t n, uint32_t from, const uint32_t to)\n{\n"
+        "    while (from < to) {\n"
+        "        const uint32_t run = to - from < 64u ? to - from : 64u; // 64 rows at a time while they're the same\n"
+        "        bool same = true;\n"
+        "        for (uint32_t c = 0; same && c < n; c++) {\n"
+        "            const size_t w = cols[c].width;\n"
+        "            same = cols[c].was == cols[c].is || memcmp(cols[c].was + from * w, cols[c].is + from * w, run * w) == 0;\n"
+        "        }\n"
+        "        if (same) {\n            from += run;\n            continue;\n        }\n"
+        "        for (uint32_t r = from; r < from + run; r++) {\n"
+        "            for (uint32_t c = 0; c < n; c++) {\n"
+        "                const size_t w = cols[c].width;\n"
+        "                if (cols[c].was != cols[c].is && memcmp(cols[c].was + r * w, cols[c].is + r * w, w) != 0) return r;\n"
+        "            }\n        }\n"
+        "        from += run;\n    }\n"
+        "    return to;\n}\n\n");
+    sb_put(o,
+        "// The site's facts are to be taken again, and its index changed with them: where it is, or with `fresh` by\n"
+        "// making it whole. With searches of it running, the loop makes one of its own and the site is left as it is;\n"
+        "// with others holding it, its entries are left (tide_ix_follow.frozen) unless it's to be whole, the site's own\n"
+        "TIDE_HELPER void tide_ix_follow_start(tide_ix_follow *f, bool fresh)\n{\n"
+        "    tide_ix_site *s = f->s;\n"
+        "    __atomic_store_n(&s->valid, 0u, __ATOMIC_RELEASE);\n"
+        "    f->looking = f->differs = f->frozen = false;\n"
+        "    f->at = f->held = f->next = f->next_held = 0u;\n"
+        "    if (__atomic_load_n(&s->readers, __ATOMIC_ACQUIRE) != 0u) { // Searches of its index are running\n"
+        "        f->s = NULL;\n"
+        "        f->ix = tide_index_make();\n"
+        "        tide_index_begin_followed(f->ix, f->exact, f->dims, f->room);\n"
+        "        f->fresh = f->own = true;\n"
+        "        return;\n    }\n"
+        "    const bool shared = s->ix && tide_index_shared(s->ix);\n"
+        "    if (shared && fresh) { // Others hold it as it is: the site's own from here\n"
+        "        tide_index_free(s->ix);\n        s->ix = NULL;\n    }\n"
+        "    if (fresh) {\n"
+        "        tide_ix_let_go(s->held, 0u, s->holds);\n"
+        "        s->holds = s->facts = 0u;\n"
+        "        if (!s->ix) s->ix = tide_index_make();\n"
+        "        tide_index_begin_followed(s->ix, f->exact, f->dims, f->room);\n    }\n"
+        "    s->ready = 0u;\n"
+        "    f->ix = s->ix;\n    f->fresh = fresh;\n    f->frozen = shared && !fresh;\n}\n\n"
+        "// A row differs, or a chunk is gone, and others hold the index, which can't take it in: the site takes a copy\n"
+        "// of it for its own, as it is (of what the site's facts said), and the walk goes on with that\n"
+        "TIDE_HELPER void tide_ix_follow_thaw(tide_ix_follow *f)\n{\n"
+        "    tide_ix_site *s = f->s;\n"
+        "    tide_index *const own = tide_index_copy(s->ix);\n"
+        "    tide_index_free(s->ix);\n"
+        "    f->ix = s->ix = own;\n"
+        "    f->frozen = false;\n"
+        "    TIDE_IX_STAT(6, 1);\n}\n\n"
+        "// Under the site's lock (with a site)\n"
+        "TIDE_HELPER tide_ix_follow tide_ix_follow_begin(tide_ix_site *s, const uint64_t plan, const uint32_t exact, const uint32_t dims,\n"
+        "                                               const uint64_t rows)\n{\n"
+        "    tide_ix_follow f = {0};\n"
+        "    f.s = s;\n    f.exact = exact;\n    f.dims = dims;\n    f.room = rows < (1u << 30) ? (uint32_t)rows : 1u << 30;\n"
+        "    if (!s) {\n"
+        "        f.ix = tide_index_make();\n"
+        "        tide_index_begin_followed(f.ix, exact, dims, f.room);\n"
+        "        f.fresh = f.own = true;\n"
+        "        return f;\n    }\n"
+        "    if (s->plan != plan) {\n"
+        "        tide_ix_let_go(s->held, 0u, s->holds);\n"
+        "        s->holds = s->facts = s->ready = 0u;\n        s->plan = plan;\n"
+        "        __atomic_store_n(&s->valid, 0u, __ATOMIC_RELEASE);\n    }\n"
+        "    s->portable = 1u;\n"
+        "    f.ix = s->ix;\n"
+        "    f.looking = s->ready && s->ix && tide_index_followed(s->ix, exact, dims);\n"
+        "    if (!f.looking) tide_ix_follow_start(&f, true);\n"
+        "    return f;\n}\n\n"
+        "TIDE_HELPER void tide_ix_follow_room(tide_ix_site *s, const uint32_t facts, const uint32_t holds)\n{\n"
+        "    if (facts > s->fact_next_room) {\n"
+        "        uint32_t room = s->fact_next_room ? s->fact_next_room : 64u;\n"
+        "        while (room < facts) {\n            if (room > UINT32_MAX / 2u) tide_out_of_memory();\n            room *= 2u;\n        }\n"
+        "        s->fact_next = tide_realloc(s->fact_next, (size_t)s->fact_next_room * sizeof *s->fact_next, (size_t)room * sizeof *s->fact_next);\n"
+        "        s->fact_next_room = room;\n    }\n"
+        "    if (holds > s->hold_next_room) {\n"
+        "        uint32_t room = s->hold_next_room ? s->hold_next_room : 64u;\n"
+        "        while (room < holds) {\n            if (room > UINT32_MAX / 2u) tide_out_of_memory();\n            room *= 2u;\n        }\n"
+        "        s->held_next = tide_realloc(s->held_next, (size_t)s->hold_next_room * sizeof *s->held_next, (size_t)room * sizeof *s->held_next);\n"
+        "        s->hold_next_room = room;\n    }\n}\n\n");
+    sb_put(o,
+        "// A table's chunks. What comes back is how many to go through: the table's, or the site's when it had more,\n"
+        "// those past the table's being gone (tide_ix_follow_gone)\n"
+        "TIDE_HELPER uint32_t tide_ix_follow_table(tide_ix_follow *f, const uint32_t chunks)\n{\n"
+        "    tide_ix_site *s = f->s;\n"
+        "    f->chunk = f->chunks = 0u;\n"
+        "    if (!s) return chunks;\n"
+        "    const bool known = !f->fresh && f->at < s->facts;\n"
+        "    const uint32_t old = known ? (uint32_t)s->fact[f->at] : 0u;\n"
+        "    if (known) f->at++;\n"
+        "    f->chunks = old;\n"
+        "    if (f->looking) {\n"
+        "        if (!known) f->differs = true;\n"
+        "        if (old != chunks) f->differs = true;\n"
+        "        return chunks;\n    }\n"
+        "    tide_ix_follow_room(s, f->next + 1u, f->next_held);\n"
+        "    s->fact_next[f->next++] = chunks;\n"
+        "    return old > chunks ? old : chunks;\n}\n\n"
+        "// A chunk's facts, `n` of them: its rows, then its pages. True: it's to be taken, tide_ix_follow.was and\n"
+        "// .pages saying what the site had of it, and tide_ix_follow_taken called once it has been\n"
+        "TIDE_HELPER bool tide_ix_follow_chunk(tide_ix_follow *f, const uint64_t *fact, const uint32_t n)\n{\n"
+        "    tide_ix_site *s = f->s;\n"
+        "    f->was = 0u;\n    f->pages = NULL;\n"
+        "    if (!s) return true;\n"
+        "    const bool known = !f->fresh && f->chunk < f->chunks && f->at + n <= s->facts && f->held + (n - 1u) <= s->holds;\n"
+        "    f->chunk++;\n"
+        "    const bool same = known && memcmp(s->fact + f->at, fact, (size_t)n * sizeof *fact) == 0;\n"
+        "    if (f->looking) {\n"
+        "        if (!same) f->differs = true;\n"
+        "        f->at += n;\n        f->held += n - 1u;\n"
+        "        return false;\n    }\n"
+        "    tide_ix_follow_room(s, f->next + n, f->next_held + (n - 1u));\n"
+        "    memcpy(s->fact_next + f->next, fact, (size_t)n * sizeof *fact);\n"
+        "    tide_page **const held = s->held_next + f->next_held;\n"
+        "    f->next += n;\n    f->next_held += n - 1u;\n"
+        "    if (same) { // As the site has it: its references go with it\n"
+        "        memcpy(held, s->held + f->held, (size_t)(n - 1u) * sizeof *held);\n"
+        "        f->at += n;\n        f->held += n - 1u;\n"
+        "        return false;\n    }\n"
+        "    tide_index_lock(&tide_ix_refs);\n"
+        "    for (uint32_t i = 1; i < n; i++) {\n"
+        "        tide_page *const p = (tide_page *)(uintptr_t)fact[i];\n"
+        "        const bool room = p->refs < UINT32_MAX - 1u; // A site never wraps a page's references\n"
+        "        if (room) tide_page_retain(p);\n"
+        "        held[i - 1u] = room ? p : NULL;\n"
+        "        f->full |= !room;\n    }\n"
+        "    tide_index_unlock(&tide_ix_refs);\n"
+        "    if (known) {\n        f->was = (uint32_t)s->fact[f->at];\n        f->pages = s->held + f->held;\n    }\n"
+        "    if (!f->fresh) TIDE_IX_STAT(3, 1);\n"
+        "    return true;\n}\n\n"
+        "// After a taken chunk's rows: the pages the site had of it are let go\n"
+        "TIDE_HELPER void tide_ix_follow_taken(tide_ix_follow *f, const uint32_t n)\n{\n"
+        "    if (!f->pages) return;\n"
+        "    tide_ix_let_go(f->pages, 0u, n - 1u);\n"
+        "    f->pages = NULL;\n"
+        "    f->at += n;\n    f->held += n - 1u;\n}\n\n"
+        "// A chunk the site had that its table has no more: its pages let go (its entries are the caller's to clear)\n"
+        "TIDE_HELPER void tide_ix_follow_gone(tide_ix_follow *f, const uint32_t n)\n{\n"
+        "    tide_ix_site *s = f->s;\n"
+        "    if (!s || f->looking || f->fresh || f->at + n > s->facts || f->held + (n - 1u) > s->holds) return;\n"
+        "    tide_ix_let_go(s->held + f->held, 0u, n - 1u);\n"
+        "    f->at += n;\n    f->held += n - 1u;\n"
+        "    TIDE_IX_STAT(3, 1);\n}\n\n");
+    sb_put(o,
+        "// After the tables. True: go through them again, this time taking in what differs\n"
+        "TIDE_HELPER bool tide_ix_follow_end(tide_ix_follow *f)\n{\n"
+        "    tide_ix_site *s = f->s;\n"
+        "    if (!s) {\n        tide_index_end(f->ix);\n        return false;\n    }\n"
+        "    if (f->looking) {\n"
+        "        if (!f->differs && f->at == s->facts) {\n            TIDE_IX_STAT(0, 1);\n            return false;\n        }\n"
+        "        tide_ix_follow_start(f, false);\n"
+        "        return true;\n    }\n"
+        "    TIDE_IX_STAT(f->fresh ? 2 : 1, 1);\n"
+        "    uint64_t *const fact = s->fact;\n"
+        "    tide_page **const held = s->held;\n"
+        "    const uint32_t fact_room = s->fact_room, hold_room = s->hold_room;\n"
+        "    s->fact = s->fact_next;\n    s->fact_room = s->fact_next_room;\n"
+        "    s->held = s->held_next;\n    s->hold_room = s->hold_next_room;\n"
+        "    s->fact_next = fact;\n    s->fact_next_room = fact_room;\n"
+        "    s->held_next = held;\n    s->hold_next_room = hold_room;\n"
+        "    s->facts = f->next;\n    s->holds = f->next_held;\n"
+        "    tide_index_end(s->ix);\n"
+        "    s->ready = !f->full;\n"
+        "    return false;\n}\n\n");
 }
 
 // The number of sites, now that every loop has been written.
@@ -535,6 +812,63 @@ static int ix_key_binding(const ix_query *x, const index_key *key, int *off, int
     return binding;
 }
 
+// A table chunk's columns as its rows are read for an index: tide_qe, the entity's; tide_qpres<c>, the presence
+// bytes the query's filters read; tide_xcol<binding>_<lane>, the lanes holding the keys, and no other: the rest
+// of a wide component is neither looked up nor copied
+static void gen_ix_chunk_columns(gen *g, const ix_query *x, const loop_index *plan, const int a)
+{
+    sb *o = &g->c;
+    line(g, o, "const tide_entity *tide_qe = tide_table_column(tide_qt, %s, tide_qc, 0);", arch_columns(g, a));
+    for (int c = 0; c < g->prog->components.count; c++) {
+        if (!comp_sparse(g, c) || !arch_stores(g, a, c)) continue;
+        if (!mask_has(x->selection->query_need_mask, c) && !mask_has(x->selection->query_without_mask, c)) continue;
+        line(g, o, "const uint8_t *tide_qpres%d = tide_table_column(tide_qt, %s, tide_qc, %d);", c, arch_columns(g, a),
+             arch_presence(g, a, c));
+    }
+    for (int k = 0; k < plan->count; k++) {
+        const int b = x->binding[k];
+        const decl *comp = x->q->query.items[b].type.decl;
+        for (int l = x->lane_lo[k]; l <= x->lane_hi[k]; l++) {
+            bool before = false;
+            for (int j = 0; j < k; j++) before |= x->binding[j] == b && x->lane_lo[j] <= l && l <= x->lane_hi[j];
+            if (before) continue;
+            line(g, o, "const uint8_t *const tide_xcol%d_%d = tide_table_column(tide_qt, %s, tide_qc, %d);", b, l,
+                 arch_columns(g, a), arch_column(g, a, comp->index) + l);
+        }
+    }
+}
+
+// Row tide_qi's keys, from those columns: tide_xwhole and tide_xkey (gen_ix_keys)
+static void gen_ix_row_keys(gen *g, const ix_query *x, const loop_index *plan)
+{
+    sb *o = &g->c;
+    line(g, o, "struct {");
+    g->indent++;
+    for (int i = 0; i < x->row->fields.count; i++) {
+        const field *f = &x->row->fields.items[i];
+        line(g, o, "%s %s;", c_type(f->type), field_cname(f));
+    }
+    g->indent--;
+    line(g, o, "} tide_xrow;");
+    for (int i = 0, f = 1; i < x->q->query.count; i++) {
+        const param *p = &x->q->query.items[i];
+        if (!param_binding(p)) continue;
+        const field *value = &x->row->fields.items[f++];
+        const int width = comp_width(p->type.decl);
+        for (int k = 0; k < plan->count; k++) {
+            if (x->binding[k] != i) continue;
+            for (int l = x->lane_lo[k]; l <= x->lane_hi[k]; l++) {
+                bool before = false;
+                for (int j = 0; j < k; j++) before |= x->binding[j] == i && x->lane_lo[j] <= l && l <= x->lane_hi[j];
+                if (before) continue;
+                line(g, o, "memcpy((uint8_t *)&tide_xrow.%s + %d, tide_xcol%d_%d + (size_t)tide_qi * %d, %d);",
+                     field_cname(value), l * width, i, l, width, width);
+            }
+        }
+    }
+    gen_ix_keys(g, plan, "tide_xrow");
+}
+
 // The rows of each admitted table, in the loop's order, those a query's filters let through, each added to the
 // index tide_xi by its keys
 static void gen_ix_query_rows(gen *g, const ix_query *x, const loop_index *plan)
@@ -548,25 +882,7 @@ static void gen_ix_query_rows(gen *g, const ix_query *x, const loop_index *plan)
         line(g, o, "for (uint32_t tide_qc = 0; tide_qc < tide_qt->chunks; tide_qc++) {");
         g->indent++;
         line(g, o, "const uint32_t tide_qn = tide_table_rows(tide_qt, %d, tide_qc);", arch_shift(g, a));
-        line(g, o, "const tide_entity *tide_qe = tide_table_column(tide_qt, %s, tide_qc, 0);", arch_columns(g, a));
-        for (int c = 0; c < g->prog->components.count; c++) {
-            if (!comp_sparse(g, c) || !arch_stores(g, a, c)) continue;
-            if (!mask_has(x->selection->query_need_mask, c) && !mask_has(x->selection->query_without_mask, c)) continue;
-            line(g, o, "const uint8_t *tide_qpres%d = tide_table_column(tide_qt, %s, tide_qc, %d);", c, arch_columns(g, a),
-                 arch_presence(g, a, c));
-        }
-        // The lanes holding the keys, and no other: the rest of a wide component is neither looked up nor copied
-        for (int k = 0; k < plan->count; k++) {
-            const int b = x->binding[k];
-            const decl *comp = x->q->query.items[b].type.decl;
-            for (int l = x->lane_lo[k]; l <= x->lane_hi[k]; l++) {
-                bool before = false;
-                for (int j = 0; j < k; j++) before |= x->binding[j] == b && x->lane_lo[j] <= l && l <= x->lane_hi[j];
-                if (before) continue;
-                line(g, o, "const uint8_t *const tide_xcol%d_%d = tide_table_column(tide_qt, %s, tide_qc, %d);", b, l,
-                     arch_columns(g, a), arch_column(g, a, comp->index) + l);
-            }
-        }
+        gen_ix_chunk_columns(g, x, plan, a);
         line(g, o, "for (uint32_t tide_qi = 0; tide_qi < tide_qn; tide_qi++) {");
         g->indent++;
         line(g, o, "if (tide_row_gone(&tide_qe[tide_qi])) continue;");
@@ -576,34 +892,8 @@ static void gen_ix_query_rows(gen *g, const ix_query *x, const loop_index *plan)
             else if (mask_has(x->selection->query_without_mask, c)) line(g, o, "if (tide_qpres%d[tide_qi]) continue;", c);
         }
         line(g, o, "const uint64_t tide_xord = (uint64_t)%du << 32 | (uint64_t)((tide_qc << %d) + tide_qi);", a, arch_shift(g, a));
-        {
-            line(g, o, "struct {");
-            g->indent++;
-            for (int i = 0; i < x->row->fields.count; i++) {
-                const field *f = &x->row->fields.items[i];
-                line(g, o, "%s %s;", c_type(f->type), field_cname(f));
-            }
-            g->indent--;
-            line(g, o, "} tide_xrow;");
-            for (int i = 0, f = 1; i < x->q->query.count; i++) {
-                const param *p = &x->q->query.items[i];
-                if (!param_binding(p)) continue;
-                const field *value = &x->row->fields.items[f++];
-                const int width = comp_width(p->type.decl);
-                for (int k = 0; k < plan->count; k++) {
-                    if (x->binding[k] != i) continue;
-                    for (int l = x->lane_lo[k]; l <= x->lane_hi[k]; l++) {
-                        bool before = false;
-                        for (int j = 0; j < k; j++) before |= x->binding[j] == i && x->lane_lo[j] <= l && l <= x->lane_hi[j];
-                        if (before) continue;
-                        line(g, o, "memcpy((uint8_t *)&tide_xrow.%s + %d, tide_xcol%d_%d + (size_t)tide_qi * %d, %d);",
-                             field_cname(value), l * width, i, l, width, width);
-                    }
-                }
-            }
-            gen_ix_keys(g, plan, "tide_xrow");
-            gen_ix_add(g, plan, "tide_xi", "tide_xord");
-        }
+        gen_ix_row_keys(g, x, plan);
+        gen_ix_add(g, plan, "tide_xi", "tide_xord");
         g->indent--;
         line(g, o, "}");
         g->indent--;
@@ -611,6 +901,127 @@ static void gen_ix_query_rows(gen *g, const ix_query *x, const loop_index *plan)
         g->indent--;
         line(g, o, "}");
     }
+}
+
+// The columns of a table chunk a followed index reads, in the order of its facts after the chunk's rows: the
+// entity column, the presence bytes the query's filters read, and the lanes holding the keys, each once. Their
+// numbers in `cols` (NULL: only counted); how many
+static int ix_chunk_cols(const gen *g, const ix_query *x, const loop_index *plan, const int a, int *cols, int *widths)
+{
+    int n = 0;
+    if (cols) cols[n] = 0, widths[n] = 0; // The entity's: sizeof(tide_entity)
+    n++;
+    for (int c = 0; c < g->prog->components.count; c++) {
+        if (!comp_sparse(g, c) || !arch_stores(g, a, c)) continue;
+        if (!mask_has(x->selection->query_need_mask, c) && !mask_has(x->selection->query_without_mask, c)) continue;
+        if (cols) cols[n] = arch_presence(g, a, c), widths[n] = 1;
+        n++;
+    }
+    for (int k = 0; k < plan->count; k++) {
+        const int b = x->binding[k];
+        const decl *comp = x->q->query.items[b].type.decl;
+        for (int l = x->lane_lo[k]; l <= x->lane_hi[k]; l++) {
+            bool before = false;
+            for (int j = 0; j < k; j++) before |= x->binding[j] == b && x->lane_lo[j] <= l && l <= x->lane_hi[j];
+            if (before) continue;
+            if (cols) cols[n] = arch_column(g, a, comp->index) + l, widths[n] = comp_width(comp);
+            n++;
+        }
+    }
+    return n;
+}
+
+static uint64_t ix_query_plan(const gen *g, const ix_query *x, const loop_index *plan);
+
+// A query's index that follows its tables (an exact key's): each table chunk whose rows or pages aren't the ones
+// the site has is taken in, row by row where the pages differ, and the rest left (tide_ix_follow, above). The
+// index to search is tide_xf.ix once this has run
+static void gen_ix_query_follow(gen *g, const ix_query *x, const loop_index *plan)
+{
+    sb *o = &g->c;
+    line(g, o, "tide_ix_follow tide_xf = tide_ix_follow_begin(tide_xs, %lluull, %du, %du, tide_xrows);",
+         (unsigned long long)ix_query_plan(g, x, plan), plan->exact, ix_doubles(plan));
+    line(g, o, "do {");
+    g->indent++;
+    for (int a = 0; a < g->prog->archetypes.count; a++) {
+        if (!query_admits(g, x->selection, a)) continue;
+        const int shift = arch_shift(g, a);
+        const int n = ix_chunk_cols(g, x, plan, a, NULL, NULL);
+        int *cols = arena_alloc((size_t)n * sizeof *cols), *widths = arena_alloc((size_t)n * sizeof *widths);
+        ix_chunk_cols(g, x, plan, a, cols, widths);
+        line(g, o, "{ // %s", arch_label(g, a));
+        g->indent++;
+        line(g, o, "const tide_table *tide_qt = %s;", ix_table(g, x, a));
+        line(g, o, "const uint32_t tide_xcs = tide_ix_follow_table(&tide_xf, tide_qt->chunks);");
+        line(g, o, "for (uint32_t tide_qc = 0; tide_qc < tide_xcs; tide_qc++) {");
+        g->indent++;
+        line(g, o, "const uint64_t tide_xg = (uint64_t)%du << 32 | (uint64_t)tide_qc << %d; // Its rows' ordinals start here", a, shift);
+        line(g, o, "if (tide_qc >= tide_qt->chunks) { // The table has no such chunk any more");
+        g->indent++;
+        line(g, o, "if (tide_xf.frozen) tide_ix_follow_thaw(&tide_xf); // Others hold the index: a copy of the site's own");
+        line(g, o, "tide_ix_follow_gone(&tide_xf, %du);", n + 1);
+        line(g, o, "tide_index_group(tide_xf.ix, tide_xg, %uu);", 1u << shift);
+        line(g, o, "tide_index_clear(tide_xf.ix);");
+        line(g, o, "continue;");
+        g->indent--;
+        line(g, o, "}");
+        line(g, o, "tide_page *const *tide_xp = tide_qt->pages + (size_t)tide_qc * (%s)->count;", arch_columns(g, a));
+        line(g, o, "const uint32_t tide_qn = tide_table_rows(tide_qt, %d, tide_qc);", shift);
+        indent(g, o);
+        sb_printf(o, "const uint64_t tide_xfact[%d] = {tide_qn", n + 1);
+        for (int i = 0; i < n; i++) sb_printf(o, ", (uint64_t)(uintptr_t)tide_xp[%d]", cols[i]);
+        sb_put(o, "};\n");
+        line(g, o, "if (!tide_ix_follow_chunk(&tide_xf, tide_xfact, %du)) continue;", n + 1);
+        line(g, o, "bool tide_xnamed = false; // The index told which group its next entries are in");
+        // The rows that differ from what the site held of the chunk; past the fewer of its rows then and now, all
+        line(g, o, "const tide_ix_column tide_xcols[%d] = {", n);
+        g->indent++;
+        for (int i = 0; i < n; i++) {
+            sb width = {0};
+            if (i == 0) sb_put(&width, "(uint32_t)sizeof(tide_entity)");
+            else sb_printf(&width, "%du", widths[i]);
+            line(g, o, "{tide_xf.pages ? tide_page_data(tide_xf.pages[%d]) : NULL, tide_page_data(tide_xp[%d]), %s}%s", i, cols[i],
+                 width.data, i + 1 < n ? "," : "");
+        }
+        g->indent--;
+        line(g, o, "};");
+        line(g, o, "const uint32_t tide_xboth = tide_xf.was < tide_qn ? tide_xf.was : tide_qn;");
+        line(g, o, "const uint32_t tide_xmost = tide_xf.was > tide_qn ? tide_xf.was : tide_qn;");
+        gen_ix_chunk_columns(g, x, plan, a);
+        line(g, o, "for (uint32_t tide_qi = tide_ix_differs(tide_xcols, %du, 0u, tide_xboth); tide_qi < tide_xmost;", n);
+        line(g, o, "     tide_qi = tide_qi + 1u < tide_xboth ? tide_ix_differs(tide_xcols, %du, tide_qi + 1u, tide_xboth) : tide_qi + 1u) {", n);
+        g->indent++;
+        line(g, o, "if (tide_xf.frozen) tide_ix_follow_thaw(&tide_xf); // Others hold the index: a copy of the site's own takes this row");
+        line(g, o, "if (!tide_xnamed) tide_index_group(tide_xf.ix, tide_xg, %uu);", 1u << shift);
+        line(g, o, "tide_xnamed = true;");
+        line(g, o, "const uint64_t tide_xord = tide_xg + tide_qi;");
+        line(g, o, "TIDE_IX_STAT(5, 1);");
+        // No entry for a row past the chunk's rows, a hole, or one the query's filters keep out
+        indent(g, o);
+        sb_put(o, "if (tide_qi >= tide_qn || tide_row_gone(&tide_qe[tide_qi])");
+        for (int c = 0; c < g->prog->components.count; c++) {
+            if (!comp_sparse(g, c) || !arch_stores(g, a, c)) continue;
+            if (mask_has(x->selection->query_need_mask, c)) sb_printf(o, " || !tide_qpres%d[tide_qi]", c);
+            else if (mask_has(x->selection->query_without_mask, c)) sb_printf(o, " || tide_qpres%d[tide_qi]", c);
+        }
+        sb_put(o, ") {\n");
+        g->indent++;
+        line(g, o, "tide_index_drop(tide_xf.ix, tide_xord);");
+        line(g, o, "continue;");
+        g->indent--;
+        line(g, o, "}");
+        gen_ix_row_keys(g, x, plan);
+        line(g, o, "tide_index_put(tide_xf.ix, tide_xwhole, tide_xkey, tide_xord);");
+        g->indent--;
+        line(g, o, "}");
+        line(g, o, "tide_ix_follow_taken(&tide_xf, %du);", n + 1);
+        g->indent--;
+        line(g, o, "}");
+        g->indent--;
+        line(g, o, "}");
+    }
+    g->indent--;
+    line(g, o, "} while (tide_ix_follow_end(&tide_xf));");
 }
 
 // What the index of a query's rows is made from, in the order it's checked.
@@ -775,22 +1186,28 @@ static bool gen_indexed_query(gen *g, const stmt *s, const char *gather)
     line(g, o, "bool tide_xown = false;");
     line(g, o, "if (!tide_xheld) {");
     g->indent++;
-    line(g, o, "tide_ix_walk tide_xw = {0};");
-    line(g, o, "if (tide_xs) {");
-    g->indent++;
-    line(g, o, "tide_xw = tide_ix_walk_begin(tide_xs, %lluull);", (unsigned long long)ix_query_plan(g, &x, plan));
-    gen_ix_query_facts(g, &x, plan);
-    g->indent--;
-    line(g, o, "}");
-    line(g, o, "bool tide_xbuild;");
-    line(g, o, "tide_xi = tide_ix_take(tide_xs, &tide_xw, &tide_xown, &tide_xbuild);");
-    line(g, o, "if (tide_xbuild) {");
-    g->indent++;
-    gen_ix_begin(g, plan, "tide_xi");
-    gen_ix_query_rows(g, &x, plan);
-    line(g, o, "tide_index_end(tide_xi);");
-    g->indent--;
-    line(g, o, "}");
+    if (plan->exact) { // An exact key's index takes in what changed
+        gen_ix_query_follow(g, &x, plan);
+        line(g, o, "tide_xi = tide_xf.ix;");
+        line(g, o, "tide_xown = tide_xf.own;");
+    } else { // One of doubles is laid out by all of its entries: made whole when any differs
+        line(g, o, "tide_ix_walk tide_xw = {0};");
+        line(g, o, "if (tide_xs) {");
+        g->indent++;
+        line(g, o, "tide_xw = tide_ix_walk_begin(tide_xs, %lluull, true);", (unsigned long long)ix_query_plan(g, &x, plan));
+        gen_ix_query_facts(g, &x, plan);
+        g->indent--;
+        line(g, o, "}");
+        line(g, o, "bool tide_xbuild;");
+        line(g, o, "tide_xi = tide_ix_take(tide_xs, &tide_xw, &tide_xown, &tide_xbuild);");
+        line(g, o, "if (tide_xbuild) {");
+        g->indent++;
+        gen_ix_begin(g, plan, "tide_xi");
+        gen_ix_query_rows(g, &x, plan);
+        line(g, o, "tide_index_end(tide_xi);");
+        g->indent--;
+        line(g, o, "}");
+    }
     line(g, o, "tide_ix_searching(tide_xs, tide_xown, %s->tide_index_cache, %s);", x.world, fast);
     g->indent--;
     line(g, o, "}");
@@ -1046,7 +1463,7 @@ static void gen_ix_rows_search(gen *g, const stmt *s, const ix_rows *r, const ch
     if (kept) {
         line(g, o, "if (tide_xs) {");
         g->indent++;
-        line(g, o, "tide_xw = tide_ix_walk_begin(tide_xs, 1u);");
+        line(g, o, "tide_xw = tide_ix_walk_begin(tide_xs, 1u, false);");
         line(g, o, "tide_ix_num(&tide_xw, tide_ix_made);");
         line(g, o, "tide_ix_num(&tide_xw, (uint64_t)(uintptr_t)%s);", r->array.data);
         line(g, o, "tide_ix_num(&tide_xw, %s);", r->count.data);
@@ -1257,7 +1674,7 @@ static bool gen_indexed_list(gen *g, const stmt *s)
     line(g, o, "tide_ix_walk tide_xw = {0};");
     line(g, o, "if (tide_xs) {");
     g->indent++;
-    line(g, o, "tide_xw = tide_ix_walk_begin(tide_xs, %lluull);",
+    line(g, o, "tide_xw = tide_ix_walk_begin(tide_xs, %lluull, false);",
          (unsigned long long)ix_hash(c_type(s->type)) ^ (unsigned long long)plan->count
              ^ (unsigned long long)plan->exact << 8);
     if (world) {

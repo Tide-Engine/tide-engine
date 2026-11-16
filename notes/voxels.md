@@ -291,7 +291,7 @@ What the bench gained for it (bench/README.md): the server's repairs are timed (
 - **It runs.** The default (8 players, 845 chunks each) holds 60 ticks a second with room: the server's update 0.97 ms median and 5.8 ms p99, on one thread as on twelve, and held to two cores; a player's machine 0.09 ms median and 1.7 ms p99 for its ticks, and its whole frame at 1080p 0.2 ms median, 12 ms at worst. 32 players hold it barely (p99 15.7 ms); 64 don't (p99 43 to 47 ms). Twice the view holds it barely (p99 14.7 ms); three times doesn't (30 ms, and a client's verified world falls 70 ticks behind, past the 60 it predicts ahead).
 - **Chunks cost 137 to 147 bytes each as sent**, a thirtieth of their cells, whatever the view or the player count. That part of the bandwidth is not high.
 - **What is high is every player's input in every tick's frame, sent again in each datagram until it's acknowledged** (below, Bandwidth): nothing with bots, whose inputs change every five seconds; 13 to 44 KB a second to each player once all eight turn every tick as a mouse does (cut the same day, to 19.2 KB a second standing: Bandwidth, below). And a part lost from a repair of more than 64 parts has the parts after it sent twice: 2% more at the default view, 28% at twice, 40% at three times, with 1% lost.
-- **What limited players** was the server's repairs: each walked every entity the server has, for each player, four times a second, so their cost went with players times all chunks (half the server's update at 64 players). Fixed later the same day (What was fixed, below): 32 players' p99 went from 15.2 ms to 10.5, and the tables below are from before it. **What limits the view** is the loops' indexes, made again whole whenever a chunk comes or goes, and on a client the ticks it runs again while a whole view arrives.
+- **What limited players** was the server's repairs: each walked every entity the server has, for each player, four times a second, so their cost went with players times all chunks (half the server's update at 64 players). Fixed later the same day (What was fixed, below): 32 players' p99 went from 15.2 ms to 10.5, and the tables below are from before it. **What limits the view** is the loops' indexes, made again whole whenever a chunk comes or goes (fixed later the same day too: a server's median update at twice the view 1.46 to 0.88 ms, a client's simulating 26.7 to 10.5 ms a second; What was fixed, below), and on a client the ticks it runs again while a whole view arrives.
 - **Fixed here**: a predicting client sorted every entity it has again for each system and query, every tick, because a world's copy dropped its orders: half a client's simulating (18.4 to 9.6 ms a second at the default view, 122 to 55 at three times; its update's p99 2.5 to 1.7 ms).
 
 ### 1. View distance (8 bots; `--near 6`, `12`, `18 --lag 1200`)
@@ -413,7 +413,7 @@ What a player is sent at the default view, 23.4 KB a second: 18.4 of repairs' pa
 Three things make a tick cost what the world holds rather than what changed, found with `tide_sample` and counters put in for a run (taken out again):
 
 - **A world's copy dropped its entities' orders** (fixed, below).
-- **A loop's index is made again whole when any page of its key changes** (notes/indexed-loops.md, Gaps), and each world has its own. A server's chunks come and go every tick, so `Has`, `Find` and `Firm`'s indexes of every chunk are made about twice a tick: 5.3 of its 30.7 ms a second of simulating at near 6 on one thread, 19.6 of 83.6 at near 12. A client ticks a copy of its world each tick (`world_at(c, tick + 1)`), whose indexes are the ones that slot of its ring had the last time round, older than the last repair: 1.7 made a tick, 2.3 of a client's 13.1 ms a second at near 6 before the fix below, 9.8 of 47.8 at near 12. Not changed: an index that takes in what came and went (per chunk of the table) or a copy that takes its source's indexes with it are both the compiler's and the runtime's (`index_codegen.inc`, `engine/src/index.c`), and want their own task.
+- **A loop's index is made again whole when any page of its key changes** (notes/indexed-loops.md, Gaps), and each world has its own. A server's chunks come and go every tick, so `Has`, `Find` and `Firm`'s indexes of every chunk are made about twice a tick: 5.3 of its 30.7 ms a second of simulating at near 6 on one thread, 19.6 of 83.6 at near 12. A client ticks a copy of its world each tick (`world_at(c, tick + 1)`), whose indexes are the ones that slot of its ring had the last time round, older than the last repair: 1.7 made a tick, 2.3 of a client's 13.1 ms a second at near 6 before the fix below, 9.8 of 47.8 at near 12. Not changed: an index that takes in what came and went (per chunk of the table) or a copy that takes its source's indexes with it are both the compiler's and the runtime's (`index_codegen.inc`, `engine/src/index.c`), and want their own task. (Both built later the same day: What was fixed, below.)
 - **A repair read every row of the server's world for one player** (section 2). The world the player confirmed has nothing kept (`tide_client_kept` is of the tick's own world), so each of its rows had its audience worked out; 0.66 ms a repair at 6,900 entities, 2.1 ms at 18,000, 4.5 ms at 32,000. Fixed (below).
 - `Idle`, `Keep` and `Retry` look at every chunk each tick by design (7% of a 32-player run's samples): a line of chunks by the tick they're due would cost what's due.
 
@@ -438,6 +438,54 @@ Three things make a tick cost what the world holds rather than what changed, fou
   | ...simulating / hashing | 31.9 / 6.80 to 33.3 / 8.27 | 46.6 / 10.4 to 51.2 / 14.0 | 76.2 / 23.7 to 77.5 / 24.4 | 87.6 / 19.6 to 85.5 / 19.8 |
 
   (Another agent's builds ran through this set: the runs spread, and simulating, which nothing here touches, moves with them. `notes/netcode.md` has the ranges and a quieter set.) A repair is now what it sends: the chunks' records, and one hash of the world the player confirmed. Its cost no longer goes with players times all chunks: at 32 players a repair looks at 96 rows of 12,669. 32 players hold 60 Hz with room (p99 10.5 ms where it was 15.2); 64 weren't run again (`maxPlayers` is 32, as before). The checks pay a hash of the world more a tick (0.7 ms a second at the default, in the hashing row).
+- **A loop's index takes in the rows that changed, and a copied world keeps its source's** (later the same day;
+  `notes/indexed-loops.md`, top two sections, has how, the runtime's new calls and the tests). `Has`, `Find` and
+  `Firm` find a chunk by its place through an index that was made again from every chunk whenever a page of the
+  keys was another page. Now the site compares the pages it holds of each table chunk (1,024 rows) with the
+  table's and puts or drops the rows whose bytes differ; and a client's copy of its world searches the index of
+  the world it was copied from while the rows are the same, and copies it when one changes. Three runs each,
+  alternating with the build before, medians; the same world hash and bytes sent in every pair:
+
+  | | 8 bots | 8, `--near 12` | 32 bots | 8, one thread | 8, `--near 12`, one thread |
+  |---|---|---|---|---|---|
+  | Server, simulating, ms a second | 28.1 to 19.6 | 78.9 to 50.5 | 67.7 to 48.5 | 26.9 to 20.3 | 74.1 to 50.2 |
+  | Server update, median / p99 / longest, ms | 0.50 / 4.45 / 12.1 to 0.32 / 4.23 / 11.9 | 1.46 / 12.18 / 20.9 to 0.88 / 11.39 / 19.9 | 2.11 / 8.88 / 16.0 to 1.67 / 8.12 / 16.0 | 0.46 / 4.31 / 12.1 to 0.31 / 4.03 / 11.9 | 1.36 / 11.70 / 20.2 to 0.87 / 11.34 / 19.5 |
+  | Server, in all, ms a second | 44.3 to 35.1 | 118.6 to 88.1 | 130.4 to 108.8 | 42.5 to 34.9 | 111.7 to 85.0 |
+  | A client, simulating, ms a second | 7.87 to 4.42 | 26.7 to 10.5 | 10.5 to 6.6 | 5.48 to 2.35 | 20.5 to 6.8 |
+  | A client's update, median / p99 / longest, ms | 0.07 / 1.32 / 6.1 to 0.04 / 1.01 / 5.9 | 0.25 / 4.33 / 19.4 to 0.08 / 2.79 / 15.9 | 0.10 / 1.81 / 8.0 to 0.06 / 1.47 / 8.0 | 0.05 / 1.06 / 5.5 to 0.02 / 0.75 / 5.4 | 0.18 / 3.75 / 16.7 to 0.05 / 2.27 / 14.5 |
+
+  The runs spread by 1 to 2% (28.0 to 28.5 and 19.6 to 19.8 for the first cell). A server's median update is a
+  third shorter at every size and its p99 hardly moves: the long updates are the ticks a box of chunks is
+  spawned in and the repairs, not the indexes. A client simulates in half the time at the default view and in
+  two fifths at twice.
+
+  **What's left of it**, counted and timed in a build that says so (the counts are `TIDE_INDEX_STATS`'; a clock
+  around each walk that takes something in was put in for the runs and taken out), on one thread, 30 s, 8 bots:
+
+  | | server | server, `--near 12` | a client | a client, `--near 12` |
+  |---|---|---|---|---|
+  | Loops' starts that found their index as it was | 48,492 | 65,876 | 171,000 | 231,000 |
+  | ...that took in what changed | 4,272 | 4,345 | 5,170 | 5,490 |
+  | Table chunks compared in those, and rows that differed | 8,934, 82,239 | 10,569, 166,496 | 5,200, 116,000 | 8,800, 387,000 |
+  | Indexes copied (a row changed while the source held the index) | 0 | 0 | 516 | 590 |
+  | Indexes made whole | 6 | 6 | 3 | 3 |
+  | Time taking in, ms a second | 0.32 | 0.63 | 0.28 | 1.0 |
+
+  Before, every one of the starts in the second row was an index made from every chunk the machine has: 4,278 a
+  run for the server, 5,170 for a client (41,351 over the eight, 849 rows each at the default view). What a
+  server pays now is a compare of the pages that were written (two of its seven table chunks a time, six columns
+  of 1,024 rows) and an entry for each of 19 rows: 2.6 µs a time where making the index was about 66. It is still
+  paid about twice a tick because a chunk's `Loaded` and `Change` handlers take every lane of the chunk's
+  component for writing in its table chunk, so the key's pages are other pages after any of them though their
+  bytes are the same (notes/indexed-loops.md, Gaps: taking only the lanes a handler writes would end most of it,
+  and the 48 KB a handler's table chunk copies). A client's is that and a copy of the index, about fifteen times
+  a second, when a repair or a prediction changes a chunk's row. With 32 bots the server's is 0.75 ms a second of
+  its 48.5 and a client's about 0.35 of its 6.6. The looking itself (a compare of seven numbers a table chunk,
+  under the site's lock, for each start that isn't a system's own loop already found to hold) is in the first
+  row's counts and wasn't timed apart: the clock cost more than it does.
+
+  The copy alone (a client's copy taking its source's index, without the taking in) gained nothing: a client's
+  simulating 5.4 to 5.6 ms a second on one thread, one run each, because the pages differ about once a tick.
 - **The bench says where a server's time and bytes go** (above; bench/README.md).
 
 ### Tried and taken out
@@ -448,7 +496,7 @@ Three things make a tick cost what the world holds rather than what changed, fou
 
 1. ~~Inputs of every player, in every unacknowledged frame (section 5): 13 to 44 KB a second a player with real hands on the mice.~~ Cut the same day (section 5, the last paragraph of that bullet): 19.2 KB a second with 8 turning and standing, 10.6 flying; 32 are as they were (20.8 standing), each tick once, and a second copy of theirs is the owner's to weigh (netcode.md, Open).
 2. (Fixed, above: a repair walked the whole server's world for one player.) What a server's update is made of at 32 players now: simulating 77 ms a second, the rest 29, hashing 24, repairs 23.
-3. Loops' indexes made again whole as chunks come and go, and for every copy of a client's world (above): a fifth of a server's and a client's simulating. Written up for its own task in `notes/indexed-loops.md`, top section.
+3. ~~Loops' indexes made again whole as chunks come and go, and for every copy of a client's world (above): a fifth of a server's and a client's simulating.~~ Fixed the same day (What was fixed, the bullet before the last): a server's simulating 28.1 to 19.6 ms a second at the default view and 78.9 to 50.5 at twice, a client's 7.9 to 4.4 and 26.7 to 10.5; 0.3 to 1 ms a second of it is left. What makes even that: a handler takes every lane of its component for writing (`notes/indexed-loops.md`, Gaps).
 4. A whole view at once: the store's 64 answers a tick and the repairs' stream gap put a client 41 to 70 ticks behind, past what it predicts at three times the view; and a lost part of a long repair sends the parts after it twice (section 5).
 5. The tick is one thread's work (section 3).
 6. A hosting player's frame of 9 to 60 ms when a box is asked for (section 4), not taken apart.
@@ -456,6 +504,7 @@ Three things make a tick cost what the world holds rather than what changed, fou
 
 ## Tests
 
+- `tidec_e2e_index_follow` and `tide_tests index_followed_*` (2026-11-16, later; `notes/indexed-loops.md`, top two sections): loops' indexes that take in the rows that changed and copies of a world that keep its indexes, each indexed loop against a plain one beside it, with the build's own counts of how each index came to be right. After it: `bench_voxels`, `_forgets`, `_wide`, `_checked` and `_counts` with their pins where they were (quick, and 8 bots, 8 at `--near 12` and 32 for 30 s on 12 threads and on one, the same hashes as the build before), `voxels_walk`, `tidec_e2e_visibility_runs` (and `_checked`, `_memo_off`), `earth_tests`, `bench_earth` (and `_split`, `_diverge`), `bench_gallery`, `tidec_e2e_indexed_loops`, `tidec_e2e_previous` and their differentials: pass, release, Windows.
 - `tidec_e2e_visibility_repairs` (and `_checked`, `_memo_off`, `_wide`; 2026-11-16): repairs from the rows the checks wrote down against repairs from every row, for worlds 1 to 36 ticks old, through 240 ticks of changes picked at random, and which way each went (`notes/netcode.md`, top section). `bench_voxels_checked` works every such repair out both ways too: 8 bots, 32, and 8 at `--near 12` for 30 s pass, the hashes and bytes where they were.
 - `entity_orders_are_shared_with_copies_until_either_changes` (`tests/test_entity.c`, in `tide_tests`; At scale, What was fixed, 2026-11-16): a copied table has its source's orders, each side's changes its own. The two older order tests said a copy's order was another array; they say it's the same one now.
 - `voxels_walk` and `bench_voxels`, `_forgets`, `_wide`, `_checked`, `_counts` after section 13 (2026-11-15): pass, the bench's hashes where they were (priorities are this machine's, and the bench has no views).

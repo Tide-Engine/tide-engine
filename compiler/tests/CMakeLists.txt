@@ -259,6 +259,14 @@ foreach(target tidec_e2e_indexed_loops tidec_e2e_indexed_loops_plain)
         target_compile_definitions(${target} PRIVATE TIDE_IX_THREADS=1)
     endif()
 endforeach()
+# Copies of a world that keep its loops' indexes, and how they came to be right, which the game counts for the test
+tide_e2e_test(index_follow)
+target_compile_definitions(tidec_e2e_index_follow PRIVATE TIDE_INDEX_STATS)
+set_tests_properties(tidec_e2e_index_follow PROPERTIES TIMEOUT 300)
+if(TIDE_PLATFORM)
+    target_link_libraries(tidec_e2e_index_follow PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_index_follow PRIVATE TIDE_IX_THREADS=1)
+endif()
 string(REPLACE ";" "|" TIDE_IX_EMULATOR "${CMAKE_CROSSCOMPILING_EMULATOR}")
 add_test(NAME tidec_indexed_loops_same
     COMMAND "${CMAKE_COMMAND}" "-DINDEXED=$<TARGET_FILE:tidec_e2e_indexed_loops>"

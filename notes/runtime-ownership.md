@@ -470,6 +470,17 @@ indexed loop gets a `struct tide_index_cache *` at the end of `tide_world` and `
 before the library is unloaded, for the indexes kept outside the worlds. Contracts: notes/indexed-loops.md, Code
 generation.
 
+Added 2026-11-16, within the task that asked for them (notes/indexed-loops.md, top sections): an index several
+hold, `tide_index_share` and `tide_index_shared`, with `tide_index_free` freeing it for the last holder (a copied
+world's sites take their source's indexes). Generated `tide_world_copy` calls the generated
+`tide_index_cache_share`; a world's `tide_index_cache` is counted by its holders and may outlive its world while a
+copy has yet to take its sites. And followed indexes, an exact-key index that takes in the entries that changed:
+`tide_index_begin_followed`, `tide_index_followed`, `tide_index_group`, `tide_index_put`, `tide_index_drop`,
+`tide_index_clear`, `tide_index_copy` and `tide_index_changes`, which generated code calls for a world's query by
+an exact key (`gen_ix_query_follow`); `tide_index_end` ends one too, and writes nothing to one already built.
+Generated code reads a table chunk's pages beside the ones a site holds (`tide_page_data` of both) to find the
+rows that differ: it relies on a held page keeping its bytes, as the sites always have.
+
 ## Meshes over GPU lists, moved runs (2026-11-05)
 
 Under compute's pre-approved boundary: `tide_draw_mesh_fill_pulled` (draw.h, a pulled shader's stand-in mesh, which
