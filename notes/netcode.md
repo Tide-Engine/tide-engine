@@ -58,10 +58,16 @@ taking until `done` (`repair_reads.done`, `works`, released; the update reads th
 (`sanitize`): `tide_tests session`, `visibility`, `page`, `tidec_e2e_visibility_*` and `bench_voxels_reads_*`
 (notes/voxels.md, Tests). There's no ThreadSanitizer on this machine; Linux CI's UBSan runs the same.
 
+**Measured** (notes/voxels.md, Repairs read on every thread): 100 together's 99th percentile 15 to 12.2, 12.5 ms on 12
+threads, 64 together's 9.6, 10.0 to 8.6, 9.2; 8 bots and one thread as they were; the same bytes and ticks.
+
 **Left.**
 - An update's longest read is now one big repair (a view arriving, 2 to 3 MB: read and packed in 4 to 7 ms, the view
-  as it is now and the tick asked for one after the other on one thread). Those two are apart and could go on two
-  threads; a view's records could be written by ranges.
+  as it is now and the tick asked for one after the other on one thread). The two as two tasks was tried and wasn't
+  faster (notes/voxels.md); a view's records written by ranges is what's left of it.
+- The frozen worlds the reads compare are hashed before them on the update's thread (each kept tick's the first time
+  it's asked for: 25 to 30 ms a second 100 apart, under 6 together), so no two threads work one out at once; on the
+  pool, the distinct ones as tasks of their own, they'd be the threads'.
 - The base's rows are still hashed again for every repair whose base they are; with the reads on the pool it's no
   longer the update's length.
 - Packing's output and the envelope are still fresh memory (small: a repair's bytes as sent).

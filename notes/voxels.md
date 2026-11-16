@@ -1537,6 +1537,55 @@ together's reads are two fifths cheaper over a run and its 99th percentile 26 to
 the noise; apart, reads 253 to 156 ms a second and the 99th percentile 111 to 93, still far past a tick (the tick and
 the checks: another task's).
 
+### Repairs read on every thread (2026-11-17, later)
+
+The longest updates at 100 together were reads of 20 to 30 repairs on one thread (10 to 12 ms). Now an update reads
+them on the pool's threads at once and starts them in the connections' order up to its allowance, as one thread did;
+the match's memo is read and not written by the reads, and a pack's 512 KiB index is kept room (netcode.md, top
+section, has each and why what's sent is the same). The first build of it read on twelve threads with the 29 reads'
+threads' time at 82 to 122 ms where one thread's had been 10: the packs' index fresh from the system for each, which
+threads waited on each other for. With it kept, 10 to 20 ms of threads' time, 4 to 6 ms of the update's.
+
+`bench_voxels`, 30 s once everyone's in, 1% lost, release, Windows, BelowNormal, the machine shared; two runs each in
+turn on 12 threads (one each for 100 apart and one thread); "before" is t3/wf-integrate11. "Read" is `client_changes`'
+ms a second, every thread's together (the bench's pack column). The hash column after counts the frozen worlds hashed
+before the reads (`repairs_read`), which were inside "read" before. The same world hash, bytes and box arrival ticks in
+every pair, and what the bots' machines took the same (`--expect-taken`: `0x9464ec286cbcff9d` at 100 together, before
+and after).
+
+| 12 threads | 8 bots | 64 together | 100 together | 100, `--spread 256` |
+|---|---|---|---|---|
+| Server, ms a second: simulate | 9.57, 9.59 to 9.71, 9.64 | 34.9, 34.5 to 34.9, 35.2 | 48.9, 49.8 to 49.7, 51.0 | 371 to 379 |
+| ...hash | 6.04, 6.14 to 6.25, 6.21 | 42.0, 39.0 to 42.3, 41.1 | 59.0, 62.0 to 64.6, 65.8 | 295 to 324 |
+| ...read | 2.31, 2.36 to 2.33, 2.31 | 34.8, 33.6 to 35.4, 35.7 | 57.6, 58.9 to 63.7, 63.0 | 146 to 141 |
+| ...in all | 24.1, 24.3 to 24.0, 23.8 | 150.5, 146.2 to 132.8, 131.5 | 220.9, 227.3 to 197.6, 201.8 | 1,055 to 1,004 |
+| Update, median / p99 / longest, ms | 0.22 / 2.65 / 9.0, 0.22 / 2.60 / 9.0 to 0.22 / 2.68 / 9.1, 0.22 / 2.65 / 9.6 | 2.59 / 9.97 / 18, 2.52 / 9.63 / 17 to 2.29 / 8.58 / 18, 2.31 / 9.22 / 19 | 3.97 / 15.11 / 23, 4.13 / 14.95 / 25 to 3.76 / 12.15 / 24, 3.77 / 12.48 / 24 | 19.2 / 87.5 / 187 to 18.0 / 83.1 / 198 |
+| Sent to each bot, KB a second | 22.7 | 28.1 | 30.7 | 27.8 |
+| After a hop, all of the box, ticks (median) | 27 | 25 | 25 | 31 |
+
+| 1 thread | 8 bots | 100 together |
+|---|---|---|
+| Server, ms a second: read / in all | 2.34 / 29.95 to 2.32 / 29.57 | 55.6 / 281.6 to 57.0 / 274.9 |
+| Update, median / p99 / longest, ms | 0.20 / 4.32 / 9.1 to 0.19 / 4.47 / 9.4 | 4.56 / 23.85 / 46 to 4.42 / 22.64 / 41 |
+
+`bench_voxels_arrives` 21 ticks at the median both ways. Earlier pairs of the first build of it (before the views
+arriving were read first) gave 100 together's p99 15.5, 15.9 to 12.3, 13.5.
+
+- **100 together's 99th percentile 15 to 12.2, 12.5 ms**, a quarter under a tick; 64 together's 9.6 to 10 down to 8.6
+  to 9.2; the server's update a tenth cheaper in all at both (what's outside the columns, mostly the reads' waiting,
+  52 to 16 ms a second). 8 bots, and one thread, as they were (one thread's reads are a little dearer with the memo
+  read and not written, 55.6 to 57.0, its whole a little cheaper with the index kept).
+- **What's left of 100 together's longest updates is the tick**: of the forty longest (12 to 26 ms), half are ticks
+  whose handlers and changes take 9 to 17 ms with their checks 5 to 10 (hops' and the spawn path, 5g), the same
+  ticks before and after; the reads in the other half are now one big repair, a view arriving (4 to 7 ms read and
+  packed, the view as it is now and the tick asked for one after the other).
+- **100 apart is the tick's and the checks'**: p99 83 ms, the server a whole core (simulating 0.38 of it, hashing 0.32).
+
+**Tried and taken out**: a repair's two reads (the view as it is now, the tick asked for) as two tasks on two threads,
+the tick asked for read ahead and let go where the view went to the next update. Two pairs alternating at 100
+together, the read-heavy updates among the forty longest: 9.6 to 2.4 ms past their simulating and hashing with it,
+8.6 to 2.0 without (and 11.0 to 2.5 against 9.0 to 1.3 in the other pair). No better, so not kept.
+
 ### What's left, most telling first
 
 1. ~~Inputs of every player, in every unacknowledged frame (section 5): 13 to 44 KB a second a player with real hands on the mice.~~ Cut the same day (section 5, the last paragraph of that bullet): 19.2 KB a second with 8 turning and standing, 10.6 flying; 32 are as they were (20.8 standing), each tick once, and a second copy of theirs is the owner's to weigh (netcode.md, Open).
@@ -1558,6 +1607,20 @@ the checks: another task's).
 10. Not measured: a second player's machine with its views (the bots have none), real disks under these sizes (section 3a has the store's files at the default), a real window (the paced run has none). More than 64 players: measured (A hundred players): 100 together are past a tick at the 99th percentile only, 100 apart past a core.
 
 ## Tests
+
+- 2026-11-17 (Repairs read on every thread): `bench_voxels_reads_1`, `_4` and `_12` (16 players joining and hopping
+  together every second at twice the view, an update's allowance met several times) pin the world
+  (`0xec783e57193243bb`) and what the bots' machines took of what they were sent, with when (`--expect-taken
+  0xcbf6ede233a6a86c`), the same on each and in a build of the branch's base with only the bench changed;
+  `bench_voxels_views` pins it too (`0x2ca98e5b0c0035b5`, the base's too). With the allowance left out where the reads
+  go on the pool, `_12` takes `0xf5c53a516c89022e` and fails, its world as it was. 100 together takes
+  `0x9464ec286cbcff9d` before and after. No other pin moved. Release, Windows: every native target builds; the 58
+  tests of `bench_voxels*`, `bench_gallery`, `bench_sand`, `bench_earth*`, `tidec_e2e_visibility*`, `_guarded_rows`,
+  `_row_grids`, `_storage*`, `_net*`, `sumo_tests`, `earth_tests` and `towers_tests` pass; `tide_tests session`,
+  `visibility`, `delta`, `net` and `page` pass. Under ASan (`sanitize`): `tide_tests session`, `visibility`, `page`,
+  `tidec_e2e_visibility_repairs` (and `_checked`, `_memo_off`, `_wide`), `_walks` (and `_checked`, `_memo_off`),
+  `bench_voxels_views` and `bench_voxels_reads_*` pass. On the web (`web-debug`): `tidec_e2e_visibility_runs`,
+  `_walks`, `_repairs` pass. No ThreadSanitizer here; Linux CI's UBSan is CI's.
 
 - 2026-11-17 (Repair reads into kept room): `tidec_e2e_visibility_repairs` (and `_checked`, `_memo_off`, `_wide`)
   writes every walked repair into writers used again and compares it byte for byte with the one written fresh. No pin
