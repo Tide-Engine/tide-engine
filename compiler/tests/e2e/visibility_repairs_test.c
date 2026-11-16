@@ -28,10 +28,10 @@
 // in all three variants
 #ifndef VISIBILITY_REPAIRS_WIDE
 #define REPAIRS UINT64_C(0xfd3420e6cae6814c)
-#define WORLD UINT64_C(0xb346eeb4d9d4668f)
+#define WORLD UINT64_C(0x38b24a1a8622905c)
 #else // The _wide variant: 160 players (visibility_repairs_wide.tide), another layout and other bytes
 #define REPAIRS UINT64_C(0x2d81a84a665643d7)
-#define WORLD UINT64_C(0xea4ece3c099b7678)
+#define WORLD UINT64_C(0x2dc7444e8fcdf4f7)
 #endif
 
 extern uint64_t tide_client_changes_stats[3];

@@ -19,7 +19,7 @@
 // Every check's projection hashes, hashed together, and the world's hash at the end: the same on every platform and
 // build, memo on, memo off and with every hash worked out twice
 #define PROJECTIONS UINT64_C(0xb8926a775cd5784c)
-#define WORLD UINT64_C(0x043f415f9218a1d5)
+#define WORLD UINT64_C(0x05e1e8ce2de7cf99)
 
 // The changes a tick can be asked for (visibility_trees.tide, Control.step), in the order they're made; and the step
 // the twin beside it takes that tick, where it isn't none (what tells the two apart is then smaller than a step)

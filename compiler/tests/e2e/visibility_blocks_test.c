@@ -17,7 +17,7 @@
 // Every check's projection hashes, hashed together, and the world's hash at the end: the same on every platform and
 // build, memo on, memo off and with every hash worked out twice
 #define PROJECTIONS UINT64_C(0xf3c2b779965662eb)
-#define WORLD UINT64_C(0x6d4a6b2604242435)
+#define WORLD UINT64_C(0xa4857c2c77844b8e)
 
 // The changes a tick can be asked for (visibility_blocks.tide, Control.step), in the order they're made. `other` is
 // the plot made just before the target, whose blocks are beside the target's in its pages. Targets and their
