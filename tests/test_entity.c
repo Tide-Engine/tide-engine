@@ -566,6 +566,169 @@ TIDE_TEST(entity_ordered_archetypes_slots_give_each_keys_place)
     tide_entities_free(&t);
 }
 
+// The keys of `arches` (every alive one for none) by going through every slot and sorting them, with their slots:
+// what an order has to be, however it was come by
+typedef struct sorted_key
+{
+    tide_entity key;
+    uint32_t slot;
+} sorted_key;
+static int sorted_key_compare(const void *a, const void *b)
+{
+    return tide_entity_compare(((const sorted_key *)a)->key, ((const sorted_key *)b)->key);
+}
+static bool order_is_the_slots(const tide_entities *t, const uint32_t *arches, const uint32_t n)
+{
+    sorted_key *want = malloc(((size_t)t->next_unused + 1u) * sizeof *want);
+    uint32_t wanted = 0;
+    for (uint32_t at = 0; at < t->next_unused; at++)
+    {
+        const tide_entity_slot *slot = tide_entity_slot_of(t, at);
+        bool in = slot->state == TIDE_ENTITY_ALIVE && !arches;
+        for (uint32_t k = 0; k < n && slot->state == TIDE_ENTITY_ALIVE; k++)
+            in = in || slot->archetype == arches[k];
+        if (in)
+            want[wanted++] = (sorted_key){slot->entity, at};
+    }
+    qsort(want, wanted, sizeof *want, sorted_key_compare);
+    uint32_t count = 0;
+    const uint32_t *slots = NULL;
+    const tide_entity *keys = arches ? tide_entities_ordered_archetypes_slots(t, arches, n, &count, &slots)
+                                     : tide_entities_ordered(t, &count);
+    bool same = count == wanted;
+    for (uint32_t i = 0; i < wanted && same; i++)
+        same = tide_entity_equal(keys[i], want[i].key) && (!arches || slots[i] == want[i].slot);
+    free(want);
+    return same;
+}
+
+static uint32_t order_roll(uint32_t *state)
+{
+    *state ^= *state << 13;
+    *state ^= *state >> 17;
+    *state ^= *state << 5;
+    return *state;
+}
+
+// An order asked for after entities came, went or changed archetype is the one before with those taken in. Through
+// changes picked at random, each order is what sorting the slots gives: asked for every round or only now and then,
+// in the table and in copies of it made between a change and the next asking, across settles, with keys that go
+// and come back in another slot before anything asks, and past more changes than are kept.
+TIDE_TEST(entity_orders_take_in_what_came_and_went)
+{
+    tide_entities t = {0}, copy = {0};
+    enum { MOST = 600 };
+    static tide_entity alive[MOST], away[MOST];
+    uint32_t alive_count = 0, away_count = 0, made = 0, state = 0x9e3779b9u;
+    const uint32_t ones[] = {1}, evens[] = {0, 2}, rare[] = {3};
+    for (uint32_t round = 0; round < 400; round++)
+    {
+        const uint32_t changes = round % 37u == 36u ? 150u : order_roll(&state) % 12u;
+        for (uint32_t c = 0; c < changes; c++)
+        {
+            const uint32_t what = order_roll(&state) % 8u;
+            if ((what < 3u || alive_count < 20u) && alive_count < MOST)
+            {
+                // Born out of order: an older clock than ones there are, or a newer
+                const tide_entity key = {1u + order_roll(&state) % 9u, ((uint64_t)order_roll(&state) << 20) | ++made};
+                TIDE_REQUIRE(tide_entity_install(&t, key));
+                tide_entity_set_location(&t, key, (tide_location){order_roll(&state) % 4u, made});
+                alive[alive_count++] = key;
+            }
+            else if (what < 5u)
+            {
+                const uint32_t at = order_roll(&state) % alive_count;
+                TIDE_REQUIRE(tide_entity_destroy(&t, alive[at]));
+                alive[at] = alive[--alive_count];
+            }
+            else if (what == 5u)
+            {
+                const uint32_t at = order_roll(&state) % alive_count;
+                tide_entity_set_location(&t, alive[at], (tide_location){order_roll(&state) % 4u, c});
+            }
+            else if (what == 6u)
+            {
+                // Gone leaving nothing and installed again, in whichever slot is free then
+                const uint32_t at = order_roll(&state) % alive_count;
+                const tide_entity key = alive[at];
+                TIDE_REQUIRE(tide_entity_erase(&t, key));
+                if (order_roll(&state) % 2u && alive_count < MOST)
+                {
+                    const tide_entity other = {2u, ((uint64_t)order_roll(&state) << 20) | ++made};
+                    TIDE_REQUIRE(tide_entity_install(&t, other));
+                    tide_entity_set_location(&t, other, (tide_location){1u, made});
+                    alive[alive_count++] = other;
+                }
+                TIDE_REQUIRE(tide_entity_install(&t, key));
+                tide_entity_set_location(&t, key, (tide_location){order_roll(&state) % 4u, c});
+            }
+            else if (away_count && alive_count < MOST && order_roll(&state) % 2u)
+            {
+                const tide_entity key = away[--away_count];
+                TIDE_REQUIRE(tide_entity_install(&t, key));
+                tide_entity_set_location(&t, key, (tide_location){order_roll(&state) % 4u, c});
+                alive[alive_count++] = key;
+            }
+            else if (away_count < MOST)
+            {
+                const uint32_t at = order_roll(&state) % alive_count;
+                tide_entity_forget(&t, alive[at], true);
+                away[away_count++] = alive[at];
+                alive[at] = alive[--alive_count];
+            }
+        }
+        if (round % 5u == 2u)
+        {
+            // A copy made before its source's orders took the changes in takes them in itself
+            tide_entities_copy(&copy, &t);
+            TIDE_CHECK(order_is_the_slots(&copy, ones, 1));
+            TIDE_CHECK(order_is_the_slots(&copy, NULL, 0));
+            if (alive_count)
+            {
+                TIDE_REQUIRE(tide_entity_destroy(&copy, alive[0]));
+                TIDE_CHECK(order_is_the_slots(&copy, evens, 2));
+                TIDE_CHECK(order_is_the_slots(&copy, ones, 1));
+            }
+            tide_entities_settle(&copy);
+        }
+        TIDE_CHECK(order_is_the_slots(&t, ones, 1));
+        if (round % 3u == 0u)
+            TIDE_CHECK(order_is_the_slots(&t, evens, 2));
+        if (round % 4u == 1u)
+            TIDE_CHECK(order_is_the_slots(&t, NULL, 0));
+        if (round % 50u == 49u)
+            TIDE_CHECK(order_is_the_slots(&t, rare, 1)); // Let go while nobody asked, and made again
+        if (round % 2u)
+            tide_entities_settle(&t);
+    }
+    TIDE_CHECK(order_is_the_slots(&t, evens, 2) && order_is_the_slots(&t, NULL, 0));
+
+    // Changes that leave a subset as it was leave its arrays: nothing is made
+    tide_entities_settle(&t);
+    uint32_t count = 0, again = 0;
+    const tide_entity *before = tide_entities_ordered_archetypes(&t, ones, 1, &count);
+    const tide_entity *whole = tide_entities_ordered(&t, &again);
+    const tide_entity passing = {3u, 12345u};
+    TIDE_REQUIRE(tide_entity_install(&t, passing));
+    tide_entity_set_location(&t, passing, (tide_location){2u, 1u});
+    TIDE_CHECK(tide_entities_ordered_archetypes(&t, ones, 1, &again) == before && again == count);
+    TIDE_CHECK(tide_entities_ordered(&t, &again) != whole);
+    whole = tide_entities_ordered(&t, &again);
+    tide_entity_set_location(&t, passing, (tide_location){1u, 1u});
+    TIDE_CHECK(tide_entity_destroy(&t, passing)); // In and out again before anything asked
+    TIDE_CHECK(tide_entities_ordered_archetypes(&t, ones, 1, &again) == before && again == count);
+    TIDE_CHECK(tide_entities_ordered(&t, &again) != whole && order_is_the_slots(&t, NULL, 0));
+
+    // More changes than are kept: every order is made from the slots, and is right
+    for (uint32_t i = 0; i < 70000u; i++)
+        tide_entity_set_location(&t, alive[i % alive_count], (tide_location){i % 4u, i});
+    TIDE_CHECK(order_is_the_slots(&t, ones, 1) && order_is_the_slots(&t, evens, 2) && order_is_the_slots(&t, NULL, 0));
+    tide_entities_settle(&t);
+    TIDE_CHECK(order_is_the_slots(&t, ones, 1));
+    tide_entities_free(&copy);
+    tide_entities_free(&t);
+}
+
 // Where an entity is by going through every slot: what a lookup has to say
 static uint32_t slot_by_scan(const tide_entities *t, const tide_entity e)
 {

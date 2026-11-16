@@ -85,6 +85,7 @@ struct tide_entity_index;
 struct tide_entity_order;
 struct tide_entity_retired_order;
 struct tide_entity_filtered_order;
+struct tide_entity_order_log;
 typedef struct tide_entities
 {
     uint32_t next_unused, free_head, pages, room; // Private dense storage only.
@@ -95,6 +96,7 @@ typedef struct tide_entities
     struct tide_entity_retired_order *retired_order;
     struct tide_entity_filtered_order *filtered_order;
     uint32_t order_lock;
+    struct tide_entity_order_log *order_log; // What came and went since its orders were made, for them to take in
 } tide_entities;
 
 // Trusted C/local allocation uses a separate monotonic namespace (birth 0).
@@ -174,6 +176,8 @@ tide_entity tide_entity_in_slot(const tide_entities *t, uint32_t index);
 // Borrowed sorted ALIVE logical keys, including pending spawns. The array remains
 // valid until settle even if structural changes invalidate this table's cache.
 // Location, snap and presentation metadata writes do not invalidate it.
+// After entities came or went, the next call gives another array: the one
+// before with those taken in, not every key sorted again.
 const tide_entity *tide_entities_ordered(const tide_entities *t, uint32_t *count);
 // Canonical ALIVE keys in an ascending unique set of archetype IDs. The cache
 // owns the IDs, so callers may replace generated/reloaded storage afterward.
