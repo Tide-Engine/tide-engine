@@ -1561,7 +1561,12 @@ the checks: another task's).
 
 - 2026-11-17 (Repair reads into kept room): `tidec_e2e_visibility_repairs` (and `_checked`, `_memo_off`, `_wide`)
   writes every walked repair into writers used again and compares it byte for byte with the one written fresh. No pin
-  moved; the runs above end on the base's hashes.
+  moved; the runs above end on the base's hashes, on 1 thread and 12 alike. After merging dev, release, Windows: every
+  native target builds; the 55 tests of `bench_voxels*`, `bench_gallery`, `bench_sand`, `bench_earth*`,
+  `tidec_e2e_visibility*`, `_guarded_rows`, `_row_grids`, `_storage*`, `_net*`, `sumo_tests`, `earth_tests` and
+  `towers_tests` pass (`bench_voxels_arrives` among them); `tide_tests session`, `visibility`, `delta` and `net` pass
+  in release and under ASan (`sanitize`); on the web (`web-debug`), `tidec_e2e_visibility_runs` and `_repairs` with
+  their variants (7) pass.
 
 - 2026-11-17 (Projection checks by the pages written): `tidec_e2e_visibility_walks` (and `_checked`, `_memo_off`)
   and the runtime's line tests (notes/ecs.md, top section); `bench_voxels_checked` for 30 s with 8 bots, 32 together,
