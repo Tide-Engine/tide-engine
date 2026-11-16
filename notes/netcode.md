@@ -1,5 +1,47 @@
 # Netcode: sessions, prediction, commands
 
+## A grid read from bytes left 64 bytes on its thread for good (2026-11-16, after the sweep)
+
+**What grew.** A player's machine kept 64 bytes for every grid it was ever sent, outside every world: in voxels, for
+every chunk that came into view. `tide_client_get<n>` for a grid (`value_codec_codegen.inc`) makes the grid in the
+scratch area (`tide_grid_new`: its directory's block, 64 bytes) and takes it into the heap (`tide_grid_own`), and
+nothing gave the scratch block back: the readers are called from `load_client_state`, `reload_client_state` and
+`apply_client_changes`, which a session calls from `tide_client_update` with no mark around them, on a thread whose
+scratch area nothing else resets (a system, a handler and a view reset to their own marks; a session's update isn't
+inside one). So the thread's scratch area grew a 1 MiB piece at a time, each new piece asked for by whatever next
+needed room (in `bench_voxels`, whose server is updated on the bots' thread, a `Want` handler's map: which is why
+the pieces were counted as the server's). The same readers read a heard event's fields, a shard's messages and a
+shard's rows, so a server reading grids from those did the same.
+
+**Measured** (`bench_voxels --out 1 --hop 0 --watch 0 --threads 4`, 8 bots flying outward, in a build that counts
+what malloc's callers hold: `bench/alloc_count.h`, notes/benchmarks.md; notes/voxels.md, The process's growth, has
+every structure's bytes over 20 minutes). The bots' updates left 4,044,864 bytes in their thread's scratch area in
+the first two minutes, always a multiple of 64 an update (64 for a chunk, 4,160 for the row of 65 a bot crossing a
+chunk's border brings, 54,080 for a first world of 845). Scratch pieces held at minutes 2, 4, 6, 8 and 10: 7, 11,
+14, 18 and 21 (7.3 to 22.0 MB): 1.84 MB a minute, for 472 chunks a second coming to the eight machines at 64 bytes
+(1.81). After: 4 pieces, 4.2 MB, at every minute to the twentieth.
+
+**The fix** is where the block is made: the reader takes a mark before `tide_grid_new` and goes back to it once the
+grid is the heap's (`tide_handle_where(v->at) != TIDE_IN_SCRATCH`: a grid read where there is no heap stays the
+scratch area's, as before). Nothing else is made between the two. No world, hash, byte sent or layout changes: the
+10-minute run ends on the same hash (`0x1d2026427b0aaadd` at tick 36,229) before and after. The other readers make
+nothing in the scratch area (text is set from the bytes read, lists and maps grow in the heap they're read into).
+
+**Tests.** `tidec_e2e_visibility_runs` (and `_checked`, `_memo_off`), `visibility_runs_a_players_world_is_its_projection`:
+the thread's scratch mark is where it was after the first load and after each of the 26 rounds of ticks, hashes, a
+repair made and taken, and a whole load (chunks with grids come and go in each). Every session benchmark now fails
+a run whose updates leave anything in their thread's scratch area (`bench.c`, `results.scratch_left`: the bots'
+machines' and the server's apart), so `bench_voxels` and its variants, `bench_gallery`, `bench_sand` and
+`bench_earth` (and `_split`, `_diverge`) check it on every run. With the fix out: `tidec_e2e_visibility_runs` fails
+at the load and at each round, and `bench_voxels --quick` says "updates left 98432 bytes in their thread's scratch
+area for good (the bots' machines' 98432, the server's 0)". With it, release on Windows: those, `tide_tests`, every
+`tidec_e2e_visibility_*`, `tidec_e2e_index_follow`, `earth_tests` and `voxels_walk` pass, every pin where it was (42
+tests). Not run here: the web build (one extra tree was this task's, the counting one) and the sanitizers.
+
+**Left.** A session's update still has no mark of its own: anything else that ever makes scratch values under
+`tide_client_update` or `tide_server_update` outside a handler, a system or a view would stay the same way. The
+benchmarks' check is what would say so; nothing does today in voxels, gallery, sand or earth.
+
 ## A view arriving: repairs as the world is now, spare chunks, 512 chunks said, 256 answers a tick; protocol 27 (2026-11-16, last)
 
 What a whole view costs to arrive (a join, a dimension hop: notes/voxels.md, A whole view arriving, has the

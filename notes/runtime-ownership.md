@@ -30,6 +30,10 @@ lanes with `tide_table_column_mut`.
 declared in tide/page.h, counts pages taken and pages copied from a shared one with their bytes
 (`tide_page_take`, `tide_page_copy`, `tide_page_own_copy_around`); bench/bench.c prints them for each side.
 
+`TIDE_ALLOC_COUNT` (2026-11-16; defined by `bench/alloc_count.h`, which a counting tree puts in front of every C
+file: notes/benchmarks.md, What the process holds): page.c's `spare_size` says no size is kept spare, so every
+page is malloc's and freed, and counted as whoever took it. Nothing in an ordinary build.
+
 ## Worker priorities (2026-11-15)
 
 Within the worker maintenance exception (Local worker runtime, Worker admission, below): `tide/worker.h` gained
