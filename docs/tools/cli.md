@@ -294,7 +294,7 @@ tide build --distribution --web --report build.txt
 
 - **Time**: each step of the build (preparing, resolving packages, compiling Tide code and assets, compiling C/C++, linking, packaging) with its share of the whole, and the compiler's own phases inside the Tide step: parsing, checking, running build code, generating C and packing assets.
 - **C/C++**: each file compiled and how long its compiler ran, slowest first in the table, and how many objects were already up to date. Compiles run several at once, so their times add up to more than the step's.
-- **Pack**: its size, and each asset's type and how its images are kept (as [`--asset-sizes`](#asset-sizes) says them), the bytes it adds to the pack, the size of the files it was read from and how long reading them took. Content an earlier asset already put in the pack is shared, shown as `shared`; the rest of the pack is its table of names.
+- **Pack**: its size as the game holds it in memory (a release's file is [compressed](#run-and-build), and its size is under Outputs), and each asset's type and how its images are kept (as [`--asset-sizes`](#asset-sizes) says them), the bytes it adds to the pack, the size of the files it was read from and how long reading them took. Content an earlier asset already put in the pack is shared, shown as `shared`; the rest of the pack is its table of names.
 - **Left out**: assets the build didn't pack, and why: in `--release` and `--distribution`, assets nothing in the game's code, defaults or shaders names, and in a `--server` build those its match code never reads.
 - **This mode**: what the mode cut or kept, such as unreferenced code removed by the linker, stripped names and symbols, or why every asset was packed (a game or package with C, which could read an asset by name, unless `--strip-assets`).
 - **Outputs**: the files the build made and their sizes.
@@ -324,7 +324,7 @@ Assets in the pack: 96.4 MB in 41 declarations, biggest first
       2.8 MB   2.9%  groundNormal     Texture 2048x2048 BC1 [Raw]
 ```
 
-Each line has the bytes and share, the declaration's name, its type, an image's size (or how many files a list or map has) and how images are kept: `BC1` or `BC3` when [compressed](../game/assets.md#gpu-compression), `RGBA` when exact, `RGBA mips` for [authored mipmaps](../game/assets.md#authored-mipmaps). The bytes are the pack's, before a web page compresses it. A file two declarations share is in the pack once and counts toward the first. It's the pack of the build it's given with, so `--release` and `--distribution` show what pruning left. `tidec --asset-sizes` prints the same.
+Each line has the bytes and share, the declaration's name, its type, an image's size (or how many files a list or map has) and how images are kept: `BC1` or `BC3` when [compressed](../game/assets.md#gpu-compression), `RGBA` when exact, `RGBA mips` for [authored mipmaps](../game/assets.md#authored-mipmaps). The bytes are the pack's, before a release build or a web page compresses it. A file two declarations share is in the pack once and counts toward the first. It's the pack of the build it's given with, so `--release` and `--distribution` show what pruning left. `tidec --asset-sizes` prints the same.
 
 Release and distribution builds leave out assets no Tide code, default or shader names. A game or package with C/C++ sources or prebuilt libraries keeps every asset instead, since C can find a pack entry by name. When the game's C reads no asset that way, `--strip-assets` says so, and its build is pruned like any other. An asset the C does read by name and nothing in Tide names is then missing at run time: its lookup finds nothing.
 
@@ -339,7 +339,7 @@ Custom build pipelines can pass `tidec --depfile <file>` to write Make-style dep
 
 `tide build --distribution --web` makes a folder to put online as it is, `.build/web/`: `index.html`, and the game's program and assets beside it, `index.wasm` and `index.pack` (none for a game without assets). The page downloads them showing how much has come, and the browser keeps them in its cache between visits until a new build changes them: the page asks for each by its hash. Such a page needs a server, even on your own machine: a page opened from disk can't download its files, and says so. With `-o <path>.html`, the files go beside that page, named after it.
 
-`--single-file` makes one self-contained `.html` file instead, `.build/<name>.html`, with the game inside, which opens straight from disk. Web distributions compress the program and assets inside that file, and decoding is included, so playing it needs no extra tools or downloads. Distribution pages of either kind use a smaller page runtime. Debug, release and hot-reload pages keep the readable runtime and original payloads.
+`--single-file` makes one self-contained `.html` file instead, `.build/<name>.html`, with the game inside, which opens straight from disk. Web distributions compress the program and assets inside that file, and decoding is included, so playing it needs no extra tools or downloads. Distribution pages of either kind use a smaller page runtime. Debug, release and hot-reload pages keep the readable runtime, and a single file's payloads as they are.
 
 ### The page while it loads
 
@@ -356,7 +356,7 @@ Standalone release and distribution builds remove unreachable native code and da
 
 `tide run` builds and plays with [hot reload](#hot-reload) by default, on desktop, the web or Android. Runs [without a window](#without-a-window) play once. On desktop, closing the game window ends the command too.
 
-A game's [assets](../game/assets.md) (its `asset` declarations) are packed with it: beside the program as `<name>.pack`, which has to stay next to it; inside the web page; and in the APK. Nothing else in the folder goes in. Under `tide run`, a file an asset names is watched like the game's code, and a saved image is in the running game within a moment, with no rebuild.
+A game's [assets](../game/assets.md) (its `asset` declarations) are packed with it: beside the program as `<name>.pack`, which has to stay next to it; inside the web page; and in the APK. Nothing else in the folder goes in. A `--release` or `--distribution` build compresses the pack it ships, beside a program, beside a web page and in an APK: roughly half the bytes for a game of images and models, and the game reads either kind, so nothing else changes. Debug builds and `tide run` keep the pack as it was built, with no pass over it. Under `tide run`, a file an asset names is watched like the game's code, and a saved image is in the running game within a moment, with no rebuild.
 
 A web page draws with WebGPU, which every game's shaders and [kernels](../game/shaders.md#compute) need: a current Chrome, Edge or Safari has it, and so does Firefox where WebGPU is on. The page takes whatever device the browser gives, its software one too. A browser without WebGPU shows, in the game's place, a note saying what the game needs.
 

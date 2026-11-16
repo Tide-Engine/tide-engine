@@ -24,7 +24,7 @@ typedef struct kept_file {
 } kept_file;
 
 static kept_file *files;
-static uint32_t file_count, file_room, writes, removes, folders, moves, lists;
+static uint32_t file_count, file_room, writes, removes, folders, moves, lists, reads;
 
 static kept_file *find_file(const char *path)
 {
@@ -61,6 +61,7 @@ static tide_io_error io_create(void *user, const char *path, const bool director
 static tide_io_error io_read(void *user, const char *path, uint8_t **data, uint32_t *size)
 {
     (void)user;
+    reads++;
     if (strstr(path, "locked")) return TIDE_IO_ACCESS_DENIED;
     const kept_file *f = find_file(path);
     if (!f) return TIDE_IO_NOT_FOUND;
@@ -225,6 +226,7 @@ static void forget_files(void)
     files = NULL;
     file_count = file_room = writes = removes = folders = moves = lists = 0;
     posted_count = posted_most = posted_ever = 0;
+    tide_storage_forget_files(NULL); // The host's files are others now: the store lists them again at its next load
 }
 
 // Files in the folder that are no key's: what a listing never has
@@ -765,6 +767,61 @@ TIDE_TEST(storage_answers_that_arent_are_refused)
 
 // A server's line: each tick's requests carried out after the last's, answers taken in the order they were asked,
 // up to the first batch not yet carried out; a forgotten one's answers dropped, its saves done
+// A tick that asks for a view's worth: each load once, in the order asked, whatever was asked between, cleared or
+// taken from another tick's (the index a load is looked for in is made again where it isn't the requests')
+TIDE_TEST(storage_asks_a_views_worth_once_each)
+{
+    tide_storage store = {0};
+    tide_storage_bind(&the_world, &store);
+    char key[32];
+    for (uint32_t round = 0; round < 2u; round++) {
+        for (uint32_t i = 0; i < 3000u; i++) {
+            snprintf(key, sizeof key, "c/%u", i);
+            tide_storage_ask(&the_world, TIDE_STORAGE_LOAD, text(key), (tide_list){0}, (tide_str){0}, TIDE_STORAGE_TO_EVENT,
+                             (tide_entity){i + 1u, 7});
+            if (i % 500u == 0) save_key(&store, key); // Never looked for, and no load's place moves
+        }
+    }
+    TIDE_REQUIRE(store.count == 3000u + 12u);
+    uint32_t loads = 0;
+    bool ordered = true;
+    for (uint32_t i = 0; i < store.count; i++) {
+        const tide_storage_request *r = &store.items[i];
+        if (r->kind != TIDE_STORAGE_LOAD) continue;
+        snprintf(key, sizeof key, "c/%u", loads);
+        ordered = ordered && r->key_size == strlen(key) && memcmp(store.bytes + r->key, key, r->key_size) == 0
+            && r->target.birth == loads + 1u;
+        loads++;
+    }
+    TIDE_CHECK(loads == 3000u && ordered);
+    // The same key for another entity, for a task, and as a listing's prefix are each another request
+    const uint32_t before = store.count;
+    tide_storage_ask(&the_world, TIDE_STORAGE_LOAD, text("c/5"), (tide_list){0}, (tide_str){0}, TIDE_STORAGE_TO_EVENT, (tide_entity){6, 8});
+    tide_storage_ask(&the_world, TIDE_STORAGE_LOAD, text("c/5"), (tide_list){0}, (tide_str){0}, TIDE_STORAGE_TO_TASK, (tide_entity){6, 7});
+    tide_storage_ask(&the_world, TIDE_STORAGE_LIST, text("c/5"), (tide_list){0}, (tide_str){0}, TIDE_STORAGE_TO_EVENT, (tide_entity){6, 7});
+    tide_storage_ask(&the_world, TIDE_STORAGE_LIST, text("c/5"), (tide_list){0}, text("c/50"), TIDE_STORAGE_TO_EVENT, (tide_entity){6, 7});
+    TIDE_CHECK(store.count == before + 4u);
+    tide_storage_ask(&the_world, TIDE_STORAGE_LIST, text("c/5"), (tide_list){0}, text("c/50"), TIDE_STORAGE_TO_EVENT, (tide_entity){6, 7});
+    TIDE_CHECK(store.count == before + 4u);
+    // Cleared, nothing of the last tick is found; taken from another, everything of it is
+    tide_storage_clear(&store);
+    tide_storage_ask(&the_world, TIDE_STORAGE_LOAD, text("c/5"), (tide_list){0}, (tide_str){0}, TIDE_STORAGE_TO_EVENT, (tide_entity){6, 7});
+    TIDE_CHECK(store.count == 1u);
+    tide_storage other = {0};
+    tide_storage_take(&other, &store);
+    tide_storage_bind(&the_world, &other);
+    for (uint32_t i = 0; i < 100u; i++) {
+        snprintf(key, sizeof key, "d/%u", i);
+        tide_storage_ask(&the_world, TIDE_STORAGE_LOAD, text(key), (tide_list){0}, (tide_str){0}, TIDE_STORAGE_TO_EVENT, (tide_entity){6, 7});
+    }
+    tide_storage_ask(&the_world, TIDE_STORAGE_LOAD, text("c/5"), (tide_list){0}, (tide_str){0}, TIDE_STORAGE_TO_EVENT, (tide_entity){6, 7});
+    tide_storage_ask(&the_world, TIDE_STORAGE_LOAD, text("d/99"), (tide_list){0}, (tide_str){0}, TIDE_STORAGE_TO_EVENT, (tide_entity){6, 7});
+    TIDE_CHECK(other.count == 101u);
+    tide_storage_unbind(&the_world);
+    tide_storage_free(&store);
+    tide_storage_free(&other);
+}
+
 TIDE_TEST(storage_line_keeps_the_order_requests_were_asked_in)
 {
     forget_files();
@@ -820,6 +877,92 @@ TIDE_TEST(storage_line_keeps_the_order_requests_were_asked_in)
     tide_storage_unbind(&the_world);
     tide_storage_free(&store);
     forget_answers();
+    forget_files();
+}
+
+// One load, served now: what it found
+static uint8_t loaded(const tide_io *files_io, tide_storage *store, const char *key)
+{
+    tide_storage_ask(&the_world, TIDE_STORAGE_LOAD, text(key), (tide_list){0}, (tide_str){0}, TIDE_STORAGE_TO_EVENT,
+                     (tide_entity){7, 9});
+    uint64_t next = 0;
+    forget_answers();
+    tide_storage_serve(store, files_io, &next, take_answer, NULL);
+    tide_stored answer;
+    if (answer_count != 1 || !tide_stored_read(answers[0], answer_sizes[0], &answer)) return 255u;
+    return answer.kind == TIDE_STORAGE_LOAD && answer.key_size == strlen(key) ? answer.outcome : 255u;
+}
+
+static void asked(const tide_io *files_io, tide_storage *store, const uint32_t kind, const char *key)
+{
+    tide_storage_ask(&the_world, kind, text(key), (tide_list){0}, (tide_str){0}, TIDE_STORAGE_TO_EVENT, (tide_entity){0});
+    uint64_t next = 0;
+    forget_answers();
+    tide_storage_serve(store, files_io, &next, take_answer, NULL);
+}
+
+// A load of a key no file was saved under asks the provider nothing once its files were listed, and every other
+// load reads as before (tide/storage.h, The files a provider has)
+TIDE_TEST(storage_loads_of_keys_never_saved_read_nothing)
+{
+    forget_files();
+    put_file("saved/kept.bin", (const uint8_t *)"x", 1);
+    put_file("saved/deep/in/it.bin", (const uint8_t *)"y", 1);
+    put_file("saved/deep/Odd.bin", (const uint8_t *)"z", 1); // No key's file: listed all the same
+    tide_storage store = {0};
+    tide_storage_bind(&the_world, &store);
+    uint64_t loads_before, unread_before;
+    tide_storage_loads(&loads_before, &unread_before);
+    reads = 0;
+    TIDE_CHECK(loaded(&io, &store, "kept") == TIDE_STORED_FOUND && reads == 1);
+    const uint32_t listed_once = lists;
+    TIDE_CHECK(listed_once >= 6u); // saved, deep and deep/in: their files and their folders
+    TIDE_CHECK(loaded(&io, &store, "deep/in/it") == TIDE_STORED_FOUND && reads == 2);
+    char key[32];
+    for (uint32_t i = 0; i < 200; i++) {
+        snprintf(key, sizeof key, "never/%u", i);
+        TIDE_CHECK(loaded(&io, &store, key) == TIDE_STORED_MISSING);
+    }
+    TIDE_CHECK(loaded(&io, &store, "deep/in") == TIDE_STORED_MISSING && loaded(&io, &store, "deep/in/its") == TIDE_STORED_MISSING);
+    TIDE_CHECK(reads == 2 && lists == listed_once); // Nothing read, nothing listed again
+    // A file whose name differs from a key's by its letters' case alone is read: some disks take one for the other
+    TIDE_CHECK(loaded(&io, &store, "deep/odd") == TIDE_STORED_MISSING && reads == 3);
+    // Saved through the store: read from then on, and its neighbours still aren't
+    asked(&io, &store, TIDE_STORAGE_SAVE, "never/7");
+    TIDE_CHECK(loaded(&io, &store, "never/7") == TIDE_STORED_FOUND && reads == 4);
+    TIDE_CHECK(loaded(&io, &store, "never/8") == TIDE_STORED_MISSING && reads == 4);
+    // Deleted: read, and found gone
+    asked(&io, &store, TIDE_STORAGE_DELETE, "kept");
+    TIDE_CHECK(loaded(&io, &store, "kept") == TIDE_STORED_MISSING && reads == 5);
+    // A copy of the provider (a run with no window's, with no thread) is the same provider
+    tide_io copy = io;
+    copy.post = NULL;
+    TIDE_CHECK(loaded(&copy, &store, "never/9") == TIDE_STORED_MISSING && loaded(&deferred, &store, "never/10") == TIDE_STORED_MISSING);
+    TIDE_CHECK(loaded(&copy, &store, "never/7") == TIDE_STORED_FOUND && reads == 6 && lists == listed_once);
+    uint64_t loads, unread;
+    tide_storage_loads(&loads, &unread);
+    TIDE_CHECK(loads - loads_before == 211u && unread - unread_before == 205u);
+    // A file put there behind the store isn't found until the host says its files changed
+    put_file("saved/behind.bin", (const uint8_t *)"b", 1);
+    TIDE_CHECK(loaded(&io, &store, "behind") == TIDE_STORED_MISSING && reads == 6);
+    tide_storage_forget_files(&io);
+    TIDE_CHECK(loaded(&io, &store, "behind") == TIDE_STORED_FOUND && reads == 7 && lists > listed_once);
+    TIDE_CHECK(loaded(&io, &store, "never/11") == TIDE_STORED_MISSING && reads == 7);
+    // A provider that can't list is read every time
+    tide_io plain = io;
+    plain.list = NULL;
+    TIDE_CHECK(loaded(&plain, &store, "never/12") == TIDE_STORED_MISSING && reads == 8);
+    TIDE_CHECK(loaded(&plain, &store, "behind") == TIDE_STORED_FOUND && reads == 9);
+    // ...and so is one a folder of which can't be listed: what's in it isn't known
+    forget_files();
+    put_file("saved/locked/k.bin", (const uint8_t *)"x", 1);
+    put_file("saved/here.bin", (const uint8_t *)"h", 1);
+    reads = 0;
+    TIDE_CHECK(loaded(&io, &store, "nothing") == TIDE_STORED_MISSING && reads == 1);
+    TIDE_CHECK(loaded(&io, &store, "nothing") == TIDE_STORED_MISSING && reads == 2);
+    TIDE_CHECK(loaded(&io, &store, "here") == TIDE_STORED_FOUND && loaded(&io, &store, "locked") == TIDE_STORED_FAILED && reads == 4);
+    tide_storage_unbind(&the_world);
+    tide_storage_free(&store);
     forget_files();
 }
 

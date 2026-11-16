@@ -89,6 +89,9 @@ typedef struct bench_desc {
     // What a world holds, for the report on each server and on what the
     // bots' machines have: its entities, say. NULL: not reported.
     uint32_t (*held)(const void *world);
+    // What the server's world's memory is made of, a line after each --every
+    // line (its entity table's, its tables' and its heaps' pages). NULL: nothing.
+    void (*parts)(const void *world);
     // A sharded game's: the box its regions divide (tide_shards_desc.world)
     tide_shard_box world;
     // For --diverge: the tick a world has run (its Time.tick), and what

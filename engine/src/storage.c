@@ -89,6 +89,45 @@ static tide_storage_request *request_room(tide_storage *s)
     return &s->items[s->count++];
 }
 
+// What a load or a listing asks, as one number: its kind, whom its answer is for, its key and the key it goes on after
+static uint64_t asked_hash(const uint32_t kind, const uint32_t to, const tide_entity target, const char *key,
+                           const uint32_t key_size, const char *after, const uint32_t after_size)
+{
+    uint64_t hash = (key_size ? tide_hash(key, key_size) : 0u) ^ (after_size ? tide_hash(after, after_size) * 31u : 0u);
+    hash = (hash ^ target.birth) * UINT64_C(0xff51afd7ed558ccd);
+    hash = (hash ^ target.lineage) * UINT64_C(0xc4ceb9fe1a85ec53);
+    hash ^= ((uint64_t)kind << 8) | to;
+    return hash ^ (hash >> 29);
+}
+
+// The index of `s`'s loads and listings made again, with room for as many again. A tick that asks for a view's worth
+// of chunks compares each with the one or two in its slot, where it compared it with every one asked before it.
+static void index_requests(tide_storage *s)
+{
+    uint32_t room = s->slot_room ? s->slot_room : 64u;
+    while (room / 4u <= s->count) {
+        if (room > UINT32_MAX / 2u) tide_out_of_memory();
+        room *= 2u;
+    }
+    if (room != s->slot_room) {
+        free(s->slots);
+        s->slots = tide_alloc_zeroed(room, sizeof *s->slots);
+        s->slot_room = room;
+    } else memset(s->slots, 0, (size_t)room * sizeof *s->slots);
+    for (uint32_t i = 0; i < s->count; i++) {
+        const tide_storage_request *r = &s->items[i];
+        if (r->kind != TIDE_STORAGE_LOAD && r->kind != TIDE_STORAGE_LIST) continue;
+        // A tick whose only request is a listing of every key has no bytes at all
+        const char *key = r->key_size ? (const char *)s->bytes + r->key : NULL;
+        const char *after = r->data_size ? (const char *)s->bytes + r->data : NULL;
+        const uint64_t hash = asked_hash(r->kind, r->to, r->target, key, r->key_size, after, r->data_size);
+        uint32_t slot = (uint32_t)hash & (room - 1u);
+        while (s->slots[slot]) slot = (slot + 1u) & (room - 1u);
+        s->slots[slot] = i + 1u;
+    }
+    s->indexed = s->count;
+}
+
 static const char *kind_done(const uint32_t kind)
 {
     return kind == TIDE_STORAGE_SAVE ? "saved" : kind == TIDE_STORAGE_LOAD ? "loaded" : kind == TIDE_STORAGE_LIST ? "listed"
@@ -141,9 +180,12 @@ void tide_storage_ask(const void *world, const uint32_t kind, const tide_str key
         return;
     }
     const uint32_t whom = answered && to == TIDE_STORAGE_TO_TASK ? TIDE_STORAGE_TO_TASK : TIDE_STORAGE_TO_EVENT;
+    uint32_t slot = 0;
     if (answered) { // Asked once however often a tick asks
-        for (uint32_t i = 0; i < s->count; i++) {
-            const tide_storage_request *r = &s->items[i];
+        if (s->indexed != s->count || s->count >= s->slot_room / 2u) index_requests(s);
+        const uint64_t hash = asked_hash(kind, whom, target, key.ptr, (uint32_t)key.bytes, after.ptr, (uint32_t)after_size);
+        for (slot = (uint32_t)hash & (s->slot_room - 1u); s->slots[slot]; slot = (slot + 1u) & (s->slot_room - 1u)) {
+            const tide_storage_request *r = &s->items[s->slots[slot] - 1u];
             if (r->kind == kind && r->to == whom && r->key_size == (uint32_t)key.bytes && r->data_size == (uint32_t)after_size
                 && tide_entity_equal(r->target, target) && (!r->key_size || memcmp(s->bytes + r->key, key.ptr, r->key_size) == 0)
                 && (!r->data_size || memcmp(s->bytes + r->data, after.ptr, r->data_size) == 0)) return;
@@ -162,7 +204,12 @@ void tide_storage_ask(const void *world, const uint32_t kind, const tide_str key
         // Each byte from the list, wherever its chunks are
         for (int32_t i = 0; i < count; i++) s->bytes[r.data + (uint32_t)i] = *(const uint8_t *)tide_list_at(bytes, i, 1);
     }
+    const bool current = s->indexed == s->count;
     *request_room(s) = r;
+    // A load or a listing takes the empty slot its search ended at. A save or a delete, which nothing looks for,
+    // leaves the index as right as it was.
+    if (answered) s->slots[slot] = s->count;
+    if (current) s->indexed = s->count;
 }
 
 // A copy of `from`'s request `r` at the end of `to`'s
@@ -174,6 +221,7 @@ static void copy_request(tide_storage *to, const tide_storage *from, const tide_
     moved.data = room_for(to, r->data_size);
     if (r->data_size) memcpy(to->bytes + moved.data, from->bytes + r->data, r->data_size);
     *request_room(to) = moved;
+    to->indexed = UINT32_MAX; // Not in its index, which the next ask makes again
 }
 
 void tide_storage_take(tide_storage *to, tide_storage *from)
@@ -186,12 +234,14 @@ void tide_storage_clear(tide_storage *s)
 {
     s->count = 0;
     s->size = 0;
+    s->indexed = UINT32_MAX; // The index still holds what was asked: the next ask empties it
 }
 
 void tide_storage_free(tide_storage *s)
 {
     free(s->items);
     free(s->bytes);
+    free(s->slots);
     memset(s, 0, sizeof *s);
 }
 
@@ -739,6 +789,181 @@ static uint8_t *list_keys(const tide_io *io, const tide_storage_request *r, cons
 }
 
 // ---------------------------------------------------------------------------
+// The files a provider has (tide/storage.h)
+
+enum { FILES_UNLISTED, FILES_LISTING, FILES_LISTED, FILES_UNKNOWN };
+
+// Each file's path as one number, every letter small (a disk that takes "A.bin" for "a.bin" gives the same): a
+// path whose number isn't here has no file, and one whose number is may have.
+typedef struct files {
+    struct files *next;
+    void *user;
+    tide_io_error (*read)(void *user, const char *path, uint8_t **data, uint32_t *size);
+    uint32_t state; // Atomic
+    uint32_t forgets; // Times it was forgotten: a listing begun before one isn't what's there
+    uint64_t *slots;
+    uint32_t count, room;
+} files;
+
+static files *providers;
+static uint32_t files_lock;
+static uint64_t loads_served, loads_unread;
+
+static void lock_files(void)
+{
+    while (__atomic_exchange_n(&files_lock, 1u, __ATOMIC_ACQUIRE)) {
+    }
+}
+
+static void unlock_files(void)
+{
+    __atomic_store_n(&files_lock, 0u, __ATOMIC_RELEASE);
+}
+
+static uint64_t path_number(const char *path, const size_t size)
+{
+    uint64_t h = UINT64_C(0xcbf29ce484222325);
+    for (size_t i = 0; i < size; i++) {
+        const uint8_t c = (uint8_t)path[i];
+        h = (h ^ (c >= 'A' && c <= 'Z' ? c + 32u : c)) * UINT64_C(0x100000001b3);
+    }
+    return h ? h : 1u;
+}
+
+// Under the lock
+static void files_put(files *f, const uint64_t number)
+{
+    if ((f->count + 1u) * 2u > f->room) {
+        const uint32_t room = f->room ? f->room * 2u : 1024u;
+        uint64_t *slots = tide_alloc_zeroed(room, sizeof *slots);
+        for (uint32_t i = 0; i < f->room; i++) {
+            if (!f->slots[i]) continue;
+            uint32_t at = (uint32_t)f->slots[i] & (room - 1u);
+            while (slots[at]) at = (at + 1u) & (room - 1u);
+            slots[at] = f->slots[i];
+        }
+        free(f->slots);
+        f->slots = slots;
+        f->room = room;
+    }
+    uint32_t at = (uint32_t)number & (f->room - 1u);
+    while (f->slots[at] && f->slots[at] != number) at = (at + 1u) & (f->room - 1u);
+    if (!f->slots[at]) f->count++;
+    f->slots[at] = number;
+}
+
+static bool files_have(const files *f, const uint64_t number)
+{
+    if (!f->room) return false;
+    uint32_t at = (uint32_t)number & (f->room - 1u);
+    while (f->slots[at] && f->slots[at] != number) at = (at + 1u) & (f->room - 1u);
+    return f->slots[at] != 0;
+}
+
+// The provider's, made if nothing asked before. Under the lock
+static files *files_of(const tide_io *io)
+{
+    for (files *f = providers; f; f = f->next) {
+        if (f->user == io->user && f->read == io->read) return f;
+    }
+    files *f = tide_alloc_zeroed(1, sizeof *f);
+    f->user = io->user;
+    f->read = io->read;
+    f->next = providers;
+    providers = f;
+    return f;
+}
+
+// A save made `path`'s file, or may have.
+static void files_add(const tide_io *io, const char *path, const uint32_t size)
+{
+    lock_files();
+    files_put(files_of(io), path_number(path, size));
+    unlock_files();
+}
+
+// Every file under `path` (`size` bytes of it, in a buffer of TIDE_STORAGE_PATH_MOST + 1), folder by folder: false
+// where a folder couldn't be listed. A path too long for a key's file isn't looked into: no load reads it.
+static bool files_list(files *f, const tide_io *io, char *path, const uint32_t size)
+{
+    names found = {0}, folders = {0};
+    path[size] = '\0';
+    tide_io_error error = io->list(io->user, path, false, false, name_entry, &found);
+    if (!error) error = io->list(io->user, path, true, false, name_entry, &folders);
+    bool ok = !error || error == TIDE_IO_NOT_FOUND; // A folder never made holds nothing
+    path[size] = '/';
+    lock_files();
+    for (uint32_t i = 0; ok && i < found.count; i++) {
+        const uint32_t n = (uint32_t)strlen(found.items[i]);
+        if (size + 1u + n > TIDE_STORAGE_PATH_MOST) continue;
+        memcpy(path + size + 1u, found.items[i], n);
+        files_put(f, path_number(path, size + 1u + n));
+    }
+    unlock_files();
+    for (uint32_t i = 0; ok && i < folders.count; i++) {
+        const uint32_t n = (uint32_t)strlen(folders.items[i]);
+        if (size + 1u + n + 2u > TIDE_STORAGE_PATH_MOST) continue;
+        memcpy(path + size + 1u, folders.items[i], n);
+        ok = files_list(f, io, path, size + 1u + n);
+        path[size] = '/';
+    }
+    free_names(&found);
+    free_names(&folders);
+    return ok;
+}
+
+// Whether `path` may have a file: false only where it certainly has none, with nothing asked of the disk.
+static bool files_may_have(const tide_io *io, const char *path, const uint32_t size)
+{
+    if (!io->list) return true;
+    lock_files();
+    files *f = files_of(io);
+    const uint32_t forgets = f->forgets;
+    unlock_files();
+    uint32_t state = FILES_UNLISTED;
+    if (__atomic_compare_exchange_n(&f->state, &state, FILES_LISTING, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        // This thread lists them, once. Saves carried out meanwhile add theirs, so nothing made since is missed
+        char folder[TIDE_STORAGE_PATH_MOST + 1u] = "saved";
+        state = files_list(f, io, folder, 5u) ? FILES_LISTED : FILES_UNKNOWN;
+        lock_files();
+        if (f->forgets != forgets) { // Forgotten meanwhile: what was listed isn't what's there
+            free(f->slots);
+            f->slots = NULL;
+            f->count = f->room = 0;
+            state = FILES_UNLISTED;
+        }
+        __atomic_store_n(&f->state, state, __ATOMIC_RELEASE);
+        unlock_files();
+    }
+    if (state != FILES_LISTED) return true; // Being listed by another thread, or not to be known: read it
+    lock_files();
+    const bool have = files_have(f, path_number(path, size));
+    unlock_files();
+    return have;
+}
+
+void tide_storage_forget_files(const tide_io *io)
+{
+    lock_files();
+    for (files *f = providers; f; f = f->next) {
+        if (io && (f->user != io->user || f->read != io->read)) continue;
+        f->forgets++;
+        if (__atomic_load_n(&f->state, __ATOMIC_ACQUIRE) == FILES_LISTING) continue; // Its lister starts again
+        free(f->slots);
+        f->slots = NULL;
+        f->count = f->room = 0;
+        __atomic_store_n(&f->state, FILES_UNLISTED, __ATOMIC_RELEASE);
+    }
+    unlock_files();
+}
+
+void tide_storage_loads(uint64_t *loads, uint64_t *unread)
+{
+    *loads = __atomic_load_n(&loads_served, __ATOMIC_RELAXED);
+    *unread = __atomic_load_n(&loads_unread, __ATOMIC_RELAXED);
+}
+
+// ---------------------------------------------------------------------------
 // Carrying requests out
 
 // The folders a path is in, made where they aren't: each of its parts but the last
@@ -804,6 +1029,8 @@ static void serve(tide_storage *store, const tide_io *io, uint64_t *next, const 
                 error = save(io, beside, (const uint8_t *)key, r->key_size);
             }
             if (!error) error = save(io, path, store->bytes + r->data, r->data_size);
+            // Once it's there, or may be: a listing begun before it was has it from here, and one begun after finds it
+            files_add(io, path, path_size);
             changed = true;
             if (error) {
                 fprintf(stderr, "tide: Storage.Save: \"%.*s\" couldn't be written to %s (error %d): it isn't saved, and "
@@ -831,7 +1058,12 @@ static void serve(tide_storage *store, const tide_io *io, uint64_t *next, const 
             uint32_t size = 0;
             // Nothing there is "not found"; anything else that went wrong is "failed", which a game can tell apart
             // from a key never saved, rather than make it afresh and save over what's there
-            const tide_io_error error = !kept || !io->read ? TIDE_IO_NOT_FOUND : io->read(io->user, path, &data, &size);
+            // A key no file was ever saved under is "not found" with nothing read (tide/storage.h, The files a
+            // provider has)
+            const bool read = kept && io->read && files_may_have(io, path, path_size);
+            __atomic_add_fetch(&loads_served, 1u, __ATOMIC_RELAXED);
+            if (!read) __atomic_add_fetch(&loads_unread, 1u, __ATOMIC_RELAXED);
+            const tide_io_error error = !read ? TIDE_IO_NOT_FOUND : io->read(io->user, path, &data, &size);
             uint8_t outcome = !error ? TIDE_STORED_FOUND : error == TIDE_IO_NOT_FOUND ? TIDE_STORED_MISSING : TIDE_STORED_FAILED;
             if (outcome == TIDE_STORED_FAILED) {
                 fprintf(stderr, "tide: Storage.Load: \"%.*s\" couldn't be read from %s (error %d): its Loaded says it failed\n",

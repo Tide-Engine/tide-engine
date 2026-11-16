@@ -10,6 +10,7 @@
 #endif
 
 #include "tide/platform.h"
+#include "tide/storage.h"
 
 #include <errno.h>
 #ifndef __wasm__
@@ -1439,6 +1440,7 @@ const tide_io *tide_platform_io_init(const char *app_id, const char *directory)
 #ifndef __wasm__
     backend_settle(&state, NULL);
 #endif
+    tide_storage_forget_files(NULL); // Its folders become another app's: the store lists them again
     free(state.app_id);
     free(state.persistent);
     free(state.temporary);

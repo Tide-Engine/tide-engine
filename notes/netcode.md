@@ -1,5 +1,80 @@
 # Netcode: sessions, prediction, commands
 
+## A whole view's repair: read in one update, packed on the pool, one big one an update; no protocol change (2026-11-16, wide views)
+
+What a whole view costs the server to send at wide view distances (notes/voxels.md, A wide view without a long
+update, has the measurements and the game's side). Where the time was, for one player's 3,125 chunks arriving (a
+repair whose `now` is 3.2 to 3.9 MB, 380 KB as sent; `bench_voxels --near 12`, timers put in for the run and taken
+out): `tide_game.client_changes` 4.4 to 8.6 ms, of which 3.4 was a grid's cells written a call each;
+`tide_recipient_delta_pack` 5.4 to 8.5 ms, of which 2.1 to 3.5 was the XOR regions packed only to lose to the
+spans; and two or three players' repairs in one update (bots that joined together, or hopped together). The
+longest update at that view was 20 to 23 ms, all of it this. Four changes, three in `engine/src/session.c` and
+`recipient_delta.c` (agent-maintained), one in tidec. **Nothing on the wire changed** (`PROTOCOL` stays 27): the
+same envelope, the same codecs, and a codec's choice is in its first byte as before.
+
+- **A grid's cells go a chunk at once in a projection's bytes** (`value_codec_codegen.inc`, the `TY_GRID` cases of
+  `tide_client_put<n>`, `_get<n>` and `_skip<n>`): where a cell's bytes are its codec's (`client_codec_raw`, as a
+  list's elements already went), one `tide_client_write` or read and `memcpy` of the chunk, where each cell was a
+  call. The same bytes; a cell's own reader refused one nested past 256 deep, so the chunk's does. The check's hash
+  had this since 2026-11-16 (Projection hashes: the rows that changed); the repairs' and projections' codec hadn't.
+  A whole view's records were 16 M cycles of the 19 its read took (3.4 ms of 4); the server's `client_changes` over
+  a run went from 8.9 to 9.9 ms a second to 6.9 to 7.5 at twice the view and from 18 to 19.5 to 13.3 at three
+  times, and a client's unpack from 1.76 ms a second to 1.53.
+- **Mostly new bytes are packed as spans first** (`tide_recipient_delta_pack`, `FRESH_LEAST`): where `now` is at
+  least 256 KiB and four times its base or more (a view arriving, a first world), `copy_spans` runs first, and
+  where it comes to an eighth of the bytes or less the XOR regions aren't packed to be compared with it. The spans
+  won every such repair measured (192 KB against 282, 382 against 447, 401 against 508), so the bytes are the
+  same; where the regions would have been smaller still, the transfer is that much bigger, never more than an
+  eighth of `now`. Smaller or less new, both are packed and the smaller goes, as before.
+- **A big repair is two updates' work** (`REPAIR_HEAVY`, 4 MiB of `now`; `client_changes_read`,
+  `client_changes_pack`, `connection.making`, `put_off_repair`, `finish_client_repair`). `pack_client_changes` is
+  two functions now: what changed, read from the two worlds (the plan, `now`, `was`, what died, the events: all
+  that needs the worlds), and those bytes packed, which reads no world. A repair whose `now` is `REPAIR_HEAVY` or
+  more, and that can't turn out to be one for the hash offer (`may_be_mostly_changed`: that fallback needs this
+  update's worlds), is read in the update that starts it and packed and sent in the next. Where the pool has
+  threads for work in the background (`tide_jobs.background` and `help`, two threads or more) the packing is
+  handed to it as a helper as soon as the bytes are read, and the next update takes what it made
+  (`packed_making`: it runs the job itself if no thread took it, and waits if one is at it); with no pool the next
+  update packs it. Which repairs are put off goes by the bytes read, and when they're sent by the update, so the
+  same datagrams go in the same updates on one thread and on twelve (`bench_voxels_views` pins it). The connection
+  isn't `sending` meanwhile: a repair asked for again in between is dropped as one asked for during a transfer is,
+  `stop_sending` drops what's being made (waiting for the pool first), and a hot reload starts such a player's
+  world again as it does a transfer's.
+- **A view arriving is read as the world is now first** (`start_client_repair`): `repair_as_it_is_now` used to be
+  packed after the tick asked for, and sent in its place if a quarter bigger. Now it's read first, and where it is
+  big it goes without the tick asked for being read at all (a join where the first player has made the view was
+  two whole views read and packed in one update). Where it isn't big, both are packed and compared as before.
+- **An update reads `REPAIR_UPDATE_MOST` of repairs** (4 MiB of `now`, `tide_server.repair_work`), then the
+  repairs still to start wait for the next update (`repair_pending` stays). Players who join or come through a
+  portal together were each a whole view read and packed in one update; now an update starts them until it has
+  read that much (two views of 3,125 chunks, one of 6,845), in the connections' order, and a small repair (a
+  border's row of chunks is 80 KB) waits only where megabytes were read before it in the same update. At 2 MiB
+  (one view of 3,125 an update) eight players hopping together had their boxes 3 ticks later at the median and 9
+  at most, for updates of 5.5 ms where two are 11: the line is the owner's to move.
+
+**What it costs a player**: a repair of 4 MiB or more lands one tick later (near 18's whole views; near 12's are
+3.2 to 3.9 MB and aren't put off). Nothing at the default view: `bench_voxels_arrives` is 21 ticks at the median
+and 29 at most, as before.
+
+**Tests**: `bench_voxels_views` (bench/CMakeLists.txt): four players joining at three times the view radius where
+the first has made it, three repairs of 6.3 to 7.0 MB put off, the world pinned and the same with `--threads 1`
+(packed by the next update), 4 (a pool with no background work: the same) and 12 (the pool's threads), and in
+`bench_voxels_checked`, which works every repair out both ways. The grid codec is under every visibility fixture
+with a grid (`tidec_e2e_visibility_blocks`, `_pieces`, `_runs`, `_trees`, `_repairs`: their pinned projection
+hashes and repaired worlds are where they were). `tests/test_recipient_delta.c` passes as it was (its buffers are
+under `FRESH_LEAST`, so both codecs are still compared there).
+
+**Left.**
+- The read itself is one update's and one thread's: about 2.3 ms for 3,125 chunks and 3.7 for 6,845 (`bench_voxels
+  --worst`'s pack column; one of 14 ms was seen at three times the view on one thread, not taken apart). Its
+  records could be written by ranges on the pool (each entity's record is its own bytes); `tide_client_see` and the
+  memo it reads are one thread's (`busy`).
+- A repair under `REPAIR_HEAVY` is still read and packed in one update (5.5 ms at 3.5 MB: 2.3 and 3). Putting those
+  off too cost a tick for each repair of a box that arrives in several (near 12 with 8 bots: 35 ticks to 40 for a
+  whole box at the median with the line at 2 MiB), which is why the line is where it is.
+- Nothing tests a put-off repair that's dropped (a player who leaves in the tick between) but the paths it shares
+  with a transfer's (`stop_sending`).
+
 ## A grid read from bytes left 64 bytes on its thread for good (2026-11-16, after the sweep)
 
 **What grew.** A player's machine kept 64 bytes for every grid it was ever sent, outside every world: in voxels, for

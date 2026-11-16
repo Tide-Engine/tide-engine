@@ -1,5 +1,110 @@
 # ECS and simulation state
 
+## A heap gives back the pages whose blocks are all free (2026-11-16, night)
+
+A world's memory stayed at the most it ever held (notes/voxels.md, What's left, 8). Measured first (`bench_voxels
+--out 1 --back 40`: 8 bots fly out for 40 s, back for 40 and stay; the bench's new line of what a world's memory is
+made of, `bench_desc.parts`), with 8,242 entities at the most and 1,467 at the end:
+
+- **Tables already give their pages back**: 12 chunks at the most, 6 at the end. A table drops its last chunk as its
+  last row goes (`drop_last`) and fills holes from the end once they're a 32nd of its rows (`tide_table_settle`), so
+  it's within a 32nd and a chunk of what its rows need. Nothing to do.
+- **The entity table doesn't, and is 1.4% of the world**: 8,242 slots in 9 pages, 0.29 MB of 20.3. Its free slots are
+  a list through the slots, part of the world's state (which slot a spawn takes), so giving its last pages back would
+  change what every machine has to agree on. Left as it is.
+- **The heaps were the rest, 19.9 of 20.3 MB, and gave nothing back**: 1,214 pages at the most and at the end. A heap
+  hands out offsets from its start and takes blocks back into free lists that go through the blocks themselves, so a
+  page whose every block is free still holds each block's link, and stays.
+
+**What was built** (`tide/heap.h`, Pages given back; `engine/src/heap.c`). It changes how a heap is kept in memory and
+nothing of what it is: its hash, its packed bytes, its deltas and the blocks it hands out next are those of the heap
+with every page there. So no world hash moved and no two machines need agree about it.
+
+- **Which pages** (`tide_heap.live`, `idle`): a count for each page of its blocks handed out and not yet back on a
+  free list (`took` as `tide_heap_alloc` hands one out, `gave` as `tide_heap_flush_pending` and `tide_heap_runs_join`
+  free one; a block released and not yet flushed still counts). The heap's own thread's alone, as its free lists are;
+  a copy takes its source's. A page read from bytes is `LIVE_UNKNOWN`: nothing says which of its blocks are free (a
+  grid's chunk writes cells over its header), so a world that came as bytes gives back only pages made since.
+- **When** (`give_back`, from `tide_heaps_settle`, which generated `apply_commands` calls after a tick's changes
+  and the flush, with nothing else on the world): once the pages whose blocks are all free are a quarter of the
+  heap's pages in memory and at least `TIDE_HEAP_GIVE_LEAST` (2) places; each of a world's heaps and each run's heap
+  by itself. Never a heap's first page (offset 0 is no block), one it hasn't handed out to the end of, or a heap
+  with blocks waiting to be freed.
+- **What's kept of one** (`tide_heap_stub`): every word of it that isn't zero (a free block is zeros and its link) and
+  what it hashed to, shared by the world and its copies as a page is. A page with more than 256 such words (small
+  blocks, a link each) stays, marked `LIVE_KEPT` so it isn't looked at again until one of its blocks is handed out.
+  The page's place in the table is NULL meanwhile.
+- **Coming back** (`bring_back`): `tide_heap_alloc` taking a free block whose page is gone makes the page again from
+  its stub first, the same bytes, under the heap's lock where runs are on threads (as `add_page`).
+- **Everything that goes through a heap's pages reads one that's gone as it was** (`span_at`, `place_hash`,
+  `page_read`): the hash takes the stub's, the stale pages leave it out, a pack and a delta write the page made again
+  for the moment, a delta read over a base that gave a page back reads it the same (so the sender and the receiver
+  needn't have the same pages in memory), and the pages' hashes and needs say what they did.
+  `tide_heaps_pages` counts the pages in memory and `tide_heaps_gone` the places given back.
+- **Why nothing reads a page that's gone**: only a handle to a block that's handed out is read, and such a page has
+  none; a released block is free only after its code's flush, as before. The three places that look a page up by an
+  offset that could be anything already took NULL for no page (`mesh.c`'s `span` and its list check, generated
+  `tide_client_place_page`, where a kept hash of a page that's gone now reads as changed).
+
+**Measured** (release, Windows, 4 threads, the machine shared; the same hash at the end before and after, in each):
+
+| `--players 8 --out 1 --back 40 --hop 0 --builders 0`, 120 s | before | after |
+|---|---|---|
+| Entities at the most / at the end | 8,242 / 1,467 | the same |
+| The server's world, packed, at the most / at the end | 21.1 / 20.3 MB | the same: it's the same world |
+| Its heaps' pages in memory at the most / at the end | 1,214 / 1,214 (19.9 MB) | 1,214 / 745 (12.2 MB), 469 given back |
+| Its tables' chunks at the most / at the end | 12 / 6 | the same |
+| The process (the server and 8 machines) at 60 s / at 120 s | 254.8 / 152.1 MB | 255.7 / 142.0 MB |
+
+| One player hopping between two dimensions every 10 s (`--players 1 --still 100 --hop 10`) | before | after |
+|---|---|---|
+| The server's heaps' pages before the first hop | 141 | 135 (6 given back) |
+| ...while both dimensions are held | 263 to 269 | 253 to 255 |
+| ...after each of the first four hops, 1,018 entities again | 260, 263, 269, 269 | 215, 191, 215, 195 |
+
+| The default run (8 bots, a hop each every 20 s, 30 s), three alternating rounds | before | after |
+|---|---|---|
+| Server, in all, ms a second | 28.07, 28.43, 28.50 | 28.10, 29.10, 28.47 |
+| Server update, 99th percentile, ms | 3.20, 3.24, 3.28 | 3.27, 3.29, 3.25 |
+| Server, snapshots, ms a second | 0.97, 1.00, 1.01 | 1.05, 1.16, 1.08 |
+| The hash at the end | `0xd5237e620fb05ff1` | the same |
+
+Counted in a build made for it (not kept), the server's and the eight machines' worlds together over 30 s: flying
+with no hops, 5 times a heap gave pages back, 85 pages in all, 48 brought back; with the hops, 1,351 times, 2,402
+pages, 473 brought back. A page given back costs a read of its 16 KiB; one brought back a zeroed page and its few
+words. What a snapshot pays more is the counts' copy (two bytes a page).
+
+**What it doesn't do.**
+
+- **A page stays for one block.** A heap's pages hold blocks of every size, in the order they were first handed
+  out, and free blocks of each size are taken again last freed first: after the bots came back, 126 of the chunks'
+  heaps' 448 pages in memory had one block out and 55 none (under a quarter of their run's heap). The world of
+  1,467 entities had 745 pages where the first 2,932 it ever held had 373. Pages for one size of block each, or
+  free blocks taken lowest first, would pack them, and would change which block is handed out next: every heap's
+  layout and every pinned world hash with them. Not done here: the pins need every suite on every platform.
+- **The packed world is as big as it was**, 20.3 MB: what's packed is the heap as it is, free blocks and all (zeros
+  and links, which a delta from nothing sends as runs). A joiner of a game without visibility is sent that; a
+  game with visibility sends each player its own projection, made block by block on their machine.
+- **A world read from bytes** (a joiner's without visibility, a hot reload's, a server's from a save) gives back
+  none of the pages it came with.
+- **The process doesn't shrink by as much as the world**: pages let go of are kept spare for the next taker (8 MB a
+  thread and 32 shared, `engine/src/page.c`) and then are the C library's.
+
+**Tests** (`tests/test_heap.c`, each against a twin heap that never settles): `heap_gives_back_the_pages_whose_blocks_
+are_all_free` (600 blocks, 500 freed: the pages go only at a settle after the flush; the hash, what's handed out
+and the packed bytes are the twin's; a snapshot from before keeps every block, one taken with pages gone stays
+what it was while the world takes them again and after the world is freed; the blocks handed out next are the
+twin's, zeroed), `heap_gives_back_a_big_blocks_page_and_keeps_pages_of_small_blocks` (blocks of four places, and
+4,096 of 16 bytes whose pages stay and count again), `heap_with_pages_given_back_packs_and_makes_deltas_as_its_twin`
+(whole bytes read back, the pages' hashes, and deltas each way between a heap with pages gone and its twin, read
+over a base kept either way), `heap_giving_back_is_the_twin_through_any_blocks_coming_and_going` (30,000 random
+allocations and releases of eight sizes in waves, a settle every five, four snapshots kept on the way). Bringing a
+page back with a word missing fails three of them. Run under ASan too (`tide_tests heap`, `list`, `grid`,
+`snapshot`, `entity`, `table`, `page`, `visibility`, `text`, `map`, `session`: all pass), and `tide_tests` whole in
+release (787), `tidec_e2e_visibility_runs` (and `_checked`, `_memo_off`), `tidec_e2e_row_heaps`, `_row_grids`,
+`_guarded_rows`, `bench_voxels` (and `_forgets`, `_wide`, `_arrives`, `_checked`, `_counts`), `bench_gallery`,
+`bench_sand`: every pin where it was. Not run: the web build, and the other suites.
+
 ## A handler takes the lanes it changed (2026-11-16, later)
 
 An event's or a command's handler with a `mut` component took every lane of that component for writing in its
@@ -90,10 +195,10 @@ client's simulating.
   server's hashing 6.14 to 5.64, its simulating 19.7 to 18.4. `versus_events` (200,000 events a tick to 50,000
   entities, one field written each, one thread, three runs each, alternating): 9.83 to 9.62 ms a tick, and with
   each tick's world kept beside it (`--kept 1`) 9.93 to 9.63. `bench_gallery` and `bench_sand` are as they were.
-- **Found on the way, not fixed** (the compiler's loop views, not this task's): `for (...) plan.parts[F(k)].Send(E
-  { ... });` over a list of a singleton the system takes read-only generates `tide_list_prepare(&(plan->parts),
-  ...)` before the loop, a write's preparation for a loop that only reads the list, through a `const` pointer:
-  clang refuses the C (`discards qualifiers`). `handler_lanes.tide` reads the entity through a function (`At`).
+- **Found on the way, fixed 2026-11-16** (the compiler's loop views): `for (...) plan.parts[F(k)].Send(E { ... });`
+  over a list of a singleton the system takes read-only generated a write's `tide_list_prepare` through a `const`
+  pointer, which clang refuses. See Loop views below, A method called on an element reads it.
+  `handler_lanes.tide` still reads the entity through a function (`At`), which it no longer has to.
 - **For the owner**: nothing to decide. The programs are no bigger for a put that's a line a lane (`bench_voxels`
   1,541 to 1,524 KB, `bench_gallery` and `versus_events` the same to within a kilobyte).
 
@@ -741,6 +846,7 @@ What the gap was, measured on a 256 x 256 plane (66,049 64-byte vertices in 260 
 - **Loop views** (`tide_list_loop`, `tide_list_loop_find`, `tide_list_loop_at`, `tide_list_loop_at_mut` in `tide/list.h`; `tide_list_loop_chunk` and `tide_list_loop_own` in `engine/src/list.c`): before a `for` or `while` loop, generated code finds each list the loop indexes and keeps the shape of (`open_loop_views`): its count, and where its elements are, side by side (`flat`; the scratch area's, an asset's), or its chunks' directory. An element is then a bounds check against that count and, in chunks, a look in a table of `TIDE_LIST_LOOP_WAYS` (16) chunks by their numbers, filled the first time one of a chunk's elements is read (its page as it is) or written (`tide_heap_write`, the world's own, as `tide_list_at_mut` makes it). A chunk read and then written is found again as the world's own, which later reads of it read; a list side by side is made the world's own at its first write. The view's helpers (`tide_list%d_lget`, `_lat`, `_lslot`, `_lset`) take the same arguments as the cached ones, so each access site picks one by name (`loop_view_of`), and `count` in the loop is the view's. A loop inside one with a view goes on with it.
 - **What keeps a list's shape** (`lv_stmt`, `lv_expr`, `lv_keeps`): nothing in the loop's condition, step and body names the list, or a place that holds it, other than to index it or read its `count`: no method of it (`Add`, `Clear`, `Resize`, ...), no assignment to it or to what holds it, no argument naming it or what holds it (it could be a `mut` one), no method called on what holds it, and no local of its root's name. A list's element as an argument is a copy, read. And no view at all in a loop with a method call on the code's own value, an Action, a lambda, a World or query, an await, a `foreach`, a `switch`, or anything else the walk doesn't know; nor in inlined code, tasks, parallel steps or a Sort's comparison. Elements are plain values (`loop_viewed`: no text, lists, maps or sets in them), written as bytes.
 - **Why it holds:** code reaches a list only through its place (functions see their parameters), so a list no code in the loop hands on, resizes or reassigns keeps its count, block and chunks for the whole loop. A page made the world's own moves the heap and leaves the old page to the snapshot that shares it, which is still read rightly; nothing in the loop reads the list through it once its view has the world's own. A loop that writes a list prepares it first (`tide_list_prepare`), so an asset's or the pack's elements are made its own before the view is found, as a slot's write would; a list a loop only reads is never prepared or made the world's own.
+- **A method called on an element reads it (2026-11-16).** `lv_expr` walked every method's receiver as a whole use, which for `items[i].Method()` recorded the loop as one that writes `items`: `open_loop_views` then prepared the list for writing before the loop. Over a list of a singleton or component taken read-only that is `tide_list_prepare(&(plan->parts), ...)` through a `const` pointer, which clang refuses (`discards qualifiers`), for `plan.parts[F(k)].Send(E { ... })` (an entity's method) and `d.big[i].Heft()` (a struct's method that isn't `mut`) alike; over a writable list it compiled and made an asset's or the pack's list the world's own for a loop that only read it. No method changes an indexed element: the checker refuses a `mut` method and a `Random`'s through an index ("an indexed element is a copy, so the mut method ... can't change it in place"), and an assignment through a read-only parameter ("'bag' is read-only", with the `mut` to add), so nothing is cast away. Now the receiver is walked as `LVM_RECEIVER` unless the call can change it (`lv_receiver_written`: never an entity, a handle; a struct's method only when `mut`; any other call by `writes()`): still a whole use of a place (`items.Add(...)`, `holder.Method()` end the view as before), and a read of a list's element. Test: `tidec_e2e_loop_views`'s `Reads` (sends to each entity of a read-only singleton's list) and `Weighs` (a struct's method on a read-only singleton's elements), which didn't compile before, with `loop_views_read_elements_methods_are_called_on` checking what they leave.
 - **Measured** (same plane, best of 25): `RecalculateNormals` 6.1 to 1.8 ms (4x C, from 13.5x); `RecalculateTangents` 37 to 22; `WeldPositions` 18 to 16; appending shapes (`Plane`, 4,096 boxes) unchanged, as `Add` makes a loop keep its cache.
 - **Tests:** `tidec_e2e_loop_views` (`compiler/tests/e2e/loop_views.tide`): scattered reads and writes of a list in chunks with two indexes, indexes past both ends, a list side by side written whole, nested loops sharing a view, a loop that adds (cache kept), a loop that hands the list to a function that writes it through its own view, a function's scratch lists, an asset's list read and a copy of it written while the asset stays as it was; and a snapshot taken before a tick keeping its chunks when the tick's loops write them, with rolling back to it giving the same world. The full native and web suites cover every game's loops with the change.
 - **A parallel step's caches are counted in its own text** (`close_list_caches` at the end of each step in `gen_par_steps`): a step's `tide_lc` was sized only when the next function declared its caches, after the step's text had been copied out, so it stayed 1. Harmless while a step indexed one list through one cache; caches by index gave `tide_e2e_parallel_work`'s step two, and ASan caught the overflow.
