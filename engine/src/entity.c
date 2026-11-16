@@ -649,7 +649,9 @@ static uint32_t used_on(const tide_entities *t, uint32_t p)
 static tide_entity_slot *slot_to_change(tide_entities *t, uint32_t index)
 {
     const uint32_t p = index >> TIDE_ENTITY_PAGE_SHIFT;
-    tide_page *own = tide_page_own(t->page[p], 1, used_on(t, p) * (uint32_t)sizeof(tide_entity_slot));
+    // (Written where its slot is, which is what a projection's check of the slots' snaps goes by: tide/page.h)
+    tide_page *own = tide_page_own_for(t->page[p], 1, used_on(t, p) * (uint32_t)sizeof(tide_entity_slot),
+                                       (index & (SLOTS - 1u)) * (uint32_t)sizeof(tide_entity_slot), (uint32_t)sizeof(tide_entity_slot));
     __atomic_store_n(&t->page[p], own, __ATOMIC_RELEASE);
     return (tide_entity_slot *)tide_page_data(own) + (index & (SLOTS - 1u));
 }

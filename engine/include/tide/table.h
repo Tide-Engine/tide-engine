@@ -165,7 +165,7 @@ static inline __attribute__((noinline)) void tide_table_lane_apart(tide_table *t
 {
     tide_page *p = t->pages[chunk * c->count + column];
     tide_page *own = tide_page_take(p->size);
-    *own = (tide_page){1, p->size, p->first, UINT32_MAX, 0, 0};
+    tide_page_start(own, 1, p->size, p->first, 0);
     *out = tide_page_data(own);
     if (apart) { // The loop writes every row: read where they are
         *in = tide_page_data(p);
@@ -181,7 +181,7 @@ static inline void tide_table_lanes_begin(tide_table *t, const tide_columns *c, 
     for (uint32_t k = 0; k < lanes; k++) {
         tide_page *p = t->pages[chunk * c->count + first + k];
         if (!apart && p->refs == 1u) { // This table's alone: in place, and what it hashed to is out of date
-            p->hashed = UINT32_MAX;
+            tide_page_dirty(p);
             in[k] = out[k] = tide_page_data(p);
             continue;
         }
@@ -247,7 +247,7 @@ static inline void *tide_table_column_mut(tide_table *t, const tide_columns *c, 
     tide_page **p = &t->pages[chunk * c->count + column];
     tide_page *page = *p;
     if (__builtin_expect(page->refs == 1u, 1)) { // This table's alone, as tide_page_own leaves it, with nothing written back
-        page->hashed = UINT32_MAX;
+        tide_page_dirty(page);
         return tide_page_data(page);
     }
     *p = tide_page_own(page, 1, tide_table_rows(t, c->shift, chunk) * c->sizes[column]);

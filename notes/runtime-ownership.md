@@ -1,3 +1,39 @@
+## Pages say where they were written (2026-11-17)
+
+**Agreed with the owner 2026-11-17** ("yes you can go ahead"): the runtime keeps which parts of a page were written
+since a check last looked, for the projection checks (netcode.md, top section). Agent-maintained, in `tide/page.h`,
+`engine/src/page.c` and the heap's and entity table's writes (`tide/heap.h`, `engine/src/heap.c`,
+`engine/src/entity.c`), all already under the page and heap maintenance; tests in `tests/test_heap.c` and
+`tests/test_entity.c`. Nothing of it is a world's state: never hashed, packed, sent or compared between machines.
+
+- **What a page keeps** (`tide_page`, whose header is 64 bytes where it was 32): `written`, the lines (64 to a page, a
+  bit each: `tide_page_lines`) written since `hash` was made, or since the hash it had while it's out of date; and,
+  set by `tide_page_hash` each time it makes a hash, `before` (the hash it had) and `wrote` (what `written` was, which
+  starts again). `grain`: a heap page of blocks of one size has their size, 1 << grain bytes (0 for any other page).
+- **The contract**: a page whose hash is of what it holds (`hashed` isn't `UINT32_MAX`) holds, in every line `wrote`
+  leaves out, the bytes it held when it hashed to `before`. `tide_page_same_since(p, kept, from, bytes)` and
+  `tide_page_lines_same_since(p, kept, lines)` say it for whoever kept a hash of the page: true where the page hashes
+  to `kept` now, or hashed to it before and those lines weren't written in between. A hash is of the bytes (as every
+  kept page hash is trusted already), so it holds whichever page, world, copy or world from bytes the hash was kept of.
+- **Who says what**: `tide_page_wrote(p, from, bytes)` and `tide_page_wrote_lines` (atomic: a heap's runs write one
+  page on several threads), `tide_page_dirty` (all of it); `tide_page_own` says all of it, `tide_page_own_for(p, mine,
+  keep, from, bytes)` the bytes it names. A heap write (`tide_heap_write`, `_write_shared`, `_write_over`, a run's copy)
+  says the lines of the block its offset is in (`tide_heap_wrote`, by the page's `grain`, which the place sets as it
+  takes the page, unpacking too, and copies keep); a slot's change (`slot_to_change`) its slot's. Anything else says
+  all of it: a new page, one taken from the spares (`tide_page_start` where a header was a literal), unpacked, a dropped
+  page taken again; and code that only makes `hashed` `UINT32_MAX` (tables' lanes, generated systems'), which
+  `tide_page_hash` takes as all of it where nothing was said. A copy (`tide_page_copy`, `_own_copy`, `_own_copy_around`)
+  has its source's `hash` and `written`, and the lines of what it doesn't copy.
+- **What a writer has to keep to**: it writes only within the block (or slot) it said, between the saying and the next
+  hash; a block's bytes are within its own block (as `hashed` already relied on, for the page). A delta that shares a
+  base's page whose blocks were smaller than its place says now is given a copy (`tide_heap_unpack_delta`), so a page's
+  `grain` is never smaller than its blocks.
+- **Generated code relies on** (client_spans_codegen.inc, client_state_codegen.inc): the contract above for heap pages
+  of one place (`1 << TIDE_HEAP_PAGE_SHIFT` bytes) and slots' pages (`TIDE_ENTITY_PAGE_SHIFT` slots of
+  `tide_entity_slot`); `tide_heap_page_used` as what a page's hash covers; reading a page's `before` and `wrote` only
+  once its hash is made (`tide_client_page_hash`, `tide_entities_slot_page_hash`). If the owner takes page.c or heap.c
+  over, those are what must stay.
+
 ## The server's store: the files a provider has (2026-11-16, night)
 
 `engine/src/storage.c`, `tide/storage.h` (notes/voxels.md, section 3f). Nothing generated code calls changed. Hosts

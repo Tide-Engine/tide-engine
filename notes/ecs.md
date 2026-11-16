@@ -1,5 +1,20 @@
 # ECS and simulation state
 
+## A page says where it was written (2026-11-17)
+
+Every page (`tide/page.h`, Lines written) keeps the lines of it (64 to a page) written since its hash was made, and
+when a hash is made, the hash before and the lines written between: so whoever kept a page's hash can tell which of
+its bytes are still those it kept, without reading them (`tide_page_same_since`). A heap's writes say their block's
+lines (a page of one size of block keeps the size, `tide_page.grain`), the entity table's a slot's, the rest all of it.
+The page header is 64 bytes (32 before). None of it is state: no hash, pack, delta or pin moved. Built for the
+projection checks (netcode.md, top section); the contract, who says what and what generated code relies on:
+runtime-ownership.md, top section. Tests: `page_lines_say_where_it_was_written`,
+`heap_pages_say_which_lines_were_written`, `heap_page_taken_again_says_all_its_lines` (`tests/test_heap.c`) and
+`entity_pages_say_which_slots_were_written` (`tests/test_entity.c`): each tick of random writes, frees, copies a
+snapshot shares (taken before a hash and in the middle of a tick), writes over, a heap's runs, worlds read from bytes,
+deltas and a world taken back, every page that hashed to what was kept of its place before differs from those bytes
+in no line it doesn't say.
+
 ## A heap's blocks in the lowest places with room (2026-11-16, night, later)
 
 What the section below left (notes/voxels.md, What's left, 8): a page stayed for one block out, as pages held blocks
