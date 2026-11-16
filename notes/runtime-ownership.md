@@ -46,6 +46,29 @@ Generated code gained `tide_dev_view_names` and `tide_show_dev_views` (notes/lan
 `TIDE_HOST_SHAPE` changes: hosts and game libraries rebuild together. No runtime function generated code calls is new.
 The menu is the standard host's (notes/standard-host.md, The dev menu).
 
+## Page references counted atomically (2026-11-17)
+
+Agent-maintained, under the page and heap maintenance (`tide/page.h`, `engine/src/page.c`, and the counts' users in
+`heap.c`, `tide/heap.h`, `table.c`, `tide/table.h`, `rows.c`, `delta.c`, `resident.c`, `asset_store.c`). A server lets
+go of a kept tick's world on the pool's background threads (`session.c`'s `let_go`, notes/netcode.md, top section),
+while the worlds sharing its pages are copied, written and let go of on others, so every count of references a world
+can share is atomic: a page's `refs`, a resident's table of pages, a heap's asset origins (entity orders' and asset
+pools' already were).
+
+- **New, generated code calls it**: `tide_page_refs(p)` (an acquire load of `p->refs`), where generated C read
+  `->refs` (a system's lanes' fallback in `codegen.c`, the indexes' sites in `index_codegen.inc`, the rows cache in
+  `rows_cache_codegen.inc`). `tide_page_retain_more(p, refs)` (runtime only: `delta.c`'s shared base pages).
+  `tide_page_retain` and `tide_page_release` are atomic; `tide_page_own_copy` and `_own_copy_around` let go of the
+  references they took over through `tide_page_release`, which gives the page back where another holder let go of
+  it meanwhile.
+- **The contract**: whoever sees as many references as it holds has the page alone, and nobody else can change that
+  until it shares the page again; seeing more than it holds, it copies, and a holder that let go meanwhile only makes
+  the copy needless. What a page holds is never read or written by whoever only lets go of a reference. Writing code
+  must keep to it: read `refs` through `tide_page_refs`, change it only through `tide_page_retain`, `_retain_more`
+  and `tide_page_release` (a page nobody else can have yet may be set as before: a new one, a copy, a dropped one
+  taken again).
+- If the owner takes page.c over: these, and that `let_go` relies on them.
+
 ## Pages say where they were written (2026-11-17)
 
 **Agreed with the owner 2026-11-17** ("yes you can go ahead"): the runtime keeps which parts of a page were written

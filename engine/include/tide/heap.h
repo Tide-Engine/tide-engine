@@ -271,7 +271,7 @@ static inline tide_block *tide_heap_write(tide_heap *h, const uint64_t block)
     tide_page *p = __atomic_load_n(&pages[block >> TIDE_HEAP_PAGE_SHIFT], __ATOMIC_ACQUIRE);
     // A page bigger than one place has a reference for each (see tide_heap)
     const uint32_t places = p->size > (1u << TIDE_HEAP_PAGE_SHIFT) ? p->size >> TIDE_HEAP_PAGE_SHIFT : 1u;
-    if (p->refs != places) return tide_heap_write_shared(h, block);
+    if (tide_page_refs(p) != places) return tide_heap_write_shared(h, block);
     tide_heap_wrote(p, block); // What it hashed to is out of date, where
     return (tide_block *)(uintptr_t)((uint8_t *)tide_page_data(p) + (size_t)(block - ((uint64_t)p->first << TIDE_HEAP_PAGE_SHIFT)));
 }

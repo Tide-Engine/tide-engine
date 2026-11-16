@@ -347,8 +347,7 @@ tide_page *tide_page_new(const uint32_t size)
 void tide_page_release(tide_page *p, const uint32_t refs)
 {
     if (!p) return;
-    p->refs -= refs;
-    if (p->refs == 0) tide_page_give(p);
+    if (__atomic_sub_fetch(&p->refs, refs, __ATOMIC_ACQ_REL) == 0) tide_page_give(p);
 }
 
 // A copy's header: `p`'s hash, its lines written and those of the bytes `from` to `from + bytes` that aren't
@@ -375,7 +374,7 @@ tide_page *tide_page_copy(const tide_page *p, const uint32_t refs, const uint32_
 tide_page *tide_page_own_copy(tide_page *p, const uint32_t mine, const uint32_t keep)
 {
     tide_page *copy = tide_page_copy(p, mine, keep);
-    p->refs -= mine;
+    tide_page_release(p, mine); // (Its last reference where another holder let go of it meanwhile)
     return copy;
 }
 
@@ -397,7 +396,7 @@ tide_page *tide_page_own_copy_around(tide_page *p, const uint32_t mine, const ui
     const uint32_t after = end < kept ? kept : end;
     memcpy(to + end, as_it_was + end, after - end);
     memset(to + after, 0, p->size - after);
-    p->refs -= mine;
+    tide_page_release(p, mine); // (Its last reference where another holder let go of it meanwhile)
     return copy;
 }
 

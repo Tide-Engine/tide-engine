@@ -337,7 +337,7 @@ tide_page *tide_delta_page(tide_delta_reader *d, const uint32_t size, const uint
     if (next_same(d)) {
         if (!base || base_size != size || d->bytes.failed) return NULL;
         if (share) {
-            base->refs += refs;
+            tide_page_retain_more(base, refs);
             return base;
         }
         tide_page *p = tide_page_new(page_size);
@@ -361,7 +361,7 @@ tide_page *tide_delta_asset_page(tide_delta_reader *d, const uint32_t size, cons
     const void *from = base ? tide_page_data(base) : NULL;
     if (next_same(d)) {
         if (!base || base_size != size || d->bytes.failed) return NULL;
-        if (share) { base->refs += refs; return base; }
+        if (share) { tide_page_retain_more(base, refs); return base; }
         tide_page *p = tide_page_new(page_size);
         p->refs = refs;
         if (size) memcpy(tide_page_data(p), from, size);

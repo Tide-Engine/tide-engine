@@ -358,12 +358,12 @@ bool tide_asset_unpack_heap(tide_heap *heap, tide_reader *reader, const tide_hea
 
 void tide_asset_origins_retain(tide_asset_origins *origins)
 {
-    if (origins) origins->refs++;
+    if (origins) __atomic_add_fetch(&origins->refs, 1u, __ATOMIC_RELAXED);
 }
 
 void tide_asset_origins_release(tide_asset_origins *origins)
 {
-    if (!origins || --origins->refs) return;
+    if (!origins || __atomic_sub_fetch(&origins->refs, 1u, __ATOMIC_ACQ_REL)) return; // (A world may be let go of on another thread)
     for (uint32_t i = 0; i < origins->room; i++) tide_asset_release(origins->pages[i].data);
     free(origins);
 }
@@ -371,7 +371,7 @@ void tide_asset_origins_release(tide_asset_origins *origins)
 static tide_asset_origins *own_origins(tide_heap *heap, const uint32_t page)
 {
     tide_asset_origins *was = heap->origins;
-    if (was && was->refs == 1u && page < was->room) return was;
+    if (was && __atomic_load_n(&was->refs, __ATOMIC_ACQUIRE) == 1u && page < was->room) return was;
     uint32_t room = was ? was->room : 4u;
     while (room <= page) room *= 2u;
     tide_asset_origins *made = tide_alloc_zeroed(1, sizeof *made + (size_t)room * sizeof *made->pages);
