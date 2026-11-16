@@ -540,6 +540,16 @@ tide_add_game(tidec_e2e_dev_build_dev DEV SOURCES e2e/dev_build.tide NAME game #
 target_include_directories(tidec_e2e_dev_build_dev PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 target_compile_definitions(tidec_e2e_dev_build_dev PRIVATE DEV_BUILD)
 add_test(NAME tidec_e2e_dev_build_dev COMMAND tidec_e2e_dev_build_dev)
+# A dev scene as a scenario, which --scene starts in with its fields or by its name alone
+tide_add_game(tidec_e2e_dev_scene DEV SCENE "Battle { side = 100, alone = true }" SOURCES e2e/dev_scene.tide NAME game
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/dev_scene_test.c")
+target_include_directories(tidec_e2e_dev_scene PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tidec_e2e_dev_scene COMMAND tidec_e2e_dev_scene)
+tide_add_game(tidec_e2e_dev_scene_named DEV SCENE Battle SOURCES e2e/dev_scene.tide NAME game
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/dev_scene_test.c")
+target_include_directories(tidec_e2e_dev_scene_named PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_compile_definitions(tidec_e2e_dev_scene_named PRIVATE NAMED_ONLY)
+add_test(NAME tidec_e2e_dev_scene_named COMMAND tidec_e2e_dev_scene_named)
 tide_e2e_test(changed_match) # ...and taken by match handlers, in rounds while their own changes go on
 # ...whose handlers changing what they watch without end stop the program
 tide_add_game(tidec_e2e_changed_endless SOURCES e2e/changed_match.tide NAME game DEFINES ENDLESS

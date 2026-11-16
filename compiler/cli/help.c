@@ -227,7 +227,8 @@ static const argument_help arguments[] = {
     {"--scene", "--scene <qualified-name>", "Start directly in an authored prefab or scene",
      "Overrides the project default: settings { startScene = Levels.Start; }.\n"
      "Without either selection, the game starts in Main. Runs normal\n"
-     "Spawned handlers, systems and views, with the usual session and devices.", RUN | BUILD},
+     "Spawned handlers, systems and views, with the usual session and devices.\n"
+     "A scene can be given its fields: --scene \"Battle { side = 50 }\".", RUN | BUILD},
     {"--stats", "--stats", "Enable the stats drawer (F8)",
      "Shows frame rate, CPU/GPU time, ping, bandwidth, memory, draw calls and\n"
      "slow systems. run starts the drawer open; build starts it closed.\n"

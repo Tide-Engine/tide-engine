@@ -5986,12 +5986,13 @@ Decided:
 - **A dev build is a switch of its own**, apart from optimization and target: an optimized or a web build can be a dev one, for playtesters.
 - **A scenario is a dev scene**, which `--scene` starts in place of the start scene; one that wants the game's usual start loads it itself.
 - **The inspector's edits change the match for everyone**, applied by the server. What depends on a field follows it through match handlers of `Changed<...>` (Events), not an event of the inspector's own.
-- Order of the pieces: `dev` and the dev menu (built), dev scenes, the tweak file, the inspector, checkpoints, picking on screen, pausing and rewinding a run.
+- Order of the pieces: `dev` and the dev menu (built), dev scenes (built), the tweak file, the inspector, checkpoints, picking on screen, pausing and rewinding a run.
 
 Provisional (Claude's picks, built 2026-11-16):
 - `dev` goes before any declaration but settings and namespaces, and before a type's method. A dev type's methods, a dev scene's preparation, a dev generic's instances and a lambda written in dev code are dev too. A field can't be dev: it's in every build, and a dev component or singleton holds what dev code needs.
 - **Which builds** (the owner agreed): `tide run` builds with dev unless `--no-dev` or `--distribution`; `tide build` with `--dev`; tidec's `--dev`; `tide_add_game(... DEV)`. Schedule and shader listings see the dev declarations.
 - **The dev menu**: the key under Escape (backquote, the owner's pick, where Valve's games open their console) in a dev build with `dev` views shows it over the views, listing them by name with a switch each; a dev view runs only while its switch is on (the owner agreed), kept by name across hot reloads. The game sees the key too. The menu is the standard host's (tide/host.h); another host shows dev views through `tide_show_dev_views`.
+- **Scenarios** (built 2026-11-16): `--scene` takes a scene with its fields as Tide writes them, `--scene "Battle { side = 50 }"` (tidec, `tide run`/`build`, `tide_add_game(... SCENE ...)`); a prefab is named alone. A build started that way doesn't warn that code on what only the usual start makes never runs.
 - The compiler's check covers names and methods code writes in declarations, signatures, fields and bodies, generic instances' and lambdas' too. A build without dev says of a name it doesn't find, when it's a dev one, that it's dev and left out.
 
 ## Mods

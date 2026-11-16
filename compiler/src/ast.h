@@ -2143,6 +2143,8 @@ void print_outline(const program *prog, sb *out);
 // editors, which need structure while code is half typed.
 bool parse_file(program *prog, const source *src, token *toks, bool recover);
 decl *parse_generic_instance(const decl *generic);
+// --scene's text as one expression (Battle { side = 50 }), or NULL with the error said
+expr *parse_expression_text(program *prog, token *toks);
 
 // Whether the attributes starting at toks[i] (a '[') belong to a field: after
 // the last ']' come a type name and a field name. Otherwise they belong to a

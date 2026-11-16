@@ -3342,3 +3342,19 @@ decl *parse_generic_instance(const decl *generic)
     d->unit = generic->unit;
     return d;
 }
+
+// What a build starts in, written as code (tidec --scene "Battle { side = 50 }"): one expression, the whole text.
+// NULL, with the error said, when it isn't one.
+expr *parse_expression_text(program *prog, token *toks)
+{
+    parser p = {.toks = toks, .prog = prog};
+    p.unit = NEW(unit);
+    p.unit->decl_col = 1;
+    if (setjmp(p.fail)) return NULL;
+    expr *e = parse_expr(&p);
+    if (!at(&p, T_EOF)) {
+        diag_error(peek(&p)->at, "--scene is a scene's or a prefab's name, or a scene with its fields, like 'Battle { side = 50 }'");
+        return NULL;
+    }
+    return e;
+}

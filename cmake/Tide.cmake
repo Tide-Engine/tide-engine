@@ -148,7 +148,7 @@ function(tide_web_page target)
 endfunction()
 
 function(tide_add_game target)
-    cmake_parse_arguments(ARG "DEV;STATS;LAYOUT;EMBED;WINDOW;SERVER;STRIP_SERVER_ASSETS;VISUALIZERS;STRIP_NAMES;SPLIT_PLUMBING;SPLIT_CODE;NO_LOOP_INDEXES;NO_CALL_MERGING;NO_CACHED" "NAME;TITLE;SHELL" "SOURCES;HOST;WARNINGS;PACKAGES;DEFINES" ${ARGN})
+    cmake_parse_arguments(ARG "DEV;STATS;LAYOUT;EMBED;WINDOW;SERVER;STRIP_SERVER_ASSETS;VISUALIZERS;STRIP_NAMES;SPLIT_PLUMBING;SPLIT_CODE;NO_LOOP_INDEXES;NO_CALL_MERGING;NO_CACHED" "NAME;TITLE;SHELL;SCENE" "SOURCES;HOST;WARNINGS;PACKAGES;DEFINES" ${ARGN})
     if(ARG_SERVER AND (TIDE_WEB OR TIDE_ANDROID OR ARG_HOST OR ARG_WINDOW OR ARG_LAYOUT))
         message(FATAL_ERROR "tide_add_game(${target} SERVER) is a standalone native server")
     endif()
@@ -383,6 +383,9 @@ function(tide_add_game target)
     set(server_flags)
     if(ARG_DEV) # A dev build: the game's `dev` declarations are in it
         list(APPEND server_flags --dev)
+    endif()
+    if(ARG_SCENE) # What it starts in, over its startScene: a name, or a scene with its fields, "Battle { side = 50 }"
+        list(APPEND server_flags --scene "${ARG_SCENE}")
     endif()
     if(ARG_SERVER)
         list(APPEND server_flags --server)

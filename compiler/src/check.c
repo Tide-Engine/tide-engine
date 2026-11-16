@@ -7631,7 +7631,8 @@ static type check_scene_call(checker *c, expr *e)
     const char *error = NULL;
     // A function or a method loads and unloads as the code that calls it would (check_acts); the GPU's code,
     // an operator and Interpolate never do
-    const bool passed = inherits(c) && c->method != c->prog->startup_create;
+    // ...as the start does (check_startup), which loads a prefab or a scene with its fields once, for the world it's given
+    const bool passed = inherits(c);
     if (in_routine(c) && !inherits(c) && c->method != c->prog->startup_create) {
         error = c->method->kind == DECL_SHADER ? "%s can't load or unload scenes; systems, views and event handlers do"
               : c->method->is_operator ? "an operator works a value out of its operands, so it can't load or unload scenes"
@@ -18017,17 +18018,38 @@ static decl *startup_named(checker *c, expr *value)
 static void check_startup(checker *c)
 {
     program *prog = c->prog;
+    expr *values = NULL; // --scene "Battle { side = 50 }": the scene with these fields
     if (prog->startup_name) {
         expr *name = NEW(expr);
         name->kind = E_NAME;
         name->name = str_from(prog->startup_name);
         name->at = (loc){1, 1, 0};
+        if (strchr(prog->startup_name, '{')) {
+            source *src = NEW(source);
+            src->path = "--scene";
+            src->text = prog->startup_name;
+            src->len = strlen(prog->startup_name);
+            diag_add_source(src);
+            token *toks = lex(src);
+            values = toks ? parse_expression_text(prog, toks) : NULL;
+            if (!values) return;
+            if (values->kind != E_LITERAL) {
+                diag_error(values->at, "--scene is a scene with its fields, like 'Battle { side = 50 }'");
+                return;
+            }
+            name->name = values->name;
+            name->at = values->qual_at;
+        }
         c->unit = NULL;
         prog->startup = startup_named(c, name);
     }
     decl *startup = prog->startup;
     if (!startup) return;
-    if (startup->kind != DECL_PREFAB) {
+    if (values && startup->kind == DECL_PREFAB) {
+        diag_error(values->at, "'" STR_FMT "' is a prefab, which starts as it's written: name it alone", STR_ARG(startup->qualified));
+        return;
+    }
+    if (startup->kind != DECL_PREFAB && !values) {
         prog->main = startup; // Source declarations and their names stay intact.
         return;
     }
@@ -18036,6 +18058,7 @@ static void check_startup(checker *c)
     fn->name = fn->qualified = str_from("tide_startup"); // Reserved, stable across unrelated declarations.
     fn->at = fn->return_type_at = startup->at;
     fn->unit = startup->unit;
+    fn->is_dev = startup->is_dev; // A dev scene's start
     fn->return_type_name = str_from("void");
     fn->body = NEW(stmt);
     fn->body->kind = S_BLOCK;
@@ -18051,10 +18074,13 @@ static void check_startup(checker *c)
     call->object->kind = E_NAME;
     call->object->name = str_from("Scene");
     call->object->at = startup->at;
-    expr *arg = NEW(expr);
-    arg->kind = E_NAME;
-    arg->name = startup->qualified;
-    arg->at = startup->at;
+    expr *arg = values;
+    if (!arg) {
+        arg = NEW(expr);
+        arg->kind = E_NAME;
+        arg->name = startup->qualified;
+        arg->at = startup->at;
+    }
     vec_push(call->args, arg);
     vec_push(fn->body->stmts, load);
     prog->startup_create = fn;
@@ -24048,6 +24074,9 @@ static void warn_unmatched(const program *prog, const decl *const *list, const i
         const decl *sys = list[i];
         // A package's systems run on what the game makes, or don't: it may use only part of it.
         if (!sys->per_entity || package_of(sys)) continue;
+        // A build started elsewhere (--scene) leaves the game's own start, and what only it makes, never made: what
+        // runs on that is the game's as written, which this build's choice doesn't make wrong
+        if (prog->startup_name) continue;
         bool matched = false;
         for (int a = 0; a < prog->archetypes.count; a++) {
             if (prog->archetype_local.items[a] != sys->entity_local) continue;

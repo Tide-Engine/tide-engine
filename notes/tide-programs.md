@@ -1,5 +1,10 @@
 # `tide_add_game` and the generated header
 
+## SCENE (2026-11-16)
+
+`tide_add_game(... SCENE <text> ...)` passes `--scene <text>` to tidec: a prefab's or scene's name, or a scene with its
+fields, `"Battle { side = 50 }"` (notes/language.md, Scenarios).
+
 ## DEV (2026-11-16)
 
 `tide_add_game(... DEV ...)` passes `--dev` to tidec: the game's `dev` declarations are in the build

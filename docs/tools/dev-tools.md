@@ -57,6 +57,30 @@ system Reload(Gun gun)
 
 Mark the code that uses it `dev` too, or leave it to dev code. Dev code can use anything.
 
+## Scenarios
+
+A scenario is a dev scene: a situation to start in, like a fight already under way or a range with one gun and a few targets. `--scene` starts the game in it, in place of its start scene, and can give it fields:
+
+```csharp
+dev scene Battle
+{
+    int side = 500;
+    bool alone;
+}
+
+dev event(Spawned) Arena(Battle battle)
+{
+    for (int i = 0; i < battle.side / 50; i++) Spawn(Soldier { });
+}
+```
+
+```sh
+tide run --scene Battle
+tide run --scene "Battle { side = 50, alone = true }"
+```
+
+The game's usual start doesn't load, so what only it sets up doesn't happen; what the game sets up elsewhere, like as players join, still does. A scenario that wants the usual start too loads it, `Scene.Load(Main { })`. A build without dev doesn't have dev scenes, so `--scene` can't name one there.
+
 ## The dev menu
 
 In a dev build with dev views, the key under **Escape** (`` ` `` on a US keyboard, where Valve's games open their console) shows the dev menu, and again hides it. It lists the game's dev views, each with a switch. A dev view runs only while it's switched on, so a game's tools stay out of the way until someone wants one, and they don't each need a key of their own. What's on stays on across a hot reload.

@@ -1,3 +1,18 @@
+## Scenarios: `--scene` with a scene's fields (2026-11-16)
+
+docs/spec.md, Dev tools. `check_startup`: a `--scene` text holding `{` is lexed as a source named `--scene` and read by
+the new `parse_expression_text` (parser.c), which must be one expression, a literal (`E_LITERAL`); its name is looked up
+as before (`startup_named`, so a dev scene in a build without dev says it's dev and left out) and a prefab is refused.
+It then makes the `tide_startup` function prefabs already had (`prog->startup_create`), whose body is
+`Scene.Load(<the literal>)`, dev when the scene is. Two fixes it needed: `Scene.Load` in that function now notes its
+act as any function's does (`passed` no longer leaves `startup_create` out), so it's given the world and cause it
+loads with (a prefab's went through `check_prefab_spawn`, which did that itself); and `warn_unmatched` says nothing
+in a build with `--scene` (the usual start's handlers never run there, by choice). `tide_add_game(... SCENE ...)`
+passes `--scene`. Tests: `tidec_e2e_dev_scene` (DEV, "Battle { side = 100, alone = true }": Main's setup never ran,
+Battle's once with those fields and its soldiers) and `tidec_e2e_dev_scene_named` (SCENE Battle: its defaults);
+`tidec_scene_startup` adds fields of an ordinary and a dev scene, the dev one left out without dev, a prefab with
+fields, an unknown field and text that isn't a literal. Native ASan and web debug.
+
 ## `dev` declarations (2026-11-16)
 
 Agreed with the owner (docs/spec.md, Dev tools, has what's decided and what's Claude's): `dev` before a declaration
