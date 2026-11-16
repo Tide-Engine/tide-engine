@@ -4955,9 +4955,19 @@ static bool on_welcome(tide_client *c, tide_reader *r)
     // A world it doesn't have yet: the first, a newer one after it went wrong,
     // or one past all it ran, when it fell behind further than the server
     // keeps ticks. Something it had whole, it had: what's after it is newer.
+    // And a whole projection whenever the server starts one, asked for or not
+    // (its build changed under a repair it was comparing, a repair it couldn't
+    // make, a player too far behind): from then the server sends this machine
+    // no tick before it and answers no repair until it's had, so one newer
+    // than all this machine was sent is taken, though it ran past its tick and
+    // thinks its own world sound. Refused, it would be sent for good.
+    const bool restarted = kind == SEND_CLIENT_WORLD && number && c->loaded && tick >= c->verified;
     const bool wanted = !c->loaded || (c->need_snapshot && tick >= c->verified) || tick > c->ahead
-        || (kind >= SEND_CLIENT_REPAIR && c->loaded && tick > c->verified);
-    if (!wanted || number <= c->got_number || (c->receiving && c->snapshot_number == number)) return true;
+        || (kind >= SEND_CLIENT_REPAIR && c->loaded && tick > c->verified) || restarted;
+    // One older than what's being received came late: the server stopped
+    // sending it when it started this one. Taken, the chunks had of this one
+    // would go, which the server heard it has and doesn't send again.
+    if (!wanted || number <= c->got_number || (c->receiving && number <= c->snapshot_number)) return true;
     if (kind == SEND_CLIENT_PATCH && (!c->answered || c->answered_tick != tick
         || number != c->answered_number + 1u || c->repair_candidate_target != tick)) return false;
     if (kind != SEND_CLIENT_PATCH) {

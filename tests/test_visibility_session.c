@@ -558,50 +558,384 @@ TIDE_TEST(visibility_delay_repair_candidates_do_not_deliver_future_events)
     visibility_continuous = false;
 }
 
-TIDE_TEST(visibility_large_repairs_release_old_callbacks_on_compatible_reload)
+// The large game's host and one client, whose builds a test swaps under a
+// stream of its repairs: every tick from 90 to 570 differs on the client, and
+// each repair is half a megabyte's hashes and then a patch.
+enum { RELOAD_HOST = 1, RELOAD_CLIENT = 2 };
+
+// The client's end of the network, which says what the server names in its
+// WELCOMEs, and can give the client one of them again, late
+typedef struct visibility_wire {
+    tide_transport inner;
+    uint32_t number, tick; // What the newest WELCOME read names, and its kind (SEND_*: 2 a whole
+    uint8_t kind;          // projection, 3 a repair, 4 a repair's hashes, 5 its patch)
+    uint8_t held[64];      // The newest WELCOME of `hold`'s kind
+    uint32_t held_size, held_number;
+    tide_address held_from;
+    uint8_t hold;
+    bool again; // The held one is what's read next
+    bool lose_hashes;     // No chunk comes of the next repair's hashes a WELCOME names, nor of any after it
+    uint32_t lose_number; // ...which is this one, the last so far
+} visibility_wire;
+
+static void visibility_wire_send(void *self, tide_address to, const void *data, uint32_t size)
 {
-    visibility_continuous = true;
-    tide_game template = visibility_game;
-    template.client_state = visibility_large_state;
-    template.load_client_state = visibility_large_load;
-    tide_game games[2] = {template, template};
-    uint32_t active = 0, sampled = 3;
-    tide_session *host = tide_session_create(&(tide_session_desc){.game = &games[active],
-        .sample = visibility_sample, .user = &sampled});
-    tide_session *client = tide_session_create(&(tide_session_desc){.game = &games[active],
-        .sample = visibility_sample, .user = &sampled});
-    tide_loopback *net = tide_loopback_create(61579);
-    TIDE_REQUIRE(host && client && net);
-    tide_loopback_set_conditions(net, (tide_net_conditions){.latency = 0.08, .jitter = 0.04, .loss = 0.1});
-    tide_session_start(host, NULL, 0);
-    TIDE_REQUIRE(tide_session_open(host, tide_loopback_endpoint(net, 1)));
-    tide_session_join(client, tide_loopback_endpoint(net, 2), tide_loopback_address(1), 0);
-    for (uint32_t step = 1; step <= 1500; step++) {
-        const double now = (double)step / 120.0;
-        tide_loopback_set_time(net, now);
-        tide_session_update(host, now);
-        tide_session_update(client, now);
-        // Hash offers, quiet candidate construction and patches overlap this
-        // stream. Replacing both tables repeatedly exercises each boundary.
-        if (step >= 400u && step <= 440u && step % 4u == 0u) {
-            const uint32_t next = 1u - active;
-            games[next] = template;
-            tide_session_set_game(host, &games[next]);
-            tide_session_set_game(client, &games[next]);
-            memset(&games[active], 0, sizeof games[active]); // No retained callback may use it.
-            active = next;
+    visibility_wire *w = self;
+    w->inner.send(w->inner.self, to, data, size);
+}
+
+static uint32_t visibility_wire_receive(void *self, tide_address *from, void *data, uint32_t capacity)
+{
+    visibility_wire *w = self;
+    if (w->again && w->held_size && w->held_size <= capacity) {
+        w->again = false;
+        memcpy(data, w->held, w->held_size);
+        *from = w->held_from;
+        return w->held_size;
+    }
+    uint32_t size = w->inner.receive(w->inner.self, from, data, capacity);
+    const uint8_t *bytes = data;
+    // A CHUNK: its header, the cookie, a nonce, then what it's a chunk of
+    for (uint32_t number = 0; size >= 20u && bytes[3] == 4u; size = w->inner.receive(w->inner.self, from, data, capacity)) {
+        memcpy(&number, bytes + 16, 4);
+        if (!w->lose_number || number != w->lose_number) break;
+    }
+    // A WELCOME: its header, a nonce, the player, flags, the tick rate, the server's tick, then what's sent
+    if (size >= 27u && size <= sizeof w->held && bytes[3] == 2u) {
+        uint32_t number, tick;
+        memcpy(&tick, bytes + 18, 4);
+        memcpy(&number, bytes + 22, 4);
+        if (number > w->number) {
+            w->number = number;
+            w->tick = tick;
+            w->kind = bytes[26];
+            if (w->lose_hashes && w->kind == 4u) w->lose_number = number;
+        }
+        if (number && bytes[26] == w->hold && number >= w->held_number) {
+            memcpy(w->held, bytes, size);
+            w->held_size = size;
+            w->held_number = number;
+            w->held_from = *from;
         }
     }
-    const tide_session_status status = tide_session_status_of(client);
-    const visibility_world *world = tide_session_view(client).verified;
-    TIDE_REQUIRE(world);
-    TIDE_CHECK(status.client.state == TIDE_SESSION_CONNECTED);
-    TIDE_CHECK(status.client.verified_tick > 650u && status.client.repairs > 10u);
-    TIDE_CHECK(world->health == 563u);
-    tide_session_destroy(client);
-    tide_session_destroy(host);
-    tide_loopback_destroy(net);
+    return size;
+}
+
+static void visibility_wire_close(void *self)
+{
+    visibility_wire *w = self;
+    w->inner.close(w->inner.self);
+}
+
+static double visibility_wire_clock(void *self)
+{
+    visibility_wire *w = self;
+    return w->inner.clock(w->inner.self);
+}
+
+static double visibility_wire_arrived(void *self)
+{
+    visibility_wire *w = self;
+    return w->inner.arrived(w->inner.self);
+}
+
+typedef struct visibility_match {
+    tide_game template, games[2][2]; // Each side has its own pair of tables, as two machines have
+    uint32_t active[2], sampled, step;
+    tide_session *host, *client;
+    tide_loopback *net;
+    visibility_wire wire;
+} visibility_match;
+
+static void visibility_match_start(visibility_match *m, const uint32_t seed, const tide_net_conditions conditions,
+                                   const bool large)
+{
+    memset(m, 0, sizeof *m);
+    visibility_continuous = large;
+    m->template = visibility_game;
+    if (large) {
+        m->template.client_state = visibility_large_state;
+        m->template.load_client_state = visibility_large_load;
+    }
+    for (uint32_t i = 0; i < 4u; i++) m->games[i / 2u][i % 2u] = m->template;
+    m->sampled = 3;
+    m->host = tide_session_create(&(tide_session_desc){.game = &m->games[0][0],
+        .sample = visibility_sample, .user = &m->sampled});
+    m->client = tide_session_create(&(tide_session_desc){.game = &m->games[1][0],
+        .sample = visibility_sample, .user = &m->sampled});
+    m->net = tide_loopback_create(seed);
+    TIDE_REQUIRE(m->host && m->client && m->net);
+    tide_loopback_set_conditions(m->net, conditions);
+    tide_session_start(m->host, NULL, 0);
+    TIDE_REQUIRE(tide_session_open(m->host, tide_loopback_endpoint(m->net, 1)));
+    m->wire.inner = tide_loopback_endpoint(m->net, 2);
+    const tide_transport wire = {.self = &m->wire, .send = visibility_wire_send, .receive = visibility_wire_receive,
+        .close = m->wire.inner.close ? visibility_wire_close : NULL,
+        .clock = m->wire.inner.clock ? visibility_wire_clock : NULL,
+        .arrived = m->wire.inner.arrived ? visibility_wire_arrived : NULL};
+    tide_session_join(m->client, wire, tide_loopback_address(1), 0);
+}
+
+static void visibility_match_step(visibility_match *m)
+{
+    const double now = (double)++m->step / 120.0;
+    tide_loopback_set_time(m->net, now);
+    tide_session_update(m->host, now);
+    tide_session_update(m->client, now);
+}
+
+// The sides in `sides` take their other table, and the one they had is zeroed
+static void visibility_match_reload(visibility_match *m, const uint32_t sides)
+{
+    tide_session *sessions[2] = {m->host, m->client};
+    for (uint32_t side = 0; side < 2u; side++) {
+        if (!(sides >> side & 1u)) continue;
+        const uint32_t next = 1u - m->active[side];
+        m->games[side][next] = m->template;
+        tide_session_set_game(sessions[side], &m->games[side][next]);
+        memset(&m->games[side][m->active[side]], 0, sizeof m->games[side][0]); // No retained callback may use it.
+        m->active[side] = next;
+    }
+}
+
+static tide_client_status visibility_match_client(const visibility_match *m)
+{
+    return tide_session_status_of(m->client).client;
+}
+
+// The client went on to the match's end: every hidden effect, and the
+// server's ticks to within `behind` of them. False where it stopped.
+static bool visibility_match_caught_up(const visibility_match *m, const uint32_t behind)
+{
+    const tide_session_status status = tide_session_status_of(m->client);
+    const visibility_world *world = tide_session_view(m->client).verified;
+    const uint32_t tick = tide_session_status_of(m->host).client.verified_tick; // The server's, on its machine
+    return world && status.client.state == TIDE_SESSION_CONNECTED && world->health == 563u
+        && tick >= 600u && status.client.verified_tick + behind >= tick;
+}
+
+static void visibility_match_end(visibility_match *m)
+{
+    tide_session_destroy(m->client);
+    tide_session_destroy(m->host);
+    tide_loopback_destroy(m->net);
     visibility_continuous = false;
+}
+
+// From `first` to `last`, every `every` steps (120 a second), on a network
+// that loses a datagram in ten. Whether the client went on to the end.
+static bool visibility_reload_case(const uint32_t seed, const uint32_t sides, const uint32_t first,
+                                   const uint32_t last, const uint32_t every, uint32_t *repairs)
+{
+    visibility_match *m = malloc(sizeof *m);
+    if (!m) return false;
+    visibility_match_start(m, seed, (tide_net_conditions){.latency = 0.08, .jitter = 0.04, .loss = 0.1}, true);
+    while (m->step < 1800u) {
+        visibility_match_step(m);
+        // Hash offers, quiet candidate construction and patches overlap this
+        // stream. Replacing the tables repeatedly exercises each boundary.
+        if (m->step >= first && m->step <= last && (m->step - first) % every == 0u) visibility_match_reload(m, sides);
+    }
+    const bool ok = visibility_match_caught_up(m, 30u);
+    if (repairs) *repairs = visibility_match_client(m).repairs;
+    visibility_match_end(m);
+    free(m);
+    return ok;
+}
+
+TIDE_TEST(visibility_large_repairs_release_old_callbacks_on_compatible_reload)
+{
+    uint32_t repairs = 0;
+    TIDE_CHECK(visibility_reload_case(61579, RELOAD_HOST | RELOAD_CLIENT, 400, 440, 4, &repairs));
+    TIDE_CHECK(repairs > 5u);
+}
+
+// Which datagrams are lost decides what a reload finds: a repair's hashes or
+// its patch on their way, one loaded whose acknowledgement hasn't come, the
+// whole projection the server started for the last reload. Whatever it finds,
+// the client goes on: with the session before, 3 of these 64 stopped for good
+// where the reload found them (seeds 25, 45 and 48).
+TIDE_TEST(visibility_reloads_under_repairs_stop_no_client_whatever_is_lost)
+{
+    uint32_t stopped = 0;
+    for (uint32_t seed = 1; seed <= 64u; seed++) {
+        if (visibility_reload_case(seed, RELOAD_HOST | RELOAD_CLIENT, 400, 440, 4, NULL)) continue;
+        printf("    seed %u stopped\n", seed);
+        stopped++;
+    }
+    TIDE_CHECK(stopped == 0);
+}
+
+// Two machines don't swap their builds in the same update. A server's alone:
+// eleven in a third of a second (the odd seeds), and one every third of a
+// second all through the stream (the even ones). 45 of these 64 stopped with
+// the session before.
+TIDE_TEST(visibility_reloads_of_the_server_alone_stop_no_client_whatever_is_lost)
+{
+    uint32_t stopped = 0;
+    for (uint32_t seed = 1; seed <= 64u; seed++) {
+        const bool often = seed % 2u == 0u;
+        if (visibility_reload_case(seed, RELOAD_HOST, often ? 200 : 400, often ? 1100 : 440, often ? 37 : 4, NULL)) continue;
+        printf("    seed %u stopped\n", seed);
+        stopped++;
+    }
+    TIDE_CHECK(stopped == 0);
+}
+
+// The cases beside those: the client's build alone, two reloads in one
+// twelfth of a second, reloads while the first whole projection comes, and
+// either side's or both all through the stream
+TIDE_TEST(visibility_reloads_of_either_side_at_any_time_stop_no_client)
+{
+    static const struct { uint32_t sides, first, last, every; } cases[] = {
+        {RELOAD_CLIENT, 400, 440, 4}, {RELOAD_HOST | RELOAD_CLIENT, 400, 401, 1}, {RELOAD_HOST, 400, 401, 1},
+        {RELOAD_HOST | RELOAD_CLIENT, 4, 60, 4}, {RELOAD_HOST, 4, 60, 4}, {RELOAD_CLIENT, 4, 60, 4},
+        {RELOAD_HOST | RELOAD_CLIENT, 200, 1100, 37}, {RELOAD_CLIENT, 200, 1100, 37},
+    };
+    uint32_t stopped = 0;
+    for (uint32_t i = 0; i < sizeof cases / sizeof *cases; i++) {
+        for (uint32_t seed = 101; seed <= 108u; seed++) {
+            if (visibility_reload_case(seed, cases[i].sides, cases[i].first, cases[i].last, cases[i].every, NULL)) continue;
+            printf("    case %u seed %u stopped\n", i, seed);
+            stopped++;
+        }
+    }
+    TIDE_CHECK(stopped == 0);
+}
+
+// The state that stopped a client, on a network that loses nothing: the
+// server's build changes while it is comparing a repair with the player's
+// world (it has the worlds it compares, made by the old build), so it lets go
+// of them and starts the whole projection. The client isn't told to want one:
+// it has the repair whole and its acknowledgement is on its way (`loaded`),
+// or the repair's hashes have just come (`!loaded`). It ran past the
+// projection's tick, and used to refuse it: the server sent it for good, and
+// answered no repair meanwhile.
+static void visibility_reload_restarts(const uint32_t sides, const bool loaded)
+{
+    visibility_match *m = malloc(sizeof *m);
+    TIDE_REQUIRE(m);
+    visibility_match_start(m, 7, (tide_net_conditions){.latency = 0.08}, true);
+    uint32_t repairs = 0, number = 0;
+    bool found = false;
+    while (!found && m->step < 900u) {
+        visibility_match_step(m);
+        const tide_client_status status = visibility_match_client(m);
+        found = m->step >= 300u && (loaded ? status.repairs > repairs && m->wire.kind == 5u
+                                           : m->wire.number > number && m->wire.kind == 4u);
+        repairs = status.repairs;
+        number = m->wire.number;
+    }
+    TIDE_REQUIRE(found);
+    const uint32_t verified = visibility_match_client(m).verified_tick;
+    visibility_match_reload(m, sides);
+    // The whole projection, named after the repair, of a tick the client ran past
+    for (uint32_t i = 0; i < 60u && m->wire.number == number; i++) visibility_match_step(m);
+    TIDE_REQUIRE(m->wire.number == number + 1u && m->wire.kind == 2u && m->wire.tick > verified);
+    const uint32_t world = m->wire.tick;
+    // ...which the client takes: its verified world is that tick's or later within two seconds
+    for (uint32_t i = 0; i < 240u && visibility_match_client(m).verified_tick < world; i++) visibility_match_step(m);
+    TIDE_CHECK(visibility_match_client(m).verified_tick >= world);
+    while (m->step < 1800u) visibility_match_step(m);
+    TIDE_CHECK(visibility_match_caught_up(m, 30u));
+    TIDE_CHECK(visibility_match_client(m).repairs > repairs);
+    visibility_match_end(m);
+    free(m);
+}
+
+TIDE_TEST(visibility_reload_whole_projection_is_taken_after_a_repair_the_server_hasnt_heard_of)
+{
+    visibility_reload_restarts(RELOAD_HOST, true);
+    visibility_reload_restarts(RELOAD_HOST | RELOAD_CLIENT, true);
+}
+
+TIDE_TEST(visibility_reload_whole_projection_is_taken_in_place_of_a_repairs_hashes)
+{
+    visibility_reload_restarts(RELOAD_HOST, false);
+    visibility_reload_restarts(RELOAD_HOST | RELOAD_CLIENT, false);
+}
+
+// The other way a client stopped: the WELCOME of the repair's hashes the
+// reload ended comes again, late (they go unordered), while the client has
+// some of the whole projection that took their place. It used to go back to
+// the hashes, which nobody sends any more, and then start the projection
+// again with none of the chunks it had said it has, which the server doesn't
+// send twice.
+TIDE_TEST(visibility_reload_late_welcome_of_the_repair_it_ended_costs_no_chunk)
+{
+    visibility_match *m = malloc(sizeof *m);
+    TIDE_REQUIRE(m);
+    visibility_match_start(m, 7, (tide_net_conditions){.latency = 0.08}, true);
+    m->wire.hold = 4u;
+    while (!m->wire.lose_number && m->step < 900u) {
+        m->wire.lose_hashes = m->step >= 300u; // The hashes are named, and none of them comes
+        visibility_match_step(m);
+    }
+    const uint32_t number = m->wire.lose_number;
+    TIDE_REQUIRE(number && m->wire.number == number && m->wire.held_number == number);
+    for (uint32_t i = 0; i < 2u; i++) visibility_match_step(m);
+    const uint32_t repairs = visibility_match_client(m).repairs;
+    m->wire.lose_hashes = false;
+    visibility_match_reload(m, RELOAD_HOST);
+    for (uint32_t i = 0; i < 60u && m->wire.number == number; i++) visibility_match_step(m);
+    TIDE_REQUIRE(m->wire.number == number + 1u && m->wire.kind == 2u);
+    const uint32_t world = m->wire.tick;
+    const uint64_t before = visibility_match_client(m).world_bytes;
+    for (uint32_t i = 0; i < 3u; i++) visibility_match_step(m);
+    // Some of the projection, not all of it
+    TIDE_REQUIRE(visibility_match_client(m).world_bytes > before && visibility_match_client(m).verified_tick < world);
+    TIDE_REQUIRE(visibility_match_client(m).repairs == repairs && m->wire.held_number == number);
+    m->wire.again = true;
+    for (uint32_t i = 0; i < 240u && visibility_match_client(m).verified_tick < world; i++) visibility_match_step(m);
+    TIDE_CHECK(!m->wire.again); // It was read
+    TIDE_CHECK(visibility_match_client(m).verified_tick >= world);
+    // Nothing of the projection came twice: half a megabyte of it, and not as much again
+    TIDE_CHECK(visibility_match_client(m).world_bytes - before < 700000u);
+    while (m->step < 1800u) visibility_match_step(m);
+    TIDE_CHECK(visibility_match_caught_up(m, 30u));
+    visibility_match_end(m);
+    free(m);
+}
+
+// A big command goes up in chunks of its own beside the world's, which a
+// build of the same layout leaves as they are on both sides: one from each
+// machine while builds swap, on a network that loses a datagram in ten. (Its
+// way down, as a store's answers and shard messages go, isn't taken here: a
+// player with a projection runs no command.)
+TIDE_TEST(visibility_reloads_during_big_command_uploads_lose_no_command)
+{
+    uint8_t *large = malloc(100000);
+    visibility_match *m = malloc(sizeof *m);
+    TIDE_REQUIRE(large && m);
+    memset(large, 0xCC, 100000);
+    large[0] = 0xA5;
+    visibility_private_commands = 0;
+    for (uint32_t sides = RELOAD_HOST; sides <= (RELOAD_HOST | RELOAD_CLIENT); sides++) {
+        for (uint32_t seed = 1; seed <= 4u; seed++) {
+            visibility_match_start(m, seed, (tide_net_conditions){.latency = 0.08, .jitter = 0.04, .loss = 0.1}, false);
+            while (m->step < 1500u) {
+                visibility_match_step(m);
+                if (m->step == 300u) {
+                    TIDE_REQUIRE(visibility_match_client(m).state == TIDE_SESSION_CONNECTED);
+                    large[1] = 9;
+                    TIDE_CHECK(tide_session_send_command(m->client, large, 100000));
+                    large[1] = 11;
+                    TIDE_CHECK(tide_session_send_command(m->host, large, 100000));
+                }
+                if (m->step >= 302u && m->step <= 342u && m->step % 4u == 2u) visibility_match_reload(m, sides);
+            }
+            const tide_client_status status = visibility_match_client(m);
+            const visibility_world *world = tide_session_view(m->client).verified;
+            TIDE_REQUIRE(world);
+            TIDE_CHECK(status.state == TIDE_SESSION_CONNECTED && status.verified_tick > 700u);
+            TIDE_CHECK(world->health == 100u - 17u + 9u + 11u);
+            TIDE_CHECK(world->sequence[0] == 1u && world->sequence[1] == 1u);
+            visibility_match_end(m);
+        }
+    }
+    TIDE_CHECK(visibility_private_commands == 0);
+    free(m);
+    free(large);
 }
 
 // One client on a network that takes no time, so a stream of repairs would

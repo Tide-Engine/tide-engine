@@ -13,6 +13,16 @@ pack sets the bit, and loads one without it to see the refusal.
 
 # Hot reloading
 
+## A same-layout reload under a stream of repairs (2026-11-16)
+
+`tide_session_set_game` on a server that is comparing a repair with a player's world lets go of the worlds it
+compares (the old build made them) and sends that player the whole projection; on a client that is comparing, it
+drops the comparison and asks for the world. Each side does so on its own: the other machine's build may not have
+changed, or not in the same update. A client used to refuse a whole projection it hadn't asked for and stopped
+for good (3 seeds of 64 with both builds swapped at once, 45 of 64 with the server's alone); it takes one now, and
+a late WELCOME of the repair the reload ended no longer costs it the projection's chunks. Cause, fix, seeds and
+tests: notes/netcode.md, top section.
+
 ## What cached functions remember (2026-11-13)
 
 A `cached` function's table is a static of the game's generated C (notes/pure-functions.md), so a library loaded

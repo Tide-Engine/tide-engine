@@ -1,5 +1,118 @@
 # Netcode: sessions, prediction, commands
 
+## A whole projection the server starts is taken; a reload under repairs stops no client (2026-11-16, later still)
+
+The bug left open below (protocol 26, Open): a hot reload during a stream of large repairs could stop a client for
+good, the server sending a whole projection for the rest of the match and the client acknowledging no chunk of it.
+Two causes, both in how a client reads a WELCOME (`on_welcome`, `engine/src/session.c`; agent-maintained), neither in
+protocol 26 nor in the reload's own code. No wire, world, hash or generated code changed.
+
+**Cause 1: a client refused a whole projection it hadn't asked for.** A server whose build changes while it is
+comparing a repair with a player's world (`connection.repair_base`: the hashes or the patch of a hash offer are on
+their way, or went and aren't acknowledged yet) lets go of the worlds it compares, which the old build made, and
+starts the whole projection in the repair's place (`stop_recipient_comparisons`, `start_snapshot`).
+`start_snapshot` is a commitment: the player's `frame_ack` becomes the server's tick, what was sent of the ticks is
+forgotten, and while it's `sending` no repair is packed (`start_client_repair` returns) and a repair asked for a
+tick that isn't `frame_ack + 1` is no request. The client took such a WELCOME only if it wanted a world
+(`need_snapshot`, which it sets itself, in `client_set_game`, when *its* build changes while *it* is comparing) or
+if the world's tick was past all it ran (`tick > ahead`). A client that had the repair whole already (its
+acknowledgement on its way or lost), or that hadn't had the hashes' WELCOME yet, or whose build didn't change in
+the same update (another machine's never does), wasn't comparing, runs ahead of the server, and refused it. It went
+on asking for a repair of the tick after its verified one, which says `CLIENT_WANTS_WORLD` too, so the server
+neither stopped sending (`newest && !wants`) nor answered: for good. The test's two sessions swap builds in the same
+update, so it took a lost or late acknowledgement to show (3 seeds of 64); a server's build alone changing stops
+45 of 64.
+*Fix:* a `SEND_CLIENT_WORLD` newer than all the client was sent, of a tick not before its verified one, is taken
+whether asked for or not (`restarted`). That's every unasked `start_snapshot` of a game with projections: this one,
+a repair the server can't make (`start_client_repair`: a tick or a world it no longer keeps), a player too far
+behind (`send_frames`). The last two got by on `tick > ahead`, which holds when the client's own ticks stopped too.
+
+**Cause 2: a late WELCOME of the transfer before took the place of the one being received.** WELCOMEs go
+unordered, one an update while something is sent. A client receiving transfer N+1 (the whole projection) that read
+a late WELCOME of N (the repair's hashes the reload ended; a repair is wanted whenever its tick is past the
+verified one) dropped what it had of N+1 and waited for N, which nobody sends; the next WELCOME of N+1 started it
+again with no chunk, and the server, which had heard the client has the first of them (`chunk_ack` only goes up),
+never sent those again. With cause 1 fixed, 1 seed of 64 still stopped this way with both builds swapped, 2 of 64
+with the server's alone.
+*Fix:* while a transfer is being received, a WELCOME of a lower number is old and is left alone (`number <=
+snapshot_number`). A server's numbers only go up on a connection, and a client is one connection's (its nonce is
+made once), so a lower number is never the newer thing. This is every game's `on_welcome`, with projections or not.
+
+**Seeds** (`visibility_large_repairs_release_old_callbacks_on_compatible_reload`'s scenario, which now runs 1,800
+steps and asks that the client is within 30 ticks of the server at the end with every hidden effect, where it
+asked for `verified > 650` and more than 10 repairs at step 1,500; clients that stopped did so at ticks 89 to 450
+of 900): seeds 1 to 104 and 61570 to 61590, 125 in all.
+
+| Builds swapped | When (steps of 120 a second) | Stopped before | With cause 1 fixed alone | With cause 2 alone | Now |
+|---|---|---|---|---|---|
+| Both, in one update | 400 to 440, every 4 | 9 | 1 | 8 | 0 |
+| The server's | 400 to 440, every 4 | 77 | 3 | 75 | 0 |
+| The client's | 400 to 440, every 4 | 0 | 0 | 0 | 0 |
+| Both | 400 and 401 | 20 | 2 | 19 | 0 |
+| Both | 4 to 60, every 4 (the first world coming) | 0 | 0 | 0 | 0 |
+| The server's | 4 to 60, every 4 | 0 | 0 | 0 | 0 |
+| The server's | 200 to 1,100, every 37 | 96 | 9 | 93 | 0 |
+| Both | 200 to 1,100, every 37 | 2 | 2 | 0 | 0 |
+
+Also 0 now, not run before: the client's at 4 to 60 and at 200 to 1,100, the server's at 400 and 401. The test's
+own seed is 61579 still; 61577, 25 and 61572 (the three that stopped after protocol 26) pass.
+
+**Tests** (`tests/test_visibility_session.c`; `visibility_match` is the large game's host and client, the client
+behind `visibility_wire`, which says what each WELCOME names, can lose a repair's hashes and can give the client a
+WELCOME again late):
+- `visibility_reloads_under_repairs_stop_no_client_whatever_is_lost`: seeds 1 to 64, both builds, 400 to 440. Seeds
+  25, 45 and 48 stop with the session before.
+- `visibility_reloads_of_the_server_alone_stop_no_client_whatever_is_lost`: seeds 1 to 64, odd ones 400 to 440 every
+  4, even ones 200 to 1,100 every 37. 45 stop before.
+- `visibility_reloads_of_either_side_at_any_time_stop_no_client`: 8 seeds each of the client's alone, two reloads in
+  a row (both, and the server's), the first whole projection coming (both, either), and all through the stream
+  (both, the client's). 6 of 64 stop before.
+- `visibility_reload_whole_projection_is_taken_after_a_repair_the_server_hasnt_heard_of` and
+  `..._in_place_of_a_repairs_hashes`: cause 1's two states made on a network that loses nothing (80 ms each way):
+  the server's build (and both) swapped in the update the client loads a patch, and in the one a repair's hashes
+  are first named. The whole projection is named next, of a tick the client ran past, and the client's verified
+  world is that tick's within two seconds.
+- `visibility_reload_late_welcome_of_the_repair_it_ended_costs_no_chunk`: cause 2: a repair's hashes are named and
+  none comes, the server's build swaps, three updates of the whole projection come, the hashes' WELCOME is read
+  again; the client has the projection within two seconds and less than 700 KB of it was sent.
+- `visibility_reloads_during_big_command_uploads_lose_no_command`: a 100 KB command from each machine with builds
+  swapped (the server's, the client's, both) as they go up, 10% lost: both run, once.
+
+Mutation: with `session.c` as it was, six of the seven fail (the uploads' passes, as it did). With cause 1's line
+out, the same six (cause 2's focused test can't be set up: no projection comes to interrupt); with cause 2's out,
+its focused test and the two 64-seed tests fail.
+
+**Validation** (release, Windows): `tide_tests` (778, the seven new ones 13 s of it), every `tidec_e2e_visibility_*`
+(26), `_scene_preparation_visibility`, `_shards_visibility`, `_task_visibility`, `tidec_e2e_net`, `_net_no_input`,
+`_net_ended`, `_net_alone_seen`, `_net_join_big`, `tide_platform_reload`, `tide_platform_reload_reads`,
+`earth_tests`, `bench_gallery`, `bench_voxels` (and `_forgets`, `_wide`, `_checked`, `_counts`): 44 CTests, all
+pass, no pinned hash or byte count moved.
+
+**Sibling cases.** During a whole projection (the first, or one a reload started): the server compares nothing, so
+its reload starts nothing; the client isn't comparing; tested (4 to 60, and every reload after the first of a
+run). During a hash offer and during its patch: cause 1's states, tested both. The client's build alone: it asks
+for the world (`need_snapshot`), and the server, whose transfer is a hash offer or a patch, starts it (`on_client`,
+"Its comparison was discarded"); a repair by changes or by baseline being received goes on, as nothing of it is the
+old build's but `drop_taken`, which makes its load fall back to a fresh one. Two reloads in a row: the second finds
+no comparison. A repair superseded mid-stream: only `start_snapshot` supersedes a transfer (a repair isn't started
+while one is sent), which is cause 2. A big command's upload: tested. A download (a big command to a player that
+runs it, a store's answer, a shard message): `tide_session_set_game` touches neither side's (`download_*`,
+`downloads`), read and not tested: a player with a projection gets none in this fixture, and games without
+projections have no comparison for a reload to end.
+
+**Left.**
+- The server's reload sends the whole projection where it could let go of its worlds and wait to be asked: a client
+  that had the repair already needs nothing, and one that was comparing asks. Half a megabyte here each time. Not
+  changed: a client mid-hashes with no repair asked for would then ask for a world the same way, and the rule above
+  is needed either way.
+- After a whole projection, a client whose ticks go on differing doesn't predict until the stream ends
+  (`catching_up` ends where the confirmed ticks reach the server's, and a repair lands behind them): its `ahead` is
+  its verified tick, a repair at a time, for as long as every tick differs (this fixture's ticks 90 to 570). It
+  goes on, a second or two behind, as far as before the reload, when it predicted. Seed 35 was this at step 1,500
+  (verified 597 of 750, a repair to 700 on its way), not a stop. Whether a client in a stream should predict from
+  a whole projection is the owner's.
+- `tide_platform_reload_web` and the sanitizer, web and other platforms' runs are CI's.
+
 ## Repairs from the rows a check wrote down (2026-11-16, later)
 
 A repair by changes (`tide_game.client_changes`, `client_changes_codegen.inc`) listed, for one player, every entity
@@ -393,7 +506,8 @@ below, for the 4 and 3 where it stops.
   eight a connection starts with, and three inputs to spare.
 - **The confirmed presentation clock keeps a stall** (top of this section): with it catching up, a tick lost in
   every copy would cost a moment and not the rest of the match, and fewer copies would do.
-- **A reload during a stream of repairs can stop a client for good**, before this change and after
+- (Fixed the same day: the top section, A whole projection the server starts is taken.)
+  **A reload during a stream of repairs can stop a client for good**, before this change and after
   (`visibility_large_repairs_release_old_callbacks_on_compatible_reload` with seeds 14, 25, 61572 and 61584 on the
   session before; 25, 61572 and 61577 now): the server starts the world again for the new build (`SEND_CLIENT_WORLD`)
   and sends it for the rest of the run, the client acknowledges no chunk of it and its verified tick stays where the
