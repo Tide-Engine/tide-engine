@@ -210,3 +210,81 @@ TIDE_TEST(visibility_repairs_from_the_rows_written_down_are_the_walks)
     for (uint32_t i = 0; i < HISTORY; i++) tide_world_free(&history[i]);
     tide_world_free(&world);
 }
+
+// Whom entities came to (tide_game.client_came): the players a visibility group's audience gained in the checks
+// since it was last asked, and nobody for a change that brings nobody anything. A session sends a repair asked
+// for of a tick before such a check as the world is now (session.c, repair_as_it_is_now). A build that keeps
+// nothing of a check (TIDE_CLIENT_MEMO_OFF, the tests' own) finds every group new each time, and says it of
+// everyone a group has: of more players than it's true of, never of fewer.
+static uint32_t came_to(const tide_world *w)
+{
+    tide_player_id recipients[PLAYERS];
+    bool came[PLAYERS];
+    for (uint32_t i = 0; i < PLAYERS; i++) recipients[i] = player(i);
+    tide_game_api.client_came(w, recipients, PLAYERS, came);
+    uint32_t bits = 0;
+    for (uint32_t i = 0; i < PLAYERS; i++) bits |= came[i] ? 1u << i : 0u;
+    return bits;
+}
+
+TIDE_TEST(visibility_came_says_whom_a_groups_audience_gained)
+{
+    static tide_world w;
+    tide_world_init(&w, 1.0f);
+    w.Control.next = 5000;
+    for (uint32_t i = 0; i < 4u; i++) {
+        tide_world_tick(&w);
+        hashes(&w);
+    }
+    (void)came_to(&w); // The first checks made every group: asked, it starts from nothing
+    TIDE_CHECK(came_to(&w) == 0u); // (No check since)
+    // Cell 5's group is player 1's: given to player 3 alone, it came to player 3 and to nobody else
+    w.Control.step = 1;
+    w.Control.target = 5;
+    tide_world_tick(&w);
+    hashes(&w);
+#ifdef TIDE_CLIENT_MEMO_OFF
+    TIDE_CHECK(came_to(&w) & 1u << 3);
+#else
+    TIDE_CHECK(came_to(&w) == 1u << 3);
+    TIDE_CHECK(came_to(&w) == 0u); // Said once
+    // A lane everyone who has the cell has, and a policy: nothing came to anyone
+    w.Control.step = 3;
+    tide_world_tick(&w);
+    hashes(&w);
+    TIDE_CHECK(came_to(&w) == 0u);
+    w.Control.step = 6;
+    tide_world_tick(&w);
+    hashes(&w);
+    TIDE_CHECK(came_to(&w) == 0u);
+    // Back to player 1, then two checks before it's asked: both are said, player 3's again among them
+    w.Control.step = 2;
+    tide_world_tick(&w);
+    hashes(&w);
+    w.Control.step = 1;
+    tide_world_tick(&w);
+    hashes(&w);
+    TIDE_CHECK(came_to(&w) == (1u << 1 | 1u << 3));
+    // The zone's group (players 0, 1 and 2) given to player 1 alone came to nobody; given back, to 0 and 2, not to 1
+    w.Control.step = 20;
+    tide_world_tick(&w);
+    hashes(&w);
+    TIDE_CHECK(came_to(&w) == 0u);
+    w.Control.step = 21;
+    tide_world_tick(&w);
+    hashes(&w);
+    TIDE_CHECK(came_to(&w) == (1u << 0 | 1u << 2));
+    // A group made with an audience (a cell spawned: step 17) came to that audience
+    w.Control.step = 17;
+    w.Control.target = 5000;
+    tide_world_tick(&w);
+    hashes(&w);
+    TIDE_CHECK(came_to(&w) != 0u);
+    // Another world has said nothing
+    static tide_world other;
+    tide_world_copy(&other, &w);
+    TIDE_CHECK(came_to(&other) == 0u);
+    tide_world_free(&other);
+#endif
+    tide_world_free(&w);
+}

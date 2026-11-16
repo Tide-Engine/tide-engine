@@ -1,5 +1,16 @@
 # Benchmarks
 
+## A view arriving, the sweep again, and what a server's worst update is made of (2026-11-16, last)
+
+`bench_voxels` with a whole view arriving faster (notes/voxels.md, A whole view arriving) and every "At scale" table
+measured again on that build, with players spread over the world, a dimension each, a ten-minute run and the version
+to play paced at 60 Hz (the same note, The sweep again). The bench's side (bench/README.md, Voxels): `--worst <n>`
+lists the server's longest updates with what each spent where, down to its longest systems, which is how the worst
+update turned out to be `Generate` making a tick's 64 new chunks on one thread whatever the pool's size, and not
+the tick a box is spawned in; `--every <s>` says what the run holds as it goes; every report ends with the most the
+process held; `bench_desc.watch_server` looks at the server's world each frame, and voxels times a hop's stages on
+the server with it. `bench_gallery`'s pin moved: its joins are shorter (notes/netcode.md, top section).
+
 ## Voxels at scale, and what the session benches report (2026-11-16)
 
 `bench_voxels` at two and three times its view, with 16, 32 and 64 bots, on one and two threads and two cores, and

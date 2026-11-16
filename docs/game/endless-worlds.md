@@ -65,6 +65,7 @@ component Streamer
 {
     Map<PlayerID, int3> watching;
     Map<long, Entity> chunks;
+    List<Entity> making;    // Chunks asked for and not yet made, in the order they were asked for
 }
 
 // On each chunk: who wants it
@@ -72,11 +73,17 @@ component Seen
 {
     VisibilityGroup group;
     Audience audience;
+    bool shown;             // Made, and its group has its audience
+    bool dear;              // It has ground in it: what making it costs
+    bool ready;             // The store had nothing for it...
+    bool go;                // ...and it may be made this tick (Pace, below)
     int emptied;            // The tick its last player left
 }
 ```
 
 Both are restricted to `Audience.None` where they're added (`visibility.Set<Streamer>(Audience.None)`). A player's moves tell their dimension which chunk they're in, and its handler adds them to the chunks their box of chunks took in and removes them from those it left. A chunk nobody has yet is spawned with an audience of nobody, and the group's audience is set once its blocks are made, so no player ever has a chunk that isn't.
+
+The box is asked for nearest first: a ring of chunks around the player's own at a time, the player's own height before the ones above and below. The store answers in the order it's asked, so what a player stands in and looks at is there before the edge of their view; and around each ring, each chunk beside the one before it, because a player is sent new entities in the order they were spawned and chunks side by side are alike, which makes what's sent smaller.
 
 The server finds its chunks in `Streamer.chunks`, not with a query: a spawn joins the tables only once its tick's changes are applied, so two players who come near one place in one tick would otherwise make two chunks there. `Spawn` gives the entity at once.
 
@@ -87,7 +94,7 @@ A system that fills each new chunk from its dimension's seed, and then shows it 
 ```csharp
 system Generate(mut Chunk chunk, mut Seen seen)
 {
-    if (chunk.stage != Stage.Missing) return;
+    if (chunk.stage != Stage.Missing || !seen.go) return;
     // ...the chunk's blocks, from Math.Perlin of the seed
     chunk.stage = Stage.Made;
     Visibility.Set(seen.group, seen.audience);
@@ -95,6 +102,36 @@ system Generate(mut Chunk chunk, mut Seen seen)
 ```
 
 Each chunk's blocks are its own, and the groups' audiences its rows set are set after them, in the chunks' order, as one thread would. Making or ending groups in the same system keeps it on one thread, so a game makes a chunk's group where it spawns the chunk.
+
+Today the chunks of one box are still made by one thread: a system's entities are handed to threads in the order they were spawned, a range of them each, and chunks spawned together are next to each other, so one thread gets them all (the engine's notes have what would change that). A tick that made every chunk the store answered for would be as long as they are many, so the game says how much a tick makes (`seen.go` above):
+
+```csharp
+// On each dimension's entity: the chunks the store had nothing for, in the order they were asked for, up to
+// `make` a tick by what each costs. One of air costs 1, one with ground in it (caves' noise, cell by cell) 10
+system Pace(mut Streamer streamer, Worlds worlds, mut World world)
+{
+    mut var left = worlds.make;
+    mut var kept = 0;
+    for (var i = 0; i < streamer.making.count; i++)
+    {
+        var chunk = streamer.making[i];
+        mut var seen = world.Get<Seen>(chunk);
+        if (seen.go || seen.shown) continue;        // Made, or let be: off the line
+        if (seen.ready && left > 0)                 // The store answered: nothing kept of it
+        {
+            left -= seen.dear ? 10 : 1;
+            seen.go = true;
+            world.Set<Seen>(chunk, seen);
+            continue;
+        }
+        streamer.making[kept] = chunk;              // Still asked for, or over this tick's allowance
+        kept++;
+    }
+    while (streamer.making.count > kept) streamer.making.RemoveAt(streamer.making.count - 1);
+}
+```
+
+`bench/voxels` makes 480 a tick: 48 chunks with ground, about 7 ms of one thread.
 
 ## Keeping what nobody is near
 
@@ -140,7 +177,7 @@ event(Expire) Drop(Seen seen, Chunk chunk)
 
 `Idle` writes nothing while it waits: `emptied` is a tick, not a counter. A system that counts in every chunk every tick changes every chunk every tick, and the server's checks cost what changes.
 
-The server reads and writes the chunks' files on a thread of their own, after the tick that asked: a player's first view of fresh ground asks for hundreds of chunks in one tick, and the tick doesn't wait for the disk. Their answers come over the next ticks, 64 a tick.
+The server reads and writes the chunks' files on a thread of their own, after the tick that asked: a player's first view of fresh ground asks for hundreds of chunks in one tick, and the tick doesn't wait for the disk. Their answers come over the next ticks, 256 a tick in a game that hides state (64 in one that doesn't, whose answers go to every player).
 
 What a dimension has saved can be listed, a page of keys at a time, for a map of where players built or to move a world's saves elsewhere: `Storage.List($"chunks/{dimension.number}/", this)` answers with a `Listed` event, and the next page is asked for after its last key ([Saving the match](./files.md#saving-the-match)). Keys made of folders (`chunks/<dimension>/...`) keep a listing to the folder its prefix names.
 
@@ -305,19 +342,23 @@ A far region comes and goes as chunks do, a while after nobody is within its dis
 
 ## What it costs
 
-`bench/voxels`, 4 bots flying across fresh terrain with 845 chunks each, 60 ticks a second, 50 ms each way: the server's update takes 0.37 ms (median), each bot is sent about 20 KB a second, and a bot's machine holds the 850 entities near it. Standing still, the server spends 1 ms a second checking what each player has; with 8 bots flying apart (6,490 chunks held), 18 ms a second, as it reads only the chunks whose data changed, or a page of memory they share with others that changed. With its store as files, read on the files' own thread, the server's longest update is about 7 ms where it was 15 with them read as each tick ended. Far regions cost each bot 0.5 to 1 KB a second where the bots build, and nothing where nobody does. A predicting machine's own ticks cost half what they did since a copied world keeps its entities' order (10 ms a second with 860 entities).
+`bench/voxels` on one machine (a 12-core desktop, one core of it: the tick is one thread's work), 60 ticks a second, 50 ms each way with a datagram in a hundred lost, bots that fly, dig, build and change dimension every 20 seconds (`notes/voxels.md`, At scale, has every table and how each was measured; 2026-11-16):
 
-Past that size (`notes/voxels.md`, At scale; one machine, 2026-11-16):
+| | 8 players, 845 chunks each | 3,125 chunks each | 6,845 chunks each | 32 players | 32, far apart | 64 players |
+|---|---|---|---|---|---|---|
+| Chunks the server holds | 6,490 | 16,941 | 32,827 | 12,669 | 28,549 | 17,598 |
+| Server's update, median / 99th percentile / longest, ms | 0.27 / 4.7 / 9 | 0.67 / 11.3 / 22 | 1.6 / 24.9 / 43 | 1.5 / 8.2 / 15 | 6.2 / 17.6 / 24 | 3.6 / 16.2 / 28 |
+| Server, ms of every second | 34 | 86 | 166 | 104 | 345 | 214 |
+| Sent to each player, KB a second | 22 | 57 | 116 | 25 | 24 | 28 |
+| A player's machine's ticks, 99th percentile, ms | 0.9 | 2.5 | 4.4 | 1.4 | 1.4 | 1.9 |
+| A whole view on a player's machine after a dimension hop, ticks | 28 | 35 | 45 | 26 | 29 | 24 |
 
-| | 8 players, 845 chunks each | 3,125 chunks each | 6,845 chunks each | 32 players | 64 players |
-|---|---|---|---|---|---|
-| Server's update, median / 99th percentile, ms | 1.0 / 5.8 | 2.6 / 14.7 | 5.1 / 30.5 | 3.7 / 15.7 | 7 to 8 / 43 to 47 |
-| Sent to each player, KB a second | 23 | 73 | 160 | 27 | 30 |
-| A player's machine's ticks, 99th percentile, ms | 1.7 | 4.9 | 9.6 | 2.1 | 2 to 3 |
-
-- A 60 Hz tick holds up to about 32 players at the default view, or 8 at twice its radius, on one thread as on twelve; past either, one update in a hundred runs over a frame. What caps players is the repairs the server works out for each of them, which read its whole world.
-- A chunk costs about 140 bytes as sent, a thirtieth of its cells, at every size. A hop or a join is a whole box at once: 116 KB at the default view, half a second until it's there, and about 0.8 s at twice the radius, as the store answers 64 chunks a tick.
-- The bots' inputs change every few seconds. Players who turn every tick, as a mouse does, add 13 to 44 KB a second to what each is sent with 8 to 32 of them: every player's input goes to every player, in each frame until it's acknowledged.
-- A player's own frame at 1920 by 1080 takes 0.2 ms of CPU at the default view of the version to play (405 chunks) and 1.1 ms with 3,125, with one long frame as a box is asked for on the machine that hosts (10 to 20 ms, and 55 to 60).
+- **What holds 60 ticks a second**: 32 players at the default view (96 cells each way) with room, 64 at the edge of a frame when they start together; 8 players at twice the radius; not 8 at three times. Players far apart, who share no chunk, cost the server more than players together: what it pays goes with the chunks it holds. 32 apart hold 60 Hz while nobody hops (11.6 ms at the 99th percentile). Threads change none of it.
+- **A player is sent** 17 KB a second flying over fresh ground, 22 to 25 with a dimension hop every 20 seconds, 5 standing, whatever the number of players. A chunk is about 140 bytes as sent, a thirtieth of its cells. Players who turn every tick, as a mouse does, add 8 to 19 KB a second to what each is sent.
+- **A whole view arrives in a third of a second**: one player hopping into a dimension nobody is in has its 845 chunks 20 ticks after the hop (21 with a datagram in a hundred lost, 29 with five), nearest first; at twice the radius, 40. Seven of those ticks are the player's own lead on the server.
+- **A dimension nobody is in costs nothing**, and eight players a dimension each cost what eight far apart in one do. Leaving a dimension frees its chunks once nobody has been near them for the linger; the server's memory stays at the most it held.
+- **A long session is level**: 8 players flying outward for 20 minutes hold 9,000 chunks and far regions in 24 MB from the fourth minute on, the server's update 1.2 ms on average throughout.
+- **A player's own frame** at 1920 by 1080, paced at 60 Hz, takes 0.7 ms of CPU at the default view of the version to play (405 chunks) and 2.1 ms with 3,125. The chunks around the player have their faces 0.12 s after a hop at any view, and all of them are there after 0.15 s (405 chunks), 0.45 s (1,445) and 1 s (3,125).
+- **What breaks first**: the server's one thread. A tick's new chunks are made by one thread, 150 microseconds for each with ground in it, and a whole view's worth of what a player is sent is packed in one update (16 ms at twice the radius).
 
 The engine's notes (`notes/voxels.md`) have the rest, and what's still missing.

@@ -37,6 +37,9 @@ static bool forget_chunks;
 // --audit: the far regions' checks ran (Streamer.audits) and found nothing wrong, or the run fails
 static uint32_t audit_every;
 static bool audit_failed;
+// --fill: the ticks a hop's whole box may take to be there, at the median, or the run fails
+static uint32_t fill_most;
+static bool fill_failed;
 
 static uint32_t path_hash(const char *path)
 {
@@ -186,6 +189,14 @@ static bench_flag flags[] = {
               "outside every timing; 0 for a profiler, which would see the counting", 1, 1, 0, 0},
     {"look", "bots of each hundred that turn a little every tick, as a player's mouse does: an input that changes "
              "every tick, which goes to every player", 0, 0, 0, 0},
+    {"make", "what a dimension makes of chunks a tick at most: a chunk of air or water counts 1, one with ground in it "
+             "10", 480, 480, 0, 1},
+    {"spread", "cells between the bots' starts, on a square grid: 0 has them start together, 256 is past a default "
+               "view's reach, so no two share a chunk", 0, 0, 0, 0},
+    {"park", "1: the bots start a dimension each (the nth in dimension n of --dimensions, around)", 0, 0, 0, 0},
+    {"out", "1: each bot flies straight out a way of its own for the whole run (eight ways), never turning", 0, 0, 0, 0},
+    {"fill", "the run fails where the whole box of a dimension a bot hopped into took more ticks than this to be on "
+             "its machine, at the median, or where one never was; 0 doesn't check", 0, 0, 0, 0},
 };
 
 static uint32_t mix(uint32_t x)
@@ -211,7 +222,11 @@ static void make_world(const bench_flag *f, void *world, const float dt)
     w->Worlds.pace = (int32_t)f[10].value;
     w->Worlds.gap = (int32_t)f[11].value;
     w->Worlds.audit = (int32_t)f[12].value;
+    w->Worlds.make = (int32_t)f[16].value;
+    w->Worlds.spread = (int32_t)f[17].value;
+    w->Worlds.park = (int32_t)f[18].value;
     audit_every = f[12].value;
+    fill_most = f[20].value;
     forget_chunks = f[13].value != 0;
 }
 
@@ -244,6 +259,7 @@ static void sample(const bench_flag *f, const uint32_t bot, const uint32_t tick,
     const uint32_t leg = (tick + bot * 53u) / 300u;
     const uint32_t h = mix(bot * 2654435761u ^ leg);
     c->move = (tide_float3){ways[h & 7u][0], (float)((h >> 3) % 3u) * 0.1f - 0.1f, ways[h & 7u][1]};
+    if (f[19].value) c->move = (tide_float3){ways[bot & 7u][0], 0, ways[bot & 7u][1]}; // --out
     c->dig = builds && (tick / 30u + bot) % 4u == 0u;
     c->build = builds && (tick / 45u + bot) % 6u == 0u;
 }
@@ -326,6 +342,8 @@ typedef struct watcher {
     uint32_t since;  // Frames since that hop
     bool most;       // Nine tenths of the box are there
     int32_t home;    // The dimension most of its chunks were in, last frame
+    // The same hop on the server (watch_server): it has asked for the box, has nine tenths of it made, all of it
+    bool asked, made_most, made_all;
 } watcher;
 
 #define WATCHED 256u
@@ -333,6 +351,9 @@ typedef struct watcher {
 static watcher watchers[WATCHED];
 static float fills_most[FILLS], fills_all[FILLS];
 static uint32_t fills_most_count, fills_all_count, hops_seen, hops_unfilled;
+// ...and on the server, in frames from the same moment: the box asked for, nine tenths of it made, all of it
+static float asks[FILLS], makes_most[FILLS], makes_all[FILLS];
+static uint32_t asks_count, makes_most_count, makes_all_count;
 
 static place *place_slot(const watcher *w, const uint64_t key)
 {
@@ -345,6 +366,53 @@ static int32_t hops_at(const bench_flag *f, const uint32_t bot, const uint32_t t
 {
     const uint32_t hop = f[8].value ? 0u : f[3].value * 60u;
     return hop ? (int32_t)((tick + mix(bot) % hop) / hop) : 0;
+}
+
+// The server's side of each hop a bot's machine is waiting on: the chunks of the dimension it hopped into that are
+// its player's (bot n is player n: they join in order), asked for and made. It runs before the bots' `watch` of
+// the frame, so a hop that one saw is a frame older here.
+static void watch_server(const bench_flag *f, const void *world)
+{
+    if (!f[14].value) return;
+    const tide_world *w = world;
+    uint32_t waiting = 0;
+    for (uint32_t i = 0; i < WATCHED && i < 32u; i++) waiting |= watchers[i].frames && watchers[i].from >= 0 && !watchers[i].made_all ? 1u << i : 0u;
+    if (!waiting) return;
+    const int32_t dimensions = w->Worlds.count;
+    static uint32_t asked[32], made[32];
+    memset(asked, 0, sizeof asked);
+    memset(made, 0, sizeof made);
+    EACH(w, e)
+    {
+        if (!tide_has_Chunk(w, e) || !tide_has_Seen(w, e)) continue;
+        const uint32_t audience = (uint32_t)tide_get_Seen(w, e).audience.players & waiting;
+        if (!audience) continue;
+        const Chunk chunk = tide_get_Chunk(w, e);
+        for (uint32_t i = 0; i < 32u; i++) {
+            if (!(audience >> i & 1u) || chunk.dimension != (watchers[i].from + 1) % dimensions) continue;
+            asked[i]++;
+            made[i] += chunk.stage == Stage_Made;
+        }
+    }
+    const uint32_t near = f[0].value, tall = f[1].value;
+    const uint32_t box = (2u * near + 1u) * (2u * near + 1u) * (2u * tall + 1u);
+    for (uint32_t i = 0; i < 32u; i++) {
+        watcher *me = &watchers[i];
+        if (!(waiting >> i & 1u)) continue;
+        const float since = (float)(me->since + 1u);
+        if (!me->asked && asked[i] >= box) {
+            me->asked = true;
+            if (asks_count < FILLS) asks[asks_count++] = since;
+        }
+        if (!me->made_most && made[i] * 10u >= box * 9u) {
+            me->made_most = true;
+            if (makes_most_count < FILLS) makes_most[makes_most_count++] = since;
+        }
+        if (made[i] >= box) {
+            me->made_all = true;
+            if (makes_all_count < FILLS) makes_all[makes_all_count++] = since;
+        }
+    }
 }
 
 static void watch(const bench_flag *f, const uint32_t bot, const void *world)
@@ -400,6 +468,7 @@ static void watch(const bench_flag *f, const uint32_t bot, const void *world)
         me->from = me->home;
         me->since = 0;
         me->most = false;
+        me->asked = me->made_most = me->made_all = false;
         hops_seen++;
         other = 0;
     } else if (me->from >= 0) {
@@ -448,6 +517,21 @@ static void describe_watched(void)
     if (fills_all_count) printf("%.0f median, %.0f at most", fills_all[fills_all_count / 2u], fills_all[fills_all_count - 1u]);
     else printf("-");
     printf("; %u never had it all before the next hop or the end\n", hops_unfilled);
+    // (The last hop of a run may be cut short by its end: one that never filled is allowed for that)
+    if (fill_most && (!fills_all_count || fills_all[fills_all_count / 2u] > (float)fill_most || hops_unfilled > 1u)) {
+        fprintf(stderr, "voxels: a hop's whole box took more than %u ticks to be there at the median (--fill), or never was\n",
+                fill_most);
+        fill_failed = true;
+    }
+    if (!asks_count) return;
+    qsort(asks, asks_count, sizeof *asks, compare_fills);
+    qsort(makes_most, makes_most_count, sizeof *makes_most, compare_fills);
+    qsort(makes_all, makes_all_count, sizeof *makes_all, compare_fills);
+    printf("  ...of that, on the server: the box asked for %.0f ticks after the bot's machine hopped (median; %.0f at most)",
+           asks[asks_count / 2u], asks[asks_count - 1u]);
+    if (makes_most_count) printf(", nine tenths of it made after %.0f (%.0f)", makes_most[makes_most_count / 2u], makes_most[makes_most_count - 1u]);
+    if (makes_all_count) printf(", all of it after %.0f (%.0f)", makes_all[makes_all_count / 2u], makes_all[makes_all_count - 1u]);
+    printf("\n");
 }
 
 int main(int argc, char **argv)
@@ -465,8 +549,9 @@ int main(int argc, char **argv)
         .held = held,
         .tick_of = tick_of,
         .watch = watch,
+        .watch_server = watch_server,
         .io = &store_io,
     };
     const int code = bench_main(&desc, argc, argv);
-    return code ? code : audit_failed ? 1 : 0;
+    return code ? code : audit_failed || fill_failed ? 1 : 0;
 }

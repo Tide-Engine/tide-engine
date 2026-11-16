@@ -1,3 +1,14 @@
+## Whom entities came to (2026-11-16, last)
+
+`tide_game` gained `client_came(world, recipients, count, out)` (`tide/session.h`; optional, generated for a game
+with projections): whether a visibility group's audience gained each recipient in the checks of `world`
+(`client_hashes`) since it was last asked. Generated code keeps it (`tide_client_kept.came`, written by
+`tide_client_groups_diff`), nothing in the runtime; the session (agent-maintained) asks once a tick and sends a
+repair asked for of an earlier tick as the world is now (netcode.md, top section). It reads and clears the memo's
+rows under the memos' lock, and says nothing for a world with no memo or one being hashed. No runtime function is
+new or changed. `TIDE_STORED_PER_TICK` (256) is new in `tide/session.h`: the store's answers a server takes into a
+tick of a game with projections.
+
 ## A handler's put, and pages counted (2026-11-16, later)
 
 No new runtime function. A match or local handler's dispatch took every lane of a `mut` component with

@@ -28135,6 +28135,7 @@ static void gen_game_api(gen *g)
         // (A projection over the one before it reads its rows' links where they are: not a hierarchy's section)
         if (!prog->hierarchy[0]) sb_put(o, "    .reload_client_state = tide_game_reload_client_state,\n");
         sb_put(o, "    .client_hashes = tide_game_client_hashes,\n"
+                  "    .client_came = tide_game_client_came,\n"
                   "    .client_changes = tide_game_client_changes,\n"
                   "    .client_changes_base = tide_game_client_changes_base,\n"
                   "    .apply_client_changes = tide_game_apply_client_changes,\n");

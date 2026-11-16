@@ -111,10 +111,10 @@
 // the world's pages, says which of them its world lacks, and gets those.
 
 #define MAGIC 0x5449u // "TI"
-#define PROTOCOL 26u
+#define PROTOCOL 27u
 
 enum { MSG_HELLO = 1, MSG_WELCOME, MSG_REFUSE, MSG_CHUNK, MSG_CLIENT, MSG_SERVER, MSG_BYE, MSG_HANDOVER, MSG_COMMAND,
-       MSG_UPLOAD, MSG_DOWNLOAD, MSG_LOCAL_INTEREST, MSG_LOCAL_DATA };
+       MSG_UPLOAD, MSG_DOWNLOAD, MSG_LOCAL_INTEREST, MSG_LOCAL_DATA, MSG_SPARE };
 // What a SERVER says of the player's upload: nothing, the chunks it has of
 // one on its way, or that one is whole (and the number of its download)
 enum { UPLOAD_NONE = 0, UPLOAD_PART = 1, UPLOAD_WHOLE = 2 };
@@ -177,6 +177,20 @@ enum { START_UNKNOWN = 0, START_MAIN = 1, START_GIVEN = 2 };
 #define PIECE 1000u                  // Bytes of a tick per piece; piece indices are varints
 #define CHUNK 1000u                  // Bytes of a packed world per chunk
 #define CHUNKS_PER_UPDATE 64u
+// Which chunks a player has past the first it lacks, as a CLIENT says them: this many words of 64 at most, and
+// only as many as reach the last it has, so a transfer of a few chunks says a byte.
+#define CHUNK_WORDS 8u
+// Spare chunks (MSG_SPARE): a player whose network loses datagrams is sent, after each update's worth of a big
+// world's or repair's chunks (SPARE_BLOCK of them), a few more, each some of those chunks XORed together, so a
+// chunk lost is made again from the rest where it would be asked for and sent again a round trip and a half later
+// (a view arriving waits for its last chunk). A spare is of every `stride`th chunk of its block, so chunks sent
+// one after another, which a network loses together, are in different ones. How many chunks to a spare goes by
+// the loss counted (spare_group); nothing under SPARE_LEAST chunks, or to a player who loses none, has any.
+#define SPARE_LEAST 32u
+#define SPARE_BLOCK CHUNKS_PER_UPDATE
+#define SPARE_GROUP_LEAST 4u
+#define SPARE_MOST (SPARE_BLOCK / SPARE_GROUP_LEAST) // Spares to a block, at most
+#define SPARE_GROUP_LEAST 4u
 // Chunks of a big command an update sends, up and down: 16 KB, under the
 // inputs and frames, so about a megabyte a second at 60 updates a second
 #define COMMAND_CHUNKS_PER_UPDATE 16u
@@ -907,7 +921,10 @@ typedef struct connection {
     double *chunk_sent;
     uint8_t *chunk_fast; // One selective-acknowledgement retry per chunk before its timeout.
     uint32_t chunk_ack;  // It has every chunk before this one
-    uint64_t chunk_mask; // ...and these after it
+    uint8_t *chunk_had;  // ...and these after it, as its CLIENTs said (a byte each)
+    uint32_t chunk_top;  // ...the last of them, plus one
+    uint32_t chunks_gone; // Chunks sent at least once
+    uint32_t spare_group, spares_gone; // Its spare chunks: how many chunks to one (0: none), and the blocks whose spares went
 
     // Ticks
     uint32_t frame_ack;  // It has every tick before this one
@@ -932,6 +949,7 @@ typedef struct connection {
     said_mark *said_marks;
     uint32_t said_next;
     bool loss_known;
+    bool loss_counted; // LOSS_SERVERS of them have been counted once: its copies are what its loss takes, not a start's
     uint8_t loss_read;
     uint32_t loss_at, loss_sent, loss_lost, loss_fresh, soon_sent, soon_lost;
     stored_frame *client_frames; // Recipient-specific frames; NULL without projections.
@@ -947,6 +965,9 @@ typedef struct connection {
     uint32_t repair_gap;
     uint32_t repair_streamed;
     uint32_t repair_pending; // Accepted request, packed after this update's authoritative ticks.
+    // The last world (by its tick) whose check found entities come into this player's sight (tide_game.client_came):
+    // a repair asked for of a tick before it is sent as the world is now (repair_as_it_is_now)
+    uint32_t came_at;
     bool repair_pending_stream;
     // It was sent the world and needs every tick from it on, however long
     // that took: the server keeps them until it catches up (keep_needed)
@@ -1213,10 +1234,21 @@ static void drop_snapshot(tide_server *s, connection *c)
     }
     free(c->chunk_sent);
     free(c->chunk_fast);
+    free(c->chunk_had);
     c->snapshot = NULL;
     c->shared = NULL;
     c->chunk_sent = NULL;
     c->chunk_fast = NULL;
+    c->chunk_had = NULL;
+}
+
+// Chunks to a spare for a player, by the datagrams it's known to lose (the ticks' copies go by the same count,
+// servers_read): none where it loses none or its first LOSS_SERVERS aren't counted yet (a player joining has
+// none), a spare for 16 up to 2% lost, for 8 up to 5.6%, for 4 past that.
+static uint32_t spare_group(const connection *c)
+{
+    if (!c->loss_counted || c->frame_copies <= FRAME_COPIES) return 0u;
+    return c->frame_copies == FRAME_COPIES + 1u ? 16u : c->frame_copies == FRAME_COPIES + 2u ? 8u : SPARE_GROUP_LEAST;
 }
 
 static void stop_sending(tide_server *s, connection *c)
@@ -1246,9 +1278,13 @@ static void send_in_chunks(tide_server *s, connection *c, const uint8_t kind, ui
     c->chunk_count = chunks_of(size);
     c->chunk_sent = calloc(c->chunk_count ? c->chunk_count : 1u, sizeof *c->chunk_sent);
     c->chunk_fast = calloc(c->chunk_count ? c->chunk_count : 1u, sizeof *c->chunk_fast);
-    if (!c->chunk_sent || !c->chunk_fast) tide_out_of_memory();
+    c->chunk_had = calloc(c->chunk_count ? c->chunk_count : 1u, sizeof *c->chunk_had);
+    if (!c->chunk_sent || !c->chunk_fast || !c->chunk_had) tide_out_of_memory();
     c->chunk_ack = 0;
-    c->chunk_mask = 0;
+    c->chunk_top = 0;
+    c->chunks_gone = 0;
+    c->spare_group = c->chunk_count >= SPARE_LEAST ? spare_group(c) : 0u;
+    c->spares_gone = 0;
 }
 
 static const void *server_world_at(const tide_server *s, const uint32_t tick)
@@ -1278,6 +1314,40 @@ static uint32_t repair_gap_after(const tide_server *s, const connection *c)
     const uint32_t most = s->dt > 0.0f && seconds / s->dt >= 2.0f ? (uint32_t)(seconds / s->dt) : 1u;
     const uint32_t gap = c->repair_gap ? c->repair_gap * 2u : 2u;
     return gap < most ? gap : most;
+}
+
+// A repair by what changed for a player from the world it confirmed to the server's as it is now, in place of the
+// one it asked for (of one tick, `size` bytes), where entities have come into its sight since that tick
+// (connection.came_at): a view arriving (chunks shown over many ticks, a scene it came into), which its own run of
+// the ticks after can't have either, so the repair asked for would be followed by another, a round trip later, for
+// the rest. NULL where the later repair is no bigger or can't be made: the one asked for goes.
+static uint8_t *repair_as_it_is_now(tide_server *s, const connection *c, const void *base, const tide_player_id player,
+                                    const uint32_t size, uint32_t *size_now)
+{
+    const stored_frame *last = &c->client_frames[(s->tick - 1u) % s->w.history];
+    if (last->tick != s->tick - 1u || !last->data || last->size < 8u || s->tick - c->frame_ack > s->w.history) return NULL;
+    tide_event_log events = {0};
+    for (uint32_t t = c->frame_ack; t < s->tick; t++) {
+        const stored_frame *frame = &c->client_frames[t % s->w.history];
+        if (frame->tick != t || !frame->data) {
+            tide_event_log_free(&events);
+            return NULL;
+        }
+        for (uint32_t at = 0; at < frame->events.size;) {
+            const tide_heard *heard = (const tide_heard *)(frame->events.bytes + at);
+            at += heard->size;
+            tide_event_log_copy(&events, &frame->events, heard, 0);
+        }
+    }
+    tide_reader named = {last->data, last->size, 0, false};
+    const uint64_t hash = tide_read_u64(&named);
+    bool mostly_changed = false;
+    uint8_t *bytes = pack_client_changes(s->game, s->world, base, s->world, &events, player, c->frame_ack, hash, size_now,
+        &mostly_changed);
+    tide_event_log_free(&events);
+    if (bytes && !mostly_changed && *size_now > size + size / 4u) return bytes;
+    free(bytes);
+    return NULL;
 }
 
 static void start_client_repair(tide_server *s, connection *c, const uint32_t tick)
@@ -1314,8 +1384,23 @@ static void start_client_repair(tide_server *s, connection *c, const uint32_t ti
             &mostly_changed);
         if (bytes && !mostly_changed) {
             tide_event_log_free(&events);
+            uint32_t to = tick;
+            // A view arriving: everything that has come since goes with it, and what comes after as a stream's
+            if (tick < s->tick && c->came_at > tick) {
+                uint32_t size_now = 0;
+                uint8_t *now = repair_as_it_is_now(s, c, base, player, size, &size_now);
+                if (now) {
+                    free(bytes);
+                    bytes = now;
+                    size = size_now;
+                    to = s->tick;
+                    if (s->now >= c->repair_stream_until) c->repair_gap = repair_gap_after(s, c);
+                    c->repair_stream_until = s->now + 1.0;
+                    c->repair_streamed = to;
+                }
+            }
             stop_sending(s, c);
-            c->snapshot_tick = tick;
+            c->snapshot_tick = to;
             c->snapshot_stream = s->now < c->repair_stream_until;
             c->sending = true;
             send_in_chunks(s, c, SEND_CLIENT_REPAIR, bytes, size, NULL);
@@ -1928,6 +2013,7 @@ static void servers_read(connection *c, const uint16_t echo, const uint8_t read)
     if (c->loss_sent >= LOSS_SERVERS) {
         c->frame_copies = copies_for(c->loss_lost, c->loss_sent);
         c->loss_sent = c->loss_lost = 0;
+        c->loss_counted = true;
     }
     const uint8_t soon = copies_for(c->soon_lost, LOSS_SOON);
     if (soon > c->frame_copies) c->frame_copies = soon;
@@ -1944,7 +2030,10 @@ static void on_client(tide_server *s, connection *c, tide_reader *r)
     const uint32_t chunk_number = tide_read_varint(r);
     const uint32_t have = chunk_number ? tide_read_varint(r) : 0u;
     const uint32_t chunk_ack = !chunk_number ? 0u : have == 0 ? UINT32_MAX : have - 1u;
-    const uint64_t chunk_mask = chunk_number && have ? tide_read_u64(r) : 0u;
+    const uint32_t chunk_words = chunk_number && have ? tide_read_u8(r) : 0u;
+    uint64_t chunk_mask[CHUNK_WORDS] = {0};
+    if (chunk_words > CHUNK_WORDS) return;
+    for (uint32_t i = 0; i < chunk_words; i++) chunk_mask[i] = tide_read_u64(r);
     const uint32_t frame_ack = tide_read_varint(r);
     const uint64_t frame_mask = tide_read_varint64(r);
     const uint8_t servers = tide_read_u8(r); // SERVERs it has read so far
@@ -2056,11 +2145,14 @@ static void on_client(tide_server *s, connection *c, tide_reader *r)
     }
     if (c->sending) {
         if (chunk_number == c->snapshot_number) { // About what's being sent, not something older
-            if (chunk_ack > c->chunk_ack) {
-                c->chunk_ack = chunk_ack < c->chunk_count ? chunk_ack : c->chunk_count;
-                c->chunk_mask = 0;
+            if (chunk_ack > c->chunk_ack) c->chunk_ack = chunk_ack < c->chunk_count ? chunk_ack : c->chunk_count;
+            // What it has past the first it lacks, whichever CLIENT said so: a chunk it has it keeps
+            for (uint32_t i = 0; chunk_ack != UINT32_MAX && c->chunk_had && i < chunk_words * 64u; i++) {
+                if (!(chunk_mask[i >> 6] >> (i & 63u) & 1u) || chunk_ack >= c->chunk_count
+                    || i >= c->chunk_count - chunk_ack - 1u) continue;
+                c->chunk_had[chunk_ack + 1u + i] = 1;
+                if (chunk_ack + 2u + i > c->chunk_top) c->chunk_top = chunk_ack + 2u + i;
             }
-            if (chunk_ack == c->chunk_ack) c->chunk_mask |= chunk_mask;
         }
         if (c->snapshot_kind == SEND_HASHES && lacks && lacks_number == c->snapshot_number) {
             send_lacking(s, c, lacks, lacks_size);
@@ -2538,12 +2630,17 @@ static uint32_t dispatch_injected(tide_server *s, tide_writer *w, private_journa
 {
     const tide_game *g = s->game;
     if (!takes_messages(g) || !s->injected_count) return 0;
-    uint32_t count = 0;
+    uint32_t count = 0, answers = 0;
     // What a message asks of the store goes with the coming tick's requests: a match task that came from another
     // shard asks again here what it waits for (shard_world_codegen.inc, tide_shard_take_tasks)
     if (g->stored) tide_storage_bind(s->world, &s->storage);
-    while (count < s->injected_count && count < TIDE_SHARD_MESSAGES_PER_TICK) {
+    while (count < s->injected_count) {
         injected *m = &s->injected[count];
+        // In the order they came, each kind up to its own number a tick: the store's answers to a game with
+        // projections are in no frame (TIDE_STORED_PER_TICK)
+        const bool answer = g->client_state && m->data[0] == TIDE_STORED_MESSAGE;
+        if (answer ? answers == TIDE_STORED_PER_TICK : count - answers == TIDE_SHARD_MESSAGES_PER_TICK) break;
+        answers += answer;
         const published *p = NULL;
         if (big_command(m->size) && !g->client_state) {
             if (!m->published && publish_place(s)) {
@@ -3143,6 +3240,15 @@ static void tick_end(tide_server *s, ticking *t)
         }
         if (g->client_hashes && count) g->client_hashes(s->world, recipients, count, hashes);
         else for (uint32_t i = 0; i < count; i++) hashes[i] = g->client_hash(s->world, recipients[i]);
+        if (g->client_came && count) {
+            bool *came = malloc(count * sizeof *came);
+            if (!came) tide_out_of_memory();
+            g->client_came(s->world, recipients, count, came);
+            for (uint32_t i = 0; i < count; i++) {
+                if (came[i]) s->connections[tide_player_index(recipients[i])].came_at = tick + 1u;
+            }
+            free(came);
+        }
         frame_inputs batch;
         const bool batched = make_frame_inputs(s, before, recipients, count, &batch);
         for (uint32_t i = 0; i < count; i++) {
@@ -3261,7 +3367,7 @@ static bool frame_names_each(const uint8_t *data, const uint32_t size, const uin
         else tide_read_bytes(&r, n);
     }
     const uint32_t messages = parts & FRAME_SHARD ? tide_read_varint(&r) : 0u;
-    if (messages > TIDE_SHARD_MESSAGES_PER_TICK) return false;
+    if (messages > TIDE_SHARD_MESSAGES_PER_TICK + TIDE_STORED_PER_TICK) return false; // A journal's record has the store's answers too
     for (uint32_t i = 0; i < messages && !r.failed; i++) {
         const uint32_t n = tide_read_varint(&r);
         if (big_command(n)) each(context, tide_read_varint(&r), n);
@@ -3420,7 +3526,8 @@ static bool replay_record(const tide_game *g, void *world, const uint8_t *record
         if (!g->command(world, tide_player_from_index((int32_t)player), channel, sequence, data, n)) return false;
     }
     const uint32_t messages = parts & FRAME_SHARD ? tide_read_varint(&r) : 0u;
-    if (messages > TIDE_SHARD_MESSAGES_PER_TICK || (messages && !takes_messages(g))) return false;
+    if (messages > TIDE_SHARD_MESSAGES_PER_TICK + (g->client_state ? TIDE_STORED_PER_TICK : 0u)
+        || (messages && !takes_messages(g))) return false;
     for (uint32_t i = 0; i < messages; i++) {
         const uint32_t n = tide_read_varint(&r);
         if (r.failed || !n || n > TIDE_SHARD_MESSAGE_LIMIT) return false;
@@ -3502,12 +3609,11 @@ static void send_chunks(tide_server *s, connection *c)
     const double again = resend_after(c->rtt_ms);
     uint32_t sent = 0;
     for (uint32_t i = c->chunk_ack; i < c->chunk_count && sent < CHUNKS_PER_UPDATE; i++) {
-        if (i > c->chunk_ack && i - c->chunk_ack <= 64u && (c->chunk_mask >> (i - c->chunk_ack - 1u) & 1u)) continue;
+        if (c->chunk_had[i]) continue;
         if (c->chunk_sent[i] > 0.0 && s->now - c->chunk_sent[i] < again) {
             // Later chunks prove the receiver reached this burst. Recover one
             // hole promptly; reordering can cost at most one extra copy here.
-            if (c->snapshot_kind < SEND_CLIENT_WORLD || c->chunk_fast[i]
-                || i - c->chunk_ack >= 64u || !(c->chunk_mask >> (i - c->chunk_ack))) continue;
+            if (c->snapshot_kind < SEND_CLIENT_WORLD || c->chunk_fast[i] || i + 1u >= c->chunk_top) continue;
             c->chunk_fast[i] = 1;
         }
         const uint32_t from = i * CHUNK;
@@ -3519,8 +3625,34 @@ static void send_chunks(tide_server *s, connection *c)
         tide_write_u16(&w, (uint16_t)size);
         tide_write_bytes(&w, c->snapshot + from, size);
         send_packet(&s->desc.transports[c->transport], c->address, &w, &s->traffic);
+        if (c->chunk_sent[i] <= 0.0) c->chunks_gone++;
         c->chunk_sent[i] = s->now > 0.0 ? s->now : 1e-9;
         sent++;
+    }
+    // A block's spares, once, as soon as each of its chunks has gone once (they first go in order): over the
+    // update's chunks, so a block and its spares go together
+    while (c->spare_group && c->chunk_ack < c->chunk_count && c->spares_gone * SPARE_BLOCK < c->chunk_count) {
+        const uint32_t first = c->spares_gone * SPARE_BLOCK;
+        const uint32_t count = c->chunk_count - first < SPARE_BLOCK ? c->chunk_count - first : SPARE_BLOCK;
+        if (c->chunks_gone < first + count) break;
+        c->spares_gone++;
+        const uint32_t stride = (count + c->spare_group - 1u) / c->spare_group;
+        for (uint32_t group = 0; group < stride; group++) {
+            uint8_t spare[CHUNK] = {0};
+            for (uint32_t i = first + group; i < first + count; i += stride) {
+                const uint32_t from = i * CHUNK;
+                const uint32_t size = c->snapshot_size - from < CHUNK ? c->snapshot_size - from : CHUNK;
+                for (uint32_t k = 0; k < size; k++) spare[k] ^= c->snapshot[from + k];
+            }
+            tide_writer w = {s->packet, TIDE_NET_MTU, 0, false, false};
+            authenticated_header(&w, MSG_SPARE, s->cookies[c - s->connections], c->nonce);
+            tide_write_u32(&w, c->snapshot_number);
+            tide_write_u32(&w, first);
+            tide_write_u8(&w, (uint8_t)stride);
+            tide_write_u8(&w, (uint8_t)group);
+            tide_write_bytes(&w, spare, CHUNK);
+            send_packet(&s->desc.transports[c->transport], c->address, &w, &s->traffic);
+        }
     }
 }
 
@@ -4370,6 +4502,10 @@ struct tide_client {
     uint32_t snapshot_size;
     uint32_t chunk_count;
     uint32_t chunks_had;
+    // Spare chunks of what's being received (on_spare): those that came, a whole chunk's bytes each, SPARE_MOST to
+    // a block of SPARE_BLOCK chunks (`spare_room` in all), and each block's stride as its first spare said it
+    uint8_t **spares, *spare_strides;
+    uint32_t spare_room;
     uint8_t *snapshot;
     uint8_t *chunk_have;
     uint32_t got_number; // The last thing it had whole
@@ -4587,10 +4723,16 @@ static void go_offline(tide_client *c, const tide_disconnect_reason reason)
 
 static void stop_receiving(tide_client *c)
 {
+    for (uint32_t i = 0; c->spares && i < c->spare_room; i++) free(c->spares[i]);
     free(c->snapshot);
     free(c->chunk_have);
+    free(c->spares);
+    free(c->spare_strides);
     c->snapshot = NULL;
     c->chunk_have = NULL;
+    c->spares = NULL;
+    c->spare_strides = NULL;
+    c->spare_room = 0;
     c->receiving = false;
 }
 
@@ -5006,6 +5148,48 @@ static bool on_welcome(tide_client *c, tide_reader *r)
     return true;
 }
 
+static void received_whole(tide_client *c)
+{
+    if (c->snapshot_kind == SEND_HASHES) answer_hashes(c);
+    else if (c->snapshot_kind == SEND_CLIENT_HASHES) answer_client_hashes(c);
+    else load_snapshot(c);
+}
+
+// The one chunk a spare is of that hasn't come, if there's one and the spare has: the spare with its other chunks
+// XORed out of it. A chunk shorter than a whole one (the last) has to leave zeros after its bytes, or the spare
+// wasn't of these chunks and nothing is taken (what's taken is checked as any transfer is, by what it loads to).
+static void take_spare(tide_client *c, const uint32_t block, const uint32_t group)
+{
+    const uint32_t first = block * SPARE_BLOCK;
+    if (!c->spares || first >= c->chunk_count) return;
+    const uint32_t count = c->chunk_count - first < SPARE_BLOCK ? c->chunk_count - first : SPARE_BLOCK;
+    const uint32_t stride = c->spare_strides[block];
+    const uint8_t *spare = stride && group < stride ? c->spares[block * SPARE_MOST + group] : NULL;
+    if (!spare) return;
+    uint32_t lacking = UINT32_MAX;
+    for (uint32_t i = first + group; i < first + count; i += stride) {
+        if (c->chunk_have[i]) continue;
+        if (lacking != UINT32_MAX) return; // Two or more: the spare can't say which is which
+        lacking = i;
+    }
+    if (lacking == UINT32_MAX) return;
+    uint8_t made[CHUNK];
+    memcpy(made, spare, CHUNK);
+    for (uint32_t i = first + group; i < first + count; i += stride) {
+        if (i == lacking) continue;
+        const uint32_t from = i * CHUNK;
+        const uint32_t size = c->snapshot_size - from < CHUNK ? c->snapshot_size - from : CHUNK;
+        for (uint32_t k = 0; k < size; k++) made[k] ^= c->snapshot[from + k];
+    }
+    const uint32_t from = lacking * CHUNK;
+    const uint32_t size = c->snapshot_size - from < CHUNK ? c->snapshot_size - from : CHUNK;
+    for (uint32_t k = size; k < CHUNK; k++) if (made[k]) return;
+    memcpy(c->snapshot + from, made, size);
+    c->chunk_have[lacking] = 1;
+    c->world_bytes += size;
+    if (++c->chunks_had == c->chunk_count) received_whole(c);
+}
+
 static void on_chunk(tide_client *c, tide_reader *r)
 {
     const uint32_t number = tide_read_u32(r);
@@ -5036,10 +5220,47 @@ static void on_chunk(tide_client *c, tide_reader *r)
     memcpy(c->snapshot + from, bytes, size);
     c->chunk_have[index] = 1;
     c->world_bytes += size;
-    if (++c->chunks_had < c->chunk_count) return;
-    if (c->snapshot_kind == SEND_HASHES) answer_hashes(c);
-    else if (c->snapshot_kind == SEND_CLIENT_HASHES) answer_client_hashes(c);
-    else load_snapshot(c);
+    if (++c->chunks_had == c->chunk_count) received_whole(c);
+    else if (c->spare_strides && c->spare_strides[index / SPARE_BLOCK]) {
+        take_spare(c, index / SPARE_BLOCK, index % SPARE_BLOCK % c->spare_strides[index / SPARE_BLOCK]);
+    }
+}
+
+// A spare chunk of what's being received (MSG_SPARE): kept, and the one chunk it's of that hasn't come made from
+// it and the rest as soon as there's only one. Its numbers are the server's to say, within what a block of this
+// transfer can have; one that says another stride than its block's first is left.
+static void on_spare(tide_client *c, tide_reader *r)
+{
+    const uint32_t number = tide_read_u32(r);
+    const uint32_t first = tide_read_u32(r);
+    const uint32_t stride = tide_read_u8(r);
+    const uint32_t group = tide_read_u8(r);
+    const uint8_t *bytes = tide_read_bytes(r, CHUNK);
+    if (!bytes || r->at != r->size || !c->receiving || number != c->snapshot_number || c->chunk_count < SPARE_LEAST
+        || first % SPARE_BLOCK || first >= c->chunk_count) return;
+    const uint32_t count = c->chunk_count - first < SPARE_BLOCK ? c->chunk_count - first : SPARE_BLOCK;
+    const uint32_t block = first / SPARE_BLOCK, blocks = (c->chunk_count + SPARE_BLOCK - 1u) / SPARE_BLOCK;
+    if (!stride || stride > SPARE_MOST || stride > count || group >= stride) return;
+    if (!c->spares) {
+        c->spares = calloc((size_t)blocks * SPARE_MOST, sizeof *c->spares);
+        c->spare_strides = calloc(blocks, 1);
+        if (!c->spares || !c->spare_strides) {
+            free(c->spares);
+            free(c->spare_strides);
+            c->spares = NULL;
+            c->spare_strides = NULL;
+            return;
+        }
+        c->spare_room = blocks * SPARE_MOST;
+    }
+    if (c->spare_strides[block] && c->spare_strides[block] != stride) return;
+    uint8_t **slot = &c->spares[block * SPARE_MOST + group];
+    if (*slot) return;
+    *slot = malloc(CHUNK);
+    if (!*slot) return;
+    memcpy(*slot, bytes, CHUNK);
+    c->spare_strides[block] = (uint8_t)stride;
+    take_spare(c, block, group);
 }
 
 static void take_early_chunks(tide_client *c)
@@ -5283,7 +5504,7 @@ static void client_receive(tide_client *c)
         c->arrived = arrived_of(t, c->now);
         tide_reader r = {data, size, 0, false};
         const uint8_t type = read_header(&r);
-        if (type == MSG_CHUNK || type == MSG_DOWNLOAD || type == MSG_SERVER || type == MSG_HANDOVER
+        if (type == MSG_CHUNK || type == MSG_SPARE || type == MSG_DOWNLOAD || type == MSG_SERVER || type == MSG_HANDOVER
             || type == MSG_LOCAL_DATA || type == MSG_BYE) {
             const uint64_t cookie = tide_read_u64(&r);
             const uint32_t nonce = tide_read_u32(&r);
@@ -5296,6 +5517,7 @@ static void client_receive(tide_client *c)
             take_early_chunks(c);
             break;
         case MSG_CHUNK: on_chunk(c, &r); break;
+        case MSG_SPARE: on_spare(c, &r); break;
         case MSG_DOWNLOAD: on_download(c, &r); break;
         case MSG_SERVER: on_server(c, &r); break;
         case MSG_HANDOVER: on_handover(c, &r); break;
@@ -6879,13 +7101,15 @@ static void send_client(tide_client *c)
     }
     // The chunks it has of what's being received, or that it has all of the last thing
     uint32_t chunk_number = 0;
-    uint32_t chunk_ack = 0;
-    uint64_t chunk_mask = 0;
+    uint32_t chunk_ack = 0, chunk_words = 0;
+    uint64_t chunk_mask[CHUNK_WORDS] = {0};
     if (c->receiving) {
         chunk_number = c->snapshot_number;
         while (chunk_ack < c->chunk_count && c->chunk_have[chunk_ack]) chunk_ack++;
-        for (uint32_t i = 0; i < 64u && chunk_ack + 1u + i < c->chunk_count; i++) {
-            if (c->chunk_have[chunk_ack + 1u + i]) chunk_mask |= (uint64_t)1 << i;
+        for (uint32_t i = 0; i < CHUNK_WORDS * 64u && chunk_ack + 1u + i < c->chunk_count; i++) {
+            if (!c->chunk_have[chunk_ack + 1u + i]) continue;
+            chunk_mask[i >> 6] |= (uint64_t)1 << (i & 63u);
+            chunk_words = (i >> 6) + 1u;
         }
     } else if (c->got_number) {
         chunk_number = c->got_number;
@@ -6895,7 +7119,11 @@ static void send_client(tide_client *c)
     // from the first, plus one, and which it has after those
     tide_write_varint(&w, chunk_number);
     if (chunk_number) tide_write_varint(&w, chunk_ack == UINT32_MAX ? 0u : chunk_ack + 1u);
-    if (chunk_number && chunk_ack != UINT32_MAX) tide_write_u64(&w, chunk_mask);
+    if (chunk_number && chunk_ack != UINT32_MAX) {
+        // ...in as many words of 64 as reach the last it has (CHUNK_WORDS at most)
+        tide_write_u8(&w, (uint8_t)chunk_words);
+        for (uint32_t i = 0; i < chunk_words; i++) tide_write_u64(&w, chunk_mask[i]);
+    }
     // The ticks it has every piece of, of the FRAMES_SAID from the one it's at (which it may have and not have
     // run yet): what the server needn't send again. A download one of them names is acknowledged on its own, below.
     uint64_t frame_mask = 0;

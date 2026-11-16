@@ -59,6 +59,13 @@ typedef struct bench_options {
     // server says it should be, tick by tick, saying what differs (the bot's
     // number plus 1; 0 for none): what makes a machine ask for repairs.
     uint32_t diverge;
+    // The server's longest updates, this many, each said with what it spent
+    // where: what a server's worst update is made of. 0: none.
+    uint32_t worst;
+    // Seconds between lines that say what the run holds as it goes (the
+    // server's world, a bot's worlds, the process, the last stretch's
+    // updates): whether anything grows in a long run. 0: none.
+    double every;
 } bench_options;
 
 typedef struct bench_desc {
@@ -93,6 +100,9 @@ typedef struct bench_desc {
     // its machine has now (its predicted one), outside every timing: for what a
     // game wants to say about how a player's world comes and goes. NULL: nothing.
     void (*watch)(const bench_flag *flags, uint32_t bot, const void *world);
+    // The same for the server's world, after every frame and before the bots'
+    // `watch` of that frame (a world one server runs; not split). NULL: nothing.
+    void (*watch_server)(const bench_flag *flags, const void *world);
     // Where the server keeps the match's store (Storage.Save and Load in match
     // code: tide_server_desc.io), or NULL: nowhere, so every load finds nothing.
     const struct tide_io *io;

@@ -75,6 +75,11 @@ typedef struct tide_headless_desc {
     // How many frames make up a second of its time, from 1 to 1000; 0 for 60. Another rate than the match's ticks
     // has frames with a tick and frames without, as a window's do. A recorded GIF still plays 30 pictures a second.
     uint32_t frame_rate;
+    // Each frame waits out what's left of its length on the wall clock, as a display holds a window's: for
+    // measuring what a player would see (workers have a real frame's time; frames that took longer than one are
+    // counted and said as the run ends). The run's own time is made up as ever, so its match and its pictures are
+    // what they are without it; only how long it takes differs.
+    bool paced;
     const char *capture; // The file the run's last frame goes to, as a PNG; NULL for none
     const char *record;  // The file the whole run goes to, as a GIF (tide_platform_record); NULL for none
     // The file everything the run played goes to, as a WAV (tide_platform_capture_audio); NULL for none

@@ -1,5 +1,130 @@
 # Netcode: sessions, prediction, commands
 
+## A view arriving: repairs as the world is now, spare chunks, 512 chunks said, 256 answers a tick; protocol 27 (2026-11-16, last)
+
+What a whole view costs to arrive (a join, a dimension hop: notes/voxels.md, A whole view arriving, has the
+measurements and the game's side). Four changes in `engine/src/session.c` (agent-maintained), one generated export.
+No world, hash, snapshot or layout changed; the wire did (`PROTOCOL` 27), and `bench_gallery`'s pinned world moved
+because its joins are shorter (below).
+
+- **A repair asked for of one tick goes as the world is now, where entities have come to the player since**
+  (`start_client_repair`, `repair_as_it_is_now`, `connection.came_at`). A client asks for the tick after its
+  verified one, and the first of a burst was answered with exactly that tick (a second within a second starts a
+  stream, which goes to the server's tick). A view arriving differs for many ticks in a row (chunks shown as they're
+  made), so the first repair held one tick's part of it and the rest waited a round trip for the next: with a hop,
+  the first tick is the old dimension leaving, and the new one's chunks all came with the second repair, 16 ticks
+  after they were asked for. Now, where the tick's check found entities come into the player's sight in a world
+  later than the one asked for (`tide_game.client_came`, below), the repair is packed again from the same base to
+  the server's world and sent in the first one's place if it's a quarter bigger, as a stream's first
+  (`repair_stream_until`, `repair_gap` as a stream that starts). A tick the client's own run got wrong, with nothing
+  arriving, is answered as before (one tick; nothing is packed twice), which is why it goes by what came and not by
+  the repair's size: a border crossing's row of chunks is one tick's, and its repair stays one tick's.
+- **`tide_game.client_came(world, recipients, count, out)`** (generated, `client_state_codegen.inc`; optional):
+  whether a visibility group's audience gained each recipient in the checks of `world` since it was last asked.
+  The check's comparison of the directory of groups with its copy (`tide_client_groups_diff`,
+  `client_spans_codegen.inc`) already finds each group whose audience is another; it now ORs into
+  `tide_client_kept.came` the players the new audience has that the old hadn't (a new group's whole audience; an
+  entry that moved as the map packed counts whole). Byte-wise over `Audience`, so any number of players. Said of more
+  players than it's true of at times, never of fewer; a build that keeps nothing (`TIDE_CLIENT_MEMO_OFF`) says it of
+  everyone a group has. The session asks once a tick, after `client_hashes`, and keeps the world's tick
+  (`came_at`). An entity spawned in sight by code the client runs too is no group's gain and isn't said; one spawned
+  into a group that has the player is (a false alarm costs one more pack, sent only if it's bigger).
+- **Spare chunks** (`MSG_SPARE`, `send_chunks`, `on_spare`, `take_spare`). A world or a repair goes in chunks of
+  1,000 bytes, and a lost one was asked for by the client's next CLIENT and sent again: a round trip and a half
+  (12 ticks here), with a box of 116 chunks losing at least one 7 times in 10 at 1% lost. Now a transfer of 32
+  chunks or more (`SPARE_LEAST`), to a player whose loss is counted and isn't none, is followed block by block (64
+  chunks, an update's worth: `SPARE_BLOCK`) by spares: each the XOR of every `stride`th chunk of the block, so
+  chunks sent one after another are in different spares, and a chunk that's the only one of its spare missing is
+  made from the spare and the rest. A spare for 16 chunks up to 2% lost, for 8 up to 5.6%, for 4 past that
+  (`spare_group`, by `frame_copies`, the count ticks' copies go by); none until `LOSS_SERVERS` are counted
+  (`loss_counted`: a connection's copies start at eight, which says nothing of its loss), so a player joining has
+  none. Spares go once, over the update's 64 chunks, and are never sent again; what they don't save is asked for as
+  before. Datagram: the header a CHUNK has, the transfer's number (u32), the block's first chunk (u32), the stride
+  and the group (a byte each), 1,000 bytes. **Whatever a spare says**: its number is the transfer being received,
+  its block starts on a multiple of 64 inside the transfer, its stride is 1 to 16 and no more than the block's
+  chunks and the one the block's first spare said, its group is under its stride, and its bytes are a chunk's
+  length, or it's left. A chunk shorter than 1,000 bytes (the last) made from a spare has to leave zeros after its
+  bytes. A spare of the right numbers and other bytes makes a chunk of them (nothing says they aren't the server's:
+  the header's cookie and nonce are what authenticates a CHUNK too), and the transfer then fails as any transfer of
+  wrong bytes does, at its unpack or its hash, and is asked for again.
+- **A CLIENT says 512 chunks past the first it lacks** (`CHUNK_WORDS` 8 words of 64, only as many as reach the last
+  it has, after a count byte; it was one word always). The server keeps what it's told a chunk at a time
+  (`chunk_had`, `chunk_top`), where it kept the one word and dropped it as the first lacking moved. A chunk past the
+  64th after a lost one was sent again a round trip and a half after it went, though the client had it: 2% more
+  bytes at voxels' default view, 28% at twice, 40% at three times, and a third of what `bench_gallery`'s joins sent.
+  A transfer with nothing past the first lacking says a byte where it said eight.
+- **256 of the store's answers a tick** in a game with projections (`TIDE_STORED_PER_TICK`, `dispatch_injected`),
+  where every game took 64 of shard messages and answers together. Such a game's frames carry no answer (what one
+  changes reaches players as state), so nothing but the tick's own work bounds them; a game that does a lot for
+  each paces that itself (voxels' `Pace`). Shard messages stay 64, counted apart, in the order they came; a
+  journal's record takes both (`replay_record`, `frame_names_each`). Any other game's answers are in its frames and
+  stay 64. Provisional (Claude's pick; spec, The server's store, Order).
+
+**Measured** (notes/voxels.md has the tables). One player standing, hopping every 3 s into a dimension whose chunks
+have gone, the box of 845 chunks whole on its machine, ticks from its input (median, most), before to after: no loss
+28 (28) to 20 (20); 1% lost 36 (44) to 21 (29); 5% lost 45 (71) to 29 (42). `bench_gallery`'s joins (a
+4.4 MB world to each of 8): 2.47 s to 1.73 at 1% lost, 2.85 to 2.02 at 3%, 3.07 to 2.22 at 5%, 1.50 to 1.40 at none;
+251.8 KB a second to each bot to 157.1 (328 to 218 at 3%).
+
+**Pins.** `bench_gallery --quick`: `0xc8e6ab383a684a0a` to `0x57ef0aa3786fe0c6`, the same on 1 and 12 threads: a
+bot whose world comes sooner samples its first input in another tick. Nothing else pinned moved for the session's
+part (voxels' moved for its game's changes).
+
+**Tests** (`tests/test_visibility_session.c`, the large game's client behind `visibility_wire`, which can lose one
+SERVER in n so the server counts a loss, lose a chosen chunk of a watched transfer and its spares, count what came
+of it, and give the client a datagram the test made; `visibility_differs_from`/`_to` move the ticks the large game's
+client differs in, so the loss is counted before the repairs start):
+- `visibility_spares_make_a_lost_chunk_again_before_its_asked_for`: 5% of SERVERs lost, then the server's build
+  swaps under a repair and the whole projection (545 chunks) goes: 69 spares (8 to a block), chunk 7 lost once and
+  never sent again; with its spares lost too, sent again once. No spare of any other transfer (the first world came
+  before the loss was counted).
+- `visibility_spares_go_only_where_datagrams_are_lost`: nothing lost, no spare, the lost chunk sent again.
+- `visibility_spares_that_arent_ones_are_refused`: once every other chunk has come and before the lost one is sent
+  again, its own spare with no stride, a stride of 17, a group past its stride, a block that starts at chunk 7, a
+  block past the transfer, 999 bytes, and another transfer's number: none makes a chunk (the client's bytes stand),
+  and the world isn't sent again.
+- `visibility_a_spare_of_other_bytes_costs_the_world_again_and_no_more`: the same spare with other bytes is taken,
+  the world fails its check, is sent again once, and the client has it.
+- `visibility_chunks_past_a_lost_one_arent_sent_again`: a chunk lost twice in a transfer of 545, no loss counted:
+  572 chunks came to the wire, the 25 past the 512 said and the lost one twice (the test allows 40 over).
+- `tidec_e2e_visibility_repairs` (and `_checked`, `_memo_off`, `_wide`): `visibility_came_says_whom_a_groups_audience_gained`:
+  a group given to another player came to that player alone, said once; a lane and a policy came to nobody; two
+  checks before it's asked are both said; a group that shrank came to nobody and one that grew to those it gained;
+  a group made with an audience; another world says nothing.
+- `bench_voxels_arrives` (bench/CMakeLists.txt): the hopping player for a minute at 1% lost, the box whole in 21
+  ticks at the median, failing past 23, its world pinned.
+
+Mutation (each alone, the test named failing): the store's answers 64 a tick, or unbounded (`bench_voxels_arrives`,
+by `--fill` and by its pin); no repair as the world is now (`_arrives`); `client_came` never saying, or saying a
+group's whole audience (`visibility_came...`, and `_arrives` for the first); a spare kept and never taken
+(`..._make_a_lost_chunk_again`); one word (`..._chunks_past_a_lost_one`); spares before the loss is counted
+(`..._go_only_where`); a spare of any stride, of any number, of any block (`..._that_arent_ones`). Not caught by any
+test: the zeros a short last chunk must leave after its bytes (a transfer whose last chunk is lost with its spare
+kept isn't made by the fixture; the transfer's own check stands behind it).
+
+**Validation** (release, Windows): `tide_tests` whole, every `tidec_e2e_visibility_*`, `_storage*`, `_net*`,
+`_managed_store*`, `_shards*`, `_task_visibility`, `_scene_preparation_visibility`, `tide_platform_store_headless`,
+`tide_platform_capture`, `tide_platform_reload`, `_reload_reads`, `earth_tests`, `bench_earth` (and `_split`,
+`_diverge`), `bench_sand`, `bench_gallery`, `bench_voxels` (and `_forgets`, `_wide`, `_checked`, `_counts`,
+`_arrives`), `voxels_walk`, `tide_platform_png`, `_png_decode`, `_gif`, `tide_cli_help`, `tide_cli_run_exit`: 67
+CTests, all pass; `npm run build` in `docs/`. Sanitizers, the web and the other platforms are CI's.
+
+**Left.**
+- Spares start once a connection's first 512 SERVERs are counted, which a player who hops in its first seconds, or
+  whose server is sending it repairs most of the time, waits longer for (a 30 s bench run's hops get them late or
+  not at all: its boxes took 23 and 28 ticks at the median where the minute-long run's took 21). A transfer's own
+  chunks say what's lost exactly (sent against had), and counting them would tell sooner. Not built.
+- A repair is still one transfer at a time, each waiting for the last one's acknowledgement: a view that's made
+  over more ticks than a round trip has (voxels at twice the view) arrives in as many round trips. A second
+  transfer started on the first one's world before it's acknowledged would halve that; the chunk state is one
+  transfer's throughout (`snapshot_number`, `chunk_*`), so it's a rewrite of it.
+- The server could start the first repair itself, the tick entities come to a player, where it waits to be asked
+  (a round trip before the nearest chunks land). The client takes a repair it didn't ask for, but only from the
+  world it has confirmed, which the server knows a round trip late: the repair would have to name its base and the
+  client hold it until its verified world reaches it. Not built; `came_at` is the signal it would go by.
+- A hop's first repair says each of the 845 chunks that left by 16 bytes of identity (13.6 KB). A group that went
+  whole could say so once.
+
 ## A whole projection the server starts is taken; a reload under repairs stops no client (2026-11-16, later still)
 
 The bug left open below (protocol 26, Open): a hot reload during a stream of large repairs could stop a client for

@@ -146,6 +146,13 @@ typedef struct tide_game {
     // same values; what's alike for them all is worked out once. The server
     // asks for every player's after each tick.
     void (*client_hashes)(const void *world, const tide_player_id *recipients, uint32_t count, uint64_t *out);
+    // Optional: whether entities came into each recipient's sight (a
+    // visibility group's audience gained them) in the checks of `world`
+    // (client_hashes) since this was last asked: what a recipient's own run
+    // of a tick can never have, so a repair it then asks for is of a view
+    // arriving, not of a tick it got wrong. Said of more recipients than it's
+    // true of at times, never of fewer. NULL: never said.
+    void (*client_came)(const void *world, const tide_player_id *recipients, uint32_t count, bool *out);
     // Optional, together: a repair that costs what changed for a recipient,
     // not what it has. `client_changes` compares two worlds of one match
     // (`lineage`: the world the match ticks, whose kept hashes both share) as
@@ -353,6 +360,11 @@ typedef struct tide_game {
 // most bytes one carries in the tick's frame: a bigger one goes to every
 // player first, as a big command does, and into a tick once they all have it.
 #define TIDE_SHARD_MESSAGES_PER_TICK 64u
+// What loads and listings of the store found (tide/storage.h) that a server takes into one tick, in a game whose
+// players are sent projections: their frames carry none of it (what an answer changes reaches them as state), so
+// nothing but the tick's own work bounds it, and a game that does a lot for each answer paces that itself. In any
+// other game an answer is in the tick's frame, and they're shard messages' 64.
+#define TIDE_STORED_PER_TICK 256u
 #define TIDE_SHARD_MESSAGE_LIMIT (64u << 20)
 
 // A command of up to TIDE_COMMAND_BYTES goes in one datagram, as commands

@@ -50,6 +50,21 @@
   cost, with and without one, never showed in a profile. The headless mixer renders 48000 / rate samples a
   frame, the remainder carried, so `--capture-audio` stays in step; a recorded GIF still plays 30 pictures a
   second. `tide run` passes both flags through (`compiler/cli/main.c`, help in `help.c`).
+- `--paced` (2026-11-16; `tide_headless_desc.paced`, `step` in `platform/src/platform.c`; Claude's pick,
+  Provisional in `docs/tools/cli.md`): a run with no window holds each frame as long as a display would, waiting
+  out what's left of the frame's made-up length on the wall clock once its work is done
+  (`tide_window_wait`, the hidden window's own wait). A run with no window made a frame as fast as it went (about a
+  millisecond), so local workers had a sixteenth of a frame's time and nothing said what a player at 60 Hz would
+  see (notes/voxels.md, At scale, section 4). The run's own time is made up as ever: the session takes no clock,
+  the match, the pictures and the recordings are the bytes they are without it, and only the run's length and the
+  workers' time differ. As it ends it says on stderr how many frames there were, how many took longer than one
+  frame's length, and the longest (`tide: paced: 600 frames of 16.7 ms, 0 took longer than that, the longest 9.8
+  ms`): the frame's work as `step` sees it, from its start to before the wait, the present included. Not what
+  `--realtime` was (turned down 2026-10-08, below): that paced a run to the wall clock so two processes would
+  meet, and nothing of it repeated. With `--frame-rate`, the length held is that rate's. Desktop only; with a
+  window it does nothing. `tide run` passes it through; `tide_cli_help` and `tide_cli_run_exit` have it. No test
+  of its timing (it would rest on a clock): the same pictures with and without it were checked by hand
+  (notes/voxels.md).
 ## A frame's views get the pool (2026-11-12)
 
 `tide_run_frame` calls `tide_loops_enter(tide_run_gui.jobs)` before `frame_shards` and `frame` and

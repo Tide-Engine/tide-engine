@@ -505,6 +505,11 @@ void tide_platform_on_close(void (*on_close)(void))
     closing = on_close;
 }
 
+// A paced run with no window (tide_headless_desc.paced): its frames, those whose work took longer than a frame
+// lasts, and the longest, in seconds
+static uint32_t paced_frames, paced_late;
+static double paced_longest;
+
 _Noreturn static void finish(int code)
 {
     // The window closed or the game quit: the host ends what it began first (its match, its local state)
@@ -512,6 +517,11 @@ _Noreturn static void finish(int code)
     closing = NULL;
     if (close_host) close_host();
     if (!tide_script_interactive_close(headless_frame) && code == 0) code = 1;
+    if (paced_frames) {
+        const double frame = 1.0 / (double)(headless_run.frame_rate ? headless_run.frame_rate : 60u);
+        fprintf(stderr, "tide: paced: %u frames of %.1f ms, %u took longer than that, the longest %.1f ms\n", paced_frames,
+                frame * 1e3, paced_late, paced_longest * 1e3);
+    }
     // A recording the run ended in the middle of is written out
     const bool run_written = record_end(&run_recording), script_written = tide_platform_record_stop();
     if ((!run_written || !script_written) && code == 0) code = 1;
@@ -573,6 +583,17 @@ static int step(void)
     between_frames = false;
     if (code == TIDE_KEEP_RUNNING && quit_asked) code = 0; // The game quit: the frame it did that in was the last
 #ifndef __wasm__
+    // A paced run with no window holds each frame as long as a display would: what's left of the frame's length
+    // (its made-up one) once its work is done. The time it makes up doesn't change.
+    if (headless && headless_run.paced) {
+        const double worked = now() - start;
+        paced_frames++;
+        paced_late += worked > (double)seconds;
+        if (worked > paced_longest) paced_longest = worked;
+        // (Yielding, not sleeping: a sleep is as coarse as the system's timer, most of a frame on Windows. The
+        // thread gives its core to whatever else is ready, a worker first)
+        while (now() < start + (double)seconds) tide_yield();
+    }
     // A window nobody sees (minimized, or an app in the background) has no
     // display's pace to wait for: the next frame comes when the frame function
     // asked, and draws nothing (see tide_platform_draw). It waits on the
