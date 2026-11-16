@@ -127,6 +127,16 @@ with 860 entities, half of a client's simulating; with 6,900, 25 ms a second (no
   18,000); what came and went merged into the order it had would cost what changed. The loops' indexes are lost to
   a copy the same way, and aren't shared yet (notes/voxels.md, At scale, What costs a chunk that's only held).
 
+## A guard's few rows in runs of their own (2026-11-16, last)
+
+A system in runs that are shares of its entities' order (its rows queue) and that starts with a guard has, where the
+guard lets at most a quarter of its entities through, runs that are shares of the rows it lets through: at most 16
+(`TIDE_LIVE_RUNS` in the generated C), so those rows' new blocks are in runs 0 to 15's heaps of their owner, wherever
+the rows are in the order. Which run a row is in then follows from the marks made before any row runs, the same on
+one thread. Nothing in heap.c, list.c or grid.c knows: a block in another run's heap is changed and released as
+before, and a grid moves whole when another run adds a chunk to it. Design, tests and measurements:
+schedule-and-threads.md, top section.
+
 ## Heaps per owner in games that hide state (2026-11-14, later)
 
 A game with state visibility no longer keeps every owner in the match's heap 0 (`assign_heaps`: only shards do): its

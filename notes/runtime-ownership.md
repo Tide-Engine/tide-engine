@@ -1,3 +1,15 @@
+## A guard's few rows shared out (2026-11-16, last)
+
+No runtime function is new or changed (schedule-and-threads.md, top section). A system whose entities' order goes to
+threads in shares and whose guard lets few rows through now has a `tide_own_<System>` whether or not it changes a
+component, which the runtime calls before its tasks where it has more than one (`tide_system_tasks.own`, as it was):
+it marks the rows the guard lets through and keeps their keys in a tick-local array the world points at while its
+systems run (`tide_world.tide_live_keys`, `NULL` in a world's bytes, as `tide_run_keys` is), which its tasks read and
+its `tide_done_` reads again. It relies on what the lanes in pieces and the keys by run already rely on: `own` done
+before any task starts and `done` after the last, on one thread each, nothing moving a row while a system's tasks run
+(`tide_entity_location_at` gives in `done` what it gave in `own`), and `tide_table_lanes_end_pieces` called for
+exactly the chunks `tide_table_lanes_begin_pieces` was.
+
 ## Whom entities came to (2026-11-16, last)
 
 `tide_game` gained `client_came(world, recipients, count, out)` (`tide/session.h`; optional, generated for a game
