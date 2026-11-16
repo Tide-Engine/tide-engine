@@ -21147,11 +21147,6 @@ static void check_trigger(const checker *c, decl *handler, param *p, decl *d)
         if (handler->is_async) diag_error(handler->async_at, "a command handler can't be async; it validates and handles one submission immediately");
         return;
     }
-    if (d->watches && !handler->is_local) {
-        diag_error(at, "a change is this machine's to show: handle it with 'local event(Changed<" STR_FMT "> ...) " STR_FMT "(...)'",
-                   STR_ARG(p->type_name), STR_ARG(handler->name));
-        diag_note("match code reacts where it changes the field, or by sending an event from there");
-    }
     if ((d == c->prog->shown || d == c->prog->hidden) && !handler->is_local) {
         diag_error(at, "'" STR_FMT "' describes this machine's visibility: handle it with 'local event(" STR_FMT ")'",
                    STR_ARG(d->name), STR_ARG(d->name));
@@ -21171,8 +21166,9 @@ static void check_trigger(const checker *c, decl *handler, param *p, decl *d)
 // match component or singleton, then a field, through the structs it's in.
 // Each field watched gets one built-in event of its own, `old` and `value` of
 // the field's type, which the tick records as it ends for each entity whose
-// field isn't what it was as the tick began (gen_changes). Its handlers are
-// local, so it's a listener's event: nothing of it is in the match.
+// field isn't what it was as the tick began (gen_changes). Local handlers hear
+// it; match handlers take it as the tick ends, in rounds until no field they
+// watch changes again.
 static void check_changed(checker *c)
 {
     program *prog = c->prog;

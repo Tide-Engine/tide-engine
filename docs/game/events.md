@@ -399,8 +399,32 @@ local event(Changed<Score.points> change) Cheer(mut Fx fx)
 - **It's sent to the entity whose field changed**, which its handler takes components of, as the tick left it. A singleton's change is sent to the world.
 - **Only fields that were there before and after change.** Spawning, destroying, adding or removing the component, and an entity this machine comes to have, change nothing: `Spawned`, `Destroyed`, `Shown` and `Hidden` say those.
 - **The path goes through structs**: `Changed<Unit.stats.level>` watches one field of a struct in a component. A field of text, a list, a map, a set or a grid can't be watched; watch a count or a version kept beside it.
-- **It's like any match event a local handler hears.** It's heard once under rollback, `verified` hears it once the server has confirmed the tick, and ownership filters work. Only the field is compared, and only on machines with a handler of it, so the match's bytes, hash and traffic are what they'd be without it.
-- **Its handlers are local.** Match code reacts where it changes the field, or sends an event from there.
+- **It's like any match event a local handler hears.** It's heard once under rollback, `verified` hears it once the server has confirmed the tick, and ownership filters work. With only local handlers, only the field is compared, and only on machines with a handler of it, so the match's bytes, hash and traffic are what they'd be without it.
+
+Match code can handle a change too. What depends on a field then follows it, whatever code set it:
+
+```csharp
+singleton Workshop
+{
+    int level;
+    int board;  // The level the board was built for
+    int serial; // Moves sent before the board changed are stale
+}
+
+// Only the number is set...
+void OpenLevel(mut Workshop workshop, int level) { workshop.level = level; }
+
+// ...and the board follows it
+event(Changed<Workshop.level> change) Load(mut Workshop workshop)
+{
+    workshop.board = change.value;
+    workshop.serial += 1;
+}
+```
+
+- **It's taken as the tick ends**, after its events and changes are done, the same tick.
+- **What a handler changes makes another round.** If a handler changes a field something watches (`serial` above, if a handler watched it), that change is sent in a round of its own, the same tick, with what it was after the round before as `old`. Rounds go on until one finds nothing changed. Handlers that keep changing each other's fields stop the program, as any endless chain of events does.
+- Every machine compares the fields match code watches on every tick, so the match comes out the same on all of them.
 
 ### Ownership filters
 

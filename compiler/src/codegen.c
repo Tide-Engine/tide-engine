@@ -15591,14 +15591,31 @@ static void gen_hear(gen *g)
         sb_put(o, "}\n\n");
     }
     gen_hear_rows(g);
-    gen_changes(g);
 }
 
-// Whether a recorded tick watches fields for local handlers of Changed<Health.value>.
+// Whether match code handles a Changed<Health.value>: then every tick, on every
+// machine, watches its field, and what changed is sent to the match's handlers
+// as its other events are (tide_reacts_round).
+static bool change_reacts(const decl *event)
+{
+    return has_handlers(event, false);
+}
+
+// Whether a recorded tick watches fields for local handlers of Changed<Health.value>
+// that match code doesn't handle (those hear the event as it's applied).
 static bool program_watches(const program *prog)
 {
     for (int i = 0; i < prog->changed.count; i++) {
-        if (prog->changed.items[i]->listeners.count) return true;
+        if (prog->changed.items[i]->listeners.count && !change_reacts(prog->changed.items[i])) return true;
+    }
+    return false;
+}
+
+// Whether match code handles a change of some field.
+static bool program_reacts(const program *prog)
+{
+    for (int i = 0; i < prog->changed.count; i++) {
+        if (change_reacts(prog->changed.items[i])) return true;
     }
     return false;
 }
@@ -15623,20 +15640,27 @@ static int watched_offset(const decl *event)
     return offset;
 }
 
-// Changed<Health.value>: as a recorded tick begins, tide_changes_begin keeps
-// what each field watched is, by entity index, beside the world; as it ends,
-// once its events and changes are done, tide_changes_end records the event for
-// each entity that had the component then and has it now, with its field not
-// the same bytes. An entity spawned, destroyed, or that gained or lost the
-// component over the tick changed nothing. Nothing of it is in the world.
+// Changed<Health.value>: as a tick begins, the begin function keeps what each
+// field watched is, by entity index, beside the world; once its events and
+// changes are done, the end looks at each entity that had the component then
+// and has it now, with its field not the same bytes. An entity spawned,
+// destroyed, or that gained or lost the component over the tick changed
+// nothing. Nothing of it is in the world.
+//
+// Fields only local handlers watch (tide_changes_begin/_end) are watched on a
+// recorded tick, and the end records the event for them. Fields match code
+// watches (tide_reacts_begin/_round) are watched on every tick, and each round
+// sends what changed since the last as the match's events, keeping the field's
+// value as the next round's start: tide_react applies them, and their handlers'
+// own changes make another round, until a round finds none.
 static void gen_changes(gen *g)
 {
     const program *prog = g->prog;
     sb *o = &g->c;
-    if (!program_watches(prog)) return;
+    if (!program_watches(prog) && !program_reacts(prog)) return;
     for (int k = 0; k < prog->changed.count; k++) {
         const decl *e = prog->changed.items[k];
-        if (!e->listeners.count) continue;
+        if (!e->listeners.count && !change_reacts(e)) continue;
         const field *last = e->watch_path.items[e->watch_path.count - 1];
         sb_printf(o, "// " STR_FMT "\n", STR_ARG(e->name));
         if (e->watches->kind == DECL_COMPONENT) {
@@ -15648,11 +15672,15 @@ static void gen_changes(gen *g)
             sb_printf(o, "static TIDE_THREAD_LOCAL %s tide_was%d_value;\n\n", c_type(last->type), k);
         }
     }
-    for (int end = 0; end < 2; end++) {
-        sb_printf(o, "static void tide_changes_%s(%stide_world *w)\n{\n", end ? "end" : "begin", end ? "" : "const ");
+    // 0: tide_changes_begin, 1: tide_changes_end, 2: tide_reacts_begin, 3: tide_reacts_round
+    for (int step = 0; step < 4; step++) {
+        const bool reacts = step >= 2, end = step % 2 == 1;
+        if (reacts ? !program_reacts(prog) : !program_watches(prog)) continue;
+        if (step == 3) sb_put(o, "static bool tide_reacts_round(tide_world *w)\n{\n    bool tide_sent = false;\n");
+        else sb_printf(o, "static void tide_%s_%s(%stide_world *w)\n{\n", reacts ? "reacts" : "changes", end ? "end" : "begin", end ? "" : "const ");
         for (int k = 0; k < prog->changed.count; k++) {
             const decl *e = prog->changed.items[k];
-            if (!e->listeners.count) continue;
+            if (reacts ? !change_reacts(e) : (!e->listeners.count || change_reacts(e))) continue;
             const char *name = type_cname(e);
             sb path = {0};
             for (int n = 0; n < e->watch_path.count; n++) sb_printf(&path, ".%s", field_cname(e->watch_path.items[n]));
@@ -15664,9 +15692,13 @@ static void gen_changes(gen *g)
                     sb_printf(o, "        if (memcmp(&tide_was%d_value, &w->%s%s, sizeof tide_was%d_value) != 0) {\n"
                                  "            %s tide_v;\n            memset(&tide_v, 0, sizeof tide_v);\n"
                                  "            memcpy(&tide_v.old, &tide_was%d_value, sizeof tide_v.old);\n"
-                                 "            memcpy(&tide_v.value, &w->%s%s, sizeof tide_v.value);\n"
-                                 "            tide_hear_%s(w, (tide_entity){0, 0}, &tide_v);\n        }\n",
-                              k, single, path.data, k, name, k, single, path.data, name);
+                                 "            memcpy(&tide_v.value, &w->%s%s, sizeof tide_v.value);\n",
+                              k, single, path.data, k, name, k, single, path.data);
+                    if (reacts) {
+                        sb_printf(o, "            memcpy(&tide_was%d_value, &tide_v.value, sizeof tide_was%d_value);\n"
+                                     "            tide_cmd_send_%s(w, (tide_entity){0, 0}, tide_v);\n            tide_sent = true;\n", k, k, name);
+                    } else sb_printf(o, "            tide_hear_%s(w, (tide_entity){0, 0}, &tide_v);\n", name);
+                    sb_put(o, "        }\n");
                 }
                 sb_put(o, "    }\n");
                 continue;
@@ -15697,8 +15729,9 @@ static void gen_changes(gen *g)
                           arch_name(g, a), arch_columns(g, a));
                 if (end) {
                     sb_printf(o, "            if (tide_entity_slot_index(&w->entities, tide_e) >= tide_was%d_count) continue;\n"
-                                 "            const tide_was%d *tide_was_at = &tide_was%d_rows[tide_entity_slot_index(&w->entities, tide_e)];\n"
-                                 "            if (!tide_was_at->present || !tide_entity_equal(tide_was_at->entity, tide_e)) continue;\n", k, k, k);
+                                 "            %stide_was%d *tide_was_at = &tide_was%d_rows[tide_entity_slot_index(&w->entities, tide_e)];\n"
+                                 "            if (!tide_was_at->present || !tide_entity_equal(tide_was_at->entity, tide_e)) continue;\n",
+                              k, reacts ? "" : "const ", k, k);
                 }
                 sb_printf(o, "            %s tide_c;\n"
                              "            tide_table_gather(&w->%s, %s, tide_row, %d, %du, %du, (uint8_t *)&tide_c + %d);\n",
@@ -15711,16 +15744,42 @@ static void gen_changes(gen *g)
                     sb_printf(o, "            if (memcmp(&tide_was_at->value, &tide_c%s, sizeof tide_was_at->value) == 0) continue;\n"
                                  "            %s tide_v;\n            memset(&tide_v, 0, sizeof tide_v);\n"
                                  "            memcpy(&tide_v.old, &tide_was_at->value, sizeof tide_v.old);\n"
-                                 "            memcpy(&tide_v.value, &tide_c%s, sizeof tide_v.value);\n"
-                                 "            tide_hear_%s(w, tide_e, &tide_v);\n",
-                              path.data, name, path.data, name);
+                                 "            memcpy(&tide_v.value, &tide_c%s, sizeof tide_v.value);\n",
+                              path.data, name, path.data);
+                    if (reacts) {
+                        sb_printf(o, "            memcpy(&tide_was_at->value, &tide_v.value, sizeof tide_was_at->value);\n"
+                                     "            tide_cmd_send_%s(w, tide_e, tide_v);\n            tide_sent = true;\n", name);
+                    } else sb_printf(o, "            tide_hear_%s(w, tide_e, &tide_v);\n", name);
                 }
                 sb_put(o, "        }\n");
             }
             sb_put(o, "    }\n");
         }
-        sb_put(o, "}\n\n");
+        sb_put(o, step == 3 ? "    return tide_sent;\n}\n\n" : "}\n\n");
     }
+    if (!program_reacts(prog)) return;
+    // The rounds: each one's changes are one further down a chain of events
+    // (tide_endless_chain stops handlers that change each other's fields
+    // without end). What they did then settles as the tick's other changes do
+    // in tide_apply_commands.
+    sb_put(o, "// The tick's changes to fields match code watches, sent to its handlers until a round finds none\n"
+              "static void tide_react(tide_world *w)\n{\n    bool tide_any = false;\n"
+              "    for (uint32_t tide_round = 1u;; tide_round++) {\n"
+              "        const tide_queue_place tide_from = tide_queue_end(&w->commands);\n"
+              "        w->tide_chain = tide_round;\n"
+              "        const bool tide_sent = tide_reacts_round(w);\n"
+              "        w->tide_chain = 0;\n"
+              "        if (!tide_sent) break;\n"
+              "        tide_any = true;\n"
+              "        tide_apply_from(w, tide_from);\n"
+              "    }\n"
+              "    if (!tide_any) return;\n");
+    for (int a = 0; a < prog->archetypes.count; a++) {
+        if (arch_local(g, a)) continue;
+        sb_printf(o, "    tide_table_settle(&w->%s, %s, &w->entities, %d);\n", arch_name(g, a), arch_columns(g, a), a);
+    }
+    sb_printf(o, "    tide_queue_clear(&w->commands);\n%s}\n\n",
+              prog->uses_heap ? "    tide_heaps_flush(&w->heap);\n    tide_heaps_settle(&w->heap);\n" : "");
 }
 
 // Availability is per listener's complete component/filter requirements. A
@@ -25863,6 +25922,7 @@ static void gen_api(gen *g)
     // has the whole match's (tide_client_all)
     const char *watching = journals_clients(prog) ? "tide_listening && (!tide_client_listening || tide_client_all)" : "tide_listening";
     if (program_watches(prog)) sb_printf(o, "    const bool tide_watching = %s;\n    if (tide_watching) tide_changes_begin(w);\n", watching);
+    if (program_reacts(prog)) sb_put(o, "    tide_reacts_begin(w); // What fields match code watches are, as the tick begins\n");
     if (prog->match_devices) sb_put(o, "    tide_device_edges(w);\n");
     if (rows_cache_count(g)) sb_put(o, "    tide_rows_cache_prepare(w); // Serial: publish immutable plans before worker dispatch\n");
     if (g->ix_any) sb_put(o, "    tide_index_cache_prepare(&w->tide_index_cache); // Serial: the tick's run, for the loops' indexes\n");
@@ -25884,6 +25944,7 @@ static void gen_api(gen *g)
     if (prog->keeps_previous_entities) sb_put(o, "    tide_previous_release(w, false); // The tick's handlers have run: nothing reads its start any more\n");
     if (prog->task_slots[0]) sb_put(o, "    tide_task_match_collect(w);\n");
     if (completions) sb_printf(o, "    tide_rows_finish_tick(tide_completions, %du, &w->entities);\n    w->tide_completions = NULL;\n", completions);
+    if (program_reacts(prog)) sb_put(o, "    tide_react(w); // ...and what changed of them\n");
     if (program_watches(prog)) sb_put(o, "    if (tide_watching) tide_changes_end(w); // ...and what changed of it\n");
     if (prog->input) sb_put(o, "    memcpy(w->previous_inputs, w->inputs, sizeof w->inputs);\n");
     // Time.t is worked out from the tick each time, never added to, so it doesn't drift
@@ -30161,6 +30222,7 @@ bool codegen(program *prog, const codegen_options *opts)
     }
     gen_shard_main(&g);
     gen_hear(&g);
+    gen_changes(&g);
     gen_gpu_lists(&g);
     gen_shaders(&g);
     gen_shader_table(&g);

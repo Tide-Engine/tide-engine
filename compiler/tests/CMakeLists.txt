@@ -534,6 +534,13 @@ tide_e2e_test(local_fields_plain) # ...whose match is the same without them
 tide_e2e_test(local_fields_net) # ...and what a client's wrong predictions do to them, on a network
 tide_e2e_test(local_events) # Local handlers of the match's events: heard once, whatever a client predicted
 tide_e2e_test(changed_events) # Changed<Health.value>: a field that changed over a tick, heard by local handlers
+tide_e2e_test(changed_match) # ...and taken by match handlers, in rounds while their own changes go on
+# ...whose handlers changing what they watch without end stop the program
+tide_add_game(tidec_e2e_changed_endless SOURCES e2e/changed_match.tide NAME game DEFINES ENDLESS
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/changed_match_test.c")
+target_include_directories(tidec_e2e_changed_endless PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tidec_e2e_changed_endless COMMAND tidec_e2e_changed_endless changed_match_plain_host)
+set_tests_properties(tidec_e2e_changed_endless PROPERTIES PASS_REGULAR_EXPRESSION "an endless chain of events: .*Changed<Unit.hp>")
 tide_e2e_test(visibility_lifecycle) # Local availability differs from genuine match lifecycle
 tide_e2e_test(visibility_host_lifecycle) # ...and what a host and a guest each hear of pieces destroyed and hidden
 tide_e2e_test(local_events_same) # Events only local code handles: the match they cost nothing,

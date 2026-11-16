@@ -1,5 +1,37 @@
 # `verified` and local handlers of match events
 
+## Match handlers of `Changed<...>` (2026-11-16)
+
+Agreed with the owner while designing team dev tools: an inspector's edit to a match field must let the game keep
+what depends on it (Inside Out's board follows `Workshop.level`, and every level change bumps `serial` so stale moves
+drop). A separate `Edited<T>` event was proposed and rejected as a second mechanism for the same job; match handlers of
+`Changed` were chosen instead, with rounds in the same tick (the owner approved both points as proposed).
+
+- **Checker**: the "a change is this machine's to show" error (`check_trigger`) is gone; the fixture
+  `errors/changed_match_handler.tide` went with it. Everything else in `check_changed` is unchanged.
+- **Codegen** (`gen_changes`, now called from the driver after `gen_hear`, since `gen_hear` returns early when nothing
+  is heard): an event with match handlers (`change_reacts`) is watched by `tide_reacts_begin`, at the start of every
+  `tide_world_tick_on`, on every machine, listening or not. `tide_react`, after the tick's commands, tasks and C system
+  completions and before `tide_changes_end`, runs rounds: `tide_reacts_round` compares each watched field with its
+  kept value, sends each difference with `tide_cmd_send_<Event>` (the entity, or the world for a singleton) and keeps
+  the new value; then `tide_apply_from` applies the round. A round sets `w->tide_chain` to its number, so its events'
+  depth grows by round and `tide_endless_chain` stops handlers that change each other's fields without end. After the
+  last round it settles tables, clears the queue and flushes heaps as `tide_apply_commands` does. Fields only local
+  handlers watch keep the old path (`tide_changes_begin`/`_end`, recorded ticks only, `tide_hear_` directly); a field
+  with match handlers is heard by its local handlers through the queue (`tide_apply_event`), one hearing per round.
+- **Cost**: per tick and field match code watches, what a recorded tick's watch costs (a memset of `next_unused`
+  slots and two lane gathers per row of the component), plus one compare pass per round. Games without match handlers
+  of a change generate nothing new. Not measured.
+- **Not covered**: a sharded game's tick run again (`gen_shard_tick`) takes a fresh begin each time it runs, untested.
+  A task a round's async handler starts runs its first part at once; the rest goes on in later ticks' task runs.
+- **Tests**: `compiler/tests/e2e/changed_match` (plain host, with and without an event log: level set, set and set
+  back in a tick, the board and serial following the same tick, `serial`'s change heard in a second round with its
+  old value, per-entity changes, a local handler hearing it once; network: a client's verified world agrees with the
+  server's with no resync) and `tidec_e2e_changed_endless` (the same game with `-DENDLESS`, a handler raising the field
+  it watches, which must stop with the endless-chain message). All pass native ASan and web debug, beside
+  `changed_events` and the five `tidec_error_changed_*` fixtures.
+- Docs: `docs/game/events.md` (When a field changes), `docs/spec.md` (Events, `Changed<...>`).
+
 ## The host hears the whole match's lifecycle (2026-11-15)
 
 **What was wrong.** In a game that hides state, the hosting machine's player reads the server's world
@@ -129,7 +161,7 @@ match handlers of a change, whole-component watches and containers are open.
   no source location (editors refuse to rename them), appended to
   `program.events`/`decls` after `collect_decls`. A singleton's event is a world
   event. Errors: local fields/components, engine-owned types, no field, heap or
-  `Resident` fields, a match handler, and components on a singleton's handler.
+  `Resident` fields, a match handler (allowed since 2026-11-16, top section), and components on a singleton's handler.
   Being built in, it skips the "nothing sends" warning, embed taps and the
   outline; a game can't name it to send it.
 - **Codegen** (`gen_changes`, `program_watches`): `tide_changes_begin` at the
