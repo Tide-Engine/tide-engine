@@ -2,7 +2,8 @@
 // view found before the loop (tide_list_loop): lists in chunks and side by
 // side, a function's local list, an asset's list read and a copy of it
 // written, indexes past either end, nested loops sharing a view, and the
-// loops that keep caches instead (they add to the list, or hand it on).
+// loops that keep caches instead (they add to the list, or hand it on), and
+// methods called on the elements of lists their systems only read.
 // Each check counts; loop_views_test.c reads them, and checks a snapshot
 // taken before a tick keeps what the tick's loops wrote over.
 
@@ -13,6 +14,8 @@ struct Cell
     int id;
     float3 p;
     float w;
+
+    float Heft() { return w + p.x; }
 }
 
 struct Corner
@@ -37,6 +40,40 @@ singleton Data
     float weight;   // What the scattered writes leave in big[7].w
 }
 
+// What the loops over singletons taken read-only leave
+singleton Tally
+{
+    List<Entity> pins;
+    int pings;
+    float heft;
+}
+
+component Pin { int hits; }
+event Ping { int by; }
+
+const int PINS = 40;
+
+event(Spawned) Setup(with Main, mut Tally tally)
+{
+    for (var i = 0; i < PINS; i++) tally.pins.Add(Spawn(Pin));
+}
+
+event(Ping ping) OnPing(mut Pin pin, mut Tally tally)
+{
+    pin.hits += ping.by;
+    tally.pings += ping.by;
+}
+
+int Turn(int k) { return (k * 7 + 3) % PINS; }
+
+// A method called on an element reads it: an entity's goes by the handle, and a struct's that isn't `mut`
+// only has its fields to read. Neither makes its loop one that writes the list, which a singleton taken
+// read-only couldn't be prepared for.
+system Reads(Tally tally)
+{
+    for (var k = 0; k < PINS; k++) tally.pins[Turn(k)].Send(Ping { by = k + 1 });
+}
+
 void Check(mut Data d, bool ok)
 {
     d.checks++;
@@ -59,6 +96,13 @@ int Scratch(int n)
 void Double(mut List<Cell> cells)
 {
     for (var i = 0; i < cells.count; i++) cells[i].w = cells[i].w * 2;
+}
+
+system Weighs(Data d, mut Tally tally)
+{
+    mut float heft = 0;
+    for (var i = 0; i < d.big.count; i += 500) heft += d.big[i].Heft();
+    tally.heft = heft;
 }
 
 system Run(mut Data d)

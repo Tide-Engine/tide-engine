@@ -2021,10 +2021,22 @@ static void lv_record(lv_scan *s, const expr *e, const lv_use_kind kind, const b
 }
 
 // How what's being looked at is used: read, or as a whole (an assignment's target, a method's receiver), or as
-// a call's argument, which can be a `mut` one when it's a place, and is a copy when it's a list's element
-typedef enum lv_mode { LVM_READ, LVM_WHOLE, LVM_ARG } lv_mode;
+// a call's argument, which can be a `mut` one when it's a place, and is a copy when it's a list's element, or
+// as the receiver of a method that leaves it as it is, which is a whole use of a place (the method may be the
+// list's own) and a read of a list's element
+typedef enum lv_mode { LVM_READ, LVM_WHOLE, LVM_ARG, LVM_RECEIVER } lv_mode;
 
 static void lv_stmt(lv_scan *s, const stmt *st);
+static bool writes(const expr *e);
+
+// Whether the method call `e` can change the value it's called on: an entity is a handle, which its methods
+// (Send, Add, Destroy, ...) reach the world by, and a struct's method changes it only when it's a `mut` one.
+static bool lv_receiver_written(const expr *e)
+{
+    if (e->object->type.kind == TY_ENTITY || e->object->type.kind == TY_LOCAL_ENTITY) return false;
+    if (e->call == CALL_METHOD) return !e->method || e->method->is_mut_method;
+    return writes(e);
+}
 
 static void lv_expr(lv_scan *s, const expr *e, const lv_mode mode)
 {
@@ -2065,7 +2077,7 @@ static void lv_expr(lv_scan *s, const expr *e, const lv_mode mode)
             s->stop = true;
             return;
         }
-        if (e->object) lv_expr(s, e->object, LVM_WHOLE);
+        if (e->object) lv_expr(s, e->object, lv_receiver_written(e) ? LVM_WHOLE : LVM_RECEIVER);
         for (int i = 0; i < e->args.count; i++) lv_expr(s, e->args.items[i], LVM_ARG);
         return;
     case E_BINARY: case E_COALESCE:

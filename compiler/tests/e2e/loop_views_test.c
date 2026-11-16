@@ -32,6 +32,24 @@ TIDE_TEST(loop_views_all_checks_pass)
     tide_pack_unload();
 }
 
+// Methods called on a list's elements in loops over singletons their systems take read-only: each entity of
+// the list is sent to, and each struct's method reads the element the view found (Weighs runs before Run, so
+// it sees the cells as the tick before left them).
+TIDE_TEST(loop_views_read_elements_methods_are_called_on)
+{
+    TIDE_REQUIRE(tide_assets_load(tide_game_pack, tide_game_pack_size));
+    tide_world_init(&world, 1.0f);
+    for (int t = 0; t < 3; t++) tide_world_tick(&world);
+    float heft = 0;
+    for (int32_t i = 0; i < 3000; i += 500) heft += weight_at(&world, i) + (float)i;
+    tide_world_tick(&world);
+    TIDE_CHECK(world.Tally.heft == heft);
+    TIDE_CHECK(world.Tally.pings == 4 * (40 * 41 / 2));
+    TIDE_CHECK(tide_scratch_mark() == 0);
+    tide_world_free(&world);
+    tide_pack_unload();
+}
+
 // A loop's view writes a list in chunks shared with a snapshot: the chunks it
 // writes are made the world's own first, so the snapshot keeps what it had,
 // and rolling back to it gives the same world again.

@@ -1,3 +1,11 @@
+## Methods on the elements of a read-only list in a loop (2026-11-16)
+
+`for (...) plan.parts[F(k)].Send(E { ... })`, and any method called on an indexed element of a list a system only
+reads, generated C clang refused (`tide_list_prepare` through a `const` pointer): the loop-view walk took a method's
+receiver for a write of the element. Codegen only, no language change; the checker already refuses every method that
+would change an indexed element, and writes through a read-only parameter, saying what to change. What was wrong, the
+fix and the test: notes/ecs.md, Loop views, A method called on an element reads it.
+
 ## A local worker call's `priority:` (2026-11-15)
 
 Built on the owner's word to go with the recommendations in the spec's Proposed worker extensions. Everything
