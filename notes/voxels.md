@@ -1193,6 +1193,25 @@ What it bought, and what it didn't:
 - **Spares from a connection's start** (its copies start at eight, which read as the worst loss): a quarter more bytes for every join's first world on a network that loses nothing. They start once the loss is counted.
 - **A making allowance of 320 or 640** in place of 480: A whole view arriving has both.
 
+### The sweep on the build with all of the above (2026-11-16, end of day)
+
+`bench_voxels --players N [--near] [--spread] --seconds 30`, 1% lost, 12 threads, release, Windows, BelowNormal, one
+run each, the machine shared (so a longest update of 60 ms and more on 12 threads is taken as the machine's: 32
+bots on one thread have 12.5 at most). Hashes the same on 1 and 12 threads (8 and 32 bots).
+
+| | Server, ms a second in all | Update, 99th percentile / longest, ms | KB a second for each bot | Whole box after a hop, ticks (median / most) |
+|---|---|---|---|---|
+| 8 | 26.9 (34.3 on one thread) | 2.7 / 4.6 | 22.3 | 25 / 45 |
+| 16 | 61.7 | 5.1 / 100 | 22.9 | 26 / 49 |
+| 32 | 108.2 (109.0 on one thread, 8.6 / 12.5) | 8.2 / 66 | 25.3 | 25 / 43 |
+| 8, `--near 12` | 66.0 | 7.6 / 12.1 | 57.1 | 43 / 59 |
+| 8, `--near 18` | 120.8 | 10.3 / 19.7 | 116.0 | 52 / 101 |
+| 8, `--spread 256 --near 12` | 111.9 | 10.4 / 15.4 | 59.3 | 47 / 87 |
+| 32, `--spread 256` | 336.2 | 21.6 / 202 | 24.3 | 30 / 50 |
+
+Three times the view holds its ticks now; 32 apart is still at the edge (a 99th percentile past a tick's 16.7 ms:
+5e and 5f below). 64 bots isn't a run the bench makes: the game's `maxPlayers` is 32.
+
 ### What's left, most telling first
 
 1. ~~Inputs of every player, in every unacknowledged frame (section 5): 13 to 44 KB a second a player with real hands on the mice.~~ Cut the same day (section 5, the last paragraph of that bullet): 19.2 KB a second with 8 turning and standing, 10.6 flying; 32 are as they were (20.8 standing), each tick once, and a second copy of theirs is the owner's to weigh (netcode.md, Open).
