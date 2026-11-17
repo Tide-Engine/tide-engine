@@ -14,6 +14,7 @@
 #include <string.h>
 
 #include "tide/checkpoint.h"
+#include "tide/timeline.h"
 #include "tide/layout.h"
 #include "tide/hosting.h"
 #include "tide/network.h"
@@ -333,6 +334,29 @@ static char tide_run_checkpoint_refused[TIDE_CHECKPOINT_NAME];
 static char tide_run_checkpoint_names[TIDE_RUN_CHECKPOINTS_LISTED][TIDE_CHECKPOINT_NAME];
 static uint32_t tide_run_checkpoint_count;
 static double tide_run_checkpoints_listed_at = -1.0;
+
+// Pausing a dev build's match, stepping it, and going back (tide/timeline.h), from the dev menu: the match this machine
+// runs is recorded as it runs, the worlds of its last ticks kept (any since it began made again by replaying). Paused,
+// the match gets no time but a step's; an earlier tick shows through this machine's views as they are, with nothing
+// they send or ask for reaching the match; and the match can go on from the tick shown. The embedded host has its own (embed.c).
+static struct {
+    tide_timeline *live;          // The match's ticks...
+    const tide_session *recorded; // ...of this session's match, by this build
+    const tide_game *game;
+    bool paused, step;
+    uint32_t shown; // The tick shown while paused
+} tide_run_travel;
+
+// Pausing, stepping and going back (with the frame, below)
+static inline const char *tide_run_travel_why(void);
+static inline uint32_t tide_run_travel_last(void);
+static inline uint32_t tide_run_travel_shown(void);
+static inline void tide_run_travel_pause(bool paused);
+static inline void tide_run_travel_forward(void);
+static inline void tide_run_travel_back(void);
+static inline void tide_run_travel_go_on(void);
+static inline const void *tide_run_travel_world(void);
+
 
 static inline void tide_run_checkpoint_ask(const int way, const char *name)
 {
@@ -1810,7 +1834,10 @@ static inline void tide_run_inspect_value(const tide_inspect_api *api, const tid
         if (memcmp(value + s->offset, s->bytes, s->size) == 0 || tide_run_now - s->at > 1.0) s->size = 0; // Back, or never
         else memcpy(value + s->offset, s->bytes, s->size);
     }
+    // An earlier tick's, while paused there, are shown as they were: a change goes to the match as it is now
+    const int frozen = tide_gui_begin_disabled(&tide_run_gui, tide_run_travel_world() != NULL);
     tide_run_inspect_fields(api, p, part->kind, target, (int32_t)part->type, (int32_t)part->type, value, 0, "", 0);
+    if (frozen >= 0) tide_gui_close(&tide_run_gui, frozen);
 }
 
 // Room for `count` of `each` bytes in `*buffer`, kept between frames; false when there's none
@@ -2173,6 +2200,33 @@ static inline void tide_run_dev_checkpoints(void)
     if (!listed) tide_run_dev_label("None yet: Save keeps the match as it is", 12.0f, TIDE_RUN_DEV_DIM);
 }
 
+// The match's time, at the menu's top whatever its tab: Pause or Play, then paused, Back and Step a tick, the tick
+// shown, and at an earlier one, Go on from here, which the match goes on from. Why it can't pause, where it can't.
+static inline void tide_run_dev_time(void)
+{
+    tide_gui *g = &tide_run_gui;
+    const char *why = tide_run_travel_why();
+    const bool paused = tide_run_travel.paused;
+    if (why[0] && !paused) {
+        char said[96];
+        snprintf(said, sizeof said, "Can't pause: %s", why);
+        tide_run_dev_label(said, 12.0f, TIDE_RUN_DEV_DIM);
+        return;
+    }
+    const int row = tide_gui_begin_horizontal(g, 0xDE770000u);
+    if (row < 0) return;
+    if (tide_gui_layout_button(g, 0xDE770001u, paused ? "Play" : "Pause")) tide_run_travel_pause(!paused);
+    if (paused && tide_gui_layout_button(g, 0xDE770002u, "Back")) tide_run_travel_back();
+    if (paused && tide_gui_layout_button(g, 0xDE770003u, "Step")) tide_run_travel_forward();
+    char tick[64];
+    const uint32_t shown = tide_run_travel_shown(), last = tide_run_travel_last();
+    if (paused && shown < last) snprintf(tick, sizeof tick, "tick %u of %u", (unsigned)shown, (unsigned)last);
+    else snprintf(tick, sizeof tick, "tick %u", (unsigned)last);
+    tide_run_dev_label(tick, 12.0f, TIDE_RUN_DEV_DIM);
+    tide_gui_close(g, row);
+    if (paused && shown < last && tide_gui_layout_button(g, 0xDE770004u, "Go on from here")) tide_run_travel_go_on();
+}
+
 // The menu's tab: 0 the game's dev views and tweaks, 1 the match's inspector, 2 the local world's. Each tab's list
 // where it's scrolled to, from its top, and how tall it last was
 static uint32_t tide_run_dev_tab;
@@ -2238,6 +2292,7 @@ static inline void tide_run_dev_menu(const tide_host_game *game, const void *mat
             if (c.clicked) tide_run_dev_tab = t;
         }
         tide_gui_close(g, row);
+        tide_run_dev_time();
         const tide_rect rule = tide_gui_layout_reserve(g, (tide_float2){width, 1.0f});
         tide_draw_rect(&g->list, (tide_float2){rule.x + width * 0.5f, rule.y + 0.5f}, (tide_float2){width, 1.0f}, TIDE_RUN_DEV_FAINT);
         tide_gui_layout_space(g, 2.0f);
@@ -2616,6 +2671,8 @@ static inline int tide_run_loading_frame(void *user, const float seconds)
     return TIDE_KEEP_RUNNING;
 }
 
+static inline void tide_run_travel_drop(void);
+
 // Ends what tide_run_begin started: the match, if any, and the local state.
 static inline void tide_run_end(void)
 {
@@ -2627,6 +2684,7 @@ static inline void tide_run_end(void)
         }
     }
     tide_run_hosting_leave();
+    tide_run_travel_drop();
     const bool open = tide_run_drawer.open;
     tide_stats_free(&tide_run_drawer);
     tide_run_drawer.open = open;
@@ -2895,6 +2953,158 @@ static inline void tide_run_send_commands(void)
     }
 }
 
+// Lets go of the recording (and of a pause): before the code of the build that made its worlds goes
+static inline void tide_run_travel_drop(void)
+{
+    if (tide_run_travel.live && tide_run_session && tide_run_travel.recorded == tide_run_session) {
+        tide_session_record(tide_run_session, NULL);
+    }
+    tide_timeline_destroy(tide_run_travel.live);
+    tide_run_travel.live = NULL;
+    tide_run_travel.recorded = NULL;
+    tide_run_travel.game = NULL;
+    tide_run_travel.paused = tide_run_travel.step = false;
+}
+
+// Why the match can't pause now, "" when it can: a dev build's match that this machine runs, alone
+static inline const char *tide_run_travel_why(void)
+{
+    const tide_host_game *game = tide_run_game;
+    if (tide_run_embedded || !game || !game->inspect) return "pausing is a dev build's";
+    if (!tide_run_session) return "there's no match";
+    if (game->game->shards) return "a sharded match doesn't pause";
+    const tide_session_status status = tide_session_status_of(tide_run_session);
+    if (!status.server) return status.client.state == TIDE_SESSION_OFFLINE ? "there's no match" : "the match is another machine's";
+    if (tide_session_remote_players(tide_run_session)) return "other machines' players are in the match";
+    if (!tide_run_travel.live || !tide_timeline_started(tide_run_travel.live)) return "the match hasn't started";
+    return "";
+}
+
+// The match recorded while it's one this machine runs in a dev build, and a pause that can't last ended
+static inline void tide_run_travel_follow(void)
+{
+    const tide_host_game *game = tide_run_game;
+    const bool wanted = !tide_run_embedded && game && game->inspect && tide_run_session && !game->game->shards
+                     && tide_session_status_of(tide_run_session).server;
+    if (!wanted || (tide_run_travel.live && (tide_run_travel.recorded != tide_run_session || tide_run_travel.game != game->game))) {
+        if (tide_run_travel.live || tide_run_travel.paused) tide_run_travel_drop();
+    }
+    if (wanted && !tide_run_travel.live) {
+        tide_run_travel.live = tide_timeline_create(&(tide_timeline_desc){.game = game->game, .jobs = tide_run_jobs()});
+        if (!tide_run_travel.live) return;
+        tide_run_travel.recorded = tide_run_session;
+        tide_run_travel.game = game->game;
+        const tide_session_recorder recorder = tide_timeline_recorder(tide_run_travel.live);
+        tide_session_record(tide_run_session, &recorder);
+    }
+    if (tide_run_travel.paused && tide_run_travel_why()[0]) {
+        tide_run_travel.paused = tide_run_travel.step = false; // It goes on
+        }
+}
+
+static inline uint32_t tide_run_travel_last(void)
+{
+    return tide_run_travel.live ? tide_timeline_last(tide_run_travel.live) : 0u;
+}
+
+// The tick the frames show: the latest, but for an earlier one shown while paused
+static inline uint32_t tide_run_travel_shown(void)
+{
+    const uint32_t last = tide_run_travel_last();
+    return tide_run_travel.paused && tide_run_travel.shown < last ? tide_run_travel.shown : last;
+}
+
+static inline void tide_run_travel_pause(const bool paused)
+{
+    if (!paused) { // Going on from the latest: what was shown is let go
+        tide_run_travel.paused = tide_run_travel.step = false;
+            return;
+    }
+    if (tide_run_travel_why()[0] || tide_run_travel.paused) return;
+    tide_run_travel.paused = true;
+    tide_run_travel.step = false;
+    tide_run_travel.shown = tide_run_travel_last();
+}
+
+// A tick on: the next one kept, or from the latest, the match's next tick
+static inline void tide_run_travel_forward(void)
+{
+    if (!tide_run_travel.paused) return;
+    if (tide_run_travel.shown < tide_run_travel_last()) tide_run_travel.shown++;
+    else tide_run_travel.step = true;
+}
+
+// A tick back, if there's one before it
+static inline void tide_run_travel_back(void)
+{
+    if (!tide_run_travel.paused || !tide_run_travel.live) return;
+    const uint32_t shown = tide_run_travel_shown();
+    if (shown > tide_timeline_first(tide_run_travel.live) && tide_timeline_world(tide_run_travel.live, shown - 1u)) {
+        tide_run_travel.shown = shown - 1u;
+    }
+}
+
+// The match goes on from the tick shown: the ticks after it are let go
+static inline void tide_run_travel_go_on(void)
+{
+    if (!tide_run_travel.paused || !tide_run_travel.live) return;
+    const uint32_t tick = tide_run_travel_shown();
+    const void *world = tide_timeline_world(tide_run_travel.live, tick);
+    if (!world || !tide_session_rewind(tide_run_session, world)) return;
+    tide_timeline_cut(tide_run_travel.live, tick, tide_session_server_world(tide_run_session));
+    tide_run_travel.paused = tide_run_travel.step = false;
+}
+
+// A new build takes over (reload_library.inc's reload_before, while the old one's code is still loaded): one of the
+// same layout keeps the recording, its worlds its to show and free from now on, and the pause; another, or a full
+// reload, lets go of them, and the match goes on
+static inline void tide_run_travel_reload(const tide_host_game *old, const tide_host_game *next)
+{
+    if (next && tide_run_travel.live && next->game->hash == old->game->hash) {
+        tide_timeline_set_game(tide_run_travel.live, next->game);
+        tide_run_travel.game = next->game;
+        return;
+    }
+    tide_run_travel_drop();
+}
+
+// What the frame gives the match: its own length, or paused, none but a step's, to just past the next tick
+static inline float tide_run_travel_seconds(const float seconds)
+{
+    tide_run_travel_follow();
+    if (!tide_run_travel.paused) return seconds;
+    const bool step = tide_run_travel.step && tide_run_travel_shown() == tide_run_travel_last();
+    tide_run_travel.step = false;
+    if (!step) return 0.0f;
+    tide_run_travel.shown = tide_run_travel_last() + 1u; // ...where the frames go, as the step is the latest
+    return (float)(tide_session_until_tick(tide_run_session) + 1e-6);
+}
+
+// While paused at an earlier tick: its world, which the frame's views draw. NULL for the latest.
+static inline const void *tide_run_travel_world(void)
+{
+    if (!tide_run_travel.paused || !tide_run_travel.live || tide_run_travel.shown >= tide_run_travel_last()) return NULL;
+    return tide_timeline_world(tide_run_travel.live, tide_run_travel.shown);
+}
+
+// After a frame of an earlier tick: what its views sent or asked for goes nowhere
+static inline void tide_run_travel_discard(void)
+{
+    const tide_host_game *game = tide_run_game;
+    void *local = tide_run_local;
+    if (game->command && game->command_sent) {
+        uint32_t size;
+        for (uint32_t i = 0; i <= tide_game_command_channels(game->game); i++) {
+            const uint32_t channel = tide_run_command_channel(i);
+            while (game->command(local, channel, &size)) game->command_sent(local, channel);
+        }
+    }
+    tide_session_request request;
+    void *start = calloc(1, game->game->start_size ? game->game->start_size : 1u);
+    while (start && game->take_request(local, &request, start)) {}
+    free(start);
+}
+
 // Only between complete frames: no views, GPU calls, reload, session requests
 // or local event handlers run here. The last polled devices keep held input;
 // sampling consumes their edges once, as it does in an ordinary frame.
@@ -2999,7 +3209,9 @@ static inline int tide_run_frame(void *user, const float seconds)
     tide_profile *measured = timing || tide_run_profiling || tide_run_reporting ? &tide_run_profiler.profile : NULL;
     tide_platform_jobs_profile(measured);
     tide_run_alone.profile = measured;
-    tide_run_frame_now += seconds;
+    // Paused, the match gets no time but a step's (tide_run_travel)
+    const float match_seconds = tide_run_travel_seconds(seconds);
+    tide_run_frame_now += match_seconds;
     const float update_seconds = tide_run_frame_now > tide_run_now ? (float)(tide_run_frame_now - tide_run_now) : 0.0f;
     if (tide_run_frame_now > tide_run_now) tide_run_now = tide_run_frame_now;
     tide_profiler_mark(profiler, TIDE_FRAME_INPUT);
@@ -3017,7 +3229,7 @@ static inline int tide_run_frame(void *user, const float seconds)
     tide_session *s = tide_run_session;
     // Existing visual errors age before this update adds fresh corrections.
     if (game->age_views) game->age_views(tide_run_local, update_seconds);
-    game->frame_time(tide_run_local, seconds);
+    game->frame_time(tide_run_local, match_seconds);
     // A room joined that isn't one, or whose host can't be reached, fails now
     // rather than timing out.
     if (tide_platform_room_failed() || tide_platform_players_failed()) tide_session_fail(s, TIDE_DISCONNECT_FAILED);
@@ -3104,10 +3316,13 @@ static inline int tide_run_frame(void *user, const float seconds)
 
     // Views draw at the frame rate, the match blended between its last two ticks
     tide_view_worlds view = tide_session_view(s);
-    if (tide_run_unblended) {
+    if (tide_run_unblended || tide_run_travel.paused) {
         view.previous = view.verified_previous = NULL;
         view.alpha = view.verified_alpha = 1.0f;
     }
+    // Paused at an earlier tick: its world
+    const void *earlier = tide_run_travel_world();
+    if (earlier) view.current = view.verified = earlier;
     const void *match = view.current;
 #ifdef __wasm__
     // A failed initial connection must still show local error/retry UI without a match view.
@@ -3159,6 +3374,7 @@ static inline int tide_run_frame(void *user, const float seconds)
     }
     tide_session_mark_presented(s);
     tide_gui_end(&tide_run_gui, &tide_run_draw);
+    if (earlier) tide_run_travel_discard(); // What its views sent or asked for goes nowhere
     tide_profiler_mark(profiler, TIDE_FRAME_VIEWS);
     if (tide_run_reporting) tide_profile_report_mark(&tide_run_report, TIDE_FRAME_VIEWS);
     tide_profiler_draw(profiler, &tide_run_draw, tide_platform_screen_size(), tide_platform_measure_text);

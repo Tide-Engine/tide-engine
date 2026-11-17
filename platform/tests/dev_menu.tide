@@ -3,7 +3,8 @@
 // and its tweaks. The match paints the screen blue, or green once the tweak
 // Green is true, which it reads as the server applied it; the dev view paints
 // it red. The test builds a copy beside its run, whose dev_menu.tweaks the menu writes. Its inspector changes the
-// match: Shade.dark paints the screen black, and a Lamp's level of 5 a white square.
+// match: Shade.dark paints the screen black, and a Lamp's level of 5 a white square. A square of the clock's, magenta
+// on even ticks and cyan on odd ones, shows the match paused, stepped and gone back.
 
 tweak bool Green = false;
 // More than the menu shows at once in the test's 200 pixels: it scrolls to Far
@@ -59,4 +60,18 @@ dev view Marker()
 {
     Draw.SetScreen();
     Draw.Rect(float2(0, 0), float2(1000, 1000), Color(1, 0, 0)); // The whole screen
+}
+
+singleton Clock { int ticks; } // After the others, so the inspector's rows the test reads stay where they were
+
+system Count(mut Clock clock)
+{
+    clock.ticks += 1;
+}
+
+[After(Backdrop)]
+view Ticking(Clock clock)
+{
+    Draw.SetScreen();
+    Draw.Rect(float2(470, 170), float2(6, 10), clock.ticks % 2 == 0 ? Color(1, 0, 1) : Color(0, 1, 1));
 }

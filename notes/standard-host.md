@@ -1,5 +1,30 @@
 # The standard host: runs with no window, the stats, debug views
 
+## Pausing, stepping and going back (2026-11-17)
+
+The owner: part of the dev menu. Built on `tide/timeline.h` (Unity's time travel, notes/unity.md), mirroring
+`embed.c`'s travel for the standard host (`tide_run_travel`, host.h; the embedded host keeps its own).
+
+- **Recording**: while a dev build's (`game->inspect`) session runs the match's server here, not sharded and not
+  embedded, `tide_run_travel_follow` makes a timeline (600 ticks kept: page-sharing `copy_world` snapshots, so a
+  tick costs its changed pages) and records into it (`tide_session_record`); dropped with the session
+  (`tide_run_end`), a client, or a build of another layout (`tide_run_travel_reload` as `reload_before` in
+  `reload.c`; the same layout keeps it with `tide_timeline_set_game`).
+- **The frame**: `tide_run_travel_seconds` gives the match the frame's length, or paused none but a step's (to just
+  past the next tick), which goes into `tide_run_frame_now` and `frame_time`; paused, views are unblended. Shown an
+  earlier tick (`tide_run_travel_world`), the views and the menu get its world in place of the session's, on this
+  machine's own local state (a copy would share its render targets), and `tide_run_travel_discard` drops the
+  commands and requests they made. Go on from here: `tide_session_rewind` with the shown world and
+  `tide_timeline_cut`, as `tide_embed_continue` does.
+- **Menu** (`tide_run_dev_time`, in the tabs' box): Pause/Play, then paused Back, Step and "tick N of M", and Go on
+  from here at an earlier tick; where it can't pause, "Can't pause: <why>" (another machine's match, other
+  machines' players, a sharded match, not started). Inspector fields are in a Disabled block at an earlier tick.
+- Tests: `tide_platform_dev_menu`'s clock square (magenta even ticks, cyan odd): paused it holds over 10 frames,
+  Step flips it once, Back shows the tick before, Go on from here goes back to Pause and ticks again.
+- Gaps: no keyboard shortcuts; no scrubbing bar (Back/Step a tick at a time); a match with other machines' players
+  doesn't pause (the embed shows past ticks while it goes on behind; not built here); the recording isn't saved or
+  replayed from the menu (`tide_timeline_save` exists).
+
 ## Checkpoints (2026-11-17)
 
 The owner's asks: save/load (and start over from one) quickly for testing, agents able to make them and launch from

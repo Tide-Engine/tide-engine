@@ -163,6 +163,40 @@ try {
     await command('step 4', 'ready');
     await command('capture glow.png');
     assert.deepEqual(color('glow.png', 470, 120), [255, 255, 0]);
+    // The match paused: its clock's square stays as it is; a step is a tick on, Back a tick back, shown as it was,
+    // and the match goes on from there
+    const clock = name => color(name, 470, 170);
+    const other = c => c[0] === 255 ? [0, 255, 255] : [255, 0, 255];
+    await command('click Pause');
+    await command('step 3', 'ready');
+    await command('capture paused.png');
+    const held = clock('paused.png');
+    await command('step 10', 'ready');
+    await command('capture still.png');
+    assert.deepEqual(clock('still.png'), held, 'paused, the match has no time');
+    await command('controls');
+    for (const label of ['Play', 'Back', 'Step']) {
+        assert.ok(said.some(line => line.includes(`button "${label}"`)), said.join('\n'));
+    }
+    await command('click Step');
+    await command('step 3', 'ready');
+    await command('capture stepped.png');
+    assert.deepEqual(clock('stepped.png'), other(held), 'a step is one tick');
+    await command('click Back');
+    await command('step 3', 'ready');
+    await command('capture back.png');
+    assert.deepEqual(clock('back.png'), held, 'Back shows the tick before');
+    await command('controls');
+    assert.ok(said.some(line => line.includes('button "Go on from here"')), said.join('\n'));
+    await command('click "Go on from here"');
+    await command('step 3', 'ready');
+    await command('controls');
+    assert.ok(said.some(line => line.includes('button "Pause"')), 'it goes on: ' + said.join('\n'));
+    await command('capture going.png');
+    const going = clock('going.png');
+    await command('step 1', 'ready');
+    await command('capture going2.png');
+    assert.deepEqual(clock('going2.png'), other(going), 'the clock ticks again');
     // Back to the Dev tab
     await command('click Dev');
     await command('step 2', 'ready');

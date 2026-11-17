@@ -141,6 +141,14 @@ In a dev build, the key under **Escape** (`` ` `` on a US keyboard, where Valve'
 
 The game sees the key too. Interactive runs list the menu's switches among the GUI's widgets, so an agent can click one by name (see [Interactive play](./cli#interactive-play)).
 
+## Pausing and going back
+
+At the dev menu's top, whatever its tab, are the match's controls: **Pause** stops it, **Step** runs it a tick at a time, and **Back** goes back a tick, showing the match as it was then. **Go on from here** goes on from the tick shown, and what came after it is gone; **Play** goes on from the latest.
+
+- While the match runs, a dev build keeps its last 600 ticks (10 seconds at 60 a second) to go back through, and any tick since it began can be made again from what went into it.
+- The game's views draw the tick shown. What they send or ask for meanwhile goes nowhere, and the [inspector](#the-inspector) shows that tick's fields as they were, without changing them.
+- It's the match this machine runs: a client of another machine's match, a sharded one, or one with players from other machines doesn't pause, and the menu says why.
+
 ## The inspector
 
 The dev menu's **Match** and **Local** tabs are its inspector, which shows the game's state while it runs, and changes it. Nothing has to be written for it: every dev build has one, made from the game's own types.
