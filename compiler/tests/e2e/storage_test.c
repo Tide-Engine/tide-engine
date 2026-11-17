@@ -401,6 +401,9 @@ static void play(const tide_io *files_io, const int later)
 TIDE_TEST(storage_saves_loads_lists_and_deletes_the_same_on_every_machine)
 {
     TIDE_REQUIRE(tide_game_api.stored != NULL);
+    // A game whose match uses the store, and no file of its own, has a page open the browser's storage before it
+    // starts: a hosting page keeps the store there, and without it every load said the store was unavailable
+    TIDE_CHECK(tide_uses_io());
     forget_files();
     put_strays();
     put_file("Tide/store/locked/k.bin", (const uint8_t *)"x", 1); // A folder the host can't list

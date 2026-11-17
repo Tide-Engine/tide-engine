@@ -623,9 +623,13 @@ static void dev_used(const checker *c, const decl *d, const str name, const loc 
 // `owner`, that type's method. True when it was.
 static bool dev_left_out(const checker *c, const decl *owner, const str name, const loc at)
 {
+    // A name the compiler looks up for itself can be empty, as a declaration outside a namespace has no qualified
+    // name: one of those never names a dev declaration (a lone `dev command` failed a build without dev)
+    if (name.len == 0) return false;
     for (int i = 0; i < c->prog->left_out.count; i++) {
         const decl *dev = c->prog->left_out.items[i];
-        if (owner ? dev->owner != owner || !str_eq(dev->name, name) : dev->owner || (!str_eq(dev->name, name) && !str_eq(dev->qualified, name))) continue;
+        const bool qualified = dev->qualified.len > 0 && str_eq(dev->qualified, name);
+        if (owner ? dev->owner != owner || !str_eq(dev->name, name) : dev->owner || (!str_eq(dev->name, name) && !qualified)) continue;
         diag_error(at, "'" STR_FMT "' is 'dev', and this build isn't a dev one, so it's left out", STR_ARG(name));
         diag_note("code that uses it must be 'dev' too, or build with dev ('tide run' does; 'tide build --dev')");
         return true;

@@ -43,7 +43,7 @@ TIDE_TEST(dev_build_views_shown)
     frame(&world, &local);
     TIDE_CHECK(local.Drawn.game == 3 && local.Drawn.tools <= 1);
     for (int i = 0; i < 10; i++) tide_world_tick(&world);
-    TIDE_CHECK(world.Shots.fired == 3);
+    TIDE_CHECK(world.Shots.fired == 3 && world.Shots.guns == 1);
     tide_local_free(&local);
     tide_world_free(&world);
 }
