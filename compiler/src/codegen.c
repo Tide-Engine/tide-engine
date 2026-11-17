@@ -28722,7 +28722,9 @@ static void gen_game_api(gen *g)
     sb *o = &g->c;
     sb_put(o, "void tide_local_set_io(tide_local *local, const tide_io *io)\n{\n    local->tide_io = io;\n}\n\n");
     sb_put(o, "#ifdef __wasm__\n__attribute__((export_name(\"tide_uses_io\")))\n#endif\nbool tide_uses_io(void)\n{\n");
-    sb_printf(o, "    return %s;\n}\n\n", program_uses_io(prog) ? "true" : "false");
+    // A page opens the browser's storage before it starts for a game that reaches files, and for one whose match
+    // keeps things in the server's store, which a page that hosts keeps in its files (Tide/store/)
+    sb_printf(o, "    return %s;\n}\n\n", program_uses_io(prog) || prog->uses_storage ? "true" : "false");
     gen_world_copy(g);
     gen_client_state(g);
     gen_client_changes(g);
