@@ -36,8 +36,17 @@ maps, entities shown (an entity a button); no game labels; a Local tab; any play
   says where the next goes, and one outside is only its room (indent wide, a line tall), so no label is made or
   measured for it and `TIDE_GUI_MAX_RECTS`/IDs aren't spent. A row's id is a hash of its entity, so it's the same
   widget wherever it is. An Entity field's button opens the entity and its ancestors and scrolls to it as its row is
-  laid out (two frames to find it). Names: `#birth`, with `/` and the lineage's low 16 bits in hex where the packet
-  has another of that birth (spawned in the same tick). Fields go through `tide_run_dev_value` (the tweaks' editors).
+  laid out (two frames to find it). Numbers: `#birth`, with `/` and the lineage's low 16 bits in hex where the packet
+  has another of that birth (spawned in the same tick); shown only inside an open entity (the owner: "magic
+  characters"), and in rows' labels for scripts. A row says its components and a preview
+  (`tide_run_inspect_summary`: the first non-hidden string field of its components, else the first that
+  `tide_run_inspect_brief` can say: numbers and vectors, bool, enum member); an Entity field is a link saying the
+  same. Look (2026-11-17, the owner's ask for readable): the menu's own theme (`tide_run_dev_theme`: 14 px text,
+  washes of white for controls, sunk fields, a soft blue accent, a bordered panel), text tabs with the current one
+  underlined, small dim section headings, rows drawn by the host over a `tide_gui_control` (chevron, name, dim
+  preview, "· N under it", hover wash, focus ring) labelled through `tide_gui_describe`, faint guides down from
+  open rows' chevrons, fields under the row's name with each component's 12 px further in, read-only values in the
+  editors' value column (130 px). Fields go through `tide_run_dev_value` (the tweaks' editors).
   Sent changes are kept (16) and shown over the packet's value until it matches, a second at most. Packets are made
   only while the inspector is open. `TideTweaks`/`TideTweaksHere` are left out of the lists, as are fields the layout marks `hidden`
   (`tide_layout_field.hidden`, from the compiler's `field.hidden`: the engine's own) and types all of whose fields are
@@ -51,7 +60,7 @@ maps, entities shown (an entity a button); no game labels; a Local tab; any play
   the match's). `tide_platform_dev_menu`: the Match tab (no `tide_` singleton, no Dev tab's tweak), then Dev again, a singleton's bool (black screen), a
   group, an entity, an int typed and entered (white square), the Local tab's singleton (yellow square). The test now
   resets its .tweaks file in `finally`, so a failed run doesn't leave Green worked out for the next. With the tree:
-  `+ Shade` opened in place (scrolled two lines to its field), `- Shade` closed, the Lamp's row opened, `+ Glow`.
+  `Shade` opened in place (scrolled two lines to its field) and closed, the Lamp's row opened, `Glow`.
   Nesting was checked by screenshots with a scratch hierarchy (rooms under rooms), not by a test.
 - Gaps: no game-chosen entity label; keyboard/gamepad focus can't reach a row outside the viewport (it isn't a
   widget); scenes aren't roots (the packet doesn't say an entity's scene; a scene's tag shows as a component); text/lists/maps/entities read-only; very large worlds pay a whole packet per
