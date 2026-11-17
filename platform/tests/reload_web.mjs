@@ -5,7 +5,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
-const source = await readFile(new URL('../web/tide.js', import.meta.url), 'utf8');
+// (Lines as \n: a Windows checkout may have \r\n, which the searches below would miss)
+const source = (await readFile(new URL('../web/tide.js', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
 const block = source.slice(source.indexOf('    // <tide run>'), source.indexOf('    // </tide run>'));
 assert.ok(block.includes('if (config.reload)'), 'the production reload block is present');
 // ...and the page's tweaks and checkpoints, which every page has and the block fills in
