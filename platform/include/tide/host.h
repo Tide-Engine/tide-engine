@@ -1269,18 +1269,42 @@ static inline void tide_run_dev_tweaks(const tide_tweaks_api *api)
 }
 
 // The dev menu's inspector (tide/inspect.h): the match's or this machine's local world, as packets made while it's
-// open, its singletons and its entities by the components they have, and one of them open with its fields. A field of
-// the match changes through the server, so the field shows what was sent until the match has it; the local world's
-// changes here.
-static bool tide_run_inspect_local;       // The local world's, not the match's (the menu's tab)
-static uint32_t tide_run_inspect_what;    // 0: the lists; 1: a singleton; 2: an entity
-static int32_t tide_run_inspect_type;     // The singleton's layout type
-static uint32_t tide_run_inspect_kind;    // ...and its section's kind
-static tide_entity tide_run_inspect_entity;
-static uint64_t tide_run_inspect_group;   // The group of entities open in the list, by its components; 0 for none
+// open, as a tree: its singletons, then its entities under their parents, each opened in place with its fields. Every
+// row is there to scroll to, and as deep as the tree goes, the list scrolls sideways. A field of the match changes
+// through the server, so the field shows what was sent until the match has it; the local world's changes here.
+static bool tide_run_inspect_local; // The local world's, not the match's (the menu's tab)
 static tide_packet tide_run_inspect_packets[2];
-static uint64_t *tide_run_inspect_keys;   // Each entity's components, hashed
-static uint32_t tide_run_inspect_key_capacity;
+
+// What's open in the tree, by what it is, so it stays open as the world changes: an entity by its handle, a singleton
+// by its section's kind and type; each in the world of its tab
+typedef struct tide_run_inspect_node {
+    tide_entity entity;
+    uint32_t kind; // 0: an entity
+    int32_t type;
+    bool local;
+} tide_run_inspect_node;
+#define TIDE_RUN_INSPECT_OPEN 256u
+static tide_run_inspect_node tide_run_inspect_open[TIDE_RUN_INSPECT_OPEN];
+static uint32_t tide_run_inspect_open_count;
+
+// An entity a field's button opened, scrolled to as its row is laid out
+static tide_entity tide_run_inspect_reveal;
+static uint32_t tide_run_inspect_revealing; // Frames left to find it in: the one it's asked in may be past its row
+// The list's viewport this frame, and where it's scrolled to: rows past it are only room
+static tide_rect tide_run_inspect_view;
+static tide_float2 *tide_run_inspect_offset;
+
+// Each frame's, from its packet: the entities' children (the first and the next, UINT32_MAX for none), each entity's
+// components (from its start, as a section and a row of it), and a stack of rows to lay out
+typedef struct tide_run_inspect_has {
+    uint32_t part, row;
+} tide_run_inspect_has;
+static uint32_t *tide_run_inspect_first, *tide_run_inspect_next, *tide_run_inspect_start, *tide_run_inspect_stack;
+static uint32_t tide_run_inspect_entity_capacity;
+static tide_run_inspect_has *tide_run_inspect_comps;
+static uint32_t tide_run_inspect_comp_capacity;
+static tide_packet_part *tide_run_inspect_parts;
+static uint32_t tide_run_inspect_part_capacity;
 
 // A change sent to the match and not back yet: shown as sent, a second at the most
 typedef struct tide_run_inspect_sent {
@@ -1292,11 +1316,10 @@ typedef struct tide_run_inspect_sent {
 } tide_run_inspect_sent;
 static tide_run_inspect_sent tide_run_inspect_pending[16];
 
-// Its widgets' ids, one after another in the frame
+// Its fields' widgets' ids, one after another in the frame
 static uint32_t tide_run_inspect_id;
 
-#define TIDE_RUN_INSPECT_GROUPS 128u
-#define TIDE_RUN_INSPECT_ROWS 500u // An open group's entities listed, the most
+#define TIDE_RUN_INSPECT_INDENT 14.0f // A level of the tree, in pixels
 
 static inline const char *tide_run_inspect_type_name(const tide_layout *layout, const uint32_t type)
 {
@@ -1314,10 +1337,18 @@ static inline bool tide_run_inspect_internal(const tide_layout *layout, const ui
     return true;
 }
 
-// An entity as the menu names it: by its birth, which stays what it is
-static inline void tide_run_inspect_entity_name(const tide_entity e, char *out, const size_t size)
+// An entity as the menu names it: by its birth, which stays what it is, and where the packet has others born with it
+// (spawned in the same tick), a little of its lineage after it, which tells them apart
+static inline void tide_run_inspect_entity_name(const tide_packet *p, const tide_entity e, char *out, const size_t size)
 {
-    snprintf(out, size, "#%llu", (unsigned long long)(e.birth ? e.birth : e.lineage));
+    const uint32_t n = tide_packet_entities(p->bytes, p->size);
+    bool shared = false;
+    for (uint32_t i = 0; i < n && !shared; i++) {
+        const tide_entity other = tide_packet_entity(p->bytes, p->size, i, NULL);
+        shared = other.birth == e.birth && other.lineage != e.lineage;
+    }
+    if (shared) snprintf(out, size, "#%llu/%04llx", (unsigned long long)e.birth, (unsigned long long)(e.lineage & 0xFFFFu));
+    else snprintf(out, size, "#%llu", (unsigned long long)(e.birth ? e.birth : e.lineage));
 }
 
 static inline uint32_t tide_run_inspect_place(const tide_packet *p, const tide_entity e)
@@ -1330,8 +1361,104 @@ static inline uint32_t tide_run_inspect_place(const tide_packet *p, const tide_e
     return UINT32_MAX;
 }
 
-// A field that's no value an editor changes, said as it is: text, an entity (a button that opens it), how much a
-// list or a map holds
+// Entity `i`'s parent, as its place: UINT32_MAX for a root (or a parent that isn't among them, or itself)
+static inline uint32_t tide_run_inspect_parent(const tide_packet *p, const uint32_t i)
+{
+    const uint32_t n = tide_packet_entities(p->bytes, p->size);
+    if (i >= n) return UINT32_MAX;
+    uint32_t parent;
+    memcpy(&parent, p->bytes + TIDE_PACKET_HEADER + (size_t)i * TIDE_PACKET_ENTITY + 24u, sizeof parent);
+    return parent < n && parent != i ? parent : UINT32_MAX;
+}
+
+static inline uint32_t tide_run_inspect_find(const uint32_t kind, const int32_t type, const tide_entity e)
+{
+    for (uint32_t i = 0; i < tide_run_inspect_open_count; i++) {
+        const tide_run_inspect_node *o = &tide_run_inspect_open[i];
+        if (o->kind == kind && o->type == type && o->local == tide_run_inspect_local && o->entity.birth == e.birth
+            && o->entity.lineage == e.lineage)
+            return i;
+    }
+    return UINT32_MAX;
+}
+
+// Opens it (the longest open closing, past as many as are kept), or closes it
+static inline void tide_run_inspect_set_open(const uint32_t kind, const int32_t type, const tide_entity e, const bool open)
+{
+    const uint32_t at = tide_run_inspect_find(kind, type, e);
+    if ((at != UINT32_MAX) == open) return;
+    if (!open) {
+        memmove(&tide_run_inspect_open[at], &tide_run_inspect_open[at + 1],
+                (size_t)(--tide_run_inspect_open_count - at) * sizeof tide_run_inspect_open[0]);
+        return;
+    }
+    if (tide_run_inspect_open_count == TIDE_RUN_INSPECT_OPEN) {
+        memmove(&tide_run_inspect_open[0], &tide_run_inspect_open[1],
+                (size_t)--tide_run_inspect_open_count * sizeof tide_run_inspect_open[0]);
+    }
+    tide_run_inspect_open[tide_run_inspect_open_count++] = (tide_run_inspect_node){e, kind, type, tide_run_inspect_local};
+}
+
+// An entity in the tree, opened, and every entity it's under, then scrolled to
+static inline void tide_run_inspect_show(const tide_packet *p, const tide_entity e)
+{
+    tide_run_inspect_reveal = e;
+    tide_run_inspect_revealing = 2;
+    uint32_t at = tide_run_inspect_place(p, e);
+    for (uint32_t depth = 0; at != UINT32_MAX && depth < 256u; depth++) {
+        tide_run_inspect_set_open(0, -1, tide_packet_entity(p->bytes, p->size, at, NULL), true);
+        at = tide_run_inspect_parent(p, at);
+    }
+}
+
+// As tall as a row is: a widget's (gui.c's LINE)
+static inline float tide_run_inspect_line(void)
+{
+    return tide_run_gui.theme.text_size + 12.0f;
+}
+
+// Whether the next row of the tree shows in the list, its top in `y`. One that doesn't is only room, taken here, so a
+// world of any size costs what's shown: none of its text is made or measured.
+static inline bool tide_run_inspect_row_shows(const uint32_t depth, float *y)
+{
+    tide_gui *g = &tide_run_gui;
+    const tide_float2 next = tide_gui_layout_next(g);
+    const float line = tide_run_inspect_line();
+    const tide_rect v = tide_run_inspect_view;
+    *y = next.y;
+    if (next.y + line >= v.y && next.y <= v.y + v.height) return true;
+    tide_gui_layout_reserve(g, (tide_float2){TIDE_RUN_INSPECT_INDENT * (float)depth, line});
+    return false;
+}
+
+// A row of the tree that shows: a button `depth` levels in, as wide as its text. True when it's pressed.
+static inline bool tide_run_inspect_row(const uint32_t id, const char *text, const uint32_t depth)
+{
+    tide_gui *g = &tide_run_gui;
+    const float indent = TIDE_RUN_INSPECT_INDENT * (float)depth;
+    const float width = g->measure ? g->measure(text, g->theme.text_size, NULL, g->theme.font).x : 8.0f * (float)strlen(text);
+    // With the room a button's text has at each side (gui.c's PAD)
+    const tide_rect r = tide_gui_layout_reserve(g, (tide_float2){indent + width + 20.0f, tide_run_inspect_line()});
+    return tide_gui_button(g, id, (tide_rect){r.x + indent, r.y, r.width - indent, r.height}, text);
+}
+
+// What an open row holds, `depth` levels in: a row of its own with room before a column. Returns what closes it,
+// -1 for nothing to close (and nothing laid out)
+static inline int tide_run_inspect_begin_indent(const uint32_t id, const uint32_t depth)
+{
+    tide_gui *g = &tide_run_gui;
+    const int row = tide_gui_begin_horizontal(g, id);
+    if (row < 0) return -1;
+    tide_gui_layout_space(g, TIDE_RUN_INSPECT_INDENT * (float)depth);
+    if (tide_gui_begin_vertical(g, id + 1u) < 0) {
+        tide_gui_close(g, row);
+        return -1;
+    }
+    return row;
+}
+
+// A field that's no value an editor changes, said as it is: text, an entity (a button that shows it in the tree),
+// how much a list or a map holds
 static inline void tide_run_inspect_shown_value(const tide_packet *p, const tide_layout_field *f, const char *name,
                                                 const uint8_t *at)
 {
@@ -1342,12 +1469,9 @@ static inline void tide_run_inspect_shown_value(const tide_packet *p, const tide
         tide_entity e;
         memcpy(&e, at, sizeof e);
         char who[48];
-        tide_run_inspect_entity_name(e, who, sizeof who);
+        tide_run_inspect_entity_name(p, e, who, sizeof who);
         snprintf(line, sizeof line, "%s: %s", name, tide_entity_is_null(e) ? "none" : who);
-        if (tide_gui_layout_button(g, tide_run_inspect_id++, line) && !tide_entity_is_null(e)) {
-            tide_run_inspect_what = 2;
-            tide_run_inspect_entity = e;
-        }
+        if (tide_gui_layout_button(g, tide_run_inspect_id++, line) && !tide_entity_is_null(e)) tide_run_inspect_show(p, e);
         return;
     }
     const bool text = strcmp(type, "string") == 0;
@@ -1488,11 +1612,87 @@ static inline void tide_run_inspect_value(const tide_inspect_api *api, const tid
     tide_run_inspect_fields(api, p, part->kind, target, (int32_t)part->type, (int32_t)part->type, value, 0, "", 0);
 }
 
-static inline void tide_run_inspect_lists(const tide_inspect_api *api, const tide_packet *p)
+// Room for `count` of `each` bytes in `*buffer`, kept between frames; false when there's none
+static inline bool tide_run_inspect_room(void **buffer, uint32_t *capacity, const uint32_t count, const size_t each)
 {
-    tide_gui *g = &tide_run_gui;
+    if (count <= *capacity) return true;
+    const uint32_t want = count < 64u ? 64u : count + count / 2u;
+    void *grown = realloc(*buffer, (size_t)want * each);
+    if (!grown) return false;
+    *buffer = grown;
+    *capacity = want;
+    return true;
+}
+
+// From the packet: its components' sections the menu lists, each entity's of them, and its children
+static inline bool tide_run_inspect_index(const tide_layout *layout, const tide_packet *p, const uint32_t n,
+                                          uint32_t *parts_out)
+{
+    uint32_t parts = 0, total = 0, at = 0;
+    tide_packet_part part;
+    while (tide_packet_next(p->bytes, p->size, &at, &part)) {
+        if (part.kind != TIDE_PACKET_COMPONENT && part.kind != TIDE_PACKET_COMPONENT_LOCAL) continue;
+        if (tide_run_inspect_internal(layout, part.type)) continue;
+        if (!tide_run_inspect_room((void **)&tide_run_inspect_parts, &tide_run_inspect_part_capacity, parts + 1u,
+                                   sizeof *tide_run_inspect_parts))
+            return false;
+        tide_run_inspect_parts[parts++] = part;
+        total += part.count;
+    }
+    uint32_t capacity = tide_run_inspect_entity_capacity;
+    if (!tide_run_inspect_room((void **)&tide_run_inspect_first, &capacity, n + 1u, sizeof(uint32_t))) return false;
+    capacity = tide_run_inspect_entity_capacity;
+    if (!tide_run_inspect_room((void **)&tide_run_inspect_next, &capacity, n + 1u, sizeof(uint32_t))) return false;
+    capacity = tide_run_inspect_entity_capacity;
+    if (!tide_run_inspect_room((void **)&tide_run_inspect_start, &capacity, n + 1u, sizeof(uint32_t))) return false;
+    capacity = tide_run_inspect_entity_capacity;
+    if (!tide_run_inspect_room((void **)&tide_run_inspect_stack, &capacity, n + 1u, sizeof(uint32_t))) return false;
+    tide_run_inspect_entity_capacity = capacity;
+    if (!tide_run_inspect_room((void **)&tide_run_inspect_comps, &tide_run_inspect_comp_capacity, total + 1u,
+                               sizeof *tide_run_inspect_comps))
+        return false;
+    // Each entity's components, side by side: counted, then each one's start, then put in its place in order
+    uint32_t *start = tide_run_inspect_start;
+    memset(start, 0, (size_t)(n + 1u) * sizeof *start);
+    for (uint32_t k = 0; k < parts; k++) {
+        for (uint32_t r = 0; r < tide_run_inspect_parts[k].count; r++) {
+            const uint32_t e = tide_run_inspect_parts[k].rows[r];
+            if (e < n) start[e + 1u]++;
+        }
+    }
+    for (uint32_t i = 0; i < n; i++) start[i + 1u] += start[i];
+    uint32_t *fill = tide_run_inspect_stack; // For now, where each entity's next one goes
+    memcpy(fill, start, (size_t)n * sizeof *fill);
+    for (uint32_t k = 0; k < parts; k++) {
+        for (uint32_t r = 0; r < tide_run_inspect_parts[k].count; r++) {
+            const uint32_t e = tide_run_inspect_parts[k].rows[r];
+            if (e < n) tide_run_inspect_comps[fill[e]++] = (tide_run_inspect_has){k, r};
+        }
+    }
+    // Children, in the order the entities are: from the last up, each its parent's first so far
+    for (uint32_t i = 0; i < n; i++) tide_run_inspect_first[i] = tide_run_inspect_next[i] = UINT32_MAX;
+    for (uint32_t i = n; i-- > 0;) {
+        const uint32_t parent = tide_run_inspect_parent(p, i);
+        if (parent == UINT32_MAX) continue;
+        tide_run_inspect_next[i] = tide_run_inspect_first[parent];
+        tide_run_inspect_first[parent] = i;
+    }
+    *parts_out = parts;
+    return true;
+}
+
+// An entity's row's id, by its handle, so it's the same widget whatever's around it
+static inline uint32_t tide_run_inspect_row_id(const tide_entity e)
+{
+    const uint64_t key[2] = {e.birth, e.lineage};
+    const uint64_t h = tide_run_bytes_hash((const uint8_t *)key, sizeof key);
+    return (uint32_t)(h ^ (h >> 32)) | 0x80000000u;
+}
+
+static inline void tide_run_inspect_tree(const tide_inspect_api *api, const tide_packet *p)
+{
     const tide_layout *layout = api->layout;
-    // Singletons, by name
+    // Singletons, by name, each opened in place
     tide_packet_part part;
     uint32_t at = 0;
     bool any = false;
@@ -1500,141 +1700,105 @@ static inline void tide_run_inspect_lists(const tide_inspect_api *api, const tid
         if (part.kind != TIDE_PACKET_SINGLETON && part.kind != TIDE_PACKET_SINGLETON_LOCAL) continue;
         const char *type = tide_run_inspect_type_name(layout, part.type);
         if (strcmp(type, "TideTweaks") == 0 || strcmp(type, "TideTweaksHere") == 0) continue; // The Dev tab's tweaks
-        if (tide_run_inspect_internal(layout, part.type)) continue;
+        if (tide_run_inspect_internal(layout, part.type) || !part.count) continue;
         if (!any) tide_run_inspect_heading("Singletons", 18.0f);
         any = true;
+        const tide_entity none = {0, 0};
+        const bool open = tide_run_inspect_find(part.kind, (int32_t)part.type, none) != UINT32_MAX;
         char label[160];
-        snprintf(label, sizeof label, "%s%s", tide_run_inspect_type_name(layout, part.type),
+        snprintf(label, sizeof label, "%s %s%s", open ? "-" : "+", type,
                  part.kind == TIDE_PACKET_SINGLETON_LOCAL && !tide_run_inspect_local ? " (local fields)" : "");
-        if (tide_gui_layout_button(g, tide_run_inspect_id++, label)) {
-            tide_run_inspect_what = 1;
-            tide_run_inspect_type = (int32_t)part.type;
-            tide_run_inspect_kind = part.kind;
-        }
-    }
-    // Entities, a group for each set of components: the hash of their types, each entity's
-    const uint32_t n = tide_packet_entities(p->bytes, p->size);
-    if (!n) return;
-    if (n > tide_run_inspect_key_capacity) {
-        uint64_t *keys = realloc(tide_run_inspect_keys, (size_t)n * sizeof *keys);
-        if (!keys) return;
-        tide_run_inspect_keys = keys;
-        tide_run_inspect_key_capacity = n;
-    }
-    uint64_t *keys = tide_run_inspect_keys;
-    for (uint32_t i = 0; i < n; i++) keys[i] = 0xCBF29CE484222325ull;
-    at = 0;
-    while (tide_packet_next(p->bytes, p->size, &at, &part)) {
-        if (part.kind != TIDE_PACKET_COMPONENT) continue;
-        for (uint32_t r = 0; r < part.count; r++) {
-            if (part.rows[r] < n) keys[part.rows[r]] = (keys[part.rows[r]] ^ (part.type + 1u)) * 0x100000001B3ull;
-        }
-    }
-    uint64_t group_keys[TIDE_RUN_INSPECT_GROUPS];
-    uint32_t group_first[TIDE_RUN_INSPECT_GROUPS], group_count[TIDE_RUN_INSPECT_GROUPS], groups = 0;
-    for (uint32_t i = 0; i < n; i++) {
-        uint32_t k = 0;
-        while (k < groups && group_keys[k] != keys[i]) k++;
-        if (k == groups) {
-            if (groups == TIDE_RUN_INSPECT_GROUPS) continue;
-            group_keys[groups] = keys[i];
-            group_first[groups] = i;
-            group_count[groups++] = 0;
-        }
-        group_count[k]++;
-    }
-    tide_run_inspect_heading("Entities", 18.0f);
-    for (uint32_t k = 0; k < groups; k++) {
-        // Named by the components its first entity has
-        char label[512];
-        size_t used = 0;
-        label[0] = '\0';
-        at = 0;
-        while (tide_packet_next(p->bytes, p->size, &at, &part)) {
-            if (part.kind != TIDE_PACKET_COMPONENT || tide_run_inspect_internal(layout, part.type)) continue;
-            bool has = false;
-            for (uint32_t r = 0; r < part.count && !has; r++) has = part.rows[r] == group_first[k];
-            if (has && used < sizeof label) {
-                used += (size_t)snprintf(label + used, sizeof label - used, "%s%s", used ? ", " : "",
-                                         tide_run_inspect_type_name(layout, part.type));
-            }
-        }
-        if (used < sizeof label) snprintf(label + used, sizeof label - used, "%s x%u", used ? "" : "(none)", group_count[k]);
-        const bool open = tide_run_inspect_group == group_keys[k];
-        char button[520];
-        snprintf(button, sizeof button, "%s %s", open ? "-" : "+", label);
-        if (tide_gui_layout_button(g, tide_run_inspect_id++, button)) tide_run_inspect_group = open ? 0 : group_keys[k];
+        const uint32_t id = 0xDE730000u + part.type * 8u + part.kind;
+        float y;
+        if (tide_run_inspect_row_shows(0, &y) && tide_run_inspect_row(id, label, 0))
+            tide_run_inspect_set_open(part.kind, (int32_t)part.type, none, !open);
         if (!open) continue;
-        uint32_t listed = 0;
-        for (uint32_t i = 0; i < n; i++) {
-            if (keys[i] != group_keys[k]) continue;
-            if (listed++ == TIDE_RUN_INSPECT_ROWS) {
-                char more[64];
-                snprintf(more, sizeof more, "...and %u more", group_count[k] - TIDE_RUN_INSPECT_ROWS);
-                tide_gui_layout_label(g, more);
-                break;
+        const int block = tide_run_inspect_begin_indent(0xDE740000u + part.type * 8u + part.kind * 2u, 1);
+        if (block < 0) continue;
+        tide_run_inspect_value(api, p, &part, 0, none);
+        tide_gui_close(&tide_run_gui, block);
+    }
+    // Entities, from those under none: each opened in place with its components, then the entities under it
+    const uint32_t n = tide_packet_entities(p->bytes, p->size);
+    uint32_t parts = 0;
+    if (!n || !tide_run_inspect_index(layout, p, n, &parts)) return;
+    char heading[48];
+    snprintf(heading, sizeof heading, "Entities (%u)", n);
+    tide_run_inspect_heading(heading, 18.0f);
+    // Depth-first, by a stack of places, each with its depth above it
+    uint32_t *stack = tide_run_inspect_stack, top = 0;
+    static uint32_t *depths;
+    static uint32_t depth_capacity;
+    if (!tide_run_inspect_room((void **)&depths, &depth_capacity, n + 1u, sizeof *depths)) return;
+    for (uint32_t i = n; i-- > 0;) {
+        if (tide_run_inspect_parent(p, i) != UINT32_MAX) continue;
+        depths[top] = 0;
+        stack[top++] = i;
+    }
+    while (top) {
+        const uint32_t i = stack[--top], depth = depths[top];
+        const tide_entity e = tide_packet_entity(p->bytes, p->size, i, NULL);
+        const bool open = tide_run_inspect_find(0, -1, e) != UINT32_MAX;
+        const bool parent = tide_run_inspect_first[i] != UINT32_MAX;
+        // Its row, where it shows: its name, and its components'
+        const uint32_t id = tide_run_inspect_row_id(e);
+        float y;
+        if (tide_run_inspect_row_shows(depth, &y)) {
+            char label[512], name[48];
+            tide_run_inspect_entity_name(p, e, name, sizeof name);
+            size_t used = (size_t)snprintf(label, sizeof label, "%s %s", open ? "-" : "+", name);
+            bool first = true;
+            for (uint32_t c = tide_run_inspect_start[i]; c < tide_run_inspect_start[i + 1u] && used < sizeof label; c++) {
+                const tide_packet_part *of = &tide_run_inspect_parts[tide_run_inspect_comps[c].part];
+                if (of->kind != TIDE_PACKET_COMPONENT) continue; // Its local fields are its component's
+                used += (size_t)snprintf(label + used, sizeof label - used, "%s%s", first ? " " : ", ",
+                                         tide_run_inspect_type_name(layout, of->type));
+                first = false;
             }
-            const tide_entity e = tide_packet_entity(p->bytes, p->size, i, NULL);
-            char name[48];
-            tide_run_inspect_entity_name(e, name, sizeof name);
-            if (tide_gui_layout_button(g, tide_run_inspect_id++, name)) {
-                tide_run_inspect_what = 2;
-                tide_run_inspect_entity = e;
+            if (parent && used < sizeof label) snprintf(label + used, sizeof label - used, " ...");
+            if (tide_run_inspect_row(id, label, depth)) tide_run_inspect_set_open(0, -1, e, !open);
+        }
+        if (tide_run_inspect_revealing && e.birth == tide_run_inspect_reveal.birth
+            && e.lineage == tide_run_inspect_reveal.lineage) {
+            // Shown at the top of the list
+            if (tide_run_inspect_offset) tide_run_inspect_offset->y += y - tide_run_inspect_view.y;
+            tide_run_inspect_revealing = 0;
+        }
+        if (!open) continue;
+        // Its components, a level in
+        const int block = tide_run_inspect_begin_indent(id ^ 0x40000000u, depth + 1u);
+        if (block >= 0) {
+            for (uint32_t c = tide_run_inspect_start[i]; c < tide_run_inspect_start[i + 1u]; c++) {
+                const tide_packet_part *of = &tide_run_inspect_parts[tide_run_inspect_comps[c].part];
+                char title[160];
+                snprintf(title, sizeof title, "%s%s", tide_run_inspect_type_name(layout, of->type),
+                         of->kind == TIDE_PACKET_COMPONENT_LOCAL && !tide_run_inspect_local ? " (local fields)" : "");
+                tide_run_inspect_heading(title, 16.0f);
+                tide_run_inspect_value(api, p, of, tide_run_inspect_comps[c].row, e);
             }
+            if (tide_run_inspect_start[i] == tide_run_inspect_start[i + 1u]) tide_gui_layout_label(&tide_run_gui, "(no components)");
+            tide_gui_close(&tide_run_gui, block);
+        }
+        // Then the entities under it, in their order
+        const uint32_t from = top;
+        for (uint32_t child = tide_run_inspect_first[i]; child != UINT32_MAX && top < n; child = tide_run_inspect_next[child]) {
+            depths[top] = depth + 1u;
+            stack[top++] = child;
+        }
+        for (uint32_t a = from, b = top; a + 1u < b; a++, b--) { // Reversed, so the first comes off first
+            const uint32_t s = stack[a];
+            stack[a] = stack[b - 1u];
+            stack[b - 1u] = s;
         }
     }
+    if (tide_run_inspect_revealing) tide_run_inspect_revealing--; // Not found
 }
 
 static inline void tide_run_dev_inspect(const tide_inspect_api *api, const void *match)
 {
-    tide_gui *g = &tide_run_gui;
     tide_run_inspect_id = 0xDE720000u;
     api->view(match, tide_run_local, &tide_run_inspect_packets[0], &tide_run_inspect_packets[1]);
-    const tide_packet *p = &tide_run_inspect_packets[tide_run_inspect_local ? 1 : 0];
-    if (!tide_run_inspect_what) {
-        tide_run_inspect_lists(api, p);
-        return;
-    }
-    if (tide_gui_layout_button(g, tide_run_inspect_id++, "< Back")) {
-        tide_run_inspect_what = 0;
-        return;
-    }
-    tide_packet_part part;
-    uint32_t at = 0;
-    if (tide_run_inspect_what == 1) { // A singleton
-        while (tide_packet_next(p->bytes, p->size, &at, &part)) {
-            if (part.kind != tide_run_inspect_kind || (int32_t)part.type != tide_run_inspect_type || !part.count) continue;
-            tide_run_inspect_heading(tide_run_inspect_type_name(api->layout, part.type), 20.0f);
-            tide_run_inspect_value(api, p, &part, 0, (tide_entity){0, 0});
-            return;
-        }
-        tide_gui_layout_label(g, "(not here)");
-        return;
-    }
-    // An entity: each component it has, then its local fields
-    const uint32_t place = tide_run_inspect_place(p, tide_run_inspect_entity);
-    char name[48];
-    tide_run_inspect_entity_name(tide_run_inspect_entity, name, sizeof name);
-    if (place == UINT32_MAX) {
-        char gone[96];
-        snprintf(gone, sizeof gone, "%s isn't here", name);
-        tide_gui_layout_label(g, gone);
-        return;
-    }
-    tide_run_inspect_heading(name, 22.0f);
-    while (tide_packet_next(p->bytes, p->size, &at, &part)) {
-        if (part.kind != TIDE_PACKET_COMPONENT && part.kind != TIDE_PACKET_COMPONENT_LOCAL) continue;
-        if (tide_run_inspect_internal(api->layout, part.type)) continue;
-        for (uint32_t r = 0; r < part.count; r++) {
-            if (part.rows[r] != place) continue;
-            char heading[160];
-            snprintf(heading, sizeof heading, "%s%s", tide_run_inspect_type_name(api->layout, part.type),
-                     part.kind == TIDE_PACKET_COMPONENT_LOCAL && !tide_run_inspect_local ? " (local fields)" : "");
-            tide_run_inspect_heading(heading, 18.0f);
-            tide_run_inspect_value(api, p, &part, r, tide_run_inspect_entity);
-            break;
-        }
-    }
+    tide_run_inspect_tree(api, &tide_run_inspect_packets[tide_run_inspect_local ? 1 : 0]);
 }
 
 // The menu's tab: 0 the game's dev views and tweaks, 1 the match's inspector, 2 the local world's. Each tab's list
@@ -1687,10 +1851,7 @@ static inline void tide_run_dev_menu(const tide_host_game *game, const void *mat
         for (uint32_t t = dev ? 0u : 1u; t < 3u; t++) {
             char label[16];
             snprintf(label, sizeof label, tide_run_dev_tab == t ? "[%s]" : "%s", names[t]);
-            if (tide_gui_layout_button(g, 0xDE6E0002u + t, label) && tide_run_dev_tab != t) {
-                tide_run_dev_tab = t;
-                tide_run_inspect_what = 0;
-            }
+            if (tide_gui_layout_button(g, 0xDE6E0002u + t, label)) tide_run_dev_tab = t;
         }
         tide_gui_close(g, row);
         tide_gui_layout_space(g, 4.0f);
@@ -1708,6 +1869,8 @@ static inline void tide_run_dev_menu(const tide_host_game *game, const void *mat
         if (tweaks) tide_run_dev_tweaks(tweaks);
     } else {
         tide_run_inspect_local = tide_run_dev_tab == 2;
+        tide_run_inspect_view = list;
+        tide_run_inspect_offset = offset;
         tide_run_dev_inspect(inspect, match);
     }
     // Where the list ends, as an empty place after it: its height, wherever it's scrolled to

@@ -901,6 +901,9 @@ void tide_gui_begin(tide_gui *g, const tide_devices *devices, const tide_float2 
     g->wheel_owner = 0;
     if (!g->rects_full) g->hot = on_top(g, g->mouse, &g->hot_rect, &g->wheel_owner);
     g->wheel = devices->mouse.poll_scroll;
+    // Shift turns a wheel that only goes up and down sideways, as browsers and editors have it
+    if ((devices->keyboard.leftShift.held || devices->keyboard.rightShift.held) && g->wheel.x == 0.0f)
+        g->wheel = tide_f2(g->wheel.y, 0.0f);
     g->gesture_cancel = 0;
     g->drag_delta = tide_f2(0, 0);
     if (g->mouse_pressed && p->touch) {
@@ -1975,6 +1978,11 @@ tide_rect tide_gui_layout_reserve_flexible(tide_gui *g, const tide_float2 size, 
     const float least = min_f(dimension(min_width), width);
     const tide_gui_group *grp = top(g);
     return take(g, fit(grp, wanted(grp, width, expand_width), least), height, width, least);
+}
+
+tide_float2 tide_gui_layout_next(const tide_gui *g)
+{
+    return g->groups[g->depth].cursor;
 }
 
 tide_rect tide_gui_layout_reserve(tide_gui *g, const tide_float2 size)

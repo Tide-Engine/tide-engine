@@ -25,9 +25,19 @@ maps, entities shown (an entity a button); no game labels; a Local tab; any play
   game with dev views or tweaks), held above the list in a scroll container of the row's height a frame before, each
   tab with its own scroll offset, all in a GUI area (the theme's panel, its shadow) as tall as the tabs and list were a
   frame before; `dev_menu.mjs` samples the game's pixels right of it (a 480-wide window); accent headings (`tide_run_inspect_heading`) for Tweaks, Singletons, Entities, an
-  entity's `#birth` and its components; lists
-  (singletons, then groups by an FNV of each entity's component types, 128 groups, 500 rows of an open group), an
-  entity's/singleton's fields through `tide_run_dev_value` (the tweaks' editors, moved out of `tide_run_dev_tweaks`).
+  the components of an open entity. A tree (`tide_run_inspect_tree`, 2026-11-17, the owner's ask: "show all", sideways
+  scrolling for depth): singletons, then entities from the roots down through the packet's `parent` (a parent not
+  among them, or itself, is a root; a cycle with no root isn't shown), depth-first by an explicit stack, children in
+  packet order. A frame's index (`tide_run_inspect_index`): each entity's listed component sections side by side
+  (counts, starts, fill) and first-child/next-sibling, in buffers kept between frames. Open rows are a list of 256
+  (entity handle, or singleton kind+type, and the tab's world), the oldest closing past it; open content sits in a
+  horizontal row (14 px a level of room) with a vertical in it, so the GUI's container depth stays constant however
+  deep the tree. Every row is laid out, but only those in the list's viewport are widgets: `tide_gui_layout_next`
+  says where the next goes, and one outside is only its room (indent wide, a line tall), so no label is made or
+  measured for it and `TIDE_GUI_MAX_RECTS`/IDs aren't spent. A row's id is a hash of its entity, so it's the same
+  widget wherever it is. An Entity field's button opens the entity and its ancestors and scrolls to it as its row is
+  laid out (two frames to find it). Names: `#birth`, with `/` and the lineage's low 16 bits in hex where the packet
+  has another of that birth (spawned in the same tick). Fields go through `tide_run_dev_value` (the tweaks' editors).
   Sent changes are kept (16) and shown over the packet's value until it matches, a second at most. Packets are made
   only while the inspector is open. `TideTweaks`/`TideTweaksHere` are left out of the lists, as are fields the layout marks `hidden`
   (`tide_layout_field.hidden`, from the compiler's `field.hidden`: the engine's own) and types all of whose fields are
@@ -40,8 +50,11 @@ maps, entities shown (an entity a button); no game labels; a Local tab; any play
   handle, `tide_command_state`'s hidden sequence, a wrong size, a singleton with a target, an entity without the component; set_local for each kind and never
   the match's). `tide_platform_dev_menu`: the Match tab (no `tide_` singleton, no Dev tab's tweak), then Dev again, a singleton's bool (black screen), a
   group, an entity, an int typed and entered (white square), the Local tab's singleton (yellow square). The test now
-  resets its .tweaks file in `finally`, so a failed run doesn't leave Green worked out for the next.
-- Gaps: no game-chosen entity label; text/lists/maps/entities read-only; very large worlds pay a whole packet per
+  resets its .tweaks file in `finally`, so a failed run doesn't leave Green worked out for the next. With the tree:
+  `+ Shade` opened in place (scrolled two lines to its field), `- Shade` closed, the Lamp's row opened, `+ Glow`.
+  Nesting was checked by screenshots with a scratch hierarchy (rooms under rooms), not by a test.
+- Gaps: no game-chosen entity label; keyboard/gamepad focus can't reach a row outside the viewport (it isn't a
+  widget); scenes aren't roots (the packet doesn't say an entity's scene; a scene's tag shows as a component); text/lists/maps/entities read-only; very large worlds pay a whole packet per
   frame while the inspector is open; sharded games get the edit on the shard that dispatches it, untested.
 
 ## Tweaks in the dev menu, and tweaks.json read again (2026-11-16)

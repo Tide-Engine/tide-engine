@@ -98,31 +98,28 @@ try {
     await command('step 40', 'ready');
     await command('capture saved.png');
     assert.deepEqual(at('saved.png'), [0, 0, 255]);
-    // The inspector, its own tab: the match's singletons, not the engine's own; a singleton's bool, then an entity's
-    // int, changed in the match
+    // The inspector, its own tab, a tree: the match's singletons, not the engine's own, each opened in place; a
+    // singleton's bool, then an entity's int, changed in the match
     await command('click Match');
-    await bottom();
+    await command('step 2', 'ready');
     await command('controls');
-    assert.ok(said.some(line => /^tide: control \d+ button "Shade" /.test(line)), said.join('\n'));
+    assert.ok(said.some(line => /^tide: control \d+ button "\+ Shade" /.test(line)), said.join('\n'));
     assert.ok(!said.some(line => line.includes('tide_')), said.join('\n'));
     assert.ok(!said.some(line => line.includes('"Green"')), said.join('\n')); // The Dev tab's
-    await command('click Shade');
-    await bottom();
+    await command('click "+ Shade"');
+    const opened = Number((await command('step 2', 'ready')).split(' ').pop());
+    await command(`${opened + 1} scroll 0 -2`); // Down to its field, under it
+    await command('step 3', 'ready');
     await command('controls');
     assert.ok(said.some(line => /^tide: control \d+ toggle "dark" /.test(line)), said.join('\n'));
     await command('click dark');
     await command('step 4', 'ready');
     await command('capture dark.png');
     assert.deepEqual(at('dark.png'), [0, 0, 0]);
-    await command('click "< Back"');
+    await command('click "- Shade"');
     await bottom();
     await command('controls');
-    const group = said.find(line => /^tide: control \d+ button "\+ Lamp x1" /.test(line));
-    assert.ok(group, said.join('\n'));
-    await command('click "+ Lamp x1"');
-    await bottom();
-    await command('controls');
-    const lamp = said.map(line => line.match(/^tide: control \d+ button "(#\d+)" /)).find(m => m);
+    const lamp = said.map(line => line.match(/^tide: control \d+ button "(\+ #[^ "]+ [^"]*Lamp[^"]*)"/)).find(m => m);
     assert.ok(lamp, said.join('\n'));
     await command(`click "${lamp[1]}"`);
     await bottom();
@@ -137,12 +134,12 @@ try {
     assert.deepEqual(color('lit.png', 470, 145), [255, 255, 255]);
     // This machine's local world: its singleton, and its field, changed here at once
     await command('click Local');
-    await bottom();
+    await command('step 2', 'ready');
     await command('controls');
-    assert.ok(said.some(line => /^tide: control \d+ button "Glow" /.test(line)), said.join('\n'));
+    assert.ok(said.some(line => /^tide: control \d+ button "\+ Glow" /.test(line)), said.join('\n'));
     assert.ok(!said.some(line => line.includes('TideTweaks')), said.join('\n'));
-    await command('click Glow');
-    await bottom();
+    await command('click "+ Glow"');
+    await command('step 10', 'ready'); // The panel grows to what opened in a few frames
     await command('controls');
     assert.ok(said.some(line => /^tide: control \d+ toggle "on" /.test(line)), said.join('\n'));
     await command('click on');

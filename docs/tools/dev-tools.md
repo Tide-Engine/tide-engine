@@ -145,9 +145,9 @@ The game sees the key too. Interactive runs list the menu's switches among the G
 
 The dev menu's **Match** and **Local** tabs are its inspector, which shows the game's state while it runs, and changes it. Nothing has to be written for it: every dev build has one, made from the game's own types.
 
-- **Match** lists the match's singletons by name, and its entities grouped by the components they have (`Health, Gun x12`). A group opens to its entities, named by number (`#41`), and an entity to each of its components' fields, then its local fields. The engine's own state (a command's sequence numbers, say) isn't listed.
-- **Local** lists this machine's local state the same way: its local singletons, and the local entities its views spawned.
-- **A field changes where it's shown**: a switch for a bool, a field for a number, a vector or a Color, a button that steps through an enum's members. Text, lists and maps are shown as they are, and an entity a field holds is a button that opens it.
+- **Match** shows the match as a tree: its singletons by name, then its entities, each under its parent (`SetParent`), named by number and the components it has (`#41 Health, Gun`). A row opens in place to its fields, and an entity's to its components' fields, its local fields, then the entities under it. Every entity is listed; a long list scrolls, and a deep one scrolls sideways too (Shift with the wheel). Entities spawned in the same tick share a number, so where one does, a little more of its identity follows it (`#41/9fba`). The engine's own state (a command's sequence numbers, say) isn't listed.
+- **Local** shows this machine's local state the same way: its local singletons, and the local entities its views spawned.
+- **A field changes where it's shown**: a switch for a bool, a field for a number, a vector or a Color, a button that steps through an enum's members. Text, lists and maps are shown as they are, and an entity a field holds is a button that opens it in the tree, and scrolls to it.
 - **A change of the match's goes through the server**, so every machine of the match has it, and the field shows what was sent until it's back. The game's [`Changed<...>` handlers](../game/events.md#when-a-field-changes) hear it as they would a change of the game's own, so what follows from a field follows from an edit too:
 
 ```csharp

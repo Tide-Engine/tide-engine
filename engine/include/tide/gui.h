@@ -631,6 +631,8 @@ int tide_gui_begin_key_text(tide_gui *g, uint32_t site, const char *key);
 // Reserve layout space without drawing or registering an interactive widget.
 tide_rect tide_gui_layout_reserve(tide_gui *g, tide_float2 size);
 tide_rect tide_gui_layout_reserve_flexible(tide_gui *g, tide_float2 size, float min_width, bool expand_width);
+// Where the next widget laid out goes (its top left), taking nothing: so a long list lays out only what shows
+tide_float2 tide_gui_layout_next(const tide_gui *g);
 
 // Widgets at a rect (GUI). The ones with a value change it, and return whether
 // they did; a button returns whether it was pressed.

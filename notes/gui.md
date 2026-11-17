@@ -159,6 +159,8 @@ provisional in docs/spec.md; docs/game/gui.md and views.md show the calls.
   gaps. At an edge focus stays; Tab/Shift+Tab retain cyclic declaration order.
   GUI.FocusNext requests the next enabled control; GUI.ClearFocus clears it.
   Scrolls reveal navigation/requested focus, without undoing pointer wheel input.
+  Shift turns a wheel with no sideways part sideways (2026-11-17, for the dev menu's tree), as browsers have it.
+  `tide_gui_layout_next` says where the next laid-out widget goes, for a caller laying out only what shows.
 - Fields share the active 255-byte UTF-8 edit buffer. Caret/anchor are byte
   boundaries; pointer placement uses binary search over code-point boundaries.
   Shift selection, Home/End, Ctrl word motion/select-all/copy/cut, Backspace/
