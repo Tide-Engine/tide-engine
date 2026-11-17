@@ -372,11 +372,13 @@ static void gen_packet_view(gen *g, const char *fn, const bool heard_wanted)
     const program *prog = g->prog;
     sb *o = &g->c;
     const layout_decls types = layout_types(prog);
-    sb_printf(o, "static void %s(const void *world, const void *previous_world, float alpha, const void *local_state,\n"
+    // A dev build's inspector's (tide_inspect_match) is made small, not fast: it runs while someone looks at the
+    // inspector, and optimizing a big game's for speed was a second of its plumbing's compile
+    sb_printf(o, "%sstatic void %s(const void *world, const void *previous_world, float alpha, const void *local_state,\n"
               "                            uint32_t verified_tick, tide_packet *out)\n{\n"
               "    const tide_world *w = world;\n    const tide_world *previous = previous_world;\n"
               "    const tide_local *l = local_state;\n    (void)previous;\n    (void)l;\n"
-              "    tide_packet_begin(out);\n", fn);
+              "    tide_packet_begin(out);\n", strncmp(fn, "tide_inspect", 12) == 0 ? "__attribute__((cold, minsize)) " : "", fn);
     const bool heard = heard_wanted && embed_event_count(prog) > 0;
     sb_printf(o, "    if (!w) {\n%s        tide_packet_end(out, 0x%016llXull, false, 0, verified_tick, 1.0f, 0);\n        return;\n    }\n",
               heard ? "        tide_embed_heard_drop(); // Nothing's heard outside a match\n" : "", (unsigned long long)g->game_hash);

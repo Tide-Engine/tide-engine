@@ -22,6 +22,7 @@
 #include "tide/heap.h" // How many ids a world's heaps have
 #include "tide/pack.h"
 #include "tide/sha256.h"
+#include "version.h"
 #include "tide/skinned_data.h"
 #include "tide/vorbis.h"
 #include "tide/wav.h"
@@ -1179,6 +1180,14 @@ static int comp_lanes(const decl *d)
 static bool lanes_looped(const int lanes)
 {
     return lanes >= LANES_LOOPED;
+}
+
+// A row's value of a wide component, copied a lane at a time by a loop: in a build for a debugger alone
+// (codegen_options.split_plumbing), where rows are copied whole. Another build's row loops name each lane's copy,
+// so one that reads a few fields has those copies and no others.
+static bool rows_lanes_looped(const gen *g, const int lanes)
+{
+    return g->opts->split_plumbing && lanes_looped(lanes);
 }
 
 // `array`[from + k] = `fetch`(`table`, `columns`, `chunk`, `column` + k), for `count` lanes
@@ -13670,7 +13679,12 @@ static void gen_component_access(gen *g)
                     // As tide_gather_<Component>, with fixed-size copies of every lane, including padding.
                     // tide_table_get supplies the current chunk/row stride without retaining lane pointers.
                     sb_put(o, "\n");
-                    for (int k = 0; k < lanes; k++) {
+                    // (A wide component's in a loop, in a build for a debugger: rows_lanes_looped)
+                    if (rows_lanes_looped(g, lanes)) {
+                        sb_printf(o, "        for (uint32_t k = 0; k < %du; k++) memcpy((uint8_t *)v + k * %du, tide_table_get(&w->%s, %s, loc.row, %du + k), %d);\n",
+                                  lanes, width, arch_name(g, a), arch_columns(g, a), arch_column(g, a, c), width);
+                    }
+                    for (int k = 0; k < lanes && !rows_lanes_looped(g, lanes); k++) {
                         sb_printf(o, "        memcpy((uint8_t *)v + %d, tide_table_get(&w->%s, %s, loc.row, %d), %d);\n",
                                   k * width, arch_name(g, a), arch_columns(g, a), arch_column(g, a, c) + k, width);
                     }
@@ -13693,7 +13707,12 @@ static void gen_component_access(gen *g)
         if (reads_some_used(g, d)) { // Only the lanes a view reads, a bit each (lane_reads_codegen.inc): the others as they were
             sb_printf(o, "TIDE_HELPER __attribute__((always_inline)) void tide_gather_some_%s(%s *v, const uint8_t *const *lanes, const uint32_t i, const uint64_t *some)\n{\n",
                       name, name);
-            for (int k = 0; k < lanes; k++) {
+            if (rows_lanes_looped(g, lanes)) {
+                sb_printf(o, "    for (uint32_t k = 0; k < %du; k++) {\n"
+                             "        if (some[k >> 6] >> (k & 63u) & 1u) memcpy((uint8_t *)v + k * %du, lanes[k] + (size_t)i * %d, %d);\n    }\n",
+                          lanes, width, width, width);
+            }
+            for (int k = 0; k < lanes && !rows_lanes_looped(g, lanes); k++) {
                 sb_printf(o, "    if (some[%d] >> %d & 1u) memcpy((uint8_t *)v + %d, lanes[%d] + (size_t)i * %d, %d);\n", k >> 6, k & 63,
                           k * width, k, width, width);
             }
@@ -13705,7 +13724,13 @@ static void gen_component_access(gen *g)
                 sb_printf(o, "    case %d: ", a);
                 if (comp_sparse(g, c)) sb_printf(o, "if (!%s) return false; ", presence_cell(g, "w", a, c, "loc.row", false));
                 sb_put(o, "\n");
-                for (int k = 0; k < lanes; k++) {
+                if (rows_lanes_looped(g, lanes)) {
+                    sb_printf(o, "        for (uint32_t k = 0; k < %du; k++) {\n"
+                                 "            if (some[k >> 6] >> (k & 63u) & 1u) memcpy((uint8_t *)v + k * %du, tide_table_get(&w->%s, %s, loc.row, %du + k), %d);\n"
+                                 "        }\n",
+                              lanes, width, arch_name(g, a), arch_columns(g, a), arch_column(g, a, c), width);
+                }
+                for (int k = 0; k < lanes && !rows_lanes_looped(g, lanes); k++) {
                     sb_printf(o, "        if (some[%d] >> %d & 1u) memcpy((uint8_t *)v + %d, tide_table_get(&w->%s, %s, loc.row, %d), %d);\n",
                               k >> 6, k & 63, k * width, arch_name(g, a), arch_columns(g, a), arch_column(g, a, c) + k, width);
                 }
@@ -21692,6 +21717,13 @@ static bool rows_spread(const gen *g, const decl *sys, const int a, const bool a
     int lanes = 0;
     for (int k = 0; k <= c; k++) {
         if (!rows_take(g, sys, a, k)) continue;
+        // A build for a debugger copies each row whole, so a parameter a lane names nothing its loop could use
+        // apart: a wide component's lanes come as its arrays there, where each call of the rows function and
+        // each of its variants spelled out a parameter for every lane (seconds of a big game's plumbing's compile)
+        if (g->opts->split_plumbing && lanes_looped(comp_lanes(g->prog->components.items[k]))) {
+            if (k == c) return false;
+            continue;
+        }
         const int n = rows_lanes(g, sys, a, g->prog->components.items[k], apart);
         const int extra = n - rows_arrays(sys, k, apart);
         lanes += n;
@@ -30274,13 +30306,84 @@ static void order_arrays(program *prog)
     free(sorted);
 }
 
+// What a text was cut into, kept beside its parts as <name>.parts: the key of everything the cut is made of (the
+// text, this compiler, where it's written and how), then a line for each file: its size, when it was written,
+// and its line of the manifest. A text that comes out the same, as a big game's plumbing does at every edit of
+// its code, is then cut into the files already there: cutting it and writing them again was a second of each
+// build. Sizes and times, as a build's kept generate goes by (tide's GENERATION_FILE).
+static void parts_key(const codegen_options *opts, const sb *text, const char *path, const char *original, const bool plumbing,
+                      char key[65])
+{
+    tide_sha256 h;
+    tide_sha256_init(&h);
+    const char *const words[] = {"tide parts 1", tide_simulation_runtime(), path, original};
+    for (size_t i = 0; i < sizeof words / sizeof words[0]; i++) tide_sha256_add(&h, words[i], strlen(words[i]) + 1u);
+    const uint64_t how[] = {plumbing, opts->line_directives, opts->split_own_code, (uint64_t)opts->split_code_parts, opts->split_code_part_bytes,
+                            opts->split_code_min_bytes, text->len};
+    tide_sha256_add(&h, how, sizeof how);
+    tide_sha256_add(&h, text->data ? text->data : "", text->len);
+    uint8_t digest[32];
+    tide_sha256_end(&h, digest);
+    for (int i = 0; i < 32; i++) snprintf(key + i * 2, 3, "%02x", digest[i]);
+}
+
+// The folder of `path`, with its slash: "" for a bare name
+static void parts_folder(const char *path, sb *out)
+{
+    const char *slash = strrchr(path, '/');
+    const char *back = strrchr(path, '\\');
+    if (back && (!slash || back > slash)) slash = back;
+    if (slash) sb_printf(out, "%.*s", (int)(slash + 1 - path), path);
+}
+
+static bool parts_kept(const char *record_path, const char *path, const char key[65], sb *manifest)
+{
+    FILE *f = fopen(record_path, "rb");
+    if (!f) return false;
+    sb kept = {0};
+    char line[1024];
+    bool ok = fgets(line, sizeof line, f) && strlen(line) == 65 && memcmp(line, key, 64) == 0;
+    int files = 0;
+    while (ok && fgets(line, sizeof line, f)) {
+        unsigned long long size = 0, modified = 0, is_size = 0, is_modified = 0;
+        int at = 0;
+        const size_t n = strlen(line);
+        ok = n > 1 && line[n - 1] == '\n' && sscanf(line, "%llu %llu %n", &size, &modified, &at) == 2 && at > 0 && strlen(line + at) > 5;
+        if (!ok) break;
+        sb file = {0};
+        parts_folder(path, &file);
+        sb_printf(&file, "%.*s", (int)(n - 1 - (size_t)at - 4), line + at + 4);
+        ok = folder_file_info(file.data, &is_size, &is_modified) && is_size == size && is_modified == modified;
+        sb_put(&kept, line + at);
+        files++;
+    }
+    fclose(f);
+    if (!ok || !files) return false;
+    sb_put(manifest, kept.data);
+    return true;
+}
+
 // Partition names depend on symbols, so a body edit leaves the other parts unchanged. Split, the text is the code's
 // parts, <name>.c and <name>_part1.c on, and last <name>_data.c, its large constants (SPLIT_DATA): most of a big
 // game's C, which an edit of its code leaves as it was, and which the code's parts are then cut without.
 static bool write_code_parts(const codegen_options *opts, const sb *text, const char *path,
                              const char *original, const bool plumbing, sb *manifest)
 {
-    const bool split = opts->split_code && (plumbing || !opts->split_plumbing) && text->len >= opts->split_code_min_bytes;
+    const bool split = opts->split_code && (plumbing || !opts->split_plumbing || opts->split_own_code)
+                       && text->len >= opts->split_code_min_bytes;
+    sb record_path = {0};
+    sb_printf(&record_path, "%.*s.parts", (int)strlen(path) - 2, path);
+    char key[65] = "";
+    if (split) {
+        parts_key(opts, text, path, original, plumbing, key);
+        if (parts_kept(record_path.data, path, key, manifest)) {
+            diag_step("  parts as they were");
+            return true;
+        }
+    }
+    remove(record_path.data); // What's there is no cut's until this one ends well
+    sb record = {0};
+    sb_printf(&record, "%s\n", key);
     sb parts[SPLIT_MOST_PARTS + 1] = {0};
     int count = 1;
     parts[0] = *text;
@@ -30318,8 +30421,19 @@ static bool write_code_parts(const codegen_options *opts, const sb *text, const 
                                     : write_file(out.data, &parts[i]))) return false;
         const char *name = strrchr(forward_slashes(out.data), '/');
         sb_printf(manifest, "%d %d %s\n", plumbing, split, name ? name + 1 : out.data);
+        unsigned long long size = 0, modified = 0;
+        if (!folder_file_info(out.data, &size, &modified)) record.len = 0; // Not kept
+        if (record.len) sb_printf(&record, "%llu %llu %d %d %s\n", size, modified, plumbing, split, name ? name + 1 : out.data);
     }
     diag_step("  writing parts");
+    if (split && record.len) {
+        // A file that can't be written leaves no record, and the next build cuts again
+        FILE *f = fopen(record_path.data, "wb");
+        if (f) {
+            const bool whole = fwrite(record.data, 1, record.len, f) == record.len;
+            if (fclose(f) != 0 || !whole) remove(record_path.data);
+        }
+    }
     return true;
 }
 
@@ -30568,6 +30682,7 @@ bool codegen(program *prog, const codegen_options *opts)
         g.skinned_fingerprints.count = skinned;
     }
 
+    diag_step(NULL);
     gen_prelude(&g);
     gen_causal_helpers(&g);
     gen_shard_prelude(&g);
@@ -30614,10 +30729,12 @@ bool codegen(program *prog, const codegen_options *opts)
         g.value_schema = 0x811C9DC5u;
         for (size_t i = start; i < g.c.len; i++) g.value_schema = (g.value_schema ^ (uint8_t)g.c.data[i]) * 0x01000193u;
     }
+    diag_step("helpers and applies");
     gen_shard_main(&g);
     gen_hear(&g);
     gen_changes(&g);
     gen_tweaks_api(&g);
+    diag_step("hear and changes");
     gen_gpu_lists(&g);
     gen_shaders(&g);
     gen_shader_table(&g);
@@ -30625,6 +30742,7 @@ bool codegen(program *prog, const codegen_options *opts)
         free(g.pack_bytes);
         return false;
     }
+    diag_step("shaders");
     gen_task_store_helpers(&g);
     gen_cached_tables(&g);
     gen_routines(&g);
@@ -30648,6 +30766,7 @@ bool codegen(program *prog, const codegen_options *opts)
     for (int i = 0; i < prog->handlers.count; i++) {
         if (!prog->handlers.items[i]->is_async) gen_system_body(&g, prog->handlers.items[i]); // Those are tasks
     }
+    diag_step("routines and bodies");
     gen_inspect_apply(&g); // What a dev build's TideSetField's dispatcher calls
     for (int i = 0; i < prog->events.count; i++) {
         if (prog->events.items[i] == prog->forgotten) continue; // Its handlers run as local fields go
@@ -30661,8 +30780,10 @@ bool codegen(program *prog, const codegen_options *opts)
     if (opts->embed) gen_embed_heard(&g); // What gen_heard's taps call
     gen_heard(&g);
     gen_forget(&g);
+    diag_step("dispatch and heard");
     for (int i = 0; i < prog->systems.count; i++) gen_system_run(&g, prog->systems.items[i]);
     for (int i = 0; i < prog->views.count; i++) gen_system_run(&g, prog->views.items[i]);
+    diag_step("systems' runs");
     gen_api(&g);
     gen_game_api(&g);
     gen_sounds(&g);
@@ -30672,6 +30793,7 @@ bool codegen(program *prog, const codegen_options *opts)
     if (opts->layout || opts->embed || inspect_set_command(prog)) gen_layout(&g); // A dev build's inspector reads it
     if (opts->embed) gen_embed(&g);
     gen_inspect(&g);
+    diag_step("api, layout, inspect");
     if (opts->build_program) gen_build_main(&g);
 
     sb h_path = {0};
@@ -30708,7 +30830,15 @@ bool codegen(program *prog, const codegen_options *opts)
         if (cut) {
             // The game's own code is whole, and its header before it: it can compile while the plumbing is cut
             ok = write_code_parts(opts, &code, path.data, g.c_path, false, &parts_manifest);
-            if (ok && parts_manifest.len && !strchr(parts_manifest.data, '\n')[1]) compile_written(path.data);
+            for (const char *line = ok ? parts_manifest.data : NULL; line && *line;) {
+                const char *end = strchr(line, '\n');
+                if (!end) break;
+                sb file = {0};
+                parts_folder(path.data, &file);
+                sb_printf(&file, "%.*s", (int)(end - line - 4), line + 4);
+                compile_written(file.data);
+                line = end + 1;
+            }
             ok = ok && write_code_parts(opts, &plumbing, plumbing_path.data, plumbing_c, true, &parts_manifest);
             whole = false;
         } else {

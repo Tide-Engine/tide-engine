@@ -2,7 +2,7 @@
 // build_overlap_test.mjs, so the report's steps, compiles, pack bytes, left-out assets and outputs are checked
 // without compiling C or running a game.
 import { spawn } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 import assert from "node:assert/strict";
 
@@ -262,9 +262,9 @@ try {
     // A debug build's plumbing is in parts too, each an object of its own: no ThinLTO, whose link compiled every
     // part again as one (and far slower) whenever a layout changed. Its game.c stays whole.
     const wide = join(root, "wide");
-    const wideCount = 140; // Enough archetypes and systems for 4 MiB of plumbing
+    const wideCount = 220; // Enough archetypes and systems for 4 MiB of plumbing (components under 32 lanes: no loops)
     const wideSource = "scene Main { }\nsingleton Tally { int n; }\n" + Array.from({ length: wideCount }, (_, i) =>
-        `component C${i} { int a; int b; int[40] pad; }\nsystem S${i}(mut C${i} c, mut Tally tally) { c.a += c.b; tally.n += 1; }\n`).join("")
+        `component C${i} { int a; int b; int[24] pad; }\nsystem S${i}(mut C${i} c, mut Tally tally) { c.a += c.b; tally.n += 1; }\n`).join("")
         + "event(Spawned) Setup(with Main)\n{\n" + Array.from({ length: wideCount }, (_, i) => `    Spawn(C${i} { a = ${i} });\n`).join("") + "}\n";
     put(join(wide, "game.tide"), wideSource);
     env.TIDE_TEST_BUILD_FORBID_THIN = "1";
@@ -286,6 +286,36 @@ try {
     assert.equal(wideEdit.code, 0, wideEdit.said);
     assert.equal(compiledWideNow().filter(name => name === "game.c").length, 1, `${compiledWideNow()}`);
     assert(compiledWideNow().length <= 2, `the code, and at most the part of the plumbing that goes by it: ${compiledWideNow()}`);
+    // Plumbing that comes out the same is left in the files it was cut into (game_plumbing.parts): not written again
+    const wideGen = join(wide, ".tide", "native-debug", "gen");
+    const written = () => plumbingParts.map(line => statSync(join(wideGen, line.slice(4))).mtimeMs).join(" ");
+    assert(existsSync(join(wideGen, "game_plumbing.parts")), "the plumbing's cut is recorded");
+    const before = written();
+    put(join(wide, "game.tide"), wideSource.replace("c.a += c.b;", "c.a += c.b + 2;"));
+    const wideAgain = await run(["build", wide, "--report", wideReport]);
+    assert.equal(wideAgain.code, 0, wideAgain.said);
+    assert.deepEqual(compiledWideNow(), ["game.c"]);
+    assert.equal(written(), before, "the plumbing's parts as they were");
+    // ...and cut again when one of them isn't what the cut left
+    writeFileSync(join(wideGen, plumbingParts[1].slice(4)), "changed\n");
+    const wideCut = await run(["build", wide, "--report", wideReport]);
+    assert.equal(wideCut.code, 0, wideCut.said);
+    assert(readFileSync(join(wideGen, plumbingParts[1].slice(4)), "utf8").length > 100, "the changed part is written again");
+
+    // A debug build's own code is in parts once it's big, compiled as game.c is and without ThinLTO; an edit of a
+    // function compiles the parts it changed, which start as soon as they're written
+    const largeDebug = await run(["build", large, "--report", largeReport]);
+    assert.equal(largeDebug.code, 0, largeDebug.said);
+    const debugParts = readFileSync(join(large, ".tide", "native-debug", "gen", "game_parts.txt"), "utf8").trim().split("\n");
+    const codeParts = debugParts.filter(line => line.startsWith("0 1 game")).map(line => line.slice(4));
+    assert(codeParts.length >= 3 && codeParts[0] === "game.c", `the code in parts: ${debugParts}`);
+    for (const name of codeParts) assert.equal(compiledLarge().filter(file => file === name).length, 1, `${name} once: ${compiledLarge()}`);
+    put(join(large, "game.tide"), largeSource(3));
+    const largeDebugEdit = await run(["build", large, "--report", largeReport]);
+    assert.equal(largeDebugEdit.code, 0, largeDebugEdit.said);
+    const changed = compiledLarge().filter(name => codeParts.includes(name));
+    assert(changed.length >= 1 && changed.length <= 2, `the function's part, and the identity's: ${compiledLarge()}`);
+    assert.equal(new Set(compiledLarge()).size, compiledLarge().length, `each once: ${compiledLarge()}`);
     delete env.TIDE_TEST_BUILD_FORBID_THIN;
 
     // A failed build still says where its time went

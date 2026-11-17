@@ -65,6 +65,14 @@ tide_e2e_test(row_lanes) # Rows copy the lanes their system reads or writes, aft
 add_test(NAME tidec_row_lanes_codegen
     COMMAND "${CMAKE_COMMAND}" "-DGAME_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_row_lanes/game.c"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/row_lanes_codegen.cmake")
+# ...and as a debugger's build has them (tide's debug builds, SPLIT_PLUMBING): rows copied whole, a wide component's
+# columns from a loop, and its lanes handed to the rows functions as arrays
+foreach(wide kept_lanes wide_lanes row_lanes)
+    tide_add_game(tidec_e2e_${wide}_debug SPLIT_PLUMBING SOURCES e2e/${wide}.tide NAME game
+        HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" e2e/${wide}_test.c)
+    target_include_directories(tidec_e2e_${wide}_debug PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    add_test(NAME tidec_e2e_${wide}_debug COMMAND tidec_e2e_${wide}_debug)
+endforeach()
 tide_e2e_test(view_reads) # Views copy and blend only the lanes they read; helpers read other singletons' lists uncopied
 tide_e2e_test(shared_bindings)
 tide_e2e_test(shared_bindings_fallback)

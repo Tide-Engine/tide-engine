@@ -260,7 +260,7 @@ void diag_step(const char *what)
     struct timespec now;
     timespec_get(&now, TIME_UTC);
     const double ms = (double)(now.tv_sec - last.tv_sec) * 1e3 + (double)(now.tv_nsec - last.tv_nsec) * 1e-6;
-    if (what) fprintf(stderr, "tidec:   %-20s %9.1f ms\n", what, ms);
+    if (what && (last.tv_sec || last.tv_nsec)) fprintf(stderr, "tidec:   %-20s %9.1f ms\n", what, ms); // (The first only starts it)
     last = now;
 }
 

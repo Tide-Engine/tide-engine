@@ -63,11 +63,13 @@ In release builds, ThinLTO preserves optimization across the partitions, and
 linking has an activity indicator; the linker caches its work beside the game's
 other cached objects, and `TIDE_JOBS` also limits parallel ThinLTO work.
 
-In ordinary debug builds, the generated plumbing is optimized and partitioned
-while your game code stays unoptimized, in one file, for the debugger. Each
-partition is an ordinary object there, with no ThinLTO, so the link takes a
-fraction of a second whatever changed. Your game code starts compiling as soon
-as it is written, while the plumbing is still being partitioned.
+In ordinary debug builds, the generated plumbing is optimized while your game
+code stays unoptimized for the debugger, and both are partitioned once they are
+big. Each partition is an ordinary object there, with no ThinLTO, so the link
+takes a fraction of a second whatever changed, and an edit of a function
+compiles the partition it is in. Your game code starts compiling as soon as it
+is written. Plumbing that comes out the same as the last build's is left in the
+files it was partitioned into.
 
 
 Code objects and expensive asset processing are cached between launches.
