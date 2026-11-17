@@ -594,6 +594,7 @@ tide_e2e_test(changed_match) # ...and taken by match handlers, in rounds while t
 tide_add_game(tidec_e2e_changed_endless SOURCES e2e/changed_match.tide NAME game DEFINES ENDLESS
     HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/changed_match_test.c")
 target_include_directories(tidec_e2e_changed_endless PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_compile_definitions(tidec_e2e_changed_endless PRIVATE ENDLESS) # (DEFINES is the Tide code's: the host stops by an exit code)
 add_test(NAME tidec_e2e_changed_endless COMMAND tidec_e2e_changed_endless changed_match_plain_host)
 set_tests_properties(tidec_e2e_changed_endless PROPERTIES PASS_REGULAR_EXPRESSION "an endless chain of events: .*Changed<Unit.hp>")
 tide_e2e_test(visibility_lifecycle) # Local availability differs from genuine match lifecycle
