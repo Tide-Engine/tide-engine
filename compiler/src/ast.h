@@ -441,6 +441,7 @@ typedef enum conflict_kind {
     CONFLICT_SHARED_HEAP,    // Each changes text, lists or grids of an owner (`data`, NULL for the match's tasks) that
                              // shares a heap with the other's: the match's own, or two names with one id
     CONFLICT_TASKS,          // Both start tasks: the match keeps them in the order they start
+    CONFLICT_ENTITIES,       // One is in C, which is handed the entity table, and the other spawns into it
 } conflict_kind;
 
 typedef struct conflict {

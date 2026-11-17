@@ -1,5 +1,16 @@
 # The Box2D package
 
+## A spawn seen early by `CheckTopology` on threads (2026-11-17)
+
+`box2d_parts_on_threads` failing now and then in CI's web-release jobs was the schedule, not Box2D: Box2D's stamp,
+image and bodies were the same, and only `Physics.topologyChanged` and the heap apart. `b2t_topology` (and Box3D's,
+`shapes.inc`) copies the entity table's slots, which a game system's spawns are registered in once its tasks are
+done; on threads that could be before `CheckTopology` ran. Systems in C and systems that spawn now keep their order
+(notes/schedule-and-threads.md, top section, with the counts). Nothing in the package changed and no pin moved.
+When the test finds a tick apart, it now plays the match again on one thread to that tick and says what's apart
+(`tell_apart` in `test/parts_test.c`): the stamp, the image's size, which sections of the image and where, which
+part of the world's hash (singletons, entities, each table, the heap), `Physics`' bytes, and each body that differs.
+
 ## Questions from views while a tick runs beside the frame (2026-11-12)
 
 With `ticksAlongsideViews` (schedule-and-threads.md, top section) a view's or a local handler's question can come

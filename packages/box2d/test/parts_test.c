@@ -154,6 +154,120 @@ TIDE_TEST(box2d_parts_roll_back)
 }
 
 #ifdef BOX2D_TEST_JOBS
+// Box2D's image in a match's list, into `bytes` (room for `size`)
+static void image_of(const tide_world *w, uint8_t *bytes, const int32_t size)
+{
+    for (int32_t at = 0; at < size;) {
+        const int32_t left = (int32_t)TIDE_LIST_CHUNK - at % (int32_t)TIDE_LIST_CHUNK;
+        const int32_t run = left < size - at ? left : size - at;
+        memcpy(bytes + at, tide_list_read(&w->heap, w->Box2D_Physics.image, at, 1), (size_t)run);
+        at += run;
+    }
+}
+
+// What's apart between a world ticked on threads and the same world ticked on
+// one, at the tick their hashes first differ: whether what was done to Box2D
+// (the stamp) or what it made of it (the image, by section), and which bodies.
+static void tell_apart(const tide_world *threaded, const tide_world *alone)
+{
+    const Box2D_Physics *p = &threaded->Box2D_Physics;
+    const Box2D_Physics *q = &alone->Box2D_Physics;
+    printf("    stamp %llx on threads, %llx on one; image %d and %d bytes; %d and %d bodies; moved %d and %d\n",
+           (unsigned long long)p->stamp, (unsigned long long)q->stamp, (int)p->size, (int)q->size, (int)p->bodies,
+           (int)q->bodies, (int)p->moved, (int)q->moved);
+    if (p->size == q->size && p->size > 16 + 4 * B2_SNAPSHOT_SECTIONS) {
+        uint8_t *x = malloc((size_t)p->size);
+        uint8_t *y = malloc((size_t)q->size);
+        image_of(threaded, x, p->size);
+        image_of(alone, y, q->size);
+        int bases[B2_SNAPSHOT_SECTIONS];
+        memcpy(bases, y + 16, sizeof bases);
+        for (int s = 0; s < B2_SNAPSHOT_SECTIONS; s++) {
+            const int from = bases[s];
+            const int to = s + 1 < B2_SNAPSHOT_SECTIONS ? bases[s + 1] : p->size;
+            int first = -1;
+            int apart = 0;
+            for (int at = from; at < to && at < p->size; at++) {
+                if (x[at] == y[at]) continue;
+                if (first < 0) first = at;
+                apart++;
+            }
+            if (first < 0) continue;
+            const int in = first - from;
+            const int record = b2GetSnapshotRecordSize(s);
+            printf("    section %d: %d bytes apart, the first at byte %d of it", s, apart, in);
+            if (record && in >= 4) printf(" (byte %d of number %d)", (in - 4) % record, (in - 4) / record);
+            printf("\n");
+        }
+        if (memcmp(x, y, 16 + sizeof bases) != 0) printf("    the header or the sections' table\n");
+        free(x);
+        free(y);
+    }
+#define PART_OF_HASH(what, x, y)                                                                                                 \
+    if ((x) != (y)) printf("    %s apart: %016llx and %016llx\n", what, (unsigned long long)(x), (unsigned long long)(y))
+    PART_OF_HASH("identity clock", tide_hash_more(TIDE_HASH_START, &threaded->tide_identity_clock, sizeof threaded->tide_identity_clock),
+                 tide_hash_more(TIDE_HASH_START, &alone->tide_identity_clock, sizeof alone->tide_identity_clock));
+    PART_OF_HASH("Time", tide_hash_more(TIDE_HASH_START, &threaded->Time, sizeof threaded->Time),
+                 tide_hash_more(TIDE_HASH_START, &alone->Time, sizeof alone->Time));
+    PART_OF_HASH("Physics", tide_hash_more(TIDE_HASH_START, p, sizeof *p), tide_hash_more(TIDE_HASH_START, q, sizeof *q));
+    PART_OF_HASH("Script and Tally",
+                 tide_hash_more(tide_hash_more(TIDE_HASH_START, &threaded->Script, sizeof threaded->Script), &threaded->Tally,
+                                sizeof threaded->Tally),
+                 tide_hash_more(tide_hash_more(TIDE_HASH_START, &alone->Script, sizeof alone->Script), &alone->Tally, sizeof alone->Tally));
+    PART_OF_HASH("entities", tide_entities_hash(TIDE_HASH_START, &threaded->entities), tide_entities_hash(TIDE_HASH_START, &alone->entities));
+    PART_OF_HASH("commands", tide_queue_hash(TIDE_HASH_START, &threaded->commands), tide_queue_hash(TIDE_HASH_START, &alone->commands));
+    PART_OF_HASH("heap", tide_heaps_hash(TIDE_HASH_START, &threaded->heap), tide_heaps_hash(TIDE_HASH_START, &alone->heap));
+#define TABLE_OF_HASH(name)                                                                                                      \
+    PART_OF_HASH(#name, tide_table_hash(TIDE_HASH_START, &threaded->name, &tide_columns_##name),                              \
+                 tide_table_hash(TIDE_HASH_START, &alone->name, &tide_columns_##name))
+    TABLE_OF_HASH(arch0_Box2D_Body_Box2D_Box);
+    TABLE_OF_HASH(arch1_Box2D_Body_Box2D_Box_Crate);
+    TABLE_OF_HASH(arch2_Box2D_Body_Box2D_Circle_Glider);
+    TABLE_OF_HASH(arch3_Box2D_Body_Box2D_Box_Gate);
+    TABLE_OF_HASH(arch4_Box2D_Body_Box2D_Box_Shelf);
+    TABLE_OF_HASH(arch5_Box2D_Body_Box2D_Circle_Crate);
+    TABLE_OF_HASH(arch6_Box2D_Body_Box2D_Box_Paddle);
+    TABLE_OF_HASH(arch7_Box2D_Body_Box2D_Box_Box2D_Circle_Crate);
+    TABLE_OF_HASH(arch8_Main);
+#undef TABLE_OF_HASH
+#undef PART_OF_HASH
+    if (memcmp(p, q, sizeof *p) != 0) {
+        const uint8_t *x = (const uint8_t *)p;
+        const uint8_t *y = (const uint8_t *)q;
+        for (size_t at = 0; at < sizeof *p; at += 8) {
+            if (memcmp(x + at, y + at, 8) == 0) continue;
+            uint64_t u;
+            uint64_t v;
+            memcpy(&u, x + at, 8);
+            memcpy(&v, y + at, 8);
+            printf("    Physics bytes %u..%u: %016llx and %016llx\n", (unsigned)at, (unsigned)at + 7, (unsigned long long)u,
+                   (unsigned long long)v);
+        }
+    }
+    const uint32_t slots = threaded->entities.next_unused > alone->entities.next_unused ? threaded->entities.next_unused
+                                                                                         : alone->entities.next_unused;
+    for (uint32_t i = 0; i < slots; i++) {
+        const tide_entity e = tide_entity_in_slot(&threaded->entities, i);
+        const tide_entity f = tide_entity_in_slot(&alone->entities, i);
+        const bool has = i < threaded->entities.next_unused && tide_has_Box2D_Body(threaded, e);
+        const bool had = i < alone->entities.next_unused && tide_has_Box2D_Body(alone, f);
+        if (has != had) {
+            printf("    slot %u: a body on %s only\n", (unsigned)i, has ? "threads" : "one thread");
+            continue;
+        }
+        if (!has) continue;
+        const Box2D_Body u = tide_get_Box2D_Body(threaded, e);
+        const Box2D_Body v = tide_get_Box2D_Body(alone, f);
+        if (memcmp(&u, &v, sizeof u) == 0) continue;
+        printf("    slot %u, body %llx and %llx: at (%.9g, %.9g) %.9g and (%.9g, %.9g) %.9g, going (%.9g, %.9g) %.9g and "
+               "(%.9g, %.9g) %.9g, asleep %d and %d\n",
+               (unsigned)i, (unsigned long long)u.id, (unsigned long long)v.id, (double)u.position.x, (double)u.position.y,
+               (double)u.angle, (double)v.position.x, (double)v.position.y, (double)v.angle, (double)u.velocity.x,
+               (double)u.velocity.y, (double)u.spin, (double)v.velocity.x, (double)v.velocity.y, (double)v.spin, (int)u.asleep,
+               (int)v.asleep);
+    }
+}
+
 // With the step shared out over the tick's threads while images are written
 // in parts: what's said to have changed is said on one thread, and the step's
 // workers say nothing.
@@ -180,7 +294,17 @@ TIDE_TEST(box2d_parts_on_threads)
     for (int i = 0; i < TICKS; i++) {
         if (i == QUIET) a.Script.quiet = true;
         tide_world_tick_on(&a, jobs);
-        if (tide_world_hash(&a) != went[i]) printf("    tick %d came out different\n", i);
+        if (tide_world_hash(&a) != went[i]) {
+            printf("    tick %d came out different\n", i);
+            tide_world_init(&b, DT);
+            for (int t = 0; t <= i; t++) {
+                if (t == QUIET) b.Script.quiet = true;
+                tide_world_tick(&b);
+            }
+            if (tide_world_hash(&b) != went[i]) printf("    and on one thread again, too\n");
+            tell_apart(&a, &b);
+            tide_world_free(&b);
+        }
         TIDE_REQUIRE(tide_world_hash(&a) == went[i]);
     }
     images_since(&whole, &in_parts);
