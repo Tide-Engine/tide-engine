@@ -1,3 +1,39 @@
+## A check's rows on the tick's pool (2026-11-17, parts)
+
+**For the owner to confirm**: `tide_game.client_hashes` (tide/session.h) may now share its work out on the threads
+handed to its caller's thread (`tide_loops_enter`, tide/jobs.h), with the same values; the header says so. The
+session (`engine/src/session.c`'s `tick_end`, agent-maintained) hands it the tick's pool: `tide_loops_enter(t->jobs)`
+around its call, `tide_loops_leave` after (notes/netcode.md, top section). Generated code (`client_spans_codegen.inc`)
+calls `tide_parallel_for` for its parts, and asks whether a pool was handed to the thread with `tide_loops_enter(NULL)`
+and `tide_loops_leave` (which give back and put back the one there is): both existing runtime functions, so no new
+one, though a `tide_loops_jobs()` that only reads would say it plainer if the owner prefers it. No new hook or
+`tide_game` member; the signature and every hash are as they were. New in generated code alone: the memo's stages
+(`tide_client_stage`, `tide_client_hasher.stage`), the parts (`tide_client_part`, `tide_client_parts`) and, for tests,
+`tide_client_check_digest` under `TIDE_CLIENT_CHECK_DIGEST`.
+
+## Repairs read on several threads at once (2026-11-17, later)
+
+**For the owner to confirm**: what the session asks of `tide_game.client_changes` (tide/session.h) is now that it can
+be called on several threads at once for one match (one `lineage`), outside ticks and checks, and writes nothing
+another call reads; the session reads an update's repairs on the pool (notes/netcode.md, top section). Its signature
+and bytes are as they were. Generated code (`client_state_codegen.inc`, `client_changes_codegen.inc`) gained, for
+itself alone, `tide_client_memo_share` / `_unshare` (the match's memo held to read, by any number of threads:
+`tide_client_memo.readers`), a hasher that reads it and writes nothing (`tide_client_hasher.shared`, `reading`) and
+`tide_client_item_holds`; it calls no runtime function that's new. The session's side: `tide_recipient_delta_pack_with`
+(engine/src/recipient_delta.h, the session's own codec) takes its index's room from the caller. No new hook or
+`tide_game` member.
+
+## A repair's read into the session's writers (2026-11-17)
+
+**For the owner to confirm**: `tide_game.client_changes` (tide/session.h), a hook between the session and generated
+code, now takes three `tide_writer *` (plan, `now`, `was`) and returns a `bool`, where it returned the plan and gave
+`now` and `was` back as `malloc`ed bytes with their sizes. Generated code (`client_changes_codegen.inc`) writes each
+from its writer's start, growing it as any growing writer does; the bytes stay the caller's. The session
+(`engine/src/session.c`, `read_room`) hands it writers with room from repairs already packed, so a read writes into
+memory it wrote before rather than fresh pages (notes/netcode.md, top section). No new runtime function; what's
+written is byte for byte what was. Callers: `session.c`, `bench/bench.c`'s timing wrapper, and seven
+`compiler/tests/e2e/visibility_*_test.c`.
+
 ## The inspector (2026-11-16)
 
 New, the agent's: `engine/include/tide/inspect.h`, `engine/src/inspect.c` (notes/standard-host.md, The inspector).
@@ -22,6 +58,65 @@ Generated code gained `tide_dev_view_names` and `tide_show_dev_views` (notes/lan
 `tide_host_game` two optional members at its end, `dev_views` and `show_dev_views`, which `tide/run.h` fills, so
 `TIDE_HOST_SHAPE` changes: hosts and game libraries rebuild together. No runtime function generated code calls is new.
 The menu is the standard host's (notes/standard-host.md, The dev menu).
+
+## Page references counted atomically (2026-11-17)
+
+Agent-maintained, under the page and heap maintenance (`tide/page.h`, `engine/src/page.c`, and the counts' users in
+`heap.c`, `tide/heap.h`, `table.c`, `tide/table.h`, `rows.c`, `delta.c`, `resident.c`, `asset_store.c`). A server lets
+go of a kept tick's world on the pool's background threads (`session.c`'s `let_go`, notes/netcode.md, top section),
+while the worlds sharing its pages are copied, written and let go of on others, so every count of references a world
+can share is atomic: a page's `refs`, a resident's table of pages, a heap's asset origins (entity orders' and asset
+pools' already were).
+
+- **New, generated code calls it**: `tide_page_refs(p)` (an acquire load of `p->refs`), where generated C read
+  `->refs` (a system's lanes' fallback in `codegen.c`, the indexes' sites in `index_codegen.inc`, the rows cache in
+  `rows_cache_codegen.inc`). `tide_page_retain_more(p, refs)` (runtime only: `delta.c`'s shared base pages).
+  `tide_page_retain` and `tide_page_release` are atomic; `tide_page_own_copy` and `_own_copy_around` let go of the
+  references they took over through `tide_page_release`, which gives the page back where another holder let go of
+  it meanwhile.
+- **The contract**: whoever sees as many references as it holds has the page alone, and nobody else can change that
+  until it shares the page again; seeing more than it holds, it copies, and a holder that let go meanwhile only makes
+  the copy needless. What a page holds is never read or written by whoever only lets go of a reference. Writing code
+  must keep to it: read `refs` through `tide_page_refs`, change it only through `tide_page_retain`, `_retain_more`
+  and `tide_page_release` (a page nobody else can have yet may be set as before: a new one, a copy, a dropped one
+  taken again).
+- If the owner takes page.c over: these, and that `let_go` relies on them.
+
+## Pages say where they were written (2026-11-17)
+
+**Agreed with the owner 2026-11-17** ("yes you can go ahead"): the runtime keeps which parts of a page were written
+since a check last looked, for the projection checks (netcode.md, top section). Agent-maintained, in `tide/page.h`,
+`engine/src/page.c` and the heap's and entity table's writes (`tide/heap.h`, `engine/src/heap.c`,
+`engine/src/entity.c`), all already under the page and heap maintenance; tests in `tests/test_heap.c` and
+`tests/test_entity.c`. Nothing of it is a world's state: never hashed, packed, sent or compared between machines.
+
+- **What a page keeps** (`tide_page`, whose header is 64 bytes where it was 32): `written`, the lines (64 to a page, a
+  bit each: `tide_page_lines`) written since `hash` was made, or since the hash it had while it's out of date; and,
+  set by `tide_page_hash` each time it makes a hash, `before` (the hash it had) and `wrote` (what `written` was, which
+  starts again). `grain`: a heap page of blocks of one size has their size, 1 << grain bytes (0 for any other page).
+- **The contract**: a page whose hash is of what it holds (`hashed` isn't `UINT32_MAX`) holds, in every line `wrote`
+  leaves out, the bytes it held when it hashed to `before`. `tide_page_same_since(p, kept, from, bytes)` and
+  `tide_page_lines_same_since(p, kept, lines)` say it for whoever kept a hash of the page: true where the page hashes
+  to `kept` now, or hashed to it before and those lines weren't written in between. A hash is of the bytes (as every
+  kept page hash is trusted already), so it holds whichever page, world, copy or world from bytes the hash was kept of.
+- **Who says what**: `tide_page_wrote(p, from, bytes)` and `tide_page_wrote_lines` (atomic: a heap's runs write one
+  page on several threads), `tide_page_dirty` (all of it); `tide_page_own` says all of it, `tide_page_own_for(p, mine,
+  keep, from, bytes)` the bytes it names. A heap write (`tide_heap_write`, `_write_shared`, `_write_over`, a run's copy)
+  says the lines of the block its offset is in (`tide_heap_wrote`, by the page's `grain`, which the place sets as it
+  takes the page, unpacking too, and copies keep); a slot's change (`slot_to_change`) its slot's. Anything else says
+  all of it: a new page, one taken from the spares (`tide_page_start` where a header was a literal), unpacked, a dropped
+  page taken again; and code that only makes `hashed` `UINT32_MAX` (tables' lanes, generated systems'), which
+  `tide_page_hash` takes as all of it where nothing was said. A copy (`tide_page_copy`, `_own_copy`, `_own_copy_around`)
+  has its source's `hash` and `written`, and the lines of what it doesn't copy.
+- **What a writer has to keep to**: it writes only within the block (or slot) it said, between the saying and the next
+  hash; a block's bytes are within its own block (as `hashed` already relied on, for the page). A delta that shares a
+  base's page whose blocks were smaller than its place says now is given a copy (`tide_heap_unpack_delta`), so a page's
+  `grain` is never smaller than its blocks.
+- **Generated code relies on** (client_spans_codegen.inc, client_state_codegen.inc): the contract above for heap pages
+  of one place (`1 << TIDE_HEAP_PAGE_SHIFT` bytes) and slots' pages (`TIDE_ENTITY_PAGE_SHIFT` slots of
+  `tide_entity_slot`); `tide_heap_page_used` as what a page's hash covers; reading a page's `before` and `wrote` only
+  once its hash is made (`tide_client_page_hash`, `tide_entities_slot_page_hash`). If the owner takes page.c or heap.c
+  over, those are what must stay.
 
 ## The server's store: the files a provider has (2026-11-16, night)
 
@@ -69,6 +164,15 @@ its `tide_done_` reads again. It relies on what the lanes in pieces and the keys
 before any task starts and `done` after the last, on one thread each, nothing moving a row while a system's tasks run
 (`tide_entity_location_at` gives in `done` what it gave in `own`), and `tide_table_lanes_end_pieces` called for
 exactly the chunks `tide_table_lanes_begin_pieces` was.
+
+## Frozen worlds (2026-11-17)
+
+`tide_game` gained `freeze_world(world)` (`tide/session.h`; optional, generated for a game whose servers repair by
+what changed: tidec's `world_freezes`): the session (agent-maintained) says nothing will change a world until it's
+let go of or copied over, and generated `tide_world_hash` keeps what it hashes to the first time (a table by address
+in the generated C, under a lock; `tide_world_free` and `tide_world_copy` take a world out of it). The session freezes
+each kept tick's world and each player's copied confirmed world, which nothing changes. No runtime function is new
+or changed, and nothing generated calls the runtime that it didn't (netcode.md, top section).
 
 ## Whom entities came to (2026-11-16, last)
 

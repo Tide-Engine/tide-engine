@@ -1,5 +1,31 @@
 # Desktop WebRTC, rooms and their tests
 
+## The handover's joiner that never connects, again; the page says its channels (2026-11-17)
+
+`tide_platform_web_rooms_handover` failed twice more on CI's Macs (run 43973916251 at 2a733f57e, shard 1; run
+44024035039 at cee773036, shard 2), as it did on 2026-11-02 (below): both joiners' connections `connected` within
+5 ms of each other, one joiner said `connected` within a second, and the other heard nothing from the host until its
+`ROOM_TIMEOUT` (15 s: `disconnected, reason 1`). Which joiner fails varies (`a` once, `b` once). Of the last 45 Build
+runs, those are its only failures; every other failing web job was other tests'.
+
+**Not the repairs read on the pool** (notes/netcode.md, Repairs read on every thread), which was suspected because the
+first of these came on the commit after it: that code can't run here. `web_rooms.c` is a game written in C with no
+`client_changes` (each repair is `REPAIR_OFFER`, with no work counted) and its session has no `jobs` (`together` is
+false), so a repair goes through the same serial calls as before that commit, and a joiner isn't due a repair at all
+before it's welcomed (`c->welcoming`). A joiner hearing nothing for 15 s means no datagram of the host's reached it.
+
+**Not reproduced here** (Windows, Chrome 157, web-release): 40 runs one after another and 60 more five at once all
+pass in about 2 s. Dropping every message one joiner's channel sends (by hand, in a copy of the page) gives exactly
+CI's lines.
+
+**What the log says now** (`web_rooms.html`, `web_rooms.mjs`): each frame says when a data channel came (the host's,
+with its state then) and when it opened, closed or failed, beside the connection states it said already; once any
+frame fails, the page asks every frame how each of its channels stands (`readyState`, messages sent and got, bytes
+buffered) and reports once all have said (`account given`). With one joiner's sends dropped by hand the host says
+`their channel open, sent 0, got 0` for it and the joiner `sent 69, got 0`: the next failure says whether the
+joiner's channel opened, whether its hellos reached the host's page, and whether the host's answers went out. Only
+listeners and a counting wrapper of `send`; nothing of the signalling or the packets changed.
+
 ## Migration fixture waits for registration (2026-11-02)
 
 Run 41440963320's only underlying failure was macOS web shard 1's

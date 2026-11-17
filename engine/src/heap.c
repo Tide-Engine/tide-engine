@@ -380,8 +380,8 @@ static tide_block *write_shared_in_runs(tide_heap *h, const uint64_t block)
     for (;;) {
         tide_page *const *pages = __atomic_load_n(&h->page, __ATOMIC_ACQUIRE);
         tide_page *p = __atomic_load_n(&pages[place], __ATOMIC_ACQUIRE);
-        if (p->refs == places(p)) {
-            p->hashed = UINT32_MAX;
+        if (tide_page_refs(p) == places(p)) {
+            tide_heap_wrote(p, block);
             break;
         }
         // Whole: how much of it is in use is the heap's own run's thread's to know (its places), which may be
@@ -400,7 +400,10 @@ static tide_block *write_shared_in_runs(tide_heap *h, const uint64_t block)
             h->retired[h->retired_count++] = p;
         }
         unlock(h);
-        if (mine) break;
+        if (mine) {
+            tide_heap_wrote(copy, block);
+            break;
+        }
         copy->refs = 0;
         tide_page_give(copy); // Another thread's copy is the heap's
     }
@@ -449,7 +452,7 @@ static tide_page *new_page(tide_heap *h, const uint32_t count)
         if (p->size != size) continue;
         h->dropped[i] = h->dropped[--h->dropped_count];
         memset(tide_page_data(p), 0, size);
-        p->hashed = UINT32_MAX;
+        tide_page_dirty(p);
         p->refs = count;
         return p;
     }
@@ -463,7 +466,7 @@ static tide_page *new_page(tide_heap *h, const uint32_t count)
 // cached_codegen.inc's keys do), unless a place taken first has it again.
 static void drop(tide_heap *h, tide_page *p, const uint32_t count)
 {
-    if (p->refs != count) {
+    if (tide_page_refs(p) != count) {
         tide_page_release(p, count);
         return;
     }
@@ -504,11 +507,19 @@ static uint32_t take_places(tide_heap *h, const uint32_t count)
     return at;
 }
 
-// A page at `count` places from `at`, taken for it.
-static tide_page *place_page(tide_heap *h, const uint32_t at, const uint32_t count)
+// The size of the blocks of the page at a place of kind `kind`, as a page's `grain` says it (tide_heap_wrote): 0
+// for a block's own page, which is one block
+static uint32_t grain_of(const uint8_t kind)
+{
+    return is_class(kind) ? kind + 3u : 0u;
+}
+
+// A page at `count` places from `at`, taken for it, which is of kind `kind`.
+static tide_page *place_page(tide_heap *h, const uint32_t at, const uint32_t count, const uint8_t kind)
 {
     tide_page *p = new_page(h, count);
     p->first = at;
+    p->grain = grain_of(kind);
     const bool shared = in_runs;
     if (shared) lock(h);
     put_pages(h, at, count, p);
@@ -579,7 +590,7 @@ static void free_block(tide_heap *h, const uint64_t block)
 void tide_heap_settle(tide_heap *h)
 {
     tide_asset_settle(h);
-    for (uint32_t i = 0; i < h->dropped_count; i++) tide_page_release(h->dropped[i], h->dropped[i]->refs);
+    for (uint32_t i = 0; i < h->dropped_count; i++) tide_page_release(h->dropped[i], tide_page_refs(h->dropped[i]));
     h->dropped_count = 0;
     if (!h->page) return;
     void *old = h->page[-1];
@@ -596,7 +607,8 @@ tide_block *tide_heap_write_shared(tide_heap *h, const uint64_t block)
     check_allowed(h);
     if (in_runs) return write_shared_in_runs(h, block);
     tide_page *p = h->page[block >> TIDE_HEAP_PAGE_SHIFT];
-    tide_page *own = tide_page_own(p, places(p), in_use(h, p));
+    tide_page *own = tide_page_refs(p) != places(p) ? tide_page_own_copy(p, places(p), in_use(h, p)) : p;
+    tide_heap_wrote(own, block);
     if (own != p) { // Code reading the old page meanwhile reads the same bytes
         moved(h); // Before the copy is in the table (moved)
         for (uint32_t k = 0; k < places(own); k++) __atomic_store_n(&h->page[own->first + k], own, __ATOMIC_RELEASE);
@@ -609,9 +621,10 @@ tide_block *tide_heap_write_over(tide_heap *h, const uint64_t block, const uint3
     check_allowed(h);
     if (in_runs) return tide_heap_write(h, block); // Copied whole: the page it replaces is kept (write_shared_in_runs)
     tide_page *p = h->page[block >> TIDE_HEAP_PAGE_SHIFT];
-    if (p->refs == places(p)) return tide_heap_write(h, block);
+    if (tide_page_refs(p) == places(p)) return tide_heap_write(h, block);
     const uint32_t from = (uint32_t)(block - ((uint64_t)p->first << TIDE_HEAP_PAGE_SHIFT)) + (uint32_t)sizeof(tide_block);
     tide_page *own = tide_page_own_copy_around(p, places(p), in_use(h, p), from, bytes);
+    tide_heap_wrote(own, block);
     moved(h); // Before the copy is in the table (moved)
     for (uint32_t k = 0; k < places(own); k++) __atomic_store_n(&h->page[own->first + k], own, __ATOMIC_RELEASE);
     return tide_heap_block(h, block);
@@ -639,7 +652,7 @@ uint64_t tide_heap_alloc(tide_heap *h, const uint32_t bytes)
         const uint32_t at = take_places(h, count);
         h->place[at] = (tide_heap_place){TIDE_PLACE_BLOCK, (uint8_t)shift, 0, 0, 0};
         for (uint32_t k = 1; k < count; k++) h->place[at + k] = (tide_heap_place){TIDE_PLACE_MORE, (uint8_t)shift, 0, 0, 0};
-        tide_page *p = place_page(h, at, count);
+        tide_page *p = place_page(h, at, count, TIDE_PLACE_BLOCK);
         ((tide_block *)tide_page_data(p))->link = tide_block_link(c, 0);
         return (uint64_t)at << TIDE_HEAP_PAGE_SHIFT;
     }
@@ -649,7 +662,7 @@ uint64_t tide_heap_alloc(tide_heap *h, const uint32_t bytes)
     if (!at) {
         at = take_places(h, 1u);
         h->place[at] = (tide_heap_place){(uint8_t)kind, 0, 0, 0, 0};
-        place_page(h, at, 1u);
+        place_page(h, at, 1u, (uint8_t)kind);
         mark(h, kind, at);
     }
     tide_heap_place *pl = &h->place[at];
@@ -1010,6 +1023,7 @@ bool tide_heap_unpack(tide_heap *h, tide_reader *r)
         }
         tide_page *p = tide_page_new(count << TIDE_HEAP_PAGE_SHIFT);
         p->first = i;
+        p->grain = grain_of(h->place[i].kind);
         p->refs = count;
         put_pages(h, i, count, p);
         if (!unpack_page(h->place[i], p, r)) r->failed = true;
@@ -1076,7 +1090,16 @@ bool tide_heap_unpack_delta(tide_heap *h, const tide_heap *base, tide_delta_read
             return false;
         }
         if (origin.data) tide_asset_origin_set(h, i, origin);
-        if (p != b) p->first = i;
+        if (p != b) {
+            p->first = i;
+            p->grain = grain_of(h->place[i].kind);
+        } else if (p->grain && p->grain < grain_of(h->place[i].kind)) {
+            // The base's page, whose blocks were smaller there than they are here (bytes from elsewhere can say
+            // so): a write here would say too few lines of it, so it's this heap's own copy
+            p = tide_page_copy(b, count, b->size);
+            p->grain = grain_of(h->place[i].kind);
+            tide_page_release(b, count); // (The references it was shared with: the base keeps its own)
+        }
         put_pages(h, i, count, p);
     }
     const bool held = chains_hold(h);

@@ -144,7 +144,9 @@ typedef struct tide_game {
     bool (*reload_client_state)(void *world, const uint8_t *data, uint32_t size, const uint8_t *had, uint32_t had_size);
     // Optional: client_hash for `count` recipients at once, into `out`, the
     // same values; what's alike for them all is worked out once. The server
-    // asks for every player's after each tick.
+    // asks for every player's after each tick, with its threads handed to the
+    // caller's (tide_loops_enter, tide/jobs.h), which the call may share its
+    // work out on (its parallel loops): the same values either way.
     void (*client_hashes)(const void *world, const tide_player_id *recipients, uint32_t count, uint64_t *out);
     // Optional: whether entities came into each recipient's sight (a
     // visibility group's audience gained them) in the checks of `world`
@@ -156,20 +158,22 @@ typedef struct tide_game {
     // Optional, together: a repair that costs what changed for a recipient,
     // not what it has. `client_changes` compares two worlds of one match
     // (`lineage`: the world the match ticks, whose kept hashes both share) as
-    // `recipient` may have them: a plan (returned, to free) naming the
-    // entities whose permitted values differ or that came into its sight and
-    // those that left it; `now`, what a projection starts with and those
-    // entities' records; and `was`, the same of `base`. `changed_size` is how
-    // much of `now` is entities the recipient already had. The recipient makes
-    // `was` again from the world it confirmed (`client_changes_base`), so
-    // `now` goes as what differs from it, and a copy of that world takes the
-    // plan and `now` (`apply_client_changes`): false, with the world in no
-    // state to keep, for bytes that aren't one. NULL: repairs go as whole
-    // projections (client_state).
-    uint8_t *(*client_changes)(const void *world, const void *base, const void *lineage, tide_player_id recipient,
-                               uint32_t *plan_size, uint8_t **now, uint32_t *now_size, uint8_t **was, uint32_t *was_size,
-                               uint32_t *changed_size);
-    uint8_t *(*client_changes_base)(const void *world, tide_player_id recipient, const uint8_t *plan, uint32_t plan_size,
+    // `recipient` may have them: a plan naming the entities whose permitted
+    // values differ or that came into its sight and those that left it;
+    // `now`, what a projection starts with and those entities' records; and
+    // `was`, the same of `base`. Each is written into the caller's writer
+    // from its start, growing it, so room it already has is used again (the
+    // bytes stay the caller's); false where it can't be made. `changed_size`
+    // is how much of `now` is entities the recipient already had. The
+    // recipient makes `was` again from the world it confirmed
+    // (`client_changes_base`), so `now` goes as what differs from it, and a
+    // copy of that world takes the plan and `now` (`apply_client_changes`):
+    // false, with the world in no state to keep, for bytes that aren't one.
+    // `client_changes` is called on several threads at once, for several
+    // recipients of one match, outside its ticks and checks: no call writes
+    // what another reads. NULL: repairs go as whole projections (client_state).
+    bool (*client_changes)(const void *world, const void *base, const void *lineage, tide_player_id recipient,
+                           tide_writer *plan, tide_writer *now, tide_writer *was, uint32_t *changed_size);    uint8_t *(*client_changes_base)(const void *world, tide_player_id recipient, const uint8_t *plan, uint32_t plan_size,
                                     uint32_t *size);
     bool (*apply_client_changes)(void *world, const uint8_t *plan, uint32_t plan_size, const uint8_t *now, uint32_t now_size,
                                  const uint8_t *was, uint32_t was_size);
@@ -230,6 +234,11 @@ typedef struct tide_game {
     // Lets go of what a world has, before its memory goes; NULL for worlds of
     // plain data.
     void (*free_world)(void *world);
+    // Says that nothing changes `world` until it's let go of (free_world) or
+    // another is copied over it (copy_world): a server's kept ticks. Its hash
+    // is then worked out once, however many players' repairs it's the base of.
+    // NULL where the game's hash keeps nothing.
+    void (*freeze_world)(const void *world);
     // The world as bytes, to carry it over to another build: written into
     // `out` when they fit in `capacity` (NULL to ask), and how many there are.
     // Unpacking makes a world from them, false if they aren't one.

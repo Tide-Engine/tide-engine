@@ -1,5 +1,66 @@
 # ECS and simulation state
 
+## A handler copies the lanes its code reads and writes (2026-11-17, a hundred apart)
+
+A match handler's dispatch (`codegen.c`'s `gen_dispatch_handlers`, the one row of the entity an event is sent to)
+gathered every lane of each component it takes, and took every lane's column first: `Forget`, which reads one map of
+the 56-lane `Streamer`, paid 3,000 to 4,000 cycles a call, at every chunk gone. Now it copies the lanes its code can
+read or write (`code_reads` and `written_lanes`, through the functions it hands them to, as a system's row does:
+row_lanes_codegen.inc's `handler_rows_plain`, `system_param_splits`) and takes only their columns, the rest `NULL`
+(`gen_chunk_columns`). Its put is as it was: the lanes its code can write, each where its bytes changed, all of them
+among those copied. A handler that starts a task, is a task, hands the component to C or a task, Sets it through its
+World, or has preparation state copies it whole, as before; so does a dispatch of a run (`tide_dispatch_run_`),
+a local handler, a shard's and a build for a debugger. What it's scheduled by is the component whole, as it was
+(`system_param_bytes`). Nothing a handler reads differs (a lane it doesn't copy is one its code never reads), so no
+world, hash or pin moved. Tests: `tidec_e2e_handler_lanes` (and `_net`) as they were; `tidec_handler_lanes_codegen`
+pins OnPoke's dispatch copying and taking lane `a` alone, and OnNative's and OnStart's copying all of `Plain`.
+
+## Spare pages of every size a world has, and more of them shared (2026-11-17, a hundred apart)
+
+`engine/src/page.c` kept pages let go of for the next taker at powers of two from 4 bytes to 16 KiB, 256 a thread
+and 1,024 shared of each size, and gave the rest back to the C library. Two sizes every world has weren't among them:
+the entity table's slots (1,024 of 32 bytes, 32 KiB) and its index's pages (256 entries of 24 bytes, 6 KiB), so
+every copy-on-write of either (a tick's first spawn or destruction in a page a kept world shares) was a `malloc` and
+every kept world let go of a `free`, past what Windows' heap keeps small (16 KiB) for the slots'. And where chunks
+come and go every tick, a tick's 16 KiB and 4 KiB pages were more than the shared 1,024, so the surplus went back to
+the system and came from it again. At 100 players apart (notes/voxels.md, A hundred apart, again) that was most of
+a spawn's time: a server profiled on one thread spent four fifths of its updates in the system's heap, below
+`tide_page_copy` for the entity key's pages and tables' columns.
+
+Now: powers of two to 32 KiB and three times a power of two (12 bytes to 24 KiB) are kept, a thread keeps 4 MB of
+each size (256 pages at most), and the shared ones are a list for each size linked through the pages' headers
+(`was`, which every taker writes), up to 256 MB of every size together (64 MB on the web). Which page a taker gets
+is never state: a page taken is written whole before it's read (`tide_page_new` zeroes it, a copy and
+`tide_page_start` write its header), so no world, hash or pin moved. What the process holds can be that much more
+after a world that let go of that many pages shrinks. Test: `page_spares_of_every_kept_size_come_back_zeroed_and_apart`
+(`tests/test_page.c`): 700 pages of each of ten sizes, kept and not, three rounds, each zeroed, its header new and none
+written over by another's bytes.
+
+## A page's references are counted atomically (2026-11-17)
+
+A world can be let go of on another thread while the worlds sharing its pages are copied, written and let go of
+(a server's kept tick's world, netcode.md, top section). `tide_page.refs` is read through `tide_page_refs` and changed
+through `tide_page_retain`, `tide_page_retain_more` and `tide_page_release`, all atomic; the copies that own a shared
+page let go of the source's references through `tide_page_release`, which gives it back where the other holder let
+go meanwhile. Whoever sees as many references as it holds has the page alone. A resident's table of pages and a heap's
+asset origins count theirs atomically too. The contract and who relies on it: runtime-ownership.md, top section. No
+byte of a world changed. Test: `page_references_hold_while_another_thread_lets_snapshots_go` (`tests/test_page.c`).
+
+## A page says where it was written (2026-11-17)
+
+Every page (`tide/page.h`, Lines written) keeps the lines of it (64 to a page) written since its hash was made, and
+when a hash is made, the hash before and the lines written between: so whoever kept a page's hash can tell which of
+its bytes are still those it kept, without reading them (`tide_page_same_since`). A heap's writes say their block's
+lines (a page of one size of block keeps the size, `tide_page.grain`), the entity table's a slot's, the rest all of it.
+The page header is 64 bytes (32 before). None of it is state: no hash, pack, delta or pin moved. Built for the
+projection checks (netcode.md, top section); the contract, who says what and what generated code relies on:
+runtime-ownership.md, top section. Tests: `page_lines_say_where_it_was_written`,
+`heap_pages_say_which_lines_were_written`, `heap_page_taken_again_says_all_its_lines` (`tests/test_heap.c`) and
+`entity_pages_say_which_slots_were_written` (`tests/test_entity.c`): each tick of random writes, frees, copies a
+snapshot shares (taken before a hash and in the middle of a tick), writes over, a heap's runs, worlds read from bytes,
+deltas and a world taken back, every page that hashed to what was kept of its place before differs from those bytes
+in no line it doesn't say.
+
 ## A heap's blocks in the lowest places with room (2026-11-16, night, later)
 
 What the section below left (notes/voxels.md, What's left, 8): a page stayed for one block out, as pages held blocks
@@ -254,8 +315,9 @@ words. What a snapshot pays more is the counts' copy (two bytes a page).
   game with visibility sends each player its own projection, made block by block on their machine.
 - **A world read from bytes** (a joiner's without visibility, a hot reload's, a server's from a save) gives back
   none of the pages it came with.
-- **The process doesn't shrink by as much as the world**: pages let go of are kept spare for the next taker (8 MB a
-  thread and 32 shared, `engine/src/page.c`) and then are the C library's.
+- **The process doesn't shrink by as much as the world**: pages let go of are kept spare for the next taker (4 MB a
+  thread of each size and 256 MB shared since 2026-11-17, `engine/src/page.c`: Spare pages of every size, top) and
+  then are the C library's.
 
 **Tests** (`tests/test_heap.c`, each against a twin heap that never settles): `heap_gives_back_the_pages_whose_blocks_
 are_all_free` (600 blocks, 500 freed: the pages go only at a settle after the flush; the hash, what's handed out

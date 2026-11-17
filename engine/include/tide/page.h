@@ -25,7 +25,8 @@
 // hashed.
 //
 // Pages hold plain data, with no pointers, and the world and its snapshots
-// are used from one thread at a time.
+// are used from one thread at a time, but for their references (below), which
+// one world's being let go of on another thread may change meanwhile.
 
 typedef struct tide_page {
     uint32_t refs;   // References to it: one from each world or snapshot that has it, or more (see tide_heap)
@@ -34,9 +35,96 @@ typedef struct tide_page {
     uint32_t hashed; // The bytes `hash` covers, or UINT32_MAX until it's hashed again
     uint64_t hash;
     // 0, but while a chunk's rows are written in pieces (tide_table_lanes_begin_pieces): the page this one
-    // takes the place of, as a number. It also keeps the data 16 bytes in from the header's start, as malloc's is
+    // takes the place of, as a number
     uint64_t was;
+    // Where it was written (Lines written, below): since `hash` was made, its lines written; and when it was
+    // made, the hash before it and the lines written between the two. This machine's alone, never hashed, packed
+    // or sent
+    uint64_t written;
+    uint64_t before;
+    uint64_t wrote;
+    // A heap's page of blocks of one size: they're 1 << grain bytes, so a write says its block's lines; 0 for any
+    // other page, where a write that doesn't say which bytes says all of them. With the rest, it keeps the data a
+    // multiple of 16 bytes in from the header's start, as malloc's is
+    uint32_t grain;
+    uint32_t spare;
 } tide_page;
+_Static_assert(sizeof(tide_page) % 16u == 0, "a page's data starts 16-byte aligned");
+
+// ---------------------------------------------------------------------------
+// Lines written
+//
+// A page is 64 lines, each a 64th of it (a page whose size isn't a power of
+// two of 64 bytes or more has every write say all of them). What it keeps of
+// where it was written, for code that keeps something worked out from a few
+// of its bytes and wants to know whether those changed, without reading them:
+//
+// - `written`: the lines written since `hash` was made, or, while it's out of
+//   date (`hashed` UINT32_MAX), since the hash it had before. Every write
+//   says its lines (tide_page_wrote), or all of them (tide_page_dirty, and
+//   anything that only makes `hashed` UINT32_MAX, which hashing takes as all).
+// - When a hash is made of it (tide_page_hash), `before` is the hash it had and
+//   `wrote` what `written` was, and `written` starts again: so its bytes are
+//   those that hashed to `before` but in the lines of `wrote`.
+// - A copy (tide_page_copy and the ways of owning a page) has the hash of what
+//   it was copied from as its own, and its `written`, with the lines of what
+//   isn't copied: the copy's bytes are as that hash's but there too.
+// - A new page, or one whose bytes are set some other way, has all of them.
+//
+// tide_page_same_since says it, for whoever kept the hash a page had: a hash
+// is of its bytes (the same bytes the same hash, as hashes are taken
+// everywhere a world is compared), so whichever page or world that hash was
+// kept of, and however many copies and worlds lie between, bytes in no line of
+// `wrote` are those it was kept of. None of it is part of a world's state.
+
+#define TIDE_PAGE_ALL_LINES UINT64_MAX
+
+// The lines bytes `from` to `from + bytes` of a page of `size` bytes are in
+static inline uint64_t tide_page_lines(const uint32_t size, const uint32_t from, const uint32_t bytes)
+{
+    if (size < 64u || (size & (size - 1u)) || !bytes || from >= size) return bytes ? TIDE_PAGE_ALL_LINES : 0u;
+    const uint32_t shift = (uint32_t)__builtin_ctz(size) - 6u;
+    const uint32_t last = (bytes > size - from ? size - 1u : from + bytes - 1u) >> shift, first = from >> shift;
+    const uint64_t to_last = last == 63u ? TIDE_PAGE_ALL_LINES : (UINT64_C(1) << (last + 1u)) - 1u;
+    return to_last & ~((UINT64_C(1) << first) - 1u);
+}
+
+// Lines of it are about to be written, maybe by several threads at once (a
+// heap's runs): its hash is out of date
+static inline void tide_page_wrote_lines(tide_page *p, const uint64_t lines)
+{
+    if ((__atomic_load_n(&p->written, __ATOMIC_RELAXED) & lines) != lines) __atomic_fetch_or(&p->written, lines, __ATOMIC_RELAXED);
+    __atomic_store_n(&p->hashed, UINT32_MAX, __ATOMIC_RELAXED);
+}
+
+// ...bytes `from` to `from + bytes` of it
+static inline void tide_page_wrote(tide_page *p, const uint32_t from, const uint32_t bytes)
+{
+    tide_page_wrote_lines(p, tide_page_lines(p->size, from, bytes));
+}
+
+// ...any of it
+static inline void tide_page_dirty(tide_page *p)
+{
+    tide_page_wrote_lines(p, TIDE_PAGE_ALL_LINES);
+}
+
+// Whether the bytes of `p` in `lines`, its hash being of what it holds now
+// (tide_page_hash was asked for it since it was last written), are the bytes
+// it held when it hashed to `kept`: it does now, or did just before, and none
+// of those lines was written in between. False where nothing says. And the
+// same of bytes `from` to `from + bytes`.
+static inline bool tide_page_lines_same_since(const tide_page *p, const uint64_t kept, const uint64_t lines)
+{
+    if (__atomic_load_n(&p->hashed, __ATOMIC_ACQUIRE) == UINT32_MAX) return false;
+    if (__atomic_load_n(&p->hash, __ATOMIC_RELAXED) == kept) return true;
+    return __atomic_load_n(&p->before, __ATOMIC_RELAXED) == kept && !(__atomic_load_n(&p->wrote, __ATOMIC_RELAXED) & lines);
+}
+
+static inline bool tide_page_same_since(const tide_page *p, const uint64_t kept, const uint32_t from, const uint32_t bytes)
+{
+    return tide_page_lines_same_since(p, kept, tide_page_lines(p->size, from, bytes));
+}
 
 // Ends the program, saying it ran out of memory. Worlds grow as they need, so
 // running out of memory is the only way they can't, and it can't happen the
@@ -129,9 +217,23 @@ static inline void *tide_page_data(const tide_page *p)
     return (void *)(uintptr_t)(p + 1);
 }
 
+// A page's references are counted atomically: a world can be let go of on another thread (a server's kept tick's,
+// on the pool's background threads) while the worlds sharing its pages are copied, written and let go of. Whoever
+// sees as many references as it holds has the page alone, and nobody else can change that until it shares it again.
+static inline uint32_t tide_page_refs(const tide_page *p)
+{
+    return __atomic_load_n(&p->refs, __ATOMIC_ACQUIRE);
+}
+
 static inline void tide_page_retain(tide_page *p)
 {
-    p->refs++;
+    __atomic_add_fetch(&p->refs, 1u, __ATOMIC_RELAXED);
+}
+
+// `refs` more references to it, as a world or a delta shares it.
+static inline void tide_page_retain_more(tide_page *p, const uint32_t refs)
+{
+    __atomic_add_fetch(&p->refs, refs, __ATOMIC_RELAXED);
 }
 
 // Lets go of `refs` references; the last one lets go of the page
@@ -170,17 +272,36 @@ tide_page *tide_page_own_copy_around(tide_page *p, uint32_t mine, uint32_t keep,
 
 // `p` to change, through `mine` of its references: itself when nobody else
 // has it, or else a copy of its first `keep` bytes (the rest zero), which
-// takes those references over. Its hash is out of date either way.
+// takes those references over. Its hash is out of date either way, and any of
+// it may be written (tide_page_dirty).
 static inline tide_page *tide_page_own(tide_page *p, const uint32_t mine, const uint32_t keep)
 {
-    if (p->refs != mine) return tide_page_own_copy(p, mine, keep);
-    p->hashed = UINT32_MAX;
-    return p;
+    tide_page *own = tide_page_refs(p) != mine ? tide_page_own_copy(p, mine, keep) : p;
+    tide_page_dirty(own);
+    return own;
+}
+
+// ...where only bytes `from` to `from + bytes` of it will be written (Lines
+// written, above).
+static inline tide_page *tide_page_own_for(tide_page *p, const uint32_t mine, const uint32_t keep, const uint32_t from,
+                                           const uint32_t bytes)
+{
+    tide_page *own = tide_page_refs(p) != mine ? tide_page_own_copy(p, mine, keep) : p;
+    tide_page_wrote(own, from, bytes);
+    return own;
 }
 
 // A copy of `p`'s first `keep` bytes (the rest zero), with `refs` references
-// and its hash out of date. `p` keeps its own.
+// and its hash out of date: as `p` but where it's zeros (Lines written).
+// `p` keeps its own.
 tide_page *tide_page_copy(const tide_page *p, uint32_t refs, uint32_t keep);
+
+// A page taken (tide_page_take) whose bytes are about to be set some other
+// way than by a copy: its header, with all of it written.
+static inline void tide_page_start(tide_page *p, const uint32_t refs, const uint32_t size, const uint32_t first, const uint64_t was)
+{
+    *p = (tide_page){.refs = refs, .size = size, .first = first, .hashed = UINT32_MAX, .was = was, .written = TIDE_PAGE_ALL_LINES};
+}
 
 // The hash of its first `bytes` bytes, kept until it changes.
 uint64_t tide_page_hash(tide_page *p, uint32_t bytes);

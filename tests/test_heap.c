@@ -1252,3 +1252,292 @@ TIDE_TEST(heap_bytes_that_arent_a_heap_are_refused)
     free(bytes);
     tide_heaps_free(&hs);
 }
+
+// ---------------------------------------------------------------------------
+// Lines written (tide/page.h): where a page was written between the hash it
+// had before and the one it has, for code that keeps something worked out
+// from a few of its bytes (a projection's check of its rows' blocks).
+
+#define LINES_PAGE (1u << TIDE_HEAP_PAGE_SHIFT)
+
+TIDE_TEST(page_lines_say_where_it_was_written)
+{
+    // 64 lines of a page's size
+    TIDE_CHECK(tide_page_lines(LINES_PAGE, 0u, 1u) == 1u);
+    TIDE_CHECK(tide_page_lines(LINES_PAGE, 255u, 2u) == 3u);
+    TIDE_CHECK(tide_page_lines(LINES_PAGE, 256u, 256u) == 2u);
+    TIDE_CHECK(tide_page_lines(LINES_PAGE, LINES_PAGE / 2u, LINES_PAGE / 2u) == UINT64_MAX << 32);
+    TIDE_CHECK(tide_page_lines(LINES_PAGE, LINES_PAGE - 100u, 5000u) == UINT64_C(1) << 63);
+    TIDE_CHECK(tide_page_lines(LINES_PAGE, 0u, 0u) == 0u);
+    TIDE_CHECK(tide_page_lines(3000u, 0u, 1u) == TIDE_PAGE_ALL_LINES); // Not a power of two: any write is all of it
+    TIDE_CHECK(tide_page_lines(32u, 0u, 1u) == TIDE_PAGE_ALL_LINES);
+    TIDE_CHECK(tide_page_lines(32768u, 512u, 32u) == 2u);
+
+    // A new page: nothing says what it was
+    tide_page *p = tide_page_new(LINES_PAGE);
+    uint8_t *data = tide_page_data(p);
+    const uint64_t first = tide_page_hash(p, LINES_PAGE);
+    TIDE_CHECK(p->wrote == TIDE_PAGE_ALL_LINES && !tide_page_same_since(p, p->before, 0u, 16u));
+    TIDE_CHECK(tide_page_same_since(p, first, 0u, LINES_PAGE) && !tide_page_same_since(p, first + 1u, 0u, 16u));
+
+    // Written where it says, the rest is what it was
+    tide_page_wrote(p, 1000u, 10u);
+    data[1000] = 1;
+    TIDE_CHECK(!tide_page_same_since(p, first, 0u, 16u)); // Nothing's said until it's hashed again
+    const uint64_t second = tide_page_hash(p, LINES_PAGE);
+    TIDE_CHECK(second != first && p->before == first && p->wrote == tide_page_lines(LINES_PAGE, 1000u, 10u));
+    TIDE_CHECK(tide_page_same_since(p, first, 0u, 768u) && !tide_page_same_since(p, first, 768u, 512u));
+    TIDE_CHECK(tide_page_same_since(p, first, 1280u, LINES_PAGE - 1280u) && tide_page_same_since(p, second, 0u, LINES_PAGE));
+    TIDE_CHECK(tide_page_lines_same_since(p, first, ~tide_page_lines(LINES_PAGE, 768u, 512u)));
+
+    // A write that only makes it out of date says all of it
+    data[5] = 9;
+    p->hashed = UINT32_MAX;
+    const uint64_t third = tide_page_hash(p, LINES_PAGE);
+    TIDE_CHECK(p->before == second && p->wrote == TIDE_PAGE_ALL_LINES && !tide_page_same_since(p, second, 9000u, 16u));
+    // ...and so does tide_page_dirty, which may say it of a page already said to be written somewhere
+    tide_page_wrote(p, 64u, 1u);
+    tide_page_dirty(p);
+    data[9000] = 2;
+    const uint64_t fourth = tide_page_hash(p, LINES_PAGE);
+    TIDE_CHECK(p->before == third && p->wrote == TIDE_PAGE_ALL_LINES);
+    // Hashed again for as many bytes: nothing changes
+    TIDE_CHECK(tide_page_hash(p, LINES_PAGE) == fourth && p->before == third);
+    // Hashed for fewer, with nothing written: the bytes are those of the hash before
+    const uint64_t shorter = tide_page_hash(p, LINES_PAGE / 2u);
+    TIDE_CHECK(shorter != fourth && p->before == fourth && p->wrote == 0u);
+
+    // A copy has its source's hash and the lines written of it since, and those it doesn't copy
+    tide_page_wrote(p, 4096u, 1u);
+    data[4096] = 3;
+    tide_page *copy = tide_page_copy(p, 1u, LINES_PAGE / 2u);
+    TIDE_CHECK(copy->hash == shorter && copy->written == (tide_page_lines(LINES_PAGE, 4096u, 1u) | (UINT64_MAX << 32)));
+    tide_page_wrote(copy, 300u, 1u);
+    ((uint8_t *)tide_page_data(copy))[300] = 4;
+    (void)tide_page_hash(copy, LINES_PAGE);
+    TIDE_CHECK(copy->before == shorter && copy->wrote == (tide_page_lines(LINES_PAGE, 4096u, 1u) | tide_page_lines(LINES_PAGE, 300u, 1u)
+                                                          | (UINT64_MAX << 32)));
+    tide_page_release(copy, 1u);
+
+    // Owned to write: where it says (tide_page_own_for), or all of it (tide_page_own), copied or not
+    (void)tide_page_hash(p, LINES_PAGE);
+    p->refs = 2u;
+    tide_page *mine = tide_page_own_for(p, 1u, LINES_PAGE, 2048u, 100u);
+    TIDE_CHECK(mine != p && p->refs == 1u && mine->written == tide_page_lines(LINES_PAGE, 2048u, 100u));
+    tide_page *again = tide_page_own_for(mine, 1u, LINES_PAGE, 8192u, 1u);
+    TIDE_CHECK(again == mine && mine->written == (tide_page_lines(LINES_PAGE, 2048u, 100u) | tide_page_lines(LINES_PAGE, 8192u, 1u)));
+    TIDE_CHECK(tide_page_own(mine, 1u, LINES_PAGE) == mine && mine->written == TIDE_PAGE_ALL_LINES);
+    tide_page_release(mine, 1u);
+    p->refs = 2u;
+    mine = tide_page_own(p, 1u, LINES_PAGE);
+    TIDE_CHECK(mine != p && mine->written == TIDE_PAGE_ALL_LINES);
+    tide_page_release(mine, 1u);
+
+    // A copy written around bytes about to be written over: those, and what isn't kept
+    (void)tide_page_hash(p, LINES_PAGE);
+    p->refs = 2u;
+    tide_page *around = tide_page_own_copy_around(p, 1u, 12000u, 1024u, 2048u);
+    TIDE_CHECK(around->written == (tide_page_lines(LINES_PAGE, 1024u, 2048u) | tide_page_lines(LINES_PAGE, 12000u, LINES_PAGE - 12000u)));
+    tide_page_release(around, 1u);
+    tide_page_release(p, 1u);
+}
+
+// What a test kept of each place of a heap (single places only): the hash its page had when the tick hashed it,
+// the bytes in use then, and those bytes
+typedef struct kept_place {
+    uint64_t hash;
+    uint32_t used;
+    uint8_t bytes[LINES_PAGE];
+} kept_place;
+
+#define KEPT_PLACES 640u
+
+// Every single place's page that hashes to what was kept of the place, now or the hash before, is the bytes kept
+// there in every line it doesn't say was written in between (false where not): how many said some lines and not all
+static uint32_t lines_hold(const tide_heap *h, const kept_place *kept, bool *held)
+{
+    uint32_t told = 0;
+    for (uint32_t i = 1; i < h->pages && i < KEPT_PLACES; i++) {
+        const tide_page *p = h->page[i];
+        const kept_place *k = &kept[i];
+        if (!p || p->first != i || p->size != LINES_PAGE || !k->hash) continue;
+        uint64_t wrote;
+        if (p->hash == k->hash) wrote = 0;
+        else if (p->before == k->hash) wrote = p->wrote;
+        else continue;
+        if (wrote && wrote != TIDE_PAGE_ALL_LINES) told++;
+        const uint8_t *now = tide_page_data(p);
+        for (uint32_t line = 0; line < 64u; line++) {
+            const uint32_t from = line * (LINES_PAGE / 64u), to = from + LINES_PAGE / 64u < k->used ? from + LINES_PAGE / 64u : k->used;
+            if (wrote >> line & 1u || from >= to) continue;
+            if (memcmp(now + from, k->bytes + from, to - from) != 0) *held = false;
+        }
+    }
+    return told;
+}
+
+// ...and keeps them as they are now (the heap hashed)
+static void lines_keep(const tide_heap *h, kept_place *kept)
+{
+    for (uint32_t i = 1; i < KEPT_PLACES; i++) {
+        const tide_page *p = i < h->pages ? h->page[i] : NULL;
+        if (!p || p->first != i || p->size != LINES_PAGE) {
+            kept[i].hash = 0;
+            continue;
+        }
+        kept[i].hash = p->hash;
+        kept[i].used = tide_heap_page_used(h, p);
+        memcpy(kept[i].bytes, tide_page_data(p), LINES_PAGE);
+    }
+}
+
+// The blocks a model of a world holds: their offsets and sizes
+typedef struct lines_blocks {
+    uint64_t at[1200];
+    uint32_t bytes[1200];
+    uint32_t count;
+} lines_blocks;
+
+static uint32_t lines_roll(uint32_t *state)
+{
+    *state = *state * 1664525u + 1013904223u;
+    return *state >> 8;
+}
+
+// Writes `bytes` from `from` of a block's payload with numbers of `seed`
+static void lines_fill(uint8_t *payload, const uint32_t from, const uint32_t bytes, const uint32_t seed)
+{
+    for (uint32_t i = 0; i < bytes; i++) payload[from + i] = (uint8_t)(seed * 131u + i * 17u + 3u);
+}
+
+TIDE_TEST(heap_pages_say_which_lines_were_written)
+{
+    static const uint32_t sizes[] = {0, 8, 24, 40, 100, 200, 500, 1000, 3000, 8000, 16368, 40000};
+    kept_place *kept = calloc(KEPT_PLACES, sizeof *kept);
+    static lines_blocks blocks, old_blocks;
+    TIDE_REQUIRE(kept != NULL);
+    tide_heaps hs = {0}, snapshot = {0}, old = {0};
+    blocks.count = old_blocks.count = 0;
+    uint32_t state = 4242u, told = 0, copies_written = 0, ran = 0;
+    bool held = true;
+    for (uint32_t tick = 0; tick < 400u; tick++) {
+        tide_heap *h = first_heap(&hs);
+        const bool in_runs = tick % 7u == 3u;
+        const uint32_t was = in_runs ? tide_heap_run_enter(1u) : 0u;
+        for (uint32_t op = 0; op < 24u; op++) {
+            const uint32_t roll = lines_roll(&state);
+            const uint32_t what = roll % 10u;
+            if (!in_runs && op == 12u && tick % 4u == 1u) {
+                // In the middle of a tick: a snapshot (whose pages, written and not hashed since, the rest of the tick
+                // copies), or a row's end, whose blocks let go are free for the next (its places' pages taken again)
+                if (tick % 8u == 1u) tide_heaps_copy(&snapshot, &hs);
+                else tide_heaps_flush(&hs);
+            }
+            if (!in_runs && (what < 3u || !blocks.count) && blocks.count < 1200u) { // A block
+                const uint32_t bytes = sizes[(roll >> 4) % (sizeof sizes / sizeof sizes[0])];
+                blocks.at[blocks.count] = tide_heap_alloc(h, bytes);
+                blocks.bytes[blocks.count++] = bytes;
+            } else if (!in_runs && what == 3u) { // One let go
+                const uint32_t i = (roll >> 4) % blocks.count;
+                tide_heap_release(h, blocks.at[i]);
+                blocks.at[i] = blocks.at[--blocks.count];
+                blocks.bytes[i] = blocks.bytes[blocks.count];
+            } else if (!in_runs && what == 4u) { // Written over, as a big list's chunk is
+                const uint32_t i = (roll >> 4) % blocks.count;
+                if (!blocks.bytes[i]) continue;
+                uint8_t *payload = (uint8_t *)(tide_heap_write_over(h, blocks.at[i], blocks.bytes[i]) + 1);
+                lines_fill(payload, 0u, blocks.bytes[i], roll);
+                copies_written++;
+            } else { // A part of one written, through its start or a place inside it
+                const uint32_t i = (roll >> 4) % blocks.count, bytes = blocks.bytes[i];
+                if (!bytes) continue;
+                const uint32_t from = (roll >> 2) % bytes, count = 1u + (roll >> 11) % (bytes - from < 64u ? bytes - from : 64u);
+                const uint64_t inside = what == 9u ? (uint64_t)(from & ~15u) : 0u; // (Offsets in 16 bytes, past the header)
+                uint8_t *at = (uint8_t *)tide_heap_write(h, blocks.at[i] + inside) - inside + sizeof(tide_block);
+                lines_fill(at, from, count, roll);
+                ran += in_runs;
+            }
+        }
+        if (in_runs) {
+            tide_heap_run_leave(was);
+            tide_heap_runs_join(h);
+        }
+        tide_heaps_flush(&hs);
+        tide_heaps_settle(&hs);
+        // A snapshot shares its pages, so the next tick's writes copy them: taken before the hash too, so a copy
+        // is of a page written since its hash
+        if (tick % 3u == 0u) tide_heaps_copy(&snapshot, &hs);
+        (void)tide_heaps_hash(0, &hs);
+        if (tick % 3u != 0u) tide_heaps_copy(&snapshot, &hs);
+        told += lines_hold(first_heap(&hs), kept, &held);
+        TIDE_REQUIRE(held);
+        // Now and then the world is another that holds the same: read from its bytes, or a delta of it read over a
+        // copy; or one from ticks before (a rollback), whose pages are older ones
+        if (tick % 50u == 20u) {
+            tide_heaps_free(&old);
+            tide_heaps_copy(&old, &hs);
+            old_blocks = blocks;
+        } else if (tick % 50u == 35u) {
+            tide_heaps_free(&hs);
+            tide_heaps_copy(&hs, &old);
+            blocks = old_blocks;
+        } else if (tick % 50u == 40u) {
+            tide_heaps back = {0};
+            TIDE_REQUIRE(unpacks(&hs, &back));
+            tide_heaps_free(&hs);
+            hs = back;
+        } else if (tick % 50u == 45u) {
+            tide_heaps back = {0};
+            TIDE_REQUIRE(delta_into(&hs, &snapshot, &snapshot, &back));
+            tide_heaps_free(&hs);
+            hs = back;
+        }
+        if (tick % 50u >= 35u && tick % 50u <= 45u && tick % 5u == 0u) {
+            (void)tide_heaps_hash(0, &hs);
+            told += lines_hold(first_heap(&hs), kept, &held);
+            TIDE_REQUIRE(held);
+        }
+        lines_keep(first_heap(&hs), kept);
+    }
+    // It said something of use most ticks
+    TIDE_CHECK(told > 2000u && copies_written > 100u && ran > 100u);
+    tide_heaps_free(&hs);
+    tide_heaps_free(&snapshot);
+    tide_heaps_free(&old);
+    free(kept);
+}
+
+// A page whose blocks all went, taken again in the same tick for a block of another place (tide_heap.dropped): its
+// bytes are another page's, which it says of all of it
+TIDE_TEST(heap_page_taken_again_says_all_its_lines)
+{
+    tide_heaps hs = {0}, snapshot = {0};
+    tide_heap *h = first_heap(&hs);
+    const uint64_t kept_block = tide_heap_alloc(h, 3000);
+    const uint64_t first = tide_heap_alloc(h, 1000), a = tide_heap_alloc(h, 1000); // (The second 1 KiB into its page)
+    fill_block(&hs, a, 1000, 1);
+    fill_block(&hs, kept_block, 3000, 2);
+    (void)tide_heaps_hash(0, &hs);
+    tide_heaps_copy(&snapshot, &hs);
+    const tide_page *before = h->page[a >> TIDE_HEAP_PAGE_SHIFT];
+    const uint64_t kept = before->hash;
+    // Its page is written (a copy, the world's own), then its one block goes: the page goes with it, kept for the next
+    fill_block(&hs, a, 1000, 3);
+    tide_heap_release(h, first);
+    tide_heap_release(h, a);
+    tide_heaps_flush(&hs);
+    TIDE_CHECK(h->dropped_count == 1u && !h->page[a >> TIDE_HEAP_PAGE_SHIFT]);
+    // ...which a block of another size takes, written where it is
+    const uint64_t b = tide_heap_alloc(h, 100);
+    TIDE_CHECK(b >> TIDE_HEAP_PAGE_SHIFT == a >> TIDE_HEAP_PAGE_SHIFT && h->dropped_count == 0u);
+    fill_block(&hs, b, 8, 4);
+    (void)tide_heaps_hash(0, &hs);
+    const tide_page *now = h->page[b >> TIDE_HEAP_PAGE_SHIFT];
+    TIDE_CHECK(now->hash != kept);
+    TIDE_CHECK(now->before != kept || now->wrote == TIDE_PAGE_ALL_LINES);
+    // The block that was there isn't as it was, whatever lines a write said
+    TIDE_CHECK((a & (LINES_PAGE - 1u)) == 1024u && !tide_page_same_since(now, kept, 1024u, 1024u));
+    tide_heaps_settle(&hs);
+    tide_heaps_free(&hs);
+    tide_heaps_free(&snapshot);
+}

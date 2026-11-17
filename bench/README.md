@@ -36,7 +36,9 @@ Every session benchmark's report gained three things with it (2026-11-16). The `
 
 Later the same day, for what a server's worst update is made of and for long runs. `--worst <n>` (any session
 benchmark) lists the server's n longest updates after the report, each with when it was, its tick, what it spent
-simulating, hashing, snapshotting and packing, and of its simulating what its handlers and changes took and its
+simulating, hashing (and of it, in brackets, every player's projection checked at once as the tick ended,
+`client_hashes`; the rest is the world's own hash and the frozen worlds the repairs compare), snapshotting and
+packing, and of its simulating what its handlers and changes took and its
 three longest systems (the server ticks with a `tide_profile` for it, which reads the clock around each system, so
 those runs' times are a little longer). Under that list it gives each of the server's systems in ms a second over
 the run, longest first, and the server's updates split in two, those after which it held as many entities as before

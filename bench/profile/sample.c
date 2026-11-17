@@ -4,7 +4,7 @@
 // code spent its samples, by function and by line, through llvm-symbolizer
 // and the program's PDB (a release build has one).
 //
-//   tide_sample [--hz <n>] [--top <n>] [--lines <n>] [--main] [--after <seconds>] [--stacks] -- program [args...]
+//   tide_sample [--hz <n>] [--top <n>] [--lines <n>] [--main] [--after <seconds>] [--stacks] [--under <function>] -- program [args...]
 //
 // --main samples the program's first thread alone (a game's frames and views),
 // which disturbs it far less than suspending its every thread each round.
@@ -12,6 +12,9 @@
 // --stacks walks each sample's stack too (dbghelp, through the program's unwind tables) and prints who called
 // what: the sampled function and the three of the program's own above it. A walk costs far more than a
 // sample, so use it with --main and a lower --hz.
+// --under <function> walks every sample's stack and keeps only those with the function in it (a bench's
+// `tide_server_update`, with --main and its --threads 1: the server's own work, not its bots'), and prints each
+// function's inclusive share too: the samples it's anywhere in the nearest 16 of the program's frames of.
 //
 // Samples outside the program's own image (the system's DLLs: waits, the
 // kernel's calls) are counted as "elsewhere" per DLL. A thread that's
@@ -76,7 +79,7 @@ static void count_sample(const uint64_t address, const uint32_t module)
 
 // A sample's stack: where it was (0 outside the program's image) and the
 // program's own callers above it, nearest first.
-#define STACK_DEPTH 4
+#define STACK_DEPTH 16
 typedef struct stack_count {
     uint64_t at[STACK_DEPTH];
     uint32_t count;
@@ -201,6 +204,8 @@ int main(int argc, char **argv)
     double hz = 5000.0, after = 0.0;
     int top = 40, lines = 40, arg = 1;
     bool main_only = false, walk = false;
+    const char *under = NULL;
+    uint64_t under_start = 0, under_size = 0;
     for (; arg < argc; arg++) {
         if (strcmp(argv[arg], "--") == 0) {
             arg++;
@@ -212,8 +217,11 @@ int main(int argc, char **argv)
         else if (strcmp(argv[arg], "--main") == 0) main_only = true;
         else if (strcmp(argv[arg], "--after") == 0 && arg + 1 < argc) after = atof(argv[++arg]);
         else if (strcmp(argv[arg], "--stacks") == 0) walk = true;
-        else {
-            fprintf(stderr, "usage: tide_sample [--hz <n>] [--top <n>] [--lines <n>] [--main] [--after <seconds>] [--stacks] -- program [args...]\n");
+        else if (strcmp(argv[arg], "--under") == 0 && arg + 1 < argc) {
+            under = argv[++arg];
+            walk = true;
+        } else {
+            fprintf(stderr, "usage: tide_sample [--hz <n>] [--top <n>] [--lines <n>] [--main] [--after <seconds>] [--stacks] [--under <function>] -- program [args...]\n");
             return 2;
         }
     }
@@ -282,8 +290,19 @@ int main(int argc, char **argv)
             CONTEXT c = {.ContextFlags = walk ? CONTEXT_FULL : CONTEXT_CONTROL};
             if (GetThreadContext(handles[i], &c)) {
                 const uint32_t m = module_of(c.Rip);
-                count_sample(m == UINT32_MAX ? c.Rip : c.Rip - modules[m].base, m);
-                total++;
+                const uint64_t rip = c.Rip;
+                bool inside = !under;
+                if (under && !under_size && program_module != UINT32_MAX) {
+                    char buffer[sizeof(SYMBOL_INFO) + 256];
+                    SYMBOL_INFO *symbol = (SYMBOL_INFO *)buffer;
+                    memset(buffer, 0, sizeof buffer);
+                    symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
+                    symbol->MaxNameLen = 255;
+                    if (SymFromName(pi.hProcess, under, symbol)) {
+                        under_start = symbol->Address;
+                        under_size = symbol->Size ? symbol->Size : 1;
+                    }
+                }
                 if (walk && program_module != UINT32_MAX) {
                     uint64_t at[STACK_DEPTH] = {m == program_module ? c.Rip - modules[m].base : 0};
                     int found = 1;
@@ -293,14 +312,19 @@ int main(int argc, char **argv)
                     frame.AddrFrame.Offset = c.Rbp;
                     frame.AddrStack.Offset = c.Rsp;
                     frame.AddrPC.Mode = frame.AddrFrame.Mode = frame.AddrStack.Mode = AddrModeFlat;
-                    for (int depth = 0; depth < 48 && found < STACK_DEPTH; depth++) {
+                    for (int depth = 0; depth < 128 && (found < STACK_DEPTH || !inside); depth++) {
                         if (!StackWalk64(IMAGE_FILE_MACHINE_AMD64, pi.hProcess, handles[i], &frame, &c, NULL,
                                          SymFunctionTableAccess64, SymGetModuleBase64, NULL) || !frame.AddrPC.Offset) break;
                         if (depth == 0) continue; // The sample itself
                         const uint64_t pc = frame.AddrPC.Offset - 1u; // Inside the call, not after it
-                        if (module_of(pc) == program_module) at[found++] = pc - modules[program_module].base;
+                        if (under_size && pc >= under_start && pc - under_start < under_size) inside = true;
+                        if (module_of(pc) == program_module && found < STACK_DEPTH) at[found++] = pc - modules[program_module].base;
                     }
-                    count_stack(at);
+                    if (inside) count_stack(at);
+                }
+                if (inside) {
+                    count_sample(m == UINT32_MAX ? rip : rip - modules[m].base, m);
+                    total++;
                 }
             }
             ResumeThread(handles[i]);
@@ -468,17 +492,26 @@ int main(int argc, char **argv)
     fclose(out);
     remove(in_path);
     remove(out_path);
-    named *pairs = NULL, *chains = NULL;
-    size_t pair_count = 0, pair_capacity = 0, chain_count = 0, chain_capacity = 0;
+    named *pairs = NULL, *chains = NULL, *inclusive = NULL;
+    size_t pair_count = 0, pair_capacity = 0, chain_count = 0, chain_capacity = 0, inclusive_count = 0, inclusive_capacity = 0;
     uint64_t walked = 0;
     size_t next_name = 0;
     for (size_t i = 0; i < stack_size; i++) {
         if (!stacks[i].count) continue;
         char chain[4200] = "", pair[2100] = "";
+        const char *seen[STACK_DEPTH];
+        int seen_count = 0;
         for (int k = 0; k < STACK_DEPTH; k++) {
             const char *name = stacks[i].at[k] ? (names[next_name] ? names[next_name] : "?") : k == 0 ? "(a DLL)" : NULL;
             if (stacks[i].at[k]) next_name++;
             if (!name) break;
+            bool again = false;
+            for (int s = 0; s < seen_count; s++) again |= strcmp(seen[s], name) == 0;
+            if (!again) {
+                seen[seen_count++] = name;
+                add_named(&inclusive, &inclusive_count, &inclusive_capacity, name, stacks[i].count);
+            }
+            if (k >= 6) continue; // Chains keep the nearest six
             if (k) strncat(chain, " <- ", sizeof chain - strlen(chain) - 1);
             strncat(chain, name, sizeof chain - strlen(chain) - 1);
             if (k < 2) {
@@ -492,6 +525,12 @@ int main(int argc, char **argv)
     }
     qsort(pairs, pair_count, sizeof *pairs, by_count);
     qsort(chains, chain_count, sizeof *chains, by_count);
+    qsort(inclusive, inclusive_count, sizeof *inclusive, by_count);
+    printf("\n  inclusive (a function anywhere in the nearest %d of the program's frames), %% of %llu walked samples:\n",
+           STACK_DEPTH, (unsigned long long)walked);
+    for (size_t i = 0; i < inclusive_count && (int)i < 2 * top; i++) {
+        printf("  %6.2f%%  %s\n", 100.0 * (double)inclusive[i].count / (double)walked, inclusive[i].name);
+    }
     printf("\n  called from (the sampled function <- its caller in the program), %% of %llu walked samples:\n", (unsigned long long)walked);
     for (size_t i = 0; i < pair_count && (int)i < top; i++) {
         printf("  %6.2f%%  %s\n", 100.0 * (double)pairs[i].count / (double)walked, pairs[i].name);

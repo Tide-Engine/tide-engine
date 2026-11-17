@@ -121,6 +121,105 @@ static uint32_t stale_in(const tide_table *t, uint64_t *bytes)
     return count;
 }
 
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
+// Snapshots let go of on another thread, as a server lets go of a kept tick's world on its pool, while the table they
+// share pages with is written, copied and let go of on this one
+typedef struct letting_go {
+    tide_table *kept;
+    uint32_t count;
+    uint32_t next; // Kept tables handed over so far
+} letting_go;
+
+static DWORD WINAPI let_kept_go(void *context)
+{
+    letting_go *l = context;
+    for (uint32_t done = 0; done < l->count;) {
+        if (__atomic_load_n(&l->next, __ATOMIC_ACQUIRE) <= done) continue;
+        tide_table_free(&l->kept[done++], &wide);
+    }
+    return 0;
+}
+
+TIDE_TEST(page_references_hold_while_another_thread_lets_snapshots_go)
+{
+    enum { ROUNDS = 400 };
+    tide_table a = {0};
+    tide_table twin = {0};
+    widen(&a, 20000);
+    widen(&twin, 20000);
+    letting_go l = {calloc(ROUNDS, sizeof(tide_table)), ROUNDS, 0};
+    TIDE_REQUIRE(l.kept != NULL);
+    HANDLE thread = CreateThread(NULL, 0, let_kept_go, &l, 0, NULL);
+    TIDE_REQUIRE(thread != NULL);
+    uint32_t dice = 99u;
+    for (uint32_t round = 0; round < ROUNDS; round++) {
+        // A tick's world kept, and handed over to be let go of a little later: each of the table's pages is shared
+        // with it as this thread writes some of them (a copy where it's shared, in place where it isn't any more)
+        tide_table_copy(&l.kept[round], &a, &wide);
+        tide_table snapshot = {0};
+        tide_table_copy(&snapshot, &a, &wide);
+        for (uint32_t k = 0; k < 64; k++) {
+            dice = dice * 1664525u + 1013904223u;
+            const uint32_t row = (dice >> 8) % 20000u, column = 1u + (dice >> 4) % 4u;
+            *(uint32_t *)tide_table_cell(&a, &wide, row, column) = dice;
+            *(uint32_t *)tide_table_cell(&twin, &wide, row, column) = dice;
+        }
+        tide_table_free(&snapshot, &wide);
+        if (round >= 3u) __atomic_store_n(&l.next, round - 2u, __ATOMIC_RELEASE);
+    }
+    __atomic_store_n(&l.next, (uint32_t)ROUNDS, __ATOMIC_RELEASE);
+    TIDE_CHECK(WaitForSingleObject(thread, INFINITE) == WAIT_OBJECT_0);
+    CloseHandle(thread);
+    // Every page the table has is its own again, and holds what the twin that shared nothing does
+    uint32_t shared = 0;
+    for (uint32_t i = 0; i < a.chunks * wide.count; i++) shared += tide_page_refs(a.pages[i]) != 1u;
+    TIDE_CHECK(shared == 0);
+    TIDE_CHECK(tide_table_hash(TIDE_HASH_START, &a, &wide) == tide_table_hash(TIDE_HASH_START, &twin, &wide));
+    free(l.kept);
+    tide_table_free(&a, &wide);
+    tide_table_free(&twin, &wide);
+}
+#endif
+
+// Pages let go of are handed out again, more than a thread keeps of them going through the shared ones, at every
+// size kept spare (the entity table's slots and its index's among them) and at one that isn't: each comes back
+// zeroed, its own and whole
+TIDE_TEST(page_spares_of_every_kept_size_come_back_zeroed_and_apart)
+{
+    enum { COUNT = 700 };
+    static const uint32_t sizes[] = {4, 12, 24, 4096, 6144, 16384, 24576, 32768, 65536, 5000};
+    tide_page **pages = calloc(COUNT, sizeof *pages);
+    TIDE_REQUIRE(pages != NULL);
+    for (uint32_t s = 0; s < sizeof sizes / sizeof sizes[0]; s++) {
+        const uint32_t size = sizes[s];
+        for (uint32_t round = 0; round < 3; round++) {
+            for (uint32_t i = 0; i < COUNT; i++) {
+                pages[i] = tide_page_new(size);
+                TIDE_REQUIRE(pages[i]->size == size && tide_page_refs(pages[i]) == 1u);
+                const uint8_t *bytes = tide_page_data(pages[i]);
+                uint32_t nonzero = 0;
+                for (uint32_t b = 0; b < size; b++) nonzero += bytes[b] != 0;
+                TIDE_CHECK(nonzero == 0);
+                TIDE_CHECK(pages[i]->was == 0 && pages[i]->hashed == UINT32_MAX);
+                memset(tide_page_data(pages[i]), (int)(i & 0xffu) | 1, size);
+            }
+            // Each is apart from the others: none was written over by another's bytes
+            uint32_t wrong = 0;
+            for (uint32_t i = 0; i < COUNT; i++) {
+                const uint8_t *bytes = tide_page_data(pages[i]);
+                wrong += bytes[0] != (uint8_t)((i & 0xffu) | 1) || bytes[size - 1u] != (uint8_t)((i & 0xffu) | 1);
+            }
+            TIDE_CHECK(wrong == 0);
+            for (uint32_t i = 0; i < COUNT; i++) tide_page_release(pages[i], 1);
+        }
+    }
+    free(pages);
+    tide_pages_free();
+}
+
 TIDE_TEST(page_stale_pages_are_hashed_on_threads_before_the_hash)
 {
     tide_table a = {0};

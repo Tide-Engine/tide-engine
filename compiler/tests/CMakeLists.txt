@@ -182,6 +182,17 @@ foreach(variant checked memo_off)
 endforeach()
 target_compile_definitions(tidec_e2e_visibility_blocks_checked PRIVATE TIDE_CLIENT_SPANS_CHECK TIDE_CLIENT_ONCE_MOST=4u)
 target_compile_definitions(tidec_e2e_visibility_blocks_memo_off PRIVATE TIDE_CLIENT_MEMO_OFF)
+# ...and by the pages written since the check before: blocks and slots beside others in their pages, changed in one
+# tick and the next, ticks not checked between, a world taken back
+tide_e2e_test(visibility_walks)
+foreach(variant checked memo_off)
+    tide_add_game(tidec_e2e_visibility_walks_${variant} SOURCES e2e/visibility_walks.tide NAME game
+        HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/visibility_walks_test.c")
+    target_include_directories(tidec_e2e_visibility_walks_${variant} PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    add_test(NAME tidec_e2e_visibility_walks_${variant} COMMAND tidec_e2e_visibility_walks_${variant})
+endforeach()
+target_compile_definitions(tidec_e2e_visibility_walks_checked PRIVATE TIDE_CLIENT_SPANS_CHECK)
+target_compile_definitions(tidec_e2e_visibility_walks_memo_off PRIVATE TIDE_CLIENT_MEMO_OFF)
 # ...and containers too big for one chunk of their list, hashed as trees of their chunks, and the rows of a piece read
 # again looked at one by one: each tick's hashes also against the player's own world's, loaded from what it's sent
 tide_e2e_test(visibility_trees)
@@ -213,6 +224,22 @@ endforeach()
 target_compile_definitions(tidec_e2e_visibility_repairs_checked PRIVATE TIDE_CLIENT_SPANS_CHECK)
 target_compile_definitions(tidec_e2e_visibility_repairs_memo_off PRIVATE TIDE_CLIENT_MEMO_OFF)
 target_compile_definitions(tidec_e2e_visibility_repairs_wide PRIVATE TIDE_CLIENT_SPANS_CHECK VISIBILITY_REPAIRS_WIDE)
+# The _checked variants read every check's rows in parts, a piece a part, here in order (client_spans_codegen.inc,
+# tide_client_part): what the parts keep and merge is worked out again from the rows each check, with the same pins
+foreach(fixture runs pieces blocks walks trees repairs)
+    target_compile_definitions(tidec_e2e_visibility_${fixture}_checked PRIVATE TIDE_CLIENT_SPLIT_ROWS=1u TIDE_CLIENT_PART_PIECES=1u
+        TIDE_CLIENT_PARTS_ALWAYS)
+endforeach()
+# ...and on the platform's pool, against one thread's: the hashes, repairs and all the checks keep the same
+if(TIDE_PLATFORM)
+    tide_add_game(tidec_e2e_visibility_walks_pool SOURCES e2e/visibility_walks.tide NAME game
+        HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/visibility_walks_test.c")
+    target_include_directories(tidec_e2e_visibility_walks_pool PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_link_libraries(tidec_e2e_visibility_walks_pool PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_visibility_walks_pool PRIVATE TIDE_CLIENT_SPANS_CHECK TIDE_CLIENT_SPLIT_ROWS=1u
+        TIDE_CLIENT_PART_PIECES=1u TIDE_CLIENT_CHECK_DIGEST TIDE_VISIBILITY_WALKS_POOL)
+    add_test(NAME tidec_e2e_visibility_walks_pool COMMAND tidec_e2e_visibility_walks_pool)
+endif()
 tide_e2e_test(shards) # One world split across shards: moving, ghosts, waiting on borders, checkpoints and splits
 tide_e2e_test(shards_players) # A player's machine following their avatar from shard to shard
 tide_e2e_test(shards_visibility) # A visibility group the root keeps, read on every shard and changed from a region

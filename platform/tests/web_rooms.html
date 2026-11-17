@@ -18,7 +18,19 @@
     parent.postMessage({ who: query.get('who'), line: String(line) }, '*');
   };
   const told = new Set();
-  addEventListener('message', ({ data }) => { if (data && data.tell) told.add(data.tell); });
+  // Once a player fails, the page asks every frame how each of its data channels
+  // stands (watch, below): whether it opened, and what went each way.
+  const channels = [];
+  addEventListener('message', ({ data }) => {
+    if (data && data.tell) told.add(data.tell);
+    if (data && data.account) {
+      for (const c of channels) {
+        tell('rtc ' + c.id + ': ' + c.made + ' channel ' + c.channel.readyState + ', sent ' + c.sent + ', got ' + c.got
+             + ', buffered ' + c.channel.bufferedAmount);
+      }
+      tell('account given');
+    }
+  });
   // Hold the host's registration until its program checks that no invite is
   // offered yet. Release it by an explicit signal, independently of timing.
   let registration = null;
@@ -38,16 +50,40 @@
     };
   }
   // Retain handshake progress if a hosted run fails before the match connects.
-  // These listeners observe WebRTC without changing its signaling or packets.
+  // These listeners observe WebRTC without changing its signaling or packets:
+  // each connection's states, and its data channel's opening, closing and
+  // the messages it sent and got (said as a program fails).
   const Peer = RTCPeerConnection;
   let peers = 0;
+  const watch = (id, channel, made) => {
+    const seen = { id, made, channel, sent: 0, got: 0 };
+    channels.push(seen);
+    const send = channel.send.bind(channel);
+    channel.send = data => {
+      seen.sent++;
+      send(data);
+    };
+    channel.addEventListener('message', () => { seen.got++; });
+    for (const event of ['open', 'close', 'error']) channel.addEventListener(event, () => tell('rtc ' + id + ': ' + made + ' channel ' + event));
+  };
   window.RTCPeerConnection = class extends Peer {
     constructor(...args) {
       super(...args);
       const id = ++peers;
+      this.id = id;
       for (const event of ['iceconnectionstatechange', 'connectionstatechange']) {
         this.addEventListener(event, () => tell('rtc ' + id + ': ice ' + this.iceConnectionState + ', connection ' + this.connectionState));
       }
+      // (Before tide.js's ondatachannel, which is set after: a channel can be open already, with no open event to come)
+      this.addEventListener('datachannel', event => {
+        tell('rtc ' + id + ': their channel came, ' + event.channel.readyState);
+        watch(id, event.channel, 'their');
+      });
+    }
+    createDataChannel(...args) {
+      const channel = super.createDataChannel(...args);
+      watch(this.id, channel, 'our');
+      return channel;
     }
   };
   var Tide = {

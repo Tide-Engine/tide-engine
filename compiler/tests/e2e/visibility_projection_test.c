@@ -284,19 +284,20 @@ TIDE_TEST(visibility_projection_preserves_exact_affine_placement_at_hidden_bound
 static bool repaired_by_changes(const tide_world *base, const tide_world *server, const tide_world *client, tide_world *out)
 {
     const tide_player_id recipient = tide_player_from_index(0);
-    uint32_t plan_size = 0, now_size = 0, was_size = 0, changed = 0, again_size = 0;
-    uint8_t *now = NULL, *was = NULL;
-    uint8_t *plan = tide_game_api.client_changes(server, base, server, recipient, &plan_size, &now, &now_size, &was, &was_size, &changed);
+    uint32_t changed = 0, again_size = 0;
+    tide_writer plan_w = {0}, now_w = {0}, was_w = {0};
+    const bool made = tide_game_api.client_changes(server, base, server, recipient, &plan_w, &now_w, &was_w, &changed);
+    uint8_t *plan = made ? plan_w.data : NULL, *now = now_w.data, *was = was_w.data;
+    const uint32_t plan_size = plan_w.size, now_size = now_w.size, was_size = was_w.size;
+    if (!made) free(plan_w.data);
     (void)tide_game_api.client_hash(server, recipient); // The tick's check, which keeps what each row came to
-    uint32_t kept_plan_size = 0, kept_now_size = 0, kept_was_size = 0;
-    uint8_t *kept_now = NULL, *kept_was = NULL;
-    uint8_t *kept_plan = tide_game_api.client_changes(server, base, server, recipient, &kept_plan_size, &kept_now, &kept_now_size,
-                                                      &kept_was, &kept_was_size, &changed);
-    bool ok = plan && kept_plan && kept_plan_size == plan_size && !memcmp(kept_plan, plan, plan_size) && kept_now_size == now_size
-              && !memcmp(kept_now, now, now_size) && kept_was_size == was_size && !memcmp(kept_was, was, was_size);
-    free(kept_plan);
-    free(kept_now);
-    free(kept_was);
+    tide_writer kept_plan = {0}, kept_now = {0}, kept_was = {0};
+    const bool kept_made = tide_game_api.client_changes(server, base, server, recipient, &kept_plan, &kept_now, &kept_was, &changed);
+    bool ok = plan && kept_made && kept_plan.size == plan_size && !memcmp(kept_plan.data, plan, plan_size) && kept_now.size == now_size
+              && !memcmp(kept_now.data, now, now_size) && kept_was.size == was_size && !memcmp(kept_was.data, was, was_size);
+    free(kept_plan.data);
+    free(kept_now.data);
+    free(kept_was.data);
     uint8_t *again = plan ? tide_game_api.client_changes_base(client, recipient, plan, plan_size, &again_size) : NULL;
     // The recipient makes `was` again from the world it confirmed, byte for byte
     ok = ok && again && again_size == was_size && !memcmp(again, was, was_size);

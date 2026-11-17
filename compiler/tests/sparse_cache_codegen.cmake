@@ -58,10 +58,10 @@ string(FIND "${tick}" "tide_run_systems(" run)
 if(prepare LESS 0 OR run LESS 0 OR NOT prepare LESS run)
     message(FATAL_ERROR "selection caches must be prepared serially before systems/tasks run")
 endif()
-foreach(required IN ITEMS "tide_rows_cache_find(" "tide_rows_plan_prepare(" "refs == UINT32_MAX"
+foreach(required IN ITEMS "tide_rows_cache_find(" "tide_rows_plan_prepare(" "tide_page_refs(page) == UINT32_MAX"
         "static __attribute__((noinline)) void tide_task_Update_slow("
         "if (tide_pieces != 1u) goto tide_fallback;"
-        "tide_pages_Item[tide_lane]->refs != 1u) goto tide_fallback;" # Only the lanes Update writes: their mask before it
+        "tide_page_refs(tide_pages_Item[tide_lane]) != 1u) goto tide_fallback;" # Only the lanes Update writes: their mask before it
         "tide_page_now->hashed = UINT32_MAX;"
         "tide_task_Update_slow(tide_world_v, tide_task, tide_pieces);"
         "memcmp(p->filter, filter" "entry->rows != tide_table_rows"

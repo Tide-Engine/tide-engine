@@ -25,12 +25,23 @@ static bool system_rows_plain(const gen *g, const decl *sys)
         && !sys->preparation_owner && !sharded(g);
 }
 
+// ...and a match handler's one row (gen_dispatch_handlers, while it says g->row_single), copied once for the event it
+// runs for: the lanes its code can read or write, as a system's, which are put back only where their bytes changed
+// (gen_row_puts), and its dispatch takes only their columns (gen_chunk_columns). Its guard is the code's own: a
+// handler has no marking pass. A dispatch that gathers or writes another way gets the component whole
+static bool handler_rows_plain(const gen *g, const decl *sys)
+{
+    return !g->opts->split_plumbing && sys->is_handler && g->row_single && sys->per_entity && sys->body && !sys->extern_system && !sys->starts_tasks
+        && !sys->is_async && !sys->is_virtual && !sys->is_override && !sys->replaced_by && !sys->is_local && !sharded(g);
+}
+
 // Whether parameter `i`'s copy can be made of some of its lanes: a component nothing but the system's own code
 // reads the copy of
 static bool system_param_splits(const gen *g, const decl *sys, const int i)
 {
     const param *p = &sys->params.items[i];
-    if (!system_rows_plain(g, sys) || p->type.kind != TY_COMPONENT || (p->mode != PARAM_READ && p->mode != PARAM_MUT)) return false;
+    if (!(system_rows_plain(g, sys) || handler_rows_plain(g, sys)) || p->type.kind != TY_COMPONENT
+        || (p->mode != PARAM_READ && p->mode != PARAM_MUT)) return false;
     const decl *d = p->type.decl;
     const int lanes = comp_lanes(d);
     return lanes > 1 && lanes <= LANE_MASK_MOST && decl_layout(d).size <= LANE_WRITES_MOST && !d->is_local

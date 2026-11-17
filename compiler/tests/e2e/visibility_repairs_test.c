@@ -49,12 +49,29 @@ static void hashes(const tide_world *w)
 typedef struct changes {
     uint8_t *plan, *now, *was;
     uint32_t plan_size, now_size, was_size, changed;
+    bool kept; // Written into `rooms`: not to free
 } changes;
 
-static changes changes_of(const tide_world *w, const tide_world *base, const void *lineage, const uint32_t p)
+// Writers a session uses again (session.c, read_room): each repair's bytes written over the last one's, whatever
+// room it had, bigger or smaller, and still the same bytes as a repair written into writers with none
+static tide_writer rooms[3];
+
+static changes changes_of(const tide_world *w, const tide_world *base, const void *lineage, const uint32_t p, const bool in_rooms)
 {
-    changes c = {0};
-    c.plan = tide_game_api.client_changes(w, base, lineage, player(p), &c.plan_size, &c.now, &c.now_size, &c.was, &c.was_size, &c.changed);
+    changes c = {.kept = in_rooms};
+    tide_writer fresh[3] = {{0}};
+    tide_writer *to = in_rooms ? rooms : fresh;
+    if (!tide_game_api.client_changes(w, base, lineage, player(p), &to[0], &to[1], &to[2], &c.changed)) {
+        for (uint32_t i = 0; i < 3u && !in_rooms; i++) free(to[i].data);
+        c.kept = false;
+        return c;
+    }
+    c.plan = to[0].data;
+    c.plan_size = to[0].size;
+    c.now = to[1].data;
+    c.now_size = to[1].size;
+    c.was = to[2].data;
+    c.was_size = to[2].size;
     return c;
 }
 
@@ -67,6 +84,7 @@ static bool same_changes(const changes *a, const changes *b)
 
 static void free_changes(changes *c)
 {
+    if (c->kept) return;
     free(c->plan);
     free(c->now);
     free(c->was);
@@ -87,10 +105,10 @@ static void compare(const tide_world *now, const tide_world *base, int expect, c
 #endif
     for (uint32_t p = 0; p < PLAYERS; p++) {
         const uint64_t found_before = tide_client_changes_stats[0], walked_before = tide_client_changes_stats[1];
-        changes first = changes_of(now, base, &world, p);
+        changes first = changes_of(now, base, &world, p, false);
         const bool found = tide_client_changes_stats[0] == found_before + 1u && tide_client_changes_stats[1] == walked_before;
         const bool walked = tide_client_changes_stats[1] == walked_before + 1u && tide_client_changes_stats[0] == found_before;
-        changes all = changes_of(now, base, &plain, p);
+        changes all = changes_of(now, base, &plain, p, true);
         if (tide_client_changes_stats[0] != found_before + (found ? 1u : 0u)) {
             printf("    tick %u, %s: a lineage with nothing kept didn't walk\n", tick, what);
             failures++;
@@ -206,6 +224,10 @@ TIDE_TEST(visibility_repairs_from_the_rows_written_down_are_the_walks)
     if (repairs != REPAIRS) printf("    repairs 0x%016" PRIx64 "\n", repairs);
     if (at_end != WORLD) printf("    world 0x%016" PRIx64 "\n", at_end);
     TIDE_CHECK(repairs == REPAIRS && at_end == WORLD);
+    for (uint32_t i = 0; i < 3u; i++) {
+        free(rooms[i].data);
+        rooms[i] = (tide_writer){0};
+    }
     tide_world_free(&bent);
     for (uint32_t i = 0; i < HISTORY; i++) tide_world_free(&history[i]);
     tide_world_free(&world);
@@ -280,6 +302,18 @@ TIDE_TEST(visibility_came_says_whom_a_groups_audience_gained)
     tide_world_tick(&w);
     hashes(&w);
     TIDE_CHECK(came_to(&w) != 0u);
+    // Three quarters of the groups gone, then one made, which packs the directory (its live entries together, each
+    // somewhere else in its list): it came to its own player alone, as the entries that moved are what they were
+    w.Control.step = 31;
+    tide_world_tick(&w);
+    hashes(&w);
+    (void)came_to(&w);
+    const uint32_t made_for = (uint32_t)w.Control.next % 4u;
+    TIDE_REQUIRE(made_for != 1u); // (Not the player of the groups left, which moved)
+    w.Control.step = 17;
+    tide_world_tick(&w);
+    hashes(&w);
+    TIDE_CHECK(came_to(&w) == 1u << made_for);
     // Another world has said nothing
     static tide_world other;
     tide_world_copy(&other, &w);

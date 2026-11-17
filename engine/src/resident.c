@@ -347,7 +347,7 @@ static tide_resident_pages *pages_new(const uint32_t count)
 
 static void pages_release(tide_resident_pages *t)
 {
-    if (!t || --t->refs) return;
+    if (!t || __atomic_sub_fetch(&t->refs, 1u, __ATOMIC_ACQ_REL)) return; // (A world may be let go of on another thread)
     for (uint32_t i = 0; i < t->count; i++) tide_page_release(t->page[i], 1);
     free(t);
 }
@@ -356,7 +356,7 @@ static void pages_release(tide_resident_pages *t)
 static tide_resident_pages *pages_own(tide_resident *r, const uint32_t count)
 {
     tide_resident_pages *old = r->pages;
-    if (old && old->refs == 1 && old->count == count) return old;
+    if (old && __atomic_load_n(&old->refs, __ATOMIC_ACQUIRE) == 1 && old->count == count) return old;
     tide_resident_pages *t = pages_new(count);
     const uint32_t keep = old ? (old->count < count ? old->count : count) : 0;
     for (uint32_t i = 0; i < keep; i++) {
@@ -384,11 +384,7 @@ void tide_arena_commit(tide_arena *a, tide_resident *r, const uint64_t stamp, co
         if (!a->touched[i]) continue;
         a->touched[i] = 0;
         tide_page *p = tide_page_take(TIDE_ARENA_PAGE);
-        p->refs = 1;
-        p->size = TIDE_ARENA_PAGE;
-        p->first = 0;
-        p->hashed = UINT32_MAX;
-        p->was = 0;
+        tide_page_start(p, 1, TIDE_ARENA_PAGE, 0, 0);
         memcpy(tide_page_data(p), a->base + ((size_t)i << TIDE_ARENA_PAGE_SHIFT), TIDE_ARENA_PAGE);
         tide_page_release(t->page[i], 1);
         t->page[i] = p;
@@ -538,7 +534,7 @@ tide_arena *tide_resident_arena(const uint64_t kind)
 void tide_resident_copy(tide_resident *to, const tide_resident *from)
 {
     if (to == from) return;
-    if (from->pages) from->pages->refs++;
+    if (from->pages) __atomic_add_fetch(&from->pages->refs, 1u, __ATOMIC_RELAXED);
     pages_release(to->pages);
     *to = *from;
 }
@@ -573,7 +569,7 @@ static const tide_writer *canonical(const tide_resident *r)
     if (k && k->pack) k->pack(k->context, r, &packed.bytes);
     if (!packed.bytes.data) packed.bytes.data = tide_alloc(1); // Nothing: still a cache entry
     packed.pages = r->pages;
-    if (packed.pages) packed.pages->refs++;
+    if (packed.pages) __atomic_add_fetch(&packed.pages->refs, 1u, __ATOMIC_RELAXED);
     packed.kind = r->kind;
     packed.stamp = r->stamp;
     packed.digest = r->digest;

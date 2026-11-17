@@ -89,6 +89,7 @@ event(Spawned) ZoneCells(with Zone)
 system Change(mut Cell cell, mut Secret secret, mut Visibility visibility, Control control)
 {
     if (control.step == 26) cell.value += 1;                                            // Every cell's: more than a check writes down
+    if (control.step == 31 && cell.id % 4 != 1) Visibility.DestroyGroup(cell.group);   // Most groups gone: the next made packs the directory
     if (cell.id != control.target) return;
     if (control.step == 1) Visibility.Set(cell.group, Audience.Only(PlayerID(3)));      // Its group's audience: nothing of its row
     if (control.step == 2) Visibility.Set(cell.group, Audience.Only(PlayerID(cell.id % 4)));
