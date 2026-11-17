@@ -1,5 +1,37 @@
 # The schedule and the tick on threads
 
+## Systems in C and systems that spawn keep their order (2026-11-17)
+
+`tide_box2d_parts`' `box2d_parts_on_threads` failed now and then in CI's web-release jobs ("tick 499 came out
+different": twice in about 45 runs). Reproduced locally under Node, `TIDE_THREADS=4`, four runs at once held to two
+cores (`ProcessorAffinity` 3, BelowNormal): 6 failures in 1,500 runs (none in 200 unpinned), at ticks 109, 261 and 499 of the yard, each
+one where a game system (`Stage`) spawns. The diagnostic the test has now (`tell_apart`) showed Box2D's stamp, image
+and every body the same, and only `Physics.topologyChanged` (byte 328) and the heap apart: on threads, the
+package's first system, `CheckTopology` (`b2t_topology`, an `extern system` with no waits), had seen the spawned
+entity's slot in the entity table, which on one thread it only sees the tick after.
+
+The cause is the schedule: spawns made no system wait (below, 2026-11-13: "nothing in Tide can tell"), but C can.
+Every `extern system` is handed the entity table (`tide_rows.entities`), and a spawner's entities are registered in
+it (`settle_system`, `tide_entity_create_key`: a slot, `next_unused`, the index) once its tasks are done, which on
+threads can be while a system in C before it in the tick is still reading, or before one after it has started.
+`b2t_topology` copies every slot's bytes to tell whether membership changed, so it took the new slot as a change
+whenever it ran late. Native never showed it in 3,000 runs held to one or two cores: the caller takes the tick's
+first system at once there, where on the web a worker that took it can be late.
+
+Now (`find_conflicts`, `CONFLICT_ENTITIES`): a system in C and a system that spawns (or loads a scene) keep their
+order, both ways, whatever data they share: C sees the entities the systems before it spawned and none of those after
+it, as on one thread. `tide schedule` says "it spawns entities, which this, in C, can see" or "it's in C, which can
+see the entities this spawns". Systems in Tide still don't wait over spawns. What it costs: a game's spawner
+declared after a physics package waits for the package's systems in C (Box2D's and Box3D's run through their whole
+stage), where it could run beside them; most spawners read what those write anyway. Not done: only a spawner's
+settling needs to wait for the systems in C before it, not its tasks (a count in `settle_waiting` in `jobs.c`), if
+that ever shows in a profile. No pin moved: one thread's order is unchanged.
+
+Tests: `tidec_schedule_extern_spawns` (`compiler/tests/schedule/extern_spawns.tide`: C before a spawner, a spawner,
+a Tide system beside it, C after); the loop above after the change, 0 failures in 2,400 runs (300 of them with
+`TIDE_THREADS=2`); every `tide_box2d_*`/`tide_box3d_*` test in native release and web-release; the schedule and
+extern-system e2e tests.
+
 ## A guard's few rows without going through every key, and a cause worked out after the guard (2026-11-16, night)
 
 From the voxels server with 32 players apart (notes/voxels.md, The spread case taken apart): `Idle`, whose code is
@@ -1511,7 +1543,8 @@ Built:
   its tasks have joined and the spawner before it has registered its own (`tide_system_tasks.settles` is true for
   all of them, where it was for systems split in order; the runtime's chain was already there). Nothing in Tide can
   tell: a spawn's key is its row's entity and place in the code, an entity that isn't installed has no archetype
-  either way, and no Tide code asks whether a key is registered (C can, with `tide_entity_alive`).
+  either way, and no Tide code asks whether a key is registered (C can, with `tide_entity_alive`). (Correction,
+  2026-11-17: C can, so a system in C and one that spawns keep their order: top section.)
 - **Builds that check** (`TIDE_HEAP_CHECKS`, on in the `sanitize` preset; `tide_heaps_allow`): each system's task
   says whose heaps it may change, and a block handed out, taken back or made a heap's own in another ends the
   program, naming the system and the heap's id. On its first run it found a hole that was there before:

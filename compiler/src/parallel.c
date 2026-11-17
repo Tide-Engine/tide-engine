@@ -207,8 +207,8 @@ bool system_heap_runs_scattered(const decl *sys)
 // What's the whole world's counts whatever entities they meet: changing its
 // heap (reading it alongside is fine), and the entity IDs spawns hand out,
 // which a system hands out as it runs unless it splits (its spawns get theirs
-// once it's done, in the tick's order, without waiting). C is trusted, so
-// calling it makes no system wait.
+// once it's done, in the tick's order, without waiting), except for a system
+// in C, which sees them. C is trusted, so calling it makes no system wait.
 // The component or singleton a parameter reads or writes, or NULL.
 static const decl *accessed(const param *p)
 {
@@ -380,6 +380,12 @@ static bool find_conflicts(const decl *earlier, const decl *later, const access_
                 }
             }
         }
+    }
+    // ...but C can tell: a system in C is handed the entity table (tide_rows.entities), where a spawner's entities
+    // are once it has registered them, which on threads is whenever its tasks are done. So the two keep their order,
+    // and C sees the entities the systems before it spawned and none of the ones after it, as on one thread.
+    if ((earlier->extern_system && later->spawns) || (earlier->spawns && later->extern_system)) {
+        any = add_conflict(w, CONFLICT_ENTITIES);
     }
     if (any && !w) return true;
     for (int i = 0; i < earlier_uses->count; i++) {
@@ -599,6 +605,13 @@ void describe_wait(const decl *sys, const system_wait *w, const char *quote, sb 
         if (w->conflicts.items[i].kind != CONFLICT_TASKS) continue;
         sb_put(out, first_part ? "" : "; ");
         sb_put(out, "tasks start in order, and spawn and change text as they start");
+        first_part = false;
+    }
+    for (int i = 0; i < w->conflicts.count; i++) {
+        if (w->conflicts.items[i].kind != CONFLICT_ENTITIES) continue;
+        sb_put(out, first_part ? "" : "; ");
+        sb_put(out, sys->extern_system ? "it spawns entities, which this, in C, can see"
+                                       : "it's in C, which can see the entities this spawns");
         first_part = false;
     }
     // Whose text, lists or grids both change: each owner's are in a heap of its own

@@ -1,5 +1,11 @@
 # The Box3D package
 
+## A spawn seen early by `CheckTopology` on threads (2026-11-17)
+
+Box3D's `b2t_topology` (`shapes.inc`) copies the entity table's slots as Box2D's does, so it could see a game
+system's spawn registered early on threads too. Fixed in the schedule, for every system in C (notes/box2d.md and
+notes/schedule-and-threads.md, top sections); nothing in the package changed.
+
 ## Questions from views while a tick runs beside the frame (2026-11-12)
 
 With `ticksAlongsideViews` (schedule-and-threads.md, top section) a view's or a local handler's question can come
