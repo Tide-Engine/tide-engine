@@ -103,10 +103,10 @@ try {
     await command('click Match');
     await command('step 2', 'ready');
     await command('controls');
-    assert.ok(said.some(line => /^tide: control \d+ button "\+ Shade" /.test(line)), said.join('\n'));
+    assert.ok(said.some(line => /^tide: control \d+ button "Shade" /.test(line)), said.join('\n'));
     assert.ok(!said.some(line => line.includes('tide_')), said.join('\n'));
     assert.ok(!said.some(line => line.includes('"Green"')), said.join('\n')); // The Dev tab's
-    await command('click "+ Shade"');
+    await command('click Shade');
     const opened = Number((await command('step 2', 'ready')).split(' ').pop());
     await command(`${opened + 1} scroll 0 -2`); // Down to its field, under it
     await command('step 3', 'ready');
@@ -116,10 +116,10 @@ try {
     await command('step 4', 'ready');
     await command('capture dark.png');
     assert.deepEqual(at('dark.png'), [0, 0, 0]);
-    await command('click "- Shade"');
+    await command('click Shade'); // Closed again
     await bottom();
     await command('controls');
-    const lamp = said.map(line => line.match(/^tide: control \d+ button "(\+ #[^ "]+ [^"]*Lamp[^"]*)"/)).find(m => m);
+    const lamp = said.map(line => line.match(/^tide: control \d+ button "(#[^ "]+ [^"]*Lamp[^"]*)"/)).find(m => m);
     assert.ok(lamp, said.join('\n'));
     await command(`click "${lamp[1]}"`);
     await bottom();
@@ -136,9 +136,9 @@ try {
     await command('click Local');
     await command('step 2', 'ready');
     await command('controls');
-    assert.ok(said.some(line => /^tide: control \d+ button "\+ Glow" /.test(line)), said.join('\n'));
+    assert.ok(said.some(line => /^tide: control \d+ button "Glow" /.test(line)), said.join('\n'));
     assert.ok(!said.some(line => line.includes('TideTweaks')), said.join('\n'));
-    await command('click "+ Glow"');
+    await command('click Glow');
     await command('step 10', 'ready'); // The panel grows to what opened in a few frames
     await command('controls');
     assert.ok(said.some(line => /^tide: control \d+ toggle "on" /.test(line)), said.join('\n'));

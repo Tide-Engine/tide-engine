@@ -2078,6 +2078,11 @@ bool tide_gui_button(tide_gui *g, const uint32_t id, const tide_rect rect, const
     return pressed_now;
 }
 
+void tide_gui_describe(tide_gui *g, const uint32_t id, const tide_gui_kind kind, const char *label)
+{
+    describe(g, id, kind, label);
+}
+
 tide_control tide_gui_control(tide_gui *g, const uint32_t id, const tide_rect rect)
 {
     describe(g, id, TIDE_GUI_KIND_CONTROL, NULL);
