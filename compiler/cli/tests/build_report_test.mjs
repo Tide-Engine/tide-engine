@@ -15,6 +15,9 @@ for (const folder of [bin, tools, events]) mkdirSync(folder, { recursive: true }
 const suffix = process.platform === "win32" ? ".exe" : "";
 cpSync(tide, join(bin, `tide${suffix}`));
 cpSync(compiler, join(tools, `clang${suffix}`));
+// ...and a WebAssembly linker beside it, which web builds look for there first (the fake clang links nothing): a
+// machine whose own wasm-ld isn't on PATH (Linux's LLVM packages) builds the pages below too
+cpSync(compiler, join(tools, `wasm-ld${suffix}`));
 for (const original of new Set([dirname(tide), dirname(compiler)])) {
     for (const name of readdirSync(original).filter(name => name.endsWith(".dll"))) {
         cpSync(join(original, name), join(bin, name));

@@ -34,7 +34,9 @@ TIDE_TEST(tweaks_read)
     // What tidec worked out beside the C, which a running dev build takes as a .tweaks file changes: the build's values
     const tide_tweaks_api *api = tide_game_tweaks();
     TIDE_REQUIRE(api != NULL && api->values[0]);
-#ifndef __wasm__ // A web build's sandbox has no files of this machine's: a page takes no tweaks as they change
+// A web build's sandbox has no files of this machine's (a page takes no tweaks as they change), and an Android
+// test runs on a device, which has none of the build machine's either
+#if !defined(__wasm__) && !defined(__ANDROID__)
     FILE *f = fopen(api->values, "rb");
     TIDE_REQUIRE(f != NULL);
     static uint8_t bytes[1024];

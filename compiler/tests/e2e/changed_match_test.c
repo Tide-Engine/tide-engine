@@ -1,4 +1,9 @@
+#include <stdlib.h>
 #include <string.h>
+
+#if defined(ENDLESS) && !defined(__wasi__)
+#include <signal.h>
+#endif
 
 #include "game.h"
 #include "tide_test.h"
@@ -8,6 +13,22 @@
 
 static tide_draw_list draw;
 static tide_gui gui;
+
+#if defined(ENDLESS) && !defined(__wasi__)
+// The endless build stops the program from inside a tick (tide_endless_chain), by abort(), which ends it by a
+// signal on Linux and macOS that CTest counts as a crash whatever it printed: an exit code instead, as
+// chain_endless_main.c does
+static void aborted(const int sig)
+{
+    (void)sig;
+    _Exit(1);
+}
+
+__attribute__((constructor)) static void stop_by_exit(void)
+{
+    signal(SIGABRT, aborted);
+}
+#endif
 
 static tide_entity unit(const tide_world *w, const int32_t id)
 {

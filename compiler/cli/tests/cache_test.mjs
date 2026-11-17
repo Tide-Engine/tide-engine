@@ -339,8 +339,12 @@ int Native(int value)
                 const stem = output.slice(0, -".html".length);
                 program = readFileSync(`${stem}.wasm`);
                 check(program.subarray(0, 4).equals(Buffer.from([0, 0x61, 0x73, 0x6d])), "the page's program is not WebAssembly");
-                check(readFileSync(`${stem}.pack`).equals(pack), "the page's pack differs from generated pack");
-                for (const [name, bytes] of [["program", program], ["pack", pack]]) {
+                // A debug page's pack is the one tidec wrote; a release's and a distribution's ships compressed
+                // (tide/pack.h, A pack compressed), and the page names those bytes
+                const shipped = readFileSync(`${stem}.pack`);
+                if (mode === "debug") check(shipped.equals(pack), "the page's pack differs from generated pack");
+                else check(shipped.subarray(0, 8).toString() === "TIDEPKLZ", `web ${mode}: the page's pack isn't compressed`);
+                for (const [name, bytes] of [["program", program], ["pack", shipped]]) {
                     const hash = createHash("sha256").update(bytes).digest("hex").slice(0, 16);
                     const file = `${basename(stem)}.${name === "program" ? "wasm" : "pack"}`;
                     check(page.includes(`${name}: { url: "${file}?v=${hash}", size: ${bytes.length} }`),
