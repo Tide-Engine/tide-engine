@@ -484,6 +484,50 @@ static read_file *read_bytes_at(const char *path)
     return f && file_bytes(f) ? f : NULL;
 }
 
+bool asset_file_hash(const char *path, uint8_t hash[32])
+{
+    const read_file *f = read_at(path);
+    if (!f) return false;
+    memcpy(hash, f->hash, 32);
+    return true;
+}
+
+typedef struct bytes_hash {
+    const uint8_t *bytes;
+    size_t size;
+    uint8_t hash[32];
+} bytes_hash;
+
+static struct {
+    bytes_hash *items;
+    int count, cap;
+} bytes_hashes;
+
+void asset_bytes_hash(const uint8_t *bytes, const size_t size, uint8_t hash[32])
+{
+    for (int i = 0; i < bytes_hashes.count; i++) {
+        if (bytes_hashes.items[i].bytes == bytes && bytes_hashes.items[i].size == size) {
+            memcpy(hash, bytes_hashes.items[i].hash, 32);
+            return;
+        }
+    }
+    if (bytes_hashes.count == bytes_hashes.cap) {
+        bytes_hashes.cap = bytes_hashes.cap ? bytes_hashes.cap * 2 : 64;
+        bytes_hashes.items = realloc(bytes_hashes.items, sizeof *bytes_hashes.items * (size_t)bytes_hashes.cap);
+        if (!bytes_hashes.items) abort();
+    }
+    bytes_hash *h = &bytes_hashes.items[bytes_hashes.count++];
+    h->bytes = bytes;
+    h->size = size;
+    tide_sha256_of(bytes, size, h->hash);
+    memcpy(hash, h->hash, 32);
+}
+
+void asset_bytes_hash_forget(void)
+{
+    bytes_hashes.count = 0;
+}
+
 const uint8_t *asset_match_bytes(const asset_match *item, size_t *size)
 {
     *size = item->size;

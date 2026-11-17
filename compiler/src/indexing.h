@@ -61,6 +61,13 @@ typedef struct loop_index {
     const stmt *list_local;
 } loop_index;
 
+// The program's functions, systems, handlers, views and methods (each declaration, then its methods), ordered so
+// that each comes after the ones it calls, where the calls don't go round: what a pass that carries facts from
+// callee to caller goes through to settle in one go. The arena's. Made from the calls the checked program has
+// (plan_loop_indexes starts it afresh), and good until call_graph_reset or the next program.
+const decl **call_graph_bottom_up(const program *prog, int *count);
+void call_graph_reset(void);
+
 // Plans every loop's index once the program is checked, and reports the
 // loops written `indexed` that can't have one.
 void plan_loop_indexes(program *prog);

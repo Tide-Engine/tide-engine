@@ -1217,46 +1217,210 @@ static bool changes_own_field(const decl *code, const decl *component, const fie
     return false;
 }
 
-// Whether `from` calls `target`, directly or through other functions.
-typedef VEC(const decl *) decl_list;
-static bool calls_expr(const expr *e, const decl *target, decl_list *seen);
-static bool calls_stmt(const stmt *s, const decl *target, decl_list *seen)
+// ---------------------------------------------------------------------------
+// Which code calls which: every function and method the game's code calls, found once a program. A big game's
+// loops asked, for each system, whether it reaches their code, and each answer walked everything the system
+// calls: thousands of walks of the same bodies.
+
+typedef struct call_graph {
+    const program *prog;
+    const decl **nodes;     // The game's declarations, their methods, and whatever those call
+    int count, room;
+    int listed;             // The first `listed` are the program's own (decls and their methods), in their order
+    int *first, *callees;   // Node n calls callees[first[n] .. first[n + 1])
+    const decl **keys;      // A declaration's node, by its address: 1 + the node, or 0
+    int *slots;
+    uint32_t mask;
+    VEC(int) edges;         // While it's built: caller, callee, caller, callee...
+    // Who reaches a target, asked before: a byte a node
+    VEC(const decl *) asked;
+    VEC(uint8_t *) reaching;
+} call_graph;
+
+static call_graph calls_of;
+
+static uint32_t call_place(const decl *d, const uint32_t mask)
 {
-    if (!s) return false;
-    if (calls_expr(s->cond, target, seen) || calls_expr(s->value, target, seen) || calls_expr(s->target, target, seen)) return true;
-    if (calls_stmt(s->init, target, seen) || calls_stmt(s->step, target, seen)) return true;
-    if (calls_stmt(s->then_stmt, target, seen) || calls_stmt(s->else_stmt, target, seen)) return true;
-    for (int i = 0; i < s->stmts.count; i++) {
-        if (calls_stmt(s->stmts.items[i], target, seen)) return true;
-    }
-    for (int i = 0; i < s->cases.count; i++) {
-        for (int k = 0; k < s->cases.items[i].body.count; k++) {
-            if (calls_stmt(s->cases.items[i].body.items[k], target, seen)) return true;
-        }
-    }
-    return false;
+    uint64_t n = (uint64_t)(uintptr_t)d;
+    n ^= n >> 33;
+    n *= UINT64_C(0xff51afd7ed558ccd);
+    n ^= n >> 33;
+    return (uint32_t)n & mask;
 }
 
-static bool calls_expr(const expr *e, const decl *target, decl_list *seen)
+static int call_node(call_graph *g, const decl *d, const bool add)
 {
-    if (!e) return false;
+    if (g->keys) {
+        uint32_t at = call_place(d, g->mask);
+        while (g->keys[at] && g->keys[at] != d) at = (at + 1u) & g->mask;
+        if (g->keys[at]) return g->slots[at] - 1;
+    }
+    if (!add) return -1;
+    if (!g->keys || (uint64_t)(g->count + 1) * 2u > g->mask) {
+        const uint32_t mask = g->keys ? g->mask * 2u + 1u : 4095u;
+        const decl **keys = arena_alloc(((size_t)mask + 1u) * sizeof *keys);
+        int *slots = arena_alloc(((size_t)mask + 1u) * sizeof *slots);
+        memset(keys, 0, ((size_t)mask + 1u) * sizeof *keys);
+        for (int i = 0; i < g->count; i++) {
+            uint32_t at = call_place(g->nodes[i], mask);
+            while (keys[at]) at = (at + 1u) & mask;
+            keys[at] = g->nodes[i];
+            slots[at] = i + 1;
+        }
+        g->keys = keys;
+        g->slots = slots;
+        g->mask = mask;
+    }
+    if (g->count == g->room) {
+        const int room = g->room ? g->room * 2 : 1024;
+        const decl **nodes = arena_alloc((size_t)room * sizeof *nodes);
+        if (g->count) memcpy(nodes, g->nodes, (size_t)g->count * sizeof *nodes);
+        g->nodes = nodes;
+        g->room = room;
+    }
+    uint32_t at = call_place(d, g->mask);
+    while (g->keys[at]) at = (at + 1u) & g->mask;
+    g->keys[at] = d;
+    g->slots[at] = g->count + 1;
+    g->nodes[g->count] = d;
+    return g->count++;
+}
+
+// The calls in code, as an edge each from node `from`
+static void calls_expr(call_graph *g, int from, const expr *e);
+static void calls_stmt(call_graph *g, const int from, const stmt *s)
+{
+    if (!s) return;
+    calls_expr(g, from, s->cond);
+    calls_expr(g, from, s->value);
+    calls_expr(g, from, s->target);
+    calls_stmt(g, from, s->init);
+    calls_stmt(g, from, s->step);
+    calls_stmt(g, from, s->then_stmt);
+    calls_stmt(g, from, s->else_stmt);
+    for (int i = 0; i < s->stmts.count; i++) calls_stmt(g, from, s->stmts.items[i]);
+    for (int i = 0; i < s->cases.count; i++) {
+        for (int k = 0; k < s->cases.items[i].body.count; k++) calls_stmt(g, from, s->cases.items[i].body.items[k]);
+    }
+}
+
+static void calls_expr(call_graph *g, const int from, const expr *e)
+{
+    if (!e) return;
     if ((e->call == CALL_FUNCTION || e->call == CALL_METHOD) && e->method) {
-        if (e->method == target) return true;
-        bool visited = false;
-        for (int i = 0; i < seen->count; i++) visited |= seen->items[i] == e->method;
-        if (!visited) {
-            vec_push(*seen, e->method);
-            if (calls_stmt(e->method->body, target, seen)) return true;
+        vec_push(g->edges, from);
+        vec_push(g->edges, call_node(g, e->method, true));
+    }
+    calls_expr(g, from, e->object);
+    calls_expr(g, from, e->lhs);
+    calls_expr(g, from, e->rhs);
+    calls_expr(g, from, e->cond);
+    for (int i = 0; i < e->args.count; i++) calls_expr(g, from, e->args.items[i]);
+    calls_stmt(g, from, e->block);
+    calls_stmt(g, from, e->step);
+}
+
+static void call_list(call_graph *g, const decl *d)
+{
+    call_node(g, d, true);
+    for (int k = 0; k < d->methods.count; k++) call_list(g, d->methods.items[k]);
+}
+
+// The program's graph, made at the first ask: the arena's, which a compilation doesn't outlive (call_graph_reset)
+static call_graph *calls_graph(const program *prog)
+{
+    call_graph *g = &calls_of;
+    if (g->prog == prog) return g;
+    memset(g, 0, sizeof *g);
+    g->prog = prog;
+    for (int i = 0; i < prog->decls.count; i++) call_list(g, prog->decls.items[i]);
+    g->listed = g->count;
+    for (int n = 0; n < g->count; n++) calls_stmt(g, n, g->nodes[n]->body); // What a body calls joins the nodes, and is walked too
+    // By caller: a count each, then each one's place
+    g->first = arena_alloc(((size_t)g->count + 1u) * sizeof *g->first);
+    memset(g->first, 0, ((size_t)g->count + 1u) * sizeof *g->first);
+    for (int i = 0; i < g->edges.count; i += 2) g->first[g->edges.items[i] + 1]++;
+    for (int n = 0; n < g->count; n++) g->first[n + 1] += g->first[n];
+    g->callees = arena_alloc(((size_t)(g->edges.count / 2) + 1u) * sizeof *g->callees);
+    int *next = arena_alloc(((size_t)g->count + 1u) * sizeof *next);
+    memcpy(next, g->first, ((size_t)g->count + 1u) * sizeof *next);
+    for (int i = 0; i < g->edges.count; i += 2) g->callees[next[g->edges.items[i]]++] = g->edges.items[i + 1];
+    return g;
+}
+
+void call_graph_reset(void)
+{
+    memset(&calls_of, 0, sizeof calls_of);
+}
+
+// Whether `from` calls `target`, directly or through other functions.
+static bool calls_code(const program *prog, const decl *from, const decl *target)
+{
+    call_graph *g = calls_graph(prog);
+    const int t = call_node(g, target, false), f = call_node(g, from, false);
+    if (t < 0 || f < 0) return false; // Code nothing lists or calls
+    uint8_t *reaching = NULL;
+    for (int i = 0; i < g->asked.count && !reaching; i++) {
+        if (g->asked.items[i] == target) reaching = g->reaching.items[i];
+    }
+    if (!reaching) {
+        // Every node that calls the target, then every node that calls one of those, until none is new
+        reaching = arena_alloc((size_t)g->count + 1u);
+        memset(reaching, 0, (size_t)g->count + 1u);
+        uint8_t *is = arena_alloc((size_t)g->count + 1u);
+        memset(is, 0, (size_t)g->count + 1u);
+        is[t] = 1;
+        for (bool more = true; more;) {
+            more = false;
+            for (int n = 0; n < g->count; n++) {
+                if (reaching[n]) continue;
+                for (int k = g->first[n]; k < g->first[n + 1]; k++) {
+                    if (!is[g->callees[k]] && !reaching[g->callees[k]]) continue;
+                    reaching[n] = 1;
+                    more = true;
+                    break;
+                }
+            }
+        }
+        vec_push(g->asked, target);
+        vec_push(g->reaching, reaching);
+    }
+    return reaching[f] != 0;
+}
+
+const decl **call_graph_bottom_up(const program *prog, int *count)
+{
+    call_graph *g = calls_graph(prog);
+    // Each listed node after everything it calls that's listed, where the calls don't go round: a walk from each in
+    // the program's order, a node given its place once what it calls has theirs
+    const decl **order = arena_alloc(((size_t)g->listed + 1u) * sizeof *order);
+    uint8_t *state = arena_alloc((size_t)g->count + 1u); // 0 not met, 1 being walked, 2 placed
+    memset(state, 0, (size_t)g->count + 1u);
+    int *stack = arena_alloc(((size_t)g->count + 1u) * sizeof *stack), *at = arena_alloc(((size_t)g->count + 1u) * sizeof *at);
+    int placed = 0;
+    for (int root = 0; root < g->listed; root++) {
+        if (state[root]) continue;
+        int depth = 0;
+        stack[0] = root;
+        at[0] = g->first[root];
+        state[root] = 1;
+        while (depth >= 0) {
+            const int n = stack[depth];
+            if (at[depth] < g->first[n + 1]) {
+                const int to = g->callees[at[depth]++];
+                if (state[to]) continue;
+                state[to] = 1;
+                stack[++depth] = to;
+                at[depth] = g->first[to];
+            } else {
+                state[n] = 2;
+                if (n < g->listed) order[placed++] = g->nodes[n];
+                depth--;
+            }
         }
     }
-    if (calls_expr(e->object, target, seen) || calls_expr(e->lhs, target, seen) || calls_expr(e->rhs, target, seen)
-        || calls_expr(e->cond, target, seen)) {
-        return true;
-    }
-    for (int i = 0; i < e->args.count; i++) {
-        if (calls_expr(e->args.items[i], target, seen)) return true;
-    }
-    return calls_stmt(e->block, target, seen) || calls_stmt(e->step, target, seen);
+    *count = placed;
+    return order;
 }
 
 // A query's key must keep its value while the code it's in runs, between one
@@ -1311,14 +1475,13 @@ static bool key_still(ictx *c, const decl *component, const field *f)
     for (int i = 0; i < c->prog->decls.count; i++) {
         const decl *d = c->prog->decls.items[i];
         if (d->kind != DECL_SYSTEM || !d->body) continue;
-        decl_list seen = {0};
         // One whose queries take the component `previous` alone hands this code the tick's start, which its own
         // writes don't change
         bool before = false, now = false;
         for (int k = 0; k < d->previous_reads.count; k++) before |= d->previous_reads.items[k] == component;
         for (int k = 0; k < d->world_uses.count; k++) now |= d->world_uses.items[k].component == component && d->world_uses.items[k].query_read;
         now |= !before;
-        const bool reaches = now && calls_stmt(d->body, c->code, &seen);
+        const bool reaches = now && calls_code(c->prog, d, c->code);
         if (reaches && changes_own_field(d, component, f, &at)) {
             because(c, at, "'" STR_FMT "' changes " STR_FMT "%s" STR_FMT " of its own entity as it goes, and calls this "
                            "code, whose loop finds rows by it: change it in a system of its own", STR_ARG(d->name),
@@ -1582,6 +1745,7 @@ static void plan_stmt(const program *prog, const decl *code, stmt *s)
 
 void plan_loop_indexes(program *prog)
 {
+    call_graph_reset(); // Another program's, or this one's before its code was checked
     for (int i = 0; i < prog->decls.count; i++) {
         const decl *d = prog->decls.items[i];
         if ((d->kind == DECL_SYSTEM || d->kind == DECL_FUNCTION) && d->body) plan_stmt(prog, d, d->body);

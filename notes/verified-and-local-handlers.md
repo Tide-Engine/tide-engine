@@ -127,6 +127,10 @@ the client can't know of audiences is the owner's.
 
 ## What local code reads, found by its source (2026-11-10)
 
+(2026-11-17: its routines are walked callees first, `call_graph_bottom_up` in indexing.c, and a member's path text
+is made once, `heard_member_path`: seven passes to four, 0.30 s to 0.14 on Mount & Rifle. notes/cli-and-packages.md,
+the fourth round.)
+
 `collect_heard_reads` (heard_reads_codegen.inc) took 1.5-2.0 s of every build of Mount & Rifle: each expression
 of the game asked `heard_add_read`, which went through every read recorded so far comparing paths, and each
 routine's walk kept the nodes it had seen in a list it searched. No change to what's found:

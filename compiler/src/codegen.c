@@ -25103,28 +25103,9 @@ static tide_grid_shape asset_grid_shape(const decl *grid)
     return (tide_grid_shape){(uint32_t)cell, (uint32_t)grid->dims, {(uint32_t)shift[0], (uint32_t)shift[1], (uint32_t)shift[2]}};
 }
 
-// A model's bytes' SHA-256, worked out once a compilation: megabytes each, which a model's meshes, their levels and
-// its own block in the pack would each hash again. By where the bytes are, which a compilation doesn't move.
-typedef struct model_hash {
-    const uint8_t *bytes;
-    size_t size;
-    uint8_t hash[32];
-} model_hash;
-
-static VEC(model_hash) model_hashes;
-
 static void model_hash_of(const uint8_t *bytes, const size_t size, uint8_t hash[32])
 {
-    for (int i = 0; i < model_hashes.count; i++) {
-        if (model_hashes.items[i].bytes == bytes && model_hashes.items[i].size == size) {
-            memcpy(hash, model_hashes.items[i].hash, 32);
-            return;
-        }
-    }
-    model_hash h = {.bytes = bytes, .size = size};
-    tide_sha256_of(bytes, size, h.hash);
-    memcpy(hash, h.hash, 32);
-    vec_push(model_hashes, h);
+    asset_bytes_hash(bytes, size, hash); // Once for each model's bytes, whoever asks (asset_files.h)
 }
 
 // An image the pack has room for (tide_pack_texture_room), and what gives its pixels: the cache's entry under `key`,
@@ -29567,7 +29548,20 @@ static size_t gen_shader_spirv(const gen *g, sb *o, const char *name, const shad
     }
     char error[256];
     size_t count = 0;
-    uint32_t *words = tide_wgsl_to_spirv(wgsl, &count, error, sizeof error);
+    // Kept in the game's build cache by the WGSL and by this compiler (whose translator it is): a big game's
+    // shaders are a fifth of a second to translate, and an edit of its code changes none of them
+    uint8_t source[32], key[32];
+    const char *runtime = tide_simulation_runtime(), *folder = g->prog->game_folder;
+    tide_sha256_of(wgsl, strlen(wgsl), source);
+    asset_cache_key(key, "spirv", source, runtime, strlen(runtime) + 1u);
+    size_t bytes = 0;
+    uint32_t *words = folder ? (uint32_t *)(void *)asset_cache_read(folder, key, &bytes) : NULL;
+    if (words && bytes >= 20u && bytes % 4u == 0 && words[0] == 0x07230203u) count = bytes / 4u; // SPIR-V's first word
+    else {
+        free(words);
+        words = tide_wgsl_to_spirv(wgsl, &count, error, sizeof error);
+        if (words && folder) asset_cache_write(folder, key, words, count * sizeof *words);
+    }
     if (!words) {
         diag_error((loc){0}, "the WGSL tidec wrote for %s didn't become SPIR-V (%s): this is a bug in tidec, worth "
                              "reporting with the frag and vert", sh->name, error);
@@ -30560,9 +30554,42 @@ static bool parts_kept(const char *record_path, const char *path, const char key
 // Partition names depend on symbols, so a body edit leaves the other parts unchanged. Split, the text is the code's
 // parts, <name>.c and <name>_part1.c on, and last <name>_data.c, its large constants (SPLIT_DATA): most of a big
 // game's C, which an edit of its code leaves as it was, and which the code's parts are then cut without.
-static bool write_code_parts(const codegen_options *opts, const sb *text, const char *path,
-                             const char *original, const bool plumbing, sb *manifest)
+// A part of a text halved (split_plumbing, by a bit of its names' hashes), and a part written: each a thread's work
+typedef struct part_halving {
+    const sb *from;
+    sb *a, *b;
+    int level;
+    bool failed;
+    const char *why;
+} part_halving;
+
+static void halve_part(void *context, const uint32_t i)
 {
+    part_halving *h = &((part_halving *)context)[i];
+    h->failed = !split_plumbing(h->from, NULL, 0, h->a, h->b, h->level);
+    if (h->failed) h->why = split_why;
+}
+
+typedef struct part_writing {
+    const sb *text;
+    const char *path, *original;
+    bool pinned, ok, found;
+    unsigned long long size, modified;
+} part_writing;
+
+static void write_part(void *context, const uint32_t i)
+{
+    part_writing *w = &((part_writing *)context)[i];
+    w->ok = w->pinned ? write_pinned(w->path, w->text, w->original, forward_slashes(w->path)) : write_file(w->path, w->text);
+    w->found = w->ok && folder_file_info(w->path, &w->size, &w->modified);
+}
+
+// `why` gets what couldn't be cut, for a false that isn't a file's (which says so itself): the caller's to report,
+// as this runs beside another text's cut.
+static bool write_code_parts(const codegen_options *opts, const sb *text, const char *path,
+                             const char *original, const bool plumbing, sb *manifest, const char **why)
+{
+    *why = NULL;
     const bool split = opts->split_code && (plumbing || !opts->split_plumbing || opts->split_own_code)
                        && text->len >= opts->split_code_min_bytes;
     sb record_path = {0};
@@ -30570,10 +30597,7 @@ static bool write_code_parts(const codegen_options *opts, const sb *text, const 
     char key[65] = "";
     if (split) {
         parts_key(opts, text, path, original, plumbing, key);
-        if (parts_kept(record_path.data, path, key, manifest)) {
-            diag_step("  parts as they were");
-            return true;
-        }
+        if (parts_kept(record_path.data, path, key, manifest)) return true;
     }
     remove(record_path.data); // What's there is no cut's until this one ends well
     sb record = {0};
@@ -30583,43 +30607,49 @@ static bool write_code_parts(const codegen_options *opts, const sb *text, const 
     parts[0] = *text;
     sb data = {0};
     if (split && !split_plumbing(text, NULL, 0, &parts[0], &data, SPLIT_DATA)) {
-        diag_error((loc){0}, "couldn't partition generated C: %s", split_why ? split_why : "unknown declaration");
+        *why = split_why ? split_why : "unknown declaration";
         return false;
     }
-    if (split) diag_step("  cutting out data");
-    // The code in halves by bits of its names' hashes, as long as each part keeps split_code_part_bytes
+    // The code in halves by bits of its names' hashes, as long as each part keeps split_code_part_bytes: a level's
+    // parts each halved on a thread of its own, as they're apart
     const int most = opts->split_code_parts ? opts->split_code_parts : 4;
     const size_t code_bytes = parts[0].len;
     for (int level = 0; split && count * 2 <= most && count * 2 <= SPLIT_MOST_PARTS
                         && code_bytes / (size_t)(count * 2) >= opts->split_code_part_bytes;
          level++) {
-        for (int i = count - 1; i >= 0; i--) {
-            sb a = {0}, b = {0};
-            if (!split_plumbing(&parts[i], NULL, 0, &a, &b, level)) {
-                diag_error((loc){0}, "couldn't partition generated C: %s", split_why ? split_why : "unknown declaration");
-                return false;
-            }
-            parts[2 * i] = a;
-            parts[2 * i + 1] = b;
+        sb whole[SPLIT_MOST_PARTS];
+        part_halving halves[SPLIT_MOST_PARTS];
+        for (int i = 0; i < count; i++) {
+            whole[i] = parts[i];
+            halves[i] = (part_halving){.from = &whole[i], .a = &parts[2 * i], .b = &parts[2 * i + 1], .level = level};
+        }
+        build_threads_each((uint32_t)count, 0u, halve_part, halves);
+        for (int i = 0; i < count; i++) {
+            if (!halves[i].failed) continue;
+            *why = halves[i].why ? halves[i].why : "unknown declaration";
+            return false;
         }
         count *= 2;
     }
     if (split) parts[count++] = data;
-    if (split) diag_step("  cutting parts");
+    // ...and each written by one
+    part_writing writes[SPLIT_MOST_PARTS + 1];
     for (int i = 0; i < count; i++) {
         sb out = {0};
         if (split && i == count - 1) sb_printf(&out, "%.*s_data.c", (int)strlen(path) - 2, path);
         else if (i) sb_printf(&out, "%.*s_part%d.c", (int)strlen(path) - 2, path, i);
         else sb_put(&out, path);
-        if (!(opts->line_directives ? write_pinned(out.data, &parts[i], original, forward_slashes(out.data))
-                                    : write_file(out.data, &parts[i]))) return false;
-        const char *name = strrchr(forward_slashes(out.data), '/');
-        sb_printf(manifest, "%d %d %s\n", plumbing, split, name ? name + 1 : out.data);
-        unsigned long long size = 0, modified = 0;
-        if (!folder_file_info(out.data, &size, &modified)) record.len = 0; // Not kept
-        if (record.len) sb_printf(&record, "%llu %llu %d %d %s\n", size, modified, plumbing, split, name ? name + 1 : out.data);
+        writes[i] = (part_writing){.text = &parts[i], .path = out.data, .original = original, .pinned = opts->line_directives};
     }
-    diag_step("  writing parts");
+    build_threads_each((uint32_t)count, 0u, write_part, writes);
+    for (int i = 0; i < count; i++) {
+        if (!writes[i].ok) return false; // The write said which
+        const char *name = strrchr(forward_slashes(writes[i].path), '/');
+        sb_printf(manifest, "%d %d %s\n", plumbing, split, name ? name + 1 : writes[i].path);
+        if (!writes[i].found) record.len = 0; // Not kept
+        if (record.len) sb_printf(&record, "%llu %llu %d %d %s\n", writes[i].size, writes[i].modified, plumbing, split,
+                                  name ? name + 1 : writes[i].path);
+    }
     if (split && record.len) {
         // A file that can't be written leaves no record, and the next build cuts again
         FILE *f = fopen(record_path.data, "wb");
@@ -30631,13 +30661,39 @@ static bool write_code_parts(const codegen_options *opts, const sb *text, const 
     return true;
 }
 
+// The game's two texts, its own code and its plumbing, cut and written at once: neither waits for the other's
+// parts. The code's files are said as they're written (compile_written), from the thread that wrote them.
+typedef struct parts_task {
+    const codegen_options *opts;
+    const sb *text;
+    const char *path, *original;
+    bool plumbing, ok;
+    sb manifest;
+    const char *why;
+} parts_task;
+
+static void parts_one(void *context, const uint32_t i)
+{
+    parts_task *t = &((parts_task *)context)[i];
+    t->ok = write_code_parts(t->opts, t->text, t->path, t->original, t->plumbing, &t->manifest, &t->why);
+    for (const char *line = t->ok && !t->plumbing ? t->manifest.data : NULL; line && *line;) {
+        const char *end = strchr(line, '\n');
+        if (!end) break;
+        sb file = {0};
+        parts_folder(t->path, &file);
+        sb_printf(&file, "%.*s", (int)(end - line - 4), line + 4);
+        compile_written(file.data);
+        line = end + 1;
+    }
+}
+
 bool codegen(program *prog, const codegen_options *opts)
 {
     compile_progress("Generating C", NULL, 0, 0);
     // Both memo tables borrow this compilation's arena, including their backing
     // arrays. A watcher resets that arena before compiling the next program.
     schedule_bytes_reset(); // (...and the gathering systems' plans, which borrow it too)
-    memset(&model_hashes, 0, sizeof model_hashes); // ...and the models' hashes, by bytes this compilation holds
+    asset_bytes_hash_forget(); // ...and the models' hashes are by bytes this compilation holds
     // A build for a debugger copies each row whole (system_rows_plain), so its schedule goes by whole components
     if (opts->split_plumbing && !prog->rows_whole) {
         prog->rows_whole = true;
@@ -31028,18 +31084,17 @@ bool codegen(program *prog, const codegen_options *opts)
         const bool cut = opts->line_directives && split_plumbing(&g.c, g.code_at.items, g.code_at.count, &code, &plumbing, -1);
         diag_step("plumbing from code");
         if (cut) {
-            // The game's own code is whole, and its header before it: it can compile while the plumbing is cut
-            ok = write_code_parts(opts, &code, path.data, g.c_path, false, &parts_manifest);
-            for (const char *line = ok ? parts_manifest.data : NULL; line && *line;) {
-                const char *end = strchr(line, '\n');
-                if (!end) break;
-                sb file = {0};
-                parts_folder(path.data, &file);
-                sb_printf(&file, "%.*s", (int)(end - line - 4), line + 4);
-                compile_written(file.data);
-                line = end + 1;
+            // The game's own code and its plumbing, each cut into its parts beside the other
+            parts_task tasks[2] = {
+                {.opts = opts, .text = &code, .path = path.data, .original = g.c_path, .plumbing = false},
+                {.opts = opts, .text = &plumbing, .path = plumbing_path.data, .original = plumbing_c, .plumbing = true}};
+            build_threads_each(2u, 0u, parts_one, tasks);
+            for (int k = 0; k < 2; k++) {
+                if (!tasks[k].ok && tasks[k].why) diag_error((loc){0}, "couldn't partition generated C: %s", tasks[k].why);
+                ok = ok && tasks[k].ok;
+                if (tasks[k].manifest.data) sb_put(&parts_manifest, tasks[k].manifest.data);
             }
-            ok = ok && write_code_parts(opts, &plumbing, plumbing_path.data, plumbing_c, true, &parts_manifest);
+            diag_step("  parts cut and written");
             whole = false;
         } else {
             // What it couldn't cut, for whoever reads this
@@ -31053,7 +31108,11 @@ bool codegen(program *prog, const codegen_options *opts)
             ok = write_file(plumbing_path.data, &whole);
         }
     }
-    if (ok && whole) ok = write_code_parts(opts, &g.c, path.data, g.c_path, false, &parts_manifest);
+    if (ok && whole) {
+        const char *why;
+        ok = write_code_parts(opts, &g.c, path.data, g.c_path, false, &parts_manifest, &why);
+        if (!ok && why) diag_error((loc){0}, "couldn't partition generated C: %s", why);
+    }
     if (ok && opts->split_code) {
         sb manifest_path = {0};
         sb_printf(&manifest_path, "%s/%s_parts.txt", opts->out_dir, opts->name);

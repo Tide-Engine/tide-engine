@@ -360,9 +360,15 @@ static void declaration(asset_usage *w, const decl *d)
             ctext(w, m->key);
             tide_sha256_add(w->hash, m->hash, 32);
             // Imported side buffers and decoded canonical models participate too.
-            if (m->skinned) tide_sha256_add(w->hash, m->skinned, m->skinned_size);
+            // (the model's digest, worked out once however many declarations and passes ask: megabytes each)
+            if (m->skinned) {
+                uint8_t model[32];
+                asset_bytes_hash(m->skinned, m->skinned_size, model);
+                tide_sha256_add(w->hash, model, sizeof model);
+            }
             for (int k = 0; k < m->side_count; k++) {
-                // A rig's files are beside every animation made for it: each is read once for the walk
+                // A rig's files are beside every animation made for it: each is asked for once for the walk. Its
+                // SHA-256 is what reading it as an asset's file gives, so one the game's record has isn't read
                 const side_digest *had = NULL;
                 for (int n = 0; n < w->sides.count && !had; n++) {
                     if (strcmp(w->sides.items[n].path, m->sides[k]) == 0) had = &w->sides.items[n];
@@ -371,23 +377,12 @@ static void declaration(asset_usage *w, const decl *d)
                     tide_sha256_add(w->hash, had->digest, sizeof had->digest);
                     continue;
                 }
-                FILE *f = fopen(m->sides[k], "rb");
-                tide_sha256 side;
-                tide_sha256_init(&side);
-                bool read = false;
-                if (f) {
-                    enum { CHUNK = 1 << 16 };
-                    uint8_t *bytes = malloc(CHUNK);
-                    if (!bytes) abort();
-                    size_t n;
-                    while ((n = fread(bytes, 1, CHUNK, f))) tide_sha256_add(&side, bytes, n);
-                    read = !ferror(f);
-                    if (!read) diag_error(d->at, "cannot fingerprint asset dependency '%s'", m->sides[k]);
-                    free(bytes);
-                    fclose(f);
-                } else diag_error(d->at, "cannot read asset dependency '%s'", m->sides[k]);
                 side_digest made = {m->sides[k], {0}};
-                tide_sha256_end(&side, made.digest);
+                const bool read = asset_file_hash(m->sides[k], made.digest);
+                if (!read) {
+                    diag_error(d->at, "cannot read asset dependency '%s'", m->sides[k]);
+                    tide_sha256_of("", 0, made.digest); // As a file that couldn't be opened hashed: nothing
+                }
                 tide_sha256_add(w->hash, made.digest, sizeof made.digest);
                 if (read) vec_push(w->sides, made); // One that couldn't be read says so for each asset it's beside
             }

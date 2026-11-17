@@ -729,3 +729,12 @@ Built: `compiler/src/index_codegen.inc` (included by `codegen.c` before `gen_que
   runs each alternating on a loaded machine (everything about twice its quiet time): `HeldWeapon` 0.73 to 0.49 ms
   a frame, the other views within their spread; `Campaign.Roam`, three such loops, 0.52 to 0.49.
 - **Gaps**: A local list's site is shared by the threads running its code, so per-entity code with a local list on several threads rebuilds it more often than it reuses it (correct, slower). A loop in async code whose body waits isn't indexed.
+
+## The call graph (2026-11-17)
+
+`key_still`'s "every system that can call this code" walked what each system calls, for each key of each loop:
+2,824 walks and 0.29 s of Mount & Rifle's build. `call_graph` (indexing.c) is the program's calls found once, by
+the walk `calls_stmt` made (a call is `CALL_FUNCTION` or `CALL_METHOD` with its method), and `calls_code` asks it,
+keeping who reaches each target asked about. `plan_loop_indexes` starts it afresh; `call_graph_bottom_up` gives
+codegen the routines with callees first (notes/verified-and-local-handlers.md). The answers are the ones the walks
+gave: `tidec_e2e_indexed_loops`, `tidec_e2e_index_follow`, `tidec_schedule_indexed_loops`.

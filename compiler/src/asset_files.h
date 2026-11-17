@@ -169,6 +169,16 @@ void asset_files_use_build_cache(bool enabled);
 void asset_files_trust(const char *game_folder);
 void asset_files_save_times(const char *game_folder);
 
+// The SHA-256 of the file at `path`, as reading an asset's file gives it: from the game's record where the file is
+// as recorded, else read. False where there's no file, or it can't be read.
+bool asset_file_hash(const char *path, uint8_t hash[32]);
+
+// The SHA-256 of an imported model's bytes (asset_match.skinned), worked out once for each run of bytes, by where
+// they are: megabytes each, which the simulation's identity, the model's meshes, their levels and its block in the
+// pack each ask for. asset_bytes_hash_forget starts afresh, for a compilation whose bytes are other ones.
+void asset_bytes_hash(const uint8_t *bytes, size_t size, uint8_t hash[32]);
+void asset_bytes_hash_forget(void);
+
 // An item's file bytes, read now where they weren't (asset_match.data): NULL where the file can't be read. Called
 // from several threads only for items whose bytes are there already.
 const uint8_t *asset_match_bytes(const asset_match *item, size_t *size);

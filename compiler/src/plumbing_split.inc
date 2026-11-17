@@ -128,10 +128,10 @@ typedef VEC(split_plain) split_plain_list;
 // Shorter runs aren't listed: reading them costs less than finding them
 #define SPLIT_PLAIN_LISTED 4096
 
-static const char *split_plain_text; // The text split_plains' offsets are in, or NULL
-static size_t split_plain_text_len;
-static const split_plain *split_plains;
-static int split_plain_count;
+static _Thread_local const char *split_plain_text; // The text split_plains' offsets are in, or NULL
+static _Thread_local size_t split_plain_text_len;
+static _Thread_local const split_plain *split_plains;
+static _Thread_local int split_plain_count;
 
 // Where the run of numbers starting at t[at] ends. A run with line ends in it ends at its last one, so whoever
 // reads on sees what follows that line's end (a directive).
@@ -371,9 +371,10 @@ static bool split_variable(const char *c, size_t n, size_t *name, size_t *name_l
     return true;
 }
 
-// Why the last split couldn't be made, and where: an offset in the text.
-static const char *split_why;
-static size_t split_where;
+// Why the last split couldn't be made, and where: an offset in the text. The splitting thread's own, as the runs
+// listed above are: parts of a text are split on several threads at once (write_code_parts).
+static _Thread_local const char *split_why;
+static _Thread_local size_t split_where;
 
 static bool split_fail(const char *why, const size_t where)
 {

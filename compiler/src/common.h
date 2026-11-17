@@ -11,7 +11,11 @@
 // analysis, so nothing the compiler allocates may outlive one.
 
 void *arena_alloc(size_t size); // Zeroed.
-void arena_reset(void);         // Frees everything arena_alloc returned.
+void arena_reset(void);
+// Says the calling thread is one that works beside the arena's own (build_threads.c says it for each thread it
+// starts): what it allocates from here on is from blocks of its own, good until arena_reset as any allocation is.
+// A checkpoint and a rewind are the arena's own thread's alone.
+void arena_thread(void);         // Frees everything arena_alloc returned.
 
 // A temporary allocation scope. Rewind invalidates everything allocated
 // after the checkpoint: none of it may be kept in an object that survives.

@@ -1,5 +1,67 @@
 # `tide`, packages and the package
 
+## Debug builds of big games, fourth round: where tidec's own time went (2026-11-17, night)
+
+Owner, after the round below: "i expected a bigger jump, how can we achieve a drastic change in total time", and
+agents start `tide run` afresh for each test, so nothing can be kept in a process. I had proposed generating C a
+source file at a time and skipping the files an edit leaves alone, estimating tidec's 3.4 s would come to about
+1 s. Measured step by step first (`diag_step` in check.c's last phase and codegen's first), that estimate was
+wrong: writing the systems' and functions' bodies is 0.27 s of it. The rest was a score of whole-program steps
+of 0.05-0.3 s each, and the program is small: 55,000 lines, 4,559 declarations, 207,000 nodes, which one walk
+goes through in a millisecond. So most steps were doing work again, not work a redesign would save.
+
+Same game and measure (`tide run game --frames 2`, debug, a machine a fifth busy):
+
+| | before | after |
+|---|---|---|
+| a constant edited | 4.8 s | 3.9-4.3 s |
+| a field added to a singleton | 10.4 s | 9.0 s |
+| tidec, of the constant's edit | 3.4 s | 2.45 s |
+
+What changed:
+
+- **Which code calls which, found once** (`call_graph`, indexing.c). `key_still` asked, for each key of each loop
+  in borrowed-query code and each system, whether the system reaches the loop's code (`calls_stmt`, a walk of
+  everything the system calls, with a list for what it had seen): 2,824 walks, 0.29 s. The graph is one walk of
+  every body; who reaches a target is found once a target, from its callers back (`calls_code`). 0.034 s.
+- **Local journals' reads, callees first** (`collect_heard_reads`, notes/verified-and-local-handlers.md): seven
+  passes over the program to four, by walking each routine after the ones it calls
+  (`call_graph_bottom_up`), and each member's path text made once (`heard_member_path`'s table). 0.30 s to 0.14.
+  What's read is the same set in any order, and only asked as a set (`heard_reads`).
+- **Shaders' SPIR-V kept** in the game's build cache (`gen_shader_spirv`: by the WGSL and the compiler's identity,
+  as an asset's import is kept). 0.20 s to 0.08.
+- **The simulation's identity hashes each model's digest**, not its megabytes for each declaration that names it
+  (`asset_bytes_hash`, shared with the pack's blocks and the levels of detail), and a side file's SHA-256 comes
+  from the files' record (`asset_file_hash`): 0.14 s to 0.08. TIDE_SIMULATION_ID changes for a game with skinned
+  models, as it does with any tide.
+- **The code and the plumbing are cut beside each other, and a level's parts on a thread each**
+  (`write_code_parts`, `halve_part`, `write_part`, `parts_one`). 0.53 s to 0.31 for an edit of the code (the
+  plumbing's hash runs beside it), and 1.9 s to 0.63 where the plumbing is cut too. For this the arena gives each
+  thread build_threads starts blocks of its own (`arena_thread`, common.c: no lock but to list a new block, all
+  freed by `arena_reset`), and the splitter's "why it failed" and its listed runs are a thread's own
+  (`_Thread_local`, plumbing_split.inc). A cut that fails says why to its caller, which reports it.
+
+What the constant's edit pays now (about 3.9 s): tidec 2.45 s (the assets 0.4; parsing 0.1; checking 0.25;
+`collect_heard_reads` 0.14; the pack laid out 0.11, its fingerprints 0.07, the identity 0.08; shaders 0.08;
+bodies 0.27; the rest of the C 0.1; code from plumbing 0.21; the parts 0.31; the debugger's views 0.1); tide's
+stamps of the generated files 0.19 (each read whole to be hashed); link 0.2; the game's start 1.05-1.4 s (the same
+in release: its own, not measured further).
+
+Not done, each measured:
+- The stamps: a file whose size and time are as they were when it was last stamped needn't be read (0.12-0.15 s).
+- The debugger's views beside the cut, on a thread (0.1 s); the [Parts] models read ahead (0.15-0.2 s); the
+  journals' reads by a worklist in place of the last passes (0.06 s).
+- **Generating C as several files directly.** It would take away "code from plumbing", the cut and most of the
+  stamps, about 0.6 s. The splitter is what makes one text's statics link across files (externs, renames, shared
+  constants): the generator would have to write that linkage itself, in every place it writes C.
+- **The game's start**, the biggest piece left and the same in every build mode.
+
+Tests and validation (Windows, Clang 23.1.2, ASan): 40 focused tests (indexed loops, the lanes' and nested
+splits' fixtures as plain and as a debugger's build, listeners and local events, shaders and SPIR-V, the asset and
+identity tests, `tidec_split_code_stable`, `tidec_recompile`, `tidec_debugger_natvis`, `tide_cli_build_report`).
+The compiler before this round and after it write the same C for every e2e fixture but the identity's line
+(each compiled alone with --split-code --split-plumbing, 355 of them). Not run: web and Android builds, Linux/macOS: CI's.
+
 ## Debug builds of big games, third round: the assets of a build that changed none (2026-11-17, evening)
 
 Owner, on the open item of the round below ("skipping it means trusting sizes and times"): "doesn't git use
