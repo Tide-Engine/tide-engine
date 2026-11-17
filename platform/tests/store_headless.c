@@ -29,7 +29,7 @@ TIDE_TEST(store_headless_answers_reach_the_tick_after_they_were_asked)
     // The game's files, with no thread of their own
     TIDE_REQUIRE(tide_run_store != NULL && tide_run_store->read && tide_run_store->write);
     TIDE_CHECK(!tide_run_store->post && !tide_run_store->settle);
-    (void)tide_run_store->remove(tide_run_store->user, "saved", true, true); // What an earlier run left
+    (void)tide_run_store->remove(tide_run_store->user, "Tide", true, true); // What an earlier run left
     for (int i = 0; i < 40; i++) frame();
     const tide_world *w = tide_session_server_world(tide_run_session);
     TIDE_REQUIRE(w != NULL && w->Time.tick > 20);
@@ -39,7 +39,7 @@ TIDE_TEST(store_headless_answers_reach_the_tick_after_they_were_asked)
     TIDE_CHECK(w->Kept.found == 400);
     const tide_io *files = tide_run_store;
     tide_run_end();
-    (void)files->remove(files->user, "saved", true, true);
+    (void)files->remove(files->user, "Tide", true, true);
     tide_draw_free(&tide_run_draw);
     tide_draw_free(&tide_run_over);
 }

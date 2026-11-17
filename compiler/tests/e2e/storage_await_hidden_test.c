@@ -192,7 +192,7 @@ TIDE_TEST(storage_await_in_a_game_that_hides_state_reaches_players_through_its_s
     const tide_world *server = tide_session_server_world(host);
     TIDE_REQUIRE(server != NULL && server->Time.tick > 60);
     check_vault(&server->Vault);
-    TIDE_CHECK(find_file("saved/hidden/a.bin") != NULL && find_file("saved/hidden/b.bin") != NULL);
+    TIDE_CHECK(find_file("Tide/store/hidden/a.bin") != NULL && find_file("Tide/store/hidden/b.bin") != NULL);
     // The guest, whose own runs of the tasks never went on: what the server's did is in the state it has
     const tide_session_status joined = tide_session_status_of(guest);
     TIDE_CHECK(joined.client.state == TIDE_SESSION_CONNECTED);

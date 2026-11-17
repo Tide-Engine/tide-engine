@@ -1,3 +1,18 @@
+## The engine's folder check takes the game's paths (2026-11-17)
+
+`tide_io_engine_path` (`engine/src/io.c`; notes/assets-and-files.md, The engine's folder) reads every path a game's
+`File` or `Directory` call gives, after `path_error` has refused NULs and bad UTF-8:
+
+- **Sizes**: a path or a root over `UINT32_MAX / 4` bytes is refused without being copied. The joined path
+  (`root + '/' + path`) and the folded one are heap buffers of exactly that length plus one; `fold_path` writes a
+  `/` and the part's bytes only for a part it read, each part following a separator in its input but the first, so
+  it writes at most the input's length plus one. The engine's own path is the folded root plus `sizeof "/Tide"`.
+- **Reads** stay in `[0, size)`: the `\\?\` prefix test checks `size >= 4` first, `UNC\` checks what's left, a part's
+  end is found before a `:` is looked for or trailing dots taken off, and `..` never goes below the kept drive.
+- **Listings**: each entry from a provider is checked as UTF-8 before it's folded (`list_entry`).
+- `io_engine_folder_paths_however_written` and `io_engine_folder_refused_to_the_games_calls` run under ASan in the
+  `sanitize` preset with the native files test.
+
 ## The store's list of a provider's files (2026-11-16, night)
 
 What a load consults before it reads (notes/voxels.md, section 3f) is numbers of paths, never the paths: a table of
@@ -93,7 +108,7 @@ ways and cuts it at every length under ASan.
 ## The server's store: listings and answers (2026-11-15)
 
 `Storage.List` takes a prefix and a key to go on after from match code, a provider lists names anyone could have put in
-`saved/`, and every machine reads the answers out of frames (notes/voxels.md, section 3b). What keeps it safe:
+`Tide/store/`, and every machine reads the answers out of frames (notes/voxels.md, section 3b). What keeps it safe:
 
 - **Game values are bounded before they're kept**: a key 1 to 256 bytes, a prefix and an `after` 0 to 256
   (`tide_storage_ask`, which refuses and logs past them, and a size given with no bytes), a value

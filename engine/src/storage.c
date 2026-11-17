@@ -380,13 +380,15 @@ static bool device_name(const char *name, const uint32_t n)
     return (memcmp(low, "com", 3) == 0 || memcmp(low, "lpt", 3) == 0) && low[3] >= '0' && low[3] <= '9';
 }
 
+_Static_assert(sizeof TIDE_STORAGE_FOLDER == TIDE_STORAGE_FOLDER_SIZE + 1u, "TIDE_STORAGE_FOLDER_SIZE is its length");
+
 uint32_t tide_storage_path(const char *key, const uint32_t key_size, char *out, const uint32_t capacity)
 {
     static const char hex[] = "0123456789ABCDEF";
     if (!key_size || key_size > TIDE_STORAGE_KEY_MOST || capacity < TIDE_STORAGE_PATH_MOST + 1u) return 0;
     uint32_t at = 0;
-    memcpy(out, "saved/", 6);
-    at = 6;
+    memcpy(out, TIDE_STORAGE_FOLDER "/", TIDE_STORAGE_FOLDER_SIZE + 1u);
+    at = TIDE_STORAGE_FOLDER_SIZE + 1u;
     bool long_part = false;
     for (uint32_t from = 0; from <= key_size;) {
         uint32_t to = from;
@@ -429,8 +431,8 @@ uint32_t tide_storage_path(const char *key, const uint32_t key_size, char *out, 
         tide_sha256_init(&sha);
         tide_sha256_add(&sha, key, key_size);
         tide_sha256_end(&sha, digest);
-        memcpy(out, "saved/%%/", 9);
-        at = 9;
+        memcpy(out, TIDE_STORAGE_FOLDER "/%%/", TIDE_STORAGE_FOLDER_SIZE + 4u);
+        at = TIDE_STORAGE_FOLDER_SIZE + 4u;
         for (uint32_t i = 0; i < 32u; i++) {
             out[at++] = "0123456789abcdef"[digest[i] >> 4];
             out[at++] = "0123456789abcdef"[digest[i] & 15u];
@@ -447,10 +449,10 @@ static int hex_digit(const char ch)
 
 uint32_t tide_storage_key(const char *path, const uint32_t path_size, char *out, const uint32_t capacity)
 {
-    if (capacity < TIDE_STORAGE_KEY_MOST || path_size < 6u + 1u + 4u || path_size > TIDE_STORAGE_PATH_MOST
-        || memcmp(path, "saved/", 6) != 0 || memcmp(path + path_size - 4u, ".bin", 4) != 0) return 0;
+    if (capacity < TIDE_STORAGE_KEY_MOST || path_size < TIDE_STORAGE_FOLDER_SIZE + 1u + 1u + 4u
+        || path_size > TIDE_STORAGE_PATH_MOST || memcmp(path, TIDE_STORAGE_FOLDER "/", TIDE_STORAGE_FOLDER_SIZE + 1u) != 0 || memcmp(path + path_size - 4u, ".bin", 4) != 0) return 0;
     uint32_t n = 0;
-    for (uint32_t i = 6; i < path_size - 4u; i++) {
+    for (uint32_t i = TIDE_STORAGE_FOLDER_SIZE + 1u; i < path_size - 4u; i++) {
         const char ch = path[i];
         char byte = ch;
         if (ch == '%') { // Two hex digits in capitals, as tide_storage_path writes them: "%%" is the hashed keys' folder
@@ -642,7 +644,7 @@ static void walk(listing *l, const uint32_t size, const char *start, const uint3
     for (uint32_t i = 0; !error && i < folders.count; i++) {
         const uint32_t n = (uint32_t)strlen(folders.items[i]);
         // The folder keys too long for a file's name are kept in is the hashed walk's
-        if (size == 5u && n == 2u && memcmp(folders.items[i], "%%", 2) == 0) continue;
+        if (size == TIDE_STORAGE_FOLDER_SIZE && n == 2u && memcmp(folders.items[i], "%%", 2) == 0) continue;
         if (size + 1u + n + 6u > TIDE_STORAGE_PATH_MOST) continue;
         // A folder of keys' files has its name as a key's part is written: "<folder>/a.bin" is a key's file then,
         // and what that key is says what every key in it starts with
@@ -669,7 +671,7 @@ static int compare_names(const void *a, const void *b)
 static void walk_hashed(listing *l)
 {
     names files = {0};
-    memcpy(l->path, "saved/%%", 9);
+    memcpy(l->path, TIDE_STORAGE_FOLDER "/%%", TIDE_STORAGE_FOLDER_SIZE + 4u);
     tide_io_error error = list_folder(l, false, &files);
     if (error) failed(l, error, "", 0); // What's there can't be told: any key could be
     if (!error && files.count > 1) qsort(files.items, files.count, sizeof *files.items, compare_names);
@@ -685,7 +687,7 @@ static void walk_hashed(listing *l)
             failed(l, TIDE_IO_FAILED, "", 0);
             break;
         }
-        snprintf(l->path, sizeof l->path, "saved/%%%%/%s", name);
+        snprintf(l->path, sizeof l->path, TIDE_STORAGE_FOLDER "/%%%%/%s", name);
         uint8_t *data = NULL;
         uint32_t size = 0;
         const tide_io_error read = l->io->read(l->io->user, l->path, &data, &size);
@@ -693,7 +695,7 @@ static void walk_hashed(listing *l)
         // The key, if it is one this file is named for
         if (!read && size >= 1u && size <= TIDE_STORAGE_KEY_MOST) {
             memcpy(key, data, size);
-            snprintf(l->path, sizeof l->path, "saved/%%%%/%s", value);
+            snprintf(l->path, sizeof l->path, TIDE_STORAGE_FOLDER "/%%%%/%s", value);
             const uint32_t n = tide_storage_path(key, size, path, sizeof path);
             if (tide_utf8_valid(key, (int32_t)size) && n == strlen(l->path) && memcmp(path, l->path, n) == 0) offer(l, key, size);
         }
@@ -716,15 +718,15 @@ static uint32_t prefix_folder(listing *l)
             found = true;
         }
     }
-    memcpy(l->path, "saved", 6);
-    if (!found) return 5u;
+    memcpy(l->path, TIDE_STORAGE_FOLDER, TIDE_STORAGE_FOLDER_SIZE + 1u);
+    if (!found) return TIDE_STORAGE_FOLDER_SIZE;
     // Its parts as a key's that goes on after them are written: "<parts>/x"
     char key[TIDE_STORAGE_KEY_MOST + 2u];
     memcpy(key, l->prefix, last);
     memcpy(key + last, "/x", 2);
     char path[TIDE_STORAGE_PATH_MOST + 1u];
     const uint32_t n = tide_storage_path(key, last + 2u, path, sizeof path);
-    if (!n || memcmp(path, "saved/%%/", 9) == 0) return 0;
+    if (!n || memcmp(path, TIDE_STORAGE_FOLDER "/%%/", TIDE_STORAGE_FOLDER_SIZE + 4u) == 0) return 0;
     memcpy(l->path, path, n - 6u); // Less "/x.bin"
     l->path[n - 6u] = '\0';
     return n - 6u;
@@ -923,8 +925,8 @@ static bool files_may_have(const tide_io *io, const char *path, const uint32_t s
     uint32_t state = FILES_UNLISTED;
     if (__atomic_compare_exchange_n(&f->state, &state, FILES_LISTING, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
         // This thread lists them, once. Saves carried out meanwhile add theirs, so nothing made since is missed
-        char folder[TIDE_STORAGE_PATH_MOST + 1u] = "saved";
-        state = files_list(f, io, folder, 5u) ? FILES_LISTED : FILES_UNKNOWN;
+        char folder[TIDE_STORAGE_PATH_MOST + 1u] = TIDE_STORAGE_FOLDER;
+        state = files_list(f, io, folder, TIDE_STORAGE_FOLDER_SIZE) ? FILES_LISTED : FILES_UNKNOWN;
         lock_files();
         if (f->forgets != forgets) { // Forgotten meanwhile: what was listed isn't what's there
             free(f->slots);
@@ -992,7 +994,7 @@ static tide_io_error save(const tide_io *io, const char *path, const uint8_t *da
 // Whether a key's file is named by its hash: then the key itself is kept beside it, in "<hash>.key"...
 static bool hashed(const char *path)
 {
-    return memcmp(path, "saved/%%/", 9) == 0;
+    return memcmp(path, TIDE_STORAGE_FOLDER "/%%/", TIDE_STORAGE_FOLDER_SIZE + 4u) == 0;
 }
 
 // ...which this writes in `out`, from the ".bin" path of `size` bytes
