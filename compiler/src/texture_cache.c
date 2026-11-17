@@ -1,5 +1,6 @@
 #include "texture_cache.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "asset_files.h"
@@ -51,22 +52,45 @@ void texture_content(const texture_cache_view *v, uint8_t content[32])
 // then the blocks or the RGBA.
 enum { HEAD = 20, ENTRY = HEAD + 32 };
 
-bool texture_cache_open(const uint8_t *data, const size_t size, texture_cache_view *out)
+// An entry's first ENTRY bytes, of an entry `size` bytes long: its words, with the [Linear] mark taken out of the
+// format's into *linear. False where they aren't an image's that takes the rest of the entry.
+static bool entry_head(const uint8_t *data, const size_t size, uint32_t head[5], bool *linear)
 {
     if (size < ENTRY) return false;
-    uint32_t head[5], levels, bytes;
-    memcpy(head, data, sizeof head);
-    const bool linear = (head[2] & 0x100u) != 0;
+    uint32_t levels, bytes;
+    memcpy(head, data, sizeof(uint32_t) * 5u);
+    *linear = (head[2] & 0x100u) != 0;
     head[2] &= ~0x100u;
     const uint64_t pixels = (uint64_t)head[0] * head[1];
     if (!head[0] || !head[1] || head[0] > TIDE_PNG_MAX_SIDE || head[1] > TIDE_PNG_MAX_SIDE
         || pixels > TIDE_IMAGE_MAX_BYTES / sizeof(tide_color)) return false;
     const bool blocks = tide_texture_blocks_size((int32_t)head[0], (int32_t)head[1], head[2], &levels, &bytes);
-    if (!((head[2] == 0 && head[3] == 0 && head[4] == pixels * 4 && size - ENTRY == pixels * 4)
-          || (blocks && head[3] == levels && head[4] == bytes && size - ENTRY == bytes))) return false;
+    return (head[2] == 0 && head[3] == 0 && head[4] == pixels * 4 && size - ENTRY == pixels * 4)
+        || (blocks && head[3] == levels && head[4] == bytes && size - ENTRY == bytes);
+}
+
+bool texture_cache_open(const uint8_t *data, const size_t size, texture_cache_view *out)
+{
+    uint32_t head[5];
+    bool linear;
+    if (!entry_head(data, size, head, &linear)) return false;
     *out = (texture_cache_view){.width = head[0], .height = head[1], .linear = linear, .rgba = head[2] ? NULL : data + ENTRY,
         .blocks = {.pixels = head[2] ? data + ENTRY : NULL, .format = head[2], .levels = head[3], .bytes = head[4]}};
     memcpy(out->content, data + HEAD, sizeof out->content);
+    return true;
+}
+
+bool texture_cache_peek(const char *folder, const uint8_t key[32], asset_prepared *out)
+{
+    uint8_t first[ENTRY];
+    uint32_t head[5];
+    size_t size;
+    bool linear;
+    if (!asset_cache_peek(folder, key, first, sizeof first, &size) || !entry_head(first, size, head, &linear)) return false;
+    *out = (asset_prepared){.width = head[0], .height = head[1], .format = head[2], .levels = head[3], .bytes = head[4],
+        .linear = linear};
+    memcpy(out->content, first + HEAD, sizeof out->content);
+    memcpy(out->key, key, sizeof out->key);
     return true;
 }
 
@@ -121,7 +145,13 @@ bool texture_make_linear(const asset_match *item, const bool raw, const bool com
     bool decoded_here = false;
     if (!item->image.pixels) {
         decoded = *item;
-        if (!image_file_read_mips(item->data, item->size, item->key, &decoded.image, &decoded.image_mips, why)) return false;
+        size_t size;
+        const uint8_t *data = asset_match_bytes(item, &size);
+        if (!data) {
+            snprintf(why, 256, "its file can't be read");
+            return false;
+        }
+        if (!image_file_read_mips(data, size, item->key, &decoded.image, &decoded.image_mips, why)) return false;
         item = &decoded;
         decoded_here = true;
     }

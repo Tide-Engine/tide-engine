@@ -299,6 +299,11 @@ typedef struct gen {
     VEC(asset_dependency) skinned_fingerprints; // Imported source geometry; preflight only, never the header.
     uint8_t *pack_bytes; // Built once, before asset compatibility hashes are computed.
     size_t pack_size;
+    // The images whose pixels the pack has room for and no more (build_pack): each hole and the image that fills it,
+    // until pack_fill reads them in or write_pack finds the file there is this pack already
+    tide_pack_hole *pack_holes;
+    uint32_t pack_hole_count;
+    struct later_image *pack_later;
     // Indexed loops (index_codegen.inc): whether any loop is, and each place a cached index is kept for, a loop
     // as a borrowed query's code for one of its sources has it
     bool ix_any;
@@ -24595,6 +24600,8 @@ static void collect_asset_dependencies(gen *g)
     }
 }
 
+static bool pack_fill(gen *g);
+
 static bool fingerprint_assets(gen *g, asset_dependency *assets, const int count, const bool defaults)
 {
     tide_asset_fingerprint_request *requests = arena_alloc((size_t)count * sizeof *requests);
@@ -24602,6 +24609,11 @@ static bool fingerprint_assets(gen *g, asset_dependency *assets, const int count
     for (int i = 0; i < count; i++) {
         const asset_dependency *dep = &assets[i];
         requests[i] = (tide_asset_fingerprint_request){.qualified = str_to_cstr(dep->asset->qualified), .desc = dep->shape};
+    }
+    // An image's fingerprint is of its pixels, which the pack may not have yet
+    for (int i = 0; i < count && g->pack_hole_count; i++) {
+        const asset_kind k = assets[i].asset->asset_kind;
+        if ((k == ASSET_TEXTURE || k == ASSET_CUBEMAP || k == ASSET_TEXTURE_ARRAY) && !pack_fill(g)) return false;
     }
     uint32_t failed;
     if (!pack_fingerprints(g->pack_bytes, g->pack_size, requests, (uint32_t)count, hashes, NULL, &failed)) {
@@ -25091,10 +25103,47 @@ static tide_grid_shape asset_grid_shape(const decl *grid)
     return (tide_grid_shape){(uint32_t)cell, (uint32_t)grid->dims, {(uint32_t)shift[0], (uint32_t)shift[1], (uint32_t)shift[2]}};
 }
 
+// A model's bytes' SHA-256, worked out once a compilation: megabytes each, which a model's meshes, their levels and
+// its own block in the pack would each hash again. By where the bytes are, which a compilation doesn't move.
+typedef struct model_hash {
+    const uint8_t *bytes;
+    size_t size;
+    uint8_t hash[32];
+} model_hash;
+
+static VEC(model_hash) model_hashes;
+
+static void model_hash_of(const uint8_t *bytes, const size_t size, uint8_t hash[32])
+{
+    for (int i = 0; i < model_hashes.count; i++) {
+        if (model_hashes.items[i].bytes == bytes && model_hashes.items[i].size == size) {
+            memcpy(hash, model_hashes.items[i].hash, 32);
+            return;
+        }
+    }
+    model_hash h = {.bytes = bytes, .size = size};
+    tide_sha256_of(bytes, size, h.hash);
+    memcpy(hash, h.hash, 32);
+    vec_push(model_hashes, h);
+}
+
+// An image the pack has room for (tide_pack_texture_room), and what gives its pixels: the cache's entry under `key`,
+// or else its file, made again as the declaration marks it.
+typedef struct later_image {
+    const asset_match *item;
+    bool raw, compress, linear;
+    uint8_t key[32];
+} later_image;
+
+typedef VEC(later_image) later_images;
+
 // One item of an asset into the pack: its block's offset.
 // `stored`, where it isn't NULL, gets an image's blocks' format (tide/texture_blocks.h), or 0 for its exact RGBA.
+// With `later`, an image the cache has prepared is given room alone and listed there, a hole of the builder's each,
+// in their order.
 static uint64_t pack_item(tide_pack_builder *b, const asset_match *item, const asset_kind kind, const decl *grid, const bool raw,
-                          const bool compress, const bool linear, uint32_t *extra, const char *cache_folder, uint32_t *stored)
+                          const bool compress, const bool linear, uint32_t *extra, const char *cache_folder, uint32_t *stored,
+                          later_images *later)
 {
     *extra = 0;
     uint32_t stored_here;
@@ -25102,7 +25151,7 @@ static uint64_t pack_item(tide_pack_builder *b, const asset_match *item, const a
     *stored = 0;
     if (kind == ASSET_ANIMATIONS || kind == ASSET_ANIMATION || kind == ASSET_HUMANOID) {
         uint8_t hash[32];
-        tide_sha256_of(item->skinned, item->skinned_size, hash);
+        model_hash_of(item->skinned, item->skinned_size, hash);
         const uint64_t at = tide_pack_bytes(b, hash, item->skinned, item->skinned_size, extra);
         return kind == ASSET_ANIMATIONS ? tide_pack_list(b, &at, 1u) : at;
     }
@@ -25113,14 +25162,26 @@ static uint64_t pack_item(tide_pack_builder *b, const asset_match *item, const a
         texture_cache_key_linear(cache, item->hash, item->key, raw, compress, linear);
         size_t cached_size;
         texture_cache_view view;
-        uint8_t *cached = NULL;
-        bool prepared = false;
-        if (item->prepared_texture && item->prepared_raw == raw && compress && !linear)
-            prepared = texture_cache_open(item->prepared_texture, item->prepared_texture_size, &view);
-        if (!prepared) {
-            cached = texture_cache_read(cache_folder, cache, &cached_size, &view);
-            prepared = cached != NULL;
+        if (later) {
+            // What the entry says of itself is enough to lay it out: its pixels are read if the pack is written
+            asset_prepared known;
+            const bool has = item->has_prepared && item->prepared.raw == raw && compress && !linear;
+            if (has) known = item->prepared;
+            if (has || texture_cache_peek(cache_folder, cache, &known)) {
+                uint32_t hole;
+                *stored = known.format;
+                const uint64_t at = tide_pack_texture_room(b, known.content, (int32_t)known.width, (int32_t)known.height,
+                                                          known.format, known.levels, known.bytes, &hole);
+                if (hole != UINT32_MAX) {
+                    later_image image = {.item = item, .raw = raw, .compress = compress, .linear = linear};
+                    memcpy(image.key, cache, sizeof image.key);
+                    vec_push(*later, image);
+                }
+                return at;
+            }
         }
+        uint8_t *cached = texture_cache_read(cache_folder, cache, &cached_size, &view);
+        const bool prepared = cached != NULL;
         if (prepared) {
             memcpy(content, view.content, sizeof content);
             *stored = view.blocks.pixels ? view.blocks.format : 0;
@@ -25184,7 +25245,7 @@ static tide_mesh_lod_source mesh_levels_source(const mesh_file *m, const uint8_t
     tide_sha256_add(&s, m->hash, sizeof m->hash);
     if (skinned) {
         uint8_t model[32];
-        tide_sha256_of(skinned, skinned_size, model);
+        model_hash_of(skinned, skinned_size, model);
         tide_sha256_add(&s, model, sizeof model);
     }
     tide_sha256_end(&s, key);
@@ -25435,13 +25496,15 @@ typedef struct texture_wants {
 
 static void want_texture(texture_wants *w, const asset_match *item, const bool raw, const bool compress, const bool linear)
 {
-    if (item->prepared_texture && item->prepared_raw == raw && compress && !linear) return;
+    if (item->has_prepared && item->prepared.raw == raw && compress && !linear) return;
     texture_want t = {.item = item, .raw = raw, .compress = compress, .linear = linear};
     texture_cache_key_linear(t.key, item->hash, item->key, raw, compress, linear);
     if (asset_cache_has(w->folder, t.key)) return;
     for (int i = 0; i < w->list.count; i++) {
         if (!memcmp(w->list.items[i].key, t.key, sizeof t.key)) return;
     }
+    size_t size;
+    asset_match_bytes(item, &size); // Its file's bytes, read here where they weren't: the images are made at once
     vec_push(w->list, t);
 }
 
@@ -25487,6 +25550,10 @@ static void want_levels(gen *g)
 {
     const program *prog = g->prog;
     if (g->opts->build_program) return; // Its pack has no levels (build_pack): build code doesn't draw
+    // Twice over the meshes: first for the levels a build before this one kept, whose files are then read at once
+    // (mesh_lod_find), then for what's left to make
+    for (int pass = 0; pass < 2; pass++) {
+    const bool find = pass == 0;
     for (int i = 0; i < prog->assets.count; i++) {
         const decl *d = prog->assets.items[i];
         const asset_value *v = d->asset;
@@ -25498,6 +25565,7 @@ static void want_levels(gen *g)
         for (int k = 0; k < (v->many ? v->count : 1); k++) {
             const asset_match *item = &v->items[k];
             uint8_t key[32];
+            if (item->built && find) continue; // What build code made is laid out to be told: looked for as it's wanted
             if (item->built) {
                 int *pad = arena_alloc(sizeof(int) * (size_t)(vertex->fields.count + 1));
                 const layout whole = decl_layout_padded(vertex, pad);
@@ -25524,9 +25592,12 @@ static void want_levels(gen *g)
             const uint8_t *model = weighted ? item->skinned : NULL;
             const size_t model_size = weighted ? item->skinned_size : 0u;
             const tide_mesh_lod_source source = mesh_levels_source(m, model, model_size, tangent_sides, key);
-            mesh_lod_want(key, &source, model, model_size, prog->game_folder);
+            if (find) mesh_lod_find(key, source.vertices, prog->game_folder);
+            else mesh_lod_want(key, &source, model, model_size, prog->game_folder);
             if (moved) free(rested.position), free(rested.normal);
         }
+    }
+    if (find) mesh_lod_find_listed();
     }
     mesh_lod_make_wanted();
 }
@@ -25633,6 +25704,13 @@ static void build_pack(gen *g)
     want_textures(g);
     want_levels(g);
     tide_pack_builder b = {.each = pack_each};
+    // A pack that goes to a file of its own is laid out with room for its prepared images, whose pixels (most of a
+    // big game's pack) are read only if the file there isn't this pack already (write_pack)
+    later_images images = {0};
+    later_images *later = opts->pack && !opts->pack_c && !opts->build_program ? &images : NULL;
+    free(g->pack_holes);
+    g->pack_holes = NULL;
+    g->pack_hole_count = 0;
     // About as big as the pack there already, which an edit of the code leaves as it was: a region that grows a
     // doubling at a time copies a big game's gigabyte over again
     if (!opts->build_program) tide_pack_reserve(&b, pack_file_size(opts->pack));
@@ -25675,7 +25753,7 @@ static void build_pack(gen *g)
                 if (skinned) {
                     uint8_t hash[32];
                     uint32_t chars;
-                    tide_sha256_of(v->items[0].skinned, v->items[0].skinned_size, hash);
+                    model_hash_of(v->items[0].skinned, v->items[0].skinned_size, hash);
                     at[0] = tide_pack_bytes(&b, hash, v->items[0].skinned, v->items[0].skinned_size, &chars);
                     tide_pack_name(&b, qualified, kind, tide_pack_skinned_list(&b, at, 1u), 1u, laid);
                 } else tide_pack_name(&b, qualified, kind, at[0], at[1], laid);
@@ -25689,7 +25767,7 @@ static void build_pack(gen *g)
                 if (skinned) {
                     uint8_t hash[32];
                     uint32_t chars;
-                    tide_sha256_of(v->items[k].skinned, v->items[k].skinned_size, hash);
+                    model_hash_of(v->items[k].skinned, v->items[k].skinned_size, hash);
                     meshes[stride * k] = tide_pack_bytes(&b, hash, v->items[k].skinned, v->items[k].skinned_size, &chars);
                 }
                 if (!v->is_map) continue;
@@ -25740,7 +25818,7 @@ static void build_pack(gen *g)
             uint64_t *layers = arena_alloc(sizeof *layers * (size_t)(v->count ? v->count : 1));
             uint32_t extra;
             for (int k = 0; k < v->count; k++) {
-                layers[k] = pack_item(&b, &v->items[k], ASSET_TEXTURE, NULL, d->sample_raw, !d->lossless, d->sample_linear, &extra, prog->game_folder, NULL);
+                layers[k] = pack_item(&b, &v->items[k], ASSET_TEXTURE, NULL, d->sample_raw, !d->lossless, d->sample_linear, &extra, prog->game_folder, NULL, later);
             }
             tide_pack_name(&b, qualified, TIDE_PACK_TEXTURE_ARRAY, tide_pack_list(&b, layers, (uint32_t)v->count), (uint32_t)v->count,
                            (uint32_t)(v->count ? v->items[0].image.width : 0) | (d->sample_linear ? TIDE_PACK_LINEAR : 0u));
@@ -25750,7 +25828,7 @@ static void build_pack(gen *g)
             uint64_t faces[6];
             uint32_t extra;
             for (int k = 0; k < 6; k++) {
-                faces[k] = pack_item(&b, &v->items[k], ASSET_TEXTURE, NULL, d->sample_raw, false, d->sample_linear, &extra, prog->game_folder, NULL);
+                faces[k] = pack_item(&b, &v->items[k], ASSET_TEXTURE, NULL, d->sample_raw, false, d->sample_linear, &extra, prog->game_folder, NULL, later);
             }
             tide_pack_name(&b, qualified, kind, tide_pack_list(&b, faces, 6), 6,
                            (uint32_t)v->items[0].image.width | (d->sample_linear ? TIDE_PACK_LINEAR : 0u));
@@ -25761,7 +25839,7 @@ static void build_pack(gen *g)
             for (int n = 0; n < v->count; n++) {
                 uint8_t hash[32];
                 uint32_t chars;
-                tide_sha256_of(v->items[n].skinned, v->items[n].skinned_size, hash);
+                model_hash_of(v->items[n].skinned, v->items[n].skinned_size, hash);
                 sources[n] = tide_pack_bytes(&b, hash, v->items[n].skinned, v->items[n].skinned_size, &chars);
             }
             tide_pack_name(&b, qualified, TIDE_PACK_LIST, tide_pack_list(&b, sources, (uint32_t)v->count),
@@ -25790,7 +25868,7 @@ static void build_pack(gen *g)
         if (!v->many) {
             uint32_t extra;
             const uint64_t at = pack_item(&b, &v->items[0], v->kind, grid, d->sample_raw, !d->lossless, d->sample_linear, &extra, prog->game_folder,
-                                          &stored[0]);
+                                          &stored[0], later);
             // A [Linear] Texture's entry says so: its bytes are for that reading alone (TIDE_PACK_LINEAR)
             tide_pack_name(&b, qualified, kind, at,
                            v->kind == ASSET_ANIMATION || v->kind == ASSET_HUMANOID ? v->items[0].skinned_size : (uint32_t)v->items[0].size,
@@ -25805,7 +25883,7 @@ static void build_pack(gen *g)
             // A marked glob's images each as one marked asset's ([Raw]: no alpha worked in; [Linear]: the sRGB encode)
             const bool raw = v->kind == ASSET_TEXTURE && d->sample_raw, linear = v->kind == ASSET_TEXTURE && d->sample_linear;
             offsets[k] = pack_item(&b, &v->items[k], v->kind, grid, raw, !d->lossless, linear, &extra, prog->game_folder,
-                                   k < 4 ? &stored[k] : NULL);
+                                   k < 4 ? &stored[k] : NULL, later);
             if (v->is_map) { // Its key: text, as code reads one
                 uint8_t hash[32];
                 tide_sha256_of(v->items[k].key, strlen(v->items[k].key), hash);
@@ -25831,7 +25909,9 @@ static void build_pack(gen *g)
         free(offsets);
         free(keys);
     }
-    g->pack_bytes = tide_pack_end(&b, &g->pack_size);
+    g->pack_bytes = tide_pack_lay(&b, &g->pack_size, &g->pack_holes, &g->pack_hole_count);
+    g->pack_later = images.items; // The arena's
+    if (!g->pack_hole_count) pack_fill(g); // Nothing to wait for: the pack as tide_pack_end makes it
     if (reported) build_report_current()->pack_size = prog->assets.count ? g->pack_size : 0; // write_pack writes none for none
     compile_progress("Generating C", NULL, 0, 0);
     if (!opts->build_program) diag_phase("packing assets");
@@ -25864,23 +25944,137 @@ static void pack_each(const uint32_t count, void (*work)(void *context, uint32_t
     build_threads_each(count, 0u, work, context);
 }
 
+// Each image's entry is held while it's copied in: a 4096-square one is tens of megabytes
+enum { FILLS_AT_ONCE = 12 };
+
+typedef struct pack_filling {
+    gen *g;
+    bool *missed;
+} pack_filling;
+
+static void fill_image(void *context, const uint32_t i)
+{
+    const pack_filling *p = context;
+    const tide_pack_hole *hole = &p->g->pack_holes[i];
+    size_t size;
+    texture_cache_view view;
+    uint8_t *cached = texture_cache_read(p->g->prog->game_folder, p->g->pack_later[i].key, &size, &view);
+    const uint8_t *pixels = !cached ? NULL : view.blocks.pixels ? view.blocks.pixels : view.rgba;
+    const uint64_t bytes = !cached ? 0u : view.blocks.pixels ? view.blocks.bytes : (uint64_t)view.width * view.height * 4u;
+    // The entry as it was when the pack was laid out (pack_item): any other, or none now, is made again below
+    if (cached && bytes == hole->size && !memcmp(view.content, hole->content, sizeof view.content))
+        memcpy(p->g->pack_bytes + hole->at, pixels, (size_t)bytes);
+    else p->missed[i] = true;
+    free(cached);
+}
+
+// Reads the pack's images into the room laid out for them, and gives the pack its digest: from here it's the
+// file's bytes, as tide_pack_end makes them. False, having said why, for an image that can't be had any more.
+static bool pack_fill(gen *g)
+{
+    bool ok = true;
+    if (g->pack_hole_count) {
+        compile_progress("Packing assets", NULL, 0, 0);
+        pack_filling p = {g, arena_alloc(g->pack_hole_count)};
+        memset(p.missed, 0, g->pack_hole_count);
+        build_threads_each(g->pack_hole_count, FILLS_AT_ONCE, fill_image, &p);
+        // An entry that's gone, or damaged, since it said what it holds: the image made of its file, as pack_item
+        // makes one the cache doesn't have, one after another (its file's bytes may be read here)
+        for (uint32_t i = 0; i < g->pack_hole_count && ok; i++) {
+            if (!p.missed[i]) continue;
+            const later_image *image = &g->pack_later[i];
+            const tide_pack_hole *hole = &g->pack_holes[i];
+            texture_made made;
+            char why[256];
+            if (!texture_make_linear(image->item, image->raw, image->compress, image->linear, &made, why)) {
+                diag_error((loc){0}, "'%s' can't be imported as an image: %s", image->item->key, why);
+                ok = false;
+                break;
+            }
+            uint8_t content[32];
+            texture_content(&made.view, content);
+            const uint8_t *pixels = made.view.blocks.pixels ? made.view.blocks.pixels : made.view.rgba;
+            const uint64_t bytes = made.view.blocks.pixels ? made.view.blocks.bytes
+                                                           : (uint64_t)made.view.width * made.view.height * 4u;
+            if (bytes == hole->size && !memcmp(content, hole->content, sizeof content)) {
+                memcpy(g->pack_bytes + hole->at, pixels, (size_t)bytes);
+                texture_cache_write(g->prog->game_folder, image->key, &made.view);
+            } else {
+                // What the entry said isn't what its file gives: the entry goes, and the next build makes it
+                char path[4096];
+                if (asset_cache_path(path, g->prog->game_folder, image->key)) remove(path);
+                diag_error((loc){0}, "the build's cache had '%s' as another image than its file gives; build again", image->item->key);
+                ok = false;
+            }
+            texture_made_free(&made);
+        }
+    }
+    free(g->pack_holes);
+    g->pack_holes = NULL;
+    g->pack_hole_count = 0;
+    g->pack_later = NULL;
+    if (ok && g->pack_bytes) tide_pack_seal(g->pack_bytes, g->pack_size, pack_each);
+    return ok;
+}
+
+// What a pack's file is known by without its images' pixels (tide_pack_recipe), kept beside it with the header it
+// was written with: `<pack>.recipe`, the recipe's 32 bytes then the header's. A build whose pack has the same
+// recipe, over a file of the same size that still starts with that header, has the pack it would write.
+static char *recipe_path(const char *pack)
+{
+    sb path = {0};
+    sb_printf(&path, "%s.recipe", pack);
+    return path.data;
+}
+
+static bool pack_kept(const char *pack, const uint8_t recipe[32], const size_t size)
+{
+    uint8_t was[32 + sizeof(tide_pack_header)];
+    FILE *f = fopen(recipe_path(pack), "rb");
+    if (!f) return false;
+    const bool read = fread(was, 1, sizeof was, f) == sizeof was && fgetc(f) == EOF;
+    fclose(f);
+    return read && !memcmp(was, recipe, 32) && pack_file_is(pack, was + 32, size);
+}
+
 static bool write_pack(gen *g)
 {
     const program *prog = g->prog;
     const codegen_options *opts = g->opts;
     if (!opts->pack && !opts->pack_c) return true;
+    uint8_t recipe[32];
+    const bool later = g->pack_hole_count != 0;
+    if (later) {
+        tide_pack_recipe(g->pack_bytes, g->pack_size, g->pack_holes, g->pack_hole_count, pack_each, recipe);
+        if (opts->pack && !opts->pack_c && prog->assets.count && pack_kept(opts->pack, recipe, g->pack_size)) {
+            diag_step("  the pack as it was");
+            return true; // The file there, with no image read
+        }
+        if (!pack_fill(g)) return false;
+    }
     const uint8_t *bytes = g->pack_bytes;
     const size_t size = g->pack_size;
     bool ok = true;
     if (opts->pack && prog->assets.count && pack_file_is(opts->pack, bytes, size)) {
         // As it was: left alone, so what copies it can tell it hasn't changed (tide's place_pack)
     } else if (opts->pack && prog->assets.count) {
+        remove(recipe_path(opts->pack)); // Of the file this replaces
         FILE *f = fopen(opts->pack, "wb");
         ok = f && fwrite(bytes, 1, size, f) == size;
         if (f) ok = fclose(f) == 0 && ok;
         if (!ok) fprintf(stderr, "tidec: can't write %s\n", opts->pack);
     } else if (opts->pack) {
         remove(opts->pack); // A game with no assets has no pack
+        remove(recipe_path(opts->pack));
+    }
+    if (ok && later && opts->pack && prog->assets.count) {
+        // Best effort: without it the next build reads the images to find the pack the same
+        FILE *f = fopen(recipe_path(opts->pack), "wb");
+        if (f) {
+            const bool wrote = fwrite(recipe, 1, sizeof recipe, f) == sizeof recipe
+                && fwrite(bytes, 1, sizeof(tide_pack_header), f) == sizeof(tide_pack_header);
+            if (fclose(f) != 0 || !wrote) remove(recipe_path(opts->pack));
+        }
     }
     if (ok && opts->pack_c) {
         sb c = {0};
@@ -30443,6 +30637,7 @@ bool codegen(program *prog, const codegen_options *opts)
     // Both memo tables borrow this compilation's arena, including their backing
     // arrays. A watcher resets that arena before compiling the next program.
     schedule_bytes_reset(); // (...and the gathering systems' plans, which borrow it too)
+    memset(&model_hashes, 0, sizeof model_hashes); // ...and the models' hashes, by bytes this compilation holds
     // A build for a debugger copies each row whole (system_rows_plain), so its schedule goes by whole components
     if (opts->split_plumbing && !prog->rows_whole) {
         prog->rows_whole = true;
@@ -30606,6 +30801,7 @@ bool codegen(program *prog, const codegen_options *opts)
         if ((g.asset_dependencies.count && !fingerprint_assets(&g, g.asset_dependencies.items, g.asset_dependencies.count, true))
             || (g.skinned_fingerprints.count && !fingerprint_assets(&g, g.skinned_fingerprints.items, g.skinned_fingerprints.count, false))) {
             free(g.pack_bytes);
+            free(g.pack_holes);
             return false;
         }
     }
@@ -30655,6 +30851,9 @@ bool codegen(program *prog, const codegen_options *opts)
         g.skinned_fingerprints.count = skinned;
         free(g.pack_bytes);
         g.pack_bytes = NULL;
+        free(g.pack_holes);
+        g.pack_holes = NULL;
+        g.pack_hole_count = 0;
         if (opts->info) {
             for (int i = 0; i < opts->info->asset_count; i++) free(opts->info->asset_paths[i]);
             free(opts->info->asset_paths);
@@ -30740,6 +30939,7 @@ bool codegen(program *prog, const codegen_options *opts)
     gen_shader_table(&g);
     if (diag_error_count()) { // A shader that didn't become SPIR-V
         free(g.pack_bytes);
+        free(g.pack_holes);
         return false;
     }
     diag_step("shaders");
@@ -30808,7 +31008,7 @@ bool codegen(program *prog, const codegen_options *opts)
         for (int k = 0; opts->server && k < all_asset_count && !server_cut; k++) server_cut = all_assets[k] == d;
         report_asset(d, type_name(d->return_type), 0, server_cut ? "the server's code never reads it" : "nothing in the game's code, defaults or shaders names it");
     }
-    if (diag_error_count()) { free(g.pack_bytes); return false; }
+    if (diag_error_count()) { free(g.pack_bytes); free(g.pack_holes); return false; }
     // Build code's program runs its main alone: what it doesn't reach of the game's C isn't compiled (split_prune).
     // C it can't cut is compiled whole, as before
     if (opts->build_program) {
@@ -30865,6 +31065,7 @@ bool codegen(program *prog, const codegen_options *opts)
     ok = ok && (!opts->visualizers || write_debug_views(&g)) && write_name_map(&g);
     diag_step("views and names");
     free(g.pack_bytes);
+    free(g.pack_holes);
     return ok;
 }
 

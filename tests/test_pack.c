@@ -470,6 +470,103 @@ TIDE_TEST(pack_small_regions_follow_their_entries_and_many_entries_fit)
     free(bytes);
 }
 
+// A pack of two images and some bytes, as tide_pack_texture_blocks makes it (`later` false) or with the images'
+// pixels given room alone and filled after the pack is laid out. `big` is a side of the first image, so its
+// region is one that stays where it was built or one moved next to its entries. `recipe`, where it isn't NULL,
+// gets the laid pack's, taken before a pixel is filled.
+static uint8_t *room_pack(const bool later, const int32_t big, const uint8_t fill, const uint8_t bytes_fill, size_t *size,
+                          uint8_t recipe[32])
+{
+    const size_t first = (size_t)big * (size_t)big * 4u;
+    uint8_t *rgba = malloc(first), small[16 * 16 * 4], blob[300];
+    if (!rgba) abort();
+    memset(rgba, fill, first);
+    for (size_t i = 0; i < sizeof small; i++) small[i] = (uint8_t)(i * 7u);
+    memset(blob, bytes_fill, sizeof blob);
+    uint8_t content[3][32];
+    tide_sha256_of(rgba, first, content[0]);
+    tide_sha256_of(small, sizeof small, content[1]);
+    tide_sha256_of(blob, sizeof blob, content[2]);
+    tide_pack_builder b = {0};
+    uint32_t chars, hole[3] = {0, 0, 0};
+    uint64_t at[3];
+    if (later) {
+        at[0] = tide_pack_texture_room(&b, content[0], big, big, 0u, 0u, 0u, &hole[0]);
+        at[1] = tide_pack_bytes(&b, content[2], blob, sizeof blob, &chars);
+        at[2] = tide_pack_texture_room(&b, content[1], 16, 16, 0u, 0u, 0u, &hole[1]);
+        // The same content again is the block there already, with nothing more to fill
+        TIDE_CHECK(tide_pack_texture_room(&b, content[1], 16, 16, 0u, 0u, 0u, &hole[2]) == at[2] && hole[2] == UINT32_MAX);
+        TIDE_CHECK(tide_pack_texture(&b, content[0], big, big, rgba) == at[0]);
+        TIDE_CHECK(hole[0] == 0u && hole[1] == 1u && b.hole_count == 2u);
+    } else {
+        at[0] = tide_pack_texture(&b, content[0], big, big, rgba);
+        at[1] = tide_pack_bytes(&b, content[2], blob, sizeof blob, &chars);
+        at[2] = tide_pack_texture(&b, content[1], 16, 16, small);
+    }
+    tide_pack_name(&b, "Game.big", TIDE_PACK_TEXTURE, at[0], first, 0);
+    tide_pack_name(&b, "Game.blob", TIDE_PACK_BYTES, at[1], sizeof blob, chars);
+    tide_pack_name(&b, "Game.small", TIDE_PACK_TEXTURE, at[2], sizeof small, 0);
+    uint8_t *out;
+    if (later) {
+        tide_pack_hole *holes;
+        uint32_t count;
+        out = tide_pack_lay(&b, size, &holes, &count);
+        if (count != 2u || holes[0].size != first || holes[1].size != sizeof small || holes[0].at >= holes[1].at) abort();
+        TIDE_CHECK(!memcmp(holes[0].content, content[0], 32) && !memcmp(holes[1].content, content[1], 32));
+        if (recipe) {
+            // Of nothing in the holes: the same whatever bytes they have before they're filled
+            uint8_t again[32];
+            tide_pack_recipe(out, *size, holes, count, NULL, recipe);
+            memset(out + holes[0].at, 0xA5, (size_t)holes[0].size);
+            memset(out + holes[1].at, 0x5A, (size_t)holes[1].size);
+            tide_pack_recipe(out, *size, holes, count, each_backwards, again);
+            TIDE_CHECK(!memcmp(recipe, again, 32));
+        }
+        memcpy(out + holes[0].at, rgba, first);
+        memcpy(out + holes[1].at, small, sizeof small);
+        free(holes);
+        tide_pack_seal(out, *size, NULL);
+    } else out = tide_pack_end(&b, size);
+    free(rgba);
+    return out;
+}
+
+TIDE_TEST(pack_room_filled_later_is_the_pack_made_at_once_and_its_recipe_tells_packs_apart)
+{
+    // 64 square stays under the size a region is moved at; 2100 square (17.6 MiB) is over it
+    for (int pass = 0; pass < 2; pass++) {
+        const int32_t big = pass ? 2100 : 64;
+        size_t size, later_size, other_size;
+        uint8_t recipe[32], other[32];
+        uint8_t *whole = room_pack(false, big, 9, 1, &size, NULL);
+        uint8_t *later = room_pack(true, big, 9, 1, &later_size, recipe);
+        TIDE_REQUIRE(size == later_size);
+        TIDE_CHECK(!memcmp(whole, later, size)); // Every byte, the digest too
+        uint8_t digest[32], zeroed[32] = {0};
+        tide_pack_header h;
+        memcpy(&h, later, sizeof h);
+        memcpy(later + offsetof(tide_pack_header, digest), zeroed, 32);
+        tide_pack_digest_of(later, later_size, NULL, digest);
+        TIDE_CHECK(!memcmp(digest, h.digest, 32));
+        memcpy(later + offsetof(tide_pack_header, digest), h.digest, 32);
+        TIDE_REQUIRE(tide_pack_load(later, later_size));
+        TIDE_CHECK(tide_pack_find("Game.big", TIDE_PACK_TEXTURE) != NULL && tide_pack_find("Game.small", TIDE_PACK_TEXTURE) != NULL);
+        tide_pack_unload();
+        free(whole);
+        free(later);
+        // The recipe is another's where an image's content is another's, and where a byte outside the images is
+        later = room_pack(true, big, 10, 1, &other_size, other);
+        TIDE_CHECK(other_size == size && memcmp(recipe, other, 32) != 0);
+        free(later);
+        later = room_pack(true, big, 9, 2, &other_size, other);
+        TIDE_CHECK(other_size == size && memcmp(recipe, other, 32) != 0);
+        free(later);
+        later = room_pack(true, big, 9, 1, &other_size, other);
+        TIDE_CHECK(!memcmp(recipe, other, 32)); // ...and the same pack's again
+        free(later);
+    }
+}
+
 TIDE_TEST(pack_refuses_the_previous_map_format_and_keeps_the_loaded_pack)
 {
     size_t size;

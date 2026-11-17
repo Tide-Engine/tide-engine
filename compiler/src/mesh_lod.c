@@ -129,17 +129,70 @@ static const tide_mesh_lod *keep(const uint8_t key[32], const tide_mesh_lod *lod
     return &k->lod;
 }
 
-// Where the levels of `key` are kept between builds: "" with no game folder.
-static void file_of(const uint8_t key[32], const char *game_folder, char path[2300])
+// Where the levels of `key` are kept between builds: "" with no game folder. `make` makes the folder they're in,
+// for levels about to be written.
+static void file_in(const uint8_t key[32], const char *game_folder, const bool make, char path[2300])
 {
     *path = '\0';
     if (!game_folder) return;
     char dir[2048];
     if (snprintf(dir, sizeof dir, "%s/.tide/assets/lod", game_folder) >= (int)sizeof dir) return;
-    folder_make(dir);
+    if (make) folder_make(dir);
     char hex[65];
     for (uint32_t i = 0; i < 32u; i++) snprintf(hex + i * 2u, 3, "%02x", key[i]);
     snprintf(path, 2300, "%s/%s.lod", dir, hex);
+}
+
+static void file_of(const uint8_t key[32], const char *game_folder, char path[2300])
+{
+    file_in(key, game_folder, true, path);
+}
+
+// ---------------------------------------------------------------------------
+// Levels looked for ahead, their files read at once: a big game has hundreds, a megabyte or so each
+
+typedef struct sought {
+    uint8_t key[32];
+    char path[2300];
+    uint32_t vertices;
+    bool found;
+    tide_mesh_lod lod;
+} sought;
+
+static sought *seeks;
+static uint32_t seek_count, seek_room;
+
+void mesh_lod_find(const uint8_t key[32], const uint32_t vertices, const char *game_folder)
+{
+    if (!game_folder || find_kept(key)) return;
+    for (uint32_t i = 0; i < seek_count; i++) {
+        if (memcmp(seeks[i].key, key, 32) == 0) return;
+    }
+    if (seek_count == seek_room) {
+        seek_room = seek_room ? seek_room * 2u : 64u;
+        seeks = realloc(seeks, (size_t)seek_room * sizeof(sought));
+        if (!seeks) abort();
+    }
+    sought *s = &seeks[seek_count++];
+    memset(s, 0, sizeof *s);
+    memcpy(s->key, key, 32);
+    s->vertices = vertices;
+    file_in(key, game_folder, false, s->path);
+}
+
+static void read_sought(void *context, const uint32_t i)
+{
+    sought *s = &((sought *)context)[i];
+    s->found = *s->path && read_levels(s->path, s->vertices, &s->lod);
+}
+
+void mesh_lod_find_listed(void)
+{
+    build_threads_each(seek_count, 0u, read_sought, seeks);
+    for (uint32_t i = 0; i < seek_count; i++) {
+        if (seeks[i].found) keep(seeks[i].key, &seeks[i].lod);
+    }
+    seek_count = 0;
 }
 
 const tide_mesh_lod *mesh_lod_cached(const uint8_t key[32], const tide_mesh_lod_source *source, const char *game_folder)

@@ -117,7 +117,8 @@ TIDE_TEST(prepared_textures_preserve_direct_importer_pixel_contract)
     asset_files_forget();
     asset_files_use_build_cache(true);
     asset_value *prepared = asset_resolve(source, str_from("preview.png"), ASSET_TEXTURE, false, false, (loc){0}, ASSET_FILES_WORK);
-    TIDE_REQUIRE(prepared && prepared->items[0].prepared_texture && !prepared->items[0].image.pixels);
+    TIDE_REQUIRE(prepared && prepared->items[0].has_prepared && prepared->items[0].prepared.width == 8
+                 && prepared->items[0].prepared.height == 6 && !prepared->items[0].image.pixels);
     asset_files_use_build_cache(false);
     asset_value *ordinary = asset_resolve(source, str_from("preview.png"), ASSET_TEXTURE, false, false, (loc){0}, ASSET_FILES_WORK);
     TIDE_REQUIRE(ordinary && ordinary->items[0].image.pixels);

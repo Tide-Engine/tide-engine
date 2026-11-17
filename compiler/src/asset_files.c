@@ -40,12 +40,14 @@ typedef struct read_file {
     char *path;
     unsigned long long size, modified;
     bool changed; // A file notification overrides matching size/time metadata
+    // Its bytes, or NULL for a file taken as the game's record has it (file_known), whose hash is the record's and
+    // whose `len` its size: file_bytes reads them where something wants them
     uint8_t *data;
     size_t len;
     uint8_t hash[32];
-    uint8_t *prepared_texture;
-    size_t prepared_texture_size;
-    bool prepared_raw;
+    bool recorded;            // Taken from the record, or read long enough after it was written to go in it
+    asset_prepared prepared; // Its draw-only texture as the cache has it, by the entry's first bytes
+    bool has_prepared;
     bool prepared_tried;
     bool decoded;          // Tried as an image...
     tide_png_image image;  // ...and what it gave (pixels NULL when neither decodes)
@@ -77,6 +79,15 @@ typedef struct read_file {
     char skin_why[256], skin_note[256];
     struct mesh_side *skin_sides;
     int skin_side_count;
+    // What the cache had of it as a mesh and as a skinned model, read ahead with the other files'
+    // (asset_files_decode_ahead) into `mesh`, and `skin` and `skin_mesh`: read_item takes each as its own where it
+    // would have read the same entry (`*_ahead_key`), marking it used where that's due (`*_ahead_old`)
+    bool models_sought;
+    bool mesh_ahead, mesh_ahead_old, skin_ahead, skin_ahead_old;
+    uint8_t mesh_ahead_key[32], skin_ahead_key[32];
+    // ...and of the mesh read ahead with tangents made for it, in `tangent_mesh`, which asset_mesh_tangents takes
+    bool tangent_ahead, tangent_ahead_old;
+    uint8_t tangent_ahead_key[32];
 } read_file;
 
 typedef struct mesh_side {
@@ -87,8 +98,36 @@ typedef struct mesh_side {
 static struct {
     read_file *items;
     int count, cap;
+    int *slots; // By a path's hash (path_hash): 1 + its item, or 0. A big game names thousands of files
+    int slot_count;
 } files;
 static bool use_build_cache;
+
+// Of a path as asset_path_same compares one: either separator, and no case
+static uint32_t path_hash(const char *path)
+{
+    uint32_t h = 2166136261u;
+    for (const char *p = path; *p; p++) h = (h ^ (uint32_t)(*p == '\\' ? '/' : tolower((unsigned char)*p))) * 16777619u;
+    return h;
+}
+
+static void files_index(const int item)
+{
+    uint32_t s = path_hash(files.items[item].path) & (uint32_t)(files.slot_count - 1);
+    while (files.slots[s]) s = (s + 1u) & (uint32_t)(files.slot_count - 1);
+    files.slots[s] = item + 1;
+}
+
+// The table's entry for `path`, or NULL
+static read_file *files_find(const char *path)
+{
+    if (!files.slot_count) return NULL;
+    for (uint32_t s = path_hash(path) & (uint32_t)(files.slot_count - 1);; s = (s + 1u) & (uint32_t)(files.slot_count - 1)) {
+        if (!files.slots[s]) return NULL;
+        read_file *f = &files.items[files.slots[s] - 1];
+        if (asset_path_same(f->path, path)) return f;
+    }
+}
 
 void asset_files_use_build_cache(const bool enabled)
 {
@@ -103,11 +142,33 @@ static char *copy_cstr(const char *s)
     return out;
 }
 
+// A new entry for `path`, which has none
+static read_file *files_add(const char *path)
+{
+    if (files.count == files.cap) {
+        files.cap = files.cap ? files.cap * 2 : 16;
+        files.items = realloc(files.items, sizeof *files.items * (size_t)files.cap);
+        if (!files.items) abort();
+    }
+    read_file *f = &files.items[files.count++];
+    memset(f, 0, sizeof *f);
+    f->path = copy_cstr(path);
+    if (files.count * 2 > files.slot_count) { // Under half full
+        files.slot_count = files.slot_count ? files.slot_count * 2 : 64;
+        free(files.slots);
+        files.slots = calloc((size_t)files.slot_count, sizeof *files.slots);
+        if (!files.slots) abort();
+        for (int i = 0; i < files.count; i++) files_index(i);
+    } else files_index(files.count - 1);
+    return f;
+}
+
 static void forget_mesh(read_file *f)
 {
-    if (f->tangent_ok) mesh_file_free(&f->tangent_mesh);
-    f->tangent_tried = f->tangent_ok = false;
-    if (f->mesh_ok) mesh_file_free(&f->mesh);
+    if (f->tangent_ok || f->tangent_ahead) mesh_file_free(&f->tangent_mesh);
+    f->tangent_tried = f->tangent_ok = f->tangent_ahead = false;
+    if (f->mesh_ok || f->mesh_ahead) mesh_file_free(&f->mesh);
+    f->mesh_ahead = false;
     for (int i = 0; i < f->side_count; i++) free(f->sides[i].path);
     free(f->sides);
     f->sides = NULL;
@@ -117,7 +178,8 @@ static void forget_mesh(read_file *f)
 
 static void forget_skin(read_file *f)
 {
-    if (f->skin_ok) mesh_file_free(&f->skin_mesh);
+    if (f->skin_ok || f->skin_ahead) mesh_file_free(&f->skin_mesh);
+    f->skin_ahead = false;
     tide_skinned_data_free(f->skin);
     for (int i = 0; i < f->skin_side_count; i++) free(f->skin_sides[i].path);
     free(f->skin_sides);
@@ -136,7 +198,6 @@ static void forget_file(read_file *f)
     free(f->sound_data);
     free(f->font_data);
     free(f->image.pixels);
-    free(f->prepared_texture);
     free((void *)(uintptr_t)f->image_mips.pixels);
     memset(f, 0, sizeof *f);
 }
@@ -145,8 +206,8 @@ void asset_files_forget(void)
 {
     for (int i = 0; i < files.count; i++) forget_file(&files.items[i]);
     free(files.items);
-    files.items = NULL;
-    files.count = files.cap = 0;
+    free(files.slots);
+    memset(&files, 0, sizeof files);
 }
 
 void asset_files_changed(const char *path)
@@ -163,26 +224,187 @@ void asset_files_changed(const char *path)
     }
 }
 
-// The table's entry for the file at `path`, which is `size` bytes, last written at `modified`. `read` says whether
-// it holds the file as it is; one that doesn't is new or emptied, for read_into.
-static read_file *file_entry(const char *path, const unsigned long long size, const unsigned long long modified, bool *read)
+// ---------------------------------------------------------------------------
+// The game's record of its files (asset_files.h, asset_files_trust): each one's path, size, last-write time and
+// SHA-256, as a build read it. A file that is as recorded is taken to have the recorded bytes.
+
+typedef struct known_file {
+    char *path;
+    unsigned long long size, modified;
+    uint8_t hash[32];
+} known_file;
+
+static struct {
+    known_file *items;
+    int count, cap;
+    int *slots; // By a path's hash: 1 + its item, or 0
+    int slot_count;
+    bool on;
+} known;
+
+#define TIMES_FILE ".tide/assets.times"
+static const char times_head[] = "tide asset files 1";
+static void hex_of(const uint8_t hash[32], char out[65]);
+
+// A file's text, the arena's: NULL for none
+static char *read_whole(const char *path, size_t *size)
 {
-    read_file *f = NULL;
-    for (int i = 0; i < files.count && !f; i++) {
-        if (asset_path_same(files.items[i].path, path)) f = &files.items[i];
+    FILE *in = fopen(path, "rb");
+    if (!in) return NULL;
+    sb text = {0};
+    char part[65536];
+    size_t n;
+    sb_putn(&text, "", 0);
+    while ((n = fread(part, 1, sizeof part, in)) > 0) sb_putn(&text, part, n);
+    fclose(in);
+    *size = text.len;
+    return text.data;
+}
+
+static void known_forget(void)
+{
+    for (int i = 0; i < known.count; i++) free(known.items[i].path);
+    free(known.items);
+    free(known.slots);
+    memset(&known, 0, sizeof known);
+}
+
+static const known_file *known_find(const char *path)
+{
+    if (!known.slot_count) return NULL;
+    for (uint32_t s = path_hash(path) & (uint32_t)(known.slot_count - 1);; s = (s + 1u) & (uint32_t)(known.slot_count - 1)) {
+        if (!known.slots[s]) return NULL;
+        const known_file *k = &known.items[known.slots[s] - 1];
+        if (asset_path_same(k->path, path)) return k;
     }
-    *read = f && !f->changed && f->size == size && f->modified == modified;
-    if (*read) return f;
-    if (!f) {
-        if (files.count == files.cap) {
-            files.cap = files.cap ? files.cap * 2 : 16;
-            files.items = realloc(files.items, sizeof *files.items * (size_t)files.cap);
-            if (!files.items) abort();
+}
+
+static char *times_path(const char *game_folder)
+{
+    char *path = malloc(strlen(game_folder) + sizeof "/" TIMES_FILE);
+    if (!path) abort();
+    sprintf(path, "%s/" TIMES_FILE, game_folder);
+    return path;
+}
+
+void asset_files_trust(const char *game_folder)
+{
+    known_forget();
+    if (!game_folder) return;
+    known.on = true;
+    char *path = times_path(game_folder);
+    size_t size = 0;
+    char *text = read_whole(path, &size);
+    free(path);
+    if (!text) return;
+    // A line a file after the first: 64 hex digits, its size, its time, then its path to the line's end. Anything
+    // else ends the reading, with what was read before it kept: each line stands alone.
+    const char *p = text, *end = text + size;
+    const size_t head = sizeof times_head - 1;
+    if (size < head + 1 || memcmp(p, times_head, head) != 0 || p[head] != '\n') return;
+    p += head + 1;
+    while (p < end) {
+        const char *line_end = memchr(p, '\n', (size_t)(end - p));
+        if (!line_end || line_end - p < 70) break;
+        known_file k = {0};
+        bool ok = true;
+        for (int i = 0; i < 32 && ok; i++) {
+            unsigned byte = 0;
+            for (int d = 0; d < 2; d++) {
+                const char c = p[i * 2 + d];
+                const int v = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
+                ok = ok && v >= 0;
+                byte = byte * 16u + (unsigned)(v < 0 ? 0 : v);
+            }
+            k.hash[i] = (uint8_t)byte;
         }
-        f = &files.items[files.count++];
-        memset(f, 0, sizeof *f);
-        f->path = copy_cstr(path);
-    } else {
+        const char *q = p + 64;
+        for (int word = 0; word < 2 && ok; word++) {
+            ok = q < line_end && *q == ' ';
+            q++;
+            unsigned long long value = 0;
+            const char *digits = q;
+            while (q < line_end && *q >= '0' && *q <= '9') value = value * 10u + (unsigned long long)(*q++ - '0');
+            ok = ok && q > digits;
+            if (word == 0) k.size = value;
+            else k.modified = value;
+        }
+        ok = ok && q < line_end && *q == ' ' && line_end - q > 1;
+        if (!ok) break;
+        k.path = malloc((size_t)(line_end - q));
+        if (!k.path) abort();
+        memcpy(k.path, q + 1, (size_t)(line_end - q - 1));
+        k.path[line_end - q - 1] = '\0';
+        if (known.count == known.cap) {
+            known.cap = known.cap ? known.cap * 2 : 256;
+            known.items = realloc(known.items, sizeof *known.items * (size_t)known.cap);
+            if (!known.items) abort();
+        }
+        known.items[known.count++] = k;
+        p = line_end + 1;
+    }
+    known.slot_count = 64;
+    while (known.slot_count < known.count * 2) known.slot_count *= 2;
+    known.slots = calloc((size_t)known.slot_count, sizeof *known.slots);
+    if (!known.slots) abort();
+    for (int i = 0; i < known.count; i++) {
+        uint32_t s = path_hash(known.items[i].path) & (uint32_t)(known.slot_count - 1);
+        while (known.slots[s]) s = (s + 1u) & (uint32_t)(known.slot_count - 1);
+        known.slots[s] = i + 1;
+    }
+}
+
+// Whether the record has the file at `path` as it is now, and its hash then
+static bool file_known(const char *path, const unsigned long long size, const unsigned long long modified, uint8_t hash[32])
+{
+    if (!known.on || !use_build_cache) return false;
+    const known_file *k = known_find(path);
+    if (!k || k->size != size || k->modified != modified) return false;
+    memcpy(hash, k->hash, 32);
+    return true;
+}
+
+void asset_files_save_times(const char *game_folder)
+{
+    if (!game_folder || !known.on) return;
+    sb text = {0};
+    sb_printf(&text, "%s\n", times_head);
+    int listed = 0;
+    for (int i = 0; i < files.count; i++) {
+        const read_file *f = &files.items[i];
+        if (!f->recorded || f->changed || strchr(f->path, '\n')) continue;
+        char hex[65];
+        hex_of(f->hash, hex);
+        sb_printf(&text, "%s %llu %llu %s\n", hex, f->size, f->modified, f->path);
+        listed++;
+    }
+    char *path = times_path(game_folder);
+    size_t was_size = 0;
+    char *was = read_whole(path, &was_size);
+    const bool same = was && was_size == text.len && memcmp(was, text.data, text.len) == 0;
+    // Beside the hashes' file, which makes .tide/ as tide does (asset_files_save_hashes): no folder, no record
+    if (!same && (listed || was)) {
+        FILE *out = fopen(path, "wb");
+        if (out) {
+            fwrite(text.data, 1, text.len, out);
+            fclose(out);
+        }
+    }
+    free(path);
+}
+
+// The table's entry for the file at `path`, which is `size` bytes, last written at `modified`. `read` says whether
+// it holds the file as it is; one that doesn't is new or emptied, for read_into. `told` says whether it was
+// emptied for having been said to have changed (asset_files_changed), which its size and time don't answer.
+static read_file *file_entry(const char *path, const unsigned long long size, const unsigned long long modified, bool *read,
+                             bool *told)
+{
+    read_file *f = files_find(path);
+    *read = f && !f->changed && f->size == size && f->modified == modified;
+    *told = f && f->changed;
+    if (*read) return f;
+    if (!f) f = files_add(path);
+    else {
         char *kept = f->path;
         f->path = NULL;
         forget_file(f);
@@ -195,6 +417,7 @@ static read_file *file_entry(const char *path, const unsigned long long size, co
 // touches nothing but `f`, so several files are read at once (asset_files_decode_ahead).
 static bool read_into(read_file *f, const char *path, const unsigned long long size, const unsigned long long modified)
 {
+    const unsigned long long before = asset_cache_now();
     FILE *in = fopen(path, "rb");
     if (!in) return false;
     f->data = malloc(size > 0 ? (size_t)size : 1u);
@@ -204,18 +427,71 @@ static bool read_into(read_file *f, const char *path, const unsigned long long s
     f->size = size;
     f->modified = modified;
     tide_sha256_of(f->data, f->len, f->hash);
+    // For the record where a later write would have moved its time: read two seconds or more after the last one
+    // (what the coarsest file system's times tell apart), and whole
+    f->recorded = f->len == size && modified <= before && before - modified >= 2u * asset_cache_second();
     return true;
 }
 
-// The file at `path`, read: NULL when there's none. Its bytes stay until the
-// file changes or asset_files_forget.
+// Takes the emptied entry `f` from the record: its hash, with no bytes read
+static void take_known(read_file *f, const unsigned long long size, const unsigned long long modified, const uint8_t hash[32])
+{
+    f->size = size;
+    f->modified = modified;
+    f->len = (size_t)size;
+    memcpy(f->hash, hash, 32);
+    f->recorded = true;
+}
+
+// The file at `path`: NULL when there's none. Its hash is known; its bytes are there unless it was taken from the
+// record (file_bytes reads them). They stay until the file changes or asset_files_forget.
 static read_file *read_at(const char *path)
 {
     unsigned long long size = 0, modified = 0;
     if (!folder_file_info(path, &size, &modified)) return NULL;
-    bool read;
-    read_file *f = file_entry(path, size, modified, &read);
-    return read || read_into(f, path, size, modified) ? f : NULL;
+    bool read, told;
+    read_file *f = file_entry(path, size, modified, &read, &told);
+    if (read) return f;
+    uint8_t hash[32];
+    if (!told && file_known(path, size, modified, hash)) {
+        take_known(f, size, modified, hash);
+        return f;
+    }
+    return read_into(f, path, size, modified) ? f : NULL;
+}
+
+// The entry of a file that read_at has given since it last changed, without asking the system for it again: NULL
+// for one never read, or that couldn't be
+static read_file *file_had(const char *path)
+{
+    read_file *f = files_find(path);
+    return f && !f->changed && (f->data || f->recorded) ? f : NULL;
+}
+
+// The bytes of a file taken from the record, read now: false when it can't be opened. They're hashed as any are,
+// so a file that isn't what the record said (written again inside its time's precision, or with its time put
+// back) is what it is from here on, in the record too.
+static bool file_bytes(read_file *f)
+{
+    if (f->data) return true;
+    return read_into(f, f->path, f->size, f->modified);
+}
+
+// The file at `path` with its bytes: NULL when there's none, or it can't be read.
+static read_file *read_bytes_at(const char *path)
+{
+    read_file *f = read_at(path);
+    return f && file_bytes(f) ? f : NULL;
+}
+
+const uint8_t *asset_match_bytes(const asset_match *item, size_t *size)
+{
+    *size = item->size;
+    if (item->data || !item->abs) return item->data;
+    read_file *f = files_find(item->abs);
+    if (!f || !file_bytes(f)) return NULL;
+    *size = f->len;
+    return f->data;
 }
 
 static bool is_utf8(const uint8_t *s, const size_t n)
@@ -687,7 +963,7 @@ static const uint8_t *read_side(void *user, const char *path, size_t *size)
 {
     side_reader *s = user;
     char *abs = asset_path_join(s->folder, path, strlen(path));
-    const read_file *f = read_at(abs);
+    const read_file *f = read_bytes_at(abs);
     s->sides = realloc(s->sides, sizeof *s->sides * (size_t)(s->count + 1));
     if (!s->sides) abort();
     s->sides[s->count++] = (mesh_side){abs, f ? f->size : 0, f ? f->modified : 0}; // One that's missing is noted too: it may come
@@ -872,11 +1148,26 @@ static void say_missing(const char *written, const char *abs, const char *folder
     asset_hashes_free(&known);
 }
 
+// A file's draw-only texture as the cache has it prepared, by its entry's first bytes: as a color, or else as [Raw]
+static void prepared_find(read_file *f, const char *key, const char *game_folder)
+{
+    uint8_t cache[32];
+    texture_cache_key(cache, f->hash, key, false, true);
+    f->has_prepared = texture_cache_peek(game_folder, cache, &f->prepared);
+    if (!f->has_prepared) {
+        texture_cache_key(cache, f->hash, key, true, true);
+        f->has_prepared = texture_cache_peek(game_folder, cache, &f->prepared);
+        f->prepared.raw = f->has_prepared;
+    }
+}
+
 // Reads `path`'s file as an item of `kind`; false, having said why, when it
 // can't be read as one.
 static bool read_item(asset_match *item, const char *key, const char *path, const asset_kind kind, const char *written, const loc at, const char *game_folder)
 {
     read_file *f = read_at(path);
+    // A Texture or a Mesh whose import the cache has needs none of its file's bytes: any other kind reads them
+    if (f && kind != ASSET_TEXTURE && kind != ASSET_MESH && !file_bytes(f)) f = NULL;
     if (!f) {
         diag_error(at, "'%s' can't be read (%s)", written, path);
         return false;
@@ -890,27 +1181,25 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
         // Draw-only textures can use their prepared payload without decoding
         // float pixels. Grid consumers still take the ordinary decoder path.
         if (use_build_cache && kind == ASSET_TEXTURE && !f->decoded) {
-            texture_cache_view view;
             if (!f->prepared_tried) {
                 f->prepared_tried = true;
-                uint8_t cache[32];
-                texture_cache_key(cache, f->hash, key, false, true);
-                f->prepared_texture = texture_cache_read(game_folder, cache, &f->prepared_texture_size, &view);
-                if (!f->prepared_texture) {
-                    texture_cache_key(cache, f->hash, key, true, true);
-                    f->prepared_texture = texture_cache_read(game_folder, cache, &f->prepared_texture_size, &view);
-                    f->prepared_raw = true;
-                }
+                prepared_find(f, key, game_folder);
             }
-            if (f->prepared_texture && texture_cache_open(f->prepared_texture, f->prepared_texture_size, &view)) {
-                item->image.width = view.width; item->image.height = view.height;
-                item->prepared_texture = f->prepared_texture;
-                item->prepared_texture_size = f->prepared_texture_size;
-                item->prepared_raw = f->prepared_raw;
+            if (f->has_prepared) {
+                item->image.width = f->prepared.width; item->image.height = f->prepared.height;
+                item->has_prepared = true;
+                item->prepared = f->prepared;
                 return true;
             }
         }
         if (!f->decoded) {
+            if (!file_bytes(f)) {
+                diag_error(at, "'%s' can't be read (%s)", written, path);
+                return false;
+            }
+            item->data = f->data;
+            item->size = f->len;
+            memcpy(item->hash, f->hash, 32);
             f->decoded = true;
             image_file_read_mips(f->data, f->len, key, &f->image, &f->image_mips, f->image_why);
         }
@@ -993,7 +1282,7 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
         else {
             free(bytes); bytes = NULL;
             clear_sides(&sides);
-            f = read_at(path);
+            f = read_bytes_at(path);
             if (!f) {
                 clear_sides(&sides);
                 free(folder);
@@ -1035,6 +1324,17 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
     } else if (kind == ASSET_SKINNED || kind == ASSET_ANIMATIONS || kind == ASSET_ANIMATION) {
         const read_file sides_check = {.sides = f->skin_sides, .side_count = f->skin_side_count};
         if (f->skin_tried && !sides_same(&sides_check)) forget_skin(f);
+        if (!f->skin_tried && f->skin_ahead) { // Read ahead: its own, where it's the entry this would read
+            uint8_t cache[32];
+            import_cache_key(cache, f, key, "skin", false);
+            if (memcmp(cache, f->skin_ahead_key, sizeof cache) != 0) forget_skin(f);
+            else {
+                if (f->skin_ahead_old) asset_cache_mark_used(game_folder, cache);
+                f->skin_ahead = false;
+                f->skin_tried = f->skin_ok = true;
+                f->skin_why[0] = f->skin_note[0] = '\0';
+            }
+        }
         if (!f->skin_tried) {
             char *folder = asset_path_folder(path);
             side_reader sides = {folder, NULL, 0};
@@ -1052,7 +1352,7 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
             else {
                 free(bytes); bytes = NULL;
                 clear_sides(&sides);
-                f = read_at(path);
+                f = read_bytes_at(path);
                 if (!f) {
                     clear_sides(&sides);
                     free(folder);
@@ -1109,6 +1409,17 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
         for (int i = 0; i < f->skin_side_count; i++) item->sides[i] = str_to_cstr(str_from(f->skin_sides[i].path));
     } else if (kind == ASSET_MESH) {
         if (f->mesh_tried && !sides_same(f)) forget_mesh(f);
+        if (!f->mesh_tried && f->mesh_ahead) { // Read ahead: its own, where it's the entry this would read
+            uint8_t cache[32];
+            import_cache_key(cache, f, key, "mesh", false);
+            if (memcmp(cache, f->mesh_ahead_key, sizeof cache) != 0) forget_mesh(f);
+            else {
+                if (f->mesh_ahead_old) asset_cache_mark_used(game_folder, cache);
+                f->mesh_ahead = false;
+                f->mesh_tried = f->mesh_ok = true;
+                f->mesh_why[0] = f->mesh_note[0] = '\0';
+            }
+        }
         if (!f->mesh_tried) {
             char *folder = asset_path_folder(path);
             side_reader sides = {folder, NULL, 0};
@@ -1123,12 +1434,16 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
             free(cached);
             if (!ok) {
                 clear_sides(&sides);
-                f = read_at(path);
+                f = read_bytes_at(path);
                 if (!f) {
                     free(folder);
                     diag_error(at, "'%s' can't be read (%s)", written, path);
                     return false;
                 }
+                // What it is from here on: its bytes, where it was taken from the record
+                item->data = f->data;
+                item->size = f->len;
+                memcpy(item->hash, f->hash, 32);
                 ok = mesh_file_read(f->data, f->len, key, read_side, &sides, &mesh, why, note);
                 if (ok && game_folder) {
                     size_t encoded_size;
@@ -1180,15 +1495,18 @@ bool asset_mesh_tangents(asset_value *value, const loc at)
     if (!value || value->kind != ASSET_MESH || value->paths_only) return false;
     for (int i = 0; i < value->count; i++) {
         asset_match *item = &value->items[i];
-        read_file *f = NULL;
         // Resolution already validated the file and its side buffers. Lookup
         // only: generating a variant never reimports or moves the file table.
-        for (int k = 0; k < files.count && !f; k++) {
-            if (asset_path_same(files.items[k].path, item->abs)) f = &files.items[k];
-        }
+        read_file *f = files_find(item->abs);
         if (!f || !f->mesh_ok) {
             diag_error(at, "'%s' has no resolved static mesh for its tangents", item->key);
             return false;
+        }
+        if (!f->tangent_tried && f->tangent_ahead) { // Read ahead, of this mesh (model_one)
+            if (f->tangent_ahead_old) asset_cache_mark_used(value->cache_folder, f->tangent_ahead_key);
+            f->tangent_ahead = false;
+            f->tangent_tried = f->tangent_ok = true;
+            f->tangent_why[0] = f->tangent_note[0] = '\0';
         }
         if (!f->tangent_tried) {
             f->tangent_tried = true;
@@ -1458,6 +1776,10 @@ static void decode_one(void *context, const uint32_t i)
 {
     const decode_ahead *d = context;
     read_file *f = d->files[i];
+    if (!file_bytes(f)) { // Taken from the record, and gone since: read_item says so
+        snprintf(f->image_why, sizeof f->image_why, "its file can't be read");
+        return;
+    }
     image_file_read_mips(f->data, f->len, d->keys[i], &f->image, &f->image_mips, f->image_why);
 }
 
@@ -1487,16 +1809,56 @@ typedef struct prepared_ahead {
 static void prepared_one(void *context, const uint32_t i)
 {
     const prepared_ahead *p = context;
-    read_file *f = p->files[i];
-    texture_cache_view view;
-    uint8_t cache[32];
-    texture_cache_key(cache, f->hash, p->keys[i], false, true);
-    f->prepared_texture = texture_cache_read(p->game_folder, cache, &f->prepared_texture_size, &view);
-    if (!f->prepared_texture) {
-        texture_cache_key(cache, f->hash, p->keys[i], true, true);
-        f->prepared_texture = texture_cache_read(p->game_folder, cache, &f->prepared_texture_size, &view);
-        f->prepared_raw = true;
+    prepared_find(p->files[i], p->keys[i], p->game_folder);
+}
+
+// A file whose name says it's a model, which read_item may read as a mesh or as a skinned model
+static bool named_as_model(const char *path)
+{
+    static const char *const suffixes[] = {".glb", ".gltf", ".obj", ".fbx"};
+    const size_t n = strlen(path);
+    for (size_t i = 0; i < sizeof suffixes / sizeof *suffixes; i++) {
+        const size_t s = strlen(suffixes[i]);
+        if (n < s) continue;
+        bool same = true;
+        for (size_t k = 0; k < s && same; k++) same = tolower((unsigned char)path[n - s + k]) == suffixes[i][k];
+        if (same) return true;
     }
+    return false;
+}
+
+// The models whose imports are looked for in the cache at once, as read_item looks for one: an entry that names
+// no file beside its own (a .gltf's with its buffers apart is read_item's to check), under the key a file is first
+// named by. Each touches its own entry of the table alone.
+static void model_one(void *context, const uint32_t i)
+{
+    const prepared_ahead *p = context;
+    read_file *f = p->files[i];
+    size_t size;
+    import_cache_key(f->mesh_ahead_key, f, p->keys[i], "mesh", false);
+    uint8_t *cached = asset_import_cache_read_alone(p->game_folder, f->mesh_ahead_key, &size, &f->mesh_ahead_old);
+    f->mesh_ahead = cached && asset_mesh_cache_decode(cached, size, &f->mesh);
+    free(cached);
+    // The same mesh with tangents made for it, where a build before this one kept that (asset_mesh_tangents' key)
+    size_t encoded_size;
+    uint8_t *encoded = f->mesh_ahead ? asset_mesh_cache_encode(&f->mesh, &encoded_size) : NULL;
+    if (encoded) {
+        uint8_t source[32];
+        tide_sha256_of(encoded, encoded_size, source);
+        asset_cache_key(f->tangent_ahead_key, "mesh-tangents", source, NULL, 0);
+        cached = asset_cache_read_unmarked(p->game_folder, f->tangent_ahead_key, &size, &f->tangent_ahead_old);
+        f->tangent_ahead = cached && asset_mesh_cache_decode(cached, size, &f->tangent_mesh);
+        free(cached);
+        free(encoded);
+    }
+    import_cache_key(f->skin_ahead_key, f, p->keys[i], "skin", false);
+    cached = asset_import_cache_read_alone(p->game_folder, f->skin_ahead_key, &size, &f->skin_ahead_old);
+    if (cached && size <= UINT32_MAX && tide_skinned_data_validate(cached, size)) {
+        f->skin = cached;
+        f->skin_size = (uint32_t)size;
+        f->skin_mesh = skin_geometry(cached, f->skin_size);
+        f->skin_ahead = true;
+    } else free(cached);
 }
 
 void asset_files_decode_ahead(const char *const *declaring, const str *paths, const int count, const char *game_folder)
@@ -1541,7 +1903,8 @@ void asset_files_decode_ahead(const char *const *declaring, const str *paths, co
         free(folder);
     }
     // Read, on every processor: a big game's files are a gigabyte to read and hash. Each file not read yet gets its
-    // entry first, here, as that may move the files' table; then the entries are filled at once.
+    // entry first, here, as that may move the files' table; then the entries are filled at once. One the record
+    // has as it is isn't read at all: what needs its bytes reads them (file_bytes).
     const size_t room = (size_t)(found.count ? found.count : 1);
     int *entries = arena_alloc(sizeof *entries * room);
     char **entry_paths = arena_alloc(sizeof *entry_paths * room);
@@ -1551,9 +1914,14 @@ void asset_files_decode_ahead(const char *const *declaring, const str *paths, co
         bool listed = false; // A file two paths name is read once
         for (uint32_t k = 0; k < unread && !listed; k++) listed = asset_path_same(entry_paths[k], found.items[i]);
         if (listed || !folder_file_info(found.items[i], &sizes[unread], &modified[unread])) continue;
-        bool read;
-        const read_file *f = file_entry(found.items[i], sizes[unread], modified[unread], &read);
+        bool read, told;
+        read_file *f = file_entry(found.items[i], sizes[unread], modified[unread], &read, &told);
         if (read) continue;
+        uint8_t hash[32];
+        if (!told && file_known(found.items[i], sizes[unread], modified[unread], hash)) {
+            take_known(f, sizes[unread], modified[unread], hash); // As recorded: nothing to read
+            continue;
+        }
         entries[unread] = (int)(f - files.items);
         entry_paths[unread++] = found.items[i];
     }
@@ -1564,23 +1932,34 @@ void asset_files_decode_ahead(const char *const *declaring, const str *paths, co
     prepared_ahead p = {arena_alloc(sizeof(read_file *) * room), arena_alloc(sizeof(char *) * room), game_folder};
     uint32_t prepared = 0;
     for (int i = 0; use_build_cache && i < found.count; i++) {
-        read_file *f = image.items[i] ? read_at(found.items[i]) : NULL;
+        read_file *f = image.items[i] ? file_had(found.items[i]) : NULL;
         if (!f || f->decoded || f->prepared_tried) continue;
         f->prepared_tried = true;
         p.files[prepared] = f;
         p.keys[prepared++] = keys.items[i];
     }
     build_threads_each(prepared, 0u, prepared_one, &p);
+    // ...and the models' imports, each a file of the cache's too: hundreds, a megabyte or so each
+    prepared_ahead m = {arena_alloc(sizeof(read_file *) * room), arena_alloc(sizeof(char *) * room), game_folder};
+    uint32_t models = 0;
+    for (int i = 0; use_build_cache && game_folder && i < found.count; i++) {
+        read_file *f = named_as_model(found.items[i]) ? file_had(found.items[i]) : NULL;
+        if (!f || f->models_sought || f->mesh_tried || f->skin_tried) continue;
+        f->models_sought = true;
+        m.files[models] = f;
+        m.keys[models++] = keys.items[i];
+    }
+    build_threads_each(models, 0u, model_one, &m);
     // Then what's to decode: what read_item would decode, and not a texture its cache has prepared
     decode_ahead d = {arena_alloc(sizeof(read_file *) * room), arena_alloc(sizeof(char *) * room)};
     uint32_t n = 0;
     for (int i = 0; i < found.count; i++) {
-        read_file *f = image.items[i] ? read_at(found.items[i]) : NULL;
+        read_file *f = image.items[i] ? file_had(found.items[i]) : NULL;
         if (!f || f->decoded) continue;
         bool listed = false;
         for (uint32_t k = 0; k < n && !listed; k++) listed = d.files[k] == f;
         if (listed) continue;
-        if (f->prepared_texture) continue; // A Grid of it decodes it as it's read, as before
+        if (f->has_prepared) continue; // A Grid of it decodes it as it's read, as before
         d.files[n] = f;
         d.keys[n] = keys.items[i];
         n++;

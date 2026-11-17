@@ -24,5 +24,11 @@ void mesh_lod_want(const uint8_t key[32], const tide_mesh_lod_source *source, co
 // so each one's levels are what one thread makes), and keeps them as mesh_lod_cached does.
 void mesh_lod_make_wanted(void);
 
+// Levels mesh_lod_want or mesh_lod_cached will be asked for, of a mesh of `vertices`: listed by mesh_lod_find, and
+// looked for in the game's .tide/assets/lod/ by mesh_lod_find_listed, every listed one's file read at once. What's
+// found is kept as mesh_lod_cached keeps it; what isn't is left for whoever asks.
+void mesh_lod_find(const uint8_t key[32], uint32_t vertices, const char *game_folder);
+void mesh_lod_find_listed(void);
+
 // How many times mesh_lod_cached made levels itself, where it didn't find them: for tests.
 uint32_t mesh_lod_made(void);

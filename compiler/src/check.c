@@ -27232,6 +27232,7 @@ bool check(program *prog)
             }
         }
         asset_files_save_hashes(prog->game_folder, named, count);
+        asset_files_save_times(prog->game_folder); // ...and each file's size and time, so the next build needn't read it
     }
     diag_step("assets' hashes saved");
     check_settings(&c);
