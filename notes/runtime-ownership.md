@@ -557,6 +557,13 @@ constants. `tide_pack_load` takes a compressed file as well as a raw one and loa
 its raw path is the code it was, split into `file_is_whole` and `take_region`. Generated C calls no new runtime
 function and no host changes: each hands `tide_assets_load` the file's bytes as before.
 
+## A pack laid out before its images are read (2026-11-17)
+
+A clear win (measured, the pack's bytes unchanged, tested: notes/assets-and-files.md, its first section). New in
+`tide/pack.h`, for tools that build packs: `tide_pack_hole`, the builder's `holes`, `tide_pack_texture_room`,
+`tide_pack_lay`, `tide_pack_recipe` and `tide_pack_seal`; `tide_pack_end` is lay then seal and gives the bytes it
+gave. Generated C calls no new runtime function, the format and `pack_load.c` are as they were.
+
 ## Pack format 5 (2026-11-10)
 
 Owner-approved ("feel free to change the pack format"): `engine/src/pack.c`'s builder makes the region in place

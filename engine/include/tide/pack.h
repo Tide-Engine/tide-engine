@@ -149,7 +149,17 @@ typedef struct tide_pack_builder {
     uint32_t shared_count, shared_room;
     tide_pack_entry *entries;
     uint32_t entry_count, entry_room;
+    struct tide_pack_hole *holes; // Room left to fill later (tide_pack_texture_room), in the order it was made
+    uint32_t hole_count, hole_room;
 } tide_pack_builder;
+
+// Bytes of a pack that its tool fills after the pack is laid out (tide_pack_lay), or never, where the pack turns
+// out to be one it has already (tide_pack_recipe): `size` bytes at `at`, of the region while the pack is built
+// and of the file once it's laid, which are the bytes `content` tells apart from any others.
+typedef struct tide_pack_hole {
+    uint64_t at, size;
+    uint8_t content[32];
+} tide_pack_hole;
 
 // A block of `size` bytes with a NUL after them, shared by `content` (its
 // SHA-256): its offset. *chars gets how many UTF-8 characters they are. It's
@@ -189,6 +199,12 @@ uint64_t tide_pack_texture(tide_pack_builder *b, const uint8_t content[32], int3
 // The blocks are copied; generated game code needs no new runtime call.
 uint64_t tide_pack_texture_blocks(tide_pack_builder *b, const uint8_t content[32], int32_t width, int32_t height,
                                  const uint8_t *rgba, tide_texture_blocks blocks);
+// The block tide_pack_texture_blocks makes of an image kept one way (its blocks of `format`, `levels` and `bytes`,
+// with no RGBA beside them; or, for a `format` of 0, its RGBA alone), with its pixels left to fill: *hole is the
+// builder's hole they go in, or UINT32_MAX where the pack has the content already. A tool that keeps an image's
+// bytes in a file lays the pack out without reading them.
+uint64_t tide_pack_texture_room(tide_pack_builder *b, const uint8_t content[32], int32_t width, int32_t height,
+                                uint32_t format, uint32_t levels, uint32_t bytes, uint32_t *hole);
 
 // A sound's file of `size` bytes as it is (a WAV), shared by `content`. Its
 // block's offset: the version it's told by in its header (the content's
@@ -249,8 +265,18 @@ uint64_t tide_pack_map(tide_pack_builder *b, const uint64_t *keys, const uint64_
 // the block at `offset`.
 void tide_pack_name(tide_pack_builder *b, const char *qualified, uint32_t kind, uint64_t offset, uint64_t size, uint32_t extra);
 
-// The pack as a file's bytes (to free()), and its size. The builder is freed.
+// The pack as a file's bytes (to free()), and its size. The builder is freed. For a builder with no holes.
 uint8_t *tide_pack_end(tide_pack_builder *b, size_t *size);
+
+// The same in steps, for a builder with holes. tide_pack_lay gives the file's bytes with the header's digest zero
+// and the holes unfilled, and the holes (to free(), `at` now of the file); the builder is freed. tide_pack_recipe
+// is what tells the file those bytes become from any other, without the holes' bytes: of every byte outside them,
+// and of each hole's place, size and content. tide_pack_seal writes the digest once the holes are filled, which
+// makes the file what tide_pack_end gives.
+uint8_t *tide_pack_lay(tide_pack_builder *b, size_t *size, tide_pack_hole **holes, uint32_t *hole_count);
+void tide_pack_recipe(const uint8_t *bytes, uint64_t size, const tide_pack_hole *holes, uint32_t hole_count, tide_pack_each each,
+                      uint8_t recipe[32]);
+void tide_pack_seal(uint8_t *bytes, uint64_t size, tide_pack_each each);
 
 // Room for a region of `bytes` before the first block, for a builder that knows about how big its pack will be
 // (the one it made last time): a region that grows is copied as it does.

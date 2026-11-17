@@ -39,6 +39,17 @@ uint8_t *asset_import_cache_read(const char *folder, const uint8_t key[32], asse
     return bytes;
 }
 
+uint8_t *asset_import_cache_read_alone(const char *folder, const uint8_t key[32], size_t *size, bool *old)
+{
+    size_t length;
+    uint8_t *bytes = asset_cache_read_unmarked(folder, key, &length, old);
+    if (!bytes) return NULL;
+    if (length <= 4 || word(bytes) != 0) { free(bytes); return NULL; }
+    *size = length - 4;
+    memmove(bytes, bytes + 4, *size);
+    return bytes;
+}
+
 void asset_import_cache_write(const char *folder, const uint8_t key[32], const asset_cache_dependency *deps,
                               const int count, const void *data, const size_t size)
 {

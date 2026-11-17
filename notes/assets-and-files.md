@@ -1,3 +1,85 @@
+## Files taken by size and time, pixels left in the cache, a pack known without being built (2026-11-17)
+
+Owner, on the 2.25 s a build of Mount & Rifle spent on assets that hadn't changed (notes/cli-and-packages.md):
+"doesn't git use timestamps for it? if git can surely we can too". This replaces two earlier decisions below
+("Primary source bytes are still read and hashed, so fresh processes detect same-size/same-time edits too",
+2026-11-03; "Stat-based source hashing was not adopted", 2026-11-10).
+
+**A file's size and last-write time say whether it changed.** `<game>/.tide/assets.times` is the record: a line a
+file, its SHA-256, size, time and absolute path, under a first line that names the format. `asset_files_trust`
+(compile.c, for a compilation that writes code and has a game folder) reads it; `read_at` takes a file that is as
+recorded from it (`file_known`, `take_known`): its hash, with no byte read. `asset_files_save_times` (check.c,
+after the hashes' file) writes it from the files' table where it differs.
+
+- **The guard git has for a file as new as its index.** A file goes in the record only when it was read two
+  seconds or more after it was last written (`read_into`, `recorded`; two seconds is the coarsest file system's
+  step). One written again inside the time its file system can tell apart, or whose time is ahead of the clock,
+  is read every build until it's old enough.
+- **What isn't seen**: an edit that keeps both the size and the time of a recorded file. Its time has to be put
+  back by hand for that. Touching the file, or any ordinary save, is seen.
+- A file said to have changed (`asset_files_changed`, a watching run) is read whatever the record says. The
+  language server and other callers without the build cache never read the record.
+- **Bytes are read when something wants them** (`file_bytes`). `read_item` reads them for every kind but a Texture
+  whose prepared texture the cache has and a Mesh whose import the cache has: `asset_match.data` is NULL for
+  those (`size` is the file's), and `asset_match_bytes` reads them for the one reader left, `texture_make_linear`
+  making a variant the cache lacks (`want_texture` reads them first, as the images are made on threads). Bytes
+  read late are hashed as any are, so a file that isn't what the record said is what it is from there on.
+- The files' table has a hash index by path (`files_find`): a lookup compared every path, 0.3 s of a build with
+  950 files.
+
+**A prepared texture is known by its entry's first bytes** (`texture_cache_peek`, `asset_cache_peek`: the key and
+the 52 bytes that say its size, format and content). `asset_match.prepared` (`asset_prepared`) replaces the
+payload pointer. The entry's digest is checked when its pixels are read, which is when a pack is written.
+
+**The pack is laid out with room for those pixels and no more** (engine/src/pack.c; notes/runtime-ownership.md):
+
+- `tide_pack_texture_room` makes the block `tide_pack_texture_blocks` would, header and words written, pixels
+  left as a hole (`tide_pack_hole`: place, size, content). `block_with_hole` zeroes only what's outside it, so a
+  gigabyte isn't touched.
+- `tide_pack_lay` gives the file's bytes with the digest zero and the holes; `tide_pack_recipe` is the SHA-256 of
+  every byte outside the holes (in the digest's 4 MiB pieces, on threads) and of each hole's place, size and
+  content; `tide_pack_seal` writes the digest once they're filled. `tide_pack_end` is lay and seal.
+- `build_pack` (a pack going to its own file, not build code's and not `--pack-c`) passes `pack_item` a list:
+  an image the cache has an entry for is given room and listed (`later_image`). `write_pack` works out the recipe
+  and compares it with `<pack>.recipe` (the recipe, then the header the pack was written with): the same recipe
+  over a file of the same size that still starts with that header is the pack (`pack_kept`), and nothing is read
+  or written. Otherwise `pack_fill` reads each entry into its hole (twelve at once), seals, and the pack is
+  written and its recipe after it. The recipe is removed before the pack is replaced.
+- An entry found gone or damaged as the pack is filled is made again from its file (`texture_make_linear`), and
+  must come out the size and content the hole was laid out for; one that doesn't is removed and the build says to
+  build again.
+- A fingerprint of an image's pixels (an asset match code depends on that is a Texture, a Cubemap or a
+  TextureArray) fills the pack first (`fingerprint_assets`). Meshes, models and the rest are in the laid pack.
+
+**Cache reads on every processor**: the levels of detail's files (`mesh_lod_find`, `mesh_lod_find_listed`; 333
+files, 0.3 s one after another); the static mesh, its tangent variant and the skinned model of each file named as
+a model (`model_one`, for entries with no file beside their own; `asset_import_cache_read_alone`), which
+`read_item` and `asset_mesh_tangents` take where they would read the same entry. Such a read doesn't mark its
+entry used; taking it does (`asset_cache_mark_used`), so an entry read ahead and never taken still expires. A
+model's bytes are hashed once a compilation (`model_hash_of`).
+
+Not done: [Parts] models ahead (0.3 s of Mount & Rifle's 0.6 s left: the patterns are known as each declaration is
+checked); meshes laid out with holes (their vertices are laid out by the game's struct, 0.1 s).
+
+Both `asset_files.c` and `texture_cache.c` are among the importers' sources, so this change re-imports a game's
+assets once.
+
+Measured, Mount & Rifle, a build that changed no asset: reading ahead 0.70 s to 0.05-0.10 s, checking 0.57 s to
+0.31 s, the pack 0.67 s to 0.11-0.15 s and 0.01 s to find it kept; one image changed and changed back gives the
+pack it was, to the digest.
+
+Tests: `tidec_asset_disk_cache` (asset_cache_test.mjs: the record and the recipe written; a code-only edit leaves
+the pack's time alone; an edit at a new time seen; an edit keeping size and time seen for a file not yet old
+enough to record and not seen for a recorded one, until its time changes; a damaged image entry found as the pack
+is filled); `pack_room_filled_later_is_the_pack_made_at_once_and_its_recipe_tells_packs_apart` (tests/test_pack.c:
+the bytes and digest of `tide_pack_end`'s, a region that stays and one that's moved, the recipe the same whatever
+the holes hold and another's for another content or another byte outside). Validation (Windows, Clang 23.1.2,
+ASan): those, `tidec_asset_files`, `tidec_asset_cache`, `tidec_asset_usage`, `tidec_mesh_files`, `tidec_mesh_lod`,
+`tidec_pack_fingerprint`, `tidec_texture_compress`, `tidec_retarget_assets`, twenty asset e2e fixtures,
+`tide_cli_assets`, `tide_cli_build_report`, `tide_server_pack`, `tide_add_game_asset_deletion`. The packaged tide
+passes `cache_test.mjs --part cache --gpu` and `--part modes --gpu`, and builds and runs Mount & Rifle in debug
+and in release. Not run: web and Android builds, Linux/macOS (the record's times are `st_mtim`'s there): CI's.
+
 ## The file provider's own thread, for the server's store (2026-11-15)
 
 - `tide_io` gained `post(user, work, context)` and `settle(user)` (`tide/io.h`): work run on a thread of the
@@ -479,7 +561,8 @@ function, pack format, asset semantics or deterministic expectation is introduce
 - Models retain external-buffer paths and content digests. A hit re-reads/hashes
   dependencies and rebuilds their watcher/depfile records. A mismatch discards
   tentative dependencies and reimports. Primary source bytes are still read and
-  hashed, so fresh processes detect same-size/same-time edits too.
+  hashed, so fresh processes detect same-size/same-time edits too. (Until 2026-11-17: a file is taken by its
+  size and time now, the first section.)
 - Audio retains validation results and converted PCM WAV bytes. Converted cache
   payloads are checked as WAV before use; raw byte assets still use source bytes.
 - Texture preparation retains exact RGBA8 or BC/authored-mip payloads, separately
@@ -545,7 +628,7 @@ measured right after the owner's (no cache writes) spent only 0.44 s in imports
 and ~2.8 s in the whole row. The rest of the owner's 10 s was not reproduced; a
 cold OS file cache for the ~4 GB read and hashed is the likely cause. Owner chose
 the recommendation: importer-scoped keys plus cleanup. Stat-based source hashing
-was not adopted (same-size/same-time edits are still caught).
+was not adopted (same-size/same-time edits are still caught). (Adopted 2026-11-17, the first section.)
 
 - `compiler/CMakeLists.txt` hashes only the code whose output the cache keeps
   (`TIDE_ASSET_CACHE_IMPORTERS`): vendored ufbx/dr_libs/stb, the compiler's asset,

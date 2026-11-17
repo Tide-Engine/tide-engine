@@ -75,6 +75,27 @@ static uint64_t block(tide_pack_builder *b, const uint64_t bytes)
     return at;
 }
 
+// The same block with only its first `head` bytes after the header zeroed, and what pads it: the `bytes - head`
+// between are a hole's, left as they are until they're filled, so a gigabyte of them isn't touched to be laid out.
+static uint64_t block_with_hole(tide_pack_builder *b, const uint64_t bytes, const uint64_t head)
+{
+    const uint64_t size = (uint64_t)sizeof(tide_block) + bytes;
+    uint32_t c = 0;
+    while (c + 1 < TIDE_HEAP_CLASSES && ((uint64_t)16 << c) < size) c++;
+    const uint64_t padded = (size + 15u) & ~15ull;
+    if (!b->base || b->size + padded > b->room) {
+        uint64_t room = b->room ? b->room : 1u << 16;
+        while (room < b->size + padded) room *= 2u;
+        make_room(b, room);
+    }
+    const uint64_t at = b->size;
+    memset(b->region + at, 0, (size_t)(sizeof(tide_block) + head));
+    memset(b->region + at + size, 0, (size_t)(padded - size));
+    ((tide_block *)(void *)(b->region + at))->link = tide_block_link(c, 0);
+    b->size += padded;
+    return at;
+}
+
 static tide_block *header(tide_pack_builder *b, const uint64_t offset)
 {
     return (tide_block *)(void *)(b->region + offset);
@@ -270,6 +291,45 @@ uint64_t tide_pack_texture_blocks(tide_pack_builder *b, const uint8_t content[32
         h->link = tide_block_link(tide_block_class(h), payload);
     }
     add_shared(b, content, TIDE_PACK_TEXTURE, at, bytes, 0);
+    return at;
+}
+
+uint64_t tide_pack_texture_room(tide_pack_builder *b, const uint8_t content[32], const int32_t width, const int32_t height,
+                                const uint32_t format, const uint32_t levels, const uint32_t bytes, uint32_t *hole)
+{
+    *hole = UINT32_MAX;
+    const tide_pack_shared *had = find_shared(b, content, TIDE_PACK_TEXTURE);
+    if (had) return had->offset;
+    // As tide_pack_texture_blocks lays it out: the size, then the RGBA, or the blocks' words and the blocks
+    const uint64_t rgba = format ? 0u : (uint64_t)(width > 0 ? width : 0) * (uint64_t)(height > 0 ? height : 0) * 4u;
+    const uint64_t head = 2u * sizeof(int32_t) + (format ? 16u : 0u);
+    const uint64_t filled = format ? bytes : rgba;
+    const uint64_t payload = head + filled;
+    const uint64_t at = block_with_hole(b, payload, head);
+    tide_block *h = header(b, at);
+    uint64_t version = 0;
+    memcpy(&version, content, sizeof version);
+    if (!version) version = 1u;
+    h->a = (uint32_t)version;
+    h->b = (uint32_t)(version >> 32);
+    const int32_t size[2] = {width, height};
+    memcpy(h + 1, size, sizeof size);
+    if (format) {
+        const uint32_t metadata[4] = {TIDE_TEXTURE_BLOCK_MAGIC, format, levels, bytes};
+        memcpy((uint8_t *)(h + 1) + sizeof size, metadata, sizeof metadata);
+        h->link = tide_block_link(tide_block_class(h), payload);
+    }
+    add_shared(b, content, TIDE_PACK_TEXTURE, at, rgba, 0);
+    if (b->hole_count == b->hole_room) {
+        const uint32_t room = b->hole_room ? b->hole_room * 2u : 64u;
+        b->holes = tide_realloc(b->holes, b->hole_room * sizeof *b->holes, room * sizeof *b->holes);
+        b->hole_room = room;
+    }
+    *hole = b->hole_count;
+    tide_pack_hole *made = &b->holes[b->hole_count++];
+    made->at = at + sizeof(tide_block) + head;
+    made->size = filled;
+    memcpy(made->content, content, 32);
     return at;
 }
 
@@ -544,7 +604,7 @@ void tide_pack_digest_of(const uint8_t *bytes, const uint64_t size, const tide_p
 // one is moved next to its entries: a small game's pack has no bytes it doesn't need.
 #define GAP_FROM (16u << 20)
 
-uint8_t *tide_pack_end(tide_pack_builder *b, size_t *size)
+uint8_t *tide_pack_lay(tide_pack_builder *b, size_t *size, tide_pack_hole **holes, uint32_t *hole_count)
 {
     const uint64_t table = sizeof(tide_pack_header);
     const uint64_t least = (table + (uint64_t)b->entry_count * sizeof(tide_pack_entry) + 15u) & ~(uint64_t)15u;
@@ -566,13 +626,88 @@ uint8_t *tide_pack_end(tide_pack_builder *b, size_t *size)
     memcpy(h.magic, TIDE_PACK_MAGIC, 8);
     memcpy(out, &h, sizeof h);
     if (b->entry_count) memcpy(out + table, b->entries, (size_t)b->entry_count * sizeof(tide_pack_entry));
-    // Its identity, of the file as it is with the digest's bytes zero, so loading needn't hash it
-    tide_pack_digest_of(out, *size, b->each, h.digest);
-    memcpy(out + offsetof(tide_pack_header, digest), h.digest, sizeof h.digest);
+    for (uint32_t i = 0; i < b->hole_count; i++) b->holes[i].at += region_at; // Of the file from here
+    if (holes) {
+        *holes = b->holes;
+        *hole_count = b->hole_count;
+    } else free(b->holes);
     free(b->shared);
     free(b->entries);
     *b = (tide_pack_builder){0};
     return out;
+}
+
+void tide_pack_seal(uint8_t *bytes, const uint64_t size, const tide_pack_each each)
+{
+    // Its identity, of the file as it is with the digest's bytes zero, so loading needn't hash it
+    uint8_t digest[32];
+    memset(bytes + offsetof(tide_pack_header, digest), 0, sizeof digest);
+    tide_pack_digest_of(bytes, size, each, digest);
+    memcpy(bytes + offsetof(tide_pack_header, digest), digest, sizeof digest);
+}
+
+uint8_t *tide_pack_end(tide_pack_builder *b, size_t *size)
+{
+    const tide_pack_each each = b->each;
+    uint8_t *out = tide_pack_lay(b, size, NULL, NULL);
+    tide_pack_seal(out, *size, each);
+    return out;
+}
+
+// A laid pack's bytes outside its holes, hashed a piece at a time as the digest's are. The holes are in the
+// order of their places, as they were made.
+typedef struct outside {
+    const uint8_t *bytes;
+    uint64_t size;
+    const tide_pack_hole *holes;
+    uint32_t hole_count;
+    uint8_t (*digests)[32];
+} outside;
+
+static void hash_outside(void *context, const uint32_t i)
+{
+    const outside *p = context;
+    uint64_t at = (uint64_t)i * TIDE_PACK_DIGEST_PIECE;
+    const uint64_t end = p->size - at < TIDE_PACK_DIGEST_PIECE ? p->size : at + TIDE_PACK_DIGEST_PIECE;
+    // The first hole that ends after the piece starts
+    uint32_t lo = 0, hi = p->hole_count;
+    while (lo < hi) {
+        const uint32_t mid = lo + (hi - lo) / 2u;
+        if (p->holes[mid].at + p->holes[mid].size <= at) lo = mid + 1u;
+        else hi = mid;
+    }
+    tide_sha256 h;
+    tide_sha256_init(&h);
+    for (uint32_t k = lo; at < end; k++) {
+        const uint64_t hole_at = k < p->hole_count && p->holes[k].at < end ? p->holes[k].at : end;
+        if (hole_at > at) tide_sha256_add(&h, p->bytes + at, (size_t)(hole_at - at));
+        if (hole_at == end) break;
+        at = p->holes[k].at + p->holes[k].size;
+    }
+    tide_sha256_end(&h, p->digests[i]);
+}
+
+void tide_pack_recipe(const uint8_t *bytes, const uint64_t size, const tide_pack_hole *holes, const uint32_t hole_count,
+                      const tide_pack_each each, uint8_t recipe[32])
+{
+    static const char version[] = "tide pack recipe 1";
+    const uint64_t count = (size + TIDE_PACK_DIGEST_PIECE - 1u) / TIDE_PACK_DIGEST_PIECE;
+    if (count > UINT32_MAX) tide_out_of_memory();
+    outside p = {bytes, size, holes, hole_count, tide_alloc(count ? (size_t)count * 32u : 32u)};
+    if (each) each((uint32_t)count, hash_outside, &p);
+    else for (uint32_t i = 0; i < count; i++) hash_outside(&p, i);
+    tide_sha256 h;
+    tide_sha256_init(&h);
+    tide_sha256_add(&h, version, sizeof version);
+    tide_sha256_add(&h, &size, sizeof size);
+    tide_sha256_add(&h, p.digests, (size_t)count * 32u);
+    for (uint32_t i = 0; i < hole_count; i++) { // A field at a time: the struct may be padded
+        tide_sha256_add(&h, &holes[i].at, sizeof holes[i].at);
+        tide_sha256_add(&h, &holes[i].size, sizeof holes[i].size);
+        tide_sha256_add(&h, holes[i].content, sizeof holes[i].content);
+    }
+    tide_sha256_end(&h, recipe);
+    free(p.digests);
 }
 
 // ---------------------------------------------------------------------------

@@ -77,6 +77,16 @@ static unsigned long long now_ticks(void)
 #endif
 }
 
+unsigned long long asset_cache_now(void)
+{
+    return now_ticks();
+}
+
+unsigned long long asset_cache_second(void)
+{
+    return TICKS_PER_SECOND;
+}
+
 // Whether `then` is at least `days` before `now`: never for a time after now, which a clock set back gives
 static bool days_before(const unsigned long long then, const unsigned long long now, const unsigned days)
 {
@@ -108,6 +118,20 @@ bool asset_cache_has(const char *folder, const uint8_t key[32])
 
 uint8_t *asset_cache_read(const char *folder, const uint8_t key[32], size_t *size)
 {
+    bool old;
+    uint8_t *data = asset_cache_read_unmarked(folder, key, size, &old);
+    if (data && old) asset_cache_mark_used(folder, key);
+    return data;
+}
+
+void asset_cache_mark_used(const char *folder, const uint8_t key[32])
+{
+    char path[4096];
+    if (asset_cache_path(path, folder, key)) touch(path);
+}
+
+uint8_t *asset_cache_read_unmarked(const char *folder, const uint8_t key[32], size_t *size, bool *old)
+{
     char path[4096];
     unsigned long long bytes, written;
     if (!asset_cache_path(path, folder, key) || !folder_file_info(path, &bytes, &written)
@@ -124,9 +148,27 @@ uint8_t *asset_cache_read(const char *folder, const uint8_t key[32], size_t *siz
         ok = !memcmp(digest, header + 32, 32);
     }
     if (!ok) { free(data); return NULL; }
-    if (days_before(written, now_ticks(), 1)) touch(path);
+    *old = days_before(written, now_ticks(), 1);
     *size = count;
     return data;
+}
+
+bool asset_cache_peek(const char *folder, const uint8_t key[32], uint8_t *head, const size_t count, size_t *size)
+{
+    char path[4096];
+    unsigned long long bytes, written;
+    if (!asset_cache_path(path, folder, key) || !folder_file_info(path, &bytes, &written)
+        || bytes <= 64 || bytes - 64 > ASSET_CACHE_MAX_BYTES || bytes - 64 < count) return false;
+    FILE *file = fopen(path, "rb");
+    if (!file) return false;
+    uint8_t header[64];
+    const bool ok = fread(header, 1, sizeof header, file) == sizeof header && !memcmp(header, key, 32)
+        && fread(head, 1, count, file) == count;
+    fclose(file);
+    if (!ok) return false;
+    if (days_before(written, now_ticks(), 1)) touch(path);
+    *size = (size_t)(bytes - 64);
+    return true;
 }
 
 void asset_cache_write(const char *folder, const uint8_t key[32], const void *data, const size_t size)

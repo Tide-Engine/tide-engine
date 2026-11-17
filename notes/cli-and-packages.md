@@ -1,5 +1,29 @@
 # `tide`, packages and the package
 
+## Debug builds of big games, third round: the assets of a build that changed none (2026-11-17, evening)
+
+Owner, on the open item of the round below ("skipping it means trusting sizes and times"): "doesn't git use
+timestamps for it? if git can surely we can too". Built: notes/assets-and-files.md, its first section. Same game
+and measure (`tide run game --frames 2`, debug; the machine a fifth busy with other sessions, so each row is this
+evening's before and after):
+
+| | before | after |
+|---|---|---|
+| the assets' files read ahead | 0.70 s | 0.05-0.10 s |
+| the assets checked | 0.57 s | 0.31 s |
+| the pack | 0.67 s | 0.11-0.15 s, and 0.01 s to find the file there is it |
+| a constant edited | 7.1 s (6.6-6.8 on a quiet machine) | 5.1-5.9 s |
+| a field added to a singleton | 13.5 s | 12.0-12.2 s |
+| nothing changed | 2.5 s | 1.4 s |
+
+What a constant's edit pays now: assets 0.6 s (0.3 of it the game's [Parts] models, each declaration's own entry
+read, checked and copied, one after another); parsing and checking 0.8 s; generating C 1.2 s; plumbing from code
+0.25 s; cutting the code 0.55 s; the rest as below. An asset that did change pays what it did: one image edited is
+1.2 s to read the cache's 1.2 GB of pixels into the pack and write it.
+
+Next, in order: the release build's ThinLTO link (11 s an edit); the [Parts] models read ahead (their patterns
+are known only as each declaration is checked); the splitter on threads; `-O1` for a debug build's plumbing.
+
 ## Debug builds of big games, second round: the code in parts, a cut kept, less plumbing (2026-11-17, later)
 
 Owner, after the round below: "we should aim for as quick as possible". Same game, machine and measure
@@ -52,7 +76,8 @@ views 0.13 s; stamps and link 0.3 s; the game's start 1.2-1.3 s (the same starte
 pack, its own setup; a watching run's reload has none of it).
 
 Not done, and why:
-- **The assets of a build that changed none**: every build reads and hashes 960 MB of sources and 1.48 GB of
+- **The assets of a build that changed none** (done the same evening: the section above): every build reads and
+  hashes 960 MB of sources and 1.48 GB of
   prepared textures, reads and checks 700 cache entries, and builds a 1.4 GB pack to find it's the one there.
   Skipping it means trusting sizes and times for the sources (as the kept generate does, and as the 2026-11-03
   note below chose not to: "so fresh processes detect same-size/same-time edits too"), an item's bytes read

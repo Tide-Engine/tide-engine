@@ -15,6 +15,11 @@ typedef struct texture_cache_view {
 void texture_cache_key_linear(uint8_t key[32], const uint8_t source[32], const char *name, bool raw, bool compress, bool linear);
 void texture_cache_key(uint8_t key[32], const uint8_t source[32], const char *name, bool raw, bool compress);
 bool texture_cache_open(const uint8_t *data, size_t size, texture_cache_view *out);
+// What `key`'s entry says of its image, from its first bytes alone (asset_files.h, asset_prepared): enough to lay
+// the image out in a pack, whose pixels texture_cache_read gives when they're wanted. False for no entry, or one
+// whose head isn't an image's of the entry's size.
+struct asset_prepared;
+bool texture_cache_peek(const char *folder, const uint8_t key[32], struct asset_prepared *out);
 uint8_t *texture_cache_read(const char *folder, const uint8_t key[32], size_t *size, texture_cache_view *out);
 void texture_cache_write(const char *folder, const uint8_t key[32], const texture_cache_view *view);
 
