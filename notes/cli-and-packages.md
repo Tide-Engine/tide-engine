@@ -8,6 +8,7 @@ forwards `--from <name>` and `--force` (refused with `--no-dev`, `--distribution
 Content-Length up to `SERVE_BODY_MOST` (1 GiB); `serve_fn` gets the body. `answer_checkpoint` (build.c, watching
 runs) answers `GET /checkpoints` (names, newest first), `GET /checkpoint?name=` and `POST /checkpoint?name=` (written
 to `saving.part`, renamed into place), names checked as the host checks them. notes/standard-host.md, Checkpoints.
+`kind=recording` (2026-11-17) serves and keeps `.recording` files beside them, listed apart; another kind is 404.
 
 
 ## `--dev` and `--no-dev` (2026-11-16)

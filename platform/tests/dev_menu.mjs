@@ -75,11 +75,16 @@ try {
     // Longer than the screen: Far is out of sight until the wheel scrolls the menu to it, and back
     assert.ok(!said.some(line => line.includes('"Far"')), said.join('\n'));
     await command('7 mouse 100 100');
-    await command('8 scroll 0 -40');
-    await command('step 3', 'ready');
-    await command('controls');
+    // A line at a time until it shows: what's under the tweaks (checkpoints, recordings) makes the list longer still
+    for (let i = 0; i < 30 && !said.some(line => line.includes('"Far"') && !line.includes('covered')); i++) {
+        const now = Number((await command('step 1', 'ready')).split(' ').pop());
+        await command(`${now + 1} scroll 0 -1`);
+        await command('step 2', 'ready');
+        await command('controls');
+    }
     assert.ok(said.some(line => line.includes('"Far"') && !line.includes('covered')), said.join('\n'));
-    await command('10 scroll 0 40');
+    const back = Number((await command('step 1', 'ready')).split(' ').pop());
+    await command(`${back + 1} scroll 0 40`);
     await command('step 3', 'ready');
     await command('controls');
     assert.ok(said.some(line => line.includes('"Green"')), said.join('\n'));
@@ -186,6 +191,27 @@ try {
     await command('step 3', 'ready');
     await command('capture back.png');
     assert.deepEqual(clock('back.png'), held, 'Back shows the tick before');
+    // The bar: dragged to its start, the first tick shows, before which Back has none; Step goes on from it
+    await command('controls');
+    const bar = said.map(line => line.match(/slider "" ([\d.]+) ([\d.]+) ([\d.]+) ([\d.]+) /)).find(m => m);
+    assert.ok(bar, said.join('\n'));
+    const [barX, barY, , barH] = bar.slice(1).map(Number);
+    const press = Number((await command('step 1', 'ready')).split(' ').pop());
+    await command(`${press + 1} mouse ${barX + 1} ${barY + barH / 2}`);
+    await command(`${press + 2} button left down`);
+    await command(`${press + 3} mouse ${barX - 40} ${barY + barH / 2}`);
+    await command(`${press + 4} button left up`);
+    await command('step 6', 'ready');
+    await command('capture first.png');
+    const first = clock('first.png');
+    await command('click Back');
+    await command('step 3', 'ready');
+    await command('capture before-first.png');
+    assert.deepEqual(clock('before-first.png'), first, 'there is no tick before the first');
+    await command('click Step');
+    await command('step 3', 'ready');
+    await command('capture after-first.png');
+    assert.deepEqual(clock('after-first.png'), other(first), 'Step goes on from it');
     await command('controls');
     assert.ok(said.some(line => line.includes('button "Go on from here"')), said.join('\n'));
     await command('click "Go on from here"');
@@ -204,17 +230,56 @@ try {
     const over = Number((await command('step 1', 'ready')).split(' ').pop());
     await command(`${over + 1} mouse 150 150`);
     await command('step 10', 'ready'); // The panel grows to the list in a few frames
-    await bottom();
-    await command('controls');
-    assert.ok(said.some(line => /^tide: control \d+ button "Save" /.test(line)), said.join('\n'));
+    // The Dev tab from its top, a line at a time, until a button of this label shows
+    const seek = async label => {
+        const top = Number((await command('step 1', 'ready')).split(' ').pop());
+        await command(`${top + 1} mouse 150 150`); // Over the list, which the wheel scrolls
+        await command(`${top + 1} scroll 0 4000`);
+        await command('step 3', 'ready');
+        await command('controls');
+        for (let i = 0; i < 40 && !said.some(line => line.includes(`"${label}" `)); i++) {
+            const now = Number((await command('step 1', 'ready')).split(' ').pop());
+            await command(`${now + 1} scroll 0 -1`);
+            await command('step 2', 'ready');
+            await command('controls');
+        }
+        assert.ok(said.some(line => line.includes(`"${label}" `)), `${label}: ${said.join('\n')}`);
+    };
+    await seek('Save');
     await command('click Save');
     await command('step 4', 'ready');
     assert.ok(existsSync(join(scratch, 'checkpoints', 'checkpoint-1.checkpoint')), errors);
+    await seek('checkpoint-1'); // Newest first
+    // Its recordings: the match's ticks so far saved, and replayed in its place, playing, paused, stepped, and stopped
+    await seek('Save recording');
+    await command('click "Save recording"');
+    await command('step 4', 'ready');
+    assert.ok(existsSync(join(scratch, 'checkpoints', 'recording-1.recording')), errors);
+    await seek('recording-1');
+    await command('click recording-1');
+    await command('step 10', 'ready'); // The menu's top grows to the replay's controls in a few frames
     await command('controls');
-    assert.ok(said.some(line => /^tide: control \d+ button "checkpoint-1" /.test(line)), said.join('\n')); // Newest first
-    const top =Number((await command('step 1', 'ready')).split(' ').pop());
-    await command(`${top + 1} scroll 0 4000`);
+    for (const label of ['Pause', 'Back', 'Step', 'Stop replay']) {
+        assert.ok(said.some(line => line.includes(`button "${label}"`)), said.join('\n'));
+    }
+    await command('click Pause');
     await command('step 3', 'ready');
+    await command('capture replay.png');
+    const replayed = clock('replay.png');
+    await command('step 10', 'ready');
+    await command('capture replay-held.png');
+    assert.deepEqual(clock('replay-held.png'), replayed, 'a replay paused holds its tick');
+    await command('click Step');
+    await command('step 3', 'ready');
+    await command('capture replay-stepped.png');
+    assert.deepEqual(clock('replay-stepped.png'), other(replayed), 'and steps a tick');
+    await command('click "Stop replay"');
+    await command('step 3', 'ready');
+    await command('controls');
+    assert.ok(said.some(line => line.includes('button "Play"')), 'the match, paused while it replayed: ' + said.join('\n'));
+    await command('click Play');
+    await command('step 3', 'ready');
+    await seek('Marker');
     await command('click Marker');
     await command('step 3', 'ready');
     await command('capture on.png');
@@ -240,6 +305,61 @@ try {
     const missing = spawnSync(resolve(programArg), ['--from', 'nowhere', '--frames', '10'], { cwd: scratch, env, encoding: 'utf8' });
     assert.equal(missing.status, 2);
     assert.match(missing.stderr, /there's no checkpoint nowhere/);
+    // Two players: the first pauses, and its frames hold the tick while the match goes on for the second, who sees
+    // it tick; going on from there, the first's tick again
+    const pair = spawn(resolve(programArg), ['--interactive', join(scratch, 'pair.txt'), '--size', '480', '200', '--players', '2'],
+                       { cwd: scratch, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    const pairLines = [];
+    let pairOut = '', pairErrors = '', pairPending = null;
+    pair.stderr.on('data', data => { pairErrors += data; });
+    pair.stdout.on('data', data => {
+        pairOut += data;
+        for (let end; (end = pairOut.indexOf('\n')) >= 0;) {
+            const line = pairOut.slice(0, end).trimEnd();
+            pairOut = pairOut.slice(end + 1);
+            if (/^tide: (control|controls|click) /.test(line)) { said.push(line); continue; }
+            if (!line.startsWith('tide: interactive ')) continue;
+            if (pairPending) { const take = pairPending; pairPending = null; take(line); } else pairLines.push(line);
+        }
+    });
+    const pairNext = () => pairLines.length ? Promise.resolve(pairLines.shift()) : new Promise(accept => { pairPending = accept; });
+    const ask = async (text, expected = 'ok') => {
+        said.length = 0;
+        pair.stdin.write(text + '\n');
+        const line = await pairNext();
+        assert.ok(line.startsWith(`tide: interactive ${expected} `), `${text}: ${line}; ${pairErrors}`);
+        return line;
+    };
+    await pairNext();
+    await ask('step 60', 'ready'); // The second has joined
+    const shown = Number((await ask('step 1', 'ready')).split(' ').pop());
+    await ask(`${shown + 1} key backquote down`);
+    await ask(`${shown + 2} key backquote up`);
+    await ask('step 5', 'ready');
+    await ask('controls');
+    assert.ok(said.some(line => line.includes('button "Pause"')), said.join('\n'));
+    await ask('click Pause');
+    await ask('step 3', 'ready');
+    await ask('capture held.png');
+    await ask('step 1', 'ready');
+    await ask('capture held-next.png');
+    const held1 = color('held-1.png', 470, 170), held2 = color('held-2.png', 470, 170);
+    assert.deepEqual(color('held-next-1.png', 470, 170), held1, "the first's frames hold the tick");
+    assert.deepEqual(color('held-next-2.png', 470, 170), held2[0] === 255 ? [0, 255, 255] : [255, 0, 255],
+                     'the match goes on for the second');
+    await ask('step 5', 'ready');
+    await ask('controls');
+    assert.ok(said.some(line => line.includes('button "Go on from here"')), said.join('\n'));
+    await ask('click "Go on from here"');
+    await ask('step 5', 'ready');
+    await ask('capture again.png');
+    await ask('step 1', 'ready');
+    await ask('capture again-next.png');
+    const again = color('again-1.png', 470, 170);
+    assert.deepEqual(color('again-next-1.png', 470, 170), again[0] === 255 ? [0, 255, 255] : [255, 0, 255],
+                     "going on, the first's frames tick again");
+    pair.stdin.end();
+    await new Promise(done => pair.on('exit', done));
     console.log('dev menu: ok');
 } catch (e) {
     console.error(e);

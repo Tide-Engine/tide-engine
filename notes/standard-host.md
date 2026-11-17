@@ -21,9 +21,22 @@ The owner: part of the dev menu. Built on `tide/timeline.h` (Unity's time travel
   machines' players, a sharded match, not started). Inspector fields are in a Disabled block at an earlier tick.
 - Tests: `tide_platform_dev_menu`'s clock square (magenta even ticks, cyan odd): paused it holds over 10 frames,
   Step flips it once, Back shows the tick before, Go on from here goes back to Pause and ticks again.
-- Gaps: no keyboard shortcuts; no scrubbing bar (Back/Step a tick at a time); a match with other machines' players
-  doesn't pause (the embed shows past ticks while it goes on behind; not built here); the recording isn't saved or
-  replayed from the menu (`tide_timeline_save` exists).
+- **Closed the same day** (the owner: "close the gaps", no shortcuts): a scrub bar (`tide_run_dev_scrub`, an int
+  slider over first..last, `tide_run_travel_show`); with other machines' players (`tide_run_travel_background`) the
+  match isn't held (`tide_run_travel_seconds` gives it the frame's length), the frames hold the tick shown, and
+  `tide_run_sample` gives the match a zeroed `tide_devices` while another tick shows; Go on from here rewinds for
+  everyone. Recordings: Dev tab RECORDINGS, Save recording (`tide_timeline_save` at the match's rate and this
+  player's id) to `<checkpoints>/recording-<n>.recording` (`tide_checkpoint_write`/`_read`/`_list_of`, the file
+  functions generalized by extension), a row click replays (`tide_timeline_load`: same layout only, its about's
+  other_build said) in the match's place, playing at its rate, with Play/Pause, Back, Step, the bar,
+  `tide_timeline_check_of` said ("As recorded, to tick N", "Tick N differs", "can't replay"), Stop replay; the live
+  match pauses at the latest meanwhile unless others play; the replay's views get `set_session` with its player.
+  Web: the page's checkpoint imports take a kind (0 checkpoint, 1 recording) and tide's server `kind=recording`.
+- Tests: the dev menu test also drags the bar to its start (Back does nothing there, Step one tick), saves and
+  replays a recording (pauses, holds, steps, Stop replay leaves the match paused, Play), and runs `--players 2`:
+  the host pauses, its square holds while the second's goes on, Go on from here and it ticks again.
+  `reload_web.mjs` lists and fetches the recording kind; `cache_test.mjs` saves/lists one through the server (CI).
+- Gaps: no keyboard shortcuts (the owner: not for now).
 
 ## Checkpoints (2026-11-17)
 

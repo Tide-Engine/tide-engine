@@ -9,7 +9,7 @@ const source = await readFile(new URL('../web/tide.js', import.meta.url), 'utf8'
 const block = source.slice(source.indexOf('    // <tide run>'), source.indexOf('    // </tide run>'));
 assert.ok(block.includes('if (config.reload)'), 'the production reload block is present');
 // ...and the page's tweaks and checkpoints, which every page has and the block fills in
-const tweakEnd = 'return checkpoints.names.length;\n    };';
+const tweakEnd = 'return names.length;\n    };';
 const tweaks = source.slice(source.indexOf('    let tweakBytes = null;'), source.indexOf(tweakEnd) + tweakEnd.length);
 assert.ok(tweaks.includes('platform.tweaks_copy'), 'the production tweak functions are present');
 assert.ok(tweaks.includes('platform.checkpoint_copy'), 'the production checkpoint functions are present');
@@ -47,11 +47,19 @@ async function runtime(watch = true, notReady = null, words = []) {
             if (offline) throw new context.TypeError('the watching server has stopped');
             if (path === 'build') return { async text() { return `${build} ${restarts} 0 ${tweaked}`; } };
             if (path === 'tweaks') return { ok: true, async arrayBuffer() { return Uint8Array.of(tweaked).buffer; } };
-            if (path === 'checkpoints') {
+            if (path === 'checkpoints?kind=recording') {
+                return { ok: true, async arrayBuffer() { return new TextEncoder().encode('run\n').buffer; } };
+            }
+            if (path === 'checkpoint?name=run&kind=recording') {
+                return { ok: true, async arrayBuffer() { return Uint8Array.of(5, 6).buffer; } };
+            }
+            if (path === 'checkpoints?kind=checkpoint') {
                 return { ok: true, async arrayBuffer() { return new TextEncoder().encode('boss\nsaved\n').buffer; } };
             }
             if (path.startsWith('checkpoint?')) {
-                const name = new URLSearchParams(path.slice(11)).get('name');
+                const query = new URLSearchParams(path.slice(11));
+                const name = query.get('name');
+                if (query.get('kind') !== 'checkpoint') return { ok: false };
                 if (init.method === 'POST') {
                     posts.push({ name, headers: init.headers, body: [...init.body] });
                     return { ok: name !== 'unwritable' };
@@ -291,26 +299,26 @@ console.log('ok: Ctrl/Cmd+R starts web instances fresh and serializes with watch
 {
     const test = await runtime(true, null, ['--seed', '7', '--from', 'boss']);
     const page = test.context.platform;
-    assert.ok(test.requests.indexOf('checkpoint?name=boss') >= 0, 'the --from checkpoint is asked for');
-    assert.ok(test.requests.indexOf('checkpoint?name=boss') < test.requests.indexOf('game-1.wasm'),
+    assert.ok(test.requests.indexOf('checkpoint?name=boss&kind=checkpoint') >= 0, 'the --from checkpoint is asked for');
+    assert.ok(test.requests.indexOf('checkpoint?name=boss&kind=checkpoint') < test.requests.indexOf('game-1.wasm'),
               'and is in before the first build starts');
     test.strings.set(1, 'boss');
-    assert.equal(page.checkpoint_copy(1, 0, 0), 3, 'its size, before it is copied');
-    assert.equal(page.checkpoint_copy(1, 16, 2), 3, 'too little room copies nothing');
-    assert.equal(page.checkpoint_copy(1, 16, 32), 3);
+    assert.equal(page.checkpoint_copy(0, 1, 0, 0), 3, 'its size, before it is copied');
+    assert.equal(page.checkpoint_copy(0, 1, 16, 2), 3, 'too little room copies nothing');
+    assert.equal(page.checkpoint_copy(0, 1, 16, 32), 3);
     assert.deepEqual([...test.context.u8().slice(16, 19)], [7, 8, 9]);
-    assert.equal(page.checkpoint_copy(1, 0, 0), 0, 'copied once, then gone');
+    assert.equal(page.checkpoint_copy(0, 1, 0, 0), 0, 'copied once, then gone');
     test.strings.set(2, 'nowhere');
-    page.checkpoint_fetch(2);
-    assert.equal(page.checkpoint_copy(2, 0, 0), 0, 'not come yet');
+    page.checkpoint_fetch(0, 2);
+    assert.equal(page.checkpoint_copy(0, 2, 0, 0), 0, 'not come yet');
     await settle();
-    assert.equal(page.checkpoint_copy(2, 0, 0), 0xFFFFFFFF, 'one that is not there');
-    assert.equal(page.checkpoint_copy(2, 16, 32), 0xFFFFFFFF);
-    assert.equal(page.checkpoint_copy(2, 0, 0), 0, 'and forgotten once said');
+    assert.equal(page.checkpoint_copy(0, 2, 0, 0), 0xFFFFFFFF, 'one that is not there');
+    assert.equal(page.checkpoint_copy(0, 2, 16, 32), 0xFFFFFFFF);
+    assert.equal(page.checkpoint_copy(0, 2, 0, 0), 0, 'and forgotten once said');
 
     test.context.u8().set([1, 2, 3], 20);
     test.strings.set(3, 'saved');
-    page.checkpoint_save(3, 20, 3);
+    page.checkpoint_save(0, 3, 20, 3);
     test.context.u8().fill(0, 20, 23); // The program's bytes are its own again at once
     assert.equal(page.checkpoint_saved(), 0, 'not kept yet');
     await settle();
@@ -318,17 +326,28 @@ console.log('ok: Ctrl/Cmd+R starts web instances fresh and serializes with watch
     assert.equal(page.checkpoint_saved(), 0, 'said once');
     assert.deepEqual(JSON.parse(JSON.stringify(test.posts)), [{ name: 'saved', headers: { 'X-Tide': '1' }, body: [1, 2, 3] }]);
     test.strings.set(4, 'unwritable');
-    page.checkpoint_save(4, 20, 3);
+    page.checkpoint_save(0, 4, 20, 3);
     await settle();
     assert.equal(page.checkpoint_saved(), 2, 'not kept');
 
-    assert.equal(page.checkpoint_list(0, 0), 0, 'none listed yet: asked for');
+    assert.equal(page.checkpoint_list(0, 0, 0), 0, 'none listed yet: asked for');
     await settle();
-    assert.equal(page.checkpoint_list(0, 32), 11);
+    assert.equal(page.checkpoint_list(0, 0, 32), 11);
     assert.equal(new TextDecoder().decode(test.context.u8().slice(0, 11)), 'boss\nsaved\n');
-    const asked = test.requests.filter(r => r === 'checkpoints').length;
-    page.checkpoint_list(0, 32);
-    assert.equal(test.requests.filter(r => r === 'checkpoints').length, asked, 'not asked again within a second');
+    const asked = test.requests.filter(r => r === 'checkpoints?kind=checkpoint').length;
+    page.checkpoint_list(0, 0, 32);
+    assert.equal(test.requests.filter(r => r === 'checkpoints?kind=checkpoint').length, asked, 'not asked again within a second');
+    // ...and recordings, the other kind, listed and fetched apart from them
+    assert.equal(page.checkpoint_list(1, 0, 0), 0);
+    await settle();
+    assert.equal(page.checkpoint_list(1, 0, 32), 4);
+    assert.equal(new TextDecoder().decode(test.context.u8().slice(0, 4)), 'run\n');
+    test.strings.set(5, 'run');
+    page.checkpoint_fetch(1, 5);
+    await settle();
+    assert.equal(page.checkpoint_copy(0, 5, 0, 0), 0, 'a checkpoint of the name is another file');
+    assert.equal(page.checkpoint_copy(1, 5, 16, 32), 2);
+    assert.deepEqual([...test.context.u8().slice(16, 18)], [5, 6]);
     assert.deepEqual(test.errors, []);
 }
 
@@ -337,10 +356,10 @@ console.log('ok: Ctrl/Cmd+R starts web instances fresh and serializes with watch
     const test = await runtime(false);
     const page = test.context.platform;
     test.strings.set(1, 'boss');
-    page.checkpoint_save(1, 0, 1);
+    page.checkpoint_save(0, 1, 0, 1);
     assert.equal(page.checkpoint_saved(), 2);
-    page.checkpoint_fetch(1);
-    assert.equal(page.checkpoint_copy(1, 0, 0), 0xFFFFFFFF);
-    assert.equal(page.checkpoint_list(0, 32), 0);
+    page.checkpoint_fetch(0, 1);
+    assert.equal(page.checkpoint_copy(0, 1, 0, 0), 0xFFFFFFFF);
+    assert.equal(page.checkpoint_list(0, 0, 32), 0);
 }
 console.log('checkpoints: ok');

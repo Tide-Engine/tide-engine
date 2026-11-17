@@ -143,11 +143,18 @@ The game sees the key too. Interactive runs list the menu's switches among the G
 
 ## Pausing and going back
 
-At the dev menu's top, whatever its tab, are the match's controls: **Pause** stops it, **Step** runs it a tick at a time, and **Back** goes back a tick, showing the match as it was then. **Go on from here** goes on from the tick shown, and what came after it is gone; **Play** goes on from the latest.
+At the dev menu's top, whatever its tab, are the match's controls: **Pause** stops it, **Step** runs it a tick at a time, **Back** goes back a tick, showing the match as it was then, and the bar under them goes to any tick since the match began. **Go on from here** goes on from the tick shown, and what came after it is gone; **Play** goes on from the latest.
 
-- While the match runs, a dev build keeps its last 600 ticks (10 seconds at 60 a second) to go back through, and any tick since it began can be made again from what went into it.
+- While the match runs, a dev build keeps its last 600 ticks (10 seconds at 60 a second) to show at once, and any tick since it began is made again from what went into it.
 - The game's views draw the tick shown. What they send or ask for meanwhile goes nowhere, and the [inspector](#the-inspector) shows that tick's fields as they were, without changing them.
-- It's the match this machine runs: a client of another machine's match, a sharded one, or one with players from other machines doesn't pause, and the menu says why.
+- With players of other machines in the match, it goes on for them: this machine's frames stay on the tick shown, and its player lets go of everything meanwhile. **Go on from here** takes every machine back to that tick.
+- It's the match this machine runs: a client of another machine's match, or a sharded one, doesn't pause, and the menu says why.
+
+### Recordings
+
+**Save recording**, in the Dev tab, keeps what the match was from its start: `checkpoints/recording-<n>.recording` in the project, beside the [checkpoints](#checkpoints). A click on one replays it in the match's place, playing at its rate, with the same controls: **Pause** and **Play**, **Back**, **Step** and the bar. Under them, the menu says whether this build makes every tick the way it was recorded, or which tick first goes otherwise: a change to the code shows there as the first tick it changes. **Stop replay** goes back to the match, which waited, paused, meanwhile (or went on, for other machines' players).
+
+A recording replays in a build with the same data layout as the one that made it; one of another is refused, saying why.
 
 ## The inspector
 

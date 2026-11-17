@@ -595,6 +595,15 @@ async function webRunTest(tide, root, release = false, optimization = null) {
         check(!(await checkpoint("GET", "nowhere")).ok, "one that isn't there isn't served");
         const listed = await fetch(`${url}checkpoints`, { headers: { "X-Tide": "1" }, signal: AbortSignal.timeout(5000) });
         check(listed.ok && await listed.text() === "boss\n", "the page lists the game's checkpoints");
+        // ...and recordings, beside them, listed apart
+        const recording = (method, name, body) => fetch(`${url}checkpoint?name=${name}&kind=recording`,
+            { method, body, headers: { "X-Tide": "1" }, signal: AbortSignal.timeout(5000) });
+        check((await recording("POST", "run", Uint8Array.of(4, 5))).ok
+              && readFileSync(join(game, "checkpoints", "run.recording")).equals(Buffer.from([4, 5])), "a recording is kept beside them");
+        const recordings = await fetch(`${url}checkpoints?kind=recording`, { headers: { "X-Tide": "1" }, signal: AbortSignal.timeout(5000) });
+        check(recordings.ok && await recordings.text() === "run\n", "recordings are listed apart from checkpoints");
+        check(!(await fetch(`${url}checkpoint?name=run&kind=other`, { headers: { "X-Tide": "1" }, signal: AbortSignal.timeout(5000) })).ok,
+              "no other kind is served");
         rmSync(join(game, "checkpoints"), { recursive: true, force: true });
         const cache = join(game, ".tide", `web-${release ? "release" : "debug"}${optimization ?? ""}`);
         let before = mark(cache);
