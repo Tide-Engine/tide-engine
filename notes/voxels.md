@@ -1715,6 +1715,56 @@ alternating with the build before, "before" this branch's base; every world hash
   ticks of handlers 20 to 23 ms. Taking the checks' pieces on the pool's threads is what would bring them near a
   tick (What's left, 5f).
 
+### A check's rows on every thread (2026-11-17, parts)
+
+What A hundred apart, again left: 25 of 100 apart's 30 longest updates were checks after the Chunk table settled
+(600 to 800 pieces read on one thread, 20 to 31 ms), and of every check, who may have what and the players' sums
+were one thread's (55 and 45 ms a second of the 245 of hashing: counted with `bench_voxels_counts`). Now the check's
+rows go in parts of four pieces on the tick's pool, then its audiences and each piece's routing in the same parts,
+each part with a stage of the memo's entries and lists of the journal's rows of its own, taken in their order after
+(notes/netcode.md, top section, has the design and why everything is one thread's).
+
+`bench_voxels`, 30 s once everyone's in, 1% lost, release, Windows, BelowNormal, one run at a time, before and after
+in turn, two of each; "before" is t3/wf-integrate14. "Hash" is the checks (the world's own hash is inside them). The
+same world hash, what the bots' machines took (`--expect-taken`'s hash: `0xb8fa79ab9a74ff3d` 100 apart,
+`0x9464ec286cbcff9d` together, `0x06c3806627f247cc` 32 apart, `0xb4e8a59de2f669db` 8 bots), bytes and box arrivals
+in every pair.
+
+| 12 threads | 8 bots | 32, `--spread 256` | 100 together | 100, `--spread 256` |
+|---|---|---|---|---|
+| Server, ms a second: simulate | 7.75, 7.73 → 7.67, 7.73 | 50.9, 50.5 → 51.3, 50.4 | 37.1, 37.1 → 37.1, 37.4 | 185, 180 → 178, 180 |
+| ...hash (the checks) | 5.64, 5.66 → 5.31, 5.32 | 54.8, 54.3 → 31.0, 30.3 | 52.0, 52.3 → 28.5, 28.5 | 255, 243 → 112, 112 |
+| ...snapshot | 0.71, 0.72 → 0.71, 0.72 | 2.62, 2.59 → 2.67, 2.60 | 3.13, 3.14 → 3.16, 3.13 | 15.9, 16.2 → 16.0, 16.1 |
+| ...repairs read (pack) | 2.02, 2.02 → 2.02, 2.01 | 21.6, 21.6 → 21.1, 20.8 | 58.5, 58.4 → 55.2, 55.8 | 127, 124 → 118, 119 |
+| ...in all | 20.3, 20.3 → 19.9, 19.9 | 135, 134 → 112, 110 | 154, 154 → 129, 129 | 548, 530 → 393, 397 |
+| Update, median / p99 / longest, ms | 0.18 / 2.31 / 4.4, 0.18 / 2.33 / 3.7 → 0.20 / 2.20 / 3.6, 0.20 / 2.09 / 3.9 | 2.15 / 9.04 / 16.0, 2.16 / 9.03 / 12.8 → 1.75 / 6.20 / 9.7, 1.72 / 6.09 / 10.2 | 2.93 / 8.50 / 15.5, 2.95 / 8.46 / 12.9 → 2.33 / 7.04 / 11.5, 2.32 / 7.16 / 10.6 | 10.8 / 35.9 / 52, 10.4 / 34.6 / 50 → 7.4 / 21.6 / 31, 7.5 / 22.0 / 33 |
+| Sent to each bot, KB a second | 22.7 | 24.7 | 30.7 | 27.8 |
+| After a hop, all of the box, ticks (median) | 27 | 31 | 25 | 31 |
+
+| 1 thread | 8 bots | 100 together |
+|---|---|---|
+| Server, ms a second: simulate / hash / in all | 13.6 / 5.37 / 26.9, 13.7 / 5.45 / 27.0 → 13.5 / 5.30 / 26.5, 13.6 / 5.35 / 26.7 | 55.7 / 48.8 / 213, 55.4 / 48.0 / 212 → 55.2 / 48.5 / 212, 55.0 / 47.8 / 210 |
+| Update, median / p99 / longest, ms | 0.18 / 3.84 / 9.0, 0.18 / 3.90 / 8.4 → 0.18 / 3.87 / 8.5, 0.18 / 3.90 / 8.7 | 3.46 / 15.0 / 24, 3.45 / 15.2 / 23 → 3.42 / 15.1 / 23, 3.38 / 15.0 / 24 |
+
+`bench_voxels_arrives` 21 ticks at the median.
+
+- **100 apart: the checks half what they were** (249 ms a second of the update's to 112), **p99 35 to 22 ms, the
+  longest 50 to 31**, the server's update 540 ms a second to 395. 32 apart's p99 9.0 to 6.1, 100 together's 8.5 to
+  7.1; 8 bots (under `TIDE_CLIENT_SPLIT_ROWS` most checks: one thread's, as before) and one thread as they were.
+- **What's left of 100 apart's p99 is the joins and the hops' ticks**, not the checks (`--worst 40` after): of the 40
+  longest (25 to 35 ms), 22 are an update reading several joiners' whole views while bots join (19 to 29 ms of
+  repairs read, the views arriving: netcode.md, Repairs read on every thread, Left), and 18 ticks whose handlers take
+  10 to 26 ms (hops' spawns and destructions, 5g), their checks 3 to 13 ms. Still 5 ms past a tick at the 99th
+  percentile, on a machine running the 100 bots' machines beside the server.
+- Counted after (`bench_voxels_counts`, 100 apart): what's left on the check's own thread is the walk (3 ms a second),
+  the groups' directory (6), the world's hash for the journal (6), the players' sums (5) and the parts' setup and
+  taking (8); the parts' own wait for the longest of them.
+
+**Not done, and why**: a row a settle moved carried to its new place (the check's kept arrays go by row, and the moves
+aren't said to it: the runtime's `tide_table_settle` would have to say them), and a piece whose page changed reading
+only its rows that did. With the parts on the pool a settle's check is 5 to 13 ms of the update, no longer its
+longest; each would cut the threads' time, not the update's.
+
 ### What's left, most telling first
 
 1. ~~Inputs of every player, in every unacknowledged frame (section 5): 13 to 44 KB a second a player with real hands on the mice.~~ Cut the same day (section 5, the last paragraph of that bullet): 19.2 KB a second with 8 turning and standing, 10.6 flying; 32 are as they were (20.8 standing), each tick once, and a second copy of theirs is the owner's to weigh (netcode.md, Open).
@@ -1727,7 +1777,7 @@ alternating with the build before, "before" this branch's base; every world hash
    - 5c. **Spares only once a connection's loss is counted** (netcode.md, Left): a join and a first hop have none.
    - 5d. ~~**The tick a box is spawned in is 2.8 µs a chunk**: 2.4 ms at the default view, 8.7 at twice, about 19 at three times, where it's a frame's worth by itself. A box asked for over a few ticks, nearest first, would bound it; the ring-a-tick variant (Tried and taken out) is that, and would pay now where it didn't.~~ Closed the same day (A wide view without a long update): 1,024 new chunks a tick, the store's part of each no longer going with how many were asked, and a box left going over as many ticks.
    - 5e. ~~**The tick a player joins or leaves the audiences of a whole view of chunks that are there** (hopping to where others are, or away from them): 6,845 chunks' `Seen` and group changed in one handler, 11 ms of handlers and 7 of hashing at three times the view (A wide view without a long update: its longest update now, 20 ms). The allowance of `Watch` counts spawns alone.~~ Partly closed (Audiences joined and left over ticks): a group's audience set with one lookup (the hop's tick 12 to 15% shorter), and joins and leaves under an allowance of their own, 8,192 a tick, which no lone view reaches. Left: a lone view at three times the radius is still one tick's (6.6 ms of handlers with the tick's spawns, 4.8 of hashing), as splitting it costs its player a repair and a round trip (5b); the hop's repairs are that view's longest updates (17 to 18 ms).
-   - 5f. **A tick in which entities come or go costs the server more than one in which none do**, whatever their number (seen where a border's row of chunks went over four ticks for one: simulating 28 to 40 ms a second at twice the view). Taken apart (The spread case taken apart): the orders were sorted again (fixed: 32 apart simulate 146 to 61 ms a second); what's left is the players' projection checks (+1.5 ms such a tick with 32 apart: slots and heap blocks written all over the world make most pieces read again) and the handlers (+1 ms: the spawn path, 5g, and `Drop`). The checks go by the pages written since (2026-11-17, Projection checks by the pages written): 2.72 to 2.12 ms of hashing such a tick; what's left of it is the rows that did change. At 100 apart (A hundred apart, again) the checks are the longest updates: a check after the Chunk table settled reads 600 to 800 pieces (16 to 25 ms on one thread), as holes are in most pieces. Left, most telling first: the pieces of a check on the pool's threads (each table chunk's apart, the journal's rows put together in their order after; the memo is written as rows are hashed, so its puts would wait for a thread of their own or a lock: the generated check's design, not begun); a piece read for a few rows changed reads all 64 (its pages' list made again whole); a moved row's terms worked out again where they could go with it.
+   - 5f. **A tick in which entities come or go costs the server more than one in which none do**, whatever their number (seen where a border's row of chunks went over four ticks for one: simulating 28 to 40 ms a second at twice the view). Taken apart (The spread case taken apart): the orders were sorted again (fixed: 32 apart simulate 146 to 61 ms a second); what's left is the players' projection checks (+1.5 ms such a tick with 32 apart: slots and heap blocks written all over the world make most pieces read again) and the handlers (+1 ms: the spawn path, 5g, and `Drop`). The checks go by the pages written since (2026-11-17, Projection checks by the pages written): 2.72 to 2.12 ms of hashing such a tick; what's left of it is the rows that did change. At 100 apart (A hundred apart, again) the checks are the longest updates: a check after the Chunk table settled reads 600 to 800 pieces (16 to 25 ms on one thread), as holes are in most pieces. ~~Left, most telling first: the pieces of a check on the pool's threads (each table chunk's apart, the journal's rows put together in their order after; the memo is written as rows are hashed, so its puts would wait for a thread of their own or a lock: the generated check's design, not begun)~~ Done (A check's rows on every thread): parts of four pieces on the pool, the memo's entries in a stage of each part's and its journal rows in lists, taken in order; the audiences and routing too. 100 apart's checks 249 to 112 ms a second and p99 35 to 22 ms, a settle's check 5 to 13 ms. Left: a piece read for a few rows changed reads all 64 (its pages' list made again whole); a moved row's terms worked out again where they could go with it; the walk, the directory and the world's hash on the check's own thread.
    - 5g. (Taken apart again at 100 apart and partly closed, 2026-11-17: The spread tick. A destruction 53,000 cycles to 15,500; a spawn is still 25,000 to 28,000, most of it pages copied from the kept worlds'. Later the same day, A hundred apart, again: the copies' cost was the system's heap, the entity table's pages never kept spare; with them kept the server's simulating is a third less at 100 apart, and handlers copy only the lanes they read and write.) **A spawned chunk is 9,000 cycles** beside its load (the command with its grid and policies 3,240, its group and policy 2,000, the map 1,130, applying it 1,170): ~~`tide_visibility_set_group` looks its group up three times~~ (one lookup since, Audiences joined and left over ticks), and a Visibility's one policy is a map made in the scratch area and copied. In a hop's tick at three times the view a spawn is 16,000 to 33,000 (its command 9,000 to 16,000): the spawns are most of that tick's handlers.
 6. ~~A hosting player's frame of 9 to 60 ms when a box is asked for (section 4), not taken apart.~~ Taken apart (A whole view arriving): it's the store's files found missing on the tick's thread, 18 µs each, which only a run with no window does; in a window the same ticks are 2.5 and 12 ms. What's left is 5d. ~~And that **every chunk a player comes near is a file looked for** (567,041 loads in 20 minutes of 8 bots flying, none found): a dimension that knew which of its chunks were ever saved (a set kept with its far regions, or a listing as it starts) would ask for those alone.~~ Closed the same night in the store itself, for every game (section 3f): it lists its files once and a load of a key never saved reads nothing (14,551 reads to 49 in the default run; a hosting run with no window's longest update 4.6 to 2.3 ms at `--near 4`, 29 to 13 at `--near 12`).
 7. ~~The process grows about a hundred bytes for each chunk that came and went, in no world (The sweep again, 8): 3.4 MB a minute with 8 bots flying, not located; the projection checks' memos are the first place to look.~~ Located and fixed the same day (The process's growth): a grid read from bytes left the 64 bytes it was made in on its thread's scratch area, 1.84 MB a minute here. What's left is the bench's own (its timings and its store in memory) and what's in the next item.
@@ -1737,6 +1787,17 @@ alternating with the build before, "before" this branch's base; every world hash
 
 ## Tests
 
+- 2026-11-17, parts (A check's rows on every thread): no pin moved; the runs above end on the base's world hashes
+  and what the bots' machines took, before and after, 12 threads and 1. New: `tidec_e2e_visibility_walks_pool` (the
+  checks on the platform's pool against one thread's, memo and journal by `tide_client_check_digest`), and the
+  `_checked` variants of the runs, pieces, blocks, walks, trees and repairs fixtures read every check in parts here
+  in order (netcode.md, top section, Tests, with the mutations caught). `bench_voxels_checked` 15 s at 100 and 32
+  apart. Release, Windows: every native target builds; the focused e2e set (56, the codegen pattern tests among them,
+  none of which moved), the 46 `bench_*`, `sumo_tests`, `earth_tests`, `towers_tests`, `tide_tests session`,
+  `visibility`, `page`, `heap`, `snapshot`; under ASan (`sanitize`) `tide_tests session`, `visibility` and the
+  visibility fixtures (`blocks`, `pieces`, `repairs`, `runs`, `trees`, `walks`, each with `_checked`, `repairs_wide`,
+  `walks_pool`, `projection`, `lifecycle`, `hash_memo`); on the web (`web-debug`) `tidec_e2e_visibility_runs`,
+  `_repairs`, `_walks`, `_pieces` and their `_checked` (in parts) with the same pins.
 - 2026-11-17, latest (A hundred apart, again): no pin moved; the 30 s runs at 8 bots (1, 4 and 12 threads), 32 apart,
   100 together and 100 apart end on the base's world hashes and what the bots' machines took (`0xb8fa79ab9a74ff3d` at
   100 apart, `0x9464ec286cbcff9d` at 100 together), before and after. `page_spares_of_every_kept_size_come_back_zeroed_and_apart`

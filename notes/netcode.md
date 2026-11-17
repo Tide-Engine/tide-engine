@@ -40,9 +40,11 @@ the check before for its own pieces and rows, the walk (made here before the par
 memo as the check began (busy, so no repair shares it, and not written until the parts are done); it writes only its
 own pieces, their rows' kept arrays, its noted and added lists, its stage and its scratch. So what each part comes to
 is what it came to read in turn on one thread: the only state one part's work could see of another's is the memo's
-entries, and an entry is a container's (its handle), which one row holds. Where two rows' values share a handle
-(nothing a game's code makes so: a value assigned is copied), the later part's copy of it goes into the memo last; it
-holds whenever the earlier one's would, its hashes being of the same bytes, and it's only ever a shortcut to them.
+entries, and an entry is a container's (its handle), which a row's value holds. An entry used by one part's rows is
+the memo's exactly as one thread leaves it. Were one handle read by two parts, the later part's copy would go into
+the memo last, made from the memo as the check began rather than from the earlier part's: it holds whenever the
+earlier one's would (its hashes are of the same bytes), and an entry is only ever a shortcut to them, so every hash,
+the journal and what's sent are the same either way; only that entry's kept items could be another's.
 Every page a part reads was hashed before it (the world's hash after the tick, the walk's on every heap and slots'
 page), so `tide_page_hash` and `tide_client_page_hash` only read: no page's hash, `before` or lines written is
 written by a part. `TIDE_CLIENT_MEMO_OFF` (no walk) and a check worked out again (`again`) never go in parts.
@@ -50,7 +52,8 @@ written by a part. `TIDE_CLIENT_MEMO_OFF` (no walk) and a check worked out again
 **Threads, checked.** Each part's state is the part's from its start to its end, `tide_parallel_for` returning once
 every part has (the caller's thread takes parts as thread 0); the main hasher, the memo, the journal and every span's
 columns are touched only before and after. The routing spares are under a lock. ASan (`sanitize`): `tide_tests`
-`session`, `visibility`, the visibility fixtures and `tidec_e2e_visibility_walks_pool`. No ThreadSanitizer here.
+`session`, `visibility`, the visibility fixtures and `tidec_e2e_visibility_walks_pool`. No ThreadSanitizer here. On the
+web (`web-debug`) the fixtures' `_checked` variants, in parts, end on the same pins as natively.
 
 **Tests.** `visibility_walks_checks_on_the_pool_are_one_threads` (`tidec_e2e_visibility_walks_pool`: every check in
 parts of a piece, on the platform's pool, with every hash also worked out from the rows): two worlds through every
@@ -59,13 +62,29 @@ check each player's hash, each repair's bytes from the journal and `tide_client_
 the memo's entries in their containers' order and of every kept row, piece, walk and journal entry) are the same.
 The `_checked` variants of the runs, pieces, blocks, walks, trees and repairs fixtures read every check in parts of a
 piece here in order (`TIDE_CLIENT_PARTS_ALWAYS`), every hash worked out again from the rows, with the same pins.
-Mutations, each alone: a table chunk's parts taken from its last (the journal's order: the pool test fails, at the
-first check with two pieces' rows written down); a stage left out of the memo (the pool test fails on the digest,
-the hashes the same); TBD.
+Mutations, each alone: every other part's stage left out of the memo (the pool test fails on the digest, every hash
+the same); a table chunk's noted rows taken from its first part alone (the pool test fails, at the first check whose
+rows another part wrote down); its rows whose audiences moved taken from its first part alone (walks never moves an
+audience, so the pool test passes; `tidec_e2e_visibility_repairs_checked`, in parts, fails: a repair from the rows
+written down isn't one from every row).
 
-**Measured**: notes/voxels.md, A check's rows on every thread.
+**Measured** (notes/voxels.md, A check's rows on every thread): 100 apart, the checks 243 to 256 ms a second to 112
+and p99 35 to 22 ms; 100 together 52 to 28.5 and p99 8.5 to 7.1; 32 apart 54.5 to 30.6 and p99 9.0 to 6.1; 8 bots and
+one thread as they were. The same world hash, what the bots' machines took, bytes and box arrival ticks in every pair.
 
-**Left.** TBD
+**Left.**
+- What a check does on its own thread: the walk (every heap and slots' page's hash, 3 ms a second at 100 apart), the
+  directory of groups compared (6), each chunk's columns looked at before and kept after, the stages and lists taken
+  (8 with the rest), the journal's pending rows, the world's hash for the journal (6) and the players' sums (5). A
+  walk by heaps on the pool, and the directory by its chunks, are what's next of it.
+- A row a settle moved still has everything of it worked out again where it lands (its kept arrays are by row): the
+  moves aren't said to the check. With the parts on the pool that's no longer an update's length (the checks after a
+  settle are 5 to 13 ms where they were 20 to 31), only the threads' time.
+- A piece a page of whose rows changed is read whole (its arrays made again), where few of its rows changed.
+- The parts' scratch (their hashers, gathered lists and stages' tables) is fresh memory each check: a few hundred
+  small allocations.
+- Checks for several players at once is what this is: a check is every player's at once, and what's one player's of
+  it (the sums of the pieces' routes and the inputs) is a few microseconds.
 
 ## The directory of groups, packed, is compared by its entries' orders; no protocol change (2026-11-17, a hundred apart)
 

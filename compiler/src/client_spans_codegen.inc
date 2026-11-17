@@ -48,6 +48,11 @@
 // - What a piece's rows add to each player's sum is kept with it while none of
 //   them was read again or had its audience worked out again.
 //
+// - A server's check with rows enough reads them in parts of a few pieces on the tick's pool, then works out who may
+//   have what and each piece's routing in the same parts (tide_client_part, gen_client_rows_parts): each part writes
+//   only its own pieces and rows, its lists of the journal's rows and a stage of the memo's entries, and they go
+//   into the journal and the memo in the parts' order, as one thread reading them in turn leaves them.
+//
 // What's kept is only ever a shortcut to what the rows come to:
 // TIDE_CLIENT_SPANS_CHECK works every hash out both ways and stops the program
 // where they differ, and TIDE_CLIENT_MEMO_OFF keeps nothing.

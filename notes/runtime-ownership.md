@@ -1,3 +1,16 @@
+## A check's rows on the tick's pool (2026-11-17, parts)
+
+**For the owner to confirm**: `tide_game.client_hashes` (tide/session.h) may now share its work out on the threads
+handed to its caller's thread (`tide_loops_enter`, tide/jobs.h), with the same values; the header says so. The
+session (`engine/src/session.c`'s `tick_end`, agent-maintained) hands it the tick's pool: `tide_loops_enter(t->jobs)`
+around its call, `tide_loops_leave` after (notes/netcode.md, top section). Generated code (`client_spans_codegen.inc`)
+calls `tide_parallel_for` for its parts, and asks whether a pool was handed to the thread with `tide_loops_enter(NULL)`
+and `tide_loops_leave` (which give back and put back the one there is): both existing runtime functions, so no new
+one, though a `tide_loops_jobs()` that only reads would say it plainer if the owner prefers it. No new hook or
+`tide_game` member; the signature and every hash are as they were. New in generated code alone: the memo's stages
+(`tide_client_stage`, `tide_client_hasher.stage`), the parts (`tide_client_part`, `tide_client_parts`) and, for tests,
+`tide_client_check_digest` under `TIDE_CLIENT_CHECK_DIGEST`.
+
 ## Repairs read on several threads at once (2026-11-17, later)
 
 **For the owner to confirm**: what the session asks of `tide_game.client_changes` (tide/session.h) is now that it can
