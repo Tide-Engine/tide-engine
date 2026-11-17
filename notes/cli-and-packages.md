@@ -1,5 +1,81 @@
 # `tide`, packages and the package
 
+## Debug builds of big games, second round: the code in parts, a cut kept, less plumbing (2026-11-17, later)
+
+Owner, after the round below: "we should aim for as quick as possible". Same game, machine and measure
+(`tide run game --frames 2`, debug, assets cached, a quiet machine; three passes):
+
+| | at the start of the day | after the round below | now |
+|---|---|---|---|
+| a constant edited | 10.6 s | 8.6-9.4 s | 6.6-6.8 s |
+| a field added to a singleton | 35.0 s | 14.9-16.8 s | 11.9-12.4 s |
+| every object again (a new tide; assets cached) | 47-63 s | 21-25 s | 21 s |
+
+What changed:
+
+- **A debug build's own code is in parts too** (`codegen_options.split_own_code`, which tide sets; `tidec
+  --split-code --split-plumbing` is as it was, so CMake's lists of a game's files stand). game.c at -O0 was
+  2.3-2.9 s in one file: 0.8 s to parse, the rest code and debug info. Its parts are cut as the plumbing's are
+  (up to 16 of 512 KiB, `game_part<n>.c`, `game_data.c`), compiled with game.c's flags and
+  `-feliminate-unused-debug-types` (`queue_unless_stamped`'s `lean`: every type the game declares is in game.o's
+  debug info once). An edit of a function compiles its part, and game.c when the simulation's identity changed
+  with it: Mount & Rifle's constant in a view compiles `game_part12.c` alone, done before the generate ends.
+- **Each of them starts compiling as it's written** (`compile_written` for every file of the code;
+  `game_written` names their objects as `queue_game` does and keeps the names in `build.early_queued`).
+- **A cut is kept** (`<name>.parts` beside the files, `parts_key`/`parts_kept` in codegen.c): the SHA-256 of the
+  text and of what the cut is made of (the compiler's sources' identity, the paths, the options), then each
+  file's size, time and manifest line. A text that comes out the same is cut into the files there: nothing is
+  cut or written. The plumbing of a code-only edit is that text: 1.0-1.4 s (cutting out its data, four levels of
+  halves, writing 50 MB) became 0.1 s, its hash. A file that isn't as the record says, or a record that isn't
+  this text's, cuts again; the record is removed before a cut and written after its files.
+- **The generated files' stamps are found on threads** (`part_stamp_work`, build.c): each is its whole text
+  read and hashed, a hundred megabytes, 0.3 s one after another.
+- **A wide component comes to a debugger's build's rows functions as arrays** (`rows_spread`: never spread
+  where `split_plumbing` and `lanes_looped`). A parameter a lane lets a row loop know its lanes are apart; a
+  debugger's build copies rows whole, and each call of a rows function (five forms for each archetype) and each
+  of its variants spelled 190 of them for Campaign.Party. The plumbing's text: 41 MB to 27 MB before its
+  `#line`s. Another build's rows functions are as they were.
+- **A debugger's build loads a wide component's row with a loop** (`rows_lanes_looped`: `tide_load_<C>_at`,
+  `tide_load_some_<C>_at`, `tide_gather_some_<C>`). Another build keeps a copy a lane, which a row loop that
+  reads a few fields folds down to those.
+- `tide_near_same_rows_<C>` is `noinline` (it was inlined back, 108 times), and a dev build's
+  `tide_inspect_match` is `cold, minsize` (`gen_packet_view`): 4.5 s to 3.9 s of its part; Unity's
+  `tide_embed_view`, the same generator's, is as it was.
+
+The plumbing's sixteen parts: 85 s of clang in all at the start of the day, 42 s after the round below, 32 s now;
+the slowest two 4.3 and 3.9 s, the rest 2.3 s or less.
+
+What a constant's edit pays now (6.6 s): reading and hashing the assets' files 0.8 s, checking the assets 0.65 s,
+packing 0.8 s (2.25 s of assets that didn't change: the next thing, below); parsing and checking 0.75 s;
+generating C 1.2 s; plumbing from code 0.26 s; cutting the code 0.55 s; the plumbing's hash 0.1 s; the debugger's
+views 0.13 s; stamps and link 0.3 s; the game's start 1.2-1.3 s (the same started alone: Vulkan, its 1.4 GB
+pack, its own setup; a watching run's reload has none of it).
+
+Not done, and why:
+- **The assets of a build that changed none**: every build reads and hashes 960 MB of sources and 1.48 GB of
+  prepared textures, reads and checks 700 cache entries, and builds a 1.4 GB pack to find it's the one there.
+  Skipping it means trusting sizes and times for the sources (as the kept generate does, and as the 2026-11-03
+  note below chose not to: "so fresh processes detect same-size/same-time edits too"), an item's bytes read
+  only when something needs them, and the pack known unchanged from its inputs' hashes without being built.
+  A day's work in asset_files.c, the import caches and build_pack, and the trust is the owner's call.
+- The splitter on threads (a level's halves are apart): its lists and the arena are one thread's.
+- `-O1` for a debug build's plumbing: a fifth less compile (one part: 10.0 to 7.8 s before this round), for
+  slower debug play; not measured in a battle.
+- Layout changes compile every part because each stamp holds the whole header. A part's stamp of the
+  declarations it names would leave most parts alone, and needs the header read as C.
+
+Tests: `tide_cli_build_report`: the debug game's plumbing left as it was by an edit of a system's code (its
+files' times, and game.c alone compiled), cut again when a part is written over; a big game's code in parts in a
+debug build, each compiled once, and an edit compiling one or two. `tidec_e2e_kept_lanes_debug`,
+`wide_lanes_debug`, `row_lanes_debug`: those fixtures as a debugger's build (SPLIT_PLUMBING), where the wide
+components' loops and array parameters are.
+
+Validation (Windows, Clang 23.1.2, ASan): 26 focused tests pass (the 19 of the round below, the three `_debug`
+fixtures, `tidec_e2e_nested_split_debug`, `tidec_debugger_natvis`, `tidec_split_code_stable`, `tidec_recompile`).
+The packaged tide passes `cache_test.mjs --part cache --gpu` and `--part modes --gpu`. Mount & Rifle builds
+and runs in debug. Not run: the other fixtures, web and Android builds, a watching run with a window,
+Linux/macOS: CI's.
+
 ## Debug builds of big games: no ThinLTO, wide components' columns in loops (2026-11-17)
 
 Owner: Mount & Rifle's `tide run` "takes like 30+ seconds", so much that `--release` was no slower. Measured with

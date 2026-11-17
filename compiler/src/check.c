@@ -27186,6 +27186,7 @@ bool check(program *prog)
     // packed (build_pack)
     int asset_decls = 0;
     for (int i = 0; i < prog->decls.count; i++) asset_decls += prog->decls.items[i]->kind == DECL_ASSET;
+    diag_step(NULL);
     // The images the assets' paths name, decoded ahead on several threads, where they'd be decoded as each is
     // checked (asset_files_decode_ahead): taken from the paths as written, so a path that isn't one only costs time
     if (!prog->asset_metadata_only && asset_decls) {
@@ -27204,12 +27205,14 @@ bool check(program *prog)
         }
         asset_files_decode_ahead(declaring.items, written.items, written.count, prog->game_folder);
     }
+    diag_step("assets read ahead");
     compile_progress_whole(2 * asset_decls);
     for (int i = 0, imported = 0; i < prog->decls.count; i++) {
         if (prog->decls.items[i]->kind != DECL_ASSET) continue;
         check_asset_decl(&c, prog->decls.items[i]); // After the constants: a path can be one
         compile_progress_reach(++imported);
     }
+    diag_step("assets checked");
     if (prog->game_folder && prog->assets.count > 0) {
         // The hashes of the named files, in the game's .tide/, so one that moves is found by its bytes
         int path_count = 0;
@@ -27226,6 +27229,7 @@ bool check(program *prog)
         }
         asset_files_save_hashes(prog->game_folder, named, count);
     }
+    diag_step("assets' hashes saved");
     check_settings(&c);
     check_startup(&c);
     if (prog->max_rewind > 0.0f && prog->input) {

@@ -118,7 +118,7 @@ static void gen_near_same(gen *g)
         bool stored = false;
         for (int a = 0; a < prog->archetypes.count && !stored; a++) stored = !arch_local(g, a) && arch_stores(g, a, k);
         if (!stored) continue;
-        sb_printf(o, "static bool tide_near_same_rows_%s(const uint8_t *const *const x, const uint8_t *const *const y, const tide_entity *const ent,\n"
+        sb_printf(o, "static __attribute__((noinline)) bool tide_near_same_rows_%s(const uint8_t *const *const x, const uint8_t *const *const y, const tide_entity *const ent,\n"
                      "                                    const uint8_t *const tags, const uint8_t *const here, const uint8_t *const there, const uint32_t n)\n{\n"
                      "    for (uint32_t i = 0; i < n; i++) {\n"
                      "        if (tide_row_gone(&ent[i]) || (tags && tags[i])) continue;\n"

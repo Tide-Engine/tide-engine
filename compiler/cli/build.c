@@ -768,8 +768,8 @@ typedef struct build {
     // The game's own code starts compiling as soon as a generate has written it (game_written), into `early`:
     struct compiles *early;   // ...the build's list, NULL for a generate that compiles nothing ahead
     const char *early_gen;    // ...the generated files' folder
-    char *early_object;       // ...its object, NULL for a build that waits for the generate to end
-    bool early_queued;        // ...and it was looked at: queue_game leaves it be
+    char *early_object;       // ...game.c's object, NULL for a build that waits for the generate to end
+    file_list early_queued;   // ...and the files looked at this way, by name: queue_game leaves them be
     game_info info; // Its settings, from its last generate
     sb externs;     // ...and the C function of each of its extern functions, a line each
     file_list engine;       // The engine's objects
@@ -1503,7 +1503,7 @@ static uint64_t header_stamp(const char *folder)
 // compiled from, `first` for the one to start ahead of its turn, `optimized`
 // for one compiled as the engine is.
 static void queue_unless_stamped(const build *b, compiles *list, const char *source, const char *object, const char *gen,
-                                 const uint64_t h, const bool first, const bool optimized, const bool thin)
+                                 const uint64_t h, const bool first, const bool optimized, const bool thin, const bool lean)
 {
     char stamp[32];
     snprintf(stamp, sizeof stamp, "%016llx", (unsigned long long)h);
@@ -1518,6 +1518,8 @@ static void queue_unless_stamped(const build *b, compiles *list, const char *sou
             arg(&job->a, "-flto=thin");
             job->size = sys_file_size(source);
         }
+        // Every type the game declares is in game.o's debug info (config_flags): once is enough
+        if (lean && !b->opts->distribution) arg(&job->a, "-feliminate-unused-debug-types");
         job->stamp_path = stamp_path;
         job->stamp = copy_text(stamp);
         job->first = first;
@@ -1536,8 +1538,8 @@ static void queue_unless_stamped(const build *b, compiles *list, const char *sou
 // the one to start ahead of its turn, `plumbing` for the generated plumbing a
 // debug build compiles as the engine (splits_plumbing). False when the
 // generated files aren't there to read.
-static bool queue_generated(const build *b, compiles *list, const char *source, const char *object, const char *gen,
-                            const bool first, const bool plumbing, const bool thin)
+static bool generated_text_stamp(const build *b, const char *source, const char *gen, const bool first, const bool plumbing,
+                            const bool thin, const bool lean, uint64_t *stamp)
 {
     char *text = sys_read_file(source, NULL);
     char *header_path = path_join(gen, "game.h");
@@ -1551,6 +1553,7 @@ static bool queue_generated(const build *b, compiles *list, const char *source, 
     char *flags = stamp_of(b, plumbing, false);
     uint64_t h = hash_text(0xCBF29CE484222325ull, flags);
     if (thin) h = hash_text(h, "ThinLTO partitions v1");
+    if (lean) h = hash_text(h, "a part of the code");
     h = hash_text(hash_text(h, source), text);
     // Only the managed reactor embeds this macro in its launcher. Ordinary
     // launchers use the game API's identity, so gameplay edits still reuse
@@ -1569,8 +1572,35 @@ static bool queue_generated(const build *b, compiles *list, const char *source, 
     free(flags);
     free(text);
     free(header);
-    queue_unless_stamped(b, list, source, object, gen, h, first, plumbing, thin);
+    *stamp = h;
     return true;
+}
+
+static bool queue_generated(const build *b, compiles *list, const char *source, const char *object, const char *gen,
+                            const bool first, const bool plumbing, const bool thin, const bool lean)
+{
+    uint64_t h = 0;
+    if (!generated_text_stamp(b, source, gen, first, plumbing, thin, lean, &h)) return false;
+    queue_unless_stamped(b, list, source, object, gen, h, first, plumbing, thin, lean);
+    return true;
+}
+
+// The stamps of a manifest's files, each on a thread: a big game's generated C is a hundred megabytes to read and
+// hash, a third of a second one file after another.
+typedef struct part_stamp {
+    const build *b;
+    const char *gen;
+    char *source;
+    bool first, plumbing, thin, lean;
+    bool wanted; // Not looked at already (game_written)
+    bool ok;
+    uint64_t stamp;
+} part_stamp;
+
+static void part_stamp_work(void *context, const uint32_t i)
+{
+    part_stamp *p = &((part_stamp *)context)[i];
+    if (p->wanted) p->ok = generated_text_stamp(p->b, p->source, p->gen, p->first, p->plumbing, p->thin, p->lean, &p->stamp);
 }
 
 // Lists the .c and .cpp files of the game, or of one of its packages
@@ -1672,8 +1702,37 @@ static bool queue_game(build *b, compiles *list, const char *gen, const char *ga
     free(manifest_path);
     bool ok = true;
     b->generated_lto = false;
+    part_stamp *stamps = NULL;
+    int stamp_count = 0, at = 0;
     if (manifest) {
-        for (char *line = manifest; *line && ok;) {
+        // Well-formed lines alone: the loop below says what's wrong with another
+        for (const char *line = manifest; *line; line = strchr(line, '\n') ? strchr(line, '\n') + 1 : line + strlen(line)) stamp_count++;
+        stamps = calloc((size_t)stamp_count + 1u, sizeof *stamps);
+        if (!stamps) abort();
+        int n = 0;
+        for (const char *line = manifest; *line && n < stamp_count; n++) {
+            const char *end = strchr(line, '\n');
+            const size_t len = end ? (size_t)(end - line) : strlen(line);
+            char *name = len >= 10 ? malloc(len - 3) : NULL;
+            if (name) {
+                memcpy(name, line + 4, len - 4);
+                name[len - 4] = 0;
+            }
+            if (name && (line[0] == '0' || line[0] == '1') && line[1] == ' ' && (line[2] == '0' || line[2] == '1') && line[3] == ' '
+                && strncmp(name, "game", 4) == 0 && has_extension(name, ".c") && !strchr(name, '/') && !strchr(name, 92)
+                && !strstr(name, "..")) {
+                const bool plumbing = line[0] == '1', main = strcmp(name, "game.c") == 0;
+                bool early = false;
+                for (int i = 0; i < b->early_queued.count; i++) early = early || strcmp(b->early_queued.items[i], name) == 0;
+                stamps[n] = (part_stamp){.b = b, .gen = gen, .source = path_join(gen, name), .first = main, .plumbing = plumbing,
+                                         .thin = line[2] == '1' && !splits_plumbing(b),
+                                         .lean = !plumbing && !main && splits_plumbing(b), .wanted = !early};
+            }
+            free(name);
+            line = end ? end + 1 : line + len;
+        }
+        build_threads_each((uint32_t)stamp_count, (uint32_t)(b->jobs > 0 ? b->jobs : 1), part_stamp_work, stamps);
+        for (char *line = manifest; *line && ok; at++) {
             char *end = strchr(line, '\n');
             if (end) *end = '\0';
             if (strlen(line) < 10 || strncmp(line + 4, "game", 4) != 0 || !has_extension(line + 4, ".c")
@@ -1695,21 +1754,29 @@ static bool queue_game(build *b, compiles *list, const char *gen, const char *ga
             char *object = main ? copy_text(objects->items[0]) : format("%s%s.o", stem, suffix);
             free(stem);
             free(suffix);
-            // (Looked at already, and compiling if it changed: game_written)
-            ok = main && b->early_queued ? true : queue_generated(b, list, source, object, gen, main, plumbing, thin);
+            // A debug build's code beside game.c: its other parts, compiled as it is. (And any of them looked at
+            // already, and compiling if it changed: game_written)
+            bool early = false;
+            for (int i = 0; i < b->early_queued.count; i++) early = early || strcmp(b->early_queued.items[i], name) == 0;
+            if (!early) {
+                ok = stamps[at].ok;
+                if (ok) queue_unless_stamped(b, list, source, object, gen, stamps[at].stamp, main, plumbing, thin, stamps[at].lean);
+            }
             if (!main) add_file(&c->objects, object);
             b->generated_lto = b->generated_lto || thin;
             free(source);
             free(object);
             line = end ? end + 1 : line + strlen(line);
         }
+        for (int i = 0; i < stamp_count; i++) free(stamps[i].source);
+        free(stamps);
         free(manifest);
     } else {
         fprintf(stderr, "tide: the generated C manifest for %s is missing; rebuild the game\n", game_c);
         ok = false;
     }
-    if (ok) ok = queue_generated(b, list, start_c, objects->items[1], gen, false, false, false);
-    b->early_queued = false;
+    if (ok) ok = queue_generated(b, list, start_c, objects->items[1], gen, false, false, false, false);
+    free_files(&b->early_queued);
     if (!ok) {
         free_compiles(list);
         return false;
@@ -3019,7 +3086,7 @@ static bool generate_sources(build *b, const char *gen, const bool layout)
     const char *const *build_libs = native_link.items;
 #endif
     const codegen_options codegen = {.name = "game", .out_dir = gen, .line_directives = true, .layout = layout,
-                                     .split_plumbing = splits_plumbing(b),
+                                     .split_plumbing = splits_plumbing(b), .split_own_code = true,
                                      .split_code = true, .split_code_min_bytes = 4u * 1024u * 1024u,
                                      .split_code_parts = 16,
                                      .split_code_part_bytes = 512u * 1024u,
@@ -3076,20 +3143,36 @@ static bool generate_sources(build *b, const char *gen, const bool layout)
     return ok;
 }
 
-// A generate has written the game's own code whole (compile_written): a debug build's game.c, which takes a few
-// seconds at -O0 and nothing the generate writes after it. It starts now, one compile more than are running,
-// while the generate cuts the plumbing into its parts. Not when files compile one at a time (TIDE_JOBS=1).
+// A generate has written a file of the game's own code whole (compile_written): a debug build's game.c and its
+// parts, compiled at -O0, which take nothing the generate writes after them. One that changed starts compiling
+// now, a compile more than are running, while the generate cuts the plumbing into its parts. Not when files
+// compile one at a time (TIDE_JOBS=1). Their objects are named as queue_game names them.
 static build *early_build;
 
 static void game_written(const char *path)
 {
     build *b = early_build;
-    if (!b || !b->early || !b->early_object || b->jobs < 2 || b->early_queued) return;
-    if (strcmp(path_base(path), "game.c") != 0) return;
-    if (!queue_generated(b, b->early, path, b->early_object, b->early_gen, true, false, false)) return;
-    b->early_queued = true;
-    int stop = b->early->count;
-    start_compiles(b->early, b->early->running_count + 1, &stop);
+    const char *name = path_base(path);
+    if (!b || !b->early || !b->early_object || b->jobs < 2 || !splits_plumbing(b)) return;
+    if (strncmp(name, "game", 4) != 0 || strncmp(name, "game_plumbing", 13) == 0 || !has_extension(name, ".c")) return;
+    const bool main = strcmp(name, "game.c") == 0;
+    char *stem = copy_text(b->early_object);
+    if (has_extension(stem, ".o")) stem[strlen(stem) - 2] = '\0';
+    char *suffix = copy_text(name + 4);
+    suffix[strlen(suffix) - 2] = '\0';
+    char *object = main ? copy_text(b->early_object) : format("%s%s.o", stem, suffix);
+    const int before = b->early->count;
+    if (queue_generated(b, b->early, path, object, b->early_gen, main, false, false, !main)) {
+        add_file(&b->early_queued, name);
+        if (b->early->count > before && b->early->running_count < b->jobs) {
+            b->early->items[before].first = true; // Whichever it is, it starts now
+            int stop = b->early->count;
+            start_compiles(b->early, b->early->running_count + 1, &stop);
+        }
+    }
+    free(stem);
+    free(suffix);
+    free(object);
 }
 
 static bool generate(build *b, const char *gen, const bool layout, compiles *ahead)
@@ -3097,7 +3180,7 @@ static bool generate(build *b, const char *gen, const bool layout, compiles *ahe
     const bool own_feedback = begin_build_feedback();
     b->early = ahead;
     b->early_gen = gen;
-    b->early_queued = false;
+    free_files(&b->early_queued);
     build_step("resolving packages");
     const bool packages = find_packages(b->folder, &b->packages);
     if (packages && ahead) {
@@ -3709,7 +3792,7 @@ static bool queue_host(run *r, compiles *list, file_list *objects)
     const uint64_t h = hash_text(hash_text(hash_text(0xCBF29CE484222325ull, flags), host_c), text);
     free(flags);
     bool ok = sys_write_text(host_c, text);
-    if (ok) queue_unless_stamped(&r->b, list, host_c, objects->items[0], NULL, h, false, false, false);
+    if (ok) queue_unless_stamped(&r->b, list, host_c, objects->items[0], NULL, h, false, false, false, false);
     free(host_c);
     return ok;
 }

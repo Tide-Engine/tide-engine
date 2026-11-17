@@ -25,6 +25,7 @@ typedef struct codegen_options {
     // With line_directives: write the plumbing, all but the game's own code, as <name>_plumbing.c, for a debug build
     // to compile optimized while the game's code (<name>.c) stays as it was written (plumbing_split.inc).
     bool split_plumbing;
+    bool split_own_code;           // With split_plumbing and split_code: the game's own code in parts too, as the plumbing is
     bool split_code; // Stable generated C partitions, listed in <name>_parts.txt.
     size_t split_code_min_bytes; // Smaller files stay whole (CLI only; tidec splits explicitly).
     int split_code_parts;          // The most parts of the code: a power of two up to 16 (0: 4).
