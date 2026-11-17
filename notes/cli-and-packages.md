@@ -1,5 +1,12 @@
 # `tide`, packages and the package
 
+## The game's start (2026-11-18)
+
+The biggest piece the fourth round below left: 1.0-1.4 s of every `tide run`, in every build mode. It was the
+pack read, copied and kept twice, not the game: notes/assets-and-files.md, its first section. Mount & Rifle, the
+same measure, a quiet machine, three passes: the program alone 1.4-1.8 s to 0.65-0.69 s; nothing changed 1.4 s to
+0.87 s; a constant edited 3.9-4.3 s to 3.5 s; a field added to a singleton 9.0 s to 7.8-7.9 s.
+
 ## Debug builds of big games, fourth round: where tidec's own time went (2026-11-17, night)
 
 Owner, after the round below: "i expected a bigger jump, how can we achieve a drastic change in total time", and

@@ -567,6 +567,57 @@ TIDE_TEST(pack_room_filled_later_is_the_pack_made_at_once_and_its_recipe_tells_p
     }
 }
 
+TIDE_TEST(pack_given_is_loaded_where_it_was_read_and_copied_where_it_has_no_room)
+{
+    // A region that stays where it was built (17 MiB) and one that follows its entries
+    for (int big = 0; big < 2; big++) {
+        const uint32_t blob = big ? 17u << 20 : 300u;
+        size_t size;
+        uint8_t *file = blob_pack(blob, 7, 3, NULL, 0, &size);
+        // Read with room after it, as a host reads one: the loaded pack is those bytes
+        const size_t room = size + (2u << 20);
+        uint8_t *read = malloc(room);
+        TIDE_REQUIRE(read != NULL);
+        memcpy(read, file, size);
+        memset(read + size, 0xEE, room - size); // What a reader leaves after the file is anything
+        tide_pack_give(read, size, room);
+        TIDE_REQUIRE(tide_pack_load(read, size));
+        TIDE_CHECK(tide_pack_given(read) && !tide_pack_given(file));
+        const tide_pack_entry *e = tide_pack_find("Game.blob2", TIDE_PACK_BYTES);
+        TIDE_REQUIRE(e != NULL && e->size == blob);
+        const uint8_t *bytes = tide_pack_span(TIDE_PACK_BASE + e->offset + sizeof(tide_block), blob);
+        tide_pack_header h;
+        memcpy(&h, file, sizeof h);
+        TIDE_CHECK(bytes != NULL && bytes[0] == 7 && bytes[blob - 1u] == 7);
+        TIDE_CHECK(bytes >= read + h.region_at && bytes < read + size); // In the bytes given, not a copy
+        // The same pack loaded from bytes nobody gave is another copy, and the given ones go with the first
+        TIDE_REQUIRE(tide_pack_load(file, size));
+        TIDE_CHECK(!tide_pack_given(read) && !tide_pack_given(file));
+        e = tide_pack_find("Game.blob2", TIDE_PACK_BYTES);
+        TIDE_REQUIRE(e != NULL);
+        bytes = tide_pack_span(TIDE_PACK_BASE + e->offset + sizeof(tide_block), blob);
+        TIDE_CHECK(bytes != NULL && bytes[blob - 1u] == 7 && !(bytes >= file && bytes < file + size));
+        // With no room for what's laid out after the region, or offered as another size, they stay the caller's
+        uint8_t *tight = malloc(size);
+        TIDE_REQUIRE(tight != NULL);
+        memcpy(tight, file, size);
+        tide_pack_give(tight, size, size);
+        TIDE_REQUIRE(tide_pack_load(tight, size));
+        TIDE_CHECK(!tide_pack_given(tight));
+        tide_pack_give(tight, size - 1u, room);
+        TIDE_REQUIRE(tide_pack_load(tight, size));
+        TIDE_CHECK(!tide_pack_given(tight));
+        // An offer is for the next load alone
+        tide_pack_give(tight, size, room);
+        TIDE_REQUIRE(tide_pack_load(file, size));
+        TIDE_REQUIRE(tide_pack_load(tight, size));
+        TIDE_CHECK(!tide_pack_given(tight));
+        tide_pack_unload();
+        free(tight);
+        free(file);
+    }
+}
+
 TIDE_TEST(pack_refuses_the_previous_map_format_and_keeps_the_loaded_pack)
 {
     size_t size;

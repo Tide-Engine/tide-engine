@@ -1,3 +1,53 @@
+## A pack loaded where it was read (2026-11-18)
+
+Owner, on the 1.0-1.4 s a run of Mount & Rifle takes to start (notes/cli-and-packages.md): "try looking into the
+startup then". Timed with marks through `tide_host_run` (taken out again), a run with no window of two frames:
+
+| | before | after |
+|---|---|---|
+| the window and the Vulkan device | 0.19 s | 0.18 s |
+| the pack's file read (1.48 GB) | 0.27-0.35 s | 0.115 s |
+| the game's `assets` (the pack loaded) | 0.24-0.32 s | 0.08 s |
+| local state, the session, the match asked for | 0.003 s | the same |
+| the first frame | 0.08 s | 0.07 s |
+| the second, and closing | 0.24-0.35 s | 0.18 s (0.08 of it the window and device closing) |
+| the program alone, two frames | 1.4-1.8 s | 0.65-0.69 s |
+
+Nothing of it was the game's own: the file was read into memory, copied into the loaded pack's memory, and the
+first copy kept by the host, which nothing read again.
+
+- **The loader takes the bytes it's given** (`tide_pack_give`, `tide_pack_given`, engine/src/pack_load.c): whoever
+  read the file offers its bytes and how much is allocated there, and the next `tide_pack_load` of exactly those
+  bytes makes the file's region the loaded pack's, where it's a whole pack that isn't compressed and the room
+  holds what loading lays out after the region (`textures_room`, to a megabyte's slot). What's past the file's
+  bytes is zeroed, as `tide_alloc`'s memory is. `tide_pack_unload` frees them. Anything else loads as it did, by
+  a copy: a compressed pack, bytes with no room, bytes nobody offered (the web's, Android's, a test's).
+  Generated C is as it was: `tide_assets_load` calls `tide_pack_load`, after its fingerprints' check of the
+  bytes as the file has them.
+- **The host offers them** (`tide_run_load_given`, tide/host.h; both where it loads in place and on the loading
+  screen's thread), and no longer keeps bytes the pack took (`tide_run_pack` is NULL then; `tide_run_loader.found`
+  says a pack was read). A game's library with a runtime of its own doesn't see the host's offer and loads by a
+  copy, as before.
+- **The file is read with room, and by the pool's threads where nobody's shown how far it got**
+  (`tide_platform_read_counted`, platform.c: a sixteenth of the file and 2 MiB more than its size, which
+  `tide_platform_read_room` says; pieces of 8 MiB each through a handle of the thread's own, `read_some`, for a
+  read with no `progress`, which is the host's in place, on the thread that runs the pool). The loading screen's
+  read is one thread's, as it was, counting as it goes.
+
+A run's memory is a pack less: 1.48 GB for this game.
+
+Left, of the 0.66 s: the Vulkan loader finding its drivers and layers 0.09 s and the device 0.08 s (the file
+could be read meanwhile: 0.1 s); `assets` 0.08 s; the two frames 0.17 s; closing 0.08 s; the process ending
+0.05 s.
+
+Tests: `pack_given_is_loaded_where_it_was_read_and_copied_where_it_has_no_room` (tests/test_pack.c: a region that
+stays and one that follows its entries read from the given bytes, garbage after the file's bytes, the pack let go
+of by the next load, bytes with no room or offered as another size or for an earlier load left the caller's).
+Validation (Windows, Clang 23.1.2, ASan): the 63 pack tests, `tide_server_pack`, `tide_platform_skinned`,
+`tide_platform_baked`, `tide_platform_shaders`, `tide_platform_texture_capacity`, three asset e2e fixtures; Mount &
+Rifle runs from the packaged tide. Not run: a window's loading screen (its read and its handing over are the
+same calls), Linux/macOS/Android, the web (which has no file to read): CI's.
+
 ## Files taken by size and time, pixels left in the cache, a pack known without being built (2026-11-17)
 
 Owner, on the 2.25 s a build of Mount & Rifle spent on assets that hadn't changed (notes/cli-and-packages.md):

@@ -55,12 +55,9 @@ uint8_t *tide_platform_pack_counted(size_t *size, uint64_t progress[2])
 }
 
 #ifndef __wasm__
-uint8_t *tide_platform_read_counted(const char *path, size_t *size, uint64_t progress[2])
+// A file's size in 64 bits (Windows' long is 32, and a pack can be more than 2 GB), with `f` back at its start
+static int64_t file_length(FILE *f)
 {
-    *size = 0;
-    FILE *f = fopen(path, "rb");
-    if (!f) return NULL;
-    // Its size in 64 bits: Windows' long is 32, and a pack can be more than 2 GB
 #ifdef _WIN32
     const int64_t length = _fseeki64(f, 0, SEEK_END) == 0 ? _ftelli64(f) : -1;
     _fseeki64(f, 0, SEEK_SET);
@@ -68,22 +65,89 @@ uint8_t *tide_platform_read_counted(const char *path, size_t *size, uint64_t pro
     const int64_t length = fseek(f, 0, SEEK_END) == 0 ? (int64_t)ftell(f) : -1;
     fseek(f, 0, SEEK_SET);
 #endif
-    uint8_t *bytes = length > 0 && (uint64_t)length < (uint64_t)PTRDIFF_MAX ? malloc((size_t)length) : NULL;
+    return length;
+}
+
+// A file read in pieces by every thread of the pool at once, each through a handle of its own: a gigabyte from
+// the system's cache is mostly its pages being made and filled, which threads do side by side.
+enum { READ_PIECE = 8 << 20 };
+
+typedef struct read_pieces {
+    const char *path;
+    uint8_t *bytes;
+    uint64_t length;
+    uint32_t next;   // The next piece to read (atomic)
+    uint32_t failed; // A piece couldn't be read (atomic)
+} read_pieces;
+
+static void read_some(void *context, const uint32_t thread)
+{
+    (void)thread;
+    read_pieces *r = context;
+    const uint64_t pieces = (r->length + READ_PIECE - 1u) / READ_PIECE;
+    FILE *f = NULL;
+    for (;;) {
+        const uint64_t i = __atomic_fetch_add(&r->next, 1u, __ATOMIC_RELAXED);
+        if (i >= pieces || __atomic_load_n(&r->failed, __ATOMIC_RELAXED)) break;
+        if (!f) f = fopen(r->path, "rb");
+        const uint64_t at = i * READ_PIECE, left = r->length - at;
+        const size_t want = left < READ_PIECE ? (size_t)left : (size_t)READ_PIECE;
+#ifdef _WIN32
+        const bool there = f && _fseeki64(f, (int64_t)at, SEEK_SET) == 0;
+#else
+        const bool there = f && fseek(f, (long)at, SEEK_SET) == 0;
+#endif
+        if (!there || fread(r->bytes + at, 1, want, f) != want) __atomic_store_n(&r->failed, 1u, __ATOMIC_RELAXED);
+    }
+    if (f) fclose(f);
+}
+
+// What the last read allocated (tide_platform_read_room)
+static const uint8_t *read_last;
+static size_t read_last_room;
+
+size_t tide_platform_read_room(const uint8_t *bytes)
+{
+    return bytes && bytes == __atomic_load_n(&read_last, __ATOMIC_ACQUIRE) ? read_last_room : 0u;
+}
+
+uint8_t *tide_platform_read_counted(const char *path, size_t *size, uint64_t progress[2])
+{
+    *size = 0;
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    const int64_t length = file_length(f);
+    // With room after the file's bytes: a pack is loaded where it's read, and lays a little out after its region
+    // (tide_pack_give). Memory nothing touches costs nothing.
+    const bool fits = length > 0 && (uint64_t)length < (uint64_t)PTRDIFF_MAX / 2u;
+    const size_t room = fits ? (size_t)length + (size_t)length / 16u + ((size_t)2u << 20) : 0u;
+    uint8_t *bytes = fits ? malloc(room) : NULL;
     if (progress) __atomic_store_n(&progress[1], length > 0 ? (uint64_t)length : 0u, __ATOMIC_RELAXED);
-    // In pieces, saying how far it got, for a loading screen to show
     size_t at = 0;
-    while (bytes && at < (size_t)length) {
+    const tide_jobs *pool = progress ? NULL : tide_platform_jobs();
+    if (bytes && pool && pool->run && (uint64_t)length >= 4u * READ_PIECE) {
+        // Nobody's shown how far it got (the host loads it in place, on the thread that runs the pool): at once
+        fclose(f);
+        f = NULL;
+        read_pieces r = {.path = path, .bytes = bytes, .length = (uint64_t)length};
+        pool->run(pool->self, read_some, &r);
+        if (!r.failed) at = (size_t)length;
+    }
+    // In pieces, saying how far it got, for a loading screen to show
+    while (f && bytes && at < (size_t)length) {
         const size_t left = (size_t)length - at;
         const size_t got = fread(bytes + at, 1, left < ((size_t)16 << 20) ? left : ((size_t)16 << 20), f);
         if (!got) break;
         at += got;
         if (progress) __atomic_store_n(&progress[0], (uint64_t)at, __ATOMIC_RELAXED);
     }
-    fclose(f);
+    if (f) fclose(f);
     if (!bytes || at != (size_t)length) {
         free(bytes);
         return NULL;
     }
+    read_last_room = room;
+    __atomic_store_n(&read_last, bytes, __ATOMIC_RELEASE);
     *size = at;
     return bytes;
 }

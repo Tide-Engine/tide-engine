@@ -457,6 +457,10 @@ uint8_t *tide_platform_pack_counted(size_t *size, uint64_t progress[2]);
 // A file read whole the same way, counting as it goes; NULL for one that
 // can't be read. Desktop and Android: the web has no files to read this way.
 uint8_t *tide_platform_read_counted(const char *path, size_t *size, uint64_t progress[2]);
+// How many bytes are allocated at `bytes`, where they're what the last tide_platform_read_counted (or a pack read
+// through it) returned: more than the file's, so a pack can be loaded where it was read (tide_pack_give). 0 for
+// any other bytes.
+size_t tide_platform_read_room(const uint8_t *bytes);
 
 // 64 bits from the system's random number generator, which nobody could guess:
 // what a session makes the seeds of the matches it starts from

@@ -106,6 +106,7 @@ typedef struct skinned_span {
 static struct {
     uint8_t digest[32];
     uint8_t *region;
+    uint8_t *given; // The file's bytes the region is in, where a reader gave them (tide_pack_give): what's freed
     uint64_t size;
     uint64_t file_size; // Before mutable texture/clip references are laid out after it.
     tide_pack_entry *entries;
@@ -1014,8 +1015,29 @@ static bool load_compressed(const uint8_t *bytes, const size_t size)
     return ok;
 }
 
+// What a reader offered (tide_pack_give), until the next load
+static struct {
+    uint8_t *bytes;
+    size_t size, room;
+} offered;
+
+void tide_pack_give(uint8_t *bytes, const size_t size, const size_t room)
+{
+    offered.bytes = bytes;
+    offered.size = size;
+    offered.room = room;
+}
+
+bool tide_pack_given(const uint8_t *bytes)
+{
+    return bytes && pack.given == bytes;
+}
+
 bool tide_pack_load(const uint8_t *bytes, const size_t size)
 {
+    uint8_t *given = offered.bytes == bytes && offered.size == size ? offered.bytes : NULL;
+    const size_t given_room = offered.room;
+    offered.bytes = NULL; // This load's, or nobody's
     if (size >= 8u && memcmp(bytes, TIDE_PACK_COMPRESSED_MAGIC, 8) == 0) return load_compressed(bytes, size);
     tide_pack_header h;
     if (size < sizeof h) return false;
@@ -1027,6 +1049,14 @@ bool tide_pack_load(const uint8_t *bytes, const size_t size)
     const uint64_t room = slots_for(whole);
     if (whole > TIDE_PACK_BASE || room > SIZE_MAX) return false; // More than memory holds
     tide_pack_unload();
+    // Where the file was read: its region is the loaded pack's, with no copy, as long as what's laid out after it
+    // has its room there too
+    if (given && h.region_at <= given_room && room <= given_room - h.region_at) {
+        memset(given + size, 0, (size_t)(h.region_at + room - size)); // As tide_alloc's memory: zero past the file
+        take_region(&h, entries, given + h.region_at);
+        pack.given = given;
+        return true;
+    }
     uint8_t *region = tide_alloc(room ? (size_t)room : 16u);
     memcpy(region, bytes + h.region_at, (size_t)h.region_size);
     take_region(&h, entries, region);
@@ -1037,7 +1067,8 @@ void tide_pack_unload(void)
 {
     tide_asset_pack_clear();
     memset(pack.digest, 0, sizeof pack.digest);
-    free(pack.region);
+    free(pack.given ? pack.given : pack.region);
+    pack.given = NULL;
     free(pack.entries);
     free(pack.textures);
     free(pack.cubes);

@@ -326,6 +326,16 @@ uint8_t *tide_pack_expand(const uint8_t *bytes, size_t size, size_t *pack_size);
 // pack's pieces are read straight into that memory.
 bool tide_pack_load(const uint8_t *bytes, size_t size);
 
+// For whoever read a pack's file into memory of its own, to have it loaded where it is: a big game's pack is
+// gigabytes, which loading otherwise copies while the reader keeps its own. tide_pack_give offers `bytes` (malloc'd,
+// `size` of the file's in `room` allocated), and the next tide_pack_load of exactly those bytes and that size takes
+// them as the loaded pack's memory, to free when it's let go of, where they're a whole pack that isn't compressed
+// and the room holds what loading lays out after the file's region; any other load forgets the offer.
+// tide_pack_given says whether the loaded pack is in `bytes`, which are then no longer the caller's. The same
+// thread offers and loads.
+void tide_pack_give(uint8_t *bytes, size_t size, size_t room);
+bool tide_pack_given(const uint8_t *bytes);
+
 // Lets go of the loaded pack: before a game's library is unloaded.
 void tide_pack_unload(void);
 // Exact source-pack identity for negotiating asset-relative state transfers.

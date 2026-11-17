@@ -18,6 +18,7 @@
 #include "tide/layout.h"
 #include "tide/hosting.h"
 #include "tide/network.h"
+#include "tide/pack.h"
 #include "tide/page.h"
 #include "tide/platform.h"
 #include "tide/profiler.h"
@@ -213,12 +214,22 @@ static inline void tide_run_assets_kept(uint8_t *bytes, const size_t size, const
     tide_clips_prepare(tide_platform_jobs()); // Its clips decoded now, on the pool's threads, not at their first play
 }
 
+// Has the game load the pack in `bytes`, where they were read: offered to the loader (tide_pack_give), which takes
+// them as the pack's memory where it can. A gigabyte isn't then copied, and kept twice.
+static inline bool tide_run_load_given(uint8_t *bytes, const size_t size)
+{
+    const size_t room = tide_platform_read_room(bytes);
+    if (room) tide_pack_give(bytes, size, room);
+    return tide_run_game->assets(bytes, size);
+}
+
 // The pack from `bytes` (malloc'd, the host's from here on): the game loads it.
 static inline void tide_run_assets_from(uint8_t *bytes, const size_t size)
 {
     free(tide_run_pack); // The last one's bytes first: a pack can be gigabytes
     tide_run_pack = NULL;
-    const bool loaded = !tide_run_game->assets || !bytes || tide_run_game->assets(bytes, size);
+    const bool loaded = !tide_run_game->assets || !bytes || tide_run_load_given(bytes, size);
+    if (tide_pack_given(bytes)) bytes = NULL; // The loaded pack's own memory now
     tide_run_assets_kept(bytes, size, loaded);
 }
 
@@ -2616,6 +2627,7 @@ typedef struct tide_run_loader {
     uint8_t *bytes;       // What was read, and whether the game loaded it: the thread's until the job's done
     size_t size;
     bool loaded;
+    bool found;     // There was a pack to read (its bytes may be the loaded pack's by now, and not kept here)
     bool read;      // A pack is read on the pool: none, where the game has no pack or it was read in place
     bool on;        // Frames show where it is, until it's in and the game has begun
     bool named;     // The platform knows the game by its ID (tide_run_name_game), from the loader's first frame
@@ -2633,8 +2645,9 @@ static inline void tide_run_load_work(void *context)
     uint8_t *bytes = l->path ? tide_platform_read_counted(l->path, &size, l->progress)
                              : tide_platform_pack_counted(&size, l->progress);
     __atomic_store_n(&l->checking, 1u, __ATOMIC_RELAXED);
-    l->loaded = !bytes || tide_run_game->assets(bytes, size);
-    l->bytes = bytes;
+    l->loaded = !bytes || tide_run_load_given(bytes, size);
+    l->found = bytes != NULL;
+    l->bytes = tide_pack_given(bytes) ? NULL : bytes; // The loaded pack's own memory, where it took them
     l->size = size;
 }
 
@@ -2701,12 +2714,12 @@ static inline int tide_run_loading_frame(void *user, const float seconds)
         l->named = true;
     }
     if (!l->warming && __atomic_load_n(&l->job.done, __ATOMIC_ACQUIRE)) {
-        if (l->read && !l->bytes && !l->path) {
+        if (l->read && !l->found && !l->path) {
             fprintf(stderr, "tide: the game's pack of assets isn't with the program (<program>.pack beside it): they read as empty\n");
         }
         free(l->path);
         l->path = NULL;
-        if (l->bytes) tide_run_assets_kept(l->bytes, l->size, l->loaded);
+        if (l->found) tide_run_assets_kept(l->bytes, l->size, l->loaded);
         char fallback[512];
         (void)tide_run_name_game(tide_run_game, fallback, sizeof fallback); // How its shaders drew before, read first
         tide_run_prewarm();

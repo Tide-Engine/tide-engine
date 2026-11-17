@@ -557,6 +557,14 @@ constants. `tide_pack_load` takes a compressed file as well as a raw one and loa
 its raw path is the code it was, split into `file_is_whole` and `take_region`. Generated C calls no new runtime
 function and no host changes: each hands `tide_assets_load` the file's bytes as before.
 
+## A pack loaded where it was read (2026-11-18)
+
+A clear win (measured, the loaded pack the same, tested: notes/assets-and-files.md, its first section). New in
+`tide/pack.h`: `tide_pack_give` and `tide_pack_given`; `tide_pack_load` takes bytes offered to it in place of
+copying them. New in `tide/platform.h`: `tide_platform_read_room`; `tide_platform_read_counted` allocates more
+than the file's size and reads on the pool's threads when it isn't counting. `tide/host.h` offers the pack it read
+(`tide_run_load_given`) and keeps no bytes the pack took. Generated C calls no new runtime function.
+
 ## A pack laid out before its images are read (2026-11-17)
 
 A clear win (measured, the pack's bytes unchanged, tested: notes/assets-and-files.md, its first section). New in
