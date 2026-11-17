@@ -1,5 +1,54 @@
 # The standard host: runs with no window, the stats, debug views
 
+## Checkpoints (2026-11-17)
+
+The owner's asks: save/load (and start over from one) quickly for testing, agents able to make them and launch from
+them, a project `checkpoints` folder, the loader takes the saver's player, carried over to later builds, and loadable
+"anyway" so a minor change doesn't lose one. The rest are my picks (spec, Dev tools, Provisional).
+
+- **Format** (`platform/include/tide/checkpoint.h`, `platform/src/checkpoint.c`): a 40-byte header (magic `TIDK`,
+  version 1, the game's hash, the saver's player index, the server tick), the layout (`tide_layout_pack`) and the
+  server world (`tide_game.pack_world`), 8-aligned. Same hash: `unpack_world` as is; another: `tide_layout_unpack` in
+  place, `tide_migrate_world` (or `_forced`), then `unpack_world`; `fields_reset` from `tide_layout_fields_reset`.
+  `tide_checkpoint_pack`/`_unpack` work on bytes (the page's path); `_save` writes `<name>.checkpoint.part` and
+  renames it into place; `_list` is newest first (mtime; a WASI runtime without one sorts by name). Names: letters,
+  digits, `-`, `_`, `.` (not first), under 64 bytes, so no path gets through.
+- **Forced migration** (`tide_migrate_world_forced`, migrate.c): a gone scene's archetype is dropped instead of
+  failing, and every row of another archetype whose scene column is one of that archetype's entities (per-row
+  `dropped`, skipped where holes are); `tide_migration.scene_dropped` names it. The other refusals (identity clock,
+  queued changes, bad bytes, memory) still refuse.
+- **Host** (host.h): `tide_run_layout()` is the inspector's layout (every dev build) or the library's.
+  `--checkpoints <dir>` (tide run passes `<project>/checkpoints`; default `checkpoints` in the working folder),
+  `--from <name>`, `--force`. Requests (menu, script queue) are carried out as the next frame begins
+  (`tide_run_checkpoints_poll`), before anything reads the match. Save reads the world through
+  `tide_session_server` (which settles a tick running alongside); a client of another machine's match is told it
+  can't. Load = `tide_run_end` + `tide_run_begin`, which starts `tide_session_start_from` the loaded world with the
+  saver's player (`tide_run_from_world`, handed over so it's read once); `tide_run_from` stays, so Ctrl+R's restart
+  goes from it again until Start fresh. `--from` that fails exits 2 the first time; later begins start fresh.
+  `--from` with `--join`/`--connect` is refused; with `--host` the loaded match is opened.
+- **Menu**: the Dev tab shows for any dev build (inspector present). CHECKPOINTS: Save (next `checkpoint-<n>`),
+  Start fresh (when starting over from one), what the last did, Load anyway (after a scene refusal), and the
+  list (rows as the tree's, "starts over here" on the current one), listed again a second apart and after a save.
+- **Scripts** (`script.c`): `checkpoint save|load|force-load <name>`, at its frame once drawn
+  (`tide_script_drawn`), the first player's only, queued for the host (`tide_platform_checkpoint_asked`, 8 at
+  once); in an interactive run also unnumbered, before the next frame, recorded in the replay with the frame.
+- **Web**: imports `checkpoint_save/saved/fetch/copy/list` (tide.js). Every page has stubs (nothing kept); under
+  `tide run --web` they POST/GET `checkpoint?name=` and GET `checkpoints` with the X-Tide header. A load fetches,
+  shows "Loading", and the poll goes on from it as it comes; a page's `--from` is fetched before the first build
+  starts, and if it isn't there the game starts fresh (no exit on a page).
+- Tests: `tide_platform_dev_menu` (script save, change, load back to black, a missing one said, the menu's Save
+  and list, then `--from dark` from the first frames and `--from nowhere` exiting 2); `tide_platform_migrate`
+  (`migrate_forced_drops_the_entities_of_a_scene_thats_gone`; `a_checkpoint_loads_into_a_build_of_another_layout`:
+  names, list, same build byte-identical, another layout equal to `tide_migrate_world`'s, scene refused then
+  forced, missing and broken files; native and WASI, the list native-only as Node's WASI opens no folders on
+  Windows); `reload_web.mjs` (the page's functions: --from fetched before the first build, copy once, missing,
+  save with the header and its result, listing throttled, a page without tide); `cache_test.mjs` web run (the
+  server: save, refused without the header, a path name refused, read back, missing, list), which needs an
+  installation: CI's `--web` run, not run locally.
+- Gaps: no rename/delete in the menu (the files are the project's); loading closes a room as a full reload does,
+  so other players rejoin; checkpoints of a sharded match aren't made (one server world).
+
+
 ## The inspector (2026-11-16)
 
 The owner's picks list (agreed "go with your picks for now"): numbers/vectors/bools/Colors/enums edited; text, lists,

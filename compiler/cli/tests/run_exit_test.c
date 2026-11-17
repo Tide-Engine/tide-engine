@@ -26,10 +26,20 @@ static void called(const char call)
     calls[call_count] = '\0';
 }
 
+// The folder of checkpoints a player's run was given, set aside from the rest: a copy, as the command frees its own
+static char passed_checkpoints_copy[4096];
+static const char *passed_checkpoints;
+
 static void pass(const char *const *args)
 {
     passed_count = 0;
+    passed_checkpoints = NULL;
     for (int i = 0; args[i]; i++) {
+        if (strcmp(args[i], "--checkpoints") == 0 && args[i + 1]) {
+            snprintf(passed_checkpoints_copy, sizeof passed_checkpoints_copy, "%s", args[++i]);
+            passed_checkpoints = passed_checkpoints_copy;
+            continue;
+        }
         if (passed_count >= (int)(sizeof passed / sizeof passed[0])) abort();
         passed[passed_count++] = args[i];
     }
@@ -179,6 +189,20 @@ int main(void)
         if (tide_command_main(5, mode) != 13 || !passed_release
             || passed_distribution != (i == 1) || passed_debug || passed_count != 2) {
             fputs("optimized mode must reach the build without DEBUG or a host argument\n", stderr);
+            return 1;
+        }
+    }
+    // A player's run keeps its checkpoints in the project's folder; a server's has none
+    {
+        char *player[] = {"tide", "run", "--frames", "1"};
+        if (tide_command_main(4, player) != 13 || !passed_checkpoints
+            || strcmp(passed_checkpoints + strlen(passed_checkpoints) - strlen("checkpoints"), "checkpoints") != 0) {
+            fputs("a player's run must be given the project's checkpoints folder\n", stderr);
+            return 1;
+        }
+        char *server[] = {"tide", "run", "--server", "--frames", "1"};
+        if (tide_command_main(5, server) != 13 || passed_checkpoints) {
+            fputs("a server's run takes no checkpoints folder\n", stderr);
             return 1;
         }
     }

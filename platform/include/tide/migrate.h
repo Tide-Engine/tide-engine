@@ -30,6 +30,7 @@ typedef struct tide_migration {
     uint32_t entities_dropped;
     uint32_t tasks_dropped;
     char failed[160]; // Why the world couldn't be carried over, or empty
+    char scene_dropped[64]; // tide_migrate_world_forced: a scene that's gone, whose entities it dropped, or empty
 } tide_migration;
 
 // Makes the bytes of a world of `to_layout`'s game, which its unpack function
@@ -41,6 +42,13 @@ typedef struct tide_migration {
 bool tide_migrate_world(const tide_layout *from_layout, const tide_layout_world *from_world, const void *from,
                         uint32_t from_size, const tide_layout *to_layout, const tide_layout_world *to_world, void **to,
                         uint32_t *to_size, tide_migration *m);
+
+// The same, but for a world whose scene is gone: the entities of a scene the new build doesn't have are dropped
+// (counted in `entities_dropped`, the scene named in `scene_dropped`), and the rest carried over. For a checkpoint
+// loaded anyway (tide/checkpoint.h), where some of a world is better than none.
+bool tide_migrate_world_forced(const tide_layout *from_layout, const tide_layout_world *from_world, const void *from,
+                               uint32_t from_size, const tide_layout *to_layout, const tide_layout_world *to_world, void **to,
+                               uint32_t *to_size, tide_migration *m);
 
 // How many fields both layouts have, of the same name in the same type, whose
 // values can't carry over: their type changed to one they don't convert to.

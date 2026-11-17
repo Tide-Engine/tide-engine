@@ -89,12 +89,12 @@ static const char *dispatch_folder(int argc, char **argv)
         "--profile", "--profile-warmup", "--capture", "--capture-audio", "--record",
         "--script", "--microphone", "--interactive", "--frames", "--scale", "--frame-rate",
         "--latency", "--jitter", "--loss", "--players", "--seed", "--define",
-        "--scene", "--title", "-o", "--assets", "--report", "--measured"
+        "--scene", "--title", "-o", "--assets", "--report", "--measured", "--from"
     };
     const char *zero[] = {
         "--server", "--strip-server-assets", "--strip-assets", "--asset-sizes", "--anonymous", "--udp-only",
         "--no-open", "--release", "--distribution", "--dev", "--no-dev", "--web", "--single-file",
-        "--android", "--stats", "--debug-views", "--ticks-alongside", "--paced"
+        "--android", "--stats", "--debug-views", "--ticks-alongside", "--paced", "--force"
     };
     for (int i = 2; i < argc; i++) {
         const char *a = argv[i];
@@ -267,6 +267,7 @@ static int command_main(const int argc, char **argv)
     bool data_directory = false;
     bool server_args = false;
     bool profile = false, profile_warmup = false, profile_bounded = false;
+    bool from = false; // --from: the match starts from a checkpoint
     for (int i = 2; i < argc; i++) {
         const char *a = argv[i];
         const int left = argc - i - 1; // Arguments after this one
@@ -307,6 +308,18 @@ static int command_main(const int argc, char **argv)
             server_args = true; // The server runs in its own folder: the folder is where the command says, from here
             game_args[game_arg_count++] = a;
             game_args[game_arg_count++] = path_absolute(argv[++i]);
+        } else if (run && strcmp(a, "--from") == 0) {
+            // The game says what's wrong with a name
+            if (left < 1 || !argv[i + 1][0] || argv[i + 1][0] == '-' || from) {
+                fputs("tide: --from takes one checkpoint's name, from the project's checkpoints folder, like `--from boss-fight`\n", stderr);
+                free(defines);
+                return 2;
+            }
+            game_args[game_arg_count++] = a;
+            game_args[game_arg_count++] = argv[++i];
+            from = true;
+        } else if (run && strcmp(a, "--force") == 0) {
+            game_args[game_arg_count++] = a;
         } else if (run && strcmp(a, "--host") == 0) {
             game_args[game_arg_count++] = a;
             if (left >= 1 && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') game_args[game_arg_count++] = argv[++i];
@@ -604,6 +617,25 @@ static int command_main(const int argc, char **argv)
         }
         open_page = false;
     }
+    if (from && (dev == 0 || opts.distribution || opts.server)) {
+        fputs("tide: --from starts a dev build's match from a checkpoint: leave out --no-dev, --distribution and --server\n", stderr);
+        free(defines);
+        return 2;
+    }
+    // A player's run keeps its checkpoints in the project's `checkpoints` folder, where they can be shared
+    char *checkpoints = NULL;
+    if (run && !opts.server && !opts.android && !opts.web) { // A page's go through tide run --web (answer_checkpoint)
+        if (game_arg_count > 125) {
+            fputs("tide: run takes each of its options once\n", stderr);
+            free(defines);
+            return 2;
+        }
+        char *project = path_absolute(opts.folder);
+        checkpoints = path_join(project, "checkpoints");
+        free(project);
+        game_args[game_arg_count++] = "--checkpoints";
+        game_args[game_arg_count++] = checkpoints;
+    }
     // A run ends with its game. Do the occasional update check before it
     // starts, so the network can't keep tide alive after the window closes.
     if (run) tide_check_for_update(root);
@@ -628,6 +660,7 @@ static int command_main(const int argc, char **argv)
         asset_sizes_free(&sizes);
     }
     if (!run && !unity) tide_check_for_update(root);
+    free(checkpoints);
     free(defines);
     return code;
 }

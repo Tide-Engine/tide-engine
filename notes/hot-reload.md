@@ -1,3 +1,10 @@
+## Forced migration, for checkpoints (2026-11-17)
+
+`tide_migrate_world_forced` carries a world whose scene is gone: that scene's own entities and every entity whose
+scene column names one of them are dropped (counted, the scene in `tide_migration.scene_dropped`), the rest carried
+as ever. Reloads still use `tide_migrate_world`, which refuses. For loading a checkpoint anyway
+(notes/standard-host.md, Checkpoints).
+
 ## Linear image role and replaced assets (2026-11-14)
 
 [Linear] resource fields retain ordinary reference layouts. Generated header comments select migration when

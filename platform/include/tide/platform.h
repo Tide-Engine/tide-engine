@@ -123,6 +123,11 @@ void tide_platform_open_headless(const tide_headless_desc *desc);
 // isn't an event, or when the window isn't headless.
 bool tide_platform_input(const char *event);
 
+// A script's `checkpoint` line once its frame drew (or an interactive run's, at once), which the host carries out
+// (tide/checkpoint.h): what it asks, 0 save, 1 load, 2 load what carries over (`force-load`), and the checkpoint's
+// name. The next one asked for, oldest first; false when none is waiting.
+bool tide_platform_checkpoint_asked(uint32_t *way, char *name, size_t size);
+
 // The frame a headless window last drew (tide_platform_draw, and what was
 // drawn over it), whole: `*width` by `*height` pixels of 4 bytes each (red, green,
 // blue, alpha), rows from the top, which stay until the next call. A window

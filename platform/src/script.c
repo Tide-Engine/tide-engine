@@ -50,6 +50,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "tide/checkpoint.h"
 #include "tide/page.h"
 #include "font.h" // tide_utf8_next
 #include "players.h"
@@ -177,12 +178,42 @@ typedef enum event_kind {
     EVENT_CAPTURE_AUDIO,
     EVENT_RECORD,
     EVENT_RECORD_STOP,
+    EVENT_CHECKPOINT, // `checkpoint save|load|force-load <name>`, which the host carries out once its frame drew
     EVENT_QUIT,
     EVENT_SLEEP, // The machine slept (tide_platform_slept): a player's, in a run of several
     EVENT_LEAVE, // A player's match, in a run of several
     EVENT_DROP,
     EVENT_REJOIN,
 } event_kind;
+
+// Checkpoints a script asked for, which the host carries out (tide_platform_checkpoint_asked)
+#define CHECKPOINTS_ASKED 8u
+static struct {
+    uint32_t way;
+    char name[TIDE_CHECKPOINT_NAME];
+} checkpoints_asked[CHECKPOINTS_ASKED];
+static uint32_t checkpoints_start, checkpoints_count;
+
+static void checkpoint_ask(const uint32_t way, const char *name)
+{
+    if (checkpoints_count == CHECKPOINTS_ASKED) {
+        fprintf(stderr, "tide: more than %u checkpoint lines at once: '%s' is left out\n", (unsigned)CHECKPOINTS_ASKED, name);
+        return;
+    }
+    const uint32_t at = (checkpoints_start + checkpoints_count++) % CHECKPOINTS_ASKED;
+    checkpoints_asked[at].way = way;
+    snprintf(checkpoints_asked[at].name, sizeof checkpoints_asked[at].name, "%s", name);
+}
+
+bool tide_platform_checkpoint_asked(uint32_t *way, char *name, const size_t size)
+{
+    if (!checkpoints_count) return false;
+    *way = checkpoints_asked[checkpoints_start].way;
+    snprintf(name, size, "%s", checkpoints_asked[checkpoints_start].name);
+    checkpoints_start = (checkpoints_start + 1u) % CHECKPOINTS_ASKED;
+    checkpoints_count--;
+    return true;
+}
 
 // What a key or button does: a tap is down for a frame, and up at the next.
 enum { PRESS_DOWN, PRESS_UP, PRESS_TAP };
@@ -293,6 +324,7 @@ static void apply(const event *e)
     case EVENT_CAPTURE_AUDIO:
     case EVENT_RECORD:
     case EVENT_RECORD_STOP:
+    case EVENT_CHECKPOINT:
     case EVENT_QUIT:
         break;
     }
@@ -555,6 +587,21 @@ static bool parse(const char *text, event *e, char *error, const size_t size)
         }
         return true;
     }
+    if (strcmp(verb, "checkpoint") == 0) {
+        static const char *const ways[] = {"save", "load", "force-load"};
+        const char *usage = "`checkpoint` saves the match or goes on from a saved one: `checkpoint save boss-fight`, "
+                            "`checkpoint load boss-fight`, or `checkpoint force-load boss-fight`, which loads what of an "
+                            "older one carries over";
+        if (!word(&at, name, sizeof name)) return fail(error, size, "%s", usage);
+        const int way = find(ways, COUNT_OF(ways), name);
+        if (way < 0) return fail(error, size, "'%s' isn't save, load or force-load: %s", name, usage);
+        e->kind = EVENT_CHECKPOINT;
+        e->which = (uint32_t)way;
+        e->text = rest(at);
+        char why[200];
+        if (!tide_checkpoint_name_ok(e->text, why, sizeof why)) return fail(error, size, "%s", why);
+        return true;
+    }
     if (strcmp(verb, "quit") == 0) {
         e->kind = EVENT_QUIT;
         return ended(&at, error, size);
@@ -568,7 +615,7 @@ static bool parse(const char *text, event *e, char *error, const size_t size)
         return ended(&at, error, size);
     }
     return fail(error, size, "'%s' isn't something a line does: that's key, button, mouse, move, scroll, text, touch, pad, capture, "
-                             "capture-audio, record, sleep, leave, drop, rejoin or quit",
+                             "capture-audio, record, checkpoint, sleep, leave, drop, rejoin or quit",
                 verb);
 }
 
@@ -578,7 +625,8 @@ bool tide_script_event(const char *text, char *error, const size_t error_size)
     bool ok = parse(text, &e, error, error_size);
     if (ok && e.kind >= EVENT_CAPTURE) {
         ok = fail(error, error_size,
-                  "`capture`, `capture-audio`, `record`, `quit`, `sleep`, `leave`, `drop` and `rejoin` are a script's lines, not input");
+                  "`capture`, `capture-audio`, `record`, `checkpoint`, `quit`, `sleep`, `leave`, `drop` and `rejoin` are a script's "
+                  "lines, not input");
     }
     if (ok) apply(&e);
     free(e.text);
@@ -778,6 +826,10 @@ int tide_script_drawn(const uint32_t frame)
         if (!for_player(e)) continue;
         if (e->kind == EVENT_QUIT) quit = true;
         if (e->kind == EVENT_RECORD_STOP && !tide_platform_record_stop()) return 1;
+        if (e->kind == EVENT_CHECKPOINT) { // The first player's, whose process runs the match
+            if (first_player()) checkpoint_ask(e->which, e->text);
+            continue;
+        }
         if (e->kind != EVENT_CAPTURE && e->kind != EVENT_CAPTURE_AUDIO && e->kind != EVENT_RECORD) continue;
         char *beside = beside_script(e->text);
         char *path = tide_platform_players_file(beside); // With the player's number, in a run of several
@@ -839,8 +891,9 @@ static bool interactive_event(const char *line, const uint32_t frame, char *erro
     if (ok && numbered && (e.frame <= frame || e.frame > 1000000000u)) {
         ok = fail(error, error_size, "queue a future frame, from %u to 1000000000", (unsigned)(frame + 1u));
     }
-    if (ok && (e.kind == EVENT_QUIT || (!numbered && e.kind != EVENT_CAPTURE))) {
-        ok = fail(error, error_size, "use `<frame> <event>` to queue input, `capture <file.png>` to look, or `quit` to end");
+    if (ok && (e.kind == EVENT_QUIT || (!numbered && e.kind != EVENT_CAPTURE && e.kind != EVENT_CHECKPOINT))) {
+        ok = fail(error, error_size, "use `<frame> <event>` to queue input, `capture <file.png>` to look, `checkpoint save <name>` "
+                                     "or `checkpoint load <name>`, or `quit` to end");
     }
     if (ok && e.kind == EVENT_CAPTURE_AUDIO) {
         ok = fail(error, error_size, "use --capture-audio <file.wav> to keep the interactive run's audio from its start");
@@ -857,6 +910,17 @@ static bool interactive_event(const char *line, const uint32_t frame, char *erro
     if (!ok) {
         free(e.text);
         return false;
+    }
+    if (!numbered && e.kind == EVENT_CHECKPOINT) {
+        // Before the next frame: a save has the match as the frame drawn shows it
+        if (first_player()) checkpoint_ask(e.which, e.text);
+        if (first_player()) {
+            char said[512];
+            snprintf(said, sizeof said, "%u %s", (unsigned)frame, line); // In a replay, once the frame it followed drew
+            replay_line(said);
+        }
+        free(e.text);
+        return true;
     }
     if (!numbered) {
         if (for_player(&e)) {

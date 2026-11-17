@@ -193,6 +193,7 @@ without those characters.
 | `--size <width> <height>` | `run` only: the window's size in pixels, 960 by 540 without it (not on the web or Android) |
 | `--capture`, `--record`, `--capture-audio`, `--microphone`, `--frames`, `--script`, `--interactive`, `--scale`, `--players` | `run` only: plays the game [without a window](#without-a-window), to see what it draws and hear what it plays, with [several players](#several-players) if you like |
 | `--latency <ms>`, `--jitter <ms>`, `--loss <percent>` | `run` only: plays a match this machine joins as if it were further from its server (see [A slow network](#a-slow-network)) |
+| `--from <name>` | `run` only, a dev build: the match starts from the [checkpoint](dev-tools.md#checkpoints) `checkpoints/<name>.checkpoint` in the project. One that won't load ends the run, saying why; with `--force`, what of it carries over is loaded |
 | `--seed <n>` | `run` only: the seed of the matches the game starts, [`Random.seed`](../language/math.md#the-match-s-seed), from 0 to 2147483647. Without it, every match gets another one |
 | `--data-dir <folder>` | `run` only, native desktop: use this save directory, relative to where the command was invoked. Useful for disposable test saves |
 | `--shards <n>`, `--shard-width <units>` | `run` only: a [sharded game](../multiplayer/shards.md)'s match as `n` regions along x, each this wide (16 times its `reach` without it), all on this machine |
@@ -932,6 +933,7 @@ frame keep their arrival order. Held input stays held until released.
 | `<frame> <event>` | Queues an action without advancing; at most 65,536 pending actions |
 | `step <n>` | Advances every player together by exactly `n` frames, then waits; `n` is 1 to 1,000,000 and the resulting frame is at most 1,000,000,000 |
 | `capture <file.png>` | Captures the current frame without advancing; `player 2 capture hers.png` selects one player |
+| `checkpoint save <name>`, `checkpoint load <name>` | Saves the match as it is now, or starts over from a saved one, before the next frame (see [Checkpoints](dev-tools.md#checkpoints)) |
 | `status` | Reports the current frame without advancing |
 | `controls` | Lists the GUI widgets the current frame drew, without advancing (below) |
 | `click <n>`, `click "label"` | Clicks a widget from `controls` at the next frame; `<frame> click ...` picks a later one |
@@ -1045,6 +1047,8 @@ tide run --script play.txt --size 1280 720 --stats
 | `capture-audio <file.wav>` | Writes what played since the last such line, or since the run began, as a WAV beside the script |
 | `record <file.gif>` | Records from this frame on, every second frame, as a GIF that loops, beside the script. It goes on to `record stop`, another `record` or the run's end. `--record`'s recording is its own, and goes on beside it |
 | `record stop` | Ends the recording, with this frame in it if it's one of its frames, and writes it out |
+| `checkpoint save <name>` | A dev build: saves the match, once this frame drew, as the [checkpoint](dev-tools.md#checkpoints) `<name>` in the project's `checkpoints` folder |
+| `checkpoint load <name>` | ...starts the game over from one, as the dev menu does; `checkpoint force-load <name>` loads what of an older one carries over. One that won't load leaves the match as it is, saying why |
 | `quit` | Ends the run once this frame drew |
 | `sleep` | The machine sleeps and wakes, as a Steam Deck or a laptop does: it [leaves a match other machines can be in](../multiplayer/matches.md#a-machine-that-sleeps). In a run of several players, it says whose: `player <n> sleep` |
 | `player <n> leave` | In a run of [several players](#several-players), player `n` leaves its match, as `Session.Leave` does: the match hears `PlayerLeft` at once |

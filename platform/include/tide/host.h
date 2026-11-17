@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "tide/checkpoint.h"
 #include "tide/layout.h"
 #include "tide/hosting.h"
 #include "tide/network.h"
@@ -309,6 +310,36 @@ static bool tide_run_alongside;
 static uint32_t tide_run_alongside_ended;
 // The room the last frame told local code the match is in (Session.room)
 static char tide_run_room[TIDE_NETWORK_ADDRESS_BYTES];
+
+// Checkpoints (tide/checkpoint.h), a dev build's: their folder (--checkpoints; tide run gives the project's
+// `checkpoints`), the one the run starts from, and starts over from (--from, then the last loaded), and what the menu
+// or a script asked for, carried out as the next frame begins (tide_run_checkpoints_poll)
+static const char *tide_run_checkpoints = "checkpoints";
+static char tide_run_from[TIDE_CHECKPOINT_NAME];
+static bool tide_run_from_force; // ...loaded with what carries over (--force)
+static void *tide_run_from_world; // ...loaded already, for tide_run_begin to start from, and the player who saved it
+static int32_t tide_run_from_player;
+// On a page, one on its way from tide (1 to load, 2 to load what carries over), and one saved, until tide says it's kept
+static int tide_run_checkpoint_coming;
+static char tide_run_checkpoint_coming_name[TIDE_CHECKPOINT_NAME];
+static char tide_run_checkpoint_saving[TIDE_CHECKPOINT_NAME];
+static int tide_run_checkpoint_want = -1; // 0 save, 1 load, 2 load what carries over
+static char tide_run_checkpoint_name[TIDE_CHECKPOINT_NAME];
+static char tide_run_checkpoint_said[240];  // What the last one did, for the menu
+static bool tide_run_checkpoint_forceable;  // ...refused for what loading anyway gets past: the menu offers it
+static char tide_run_checkpoint_refused[TIDE_CHECKPOINT_NAME];
+// The folder's checkpoints, newest first, as last listed
+#define TIDE_RUN_CHECKPOINTS_LISTED 64u
+static char tide_run_checkpoint_names[TIDE_RUN_CHECKPOINTS_LISTED][TIDE_CHECKPOINT_NAME];
+static uint32_t tide_run_checkpoint_count;
+static double tide_run_checkpoints_listed_at = -1.0;
+
+static inline void tide_run_checkpoint_ask(const int way, const char *name)
+{
+    tide_run_checkpoint_want = way;
+    snprintf(tide_run_checkpoint_name, sizeof tide_run_checkpoint_name, "%s", name);
+}
+
 
 // The network the game registered, or NULL: its matches are in Tide's rooms.
 static inline const tide_network *tide_run_registered(void)
@@ -873,6 +904,18 @@ static inline void tide_run_configure(const tide_run_desc *desc)
             const char *takes = "a display's scale from 0.25 to 8, like --scale 2";
             tide_run_headless_desc.scale = (float)tide_run_number(&i, arg, 0.25, 8.0, takes);
             scaled = true;
+        } else if (strcmp(arg, "--checkpoints") == 0) {
+            tide_run_checkpoints = tide_run_value(&i, arg, "the folder a dev build's checkpoints are in, like --checkpoints checkpoints");
+        } else if (strcmp(arg, "--from") == 0) {
+            const char *name = tide_run_value(&i, arg, "a checkpoint's name, which the match starts from, like --from boss-fight");
+            char why[200];
+            if (!tide_checkpoint_name_ok(name, why, sizeof why)) {
+                fprintf(stderr, "tide: --from: %s\n", why);
+                exit(2);
+            }
+            snprintf(tide_run_from, sizeof tide_run_from, "%s", name);
+        } else if (strcmp(arg, "--force") == 0) {
+            tide_run_from_force = true;
         } else if (strcmp(arg, "--frames") == 0) {
             const char *takes = "how many frames the run lasts, like --frames 300";
             tide_run_headless_desc.frames = (uint32_t)tide_run_number(&i, arg, 1.0, 1e9, takes);
@@ -1120,6 +1163,19 @@ static inline uint64_t tide_run_bytes_hash(const uint8_t *bytes, const size_t le
 __attribute__((import_module("tide"), import_name("tweaks_copy"))) uint32_t tide_web_tweaks_copy(void *to, uint32_t capacity);
 __attribute__((import_module("tide"), import_name("tweak_write"))) void tide_web_tweak_write(const char *file, const char *name,
                                                                                             const char *value);
+// A dev build's checkpoints on a page, which tide run --web keeps in the game's folder (tide.js): one saved, and
+// whether it was kept (0 not yet, 1 kept, 2 not); one asked for, and copied once it's come (its size, 0 while it
+// hasn't, UINT32_MAX for one that isn't there); their names, newest first, a line each, as last listed
+__attribute__((import_module("tide"), import_name("checkpoint_save"))) void tide_web_checkpoint_save(const char *name,
+                                                                                                    const void *bytes,
+                                                                                                    uint32_t size);
+__attribute__((import_module("tide"), import_name("checkpoint_saved"))) uint32_t tide_web_checkpoint_saved(void);
+__attribute__((import_module("tide"), import_name("checkpoint_fetch"))) void tide_web_checkpoint_fetch(const char *name);
+__attribute__((import_module("tide"), import_name("checkpoint_copy"))) uint32_t tide_web_checkpoint_copy(const char *name,
+                                                                                                        void *to,
+                                                                                                        uint32_t capacity);
+__attribute__((import_module("tide"), import_name("checkpoint_list"))) uint32_t tide_web_checkpoint_list(char *to,
+                                                                                                        uint32_t capacity);
 #endif
 
 static inline void tide_run_tweaks_poll(const tide_host_game *game)
@@ -2062,6 +2118,61 @@ static inline void tide_run_dev_inspect(const tide_inspect_api *api, const void 
     tide_run_inspect_tree(api, &tide_run_inspect_packets[tide_run_inspect_local ? 1 : 0]);
 }
 
+// The Dev tab's checkpoints: Save (named checkpoint-<n>, the next number), then each saved one, newest first, which a
+// click loads; the one the run starts over from is marked, and Start fresh forgets it
+static inline void tide_run_dev_checkpoints(void)
+{
+    tide_gui *g = &tide_run_gui;
+    if (tide_run_checkpoints_listed_at < 0.0 || tide_run_now - tide_run_checkpoints_listed_at > 1.0) {
+#ifdef __wasm__
+        static char listed[TIDE_RUN_CHECKPOINTS_LISTED * TIDE_CHECKPOINT_NAME];
+        const uint32_t size = tide_web_checkpoint_list(listed, sizeof listed - 1u);
+        listed[size < sizeof listed ? size : 0u] = '\0';
+        tide_run_checkpoint_count = 0;
+        for (char *line = listed; *line && tide_run_checkpoint_count < TIDE_RUN_CHECKPOINTS_LISTED;) {
+            char *end = strchr(line, '\n');
+            if (end) *end = '\0';
+            char why[8];
+            if (tide_checkpoint_name_ok(line, why, sizeof why))
+                snprintf(tide_run_checkpoint_names[tide_run_checkpoint_count++], TIDE_CHECKPOINT_NAME, "%s", line);
+            if (!end) break;
+            line = end + 1;
+        }
+#else
+        tide_run_checkpoint_count = tide_checkpoint_list(tide_run_checkpoints, tide_run_checkpoint_names, TIDE_RUN_CHECKPOINTS_LISTED);
+#endif
+        tide_run_checkpoints_listed_at = tide_run_now;
+    }
+    tide_run_inspect_heading("CHECKPOINTS");
+    const int row = tide_gui_begin_horizontal(g, 0xDE750000u);
+    if (tide_gui_layout_button(g, 0xDE750001u, "Save")) {
+        uint32_t next = 1;
+        const uint32_t listed = tide_run_checkpoint_count < TIDE_RUN_CHECKPOINTS_LISTED ? tide_run_checkpoint_count : TIDE_RUN_CHECKPOINTS_LISTED;
+        for (uint32_t i = 0; i < listed; i++) {
+            unsigned n = 0;
+            char tail;
+            if (sscanf(tide_run_checkpoint_names[i], "checkpoint-%u%c", &n, &tail) == 1 && n >= next) next = n + 1u;
+        }
+        char name[TIDE_CHECKPOINT_NAME];
+        snprintf(name, sizeof name, "checkpoint-%u", next);
+        tide_run_checkpoint_ask(0, name);
+    }
+    if (tide_run_from[0] && tide_gui_layout_button(g, 0xDE750002u, "Start fresh")) tide_run_checkpoint_ask(3, "");
+    if (row >= 0) tide_gui_close(g, row);
+    if (tide_run_checkpoint_said[0]) tide_run_dev_label(tide_run_checkpoint_said, 12.0f, TIDE_RUN_DEV_DIM);
+    if (tide_run_checkpoint_forceable && tide_gui_layout_button(g, 0xDE750003u, "Load anyway"))
+        tide_run_checkpoint_ask(2, tide_run_checkpoint_refused);
+    const uint32_t listed = tide_run_checkpoint_count < TIDE_RUN_CHECKPOINTS_LISTED ? tide_run_checkpoint_count : TIDE_RUN_CHECKPOINTS_LISTED;
+    for (uint32_t i = 0; i < listed; i++) {
+        const char *name = tide_run_checkpoint_names[i];
+        float y;
+        if (!tide_run_inspect_row_shows(0, &y)) continue;
+        const bool from = strcmp(name, tide_run_from) == 0;
+        if (tide_run_inspect_row(0xDE760000u + i, name, name, from ? "starts over here" : "", 0, false)) tide_run_checkpoint_ask(1, name);
+    }
+    if (!listed) tide_run_dev_label("None yet: Save keeps the match as it is", 12.0f, TIDE_RUN_DEV_DIM);
+}
+
 // The menu's tab: 0 the game's dev views and tweaks, 1 the match's inspector, 2 the local world's. Each tab's list
 // where it's scrolled to, from its top, and how tall it last was
 static uint32_t tide_run_dev_tab;
@@ -2086,7 +2197,7 @@ static inline void tide_run_dev_menu(const tide_host_game *game, const void *mat
     // Inside the panel, past its margin: as much as the screen has
     const float x = pad + margin, inner = most - 2.0f * margin > 0.0f ? most - 2.0f * margin : 0.0f;
     tide_gui_view(g, UINT32_MAX); // Its own: no view's claims hide the devices from it
-    const bool dev = (game->dev_views && game->dev_views[0]) || tweaks;
+    const bool dev = (game->dev_views && game->dev_views[0]) || tweaks || inspect; // A dev build's checkpoints
     if (!dev && tide_run_dev_tab == 0) tide_run_dev_tab = 1;
     if (!inspect) tide_run_dev_tab = 0;
     // As tall as they were a frame before: the tabs, and under them this tab's list, which a longer list scrolls past
@@ -2142,6 +2253,7 @@ static inline void tide_run_dev_menu(const tide_host_game *game, const void *mat
             if (tide_gui_layout_toggle(g, 0xDE700000u + i, game->dev_views[i], &on)) tide_run_dev_show(game->dev_views[i], on);
         }
         if (tweaks) tide_run_dev_tweaks(tweaks);
+        if (inspect) tide_run_dev_checkpoints();
     } else {
         tide_run_inspect_local = tide_run_dev_tab == 2;
         tide_run_inspect_view = list;
@@ -2266,6 +2378,8 @@ static inline void tide_run_prewarm(void)
     tide_platform_prewarm(tide_run_game->shaders, count);
 }
 
+static inline bool tide_run_checkpoint_world(const char *name, bool force, void **world, int32_t *player);
+
 // Starts tide_run_game: its local state and a session, then the match the
 // command line asks for, or Main's if it's the match's.
 static inline void tide_run_begin(void)
@@ -2281,8 +2395,27 @@ static inline void tide_run_begin(void)
     tide_run_prewarm();
     game->local_init(tide_run_local);
     tide_run_session = tide_run_new_session();
+    // From a checkpoint: --from, or the one loaded last. The first time, one that can't be loaded ends the run, so a
+    // script or an agent that asked for it hears why; after, the game starts fresh, saying why
+    static bool begun;
+    void *from = tide_run_from_world; // Loaded already, by the menu or a script
+    int32_t from_player = tide_run_from_player;
+    tide_run_from_world = NULL;
+    if (!from && tide_run_from[0] && !tide_run_checkpoint_world(tide_run_from, tide_run_from_force, &from, &from_player)) {
+#ifdef __wasm__
+        if (tide_run_checkpoint_coming) tide_run_from[0] = '\0'; // On its way: it's gone on from as it comes
+        else
+#endif
+        if (!begun) exit(2);
+        tide_run_from[0] = '\0';
+    }
+    begun = true;
     tide_session_request request = {0};
     bool asked = tide_run_arguments(&request);
+    if (from && asked && request.kind != TIDE_REQUEST_OPEN) {
+        fprintf(stderr, "tide: --from starts this machine's match from a checkpoint: it takes no --join or --connect\n");
+        exit(2);
+    }
     if (tide_platform_players() && !game->main_is_local) {
         // A run of several players: the first opens Main's match, as --host would, and the others join its room
         asked = true;
@@ -2293,7 +2426,15 @@ static inline void tide_run_begin(void)
         }
     }
     const bool open = asked && request.kind == TIDE_REQUEST_OPEN;
-    if (asked && !open) {
+    if (from) {
+        // The match goes on from it, this machine's player the one who saved it
+        tide_player_set players = {0};
+        tide_players_add(&players, from_player >= 0 ? (uint32_t)from_player : 0u);
+        tide_session_start_from(tide_run_session, from, players, tide_run_now);
+        game->game->free_world(from);
+        free(from);
+        if (open) tide_run_request(&request, NULL);
+    } else if (asked && !open) {
         tide_run_request(&request, NULL); // --join or --connect
     } else if (!game->main_is_local) {
         // Main is the match's: it starts right away, opened with --host
@@ -2507,6 +2648,192 @@ static inline void tide_run_end(void)
     tide_draw_forget(&tide_run_draw); // What the game starts over with is other pixels
 }
 
+// The game's layout, which checkpoints are saved with and carried over by: a dev build's (its inspector's), or one
+// tide run's library has; NULL for neither
+static inline const tide_layout *tide_run_layout(void)
+{
+    const tide_host_game *game = tide_run_game;
+    const tide_inspect_api *inspect = game->inspect ? game->inspect() : NULL;
+    return inspect && inspect->layout ? inspect->layout : game->layout;
+}
+
+// The world of checkpoint `name`, carried over to this build, into `*world` (free it with free_world, then free()),
+// and the player who saved it: false, having said why (and kept it for the menu)
+static inline bool tide_run_checkpoint_world(const char *name, const bool force, void **world, int32_t *player)
+{
+    const tide_host_game *game = tide_run_game;
+    const tide_layout *layout = tide_run_layout();
+    tide_run_checkpoint_forceable = false;
+    if (!layout) {
+        snprintf(tide_run_checkpoint_said, sizeof tide_run_checkpoint_said,
+                 "checkpoints are a dev build's: tide run, or tide build --dev");
+        fprintf(stderr, "tide: %s\n", tide_run_checkpoint_said);
+        return false;
+    }
+    tide_checkpoint_loaded loaded;
+#ifdef __wasm__
+    const uint32_t size = tide_web_checkpoint_copy(name, NULL, 0);
+    if (!size) { // Not here yet: asked for, and loaded as it comes (tide_run_checkpoints_poll)
+        tide_web_checkpoint_fetch(name);
+        tide_run_checkpoint_coming = force ? 2 : 1;
+        snprintf(tide_run_checkpoint_coming_name, sizeof tide_run_checkpoint_coming_name, "%s", name);
+        snprintf(tide_run_checkpoint_said, sizeof tide_run_checkpoint_said, "Loading %s", name);
+        return false;
+    }
+    void *bytes = size != UINT32_MAX ? malloc(size) : NULL;
+    if (bytes) tide_web_checkpoint_copy(name, bytes, size);
+    else if (size == UINT32_MAX) { // Forgotten, so a later ask fetches it again
+        char none;
+        tide_web_checkpoint_copy(name, &none, 0);
+    }
+    const bool ok = bytes && tide_checkpoint_unpack(bytes, size, name, layout, game->game, force, world, player, &loaded);
+    if (!bytes) {
+        loaded = (tide_checkpoint_loaded){0};
+        snprintf(loaded.carried.failed, sizeof loaded.carried.failed,
+                 size == UINT32_MAX ? "there's no checkpoint %s in the game's checkpoints folder (it's tide run --web's)"
+                                    : "there wasn't enough memory for %s",
+                 name);
+    }
+    free(bytes);
+    if (!ok) {
+#else
+    if (!tide_checkpoint_load(tide_run_checkpoints, name, layout, game->game, force, world, player, &loaded)) {
+#endif
+        const bool scene = strncmp(loaded.carried.failed, "the scene ", 10) == 0;
+        snprintf(tide_run_checkpoint_said, sizeof tide_run_checkpoint_said, "%s didn't load: %s", name, loaded.carried.failed);
+        fprintf(stderr, "tide: checkpoint %s%s\n", tide_run_checkpoint_said,
+                scene && !force ? "; load what carries over with --force, `checkpoint force-load`, or the menu's Load anyway" : "");
+        tide_run_checkpoint_forceable = scene && !force;
+        if (tide_run_checkpoint_forceable) snprintf(tide_run_checkpoint_refused, sizeof tide_run_checkpoint_refused, "%s", name);
+        return false;
+    }
+    int n = snprintf(tide_run_checkpoint_said, sizeof tide_run_checkpoint_said, "Loaded %s, from tick %u", name, (unsigned)loaded.tick);
+    if (!loaded.same) {
+        const tide_migration *m = &loaded.carried;
+        n += snprintf(tide_run_checkpoint_said + n, sizeof tide_run_checkpoint_said - (size_t)n, ", carried over to this build");
+        if (loaded.fields_reset)
+            n += snprintf(tide_run_checkpoint_said + n, sizeof tide_run_checkpoint_said - (size_t)n, "; %u field%s reset",
+                          (unsigned)loaded.fields_reset, loaded.fields_reset == 1 ? "" : "s");
+        if (m->entities_dropped)
+            n += snprintf(tide_run_checkpoint_said + n, sizeof tide_run_checkpoint_said - (size_t)n, "; %u entit%s dropped%s%s",
+                          (unsigned)m->entities_dropped, m->entities_dropped == 1 ? "y" : "ies",
+                          m->scene_dropped[0] ? " with the scene " : "", m->scene_dropped);
+        if (m->tasks_dropped)
+            snprintf(tide_run_checkpoint_said + n, sizeof tide_run_checkpoint_said - (size_t)n, "; %u waiting task%s dropped",
+                     (unsigned)m->tasks_dropped, m->tasks_dropped == 1 ? "" : "s");
+    }
+    printf("tide: %s\n", tide_run_checkpoint_said);
+    fflush(stdout);
+    return true;
+}
+
+// Saves the match this machine's server runs as checkpoint `name`
+static inline void tide_run_checkpoint_save(const char *name)
+{
+    const tide_host_game *game = tide_run_game;
+    const tide_layout *layout = tide_run_layout();
+    tide_run_checkpoint_forceable = false;
+    // As it is after the tick that's running, if one runs beside the frame
+    const tide_server *server = tide_run_session && layout ? tide_session_server(tide_run_session) : NULL;
+    const void *world = server ? tide_session_server_world(tide_run_session) : NULL;
+    char why[200];
+    if (!layout) {
+        snprintf(tide_run_checkpoint_said, sizeof tide_run_checkpoint_said, "checkpoints are a dev build's: tide run, or tide build --dev");
+    } else if (!world) {
+        snprintf(tide_run_checkpoint_said, sizeof tide_run_checkpoint_said,
+                 "%s isn't saved: this machine doesn't run the match's server, so save on the one that hosts it", name);
+    } else {
+        const tide_session_status status = tide_session_status_of(tide_run_session);
+        const uint32_t tick = status.client.server_tick;
+        const int32_t player = tide_player_index(status.client.player);
+#ifdef __wasm__
+        // A page's go to tide, which keeps them in the game's folder: kept once it says so (tide_run_checkpoints_poll)
+        uint32_t size = 0;
+        uint8_t *bytes = NULL;
+        if (tide_checkpoint_name_ok(name, why, sizeof why)) {
+            bytes = tide_checkpoint_pack(layout, game->game, world, player, tick, &size);
+            if (!bytes) snprintf(why, sizeof why, "there wasn't enough memory");
+        }
+        if (bytes) {
+            tide_web_checkpoint_save(name, bytes, size);
+            free(bytes);
+            snprintf(tide_run_checkpoint_saving, sizeof tide_run_checkpoint_saving, "%s", name);
+            snprintf(tide_run_checkpoint_said, sizeof tide_run_checkpoint_said, "Saving %s, at tick %u", name, (unsigned)tick);
+            return;
+        }
+#else
+        if (tide_checkpoint_save(tide_run_checkpoints, name, layout, game->game, world, player, tick, why, sizeof why)) {
+            snprintf(tide_run_checkpoint_said, sizeof tide_run_checkpoint_said, "Saved %s, at tick %u", name, (unsigned)tick);
+            printf("tide: %s (%s/%s.checkpoint)\n", tide_run_checkpoint_said, tide_run_checkpoints, name);
+            fflush(stdout);
+            tide_run_checkpoints_listed_at = -1.0; // Listed again
+            return;
+        }
+#endif
+        snprintf(tide_run_checkpoint_said, sizeof tide_run_checkpoint_said, "%s isn't saved: %s", name, why);
+    }
+    fprintf(stderr, "tide: checkpoint %s\n", tide_run_checkpoint_said);
+}
+
+// Starts the game again from checkpoint `name` (`force`: what of it carries over), which it starts over from from now
+// on; one that won't load leaves the match as it is. A checkpoint is the match's: the local state starts over, as at a
+// full reload, and the game's local code makes it again from the match. "" starts fresh.
+static inline void tide_run_checkpoint_go(const char *name, const bool force)
+{
+    if (name[0]) {
+        void *world = NULL;
+        int32_t player = -1;
+        if (!tide_run_checkpoint_world(name, force, &world, &player)) return;
+        tide_run_from_world = world; // tide_run_begin starts from it
+        tide_run_from_player = player;
+    }
+    snprintf(tide_run_from, sizeof tide_run_from, "%s", name);
+    tide_run_from_force = force;
+    tide_run_end();
+    tide_platform_audio_forget();
+    tide_devices_consume(&tide_run_devices);
+    tide_run_begin();
+    if (!name[0]) {
+        snprintf(tide_run_checkpoint_said, sizeof tide_run_checkpoint_said, "Started fresh");
+        printf("tide: started fresh\n");
+        fflush(stdout);
+    }
+}
+
+// What the menu or a script asked of checkpoints, as a frame begins
+static inline void tide_run_checkpoints_poll(void)
+{
+    uint32_t way = 0;
+    char name[TIDE_CHECKPOINT_NAME];
+#ifdef __wasm__
+    if (tide_run_checkpoint_saving[0]) {
+        const uint32_t saved = tide_web_checkpoint_saved();
+        if (saved) {
+            snprintf(tide_run_checkpoint_said, sizeof tide_run_checkpoint_said, saved == 1u ? "Saved %s" : "%s isn't saved: "
+                     "a page keeps checkpoints in the game's folder only under tide run --web", tide_run_checkpoint_saving);
+            printf("tide: %s\n", tide_run_checkpoint_said);
+            tide_run_checkpoint_saving[0] = '\0';
+            tide_run_checkpoints_listed_at = -1.0;
+        }
+    }
+    if (tide_run_checkpoint_coming && tide_web_checkpoint_copy(tide_run_checkpoint_coming_name, NULL, 0)) {
+        const bool force = tide_run_checkpoint_coming == 2;
+        tide_run_checkpoint_coming = 0;
+        snprintf(name, sizeof name, "%s", tide_run_checkpoint_coming_name);
+        tide_run_checkpoint_go(name, force);
+    }
+#endif
+    while (tide_platform_checkpoint_asked(&way, name, sizeof name)) {
+        if (way == 0u) tide_run_checkpoint_save(name);
+        else tide_run_checkpoint_go(name, way == 2u);
+    }
+    const int want = tide_run_checkpoint_want;
+    tide_run_checkpoint_want = -1;
+    if (want == 0) tide_run_checkpoint_save(tide_run_checkpoint_name);
+    else if (want == 1 || want == 2) tide_run_checkpoint_go(tide_run_checkpoint_name, want == 2);
+    else if (want == 3) tide_run_checkpoint_go("", false);
+}
+
 // Host migration (see tide_session_take_over). The machine that runs a match
 // tells the server the room its players can meet in again; one whose match
 // lost its server goes there, to take the match over or to join whoever did.
@@ -2636,6 +2963,7 @@ static inline void tide_run_typing(const tide_host_game *game, const bool typing
 static inline int tide_run_frame(void *user, const float seconds)
 {
     if (tide_run_loading.on) return tide_run_loading_frame(user, seconds); // The game's pack isn't in yet
+    if (tide_run_session) tide_run_checkpoints_poll(); // Before anything of the frame reads the match
     const tide_host_game *game = tide_run_game;
     // Asked every frame: a reload can bring the setting, or take it away. Inside another program's frame they're
     // drawn with the frame, as the views' drawing is, and say only what's Tide's

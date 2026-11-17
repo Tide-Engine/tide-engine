@@ -3,10 +3,12 @@
 // describes for platform/tests/migrate.tide.
 
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "game.h"
+#include "tide/checkpoint.h"
 #include "tide/migrate.h"
 #include "tide_test.h"
 
@@ -672,6 +674,30 @@ TIDE_TEST(migrate_refuses_a_world_whose_scene_is_gone)
     free(old.bytes);
 }
 
+// Forced (a checkpoint loaded anyway), the scene's entity and every entity in it are dropped, and the rest carried
+TIDE_TEST(migrate_forced_drops_the_entities_of_a_scene_thats_gone)
+{
+    const old_match old = make_old(0);
+    void *bytes = NULL;
+    uint32_t size = 0;
+    tide_migration m;
+    TIDE_CHECK(tide_migrate_world_forced(&old_layout, &old_layout.match, old.bytes, old.size, &no_arena_layout,
+                                         &no_arena_layout.match, &bytes, &size, &m));
+    TIDE_CHECK(strcmp(m.scene_dropped, "Arena") == 0);
+    TIDE_CHECK(m.failed[0] == '\0');
+    // The arena, both balls in it, and the entity whose only component (Tag) is gone
+    TIDE_CHECK(m.entities_dropped == 4);
+    // The new world: its header, then its entities, none of them alive, and no rows
+    tide_reader r = {bytes, size, no_arena_layout.match.size, false};
+    tide_entities entities = {0};
+    TIDE_CHECK(tide_entities_unpack(&entities, &r));
+    TIDE_CHECK(!tide_entity_alive(&entities, old.ball1) && !tide_entity_alive(&entities, old.arena));
+    TIDE_CHECK(tide_read_u32(&r) == 0);
+    tide_entities_free(&entities);
+    free(bytes);
+    free(old.bytes);
+}
+
 TIDE_TEST(migrate_refuses_a_world_with_changes_waiting)
 {
     const old_match old = make_old(1);
@@ -1166,4 +1192,96 @@ TIDE_TEST(migrate_carries_local_fields_by_name)
     free(local);
     free(copy);
     free(bare);
+}
+
+// ---------------------------------------------------------------------------
+// Checkpoints (tide/checkpoint.h): a world saved with its layout, loaded by a build of another
+
+// A game whose worlds are their packed bytes as they are, for a checkpoint to save and load
+static const old_match *checkpoint_saved;
+static uint8_t *checkpoint_loaded;
+static uint32_t checkpoint_loaded_size;
+
+static uint32_t checkpoint_pack(const void *world, uint8_t *out, const uint32_t capacity)
+{
+    (void)world;
+    if (out && capacity >= checkpoint_saved->size) memcpy(out, checkpoint_saved->bytes, checkpoint_saved->size);
+    return checkpoint_saved->size;
+}
+
+static bool checkpoint_unpack(void *world, const uint8_t *data, const uint32_t size)
+{
+    (void)world;
+    free(checkpoint_loaded);
+    checkpoint_loaded = malloc(size);
+    memcpy(checkpoint_loaded, data, size);
+    checkpoint_loaded_size = size;
+    return true;
+}
+
+static void checkpoint_free(void *world)
+{
+    (void)world;
+}
+
+TIDE_TEST(a_checkpoint_loads_into_a_build_of_another_layout)
+{
+    const old_match old = make_old(0);
+    checkpoint_saved = &old;
+    const tide_game saving = {.world_size = 64, .hash = 1, .pack_world = checkpoint_pack, .unpack_world = checkpoint_unpack,
+                              .free_world = checkpoint_free};
+    tide_game loading = saving;
+    loading.hash = 2; // Another layout
+    const char *folder = "migrate_checkpoints";
+    char why[200];
+    TIDE_CHECK(!tide_checkpoint_name_ok("../boss", why, sizeof why));
+    TIDE_CHECK(!tide_checkpoint_name_ok("", why, sizeof why));
+    TIDE_CHECK(tide_checkpoint_save(folder, "arena", &old_layout, &saving, old.bytes, 0, 41, why, sizeof why));
+#ifndef __wasm__ // Node's WASI opens no folders on Windows; a page lists through tide run's server, not this
+    char names[4][TIDE_CHECKPOINT_NAME];
+    TIDE_CHECK(tide_checkpoint_list(folder, names, 4) == 1 && strcmp(names[0], "arena") == 0);
+#endif
+
+    // The same build: its bytes as they were
+    void *world = NULL;
+    int32_t player = -1;
+    tide_checkpoint_loaded loaded;
+    TIDE_CHECK(tide_checkpoint_load(folder, "arena", &old_layout, &saving, false, &world, &player, &loaded));
+    TIDE_CHECK(loaded.same && loaded.tick == 41 && player == 0);
+    TIDE_CHECK(checkpoint_loaded_size == old.size && memcmp(checkpoint_loaded, old.bytes, old.size) == 0);
+    free(world);
+
+    // Another layout: carried over by name, as a reload carries a world
+    TIDE_CHECK(tide_checkpoint_load(folder, "arena", &new_layout, &loading, false, &world, &player, &loaded));
+    TIDE_CHECK(!loaded.same && loaded.fields_reset == 1 && loaded.carried.entities_dropped == 1); // Ball.gone; Tag only
+    void *expected = NULL;
+    uint32_t expected_size = 0;
+    tide_migration m;
+    TIDE_CHECK(tide_migrate_world(&old_layout, &old_layout.match, old.bytes, old.size, &new_layout, &new_layout.match, &expected,
+                                  &expected_size, &m));
+    TIDE_CHECK(checkpoint_loaded_size == expected_size && memcmp(checkpoint_loaded, expected, expected_size) == 0);
+    free(expected);
+    free(world);
+
+    // One whose scene is gone: refused, or forced, the rest
+    TIDE_CHECK(!tide_checkpoint_load(folder, "arena", &no_arena_layout, &loading, false, &world, &player, &loaded));
+    TIDE_CHECK(strstr(loaded.carried.failed, "the scene Arena is gone") != NULL && world == NULL);
+    TIDE_CHECK(tide_checkpoint_load(folder, "arena", &no_arena_layout, &loading, true, &world, &player, &loaded));
+    TIDE_CHECK(strcmp(loaded.carried.scene_dropped, "Arena") == 0 && loaded.carried.entities_dropped == 4);
+    free(world);
+
+    // Not there, or not one
+    TIDE_CHECK(!tide_checkpoint_load(folder, "nowhere", &old_layout, &saving, false, &world, &player, &loaded));
+    TIDE_CHECK(strstr(loaded.carried.failed, "there's no checkpoint nowhere") != NULL);
+    FILE *f = fopen("migrate_checkpoints/broken.checkpoint", "wb");
+    fputs("not a checkpoint", f);
+    fclose(f);
+    TIDE_CHECK(!tide_checkpoint_load(folder, "broken", &old_layout, &saving, false, &world, &player, &loaded));
+    TIDE_CHECK(strstr(loaded.carried.failed, "isn't a checkpoint") != NULL);
+
+    remove("migrate_checkpoints/arena.checkpoint");
+    remove("migrate_checkpoints/broken.checkpoint");
+    free(checkpoint_loaded);
+    checkpoint_loaded = NULL;
+    free(old.bytes);
 }

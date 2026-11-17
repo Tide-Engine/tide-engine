@@ -4,7 +4,7 @@
 // entities by their components, and a field changed there reaches the match through the server.
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { readPng } from './png_read.mjs';
 
@@ -59,6 +59,7 @@ const timer = setTimeout(() => { console.error('dev menu test timed out'); proce
 const at = name => color(name, 470, 190); // Right of the menu, and its panel's shadow
 try {
     rmSync(tweaksFile, { force: true });
+    rmSync(join(scratch, 'checkpoints'), { recursive: true, force: true }); // A run before's
     assert.equal(await next(), 'tide: interactive ready 1');
     await command('step 2', 'ready'); // The match's first ticks
     await command('capture off.png');
@@ -116,6 +117,22 @@ try {
     await command('step 4', 'ready');
     await command('capture dark.png');
     assert.deepEqual(at('dark.png'), [0, 0, 0]);
+    // A checkpoint of the dark match, as an agent saves one; the match changed after it, then loaded from it again
+    await command('checkpoint save dark');
+    await command('step 2', 'ready');
+    assert.ok(existsSync(join(scratch, 'checkpoints', 'dark.checkpoint')), errors);
+    await command('click dark');
+    await command('step 4', 'ready');
+    await command('capture light.png');
+    assert.deepEqual(at('light.png'), [0, 0, 255]);
+    await command('checkpoint load dark');
+    await command('step 6', 'ready');
+    await command('capture loaded.png');
+    assert.deepEqual(at('loaded.png'), [0, 0, 0]); // Dark again: the match is the one saved
+    await command('checkpoint load nowhere'); // Said, and the match goes on as it is
+    await command('step 2', 'ready');
+    assert.match(errors, /checkpoint nowhere didn't load: there's no checkpoint nowhere/);
+    await command('step 2', 'ready');
     await command('click Shade'); // Closed again
     await bottom();
     await command('controls');
@@ -149,7 +166,19 @@ try {
     // Back to the Dev tab
     await command('click Dev');
     await command('step 2', 'ready');
-    const top = Number((await command('step 1', 'ready')).split(' ').pop());
+    // Its checkpoints: Save names the next, the list has it. The wheel scrolls what the pointer is over: the list
+    const over = Number((await command('step 1', 'ready')).split(' ').pop());
+    await command(`${over + 1} mouse 150 150`);
+    await command('step 10', 'ready'); // The panel grows to the list in a few frames
+    await bottom();
+    await command('controls');
+    assert.ok(said.some(line => /^tide: control \d+ button "Save" /.test(line)), said.join('\n'));
+    await command('click Save');
+    await command('step 4', 'ready');
+    assert.ok(existsSync(join(scratch, 'checkpoints', 'checkpoint-1.checkpoint')), errors);
+    await command('controls');
+    assert.ok(said.some(line => /^tide: control \d+ button "checkpoint-1" /.test(line)), said.join('\n')); // Newest first
+    const top =Number((await command('step 1', 'ready')).split(' ').pop());
     await command(`${top + 1} scroll 0 4000`);
     await command('step 3', 'ready');
     await command('click Marker');
@@ -166,6 +195,17 @@ try {
     await command('capture kept.png');
     assert.deepEqual(at('kept.png'), [255, 0, 0]);
     child.stdin.end();
+    await new Promise(done => child.on('exit', done));
+    // A run started from the checkpoint is dark from its first frames; one from a checkpoint that isn't there ends
+    // at once, saying why
+    const from = spawnSync(resolve(programArg), ['--from', 'dark', '--frames', '10', '--capture', join(scratch, 'from.png'),
+                                                 '--size', '480', '200'], { cwd: scratch, env, encoding: 'utf8' });
+    assert.equal(from.status, 0, from.stderr);
+    assert.match(from.stdout, /tide: Loaded dark, from tick \d+/);
+    assert.deepEqual(at('from.png'), [0, 0, 0]);
+    const missing = spawnSync(resolve(programArg), ['--from', 'nowhere', '--frames', '10'], { cwd: scratch, env, encoding: 'utf8' });
+    assert.equal(missing.status, 2);
+    assert.match(missing.stderr, /there's no checkpoint nowhere/);
     console.log('dev menu: ok');
 } catch (e) {
     console.error(e);

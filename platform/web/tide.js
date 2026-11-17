@@ -3499,6 +3499,33 @@
     };
     platform.tweak_write = () => {};
 
+    // A dev build's checkpoints (tide/checkpoint.h), which tide run --web keeps in the game's folder: one the
+    // program saved, on its way there (`saved`: 0 not yet, 1 kept, 2 not), one it asked for, once it's come (null
+    // while it hasn't, or `false` for one that isn't there), and their names, newest first, a line each. A page
+    // without tide keeps none.
+    const checkpoints = { saved: 0, name: '', bytes: null, names: new Uint8Array(0), listing: false, listedAt: -Infinity };
+    platform.checkpoint_save = () => { checkpoints.saved = 2; };
+    platform.checkpoint_saved = () => { const saved = checkpoints.saved; if (saved !== 0) checkpoints.saved = 0; return saved; };
+    platform.checkpoint_fetch = name => { checkpoints.name = string(name); checkpoints.bytes = false; };
+    platform.checkpoint_copy = (name, ptr, capacity) => {
+        if (string(name) !== checkpoints.name || checkpoints.bytes === null) return 0;
+        if (checkpoints.bytes === false) {
+            if (ptr) checkpoints.name = '';
+            return 0xFFFFFFFF;
+        }
+        const size = checkpoints.bytes.length;
+        if (ptr && size <= capacity) {
+            u8().set(checkpoints.bytes, ptr);
+            checkpoints.bytes = null;
+            checkpoints.name = '';
+        }
+        return size;
+    };
+    platform.checkpoint_list = (ptr, capacity) => {
+        if (checkpoints.names.length <= capacity) u8().set(checkpoints.names, ptr);
+        return checkpoints.names.length;
+    };
+
     // The files TIDE_FILES names ({ url, size } each, the url with the file's hash in its query, so a
     // browser's cache keeps a build's files until another build's page names others), all at once, counting
     // what's come of them all together.
@@ -3650,6 +3677,42 @@
                 .then(response => { if (!response.ok) printErr(`tide: couldn't write ${tweak} to its file`); },
                       () => {});
         };
+        // Checkpoints, in the game's folder: saved and read through tide, and listed a second at the most apart
+        platform.checkpoint_save = (name, ptr, size) => {
+            const which = string(name);
+            const body = u8().slice(ptr, ptr + size); // Copied now: the program frees them
+            checkpoints.saved = 0;
+            fetch(`checkpoint?${new URLSearchParams({ name: which })}`, { method: 'POST', body, cache: 'no-store',
+                                                                          headers: { 'X-Tide': '1' } })
+                .then(response => { checkpoints.saved = response.ok ? 1 : 2; checkpoints.listedAt = -Infinity; },
+                      () => { checkpoints.saved = 2; });
+        };
+        const fetchCheckpoint = async which => {
+            checkpoints.name = which;
+            checkpoints.bytes = null;
+            try {
+                const response = await fetch(`checkpoint?${new URLSearchParams({ name: which })}`,
+                                             { cache: 'no-store', headers: { 'X-Tide': '1' } });
+                if (checkpoints.name === which) checkpoints.bytes = response.ok ? new Uint8Array(await response.arrayBuffer()) : false;
+            } catch {
+                if (checkpoints.name === which) checkpoints.bytes = false;
+            }
+        };
+        platform.checkpoint_fetch = name => { fetchCheckpoint(string(name)); };
+        const listed = platform.checkpoint_list;
+        platform.checkpoint_list = (ptr, capacity) => {
+            if (!checkpoints.listing && performance.now() - checkpoints.listedAt > 1000) {
+                checkpoints.listing = true;
+                fetch('checkpoints', { cache: 'no-store', headers: { 'X-Tide': '1' } })
+                    .then(response => response.ok ? response.arrayBuffer() : null)
+                    .then(names => { if (names) checkpoints.names = new Uint8Array(names); }, () => {})
+                    .finally(() => { checkpoints.listing = false; checkpoints.listedAt = performance.now(); });
+            }
+            return listed(ptr, capacity);
+        };
+        // --from: the checkpoint is here before the first build starts, which goes on from it
+        const from = words.indexOf('--from');
+        let fromFetched = from < 0 || from + 1 >= words.length;
         const startFresh = async () => {
             freshRequested = false;
             await replace(bytes, true);
@@ -3677,6 +3740,10 @@
                         pack = packs;
                         if (bytes && exports && exports.tide_pack_changed && !stopped) exports.tide_pack_changed();
                     }
+                }
+                if (!fromFetched) {
+                    fromFetched = true;
+                    await fetchCheckpoint(words[from + 1]);
                 }
                 if (newest && newest !== build) {
                     const response = await fetch(`game-${newest}.wasm`, { cache: 'no-store' });
