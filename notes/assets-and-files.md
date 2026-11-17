@@ -79,6 +79,7 @@ ASan): those, `tidec_asset_files`, `tidec_asset_cache`, `tidec_asset_usage`, `ti
 `tide_cli_assets`, `tide_cli_build_report`, `tide_server_pack`, `tide_add_game_asset_deletion`. The packaged tide
 passes `cache_test.mjs --part cache --gpu` and `--part modes --gpu`, and builds and runs Mount & Rifle in debug
 and in release. Not run: web and Android builds, Linux/macOS (the record's times are `st_mtim`'s there): CI's.
+
 ## The engine's folder: the store's files out of the game's reach (2026-11-17)
 
 The owner's decision: the server's store keeps its files in `<persistent>/Tide/store/` (was `saved/`), and
