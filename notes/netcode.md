@@ -1,5 +1,32 @@
 # Netcode: sessions, prediction, commands
 
+## A whole projection's entities found on the pool; no protocol change (2026-11-17, joins)
+
+What a player is sent of the world whole (a join, a transfer, a repair offer: generated `client_state`) asked
+`tide_visibility_entity` of every entity of every archetype twice, once to count and once to write, each a lookup of
+the entity and a walk to its scene and groups, on the update's thread. A server's world is every player's: at 100
+players apart, 30,000 or more entities of which a joiner has a few hundred, and the updates where several joined
+were the run's longest (`server, while one joins` p99 28 to 46 ms).
+
+- **Once each, where it is**: `tide_client_see_keys` goes through the archetype's entities in the order of their
+  identities with their slots (`tide_entities_ordered_archetypes_slots`), asks `tide_visibility_entity_at` (the
+  same answer as `tide_visibility_entity` for a live entity at a known place, with a `tide_visibility_walk` keeping
+  the scene's root and the directory found for the rows that share them) and keeps the places of those the
+  recipient may have, which are then written. A client's world (it has only what it may) asks as before.
+- **On the pool**: where the session handed this thread a pool (`tide_loops_enter`, which `start_snapshot`,
+  `offer_client_repair` and `send_client_lacking` now do around the whole projection, on the update's thread; never
+  from the repairs read on the pool) and there are 4,096 entities or more, parts of 2,048 run on its threads, each
+  reading the world alone and writing its own flags, kept in order after. The bytes are the same however many
+  threads: every run below ends on the same world hash, bytes per player and arrival ticks.
+- **Measured** (`bench_voxels --players 100 --spread 256 --seconds 30`, 12 threads, two alternating pairs, the
+  machine shared): updates while one joins, p99 28.5 and 46.1 ms to 14.1 and 15.6; the run's p99 21.2 and 27.7 to
+  24.2 and 27.1 (the steady state, within the machine's noise); 27.8 KB a second for each bot, box fill 31 ticks at
+  the median, hash `0x5165130e825fa70f` in all four.
+- **Tests**: every native release target builds; the `bench_*`, `tidec_e2e_visibility*`, `_net*`, `_storage*`,
+  `_local_fields`/`_events`, codegen pattern tests, `sumo_tests`, `earth_tests`, `towers_tests` and `tide_tests`
+  (109) pass; under ASan (`sanitize`) `bench_voxels` (quick, `_arrives`, `_views`, `_reads_12`), the visibility
+  runs, repairs and walks-on-the-pool fixtures, and 12 players apart joining. No pin moved.
+
 ## A check's rows on every thread; no protocol change (2026-11-17, parts)
 
 What was left of the projection checks at 100 players apart (notes/voxels.md, A hundred apart, again): a check after

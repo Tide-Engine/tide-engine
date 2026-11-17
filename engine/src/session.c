@@ -1900,8 +1900,18 @@ static void repairs_read(tide_server *s, repair_start *starts, const uint32_t co
 // A repair by the hash offer (the player's own run of the tick compared block by block), or failing that a whole
 // projection against the world it confirmed: where what changed couldn't be read, or is mostly other values of
 // entities the player had.
+static void offer_client_repair_on(tide_server *s, connection *c, const uint32_t tick, const void *world,
+                                   const void *base, tide_event_log events);
 static void offer_client_repair(tide_server *s, connection *c, const uint32_t tick, const void *world, const void *base,
                                 tide_event_log events)
+{
+    const tide_jobs *const loops = tide_loops_enter(s->desc.jobs); // A whole projection is read on the pool (client_state)
+    offer_client_repair_on(s, c, tick, world, base, events);
+    tide_loops_leave(loops);
+}
+
+static void offer_client_repair_on(tide_server *s, connection *c, const uint32_t tick, const void *world,
+                                   const void *base, tide_event_log events)
 {
     const tide_player_id player = tide_player_from_index((int32_t)(c - s->connections));
     uint32_t size = 0;
@@ -1934,7 +1944,15 @@ static void offer_client_repair(tide_server *s, connection *c, const uint32_t ti
     send_in_chunks(s, c, SEND_CLIENT_REPAIR, bytes, size, NULL);
 }
 
-static void send_client_lacking(tide_server *s, connection *c, const uint8_t *needs, uint32_t needs_size)
+static void send_client_lacking_on(tide_server *s, connection *c, const uint8_t *needs, const uint32_t needs_size);
+static void send_client_lacking(tide_server *s, connection *c, const uint8_t *needs, const uint32_t needs_size)
+{
+    const tide_jobs *const loops = tide_loops_enter(s->desc.jobs); // Whole projections are read on the pool (client_state)
+    send_client_lacking_on(s, c, needs, needs_size);
+    tide_loops_leave(loops);
+}
+
+static void send_client_lacking_on(tide_server *s, connection *c, const uint8_t *needs, const uint32_t needs_size)
 {
     if (!c->hashed || !c->repair_base) return;
     const tide_player_id player = tide_player_from_index((int32_t)(c - s->connections));
@@ -1997,7 +2015,15 @@ static uint8_t *hashes_of(const tide_server *s, const void *world, uint32_t *siz
 // player with a world to build it from (or that can start the match itself,
 // over a network), its pages' hashes first. A world that goes in one update
 // anyway goes whole: the hashes would only cost it a round trip.
+static void start_snapshot_on(tide_server *s, connection *c);
 static void start_snapshot(tide_server *s, connection *c)
+{
+    const tide_jobs *const loops = tide_loops_enter(s->desc.jobs); // A whole projection is read on the pool (client_state)
+    start_snapshot_on(s, c);
+    tide_loops_leave(loops);
+}
+
+static void start_snapshot_on(tide_server *s, connection *c)
 {
     const tide_game *g = s->game;
     const bool verified = c->verified_world || c->verified_kept;
