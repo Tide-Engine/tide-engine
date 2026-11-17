@@ -168,6 +168,14 @@ taking until `done` (`repair_reads.done`, `works`, released; the update reads th
 **Measured** (notes/voxels.md, Repairs read on every thread): 100 together's 99th percentile 15 to 12.2, 12.5 ms on 12
 threads, 64 together's 9.6, 10.0 to 8.6, 9.2; 8 bots and one thread as they were; the same bytes and ticks.
 
+**Suspected of the handover's flake, and cleared** (2026-11-17; notes/webrtc-and-rooms.md, top section): CI's
+`tide_platform_web_rooms_handover` failed (a joiner never welcomed) on the commit after this one and again later, but
+that game has no `client_changes` and its session no pool, so none of this runs there, and the same failure was seen
+on 2026-11-02. Checked too, by reading: the start loop keeps the serial rule, so the first due repair in the
+connections' order always starts whatever it read (`repair_work` is 0 then), each read past the allowance is one the
+serial loop wouldn't have begun in this update either, and a joiner's whole view, put off as `REPAIR_HEAVY`, leaves
+the due list (`making`) until it's sent. Nothing moved; no pin changed.
+
 **Left.**
 - An update's longest read is now one big repair (a view arriving, 2 to 3 MB: read and packed in 4 to 7 ms, the view
   as it is now and the tick asked for one after the other on one thread). The two as two tasks was tried and wasn't

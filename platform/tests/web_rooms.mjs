@@ -69,6 +69,7 @@ const page = `<!doctype html>
   const ok = new Set();
   const before = {}, after = {};
   let reported = false;
+  const accounts = { asked: false, given: 0 }; // Frames asked how their channels stand, once one failed
   function report(passed) {
     if (reported) return;
     reported = true;
@@ -123,7 +124,13 @@ const page = `<!doctype html>
       ok.add(data.who);
       if (ok.size === 2) report(true);
     }
-    if (/^(FAIL|exit|abort)/.test(data.line)) report(false);
+    // A player failed: every frame says how its data channels stand first (web_rooms.html), so the log says
+    // which way messages stopped
+    if (/^(FAIL|exit|abort)/.test(data.line) && !accounts.asked) {
+      accounts.asked = true;
+      for (const frame of Object.values(playing)) frame.contentWindow.postMessage({ account: true }, '*');
+    }
+    if (data.line === 'account given' && ++accounts.given === Object.keys(playing).length) report(false);
   });
   player('host', ended ? 'end-host' : handover ? 'handover-host' : 'host');
 </script>
