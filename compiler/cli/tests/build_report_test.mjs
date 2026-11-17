@@ -259,6 +259,35 @@ try {
     assert(compiledLarge().every(name => partNames.includes(name)), `${compiledLarge()}`);
     delete env.TIDE_TEST_BUILD_REQUIRE_THIN;
 
+    // A debug build's plumbing is in parts too, each an object of its own: no ThinLTO, whose link compiled every
+    // part again as one (and far slower) whenever a layout changed. Its game.c stays whole.
+    const wide = join(root, "wide");
+    const wideCount = 140; // Enough archetypes and systems for 4 MiB of plumbing
+    const wideSource = "scene Main { }\nsingleton Tally { int n; }\n" + Array.from({ length: wideCount }, (_, i) =>
+        `component C${i} { int a; int b; int[40] pad; }\nsystem S${i}(mut C${i} c, mut Tally tally) { c.a += c.b; tally.n += 1; }\n`).join("")
+        + "event(Spawned) Setup(with Main)\n{\n" + Array.from({ length: wideCount }, (_, i) => `    Spawn(C${i} { a = ${i} });\n`).join("") + "}\n";
+    put(join(wide, "game.tide"), wideSource);
+    env.TIDE_TEST_BUILD_FORBID_THIN = "1";
+    const wideReport = join(root, "reports", "wide.json");
+    const wideBuild = await run(["build", wide, "--report", wideReport]);
+    assert.equal(wideBuild.code, 0, wideBuild.said);
+    const wideParts = readFileSync(join(wide, ".tide", "native-debug", "gen", "game_parts.txt"), "utf8").trim().split("\n");
+    assert.equal(wideParts[0], "0 0 game.c");
+    const plumbingParts = wideParts.filter(line => line.startsWith("1 1 game_plumbing"));
+    assert(plumbingParts.length >= 3, `the plumbing in parts, and its data: ${wideParts}`);
+    const compiledWide = JSON.parse(readFileSync(wideReport, "utf8")).compiles.files.map(file => basename(file.source));
+    for (const line of wideParts) assert(compiledWide.includes(line.slice(4)), `${line} compiled: ${compiledWide}`);
+    // game.c starts compiling while the plumbing is still being cut (compile_written): once, and after an edit of
+    // a system's code it alone
+    const compiledWideNow = () => JSON.parse(readFileSync(wideReport, "utf8")).compiles.files.map(file => basename(file.source));
+    assert.equal(compiledWide.filter(name => name === "game.c").length, 1, `${compiledWide}`);
+    put(join(wide, "game.tide"), wideSource.replace("c.a += c.b;", "c.a += c.b + 1;"));
+    const wideEdit = await run(["build", wide, "--report", wideReport]);
+    assert.equal(wideEdit.code, 0, wideEdit.said);
+    assert.equal(compiledWideNow().filter(name => name === "game.c").length, 1, `${compiledWideNow()}`);
+    assert(compiledWideNow().length <= 2, `the code, and at most the part of the plumbing that goes by it: ${compiledWideNow()}`);
+    delete env.TIDE_TEST_BUILD_FORBID_THIN;
+
     // A failed build still says where its time went
     put(join(game, "game.tide"), "system Broken() { Missing(); }\n");
     const failedPath = join(root, "reports", "failed.json");

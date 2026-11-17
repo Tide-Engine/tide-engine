@@ -1,5 +1,88 @@
 # `tide`, packages and the package
 
+## Debug builds of big games: no ThinLTO, wide components' columns in loops (2026-11-17)
+
+Owner: Mount & Rifle's `tide run` "takes like 30+ seconds", so much that `--release` was no slower. Measured with
+this checkout's packaged tide (embedded clang/lld 23.1.2) on a scratch copy of the game at 480c451 (unpinned, debug,
+assets cached), Ryzen 9 7900X, `tide run game --frames 2`, redirected output with each line timed:
+
+| | before | after |
+|---|---|---|
+| a field added to a singleton (every plumbing part compiles) | 35.0 s (link 23.3 s) | 14.9-16.8 s (link 0.2 s) |
+| a constant edited (game.c alone) | 10.6 s | 8.6-9.4 s |
+| every object again (a new tide; assets cached) | 47-63 s (link 24 s) | 21-25 s |
+| nothing changed | 2.5 s | 2.5 s |
+
+What it was, and what changed:
+
+- **A debug build's plumbing parts are objects of their own, with no ThinLTO** (`queue_game`: `thin` only when
+  `!splits_plumbing(b)`). lld's trace of the debug link (`-Xlinker -Xlink=--time-trace=<file>`): 32 s wall for
+  112 s of backend work, of which one function, `tide_task_Campaign_Pursue`, was 24.6 s (15.7 s printing assembly,
+  5.3 s `Live DEBUG_VALUE analysis`): ThinLTO imported the system's rows function (190 parameters, one a lane) into
+  its task once for each of six archetypes. The same part compiled alone, `-O2 -g`, took 10 s. So the cross-part
+  optimization made every layout change a 23 s link, and since a layout change compiles every part again (each has
+  the types), the cached link never applied. The measurement that picked ThinLTO for the parts (2026-11-05, below)
+  was of release builds and of the compile alone. Release, distribution and `-O<n>` builds keep ThinLTO: their
+  link after an edit is 11 s here, the same import into the same tasks, and is the next thing to look at.
+  Runtime: the game's `tools/performance-route.txt` (seed 42, 3,230 frames, 1280x720, `--define PERFORMANCE_TRACE`,
+  `--profile`), two runs each way and two more: views 3.75-4.05 ms a frame without ThinLTO against 3.96-4.00 with,
+  match 0.042-0.048 against 0.044-0.045. That route's match is light in this version of the game; a battle's
+  wasn't measured.
+- **A wide component's columns come from a loop** (`lanes_looped`, `gen_columns_loop` in codegen.c; `LANES_LOOPED`
+  = 32 lanes, every lane taken). Generated C fetched each lane's column with a call of its own
+  (`tide_table_column`/`_mut`, inlined): for Campaign.Party (744 bytes, 186 lanes), in every archetype of every
+  system and query that takes it. `tide_task_Campaign_Pursue` was 5.5 s of clang at -O2 for 1,116 such lines, and
+  0.2 s as six loops; `-ftime-trace` over the sixteen parts had the Party systems' tasks and
+  `tide_game_near_same` as most of the four slowest. Looped: a chunk's kept columns (`gen_system_chunk`, both
+  forms), `gen_chunk_columns`, the lanes a system can't write (`gen_unwritten_lanes`, runs of 32 or more), a
+  query's bindings, a canonical loop's read-only components, and `tide_game_near_same`'s two arrays. The arrays
+  filled by a loop aren't `const` arrays with initializers any more; the row loops are handed their elements or
+  the array as before. Narrow components and ones taken in part keep a line a lane, so the SIMD loops' places
+  stay named apart. Plumbing parts: 2.4-12.5 s each before, 1.9-2.8 s after but for two (5.5 and 6.6 s).
+- **`tide_game_near_same` compares a component's rows in one function a component**
+  (`tide_near_same_rows_<Component>`, predict_far_codegen.inc), called for each archetype that stores it, where
+  each archetype had the two gathers and every field's comparison of its own: 2.9 s to 1.7 s of its part.
+- **`tide_world_print` is compiled as written** (`optnone, noinline`): it prints, and optimizing a big game's was
+  1.7 s of the slowest part.
+- **A debug build's game.c starts compiling as soon as it's written** (`compile_written` in common.h, called by
+  codegen once the code's file is whole and before the plumbing is cut; `game_written` in build.c queues it into
+  the build's list with its stamp and starts one compile more). The generate goes on for about 1.9 s after
+  (cutting the plumbing's data and parts, the debugger's views, the objects' stamps), which the 2.3 s compile now
+  overlaps. `build.early_object` says where a build wants it (`build_game`, `build_library_work`); `queue_game`
+  leaves a file looked at this way alone (`early_queued`). Not with `TIDE_JOBS=1`, nor for release builds, whose
+  code is in parts written last.
+- **More than 256 components is said and nothing more is checked** (`check`, after `collect_decls`): the error was
+  said and checking went on, and `check_params` then read a 256-bit set of components past its end (ASan, found
+  by this work's first test fixture). `errors/components_too_many.tide`.
+- `diag_step` (common.h): steps inside a phase, said under `TIDEC_TIMES` alone (a report keeps phases by name).
+  codegen's end says its own: plumbing from code, cutting out data, cutting parts, writing parts, views and names.
+
+What an edit of a constant still pays (8.6 s): the Tide step 5.9-6.5 s (declarations 1.15 s, of it reading and
+hashing 960 MB of asset files; checking 0.5 s; generating C 1.85 s; packing 0.65 s; plumbing from code 0.4 s;
+cutting out its data 0.3 s; cutting its parts 1.06 s, four levels each going through all of it; views 0.17 s;
+stamps of the generated files 0.3 s), game.c at -O0 2.3 s (1 s of it past the generate now), link 0.2 s, the
+game's start 1.2 s. A layout change adds the plumbing's parts, 7-8 s for the slowest two with all sixteen
+compiling (`tide_inspect_match` 2 s, what's left of `tide_game_near_same` 1.7 s). Ideas not done: one N-way
+cut of the plumbing instead of four binary levels, or the levels' halves on threads; shaders' arrays written
+straight to the data part instead of cut out of the plumbing; game.c in parts at -O0 (each part's debug info
+would hold every type: `-fno-eliminate-unused-debug-types`); the rows functions of a debugger's build taking a
+wide component as arrays instead of a parameter a lane (`rows_spread`), which copies rows whole anyway.
+A new tide compiles everything again, build code included: 21-25 s, of which the Tide step is 11-17 s.
+
+Tests: `tide_cli_build_report` builds a debug game of 140 components and systems (4 MiB of plumbing, so parts)
+with the controlled compiler refusing `-flto=thin` and `--thinlto-*` (`TIDE_TEST_BUILD_FORBID_THIN`), expects the
+manifest's parts all compiled and game.c once, and after an edit of a system's code game.c once and at most one
+part more. `tidec_error_components_too_many`.
+
+Validation (Windows, Clang 23.1.2, ASan): 19 focused tests pass: `tidec_e2e_wide_lanes`, `kept_lanes`,
+`row_lanes`, `handler_lanes`, `handler_lanes_net`, `predict_near`, `predict_near_split`, `predict_kept`,
+`predict_owned`, the three `_lanes_codegen` text checks, `tide_cli_tests`, `build_report`, `build_overlap`,
+`generation`, `run_exit`, `help`, the new error fixture. Mount & Rifle builds and runs in debug (the route above)
+and release (two frames). Not run: the rest of the compiler's fixtures against the changed C (looped columns
+for any component of 32 lanes or more, `tide_near_same_rows_*` in every game), web builds of them, a watching
+run with a window (hidden runs refuse one; its build is `build_library_work`, which `build_overlap`'s host case
+covers with the inert host), Linux/macOS/Android: CI's.
+
 ## Checkpoints in `tide run` (2026-11-17)
 
 `tide run` passes the game `--checkpoints <project>/checkpoints` (not for `--server`, Android or the web) and

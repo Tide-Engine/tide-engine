@@ -1170,6 +1170,25 @@ static int comp_lanes(const decl *d)
     return decl_layout(d).size / comp_width(d);
 }
 
+// A wide component's lanes, every one of them taken: where their columns are comes from a loop, not a line a
+// lane. A call inlined for each lane, of each archetype, of each system and query that takes the component
+// was most of what a big game's plumbing took to compile (a 744-byte component has 186 lanes). Narrow
+// components and ones taken in part keep a line a lane, which names each place apart for the row loops.
+#define LANES_LOOPED 32
+
+static bool lanes_looped(const int lanes)
+{
+    return lanes >= LANES_LOOPED;
+}
+
+// `array`[from + k] = `fetch`(`table`, `columns`, `chunk`, `column` + k), for `count` lanes
+static void gen_columns_loop(sb *o, const char *pad, const char *array, const int from, const char *fetch, const char *table,
+                             const char *columns, const char *chunk, const int column, const int count)
+{
+    sb_printf(o, "%sfor (uint32_t tide_k = 0; tide_k < %du; tide_k++) %s[%du + tide_k] = %s(%s, %s, %s, %du + tide_k);\n", pad, count,
+              array, from, fetch, table, columns, chunk, column);
+}
+
 // Archetype `a`'s columns in its tide_table (tide/table.h): the entity, the
 // scene each is in (in a world with scenes), then its components' lanes, the
 // components in order.
@@ -18388,6 +18407,16 @@ static bool rows_take(const gen *g, const decl *sys, const int a, const int c)
     return false;
 }
 
+// ...with every one of `used` taken
+static bool lanes_all_looped(const lane_mask *used, const int lanes)
+{
+    if (!lanes_looped(lanes)) return false;
+    for (int k = 0; k < lanes; k++) {
+        if (!lane_has(used, k)) return false;
+    }
+    return true;
+}
+
 // Structural changes stay queued, so a chunk's page slots stay put even when
 // Set replaces one page. Only affected components reload their lanes
 // at each row; the ordinary cached/SIMD path keeps its existing columns.
@@ -18480,6 +18509,14 @@ static void gen_chunk_columns(gen *g, const decl *sys, const int a, const char *
         const bool taken = change && !g->row_single;
         // A handler's row takes the columns of the lanes it copies alone (row_lanes_codegen.inc), the rest NULL
         const lane_mask used_lanes = g->row_single && handler_rows_plain(g, sys) ? system_comp_lanes(g, sys, a, c) : lane_every(comp_lanes(d));
+        if (lanes_all_looped(&used_lanes, comp_lanes(d))) {
+            sb array = {0};
+            sb_printf(&array, "tide_col_%s", comp);
+            sb_printf(o, "%s%suint8_t *tide_col_%s[%d];\n", pad, taken ? "" : "const ", comp, comp_lanes(d));
+            gen_columns_loop(o, pad, array.data, 0, taken ? "(uint8_t *)tide_table_column_mut" : "(const uint8_t *)tide_table_column", "tide_t",
+                             columns, "tide_c", arch_column(g, a, c), comp_lanes(d));
+            continue;
+        }
         sb_printf(o, "%s%suint8_t *const tide_col_%s[%d] = {", pad, taken ? "" : "const ", comp, comp_lanes(d));
         for (int k = 0; k < comp_lanes(d); k++) {
             if (!lane_has(&used_lanes, k)) {
@@ -22170,6 +22207,17 @@ static void gen_unwritten_lanes(gen *g, const decl *sys, const int a, const int 
     const lane_mask used = system_comp_lanes(g, sys, a, c); // The ones no row copies either are nowhere (row_lanes_codegen.inc)
     for (int k = 0; k < comp_lanes(d); k++) {
         if (lane_has(&mask, k)) continue;
+        // A long run of them is a loop (lanes_looped)
+        int run = 0;
+        while (k + run < comp_lanes(d) && !lane_has(&mask, k + run) && lane_has(&used, k + run)) run++;
+        if (run >= LANES_LOOPED) {
+            sb_printf(&g->c, "%sfor (uint32_t tide_k = %du; tide_k < %du; tide_k++) {\n"
+                             "%s    tide_was_%s[tide_k] = tide_table_column(tide_t, %s, tide_c, %du + tide_k);\n"
+                             "%s    tide_own_%s[tide_k] = (uint8_t *)(uintptr_t)tide_was_%s[tide_k];\n%s}\n",
+                      pad, k, k + run, pad, type_cname(d), arch_columns(g, a), arch_column(g, a, c), pad, type_cname(d), type_cname(d), pad);
+            k += run - 1;
+            continue;
+        }
         // Nothing names a lane no row copies (gen_rows_columns hands over the used ones, by number), so it's left
         // unset: a system in entity order comes here for every run of rows, and two stores a lane for each of a
         // wide component's lanes was most of what such a row cost
@@ -22291,12 +22339,27 @@ static void gen_system_chunk(gen *g, const decl *sys, const int a, const rows_se
             sb_printf(o, "%s%suint8_t *const *const tide_col_%s = tide_kept_col_%s_%d;\n", pad, changed ? "" : "const ", type_cname(d),
                       type_cname(d), a);
             sb_printf(o, "%sif (tide_kept_%d != tide_c) {\n", pad, a);
-            for (int k = 0; k < comp_lanes(d); k++) {
+            if (lanes_all_looped(&used, comp_lanes(d))) {
+                sb array = {0}, in = {0};
+                sb_printf(&array, "tide_kept_col_%s_%d", type_cname(d), a);
+                sb_printf(&in, "%s    ", pad);
+                gen_columns_loop(o, in.data, array.data, 0, changed ? "(uint8_t *)tide_table_column_mut" : "(const uint8_t *)tide_table_column",
+                                 "tide_t", columns, "tide_c", arch_column(g, a, c), comp_lanes(d));
+            }
+            for (int k = 0; k < comp_lanes(d) && !lanes_all_looped(&used, comp_lanes(d)); k++) {
                 if (!lane_has(&used, k)) continue;
                 sb_printf(o, "%s    tide_kept_col_%s_%d[%d] = (%suint8_t *)tide_table_column%s(tide_t, %s, tide_c, %d);\n", pad, type_cname(d),
                           a, k, changed ? "" : "const ", changed ? "_mut" : "", columns, arch_column(g, a, c) + k);
             }
             sb_printf(o, "%s}\n", pad);
+            continue;
+        }
+        if (lanes_all_looped(&used, comp_lanes(d))) {
+            sb array = {0};
+            sb_printf(&array, "tide_col_%s", type_cname(d));
+            sb_printf(o, "%s%suint8_t *tide_col_%s[%d];\n", pad, changed ? "" : "const ", type_cname(d), comp_lanes(d));
+            gen_columns_loop(o, pad, array.data, 0, changed ? "(uint8_t *)tide_table_column_mut" : "(const uint8_t *)tide_table_column", "tide_t",
+                             columns, "tide_c", arch_column(g, a, c), comp_lanes(d));
             continue;
         }
         sb_printf(o, "%s%suint8_t *const tide_col_%s[%d] = {", pad, changed ? "" : "const ", type_cname(d), comp_lanes(d));
@@ -22772,6 +22835,14 @@ static void gen_query_fill(gen *g, const decl *sys, const int qi)
             const param *p = &q->query.items[i];
             if (!param_binding(p) || (p->verified && !confirmed)) continue;
             const decl *comp = p->type.decl;
+            if (lanes_looped(comp_lanes(comp))) {
+                sb array = {0};
+                sb_printf(&array, "tide_col%d", i);
+                sb_printf(o, "            const uint8_t *tide_col%d[%d];\n", i, comp_lanes(comp));
+                gen_columns_loop(o, "            ", array.data, 0, "(const uint8_t *)tide_table_column", "tide_t", columns, "tide_c",
+                                 arch_column(g, a, comp->index), comp_lanes(comp));
+                continue;
+            }
             sb_printf(o, "            const uint8_t *const tide_col%d[%d] = {", i, comp_lanes(comp));
             for (int k = 0; k < comp_lanes(comp); k++) {
                 sb_printf(o, "%s(const uint8_t *)tide_table_column(tide_t, %s, tide_c, %d)", k ? ", " : "", columns,
@@ -23459,6 +23530,14 @@ static void gen_system_cached_task(gen *g, const decl *sys, const rows_set *rows
                 if (!rows_take(g, sys, a, c) || changes_component(sys, c, false)) continue;
                 const decl *d = prog->components.items[c];
                 const lane_mask used = system_comp_lanes(g, sys, a, c); // (row_lanes_codegen.inc)
+                if (lanes_all_looped(&used, comp_lanes(d))) {
+                    sb array = {0};
+                    sb_printf(&array, "tide_col_%s", type_cname(d));
+                    sb_printf(o, "            const uint8_t *tide_col_%s[%d];\n", type_cname(d), comp_lanes(d));
+                    gen_columns_loop(o, "            ", array.data, 0, "tide_table_column", "tide_t", columns, "tide_c", arch_column(g, a, c),
+                                     comp_lanes(d));
+                    continue;
+                }
                 sb_printf(o, "            const uint8_t *const tide_col_%s[%d] = {", type_cname(d), comp_lanes(d));
                 for (int k = 0; k < comp_lanes(d); k++) {
                     if (lane_has(&used, k)) sb_printf(o, "%stide_table_column(tide_t, %s, tide_c, %d)", k ? ", " : "", columns, arch_column(g, a, c) + k);
@@ -26419,7 +26498,9 @@ static void gen_api(gen *g)
         sb_put(o, "    (void)w;\n    return n;\n}\n\n");
     }
 
-    sb_put(o, "void tide_world_print(const tide_world *w)\n{\n");
+    // Every value of every archetype, for someone reading a world: compiled as written, since optimizing a big
+    // game's was seconds of its plumbing's compile and it prints
+    sb_put(o, "__attribute__((optnone, noinline)) void tide_world_print(const tide_world *w)\n{\n");
     if (prog->uses_heap) sb_put(o, "    tide_text_use((tide_heaps *)(uintptr_t)&w->heap, NULL); // Its lists' heap\n");
     sb_put(o, "    printf(\"tick %d, %u entities\\n\", (int)w->Time.tick, (unsigned)tide_world_entity_count(w));\n");
     for (int s = 0; s < prog->singletons.count; s++) {
@@ -30208,6 +30289,7 @@ static bool write_code_parts(const codegen_options *opts, const sb *text, const 
         diag_error((loc){0}, "couldn't partition generated C: %s", split_why ? split_why : "unknown declaration");
         return false;
     }
+    if (split) diag_step("  cutting out data");
     // The code in halves by bits of its names' hashes, as long as each part keeps split_code_part_bytes
     const int most = opts->split_code_parts ? opts->split_code_parts : 4;
     const size_t code_bytes = parts[0].len;
@@ -30226,6 +30308,7 @@ static bool write_code_parts(const codegen_options *opts, const sb *text, const 
         count *= 2;
     }
     if (split) parts[count++] = data;
+    if (split) diag_step("  cutting parts");
     for (int i = 0; i < count; i++) {
         sb out = {0};
         if (split && i == count - 1) sb_printf(&out, "%.*s_data.c", (int)strlen(path) - 2, path);
@@ -30236,6 +30319,7 @@ static bool write_code_parts(const codegen_options *opts, const sb *text, const 
         const char *name = strrchr(forward_slashes(out.data), '/');
         sb_printf(manifest, "%d %d %s\n", plumbing, split, name ? name + 1 : out.data);
     }
+    diag_step("  writing parts");
     return true;
 }
 
@@ -30610,6 +30694,7 @@ bool codegen(program *prog, const codegen_options *opts)
         if (split_prune(&g.c, "main", &reached)) g.c = reached;
     }
     sb parts_manifest = {0};
+    diag_step(NULL);
     bool ok = write_file(h_path.data, &g.h), whole = true;
     if (ok && opts->split_plumbing) {
         // A debug build compiles the plumbing optimized, and the game's code as written. Generated C this can't cut
@@ -30618,9 +30703,13 @@ bool codegen(program *prog, const codegen_options *opts)
         sb_printf(&plumbing_path, "%s/%s_plumbing.c", opts->out_dir, opts->name);
         const char *plumbing_c = forward_slashes(plumbing_path.data);
         sb code = {0}, plumbing = {0};
-        if (opts->line_directives && split_plumbing(&g.c, g.code_at.items, g.code_at.count, &code, &plumbing, -1)) {
-            ok = write_code_parts(opts, &code, path.data, g.c_path, false, &parts_manifest)
-                 && write_code_parts(opts, &plumbing, plumbing_path.data, plumbing_c, true, &parts_manifest);
+        const bool cut = opts->line_directives && split_plumbing(&g.c, g.code_at.items, g.code_at.count, &code, &plumbing, -1);
+        diag_step("plumbing from code");
+        if (cut) {
+            // The game's own code is whole, and its header before it: it can compile while the plumbing is cut
+            ok = write_code_parts(opts, &code, path.data, g.c_path, false, &parts_manifest);
+            if (ok && parts_manifest.len && !strchr(parts_manifest.data, '\n')[1]) compile_written(path.data);
+            ok = ok && write_code_parts(opts, &plumbing, plumbing_path.data, plumbing_c, true, &parts_manifest);
             whole = false;
         } else {
             // What it couldn't cut, for whoever reads this
@@ -30640,7 +30729,11 @@ bool codegen(program *prog, const codegen_options *opts)
         sb_printf(&manifest_path, "%s/%s_parts.txt", opts->out_dir, opts->name);
         ok = write_file(manifest_path.data, &parts_manifest);
     }
-    ok = ok && write_pack(&g) && (!opts->visualizers || write_debug_views(&g)) && write_name_map(&g);
+    diag_step("the C's parts");
+    ok = ok && write_pack(&g);
+    diag_step("writing the pack");
+    ok = ok && (!opts->visualizers || write_debug_views(&g)) && write_name_map(&g);
+    diag_step("views and names");
     free(g.pack_bytes);
     return ok;
 }

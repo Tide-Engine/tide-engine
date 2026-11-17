@@ -27106,6 +27106,8 @@ bool check(program *prog)
     builtins_use_gui(prog->gui_theme, prog->gui_control);
     add_device_records(prog);
     collect_decls(prog);
+    // Said already (collect_decls). Nothing more is checked: every set of components is MAX_COMPONENTS bits
+    if (prog->components.count > MAX_COMPONENTS) return false;
     if (prog->preparing) {
         decl *order = NEW(decl);
         order->kind = DECL_SINGLETON;

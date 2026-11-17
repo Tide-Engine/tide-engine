@@ -108,6 +108,26 @@ static void gen_near_same(gen *g)
     const program *prog = g->prog;
     sb *o = &g->c;
     const int far = prog->predict_far->index;
+    // A chunk's rows of one component in the two worlds, compared once for the component: every archetype that
+    // stores it calls this, where each had the rows' gathers and its fields' comparisons of its own (a wide
+    // component in many archetypes was seconds of the plumbing's compile). `tags` leaves the far rows out, and
+    // `here` and `there` say which rows have a sparse one; NULL for neither.
+    for (int k = 0; k < prog->components.count; k++) {
+        const decl *d = prog->components.items[k];
+        if (k == far || d->is_local || comp_lanes(d) == 0) continue;
+        bool stored = false;
+        for (int a = 0; a < prog->archetypes.count && !stored; a++) stored = !arch_local(g, a) && arch_stores(g, a, k);
+        if (!stored) continue;
+        sb_printf(o, "static bool tide_near_same_rows_%s(const uint8_t *const *const x, const uint8_t *const *const y, const tide_entity *const ent,\n"
+                     "                                    const uint8_t *const tags, const uint8_t *const here, const uint8_t *const there, const uint32_t n)\n{\n"
+                     "    for (uint32_t i = 0; i < n; i++) {\n"
+                     "        if (tide_row_gone(&ent[i]) || (tags && tags[i])) continue;\n"
+                     "        if (here) {\n            if (here[i] != there[i]) return false;\n            if (!here[i]) continue;\n        }\n"
+                     "        %s u, v;\n        tide_gather_%s(&u, x, i);\n        tide_gather_%s(&v, y, i);\n",
+                  type_cname(d), type_cname(d), type_cname(d), type_cname(d));
+        gen_near_same_value(g, d, "u", "v", "        ");
+        sb_put(o, "    }\n    return true;\n}\n\n");
+    }
     sb_put(o, "static bool tide_game_near_same(const void *predicted_world, const void *confirmed_world)\n{\n"
               "    const tide_world *p = predicted_world, *q = confirmed_world;\n");
     for (int i = 0; i < prog->singletons.count; i++) {
@@ -168,7 +188,13 @@ static void gen_near_same(gen *g)
                              "                const uint8_t *const there = tide_table_column(t, %s, c, %d);\n",
                           cols, arch_presence(g, a, k), cols, arch_presence(g, a, k));
             }
-            if (lanes > 0) {
+            if (lanes_looped(lanes)) {
+                sb_printf(o, "                const uint8_t *x[%d], *y[%d];\n", lanes, lanes);
+                gen_columns_loop(o, "                ", "x", 0, "tide_table_column", "s", cols, "c", arch_column(g, a, k), lanes);
+                gen_columns_loop(o, "                ", "y", 0, "tide_table_column", "t", cols, "c", arch_column(g, a, k), lanes);
+                sb_put(o, "                bool shared = true;\n");
+                sb_printf(o, "                for (int l = 0; l < %d; l++) shared &= x[l] == y[l];\n", lanes);
+            } else if (lanes > 0) {
                 sb_printf(o, "                const uint8_t *const x[%d] = {", lanes);
                 for (int l = 0; l < lanes; l++) sb_printf(o, "%stide_table_column(s, %s, c, %d)", l ? ", " : "", cols, arch_column(g, a, k) + l);
                 sb_printf(o, "};\n                const uint8_t *const y[%d] = {", lanes);
@@ -179,15 +205,15 @@ static void gen_near_same(gen *g)
                 sb_put(o, "                const bool shared = true;\n");
             }
             sb_printf(o, "                if (%sshared) goto next_%d_%d;\n", sparse ? "here == there && " : "", a, k);
-            if (!sparse && lanes == 0) sb_printf(o, "                (void)n;\n");
+            if (lanes > 0) {
+                sb_printf(o, "                if (!tide_near_same_rows_%s(x, y, ent, %s, %s, %s, n)) return false;\n            }\n            next_%d_%d:;\n",
+                          type_cname(d), tagged ? "tags" : "NULL", sparse ? "here" : "NULL", sparse ? "there" : "NULL", a, k);
+                continue;
+            }
+            if (!sparse) sb_printf(o, "                (void)n;\n");
             sb_put(o, "                for (uint32_t i = 0; i < n; i++) {\n");
             sb_printf(o, "                    if (%s) continue;\n", skip);
             if (sparse) sb_put(o, "                    if (here[i] != there[i]) return false;\n                    if (!here[i]) continue;\n");
-            if (lanes > 0) {
-                sb_printf(o, "                    %s u, v;\n                    tide_gather_%s(&u, x, i);\n                    tide_gather_%s(&v, y, i);\n",
-                          type_cname(d), type_cname(d), type_cname(d));
-                gen_near_same_value(g, d, "u", "v", "                    ");
-            }
             sb_printf(o, "                }\n            }\n            next_%d_%d:;\n", a, k);
         }
         sb_put(o, "        }\n    }\n");

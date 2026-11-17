@@ -110,10 +110,19 @@ void diag_reset(void);
 // that just ended took (the time since the last call), under `what`; NULL
 // starts the clock.
 void diag_phase(const char *what);
+// A step inside a phase, said under TIDEC_TIMES alone (a build's report keeps
+// the phases): the time since the last call, or with NULL, only starts it.
+void diag_step(const char *what);
 // Optional synchronous build feedback. Counts are completed items in this stage;
 // total == 0 means indeterminate. The receiver copies borrowed strings.
 typedef void (*compile_progress_sink)(const char *stage, const char *detail, int completed, int total);
 void compile_set_progress(compile_progress_sink sink);
+// Told as soon as a generated C file that takes nothing written after it is
+// whole (codegen: the game's own code of a build whose plumbing is apart), so
+// its compile can start while the rest is made. No receiver: nothing.
+typedef void (*compile_written_sink)(const char *path);
+void compile_set_written(compile_written_sink sink);
+void compile_written(const char *path);
 void compile_progress(const char *stage, const char *detail, int completed, int total);
 // From compile_progress_whole(total) on (0 ends it), every notification carries the count of the whole compilation
 // instead of its stage's: compile_progress_reach(done) moves it on, never back. A bar that follows it fills once,

@@ -765,6 +765,11 @@ typedef struct build {
     int jobs;         // How many files compile at once
     bool engine_built;
     bool generated_lto; // The current generated manifest contains ThinLTO partitions.
+    // The game's own code starts compiling as soon as a generate has written it (game_written), into `early`:
+    struct compiles *early;   // ...the build's list, NULL for a generate that compiles nothing ahead
+    const char *early_gen;    // ...the generated files' folder
+    char *early_object;       // ...its object, NULL for a build that waits for the generate to end
+    bool early_queued;        // ...and it was looked at: queue_game leaves it be
     game_info info; // Its settings, from its last generate
     sb externs;     // ...and the C function of each of its extern functions, a line each
     file_list engine;       // The engine's objects
@@ -1679,7 +1684,7 @@ static bool queue_game(build *b, compiles *list, const char *gen, const char *ga
                 ok = false;
                 break;
             }
-            const bool plumbing = line[0] == '1', thin = line[2] == '1';
+            const bool plumbing = line[0] == '1', thin = line[2] == '1' && !splits_plumbing(b);
             const char *name = line + 4;
             const bool main = strcmp(name, "game.c") == 0;
             char *source = path_join(gen, name);
@@ -1690,7 +1695,8 @@ static bool queue_game(build *b, compiles *list, const char *gen, const char *ga
             char *object = main ? copy_text(objects->items[0]) : format("%s%s.o", stem, suffix);
             free(stem);
             free(suffix);
-            ok = queue_generated(b, list, source, object, gen, main, plumbing, thin);
+            // (Looked at already, and compiling if it changed: game_written)
+            ok = main && b->early_queued ? true : queue_generated(b, list, source, object, gen, main, plumbing, thin);
             if (!main) add_file(&c->objects, object);
             b->generated_lto = b->generated_lto || thin;
             free(source);
@@ -1703,6 +1709,7 @@ static bool queue_game(build *b, compiles *list, const char *gen, const char *ga
         ok = false;
     }
     if (ok) ok = queue_generated(b, list, start_c, objects->items[1], gen, false, false, false);
+    b->early_queued = false;
     if (!ok) {
         free_compiles(list);
         return false;
@@ -3069,9 +3076,28 @@ static bool generate_sources(build *b, const char *gen, const bool layout)
     return ok;
 }
 
+// A generate has written the game's own code whole (compile_written): a debug build's game.c, which takes a few
+// seconds at -O0 and nothing the generate writes after it. It starts now, one compile more than are running,
+// while the generate cuts the plumbing into its parts. Not when files compile one at a time (TIDE_JOBS=1).
+static build *early_build;
+
+static void game_written(const char *path)
+{
+    build *b = early_build;
+    if (!b || !b->early || !b->early_object || b->jobs < 2 || b->early_queued) return;
+    if (strcmp(path_base(path), "game.c") != 0) return;
+    if (!queue_generated(b, b->early, path, b->early_object, b->early_gen, true, false, false)) return;
+    b->early_queued = true;
+    int stop = b->early->count;
+    start_compiles(b->early, b->early->running_count + 1, &stop);
+}
+
 static bool generate(build *b, const char *gen, const bool layout, compiles *ahead)
 {
     const bool own_feedback = begin_build_feedback();
+    b->early = ahead;
+    b->early_gen = gen;
+    b->early_queued = false;
     build_step("resolving packages");
     const bool packages = find_packages(b->folder, &b->packages);
     if (packages && ahead) {
@@ -3099,7 +3125,12 @@ static bool generate(build *b, const char *gen, const bool layout, compiles *ahe
     const uint64_t before = last.text ? stamp_assets(last.info.asset_paths, last.info.asset_count) : 0;
     const uint64_t started = sys_time();
     const unsigned long said = diag_warnings_said();
+    early_build = b;
+    compile_set_written(game_written);
     const bool ok = packages && (kept || generate_sources(b, gen, layout));
+    compile_set_written(NULL);
+    early_build = NULL;
+    b->early = NULL;
     if (ok && !kept && key[0] && said == diag_warnings_said() && !b->info.fetched_assets
         && assets_stayed(b, &last, before, started)) generation_keep(b, gen, key);
     generation_free(&last);
@@ -3306,6 +3337,7 @@ static char *build_game(const char *root, const build_options *opts, const char 
     sys_mkdirs(gen);
 
     compiles list = {0};
+    b.early_object = path_join(b.cache, "game.o");
     if (!generate(&b, gen, false, &list)) return NULL;
     report_cuts(&b);
     char *main_c = path_join(gen, "main.c");
@@ -3588,6 +3620,8 @@ static char *build_path(const run *r, const uint32_t n, const char *suffix)
 static bool build_library_work(run *r)
 {
     compiles list = {0};
+    free(r->b.early_object);
+    r->b.early_object = path_join(r->dir, "game.o");
     if (!generate(&r->b, r->gen, true, &list)) return false;
     const char *suffix = r->web ? ".wasm" : LIBRARY_SUFFIX;
     char *game_c = path_join(r->gen, "game.c");

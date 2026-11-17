@@ -54,14 +54,20 @@ its own timer. Completed stages remain visible before game launch or completion
 output, and diagnostics appear on clean lines. A failed stage keeps its last
 observed progress. Redirected output uses plain stderr lines with file counts.
 
-Large generated C files (at least 4 MiB) compile as four stable partitions in
-parallel, with ThinLTO preserving optimization across them. Each completed
-partition advances the C compilation bar; linking has an activity indicator.
-The linker caches its work beside the game's other cached objects. Small files
-stay whole. In ordinary debug builds, the optimized generated plumbing can be
-partitioned while your game code stays unoptimized for the debugger. A body
-edit keeps unrelated partitions reusable; changes to shared types can rebuild
-them all. `TIDE_JOBS` also limits parallel ThinLTO work.
+Large generated C files (at least 4 MiB) compile as up to sixteen stable
+partitions in parallel. Each completed partition advances the C compilation
+bar. Small files stay whole. A body edit keeps unrelated partitions reusable;
+changes to shared types can rebuild them all.
+
+In release builds, ThinLTO preserves optimization across the partitions, and
+linking has an activity indicator; the linker caches its work beside the game's
+other cached objects, and `TIDE_JOBS` also limits parallel ThinLTO work.
+
+In ordinary debug builds, the generated plumbing is optimized and partitioned
+while your game code stays unoptimized, in one file, for the debugger. Each
+partition is an ordinary object there, with no ThinLTO, so the link takes a
+fraction of a second whatever changed. Your game code starts compiling as soon
+as it is written, while the plumbing is still being partitioned.
 
 
 Code objects and expensive asset processing are cached between launches.

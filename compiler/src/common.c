@@ -189,6 +189,18 @@ void compile_set_progress(compile_progress_sink receiver)
     progress_sink = receiver;
 }
 
+static compile_written_sink written_sink;
+
+void compile_set_written(const compile_written_sink receiver)
+{
+    written_sink = receiver;
+}
+
+void compile_written(const char *path)
+{
+    if (written_sink) written_sink(path);
+}
+
 static int progress_total, progress_done; // compile_progress_whole's
 
 void compile_progress(const char *stage, const char *detail, const int completed, const int total)
@@ -233,6 +245,22 @@ void diag_phase(const char *what)
     const double ms = (double)(now.tv_sec - last.tv_sec) * 1e3 + (double)(now.tv_nsec - last.tv_nsec) * 1e-6;
     if (what) build_report_phase(what, ms);
     if (what && enabled) fprintf(stderr,"tidec: %-22s %9.1f ms\n", what, ms);
+    last = now;
+}
+
+void diag_step(const char *what)
+{
+    static int enabled = -1;
+    static struct timespec last;
+    if (enabled < 0) {
+        const char *set = getenv("TIDEC_TIMES");
+        enabled = set && set[0] && set[0] != '0';
+    }
+    if (!enabled) return;
+    struct timespec now;
+    timespec_get(&now, TIME_UTC);
+    const double ms = (double)(now.tv_sec - last.tv_sec) * 1e3 + (double)(now.tv_nsec - last.tv_nsec) * 1e-6;
+    if (what) fprintf(stderr, "tidec:   %-20s %9.1f ms\n", what, ms);
     last = now;
 }
 

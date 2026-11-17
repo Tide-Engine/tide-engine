@@ -1,5 +1,15 @@
 # ECS and simulation state
 
+## A wide component's columns from a loop (2026-11-17, compile times)
+
+Generated C found each lane's column of a chunk with a call of its own. For a component of 32 lanes or more with
+every lane taken (`lanes_looped`, `LANES_LOOPED` in codegen.c) a loop fills the array instead
+(`gen_columns_loop`): a chunk's kept columns, `gen_chunk_columns`, the lanes a system can't write, a query's
+bindings, a canonical loop's read-only components, `tide_game_near_same`. Those arrays are no longer `const`
+arrays with initializers. Narrow components, and wide ones taken in part (a release's row lanes), are as they
+were. `tide_game_near_same` calls `tide_near_same_rows_<Component>` for each archetype's chunk of a component.
+Why, and what it measured: notes/cli-and-packages.md, Debug builds of big games.
+
 ## A handler copies the lanes its code reads and writes (2026-11-17, a hundred apart)
 
 A match handler's dispatch (`codegen.c`'s `gen_dispatch_handlers`, the one row of the entity an event is sent to)
