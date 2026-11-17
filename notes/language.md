@@ -158,6 +158,11 @@ puts it in dev builds only, and code without `dev` can't use it in any build.
   the code it's written in, which `dev_used` goes by and whose dev it takes. A checker made fresh with no code
   (constant folding) reports nothing: never a wrong error. A build without dev catches the rest: a name or method
   not found that's in `left_out` says it's dev and left out (`dev_left_out`), and for a method that's all it says.
+  **Correction (2026-11-17)**: an empty name is never one (`dev_left_out` returns false for it), and a declaration's
+  qualified name is compared only where it has one. A `query (...)` parameter has the checker look up an empty name of
+  its own, and a dev declaration outside a namespace has an empty qualified name, so any game with a query and a dev
+  declaration failed a build without dev with "'' is 'dev'" at 0:0 (found by a prototype's `dev command`). The
+  `dev_build` fixture now has a system with a query (`Count`), which fails that way without the fix.
 - **Dev views** (codegen, beside `tide_frame`): `tide_dev_view_names[]` (NULL-terminated, the views' diagnostic
   names) and `tide_show_dev_views(const uint8_t *)`, always generated and declared in the header; a dev view's call
   in `tide_frame` is inside `if (tide_dev_shown[k])`, a static array, so it's off until a host shows it. No world,

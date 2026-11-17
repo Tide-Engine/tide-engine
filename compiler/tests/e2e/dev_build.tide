@@ -6,7 +6,7 @@ component Gun
     int ammo = 3;
 }
 
-singleton Shots { int fired; }
+singleton Shots { int fired; int guns; }
 
 scene Main { }
 
@@ -20,6 +20,14 @@ system Fire(mut Gun gun, mut Shots shots)
     if (gun.ammo <= 0) return;
     gun.ammo -= 1;
     shots.fired += 1;
+}
+
+// A query beside dev declarations: a query's parameter has the compiler look up a name of its own, empty, which a
+// build without dev once took for a left-out dev declaration (which has no qualified name outside a namespace)
+system Count(mut Shots shots, query (Gun gun) guns)
+{
+    shots.guns = 0;
+    foreach (var row in guns) shots.guns += row.gun.ammo >= 0 ? 1 : 0;
 }
 
 // What a dev build has besides
