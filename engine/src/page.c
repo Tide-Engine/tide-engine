@@ -225,21 +225,35 @@ void *tide_realloc(void *p, const size_t old_size, const size_t size)
 // pages every tick as the tick changed, megabytes of them in a game with a big list or grid. A page just let go of
 // is still in the CPU's caches; a fresh one from the system page-faults as each 4 KiB of it is first written.
 //
-// By size, for the sizes pages mostly have: a heap's (16 KiB, a list's or a grid's chunk too), and a chunk's lanes,
-// powers of two from 4 bytes to 16 KiB. A page of another size is the system's.
+// By size, for the sizes pages have: a heap's (16 KiB, a list's or a grid's chunk too), a chunk's lanes, powers of
+// two from 4 bytes, the entity table's slots (32 KiB) and its index's pages (6 KiB: three times a power of two, as
+// are 12 bytes to 24 KiB). A page of another size is the system's. A page of a size past what the system's heap
+// keeps small (16 KiB on Windows) costs thousands of cycles from it, and is given back to it as dearly: a server
+// where chunks come and go every tick copied tens of thousands of such pages a second from the worlds it keeps,
+// and let go of as many with them, and that was most of its spawns' and destructions' time.
 //
-// A thread has its own, free to reach. A tick's pages are often let go of on one thread and taken on another, so a
-// thread's surplus goes where the others find it, several at once, and a thread with none looks there first. Each
-// keeps what a tick of a big world changes: 8 MB at most in a thread's own, 32 MB in the shared ones.
-#define SPARE_LEAST 2u  // 4 bytes, as a power of two
-#define SPARE_SIZES 13u // To 16 KiB, each twice the last
+// A thread has its own, free to reach. A tick's pages are often let go of on one thread (a kept world, on the
+// pool) and taken on another, so a thread's surplus goes where the others find it, several at once, and a thread
+// with none looks there first: a list of them for each size, linked through their headers, up to SHARED_BYTES of
+// every size together. Each keeps what a tick of a big world changes: 4 MB at most in a thread's own of each size,
+// and SHARED_BYTES shared, which a game that never lets go of that many never holds.
+#define SPARE_LEAST 2u   // 4 bytes, as a power of two
+#define SPARE_POWERS 14u // To 32 KiB, each twice the last
+#define SPARE_THIRDS 12u // ...and three times 4 bytes to three times 8 KiB
+#define SPARE_SIZES (SPARE_POWERS + SPARE_THIRDS)
 #define SPARES 256u
+#define SPARE_BYTES (4u << 20)  // A thread's own of each size, at most
 #define SPARES_MOVED 64u // To the others', or from them, at once
-#define SPARES_SHARED 1024u
+#ifdef __wasm__
+#define SHARED_BYTES (64ull << 20) // A page's memory, which never goes back to the system
+#else
+#define SHARED_BYTES (256ull << 20)
+#endif
 static TIDE_THREAD_LOCAL tide_page *spare[SPARE_SIZES][SPARES];
 static TIDE_THREAD_LOCAL uint32_t spares[SPARE_SIZES];
-static tide_page *shared[SPARE_SIZES][SPARES_SHARED];
-static uint32_t shared_spares[SPARE_SIZES]; // Changed with the lock held, and read without it to see there are none
+static tide_page *shared[SPARE_SIZES];         // Linked through `was`
+static uint32_t shared_spares[SPARE_SIZES];    // Changed with the lock held, and read without it to see there are none
+static uint64_t shared_bytes;                  // ...with the lock held
 static uint32_t shared_lock;
 
 // Held for a few moves of a pointer, so a thread that wants it spins: a web
@@ -262,9 +276,23 @@ static uint32_t spare_size(const uint32_t size)
     (void)size;
     return SPARE_SIZES;
 #else
-    if (size < 1u << SPARE_LEAST || size > 1u << (SPARE_LEAST + SPARE_SIZES - 1u) || (size & (size - 1u))) return SPARE_SIZES;
-    return (uint32_t)__builtin_ctz(size) - SPARE_LEAST;
+    if (size < 1u << SPARE_LEAST) return SPARE_SIZES;
+    if (!(size & (size - 1u))) {
+        const uint32_t k = (uint32_t)__builtin_ctz(size) - SPARE_LEAST;
+        return k < SPARE_POWERS ? k : SPARE_SIZES;
+    }
+    const uint32_t third = size / 3u;
+    if (third * 3u != size || third < 1u << SPARE_LEAST || (third & (third - 1u))) return SPARE_SIZES;
+    const uint32_t k = (uint32_t)__builtin_ctz(third) - SPARE_LEAST;
+    return k < SPARE_THIRDS ? SPARE_POWERS + k : SPARE_SIZES;
 #endif
+}
+
+// What a thread keeps of pages of `size` bytes before its surplus goes to the shared ones.
+static uint32_t spares_most(const uint32_t size)
+{
+    const uint32_t most = SPARE_BYTES / size;
+    return most < SPARES ? (most > SPARES_MOVED ? most : SPARES_MOVED) : SPARES;
 }
 
 #ifdef TIDE_PAGE_STATS
@@ -287,7 +315,14 @@ tide_page *tide_page_take(const uint32_t size)
     if (!spares[k] && __atomic_load_n(&shared_spares[k], __ATOMIC_RELAXED)) {
         lock_shared();
         uint32_t left = shared_spares[k];
-        while (spares[k] < SPARES_MOVED && left) spare[k][spares[k]++] = shared[k][--left];
+        tide_page *next = shared[k];
+        while (spares[k] < SPARES_MOVED && left) {
+            spare[k][spares[k]++] = next;
+            next = (tide_page *)(uintptr_t)next->was;
+            left--;
+            shared_bytes -= sizeof(tide_page) + size;
+        }
+        shared[k] = next;
         __atomic_store_n(&shared_spares[k], left, __ATOMIC_RELAXED);
         unlock_shared();
         tide_memory_sync(); // Another thread may have got them from the system since this one last heard of its memory
@@ -302,13 +337,19 @@ void tide_page_give(tide_page *p)
         free(p);
         return;
     }
-    if (spares[k] == SPARES) { // Too many for one thread: some go to the others, or back to the system
+    const uint32_t most = spares_most(p->size);
+    if (spares[k] >= most) { // Too many for one thread: some go to the others, or back to the system
+        const uint64_t bytes = sizeof(tide_page) + p->size;
         lock_shared();
-        uint32_t there = shared_spares[k];
-        while (spares[k] > SPARES - SPARES_MOVED && there < SPARES_SHARED) shared[k][there++] = spare[k][--spares[k]];
-        __atomic_store_n(&shared_spares[k], there, __ATOMIC_RELAXED);
+        while (spares[k] > most - SPARES_MOVED && shared_bytes + bytes <= SHARED_BYTES) {
+            tide_page *const moved = spare[k][--spares[k]];
+            moved->was = (uint64_t)(uintptr_t)shared[k];
+            shared[k] = moved;
+            shared_bytes += bytes;
+            __atomic_store_n(&shared_spares[k], shared_spares[k] + 1u, __ATOMIC_RELAXED);
+        }
         unlock_shared();
-        while (spares[k] > SPARES - SPARES_MOVED) free(spare[k][--spares[k]]);
+        while (spares[k] > most - SPARES_MOVED) free(spare[k][--spares[k]]);
     }
     spare[k][spares[k]++] = p;
 }
@@ -318,8 +359,14 @@ void tide_pages_free(void)
     for (uint32_t k = 0; k < SPARE_SIZES; k++) {
         while (spares[k]) free(spare[k][--spares[k]]);
         lock_shared();
-        uint32_t left = shared_spares[k];
-        while (left) free(shared[k][--left]);
+        tide_page *next = shared[k];
+        while (next) {
+            tide_page *const after = (tide_page *)(uintptr_t)next->was;
+            shared_bytes -= sizeof(tide_page) + next->size;
+            free(next);
+            next = after;
+        }
+        shared[k] = NULL;
         __atomic_store_n(&shared_spares[k], 0u, __ATOMIC_RELAXED);
         unlock_shared();
     }

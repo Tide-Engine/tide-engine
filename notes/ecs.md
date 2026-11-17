@@ -1,5 +1,26 @@
 # ECS and simulation state
 
+## Spare pages of every size a world has, and more of them shared (2026-11-17, a hundred apart)
+
+`engine/src/page.c` kept pages let go of for the next taker at powers of two from 4 bytes to 16 KiB, 256 a thread
+and 1,024 shared of each size, and gave the rest back to the C library. Two sizes every world has weren't among them:
+the entity table's slots (1,024 of 32 bytes, 32 KiB) and its index's pages (256 entries of 24 bytes, 6 KiB), so
+every copy-on-write of either (a tick's first spawn or destruction in a page a kept world shares) was a `malloc` and
+every kept world let go of a `free`, past what Windows' heap keeps small (16 KiB) for the slots'. And where chunks
+come and go every tick, a tick's 16 KiB and 4 KiB pages were more than the shared 1,024, so the surplus went back to
+the system and came from it again. At 100 players apart (notes/voxels.md, A hundred apart, again) that was most of
+a spawn's time: a server profiled on one thread spent four fifths of its updates in the system's heap, below
+`tide_page_copy` for the entity key's pages and tables' columns.
+
+Now: powers of two to 32 KiB and three times a power of two (12 bytes to 24 KiB) are kept, a thread keeps 4 MB of
+each size (256 pages at most), and the shared ones are a list for each size linked through the pages' headers
+(`was`, which every taker writes), up to 256 MB of every size together (64 MB on the web). Which page a taker gets
+is never state: a page taken is written whole before it's read (`tide_page_new` zeroes it, a copy and
+`tide_page_start` write its header), so no world, hash or pin moved. What the process holds can be that much more
+after a world that let go of that many pages shrinks. Test: `page_spares_of_every_kept_size_come_back_zeroed_and_apart`
+(`tests/test_page.c`): 700 pages of each of ten sizes, kept and not, three rounds, each zeroed, its header new and none
+written over by another's bytes.
+
 ## A page's references are counted atomically (2026-11-17)
 
 A world can be let go of on another thread while the worlds sharing its pages are copied, written and let go of
@@ -279,8 +300,9 @@ words. What a snapshot pays more is the counts' copy (two bytes a page).
   game with visibility sends each player its own projection, made block by block on their machine.
 - **A world read from bytes** (a joiner's without visibility, a hot reload's, a server's from a save) gives back
   none of the pages it came with.
-- **The process doesn't shrink by as much as the world**: pages let go of are kept spare for the next taker (8 MB a
-  thread and 32 shared, `engine/src/page.c`) and then are the C library's.
+- **The process doesn't shrink by as much as the world**: pages let go of are kept spare for the next taker (4 MB a
+  thread of each size and 256 MB shared since 2026-11-17, `engine/src/page.c`: Spare pages of every size, top) and
+  then are the C library's.
 
 **Tests** (`tests/test_heap.c`, each against a twin heap that never settles): `heap_gives_back_the_pages_whose_blocks_
 are_all_free` (600 blocks, 500 freed: the pages go only at a settle after the flush; the hash, what's handed out

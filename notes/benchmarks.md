@@ -567,6 +567,12 @@ frames past 200 averaged. Its `PerfProbeMark` views bracket the views, Camera to
   called what: the sampled function and its caller, and chains of the program's own four deep. A walk costs far
   more than a sample: with `--main --hz 2000`. It found the per-run loop indexes (indexed-loops.md, No index for one
   run alone). Frames it can't name show as `?`.
+- `tide_sample --under <function>` (2026-11-17) keeps only the samples whose stack has the function in it, and
+  prints each function's inclusive share (anywhere in the nearest 16 of the program's frames): with `--main` and a
+  session bench's `--threads 1`, `--under tide_server_update` is the server's own work without its bots' (they run
+  on the same thread). A walk costs about what a sample does in a busy program, so `--hz 500`; the program slows,
+  and the system's heap more than the rest under it (notes/ecs.md, Spare pages of every size: four fifths of the
+  server's samples there with the walks at 1,500 Hz, a fifth of its time without them).
 - `tide_sample --after <seconds>` (2026-11-13) starts sampling that long after the program starts, to leave its
   loading out; used with `--main` and `--ticks-alongside` to see a frame thread's views by file
   (schedule-and-threads.md, How much of the views is recording draws).

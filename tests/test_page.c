@@ -184,6 +184,42 @@ TIDE_TEST(page_references_hold_while_another_thread_lets_snapshots_go)
 }
 #endif
 
+// Pages let go of are handed out again, more than a thread keeps of them going through the shared ones, at every
+// size kept spare (the entity table's slots and its index's among them) and at one that isn't: each comes back
+// zeroed, its own and whole
+TIDE_TEST(page_spares_of_every_kept_size_come_back_zeroed_and_apart)
+{
+    enum { COUNT = 700 };
+    static const uint32_t sizes[] = {4, 12, 24, 4096, 6144, 16384, 24576, 32768, 65536, 5000};
+    tide_page **pages = calloc(COUNT, sizeof *pages);
+    TIDE_REQUIRE(pages != NULL);
+    for (uint32_t s = 0; s < sizeof sizes / sizeof sizes[0]; s++) {
+        const uint32_t size = sizes[s];
+        for (uint32_t round = 0; round < 3; round++) {
+            for (uint32_t i = 0; i < COUNT; i++) {
+                pages[i] = tide_page_new(size);
+                TIDE_REQUIRE(pages[i]->size == size && tide_page_refs(pages[i]) == 1u);
+                const uint8_t *bytes = tide_page_data(pages[i]);
+                uint32_t nonzero = 0;
+                for (uint32_t b = 0; b < size; b++) nonzero += bytes[b] != 0;
+                TIDE_CHECK(nonzero == 0);
+                TIDE_CHECK(pages[i]->was == 0 && pages[i]->hashed == UINT32_MAX);
+                memset(tide_page_data(pages[i]), (int)(i & 0xffu) | 1, size);
+            }
+            // Each is apart from the others: none was written over by another's bytes
+            uint32_t wrong = 0;
+            for (uint32_t i = 0; i < COUNT; i++) {
+                const uint8_t *bytes = tide_page_data(pages[i]);
+                wrong += bytes[0] != (uint8_t)((i & 0xffu) | 1) || bytes[size - 1u] != (uint8_t)((i & 0xffu) | 1);
+            }
+            TIDE_CHECK(wrong == 0);
+            for (uint32_t i = 0; i < COUNT; i++) tide_page_release(pages[i], 1);
+        }
+    }
+    free(pages);
+    tide_pages_free();
+}
+
 TIDE_TEST(page_stale_pages_are_hashed_on_threads_before_the_hash)
 {
     tide_table a = {0};
