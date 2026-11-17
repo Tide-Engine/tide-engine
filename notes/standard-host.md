@@ -1,5 +1,79 @@
 # The standard host: runs with no window, the stats, debug views
 
+## Pausing, stepping and going back (2026-11-17)
+
+The owner: part of the dev menu. Built on `tide/timeline.h` (Unity's time travel, notes/unity.md), mirroring
+`embed.c`'s travel for the standard host (`tide_run_travel`, host.h; the embedded host keeps its own).
+
+- **Recording**: while a dev build's (`game->inspect`) session runs the match's server here, not sharded and not
+  embedded, `tide_run_travel_follow` makes a timeline (600 ticks kept: page-sharing `copy_world` snapshots, so a
+  tick costs its changed pages) and records into it (`tide_session_record`); dropped with the session
+  (`tide_run_end`), a client, or a build of another layout (`tide_run_travel_reload` as `reload_before` in
+  `reload.c`; the same layout keeps it with `tide_timeline_set_game`).
+- **The frame**: `tide_run_travel_seconds` gives the match the frame's length, or paused none but a step's (to just
+  past the next tick), which goes into `tide_run_frame_now` and `frame_time`; paused, views are unblended. Shown an
+  earlier tick (`tide_run_travel_world`), the views and the menu get its world in place of the session's, on this
+  machine's own local state (a copy would share its render targets), and `tide_run_travel_discard` drops the
+  commands and requests they made. Go on from here: `tide_session_rewind` with the shown world and
+  `tide_timeline_cut`, as `tide_embed_continue` does.
+- **Menu** (`tide_run_dev_time`, in the tabs' box): Pause/Play, then paused Back, Step and "tick N of M", and Go on
+  from here at an earlier tick; where it can't pause, "Can't pause: <why>" (another machine's match, other
+  machines' players, a sharded match, not started). Inspector fields are in a Disabled block at an earlier tick.
+- Tests: `tide_platform_dev_menu`'s clock square (magenta even ticks, cyan odd): paused it holds over 10 frames,
+  Step flips it once, Back shows the tick before, Go on from here goes back to Pause and ticks again.
+- Gaps: no keyboard shortcuts; no scrubbing bar (Back/Step a tick at a time); a match with other machines' players
+  doesn't pause (the embed shows past ticks while it goes on behind; not built here); the recording isn't saved or
+  replayed from the menu (`tide_timeline_save` exists).
+
+## Checkpoints (2026-11-17)
+
+The owner's asks: save/load (and start over from one) quickly for testing, agents able to make them and launch from
+them, a project `checkpoints` folder, the loader takes the saver's player, carried over to later builds, and loadable
+"anyway" so a minor change doesn't lose one. The rest are my picks (spec, Dev tools, Provisional).
+
+- **Format** (`platform/include/tide/checkpoint.h`, `platform/src/checkpoint.c`): a 40-byte header (magic `TIDK`,
+  version 1, the game's hash, the saver's player index, the server tick), the layout (`tide_layout_pack`) and the
+  server world (`tide_game.pack_world`), 8-aligned. Same hash: `unpack_world` as is; another: `tide_layout_unpack` in
+  place, `tide_migrate_world` (or `_forced`), then `unpack_world`; `fields_reset` from `tide_layout_fields_reset`.
+  `tide_checkpoint_pack`/`_unpack` work on bytes (the page's path); `_save` writes `<name>.checkpoint.part` and
+  renames it into place; `_list` is newest first (mtime; a WASI runtime without one sorts by name). Names: letters,
+  digits, `-`, `_`, `.` (not first), under 64 bytes, so no path gets through.
+- **Forced migration** (`tide_migrate_world_forced`, migrate.c): a gone scene's archetype is dropped instead of
+  failing, and every row of another archetype whose scene column is one of that archetype's entities (per-row
+  `dropped`, skipped where holes are); `tide_migration.scene_dropped` names it. The other refusals (identity clock,
+  queued changes, bad bytes, memory) still refuse.
+- **Host** (host.h): `tide_run_layout()` is the inspector's layout (every dev build) or the library's.
+  `--checkpoints <dir>` (tide run passes `<project>/checkpoints`; default `checkpoints` in the working folder),
+  `--from <name>`, `--force`. Requests (menu, script queue) are carried out as the next frame begins
+  (`tide_run_checkpoints_poll`), before anything reads the match. Save reads the world through
+  `tide_session_server` (which settles a tick running alongside); a client of another machine's match is told it
+  can't. Load = `tide_run_end` + `tide_run_begin`, which starts `tide_session_start_from` the loaded world with the
+  saver's player (`tide_run_from_world`, handed over so it's read once); `tide_run_from` stays, so Ctrl+R's restart
+  goes from it again until Start fresh. `--from` that fails exits 2 the first time; later begins start fresh.
+  `--from` with `--join`/`--connect` is refused; with `--host` the loaded match is opened.
+- **Menu**: the Dev tab shows for any dev build (inspector present). CHECKPOINTS: Save (next `checkpoint-<n>`),
+  Start fresh (when starting over from one), what the last did, Load anyway (after a scene refusal), and the
+  list (rows as the tree's, "starts over here" on the current one), listed again a second apart and after a save.
+- **Scripts** (`script.c`): `checkpoint save|load|force-load <name>`, at its frame once drawn
+  (`tide_script_drawn`), the first player's only, queued for the host (`tide_platform_checkpoint_asked`, 8 at
+  once); in an interactive run also unnumbered, before the next frame, recorded in the replay with the frame.
+- **Web**: imports `checkpoint_save/saved/fetch/copy/list` (tide.js). Every page has stubs (nothing kept); under
+  `tide run --web` they POST/GET `checkpoint?name=` and GET `checkpoints` with the X-Tide header. A load fetches,
+  shows "Loading", and the poll goes on from it as it comes; a page's `--from` is fetched before the first build
+  starts, and if it isn't there the game starts fresh (no exit on a page).
+- Tests: `tide_platform_dev_menu` (script save, change, load back to black, a missing one said, the menu's Save
+  and list, then `--from dark` from the first frames and `--from nowhere` exiting 2); `tide_platform_migrate`
+  (`migrate_forced_drops_the_entities_of_a_scene_thats_gone`; `a_checkpoint_loads_into_a_build_of_another_layout`:
+  names, list, same build byte-identical, another layout equal to `tide_migrate_world`'s, scene refused then
+  forced, missing and broken files; native and WASI, the list native-only as Node's WASI opens no folders on
+  Windows); `reload_web.mjs` (the page's functions: --from fetched before the first build, copy once, missing,
+  save with the header and its result, listing throttled, a page without tide); `cache_test.mjs` web run (the
+  server: save, refused without the header, a path name refused, read back, missing, list), which needs an
+  installation: CI's `--web` run, not run locally.
+- Gaps: no rename/delete in the menu (the files are the project's); loading closes a room as a full reload does,
+  so other players rejoin; checkpoints of a sharded match aren't made (one server world).
+
+
 ## The inspector (2026-11-16)
 
 The owner's picks list (agreed "go with your picks for now"): numbers/vectors/bools/Colors/enums edited; text, lists,

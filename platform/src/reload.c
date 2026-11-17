@@ -295,6 +295,7 @@ _Noreturn void tide_host_run_library(const tide_run_desc *desc, const char *dir)
     if (!game) exit(1);
     tide_run_game = game;
     tide_run_input = restart_input;
+    reload_before = tide_run_travel_reload; // A paused match's recording, kept or let go with the build that made it
     tide_run_open(desc);
     check_pack(true); // The pack tide wrote with the first build, where the game has assets
     tide_run_begin_loaded();

@@ -1,5 +1,15 @@
 # `tide`, packages and the package
 
+## Checkpoints in `tide run` (2026-11-17)
+
+`tide run` passes the game `--checkpoints <project>/checkpoints` (not for `--server`, Android or the web) and
+forwards `--from <name>` and `--force` (refused with `--no-dev`, `--distribution` or `--server`). For a page,
+`serve.c` now takes POST bodies: only with the X-Tide header (others are closed before their body is held), with a
+Content-Length up to `SERVE_BODY_MOST` (1 GiB); `serve_fn` gets the body. `answer_checkpoint` (build.c, watching
+runs) answers `GET /checkpoints` (names, newest first), `GET /checkpoint?name=` and `POST /checkpoint?name=` (written
+to `saving.part`, renamed into place), names checked as the host checks them. notes/standard-host.md, Checkpoints.
+
+
 ## `--dev` and `--no-dev` (2026-11-16)
 
 `build_options.dev` (build.h) goes to `codegen_options.dev`. `main.c` sets it from `--dev`/`--no-dev` (`run` only),

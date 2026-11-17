@@ -41,6 +41,9 @@ typedef struct connection {
     uint64_t opened; // Its place among the connections, to close the oldest
     uint32_t got;
     char request[REQUEST_BYTES];
+    // A POST's body, once its headers are in: `want` bytes, `have` of them so far
+    uint8_t *body;
+    uint32_t want, have;
 } connection;
 
 struct serve {
@@ -92,6 +95,9 @@ static void close_connection(connection *c)
 {
     close_socket(c->s);
     c->s = NO_SOCKET;
+    free(c->body);
+    c->body = NULL;
+    c->want = c->have = 0;
     c->got = 0;
 }
 
@@ -129,12 +135,15 @@ static void reply(connection *c, const serve_fn answer, void *user)
     char method[8] = "";
     char path[2048] = "";
     serve_reply r = {404, "text/plain; charset=utf-8", "Not found\n", 10};
-    if (sscanf(c->request, "%7s %2047s", method, path) == 2 && strcmp(method, "GET") == 0) {
+    const bool read = sscanf(c->request, "%7s %2047s", method, path) == 2;
+    if (read && strcmp(method, "GET") == 0) {
         // The query goes to `answer` only from the page's own requests, with their X-Tide header: another site's
         // page can't send one here without asking first (CORS), which this server never allows
         char *query = strchr(path, '?');
         if (query && !tide_header(c->request)) *query = '\0';
-        answer(user, path, &r);
+        answer(user, path, NULL, 0, &r);
+    } else if (read && strcmp(method, "POST") == 0 && c->body && tide_header(c->request)) {
+        answer(user, path, c->body, c->want, &r); // Its X-Tide header: the page's own, as no other site can send one
     }
     // The page is cross-origin isolated, so the game can share its memory with
     // workers and run ticks on threads (platform/web/tide.js), and editors
@@ -149,6 +158,39 @@ static void reply(connection *c, const serve_fn answer, void *user)
     set_blocking(c->s, true);
     if (send_all(c->s, header, (size_t)n)) send_all(c->s, r.body, r.size);
     close_connection(c);
+}
+
+// A POST's Content-Length: false where it has none, or more than a body may have
+static bool content_length(const char *request, uint64_t *length)
+{
+    for (const char *line = strstr(request, "\r\n"); line; line = strstr(line + 2, "\r\n")) {
+        const char *name = line + 2, *want = "content-length:";
+        size_t i = 0;
+        while (want[i] && tolower((unsigned char)name[i]) == want[i]) i++;
+        if (want[i]) continue;
+        const char *at = name + i;
+        while (*at == ' ' || *at == '\t') at++;
+        uint64_t n = 0;
+        const char *digits = at;
+        for (; *at >= '0' && *at <= '9' && n <= SERVE_BODY_MOST; at++) n = n * 10u + (uint64_t)(*at - '0');
+        if (at == digits || n > SERVE_BODY_MOST) return false;
+        *length = n;
+        return true;
+    }
+    return false;
+}
+
+// Starts a POST's body of `length` bytes, with what came after its headers (`from`, to what's been read)
+static bool body_begin(connection *c, const char *from, const uint64_t length)
+{
+    const uint32_t already = (uint32_t)(c->request + c->got - from);
+    if (already > length) return false;
+    c->body = malloc((size_t)length);
+    if (!c->body) return false;
+    memcpy(c->body, from, already);
+    c->want = (uint32_t)length;
+    c->have = already;
+    return true;
 }
 
 // Takes a connection waiting to be accepted, closing the oldest one when
@@ -194,6 +236,17 @@ void serve_poll(serve *s, const int ms, const serve_fn answer, void *user)
     for (int i = 0; i < CONNECTIONS; i++) {
         connection *c = &s->connections[i];
         if (c->s == NO_SOCKET || !FD_ISSET(c->s, &readable)) continue;
+        if (c->body) { // The rest of a POST's body
+            const uint32_t room = c->want - c->have;
+            const int got = (int)recv(c->s, (char *)c->body + c->have, room > (1u << 20) ? (1 << 20) : (int)room, 0);
+            if (got <= 0) {
+                close_connection(c);
+                continue;
+            }
+            c->have += (uint32_t)got;
+            if (c->have == c->want) reply(c, answer, user);
+            continue;
+        }
         const int got = (int)recv(c->s, c->request + c->got, REQUEST_BYTES - 1u - c->got, 0);
         if (got <= 0) {
             close_connection(c);
@@ -201,8 +254,24 @@ void serve_poll(serve *s, const int ms, const serve_fn answer, void *user)
         }
         c->got += (uint32_t)got;
         c->request[c->got] = '\0';
-        if (strstr(c->request, "\r\n\r\n")) reply(c, answer, user);
-        else if (c->got >= REQUEST_BYTES - 1u) close_connection(c); // Too long for us
+        const char *end = strstr(c->request, "\r\n\r\n");
+        if (!end) {
+            if (c->got >= REQUEST_BYTES - 1u) close_connection(c); // Too long for us
+            continue;
+        }
+        // A POST: its body, as long as it says, after its headers. The page's own alone, with its X-Tide header:
+        // another site's isn't taken, nor its body held
+        uint64_t length = 0;
+        if (strncmp(c->request, "POST ", 5) == 0 && (!tide_header(c->request) || !content_length(c->request, &length))) {
+            close_connection(c);
+            continue;
+        }
+        if (!length) {
+            reply(c, answer, user);
+            continue;
+        }
+        if (!body_begin(c, end + 4, length)) close_connection(c);
+        else if (c->have == c->want) reply(c, answer, user);
     }
     if (FD_ISSET(s->listener, &readable)) accept_one(s);
 }

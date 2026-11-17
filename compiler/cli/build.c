@@ -5170,6 +5170,9 @@ typedef struct web_run {
     char *tweaks; // A dev build's tweaks as tidec last worked them out (<gen>/game_tweaks.bin), and a hash of them
     size_t tweaks_size;
     uint32_t tweaks_stamp;
+    char *checkpoint; // The checkpoint the page last asked for, and the game's checkpoints' names, a line each
+    size_t checkpoint_size;
+    char *checkpoint_names;
     // Without watching, the built page's program and pack beside it, and their paths
     char *files[2];
     size_t file_sizes[2];
@@ -5303,9 +5306,99 @@ static uint32_t read_page_tweaks(web_run *w)
     return w->tweaks_stamp = h;
 }
 
-static void answer_web(void *user, const char *path, serve_reply *reply)
+// A dev build's checkpoints for a page, which has no files of this machine (tide/checkpoint.h): in the game's
+// `checkpoints` folder, named by letters, digits, '-', '_' and '.' (not first)
+static bool page_checkpoint_name(const char *query, char *name, const size_t size)
+{
+    if (!query_value(query, "name", name, size) || !name[0] || strlen(name) >= 64u) return false;
+    for (const char *c = name; *c; c++)
+        if (!isalnum((unsigned char)*c) && *c != '-' && *c != '_' && (*c != '.' || c == name)) return false;
+    return true;
+}
+
+typedef struct page_checkpoint {
+    char name[64];
+    int64_t when;
+} page_checkpoint;
+
+typedef struct page_checkpoints {
+    const char *folder;
+    page_checkpoint *found;
+    size_t count, capacity;
+} page_checkpoints;
+
+static void page_checkpoint_found(void *user, const char *file, const bool is_dir)
+{
+    page_checkpoints *l = user;
+    const size_t n = strlen(file), suffix = strlen(".checkpoint");
+    if (is_dir || n <= suffix || n - suffix >= 64u || strcmp(file + n - suffix, ".checkpoint") != 0) return;
+    if (l->count == l->capacity) {
+        l->capacity = l->capacity ? l->capacity * 2u : 16u;
+        l->found = realloc(l->found, l->capacity * sizeof *l->found);
+        if (!l->found) abort();
+    }
+    page_checkpoint *c = &l->found[l->count++];
+    memcpy(c->name, file, n - suffix);
+    c->name[n - suffix] = '\0';
+    char *path = path_join(l->folder, file);
+    c->when = sys_mtime(path);
+    free(path);
+}
+
+static int page_checkpoint_newest(const void *a, const void *b)
+{
+    const page_checkpoint *x = a, *y = b;
+    if (x->when != y->when) return x->when > y->when ? -1 : 1;
+    return strcmp(x->name, y->name);
+}
+
+// `/checkpoints`: their names, newest first, a line each; `/checkpoint?name=...`: one's bytes; a POST to it saves one
+static bool answer_checkpoint(web_run *w, const char *path, const uint8_t *body, const size_t size, serve_reply *reply)
+{
+    char *folder = path_join(w->r.b.folder, "checkpoints");
+    char name[64];
+    bool answered = true;
+    if (!body && strcmp(path, "/checkpoints") == 0) {
+        page_checkpoints l = {folder, NULL, 0, 0};
+        sys_list(folder, page_checkpoint_found, &l);
+        if (l.count) qsort(l.found, l.count, sizeof *l.found, page_checkpoint_newest);
+        free(w->checkpoint_names);
+        w->checkpoint_names = malloc(l.count * 64u + 1u);
+        if (!w->checkpoint_names) abort();
+        size_t at = 0;
+        for (size_t i = 0; i < l.count; i++) at += (size_t)sprintf(w->checkpoint_names + at, "%s\n", l.found[i].name);
+        w->checkpoint_names[at] = '\0';
+        free(l.found);
+        *reply = (serve_reply){200, "text/plain; charset=utf-8", w->checkpoint_names, at};
+    } else if (strncmp(path, "/checkpoint?", 12) == 0 && page_checkpoint_name(path + 12, name, sizeof name)) {
+        char file[80];
+        snprintf(file, sizeof file, "%s.checkpoint", name);
+        char *at = path_join(folder, file);
+        if (body) {
+            // Written whole beside it, then in its place, as a native run writes one
+            char *part = path_join(folder, "saving.part");
+            const bool saved = sys_mkdirs(folder) && sys_write_file(part, (const char *)body, size) && sys_rename(part, at);
+            if (saved) *reply = (serve_reply){200, "text/plain; charset=utf-8", "", 0};
+            else fprintf(stderr, "tide: the page's checkpoint %s couldn't be written to %s\n", name, at);
+            free(part);
+        } else {
+            free(w->checkpoint);
+            w->checkpoint = sys_read_file(at, &w->checkpoint_size);
+            if (w->checkpoint) *reply = (serve_reply){200, "application/octet-stream", w->checkpoint, w->checkpoint_size};
+        }
+        free(at);
+    } else {
+        answered = false;
+    }
+    free(folder);
+    return answered;
+}
+
+static void answer_web(void *user, const char *path, const uint8_t *body, const size_t size, serve_reply *reply)
 {
     web_run *w = user;
+    if (w->r.b.opts->watch && answer_checkpoint(w, path, body, size, reply)) return;
+    if (body) return; // No other POST
     char newest[64], pack[64];
     snprintf(newest, sizeof newest, "/game-%u.wasm", (unsigned)w->r.builds);
     snprintf(pack, sizeof pack, "/pack-%u", (unsigned)w->r.packs);

@@ -137,9 +137,17 @@ Combat.Pace = Combat.Rate.Fast;
 
 ## The dev menu
 
-In a dev build, the key under **Escape** (`` ` `` on a US keyboard, where Valve's games open their console) shows the dev menu, and again hides it. Its **Dev** tab lists the game's dev views, each with a switch, and its [tweaks](#tweaks); its **Match** and **Local** tabs are the [inspector](#the-inspector). A dev view runs only while it's switched on, so a game's tools stay out of the way until someone wants one, and they don't each need a key of their own. What's on stays on across a hot reload.
+In a dev build, the key under **Escape** (`` ` `` on a US keyboard, where Valve's games open their console) shows the dev menu, and again hides it. Its **Dev** tab lists the game's dev views, each with a switch, its [tweaks](#tweaks) and its [checkpoints](#checkpoints); its **Match** and **Local** tabs are the [inspector](#the-inspector). A dev view runs only while it's switched on, so a game's tools stay out of the way until someone wants one, and they don't each need a key of their own. What's on stays on across a hot reload.
 
 The game sees the key too. Interactive runs list the menu's switches among the GUI's widgets, so an agent can click one by name (see [Interactive play](./cli#interactive-play)).
+
+## Pausing and going back
+
+At the dev menu's top, whatever its tab, are the match's controls: **Pause** stops it, **Step** runs it a tick at a time, and **Back** goes back a tick, showing the match as it was then. **Go on from here** goes on from the tick shown, and what came after it is gone; **Play** goes on from the latest.
+
+- While the match runs, a dev build keeps its last 600 ticks (10 seconds at 60 a second) to go back through, and any tick since it began can be made again from what went into it.
+- The game's views draw the tick shown. What they send or ask for meanwhile goes nowhere, and the [inspector](#the-inspector) shows that tick's fields as they were, without changing them.
+- It's the match this machine runs: a client of another machine's match, a sharded one, or one with players from other machines doesn't pause, and the menu says why.
 
 ## The inspector
 
@@ -160,3 +168,29 @@ event(Changed<Unit.hp> change) Down(mut Unit unit)
 
 - **A change of the local world's** is this machine's, made at once.
 - Any player of a dev build can change a field. Only a value its field can hold is taken: a member of the enum, a bool that's true or false, a number that's a number. An entity that's gone by then is left alone.
+
+## Checkpoints
+
+A checkpoint is the match saved as it is, to start from again: the boss fight at low health, the base with every building, the moment a bug shows. Save one, play on, and load it to be back there; a change to the code doesn't lose it.
+
+- **Save** in the dev menu's Dev tab saves the match on this machine's server as the next `checkpoint-<n>`. The tab lists the checkpoints, newest first, and a click on one loads it.
+- **Loading one starts the game over from it**, as Ctrl+R starts it over: the match is the one saved, and this machine's player is the one who saved it. Local state (the camera, menus) starts fresh, and the game's local code makes it from the match as it would at any start. Ctrl+R then starts over from that checkpoint again, until **Start fresh** forgets it.
+- **They're files in the project**, `checkpoints/<name>.checkpoint`, so they go into version control with the code, and a teammate starts where you were. A file's name is its checkpoint's: rename one to name it.
+- **A later build loads it**: what was saved is carried over to the new code by name, as [hot reload](cli.md#hot-reload) carries a running match. Fields keep their values, new ones get their defaults, and loading says what was reset or dropped. One whose scene is gone is refused, saying why; **Load anyway** (`--force`, `checkpoint force-load`) loads the rest of it, without that scene's entities.
+- **Saved by the machine that runs the match**: a client of another machine's match has no server world to save.
+- What a game keeps in its own C, outside the match, isn't in a checkpoint.
+
+For a script, an agent or a terminal, the same goes by name ([Without a window](cli.md#without-a-window)):
+
+```sh
+tide run --from boss-fight                # Starts from checkpoints/boss-fight.checkpoint
+tide run --from boss-fight --force        # ...with what of it carries over
+```
+
+```text
+# In a script or an interactive run: saved once the frame drew, and loaded
+300 checkpoint save boss-fight
+400 checkpoint load boss-fight
+```
+
+A run started `--from` a checkpoint that won't load ends at once, saying why, so a script never plays on from the wrong place. On the web, `tide run --web` keeps the page's checkpoints in the same folder.

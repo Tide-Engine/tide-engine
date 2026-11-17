@@ -468,9 +468,9 @@ static bool identity_layout_fits(const tide_layout_world *w)
     return !w->lifecycle_count || (uint64_t)w->lifecycle_occurrences + (uint64_t)w->lifecycle_count * sizeof(uint64_t) <= w->size;
 }
 
-bool tide_migrate_world(const tide_layout *from_layout, const tide_layout_world *fw, const void *from_bytes,
-                        const uint32_t from_size, const tide_layout *to_layout, const tide_layout_world *tw, void **to_bytes,
-                        uint32_t *to_size, tide_migration *m)
+static bool migrate(const tide_layout *from_layout, const tide_layout_world *fw, const void *from_bytes,
+                    const uint32_t from_size, const tide_layout *to_layout, const tide_layout_world *tw, void **to_bytes,
+                    uint32_t *to_size, tide_migration *m, const bool forced)
 {
     const uint8_t *from = from_bytes;
     *m = (tide_migration){0};
@@ -504,12 +504,56 @@ bool tide_migrate_world(const tide_layout *from_layout, const tide_layout_world 
     }
     for (uint32_t i = 0; ok && i < to_layout->type_count; i++) c.types[i] = find_type(from_layout, to_layout->types[i].name);
 
-    // A scene that's gone takes the match with it
+    // A scene that's gone takes the match with it, or forced, its entities alone
+    bool *lost = calloc(fw->archetype_count ? fw->archetype_count : 1u, sizeof *lost);
+    if (ok && !lost) {
+        snprintf(m->failed, sizeof m->failed, "there wasn't enough memory");
+        ok = false;
+    }
     for (uint32_t a = 0; ok && a < fw->archetype_count; a++) {
         const char *scene = old.counts[a] ? lost_scene(&c, tw, &fw->archetypes[a]) : NULL;
-        if (scene) {
+        if (scene && forced) {
+            lost[a] = true;
+            if (!m->scene_dropped[0]) snprintf(m->scene_dropped, sizeof m->scene_dropped, "%s", scene);
+        } else if (scene) {
             snprintf(m->failed, sizeof m->failed, "the scene %s is gone", scene);
             ok = false;
+        }
+    }
+
+    // Forced, the entities in a scene that's gone go with it: the scenes' own entities, and each row whose scene is
+    // one of them (dropped row by row, `dropped` from each archetype's `first`)
+    uint32_t *first = calloc(fw->archetype_count + 1u, sizeof *first);
+    tide_entity *scenes_gone = NULL;
+    uint32_t scenes_gone_count = 0;
+    if (ok && !first) {
+        snprintf(m->failed, sizeof m->failed, "there wasn't enough memory");
+        ok = false;
+    }
+    for (uint32_t a = 0; ok && a < fw->archetype_count; a++) {
+        first[a + 1u] = first[a] + old.counts[a];
+        if (lost[a]) scenes_gone_count += old.counts[a];
+    }
+    bool *dropped = ok ? calloc(first[fw->archetype_count] + 1u, sizeof *dropped) : NULL;
+    if (ok && scenes_gone_count) scenes_gone = calloc(scenes_gone_count, sizeof *scenes_gone);
+    if (ok && (!dropped || (scenes_gone_count && !scenes_gone))) {
+        snprintf(m->failed, sizeof m->failed, "there wasn't enough memory");
+        ok = false;
+    }
+    scenes_gone_count = 0;
+    for (uint32_t a = 0; ok && a < fw->archetype_count; a++) {
+        for (uint32_t row = 0; lost[a] && row < old.counts[a]; row++) {
+            memcpy(&scenes_gone[scenes_gone_count++], cell(from_layout, &fw->archetypes[a], old.rows[a], old.counts[a], 0, row),
+                   sizeof(tide_entity));
+        }
+    }
+    for (uint32_t a = 0; ok && scenes_gone_count && a < fw->archetype_count; a++) {
+        const tide_layout_archetype *fa = &fw->archetypes[a];
+        for (uint32_t row = 0; !lost[a] && fa->scenes && row < old.counts[a]; row++) {
+            tide_entity scene;
+            memcpy(&scene, cell(from_layout, fa, old.rows[a], old.counts[a], 1, row), sizeof scene);
+            for (uint32_t s = 0; s < scenes_gone_count && !dropped[first[a] + row]; s++)
+                dropped[first[a] + row] = !tide_entity_is_null(scene) && tide_entity_equal(scene, scenes_gone[s]);
         }
     }
 
@@ -517,12 +561,12 @@ bool tide_migrate_world(const tide_layout *from_layout, const tide_layout_world 
     // the order of the old archetypes and their rows
     for (uint32_t a = 0; ok && a < fw->archetype_count; a++) {
         const tide_layout_archetype *fa = &fw->archetypes[a];
-        goes[a] = new_archetype(&c, tw, fa);
+        goes[a] = lost[a] ? -1 : new_archetype(&c, tw, fa);
         for (uint32_t row = 0; row < old.counts[a]; row++) {
             tide_entity e;
             memcpy(&e, cell(from_layout, fa, old.rows[a], old.counts[a], 0, row), sizeof e);
             if (tide_row_gone(&e)) continue; // A hole: no entity, and no row in the new world
-            if (goes[a] < 0) {
+            if (goes[a] < 0 || dropped[first[a] + row]) {
                 tide_entity_destroy(&old.entities, e);
                 m->entities_dropped++;
             } else {
@@ -569,6 +613,10 @@ bool tide_migrate_world(const tide_layout *from_layout, const tide_layout_world 
         free(c.types);
         free(counts);
         free(goes);
+        free(lost);
+        free(first);
+        free(dropped);
+        free(scenes_gone);
         free(old_value);
         free(new_value);
         return false;
@@ -619,7 +667,7 @@ bool tide_migrate_world(const tide_layout *from_layout, const tide_layout_world 
                 if (goes[a] != (int32_t)k) continue;
                 const tide_layout_archetype *fa = &fw->archetypes[a];
                 for (uint32_t row = 0; row < old.counts[a]; row++) {
-                    if (gone(from_layout, fa, old.rows[a], old.counts[a], row)) continue;
+                    if (gone(from_layout, fa, old.rows[a], old.counts[a], row) || dropped[first[a] + row]) continue;
                     uint8_t *value = take(&w, bytes);
                     if (tc) { // The whole value carried over, for the lane of it this column holds
                         const tide_layout_place *fc = old_component(&c, fa, tc->type);
@@ -693,6 +741,10 @@ bool tide_migrate_world(const tide_layout *from_layout, const tide_layout_world 
     free(c.types);
     free(counts);
     free(goes);
+    free(lost);
+    free(first);
+    free(dropped);
+    free(scenes_gone);
     free(old_value);
     free(new_value);
     *to_bytes = to;
@@ -910,4 +962,18 @@ const tide_layout *tide_layout_unpack(void *block, const uint32_t size)
     }
     if (!unpack_world(b, size, &l->match) || !unpack_world(b, size, &l->local)) return NULL;
     return l;
+}
+
+bool tide_migrate_world(const tide_layout *from_layout, const tide_layout_world *fw, const void *from_bytes,
+                        const uint32_t from_size, const tide_layout *to_layout, const tide_layout_world *tw, void **to_bytes,
+                        uint32_t *to_size, tide_migration *m)
+{
+    return migrate(from_layout, fw, from_bytes, from_size, to_layout, tw, to_bytes, to_size, m, false);
+}
+
+bool tide_migrate_world_forced(const tide_layout *from_layout, const tide_layout_world *fw, const void *from_bytes,
+                               const uint32_t from_size, const tide_layout *to_layout, const tide_layout_world *tw,
+                               void **to_bytes, uint32_t *to_size, tide_migration *m)
+{
+    return migrate(from_layout, fw, from_bytes, from_size, to_layout, tw, to_bytes, to_size, m, true);
 }
