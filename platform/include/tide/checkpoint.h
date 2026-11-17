@@ -49,3 +49,13 @@ bool tide_checkpoint_unpack(void *bytes, uint32_t size, const char *what, const 
 
 // The checkpoints in `folder`, newest first: up to `most` names in `names`; returns how many there are of them all
 uint32_t tide_checkpoint_list(const char *folder, char (*names)[TIDE_CHECKPOINT_NAME], uint32_t most);
+
+// Other files a dev build keeps in the same folder, named as checkpoints are, by their extension (".recording": a
+// match's ticks, tide/timeline.h): written whole and then in place, read (malloc'd, NULL saying why), and listed,
+// newest first. A checkpoint is one of them, ".checkpoint".
+bool tide_checkpoint_write(const char *folder, const char *name, const char *extension, const void *bytes, uint32_t size,
+                           char *why, size_t why_size);
+uint8_t *tide_checkpoint_read(const char *folder, const char *name, const char *extension, uint32_t *size, char *why,
+                              size_t why_size);
+uint32_t tide_checkpoint_list_of(const char *folder, const char *extension, char (*names)[TIDE_CHECKPOINT_NAME],
+                                 uint32_t most);

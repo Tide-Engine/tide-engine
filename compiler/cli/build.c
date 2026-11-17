@@ -5321,8 +5321,18 @@ typedef struct page_checkpoint {
     int64_t when;
 } page_checkpoint;
 
+// Which kind a query asks for: a checkpoint's file (no kind, or `kind=checkpoint`) or a recording's
+// (`kind=recording`), by its extension; NULL for another
+static const char *page_checkpoint_kind(const char *query)
+{
+    char kind[32];
+    if (!query || !query_value(query, "kind", kind, sizeof kind) || strcmp(kind, "checkpoint") == 0) return ".checkpoint";
+    return strcmp(kind, "recording") == 0 ? ".recording" : NULL;
+}
+
 typedef struct page_checkpoints {
     const char *folder;
+    const char *extension;
     page_checkpoint *found;
     size_t count, capacity;
 } page_checkpoints;
@@ -5330,8 +5340,8 @@ typedef struct page_checkpoints {
 static void page_checkpoint_found(void *user, const char *file, const bool is_dir)
 {
     page_checkpoints *l = user;
-    const size_t n = strlen(file), suffix = strlen(".checkpoint");
-    if (is_dir || n <= suffix || n - suffix >= 64u || strcmp(file + n - suffix, ".checkpoint") != 0) return;
+    const size_t n = strlen(file), suffix = strlen(l->extension);
+    if (is_dir || n <= suffix || n - suffix >= 64u || strcmp(file + n - suffix, l->extension) != 0) return;
     if (l->count == l->capacity) {
         l->capacity = l->capacity ? l->capacity * 2u : 16u;
         l->found = realloc(l->found, l->capacity * sizeof *l->found);
@@ -5352,14 +5362,18 @@ static int page_checkpoint_newest(const void *a, const void *b)
     return strcmp(x->name, y->name);
 }
 
-// `/checkpoints`: their names, newest first, a line each; `/checkpoint?name=...`: one's bytes; a POST to it saves one
+// `/checkpoints`: their names, newest first, a line each; `/checkpoint?name=...`: one's bytes; a POST to it saves one.
+// With `kind=recording`, a recording's (a match's ticks) beside them instead.
 static bool answer_checkpoint(web_run *w, const char *path, const uint8_t *body, const size_t size, serve_reply *reply)
 {
+    const char *query = strchr(path, '?');
+    const char *extension = page_checkpoint_kind(query ? query + 1 : NULL);
+    if (!extension) return false;
     char *folder = path_join(w->r.b.folder, "checkpoints");
     char name[64];
     bool answered = true;
-    if (!body && strcmp(path, "/checkpoints") == 0) {
-        page_checkpoints l = {folder, NULL, 0, 0};
+    if (!body && (strcmp(path, "/checkpoints") == 0 || strncmp(path, "/checkpoints?", 13) == 0)) {
+        page_checkpoints l = {folder, extension, NULL, 0, 0};
         sys_list(folder, page_checkpoint_found, &l);
         if (l.count) qsort(l.found, l.count, sizeof *l.found, page_checkpoint_newest);
         free(w->checkpoint_names);
@@ -5371,8 +5385,8 @@ static bool answer_checkpoint(web_run *w, const char *path, const uint8_t *body,
         free(l.found);
         *reply = (serve_reply){200, "text/plain; charset=utf-8", w->checkpoint_names, at};
     } else if (strncmp(path, "/checkpoint?", 12) == 0 && page_checkpoint_name(path + 12, name, sizeof name)) {
-        char file[80];
-        snprintf(file, sizeof file, "%s.checkpoint", name);
+        char file[96];
+        snprintf(file, sizeof file, "%s%s", name, extension);
         char *at = path_join(folder, file);
         if (body) {
             // Written whole beside it, then in its place, as a native run writes one

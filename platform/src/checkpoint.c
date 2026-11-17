@@ -60,10 +60,11 @@ bool tide_checkpoint_name_ok(const char *name, char *why, const size_t why_size)
     return true;
 }
 
-// `folder`/`name`.checkpoint, and with ".part" for the file it's written to first
-static bool path_of(const char *folder, const char *name, const char *suffix, char *out, const size_t size)
+// `folder`/`name``extension`, and with ".part" after it for the file it's written to first
+static bool path_of(const char *folder, const char *name, const char *extension, const char *suffix, char *out,
+                    const size_t size)
 {
-    const int n = snprintf(out, size, "%s%s%s.checkpoint%s", folder && folder[0] ? folder : ".", "/", name, suffix);
+    const int n = snprintf(out, size, "%s/%s%s%s", folder && folder[0] ? folder : ".", name, extension, suffix);
     return n > 0 && (size_t)n < size;
 }
 
@@ -143,16 +144,12 @@ uint8_t *tide_checkpoint_pack(const tide_layout *layout, const tide_game *game, 
     return bytes;
 }
 
-bool tide_checkpoint_save(const char *folder, const char *name, const tide_layout *layout, const tide_game *game,
-                          const void *world, const int32_t player, const uint32_t tick, char *why, const size_t why_size)
+bool tide_checkpoint_write(const char *folder, const char *name, const char *extension, const void *bytes,
+                           const uint32_t size, char *why, const size_t why_size)
 {
     if (!tide_checkpoint_name_ok(name, why, why_size)) return false;
-    if (!layout || !game || !world || !game->pack_world) {
-        snprintf(why, why_size, "there's no match on this machine's server to save");
-        return false;
-    }
     char path[4096], part[4096];
-    if (!path_of(folder, name, "", path, sizeof path) || !path_of(folder, name, ".part", part, sizeof part)) {
+    if (!path_of(folder, name, extension, "", path, sizeof path) || !path_of(folder, name, extension, ".part", part, sizeof part)) {
         snprintf(why, why_size, "the checkpoints' folder's path is too long");
         return false;
     }
@@ -160,17 +157,10 @@ bool tide_checkpoint_save(const char *folder, const char *name, const tide_layou
         snprintf(why, why_size, "can't make the folder %s", folder);
         return false;
     }
-    uint32_t size = 0;
-    uint8_t *bytes = tide_checkpoint_pack(layout, game, world, player, tick, &size);
-    if (!bytes) {
-        snprintf(why, why_size, "there wasn't enough memory");
-        return false;
-    }
-    // Written whole beside it, then in its place: a checkpoint is never half a file
+    // Written whole beside it, then in its place: never half a file
     FILE *f = open_file(part, "wb");
     bool ok = f && fwrite(bytes, 1, (size_t)size, f) == (size_t)size;
     if (f && fclose(f) != 0) ok = false;
-    free(bytes);
     if (ok) ok = replace(part, path);
     if (!ok) {
         remove(part);
@@ -179,24 +169,20 @@ bool tide_checkpoint_save(const char *folder, const char *name, const tide_layou
     return ok;
 }
 
-bool tide_checkpoint_load(const char *folder, const char *name, const tide_layout *layout, const tide_game *game,
-                          const bool force, void **world_out, int32_t *player, tide_checkpoint_loaded *loaded)
+uint8_t *tide_checkpoint_read(const char *folder, const char *name, const char *extension, uint32_t *size_out, char *why,
+                              const size_t why_size)
 {
-    *loaded = (tide_checkpoint_loaded){0};
-    *world_out = NULL;
-    *player = -1;
-    char *failed = loaded->carried.failed;
-    const size_t failed_size = sizeof loaded->carried.failed;
-    if (!tide_checkpoint_name_ok(name, failed, failed_size)) return false;
+    *size_out = 0;
+    if (!tide_checkpoint_name_ok(name, why, why_size)) return NULL;
     char path[4096];
-    if (!path_of(folder, name, "", path, sizeof path)) {
-        snprintf(failed, failed_size, "the checkpoints' folder's path is too long");
-        return false;
+    if (!path_of(folder, name, extension, "", path, sizeof path)) {
+        snprintf(why, why_size, "the checkpoints' folder's path is too long");
+        return NULL;
     }
     FILE *f = open_file(path, "rb");
     if (!f) {
-        snprintf(failed, failed_size, "there's no checkpoint %s (%s)", name, path);
-        return false;
+        snprintf(why, why_size, "there's no %s %s (%s)", strcmp(extension, ".checkpoint") == 0 ? "checkpoint" : "file", name, path);
+        return NULL;
     }
     uint8_t *bytes = NULL;
     size_t size = 0, capacity = 0;
@@ -211,14 +197,49 @@ bool tide_checkpoint_load(const char *folder, const char *name, const tide_layou
         size += got;
         if (got == 0) break;
     }
-    const bool read_whole = feof(f) && !ferror(f) && size <= UINT32_MAX;
+    const bool whole = feof(f) && !ferror(f) && size <= UINT32_MAX;
     fclose(f);
-    if (!read_whole) {
+    if (!whole) {
         free(bytes);
-        snprintf(failed, failed_size, "%s didn't read whole", path);
+        snprintf(why, why_size, "%s didn't read whole", path);
+        return NULL;
+    }
+    *size_out = (uint32_t)size;
+    return bytes ? bytes : malloc(1);
+}
+
+bool tide_checkpoint_save(const char *folder, const char *name, const tide_layout *layout, const tide_game *game,
+                          const void *world, const int32_t player, const uint32_t tick, char *why, const size_t why_size)
+{
+    if (!tide_checkpoint_name_ok(name, why, why_size)) return false;
+    if (!layout || !game || !world || !game->pack_world) {
+        snprintf(why, why_size, "there's no match on this machine's server to save");
         return false;
     }
-    const bool ok = tide_checkpoint_unpack(bytes, (uint32_t)size, path, layout, game, force, world_out, player, loaded);
+    uint32_t size = 0;
+    uint8_t *bytes = tide_checkpoint_pack(layout, game, world, player, tick, &size);
+    if (!bytes) {
+        snprintf(why, why_size, "there wasn't enough memory");
+        return false;
+    }
+    const bool ok = tide_checkpoint_write(folder, name, ".checkpoint", bytes, size, why, why_size);
+    free(bytes);
+    return ok;
+}
+
+bool tide_checkpoint_load(const char *folder, const char *name, const tide_layout *layout, const tide_game *game,
+                          const bool force, void **world_out, int32_t *player, tide_checkpoint_loaded *loaded)
+{
+    *loaded = (tide_checkpoint_loaded){0};
+    *world_out = NULL;
+    *player = -1;
+    uint32_t size = 0;
+    uint8_t *bytes = tide_checkpoint_read(folder, name, ".checkpoint", &size, loaded->carried.failed,
+                                          sizeof loaded->carried.failed);
+    if (!bytes) return false;
+    char path[4096];
+    path_of(folder, name, ".checkpoint", "", path, sizeof path);
+    const bool ok = tide_checkpoint_unpack(bytes, size, path, layout, game, force, world_out, player, loaded);
     free(bytes);
     return ok;
 }
@@ -298,11 +319,11 @@ static int newest_first(const void *a, const void *b)
     return strcmp(x->name, y->name);
 }
 
-// A file's name as a checkpoint's: what's before ".checkpoint", if that's all it ends with
-static bool checkpoint_name(const char *file, char *name)
+// A file's name as a checkpoint's: what's before its extension, if that's all it ends with
+static bool checkpoint_name(const char *file, const char *extension, char *name)
 {
-    const size_t n = strlen(file), suffix = strlen(".checkpoint");
-    if (n <= suffix || n - suffix >= TIDE_CHECKPOINT_NAME || strcmp(file + n - suffix, ".checkpoint") != 0) return false;
+    const size_t n = strlen(file), suffix = strlen(extension);
+    if (n <= suffix || n - suffix >= TIDE_CHECKPOINT_NAME || strcmp(file + n - suffix, extension) != 0) return false;
     memcpy(name, file, n - suffix);
     name[n - suffix] = '\0';
     char why[8];
@@ -311,12 +332,18 @@ static bool checkpoint_name(const char *file, char *name)
 
 uint32_t tide_checkpoint_list(const char *folder, char (*names)[TIDE_CHECKPOINT_NAME], const uint32_t most)
 {
+    return tide_checkpoint_list_of(folder, ".checkpoint", names, most);
+}
+
+uint32_t tide_checkpoint_list_of(const char *folder, const char *extension, char (*names)[TIDE_CHECKPOINT_NAME],
+                                 const uint32_t most)
+{
     found *all = NULL;
     uint32_t count = 0, capacity = 0;
     const char *at = folder && folder[0] ? folder : ".";
 #ifdef _WIN32
     char pattern[4096];
-    if (snprintf(pattern, sizeof pattern, "%s/*.checkpoint", at) >= (int)sizeof pattern) return 0;
+    if (snprintf(pattern, sizeof pattern, "%s/*%s", at, extension) >= (int)sizeof pattern) return 0;
     wchar_t *w = wide(pattern);
     WIN32_FIND_DATAW data;
     HANDLE scan = w ? FindFirstFileW(w, &data) : INVALID_HANDLE_VALUE;
@@ -327,14 +354,14 @@ uint32_t tide_checkpoint_list(const char *folder, char (*names)[TIDE_CHECKPOINT_
         if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
         if (!WideCharToMultiByte(CP_UTF8, 0, data.cFileName, -1, file, sizeof file, NULL, NULL)) continue;
         found f;
-        if (!checkpoint_name(file, f.name)) continue;
+        if (!checkpoint_name(file, extension, f.name)) continue;
         f.when = (int64_t)(((uint64_t)data.ftLastWriteTime.dwHighDateTime << 32) | data.ftLastWriteTime.dwLowDateTime);
 #else
     DIR *scan = opendir(at);
     if (!scan) return 0;
     for (const struct dirent *e; (e = readdir(scan));) {
         found f;
-        if (!checkpoint_name(e->d_name, f.name)) continue;
+        if (!checkpoint_name(e->d_name, extension, f.name)) continue;
         // Its time if it has one (a WASI runtime may not say), for the newest first
         char path[4096];
         struct stat s;

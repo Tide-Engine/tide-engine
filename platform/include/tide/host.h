@@ -324,6 +324,7 @@ static int32_t tide_run_from_player;
 static int tide_run_checkpoint_coming;
 static char tide_run_checkpoint_coming_name[TIDE_CHECKPOINT_NAME];
 static char tide_run_checkpoint_saving[TIDE_CHECKPOINT_NAME];
+static int tide_run_checkpoint_saving_kind; // ...a checkpoint (0), or a recording (1)
 static int tide_run_checkpoint_want = -1; // 0 save, 1 load, 2 load what carries over
 static char tide_run_checkpoint_name[TIDE_CHECKPOINT_NAME];
 static char tide_run_checkpoint_said[240];  // What the last one did, for the menu
@@ -337,25 +338,46 @@ static double tide_run_checkpoints_listed_at = -1.0;
 
 // Pausing a dev build's match, stepping it, and going back (tide/timeline.h), from the dev menu: the match this machine
 // runs is recorded as it runs, the worlds of its last ticks kept (any since it began made again by replaying). Paused,
-// the match gets no time but a step's; an earlier tick shows through this machine's views as they are, with nothing
-// they send or ask for reaching the match; and the match can go on from the tick shown. The embedded host has its own (embed.c).
+// the match gets no time but a step's, or with other machines' players in it, goes on for them while the frames hold
+// the tick shown; an earlier tick shows through this machine's views as they are, with nothing they send or ask for,
+// nor its devices, reaching the match; and the match can go on from the tick shown. A recording (its ticks saved as a
+// file beside the checkpoints) replays in the match's place. The embedded host has its own (embed.c).
 static struct {
     tide_timeline *live;          // The match's ticks...
     const tide_session *recorded; // ...of this session's match, by this build
     const tide_game *game;
     bool paused, step;
     uint32_t shown; // The tick shown while paused
+    // A recording replayed in the match's place: its ticks from its first, played at its rate or stepped through
+    tide_timeline *replay;
+    tide_timeline_about about;
+    char replay_name[TIDE_CHECKPOINT_NAME];
+    uint32_t replay_shown;
+    bool playing;
+    double played;
+    char coming[TIDE_CHECKPOINT_NAME]; // On a page, a recording on its way from tide to be replayed
+    char said[240];                    // What the last save or replay did, for the menu
 } tide_run_travel;
+// The recordings in the checkpoints' folder, newest first, as last listed
+static char tide_run_recording_names[TIDE_RUN_CHECKPOINTS_LISTED][TIDE_CHECKPOINT_NAME];
+static uint32_t tide_run_recording_count;
+static double tide_run_recordings_listed_at = -1.0;
 
 // Pausing, stepping and going back (with the frame, below)
 static inline const char *tide_run_travel_why(void);
+static inline uint32_t tide_run_travel_first(void);
 static inline uint32_t tide_run_travel_last(void);
 static inline uint32_t tide_run_travel_shown(void);
+static inline bool tide_run_travel_background(void);
 static inline void tide_run_travel_pause(bool paused);
 static inline void tide_run_travel_forward(void);
 static inline void tide_run_travel_back(void);
+static inline void tide_run_travel_show(uint32_t tick);
 static inline void tide_run_travel_go_on(void);
 static inline const void *tide_run_travel_world(void);
+static inline void tide_run_travel_save(void);
+static inline void tide_run_travel_replay(const char *name);
+static inline void tide_run_travel_stop_replay(void);
 
 
 static inline void tide_run_checkpoint_ask(const int way, const char *name)
@@ -497,6 +519,9 @@ static inline void tide_run_sample(void *user, const uint32_t tick, void *input)
     (void)tick;
     if (!tide_run_game->sample_input) return;
     tide_devices sampled = tide_run_devices;
+    // While the frames show another tick and the match goes on (for other machines' players), this machine's player
+    // lets go of everything, as nothing seen is the match as it is
+    if (tide_run_travel_world()) memset(&sampled, 0, sizeof sampled);
     tide_gui_hide(&tide_run_gui, &sampled); // A click on a button isn't the game's
     tide_stats_hide(&tide_run_drawer, &sampled); // ...nor one on the stats
     tide_run_game->sample_input(&sampled, tide_run_local, input);
@@ -1187,18 +1212,23 @@ static inline uint64_t tide_run_bytes_hash(const uint8_t *bytes, const size_t le
 __attribute__((import_module("tide"), import_name("tweaks_copy"))) uint32_t tide_web_tweaks_copy(void *to, uint32_t capacity);
 __attribute__((import_module("tide"), import_name("tweak_write"))) void tide_web_tweak_write(const char *file, const char *name,
                                                                                             const char *value);
-// A dev build's checkpoints on a page, which tide run --web keeps in the game's folder (tide.js): one saved, and
-// whether it was kept (0 not yet, 1 kept, 2 not); one asked for, and copied once it's come (its size, 0 while it
-// hasn't, UINT32_MAX for one that isn't there); their names, newest first, a line each, as last listed
-__attribute__((import_module("tide"), import_name("checkpoint_save"))) void tide_web_checkpoint_save(const char *name,
+// A dev build's checkpoints (`kind` 0) and recordings (1) on a page, which tide run --web keeps in the game's folder
+// (tide.js): one saved, and whether it was kept (0 not yet, 1 kept, 2 not); one asked for, and copied once it's come
+// (its size, 0 while it hasn't, UINT32_MAX for one that isn't there); a kind's names, newest first, a line each, as
+// last listed
+__attribute__((import_module("tide"), import_name("checkpoint_save"))) void tide_web_checkpoint_save(uint32_t kind,
+                                                                                                    const char *name,
                                                                                                     const void *bytes,
                                                                                                     uint32_t size);
 __attribute__((import_module("tide"), import_name("checkpoint_saved"))) uint32_t tide_web_checkpoint_saved(void);
-__attribute__((import_module("tide"), import_name("checkpoint_fetch"))) void tide_web_checkpoint_fetch(const char *name);
-__attribute__((import_module("tide"), import_name("checkpoint_copy"))) uint32_t tide_web_checkpoint_copy(const char *name,
+__attribute__((import_module("tide"), import_name("checkpoint_fetch"))) void tide_web_checkpoint_fetch(uint32_t kind,
+                                                                                                      const char *name);
+__attribute__((import_module("tide"), import_name("checkpoint_copy"))) uint32_t tide_web_checkpoint_copy(uint32_t kind,
+                                                                                                        const char *name,
                                                                                                         void *to,
                                                                                                         uint32_t capacity);
-__attribute__((import_module("tide"), import_name("checkpoint_list"))) uint32_t tide_web_checkpoint_list(char *to,
+__attribute__((import_module("tide"), import_name("checkpoint_list"))) uint32_t tide_web_checkpoint_list(uint32_t kind,
+                                                                                                        char *to,
                                                                                                         uint32_t capacity);
 #endif
 
@@ -2145,43 +2175,79 @@ static inline void tide_run_dev_inspect(const tide_inspect_api *api, const void 
     tide_run_inspect_tree(api, &tide_run_inspect_packets[tide_run_inspect_local ? 1 : 0]);
 }
 
+// The checkpoints' folder's files of a kind (0 checkpoints, 1 recordings), newest first, into `names`: how many
+static inline uint32_t tide_run_list_kind(const uint32_t kind, char (*names)[TIDE_CHECKPOINT_NAME])
+{
+#ifdef __wasm__
+    static char listed[TIDE_RUN_CHECKPOINTS_LISTED * TIDE_CHECKPOINT_NAME];
+    const uint32_t size = tide_web_checkpoint_list(kind, listed, sizeof listed - 1u);
+    listed[size < sizeof listed ? size : 0u] = '\0';
+    uint32_t count = 0;
+    for (char *line = listed; *line && count < TIDE_RUN_CHECKPOINTS_LISTED;) {
+        char *end = strchr(line, '\n');
+        if (end) *end = '\0';
+        char why[8];
+        if (tide_checkpoint_name_ok(line, why, sizeof why)) snprintf(names[count++], TIDE_CHECKPOINT_NAME, "%s", line);
+        if (!end) break;
+        line = end + 1;
+    }
+    return count;
+#else
+    const uint32_t count = tide_checkpoint_list_of(tide_run_checkpoints, kind ? ".recording" : ".checkpoint", names,
+                                                   TIDE_RUN_CHECKPOINTS_LISTED);
+    return count < TIDE_RUN_CHECKPOINTS_LISTED ? count : TIDE_RUN_CHECKPOINTS_LISTED;
+#endif
+}
+
+// The next free name of `prefix`-<n>, past every one listed
+static inline void tide_run_next_name(const char *prefix, char (*listed)[TIDE_CHECKPOINT_NAME], const uint32_t count, char *out)
+{
+    uint32_t next = 1;
+    const size_t n = strlen(prefix);
+    for (uint32_t i = 0; i < count; i++) {
+        unsigned number = 0;
+        char tail;
+        if (strncmp(listed[i], prefix, n) == 0 && sscanf(listed[i] + n, "-%u%c", &number, &tail) == 1 && number >= next) next = number + 1u;
+    }
+    snprintf(out, TIDE_CHECKPOINT_NAME, "%s-%u", prefix, (unsigned)next);
+}
+
+// The Dev tab's recordings: Save recording (named recording-<n>), the match's ticks so far, and each saved one, newest
+// first, which a click replays in the match's place
+static inline void tide_run_dev_recordings(void)
+{
+    tide_gui *g = &tide_run_gui;
+    if (tide_run_recordings_listed_at < 0.0 || tide_run_now - tide_run_recordings_listed_at > 1.0) {
+        tide_run_recording_count = tide_run_list_kind(1u, tide_run_recording_names);
+        tide_run_recordings_listed_at = tide_run_now;
+    }
+    tide_run_inspect_heading("RECORDINGS");
+    if (tide_gui_layout_button(g, 0xDE780001u, "Save recording")) tide_run_travel_save();
+    if (tide_run_travel.said[0]) tide_run_dev_label(tide_run_travel.said, 12.0f, TIDE_RUN_DEV_DIM);
+    for (uint32_t i = 0; i < tide_run_recording_count; i++) {
+        const char *name = tide_run_recording_names[i];
+        float y;
+        if (!tide_run_inspect_row_shows(0, &y)) continue;
+        const bool on = tide_run_travel.replay && strcmp(name, tide_run_travel.replay_name) == 0;
+        if (tide_run_inspect_row(0xDE790000u + i, name, name, on ? "replaying" : "", 0, false)) tide_run_travel_replay(name);
+    }
+    if (!tide_run_recording_count) tide_run_dev_label("None yet: Save recording keeps the match's ticks so far", 12.0f, TIDE_RUN_DEV_DIM);
+}
+
 // The Dev tab's checkpoints: Save (named checkpoint-<n>, the next number), then each saved one, newest first, which a
 // click loads; the one the run starts over from is marked, and Start fresh forgets it
 static inline void tide_run_dev_checkpoints(void)
 {
     tide_gui *g = &tide_run_gui;
     if (tide_run_checkpoints_listed_at < 0.0 || tide_run_now - tide_run_checkpoints_listed_at > 1.0) {
-#ifdef __wasm__
-        static char listed[TIDE_RUN_CHECKPOINTS_LISTED * TIDE_CHECKPOINT_NAME];
-        const uint32_t size = tide_web_checkpoint_list(listed, sizeof listed - 1u);
-        listed[size < sizeof listed ? size : 0u] = '\0';
-        tide_run_checkpoint_count = 0;
-        for (char *line = listed; *line && tide_run_checkpoint_count < TIDE_RUN_CHECKPOINTS_LISTED;) {
-            char *end = strchr(line, '\n');
-            if (end) *end = '\0';
-            char why[8];
-            if (tide_checkpoint_name_ok(line, why, sizeof why))
-                snprintf(tide_run_checkpoint_names[tide_run_checkpoint_count++], TIDE_CHECKPOINT_NAME, "%s", line);
-            if (!end) break;
-            line = end + 1;
-        }
-#else
-        tide_run_checkpoint_count = tide_checkpoint_list(tide_run_checkpoints, tide_run_checkpoint_names, TIDE_RUN_CHECKPOINTS_LISTED);
-#endif
+        tide_run_checkpoint_count = tide_run_list_kind(0u, tide_run_checkpoint_names);
         tide_run_checkpoints_listed_at = tide_run_now;
     }
     tide_run_inspect_heading("CHECKPOINTS");
     const int row = tide_gui_begin_horizontal(g, 0xDE750000u);
     if (tide_gui_layout_button(g, 0xDE750001u, "Save")) {
-        uint32_t next = 1;
-        const uint32_t listed = tide_run_checkpoint_count < TIDE_RUN_CHECKPOINTS_LISTED ? tide_run_checkpoint_count : TIDE_RUN_CHECKPOINTS_LISTED;
-        for (uint32_t i = 0; i < listed; i++) {
-            unsigned n = 0;
-            char tail;
-            if (sscanf(tide_run_checkpoint_names[i], "checkpoint-%u%c", &n, &tail) == 1 && n >= next) next = n + 1u;
-        }
         char name[TIDE_CHECKPOINT_NAME];
-        snprintf(name, sizeof name, "checkpoint-%u", next);
+        tide_run_next_name("checkpoint", tide_run_checkpoint_names, tide_run_checkpoint_count, name);
         tide_run_checkpoint_ask(0, name);
     }
     if (tide_run_from[0] && tide_gui_layout_button(g, 0xDE750002u, "Start fresh")) tide_run_checkpoint_ask(3, "");
@@ -2200,17 +2266,49 @@ static inline void tide_run_dev_checkpoints(void)
     if (!listed) tide_run_dev_label("None yet: Save keeps the match as it is", 12.0f, TIDE_RUN_DEV_DIM);
 }
 
+// A bar of the ticks from `first` to `last`, the one shown `shown`, which a drag shows another of
+static inline void tide_run_dev_scrub(const uint32_t id, const uint32_t first, const uint32_t last, const uint32_t shown)
+{
+    if (last <= first) return;
+    int32_t tick = (int32_t)shown;
+    if (tide_gui_layout_int_slider(&tide_run_gui, id, "", &tick, (int32_t)first, (int32_t)last) && tick >= 0)
+        tide_run_travel_show((uint32_t)tick);
+}
+
 // The match's time, at the menu's top whatever its tab: Pause or Play, then paused, Back and Step a tick, the tick
-// shown, and at an earlier one, Go on from here, which the match goes on from. Why it can't pause, where it can't.
+// shown, a bar to drag through the ticks, and at an earlier one, Go on from here, which the match goes on from. Why it
+// can't pause, where it can't. A recording replayed has its own: Play or Pause, Back, Step, its bar, whether this build
+// replays it as it was recorded, and Stop replay.
 static inline void tide_run_dev_time(void)
 {
     tide_gui *g = &tide_run_gui;
+    char line[160];
+    if (tide_run_travel.replay) {
+        tide_timeline *r = tide_run_travel.replay;
+        const uint32_t first = tide_timeline_first(r), last = tide_timeline_last(r), shown = tide_run_travel.replay_shown;
+        const int row = tide_gui_begin_horizontal(g, 0xDE770010u);
+        if (row < 0) return;
+        if (tide_gui_layout_button(g, 0xDE770011u, tide_run_travel.playing ? "Pause" : "Play")) tide_run_travel_pause(tide_run_travel.playing);
+        if (tide_gui_layout_button(g, 0xDE770012u, "Back")) tide_run_travel_back();
+        if (tide_gui_layout_button(g, 0xDE770013u, "Step")) tide_run_travel_forward();
+        snprintf(line, sizeof line, "%s: tick %u of %u", tide_run_travel.replay_name, (unsigned)shown, (unsigned)last);
+        tide_run_dev_label(line, 12.0f, TIDE_RUN_DEV_DIM);
+        tide_gui_close(g, row);
+        tide_run_dev_scrub(0xDE770014u, first, last, shown);
+        tide_timeline_check check;
+        tide_timeline_check_of(r, &check);
+        if (check.unreadable) snprintf(line, sizeof line, "This build can't replay tick %u", (unsigned)check.unreadable);
+        else if (check.differs) snprintf(line, sizeof line, "Tick %u differs from the recording", (unsigned)check.differs);
+        else snprintf(line, sizeof line, "As recorded, to tick %u", (unsigned)check.checked);
+        tide_run_dev_label(line, 12.0f, check.differs || check.unreadable ? g->theme.accent : TIDE_RUN_DEV_DIM);
+        if (tide_gui_layout_button(g, 0xDE770015u, "Stop replay")) tide_run_travel_stop_replay();
+        return;
+    }
     const char *why = tide_run_travel_why();
     const bool paused = tide_run_travel.paused;
     if (why[0] && !paused) {
-        char said[96];
-        snprintf(said, sizeof said, "Can't pause: %s", why);
-        tide_run_dev_label(said, 12.0f, TIDE_RUN_DEV_DIM);
+        snprintf(line, sizeof line, "Can't pause: %s", why);
+        tide_run_dev_label(line, 12.0f, TIDE_RUN_DEV_DIM);
         return;
     }
     const int row = tide_gui_begin_horizontal(g, 0xDE770000u);
@@ -2218,13 +2316,15 @@ static inline void tide_run_dev_time(void)
     if (tide_gui_layout_button(g, 0xDE770001u, paused ? "Play" : "Pause")) tide_run_travel_pause(!paused);
     if (paused && tide_gui_layout_button(g, 0xDE770002u, "Back")) tide_run_travel_back();
     if (paused && tide_gui_layout_button(g, 0xDE770003u, "Step")) tide_run_travel_forward();
-    char tick[64];
     const uint32_t shown = tide_run_travel_shown(), last = tide_run_travel_last();
-    if (paused && shown < last) snprintf(tick, sizeof tick, "tick %u of %u", (unsigned)shown, (unsigned)last);
-    else snprintf(tick, sizeof tick, "tick %u", (unsigned)last);
-    tide_run_dev_label(tick, 12.0f, TIDE_RUN_DEV_DIM);
+    if (paused && shown < last) snprintf(line, sizeof line, "tick %u of %u", (unsigned)shown, (unsigned)last);
+    else snprintf(line, sizeof line, "tick %u", (unsigned)last);
+    tide_run_dev_label(line, 12.0f, TIDE_RUN_DEV_DIM);
     tide_gui_close(g, row);
-    if (paused && shown < last && tide_gui_layout_button(g, 0xDE770004u, "Go on from here")) tide_run_travel_go_on();
+    if (!paused) return;
+    tide_run_dev_scrub(0xDE770005u, tide_run_travel_first(), last, shown);
+    if (tide_run_travel_background()) tide_run_dev_label("The match goes on for the other players", 12.0f, TIDE_RUN_DEV_DIM);
+    if (shown < last && tide_gui_layout_button(g, 0xDE770004u, "Go on from here")) tide_run_travel_go_on();
 }
 
 // The menu's tab: 0 the game's dev views and tweaks, 1 the match's inspector, 2 the local world's. Each tab's list
@@ -2309,6 +2409,7 @@ static inline void tide_run_dev_menu(const tide_host_game *game, const void *mat
         }
         if (tweaks) tide_run_dev_tweaks(tweaks);
         if (inspect) tide_run_dev_checkpoints();
+        if (inspect) tide_run_dev_recordings();
     } else {
         tide_run_inspect_local = tide_run_dev_tab == 2;
         tide_run_inspect_view = list;
@@ -2730,19 +2831,19 @@ static inline bool tide_run_checkpoint_world(const char *name, const bool force,
     }
     tide_checkpoint_loaded loaded;
 #ifdef __wasm__
-    const uint32_t size = tide_web_checkpoint_copy(name, NULL, 0);
+    const uint32_t size = tide_web_checkpoint_copy(0u, name, NULL, 0);
     if (!size) { // Not here yet: asked for, and loaded as it comes (tide_run_checkpoints_poll)
-        tide_web_checkpoint_fetch(name);
+        tide_web_checkpoint_fetch(0u, name);
         tide_run_checkpoint_coming = force ? 2 : 1;
         snprintf(tide_run_checkpoint_coming_name, sizeof tide_run_checkpoint_coming_name, "%s", name);
         snprintf(tide_run_checkpoint_said, sizeof tide_run_checkpoint_said, "Loading %s", name);
         return false;
     }
     void *bytes = size != UINT32_MAX ? malloc(size) : NULL;
-    if (bytes) tide_web_checkpoint_copy(name, bytes, size);
+    if (bytes) tide_web_checkpoint_copy(0u, name, bytes, size);
     else if (size == UINT32_MAX) { // Forgotten, so a later ask fetches it again
         char none;
-        tide_web_checkpoint_copy(name, &none, 0);
+        tide_web_checkpoint_copy(0u, name, &none, 0);
     }
     const bool ok = bytes && tide_checkpoint_unpack(bytes, size, name, layout, game->game, force, world, player, &loaded);
     if (!bytes) {
@@ -2813,9 +2914,10 @@ static inline void tide_run_checkpoint_save(const char *name)
             if (!bytes) snprintf(why, sizeof why, "there wasn't enough memory");
         }
         if (bytes) {
-            tide_web_checkpoint_save(name, bytes, size);
+            tide_web_checkpoint_save(0u, name, bytes, size);
             free(bytes);
             snprintf(tide_run_checkpoint_saving, sizeof tide_run_checkpoint_saving, "%s", name);
+            tide_run_checkpoint_saving_kind = 0;
             snprintf(tide_run_checkpoint_said, sizeof tide_run_checkpoint_said, "Saving %s, at tick %u", name, (unsigned)tick);
             return;
         }
@@ -2867,14 +2969,21 @@ static inline void tide_run_checkpoints_poll(void)
     if (tide_run_checkpoint_saving[0]) {
         const uint32_t saved = tide_web_checkpoint_saved();
         if (saved) {
-            snprintf(tide_run_checkpoint_said, sizeof tide_run_checkpoint_said, saved == 1u ? "Saved %s" : "%s isn't saved: "
-                     "a page keeps checkpoints in the game's folder only under tide run --web", tide_run_checkpoint_saving);
-            printf("tide: %s\n", tide_run_checkpoint_said);
+            char *said = tide_run_checkpoint_saving_kind ? tide_run_travel.said : tide_run_checkpoint_said;
+            snprintf(said, sizeof tide_run_checkpoint_said, saved == 1u ? "Saved %s" : "%s isn't saved: "
+                     "a page keeps them in the game's folder only under tide run --web", tide_run_checkpoint_saving);
+            printf("tide: %s\n", said);
+            tide_run_recordings_listed_at = -1.0;
             tide_run_checkpoint_saving[0] = '\0';
             tide_run_checkpoints_listed_at = -1.0;
         }
     }
-    if (tide_run_checkpoint_coming && tide_web_checkpoint_copy(tide_run_checkpoint_coming_name, NULL, 0)) {
+    if (tide_run_travel.coming[0] && tide_web_checkpoint_copy(1u, tide_run_travel.coming, NULL, 0)) {
+        snprintf(name, sizeof name, "%s", tide_run_travel.coming);
+        tide_run_travel.coming[0] = '\0';
+        tide_run_travel_replay(name);
+    }
+    if (tide_run_checkpoint_coming && tide_web_checkpoint_copy(0u, tide_run_checkpoint_coming_name, NULL, 0)) {
         const bool force = tide_run_checkpoint_coming == 2;
         tide_run_checkpoint_coming = 0;
         snprintf(name, sizeof name, "%s", tide_run_checkpoint_coming_name);
@@ -2953,7 +3062,28 @@ static inline void tide_run_send_commands(void)
     }
 }
 
-// Lets go of the recording (and of a pause): before the code of the build that made its worlds goes
+// The match's ticks a second, which a recording says it was made at
+static inline uint32_t tide_run_travel_rate(void)
+{
+    if (tide_run_settings.tick_rate > 0) return (uint32_t)tide_run_settings.tick_rate;
+    return tide_run_game && tide_run_game->game->tick_rate ? tide_run_game->game->tick_rate : 60u;
+}
+
+// Players of other machines are in the match: it never stops for them
+static inline bool tide_run_travel_background(void)
+{
+    return tide_run_session && tide_session_remote_players(tide_run_session) > 0u;
+}
+
+static inline void tide_run_travel_stop_replay(void)
+{
+    tide_timeline_destroy(tide_run_travel.replay);
+    tide_run_travel.replay = NULL;
+    tide_run_travel.playing = false;
+    tide_run_travel.replay_name[0] = '\0';
+}
+
+// Lets go of the recording (and of a pause, and a replay): before the code of the build that made its worlds goes
 static inline void tide_run_travel_drop(void)
 {
     if (tide_run_travel.live && tide_run_session && tide_run_travel.recorded == tide_run_session) {
@@ -2964,9 +3094,10 @@ static inline void tide_run_travel_drop(void)
     tide_run_travel.recorded = NULL;
     tide_run_travel.game = NULL;
     tide_run_travel.paused = tide_run_travel.step = false;
+    tide_run_travel_stop_replay();
 }
 
-// Why the match can't pause now, "" when it can: a dev build's match that this machine runs, alone
+// Why the match can't pause now, "" when it can: a dev build's match that this machine runs
 static inline const char *tide_run_travel_why(void)
 {
     const tide_host_game *game = tide_run_game;
@@ -2975,7 +3106,6 @@ static inline const char *tide_run_travel_why(void)
     if (game->game->shards) return "a sharded match doesn't pause";
     const tide_session_status status = tide_session_status_of(tide_run_session);
     if (!status.server) return status.client.state == TIDE_SESSION_OFFLINE ? "there's no match" : "the match is another machine's";
-    if (tide_session_remote_players(tide_run_session)) return "other machines' players are in the match";
     if (!tide_run_travel.live || !tide_timeline_started(tide_run_travel.live)) return "the match hasn't started";
     return "";
 }
@@ -2987,7 +3117,12 @@ static inline void tide_run_travel_follow(void)
     const bool wanted = !tide_run_embedded && game && game->inspect && tide_run_session && !game->game->shards
                      && tide_session_status_of(tide_run_session).server;
     if (!wanted || (tide_run_travel.live && (tide_run_travel.recorded != tide_run_session || tide_run_travel.game != game->game))) {
-        if (tide_run_travel.live || tide_run_travel.paused) tide_run_travel_drop();
+        if (tide_run_travel.live || tide_run_travel.paused) {
+            tide_timeline *replay = tide_run_travel.replay; // A recording replayed isn't the match's: it stays
+            tide_run_travel.replay = NULL;
+            tide_run_travel_drop();
+            tide_run_travel.replay = replay;
+        }
     }
     if (wanted && !tide_run_travel.live) {
         tide_run_travel.live = tide_timeline_create(&(tide_timeline_desc){.game = game->game, .jobs = tide_run_jobs()});
@@ -2997,9 +3132,12 @@ static inline void tide_run_travel_follow(void)
         const tide_session_recorder recorder = tide_timeline_recorder(tide_run_travel.live);
         tide_session_record(tide_run_session, &recorder);
     }
-    if (tide_run_travel.paused && tide_run_travel_why()[0]) {
-        tide_run_travel.paused = tide_run_travel.step = false; // It goes on
-        }
+    if (tide_run_travel.paused && tide_run_travel_why()[0]) tide_run_travel.paused = tide_run_travel.step = false; // It goes on
+}
+
+static inline uint32_t tide_run_travel_first(void)
+{
+    return tide_run_travel.live ? tide_timeline_first(tide_run_travel.live) : 0u;
 }
 
 static inline uint32_t tide_run_travel_last(void)
@@ -3014,11 +3152,19 @@ static inline uint32_t tide_run_travel_shown(void)
     return tide_run_travel.paused && tide_run_travel.shown < last ? tide_run_travel.shown : last;
 }
 
+// Pauses, or goes on: a recording replayed plays or stops
 static inline void tide_run_travel_pause(const bool paused)
 {
-    if (!paused) { // Going on from the latest: what was shown is let go
+    if (tide_run_travel.replay) {
+        const bool ended = tide_run_travel.replay_shown >= tide_timeline_last(tide_run_travel.replay);
+        if (!paused && ended) tide_run_travel.replay_shown = tide_timeline_first(tide_run_travel.replay); // Again from its start
+        tide_run_travel.playing = !paused;
+        tide_run_travel.played = 0.0;
+        return;
+    }
+    if (!paused) { // Going on from the latest
         tide_run_travel.paused = tide_run_travel.step = false;
-            return;
+        return;
     }
     if (tide_run_travel_why()[0] || tide_run_travel.paused) return;
     tide_run_travel.paused = true;
@@ -3026,17 +3172,29 @@ static inline void tide_run_travel_pause(const bool paused)
     tide_run_travel.shown = tide_run_travel_last();
 }
 
-// A tick on: the next one kept, or from the latest, the match's next tick
+// A tick on: the next one kept, or from the latest, the match's next tick (which goes by itself for other players)
 static inline void tide_run_travel_forward(void)
 {
+    if (tide_run_travel.replay) {
+        tide_run_travel.playing = false;
+        if (tide_run_travel.replay_shown < tide_timeline_last(tide_run_travel.replay)
+            && tide_timeline_world(tide_run_travel.replay, tide_run_travel.replay_shown + 1u)) tide_run_travel.replay_shown++;
+        return;
+    }
     if (!tide_run_travel.paused) return;
     if (tide_run_travel.shown < tide_run_travel_last()) tide_run_travel.shown++;
-    else tide_run_travel.step = true;
+    else if (!tide_run_travel_background()) tide_run_travel.step = true;
 }
 
 // A tick back, if there's one before it
 static inline void tide_run_travel_back(void)
 {
+    if (tide_run_travel.replay) {
+        tide_run_travel.playing = false;
+        if (tide_run_travel.replay_shown > tide_timeline_first(tide_run_travel.replay)
+            && tide_timeline_world(tide_run_travel.replay, tide_run_travel.replay_shown - 1u)) tide_run_travel.replay_shown--;
+        return;
+    }
     if (!tide_run_travel.paused || !tide_run_travel.live) return;
     const uint32_t shown = tide_run_travel_shown();
     if (shown > tide_timeline_first(tide_run_travel.live) && tide_timeline_world(tide_run_travel.live, shown - 1u)) {
@@ -3044,10 +3202,26 @@ static inline void tide_run_travel_back(void)
     }
 }
 
-// The match goes on from the tick shown: the ticks after it are let go
+// Tick `tick` shown, from the first to the last: made again by replaying where it isn't kept
+static inline void tide_run_travel_show(const uint32_t tick)
+{
+    if (tide_run_travel.replay) {
+        if (tide_timeline_world(tide_run_travel.replay, tick)) tide_run_travel.replay_shown = tick;
+        tide_run_travel.playing = false;
+        return;
+    }
+    if (!tide_run_travel.paused || !tide_run_travel.live) return;
+    const uint32_t last = tide_run_travel_last();
+    if (tick < tide_timeline_first(tide_run_travel.live) || tick > last) return;
+    if (tick < last && !tide_timeline_world(tide_run_travel.live, tick)) return;
+    tide_run_travel.shown = tick;
+    tide_run_travel.step = false;
+}
+
+// The match goes on from the tick shown, for every machine in it: the ticks after it are let go
 static inline void tide_run_travel_go_on(void)
 {
-    if (!tide_run_travel.paused || !tide_run_travel.live) return;
+    if (tide_run_travel.replay || !tide_run_travel.paused || !tide_run_travel.live) return;
     const uint32_t tick = tide_run_travel_shown();
     const void *world = tide_timeline_world(tide_run_travel.live, tick);
     if (!world || !tide_session_rewind(tide_run_session, world)) return;
@@ -3055,24 +3229,134 @@ static inline void tide_run_travel_go_on(void)
     tide_run_travel.paused = tide_run_travel.step = false;
 }
 
+// The match's ticks so far, as a recording beside the checkpoints, named recording-<n>
+static inline void tide_run_travel_save(void)
+{
+    tide_run_travel_follow();
+    if (!tide_run_travel.live || !tide_timeline_started(tide_run_travel.live)) {
+        snprintf(tide_run_travel.said, sizeof tide_run_travel.said, "Nothing's recorded: %s",
+                 tide_run_travel_why()[0] ? tide_run_travel_why() : "the match hasn't started");
+        return;
+    }
+    char name[TIDE_CHECKPOINT_NAME];
+    tide_run_next_name("recording", tide_run_recording_names, tide_run_recording_count, name);
+    const uint32_t player = tide_run_session ? tide_session_status_of(tide_run_session).client.player.id : 0u;
+    uint32_t size = 0;
+    uint8_t *bytes = tide_timeline_save(tide_run_travel.live, tide_run_travel_rate(), player, &size);
+    if (!bytes) {
+        snprintf(tide_run_travel.said, sizeof tide_run_travel.said, "%s isn't saved: there wasn't enough memory", name);
+        return;
+    }
+    const uint32_t ticks = tide_timeline_last(tide_run_travel.live) - tide_timeline_first(tide_run_travel.live);
+#ifdef __wasm__
+    tide_web_checkpoint_save(1u, name, bytes, size); // Kept once tide says so (tide_run_checkpoints_poll)
+    snprintf(tide_run_checkpoint_saving, sizeof tide_run_checkpoint_saving, "%s", name);
+    tide_run_checkpoint_saving_kind = 1;
+    snprintf(tide_run_travel.said, sizeof tide_run_travel.said, "Saving %s, %u ticks", name, (unsigned)ticks);
+#else
+    char why[200];
+    if (tide_checkpoint_write(tide_run_checkpoints, name, ".recording", bytes, size, why, sizeof why)) {
+        snprintf(tide_run_travel.said, sizeof tide_run_travel.said, "Saved %s, %u ticks", name, (unsigned)ticks);
+        printf("tide: %s (%s/%s.recording)\n", tide_run_travel.said, tide_run_checkpoints, name);
+        fflush(stdout);
+        tide_run_recordings_listed_at = -1.0;
+    } else {
+        snprintf(tide_run_travel.said, sizeof tide_run_travel.said, "%s isn't saved: %s", name, why);
+        fprintf(stderr, "tide: recording %s\n", tide_run_travel.said);
+    }
+#endif
+    free(bytes);
+}
+
+// Recording `name` replayed in the match's place, from its first tick, playing: the match this machine runs pauses
+// meanwhile, but for other machines' players, for whom it goes on. A recording of another layout isn't replayed.
+static inline void tide_run_travel_replay(const char *name)
+{
+    char why[200] = "";
+    uint32_t size = 0;
+    uint8_t *bytes = NULL;
+#ifdef __wasm__
+    const uint32_t coming = tide_web_checkpoint_copy(1u, name, NULL, 0);
+    if (!coming) { // Not here yet: asked for, and replayed as it comes (tide_run_checkpoints_poll)
+        tide_web_checkpoint_fetch(1u, name);
+        snprintf(tide_run_travel.coming, sizeof tide_run_travel.coming, "%s", name);
+        snprintf(tide_run_travel.said, sizeof tide_run_travel.said, "Loading %s", name);
+        return;
+    }
+    if (coming == UINT32_MAX) {
+        char none;
+        tide_web_checkpoint_copy(1u, name, &none, 0);
+        snprintf(why, sizeof why, "there's no recording %s in the game's checkpoints folder", name);
+    } else if ((bytes = malloc(coming)) != NULL) {
+        tide_web_checkpoint_copy(1u, name, bytes, coming);
+        size = coming;
+    } else {
+        snprintf(why, sizeof why, "there wasn't enough memory");
+    }
+#else
+    bytes = tide_checkpoint_read(tide_run_checkpoints, name, ".recording", &size, why, sizeof why);
+#endif
+    tide_timeline_about about = {0};
+    tide_timeline *r = bytes ? tide_timeline_load(&(tide_timeline_desc){.game = tide_run_game->game, .jobs = tide_run_jobs()},
+                                                  bytes, size, &about, why, sizeof why)
+                             : NULL;
+    free(bytes);
+    if (!r) {
+        snprintf(tide_run_travel.said, sizeof tide_run_travel.said, "%s isn't replayed: %s", name, why);
+        fprintf(stderr, "tide: recording %s\n", tide_run_travel.said);
+        return;
+    }
+    tide_run_travel_stop_replay();
+    if (!tide_run_travel_background() && !tide_run_travel.paused && !tide_run_travel_why()[0]) { // At the latest
+        tide_run_travel.paused = true;
+        tide_run_travel.step = false;
+        tide_run_travel.shown = tide_run_travel_last();
+    }
+    tide_run_travel.replay = r;
+    tide_run_travel.about = about;
+    snprintf(tide_run_travel.replay_name, sizeof tide_run_travel.replay_name, "%s", name);
+    tide_run_travel.replay_shown = tide_timeline_first(r);
+    tide_run_travel.playing = true;
+    tide_run_travel.played = 0.0;
+    snprintf(tide_run_travel.said, sizeof tide_run_travel.said, "Replaying %s%s", name,
+             about.other_build ? ", recorded by another build: its ticks may go otherwise" : "");
+}
+
 // A new build takes over (reload_library.inc's reload_before, while the old one's code is still loaded): one of the
-// same layout keeps the recording, its worlds its to show and free from now on, and the pause; another, or a full
-// reload, lets go of them, and the match goes on
+// same layout keeps the recording and a replay, their worlds its to show and free from now on, and the pause;
+// another, or a full reload, lets go of them, and the match goes on
 static inline void tide_run_travel_reload(const tide_host_game *old, const tide_host_game *next)
 {
-    if (next && tide_run_travel.live && next->game->hash == old->game->hash) {
+    if (next && next->game->hash == old->game->hash) {
         tide_timeline_set_game(tide_run_travel.live, next->game);
-        tide_run_travel.game = next->game;
+        tide_timeline_set_game(tide_run_travel.replay, next->game);
+        if (tide_run_travel.live) tide_run_travel.game = next->game;
         return;
     }
     tide_run_travel_drop();
 }
 
-// What the frame gives the match: its own length, or paused, none but a step's, to just past the next tick
+// What the frame gives the match: its own length, or paused, none but a step's, to just past the next tick; with
+// other machines' players, its own length all the same. A recording replayed plays on by the frame's.
 static inline float tide_run_travel_seconds(const float seconds)
 {
     tide_run_travel_follow();
-    if (!tide_run_travel.paused) return seconds;
+    tide_timeline *r = tide_run_travel.replay;
+    if (r && tide_run_travel.playing) {
+        const uint32_t rate = tide_run_travel.about.tick_rate ? tide_run_travel.about.tick_rate : tide_run_travel_rate();
+        tide_run_travel.played += tide_is_finite_d((double)seconds) && seconds > 0.0f ? (double)seconds : 0.0;
+        if (tide_run_travel.played > 0.25) tide_run_travel.played = 0.25; // A frame that took long doesn't race on
+        while (tide_run_travel.played * rate >= 1.0 && tide_run_travel.replay_shown < tide_timeline_last(r)) {
+            tide_run_travel.played -= 1.0 / rate;
+            if (!tide_timeline_world(r, tide_run_travel.replay_shown + 1u)) {
+                tide_run_travel.playing = false;
+                break;
+            }
+            tide_run_travel.replay_shown++;
+        }
+        if (tide_run_travel.replay_shown >= tide_timeline_last(r)) tide_run_travel.playing = false;
+    }
+    if (!tide_run_travel.paused || tide_run_travel_background()) return seconds;
     const bool step = tide_run_travel.step && tide_run_travel_shown() == tide_run_travel_last();
     tide_run_travel.step = false;
     if (!step) return 0.0f;
@@ -3080,9 +3364,11 @@ static inline float tide_run_travel_seconds(const float seconds)
     return (float)(tide_session_until_tick(tide_run_session) + 1e-6);
 }
 
-// While paused at an earlier tick: its world, which the frame's views draw. NULL for the latest.
+// The world the frame's views draw in the match's place: a recording's tick replayed, or one of the match's earlier
+// ticks while paused there. NULL for the match as it is.
 static inline const void *tide_run_travel_world(void)
 {
+    if (tide_run_travel.replay) return tide_timeline_world(tide_run_travel.replay, tide_run_travel.replay_shown);
     if (!tide_run_travel.paused || !tide_run_travel.live || tide_run_travel.shown >= tide_run_travel_last()) return NULL;
     return tide_timeline_world(tide_run_travel.live, tide_run_travel.shown);
 }
@@ -3323,6 +3609,11 @@ static inline int tide_run_frame(void *user, const float seconds)
     // Paused at an earlier tick: its world
     const void *earlier = tide_run_travel_world();
     if (earlier) view.current = view.verified = earlier;
+    if (earlier && tide_run_travel.replay) { // Its views see the recording's player as this machine's
+        const uint32_t player = tide_run_travel.about.player;
+        game->set_session(tide_run_local, TIDE_SESSION_CONNECTED, player ? tide_player_from_index((int32_t)player - 1) : (tide_player_id){0},
+                          0, true, false, "");
+    }
     const void *match = view.current;
 #ifdef __wasm__
     // A failed initial connection must still show local error/retry UI without a match view.
