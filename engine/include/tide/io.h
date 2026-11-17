@@ -115,6 +115,23 @@ typedef struct tide_io_list_result {
     bool ok;
 } tide_io_list_result;
 
+// The engine's own folder in the persistent root, "<persistent>/Tide": the
+// server's store keeps its files there (TIDE_STORAGE_FOLDER, tide/storage.h).
+// The game's File and Directory calls below refuse it with
+// TIDE_IO_ACCESS_DENIED: any path in it (the folder itself too), and a
+// directory it's in for Directory.Move and Directory.Delete. Exists is false
+// for a path in it, and a listing leaves out what's in it (the folder's own
+// name stays). Providers don't refuse it: the store calls them directly.
+#define TIDE_IO_ENGINE_FOLDER "Tide"
+// Whether `path`, as the game's calls take it (relative to the persistent
+// root, or absolute), is in the engine's folder, or with `or_above` also the
+// folder or one it's in. Lexical, as the strictest system reads a path: '\'
+// and '/' both separate, "." and empty parts are dropped, ".." takes the part
+// before it off, "\\?\" and "\\.\" prefixes are dropped, a part ends at a ':'
+// (an NTFS stream's) and without trailing dots and spaces (as Windows names a
+// file), and letters are compared without case, on every system alike.
+bool tide_io_engine_path(const tide_io *io, tide_str path, bool or_above);
+
 bool tide_file_exists(const tide_io *io, tide_str path);
 tide_io_void_result tide_file_create(const tide_io *io, tide_str path);
 tide_io_text_result tide_file_read_all_text(const tide_io *io, tide_str path);

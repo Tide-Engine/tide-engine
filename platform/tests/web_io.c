@@ -135,6 +135,32 @@ int main(int argc, char **argv)
               "directory deletion requires explicit recursion");
         check(tide_file_write_all_text(io, save_path("../other-game/file"), text("x")).error == TIDE_IO_ACCESS_DENIED,
               "paths cannot escape this game's virtual roots");
+        // The engine's folder: the store's files, written as the store writes them, out of the game's reach
+        check(io->create(io->user, "Tide/store", true) == TIDE_IO_NONE
+              && io->write(io->user, "Tide/store/k.bin", (const uint8_t *)"k", 1, false) == TIDE_IO_NONE,
+              "the store writes its files in Tide/store");
+        static const char *const refused[] = {"Tide/store/k.bin", "tide\\STORE\\k.bin", "saves/../Tide/store/k.bin",
+                                              "Tide./store/k.bin", "./TIDE/store/k.bin"};
+        for (int i = 0; i < 5; i++) {
+            check(tide_file_read_all_bytes(io, text(refused[i])).error == TIDE_IO_ACCESS_DENIED
+                  && tide_file_write_all_text(io, text(refused[i]), text("x")).error == TIDE_IO_ACCESS_DENIED
+                  && !tide_file_exists(io, text(refused[i])),
+                  "the game's file calls are refused in the engine's folder");
+        }
+        check(tide_file_read_all_text(io, save_path("Tide/store/k.bin")).error == TIDE_IO_ACCESS_DENIED,
+              "the engine's folder is refused by its absolute path too");
+        check(tide_directory_delete(io, tide_application_persistent_data_path(io), true).error == TIDE_IO_ACCESS_DENIED,
+              "the folder the engine's is in can't be deleted");
+        check(tide_file_write_all_text(io, text("Tide2.txt"), text("x")).ok && tide_file_write_all_text(io, text("tide-notes.txt"), text("x")).ok,
+              "names like the engine's folder's are the game's");
+        const tide_io_list_result root = tide_directory_get_files(io, tide_application_persistent_data_path(io), true);
+        bool store_listed = false;
+        for (int32_t i = 0; root.ok && i < tide_list_count(root.value); i++) {
+            store_listed |= tide_io_engine_path(io, tide_text_view(*(const tide_text *)tide_list_at(root.value, i, sizeof(tide_text))), false);
+        }
+        check(root.ok && !store_listed, "a listing of the root leaves out the engine's files");
+        check(tide_file_delete(io, text("Tide2.txt")).ok && tide_file_delete(io, text("tide-notes.txt")).ok
+              && io->remove(io->user, "Tide", true, true) == TIDE_IO_NONE, "clean up the engine folder's files");
         io = tide_platform_io_init("dev.tide.io.test", NULL);
         check(tide_file_exists(io, save_path("saves/text.txt")), "reinitializing for hot reload retains pending files");
     } else if (!strcmp(phase, "busy")) {

@@ -79,7 +79,7 @@ static tide_io_error store_read(void *user, const char *path, uint8_t **data, ui
     const kept *k = store_room ? store_slot(path) : NULL;
     if (!k || !k->path) return TIDE_IO_NOT_FOUND;
     store_found++;
-    store_far_found += strncmp(path, "saved/far/", 10) == 0;
+    store_far_found += strncmp(path, TIDE_STORAGE_FOLDER "/far/", TIDE_STORAGE_FOLDER_SIZE + 5u) == 0;
     *data = malloc(k->size ? k->size : 1u);
     if (!*data) return TIDE_IO_FAILED;
     memcpy(*data, k->data, k->size);
@@ -91,7 +91,7 @@ static tide_io_error store_write(void *user, const char *path, const uint8_t *da
 {
     (void)user;
     (void)append;
-    if (forget_chunks && strncmp(path, "saved/chunks/", 13) == 0) {
+    if (forget_chunks && strncmp(path, TIDE_STORAGE_FOLDER "/chunks/", TIDE_STORAGE_FOLDER_SIZE + 8u) == 0) {
         store_forgot++;
         return TIDE_IO_NONE;
     }
@@ -351,7 +351,7 @@ static void describe(const void *world)
         edited += changed > 0;
         edits += (uint64_t)changed;
     }
-    for (uint32_t i = 0; i < store_room; i++) far += store[i].path && strncmp(store[i].path, "saved/far/", 10) == 0;
+    for (uint32_t i = 0; i < store_room; i++) far += store[i].path && strncmp(store[i].path, TIDE_STORAGE_FOLDER "/far/", TIDE_STORAGE_FOLDER_SIZE + 5u) == 0;
     printf("  chunks %u (%u changed by players, %llu changes), avatars %u\n", chunks, edited, (unsigned long long)edits, avatars);
     printf("  far regions %u (%u with columns players changed, sent %llu times); %u kept in the store, %llu loaded back\n",
            regions, sent, (unsigned long long)sendings, far, (unsigned long long)store_far_found);

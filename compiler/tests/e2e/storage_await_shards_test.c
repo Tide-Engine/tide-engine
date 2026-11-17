@@ -230,7 +230,7 @@ TIDE_TEST(storage_await_tasks_ask_again_on_the_shard_they_cross_to)
     }
     TIDE_CHECK(reads >= 16); // Asked on the left, then on the right
     // What the root's start saved, before its server was made: carried out with its first tick's requests
-    const kept_file *started = find_file("saved/started.bin");
+    const kept_file *started = find_file("Tide/store/started.bin");
     TIDE_CHECK(started != NULL && started->size == 4);
     tide_shards_destroy(shards);
     shards = NULL;
@@ -284,7 +284,7 @@ TIDE_TEST(storage_await_shards_from_a_checkpoint_ask_again)
     uint8_t *saved = tide_shards_save(shards, &size);
     TIDE_REQUIRE(saved != NULL && size > 0);
     tide_shards_destroy(shards); // Its saves carried out; its loads' answers nobody's
-    TIDE_CHECK(posted_count == 0 && find_file("saved/mover/7.bin") != NULL);
+    TIDE_CHECK(posted_count == 0 && find_file("Tide/store/mover/7.bin") != NULL);
     const uint32_t before = reads;
     shards = tide_shards_load(&split_desc, saved, size, now);
     free(saved);
