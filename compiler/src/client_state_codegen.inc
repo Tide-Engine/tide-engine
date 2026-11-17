@@ -1721,6 +1721,42 @@ static void gen_client_state(gen *g)
     gen_client_hierarchy_codec(g);
     gen_client_input_filter(g);
 
+    // Which of an archetype's entities (in the order of their identities) a recipient may have: their places in
+    // `seen`, in that order. A server's world is every player's, tens of thousands of entities of which a few are
+    // the recipient's (a player joining is sent theirs out of all of them), so each is found once where it is, its
+    // scene's root and the directory found once for the rows that share them; and where a frame's pool was handed to
+    // this thread (tide_loops_enter: the session does, around a whole projection), in parts on its threads. Each
+    // part reads the world alone and writes its own flags, so the places are the same either way.
+    sb_put(o, "#define TIDE_CLIENT_SEE_PART 2048u\n\n"
+              "typedef struct tide_client_seeing {\n"
+              "    const tide_world *w;\n    tide_player_id recipient;\n    const tide_entity *keys;\n    const uint32_t *slots;\n"
+              "    uint32_t count;\n    uint8_t *seen;\n} tide_client_seeing;\n\n"
+              "static void tide_client_see_part(void *context, const uint32_t task)\n{\n"
+              "    const tide_client_seeing *s = context;\n    const tide_world *w = s->w;\n"
+              "    tide_text_use((tide_heaps *)(uintptr_t)&w->heap, NULL); // (The thread's, for the directory read: a pool's thread has another's)\n"
+              "    tide_visibility_walk walk = {0};\n    tide_map_view_none(&walk.groups);\n"
+              "    const uint32_t from = task * TIDE_CLIENT_SEE_PART;\n"
+              "    const uint32_t to = s->count - from < TIDE_CLIENT_SEE_PART ? s->count : from + TIDE_CLIENT_SEE_PART;\n"
+              "    for (uint32_t k = from; k < to; k++) {\n"
+              "        const tide_location loc = tide_entity_location_at(&w->entities, s->slots[k], s->keys[k]);\n"
+              "        s->seen[k] = tide_visibility_entity_at(w, s->keys[k], loc, s->recipient, &walk) ? 1u : 0u;\n"
+              "    }\n}\n\n"
+              "TIDE_HELPER uint32_t tide_client_see_keys(const tide_world *w, const tide_player_id recipient, const tide_entity *keys,\n"
+              "                                          const uint32_t *slots, const uint32_t count, uint32_t *seen)\n{\n"
+              "    uint32_t n = 0;\n"
+              "    const tide_jobs *pool = tide_loops_enter(NULL);\n    tide_loops_leave(pool);\n"
+              "    if (!w->tide_visibility_state.client && pool && pool->threads >= 2u && count >= 2u * TIDE_CLIENT_SEE_PART) {\n"
+              "        uint8_t *flags = malloc(count);\n        if (!flags) tide_out_of_memory();\n"
+              "        tide_client_seeing s = {w, recipient, keys, slots, count, flags};\n"
+              "        tide_parallel_for((count + TIDE_CLIENT_SEE_PART - 1u) / TIDE_CLIENT_SEE_PART, tide_client_see_part, &s, (uint64_t)1u << 40);\n"
+              "        tide_text_use((tide_heaps *)(uintptr_t)&w->heap, NULL);\n"
+              "        for (uint32_t k = 0; k < count; k++) {\n            if (flags[k]) seen[n++] = k;\n        }\n"
+              "        free(flags);\n        return n;\n    }\n"
+              "    tide_visibility_walk walk = {0};\n    tide_map_view_none(&walk.groups);\n"
+              "    for (uint32_t k = 0; k < count; k++) {\n"
+              "        const tide_location loc = tide_entity_location_at(&w->entities, slots[k], keys[k]);\n"
+              "        if (tide_visibility_entity_at(w, keys[k], loc, recipient, &walk)) seen[n++] = k;\n"
+              "    }\n    return n;\n}\n\n");
     sb_put(o, "static uint8_t *tide_game_client_state(const void *world, tide_player_id recipient, uint32_t *size)\n{\n"
               "    const tide_world *w = world;\n    tide_text_use((tide_heaps *)&w->heap, NULL);\n"
               "    tide_writer out = {.grows = true};\n"
@@ -1759,15 +1795,20 @@ static void gen_client_state(gen *g)
         // Its entities in the order of their identities, not of their rows: the bytes say what the recipient
         // has, the same wherever each world keeps it (a recipient's rows are where its own ticks and its
         // repairs put them, tide_game_apply_client_changes)
+        // Who may have each is found once, where it is, with its scene's root and the directory found once for the
+        // rows that share them (a server's world is every player's: tens of thousands of entities, a few of them
+        // the recipient's), and those it may have are then written
         sb_printf(o, "    {\n        uint32_t count = 0, tide_key_count = 0;\n        const uint32_t tide_archetype = %du;\n"
-                     "        const tide_entity *tide_keys = tide_entities_ordered_archetypes(&w->entities, &tide_archetype, 1u, &tide_key_count);\n", a);
-        sb_put(o, "        for (uint32_t tide_k = 0; tide_k < tide_key_count; tide_k++) {\n"
-                  "            if (tide_visibility_entity(w, tide_keys[tide_k], recipient)) count++;\n"
-                  "        }\n        tide_write_varint(&out, count);\n");
-        sb_put(o, "        for (uint32_t tide_k = 0; tide_k < tide_key_count; tide_k++) {\n"
+                     "        const uint32_t *tide_key_slots = NULL;\n"
+                     "        const tide_entity *tide_keys = tide_entities_ordered_archetypes_slots(&w->entities, &tide_archetype, 1u, &tide_key_count, &tide_key_slots);\n", a);
+        sb_put(o, "        uint32_t *tide_seen = tide_key_count ? malloc((size_t)tide_key_count * sizeof *tide_seen) : NULL;\n"
+                  "        if (tide_key_count && !tide_seen) tide_out_of_memory();\n"
+                  "        count = tide_client_see_keys(w, recipient, tide_keys, tide_key_slots, tide_key_count, tide_seen);\n"
+                  "        tide_write_varint(&out, count);\n");
+        sb_put(o, "        for (uint32_t tide_i = 0; tide_i < count; tide_i++) {\n"
+                  "            const uint32_t tide_k = tide_seen[tide_i];\n"
                   "            const tide_entity e = tide_keys[tide_k];\n"
-                  "            if (!tide_visibility_entity(w, e, recipient)) continue;\n"
-                  "            const uint32_t row = tide_entity_location(&w->entities, e).row;\n            (void)row;\n"
+                  "            const uint32_t row = tide_entity_location_at(&w->entities, tide_key_slots[tide_k], e).row;\n            (void)row;\n"
                   "            tide_write_u64(&out, e.birth);\n            tide_write_u64(&out, e.lineage);\n"
                   "            tide_write_u32(&out, tide_entity_snaps(&w->entities, e));\n");
         if (arch_scene_column(g, a)) {
@@ -1791,7 +1832,7 @@ static void gen_client_state(gen *g)
             if (comp_sparse(g, c)) sb_put(o, "                }\n");
             sb_put(o, "            }\n");
         }
-        sb_put(o, "        }\n    }\n");
+        sb_put(o, "        }\n        free(tide_seen);\n    }\n");
     }
     if (prog->hierarchy[0]) sb_put(o, "    tide_client_put_hierarchy(&out, w, recipient);\n");
     sb_put(o, "    if (out.overflow) tide_out_of_memory();\n    *size = out.size;\n    return out.data;\n}\n\n");

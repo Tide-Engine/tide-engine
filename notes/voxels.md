@@ -1765,6 +1765,15 @@ aren't said to it: the runtime's `tide_table_settle` would have to say them), an
 only its rows that did. With the parts on the pool a settle's check is 5 to 13 ms of the update, no longer its
 longest; each would cut the threads' time, not the update's.
 
+### Joins found on the pool (2026-11-17, joins)
+
+A whole projection (what a joiner is sent) looked every entity up twice, one by one, on the update's thread: at 100
+apart the updates where several joined were the run's longest. Now each is found once, where it is, and on the
+pool's threads (notes/netcode.md, top section): updates while one joins, p99 28 to 46 ms to 14 to 16; the steady
+state as it was (p99 21 to 28 ms on the shared machine); hash, bytes and arrival the same. What's left at 100 apart
+is the steady state's hop ticks (handlers for the chunks spawned and destroyed, 10 to 26 ms) and the bots sharing the
+server's cores in the bench.
+
 ### What's left, most telling first
 
 1. ~~Inputs of every player, in every unacknowledged frame (section 5): 13 to 44 KB a second a player with real hands on the mice.~~ Cut the same day (section 5, the last paragraph of that bullet): 19.2 KB a second with 8 turning and standing, 10.6 flying; 32 are as they were (20.8 standing), each tick once, and a second copy of theirs is the owner's to weigh (netcode.md, Open).
