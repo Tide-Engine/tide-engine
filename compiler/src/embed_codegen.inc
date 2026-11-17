@@ -529,7 +529,7 @@ static void gen_embed(gen *g)
             const field *f = &d->fields.items[i];
             const type t = f->type;
             const int dim = type_dim(t) > 0 ? type_dim(t) : t.kind == TY_LONG ? 1 : 0;
-            sb_printf(o, "    {\"" STR_FMT "\", \"%s\", %s, %d, %d, offsetof(%s, %s), sizeof(((%s *)0)->%s), 0},\n", STR_ARG(f->name),
+            sb_printf(o, "    {\"" STR_FMT "\", \"%s\", %s, %d, %d, offsetof(%s, %s), sizeof(((%s *)0)->%s), 0, false},\n", STR_ARG(f->name),
                       layout_field_name(t), layout_kind(t), dim, t.kind == TY_STRUCT ? layout_index(&types, t.decl) : -1, name,
                       field_cname(f), name, field_cname(f));
         }

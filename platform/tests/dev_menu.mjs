@@ -98,12 +98,14 @@ try {
     await command('step 40', 'ready');
     await command('capture saved.png');
     assert.deepEqual(at('saved.png'), [0, 0, 255]);
-    // The inspector, at the list's end: a singleton's bool, then an entity's int, changed in the match
-    await bottom();
-    await command('click Inspector');
+    // The inspector, its own tab: the match's singletons, not the engine's own; a singleton's bool, then an entity's
+    // int, changed in the match
+    await command('click Match');
     await bottom();
     await command('controls');
     assert.ok(said.some(line => /^tide: control \d+ button "Shade" /.test(line)), said.join('\n'));
+    assert.ok(!said.some(line => line.includes('tide_')), said.join('\n'));
+    assert.ok(!said.some(line => line.includes('"Green"')), said.join('\n')); // The Dev tab's
     await command('click Shade');
     await bottom();
     await command('controls');
@@ -147,6 +149,9 @@ try {
     await command('step 4', 'ready');
     await command('capture glow.png');
     assert.deepEqual(color('glow.png', 3, 120), [255, 255, 0]);
+    // Back to the Dev tab
+    await command('click Dev');
+    await command('step 2', 'ready');
     const top = Number((await command('step 1', 'ready')).split(' ').pop());
     await command(`${top + 1} scroll 0 4000`);
     await command('step 3', 'ready');

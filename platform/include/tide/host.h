@@ -1222,13 +1222,25 @@ static inline bool tide_run_dev_value(const uint32_t id, const char *name, const
     return changed;
 }
 
+// A heading in the menu over what follows it: a little room above, in the theme's accent
+static inline void tide_run_inspect_heading(const char *text, const float size)
+{
+    tide_gui *g = &tide_run_gui;
+    tide_gui_layout_space(g, 4.0f);
+    tide_gui_theme theme = g->theme;
+    theme.text = theme.accent;
+    const int depth = tide_gui_begin_theme(g, theme);
+    tide_gui_layout_label_sized(g, text, size);
+    tide_gui_close(g, depth);
+}
+
 // The tweaks in the menu, laid out one under another: an editor each, by its kind, or a worked-out one's value.
 // Changed, the copy goes to the match, and the value into its .tweaks file.
 static inline void tide_run_dev_tweaks(const tide_tweaks_api *api)
 {
     tide_gui *g = &tide_run_gui;
     uint8_t *values = api->here(tide_run_local);
-    tide_gui_layout_label(g, "Tweaks");
+    tide_run_inspect_heading("Tweaks", 18.0f);
     for (uint32_t i = 0; i < api->count; i++) {
         const tide_tweak *t = &api->tweaks[i];
         uint8_t *at = values + t->offset;
@@ -1260,8 +1272,7 @@ static inline void tide_run_dev_tweaks(const tide_tweaks_api *api)
 // open, its singletons and its entities by the components they have, and one of them open with its fields. A field of
 // the match changes through the server, so the field shows what was sent until the match has it; the local world's
 // changes here.
-static bool tide_run_inspect_shown;       // Its part of the menu is open
-static bool tide_run_inspect_local;       // The local world's, not the match's
+static bool tide_run_inspect_local;       // The local world's, not the match's (the menu's tab)
 static uint32_t tide_run_inspect_what;    // 0: the lists; 1: a singleton; 2: an entity
 static int32_t tide_run_inspect_type;     // The singleton's layout type
 static uint32_t tide_run_inspect_kind;    // ...and its section's kind
@@ -1290,6 +1301,17 @@ static uint32_t tide_run_inspect_id;
 static inline const char *tide_run_inspect_type_name(const tide_layout *layout, const uint32_t type)
 {
     return type < layout->type_count ? layout->types[type].name : "?";
+}
+
+// A type that's the engine's own, every field of it hidden (a command's sequences, a ghost's): never listed
+static inline bool tide_run_inspect_internal(const tide_layout *layout, const uint32_t type)
+{
+    if (type >= layout->type_count || !layout->types[type].field_count) return false;
+    const tide_layout_type *t = &layout->types[type];
+    for (uint32_t i = 0; i < t->field_count; i++) {
+        if (!t->fields[i].hidden) return false;
+    }
+    return true;
 }
 
 // An entity as the menu names it: by its birth, which stays what it is
@@ -1387,6 +1409,7 @@ static inline void tide_run_inspect_fields(const tide_inspect_api *api, const ti
     const tide_layout_type *t = &layout->types[type];
     for (uint32_t i = 0; i < t->field_count; i++) {
         const tide_layout_field *f = &t->fields[i];
+        if (f->hidden) continue; // The engine's own
         char name[160];
         snprintf(name, sizeof name, "%s%s%s", prefix, prefix[0] ? "." : "", f->name);
         const uint32_t offset = base + f->offset;
@@ -1476,8 +1499,9 @@ static inline void tide_run_inspect_lists(const tide_inspect_api *api, const tid
     while (tide_packet_next(p->bytes, p->size, &at, &part)) {
         if (part.kind != TIDE_PACKET_SINGLETON && part.kind != TIDE_PACKET_SINGLETON_LOCAL) continue;
         const char *type = tide_run_inspect_type_name(layout, part.type);
-        if (strcmp(type, "TideTweaks") == 0 || strcmp(type, "TideTweaksHere") == 0) continue; // The tweaks', above
-        if (!any) tide_gui_layout_label(g, "Singletons");
+        if (strcmp(type, "TideTweaks") == 0 || strcmp(type, "TideTweaksHere") == 0) continue; // The Dev tab's tweaks
+        if (tide_run_inspect_internal(layout, part.type)) continue;
+        if (!any) tide_run_inspect_heading("Singletons", 18.0f);
         any = true;
         char label[160];
         snprintf(label, sizeof label, "%s%s", tide_run_inspect_type_name(layout, part.type),
@@ -1519,7 +1543,7 @@ static inline void tide_run_inspect_lists(const tide_inspect_api *api, const tid
         }
         group_count[k]++;
     }
-    tide_gui_layout_label(g, "Entities");
+    tide_run_inspect_heading("Entities", 18.0f);
     for (uint32_t k = 0; k < groups; k++) {
         // Named by the components its first entity has
         char label[512];
@@ -1527,7 +1551,7 @@ static inline void tide_run_inspect_lists(const tide_inspect_api *api, const tid
         label[0] = '\0';
         at = 0;
         while (tide_packet_next(p->bytes, p->size, &at, &part)) {
-            if (part.kind != TIDE_PACKET_COMPONENT) continue;
+            if (part.kind != TIDE_PACKET_COMPONENT || tide_run_inspect_internal(layout, part.type)) continue;
             bool has = false;
             for (uint32_t r = 0; r < part.count && !has; r++) has = part.rows[r] == group_first[k];
             if (has && used < sizeof label) {
@@ -1565,19 +1589,6 @@ static inline void tide_run_dev_inspect(const tide_inspect_api *api, const void 
 {
     tide_gui *g = &tide_run_gui;
     tide_run_inspect_id = 0xDE720000u;
-    tide_gui_layout_toggle(g, tide_run_inspect_id++, "Inspector", &tide_run_inspect_shown);
-    if (!tide_run_inspect_shown) return;
-    // Which world
-    const int row = tide_gui_begin_horizontal(g, tide_run_inspect_id++);
-    if (tide_gui_layout_button(g, tide_run_inspect_id++, tide_run_inspect_local ? "Match" : "[Match]") && tide_run_inspect_local) {
-        tide_run_inspect_local = false;
-        tide_run_inspect_what = 0;
-    }
-    if (tide_gui_layout_button(g, tide_run_inspect_id++, tide_run_inspect_local ? "[Local]" : "Local") && !tide_run_inspect_local) {
-        tide_run_inspect_local = true;
-        tide_run_inspect_what = 0;
-    }
-    tide_gui_close(g, row);
     api->view(match, tide_run_local, &tide_run_inspect_packets[0], &tide_run_inspect_packets[1]);
     const tide_packet *p = &tide_run_inspect_packets[tide_run_inspect_local ? 1 : 0];
     if (!tide_run_inspect_what) {
@@ -1593,7 +1604,7 @@ static inline void tide_run_dev_inspect(const tide_inspect_api *api, const void 
     if (tide_run_inspect_what == 1) { // A singleton
         while (tide_packet_next(p->bytes, p->size, &at, &part)) {
             if (part.kind != tide_run_inspect_kind || (int32_t)part.type != tide_run_inspect_type || !part.count) continue;
-            tide_gui_layout_label(g, tide_run_inspect_type_name(api->layout, part.type));
+            tide_run_inspect_heading(tide_run_inspect_type_name(api->layout, part.type), 20.0f);
             tide_run_inspect_value(api, p, &part, 0, (tide_entity){0, 0});
             return;
         }
@@ -1610,23 +1621,27 @@ static inline void tide_run_dev_inspect(const tide_inspect_api *api, const void 
         tide_gui_layout_label(g, gone);
         return;
     }
-    tide_gui_layout_label(g, name);
+    tide_run_inspect_heading(name, 22.0f);
     while (tide_packet_next(p->bytes, p->size, &at, &part)) {
         if (part.kind != TIDE_PACKET_COMPONENT && part.kind != TIDE_PACKET_COMPONENT_LOCAL) continue;
+        if (tide_run_inspect_internal(api->layout, part.type)) continue;
         for (uint32_t r = 0; r < part.count; r++) {
             if (part.rows[r] != place) continue;
             char heading[160];
-            snprintf(heading, sizeof heading, "%s", tide_run_inspect_type_name(api->layout, part.type));
-            tide_gui_layout_label(g, heading);
+            snprintf(heading, sizeof heading, "%s%s", tide_run_inspect_type_name(api->layout, part.type),
+                     part.kind == TIDE_PACKET_COMPONENT_LOCAL && !tide_run_inspect_local ? " (local fields)" : "");
+            tide_run_inspect_heading(heading, 18.0f);
             tide_run_inspect_value(api, p, &part, r, tide_run_inspect_entity);
             break;
         }
     }
 }
 
-// Where the menu's list is scrolled to, from its top, and how tall it last was
-static tide_float2 tide_run_dev_offset;
-static float tide_run_dev_height = 64.0f;
+// The menu's tab: 0 the game's dev views and tweaks, 1 the match's inspector, 2 the local world's. Each tab's list
+// where it's scrolled to, from its top, and how tall it last was
+static uint32_t tide_run_dev_tab;
+static tide_float2 tide_run_dev_offsets[3];
+static float tide_run_dev_heights[3] = {64.0f, 64.0f, 64.0f};
 
 static inline void tide_run_dev_menu(const tide_host_game *game, const void *match)
 {
@@ -1641,25 +1656,60 @@ static inline void tide_run_dev_menu(const tide_host_game *game, const void *mat
     tide_gui *g = &tide_run_gui;
     const float pad = 8.0f, width = 320.0f;
     const tide_float2 screen = tide_platform_screen_size();
-    // Down the screen's height, which a longer list scrolls past (the wheel, or a drag on a touchscreen). The pointer
-    // is its over the list alone, as tall as it last was: below it, the game's
     const float most = screen.y - 2.0f * pad > 0.0f ? screen.y - 2.0f * pad : 0.0f;
-    const tide_rect panel = {pad, pad, width, most};
     tide_gui_view(g, UINT32_MAX); // Its own: no view's claims hide the devices from it
-    tide_gui_claim_pointer_at(g, (tide_rect){pad, pad, width, tide_run_dev_height < most ? tide_run_dev_height : most});
-    const int depth = tide_gui_begin_scroll(g, 0xDE6F0000u, panel, &tide_run_dev_offset);
-    tide_gui_layout_label(g, "Dev");
-    for (uint32_t i = 0; game->dev_views && i < TIDE_RUN_DEV_VIEWS && game->dev_views[i]; i++) {
-        bool shown = tide_run_dev_shown(game->dev_views[i]);
-        if (tide_gui_layout_toggle(g, 0xDE700000u + i, game->dev_views[i], &shown)) tide_run_dev_show(game->dev_views[i], shown);
+    // Its tabs, which stay at the top however far the list is scrolled: Dev for a game with dev views or tweaks, and
+    // the inspector's two worlds
+    const bool dev = (game->dev_views && game->dev_views[0]) || tweaks;
+    if (!dev && tide_run_dev_tab == 0) tide_run_dev_tab = 1;
+    if (!inspect) tide_run_dev_tab = 0;
+    float top = pad;
+    if (inspect) {
+        // As tall as the row was a frame before (a container of their own, with nothing drawn behind them)
+        static float tall = 40.0f;
+        static tide_float2 none;
+        none = (tide_float2){0.0f, 0.0f};
+        const int area = tide_gui_begin_scroll(g, 0xDE6E0000u, (tide_rect){pad, pad, width, tall < most ? tall : most}, &none);
+        const int row = tide_gui_begin_horizontal(g, 0xDE6E0001u);
+        static const char *const names[3] = {"Dev", "Match", "Local"};
+        for (uint32_t t = dev ? 0u : 1u; t < 3u; t++) {
+            char label[16];
+            snprintf(label, sizeof label, tide_run_dev_tab == t ? "[%s]" : "%s", names[t]);
+            if (tide_gui_layout_button(g, 0xDE6E0002u + t, label) && tide_run_dev_tab != t) {
+                tide_run_dev_tab = t;
+                tide_run_inspect_what = 0;
+            }
+        }
+        tide_gui_close(g, row);
+        tide_gui_layout_space(g, 4.0f);
+        const tide_rect end = tide_gui_layout_reserve(g, (tide_float2){0.0f, 0.0f});
+        tide_gui_close(g, area);
+        if (end.y > pad) tall = end.y - pad;
+        top = pad + (tall < most ? tall : most);
     }
-    if (tweaks) tide_run_dev_tweaks(tweaks);
-    if (inspect) tide_run_dev_inspect(inspect, match);
+    // Under them, down the screen's height, which a longer list scrolls past (the wheel, or a drag on a touchscreen).
+    // The pointer is its over the tabs and the list alone, as tall as it last was: below it, the game's
+    const float room = pad + most - top > 0.0f ? pad + most - top : 0.0f;
+    const tide_rect panel = {pad, top, width, room};
+    tide_float2 *offset = &tide_run_dev_offsets[tide_run_dev_tab];
+    float *last = &tide_run_dev_heights[tide_run_dev_tab];
+    tide_gui_claim_pointer_at(g, (tide_rect){pad, pad, width, top - pad + (*last < room ? *last : room)});
+    const int depth = tide_gui_begin_scroll(g, 0xDE6F0000u + tide_run_dev_tab, panel, offset);
+    if (tide_run_dev_tab == 0) {
+        for (uint32_t i = 0; game->dev_views && i < TIDE_RUN_DEV_VIEWS && game->dev_views[i]; i++) {
+            bool shown = tide_run_dev_shown(game->dev_views[i]);
+            if (tide_gui_layout_toggle(g, 0xDE700000u + i, game->dev_views[i], &shown)) tide_run_dev_show(game->dev_views[i], shown);
+        }
+        if (tweaks) tide_run_dev_tweaks(tweaks);
+    } else {
+        tide_run_inspect_local = tide_run_dev_tab == 2;
+        tide_run_dev_inspect(inspect, match);
+    }
     // Where the list ends, as an empty place after it: its height, wherever it's scrolled to
     const tide_rect end = tide_gui_layout_reserve(g, (tide_float2){0.0f, 0.0f});
     tide_gui_close(g, depth);
-    const float height = end.y + tide_run_dev_offset.y - panel.y;
-    if (height > 0.0f) tide_run_dev_height = height + pad;
+    const float height = end.y + offset->y - panel.y;
+    if (height > 0.0f) *last = height + pad;
 }
 
 // Where the matches this machine hosts keep their store (Storage.Save and Load in match code): the game's own

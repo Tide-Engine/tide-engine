@@ -21,17 +21,23 @@ maps, entities shown (an entity a button); no game labels; a Local tab; any play
   components (a locally spawned component's twin, `tide_local_component_X`, named as X in the layout) and local
   singletons. `set_local` covers local components, local parts of match components (`tide_get/set_X_local`) and
   local singletons (a match singleton's local fields are one). `gen_embed_packers` when not `--embed`.
-- **Host** (`tide_run_dev_inspect`, host.h): an "Inspector" switch in the menu, `[Match]`/`Local` buttons, lists
+- **Host** (`tide_run_dev_inspect`, host.h): the menu's tabs `Dev`/`Match`/`Local` (`tide_run_dev_tab`; Dev only for a
+  game with dev views or tweaks), held above the list in a scroll container of the row's height a frame before, each
+  tab with its own scroll offset; accent headings (`tide_run_inspect_heading`) for Tweaks, Singletons, Entities, an
+  entity's `#birth` and its components; lists
   (singletons, then groups by an FNV of each entity's component types, 128 groups, 500 rows of an open group), an
   entity's/singleton's fields through `tide_run_dev_value` (the tweaks' editors, moved out of `tide_run_dev_tweaks`).
   Sent changes are kept (16) and shown over the packet's value until it matches, a second at most. Packets are made
-  only while the inspector is open. `TideTweaks`/`TideTweaksHere` are left out of the lists. `tide_run_dev_menu`
+  only while the inspector is open. `TideTweaks`/`TideTweaksHere` are left out of the lists, as are fields the layout marks `hidden`
+  (`tide_layout_field.hidden`, from the compiler's `field.hidden`: the engine's own) and types all of whose fields are
+  (`tide_command_state`, `tide_ghost`, the hierarchy, the visibility policy); `tide_inspect_field` refuses a hidden
+  field, so the server never writes one. `tide_run_dev_menu`
   takes the frame's match world; the menu shows in every dev build now.
 - Tests: `tidec_e2e_inspect` (native and web: packets' entities, components, text, local fields, local entities and
   singletons; set through `tide_game_api.command` for a float heard by a `Changed` handler, an enum, a bool, a nested
   struct's int and float3, a Color, a singleton's double; refused: a non-member, bool 2, NaN, part of a vector, a text
-  handle, a wrong size, a singleton with a target, an entity without the component; set_local for each kind and never
-  the match's). `tide_platform_dev_menu`: the Inspector at the scrolled end, a singleton's bool (black screen), a
+  handle, `tide_command_state`'s hidden sequence, a wrong size, a singleton with a target, an entity without the component; set_local for each kind and never
+  the match's). `tide_platform_dev_menu`: the Match tab (no `tide_` singleton, no Dev tab's tweak), then Dev again, a singleton's bool (black screen), a
   group, an entity, an int typed and entered (white square), the Local tab's singleton (yellow square). The test now
   resets its .tweaks file in `finally`, so a failed run doesn't leave Green worked out for the next.
 - Gaps: no game-chosen entity label; text/lists/maps/entities read-only; very large worlds pay a whole packet per

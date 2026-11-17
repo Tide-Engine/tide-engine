@@ -190,7 +190,18 @@ TIDE_TEST(inspect_changes_the_match_through_the_server)
     api->set(&local, bo, health, offsetof(Health, value), &handle, 2);
     api->set(&local, bo, score, offsetof(Score, points), &points, sizeof points);
     api->set(&local, scene, health, offsetof(Health, value), &seven, sizeof seven);
+    // ...and the engine's own: the commands' sequences, hidden in the layout, which the inspector neither shows nor
+    // changes
+    const int32_t state = type_named(api, "tide_command_state");
+    TIDE_REQUIRE(state >= 0 && api->layout->types[state].field_count > 0);
+    TIDE_CHECK(api->layout->types[state].fields[0].hidden);
+    TIDE_CHECK(!api->layout->types[health].fields[0].hidden);
+    const tide_layout_field *seq = &api->layout->types[state].fields[0];
+    TIDE_CHECK(!tide_inspect_field(api->layout, state, seq->offset, seq->size));
+    const int32_t jump = 1000000;
+    api->set(&local, (tide_entity){0, 0}, state, seq->offset, &jump, seq->size);
     deliver();
+    TIDE_CHECK(world.tide_command_state.seq0 != jump);
     const Health after = tide_get_Health(&world, bo);
     TIDE_CHECK(memcmp(&after, &h, sizeof h) == 0);
     TIDE_CHECK(world.Score.points == 0 && world.Score.heard == 1);

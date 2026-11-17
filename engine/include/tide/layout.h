@@ -33,6 +33,9 @@ typedef struct tide_layout_field {
     // 0 for the world's own. Its handles say that id, so the field only
     // carries over to a build where it's the same.
     uint32_t heap;
+    // The engine's own (a command's sequence, a ghost's, a scene's audience): carried over like any other, and in no
+    // tool, which neither shows nor changes it (tide/inspect.h)
+    bool hidden;
 } tide_layout_field;
 
 // A component, singleton, input or struct.

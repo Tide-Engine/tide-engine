@@ -29000,9 +29000,9 @@ static void gen_layout(gen *g)
             // Its handles say which heap its blocks are in (decl.heap_id): in a
             // build where that's another, the field starts again rather than
             // carry handles into a heap that hasn't their blocks
-            sb_printf(o, "    {\"" STR_FMT "\", \"%s\", %s, %d, %d, offsetof(%s, %s), sizeof(((%s *)0)->%s), %u},\n",
+            sb_printf(o, "    {\"" STR_FMT "\", \"%s\", %s, %d, %d, offsetof(%s, %s), sizeof(((%s *)0)->%s), %u, %s},\n",
                       STR_ARG(f->name), type_name, layout_kind(t), dim, ref, name, field_cname(f), name,
-                      field_cname(f), type_has_text(t) ? (unsigned)d->heap_id : 0u);
+                      field_cname(f), type_has_text(t) ? (unsigned)d->heap_id : 0u, f->hidden ? "true" : "false");
         }
         sb_put(o, "};\n\n");
     }

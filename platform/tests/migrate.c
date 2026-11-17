@@ -12,7 +12,7 @@
 
 extern const tide_layout tide_game_layout;
 
-#define FIELD(T, f, type, kind, dim, decl) {#f, type, kind, dim, decl, offsetof(T, f), sizeof(((T *)0)->f), 0}
+#define FIELD(T, f, type, kind, dim, decl) {#f, type, kind, dim, decl, offsetof(T, f), sizeof(((T *)0)->f), 0, false}
 
 TIDE_TEST(migrate_preserves_logical_entity_clock_at_a_changed_header_offset)
 {

@@ -38,7 +38,7 @@ const tide_layout_field *tide_inspect_field(const tide_layout *layout, int32_t t
                 break;
             }
         }
-        if (!in) return NULL;
+        if (!in || in->hidden) return NULL; // The engine's own, never a tool's
         if (in->kind == TIDE_LAYOUT_STRUCT) {
             offset -= in->offset;
             type = in->decl;
