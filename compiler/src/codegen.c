@@ -18478,8 +18478,14 @@ static void gen_chunk_columns(gen *g, const decl *sys, const int a, const char *
         // Taken for writing only by a loop that writes its rows where they are (a view's, or one that reads its own
         // writes through its World): whoever takes a page a snapshot shares copies it, written or not
         const bool taken = change && !g->row_single;
+        // A handler's row takes the columns of the lanes it copies alone (row_lanes_codegen.inc), the rest NULL
+        const lane_mask used_lanes = g->row_single && handler_rows_plain(g, sys) ? system_comp_lanes(g, sys, a, c) : lane_every(comp_lanes(d));
         sb_printf(o, "%s%suint8_t *const tide_col_%s[%d] = {", pad, taken ? "" : "const ", comp, comp_lanes(d));
         for (int k = 0; k < comp_lanes(d); k++) {
+            if (!lane_has(&used_lanes, k)) {
+                sb_printf(o, "%sNULL", k ? ", " : "");
+                continue;
+            }
             sb_printf(o, "%s(%suint8_t *)tide_table_column%s(tide_t, %s, tide_c, %d)", k ? ", " : "", taken ? "" : "const ",
                       taken ? "_mut" : "", columns, arch_column(g, a, c) + k);
         }

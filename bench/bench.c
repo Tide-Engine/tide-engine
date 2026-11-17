@@ -401,6 +401,7 @@ struct machine {
     // What its updates spent in the game's functions
     double tick_ms, copy_ms, hash_ms, pack_ms, unpack_ms;
     double world_hash_ms; // ...of hash_ms, the world's own hash (the rest is players' projections')
+    double checks_ms;     // ...and every player's projection checked at once (client_hashes), as a server's tick ends
     uint64_t ticks, copies, hashes, packs, unpacks;
     uint64_t bytes;
     // ...and of that, by what a datagram is (KINDS): bytes and datagrams
@@ -570,7 +571,9 @@ static void timed_client_hashes(const void *world, const tide_player_id *recipie
 {
     const uint64_t start = tide_time_now_ns();
     real->client_hashes(world, recipients, count, out);
-    current->hash_ms += since(start);
+    const double ms = since(start);
+    current->hash_ms += ms;
+    current->checks_ms += ms;
     current->hashes++;
     for (uint32_t i = 0; diverging && traced && i < count; i++) {
         if (tide_player_equal(recipients[i], traced_player)) compare(world, out[i]);
@@ -1455,7 +1458,7 @@ static bool read_number(const char *text, uint32_t *out)
 #define WORST_MOST 64u
 #define WORST_SYSTEMS 3u
 typedef struct long_update {
-    double ms, at, tick_ms, hash_ms, copy_ms, pack_ms;
+    double ms, at, tick_ms, hash_ms, checks_ms, copy_ms, pack_ms;
     uint32_t tick, packs;
     // Of its simulating: what follows a tick's systems (changes, handlers, tasks), and its longest systems
     double changes_ms, system_ms[WORST_SYSTEMS];
@@ -1512,11 +1515,11 @@ static void print_systems(const tide_profile *p, const double seconds)
 static void print_worst(void)
 {
     if (!worst_count) return;
-    printf("\n  the server's longest updates (ms)   at (s)     tick   simulate     hash snapshot     pack (calls)    the rest\n");
+    printf("\n  the server's longest updates (ms)   at (s)     tick   simulate     hash (checks) snapshot     pack (calls)    the rest\n");
     for (uint32_t i = 0; i < worst_count; i++) {
         const long_update *u = &worst[i];
-        printf("  %33.2f %8.2f %8u %10.2f %8.2f %8.2f %8.2f (%u) %11.2f\n", u->ms, u->at, u->tick, u->tick_ms, u->hash_ms,
-               u->copy_ms, u->pack_ms, u->packs, u->ms - u->tick_ms - u->hash_ms - u->copy_ms - u->pack_ms);
+        printf("  %33.2f %8.2f %8u %10.2f %8.2f (%6.2f) %8.2f %8.2f (%u) %11.2f\n", u->ms, u->at, u->tick, u->tick_ms, u->hash_ms,
+               u->checks_ms, u->copy_ms, u->pack_ms, u->packs, u->ms - u->tick_ms - u->hash_ms - u->copy_ms - u->pack_ms);
         printf("  %33s simulating: handlers and changes %.2f", "", u->changes_ms);
         for (uint32_t k = 0; k < WORST_SYSTEMS && u->system[k][0]; k++) printf(", %s %.2f", u->system[k], u->system_ms[k]);
         printf("\n");
@@ -1853,7 +1856,7 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
             machine *h = hosts[i];
             if (!h || !h->server) continue;
             current = h;
-            const long_update before = {.tick_ms = h->tick_ms, .hash_ms = h->hash_ms, .copy_ms = h->copy_ms,
+            const long_update before = {.tick_ms = h->tick_ms, .hash_ms = h->hash_ms, .checks_ms = h->checks_ms, .copy_ms = h->copy_ms,
                                         .pack_ms = h->pack_ms, .packs = (uint32_t)h->packs};
             if (o.worst) tide_profile_clear(&server_profile);
             const double world_hash_before = h->world_hash_ms;
@@ -1878,6 +1881,7 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
             if (o.worst && (worst_count < o.worst || ms > worst[o.worst - 1u].ms)) {
                 long_update u = {.ms = ms, .at = now, .tick = tide_server_tick(h->server),
                                  .tick_ms = h->tick_ms - before.tick_ms, .hash_ms = h->hash_ms - before.hash_ms,
+                                 .checks_ms = h->checks_ms - before.checks_ms,
                                  .copy_ms = h->copy_ms - before.copy_ms, .pack_ms = h->pack_ms - before.pack_ms,
                                  .packs = (uint32_t)h->packs - before.packs, .changes_ms = server_profile.changes_ms};
                 for (uint32_t k = 0; k < server_profile.systems.count; k++) {

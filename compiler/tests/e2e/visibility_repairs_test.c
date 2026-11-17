@@ -302,6 +302,18 @@ TIDE_TEST(visibility_came_says_whom_a_groups_audience_gained)
     tide_world_tick(&w);
     hashes(&w);
     TIDE_CHECK(came_to(&w) != 0u);
+    // Three quarters of the groups gone, then one made, which packs the directory (its live entries together, each
+    // somewhere else in its list): it came to its own player alone, as the entries that moved are what they were
+    w.Control.step = 31;
+    tide_world_tick(&w);
+    hashes(&w);
+    (void)came_to(&w);
+    const uint32_t made_for = (uint32_t)w.Control.next % 4u;
+    TIDE_REQUIRE(made_for != 1u); // (Not the player of the groups left, which moved)
+    w.Control.step = 17;
+    tide_world_tick(&w);
+    hashes(&w);
+    TIDE_CHECK(came_to(&w) == 1u << made_for);
     // Another world has said nothing
     static tide_world other;
     tide_world_copy(&other, &w);

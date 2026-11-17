@@ -1,5 +1,20 @@
 # ECS and simulation state
 
+## A handler copies the lanes its code reads and writes (2026-11-17, a hundred apart)
+
+A match handler's dispatch (`codegen.c`'s `gen_dispatch_handlers`, the one row of the entity an event is sent to)
+gathered every lane of each component it takes, and took every lane's column first: `Forget`, which reads one map of
+the 56-lane `Streamer`, paid 3,000 to 4,000 cycles a call, at every chunk gone. Now it copies the lanes its code can
+read or write (`code_reads` and `written_lanes`, through the functions it hands them to, as a system's row does:
+row_lanes_codegen.inc's `handler_rows_plain`, `system_param_splits`) and takes only their columns, the rest `NULL`
+(`gen_chunk_columns`). Its put is as it was: the lanes its code can write, each where its bytes changed, all of them
+among those copied. A handler that starts a task, is a task, hands the component to C or a task, Sets it through its
+World, or has preparation state copies it whole, as before; so does a dispatch of a run (`tide_dispatch_run_`),
+a local handler, a shard's and a build for a debugger. What it's scheduled by is the component whole, as it was
+(`system_param_bytes`). Nothing a handler reads differs (a lane it doesn't copy is one its code never reads), so no
+world, hash or pin moved. Tests: `tidec_e2e_handler_lanes` (and `_net`) as they were; `tidec_handler_lanes_codegen`
+pins OnPoke's dispatch copying and taking lane `a` alone, and OnNative's and OnStart's copying all of `Plain`.
+
 ## Spare pages of every size a world has, and more of them shared (2026-11-17, a hundred apart)
 
 `engine/src/page.c` kept pages let go of for the next taker at powers of two from 4 bytes to 16 KiB, 256 a thread

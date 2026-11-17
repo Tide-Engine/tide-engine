@@ -1,5 +1,26 @@
 # Netcode: sessions, prediction, commands
 
+## The directory of groups, packed, is compared by its entries' orders; no protocol change (2026-11-17, a hundred apart)
+
+The projection checks compare the directory of visibility groups (`tide_visibility_state.groups`, a map) with the copy
+they kept, entry by entry where they are (`client_spans_codegen.inc`'s `tide_client_groups_diff`). A map packs its
+live entries together once it has more dead than live (`map.c`'s `compact`, on an insert): every entry after the
+first dead one moved, and each was taken as a group that changed and came to all its audience. At 100 players apart
+(80,000 groups, a chunk's each, half of them dead every so often) that check was the run's longest: 11 to 12 ms
+comparing the directory and 20 ms working every row's audience out again, and every player whose group moved was
+said to have had entities come to them (`tide_game.client_came`), so their next repair was one of a view arriving.
+Now a list that isn't the one kept (it packed, or it's small) goes by its entries' orders, which an entry keeps
+wherever it is and which go up along the list, dead ones too: an order in both is compared, one in either alone came
+or went. What's taken as changed is what changed; were orders ever out of order, it would be more than that, never
+less (an entry met in one list alone is taken as changed). The list kept in chunks and still the one kept goes place by place,
+as before. Generated code only; nothing on the wire changed (`PROTOCOL` stays 27), and a player's repairs and what's
+said to have come to them differ only after a pack, where they were more than was true.
+
+**Tests.** `visibility_came_says_whom_a_groups_audience_gained` (`tidec_e2e_visibility_repairs` and its variants):
+three quarters of the groups destroyed, then one made, which packs the directory: it came to its own player alone;
+with the place-by-place comparison back it fails (the groups that moved came to theirs). `bench_voxels_checked` (every
+hash worked out from the rows too) for 15 s at 100 players apart passes.
+
 ## Repairs read on every thread; no protocol change (2026-11-17)
 
 What was left of the hundred players (the section below, Left): an update's 20 to 32 repairs were read one after
