@@ -1,5 +1,72 @@
 # Netcode: sessions, prediction, commands
 
+## A check's rows on every thread; no protocol change (2026-11-17, parts)
+
+What was left of the projection checks at 100 players apart (notes/voxels.md, A hundred apart, again): a check after
+the Chunk table settled read 600 to 800 pieces on one thread (20 to 31 ms), 25 of the run's 30 longest updates; and
+of every check, who may have what (audiences) and each player's sums were one thread's too (55 and 45 ms a second of
+the server's 245 of hashing). Generated code (`client_spans_codegen.inc`, `client_state_codegen.inc`) and one line of
+the session; **nothing on the wire, in a world or in any hash changed** (`PROTOCOL` stays 27; no pin moved).
+
+- **The rows' part in parts** (`tide_client_part`): every table chunk's pieces, `TIDE_CLIENT_PART_PIECES` (4) at a
+  time, each a call of `tide_client_rows_chunk<a>(..., chunk, moved, from, to, ...)`, the loop body that was inline.
+  Where the check has `TIDE_CLIENT_SPLIT_ROWS` (4,096) rows or more, the memo and the walk, and a pool was handed to its
+  thread, the parts run on the pool's threads (`tide_parallel_for`, a frame's loop) and are then taken in their order
+  (`tide_client_parts_take`); else each table chunk is one call here, in order, as before. Before the parts: room for
+  every chunk's pieces (`tide_client_span_pieces`, which grows the array they're in) and which of each chunk's columns
+  were written since (`tide_client_span_written`, which hashes the columns' pages), so a part hashes no page; after
+  each chunk's parts, its columns kept (`tide_client_span_kept`) here.
+- **The memo in stages** (`tide_client_stage`, `tide_client_hasher.stage`): a part's hasher reads the memo and never
+  writes it. An entry it uses is copied into its stage the first time (or made there: a put's, a big container's
+  sums'), and is then changed there exactly as the memo's own would be (`tide_client_memo_get`, `_put`, `_sums` take
+  the stage's entry where the hasher has one); each put and each sums call is noted, in order, as the memo grows by
+  them (it rehashes before an insert past half its room). Taken in order (`tide_client_stage_merge`), a stage's calls
+  grow the memo as one thread's would, and each entry the part used becomes the part's, the memo's `kept` counted once
+  for each entry first used this call.
+- **The journal in lists**: what a part notes (`tide_client_noted`, the pending rows of `tide_client_journal_row`) and,
+  later, the rows whose audiences moved (`tide_client_added`, `tide_client_journal_add`'s) go into the journal's lists
+  in the parts' order, then each table's rows past its end, as the serial order had them.
+- **Who may have what, and each piece's routing, in parts** (`tide_client_parts_seen`): once the rows' parts are
+  taken and the directory of groups compared (here), the same parts work out their pieces' audiences
+  (`tide_client_seen_chunk<a>`, each with its own `tide_visibility_walk`) and then route them
+  (`tide_client_route_chunk<a>`: what a piece's rows add to each player's sum), with routing scratch from a list of
+  spares, one for each part at a time. The players' sums are then added up here from every piece's route (wrapping
+  sums of what each piece kept: the same in any order, and they're added in the same order anyway).
+- **The session** (`tick_end`, agent-maintained) hands its tick's pool to the thread around `client_hashes`
+  (`tide_loops_enter(t->jobs)`, `tide_loops_leave`): runtime-ownership.md, top section.
+
+**Why everything is one thread's.** A part reads the world (written by nobody during a check), the state kept by
+the check before for its own pieces and rows, the walk (made here before the parts, and only read by them) and the
+memo as the check began (busy, so no repair shares it, and not written until the parts are done); it writes only its
+own pieces, their rows' kept arrays, its noted and added lists, its stage and its scratch. So what each part comes to
+is what it came to read in turn on one thread: the only state one part's work could see of another's is the memo's
+entries, and an entry is a container's (its handle), which one row holds. Where two rows' values share a handle
+(nothing a game's code makes so: a value assigned is copied), the later part's copy of it goes into the memo last; it
+holds whenever the earlier one's would, its hashes being of the same bytes, and it's only ever a shortcut to them.
+Every page a part reads was hashed before it (the world's hash after the tick, the walk's on every heap and slots'
+page), so `tide_page_hash` and `tide_client_page_hash` only read: no page's hash, `before` or lines written is
+written by a part. `TIDE_CLIENT_MEMO_OFF` (no walk) and a check worked out again (`again`) never go in parts.
+
+**Threads, checked.** Each part's state is the part's from its start to its end, `tide_parallel_for` returning once
+every part has (the caller's thread takes parts as thread 0); the main hasher, the memo, the journal and every span's
+columns are touched only before and after. The routing spares are under a lock. ASan (`sanitize`): `tide_tests`
+`session`, `visibility`, the visibility fixtures and `tidec_e2e_visibility_walks_pool`. No ThreadSanitizer here.
+
+**Tests.** `visibility_walks_checks_on_the_pool_are_one_threads` (`tidec_e2e_visibility_walks_pool`: every check in
+parts of a piece, on the platform's pool, with every hash also worked out from the rows): two worlds through every
+step of `visibility_walks_see_every_page_written_since`, one checked on one thread and one on the pool; after every
+check each player's hash, each repair's bytes from the journal and `tide_client_check_digest` (a test build's hash of
+the memo's entries in their containers' order and of every kept row, piece, walk and journal entry) are the same.
+The `_checked` variants of the runs, pieces, blocks, walks, trees and repairs fixtures read every check in parts of a
+piece here in order (`TIDE_CLIENT_PARTS_ALWAYS`), every hash worked out again from the rows, with the same pins.
+Mutations, each alone: a table chunk's parts taken from its last (the journal's order: the pool test fails, at the
+first check with two pieces' rows written down); a stage left out of the memo (the pool test fails on the digest,
+the hashes the same); TBD.
+
+**Measured**: notes/voxels.md, A check's rows on every thread.
+
+**Left.** TBD
+
 ## The directory of groups, packed, is compared by its entries' orders; no protocol change (2026-11-17, a hundred apart)
 
 The projection checks compare the directory of visibility groups (`tide_visibility_state.groups`, a map) with the copy

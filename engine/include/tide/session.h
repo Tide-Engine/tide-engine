@@ -144,7 +144,9 @@ typedef struct tide_game {
     bool (*reload_client_state)(void *world, const uint8_t *data, uint32_t size, const uint8_t *had, uint32_t had_size);
     // Optional: client_hash for `count` recipients at once, into `out`, the
     // same values; what's alike for them all is worked out once. The server
-    // asks for every player's after each tick.
+    // asks for every player's after each tick, with its threads handed to the
+    // caller's (tide_loops_enter, tide/jobs.h), which the call may share its
+    // work out on (its parallel loops): the same values either way.
     void (*client_hashes)(const void *world, const tide_player_id *recipients, uint32_t count, uint64_t *out);
     // Optional: whether entities came into each recipient's sight (a
     // visibility group's audience gained them) in the checks of `world`

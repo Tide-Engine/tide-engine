@@ -11,6 +11,11 @@
 
 #include "game.h"
 #include "tide_test.h"
+#ifdef TIDE_VISIBILITY_WALKS_POOL
+#include "tide/jobs.h"
+#include "tide/platform.h"
+uint64_t tide_client_check_digest(const void *world); // (The game's, with TIDE_CLIENT_CHECK_DIGEST)
+#endif
 
 #define PLAYERS 4u
 // Every check's projection hashes, hashed together, and the world's hash at the end: the same in every build, memo
@@ -206,3 +211,98 @@ TIDE_TEST(visibility_walks_see_every_page_written_since)
     tide_world_free(&base);
     tide_world_free(&world);
 }
+
+#ifdef TIDE_VISIBILITY_WALKS_POOL
+// A check's rows in parts on the pool's threads (client_spans_codegen.inc, tide_client_part: this build splits every
+// check, a piece a part) against one thread's: two worlds ticked alike through every step above, one checked here and
+// one with the platform's pool handed to this thread (tide_loops_enter), as a server's session checks. After every
+// check, every player's hash, each repair's bytes from what the check wrote down, and everything the checks keep
+// (tide_client_check_digest: the memo's entries, the kept rows, pieces, walks and journal) are the same
+static tide_world one, one_base, many, many_base, one_back, many_back;
+
+static uint32_t pool_failures;
+
+static void both_tick(void)
+{
+    tide_world_copy(&one_base, &one);
+    tide_world_copy(&many_base, &many);
+    tide_world_tick(&one);
+    tide_world_tick(&many);
+}
+
+static void both_check(const tide_jobs *pool, const char *what)
+{
+    uint64_t a[PLAYERS], b[PLAYERS];
+    hashes(&one, a);
+    const tide_jobs *was = tide_loops_enter(pool);
+    hashes(&many, b);
+    tide_loops_leave(was);
+    const uint64_t da = tide_client_check_digest(&one), db = tide_client_check_digest(&many);
+    bool same = da == db;
+    for (uint32_t p = 0; p < PLAYERS; p++) {
+        same &= a[p] == b[p];
+        changes x = changes_of(&one, &one_base, p), y = changes_of(&many, &many_base, p);
+        same &= same_changes(&x, &y);
+        free_changes(&x);
+        free_changes(&y);
+    }
+    if (!same) {
+        printf("    %s: the check in parts on the pool isn't one thread's (kept %016" PRIx64 " against %016" PRIx64 ")\n", what, db, da);
+        pool_failures++;
+    }
+}
+
+TIDE_TEST(visibility_walks_checks_on_the_pool_are_one_threads)
+{
+    const tide_jobs *pool = tide_platform_jobs();
+    if (!pool || pool->threads < 2u) {
+        printf("    one core: nothing to compare\n");
+        return;
+    }
+    tide_world_init(&one, 1.0f);
+    tide_world_init(&many, 1.0f);
+    for (int k = 0; k < 4; k++) both_tick();
+    both_check(pool, "the start");
+    for (int round = 0; round < 4; round++) {
+        one.Control.noise = many.Control.noise = (round & 1) != 0;
+        both_tick();
+        both_check(pool, "quiet");
+        for (size_t i = 0; i < sizeof STEPS / sizeof STEPS[0]; i++) {
+            const int target = STEPS[i].alone ? 0 : 64 * (round + 1);
+            const int other = STEPS[i].alone ? -1 : 64 * (round + 1) - 1;
+            if (STEPS[i].how == TAKEN_BACK) {
+                tide_world_copy(&one_back, &one);
+                tide_world_copy(&many_back, &many);
+                for (int k = 0; k < 2; k++) {
+                    both_tick();
+                    both_check(pool, "a tick to be taken back");
+                }
+                tide_world_copy(&one, &one_back);
+                tide_world_copy(&many, &many_back);
+            }
+            one.Control.step = many.Control.step = STEPS[i].step;
+            one.Control.target = many.Control.target = target;
+            one.Control.other = many.Control.other = other;
+            both_tick();
+            if (STEPS[i].how == UNCHECKED_FIRST) {
+                (void)tide_world_hash(&one);
+                (void)tide_world_hash(&many);
+                one.Control.step = many.Control.step = STEPS[i].step + 1;
+                both_tick();
+            }
+            both_check(pool, STEPS[i].what);
+            one.Control.step = many.Control.step = 0;
+            both_tick();
+            both_check(pool, "the tick after");
+        }
+    }
+    TIDE_CHECK(pool_failures == 0);
+    TIDE_CHECK(tide_world_hash(&one) == tide_world_hash(&many));
+    tide_world_free(&one_back);
+    tide_world_free(&many_back);
+    tide_world_free(&one_base);
+    tide_world_free(&many_base);
+    tide_world_free(&many);
+    tide_world_free(&one);
+}
+#endif

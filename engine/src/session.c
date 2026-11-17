@@ -3790,8 +3790,11 @@ static void tick_end(tide_server *s, ticking *t)
             const connection *c = &s->connections[p];
             if (c->used && c->greeted && !mirrors(s, c)) recipients[count++] = tide_player_from_index((int32_t)p);
         }
+        // (On the tick's threads where the game's check reads its rows in parts: the same hashes either way)
+        const tide_jobs *loops = tide_loops_enter(t->jobs);
         if (g->client_hashes && count) g->client_hashes(s->world, recipients, count, hashes);
         else for (uint32_t i = 0; i < count; i++) hashes[i] = g->client_hash(s->world, recipients[i]);
+        tide_loops_leave(loops);
         if (g->client_came && count) {
             bool *came = malloc(count * sizeof *came);
             if (!came) tide_out_of_memory();

@@ -445,6 +445,9 @@ static void gen_client_hash_helpers(gen *g)
               "    // Hashing on several threads at once (a server's repairs): `shared` is the memo, read and never written, and\n"
               "    // nothing is kept (no `memo`, no `reach`)\n"
               "    const tide_client_memo *shared;\n    bool reading;\n"
+              "    // ...or a part of a check's rows, read on any thread (tide_client_stage): the memo's entries it uses are its\n"
+              "    // stage's, and nothing of the memo is written until the parts are done (no `memo`)\n"
+              "    struct tide_client_stage *stage;\n"
               "    tide_client_item *reach; // The blocks and pages read so far (their hashes where a memo's entry had them)\n"
               "    uint32_t reached, reach_room;\n    uint32_t floor; // Where the container being read started its pages\n    bool poisoned; // Something was read from outside the heaps\n} tide_client_hasher;\n\n"
               "// A page's place: its heap (the id and run of a `where`) above 32 bits, its first place in that heap below\n"
@@ -654,6 +657,85 @@ static void gen_client_hash_helpers(gen *g)
               "        m->swept = m->count;\n    }\n"
               "    while (__atomic_exchange_n(&tide_client_memo_lock, 1u, __ATOMIC_ACQUIRE)) {\n    }\n"
               "    m->busy = false;\n    __atomic_store_n(&tide_client_memo_lock, 0u, __ATOMIC_RELEASE);\n}\n\n");
+    // A check's rows read in parts on several threads at once (client_spans_codegen.inc, tide_client_part): what each
+    // part does to the memo is what one thread reading the parts in turn would do, kept apart until they're done
+    sb_put(o, "// A part of a check's rows, hashed on any thread while other parts are (client_spans_codegen.inc): the memo is\n"
+              "// read and not written meanwhile. An entry the part uses is copied into its stage the first time (or made there),\n"
+              "// and from then on changed there as the memo's own would be; each put and each sums, which the memo grows by, is\n"
+              "// noted in order. Once every part is done, their stages go into the memo in the parts' order\n"
+              "// (tide_client_stage_merge): it grows as one thread putting the same in that order grows it, and each entry\n"
+              "// used is the part's. A container read by one part alone (any whose value is one entity's) is then the memo's\n"
+              "// as one thread leaves it; one that two parts read is the later one's, which holds as the earlier's does, the\n"
+              "// hashes it keeps being of the same bytes\n"
+              "typedef struct tide_client_stage_op { uint64_t at; uint32_t type; } tide_client_stage_op;\n"
+              "typedef struct tide_client_stage {\n    const tide_client_memo *memo; // Read meanwhile, never written\n"
+              "    tide_client_memo_entry *entries; // The entries the part used, in the order it first did\n"
+              "    uint32_t count, room;\n"
+              "    uint32_t *table; // Each one's place in `entries` + 1, by its handle and type; 0 for an empty slot\n"
+              "    uint32_t table_room;\n"
+              "    tide_client_stage_op *ops; // Each put and sums, in order\n    uint32_t op_count, op_room;\n} tide_client_stage;\n\n"
+              "TIDE_HELPER uint32_t tide_client_stage_hash(const uint64_t at, const uint32_t type)\n{\n"
+              "    return (uint32_t)tide_client_mix(at * 0x9e3779b97f4a7c15ull + type);\n}\n\n"
+              "TIDE_HELPER void tide_client_stage_note(tide_client_stage *s, const uint64_t at, const uint32_t type)\n{\n"
+              "    if (s->op_count == s->op_room) {\n"
+              "        s->op_room = s->op_room ? s->op_room * 2u : 64u;\n"
+              "        s->ops = realloc(s->ops, (size_t)s->op_room * sizeof *s->ops);\n"
+              "        if (!s->ops) tide_out_of_memory();\n    }\n"
+              "    s->ops[s->op_count++] = (tide_client_stage_op){at, type};\n}\n\n");
+    sb_put(o, "// The part's entry for a container: its own, or the memo's copied, or (`make`) a new one with nothing in it where\n"
+              "// the memo has none (`made` says so); NULL where there's none and none is to be made\n"
+              "TIDE_HELPER tide_client_memo_entry *tide_client_stage_entry(tide_client_stage *s, const uint64_t at, const uint32_t type,\n"
+              "                                                            const bool make, bool *made)\n{\n"
+              "    if (made) *made = false;\n"
+              "    for (uint32_t i = s->table_room ? tide_client_stage_hash(at, type) & (s->table_room - 1u) : 0u; s->table_room && s->table[i];\n"
+              "         i = (i + 1u) & (s->table_room - 1u)) {\n"
+              "        tide_client_memo_entry *e = &s->entries[s->table[i] - 1u];\n"
+              "        if (e->at == at && e->type == type) return e;\n    }\n"
+              "    const tide_client_memo *m = s->memo;\n"
+              "    const tide_client_memo_entry *had = m && m->room ? &m->slots[tide_client_memo_slot(m, at, type)] : NULL;\n"
+              "    if (had && !had->at) had = NULL;\n"
+              "    if (!had && !make) return NULL;\n"
+              "    if (s->count == s->room) {\n"
+              "        s->room = s->room ? s->room * 2u : 16u;\n"
+              "        s->entries = realloc(s->entries, (size_t)s->room * sizeof *s->entries);\n"
+              "        if (!s->entries) tide_out_of_memory();\n    }\n"
+              "    if ((s->count + 1u) * 2u > s->table_room) {\n"
+              "        free(s->table);\n        s->table_room = s->table_room ? s->table_room * 2u : 64u;\n"
+              "        s->table = calloc(s->table_room, sizeof *s->table);\n        if (!s->table) tide_out_of_memory();\n"
+              "        for (uint32_t k = 0; k < s->count; k++) {\n"
+              "            uint32_t i = tide_client_stage_hash(s->entries[k].at, s->entries[k].type) & (s->table_room - 1u);\n"
+              "            while (s->table[i]) i = (i + 1u) & (s->table_room - 1u);\n"
+              "            s->table[i] = k + 1u;\n        }\n    }\n"
+              "    tide_client_memo_entry *e = &s->entries[s->count];\n"
+              "    if (had) {\n"
+              "        *e = *had;\n        e->items = NULL;\n        e->sums = NULL;\n        e->room = had->count;\n"
+              "        if (had->count) {\n"
+              "            e->items = malloc((size_t)had->count * sizeof *e->items);\n            if (!e->items) tide_out_of_memory();\n"
+              "            memcpy(e->items, had->items, (size_t)had->count * sizeof *e->items);\n        }\n"
+              "        if (had->sum_room) {\n"
+              "            e->sums = malloc((size_t)had->sum_room * sizeof *e->sums);\n            if (!e->sums) tide_out_of_memory();\n"
+              "            memcpy(e->sums, had->sums, (size_t)had->sum_room * sizeof *e->sums);\n        }\n"
+              "    } else {\n        memset(e, 0, sizeof *e);\n        e->at = at;\n        e->type = type;\n        if (made) *made = true;\n    }\n"
+              "    uint32_t i = tide_client_stage_hash(at, type) & (s->table_room - 1u);\n"
+              "    while (s->table[i]) i = (i + 1u) & (s->table_room - 1u);\n"
+              "    s->table[i] = ++s->count;\n"
+              "    return e;\n}\n\n");
+    sb_put(o, "// The part's stage into the memo, after the parts before it: the memo grows by its puts and sums in order, as\n"
+              "// one thread's would, and each entry it used becomes the part's. The stage is empty after\n"
+              "TIDE_HELPER void tide_client_stage_merge(tide_client_memo *m, tide_client_stage *s)\n{\n"
+              "    for (uint32_t i = 0; i < s->op_count; i++) {\n"
+              "        if ((m->count + 1u) * 2u > m->room) tide_client_memo_rehash(m, m->room ? m->room * 2u : 128u, NULL);\n"
+              "        tide_client_memo_entry *e = &m->slots[tide_client_memo_slot(m, s->ops[i].at, s->ops[i].type)];\n"
+              "        if (!e->at) {\n            e->at = s->ops[i].at;\n            e->type = s->ops[i].type;\n            m->count++;\n        }\n    }\n"
+              "    for (uint32_t i = 0; i < s->count; i++) {\n"
+              "        tide_client_memo_entry *from = &s->entries[i];\n"
+              "        tide_client_memo_entry *e = m->room ? &m->slots[tide_client_memo_slot(m, from->at, from->type)] : NULL;\n"
+              "        if (!e || !e->at) { // (Never so: an entry a part used was the memo's, or it put or summed it)\n"
+              "            free(from->items);\n            free(from->sums);\n            continue;\n        }\n"
+              "        if (from->used == m->call && e->used != m->call) m->kept++;\n"
+              "        free(e->items);\n        free(e->sums);\n        *e = *from;\n    }\n"
+              "    free(s->entries);\n    free(s->table);\n    free(s->ops);\n"
+              "    const tide_client_memo *memo = s->memo;\n    memset(s, 0, sizeof *s);\n    s->memo = memo;\n}\n\n");
     sb_put(o, "TIDE_HELPER void tide_client_reach_item(tide_client_hasher *hs, const tide_client_item it)\n{\n"
               "    if (hs->reached > hs->floor && hs->reach[hs->reached - 1u].key == it.key) return;\n"
               "    if (hs->reached == hs->reach_room) {\n"
@@ -693,10 +775,16 @@ static void gen_client_hash_helpers(gen *g)
               "        for (uint32_t i = 0; i < e->count; i++) {\n"
               "            if (!tide_client_item_holds(hs->heaps, &e->items[i])) return false;\n        }\n"
               "        *hash = e->hash;\n        return true;\n    }\n"
-              "    if (!m || !m->room) return false;\n"
-              "    tide_client_memo_entry *e = &m->slots[tide_client_memo_slot(m, at, type)];\n    if (!e->at) return false;\n"
+              "    tide_client_memo_entry *e;\n    uint32_t call;\n"
+              "    if (hs->stage) { // A part of a check's rows: the part's entry (tide_client_stage)\n"
+              "        e = tide_client_stage_entry(hs->stage, at, type, false, NULL);\n"
+              "        if (!e) return false;\n        call = hs->stage->memo->call;\n"
+              "    } else {\n"
+              "        if (!m || !m->room) return false;\n"
+              "        e = &m->slots[tide_client_memo_slot(m, at, type)];\n        call = m->call;\n    }\n"
+              "    if (!e->at) return false;\n"
               "    if (!tide_client_memo_holds(e, hs->heaps)) return false;\n"
-              "    if (e->used != m->call) {\n        e->used = m->call;\n        m->kept++;\n    }\n"
+              "    if (e->used != call) {\n        e->used = call;\n        if (!hs->stage) m->kept++;\n    }\n"
               "    for (uint32_t i = 0; i < e->count; i++) tide_client_reach_item(hs, e->items[i]);\n"
               "    *hash = e->hash;\n    return true;\n}\n\n");
     sb_put(o, "static int tide_client_item_order(const void *a, const void *b)\n{\n"
@@ -719,16 +807,23 @@ static void gen_client_hash_helpers(gen *g)
               "    for (uint32_t i = 0; i < unique; i++) {\n"
               "        // (A piece of a bigger page, whose own place isn't the page's: the entry never holds)\n"
               "        if (!r[i].page && !tide_client_item_fill(hs->heaps, &r[i])) {\n            r[i].page = r[i].block = 0;\n            broken = true;\n        }\n    }\n"
-              "    tide_client_memo *m = hs->memo;\n    if (!m) return;\n"
-              "    if ((m->count + 1u) * 2u > m->room) tide_client_memo_rehash(m, m->room ? m->room * 2u : 128u, NULL);\n"
-              "    tide_client_memo_entry *e = &m->slots[tide_client_memo_slot(m, at, type)];\n"
-              "    if (!e->at) {\n        e->at = at;\n        e->type = type;\n        m->count++;\n    }\n"
+              "    tide_client_memo *m = hs->memo;\n"
+              "    tide_client_memo_entry *e;\n    uint32_t call;\n"
+              "    if (hs->stage) { // A part of a check's rows: into the part's entry, the put noted (tide_client_stage)\n"
+              "        tide_client_stage_note(hs->stage, at, type);\n"
+              "        e = tide_client_stage_entry(hs->stage, at, type, true, NULL);\n        call = hs->stage->memo->call;\n"
+              "    } else {\n"
+              "        if (!m) return;\n"
+              "        if ((m->count + 1u) * 2u > m->room) tide_client_memo_rehash(m, m->room ? m->room * 2u : 128u, NULL);\n"
+              "        e = &m->slots[tide_client_memo_slot(m, at, type)];\n"
+              "        if (!e->at) {\n            e->at = at;\n            e->type = type;\n            m->count++;\n        }\n"
+              "        call = m->call;\n    }\n"
               "    if (e->room < unique) {\n"
               "        free(e->items);\n        e->items = malloc((size_t)unique * sizeof *e->items);\n"
               "        if (!e->items) tide_out_of_memory();\n        e->room = unique;\n    }\n"
               "    if (unique) memcpy(e->items, r, (size_t)unique * sizeof *r);\n"
               "    e->count = unique;\n    e->hash = hash;\n    e->broken = broken;\n"
-              "    if (e->used != m->call) {\n        e->used = m->call;\n        m->kept++;\n    }\n}\n\n");
+              "    if (e->used != call) {\n        e->used = call;\n        if (!hs->stage) m->kept++;\n    }\n}\n\n");
     // A container too big for one chunk of its list (tide/list.h) hashes as a tree of its chunks, so a change costs the
     // chunks it's in. What it hashes to is a function of its value alone, as ever, and another function than a small
     // container's: a map or a set is the sum of its live entries' hashes (each its order, key and value: the orders say
@@ -745,14 +840,20 @@ static void gen_client_hash_helpers(gen *g)
               "TIDE_HELPER tide_client_sum *tide_client_memo_sums(tide_client_hasher *hs, const tide_list l, const uint32_t type, const uint32_t chunks)\n{\n"
               "#ifdef TIDE_CLIENT_MEMO_OFF // For tests: every hash made again\n    (void)hs; (void)l; (void)type; (void)chunks;\n    return NULL;\n#else\n"
               "    tide_client_memo *m = hs->memo;\n"
-              "    if (!m || !l.at || tide_handle_world(l.at) != TIDE_IN_MATCH) return NULL;\n"
+              "    if ((!m && !hs->stage) || !l.at || tide_handle_world(l.at) != TIDE_IN_MATCH) return NULL;\n"
               "    const tide_heap *h = tide_client_heap(hs->heaps, tide_client_heap_of(l.at));\n"
               "    if (!h || tide_handle_offset(l.at) >> TIDE_HEAP_PAGE_SHIFT >= h->pages) return NULL;\n"
               "    const tide_block *b = tide_heap_block(h, tide_handle_offset(l.at));\n"
               "    if (b->b == TIDE_LIST_ASSET || !(b->b & TIDE_LIST_CHUNKED) || (b->b & ~TIDE_LIST_CHUNKED) < chunks) return NULL;\n"
-              "    if ((m->count + 1u) * 2u > m->room) tide_client_memo_rehash(m, m->room ? m->room * 2u : 128u, NULL);\n"
-              "    tide_client_memo_entry *e = &m->slots[tide_client_memo_slot(m, l.at, type)];\n"
-              "    if (!e->at) {\n        e->at = l.at;\n        e->type = type;\n        e->broken = true;\n        m->count++;\n    }\n"
+              "    tide_client_memo_entry *e;\n"
+              "    if (hs->stage) { // A part of a check's rows: the part's entry, made as the memo's would be (tide_client_stage)\n"
+              "        tide_client_stage_note(hs->stage, l.at, type);\n"
+              "        bool made;\n        e = tide_client_stage_entry(hs->stage, l.at, type, true, &made);\n"
+              "        if (made) e->broken = true;\n"
+              "    } else {\n"
+              "        if ((m->count + 1u) * 2u > m->room) tide_client_memo_rehash(m, m->room ? m->room * 2u : 128u, NULL);\n"
+              "        e = &m->slots[tide_client_memo_slot(m, l.at, type)];\n"
+              "        if (!e->at) {\n            e->at = l.at;\n            e->type = type;\n            e->broken = true;\n            m->count++;\n        }\n    }\n"
               "    if (e->sum_room < chunks) {\n"
               "        e->sums = realloc(e->sums, (size_t)chunks * sizeof *e->sums);\n"
               "        if (!e->sums) tide_out_of_memory();\n"
@@ -1112,6 +1213,13 @@ static void gen_client_hashes(gen *g)
         }
         gen_client_entity_parts(g, &codec, a, heapy, deniable, n);
     }
+    if (heapy) {
+        // The rows' part a table chunk's pieces at a time, which a check reads in parts on the pool (client_spans_codegen.inc)
+        int *parts = malloc(((size_t)prog->components.count + 1u) * sizeof *parts);
+        if (!parts) abort();
+        gen_client_rows_parts(g, deniable, parts);
+        free(parts);
+    }
 
     // (`again`: nothing kept is used or left: every row read, for TIDE_CLIENT_SPANS_CHECK)
     sb_put(o, "static void tide_client_hashes_work(const void *world, const tide_player_id *recipients, const uint32_t count, uint64_t *out,\n"
@@ -1266,65 +1374,29 @@ static void gen_client_hashes(gen *g)
     // them was read again or had its audience worked out again (client_spans_codegen.inc): a piece adds what it
     // kept, for the players asked
     if (heapy) {
-        sb_put(o, "    if (!kept->route_sums) {\n"
+        // (In parts, each piece was routed as its audiences were worked out: tide_client_parts_seen)
+        sb_put(o, "    if (!parted && !kept->route_sums) {\n"
                   "        kept->route_sums = calloc(TIDE_GAME_PLAYERS, 2u * sizeof *kept->route_sums);\n"
                   "        kept->route_touched = malloc(TIDE_GAME_PLAYERS * sizeof *kept->route_touched);\n"
                   "        if (!kept->route_sums || !kept->route_touched) tide_out_of_memory();\n    }\n");
     }
     for (int a = 0; a < prog->archetypes.count && heapy; a++) {
         if (arch_local(g, a)) continue;
-        const int n = client_deniable(g, a, deniable);
         const char *table = arch_name(g, a);
         sb_printf(o, "    for (uint32_t chunk = 0; chunk < w->%s.chunks; chunk++) {\n"
-                     "        const uint32_t first = chunk << (%s)->shift, here = tide_table_rows(&w->%s, (%s)->shift, chunk);\n"
-                     "        for (uint32_t at = 0; at < here; at += TIDE_CLIENT_PIECE) {\n"
-                     "            tide_client_piece *piece = &kept%d->spans[chunk].pieces[at >> TIDE_CLIENT_PIECE_SHIFT];\n"
-                     "            if (!piece->routed) {\n"
-                     "                const uint32_t end = first + (here - at < TIDE_CLIENT_PIECE ? here : at + TIDE_CLIENT_PIECE);\n"
-                     "                uint32_t touched = 0;\n"
-                     "                for (uint32_t row = first + at; row < end; row++) {\n",
-                  table, arch_columns(g, a), table, arch_columns(g, a), a);
-        sb_printf(o, "                    if (tide_row_gone(%s)) continue;\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
-        sb_printf(o, "                    uint32_t words[sizeof(Audience) / sizeof(uint32_t)];\n                    memcpy(words, &audience%d[row], sizeof words);\n", a);
-        sb_put(o, "                    for (uint32_t word = 0; word < sizeof words / sizeof words[0]; word++) {\n"
-                  "                        for (uint32_t bits = words[word]; bits; bits &= bits - 1u) {\n"
-                  "                            const uint32_t p = word * 32u + (uint32_t)__builtin_ctz(bits);\n"
-                  "                            if (p >= TIDE_GAME_PLAYERS) continue;\n"
-                  "                            const tide_player_id recipient = {p + 1u};\n"
-                  "                            (void)recipient;\n");
-        sb_printf(o, "                            uint64_t h = has%d[row * 2u + 1u];\n", a);
-        int stride = 0;
-        for (int c = 0; c < prog->components.count; c++) stride += arch_stores(g, a, c);
-        if (!stride) stride = 1;
-        for (int k = 0; k < n; k++) {
-            sb_printf(o, "                            if (!client && ((has%d[row * 2u] >> %d) & 1u) && !tide_audience_contains(denied%d[row * %du + %du], recipient))\n"
-                         "                                h -= terms%d[(size_t)row * %du + %du];\n",
-                      a, k, a, (unsigned)n, (unsigned)k, a, (unsigned)stride, (unsigned)client_part_of(g, a, deniable[k]));
-        }
-        sb_put(o, "                            uint64_t *const to = &kept->route_sums[p * 2u];\n"
-                  "                            if (!to[1]) kept->route_touched[touched++] = p;\n"
-                  "                            to[0] += tide_client_mix(h);\n                            to[1]++;\n"
-                  "                        }\n                    }\n                }\n"
-                  "                if (touched > piece->route_room) {\n"
-                  "                    piece->route_players = realloc(piece->route_players, (size_t)touched * sizeof *piece->route_players);\n"
-                  "                    piece->route_sums = realloc(piece->route_sums, (size_t)touched * 2u * sizeof *piece->route_sums);\n"
-                  "                    if (!piece->route_players || !piece->route_sums) tide_out_of_memory();\n"
-                  "                    piece->route_room = touched;\n                }\n"
-                  "                for (uint32_t j = 0; j < touched; j++) {\n"
-                  "                    uint64_t *const from = &kept->route_sums[kept->route_touched[j] * 2u];\n"
-                  "                    piece->route_players[j] = kept->route_touched[j];\n"
-                  "                    piece->route_sums[j * 2u] = from[0];\n                    piece->route_sums[j * 2u + 1u] = from[1];\n"
-                  "                    from[0] = from[1] = 0;\n                }\n"
-                  "                piece->route_count = touched;\n"
-                  "#ifndef TIDE_CLIENT_MEMO_OFF\n                piece->routed = true;\n#endif\n"
-                  "            }\n"
-                  "            for (uint32_t j = 0; j < piece->route_count; j++) {\n"
-                  "                const int32_t i = asked[piece->route_players[j]];\n"
-                  "                if (i < 0) continue;\n"
-                  "                sums[(uint32_t)i * 2u] += piece->route_sums[j * 2u];\n"
-                  "                sums[(uint32_t)i * 2u + 1u] += piece->route_sums[j * 2u + 1u];\n"
-                  "            }\n        }\n    }\n");
+                     "        const uint32_t pieces = tide_client_span_pieces(&kept%d->spans[chunk], tide_table_rows(&w->%s, (%s)->shift, chunk));\n"
+                     "        if (!parted) tide_client_route_chunk%d(w, kept, client, chunk, 0u, pieces, kept->route_sums, kept->route_touched);\n"
+                     "        for (uint32_t p = 0; p < pieces; p++) {\n"
+                     "            const tide_client_piece *piece = &kept%d->spans[chunk].pieces[p];\n"
+                     "            for (uint32_t j = 0; j < piece->route_count; j++) {\n"
+                     "                const int32_t i = asked[piece->route_players[j]];\n"
+                     "                if (i < 0) continue;\n"
+                     "                sums[(uint32_t)i * 2u] += piece->route_sums[j * 2u];\n"
+                     "                sums[(uint32_t)i * 2u + 1u] += piece->route_sums[j * 2u + 1u];\n"
+                     "            }\n        }\n    }\n",
+                  table, a, table, arch_columns(g, a), a, a);
     }
+    if (heapy) sb_put(o, "    if (parted) tide_client_parts_end(&split);\n");
     for (int a = 0; a < prog->archetypes.count && !heapy; a++) {
         if (arch_local(g, a)) continue;
         const int n = client_deniable(g, a, deniable);
