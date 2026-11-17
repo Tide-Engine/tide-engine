@@ -142,7 +142,14 @@ tide_list tide_stored_keys(const tide_stored *answer);
 // ...and a key's bytes as text: its characters counted.
 tide_str tide_stored_text(const char *bytes, uint32_t size);
 
-// Where a key is kept under a provider's persistent root: "saved/", then the
+// The folder under a provider's persistent root the store keeps its files in,
+// inside the engine's own folder there (TIDE_IO_ENGINE_FOLDER, tide/io.h), which
+// the game's File and Directory calls are refused: nothing but the store makes
+// or changes a file in it.
+#define TIDE_STORAGE_FOLDER TIDE_IO_ENGINE_FOLDER "/store"
+#define TIDE_STORAGE_FOLDER_SIZE 10u
+
+// Where a key is kept under a provider's persistent root: "Tide/store/", then the
 // key with every byte but small letters, digits, '-', '_' and (in its last
 // part, after its first byte) '.' written %XX, '/' kept between parts that
 // aren't empty, then ".bin". A part whose name before its first '.' is a
@@ -151,12 +158,12 @@ tide_str tide_stored_text(const char *bytes, uint32_t size);
 // key is a file of its own on a disk that tells capitals from small letters or
 // one that doesn't, and none reaches outside the folder. A key with a part
 // longer than TIDE_STORAGE_PART_MOST so written, more than a file system's
-// name takes, is "saved/%%/" and its SHA-256 in hex instead: no other key's
+// name takes, is "Tide/store/%%/" and its SHA-256 in hex instead: no other key's
 // path has a folder "%%", and the key itself is kept beside it, in the same
 // name with ".key" for ".bin", so a listing finds it. The path's length, or 0
 // for a key that isn't one or a `capacity` less than TIDE_STORAGE_PATH_MOST + 1.
 #define TIDE_STORAGE_PART_MOST 200u
-#define TIDE_STORAGE_PATH_MOST (6u + TIDE_STORAGE_KEY_MOST * 3u + 4u)
+#define TIDE_STORAGE_PATH_MOST (TIDE_STORAGE_FOLDER_SIZE + 1u + TIDE_STORAGE_KEY_MOST * 3u + 4u)
 uint32_t tide_storage_path(const char *key, uint32_t key_size, char *out, uint32_t capacity);
 // The other way: the key kept at `path` (as tide_storage_path wrote it), into
 // `out`, which has room for TIDE_STORAGE_KEY_MOST bytes. Its size, or 0 for a
@@ -256,7 +263,7 @@ uint32_t tide_storage_waiting(const tide_storage_line *line);
 //
 // Most loads of a world that makes itself from a seed find nothing: a chunk
 // nobody changed was never saved. So that such a load asks the disk nothing,
-// the store remembers which files each provider's saved/ has (a provider being
+// the store remembers which files each provider's Tide/store/ has (a provider being
 // its `user` and `read`, whatever copies of the tide_io there are): listed
 // once, folder by folder, at the provider's first load, and added to at every
 // save any server of the process carries out. A load of a key whose file isn't
@@ -264,7 +271,7 @@ uint32_t tide_storage_waiting(const tide_storage_line *line);
 // before, and says what the read finds. A provider with no `list`, or one a
 // folder of which couldn't be listed, is read every time.
 //
-// So while servers run, the files in a provider's saved/ are the store's to
+// So while servers run, the files in a provider's Tide/store/ are the store's to
 // make: one put there by anything else (the game's own file calls, a person,
 // another process) may not be found until tide_storage_forget_files or the
 // process's end. A host that changes what a provider's folder is, or its files

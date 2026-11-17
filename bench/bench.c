@@ -1433,8 +1433,8 @@ static void usage(const bench_desc *d)
     printf("  --expect-taken <hash>  what the bots' machines took of what they were sent, hashed; fails on another\n");
     printf("  --save <label>      adds the results to bench/results/%s.jsonl (see bench/compare.mjs)\n", d->name);
     if (d->game->stored) {
-        printf("  --files <folder>    keeps the server's store as files in the folder's saved/ (emptied first), as the\n"
-               "                      standard hosts do: carried out on the files' own thread\n");
+        printf("  --files <folder>    keeps the server's store as files in the folder's Tide/store/ (emptied first), as\n"
+               "                      the standard hosts do: carried out on the files' own thread\n");
         printf("  --files-here <folder> the same, carried out as each tick ends, on the server's thread\n");
     }
     for (uint32_t i = 0; i < d->flag_count; i++) {
@@ -1775,7 +1775,7 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
                 fprintf(stderr, "%s: --files: the folder %s can't be used\n", d->name, files_folder);
                 return 1;
             }
-            (void)platform->remove(platform->user, "saved", true, true); // Every run starts with nothing kept
+            (void)platform->remove(platform->user, "Tide", true, true); // Every run starts with nothing kept
             files_io = *platform;
             if (files_here) files_io.post = NULL;
             if (files_here) files_io.settle = NULL;

@@ -1,3 +1,49 @@
+## The engine's folder: the store's files out of the game's reach (2026-11-17)
+
+The owner's decision: the server's store keeps its files in `<persistent>/Tide/store/` (was `saved/`), and
+`<persistent>/Tide/` is the engine's, refused to the game's `File` and `Directory` calls. The store's "listed once,
+answered from memory" (notes/voxels.md, 3f) is then safe by construction: nothing of the game's can add, change or
+remove a file there. No backward compatibility: old `saved/` folders aren't read, moved or deleted.
+
+- **Names**: `TIDE_IO_ENGINE_FOLDER` ("Tide", `tide/io.h`) and `TIDE_STORAGE_FOLDER` ("Tide/store",
+  `TIDE_STORAGE_FOLDER_SIZE` 10, `tide/storage.h`). `TIDE_STORAGE_PATH_MOST` grew by 5 with the folder.
+  `storage.c` builds every path from them (`tide_storage_path`/`tide_storage_key`, the hashed `%%` folder, the
+  listing walk and the provider's file list); a `_Static_assert` keeps the size and the text together.
+- **Where it's checked**: the engine's wrapper (`engine/src/io.c`), the one way every game call reaches any provider,
+  native or the page's; providers don't check (the store calls them directly with `Tide/store/...`). So one piece of
+  code serves desktop, Android and the web, and the same path is refused on every platform.
+- **The rule** (`tide_io_engine_path(io, path, or_above)`): a path is joined to `persistent_data_path` if it's relative
+  (no leading separator, no `X:`), then folded lexically (`fold_path`): `\` is `/`; a leading `\\?\` or `\\.\` (and
+  `UNC\` after it) is dropped; empty parts and `.` are dropped; `..` takes the last part off, never a drive's; a part
+  ends at its first `:` (an NTFS stream's name; not a first `X:` drive) and loses trailing dots and spaces (as Win32
+  names a file), and a part left empty is dropped; ASCII letters go small. The root is folded the same way plus
+  `/tide`. In: the folded path is that or under it. `or_above`: also the root and every folder above it. Where the
+  root has a drive and the path a leading `/` with none, the root's drive is left out (the process's drive).
+- **Calls**: create, read (text/bytes), write/append, `File.Delete`, `File.Copy`/`File.Move` (both paths), and the
+  listings refuse a path in it with `TIDE_IO_ACCESS_DENIED` before the provider is asked; `Directory.Delete` and
+  `Directory.Move` (both paths) refuse `or_above` too, since a folder moved or deleted takes the store along (the
+  owner's decision named the folder's paths; this follows from it: deleting the persistent root would delete the
+  store). `Exists` is false there, with nothing asked. A listing of a folder above it keeps the `Tide` folder's own
+  entry and drops every entry in it (`list_entry`: an entry in it whose parent is in it too). An invalid path
+  (`path_error`) is still `INVALID_PATH` first. The first refusal of a run prints one line to stderr saying what to
+  do (`refused`, an atomic flag).
+- **Choices made here** (the owner asked for case tricks on Windows and macOS): the fold is the same on every
+  platform, so `tide/`, `Tide./` or `Tide:x` is refused on Linux and the web too, where it'd be another folder: a game
+  that works on one platform works on all. Only ASCII letters fold, and the comparison is of text: links and junctions
+  (which the game's calls can't make), 8.3 short names of the root, other spellings of the root (`\\localhost\C$\`,
+  a `subst` drive) and non-ASCII letters of the root in another case aren't seen. Native absolute paths are otherwise
+  the OS's, as before, and a game's C is trusted.
+- **Tests**: `io_engine_folder_paths_however_written` and `io_engine_folder_refused_to_the_games_calls`
+  (`tests/test_io_engine_folder.c`, in `tide_tests`: the fold for Windows, POSIX, page and missing roots, and every
+  call through a fake provider that counts what it's asked, which is nothing for a refused call, and a root listing
+  with the store's entries in it); `io_native_engine_folder_is_the_engines` (`tide_platform_io`: real files under a
+  `--data-dir`-style root, the store's file written through the provider, each call refused for relative, `..`,
+  back-in-through-the-root's-name, mixed case, backslash, trailing dot/space and absolute shouted paths, folders
+  above refused, similar names allowed, listings without the store's files, the store's file unchanged); the web's
+  `tide_platform_web_io` write phase (the page's provider, the same checks). The store's tests, the headless store
+  test and `bench_voxels` use the new folder; no pinned hash moved (the store's files aren't world state).
+- Logs (`Player.log`, `Crashes/`) and other files the engine keeps in the persistent folder stay where they were.
+
 ## The file provider's own thread, for the server's store (2026-11-15)
 
 - `tide_io` gained `post(user, work, context)` and `settle(user)` (`tide/io.h`): work run on a thread of the

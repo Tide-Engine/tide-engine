@@ -204,7 +204,7 @@ static const tide_io deferred = {.exists = io_exists, .create = io_create, .read
 // A folder the host can't list, which a listing of it then fails
 static void put_locked(void)
 {
-    put_file("saved/locked/k.bin", (const uint8_t *)"x", 1);
+    put_file("Tide/store/locked/k.bin", (const uint8_t *)"x", 1);
 }
 
 static void forget_files(void)
@@ -444,7 +444,7 @@ TIDE_TEST(storage_await_a_match_taken_up_again_asks_what_its_tasks_wait_for)
     const int32_t player = tide_player_index(tide_session_status_of(alone).client.player);
     TIDE_REQUIRE(player >= 0);
     tide_session_destroy(alone); // Carries out what it handed over: tick 2's saves, and loads nobody takes
-    TIDE_CHECK(posted_count == 0 && find_file("saved/boxes/7.bin"));
+    TIDE_CHECK(posted_count == 0 && find_file("Tide/store/boxes/7.bin"));
     const uint32_t before = reads;
     tide_session *again = tide_session_create(&(tide_session_desc){.game = &tide_game_api, .tick_rate = 60, .sample = sample, .io = &deferred});
     tide_player_set in_it = {0};

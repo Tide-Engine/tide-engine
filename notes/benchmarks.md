@@ -61,7 +61,7 @@ top section.
 ## The server's store as files (2026-11-15)
 
 A benchmark of a game that uses the store (`bench_voxels`) takes `--files <folder>`: the server's store is the
-platform's own files in the folder's `saved/` (`tide_platform_io_init("dev.tide.bench", folder)`, emptied as the run
+platform's own files in the folder's `Tide/store/` (`tide_platform_io_init("dev.tide.bench", folder)`, emptied as the run
 starts), carried out on the provider's own thread as the standard hosts do. `--files-here <folder>` is the same with
 the provider's `post` and `settle` taken out, so each tick's requests are carried out as the tick ends, as they were
 before 2026-11-15. Without either, the game's own (`bench_desc.io`: voxels' in memory, whose counts the report

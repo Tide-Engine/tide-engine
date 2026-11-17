@@ -232,19 +232,19 @@ static void forget_files(void)
 // Files in the folder that are no key's: what a listing never has
 static void put_strays(void)
 {
-    static const char *const strays[] = {"saved/list/stray.txt", "saved/list/z.bin.new", "saved/list/Bad.bin",
-                                         "saved/list/x%2e.bin", "saved/list/q.r/s.bin", "saved/list/con.bin",
-                                         "saved/list/%2Fy.bin.bin"};
+    static const char *const strays[] = {"Tide/store/list/stray.txt", "Tide/store/list/z.bin.new", "Tide/store/list/Bad.bin",
+                                         "Tide/store/list/x%2e.bin", "Tide/store/list/q.r/s.bin", "Tide/store/list/con.bin",
+                                         "Tide/store/list/%2Fy.bin.bin"};
     for (size_t i = 0; i < sizeof strays / sizeof strays[0]; i++) put_file(strays[i], (const uint8_t *)"x", 1);
     char path[128];
     // A hashed key's value without its key, its key without its value, and a key that isn't its file's hash
-    snprintf(path, sizeof path, "saved/%%%%/%s.bin", "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+    snprintf(path, sizeof path, "Tide/store/%%%%/%s.bin", "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
     put_file(path, (const uint8_t *)"x", 1);
-    snprintf(path, sizeof path, "saved/%%%%/%s.key", "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd");
+    snprintf(path, sizeof path, "Tide/store/%%%%/%s.key", "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd");
     put_file(path, (const uint8_t *)"list/d", 6);
-    snprintf(path, sizeof path, "saved/%%%%/%s.bin", "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+    snprintf(path, sizeof path, "Tide/store/%%%%/%s.bin", "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
     put_file(path, (const uint8_t *)"x", 1);
-    snprintf(path, sizeof path, "saved/%%%%/%s.key", "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+    snprintf(path, sizeof path, "Tide/store/%%%%/%s.key", "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
     put_file(path, (const uint8_t *)"list/e", 6);
 }
 
@@ -340,17 +340,17 @@ static void check_files(void)
 {
     // 1,116 saves, two of them of hashed keys, which write their keys too
     TIDE_CHECK(writes == 1118 && moves == 1118 && removes == 3 && folders >= 1);
-    TIDE_CHECK(find_file("saved/%63on.bin") && find_file("saved/a.bin") && find_file("saved/a%2Ebin/x.bin"));
-    const kept_file *box = find_file("saved/boxes/7.bin");
+    TIDE_CHECK(find_file("Tide/store/%63on.bin") && find_file("Tide/store/a.bin") && find_file("Tide/store/a%2Ebin/x.bin"));
+    const kept_file *box = find_file("Tide/store/boxes/7.bin");
     TIDE_CHECK(box && box->size == 1 && box->data[0] == 4);
-    const kept_file *odd = find_file("saved/a%20b/%2E%2E/c.bin");
+    const kept_file *odd = find_file("Tide/store/a%20b/%2E%2E/c.bin");
     TIDE_CHECK(odd && odd->size == 2 && odd->data[0] == 10 && odd->data[1] == 11);
-    TIDE_CHECK(find_file("saved/big.bin") && find_file("saved/big.bin")->size == 5000);
-    TIDE_CHECK(!find_file("saved/gone.bin"));
+    TIDE_CHECK(find_file("Tide/store/big.bin") && find_file("Tide/store/big.bin")->size == 5000);
+    TIDE_CHECK(!find_file("Tide/store/gone.bin"));
     char key[80], path[TIDE_STORAGE_PATH_MOST + 1u];
     long_key(key, 'Q');
     const uint32_t n = tide_storage_path(key, 75, path, sizeof path);
-    TIDE_REQUIRE(n && strncmp(path, "saved/%%/", 9) == 0);
+    TIDE_REQUIRE(n && strncmp(path, "Tide/store/%%/", 14) == 0);
     TIDE_CHECK(find_file(path) != NULL);
     memcpy(path + n - 4, ".key", 5);
     const kept_file *beside = find_file(path);
@@ -360,7 +360,7 @@ static void check_files(void)
     TIDE_CHECK(!find_file(path));
     memcpy(path + r - 4, ".key", 5);
     TIDE_CHECK(!find_file(path));
-    TIDE_CHECK(find_file("saved/page/1099.bin") && !find_file("saved/page/1100.bin"));
+    TIDE_CHECK(find_file("Tide/store/page/1099.bin") && !find_file("Tide/store/page/1100.bin"));
 }
 
 // A host with the files and a guest without, over a lossy network, until both have every answer: the guest's world
@@ -403,7 +403,7 @@ TIDE_TEST(storage_saves_loads_lists_and_deletes_the_same_on_every_machine)
     TIDE_REQUIRE(tide_game_api.stored != NULL);
     forget_files();
     put_strays();
-    put_file("saved/locked/k.bin", (const uint8_t *)"x", 1); // A folder the host can't list
+    put_file("Tide/store/locked/k.bin", (const uint8_t *)"x", 1); // A folder the host can't list
     play(&io, 0);
     forget_files();
 }
@@ -414,7 +414,7 @@ TIDE_TEST(storage_answers_carried_out_later_are_the_same_on_every_machine)
 {
     forget_files();
     put_strays();
-    put_file("saved/locked/k.bin", (const uint8_t *)"x", 1);
+    put_file("Tide/store/locked/k.bin", (const uint8_t *)"x", 1);
     play(&deferred, 5);
     TIDE_CHECK(posted_ever > 3 && posted_most >= 2); // Ticks' batches waited for each other
     TIDE_CHECK(posted_count == 0);
@@ -435,12 +435,12 @@ TIDE_TEST(storage_saves_survive_a_server_that_stops)
         server = tide_session_server_world(alone);
     }
     TIDE_REQUIRE(server != NULL && server->Time.tick >= 10 && server->Time.tick < 12);
-    TIDE_CHECK(posted_count >= 3 && !find_file("saved/boxes/7.bin"));
+    TIDE_CHECK(posted_count >= 3 && !find_file("Tide/store/boxes/7.bin"));
     tide_session_destroy(alone);
     TIDE_CHECK(posted_count == 0);
-    const kept_file *box = find_file("saved/boxes/7.bin");
+    const kept_file *box = find_file("Tide/store/boxes/7.bin");
     TIDE_CHECK(box && box->size == 3 && box->data[2] == 3);
-    TIDE_CHECK(find_file("saved/page/1099.bin") != NULL);
+    TIDE_CHECK(find_file("Tide/store/page/1099.bin") != NULL);
     forget_files();
 }
 
@@ -450,7 +450,7 @@ TIDE_TEST(storage_rewind_drops_answers_still_being_carried_out)
 {
     forget_files();
     put_strays();
-    put_file("saved/locked/k.bin", (const uint8_t *)"x", 1);
+    put_file("Tide/store/locked/k.bin", (const uint8_t *)"x", 1);
     tide_session *alone = tide_session_create(&(tide_session_desc){.game = &tide_game_api, .tick_rate = 60, .sample = sample, .io = &deferred});
     double t = 0.0;
     tide_session_start(alone, NULL, t);
@@ -510,32 +510,32 @@ TIDE_TEST(storage_without_files_finds_nothing)
 TIDE_TEST(storage_paths_stay_in_their_folder)
 {
     char path[TIDE_STORAGE_PATH_MOST + 1u];
-    TIDE_CHECK(tide_storage_path("chunks/0/3_-2_5", 15, path, sizeof path) && strcmp(path, "saved/chunks/0/3_-2_5.bin") == 0);
-    TIDE_CHECK(tide_storage_path("../../etc", 9, path, sizeof path) && strcmp(path, "saved/%2E%2E/%2E%2E/etc.bin") == 0);
-    TIDE_CHECK(tide_storage_path("/a//b/", 6, path, sizeof path) && strcmp(path, "saved/%2Fa%2F%2Fb%2F.bin") == 0);
-    TIDE_CHECK(tide_storage_path("C:\\x", 4, path, sizeof path) && strcmp(path, "saved/%43%3A%5Cx.bin") == 0);
-    TIDE_CHECK(tide_storage_path("a.b", 3, path, sizeof path) && strcmp(path, "saved/a.b.bin") == 0);
+    TIDE_CHECK(tide_storage_path("chunks/0/3_-2_5", 15, path, sizeof path) && strcmp(path, "Tide/store/chunks/0/3_-2_5.bin") == 0);
+    TIDE_CHECK(tide_storage_path("../../etc", 9, path, sizeof path) && strcmp(path, "Tide/store/%2E%2E/%2E%2E/etc.bin") == 0);
+    TIDE_CHECK(tide_storage_path("/a//b/", 6, path, sizeof path) && strcmp(path, "Tide/store/%2Fa%2F%2Fb%2F.bin") == 0);
+    TIDE_CHECK(tide_storage_path("C:\\x", 4, path, sizeof path) && strcmp(path, "Tide/store/%43%3A%5Cx.bin") == 0);
+    TIDE_CHECK(tide_storage_path("a.b", 3, path, sizeof path) && strcmp(path, "Tide/store/a.b.bin") == 0);
     // A folder has no '.': none ends in one (which Windows drops), none is another key's file
-    TIDE_CHECK(tide_storage_path("a.bin/x", 7, path, sizeof path) && strcmp(path, "saved/a%2Ebin/x.bin") == 0);
-    TIDE_CHECK(tide_storage_path("a./b", 4, path, sizeof path) && strcmp(path, "saved/a%2E/b.bin") == 0);
+    TIDE_CHECK(tide_storage_path("a.bin/x", 7, path, sizeof path) && strcmp(path, "Tide/store/a%2Ebin/x.bin") == 0);
+    TIDE_CHECK(tide_storage_path("a./b", 4, path, sizeof path) && strcmp(path, "Tide/store/a%2E/b.bin") == 0);
     // Windows devices, in any case, with an extension or as a folder
-    TIDE_CHECK(tide_storage_path("con", 3, path, sizeof path) && strcmp(path, "saved/%63on.bin") == 0);
-    TIDE_CHECK(tide_storage_path("com1.x", 6, path, sizeof path) && strcmp(path, "saved/%63om1.x.bin") == 0);
-    TIDE_CHECK(tide_storage_path("lpt9/a", 6, path, sizeof path) && strcmp(path, "saved/%6Cpt9/a.bin") == 0);
-    TIDE_CHECK(tide_storage_path("console", 7, path, sizeof path) && strcmp(path, "saved/console.bin") == 0);
+    TIDE_CHECK(tide_storage_path("con", 3, path, sizeof path) && strcmp(path, "Tide/store/%63on.bin") == 0);
+    TIDE_CHECK(tide_storage_path("com1.x", 6, path, sizeof path) && strcmp(path, "Tide/store/%63om1.x.bin") == 0);
+    TIDE_CHECK(tide_storage_path("lpt9/a", 6, path, sizeof path) && strcmp(path, "Tide/store/%6Cpt9/a.bin") == 0);
+    TIDE_CHECK(tide_storage_path("console", 7, path, sizeof path) && strcmp(path, "Tide/store/console.bin") == 0);
     // A part too long for a file's name: the key's hash, in a folder no other key's path has
     char long_key_bytes[120];
     memset(long_key_bytes, 'Q', sizeof long_key_bytes); // Capitals: three bytes each written out, 360 in all
-    TIDE_CHECK(tide_storage_path(long_key_bytes, sizeof long_key_bytes, path, sizeof path) == 9u + 64u + 4u
-               && strncmp(path, "saved/%%/", 9) == 0);
+    TIDE_CHECK(tide_storage_path(long_key_bytes, sizeof long_key_bytes, path, sizeof path) == 14u + 64u + 4u
+               && strncmp(path, "Tide/store/%%/", 14) == 0);
     char other[TIDE_STORAGE_PATH_MOST + 1u];
     long_key_bytes[0] = 'R';
     TIDE_CHECK(tide_storage_path(long_key_bytes, sizeof long_key_bytes, other, sizeof other) && strcmp(path, other) != 0);
-    TIDE_CHECK(tide_storage_path(".", 1, path, sizeof path) && strcmp(path, "saved/%2E.bin") == 0);
+    TIDE_CHECK(tide_storage_path(".", 1, path, sizeof path) && strcmp(path, "Tide/store/%2E.bin") == 0);
     TIDE_CHECK(!tide_storage_path("", 0, path, sizeof path));
     char most[TIDE_STORAGE_KEY_MOST + 1u];
     memset(most, '/', TIDE_STORAGE_KEY_MOST);
-    TIDE_CHECK(tide_storage_path(most, TIDE_STORAGE_KEY_MOST, path, sizeof path) == 6u + TIDE_STORAGE_KEY_MOST * 3u + 4u);
+    TIDE_CHECK(tide_storage_path(most, TIDE_STORAGE_KEY_MOST, path, sizeof path) == 11u + TIDE_STORAGE_KEY_MOST * 3u + 4u);
     TIDE_CHECK(!tide_storage_path(most, TIDE_STORAGE_KEY_MOST + 1u, path, sizeof path));
 }
 
@@ -559,10 +559,10 @@ TIDE_TEST(storage_paths_give_their_keys_back)
     TIDE_CHECK(p && tide_storage_key(path, p, key, sizeof key) == sizeof most);
     // Not a key's: another name, a save that stopped, small hex digits, capitals, a folder with a '.', a device's name
     // as it is, a '/' written out where it's a folder's, bytes that aren't UTF-8, a hashed key, nothing at all
-    static const char *const strays[] = {"saved/a.txt", "saved/a.bin.new", "saved/a%2e.bin", "saved/A.bin", "saved/q.r/s.bin",
-                                         "saved/con.bin", "saved/a%2Fb.bin", "saved/%FF.bin", "saved/%C3.bin", "saved/.bin",
-                                         "saved/%%/0123.bin", "saved/a/.bin", "saved//a.bin", "other/a.bin", "saved/a%2",
-                                         "saved/a%4.bin", "saved/a b.bin", "saved/a.bin/x.bin", "saved/%2E%2E.bin.bin"};
+    static const char *const strays[] = {"Tide/store/a.txt", "Tide/store/a.bin.new", "Tide/store/a%2e.bin", "Tide/store/A.bin", "Tide/store/q.r/s.bin",
+                                         "Tide/store/con.bin", "Tide/store/a%2Fb.bin", "Tide/store/%FF.bin", "Tide/store/%C3.bin", "Tide/store/.bin",
+                                         "Tide/store/%%/0123.bin", "Tide/store/a/.bin", "Tide/store//a.bin", "other/a.bin", "Tide/store/a%2",
+                                         "Tide/store/a%4.bin", "Tide/store/a b.bin", "Tide/store/a.bin/x.bin", "Tide/store/%2E%2E.bin.bin"};
     for (size_t i = 0; i < sizeof strays / sizeof strays[0]; i++) {
         TIDE_CHECK(tide_storage_key(strays[i], (uint32_t)strlen(strays[i]), key, sizeof key) == 0);
     }
@@ -666,7 +666,7 @@ TIDE_TEST(storage_lists_keys_by_prefix_in_order_and_in_pages)
     TIDE_CHECK(strstr(got, "list/c/e lista") != NULL);
     TIDE_CHECK(listed(&io, &store, "list/c", "", got, sizeof got, &count, &more, &failed) && strcmp(got, "list/c/d list/c/e") == 0);
     TIDE_CHECK(listed(&io, &store, "de", "", got, sizeof got, &count, &more, &failed) && strcmp(got, "deep/v deep/x/w deep/x/y/z") == 0);
-    // A '/' that's no folder's: "a//b" and "a/" are files beside the folder "a", in "saved"
+    // A '/' that's no folder's: "a//b" and "a/" are files beside the folder "a", in "Tide/store"
     TIDE_CHECK(listed(&io, &store, "a/", "", got, sizeof got, &count, &more, &failed) && strcmp(got, "a/ a//b a/c") == 0);
     TIDE_CHECK(listed(&io, &store, "a//", "", got, sizeof got, &count, &more, &failed) && strcmp(got, "a//b") == 0);
     TIDE_CHECK(listed(&io, &store, "con/", "", got, sizeof got, &count, &more, &failed) && strcmp(got, "con/x") == 0);
@@ -720,7 +720,7 @@ TIDE_TEST(storage_lists_keys_by_prefix_in_order_and_in_pages)
     TIDE_CHECK(answer_count == 2);
     // A folder that can't be listed fails the listing where its keys could be among the answer's: no keys, not "more".
     // Where they'd all be past the answer's last, it doesn't, and the page after does
-    put_file("saved/locked/k.bin", (const uint8_t *)"x", 1);
+    put_file("Tide/store/locked/k.bin", (const uint8_t *)"x", 1);
     TIDE_CHECK(listed(&io, &store, "locked/", "", got, sizeof got, &count, &more, &failed) && failed && count == 0 && !more);
     TIDE_CHECK(listed(&io, &store, "", "", pages, sizeof pages, &count, &more, &failed) && !failed && count == 1024 && more);
     TIDE_CHECK(listed(&io, &store, "", "lista", got, sizeof got, &count, &more, &failed) && failed && count == 0);
@@ -858,13 +858,13 @@ TIDE_TEST(storage_line_keeps_the_order_requests_were_asked_in)
     tide_storage_forget(&line);
     run_posted();
     forget_answers();
-    TIDE_CHECK(tide_storage_receive(&line, take_answer, NULL) == 0 && answer_count == 0 && find_file("saved/k/3.bin"));
+    TIDE_CHECK(tide_storage_receive(&line, take_answer, NULL) == 0 && answer_count == 0 && find_file("Tide/store/k/3.bin"));
     // Finished with work still posted: it's done, and its answers freed
     save_key(&store, "k/4");
     list_keys("k/", "");
     tide_storage_send(&line, &store, &deferred, true);
     tide_storage_finish(&line);
-    TIDE_CHECK(posted_count == 0 && find_file("saved/k/4.bin") && !line.first);
+    TIDE_CHECK(posted_count == 0 && find_file("Tide/store/k/4.bin") && !line.first);
     // ...and with answers nobody takes, loads and listings aren't carried out
     tide_storage_ask(&the_world, TIDE_STORAGE_LOAD, text("k/1"), (tide_list){0}, (tide_str){0}, TIDE_STORAGE_TO_EVENT, (tide_entity){0});
     save_key(&store, "k/5");
@@ -872,7 +872,7 @@ TIDE_TEST(storage_line_keeps_the_order_requests_were_asked_in)
     tide_storage_send(&line, &store, &io, false);
     list_keys("k/", "");
     tide_storage_send(&line, &store, &io, false);
-    TIDE_CHECK(tide_storage_receive(&line, take_answer, NULL) == 0 && find_file("saved/k/5.bin") && lists == before);
+    TIDE_CHECK(tide_storage_receive(&line, take_answer, NULL) == 0 && find_file("Tide/store/k/5.bin") && lists == before);
     tide_storage_finish(&line);
     tide_storage_unbind(&the_world);
     tide_storage_free(&store);
@@ -906,9 +906,9 @@ static void asked(const tide_io *files_io, tide_storage *store, const uint32_t k
 TIDE_TEST(storage_loads_of_keys_never_saved_read_nothing)
 {
     forget_files();
-    put_file("saved/kept.bin", (const uint8_t *)"x", 1);
-    put_file("saved/deep/in/it.bin", (const uint8_t *)"y", 1);
-    put_file("saved/deep/Odd.bin", (const uint8_t *)"z", 1); // No key's file: listed all the same
+    put_file("Tide/store/kept.bin", (const uint8_t *)"x", 1);
+    put_file("Tide/store/deep/in/it.bin", (const uint8_t *)"y", 1);
+    put_file("Tide/store/deep/Odd.bin", (const uint8_t *)"z", 1); // No key's file: listed all the same
     tide_storage store = {0};
     tide_storage_bind(&the_world, &store);
     uint64_t loads_before, unread_before;
@@ -916,7 +916,7 @@ TIDE_TEST(storage_loads_of_keys_never_saved_read_nothing)
     reads = 0;
     TIDE_CHECK(loaded(&io, &store, "kept") == TIDE_STORED_FOUND && reads == 1);
     const uint32_t listed_once = lists;
-    TIDE_CHECK(listed_once >= 6u); // saved, deep and deep/in: their files and their folders
+    TIDE_CHECK(listed_once >= 6u); // Tide/store, deep and deep/in: their files and their folders
     TIDE_CHECK(loaded(&io, &store, "deep/in/it") == TIDE_STORED_FOUND && reads == 2);
     char key[32];
     for (uint32_t i = 0; i < 200; i++) {
@@ -943,7 +943,7 @@ TIDE_TEST(storage_loads_of_keys_never_saved_read_nothing)
     tide_storage_loads(&loads, &unread);
     TIDE_CHECK(loads - loads_before == 211u && unread - unread_before == 205u);
     // A file put there behind the store isn't found until the host says its files changed
-    put_file("saved/behind.bin", (const uint8_t *)"b", 1);
+    put_file("Tide/store/behind.bin", (const uint8_t *)"b", 1);
     TIDE_CHECK(loaded(&io, &store, "behind") == TIDE_STORED_MISSING && reads == 6);
     tide_storage_forget_files(&io);
     TIDE_CHECK(loaded(&io, &store, "behind") == TIDE_STORED_FOUND && reads == 7 && lists > listed_once);
@@ -955,8 +955,8 @@ TIDE_TEST(storage_loads_of_keys_never_saved_read_nothing)
     TIDE_CHECK(loaded(&plain, &store, "behind") == TIDE_STORED_FOUND && reads == 9);
     // ...and so is one a folder of which can't be listed: what's in it isn't known
     forget_files();
-    put_file("saved/locked/k.bin", (const uint8_t *)"x", 1);
-    put_file("saved/here.bin", (const uint8_t *)"h", 1);
+    put_file("Tide/store/locked/k.bin", (const uint8_t *)"x", 1);
+    put_file("Tide/store/here.bin", (const uint8_t *)"h", 1);
     reads = 0;
     TIDE_CHECK(loaded(&io, &store, "nothing") == TIDE_STORED_MISSING && reads == 1);
     TIDE_CHECK(loaded(&io, &store, "nothing") == TIDE_STORED_MISSING && reads == 2);
@@ -1050,7 +1050,7 @@ TIDE_TEST(storage_line_a_batch_that_cant_be_queued_goes_after_those_before_it)
     tide_storage_ask(&the_world, TIDE_STORAGE_LOAD, text("q/1"), (tide_list){0}, (tide_str){0}, TIDE_STORAGE_TO_EVENT, (tide_entity){0});
     refuse_posts = 1;
     tide_storage_send(&line, &store, &deferred, true); // Can't be queued, then can
-    TIDE_CHECK(find_file("saved/q/1.bin") != NULL && posted_count == 1);
+    TIDE_CHECK(find_file("Tide/store/q/1.bin") != NULL && posted_count == 1);
     run_posted();
     forget_answers();
     TIDE_CHECK(tide_storage_receive(&line, take_answer, NULL) == 1);
@@ -1081,7 +1081,7 @@ TIDE_TEST(storage_line_a_batch_that_cant_be_queued_goes_after_those_before_it)
 static const tide_io *platform_files(void)
 {
     const tide_io *files_io = tide_platform_io_init("tests.tide.storage", "storage_files");
-    if (files_io) (void)files_io->remove(files_io->user, "saved", true, true); // What an earlier run left
+    if (files_io) (void)files_io->remove(files_io->user, "Tide", true, true); // What an earlier run left
     return files_io;
 }
 
@@ -1111,11 +1111,11 @@ TIDE_TEST(storage_lists_the_platforms_files)
     uint64_t next = 0;
     tide_storage_serve(&store, files_io, &next, take_answer, NULL);
     // A save that stopped, a file of another name, one in capitals, one in a folder with a '.', a hashed value alone
-    put_stray(files_io, "saved/list/z.bin.new");
-    put_stray(files_io, "saved/list/stray.txt");
-    put_stray(files_io, "saved/list/Bad.bin");
-    put_stray(files_io, "saved/list/q.r/s.bin");
-    put_stray(files_io, "saved/%%/ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff.bin");
+    put_stray(files_io, "Tide/store/list/z.bin.new");
+    put_stray(files_io, "Tide/store/list/stray.txt");
+    put_stray(files_io, "Tide/store/list/Bad.bin");
+    put_stray(files_io, "Tide/store/list/q.r/s.bin");
+    put_stray(files_io, "Tide/store/%%/ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff.bin");
     char got[4096], want[256];
     uint32_t count;
     bool more, failed;
@@ -1154,7 +1154,7 @@ TIDE_TEST(storage_lists_the_platforms_files)
     forget_answers();
     tide_storage_unbind(&the_world);
     tide_storage_free(&store);
-    (void)files_io->remove(files_io->user, "saved", true, true);
+    (void)files_io->remove(files_io->user, "Tide", true, true);
 }
 
 // Work another server posted after this line's batches, which takes as long as it likes: it waits for the test to
@@ -1193,10 +1193,10 @@ TIDE_TEST(storage_finish_waits_for_its_own_batches_alone)
     __atomic_store_n(&blocker_go, 1u, __ATOMIC_RELEASE);
     files_io->settle(files_io->user, NULL);
     TIDE_CHECK(!__atomic_load_n(&blocker_waited_out, __ATOMIC_ACQUIRE));
-    TIDE_CHECK(files_io->exists(files_io->user, "saved/mine/1.bin", false)); // Its own batch carried out
+    TIDE_CHECK(files_io->exists(files_io->user, "Tide/store/mine/1.bin", false)); // Its own batch carried out
     tide_storage_unbind(&the_world);
     tide_storage_free(&store);
-    (void)files_io->remove(files_io->user, "saved", true, true);
+    (void)files_io->remove(files_io->user, "Tide", true, true);
 }
 
 // What a tick's end costs with many loads: carried out where it ends (as before) and handed to the provider's
@@ -1253,6 +1253,6 @@ TIDE_TEST(storage_measure_tick_end)
            before_ms[0], before_ms[1], before_ms[2], after_ms[0], after_ms[1], after_ms[2], thread_ms[0], thread_ms[1], thread_ms[2]);
     tide_storage_unbind(&the_world);
     tide_storage_free(&store);
-    (void)files_io->remove(files_io->user, "saved", true, true);
+    (void)files_io->remove(files_io->user, "Tide", true, true);
 }
 #endif

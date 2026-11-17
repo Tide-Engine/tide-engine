@@ -483,7 +483,7 @@ typedef struct tide_server_desc {
     bool closed;                 // Takes no one new from the start, only players coming back
     const tide_jobs *jobs;       // Threads to run ticks on (tide/jobs.h), or NULL: this one
     // Where the match's store is kept (Storage.Save, Load, Delete and List in
-    // match code): files under this provider's persistent root, in `saved/`
+    // match code): files under this provider's persistent root, in `Tide/store/`
     // (tide/storage.h). A tick's requests are carried out on the provider's own
     // thread where it has one (tide_io.post), after the tick, and else as the
     // tick ends; the server waits for them as it's destroyed. It outlives the
