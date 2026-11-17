@@ -1642,6 +1642,7 @@ static inline void tide_run_dev_inspect(const tide_inspect_api *api, const void 
 static uint32_t tide_run_dev_tab;
 static tide_float2 tide_run_dev_offsets[3];
 static float tide_run_dev_heights[3] = {64.0f, 64.0f, 64.0f};
+static float tide_run_dev_tabs_tall = 40.0f; // The tabs' row, and the room under it
 
 static inline void tide_run_dev_menu(const tide_host_game *game, const void *match)
 {
@@ -1654,22 +1655,33 @@ static inline void tide_run_dev_menu(const tide_host_game *game, const void *mat
     tide_run_dev_key = key;
     if (!tide_run_dev_open) return;
     tide_gui *g = &tide_run_gui;
-    const float pad = 8.0f, width = 320.0f;
+    const float pad = 8.0f, width = 320.0f, margin = 8.0f;
     const tide_float2 screen = tide_platform_screen_size();
     const float most = screen.y - 2.0f * pad > 0.0f ? screen.y - 2.0f * pad : 0.0f;
+    // Inside the panel, past its margin: as much as the screen has
+    const float x = pad + margin, inner = most - 2.0f * margin > 0.0f ? most - 2.0f * margin : 0.0f;
     tide_gui_view(g, UINT32_MAX); // Its own: no view's claims hide the devices from it
-    // Its tabs, which stay at the top however far the list is scrolled: Dev for a game with dev views or tweaks, and
-    // the inspector's two worlds
     const bool dev = (game->dev_views && game->dev_views[0]) || tweaks;
     if (!dev && tide_run_dev_tab == 0) tide_run_dev_tab = 1;
     if (!inspect) tide_run_dev_tab = 0;
-    float top = pad;
+    // As tall as they were a frame before: the tabs, and under them this tab's list, which a longer list scrolls past
+    // (the wheel, or a drag on a touchscreen)
+    const float tabs = inspect ? (tide_run_dev_tabs_tall < inner ? tide_run_dev_tabs_tall : inner) : 0.0f;
+    const float top = x + tabs, room = inner - tabs;
+    tide_float2 *offset = &tide_run_dev_offsets[tide_run_dev_tab];
+    float *last = &tide_run_dev_heights[tide_run_dev_tab];
+    const float shown = tabs + (*last < room ? *last : room) + 2.0f * margin;
+    // A panel behind it all, so its text reads over any game. The pointer is its over the panel alone: below it, the
+    // game's
+    const tide_rect back = {pad, pad, width + 2.0f * margin, shown < most ? shown : most};
+    tide_gui_claim_pointer_at(g, back);
+    const int area = tide_gui_begin_area(g, 0xDE6D0000u, back);
     if (inspect) {
-        // As tall as the row was a frame before (a container of their own, with nothing drawn behind them)
-        static float tall = 40.0f;
+        // Its tabs, which stay at the top however far the list is scrolled: Dev for a game with dev views or tweaks,
+        // and the inspector's two worlds (a container of their own, as tall as their row was)
         static tide_float2 none;
         none = (tide_float2){0.0f, 0.0f};
-        const int area = tide_gui_begin_scroll(g, 0xDE6E0000u, (tide_rect){pad, pad, width, tall < most ? tall : most}, &none);
+        const int box = tide_gui_begin_scroll(g, 0xDE6E0000u, (tide_rect){x, x, width, tabs}, &none);
         const int row = tide_gui_begin_horizontal(g, 0xDE6E0001u);
         static const char *const names[3] = {"Dev", "Match", "Local"};
         for (uint32_t t = dev ? 0u : 1u; t < 3u; t++) {
@@ -1682,23 +1694,16 @@ static inline void tide_run_dev_menu(const tide_host_game *game, const void *mat
         }
         tide_gui_close(g, row);
         tide_gui_layout_space(g, 4.0f);
-        const tide_rect end = tide_gui_layout_reserve(g, (tide_float2){0.0f, 0.0f});
-        tide_gui_close(g, area);
-        if (end.y > pad) tall = end.y - pad;
-        top = pad + (tall < most ? tall : most);
+        const tide_rect below = tide_gui_layout_reserve(g, (tide_float2){0.0f, 0.0f});
+        tide_gui_close(g, box);
+        if (below.y > x) tide_run_dev_tabs_tall = below.y - x;
     }
-    // Under them, down the screen's height, which a longer list scrolls past (the wheel, or a drag on a touchscreen).
-    // The pointer is its over the tabs and the list alone, as tall as it last was: below it, the game's
-    const float room = pad + most - top > 0.0f ? pad + most - top : 0.0f;
-    const tide_rect panel = {pad, top, width, room};
-    tide_float2 *offset = &tide_run_dev_offsets[tide_run_dev_tab];
-    float *last = &tide_run_dev_heights[tide_run_dev_tab];
-    tide_gui_claim_pointer_at(g, (tide_rect){pad, pad, width, top - pad + (*last < room ? *last : room)});
-    const int depth = tide_gui_begin_scroll(g, 0xDE6F0000u + tide_run_dev_tab, panel, offset);
+    const tide_rect list = {x, top, width, room};
+    const int depth = tide_gui_begin_scroll(g, 0xDE6F0000u + tide_run_dev_tab, list, offset);
     if (tide_run_dev_tab == 0) {
         for (uint32_t i = 0; game->dev_views && i < TIDE_RUN_DEV_VIEWS && game->dev_views[i]; i++) {
-            bool shown = tide_run_dev_shown(game->dev_views[i]);
-            if (tide_gui_layout_toggle(g, 0xDE700000u + i, game->dev_views[i], &shown)) tide_run_dev_show(game->dev_views[i], shown);
+            bool on = tide_run_dev_shown(game->dev_views[i]);
+            if (tide_gui_layout_toggle(g, 0xDE700000u + i, game->dev_views[i], &on)) tide_run_dev_show(game->dev_views[i], on);
         }
         if (tweaks) tide_run_dev_tweaks(tweaks);
     } else {
@@ -1708,8 +1713,9 @@ static inline void tide_run_dev_menu(const tide_host_game *game, const void *mat
     // Where the list ends, as an empty place after it: its height, wherever it's scrolled to
     const tide_rect end = tide_gui_layout_reserve(g, (tide_float2){0.0f, 0.0f});
     tide_gui_close(g, depth);
-    const float height = end.y + offset->y - panel.y;
-    if (height > 0.0f) *last = height + pad;
+    tide_gui_close(g, area);
+    const float height = end.y + offset->y - list.y;
+    if (height > 0.0f) *last = height;
 }
 
 // Where the matches this machine hosts keep their store (Storage.Save and Load in match code): the game's own

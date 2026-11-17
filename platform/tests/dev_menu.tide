@@ -44,7 +44,7 @@ view Glowing(Glow glow)
 {
     if (!glow.on) return;
     Draw.SetScreen();
-    Draw.Rect(float2(3, 120), float2(6, 10), Color(1, 1, 0));
+    Draw.Rect(float2(470, 120), float2(6, 10), Color(1, 1, 0));
 }
 
 [After(Backdrop)]
@@ -52,7 +52,7 @@ view Lit(Lamp lamp)
 {
     if (lamp.level != 5) return;
     Draw.SetScreen();
-    Draw.Rect(float2(3, 145), float2(6, 10), Color(1, 1, 1)); // Centered on the pixel the test reads
+    Draw.Rect(float2(470, 145), float2(6, 10), Color(1, 1, 1)); // Centered on the pixel the test reads
 }
 
 dev view Marker()

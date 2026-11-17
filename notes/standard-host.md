@@ -23,7 +23,8 @@ maps, entities shown (an entity a button); no game labels; a Local tab; any play
   local singletons (a match singleton's local fields are one). `gen_embed_packers` when not `--embed`.
 - **Host** (`tide_run_dev_inspect`, host.h): the menu's tabs `Dev`/`Match`/`Local` (`tide_run_dev_tab`; Dev only for a
   game with dev views or tweaks), held above the list in a scroll container of the row's height a frame before, each
-  tab with its own scroll offset; accent headings (`tide_run_inspect_heading`) for Tweaks, Singletons, Entities, an
+  tab with its own scroll offset, all in a GUI area (the theme's panel, its shadow) as tall as the tabs and list were a
+  frame before; `dev_menu.mjs` samples the game's pixels right of it (a 480-wide window); accent headings (`tide_run_inspect_heading`) for Tweaks, Singletons, Entities, an
   entity's `#birth` and its components; lists
   (singletons, then groups by an FNV of each entity's component types, 128 groups, 500 rows of an open group), an
   entity's/singleton's fields through `tide_run_dev_value` (the tweaks' editors, moved out of `tide_run_dev_tweaks`).

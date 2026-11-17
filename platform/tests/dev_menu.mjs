@@ -18,7 +18,7 @@ const workOut = () => {
 const scratch = resolve(scratchArg);
 mkdirSync(scratch, { recursive: true });
 const env = { ...process.env, TIDE_HIDDEN: '1' };
-const child = spawn(resolve(programArg), ['--interactive', join(scratch, 'replay.txt'), '--size', '320', '200'],
+const child = spawn(resolve(programArg), ['--interactive', join(scratch, 'replay.txt'), '--size', '480', '200'],
                     { cwd: scratch, env, stdio: ['pipe', 'pipe', 'pipe'] });
 let output = '', errors = '', pending;
 const lines = [], said = [];
@@ -56,7 +56,7 @@ const bottom = async () => {
 const color = (name, x, y) => readPng(readFileSync(join(scratch, name))).at(x, y).slice(0, 3);
 
 const timer = setTimeout(() => { console.error('dev menu test timed out'); process.exit(1); }, 60000);
-const at = name => color(name, 3, 190); // Left of the menu
+const at = name => color(name, 470, 190); // Right of the menu, and its panel's shadow
 try {
     rmSync(tweaksFile, { force: true });
     assert.equal(await next(), 'tide: interactive ready 1');
@@ -134,7 +134,7 @@ try {
     await command(`${typing + 2} key enter`);
     await command('step 6', 'ready');
     await command('capture lit.png');
-    assert.deepEqual(color('lit.png', 3, 145), [255, 255, 255]);
+    assert.deepEqual(color('lit.png', 470, 145), [255, 255, 255]);
     // This machine's local world: its singleton, and its field, changed here at once
     await command('click Local');
     await bottom();
@@ -148,7 +148,7 @@ try {
     await command('click on');
     await command('step 4', 'ready');
     await command('capture glow.png');
-    assert.deepEqual(color('glow.png', 3, 120), [255, 255, 0]);
+    assert.deepEqual(color('glow.png', 470, 120), [255, 255, 0]);
     // Back to the Dev tab
     await command('click Dev');
     await command('step 2', 'ready');
