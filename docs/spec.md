@@ -5987,7 +5987,7 @@ Decided:
 - **A scenario is a dev scene**, which `--scene` starts in place of the start scene; one that wants the game's usual start loads it itself.
 - **The inspector's edits change the match for everyone**, applied by the server. What depends on a field follows it through match handlers of `Changed<...>` (Events), not an event of the inspector's own.
 - **Checkpoints** (the owner, 2026-11-17): the match saved, to start from again, quickly, from the dev menu, and by agents, which make them and launch a game from them; kept in the project's `checkpoints` folder, to share; the player who loads one is the player who saved it; one saved by an older build is carried over to the new one by name, and one that can't be all the way can still be loaded, with what carries over ("losing a checkpoint due to a minor detail could be frustrating").
-- Order of the pieces: `dev` and the dev menu (built), dev scenes (built), the tweak file (built), the inspector (built), checkpoints (built), picking on screen, pausing and rewinding a run.
+- Order of the pieces: `dev` and the dev menu (built), dev scenes (built), the tweak file (built), the inspector (built), checkpoints (built), picking on screen (left out for now, the owner, 2026-11-17), pausing and rewinding a run.
 
 Provisional (Claude's picks, built 2026-11-16):
 - `dev` goes before any declaration but settings and namespaces, and before a type's method. A dev type's methods, a dev scene's preparation, a dev generic's instances and a lambda written in dev code are dev too. A field can't be dev: it's in every build, and a dev component or singleton holds what dev code needs.
