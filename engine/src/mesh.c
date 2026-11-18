@@ -225,14 +225,23 @@ static uint64_t chunk_hash(const grid_seen *v, const tide_grid_shape *s, const t
     return hash ? hash : 1u;
 }
 
-// What a heap's grid holds, as a number to go on hashing: its size, and each chunk's place and hash.
+// What a heap's grid holds, as a number to go on hashing: its size, and each chunk's place and hash. A draw that
+// samples a grid asks it each time, so the chunks' places and hashes are put side by side, 64 at a time, and hashed
+// at once by tide_hash_wide: a word at a time, a texture of 32 chunks cost a third of a draw.
 static uint64_t grid_hash(const grid_seen *v, const tide_grid_shape *s)
 {
     uint64_t hash = tide_hash_more(TIDE_HASH_START, v->dir.size, sizeof v->dir.size);
-    for (uint32_t r = 0; r < v->dir.records; r++) {
-        const uint64_t cells = chunk_hash(v, s, &v->records[r]);
-        hash = tide_hash_more(hash, v->records[r].chunk, sizeof v->records[r].chunk);
-        hash = tide_hash_more(hash, &cells, sizeof cells);
+    uint64_t run[64 * 3];
+    for (uint32_t r = 0; r < v->dir.records;) {
+        uint32_t n = 0;
+        for (; n < 64u && r < v->dir.records; n++, r++) {
+            const tide_grid_record *record = &v->records[r];
+            run[3u * n] = (uint64_t)(uint32_t)record->chunk[0] | (uint64_t)(uint32_t)record->chunk[1] << 32;
+            run[3u * n + 1u] = (uint32_t)record->chunk[2];
+            run[3u * n + 2u] = chunk_hash(v, s, record);
+        }
+        const uint64_t wide = tide_hash_wide(run, (size_t)n * 3u * sizeof run[0]);
+        hash = tide_hash_more(hash, &wide, sizeof wide);
     }
     return hash;
 }

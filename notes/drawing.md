@@ -1276,6 +1276,20 @@ changed RGBA pixels. Independent cache review found no blocking issues.
 [Measured forest results and reproduction](../bench/results/forest-opt-20261102/README.md)
 record the complete optimization task; those timings do not isolate this cache.
 
+A grid sampled as a texture (`Texture`, `TextureArray`, a `Grid3` as layers) is
+versioned on every draw that samples it: `grid_hash` (mesh.c) takes each chunk's
+place and its page's kept hash (`tide_heap_block_hash`, a `moves` each as before).
+Since 2026-11-18 those are laid side by side, 64 chunks at a time, and hashed at
+once with `tide_hash_wide`, where two `tide_hash_more` a chunk ran word by word.
+LOAM's tiles, a `Grid3<Color>` of 16x16x128 in 32 chunks, are sampled by about
+1,100 draws a frame: a sampling went from 0.26 us to 0.17 (measured by asking it
+eight more times a draw), and the far world's views from 0.47 ms to 0.42. The
+version is only the draw list's key for the grid's pixels, so its numbers
+changing is nothing; LOAM's 1280x720 capture is the same bytes. What's left is a
+page lookup for each chunk. A version found once a view, or once a frame where
+nothing wrote the grid, would take that too; it wants a way to know nothing
+wrote it (the pages' `hashed` say so only chunk by chunk), not built.
+
 ## Picks out of the camera's view (2026-11-04)
 
 Mount & Rifle's gap ("A render target's LOD pixel tolerance barely moves instanced
