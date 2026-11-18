@@ -1,3 +1,4 @@
+// The game locks the cursor (Grip), as a first-person one does: the menu frees it while it's open.
 // The dev menu, driven the way an agent plays (--interactive): its dev view is off, the key under Escape lists it among the GUI's
 // widgets, and a click on its switch shows it; its tweak, changed there, reaches the match and its .tweaks file, and
 // its .tweaks file saved elsewhere and worked out again is taken. Its inspector lists the match's singletons and its

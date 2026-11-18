@@ -184,6 +184,10 @@ the menu while the key under Escape (`keyboard.backquote`, the owner's pick) has
 menu with the view kept on. It's `tide_run_frame`'s, so the web has it too (untested there: no web test presses
 the key). Frames the embed draws itself (time travel's `show_frame`, tide/embed.h) don't call it, so dev views stay off
 there. Decisions are in docs/spec.md, Dev tools.
+- **The menu frees the cursor** (fixed 2026-11-18, found in LOAM): `tide_run_frame` locked the cursor whenever the
+  game asked (`Cursor.Lock`) with the menu open, so in a first-person game the mouse turned the camera and no switch
+  could be clicked. It's locked now only while the menu is shut (`!tide_run_dev_open`), as a modal frees it. The
+  test's game locks it every frame (`Grip` in dev_menu.tide), which failed at the first click without the fix.
 
 ## The game named before its window opens (2026-11-16)
 

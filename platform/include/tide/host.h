@@ -3685,7 +3685,9 @@ static inline int tide_run_frame(void *user, const float seconds)
     if (tide_run_reporting) tide_profile_report_mark(&tide_run_report, TIDE_FRAME_VIEWS);
     tide_profiler_draw(profiler, &tide_run_draw, tide_platform_screen_size(), tide_platform_measure_text);
     tide_run_typing(game, tide_gui_typing(&tide_run_gui));
-    tide_platform_cursor_lock(tide_gui_cursor_lock(&tide_run_gui)); // The next poll says whether the window holds it
+    // The next poll says whether the window holds it. The dev menu frees it while it's open, as a modal does: a game
+    // that locks it (a first-person one) would otherwise turn with the mouse and no switch could be clicked
+    tide_platform_cursor_lock(tide_gui_cursor_lock(&tide_run_gui) && !tide_run_dev_open);
     if (timing && tide_run_draw.epoch != tide_run_timing_epoch) {
         // A retained native reload keeps the host, but the samples are the old build's.
         tide_run_reset_timing(true);

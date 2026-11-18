@@ -56,6 +56,12 @@ view Lit(Lamp lamp)
     Draw.Rect(float2(470, 145), float2(6, 10), Color(1, 1, 1)); // Centered on the pixel the test reads
 }
 
+// A first-person game's grip on the pointer: the menu frees it while it's open, or its switches couldn't be clicked
+view Grip()
+{
+    Cursor.Lock();
+}
+
 dev view Marker()
 {
     Draw.SetScreen();
