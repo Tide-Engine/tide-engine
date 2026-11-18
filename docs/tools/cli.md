@@ -55,7 +55,7 @@ output, and diagnostics appear on clean lines. A failed stage keeps its last
 observed progress. Redirected output uses plain stderr lines with file counts.
 
 Large generated C files (at least 4 MiB) compile as up to sixteen stable
-partitions in parallel. Each completed partition advances the C compilation
+partitions in parallel, thirty-two in a debug build. Each completed partition advances the C compilation
 bar. Small files stay whole. A body edit keeps unrelated partitions reusable;
 changes to shared types can rebuild them all.
 

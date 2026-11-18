@@ -301,6 +301,18 @@ try {
     const wideCut = await run(["build", wide, "--report", wideReport]);
     assert.equal(wideCut.code, 0, wideCut.said);
     assert(readFileSync(join(wideGen, plumbingParts[1].slice(4)), "utf8").length > 100, "the changed part is written again");
+    // A part's stamp is kept (parts.stamped) once its file was two seconds old when it was read, and taken from
+    // there while the file's size and time stay: a build that leaves the plumbing alone doesn't read it to say so
+    await new Promise(resolve => setTimeout(resolve, 2200));
+    const wideKept = await run(["build", wide, "--report", wideReport]);
+    assert.equal(wideKept.code, 0, wideKept.said);
+    const stamped = readFileSync(join(wideGen, "parts.stamped"), "utf8");
+    for (const line of plumbingParts) assert(stamped.includes(` ${line.slice(4)}\n`), `${line.slice(4)} in ${stamped}`);
+    put(join(wide, "game.tide"), wideSource.replace("c.a += c.b;", "c.a += c.b + 3;"));
+    const wideTaken = await run(["build", wide, "--report", wideReport]);
+    assert.equal(wideTaken.code, 0, wideTaken.said);
+    assert.deepEqual(compiledWideNow(), ["game.c"], "the plumbing's objects stand by their kept stamps");
+    assert.equal(readFileSync(join(wideGen, "parts.stamped"), "utf8"), stamped, "kept stamps stay as they were");
 
     // A debug build's own code is in parts once it's big, compiled as game.c is and without ThinLTO; an edit of a
     // function compiles the parts it changed, which start as soon as they're written

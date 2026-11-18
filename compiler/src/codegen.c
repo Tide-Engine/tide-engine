@@ -30672,11 +30672,18 @@ typedef struct parts_task {
     bool plumbing, ok;
     sb manifest;
     const char *why;
+    gen *views; // In place of a text: the debugger's views written, which take nothing of the cuts either
 } parts_task;
+
+static bool write_debug_views(gen *g);
 
 static void parts_one(void *context, const uint32_t i)
 {
     parts_task *t = &((parts_task *)context)[i];
+    if (t->views) {
+        t->ok = write_debug_views(t->views);
+        return;
+    }
     t->ok = write_code_parts(t->opts, t->text, t->path, t->original, t->plumbing, &t->manifest, &t->why);
     for (const char *line = t->ok && !t->plumbing ? t->manifest.data : NULL; line && *line;) {
         const char *end = strchr(line, '\n');
@@ -31076,6 +31083,7 @@ bool codegen(program *prog, const codegen_options *opts)
     sb parts_manifest = {0};
     diag_step(NULL);
     bool ok = write_file(h_path.data, &g.h), whole = true;
+    bool views_written = false, views_ok = false;
     if (ok && opts->split_plumbing) {
         // A debug build compiles the plumbing optimized, and the game's code as written. Generated C this can't cut
         // stays whole in <name>.c, and the plumbing's file says so
@@ -31086,11 +31094,15 @@ bool codegen(program *prog, const codegen_options *opts)
         const bool cut = opts->line_directives && split_plumbing(&g.c, g.code_at.items, g.code_at.count, &code, &plumbing, -1);
         diag_step("plumbing from code");
         if (cut) {
-            // The game's own code and its plumbing, each cut into its parts beside the other
-            parts_task tasks[2] = {
+            // The game's own code and its plumbing, each cut into its parts beside the other, and the debugger's
+            // views written meanwhile: megabytes of text made from the program, which no cut reads
+            parts_task tasks[3] = {
                 {.opts = opts, .text = &code, .path = path.data, .original = g.c_path, .plumbing = false},
-                {.opts = opts, .text = &plumbing, .path = plumbing_path.data, .original = plumbing_c, .plumbing = true}};
-            build_threads_each(2u, 0u, parts_one, tasks);
+                {.opts = opts, .text = &plumbing, .path = plumbing_path.data, .original = plumbing_c, .plumbing = true},
+                {.views = &g}};
+            build_threads_each(opts->visualizers ? 3u : 2u, 0u, parts_one, tasks);
+            views_written = opts->visualizers;
+            views_ok = tasks[2].ok;
             for (int k = 0; k < 2; k++) {
                 if (!tasks[k].ok && tasks[k].why) diag_error((loc){0}, "couldn't partition generated C: %s", tasks[k].why);
                 ok = ok && tasks[k].ok;
@@ -31123,7 +31135,7 @@ bool codegen(program *prog, const codegen_options *opts)
     diag_step("the C's parts");
     ok = ok && write_pack(&g);
     diag_step("writing the pack");
-    ok = ok && (!opts->visualizers || write_debug_views(&g)) && write_name_map(&g);
+    ok = ok && (!opts->visualizers || (views_written ? views_ok : write_debug_views(&g))) && write_name_map(&g);
     diag_step("views and names");
     free(g.pack_bytes);
     free(g.pack_holes);

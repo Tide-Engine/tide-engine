@@ -28,7 +28,7 @@ typedef struct codegen_options {
     bool split_own_code;           // With split_plumbing and split_code: the game's own code in parts too, as the plumbing is
     bool split_code; // Stable generated C partitions, listed in <name>_parts.txt.
     size_t split_code_min_bytes; // Smaller files stay whole (CLI only; tidec splits explicitly).
-    int split_code_parts;          // The most parts of the code: a power of two up to 16 (0: 4).
+    int split_code_parts;          // The most parts of the code: a power of two up to 32 (0: 4).
     size_t split_code_part_bytes;  // Fewer parts where they'd have less code than this each (0: always the most).
     bool visualizers;        // Also write <name>.natvis and <name>_lldb.py: how debuggers show the game's values.
     bool layout;             // Describe the data layout as tide_game_layout (tide/layout.h), for hot reloading.

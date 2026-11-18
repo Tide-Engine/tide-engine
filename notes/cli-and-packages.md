@@ -1,5 +1,46 @@
 # `tide`, packages and the package
 
+## tide's own steps around a generate, and thirty-two parts (2026-11-18)
+
+Owner: "time to run is extremely important to me". What tide itself did around tidec, timed with marks (taken
+out), for Mount & Rifle:
+
+- **The assets' files' stamp was taken four times a build, 0.06-0.08 s each** (`stamp_assets`: a size and a time
+  asked for each of 870 files, one after another): by `generation_kept` and again as `before`, then by
+  `assets_stayed` and again by `generation_keep`. Now once before and once after (`generate` hands them on), each
+  file's asked on a thread (`asset_stamp_work`); the stamp is the same number.
+- **A generated file's stamp is kept** (`<gen>/parts.stamped`: the file's size and time, a hash of what else its
+  stamp is made of, `part_stamp_with`, and the stamp): a part whose file is as it was isn't read to be hashed,
+  0.05 s of a hundred megabytes of plumbing an edit of the code leaves alone. Kept only for a file read two
+  seconds or more after it was written and the same after the read (`part_stamp.settled`), as an asset's file is
+  recorded (notes/assets-and-files.md).
+- **The debugger's views are written beside the cut** (`parts_task.views`, codegen.c): 0.1 s of tidec that
+  nothing waits for.
+- **A debug build's code and plumbing are cut into up to 32 parts** (`split_code_parts`, of 128 KiB at the
+  least; `SPLIT_MOST_PARTS` 32; a release's ThinLTO parts stay 16 of 512 KiB). The part an edit changes compiles
+  in 0.1 s where it took 0.2, and a layout's 67 files fill 24 processors more evenly than 35 did: their compile
+  3.8-4.4 s where it was 5.0. 64 parts were no faster.
+- **A link's arguments go in a file where they're more than a command line holds** (`run_link`: over 24,000
+  characters, `<output>.rsp`, each quoted for the reader; `tide cc` takes `@file`, cc.cpp). 67 objects' paths in a
+  long folder passed Windows' 32,767, and the link said it couldn't start.
+
+Side by side with the tide before (each on its own copy of the game, by turns, six rounds, a quiet machine;
+medians): a field added 7.99 s to 7.76, a constant edited 3.59 s to 3.53, nothing changed 0.94 s to 0.87.
+
+The constant's edit gains little because what follows tidec now waits for the changed part's own compile:
+tidec ends at 2.4 s, the part is compiled at 2.58 (it's written 0.2 s before tidec ends), the link takes 0.17
+and the game 0.8. What's left is tidec's 2.4 s: the assets 0.4, parsing and checking 0.45, the journals' reads
+0.14, the pack laid out with its fingerprints and the identity 0.26, the C 0.4, code from plumbing 0.22, the cut
+0.35.
+
+Tests: `tide_cli_build_report` (the plumbing's parts in `parts.stamped` once they're two seconds old, their
+objects standing by it over an edit of the code, the file as it was after). Validation (Windows, Clang 23.1.2,
+ASan): 11 focused tests (`tide_cli_tests`, `tide_cli_build_overlap`, `tide_cli_build_report`,
+`tide_cli_generation`, `tide_cli_assets`, `tidec_debugger_natvis`, `tidec_split_code_stable`, `tidec_recompile`,
+three `_debug` fixtures); the packaged tide passes `cache_test.mjs --part cache --gpu` and `--part modes --gpu`
+and builds and runs Mount & Rifle in debug (its link through a file) and in release. Not run: Linux/macOS (the
+file's quoting there is the other branch), web and Android: CI's.
+
 ## The game's start (2026-11-18)
 
 The biggest piece the fourth round below left: 1.0-1.4 s of every `tide run`, in every build mode. It was the

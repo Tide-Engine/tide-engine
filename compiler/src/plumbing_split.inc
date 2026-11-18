@@ -739,7 +739,7 @@ static void split_put_conditionals(split_out *o, const char *t, const size_t fro
 #define SPLIT_DATA (-2)
 
 // The most parts the code is cut into (codegen_options.split_code_parts)
-#define SPLIT_MOST_PARTS 16
+#define SPLIT_MOST_PARTS 32
 
 static const char split_macros[] =
     "// This build's generated C is in two files, the game's code and its plumbing; what one names of the other's\n"

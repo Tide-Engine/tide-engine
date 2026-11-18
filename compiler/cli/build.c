@@ -1478,6 +1478,13 @@ static unsigned target_cpu(const build *b)
 #endif
 }
 
+// A second, as sys_time and sys_file_written count
+#ifdef _WIN32
+#define SYS_TIME_SECOND 10000000ull
+#else
+#define SYS_TIME_SECOND 1000000000ull
+#endif
+
 static uint64_t hash_text(uint64_t h, const char *text)
 {
     for (const char *p = text; *p; p++) h = (h ^ (uint8_t)*p) * 0x100000001B3ull;
@@ -1595,12 +1602,114 @@ typedef struct part_stamp {
     bool wanted; // Not looked at already (game_written)
     bool ok;
     uint64_t stamp;
+    // What the stamp was last time, for a file that is as it was then (parts_stamped): its size and time, and what
+    // else the stamp is made of. A big game's plumbing is a hundred megabytes an edit of its code leaves alone.
+    uint64_t file, with;
+    bool known, settled;
+    uint64_t known_stamp;
 } part_stamp;
 
 static void part_stamp_work(void *context, const uint32_t i)
 {
     part_stamp *p = &((part_stamp *)context)[i];
-    if (p->wanted) p->ok = generated_text_stamp(p->b, p->source, p->gen, p->first, p->plumbing, p->thin, p->lean, &p->stamp);
+    if (!p->wanted) return;
+    p->file = sys_file_stamp(p->source);
+    if (p->known && p->file) { // (p->known says the last file's size and time, and the rest, are these)
+        p->stamp = p->known_stamp;
+        p->ok = true;
+        return;
+    }
+    const uint64_t before = sys_time();
+    p->ok = generated_text_stamp(p->b, p->source, p->gen, p->first, p->plumbing, p->thin, p->lean, &p->stamp);
+    // Kept for next time where a later write would show: read two seconds or more after it was written, and the
+    // same file after the read as before it
+    const uint64_t written = sys_file_written(p->source);
+    p->settled = p->ok && written && written <= before && before - written >= 2u * SYS_TIME_SECOND
+              && sys_file_stamp(p->source) == p->file;
+}
+
+// What a part's stamp is made of besides its own text: the flags it compiles with, how it's cut, and the header as
+// generated_text_stamp takes it (whole, or without the simulation's identity).
+static uint64_t part_stamp_with(const build *b, const part_stamp *p, const char *header, const char *header_plain)
+{
+    char *flags = stamp_of(b, p->plumbing, false);
+    uint64_t h = hash_text(0xCBF29CE484222325ull, flags);
+    free(flags);
+    const char marks[] = {(char)('0' + p->thin), (char)('0' + p->lean), (char)('0' + p->first), (char)('0' + p->plumbing), 0};
+    h = hash_text(hash_text(h, marks), p->source);
+    return hash_text(h, (!p->first || p->plumbing) && !b->opts->managed ? header_plain : header);
+}
+
+#define PARTS_STAMPED_FILE "parts.stamped"
+
+// Fills each wanted part's `with`, and `known` where <gen>/parts.stamped has its stamp for the file as it is now.
+static void parts_stamped_read(const build *b, const char *gen, part_stamp *stamps, const int count)
+{
+    char *header_path = path_join(gen, "game.h");
+    char *header = sys_read_file(header_path, NULL);
+    free(header_path);
+    if (!header) return;
+    char *plain = copy_text(header);
+    char *identity = strstr(plain, "\n#define TIDE_SIMULATION_ID ");
+    if (identity) { // The text without that line, as generated_text_stamp hashes its two halves
+        char *end = strchr(identity + 1, '\n');
+        memmove(identity, end ? end : identity + strlen(identity), strlen(end ? end : "") + 1u);
+    }
+    for (int i = 0; i < count; i++) {
+        if (stamps[i].wanted && stamps[i].source) stamps[i].with = part_stamp_with(b, &stamps[i], header, plain);
+    }
+    free(plain);
+    free(header);
+    char *path = path_join(gen, PARTS_STAMPED_FILE);
+    char *text = sys_read_file(path, NULL);
+    free(path);
+    for (char *line = text; line && *line;) {
+        char *end = strchr(line, '\n');
+        if (!end) break;
+        *end = 0;
+        unsigned long long file = 0, with = 0, stamp = 0;
+        int at = 0;
+        if (sscanf(line, "%llx %llx %llx %n", &file, &with, &stamp, &at) == 3 && at > 0) {
+            for (int i = 0; i < count; i++) {
+                part_stamp *p = &stamps[i];
+                if (!p->wanted || !p->source || p->known || p->with != with || strcmp(path_base(p->source), line + at) != 0) continue;
+                // The file's size and time are asked on the thread that would read it: here only what was kept
+                p->known = sys_file_stamp(p->source) == file && file != 0;
+                p->known_stamp = stamp;
+            }
+        }
+        line = end + 1;
+    }
+    free(text);
+}
+
+// Keeps the stamps that may be kept (part_stamp.settled, and the ones taken as kept this time), where that differs
+// from what's there.
+static void parts_stamped_write(const char *gen, const part_stamp *stamps, const int count)
+{
+    char *path = path_join(gen, PARTS_STAMPED_FILE);
+    char *was = sys_read_file(path, NULL);
+    size_t len = 0, room = 256;
+    char *text = malloc(room);
+    if (!text) abort();
+    text[0] = 0;
+    for (int i = 0; i < count; i++) {
+        const part_stamp *p = &stamps[i];
+        if (!p->wanted || !p->source || !p->ok || !(p->known || p->settled)) continue;
+        const char *name = path_base(p->source);
+        const size_t need = strlen(name) + 64u;
+        if (len + need > room) {
+            room = (len + need) * 2u;
+            text = realloc(text, room);
+            if (!text) abort();
+        }
+        len += (size_t)snprintf(text + len, room - len, "%016llx %016llx %016llx %s\n", (unsigned long long)p->file,
+                                (unsigned long long)p->with, (unsigned long long)p->stamp, name);
+    }
+    if (!was || strcmp(was, text) != 0) sys_write_text(path, text);
+    free(was);
+    free(text);
+    free(path);
 }
 
 // Lists the .c and .cpp files of the game, or of one of its packages
@@ -1731,7 +1840,9 @@ static bool queue_game(build *b, compiles *list, const char *gen, const char *ga
             free(name);
             line = end ? end + 1 : line + len;
         }
+        parts_stamped_read(b, gen, stamps, stamp_count);
         build_threads_each((uint32_t)stamp_count, (uint32_t)(b->jobs > 0 ? b->jobs : 1), part_stamp_work, stamps);
+        parts_stamped_write(gen, stamps, stamp_count);
         for (char *line = manifest; *line && ok; at++) {
             char *end = strchr(line, '\n');
             if (end) *end = '\0';
@@ -2151,6 +2262,59 @@ static void generated_lto_flags(args *a, const build *b, char **cache_flag, char
 // debug info on Windows goes in `pdb`. With `kept`, only when it would make
 // something other than what it made there last time: <output>.stamp says what
 // that was made of.
+// Runs a link whose arguments may be more than a command line holds (Windows': 32,767 characters, which a big
+// game's objects' paths pass): then they go in a file beside the output, `<output>.rsp`, that the compiler reads
+// (@file), each quoted as its command line's reader takes it.
+static int run_link(const char *const *items, const char *output)
+{
+    size_t length = 0;
+    int count = 0;
+    for (; items[count]; count++) length += strlen(items[count]) + 3u;
+#ifdef TIDE_EMBEDDED_CLANG
+    const int head = 2; // tide, cc
+#else
+    const int head = 1;
+#endif
+    if (length < 24000u || count <= head) return sys_run(items, NULL, false);
+    size_t room = length * 2u + 16u, at = 0;
+    char *text = malloc(room);
+    if (!text) abort();
+    for (int i = head; i < count; i++) {
+        text[at++] = '"';
+        for (const char *c = items[i]; *c;) {
+#ifdef _WIN32
+            // Backslashes are themselves but before a quote, or the closing one, where each is two
+            size_t slashes = 0;
+            while (c[slashes] == 92) slashes++;
+            if (slashes) {
+                const bool doubled = c[slashes] == '"' || !c[slashes];
+                for (size_t k = 0; k < slashes * (doubled ? 2u : 1u); k++) text[at++] = 92;
+                c += slashes;
+                continue;
+            }
+#else
+            if (*c == 92) text[at++] = 92;
+#endif
+            if (*c == '"') text[at++] = 92;
+            text[at++] = *c++;
+        }
+        text[at++] = '"';
+        text[at++] = 10;
+    }
+    text[at] = 0;
+    char *file = format("%s.rsp", output, NULL);
+    char *named = format("@%s", file, NULL);
+    int code = -1;
+    if (sys_write_text(file, text)) {
+        const char *run[4] = {items[0], head == 2 ? items[1] : named, head == 2 ? named : NULL, NULL};
+        code = sys_run(run, NULL, false);
+    }
+    free(named);
+    free(file);
+    free(text);
+    return code;
+}
+
 static bool link_objects(const build *b, const file_list *objects, const c_side *c, const char *output,
                          const bool shared, const char *pdb, const bool kept)
 {
@@ -2257,7 +2421,7 @@ static bool link_objects(const build *b, const file_list *objects, const c_side 
     // A ThinLTO link optimizes the generated C's parts as a whole first, which is most of its time
     build_step_shown(same ? "linked output is up to date" : "linking",
                      !same && b->generated_lto ? "optimizing across files and linking" : NULL);
-    const int code = same ? 0 : sys_run(a.items, NULL, false);
+    const int code = same ? 0 : run_link(a.items, output);
     if (code == 0 && stamp_path && !same) sys_write_text(stamp_path, stamp);
     free(stamp_path);
     if (code > 0) explain_link(b, a.items);
@@ -2800,8 +2964,8 @@ static void generation_free(generation *g)
     *g = (generation){0};
 }
 
-// Leaves the record of the generate just made in `gen`.
-static void generation_keep(const build *b, const char *gen, const char *key)
+// Leaves the record of the generate just made in `gen`. `assets` is stamp_assets of its paths, taken after it ran.
+static void generation_keep(const build *b, const char *gen, const char *key, const uint64_t assets)
 {
     char *path = path_join(gen, GENERATION_FILE);
     char *fresh = format("%s.new", path, NULL);
@@ -2811,7 +2975,7 @@ static void generation_keep(const build *b, const char *gen, const char *key)
         const game_info *info = &b->info;
         const char *externs = b->externs.data ? b->externs.data : "";
         fprintf(f, "%s\n%s\n%016llx\n%016llx\n%d%d%d\n", GENERATION_FORMAT, key,
-                (unsigned long long)stamp_assets(info->asset_paths, info->asset_count),
+                (unsigned long long)assets,
                 (unsigned long long)generated_stamp(gen), info->bold, info->microphone, info->assets_affect_match);
         const char *const texts[] = {info->simulation, info->title, info->app_id, info->version, externs};
         for (size_t i = 0; i < sizeof texts / sizeof texts[0]; i++) fprintf(f, "%zu\n%s\n", strlen(texts[i]), texts[i]);
@@ -2905,11 +3069,11 @@ static bool generation_read(const char *gen, generation *g)
 // Whether the generate `last` records in `gen` is the one `key` asks for, its assets' files and what tidec wrote as
 // they were: then `b` has what that generate gave it (its settings, its externs' names, the paths its assets name),
 // and `last` is empty.
-static bool generation_kept(build *b, const char *gen, const char *key, generation *last)
+static bool generation_kept(build *b, const char *gen, const char *key, generation *last, const uint64_t assets)
 {
     if (!last->text || strcmp(last->key, key) != 0) return false;
     char stamp[32];
-    snprintf(stamp, sizeof stamp, "%016llx", (unsigned long long)stamp_assets(last->info.asset_paths, last->info.asset_count));
+    snprintf(stamp, sizeof stamp, "%016llx", (unsigned long long)assets);
     if (strcmp(stamp, last->assets) != 0) return false;
     snprintf(stamp, sizeof stamp, "%016llx", (unsigned long long)generated_stamp(gen));
     if (strcmp(stamp, last->written) != 0) return false;
@@ -2938,11 +3102,13 @@ static bool generation_kept(build *b, const char *gen, const char *key, generati
 // it hasn't. `last` is the record before that generate, whose paths' stamp then was `before`: with the same paths
 // now, their stamp tells. Otherwise (a first generate, another asset declared) none may have been written since
 // the generate started, at `started`.
-static bool assets_stayed(const build *b, const generation *last, const uint64_t before, const uint64_t started)
+// *now gets the paths' stamp as it is after the generate, for its record.
+static bool assets_stayed(const build *b, const generation *last, const uint64_t before, const uint64_t started, uint64_t *now)
 {
     bool same = last->text && last->info.asset_count == b->info.asset_count;
     for (int i = 0; same && i < b->info.asset_count; i++) same = strcmp(last->info.asset_paths[i], b->info.asset_paths[i]) == 0;
-    if (same) return before == stamp_assets(b->info.asset_paths, b->info.asset_count);
+    *now = stamp_assets(b->info.asset_paths, b->info.asset_count);
+    if (same) return before == *now;
     return assets_newest(b) < started;
 }
 
@@ -3088,8 +3254,8 @@ static bool generate_sources(build *b, const char *gen, const bool layout)
     const codegen_options codegen = {.name = "game", .out_dir = gen, .line_directives = true, .layout = layout,
                                      .split_plumbing = splits_plumbing(b), .split_own_code = true,
                                      .split_code = true, .split_code_min_bytes = 4u * 1024u * 1024u,
-                                     .split_code_parts = 16,
-                                     .split_code_part_bytes = 512u * 1024u,
+                                     .split_code_parts = splits_plumbing(b) ? 32 : 16, // A debug build: plain objects, more of them
+                                     .split_code_part_bytes = splits_plumbing(b) ? 128u * 1024u : 512u * 1024u,
                                      .build_cc = build_cc, .build_flags = native_flags, .build_libs = build_libs,
                                      .build_include = b->include, .build_engine = engine_src,
                                      .visualizers = b->views != NULL,
@@ -3197,7 +3363,10 @@ static bool generate(build *b, const char *gen, const bool layout, compiles *ahe
     if (packages && records_generation(b)) generation_key(b, gen, layout, key);
     generation last = {0};
     if (key[0]) generation_read(gen, &last);
-    const bool kept = key[0] && keeps_generation(b) && generation_kept(b, gen, key, &last);
+    // The stamp of the files the last generate's assets named, as they are now: what says whether it stands, and
+    // what they're compared with once this one has run. Asked for once: a thousand files' sizes and times.
+    const uint64_t before = last.text ? stamp_assets(last.info.asset_paths, last.info.asset_count) : 0;
+    const bool kept = key[0] && keeps_generation(b) && generation_kept(b, gen, key, &last, before);
     if (kept) build_step("Tide code and assets are up to date");
     else if (packages) build_step("compiling Tide code and assets");
     if (packages && !kept) { // What's there is no generate's until this one ends well
@@ -3205,7 +3374,6 @@ static bool generate(build *b, const char *gen, const bool layout, compiles *ahe
         sys_remove(record);
         free(record);
     }
-    const uint64_t before = last.text ? stamp_assets(last.info.asset_paths, last.info.asset_count) : 0;
     const uint64_t started = sys_time();
     const unsigned long said = diag_warnings_said();
     early_build = b;
@@ -3214,8 +3382,9 @@ static bool generate(build *b, const char *gen, const bool layout, compiles *ahe
     compile_set_written(NULL);
     early_build = NULL;
     b->early = NULL;
+    uint64_t after = 0;
     if (ok && !kept && key[0] && said == diag_warnings_said() && !b->info.fetched_assets
-        && assets_stayed(b, &last, before, started)) generation_keep(b, gen, key);
+        && assets_stayed(b, &last, before, started, &after)) generation_keep(b, gen, key, after);
     generation_free(&last);
     if (!ok && ahead) free_compiles(ahead);
     if (own_feedback) end_build_feedback(ok);
@@ -3668,14 +3837,36 @@ static uint64_t asset_stamp(const build *b)
 }
 
 // The same for the `count` paths a generate listed (game_info.asset_paths): a folder's ends in a slash.
+// (Each file's stamp is asked of the system on a thread of its own turn: a big game names a thousand, a tenth of
+// a second one after another, and a build asks before it generates and after. The stamp is what one thread makes.)
+typedef struct asset_stamps {
+    char *const *paths;
+    uint64_t *stamps;
+} asset_stamps;
+
+static void asset_stamp_work(void *context, const uint32_t i)
+{
+    const asset_stamps *a = context;
+    const char *path = a->paths[i];
+    if (!(path[0] && path[strlen(path) - 1] == '/')) a->stamps[i] = sys_file_stamp(path);
+}
+
 static uint64_t stamp_assets(char *const *paths, const int count)
 {
     uint64_t h = 0xCBF29CE484222325ull;
+    asset_stamps a = {paths, calloc((size_t)count + 1u, sizeof *a.stamps)};
+    if (!a.stamps) abort();
+    build_threads_each((uint32_t)count, 0u, asset_stamp_work, &a);
     for (int i = 0; i < count; i++) {
         const char *path = paths[i];
-        if (path[0] && path[strlen(path) - 1] == '/') folder_find_files(path, stamp_asset_file, &h);
-        else stamp_file(&h, path);
+        if (path[0] && path[strlen(path) - 1] == '/') {
+            folder_find_files(path, stamp_asset_file, &h);
+            continue;
+        }
+        for (const char *c = path; *c; c++) h = (h ^ (uint8_t)*c) * 0x100000001B3ull; // As stamp_file
+        h = (h ^ a.stamps[i]) * 0x100000001B3ull;
     }
+    free(a.stamps);
     return h;
 }
 
