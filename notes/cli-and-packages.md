@@ -1,5 +1,35 @@
 # `tide`, packages and the package
 
+## Two of tidec's phases beside each other, and the [Parts] models read ahead (2026-11-18, later)
+
+Owner, on running tidec's independent phases in parallel: "yes go ahead". What turned out independent enough to
+do safely, for Mount & Rifle:
+
+- **What local journals read, beside the pack** (`codegen_side`, codegen.c). `collect_heard_reads`,
+  `collect_heard_codecs` and `collect_shard_codecs` walk the code and write `gen.heard_*`, `value_codec` and
+  `heard_heap`; `collect_asset_dependencies`, `build_pack` and the fingerprints write the pack and the two lists
+  of dependencies. Neither reads the other's, neither says a diagnostic the other could, names are made in the
+  arena (each thread's own blocks, `arena_thread`) and codegen.c has no other state they share (its statics are
+  flags set before). 0.14 s and 0.18 s, at once.
+- **A [Parts] declaration's model is read from the cache ahead** (`asset_files_parts_ahead`, asset_files.c;
+  check.c gathers each declaration's patterns as `check_parts_attribute` would, `attribute_pattern`). Each was
+  an entry of megabytes read, checked and unpacked as its declaration was checked, one after another: 28 of
+  them. Now on threads after the files' read-ahead, by the key `asset_choose_parts` and `import_cache_key` give
+  (`import_cache_key_of`), and `read_item` takes what was read where it would read the same entry
+  (`read_file.parts_ahead`), marking it used. A declaration whose patterns aren't plain constants, a glob or a
+  URL is read as before.
+
+What wasn't: the assets beside the code's checking (a model's catalogs are types the code is checked with); the
+simulation's identity beside the bodies (it hashes the program as codegen leaves it at one moment, and must be the
+same number every build); parsing files at once (the declarations' lists and the diagnostics are one thread's).
+
+Measured side by side with the tide before (each on its own copy, by turns, six rounds; the machine was busy, so
+the least of each): a constant edited 3.55 s to 3.33, a field added 8.87 s to 8.05. tidec's phases: "generating C"
+before the pack 0.19 s to 0.05; the assets 0.43 s to 0.35.
+
+Tests and validation (Windows, Clang 23.1.2, ASan): 34 focused tests (the asset reader's and cache's, skinned, [Parts] and animation fixtures, listeners and local events, the split and debugger tests, `tide_cli_build_report`, `tide_cli_assets`, `tide_cli_generation`); the packaged tide passes `cache_test.mjs --part cache --gpu` and `--part modes --gpu` and builds and runs Mount & Rifle. The compiler before the round of 2026-11-17 and this
+one write the same C for every e2e fixture but the identity's line (355 of them; six storage files and `dev_build` differ by two fixes merged from dev since, 3a6ded61e and 730408c1e). Not run: Linux/macOS, web, Android: CI's.
+
 ## tide's own steps around a generate, and thirty-two parts (2026-11-18)
 
 Owner: "time to run is extremely important to me". What tide itself did around tidec, timed with marks (taken
@@ -661,7 +691,7 @@ existing stronger header invalidation. Neither engine/package objects nor the ga
 Measurements (Windows, clang/lld 23.1.2, Ryzen 9 7900X; exploratory single passes, ordinary desktop load): Mount &
 Rifle's 102,183,928-byte C took 49.47 s to compile as one file, 29.84 s with the prior two-file split, 19.39 s in four
 parts, and 6.71 s in four ThinLTO parts. Successful DLL links retaining the game API took 0.32 / 0.45 / 0.56 / 10.24 s
-respectively: about 49.8 to 17.0 s for that C-and-link work. These are MSVC-ABI experiments, not timings of the
+respectively: about 49.8 to 17.0 s for that C-and-link work. These are MSVC-355 of them; six storage files and `dev_build` differ by two fixes merged from dev since, 3a6ded61e and 730408c1eI experiments, not timings of the
 packaged MinGW CLI or total game builds; asset import/Tide generation and engine/package compilation are excluded.
 Separating shader arrays alone took 51.20 s and was rejected. The initial full-file time trace put 23.3 s in LLVM
 optimization and 28.7 s in backend code generation, against 5.9 s in the frontend. Raw data and identities:
@@ -895,7 +925,7 @@ channels and active users/installers are skipped. Last-use stamps live outside
 the installations and refresh before and after commands. Legacy caches acquire
 a new 30-day grace period on first observation. Expired pins are downloaded again
 with existing consent. Lock files remain to preserve cross-process lock identity.
-No background service, runtime ABI, telemetry field or game code changes.
+No background service, runtime 355 of them; six storage files and `dev_build` differ by two fixes merged from dev since, 3a6ded61e and 730408c1eI, telemetry field or game code changes.
 
 Validation: strict warning-free Windows Clang 23.1.2 ASan builds; the seven
 focused CLI CTests and tidels_tests pass (8/8). The final version fixture passes
@@ -905,7 +935,7 @@ sharing/update deferral, consent, checksum/offline fallback, last-use expiry,
 legacy grace, active exact-version protection and symlink/junction boundaries.
 It exercises both host commands and --web forwarding without running a game.
 Unity 6000.6.0f1 VersionTests passes 12 tests in a scratch Sample under
-TIDE_HIDDEN/batchmode/nographics/noAudio; one existing ABI-5-host test is ignored
+TIDE_HIDDEN/batchmode/nographics/noAudio; one existing 355 of them; six storage files and `dev_build` differ by two fixes merged from dev since, 3a6ded61e and 730408c1eI-5-host test is ignored
 because that unrelated fixture was not supplied. Editor lock exclusion/release
 and last-use refresh pass. Node 24.22.1 docs production build and diff checks
 pass; the docs retain existing allowed unstaged-game-page 404s. Release-dispatch
@@ -1019,7 +1049,7 @@ then starts generated/game/package C within the existing TIDE_JOBS budget.
 The front end stays on its caller thread: no concurrent arena, checker or
 importer access. Already-cached engines start no speculative jobs; TIDE_JOBS=1
 keeps generation and C compilation serial. Android still generates once before
-its two ABI builds; its C batches use the shared scheduler without prelaunch.
+its two 355 of them; six storage files and `dev_build` differ by two fixes merged from dev since, 3a6ded61e and 730408c1eI builds; its C batches use the shared scheduler without prelaunch.
 
 Within the existing batch, generated game.c keeps first priority, followed by
 engine sources in descending file-size order, then other C in its existing
@@ -1171,7 +1201,7 @@ package resolution, Tide/asset compilation, C/C++ compilation and linking.
 C/C++ batches announce their file/worker counts and each successful completion
 with a completed/total count and basename; empty batches and reused links say
 they are up to date. Native runs announce launch; web/Android standalone builds
-announce packaging, and Android links identify their ABI. Shared build paths
+announce packaging, and Android links identify their 355 of them; six storage files and `dev_build` differ by two fixes merged from dev since, 3a6ded61e and 730408c1eI. Shared build paths
 also give watched rebuilds this feedback. stdout completion messages, diagnostic
 ordering, cache stamps, compiler scheduling and runtime contracts stay unchanged.
 These are real file counts, not an estimated overall percentage or timer.
@@ -1293,7 +1323,7 @@ after successful code generation, using the existing `game_info.asset_paths`
 collection. It refuses inspection-only modes and fails on output I/O errors.
 `tide_add_game` consumes the file for reference model/side-buffer rebuilds;
 the in-process CLI watcher already reads the same asset path collection.
-No game runtime ABI or telemetry fields change. Contracts and validation:
+No game runtime 355 of them; six storage files and `dev_build` differ by two fixes merged from dev since, 3a6ded61e and 730408c1eI or telemetry fields change. Contracts and validation:
 notes/tide-programs.md and notes/assets-and-files.md.
 
 ## Release prunes again; distribution keeps only shipping cuts (2026-10-30)
@@ -1307,7 +1337,7 @@ collects sections in every mode, as before. Distribution alone keeps: symbol
 stripping (-s, Apple -S -x -no_exported_symbols, wasm -s), name/shader-name
 stripping with the private game.names map, debugger-sidecar cleanup, -DNDEBUG,
 the Windows GUI subsystem, the minified/compressed web page, Android's export
-allowlist, appId requirement, non-debuggable APK and AAB. Release keeps -g,
+allowlist, appId requirement, non-debuggable APK and A355 of them; six storage files and `dev_build` differ by two fixes merged from dev since, 3a6ded61e and 730408c1e. Release keeps -g,
 PDB/dSYM, natvis/LLDB views, names and assertions. NDEBUG stays a distribution
 cut: it is no pruning, and the split's release-keeps-assertions choice stands
 until the owner says otherwise.
@@ -1378,7 +1408,7 @@ undefined; no new language symbol or telemetry field is introduced.
 Caches are separate <target>-debug/release/distribution directories. Custom-C
 simulation identity records all three modes because NDEBUG can affect trusted
 C. Android release APKs stay debuggable and accept the default app ID;
-distribution requires appId and produces the shipping AAB/limited exports.
+distribution requires appId and produces the shipping A355 of them; six storage files and `dev_build` differ by two fixes merged from dev since, 3a6ded61e and 730408c1e/limited exports.
 Deploy explicitly requests distribution, preserving its shipping contract.
 Unity declaration fallback forwards the selected mode. CMake configurations
 and tidec's explicit strip options are unchanged.
@@ -1546,9 +1576,9 @@ their APIs. Android standalone release links use platform/android/game.exports:
 only ANativeActivity_onCreate is global; all other game/runtime definitions are
 local. Its entry point already has the required explicit visibility/root.
 The platform install ships that file as lib/android/game.exports, shared by
-the two ABI folders. A missing file fails the release build with reinstall
+the two 355 of them; six storage files and `dev_build` differ by two fixes merged from dev since, 3a6ded61e and 730408c1eI folders. A missing file fails the release build with reinstall
 guidance. Separately supplied game libraries are not relinked or restricted.
-The APK, generated headers and host ABI do not change. Custom code relying on
+The APK, generated headers and host 355 of them; six storage files and `dev_build` differ by two fixes merged from dev since, 3a6ded61e and 730408c1eI do not change. Custom code relying on
 dynamic lookup of libgame.so's former incidental exports must expose its API in
 a separate library. CMake shipping apps use the same export policy; debug and
 profiling configs retain names.
@@ -1568,7 +1598,7 @@ and batching pass Vulkan/OpenGL/WebGL/D3D11/WebGPU. The all-fixture check pins
 Native/web installed --strip-only checks pass with actual shader sentinels and
 private maps, including split/single-file pages and debug-to-release cleanup.
 
-Both Android platform ABI libraries build and install the allowlist. The staged
+Both Android platform 355 of them; six storage files and `dev_build` differ by two fixes merged from dev since, 3a6ded61e and 730408c1eI libraries build and install the allowlist. The staged
 CLI passes cpp_test.cmake with WEB and ANDROID enabled: real debug/release APKs,
 C++ constructors/virtual dispatch/custom allocation, expected failure cases,
 and only the NativeActivity export in both release libgame.so files. CMake's
@@ -1662,7 +1692,7 @@ selection is a declaration-valued `settings { startScene = Levels.Start; }`;
 Main behavior remains. A prefab entry uses the ordinary checked Scene.Load
 path, its authored root and normal Spawned handlers, then ordinary systems,
 views and session startup. Match and local scene entries retain their normal
-placement. No new runtime function or generated-C/runtime ABI is introduced.
+placement. No new runtime function or generated-C/runtime 355 of them; six storage files and `dev_build` differ by two fixes merged from dev since, 3a6ded61e and 730408c1eI is introduced.
 CLI help exposes --scene for build/run and describes hosting and several-player
 startup using the selected match/local entry. The help fixture pins the option,
 persisted-setting example and removal of the former Main-only requirements.
@@ -2265,7 +2295,7 @@ fully unoptimized for engine development and correctness testing.
 Engine compile jobs and their object stamps use the same engine-specific
 flags. An old engine stamp rebuilds engine objects without changing the
 game's compilation policy. Existing per-game/configuration caches remain;
-ordinary game edits do not rebuild the engine. No ABI, runtime API or
+ordinary game edits do not rebuild the engine. No 355 of them; six storage files and `dev_build` differ by two fixes merged from dev since, 3a6ded61e and 730408c1eI, runtime API or
 language semantics changed, and no animation sampling/binding cache was added.
 
 The package cache integration test checks optimization/assertion macros in
@@ -2367,7 +2397,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 - **Standalone release games collect unused code and data** (2026-10-10). `compiler/cli/build.c` compiles release engine/game/package C with `-ffunction-sections` and `-fdata-sections`, then links MinGW and ELF executables with `--gc-sections,-s`, macOS executables with `-dead_strip,-S,-x`, and WebAssembly with `-s` (wasm-ld already collects unused functions and data in every configuration). The section flags enter the ordinary object stamps; every build relinks, so a changed link policy never reuses a stale program. `-O2` and the determinism flags stay as before, with no LTO. Debug links and watched/hot-reload links keep their existing policy and public API. Android release libraries collect private sections and strip debug/symbol tables while retaining public exports, including the NativeActivity entry; no export visibility is narrowed. Prebuilt platform objects get sections in Release, RelWithDebInfo and MinSizeRel through `tide_flags`, so collection can work within an archive member as well as between members. Runtime references, retained exports and callbacks remain roots, and arbitrary prebuilt third-party libraries can only be collected as finely as their own sections allow.
   - `cache_test.mjs` checks the installed build path using a private installation copy: an extra engine source and the game's own C each contain a called function/data sentinel and an uncalled one. Both uncalled markers exist in the release objects but disappear from the final native/web program, both called markers remain, and native debug retains all four. An asset with no Tide reference remains available to the game's C. `--strip-only` runs these checks without the cache/watch cases; they also run in the ordinary package cache test. `cpp_test.cmake` builds the successful constructor, virtual-dispatch and custom-allocation cases in debug and release on native/web, and its Android case in both configurations when requested.
   - Automatic unused-asset pruning is enabled only for release standalone games without layout/watch mode and without C/C++ or prebuilt libraries in the game or any resolved package. C can look up a pack entry by name without a Tide reference, so such interop games keep every asset. This opt-in is independent of `DEBUG`; the compiler's default and custom-host builds keep their asset API. Asset graph details are in `notes/assets-and-files.md`.
-  - Validation on Windows: the staged package passed native/web sentinel checks, all C++ package cases in debug/release, and Android compilation for both ABIs using the installed NDK. Both Android release libraries retained `ANativeActivity_onCreate` and `main` exports. Web watching passed in debug and release; the native scripted reload/swap test passed with ordinary debug libraries and isolated optimized libraries compiled with function/data sections. Node syntax and strict C17 warning checks passed. No Android emulator or macOS linker was run for this change.
+  - Validation on Windows: the staged package passed native/web sentinel checks, all C++ package cases in debug/release, and Android compilation for both 355 of them; six storage files and `dev_build` differ by two fixes merged from dev since, 3a6ded61e and 730408c1eIs using the installed NDK. Both Android release libraries retained `ANativeActivity_onCreate` and `main` exports. Web watching passed in debug and release; the native scripted reload/swap test passed with ordinary debug libraries and isolated optimized libraries compiled with function/data sections. Node syntax and strict C17 warning checks passed. No Android emulator or macOS linker was run for this change.
   - Full debug suites passed 2,061 native and 2,031 web tests, and the production docs build passed. With identical source cases and LLVM 23.1.2, a minimal Windows release shrank from 1,534,464 to 991,744 bytes and Duel from 1,915,392 to 1,436,160; their WASM payloads shrank from 835,829 to 601,001 and 1,274,398 to 1,033,845 bytes. These are raw payload sizes, not compressed download sizes. The runtime JavaScript stayed at 148,672 bytes. Bounded native/browser smoke runs, stale-pack cleanup and unused URL/path omission passed; asset pack measurements are in `assets-and-files.md`.
   - WSL passed the seven asset-usage cases under ASan/UBSan with leak detection. ELF probes using Clang 18/23 and both GNU ld and lld preserved called functions, C++ constructors and virtual dispatch, removed unused function/data sections and stripped `.symtab`. GNU ld retained a pooled unused string sharing a section with a used literal; packaged Linux's embedded lld removed it. After merging concurrent skinned runtime/codegen optimizations, the affected asset/model/pack/order suites passed 206 native and 201 web tests. Requested Build run `38079507404` covers `c75ebcda`, including these changes; its Windows and macOS package checks exposed the missing private-header installation described below.
 - **Gameplay model assets rebuild under watching** (built 2026-10-08, extended 2026-10-09): `game_info.assets_affect_match` is true when generated code has a skinned asset or assets reached by its typed skinned vertex defaults, including Decode-only programs. Native and web watchers in `compiler/cli/build.c` send settled asset changes, including external glTF buffers, through the ordinary library/program build path; the generated header's canonical model-content and selected default-dependency fingerprints give that build its new identity. A game without either keeps its existing pack-only repack path. A failed generation retains the last successful `game_info` and its watched asset paths, so correcting a bad model triggers another build without an unrelated source edit. `game_info` is returned in-process; there is no serialized CLI metadata format for this flag. `tidec_skinned_default_identity` covers asset dependencies through Decode without an imported skinned declaration.

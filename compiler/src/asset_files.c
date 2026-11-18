@@ -88,7 +88,18 @@ typedef struct read_file {
     // ...and of the mesh read ahead with tangents made for it, in `tangent_mesh`, which asset_mesh_tangents takes
     bool tangent_ahead, tangent_ahead_old;
     uint8_t tangent_ahead_key[32];
+    // ...and some of its parts, a [Parts] declaration's each (asset_files_parts_ahead), until read_item takes them
+    struct parts_read *parts_ahead;
+    int parts_ahead_count;
 } read_file;
+
+typedef struct parts_read {
+    uint8_t key[32]; // The cache's entry
+    uint8_t *bytes;  // The model, validated
+    uint32_t size;
+    mesh_file mesh;  // Its geometry (skin_geometry)
+    bool old;        // The entry is due its mark of use
+} parts_read;
 
 typedef struct mesh_side {
     char *path;
@@ -176,6 +187,17 @@ static void forget_mesh(read_file *f)
     f->mesh_tried = f->mesh_ok = false;
 }
 
+static void forget_parts(read_file *f)
+{
+    for (int i = 0; i < f->parts_ahead_count; i++) {
+        mesh_file_free(&f->parts_ahead[i].mesh);
+        tide_skinned_data_free(f->parts_ahead[i].bytes);
+    }
+    free(f->parts_ahead);
+    f->parts_ahead = NULL;
+    f->parts_ahead_count = 0;
+}
+
 static void forget_skin(read_file *f)
 {
     if (f->skin_ok || f->skin_ahead) mesh_file_free(&f->skin_mesh);
@@ -193,6 +215,7 @@ static void forget_file(read_file *f)
 {
     forget_mesh(f);
     forget_skin(f);
+    forget_parts(f);
     free(f->path);
     free(f->data);
     free(f->sound_data);
@@ -1054,17 +1077,23 @@ static bool check_cached_side(void *user, const char *path, const uint8_t hash[3
     return true;
 }
 
-static void import_cache_key(uint8_t cache[32], const read_file *f, const char *name, const char *kind, const bool parts)
+static void import_cache_key_of(uint8_t cache[32], const read_file *f, const char *name, const char *kind, const uint8_t *chosen)
 {
     tide_sha256 h;
     uint8_t variant[32];
     tide_sha256_init(&h);
     tide_sha256_add(&h, f->path, strlen(f->path) + 1);
     tide_sha256_add(&h, name, strlen(name) + 1); // Suffix-based format selection, including URLs.
-    if (parts) tide_sha256_add(&h, parts_key, sizeof parts_key);
+    if (chosen) tide_sha256_add(&h, chosen, 32);
     tide_sha256_end(&h, variant);
     asset_cache_key(cache, kind, f->hash, variant, sizeof variant);
 }
+
+static void import_cache_key(uint8_t cache[32], const read_file *f, const char *name, const char *kind, const bool parts)
+{
+    import_cache_key_of(cache, f, name, kind, parts ? parts_key : NULL);
+}
+
 
 static void write_import_cache(const char *folder, const uint8_t key[32], const side_reader *sides,
                                const void *bytes, const size_t size)
@@ -1319,9 +1348,22 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
         char why[256], note[256];
         uint8_t cache[32];
         import_cache_key(cache, f, key, "skin-parts", true);
-        size_t cached_size;
-        bytes = asset_import_cache_read(game_folder, cache, check_cached_side, &sides, &cached_size);
-        bool ok = bytes && cached_size <= UINT32_MAX && tide_skinned_data_validate(bytes, cached_size);
+        size_t cached_size = 0;
+        // Read ahead with the other declarations' (asset_files_parts_ahead): the entry this would read, checked
+        mesh_file ahead_mesh;
+        bool ahead = false;
+        for (int i = 0; i < f->parts_ahead_count && !ahead; i++) {
+            parts_read *r = &f->parts_ahead[i];
+            if (memcmp(r->key, cache, sizeof cache) != 0) continue;
+            if (r->old) asset_cache_mark_used(game_folder, cache);
+            bytes = r->bytes;
+            cached_size = r->size;
+            ahead_mesh = r->mesh;
+            ahead = true;
+            *r = f->parts_ahead[--f->parts_ahead_count];
+        }
+        if (!ahead) bytes = asset_import_cache_read(game_folder, cache, check_cached_side, &sides, &cached_size);
+        bool ok = ahead || (bytes && cached_size <= UINT32_MAX && tide_skinned_data_validate(bytes, cached_size));
         if (ok) size = (uint32_t)cached_size;
         else {
             free(bytes); bytes = NULL;
@@ -1356,7 +1398,7 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
         memcpy(copy, bytes, size);
         item->skinned = copy;
         item->skinned_size = size;
-        item->mesh = skin_geometry(bytes, size); // Lives as the compiler does, as the arena's copy
+        item->mesh = ahead ? ahead_mesh : skin_geometry(bytes, size); // Lives as the compiler does, as the arena's copy
         tide_skinned_data_free(bytes);
         item->side_count = sides.count;
         item->sides = arena_alloc(sizeof(char *) * (size_t)(sides.count ? sides.count : 1));
@@ -2010,6 +2052,75 @@ void asset_files_decode_ahead(const char *const *declaring, const str *paths, co
     }
     build_threads_each(n, DECODES_AT_ONCE, decode_one, &d);
     for (uint32_t i = 0; i < n; i++) d.files[i]->decoded = true;
+}
+
+typedef struct parts_seek {
+    read_file *file;
+    const char *game_folder;
+    parts_read read;
+    bool found;
+} parts_seek;
+
+static void parts_one(void *context, const uint32_t i)
+{
+    parts_seek *s = &((parts_seek *)context)[i];
+    size_t size;
+    uint8_t *bytes = asset_import_cache_read_alone(s->game_folder, s->read.key, &size, &s->read.old);
+    if (bytes && size <= UINT32_MAX && tide_skinned_data_validate(bytes, size)) {
+        s->read.bytes = bytes;
+        s->read.size = (uint32_t)size;
+        s->read.mesh = skin_geometry(bytes, s->read.size);
+        s->found = true;
+    } else free(bytes);
+}
+
+void asset_files_parts_ahead(const asset_parts_wanted *wanted, const int count, const char *game_folder)
+{
+    if (!use_build_cache || !game_folder || count <= 0) return;
+    parts_seek *seeks = calloc((size_t)count, sizeof *seeks);
+    if (!seeks) abort();
+    uint32_t n = 0;
+    for (int i = 0; i < count; i++) {
+        const char *written = asset_written_path(wanted[i].path);
+        const size_t len = strlen(written);
+        if (!*written || asset_path_is_url(written, len) || asset_path_is_glob(written, len)) continue;
+        char *at = declaring_abs(wanted[i].declaring);
+        char *folder = asset_path_folder(at);
+        char *abs = asset_path_join(folder, written, len);
+        read_file *f = file_had(abs);
+        free(abs);
+        free(folder);
+        free(at);
+        if (!f) continue;
+        // The key asset_choose_parts gives these patterns, and import_cache_key the file with it
+        tide_sha256 h;
+        uint8_t chosen[32];
+        tide_sha256_init(&h);
+        for (int k = 0; k < wanted[i].count; k++) {
+            const uint32_t length = (uint32_t)wanted[i].patterns[k].len;
+            tide_sha256_add(&h, &length, sizeof length);
+            tide_sha256_add(&h, wanted[i].patterns[k].ptr, length);
+        }
+        tide_sha256_end(&h, chosen);
+        parts_seek *s = &seeks[n];
+        import_cache_key_of(s->read.key, f, written, "skin-parts", chosen);
+        bool listed = false; // Two declarations of the same parts of a file read one entry
+        for (uint32_t k = 0; k < n && !listed; k++) listed = seeks[k].file == f && !memcmp(seeks[k].read.key, s->read.key, 32);
+        for (int k = 0; k < f->parts_ahead_count && !listed; k++) listed = !memcmp(f->parts_ahead[k].key, s->read.key, 32);
+        if (listed) continue;
+        s->file = f;
+        s->game_folder = game_folder;
+        n++;
+    }
+    build_threads_each(n, 0u, parts_one, seeks);
+    for (uint32_t i = 0; i < n; i++) {
+        if (!seeks[i].found) continue;
+        read_file *f = seeks[i].file;
+        f->parts_ahead = realloc(f->parts_ahead, sizeof *f->parts_ahead * (size_t)(f->parts_ahead_count + 1));
+        if (!f->parts_ahead) abort();
+        f->parts_ahead[f->parts_ahead_count++] = seeks[i].read;
+    }
+    free(seeks);
 }
 
 void asset_watched(const char *declaring_as_given, const str path, asset_path_fn found, void *user)

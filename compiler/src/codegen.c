@@ -30696,6 +30696,30 @@ static void parts_one(void *context, const uint32_t i)
     }
 }
 
+typedef struct codegen_sides {
+    gen *g;
+    bool failed; // An asset's fingerprint couldn't be taken, which said why
+} codegen_sides;
+
+static void codegen_side(void *context, const uint32_t i)
+{
+    codegen_sides *s = context;
+    gen *g = s->g;
+    if (i == 0) {
+        collect_heard_reads(g);
+        collect_heard_codecs(g);
+        collect_shard_codecs(g);
+        return;
+    }
+    collect_asset_dependencies(g);
+    if (g->opts->info && g->asset_dependencies.count) g->opts->info->assets_affect_match = true;
+    if (g->asset_dependencies.count || g->skinned_fingerprints.count) {
+        build_pack(g);
+        s->failed = (g->asset_dependencies.count && !fingerprint_assets(g, g->asset_dependencies.items, g->asset_dependencies.count, true))
+                 || (g->skinned_fingerprints.count && !fingerprint_assets(g, g->skinned_fingerprints.items, g->skinned_fingerprints.count, false));
+    }
+}
+
 bool codegen(program *prog, const codegen_options *opts)
 {
     compile_progress("Generating C", NULL, 0, 0);
@@ -30856,19 +30880,14 @@ bool codegen(program *prog, const codegen_options *opts)
         }
     }
     collect_heard_rows(&g);
-    collect_heard_reads(&g);
-    collect_heard_codecs(&g);
-    collect_shard_codecs(&g);
-    collect_asset_dependencies(&g);
-    if (opts->info && g.asset_dependencies.count) opts->info->assets_affect_match = true;
-    if (g.asset_dependencies.count || g.skinned_fingerprints.count) {
-        build_pack(&g);
-        if ((g.asset_dependencies.count && !fingerprint_assets(&g, g.asset_dependencies.items, g.asset_dependencies.count, true))
-            || (g.skinned_fingerprints.count && !fingerprint_assets(&g, g.skinned_fingerprints.items, g.skinned_fingerprints.count, false))) {
-            free(g.pack_bytes);
-            free(g.pack_holes);
-            return false;
-        }
+    // Two things neither of which reads what the other makes, at once: what local journals read of the events (a
+    // walk of all the code, to its codecs), and the pack with the fingerprints of the assets the match depends on
+    codegen_sides sides = {.g = &g};
+    build_threads_each(2u, 0u, codegen_side, &sides);
+    if (sides.failed) {
+        free(g.pack_bytes);
+        free(g.pack_holes);
+        return false;
     }
     g.ix_any = ix_program(&g);
     gen_header(&g);

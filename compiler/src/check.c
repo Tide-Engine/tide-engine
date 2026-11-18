@@ -27208,6 +27208,27 @@ bool check(program *prog)
             }
         }
         asset_files_decode_ahead(declaring.items, written.items, written.count, prog->game_folder);
+        // ...and the models whose declarations choose parts of them, each by its patterns, as its check asks for it
+        VEC(asset_parts_wanted) parts = {0};
+        for (int i = 0; i < prog->decls.count; i++) {
+            const decl *k = prog->decls.items[i];
+            if (k->kind != DECL_ASSET || !k->value || k->value->kind == E_LIST || !k->unit || !k->unit->src) continue;
+            const expr *path = text_literal(k->value);
+            const attribute *chosen = NULL;
+            int named = 0;
+            for (int a = 0; a < k->attributes.count; a++) {
+                if (!str_eq_c(k->attributes.items[a].name, "Parts")) continue;
+                chosen = &k->attributes.items[a];
+                named++;
+            }
+            if (!path || named != 1 || chosen->args.count || !chosen->values.count) continue; // Its check says what's wrong
+            str *patterns = arena_alloc(sizeof *patterns * (size_t)chosen->values.count);
+            bool whole = true;
+            for (int v = 0; v < chosen->values.count && whole; v++) whole = attribute_pattern(chosen->values.items[v], &patterns[v]);
+            if (!whole) continue;
+            vec_push(parts, ((asset_parts_wanted){k->unit->src->path, path->text, patterns, chosen->values.count}));
+        }
+        asset_files_parts_ahead(parts.items, parts.count, prog->game_folder);
     }
     diag_step("assets read ahead");
     compile_progress_whole(2 * asset_decls);

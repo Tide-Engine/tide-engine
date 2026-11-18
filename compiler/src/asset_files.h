@@ -129,6 +129,18 @@ void asset_watched(const char *declaring, str path, asset_path_fn found, void *u
 // same way; what's wrong with one is said when an asset reads it.
 void asset_files_decode_ahead(const char *const *declaring, const str *paths, int count, const char *game_folder);
 
+// The skinned models a [Parts] declaration will ask for (asset_choose_parts, then asset_resolve), looked for in the
+// build's cache ahead, at once: each a file `path` names from the file `declaring` (one file: a glob's or a URL's
+// is left to its declaration) with the patterns its Parts has. After asset_files_decode_ahead, which reads the
+// files' hashes. What's found is what asset_resolve would read from the cache, taken by it when it's asked.
+typedef struct asset_parts_wanted {
+    const char *declaring;
+    str path;
+    const str *patterns;
+    int count;
+} asset_parts_wanted;
+void asset_files_parts_ahead(const asset_parts_wanted *wanted, int count, const char *game_folder);
+
 // Whether `path` (forward slashes) matches the glob `pattern`: `*` within a
 // name, `**` across folders, `?` a character; Windows paths ignore case.
 bool asset_glob_match(const char *pattern, const char *path);
