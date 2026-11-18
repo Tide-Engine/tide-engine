@@ -40,9 +40,46 @@
 #define SPIRV_WORDS(name) 0u
 #endif
 
+#if !defined(__wasm__) && !defined(__ANDROID__)
+static void read_room_is(const uint8_t *bytes, size_t room);
+
+// The pack read ahead (tide_platform_pack_ahead), if one was: its bytes, known as a read's are
+static uint8_t *pack_read_ahead(size_t *size, uint64_t progress[2])
+{
+    char path[4096];
+    size_t room = 0;
+    uint8_t *bytes = tide_window_pack_path(path) ? tide_jobs_read_ahead_take(path, size, &room) : NULL;
+    if (!bytes) return NULL;
+    read_room_is(bytes, room);
+    if (progress) {
+        __atomic_store_n(&progress[1], (uint64_t)*size, __ATOMIC_RELAXED);
+        __atomic_store_n(&progress[0], (uint64_t)*size, __ATOMIC_RELAXED);
+    }
+    return bytes;
+}
+
+void tide_platform_pack_ahead(void)
+{
+    char path[4096];
+    if (tide_window_pack_path(path)) tide_jobs_read_ahead(path);
+}
+#else
+static uint8_t *pack_read_ahead(size_t *size, uint64_t progress[2])
+{
+    (void)size;
+    (void)progress;
+    return NULL;
+}
+
+void tide_platform_pack_ahead(void)
+{
+}
+#endif
+
 uint8_t *tide_platform_pack(size_t *size)
 {
-    return tide_window_pack(size, NULL);
+    uint8_t *ahead = pack_read_ahead(size, NULL);
+    return ahead ? ahead : tide_window_pack(size, NULL);
 }
 
 uint8_t *tide_platform_pack_counted(size_t *size, uint64_t progress[2])
@@ -51,7 +88,8 @@ uint8_t *tide_platform_pack_counted(size_t *size, uint64_t progress[2])
         __atomic_store_n(&progress[0], 0u, __ATOMIC_RELAXED);
         __atomic_store_n(&progress[1], 0u, __ATOMIC_RELAXED);
     }
-    return tide_window_pack(size, progress);
+    uint8_t *ahead = pack_read_ahead(size, progress);
+    return ahead ? ahead : tide_window_pack(size, progress);
 }
 
 #ifndef __wasm__
@@ -105,6 +143,14 @@ static void read_some(void *context, const uint32_t thread)
 // What the last read allocated (tide_platform_read_room)
 static const uint8_t *read_last;
 static size_t read_last_room;
+
+#ifndef __ANDROID__
+static void read_room_is(const uint8_t *bytes, const size_t room)
+{
+    read_last_room = room;
+    __atomic_store_n(&read_last, bytes, __ATOMIC_RELEASE);
+}
+#endif
 
 size_t tide_platform_read_room(const uint8_t *bytes)
 {

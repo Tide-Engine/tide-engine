@@ -10,8 +10,11 @@
 
 #include "tide/platform.h"
 
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "tide/time.h" // How long a round took (run)
 #include "tide/worker.h"
@@ -853,6 +856,120 @@ const tide_jobs *tide_platform_jobs(void)
 void tide_platform_jobs_profile(tide_profile *profile)
 {
     the_pool.jobs.profile = profile;
+}
+
+// ---------------------------------------------------------------------------
+// A file read ahead (tide_platform_pack_ahead): on threads of its own, started before the window and the device
+// are opened, which take about as long as a big game's pack does to read. Not the pool's, which starts later and
+// whose threads are the game's.
+
+enum { AHEAD_PIECE = 8 << 20, AHEAD_THREADS = 8 };
+
+static struct {
+    bool started;
+    char path[4096];
+    uint8_t *bytes;
+    uint64_t length;
+    size_t room;
+    uint32_t next, failed; // The next piece to read, and whether one couldn't be (atomic)
+    int threads;
+#ifdef _WIN32
+    HANDLE handles[AHEAD_THREADS];
+#else
+    pthread_t handles[AHEAD_THREADS];
+#endif
+} ahead;
+
+static void ahead_read(void)
+{
+    const uint64_t pieces = (ahead.length + AHEAD_PIECE - 1u) / AHEAD_PIECE;
+    FILE *f = NULL;
+    for (;;) {
+        const uint64_t i = __atomic_fetch_add(&ahead.next, 1u, __ATOMIC_RELAXED);
+        if (i >= pieces || __atomic_load_n(&ahead.failed, __ATOMIC_RELAXED)) break;
+        if (!f) f = fopen(ahead.path, "rb");
+        const uint64_t at = i * AHEAD_PIECE, left = ahead.length - at;
+        const size_t want = left < AHEAD_PIECE ? (size_t)left : (size_t)AHEAD_PIECE;
+#ifdef _WIN32
+        const bool there = f && _fseeki64(f, (int64_t)at, SEEK_SET) == 0;
+#else
+        const bool there = f && fseek(f, (long)at, SEEK_SET) == 0;
+#endif
+        if (!there || fread(ahead.bytes + at, 1, want, f) != want) __atomic_store_n(&ahead.failed, 1u, __ATOMIC_RELAXED);
+    }
+    if (f) fclose(f);
+}
+
+#ifdef _WIN32
+static DWORD WINAPI ahead_thread(LPVOID unused)
+{
+    (void)unused;
+    ahead_read();
+    return 0;
+}
+#else
+static void *ahead_thread(void *unused)
+{
+    (void)unused;
+    ahead_read();
+    return NULL;
+}
+#endif
+
+void tide_jobs_read_ahead(const char *path)
+{
+    if (ahead.started || strlen(path) >= sizeof ahead.path) return;
+    FILE *f = fopen(path, "rb");
+    if (!f) return;
+#ifdef _WIN32
+    const int64_t length = _fseeki64(f, 0, SEEK_END) == 0 ? _ftelli64(f) : -1;
+#else
+    const int64_t length = fseek(f, 0, SEEK_END) == 0 ? (int64_t)ftell(f) : -1;
+#endif
+    fclose(f);
+    // A small file is read as fast by whoever asks for it
+    if (length < 4 * (int64_t)AHEAD_PIECE || (uint64_t)length >= (uint64_t)PTRDIFF_MAX / 2u) return;
+    ahead.room = (size_t)length + (size_t)length / 16u + ((size_t)2u << 20); // As tide_platform_read_counted leaves
+    ahead.bytes = malloc(ahead.room);
+    if (!ahead.bytes) return;
+    ahead.length = (uint64_t)length;
+    strcpy(ahead.path, path);
+    ahead.next = ahead.failed = 0;
+    ahead.threads = 0;
+    for (int i = 0; i < AHEAD_THREADS; i++) {
+#ifdef _WIN32
+        ahead.handles[ahead.threads] = CreateThread(NULL, 0, ahead_thread, NULL, 0, NULL);
+        if (!ahead.handles[ahead.threads]) break;
+#else
+        if (pthread_create(&ahead.handles[ahead.threads], NULL, ahead_thread, NULL) != 0) break;
+#endif
+        ahead.threads++;
+    }
+    ahead.started = true;
+}
+
+uint8_t *tide_jobs_read_ahead_take(const char *path, size_t *size, size_t *room)
+{
+    if (!ahead.started) return NULL;
+    ahead_read(); // What's left, with them
+    for (int i = 0; i < ahead.threads; i++) {
+#ifdef _WIN32
+        WaitForSingleObject(ahead.handles[i], INFINITE);
+        CloseHandle(ahead.handles[i]);
+#else
+        pthread_join(ahead.handles[i], NULL);
+#endif
+    }
+    ahead.started = false;
+    uint8_t *bytes = ahead.bytes;
+    ahead.bytes = NULL;
+    if (ahead.failed || strcmp(path, ahead.path) != 0) { // Another file than was read: the caller reads its own
+        free(bytes);
+        return NULL;
+    }
+    *size = (size_t)ahead.length;
+    *room = ahead.room;
+    return bytes;
 }
 
 #endif

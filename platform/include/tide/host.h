@@ -3838,6 +3838,7 @@ static inline int tide_run_frame(void *user, const float seconds)
 _Noreturn static inline void tide_host_run(const tide_run_desc *desc, const tide_host_game *game)
 {
     tide_run_game = game;
+    if (game->assets) tide_platform_pack_ahead(); // Read while the window and the device open
     tide_run_open(desc);
     if (!tide_run_load_shown(NULL)) tide_run_load_assets();
     tide_run_begin_loaded();

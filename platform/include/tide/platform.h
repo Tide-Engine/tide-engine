@@ -450,6 +450,10 @@ uint64_t tide_platform_linear_copies(void);
 // in its APK on Android. malloc'd bytes, the caller's to free, or NULL for
 // none. The standard host loads it before the game runs (tide/host.h).
 uint8_t *tide_platform_pack(size_t *size);
+// Starts reading that pack on threads of its own, where it's a file (a desktop's): for a host to call before it
+// opens its window, so the two take the time of the longer. tide_platform_pack and tide_platform_pack_counted
+// then give what was read. Nothing elsewhere, or for a small pack.
+void tide_platform_pack_ahead(void);
 // The same, saying as it goes how far it has read: progress[0] the bytes read
 // so far, progress[1] the whole pack's, each stored atomically, so another
 // thread can show them while this one reads (the host's loading screen).

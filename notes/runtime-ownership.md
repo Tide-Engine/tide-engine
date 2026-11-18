@@ -557,6 +557,11 @@ constants. `tide_pack_load` takes a compressed file as well as a raw one and loa
 its raw path is the code it was, split into `file_is_whole` and `take_region`. Generated C calls no new runtime
 function and no host changes: each hands `tide_assets_load` the file's bytes as before.
 
+## The pack read while the window opens (2026-11-18)
+
+A clear win (measured, the bytes the same, tested: notes/assets-and-files.md, its first section). New in
+`tide/platform.h`: `tide_platform_pack_ahead`, which `tide/host.h` calls before it opens the window.
+
 ## A pack loaded where it was read (2026-11-18)
 
 A clear win (measured, the loaded pack the same, tested: notes/assets-and-files.md, its first section). New in

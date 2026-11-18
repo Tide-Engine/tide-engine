@@ -1,3 +1,19 @@
+## The pack read while the window opens (2026-11-18, later)
+
+What the section below left: the window and the Vulkan device take 0.18 s to open and the pack 0.115 s to read
+after them. `tide_platform_pack_ahead` (platform.c; the host calls it first in `tide_host_run`, for a game with
+assets) starts the read on eight threads of its own (`tide_jobs_read_ahead`, jobs.c, which has the systems'
+threads; not the pool's, which starts later and is the game's), into memory with the room a read leaves, and
+`tide_platform_pack` and `tide_platform_pack_counted` take what was read (`tide_jobs_read_ahead_take`: the caller
+reads the pieces left with them, then waits for them), known as a read's are (`tide_platform_read_room`), so the
+loader takes it in place as before. A desktop's alone (`tide_window_pack_path`, glfw.c); nothing for a pack under
+32 MiB, on the web or on Android, and a read that fails leaves the ordinary one to be made.
+
+Mount & Rifle, the program alone, two frames, four runs each: 0.66-0.69 s to 0.60-0.64 s. Checked (Windows, ASan):
+the 63 pack tests, `tide_platform_jobs`, `tide_server_pack`, `tide_platform_skinned`, `tide_platform_baked`,
+`tide_platform_shaders`, `tide_platform_texture_capacity`, `tide_cli_run_exit`, `tide_cli_hidden`. Not run: a
+window's loading screen, Linux/macOS (pthreads' branch): CI's.
+
 ## A pack loaded where it was read (2026-11-18)
 
 Owner, on the 1.0-1.4 s a run of Mount & Rifle takes to start (notes/cli-and-packages.md): "try looking into the
