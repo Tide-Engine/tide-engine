@@ -218,8 +218,10 @@ static inline void tide_run_assets_kept(uint8_t *bytes, const size_t size, const
 // them as the pack's memory where it can. A gigabyte isn't then copied, and kept twice.
 static inline bool tide_run_load_given(uint8_t *bytes, const size_t size)
 {
+#ifndef __wasm__ // A page's pack is fetched, with no room past its bytes
     const size_t room = tide_platform_read_room(bytes);
     if (room) tide_pack_give(bytes, size, room);
+#endif
     return tide_run_game->assets(bytes, size);
 }
 

@@ -53,6 +53,9 @@ scene Main { }
 singleton State { int value; }
 system Tick(mut State state) { state.value += 1; }
 `;
+// The assets as files long since written, which a build records: a copy keeps its file's time on Windows only
+const written = new Date(Math.floor(Date.now()/1000)*1000-7200e3);
+for (const n of readdirSync(game)) utimesSync(join(game, n), written, written);
 const input = join(game, "game.tide");
 writeFileSync(input, source);
 async function build(directory=out, success=true, flags=[]) {

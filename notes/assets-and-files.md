@@ -81,6 +81,9 @@ after the hashes' file) writes it from the files' table where it differs.
   seconds or more after it was last written (`read_into`, `recorded`; two seconds is the coarsest file system's
   step). One written again inside the time its file system can tell apart, or whose time is ahead of the clock,
   is read every build until it's old enough.
+  `asset_cache_test.mjs` sets its fixture files' times two hours back before the first build for this: a copy
+  keeps its source's time on Windows and takes the present one elsewhere, where the first version of the test
+  found no record (Linux and macOS, 2026-11-18).
 - **What isn't seen**: an edit that keeps both the size and the time of a recorded file. Its time has to be put
   back by hand for that. Touching the file, or any ordinary save, is seen.
 - A file said to have changed (`asset_files_changed`, a watching run) is read whatever the record says. The

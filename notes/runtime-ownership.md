@@ -568,7 +568,10 @@ A clear win (measured, the loaded pack the same, tested: notes/assets-and-files.
 `tide/pack.h`: `tide_pack_give` and `tide_pack_given`; `tide_pack_load` takes bytes offered to it in place of
 copying them. New in `tide/platform.h`: `tide_platform_read_room`; `tide_platform_read_counted` allocates more
 than the file's size and reads on the pool's threads when it isn't counting. `tide/host.h` offers the pack it read
-(`tide_run_load_given`) and keeps no bytes the pack took. Generated C calls no new runtime function.
+(`tide_run_load_given`) and keeps no bytes the pack took. Generated C calls no new runtime function. A page's host
+offers nothing: the web platform has no `tide_platform_read_room` (its pack is fetched), and the call is compiled
+out for `__wasm__`. Correction, 2026-11-18: it wasn't at first, and every page that loaded said tide.js had no
+such function; the Docs job's examples caught it, the web test pages didn't.
 
 ## A pack laid out before its images are read (2026-11-17)
 
