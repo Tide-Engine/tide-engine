@@ -10,6 +10,12 @@ namespace Tide
     // the game's prefabs and scenes. In Play they're the entity's own values this frame, as Tide's views see them,
     // written before scripts' Update: a script reads them as fields, its local fields too. Writing one changes nothing
     // in the match, which is the server's: send a command.
+    //
+    // The runner reads a component from the match once one of it is enabled on a GameObject, or a script asked
+    // (TideRunner.Read, a TideEntity's Has, TryGet and Get): what nothing in Unity reads stays out of the game's
+    // frame. While it's read, every shown entity that has it has its component, as authored or added by the runner.
+    // Disabling one doesn't take the component from its entity: it says this GameObject doesn't read it, and while
+    // the only ones there are disabled ones, the component isn't read.
     [RequireComponent(typeof(TideEntity))]
     [Icon(TideIcon.Component)]
     public abstract class TideComponent : MonoBehaviour
@@ -22,6 +28,112 @@ namespace Tide
         protected internal abstract unsafe void ReadLive(byte* values, byte* locals, TidePacket packet, TideRunner runner);
 
         internal int LiveFrame = -1; // The runner's frame that last wrote it: one the entity lost isn't
+        internal TideEntity Beside;  // The TideEntity that keeps it among its GameObject's Tide components, once it does
+
+        // What GameObjects say of each generated component, counted as Unity wakes, enables, disables and destroys
+        // them: how many are enabled on active GameObjects, how many are disabled themselves (their own checkbox, not
+        // their GameObject's), and whether one was ever enabled. A component is read once one was enabled, and from
+        // then on, GameObjects of it coming and going or not, unless the only ones there are disabled ones.
+        sealed class Said
+        {
+            public int on, off;
+            public bool had;
+
+            public bool Read => on > 0 || (had && off == 0);
+        }
+
+        static readonly Dictionary<Type, Said> saidOf = new Dictionary<Type, Said>();
+        Said said;
+        bool switchedOff; // Counted among its type's disabled ones
+
+        // Moves as whether a type is read does
+        internal static int EnabledVersion { get; private set; }
+
+        // Whether GameObjects read generated component `kind`
+        internal static bool AnyEnabled(Type kind)
+        {
+            return saidOf.TryGetValue(kind, out var said) && said.Read;
+        }
+
+        Said Mine()
+        {
+            if (said != null) return said;
+            var kind = GetType();
+            if (!saidOf.TryGetValue(kind, out said)) saidOf[kind] = said = new Said();
+            return said;
+        }
+
+        // One disabled from the start, as a prefab can have it, is woken but never enabled
+        protected virtual void Awake()
+        {
+            if (enabled) return;
+            var counts = Mine();
+            var read = counts.Read;
+            switchedOff = true;
+            counts.off++;
+            if (counts.Read != read) EnabledVersion++;
+        }
+
+        protected virtual void OnEnable()
+        {
+            var counts = Mine();
+            var read = counts.Read;
+            counts.on++;
+            counts.had = true;
+            if (switchedOff)
+            {
+                switchedOff = false;
+                counts.off--;
+            }
+            if (counts.Read != read) EnabledVersion++;
+        }
+
+        protected virtual void OnDisable()
+        {
+            var counts = Mine();
+            var read = counts.Read;
+            if (counts.on > 0) counts.on--;
+            if (!enabled && !switchedOff) // Its own checkbox: a GameObject going, or put away, leaves it set
+            {
+                switchedOff = true;
+                counts.off++;
+            }
+            if (counts.Read != read) EnabledVersion++;
+        }
+
+        protected virtual void OnDestroy()
+        {
+            if (!switchedOff) return;
+            var counts = Mine();
+            var read = counts.Read;
+            switchedOff = false;
+            counts.off--;
+            if (counts.Read != read) EnabledVersion++;
+        }
+
+        // A runner starting (a new match's) reads what GameObjects have enabled now: what the last one's had, and has
+        // no more, isn't read for that
+        internal static void StartOver()
+        {
+            foreach (var counts in saidOf.Values) counts.had = counts.on > 0;
+            EnabledVersion++;
+        }
+
+        // Play entered without a domain reload starts counting again
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ForgetEnabled()
+        {
+            saidOf.Clear();
+            EnabledVersion++;
+        }
+    }
+
+    // A component that makes its entity a part of another's body (its package's unity.json, "part"): tide writes it on
+    // the generated component, so where a part's shapes are is found with no look through the GameObject's fields.
+    public interface ITidePart
+    {
+        // The GameObject of the body it's a part of, or null
+        GameObject TidePartOf { get; }
     }
 
     // The Inspector's icons of Tide's scripts (com.tide.unity's Editor/Icons): the generated components name Component
@@ -172,6 +284,25 @@ namespace Tide
         public abstract bool Empty { get; }
         public abstract void Tell(TideEvent e, UnityEngine.Object context);
 
+        // How many handlers hear each kind of event, the runner's and every TideEntity's: an event nothing hears isn't
+        // read from the match
+        static readonly Dictionary<Type, int> heardBy = new Dictionary<Type, int>();
+
+        // Moves as a kind gets its first handler or loses its last
+        public static int Version { get; private set; }
+
+        public static bool Heard(Type kind)
+        {
+            return heardBy.TryGetValue(kind, out var count) && count > 0;
+        }
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ForgetHeard()
+        {
+            heardBy.Clear();
+            Version++;
+        }
+
         // Adds or takes away `heard` in `table`'s handlers of `T`
         public static void Listen<T>(Dictionary<Type, TideHearing> table, Action<T> heard, bool on) where T : TideEvent
         {
@@ -182,8 +313,18 @@ namespace Tide
                 table[typeof(T)] = had = new TideHearing<T>();
             }
             var typed = (TideHearing<T>)had;
-            if (on) typed.Add(heard);
-            else typed.Remove(heard);
+            heardBy.TryGetValue(typeof(T), out var count);
+            if (on)
+            {
+                typed.Add(heard);
+                heardBy[typeof(T)] = count + 1;
+                if (count == 0) Version++;
+            }
+            else if (typed.Remove(heard) && count > 0)
+            {
+                heardBy[typeof(T)] = count - 1;
+                if (count == 1) Version++;
+            }
             if (typed.Empty) table.Remove(typeof(T));
         }
 
@@ -213,14 +354,16 @@ namespace Tide
             handlers = next;
         }
 
-        public void Remove(Action<T> heard)
+        // False where it wasn't among them
+        public bool Remove(Action<T> heard)
         {
             var at = Array.LastIndexOf(handlers, heard); // The last one added, as taking a delegate away does
-            if (at < 0) return;
+            if (at < 0) return false;
             var next = new Action<T>[handlers.Length - 1];
             Array.Copy(handlers, next, at);
             Array.Copy(handlers, at + 1, next, at, next.Length - at);
             handlers = next;
+            return true;
         }
 
         public override void Tell(TideEvent e, UnityEngine.Object context)
@@ -246,6 +389,7 @@ namespace Tide
     public static class TideTypes
     {
         static readonly Dictionary<string, Type> byName = new Dictionary<string, Type>();
+        static readonly Dictionary<Type, string> names = new Dictionary<Type, string>();
         static readonly Dictionary<string, Func<object>> makers = new Dictionary<string, Func<object>>();
 
         public static ulong Hash { get; private set; }
@@ -259,6 +403,7 @@ namespace Tide
         {
             Hash = ulong.TryParse(hash, System.Globalization.NumberStyles.HexNumber, null, out var h) ? h : 0;
             byName[name] = type;
+            names[type] = name;
             if (make != null) makers[name] = make;
             else makers.Remove(name);
             Version++;
@@ -267,6 +412,12 @@ namespace Tide
         public static Type Of(string name)
         {
             return name != null && byName.TryGetValue(name, out var type) ? type : null;
+        }
+
+        // The Tide name of a generated class, or null for a type that isn't one
+        public static string NameOf(Type type)
+        {
+            return type != null && names.TryGetValue(type, out var name) ? name : null;
         }
 
         // What makes one of the singleton or event named `name`, or null for one registered without

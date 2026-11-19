@@ -70,6 +70,9 @@ namespace Tide
         public float Alpha { get; private set; }
         public int EntityCount { get; private set; }
 
+        // The packet's bytes: what the game's frame wrote for Unity to read
+        public uint Size => size;
+
         struct Section
         {
             public uint Kind, Type, Count, Stride, Bytes;

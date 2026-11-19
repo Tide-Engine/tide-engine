@@ -250,6 +250,24 @@ when something hears its kind. In Unity's Profiler the runner's frame is
 drawing read for Unity's cameras) and `Tide.Show` (the entities shown through
 their GameObjects, their components and the singletons read, events told).
 
+The game's frame hands Unity what Unity reads of the match, and nothing else:
+
+- **A component** is read once one of it is enabled on a GameObject: a
+  prefab's or a scene's, or one a script added. Every shown entity that has
+  it then has its component, with its values. One the game gives entities as
+  it runs, which no GameObject has, isn't read until a script asks:
+  `runner.Read<Tide.Game.Stunned>()` once, or an entity's `Has`, `TryGet` or
+  `Get` of its value.
+- **A singleton** is read once `runner.Get<T>()` asks for it, and **an event**
+  while something hears it.
+- What's asked for the first time is there in the same frame.
+- Disabling a Tide component doesn't take it from its entity: it says that
+  GameObject doesn't read it. While the only ones of a component there are
+  disabled ones, it costs the frame nothing, and they stay as they were.
+- The runner's **Read Everything** reads every component of every shown
+  entity, every singleton and every event each frame, as the package did before
+  it read by need.
+
 The game's views draw with Unity's camera: the runner's View Camera, or the
 main camera, is the 3D camera Tide's views start with, so
 `Draw.WorldToScreen(position)` is where Unity shows that point, in screen

@@ -4314,7 +4314,8 @@ static const char *const embed_exports[] = {"tide_embed_abi", "tide_embed_create
                                             "tide_embed_audio", "tide_embed_microphone",
                                             "tide_embed_travel_of", "tide_embed_travel_keep", "tide_embed_pause",
                                             "tide_embed_step", "tide_embed_show", "tide_embed_continue", "tide_embed_recording", "tide_embed_replay",
-                                            "tide_embed_replay_end", "tide_embed_log", NULL};
+                                            "tide_embed_replay_end", "tide_embed_log", "tide_embed_view_want",
+                                            "tide_embed_view_again", NULL};
 
 typedef struct numbered {
     const char *prefix, *suffix;
@@ -5066,6 +5067,17 @@ static const char unity_web_exports[] =
     "}\n";
 
 // ...and time travel's (tide/embed.h): its status, and what the jslib asks of it
+// What the page reads of the match (tide_embed_view_want, _again): a string of its own, as one literal holds 4,095
+// characters
+static const char unity_web_read_exports[] =
+    "\n"
+    "// What the page reads of the match: `types` bits at `bits` (tide_unity_buffer's, so aligned), or none for everything\n"
+    "TIDE_UNITY_EXPORT(tide_unity_view_want) void tide_unity_view_want(const void *bits, uint32_t types)\n"
+    "{\n"
+    "    tide_embed_view_want(unity_embed, bits, types);\n"
+    "}\n"
+    "TIDE_UNITY_EXPORT(tide_unity_view_again) int tide_unity_view_again(void) { return tide_embed_view_again(unity_embed); }\n";
+
 static const char unity_web_travel_exports[] =
     "\n"
     "// Time travel (tide/embed.h): its status, and what the jslib asks of it\n"
@@ -5162,10 +5174,12 @@ static int tide_unity_web(const char *root, const build_options *opts)
     if (!generate(&b, gen, false, &list)) goto done;
     char escaped[512];
     c_string(escaped, sizeof escaped, b.name);
-    char *text = malloc(sizeof unity_web_main + strlen(escaped) + sizeof unity_web_exports + sizeof unity_web_travel_exports);
+    char *text = malloc(sizeof unity_web_main + strlen(escaped) + sizeof unity_web_exports + sizeof unity_web_read_exports
+                        + sizeof unity_web_travel_exports);
     if (!text) abort();
     sprintf(text, unity_web_main, escaped);
     strcat(text, unity_web_exports);
+    strcat(text, unity_web_read_exports);
     strcat(text, unity_web_travel_exports);
     const bool wrote = sys_write_text(main_c, text);
     free(text);

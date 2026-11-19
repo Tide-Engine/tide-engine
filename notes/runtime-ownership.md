@@ -1,3 +1,17 @@
+## The view packet carries what's read (2026-11-19)
+
+Mine, a clear win under the guide's rule (measured, what a reader of everything gets unchanged, tested;
+notes/unity.md, The packet carries what Unity reads). `tide_packet` (`tide/embed_game.h`) gained `wanted`,
+`wanted_types` and `again`, which a host sets before each `tide_embed_game.view` call, and the inline
+`tide_packet_wants(p, type)`. Generated C (`embed_codegen.inc`) tests it around each component's and singleton's
+block, and its event taps keep a record only for an event that's wanted (`tide_embed_heard_wants`, from the pointer
+the last view call was given: the host keeps the bits where they are). The heard events now go as the next is heard
+or the next frame's packet is written, where the packet's end dropped them, so the same frame's packet written again
+(`again`) carries them again. No `tide_embed_game` member, signature or `tide_host_game` member changed, so
+`TIDE_HOST_SHAPE` is as it was; a zeroed packet (`wanted` NULL: the dev inspector's, any host that never says) gets
+everything, as before. `tide/embed.h` gained `tide_embed_view_want` and `tide_embed_view_again` (embed ABI 27, with
+Unity's `TideLibrary.Abi`). Hosts, libraries and generated games rebuild together, as for any `tide_packet` change.
+
 ## Which tide built a library (2026-11-19)
 
 Clear win, no sign-off (measured: nothing in a frame; results unchanged; tested): a game's library built by

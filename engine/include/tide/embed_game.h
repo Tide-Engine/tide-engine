@@ -87,7 +87,22 @@ typedef struct tide_packet {
     uint32_t entry_count, entry_capacity;
     struct tide_packet_entity_entry *entity_places;
     uint32_t entity_place_capacity, entity_place_count;
+    // What of the match the other program reads, which is all the packet carries: a bit for each of the schema's
+    // types below `wanted_types`, set for a component (its local fields with it), a singleton (likewise) or an event
+    // that's read. NULL, and any type past them: read. The entities are always there. The host's to set before each
+    // packet, and to keep where it is: a game's taps read it between two packets.
+    const uint64_t *wanted;
+    uint32_t wanted_types;
+    // The last packet written again, with what's wanted now: it carries the events the last one did, where a new
+    // frame's carries those heard since
+    bool again;
 } tide_packet;
+
+// Whether the packet carries the schema's type `type`
+static inline bool tide_packet_wants(const tide_packet *p, const uint32_t type)
+{
+    return !p->wanted || type >= p->wanted_types || (p->wanted[type >> 6] >> (type & 63u) & 1u) != 0;
+}
 
 // Starts the frame's packet: an empty one with room for the header.
 void tide_packet_begin(tide_packet *p);
