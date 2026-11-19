@@ -288,10 +288,26 @@ public sealed unsafe class TravelTests
         yield return null;
         Assert.AreEqual(TideTravelState.Paused, runner.Travel.state, "back to the match, paused");
         Assert.AreEqual(live.last, runner.Travel.last);
+        // Another layout's hash: the recording says the layout it was recorded with, so it's carried over by name (to
+        // the same fields here) and replayed with nothing to check its ticks against
         var bytes = System.IO.File.ReadAllBytes(path);
-        bytes[13] ^= 1; // Its layout's hash
-        Assert.IsFalse(runner.Replay(bytes));
-        StringAssert.Contains("laid out otherwise", runner.Travel.Refused);
+        bytes[12] ^= 1;
+        Assert.IsTrue(runner.Replay(bytes), "carried over: " + runner.Travel.Refused);
+        Assert.AreEqual(2, runner.Travel.otherBuild, "laid out otherwise");
+        Assert.IsTrue(runner.ShowTick(middle));
+        yield return null;
+        t = runner.Travel;
+        Assert.AreEqual(t.first, t.checkedTo, "nothing checked");
+        Assert.AreEqual(0u, t.differs);
+        Assert.AreEqual(0u, t.unreadable);
+        Assert.Less(Vector3.Distance(there, MyBall().transform.position), 1e-4f, "the ball where the match had it, by name");
+        runner.EndReplay();
+        yield return null;
+        // Cut short: refused, saying so
+        var cut = new byte[bytes.Length - 5];
+        System.Array.Copy(bytes, cut, cut.Length);
+        Assert.IsFalse(runner.Replay(cut));
+        StringAssert.Contains("cut short", runner.Travel.Refused);
         System.IO.File.Delete(path);
     }
 

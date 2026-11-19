@@ -408,7 +408,10 @@ typedef struct tide_embed_travel {
     uint32_t differs;
     uint32_t unreadable;
     uint8_t playing;     // Replaying: it goes on at the tick rate (tide_embed_pause false)
-    uint8_t other_build; // The recording was made by a build whose simulation was another
+    // The recording was made by a build whose simulation was another (1), or whose data was laid out otherwise (2):
+    // then its worlds were carried over by name and its ticks run with this build's code, with nothing to check them
+    // against (`checked` stays at `first`, `differs` 0)
+    uint8_t other_build;
     uint8_t background;  // Players of other machines are in the match: it goes on behind what's shown
     uint8_t followed;    // The match is another machine's: the ticks this machine had confirmed are kept and shown
                          // (`first` the first of them), and it can't be stepped, taken back or recorded from here
@@ -456,9 +459,12 @@ const uint8_t *tide_embed_recording(tide_embed *e, uint32_t *size);
 
 // Shows a recording (copied), from its first tick, paused: the match, if any,
 // pauses until tide_embed_replay_end. Its ticks are made again with this
-// build as they're shown, each world checked against the recording's. False,
-// saying why in tide_embed_travel's `refused`, for bytes that aren't a
-// recording, one of another data layout, or a match that can't pause.
+// build as they're shown, each world checked against the recording's. One a
+// build of another data layout saved replays too where it says that layout
+// (recordings do since version 2): its worlds carried over by name, its
+// ticks unchecked (`other_build` 2). False, saying why in tide_embed_travel's
+// `refused`, for bytes that aren't a recording, one of another data layout
+// that can't be carried over, or a match that can't pause.
 bool tide_embed_replay(tide_embed *e, const uint8_t *data, uint32_t size);
 
 // Back to the match from a recording, paused where it was.

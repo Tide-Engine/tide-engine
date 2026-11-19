@@ -490,8 +490,10 @@ static uint8_t *record_in(uint8_t *recording, const uint32_t size, const uint32_
 {
     uint32_t at = 8u + 4u + 8u + 32u + 4u + 4u + 4u + 4u;
     uint32_t n;
-    memcpy(&n, recording + at, 4);
-    at += 4u + n;
+    for (int i = 0; i < 3; i++) { // Its layout, its first world, and that world as its layout has it
+        memcpy(&n, recording + at, 4);
+        at += 4u + n;
+    }
     uint32_t count;
     memcpy(&count, recording + at, 4);
     at += 4u;
@@ -541,9 +543,15 @@ TIDE_TEST(travel_replay_says_where_it_differs)
     tide_embed_replay_end(e);
 
     record[8] ^= 1u;
-    copy[8 + 4] ^= 1u; // Its layout's hash
-    TIDE_CHECK(!tide_embed_replay(e, copy, size));
-    TIDE_CHECK(strstr(travel_of(e).refused, "laid out otherwise") != NULL);
+    // Another layout's hash: the recording says its layout, so its worlds are carried over by name (here to the same
+    // fields) and its ticks run unchecked, where a recording without one was refused (travel_layout.c has a real one)
+    copy[8 + 4] ^= 1u;
+    TIDE_REQUIRE(tide_embed_replay(e, copy, size));
+    TIDE_CHECK(travel_of(e).other_build == 2u);
+    TIDE_REQUIRE(tide_embed_show(e, travel_of(e).last));
+    t = travel_of(e);
+    TIDE_CHECK(t.differs == 0 && t.unreadable == 0 && t.checked == t.first);
+    tide_embed_replay_end(e);
     copy[8 + 4] ^= 1u;
     TIDE_CHECK(!tide_embed_replay(e, copy, size - 3u));
     TIDE_CHECK(strstr(travel_of(e).refused, "cut short") != NULL);
@@ -552,6 +560,34 @@ TIDE_TEST(travel_replay_says_where_it_differs)
     TIDE_CHECK(travel_of(e).refused[0] == '\0');
     free(copy);
     tide_embed_destroy(e);
+}
+
+// For platform/tests/travel_layout.c, a build of this game laid out otherwise (TIDE_TRAVEL_RECORDING, set by ctest):
+// the recording shown, and beside it what the views drew of its first tick, of `middle` and of its last
+static void leave_recording(tide_embed *e, const uint8_t *bytes, const uint32_t size, const uint32_t middle)
+{
+    const char *path = getenv("TIDE_TRAVEL_RECORDING");
+    if (!path) return;
+    FILE *f = fopen(path, "wb");
+    TIDE_REQUIRE(f != NULL);
+    TIDE_CHECK(fwrite(bytes, 1, size, f) == size);
+    fclose(f);
+    char said[1100];
+    snprintf(said, sizeof said, "%s.txt", path);
+    f = fopen(said, "w");
+    TIDE_REQUIRE(f != NULL);
+    const tide_embed_travel t = travel_of(e);
+    const uint32_t ticks[3] = {t.first, middle, t.last};
+    for (int i = 0; i < 3; i++) {
+        TIDE_REQUIRE(tide_embed_show(e, ticks[i]));
+        seen_steps = seen_jumps = seen_total = -1;
+        seen_x = 0.0f;
+        frames(e, 1, NULL);
+        uint32_t bits;
+        memcpy(&bits, &seen_x, sizeof bits);
+        fprintf(f, "%u %d %u %d %d\n", (unsigned)ticks[i], seen_steps, (unsigned)bits, seen_jumps, seen_total);
+    }
+    fclose(f);
 }
 
 // Going on from a tick shown: the match goes back there, the ticks after it let go, a command applied after it
@@ -613,6 +649,7 @@ TIDE_TEST(travel_continues_from_a_tick_shown)
     }
     t = travel_of(e);
     TIDE_CHECK(t.differs == 0 && t.unreadable == 0 && t.checked == t.last);
+    leave_recording(e, copy, size, back);
     free(copy);
     tide_embed_destroy(e);
 }
@@ -1072,6 +1109,14 @@ TIDE_TEST(timeline_rewinds_with_other_machines_in_the_match)
     uint32_t size = 0;
     uint8_t *bytes = tide_timeline_save(timeline, 30, 1, &size);
     TIDE_REQUIRE(bytes != NULL);
+    if (getenv("TIDE_TRAVEL_RECORDING")) { // One that doesn't say its layout, for travel_layout.c's build to refuse
+        char plain[1100];
+        snprintf(plain, sizeof plain, "%s.plain", getenv("TIDE_TRAVEL_RECORDING"));
+        FILE *f = fopen(plain, "wb");
+        TIDE_REQUIRE(f != NULL);
+        TIDE_CHECK(fwrite(bytes, 1, size, f) == size);
+        fclose(f);
+    }
     machines_stop();
     tide_timeline_destroy(timeline);
     tide_timeline *replayed = tide_timeline_load(&(tide_timeline_desc){.game = &tide_game_api, .keep = 4}, bytes, size,

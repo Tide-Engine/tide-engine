@@ -68,7 +68,8 @@ namespace Tide.Editor
                 if (t.unreadable != 0) lines.Add($"This build can't replay tick {t.unreadable}: its input, commands or players aren't this build's.");
                 else if (t.differs != 0) lines.Add($"Goes otherwise from tick {t.differs}: the recording's world there has hash {t.expected:x16}, this build's {t.got:x16}.");
                 else if (t.checkedTo > t.first) lines.Add($"Every tick to {t.checkedTo} made the recording's world.");
-                if (t.otherBuild != 0) lines.Add("Recorded by a build whose code was another.");
+                if (t.otherBuild == 2) lines.Add("Recorded by a build whose data was laid out otherwise: its worlds were carried over by name, as a hot reload carries a match, and its ticks run with this build's code. Nothing checks them: the recording's hashes are of worlds laid out the old way.");
+                else if (t.otherBuild != 0) lines.Add("Recorded by a build whose code was another.");
                 break;
             }
             if (t.state == TideTravelState.Paused || t.state == TideTravelState.Replay) lines.Add($"World hash {t.hash:x16}");

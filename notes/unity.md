@@ -234,6 +234,60 @@ it replays: it's a window over the ticks this machine saw confirmed, not a recor
   hides nothing, so a client-side journal is possible; not asked for). Unity with a second machine: the Sample's
   PlayMode tests run one editor, so the followed case runs natively alone.
 
+### 3. A recording replays across a layout change
+
+A recording was refused by any build whose layout hash wasn't its own, as it said nothing of how its worlds were
+laid out. It says now, and a build laid out otherwise carries its worlds over by name with the hot reload's own
+migration (`tide/migrate.h`, as a checkpoint is loaded by another layout's build: `platform/src/checkpoint.c`).
+
+- **The file** (`timeline.c`, `TIDETIME` version 2): after the head, the layout it was recorded with
+  (`tide_layout_pack`: its size, 0 for none, and bytes); and each world (the first, and each one gone back to) is
+  followed by itself as its layout has it (`tide_game.pack_world`; size 0 without a layout), since migration reads
+  those bytes and a delta pack is only the recording build's to read. Version 1 files still load, into a build of
+  their layout. The cost is the layout's description and a second copy of the first world and of each jump's.
+- **`tide_timeline_desc.layout`** (the build's own, `tide_host_game.layout`): with it a saved recording says its
+  layout, and `tide_timeline_load` takes one of another layout: each world through `tide_migrate_world` and this
+  build's `unpack_world`, the records as they are. `tide_timeline_about` says `other_layout`, `fields_reset`
+  (`tide_layout_fields_reset`), `entities_dropped`, `tasks_dropped`. `tide_timeline_set_layout` for a hot reload of
+  the same layout (the old build's description goes with its code).
+- **Nothing is checked there** (`unchecked`): a record's hash is of the recording build's world, laid out the old
+  way, so a carried-over replay reports no `differs` and its `checked` stays at its first tick, rather than every
+  tick "differing". Its ticks are this build's code run on what went into them. A tick whose input or commands this
+  build lays out otherwise doesn't read, and is where it stops (`unreadable`, as before). Such a timeline isn't saved
+  again (`tide_timeline_save` gives none): it would be a recording of this layout with the other's hashes.
+- **The embed** hands the timelines its game's layout (live and loaded, and the new build's at a same-layout
+  reload) and says `other_build` 2 for a recording carried over (1 was, and is, another build's code of the same
+  layout). No ABI or struct change. The package's window says so in place of its "Every tick to N made the
+  recording's world" line.
+- **Picks:** carried over by name with the reload's rules rather than a migration of its own; no check rather than
+  a hash of some layout-free form of the world (there is none); refusing to save a carried-over timeline; refused
+  still where the recording has no layout (version 1, or a game built without one) or this build has none to say.
+- **Tests:** `tide_platform_travel_layout` (new: `platform/tests/travel_layout.tide`, travel.tide's game with its
+  components' fields in another order, new fields with defaults among them and a new singleton, built as a second
+  program; ctest runs it after `tide_platform_travel`, which leaves its recordings where `TIDE_TRAVEL_RECORDING`
+  says, a fixture of the two tests): the other build's recording, with a going-back in it, replays through the
+  embed as `other_build` 2, the views drawing at its first tick, at the tick gone back to and at its last what the
+  recording's build drew there (steps, the walker's x to the bit, jumps, the score), the new fields at their
+  defaults, nothing unreadable, nothing checked, and played at its rate to its end; the timeline's own account
+  (`other_layout`, nothing reset or dropped), no save of it, a build with no layout to say refused, bytes cut
+  short inside the layout refused; and a recording that says no layout refused, saying so. `tide_platform_travel`:
+  a recording with its layout hash flipped is carried over (to the same fields) and replayed unchecked, where it
+  was refused; `record_in` reads the new file. `tide_platform_dev_menu` (the standard host's recordings, saved
+  and replayed through the same file) passes as it was. The Sample's PlayMode
+  `ARecordingReplaysFromAFileBitForBit`: the flipped hash carried over, the ball where the match had it, nothing
+  checked; a cut-short file refused. EditMode `TravelWindowTests` (what the window says of one).
+- **Runs:** native `sanitize`: `tide_platform_travel` 12/12, `tide_platform_travel_layout` 2/2, `tide_platform_embed`
+  32/32, `tide_platform_dev_menu`. Web debug: `tide_platform` compiles. Unity as before, the tide installed again
+  from this checkout: PlayMode `TravelTests` 6/6 (the Sample's own layout carried over to itself), EditMode
+  `TravelWindowTests` 2/2.
+- **Left:** the standard host's dev menu makes its timelines without a layout, so its recordings say none and it
+  refuses another layout's as before (one field, `tide_timeline_desc.layout`, in `tide/host.h`'s two calls, when
+  it's wanted there). The counts of what didn't carry (`fields_reset`, entities and tasks dropped) are in
+  `tide_timeline_about` and not in `tide_embed_travel`, which has no room for them without an ABI number. Input
+  and command changes aren't carried: their packed bytes are the recording build's alone to read. A real layout
+  change in Unity (the Sample's game changed, built and reloaded mid-test) isn't a PlayMode test; the two-program
+  native test is that case.
+
 ## The replay of 2026-11-14's GPU work, Gamma [Linear] images, multisampled mipmaps, triangle sides (2026-11-15)
 
 Everything the day's readback, number-image, checker-format and capability work records is now replayed and run

@@ -373,6 +373,16 @@ default).
   the first tick whose world went otherwise, which after a change to the game's
   code is where that change first matters. **Replay This Match** replays the
   current one.
+- A recording also replays in a build whose **data is laid out otherwise** (a
+  component gained a field, fields moved, a singleton is new): it says the
+  layout it was recorded with, and its worlds are carried over by name as a hot
+  reload carries a match (a field of the same name keeps its value, a new one
+  has its default). Its ticks then run with this build's code from what went
+  into them. Nothing checks them, as the recording's hashes are of worlds laid
+  out the old way, and the window says so. A tick whose input or commands
+  changed shape can't be run: the window says which tick it stops at.
+  Recordings saved before this (and a game's that tide describes no layout
+  for) only replay in a build of their own layout.
 
 In C#: `runner.Pause()`, `Step()`, `Resume()`, `ShowTick(n)`,
 `ContinueFromHere()`, `Recording()` and `SaveRecording(path)`,

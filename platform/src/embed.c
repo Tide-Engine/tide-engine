@@ -517,6 +517,8 @@ static void travel_reload(const tide_host_game *old, const tide_host_game *next)
     if (next && next->game->hash == old->game->hash && next->local_size == old->local_size) {
         tide_timeline_set_game(travel.live, next->game);
         tide_timeline_set_game(travel.replay, next->game);
+        tide_timeline_set_layout(travel.live, next->layout); // The old build's description goes with its code
+        tide_timeline_set_layout(travel.replay, next->layout);
         if (travel.live) travel.game = next->game;
         return;
     }
@@ -539,7 +541,8 @@ static void travel_follow(void)
     }
     if (wanted && !travel.live) {
         travel.live = tide_timeline_create(&(tide_timeline_desc){
-            .game = tide_run_game->game, .keep = travel_keep_ticks(), .jobs = tide_run_jobs()});
+            .game = tide_run_game->game, .keep = travel_keep_ticks(), .jobs = tide_run_jobs(),
+            .layout = tide_run_game->layout});
         if (!travel.live) return;
         travel.recorded = tide_run_session;
         travel.game = tide_run_game->game;
@@ -765,7 +768,7 @@ void tide_embed_travel_of(const tide_embed *e, tide_embed_travel *out)
         out->last = tide_timeline_last(r);
         out->shown = travel.replay_shown;
         out->playing = travel.playing;
-        out->other_build = travel.about.other_build;
+        out->other_build = travel.about.other_layout ? 2u : travel.about.other_build ? 1u : 0u;
         if (travel.about.tick_rate) out->tick_rate = travel.about.tick_rate;
         tide_timeline_check check;
         tide_timeline_check_of(r, &check);
@@ -908,7 +911,8 @@ bool tide_embed_replay(tide_embed *e, const uint8_t *data, const uint32_t size)
     tide_timeline_about about;
     tide_timeline *r = tide_timeline_load(&(tide_timeline_desc){.game = tide_run_game->game,
                                                                 .keep = travel.keep_seconds > 0.0f ? travel_keep_ticks() : 0u,
-                                                                .jobs = tide_run_jobs()},
+                                                                .jobs = tide_run_jobs(),
+                                                                .layout = tide_run_game->layout},
                                           data, size, &about, said, sizeof said);
     if (!r) {
         snprintf(travel.refused, sizeof travel.refused, "%s", said);
