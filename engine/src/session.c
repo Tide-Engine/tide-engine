@@ -4044,7 +4044,7 @@ static const uint8_t *record_download(const uint8_t *record, const uint32_t size
 // Reads a record and runs its tick on `world`: false for bytes that aren't
 // one this build can run. `hash` is the server's world's after it.
 static bool replay_record(const tide_game *g, void *world, const uint8_t *record, const uint32_t size, const tide_jobs *jobs,
-                          uint64_t *server_hash)
+                          uint64_t *server_hash, tide_event_log *heard)
 {
     *server_hash = 0;
     if (!g || !world || !record) return false;
@@ -4053,7 +4053,7 @@ static bool replay_record(const tide_game *g, void *world, const uint8_t *record
     const uint32_t frame_size = tide_read_u32(&head);
     const uint8_t *frame = tide_read_bytes(&head, frame_size);
     if (!frame) return false;
-    if (g->prepare_pending && g->prepare && g->prepare_pending(world)) g->prepare(world, jobs, NULL, NULL);
+    if (g->prepare_pending && g->prepare && g->prepare_pending(world)) g->prepare(world, jobs, NULL, heard);
     const uint32_t names_at = head.at;
     const uint32_t players = tide_game_players(g);
     tide_reader r = {frame, frame_size, 0, false};
@@ -4127,7 +4127,18 @@ static bool replay_record(const tide_game *g, void *world, const uint8_t *record
     }
     if (parts & FRAME_LOCAL_EVENTS) tide_read_bytes(&r, tide_read_varint(&r));
     if (r.failed || r.at != r.size) return false;
-    g->tick(world, jobs);
+    // With `heard`, as the server's own machine's tick records what it sent (tick_run)
+    if (heard && g->client_state && g->tick_client_events) {
+        tide_event_log *journals = calloc(players, sizeof *journals);
+        if (!journals) tide_out_of_memory();
+        g->tick_client_events(world, jobs, journals, heard);
+        for (uint32_t p = 0; p < players; p++) tide_event_log_free(&journals[p]);
+        free(journals);
+    } else if (heard && g->tick_events) {
+        g->tick_events(world, jobs, heard);
+    } else {
+        g->tick(world, jobs);
+    }
     return true;
 }
 
@@ -4140,9 +4151,15 @@ bool tide_replay(const tide_game *g, void *world, const uint8_t *record, const u
 tide_replay_result tide_replay_check(const tide_game *g, void *world, const uint8_t *record, const uint32_t size,
                                      const tide_jobs *jobs, uint64_t *expected, uint64_t *got)
 {
+    return tide_replay_heard(g, world, record, size, jobs, NULL, expected, got);
+}
+
+tide_replay_result tide_replay_heard(const tide_game *g, void *world, const uint8_t *record, const uint32_t size,
+                                     const tide_jobs *jobs, tide_event_log *heard, uint64_t *expected, uint64_t *got)
+{
     uint64_t server_hash = 0;
     *got = 0;
-    const bool ran = replay_record(g, world, record, size, jobs, &server_hash);
+    const bool ran = replay_record(g, world, record, size, jobs, &server_hash, heard);
     *expected = server_hash;
     if (!ran) return TIDE_REPLAY_UNREADABLE;
     *got = hash_of(g, world, jobs);

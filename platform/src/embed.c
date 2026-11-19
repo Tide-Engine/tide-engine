@@ -70,6 +70,9 @@ static struct {
     double played;               // ...seconds into its next tick
     void *local;                 // The local state of frames that show another tick than the latest
     void *start;                 // ...and of its requests, which go nowhere
+    const tide_timeline *heard_of; // ...which heard the ticks of this (the match's, or a recording's)...
+    uint32_t heard_tick;         // ...up to this one
+    tide_event_log events;       // ...and hears these at its next frame: what the ticks it came past sent
     uint8_t *saved;              // The last recording given out
     char refused[TIDE_EMBED_TRAVEL_TEXT];
 } travel;
@@ -460,6 +463,8 @@ static void drop_travel_local(void)
     free(travel.local);
     free(travel.start);
     travel.local = travel.start = NULL;
+    travel.heard_of = NULL;
+    tide_event_log_free(&travel.events);
 }
 
 static void drop_live(void)
@@ -535,10 +540,40 @@ static void travel_follow(void)
     if (travel.paused && !travel.replay && travel_why(true)[0]) travel.paused = travel.step = false; // It goes on
 }
 
+// Ticks a frame comes past at most with each of them heard: a jump further on, like one back, hears the tick it
+// lands on alone
+#define TRAVEL_HEARD_MOST 64u
+
+// What the frames showing `t`'s ticks hear as they come to show `tick`, for show_frame's local handlers (and the
+// packet's EVENTS): what each tick sent that they came past since the one they last showed, in order, as the machine
+// that ran the match heard it (each run again: tide_timeline_heard); or, at a tick they didn't come to that way (the
+// first one shown, one before it, one far after it), what the tick that made its world sent. A tick shown again
+// sends nothing again. Before its world is asked for, which this may make another.
+static void travel_gather(tide_timeline *t, const uint32_t tick)
+{
+    const bool following = travel.local && travel.heard_of == t;
+    if (following && travel.heard_tick == tick) return;
+    uint32_t from = tick;
+    if (following && tick > travel.heard_tick && tick - travel.heard_tick <= TRAVEL_HEARD_MOST) from = travel.heard_tick + 1u;
+    if (tide_run_game->events) {
+        for (uint32_t at = from; at >= from && at <= tick; at++) tide_timeline_heard(t, at, &travel.events);
+    }
+    travel.heard_of = t;
+    travel.heard_tick = tick;
+}
+
+// The world after `tick` ticks of `t` for a frame to show, what it hears of it gathered first
+static const void *travel_world(tide_timeline *t, const uint32_t tick)
+{
+    travel_gather(t, tick);
+    return tide_timeline_world(t, tick);
+}
+
 // A frame showing `world`, the world after `tick` ticks, with `player` this machine's: the views on a local state
-// of their own, with no session, as nothing of it may reach the match
+// of their own, with no session, as nothing of it may reach the match. Its local handlers hear what travel_gather
+// found; `sounds`: and what the frame plays is heard (not beside the match's own frame, whose sound is the frame's).
 static void show_frame(const void *world, const uint32_t tick, const uint32_t player, const tide_embed_input *input,
-                       const float width, const float height, const float scale)
+                       const float width, const float height, const float scale, const bool sounds)
 {
     const tide_host_game *game = tide_run_game;
     if (!travel.local) {
@@ -566,10 +601,14 @@ static void show_frame(const void *world, const uint32_t tick, const uint32_t pl
     tide_gui_begin(&tide_run_gui, &tide_run_devices, tide_platform_screen_size(), tide_platform_measure_text);
     tide_run_gui.copy = tide_platform_copy;
     tide_run_gui.jobs = tide_platform_jobs();
+    // What the ticks it came past sent: its local handlers run first, as a frame's do (tide/host.h)
+    if (game->events) game->events(local, &travel.events);
+    if (game->audio) game->audio(local, &tide_run_audio);
     const tide_jobs *const loops_before = tide_loops_enter(tide_run_gui.jobs); // As a frame's views have it (tide/host.h)
     game->frame(world, NULL, 1.0f, world, NULL, 1.0f, local, &tide_run_draw, &tide_run_gui);
     tide_loops_leave(loops_before);
     tide_gui_end(&tide_run_gui, &tide_run_draw);
+    if (sounds) tide_platform_audio(&tide_run_audio);
     // What's pressed, sent or asked for on another tick's picture goes nowhere
     tide_devices_consume(&tide_run_devices);
     if (game->command && game->command_sent) {
@@ -597,6 +636,9 @@ static void background_frame(const float dt, const float width, const float heig
     static const tide_embed_input none;
     tide_platform_embed_frame(&none, tide_f2(width, height), scale);
     tide_run_frame(NULL, dt);
+    // What the match's own handlers heard of it is in no packet: the one the frame shows has the tick shown's
+    // (the other program's taps keep what they hear until a packet takes it)
+    write_view(false);
 }
 
 static uint32_t own_player(void)
@@ -606,7 +648,7 @@ static uint32_t own_player(void)
 
 // A recording's frame: its ticks made as they come at the tick rate while it plays, the one reached shown
 static void replay_frame(const float dt, const tide_embed_input *input, const float width, const float height,
-                         const float scale)
+                         const float scale, const bool sounds)
 {
     tide_timeline *r = travel.replay;
     const uint32_t last = tide_timeline_last(r);
@@ -616,7 +658,7 @@ static void replay_frame(const float dt, const tide_embed_input *input, const fl
         if (travel.played > 0.25) travel.played = 0.25; // A frame that took long doesn't race through the ticks after it
         while (travel.played * rate >= 1.0 && travel.replay_shown < last) {
             travel.played -= 1.0 / rate;
-            if (!tide_timeline_world(r, travel.replay_shown + 1u)) {
+            if (!travel_world(r, travel.replay_shown + 1u)) {
                 travel.playing = false;
                 break;
             }
@@ -624,8 +666,8 @@ static void replay_frame(const float dt, const tide_embed_input *input, const fl
         }
         if (travel.replay_shown >= last) travel.playing = false;
     }
-    const void *world = tide_timeline_world(r, travel.replay_shown);
-    if (world) show_frame(world, travel.replay_shown, travel.about.player, input, width, height, scale);
+    const void *world = travel_world(r, travel.replay_shown);
+    if (world) show_frame(world, travel.replay_shown, travel.about.player, input, width, height, scale, sounds);
 }
 
 double tide_embed_frame(tide_embed *e, const float seconds, const tide_embed_input *input, const float width, const float height,
@@ -654,15 +696,15 @@ double tide_embed_frame(tide_embed *e, const float seconds, const tide_embed_inp
     const bool background = (travel.replay || travel.paused) && travel_background();
     if (background) background_frame(dt, width, height, scale);
     if (travel.replay) {
-        replay_frame(dt, input, width, height, scale);
+        replay_frame(dt, input, width, height, scale, !background);
         return 1.0 / travel_rate();
     }
     if (travel.paused) {
         const uint32_t last = tide_timeline_last(travel.live);
-        const void *world = travel.shown < last ? tide_timeline_world(travel.live, travel.shown) : NULL;
-        if (!world && background) world = tide_timeline_world(travel.live, travel.shown = last); // Gone: the latest
+        const void *world = travel.shown < last ? travel_world(travel.live, travel.shown) : NULL;
+        if (!world && background) world = travel_world(travel.live, travel.shown = last); // Gone: the latest
         if (world) {
-            show_frame(world, travel.shown, own_player(), input, width, height, scale);
+            show_frame(world, travel.shown, own_player(), input, width, height, scale, !background);
             return 1.0 / travel_rate();
         }
         // The latest tick, as it is: no time passes for the match but a step's, to just past its next tick
