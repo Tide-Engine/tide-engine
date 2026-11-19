@@ -3920,6 +3920,26 @@ End-to-end frame/shot validation (2026-10-11): the two physics rewind-network fi
 
 The fixtures exposed a prediction-reuse bug: a server-rejected old view stamp can leave the server's input unchanged, so its frame carries no input delta even though the client's sampled stamp differs. as_predicted now compares held inputs for this client's slots against the confirmed base before reusing a predicted world. Otherwise it replays the authoritative held input instead of requesting an unnecessary resync. This uses existing input/scratch callbacks, changes no wire or generated-C ABI, and preserves bounded validation. The fixtures require zero resyncs.
 
+### Packet starvation reproduction (2026-11-19)
+
+`session_view_time_after_packet_starvation` runs a 60 Hz match with 20 ms
+one-way latency, 120 Hz updates and 24 Hz confirmed frame marks. For 333 ms it drops every server-to-client
+datagram while input and rendering continue. In the final second, verification is at most four ticks behind
+and prediction is ahead with no input delay or resync. At the last frame both the control and starved clients
+verify two ticks behind and predict three ticks ahead. The confirmed display is 2.5 ticks behind in the control
+and 25.5 after starvation. With a quarter-second rewind window, the server accepts all 61 control timestamps
+and rejects all 61 starved timestamps in that final second. Windows ASan and Node WASI give the same result.
+
+`update_client` discards elapsed playback time when it clamps `verified_view` at the preceding confirmed
+frontier. Predictions and inputs keep advancing, so this loss need not enter `play`'s `catching_up` mode, which
+moves the display directly to the frontier when joining or falling behind on input or simulation work.
+Once the burst is confirmed, advancing the display at the match rate preserves its extra 23-tick lag.
+The fixture pins the control's interpolation, checks updated confirmed worlds against the server's hashes, and
+checks sampled marks against the endpoints actually presented and the original execution-age rule. It reports
+the recovered display offset and stamp counts. A regression assertion that the display comes within one tick
+of the control by the last frame fails on the current engine. The maximum playback speed or discontinuity
+allowed during recovery is open for the owner.
+
 ## T? fields on the wire (2026-10-11)
 
 A field declared `T?` (`notes/language.md`, T? fields) is part of a world's bytes like any field, so worlds, deltas and hashes need nothing for it. `gen_bits` (`compiler/src/codegen.c`) packs one in a command, and in an input sent whole, as a bit and then its value only when there is one, reading into zeros; in an input's delta it's the value's own delta and whether `ok` flipped (a bit each while nothing changes), and the read ends by zeroing one with no value. An input from outside with no value but bytes beside it, or padding that isn't zeros, is zeros before `Sanitize` (`gen_clear_padding`). No protocol number moved: a game with no `T?` field packs what it did. `compiler/tests/e2e/optional_fields` pins an empty input at 2 bytes and two commands at 19 and 14, checks every truncation of a command is refused, and that whole and delta inputs come back bit for bit. Left as it is: an input's delta sends a value's change even as the field goes to nothing.

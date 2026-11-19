@@ -188,6 +188,151 @@ static const tide_game repair_game = {
     .client_state = repair_state, .load_client_state = repair_load, .client_hash = repair_client_hash,
 };
 
+typedef struct starvation_result {
+    double display_lag;
+    uint32_t verified_lag, prediction_lead, accepted, expired;
+} starvation_result;
+
+static uint8_t *starvation_pack(const void *world, const void *base, const uint8_t *need, uint32_t need_size,
+                                bool assets, uint32_t *size)
+{
+    (void)base; (void)need; (void)need_size; (void)assets;
+    *size = sizeof(repair_world);
+    uint8_t *bytes = malloc(*size);
+    if (bytes) memcpy(bytes, world, *size);
+    return bytes;
+}
+
+static bool starvation_unpack(void *world, const void *base, const uint8_t *bytes, uint32_t size)
+{
+    (void)base;
+    if (size != sizeof(repair_world)) return false;
+    memcpy(world, bytes, size);
+    return true;
+}
+
+static starvation_result run_view_starvation(bool starve)
+{
+    enum { UPDATES = 120, TICKS = 60, FIRST_LOST = 240, FIRST_SENT = 280, TAIL = 600, END = 720 };
+    memset(&probe, 0, sizeof probe);
+    // Both sides can run the whole world. Keep visibility repair out of this test.
+    tide_game game = repair_game;
+    game.client_state = NULL;
+    game.load_client_state = NULL;
+    game.client_hash = NULL;
+    game.pack_delta = starvation_pack;
+    game.unpack_delta = starvation_unpack;
+    tide_game client_game = game;
+    client_game.write_input = repair_sample_write;
+    tide_loopback *net = tide_loopback_create(721);
+    const tide_net_conditions clear = {.latency = 0.02};
+    tide_loopback_set_conditions(net, clear);
+    tide_server *server = tide_server_create(&(tide_server_desc){.game = &game, .tick_rate = TICKS,
+        .transports = {tide_loopback_endpoint(net, 1)}}, 0);
+    tide_client *client = tide_client_create(&(tide_client_desc){.game = &client_game,
+        .transport = tide_loopback_endpoint(net, 2), .server = tide_loopback_address(1),
+        .sample = repair_sample, .lead = 2}, 0);
+    starvation_result result = {0};
+    TIDE_CHECK(net && server && client);
+    if (!net || !server || !client) goto done;
+    uint32_t previous = 0, fractional = 0, last_verified = 0;
+    double last_drawn = 0.0;
+    uint64_t hashes[128] = {0};
+    for (uint32_t step = 1; step <= END; step++) {
+        const double now = step / (double)UPDATES;
+        tide_loopback_set_time(net, now);
+        tide_client_update(client, now);
+        // Only downstream packets go missing. This client keeps updating,
+        // sampling and drawing while the server goes on at its normal pace.
+        const bool dropping = starve && step >= FIRST_LOST && step < FIRST_SENT;
+        if (dropping) tide_loopback_set_conditions(net, (tide_net_conditions){.latency = clear.latency, .loss = 1.0});
+        tide_server_update(server, now);
+        if (dropping) tide_loopback_set_conditions(net, clear);
+
+        const repair_world *world = tide_server_world(server);
+        hashes[world->tick % 128u] = repair_hash(world);
+        const tide_client_status status = tide_client_status_of(client);
+        if (status.verified_tick != last_verified) {
+            last_verified = status.verified_tick;
+            const repair_world *confirmed = tide_client_verified_world(client);
+            TIDE_CHECK(confirmed && confirmed->tick == last_verified);
+            TIDE_CHECK(confirmed && repair_hash(confirmed) == hashes[last_verified % 128u]);
+        }
+        if (starve && step == FIRST_SENT - 1) {
+            TIDE_CHECK(world->tick > status.verified_tick + 15);
+            TIDE_CHECK(status.predicted_tick > status.verified_tick + 15);
+            TIDE_CHECK(fabs(last_drawn - status.verified_tick) < 1e-5);
+        }
+
+        const repair_input *input = &world->input[0];
+        if (input->sequence && input->sequence != previous && step >= UPDATES) {
+            previous = input->sequence;
+            TIDE_CHECK(previous < 1024 && previous <= probe.samples);
+            if (previous >= 1024) break;
+            const tide_view_time sent = probe.sampled[previous];
+            const double at = (double)sent.tick - 1.0 + sent.alpha;
+            const double age = ((double)world->tick - 1.0 - at) / TICKS;
+            const bool valid = sent.valid && age <= game.max_rewind;
+            TIDE_CHECK(input->view.valid == valid);
+            if (valid) {
+                TIDE_CHECK(input->view.tick == sent.tick && input->view.alpha == sent.alpha);
+                if (step >= TAIL) result.accepted++;
+            } else {
+                TIDE_CHECK(input->view.tick == 0 && input->view.alpha == 0);
+                if (step >= TAIL && sent.valid) result.expired++;
+            }
+        }
+
+        // Rendering runs at 24 Hz while networking updates at 120 Hz.
+        // Stamp the interpolated endpoints that actually went to the view.
+        const tide_view_worlds view = tide_client_view(client);
+        if (view.verified && step % 5u == 0) {
+            const repair_world *shown = view.verified;
+            const repair_world *before = view.verified_previous;
+            const double at = (double)view.verified_tick - 1.0 + view.verified_alpha;
+            TIDE_CHECK(shown->tick == view.verified_tick && shown->tick <= status.verified_tick);
+            TIDE_CHECK(!before || before->tick + 1u == shown->tick);
+            TIDE_CHECK(at >= last_drawn - 1e-5 && at <= status.verified_tick);
+            if ((step > UPDATES && step < FIRST_LOST) || (!starve && step >= TAIL)) {
+                if (view.verified_alpha > 1e-5f && view.verified_alpha < 1.0f - 1e-5f) fractional++;
+                TIDE_CHECK(before && fabs(at - last_drawn - (double)(5 * TICKS) / UPDATES) < 1e-5);
+            }
+            last_drawn = at;
+            probe.presented = (tide_view_time){(int32_t)view.verified_tick, view.verified_alpha, true};
+            tide_client_mark_presented(client);
+        }
+        if (step >= TAIL) {
+            TIDE_CHECK(status.state == TIDE_SESSION_CONNECTED && status.resyncs == 0 && status.delay_ticks == 0);
+            TIDE_CHECK(status.predicted_tick > world->tick && world->tick - status.verified_tick <= 4u);
+        }
+        if (step == END) {
+            result.display_lag = (double)world->tick - last_drawn;
+            result.verified_lag = world->tick - status.verified_tick;
+            result.prediction_lead = status.predicted_tick - world->tick;
+        }
+    }
+    TIDE_CHECK(fractional >= 5 && probe.lost_stamps == 0);
+done:
+    tide_client_destroy(client);
+    tide_server_destroy(server);
+    tide_loopback_destroy(net);
+    return result;
+}
+
+TIDE_TEST(session_view_time_after_packet_starvation)
+{
+    const starvation_result clear = run_view_starvation(false);
+    const starvation_result starved = run_view_starvation(true);
+    printf("    clear/starved: verification %u/%u ticks behind, prediction %u/%u ticks ahead, "
+           "display %.1f/%.1f ticks behind, stamps accepted %u/%u and expired %u/%u\n",
+           clear.verified_lag, starved.verified_lag, clear.prediction_lead, starved.prediction_lead,
+           clear.display_lag, starved.display_lag, clear.accepted, starved.accepted, clear.expired, starved.expired);
+    TIDE_CHECK(clear.accepted > 40 && !clear.expired);
+    TIDE_CHECK(fabs(clear.display_lag - 2.5) < 1e-5);
+    // Report recovery separately until the confirmed playback policy defines when it must finish.
+    TIDE_CHECK(starved.accepted + starved.expired > 40);
+}
+
 TIDE_TEST(session_view_time_survives_consecutive_visibility_repairs)
 {
     memset(&probe, 0, sizeof probe);
