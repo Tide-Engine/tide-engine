@@ -1,5 +1,52 @@
 # `tide`, packages and the package
 
+## Starting large generated C files earlier (2026-11-19)
+
+The CLI now gives optimized generated C the same descending source-size priority as engine and ThinLTO
+objects. A layout edit rebuilds every generated object that includes the changed header. Starting the largest
+plumbing parts before the smaller jobs reduces the wait at the end of that batch. The existing first-job
+priority, compiler arguments, object stamps, link order and diagnostic order are unchanged. Watching builds
+use the same scheduler and publish at the same point, after the completed link. Simulation ID calculation
+still fingerprints this CLI source as part of the toolchain revision.
+
+Measured Mount & Rifle `480c451` against Tide `1b0cbe623` and the change above, on a Windows Ryzen 9 7900X
+with packaged Clang 23.1.2 and 24 jobs. Both scratch copies used the development Tide binaries and their own
+warmed caches. Ran `tide run <copy> --frames 2` with `TIDE_HIDDEN=1` and `TIDEC_TIMES=1`. Each pair alternated
+which compiler went first. There were eight view-constant edits (`FIELD_OF_VIEW`) and four additions and four
+removals of an `int` field in the match singleton `Admin`. One earlier probe edited a singleton in an inactive
+conditional and was discarded after it rebuilt zero objects.
+
+| Edit | Total before / after | Prep and packages | Tide and object queue | C batch tail | Link | Game |
+|---|---:|---:|---:|---:|---:|---:|
+| Constant | 3.39 / 3.52 | 0.11 / 0.11 | 2.21 / 2.32 | 0.12 / 0.13 | 0.18 / 0.19 | 0.74 / 0.78 |
+| Add field | 8.47 / 8.30 | 0.11 / 0.11 | 2.62 / 2.56 | 4.82 / 4.67 | 0.18 / 0.17 | 0.73 / 0.71 |
+| Remove field | 8.35 / 7.88 | 0.12 / 0.11 | 2.55 / 2.49 | 4.80 / 4.38 | 0.18 / 0.17 | 0.73 / 0.73 |
+
+Columns are medians in seconds, taken independently. The C tail starts at the CLI's batch announcement.
+Game-code jobs can start before that announcement. The field addition rebuilt 67 C files and improved in
+all four pairs. A constant edit rebuilt one unoptimized part and exercises the same launch path on both CLIs.
+Most of the measured difference for that edit was before the C batch. There was no demonstrated constant-edit
+win. The older 3.53 and 7.76 s measurements used another toolchain and edits. The paired baseline above is
+the comparison for this change.
+
+On the baseline constant edit, lexing/parsing took 0.11 s, asset checks and cache reads 0.29 s, and the
+remaining checks and scheduling 0.29 s. Pack preparation took 0.12 s and C generation took 1.23 s, including
+0.61 s to separate and partition generated C. The corresponding field addition spent 0.40 s parsing, checking
+code and scheduling, and 0.94 s separating and partitioning. The generated `game_plumbing_part11.c` finished last.
+A separate Clang time trace of that file showed 0.44 s in the C front end and 5.78 s in the backend. The largest
+single function optimization event was 1.83 s in `tide_game_near_same`. Reducing that function's compile cost
+would need runtime performance measurements on the prediction path. Whole-program incremental analysis alone
+would address roughly 0.4 s of the current constant edit. Partitioning and generated C compile cost merit separate
+measurement before a redesign of the checker.
+
+Validation on Windows: the ASan build-report fixture catches the old launch order after a layout edit, checks
+that all plumbing objects rebuild, then checks reuse and byte-identical generation when the job count changes.
+The build overlap and generation tests also passed. Both benchmark CLIs ran the game, and all 68 generated C,
+header and manifest files matched after normalizing scratch paths and the toolchain revision's Simulation ID.
+The staged package passed `cache_test.mjs --part at-once --web` and `--part cache --web --gpu`, covering native
+and web object parity, rebuilds after a failed compile, installed toolchain and header invalidation, a hidden
+native run, and debug and release web watch publication. Native windowed hot reload and Android were not run.
+
 ## `tide unity --ios`: a player's game as sources (2026-11-19)
 
 The agent's picks, Provisional; the design and the Unity side are in `notes/unity.md`, iOS players.

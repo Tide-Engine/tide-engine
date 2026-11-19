@@ -314,6 +314,27 @@ try {
     assert.deepEqual(compiledWideNow(), ["game.c"], "the plumbing's objects stand by their kept stamps");
     assert.equal(readFileSync(join(wideGen, "parts.stamped"), "utf8"), stamped, "kept stamps stay as they were");
 
+    // A layout edit invalidates every generated object. With one worker the
+    // report exposes launch order, so large optimized parts must go first.
+    const wideLayout = wideSource.replace("int n;", "int n; int extra;");
+    put(join(wide, "game.tide"), wideLayout);
+    env.TIDE_JOBS = "1";
+    const wideChanged = await run(["build", wide, "--report", wideReport]);
+    assert.equal(wideChanged.code, 0, wideChanged.said);
+    assert.equal(compiledWideNow()[0], "game.c");
+    const layoutParts = readFileSync(join(wideGen, "game_parts.txt"), "utf8").trim().split("\n").map(line => line.slice(4));
+    const changedPlumbing = compiledWideNow().filter(name => name.startsWith("game_plumbing"));
+    assert.deepEqual(changedPlumbing.toSorted(), layoutParts.filter(name => name.startsWith("game_plumbing")).toSorted());
+    const sizes = changedPlumbing.map(name => statSync(join(wideGen, name)).size);
+    assert(new Set(sizes).size > 1, "fixture must exercise unequal compile priorities");
+    assert.deepEqual(sizes, sizes.toSorted((a, b) => b - a));
+    const generated = ["game.h", ...layoutParts].map(name => [name, readFileSync(join(wideGen, name))]);
+    env.TIDE_JOBS = "2";
+    const wideLayoutWarm = await run(["build", wide, "--report", wideReport]);
+    assert.equal(wideLayoutWarm.code, 0, wideLayoutWarm.said);
+    assert.deepEqual(compiledWideNow(), [], "changing job count keeps the rebuilt objects");
+    for (const [name, bytes] of generated) assert(bytes.equals(readFileSync(join(wideGen, name))), `${name} is identical`);
+
     // A debug build's own code is in parts once it's big, compiled as game.c is and without ThinLTO; an edit of a
     // function compiles the parts it changed, which start as soon as they're written
     const largeDebug = await run(["build", large, "--report", largeReport]);

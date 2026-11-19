@@ -1009,7 +1009,7 @@ typedef struct compile_job {
     bool cpp;
     bool first;       // Started ahead of its turn: the game's own code, which takes the longest
     bool engine;      // One of the engine's files, which have one stamp for them all (compiles.engine_stamp)
-    int64_t size;     // Start larger engine files early; their compile often sets the cold build's finish time
+    int64_t size;     // Start large engine and generated files early
     char *stamp_path; // The file that says what the object was made of, NULL for a file with none of its own:
     char *stamp;      // gone while the file compiles, so a compile that's cut short leaves no object that passes, and written once it has
     bool started;
@@ -1097,8 +1097,8 @@ static void free_compiles(compiles *list)
     *list = (compiles){0};
 }
 
-// The next file before `stop`: the game's generated code first, then larger
-// engine sources, then the remaining files in order. Diagnostics keep their
+// The next file before `stop`: explicitly prioritized jobs first, then larger
+// engine and generated sources, then the remaining files in order. Diagnostics keep their
 // original order independently. -1 when none is left.
 static int next_compile(const compiles *list, const int stop)
 {
@@ -1523,10 +1523,8 @@ static void queue_unless_stamped(const build *b, compiles *list, const char *sou
         // if the source is then put back exactly as it was before the failure.
         // The stamp goes as the compile starts (run_compiles).
         compile_job *job = queue_compile_as(list, b, source, object, gen, false, optimized);
-        if (thin) {
-            arg(&job->a, "-flto=thin");
-            job->size = sys_file_size(source);
-        }
+        if (thin) arg(&job->a, "-flto=thin");
+        if (thin || optimized) job->size = sys_file_size(source);
         // Every type the game declares is in game.o's debug info (config_flags): once is enough
         if (lean && !b->opts->distribution) arg(&job->a, "-feliminate-unused-debug-types");
         job->stamp_path = stamp_path;
