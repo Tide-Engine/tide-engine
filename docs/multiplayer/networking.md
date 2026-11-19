@@ -137,6 +137,8 @@ Each tick verifies the recipient's canonical permitted state. Corrections use a 
 
 Draw remote players with `verified Body body` to interpolate confirmed positions without extrapolating guessed input around corners. The player's own movement can still use the predicted view. Verified event handlers receive exact event state.
 
+When confirmed updates stall, the view holds the last confirmed state. Once confirmation catches up, the view can skip a large playback backlog in one frame and resume interpolation from the latest confirmation.
+
 The physics packages offer a read-only query context for hit validation. Enable bounded history with `settings { maxRewind = 0.25; }` and opt bodies in with `Body { rewind = true }`. `physics.Rewind(controls.viewTime, out var query)` prepares one scene for all the queries in that shot; `query.Raycast(...)`, `Cast`, `Overlap` and `Inside` have the current physics query forms. Non-opted bodies use current geometry, so walls still block a historical player. Opt moving doors in when they should also rewind.
 
 With `maxRewind` enabled, every input has an engine-supplied, read-only `ViewTime viewTime`. Its `tick` is the upper confirmed endpoint, `alpha` is the interpolation fraction, and `valid` says whether a frame has been presented. The timestamp describes the last frame actually presented, not a future predicted tick. The server treats its wire value as an untrusted claim: it rejects malformed fractions, future ticks, times before that connection's snapshot, times beyond what it advertised and times outside the configured window. `Rewind` also checks retained physics history and returns false when the requested interval is unavailable. It never silently substitutes current geometry or clamps the time.

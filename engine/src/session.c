@@ -229,6 +229,7 @@ enum { START_UNKNOWN = 0, START_MAIN = 1, START_GIVEN = 2 };
 #define CLOCK_EXCESS 0.1  // Seconds beyond even a fresh join's conservative lead before recovering faster
 #define MAX_TICKS 8u    // Ticks a server runs in one update at most: after a stall it drops the time instead
 #define CATCH_UP_TICKS 8u // Normal frame allowance for server ticks while a client is behind (catch_up_room)
+#define VERIFIED_VIEW_SLACK 0.1 // Seconds of confirmed playback backlog tolerated for ordinary packet bursts
 #define PRESENT_SECONDS 20.0  // How long players of a world a server went on from have to come back
 #define HANDOVER_EVERY 1.0    // Seconds between HANDOVERs, once it's been the same that long
 
@@ -7586,7 +7587,14 @@ static void play(tide_client *c)
     if (!c->catching_up && out_of_room && c->heard_tick > c->sampled) fall_behind(c);
     // Level with the server once it has run every tick the server said it
     // ran, or the next one's time hasn't come: from there it predicts
-    if (c->catching_up && !c->need_snapshot && !c->receiving && (c->verified >= c->heard_tick || waits)) {
+    if (!c->need_snapshot && !c->receiving && (c->verified >= c->heard_tick || waits)) {
+        if (!c->repair_tick) {
+            // A hold at the confirmation frontier can leave playback behind even
+            // when prediction stayed ahead. Skip the backlog once confirmation
+            // is current, allowing for packet bursts and slower client updates.
+            const double slack = 1.0 + (VERIFIED_VIEW_SLACK + 2.0 * c->took_before) * (double)c->tick_rate;
+            if ((double)c->verified - c->verified_view > slack) c->verified_view = (double)c->verified;
+        }
         c->catching_up = false;
     }
     if (!c->catching_up) {

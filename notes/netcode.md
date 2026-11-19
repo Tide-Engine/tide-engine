@@ -937,9 +937,8 @@ real time and is held at the newest confirmed tick, so after the confirmed ticks
 burst it stays that far behind for good (until a repair, a reload or a resync sets it). What's drawn from the
 confirmed world, and the view times a rewind goes by, are that much older from then on:
 `tide_box3d_rewind_network`'s 20 frames a second with 10% lost had every stamp expire (350 ms old) with a first cut
-of this that learned a network's loss by losing ticks. So ticks have to be lost in every copy almost never, not
-merely seldom; that's what the rule below is sized by. Whether that clock should catch up is the owner's
-(Confirmed presentation, 2026-10-11, below).
+of this that learned a network's loss by losing ticks. So ticks had to be lost in every copy almost never,
+which is what the rule below is sized by. See Confirmed presentation below for the 2026-11-19 playback fix.
 
 ### What's built (`engine/src/session.c`; agent-maintained, no generated code or `tide_game` member involved)
 
@@ -1167,8 +1166,8 @@ below, for the 4 and 3 where it stops.
   second over what it was. A whole datagram's room gives 32 players turning a second copy (33.7 KB a second for
   18.9, no stall for a lost datagram) and 8 players at 10% lost their sixth. So are once in 100,000 ticks, 512 and 256 SERVERs, the
   eight a connection starts with, and three inputs to spare.
-- **The confirmed presentation clock keeps a stall** (top of this section): with it catching up, a tick lost in
-  every copy would cost a moment and not the rest of the match, and fewer copies would do.
+- **The confirmed presentation clock keeps a stall** (fixed 2026-11-19, Confirmed presentation below): a tick lost in
+  every copy can still stall the view until confirmation recovers. Retransmission settings still use the rules above.
 - (Fixed the same day: the top section, A whole projection the server starts is taken.)
   **A reload during a stream of repairs can stop a client for good**, before this change and after
   (`visibility_large_repairs_release_old_callbacks_on_compatible_reload` with seeds 14, 25, 61572 and 61584 on the
@@ -3920,25 +3919,31 @@ End-to-end frame/shot validation (2026-10-11): the two physics rewind-network fi
 
 The fixtures exposed a prediction-reuse bug: a server-rejected old view stamp can leave the server's input unchanged, so its frame carries no input delta even though the client's sampled stamp differs. as_predicted now compares held inputs for this client's slots against the confirmed base before reusing a predicted world. Otherwise it replays the authoritative held input instead of requesting an unnecessary resync. This uses existing input/scratch callbacks, changes no wire or generated-C ABI, and preserves bounded validation. The fixtures require zero resyncs.
 
-### Packet starvation reproduction (2026-11-19)
+### Packet starvation and immediate playback recovery (2026-11-19)
 
 `session_view_time_after_packet_starvation` runs a 60 Hz match with 20 ms
 one-way latency, 120 Hz updates and 24 Hz confirmed frame marks. For 333 ms it drops every server-to-client
 datagram while input and rendering continue. In the final second, verification is at most four ticks behind
 and prediction is ahead with no input delay or resync. At the last frame both the control and starved clients
-verify two ticks behind and predict three ticks ahead. The confirmed display is 2.5 ticks behind in the control
-and 25.5 after starvation. With a quarter-second rewind window, the server accepts all 61 control timestamps
-and rejects all 61 starved timestamps in that final second. Windows ASan and Node WASI give the same result.
+verify two ticks behind and predict three ticks ahead. Before the fix the confirmed display was 2.5 ticks behind
+in the control and 25.5 after starvation. With a quarter-second rewind window, the server accepted all 61
+control timestamps and rejected all 61 starved timestamps in that final second.
 
 `update_client` discards elapsed playback time when it clamps `verified_view` at the preceding confirmed
 frontier. Predictions and inputs keep advancing, so this loss need not enter `play`'s `catching_up` mode, which
 moves the display directly to the frontier when joining or falling behind on input or simulation work.
-Once the burst is confirmed, advancing the display at the match rate preserves its extra 23-tick lag.
-The fixture pins the control's interpolation, checks updated confirmed worlds against the server's hashes, and
-checks sampled marks against the endpoints actually presented and the original execution-age rule. It reports
-the recovered display offset and stamp counts. A regression assertion that the display comes within one tick
-of the control by the last frame fails on the current engine. The maximum playback speed or discontinuity
-allowed during recovery is open for the owner.
+The owner chose to skip the display backlog once confirmation recovers. At the end of `play`'s confirmation loop,
+when the client has reached the last reported server tick or the next complete tick is still ahead of its clock,
+`verified_view` moves straight to the latest confirmed tick if its backlog exceeds one tick plus 100 ms and
+two client update intervals. That margin leaves room for packet bursts and slow updates. An outstanding world
+transfer or visibility repair blocks this path. The next input still names the last frame actually shown until
+the host marks a new one. Confirming ticks, predicting, and the server's execution-age rule use their existing clocks.
+
+The fixture requires one forward jump on recovery, ordinary interpolation before and afterward, and matching
+confirmed world hashes. It checks the expiry of old stamps held through the outage and acceptance of the exact
+sampled frame after recovery. On Windows ASan and Node WASI both runs now show a final 2.5-tick display lag and
+61 accepted timestamps. On both platforms, the Box2D and Box3D rewind-network fixtures, view-correction cases,
+and `tidec_e2e_net` and `tidec_e2e_net_join_big` pass. The documentation build passes.
 
 ## T? fields on the wire (2026-10-11)
 

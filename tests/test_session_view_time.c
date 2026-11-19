@@ -235,7 +235,8 @@ static starvation_result run_view_starvation(bool starve)
     starvation_result result = {0};
     TIDE_CHECK(net && server && client);
     if (!net || !server || !client) goto done;
-    uint32_t previous = 0, fractional = 0, last_verified = 0;
+    uint32_t previous = 0, fractional = 0, last_verified = 0, jumps = 0, expired_during_stall = 0;
+    bool recovered = false;
     double last_drawn = 0.0;
     uint64_t hashes[128] = {0};
     for (uint32_t step = 1; step <= END; step++) {
@@ -280,23 +281,31 @@ static starvation_result run_view_starvation(bool starve)
             } else {
                 TIDE_CHECK(input->view.tick == 0 && input->view.alpha == 0);
                 if (step >= TAIL && sent.valid) result.expired++;
+                if (sent.valid && step >= FIRST_LOST && step < TAIL) expired_during_stall++;
             }
         }
 
         // Rendering runs at 24 Hz while networking updates at 120 Hz.
         // Stamp the interpolated endpoints that actually went to the view.
         const tide_view_worlds view = tide_client_view(client);
+        const double at = (double)view.verified_tick - 1.0 + view.verified_alpha;
+        if (starve && step >= FIRST_SENT && !recovered && status.verified_tick >= status.server_tick
+            && world->tick - status.verified_tick <= 4u) {
+            TIDE_CHECK(at == status.verified_tick);
+            recovered = true;
+        }
         if (view.verified && step % 5u == 0) {
             const repair_world *shown = view.verified;
             const repair_world *before = view.verified_previous;
-            const double at = (double)view.verified_tick - 1.0 + view.verified_alpha;
+            const double advance = (double)(5 * TICKS) / UPDATES;
             TIDE_CHECK(shown->tick == view.verified_tick && shown->tick <= status.verified_tick);
             TIDE_CHECK(!before || before->tick + 1u == shown->tick);
             TIDE_CHECK(at >= last_drawn - 1e-5 && at <= status.verified_tick);
-            if ((step > UPDATES && step < FIRST_LOST) || (!starve && step >= TAIL)) {
+            if ((step > UPDATES && step < FIRST_LOST) || step >= TAIL) {
                 if (view.verified_alpha > 1e-5f && view.verified_alpha < 1.0f - 1e-5f) fractional++;
-                TIDE_CHECK(before && fabs(at - last_drawn - (double)(5 * TICKS) / UPDATES) < 1e-5);
+                TIDE_CHECK(before && fabs(at - last_drawn - advance) < 1e-5);
             }
+            if (step >= FIRST_LOST && at - last_drawn > advance + 1e-5) jumps++;
             last_drawn = at;
             probe.presented = (tide_view_time){(int32_t)view.verified_tick, view.verified_alpha, true};
             tide_client_mark_presented(client);
@@ -312,6 +321,8 @@ static starvation_result run_view_starvation(bool starve)
         }
     }
     TIDE_CHECK(fractional >= 5 && probe.lost_stamps == 0);
+    if (starve) TIDE_CHECK(recovered && jumps == 1 && expired_during_stall > 0);
+    else TIDE_CHECK(jumps == 0);
 done:
     tide_client_destroy(client);
     tide_server_destroy(server);
@@ -329,8 +340,8 @@ TIDE_TEST(session_view_time_after_packet_starvation)
            clear.display_lag, starved.display_lag, clear.accepted, starved.accepted, clear.expired, starved.expired);
     TIDE_CHECK(clear.accepted > 40 && !clear.expired);
     TIDE_CHECK(fabs(clear.display_lag - 2.5) < 1e-5);
-    // Report recovery separately until the confirmed playback policy defines when it must finish.
-    TIDE_CHECK(starved.accepted + starved.expired > 40);
+    TIDE_CHECK(starved.display_lag <= clear.display_lag + 1.0);
+    TIDE_CHECK(starved.accepted > 40 && !starved.expired);
 }
 
 TIDE_TEST(session_view_time_survives_consecutive_visibility_repairs)
