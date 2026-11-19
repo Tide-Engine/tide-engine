@@ -1,3 +1,123 @@
+## Physics shapes in the Scene view: drawn as Unity's colliders are, and checked against them (2026-11-19)
+
+Phase 4's "gizmos for Tide physics shapes" and the authoring gaps' "gizmos". The wireframes were built on
+2026-10-22 and 2026-10-25 (Packages' components in Unity) for the selected GameObject alone and never checked
+against anything. All picks mine (Provisional).
+
+- **When a shape is drawn** (`TideShapes.Draw`, `Drawn`): while its GameObject **or one above it** is selected
+  (`GizmoType.InSelectionHierarchy`), as Unity draws the colliders under a selected Rigidbody: selecting a body
+  shows its parts' shapes, which it didn't. Unselected ones are drawn only with **Always Show Tide Shapes** on
+  (Project Settings > Tide; `TideShapes.Always`, EditorPrefs `Tide.AlwaysShowShapes`, this machine's, off at first),
+  as Physics 2D's Always Show Colliders does Unity's, and fainter (`Faint`, alpha 0.35 against 0.9). Unity's 3D
+  colliders have no such switch outside the Physics Debugger; one switch for both of Tide's is simpler than two.
+  Tide's blue is kept rather than Unity's green, so the two can be told apart where a GameObject has both.
+- **With it on, Unity asks for every Tide component each repaint**: `Shaped(type)` answers from a table whether a
+  type has any of the five attributes, before any reflection on the component.
+- **Edit mode and Play.** Outside Play the fields are the authored values. In Play they're the match's: the
+  generated `ReadLive` writes each frame's values into the same fields (a size divided by the scale again, a part's
+  offset or points brought back from its body's frame: `TideScale.Unscale`, `TideParts.Placed`/`Points`), and the
+  GameObject is where the match has the entity, so the same drawing shows the live shape. Nothing separate draws
+  in Play.
+- **One place for a primitive's geometry** (`TideShapes.PrimitiveOf`: matrix, centre, size, radius, height), which
+  the drawing uses, and `WorldBounds`, the box in the world that holds what's drawn: Unity's `Collider.bounds` of
+  the same shape, which is what the tests compare.
+- **Tests** (EditMode `ShapeTests`, fixtures `Assets/Tests/Geometry/GeometryBox`, `Sphere`, `Capsule`, `Rect`,
+  `Circle` with the attributes tide writes for Box3D's and Box2D's):
+  - a Tide box, sphere and capsule against a `BoxCollider`, `SphereCollider` and `CapsuleCollider` of the same
+    fields on the same GameObject, at five placements (plain; scaled per axis; turned and scaled; mirrored; under a
+    moved, turned, scaled parent): the bounds agree to 0.4 mm;
+  - a rect and a circle against `BoxCollider2D` and `CircleCollider2D`, turned about z, scaled and mirrored;
+  - a part's box in Play: its offset baked as tide bakes it, shown back by `TideParts.Placed` as authored, drawn
+    where Unity's collider is, and again after its body moved;
+  - when a shape is drawn: selected, under a selection, unselected with and without the switch, the switch kept in
+    EditorPrefs, which types have shapes, and the gizmo's own `DrawGizmo` flags.
+- **Runs:** Unity 6000.6.0f1, hidden batch, `-nographics`, this checkout's Sample: ShapeTests 4 of 4 and GeometryTests 5 of 5, within the EditMode run of 47 of 52 (the five others are the run's setup: A build says which tide made it, Runs). No C# warnings.
+- **Not seen:** the wireframes, the fainter unselected ones, the Project Settings toggle and Edit Shape's handles in
+  a window: agent runs open none, and a batch run has no Scene view to draw gizmos into. What's tested is the
+  geometry that's drawn and when; what `Handles` makes of it on the screen isn't.
+- **Left:** outlines, meshes, terrains and joints have no Unity collider to hold them against here (their geometry
+  is `GeometryTests`'); a sensor, an asleep body or a disabled component draws as any other (Unity's 2D has colors
+  for those); Unity hiding the gizmo of a component folded in the Inspector isn't asked for.
+
+## An orthographic Unity camera (2026-11-19)
+
+"Not done: an orthographic Unity camera" (Unity's camera is the views', 2026-10-21) was left because the embed's
+camera then was a position, a rotation and a field of view, and Tide's 3D cameras were perspective ones. Both
+stopped being true a day later: `tide_embed_camera` takes Unity's two matrices as they are (ABI 4, 2026-10-22), and
+Tide has `Draw.Camera(transform, projection)` with `float4x4.Ortho`. So nothing needed building, no language or
+draw API change is proposed, and nothing is the owner's to decide: what was missing was any run of it in Unity.
+
+- **Run now** (the Sample's PlayMode `BounceTests`, the Sample's own camera made orthographic):
+  - `TideDrawsIntoAnOrthographicCamerasFrame`: the whole frame check of `TideDrawsIntoUnitysFrame` through an
+    orthographic camera (size 7): the game's frag plates where the camera sees them, the plate under Unity's floor
+    hidden by the camera's depth (so Tide's depth is Unity's orthographic depth, near and far planes included), the
+    cube over the ball at `WorldToScreenPoint`, the ring around it, and the screen-space Hud, target, stencil and
+    depth view as they were. The ring's pixels are matched by 0.5 there rather than 0.35: it's a pixel wide and
+    smooth, and where its middle falls between two pixels each is half floor (10 of 16 angles at 0.35, a matter of
+    the ball's place on the screen, not of the camera; the floor alone is 0.6 away).
+  - `TheMatchShowsItsBall`: the ring's place in the draw packet (`Draw.WorldToScreen`) within 1.5 pixels of
+    `Camera.main.WorldToScreenPoint` after the camera turns orthographic, and at another place than the perspective
+    camera had it. Runs without a GPU too.
+  - `SceneViewsShowTidesThreeD`: a scene camera made orthographic (the Scene view's Iso) shows the cube where it
+    sees it (`tide_embed_render_view`), and not a unit beside it.
+- **Runs:** Unity 6000.6.0f1, hidden batch with the GPU, `-noAudio`, Direct3D 11 (`-force-d3d11`), the built-in pipeline, this checkout's Sample with a scratch tide of this checkout: BounceTests 18 of 18. The frame was also saved (`TIDE_UNITY_DUMP`) and looked at: the box from above without perspective, the ring about the ball, the cube over it, the plate's stripes. Not on Direct3D 12, Vulkan or OpenGL Core: the camera's matrices reach the replay as uniforms, on every API alike.
+- **Not run:** URP with an orthographic camera (the pass takes the same matrices), an oblique or off-centre
+  projection (`Camera.projectionMatrix` set by hand: the same path, any matrix), and what a game's own view does
+  with a camera it assumes is perspective (`Draw.CameraProjection()` gives it the matrix to ask).
+
+## A build says which tide made it, and the host loads only its own (2026-11-19)
+
+Closes "Found on the way, not changed" of 2026-10-25 (Tide's drawing after a hot reload): a host took any
+`game-<n>` that loaded. The shape check of 2026-11-10 (Made for production) refuses tables of another size; two
+tides that lay the tables out alike, or whose engine copies differ, still loaded each other's builds. All picks
+mine (Provisional).
+
+- **What a build carries.** `tide unity` works out which tide it is as each build starts (`made_by` in
+  `compiler/cli/build.c`): `<version> (<16 hex digits>)`, the digits a hash of tide's own executable, the
+  installation's headers, the engine's sources and the platform layer's library, by their stamps (path, size, time).
+  It writes that text into the game's library (`tide_host_library_made_by`, in `library.c`) and into the host Unity
+  loads (`embed_host.c`: a constructor calling `tide_embed_made_by`, so the host says it as it's loaded and C# calls
+  nothing new). Two tides of one version (a development tide built again) are two; so is one whose files changed.
+- **What the host does** (`reload_library.inc`'s `load`, after the shape check): a library that says another text,
+  or has no such function, isn't loaded. The Console gets an error through `tide_embed_log`, as for any build that
+  doesn't load: "tide: .../game-7.dll was built by tide 0.8.0-dev (36d2...240), and what runs it by tide 0.8.0-dev
+  (36d2...24f), so it isn't loaded: tide was installed again, or another one took its place, since the game started.
+  Stop the game and start it again once tide has built it (in Unity: leave Play, wait for tide's build, and enter
+  Play again), so that one tide built both". The match goes on with the build it has, and that build isn't tried
+  again. Where it's the first build (`tide_embed_create`), there's no embed and the same error.
+- **The installation changing under a running editor**, which "could do the same (not tried)":
+  - tide's loop (`unity_build`) sees that the text changed since it built the host, stamps the headers again, and
+    builds the host again before the game. So the host on disk and the newest game are always one tide's, and
+    entering Play again is enough: nothing is restarted by hand.
+  - A Play that's running keeps the host it loaded (a copy), which refuses the new build with the message above.
+  - `TideBuildService.FollowTide` (once a second, from `Drain`): where the tide executable the service started was
+    replaced (another size or time, as it is for two seconds: `Replaced`), it starts tide again. The running one is
+    the old program, which would go on compiling with the new installation's files.
+- **No embed ABI or packet change.** `tide_embed_made_by` is the host library's own business, not an export, and
+  `TideLibrary.Abi` stays. `tide_run_desc.made_by` gives `tide run`'s host the same check; tide doesn't set it
+  (one process builds that host and its games, and a running host can't be built again): left so.
+- **Not checked, as before:** a player's game (linked by the package from one build), Android's whole library and a
+  page's program (the game and the host are one link). A reinstall of the very same version is another tide to a
+  Play that's running (its files' times changed), which costs a Play restart and never a wrong load. Stamps, not
+  bytes: two installations whose files are the same bytes at the same paths and times are one.
+- **Tests:**
+  - `tide_platform_reload` (native, ASan): a foreign build published while the game runs is refused, both tides
+    named and the fix said, and the build running goes on; a host that says nothing loads it; a host of a third tide
+    loads neither (notes/hot-reload.md).
+  - `tide_cli_unity_made_by` (`compiler/cli/tests/unity_made_by_test.mjs`, a made-up installation and the controlled
+    compiler): the installation changed under a watching `tide unity`, part by part, gives another text in the
+    library and the host, the host compiled again; a change of the game alone leaves the host (notes/cli-and-packages.md).
+  - The Sample's PlayMode `BounceTests.ABuildAnotherTideMadeIsntLoaded`: the running build's library with one digit
+    of its text changed, published as the next `game-<n>` in Play. The Console's error is expected by its text
+    (`LogAssert`), no `loaded-<n>` copy stays, the match's ticks go on, and the game ended and started again runs.
+    This is the 2026-10-25 crash's case with the tables the same size, which the shape check let through.
+  - EditMode `ReplacedTests`: what counts as tide replaced (changing, settled, the same bytes at another time, gone,
+    put back).
+- **Runs:** Windows ASan (`sanitize`): `tide_platform_reload`, `tide_platform_embed`, `tide_cli_unity_made_by`, `tide_cli_generation` pass. `embed.c` compiles for wasm32-wasip1-threads under the warnings (syntax alone; no web tree was built). Unity 6000.6.0f1, hidden batch, `-noAudio`, this checkout's Sample with a scratch tide of this checkout's mingw-release tree (`-tide-command`), automatic builds off, the game built by `tide unity --once`: PlayMode BounceTests 18 of 18 on Direct3D 11; EditMode (`-nographics`) 47 of 52, two skipped as before, and three failing for the run's own setup, as in earlier runs: the two UnsavedTests want a running tide, and the launch-argument test a launch without `-tide-command`. No C# warnings.
+- **Not run:** the service restarting a real tide whose executable is replaced under an interactive editor (its
+  rule is tested, and tide's side by the CLI test); an upgrade through `tide upgrade` or the Versions window while
+  Play runs, end to end; Linux and macOS (constructors in a shared library, CI's).
+
 ## Time travel's gaps (2026-11-19)
 
 The owner asked for the Unity integration's known gaps to be closed; these are the ones "Time travel (2026-10-26)"
@@ -2073,7 +2193,7 @@ hand, an unknown field is a mistake. Test: `tidec_prefab_error_once` (a
 the error once).
 
 Gaps: unsaved scene and prefab edits (tide reads saved files), `Name#k` paths
-when names include `#`, and gizmos. (Asset fields aren't one: a match component
+when names include `#`, and gizmos (physics shapes' since: Packages' components in Unity, and 2026-11-19, top). (Asset fields aren't one: a match component
 can't hold a rendering resource, "rendering resources belong to this machine,
 so the match can't use them", and a `Mesh` can't be a field, so nothing of a
 component is a Unity asset; tidels renames reach Unity assets, Tooling below.)
@@ -2546,7 +2666,8 @@ in world units), so it moved into `Draw.Screen()` at (16, 30), and a `Ring`
 view draws a wire circle at each ball's `WorldToScreen`; the play mode test
 finds the ring within 1.5 pixels of `Camera.main.WorldToScreenPoint` of the
 ball (y flipped). Not done: an orthographic Unity camera (Tide's 3D cameras are
-perspective ones), and Unity's near and far planes for a projected depth.
+perspective ones), and Unity's near and far planes for a projected depth. (Both done a day later by the matrices of
+Tide's renderer in Unity, below; an orthographic camera first run in Unity on 2026-11-19, top.)
 
 **Stats and the runner's Arguments (2026-10-21).** The owner put `--stats` in
 TideRunner's Arguments and saw nothing: the embed dropped every flag it didn't
@@ -3479,7 +3600,8 @@ only Tide drawing is the rooms package's menu, in screen space.
   EditMode 24/24 on D3D11; the drawing tests also on Vulkan, OpenGL Core and D3D12. Reproduced first on a scratch
   copy of the owner's playground (its rooms menu: gone after a layout reload, and a frame after the first under its
   Enter Play Mode Options; shown in both with the fix).
-- **Found on the way, not changed:** a host takes any `game-<n>` that loads, with no check that the same tide made
+- **Found on the way, not changed** (closed since: the tables' sizes on 2026-11-10, Made for production, and which
+  tide built it on 2026-11-19, top): a host takes any `game-<n>` that loads, with no check that the same tide made
   it. A copy of the playground whose ProjectSettings named another tide (`tidePath`) loaded an embed of one tide and a
   build of the other, and Unity crashed in `tide_run_bind_io` (a pointer of the game's table, laid out otherwise).
   The same could come of tide's installation changing under a running editor, as each build reads the installed

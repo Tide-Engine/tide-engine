@@ -253,7 +253,9 @@ their GameObjects, their components and the singletons read, events told).
 The game's views draw with Unity's camera: the runner's View Camera, or the
 main camera, is the 3D camera Tide's views start with, so
 `Draw.WorldToScreen(position)` is where Unity shows that point, in screen
-pixels from the top left. Draw at it inside `Draw.Screen() { ... }`, whose
+pixels from the top left. The camera can be perspective or orthographic: Tide
+takes its placement and projection as they are, its near and far planes too,
+and `Draw.CameraTransform()` and `Draw.CameraProjection()` give them. Draw at it inside `Draw.Screen() { ... }`, whose
 calls are in screen pixels; outside it, 2D draws go through Tide's 2D camera,
 centered on the screen at a pixel a unit unless the view sets one.
 
@@ -281,8 +283,12 @@ them (OpenGL ES 3, WebGL 2), the views' 2D is drawn with Unity's GL alone.
 
 A physics package's components are on GameObjects like the game's own: with
 `box3d`, a `Body` and a `Box`, `Sphere` or `Capsule` (Add Component, Tide/Box3D).
-A shape's size is by the GameObject's scale, as a collider's is, a selected one
-is drawn in the Scene view, and Edit Shape gives it handles. The body starts
+A shape's size is by the GameObject's scale, as a collider's is. It's drawn in
+the Scene view while its GameObject or one above it is selected, as Unity's
+colliders are (select a body to see its parts' shapes), and Edit Shape gives it
+handles. With Always Show Tide Shapes on (Project Settings > Tide, this
+machine's choice), every shape is drawn, the unselected ones fainter. In Play
+the shapes are the match's: each is drawn from its component's live values. The body starts
 where the GameObject is, and the GameObject follows it. A shape on a child
 GameObject with a `Part` is on the body above it, where the child puts it. A
 mesh collider fills from the GameObject's MeshFilter, a height field from its
@@ -411,10 +417,13 @@ and for consoles. A
 dedicated server needs none of them: it's a Tide build of the same game
 (`tide build --server --assets Assets`), which Unity's players join.
 
-The editor's host and each build of the game it loads are made by one `tide`.
-If a build comes from another (a development `tide` rebuilt while Play runs),
-the host says it "was built by another tide than the one running it" and goes
-on with the build it has: start Play again.
+The editor's host and each build of the game it loads are made by one `tide`,
+and each says which: its version and a number of the files it builds with. If
+a build comes from another (`tide` installed again or upgraded while the editor
+is open, or a development `tide` rebuilt), the Console says which tide built
+the game and which the host, and Play goes on with the build it has. Leave
+Play, let `tide` finish its build, and enter Play again: `tide` builds the host
+again with the next game, so nothing has to be restarted.
 
 ## Requirements
 

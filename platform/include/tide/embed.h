@@ -144,6 +144,13 @@ enum {
 };
 const uint8_t *tide_embed_log(tide_embed *e, uint32_t *size);
 
+// Which tide built this host, as text that stays where it is (a literal): the games' libraries it loads from
+// tide_embed_desc.library_dir have to say the same (tide/host.h's TIDE_HOST_LIBRARY_MADE_BY), and one that says
+// another isn't loaded, with a problem in tide_embed_log saying what to do. The process's, said before
+// tide_embed_create: the host tide builds for Unity says it as it's loaded, so the other program never calls this.
+// NULL, or never said, takes any library. A game linked in (tide_embed_desc.game) isn't checked: one build made both.
+void tide_embed_made_by(const char *made_by);
+
 // What the frame's views drew (tide/draw.h's draw list), for the other program
 // to draw in its own window, as bytes: this header, then its arrays, each from
 // a multiple of 8 bytes, in this order: the commands (tide_draw_command), the

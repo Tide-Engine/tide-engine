@@ -47,6 +47,28 @@ handed to C now, or isn't any more), `tide_layout_field.heap` differs and the fi
 (`carries`); a heap whose owner is gone is left out by `tide_heaps_unpack`. `TIDE_HOST_SHAPE` counts the layout's
 type and field sizes. schedule-and-threads.md, top section.
 
+## A library says which tide built it (2026-11-19)
+
+The shape check below sees tables of another size, not two tides that lay the same tables out alike and mean other
+things by them, nor an engine copy in the library that differs from the host's. So a library also exports
+`tide_host_library_made_by` (`tide/host.h`'s `TIDE_HOST_LIBRARY_MADE_BY`): text naming the tide that built it. A host
+that says which tide built it (`tide_run_desc.made_by` for `tide_host_run_library`, `tide_embed_made_by` for
+`tide/embed.h`'s; `library_made_by` in `reload_library.inc`) loads only libraries that say the same text, after the
+shape check: another, or a library with no such function, isn't loaded, and `library_say` names both tides and says
+to stop the game and start it again once tide has built it (for Unity: leave Play, wait for the build, enter Play
+again). The game goes on with the build it has; where it's the first build, nothing runs (`tide_host_run_library`
+exits, `tide_embed_create` gives none). A host that says nothing takes any library of its shape, as before.
+
+Who says it today: the host `tide unity` builds for Unity and that command's libraries (notes/unity.md, top;
+`compiler/cli/build.c`'s `made_by`, per build, from the installation's files as they are). `tide run`'s host says
+none, and its libraries export none: one process builds host and game from one installation, and its host can't be
+built again while it runs. **Provisional (mine)**: left so; the field is there for it.
+
+Test: `tide_platform_reload`'s last stages (`reload_game.c` exports the text, `tide_platform_reload_game_foreign`
+another one's; `reload_host.c` takes the host's from `TIDE_RELOAD_MADE_BY`): a foreign build published while the
+game runs is refused with both tides named and the build running goes on to the script's end; a host that says
+nothing loads it; a host of a third tide loads neither and nothing runs. Windows ASan.
+
 ## A library another tide built isn't loaded (2026-11-10)
 
 `reload_library.inc`'s `load` (`tide run`'s host and `tide/embed.h`'s) checks each library before calling through

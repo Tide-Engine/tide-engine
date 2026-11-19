@@ -1,5 +1,31 @@
 # `tide`, packages and the package
 
+## `tide unity` says which tide builds (2026-11-19)
+
+`made_by` (`build.c`): `<TIDE_VERSION> (<16 hex digits>)`, the digits FNV-1a over tide's own executable (path, size
+and time), the installation's headers (`header_stamp(include)`), the engine's sources (`src/engine`, headers and
+`.c` files, summed so the folder's order doesn't matter) and `lib/native/libtide_platform.a`: everything the host
+Unity loads and a game's library are made of, by their stamps (`sys_file_stamp`), not their bytes. Worked out as
+each build starts, about 180 files' stamps (4 ms in Python on this machine's installation, against builds of seconds). `write_unity_library` writes it into
+`library.c` as `tide_host_library_made_by` (the file written only where its text changes, `write_if_changed`), and
+`build_embed_host` into `embed_host.c` as a constructor calling `tide_embed_made_by` (notes/hot-reload.md, A library
+says which tide built it; notes/unity.md, top).
+
+**The installation changing under a watching `tide unity`** (an upgrade, a reinstall, a development tide's
+`cmake --install` while the editor is open): each build reads the installed files as they are, so the next game was
+another tide's than the host built at the start. `unity_build` (the loop's two builds) works the text out again,
+and where it isn't `run.made_by`, stamps the headers again (`b.headers`: objects compiled with the old ones aren't
+reused), has the engine's objects looked at again (`engine_built`), and writes `library.c` and builds the host
+again before the game. So after any build, the host on disk and the newest game are one tide's.
+
+Test: `tide_cli_unity_made_by` (`tests/unity_made_by_test.mjs`, with `tide_cli_build_compiler`'s controlled
+compiler and a made-up installation, as `tide_cli_generation`): both texts are tide's version and one number; a
+change of the game leaves the host as it is (not compiled or linked again); the platform layer's library, a
+header, an engine source and a new engine file changing each give another number in both, with the host compiled
+again; then nothing more changes. The controlled linker's library isn't one, so each build ends at the schema's
+read, after what's checked. Not covered there: tide's own executable changing (it's the running program; the
+editor's build service starts tide again for that, notes/unity.md).
+
 ## Two of tidec's phases beside each other, and the [Parts] models read ahead (2026-11-18, later)
 
 Owner, on running tidec's independent phases in parallel: "yes go ahead". What turned out independent enough to

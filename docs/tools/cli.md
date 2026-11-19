@@ -646,7 +646,8 @@ Tide's views draw in Unity's frame with Tide's own renderer: 2D, text, 3D
 drawn with the camera's depth (so Tide's meshes and Unity's scene hide each
 other), render targets, stencil, the game's own frags and verts, and its
 compute kernels, GPU lists and their reads back, as Tide draws them in its own
-window. The views' 3D camera is the runner's View Camera, or the main camera.
+window. The views' 3D camera is the runner's View Camera, or the main camera,
+perspective or orthographic.
 tide writes a Unity shader for each of the game's shaders, a compute shader
 for each kernel, and the same for Tide's own, into
 `Packages/com.tide.game/Resources/TideShaders`, which Unity compiles for every

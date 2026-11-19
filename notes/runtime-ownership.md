@@ -1,3 +1,13 @@
+## Which tide built a library (2026-11-19)
+
+Clear win, no sign-off (measured: nothing in a frame; results unchanged; tested): a game's library built by
+`tide unity` exports `tide_host_library_made_by` (text, written by the CLI's `library.c`, not by tidec; no generated
+C or game header changes, so no hash moves), and hosts gain a way to say their own: `tide_run_desc.made_by`
+(`tide/host.h`, a new last member, NULL for any) and `tide_embed_made_by(text)` (`tide/embed.h`, the process's,
+called by a constructor in the host `tide unity` builds, never by the other program: no embed ABI change and no new
+export). `reload_library.inc`'s `load` refuses a library that says another text when the host says one.
+notes/hot-reload.md, A library says which tide built it; notes/unity.md, top.
+
 ## A check's rows on the tick's pool (2026-11-17, parts)
 
 **For the owner to confirm**: `tide_game.client_hashes` (tide/session.h) may now share its work out on the threads

@@ -197,6 +197,15 @@ TIDE_HOST_EXPORT uint64_t tide_host_library_shape(void)
 #endif
 }
 
+// Which tide built it, as tide writes for a game's library: a host that says which built it loads only its own
+#ifndef RELOAD_MADE_BY
+#define RELOAD_MADE_BY "9.9.9-test (0000000000000001)"
+#endif
+TIDE_HOST_EXPORT const char *tide_host_library_made_by(void)
+{
+    return RELOAD_MADE_BY;
+}
+
 TIDE_HOST_EXPORT const tide_host_game *tide_host_library(void)
 {
     static const tide_host_game host = {
