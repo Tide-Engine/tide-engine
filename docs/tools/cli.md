@@ -455,6 +455,8 @@ Carrying the game over works like this:
 
 When the game gets into a state you don't want, press **Ctrl+R** in the game, or type `r` and press Enter in `tide`'s terminal, to fully reload it. On the web, Cmd+R does the same on macOS. This starts the match, local state, GUI and the game's C or C++ globals over, without carrying state from the old run. With a match on several windows (`--host` in one, `--connect localhost` in another), each window hot reloads when you save, and players stay in the match. A window that joined another's match joins it again a second after that match ends without it: when the other window starts it over, or is still on a build with another data layout. On the web, a hot reload goes on with the match closed for now: the room closes, and the other players drop out.
 
+If `tide` itself is upgraded or installed again while a game runs on desktop, the next save isn't built: `tide run` says its installation changed, and the game goes on with the build it has. Stop the run and start `tide run` again. In Unity, leave Play and enter it again once `tide` has built.
+
 `tide run --web --stats` hot reloads too. `tide` serves the game's page at an address on your machine, like `http://127.0.0.1:52407/?stats`, opens it in your browser, and keeps running until you press Ctrl+C. What each hot reload did shows in the browser's console. VS Code and JetBrains IDEs can play it beside your code instead (see [Editors](editors.md)).
 
 Hot reload is for `tide run`. `tide build` makes a plain program, or a page with nothing of it. Runs [without a window](#without-a-window) play once, with no hot reload.

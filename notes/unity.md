@@ -18,26 +18,40 @@ against anything. All picks mine (Provisional).
   offset or points brought back from its body's frame: `TideScale.Unscale`, `TideParts.Placed`/`Points`), and the
   GameObject is where the match has the entity, so the same drawing shows the live shape. Nothing separate draws
   in Play.
-- **One place for a primitive's geometry** (`TideShapes.PrimitiveOf`: matrix, centre, size, radius, height), which
-  the drawing uses, and `WorldBounds`, the box in the world that holds what's drawn: Unity's `Collider.bounds` of
-  the same shape, which is what the tests compare.
+- **A primitive's wires are plain lines** (`TideShapes.Wires`, from `PrimitiveOf`'s matrix, centre, size, radius
+  and height): a box's twelve edges, a rect's four, a sphere's three rings, a circle's one, a capsule's two rings,
+  four sides and four half rings, a ring 64 lines. The gizmo hands them to `Handles.DrawLines` as they are, where
+  it called `DrawWireCube`, `DrawWireDisc` and `DrawWireArc`, so what the tests read is what's drawn, and nothing of
+  Tide's is between them and Unity's line drawing. `WorldBounds` is the box in the world that holds the shape,
+  Unity's `Collider.bounds` of the same one.
 - **Tests** (EditMode `ShapeTests`, fixtures `Assets/Tests/Geometry/GeometryBox`, `Sphere`, `Capsule`, `Rect`,
   `Circle` with the attributes tide writes for Box3D's and Box2D's):
   - a Tide box, sphere and capsule against a `BoxCollider`, `SphereCollider` and `CapsuleCollider` of the same
     fields on the same GameObject, at five placements (plain; scaled per axis; turned and scaled; mirrored; under a
     moved, turned, scaled parent): the bounds agree to 0.4 mm;
-  - a rect and a circle against `BoxCollider2D` and `CircleCollider2D`, turned about z, scaled and mirrored;
+  - a rect and a circle against `BoxCollider2D` and `CircleCollider2D`, turned about z, scaled and mirrored; in
+    each of these, every point of the wires is inside Unity's bounds;
+  - the wires themselves: a turned, scaled box's are twelve edges, each between two of its eight corners along one
+    axis; a rect's four sides; every point of a sphere's rings on the sphere, the rings joined and closed; every
+    point of a capsule's at its radius from its middle line, its height end to end, and one shorter than it's wide a
+    sphere, as Box3D makes it (notes/box3d.md);
   - a part's box in Play: its offset baked as tide bakes it, shown back by `TideParts.Placed` as authored, drawn
     where Unity's collider is, and again after its body moved;
   - when a shape is drawn: selected, under a selection, unselected with and without the switch, the switch kept in
     EditorPrefs, which types have shapes, and the gizmo's own `DrawGizmo` flags.
-- **Runs:** Unity 6000.6.0f1, hidden batch, `-nographics`, this checkout's Sample: ShapeTests 4 of 4 and GeometryTests 5 of 5, within the EditMode run of 47 of 52 (the five others are the run's setup: A build says which tide made it, Runs). No C# warnings.
-- **Not seen:** the wireframes, the fainter unselected ones, the Project Settings toggle and Edit Shape's handles in
-  a window: agent runs open none, and a batch run has no Scene view to draw gizmos into. What's tested is the
-  geometry that's drawn and when; what `Handles` makes of it on the screen isn't.
-- **Left:** outlines, meshes, terrains and joints have no Unity collider to hold them against here (their geometry
-  is `GeometryTests`'); a sensor, an asleep body or a disabled component draws as any other (Unity's 2D has colors
-  for those); Unity hiding the gizmo of a component folded in the Inspector isn't asked for.
+- **Read against the packages' notes** (notes/box2d.md and notes/box3d.md, whole, and the shapes' declarations):
+  sizes are whole sizes about the offset, a capsule stands along its body's y with its height end to end, as drawn;
+  no shape, joint or gizmo gap of Unity's is listed there.
+- **Runs:** Unity 6000.6.0f1, hidden batch, Direct3D 11, this checkout's Sample: ShapeTests 5 of 5 and GeometryTests
+  5 of 5. No C# warnings.
+- **Can't be seen from here:** the Scene view itself. Agent runs open no window, and Unity draws gizmos only inside
+  a window's repaint: `Handles` read the current GUI event, which can't be set outside one (tried: a repaint event
+  set by hand stays null, and `Handles.SetCamera` throws), so a batch run can't draw one into a texture either. What
+  is left unseen is Unity's own: that `Handles.DrawLines` draws these lines in the colour given, the Project
+  Settings toggle's row, and Edit Shape's handles (Unity's `BoxBoundsHandle` and the like, unchanged by this).
+- **By choice, not left:** outlines, meshes, terrains and joints have no Unity collider of the same fields to be
+  held against (their geometry is `GeometryTests`'); a sensor or an asleep body draws as any other, as Unity's 3D
+  colliders do.
 
 ## An orthographic Unity camera (2026-11-19)
 
@@ -60,10 +74,21 @@ draw API change is proposed, and nothing is the owner's to decide: what was miss
     camera had it. Runs without a GPU too.
   - `SceneViewsShowTidesThreeD`: a scene camera made orthographic (the Scene view's Iso) shows the cube where it
     sees it (`tide_embed_render_view`), and not a unit beside it.
-- **Runs:** Unity 6000.6.0f1, hidden batch with the GPU, `-noAudio`, Direct3D 11 (`-force-d3d11`), the built-in pipeline, this checkout's Sample with a scratch tide of this checkout: BounceTests 18 of 18. The frame was also saved (`TIDE_UNITY_DUMP`) and looked at: the box from above without perspective, the ring about the ball, the cube over it, the plate's stripes. Not on Direct3D 12, Vulkan or OpenGL Core: the camera's matrices reach the replay as uniforms, on every API alike.
-- **Not run:** URP with an orthographic camera (the pass takes the same matrices), an oblique or off-centre
-  projection (`Camera.projectionMatrix` set by hand: the same path, any matrix), and what a game's own view does
-  with a camera it assumes is perspective (`Draw.CameraProjection()` gives it the matrix to ask).
+  - `TideDrawsIntoAnOrthographicCamerasFrameInURP`: the same frame check through URP's pass.
+- **Read against the renderer's notes** (notes/rendering.md and notes/drawing.md, whole): nothing of Tide's that
+  takes something from the 3D camera needs a perspective one. Culling planes and `Draw.Bounds` come from the matrix
+  and are tested with orthographic ones; picking rays unproject through it; the mirror test is a determinant's
+  sign, and `Camera.projectionMatrix` is OpenGL's convention as a perspective one's; levels of detail go by `w`,
+  which doesn't change with distance there, as an object's size on the screen doesn't; occlusion and GPU culling
+  never run under the recorder. One thing that isn't about the projection, and older than this: a scene view draws
+  the frame's list again, which was culled and given its levels of detail for the game's camera, so what that
+  camera culled is missing from a scene view looking elsewhere (drawing.md, "Culling happens during recording").
+- **Runs:** Unity 6000.6.0f1, hidden batch with the GPU, `-noAudio`, this checkout's Sample with a scratch tide of
+  this checkout: BounceTests 20 of 20 on each of Direct3D 11, Direct3D 12, Vulkan and OpenGL Core, the built-in
+  pipeline's and URP's orthographic frames among them. The Direct3D 11 frame was also saved (`TIDE_UNITY_DUMP`) and
+  looked at: the box from above without perspective, the ring about the ball, the cube over it, the plate's stripes.
+- **Not run:** Metal (no Mac), and an oblique or off-centre projection set by hand (`Camera.projectionMatrix`:
+  the same path, any matrix; Tide's own tests cover arbitrary ones, drawing.md).
 
 ## A build says which tide made it, and the host loads only its own (2026-11-19)
 
@@ -73,8 +98,10 @@ tides that lay the tables out alike, or whose engine copies differ, still loaded
 mine (Provisional).
 
 - **What a build carries.** `tide unity` works out which tide it is as each build starts (`made_by` in
-  `compiler/cli/build.c`): `<version> (<16 hex digits>)`, the digits a hash of tide's own executable, the
-  installation's headers, the engine's sources and the platform layer's library, by their stamps (path, size, time).
+  `compiler/cli/build.c`): `<version> (<16 hex digits>)`, the digits a hash of tide's own executable (as it was
+  when the process first asked: a tide replaced on disk under a running one is still the old program), its compiler,
+  the installation's headers, the engine's sources and the platform layer's library, by their stamps (path, size,
+  time).
   It writes that text into the game's library (`tide_host_library_made_by`, in `library.c`) and into the host Unity
   loads (`embed_host.c`: a constructor calling `tide_embed_made_by`, so the host says it as it's loaded and C# calls
   nothing new). Two tides of one version (a development tide built again) are two; so is one whose files changed.
@@ -88,16 +115,25 @@ mine (Provisional).
 - **The installation changing under a running editor**, which "could do the same (not tried)":
   - tide's loop (`unity_build`) sees that the text changed since it built the host, stamps the headers again, and
     builds the host again before the game. So the host on disk and the newest game are always one tide's, and
-    entering Play again is enough: nothing is restarted by hand.
+    entering Play again is enough: nothing is restarted by hand. A host that fails to build is tried again with
+    the next build (`made_by` is forgotten), rather than left the old tide's beside new games.
   - A Play that's running keeps the host it loaded (a copy), which refuses the new build with the message above.
   - `TideBuildService.FollowTide` (once a second, from `Drain`): where the tide executable the service started was
     replaced (another size or time, as it is for two seconds: `Replaced`), it starts tide again. The running one is
     the old program, which would go on compiling with the new installation's files.
 - **No embed ABI or packet change.** `tide_embed_made_by` is the host library's own business, not an export, and
-  `TideLibrary.Abi` stays. `tide_run_desc.made_by` gives `tide run`'s host the same check; tide doesn't set it
-  (one process builds that host and its games, and a running host can't be built again): left so.
+  `TideLibrary.Abi` stays.
+- **`tide run` too** (the same day, after a review against notes/cli-and-packages.md and notes/hot-reload.md: its
+  watching host and its libraries can be two tides' as Unity's can, and its headers are stamped once a run, so a
+  build after an install mixed old objects with new headers). Its host says its tide (`tide_run_desc.made_by`, in
+  the generated `host.c`) and its libraries export the text (`write_library`). The host can't be built again while
+  it runs, so tide doesn't build at all once the installation is another tide (`run_build`): "tide's installation
+  changed since this run started (it was tide ..., and is tide ... now), so the game isn't built again ... stop
+  this run and start `tide run` again". The game goes on with the build it has.
 - **Not checked, as before:** a player's game (linked by the package from one build), Android's whole library and a
-  page's program (the game and the host are one link). A reinstall of the very same version is another tide to a
+  page's program (the game and the host are one link). Not in the number: the installation's `mingw/` and
+  `lib/clang/` (thousands of files to stamp each build; they change only with tide itself, which is in it) and
+  macOS's MoltenVK (the host's alone). A reinstall of the very same version is another tide to a
   Play that's running (its files' times changed), which costs a Play restart and never a wrong load. Stamps, not
   bytes: two installations whose files are the same bytes at the same paths and times are one.
 - **Tests:**
@@ -106,17 +142,36 @@ mine (Provisional).
     loads neither (notes/hot-reload.md).
   - `tide_cli_unity_made_by` (`compiler/cli/tests/unity_made_by_test.mjs`, a made-up installation and the controlled
     compiler): the installation changed under a watching `tide unity`, part by part, gives another text in the
-    library and the host, the host compiled again; a change of the game alone leaves the host (notes/cli-and-packages.md).
+    library and the host, the host compiled again; a change of the game alone leaves the host; and `tide run`'s
+    `host.c` and `library.c` say the same tide (notes/cli-and-packages.md).
   - The Sample's PlayMode `BounceTests.ABuildAnotherTideMadeIsntLoaded`: the running build's library with one digit
     of its text changed, published as the next `game-<n>` in Play. The Console's error is expected by its text
     (`LogAssert`), no `loaded-<n>` copy stays, the match's ticks go on, and the game ended and started again runs.
     This is the 2026-10-25 crash's case with the tables the same size, which the shape check let through.
+  - PlayMode `BounceTests.TideInstalledAgainWhilePlayRunsIsSaidAndPlayAgainWorks`, the real thing end to end with
+    the editor's own build service and tide: in Play, the installation's platform library gets another time and
+    the service is told of a change; tide builds the host again as another tide, and the game; the running Play
+    says the Console's error, keeps its build and its ticks go on; the game ended and started again runs the new
+    host with the new game; then the installation is put back and tide builds both once more. It runs only with
+    automatic builds on and `-tide-command` (a development tide: an installed tide's files aren't a test's to
+    touch), and is ignored otherwise.
   - EditMode `ReplacedTests`: what counts as tide replaced (changing, settled, the same bytes at another time, gone,
-    put back).
-- **Runs:** Windows ASan (`sanitize`): `tide_platform_reload`, `tide_platform_embed`, `tide_cli_unity_made_by`, `tide_cli_generation` pass. `embed.c` compiles for wasm32-wasip1-threads under the warnings (syntax alone; no web tree was built). Unity 6000.6.0f1, hidden batch, `-noAudio`, this checkout's Sample with a scratch tide of this checkout's mingw-release tree (`-tide-command`), automatic builds off, the game built by `tide unity --once`: PlayMode BounceTests 18 of 18 on Direct3D 11; EditMode (`-nographics`) 47 of 52, two skipped as before, and three failing for the run's own setup, as in earlier runs: the two UnsavedTests want a running tide, and the launch-argument test a launch without `-tide-command`. No C# warnings.
-- **Not run:** the service restarting a real tide whose executable is replaced under an interactive editor (its
-  rule is tested, and tide's side by the CLI test); an upgrade through `tide upgrade` or the Versions window while
-  Play runs, end to end; Linux and macOS (constructors in a shared library, CI's).
+    put back), and `TheRunningTideIsStartedAgainWhenItsFileIsReplaced`, live: the running tide's executable moved
+    aside and a new file put in its place, as an installer replaces a running program (Windows refuses a write of
+    one, its time included), and the service's tide is another process within seconds, once. Under the same
+    conditions as the test above.
+- **Runs:** Windows ASan (`sanitize`): `tide_platform_reload`, `tide_platform_embed`, `tide_platform_travel`,
+  `tide_cli_unity_made_by`, `tide_cli_generation`, `tide_cli_build_overlap`, `tide_cli_build_report` pass. Web debug:
+  `tide_platform_embed` builds and links. Unity 6000.6.0f1, hidden batch, `-noAudio`, this checkout's Sample with a
+  scratch tide of this checkout's mingw-release tree (`-tide-command`), the editor's build service on: PlayMode whole,
+  65 of 65 on Direct3D 11, and BounceTests 20 of 20 on each of Direct3D 11, Direct3D 12, Vulkan and OpenGL Core (the
+  end-to-end test above on all four); EditMode on Direct3D 11, 52 of 54: one skipped as before (the ABI-5 host
+  fixture), and the launch-argument test failing only because these runs pass `-tide-command` (it checks a launch
+  without one, which here would be the owner's installed tide). No C# warnings.
+- **Not run:** `tide upgrade` itself or the Versions window's switch while Play runs (what they do to the files is
+  what the two live tests do); a watching `tide run` end to end, which needs a window (its host's check is
+  `tide_platform_reload`'s, its texts the CLI test's, and `run_build`'s refusal is read, not run); Linux and macOS
+  (CI's).
 
 ## Time travel's gaps (2026-11-19)
 

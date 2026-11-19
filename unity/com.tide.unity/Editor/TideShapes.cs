@@ -179,24 +179,99 @@ namespace Tide.Editor
             }
         }
 
-        // The box in the world, its sides along the axes, that holds what's drawn of a primitive: what Unity gives as
-        // a collider's bounds, which the tests hold it against, there being no window to look at in a batch run
+        // A primitive's wires, as pairs of points in the world: a box's twelve edges, a rect's four, a sphere's three
+        // rings, a circle's one, a capsule's two rings, four sides and four half rings. These are what's drawn, so
+        // the tests read them where a batch run has no Scene view to look at. False for a component without one.
+        const int RingSides = 64;
+
+        internal static bool Wires(TideComponent c, List<Vector3> lines)
+        {
+            if (!PrimitiveOf(c, out var p)) return false;
+            var m = p.Matrix;
+            void Line(Vector3 a, Vector3 b)
+            {
+                lines.Add(m.MultiplyPoint3x4(a));
+                lines.Add(m.MultiplyPoint3x4(b));
+            }
+            // Part of a ring about `center`, from `from` turning toward `toward` (both of the ring's radius), `turn` of a whole one
+            void Arc(Vector3 center, Vector3 from, Vector3 toward, float turn)
+            {
+                var sides = Mathf.Max(1, Mathf.RoundToInt(RingSides * turn));
+                var last = center + from;
+                for (var k = 1; k <= sides; k++)
+                {
+                    var angle = 2 * Mathf.PI * turn * k / sides;
+                    var next = center + from * Mathf.Cos(angle) + toward * Mathf.Sin(angle);
+                    Line(last, next);
+                    last = next;
+                }
+            }
+            Vector3 x = Vector3.right * p.Radius, y = Vector3.up * p.Radius, z = Vector3.forward * p.Radius;
+            switch (p.Kind)
+            {
+                case "box":
+                case "rect":
+                    var half = p.Size * 0.5f;
+                    for (var axis = 0; axis < 3; axis++)
+                    {
+                        if (p.Kind == "rect" && axis == 2) break; // Flat: its four sides, once
+                        int u = (axis + 1) % 3, v = (axis + 2) % 3;
+                        for (var corner = 0; corner < 4; corner++)
+                        {
+                            var a = p.Center;
+                            a[u] += (corner & 1) != 0 ? half[u] : -half[u];
+                            a[v] += (corner & 2) != 0 ? half[v] : -half[v];
+                            if (p.Kind == "rect" && ((axis == 0 && (corner & 2) != 0) || (axis == 1 && (corner & 1) != 0))) continue;
+                            var b = a;
+                            a[axis] -= half[axis];
+                            b[axis] += half[axis];
+                            Line(a, b);
+                        }
+                    }
+                    return true;
+                case "sphere":
+                    Arc(p.Center, x, y, 1);
+                    Arc(p.Center, y, z, 1);
+                    Arc(p.Center, z, x, 1);
+                    return true;
+                case "circle":
+                    Arc(p.Center, x, y, 1);
+                    return true;
+                case "capsule":
+                    var up = Vector3.up * Mathf.Max(0, p.Height * 0.5f - p.Radius);
+                    Vector3 top = p.Center + up, bottom = p.Center - up;
+                    Arc(top, x, z, 1);
+                    Arc(bottom, x, z, 1);
+                    foreach (var side in new[] { x, z })
+                    {
+                        Line(top + side, bottom + side);
+                        Line(top - side, bottom - side);
+                        Arc(top, side, y, 0.5f);
+                        Arc(bottom, side, -y, 0.5f);
+                    }
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        // The box in the world, its sides along the axes, that holds a primitive: what Unity gives as a collider's
+        // bounds, which the tests hold it against. A box's and a rect's is its wires'; a round shape's is its
+        // surface's, which its rings reach only along their own planes.
         internal static bool WorldBounds(TideComponent c, out Bounds bounds)
         {
             bounds = default;
             if (!PrimitiveOf(c, out var p)) return false;
             var m = p.Matrix;
+            var center = m.MultiplyPoint3x4(p.Center);
             if (p.Kind == "box" || p.Kind == "rect")
             {
-                bounds = new Bounds(m.MultiplyPoint3x4(p.Center), Vector3.zero);
-                for (var i = 0; i < 8; i++)
-                {
-                    var corner = new Vector3((i & 1) != 0 ? 0.5f : -0.5f, (i & 2) != 0 ? 0.5f : -0.5f, (i & 4) != 0 ? 0.5f : -0.5f);
-                    bounds.Encapsulate(m.MultiplyPoint3x4(p.Center + Vector3.Scale(corner, p.Size)));
-                }
+                var lines = new List<Vector3>();
+                Wires(c, lines);
+                bounds = new Bounds(center, Vector3.zero);
+                foreach (var point in lines) bounds.Encapsulate(point);
                 return true;
             }
-            var center = m.MultiplyPoint3x4(p.Center);
             if (p.Kind == "circle")
             {
                 // A disc's reach along each axis is its radius times how much of the axis lies in its plane
@@ -212,6 +287,8 @@ namespace Tide.Editor
             return true;
         }
 
+        static readonly List<Vector3> wires = new List<Vector3>();
+
         [DrawGizmo(GizmoType.Selected | GizmoType.Active | GizmoType.InSelectionHierarchy | GizmoType.NonSelected)]
         static void Draw(TideComponent component, GizmoType type)
         {
@@ -222,28 +299,9 @@ namespace Tide.Editor
             DrawJoint(component, color);
             DrawMesh(component, color);
             DrawTerrain(component, color);
-            if (Editing(component) || !PrimitiveOf(component, out var p)) return;
-            using (new Handles.DrawingScope(color, p.Matrix))
-            {
-                switch (p.Kind)
-                {
-                    case "box":
-                    case "rect":
-                        Handles.DrawWireCube(p.Center, p.Size);
-                        break;
-                    case "sphere":
-                        Handles.DrawWireDisc(p.Center, Vector3.up, p.Radius);
-                        Handles.DrawWireDisc(p.Center, Vector3.right, p.Radius);
-                        Handles.DrawWireDisc(p.Center, Vector3.forward, p.Radius);
-                        break;
-                    case "circle":
-                        Handles.DrawWireDisc(p.Center, Vector3.forward, p.Radius);
-                        break;
-                    case "capsule":
-                        Capsule(p.Center, p.Radius, p.Height);
-                        break;
-                }
-            }
+            wires.Clear();
+            if (Editing(component) || !Wires(component, wires)) return;
+            using (new Handles.DrawingScope(color, Matrix4x4.identity)) Handles.DrawLines(wires.ToArray());
         }
 
         // An outline's line through its points in the world, rounded by its radius times the scale's (a flat one's in
@@ -342,24 +400,6 @@ namespace Tide.Editor
             field.SetValue(c, value);
             EditorUtility.SetDirty(c);
             PrefabUtility.RecordPrefabInstancePropertyModifications(c);
-        }
-
-        // A capsule along y: `height` end to end, as a CapsuleCollider's
-        static void Capsule(Vector3 center, float radius, float height)
-        {
-            var half = Mathf.Max(0, height * 0.5f - radius);
-            var top = center + Vector3.up * half;
-            var bottom = center - Vector3.up * half;
-            Handles.DrawWireDisc(top, Vector3.up, radius);
-            Handles.DrawWireDisc(bottom, Vector3.up, radius);
-            foreach (var side in new[] { Vector3.right, Vector3.forward })
-            {
-                Handles.DrawLine(top + side * radius, bottom + side * radius);
-                Handles.DrawLine(top - side * radius, bottom - side * radius);
-                var normal = Vector3.Cross(side, Vector3.up);
-                Handles.DrawWireArc(top, normal, side, -180, radius);
-                Handles.DrawWireArc(bottom, normal, side, 180, radius);
-            }
         }
     }
 
