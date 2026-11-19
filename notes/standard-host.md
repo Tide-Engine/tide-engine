@@ -1,4 +1,39 @@
+## The view packet by what the other program reads (2026-11-19)
+
+`tide_embed_view_want(e, bits, types)` says which of the schema's types the other program reads: a bit each for its
+first `types` types (64 to a word), set for a component, a singleton or an event. From the next frame on the packet
+carries the entities and those alone; a component's local fields and a singleton's come with it, and an event that
+isn't read isn't kept by its tap. NULL or 0 types is everything, which is also what an embed that's never told
+gets, so nothing changes for a host that doesn't call it. The bits are copied into the embed's own room (65,536
+types; any past them are read) and are of the build running: they're kept with its layout hash, and a build laid out
+otherwise coming in gets everything until the other program says again (its types are numbered anew).
+
+`tide_embed_view_again(e)` writes the last frame's packet again with what's read now, so a type something reads for
+the first time is there in the same frame: the same worlds (the session's view, unblended where the frame's was; a
+shown or replayed tick's world from its timeline, with time travel's own local state), entities in the same places,
+and the same events, which the game keeps until the next frame's packet or the next event heard. False, leaving the
+packet as it was, where that frame's worlds may not be there: after a request (a match may end with it), after
+`tide_embed_continue`, and once time travel's worlds or local state went (`drop_live`, `drop_replay`,
+`drop_travel_local`). Embed ABI 27; both are in `embed_exports`, and the web program has `tide_unity_view_want`
+(bits in `tide_unity_buffer`) and `tide_unity_view_again`.
+
+Test: `embed_view_carries_what_is_read` (`platform/tests/embed.c`): a counter alone (no singleton, a smaller
+packet, the counter's text still its STRINGS entry); a singleton asked for after the frame there in the same frame's
+packet with the counter as it was; an event nothing reads never in 30 frames' packets, then read, in its frame's
+packet, in that packet written again, and not in the next frame's; no packet again after a request; everything for
+the next embed, and for types past those said. notes/unity.md has Unity's side and the measurements.
+
 # The standard host: runs with no window, the stats, debug views
+
+## An embed's host says which tide built it (2026-11-19)
+
+`tide_embed_made_by(text)` (`tide/embed.h`; the process's, before `tide_embed_create`): the libraries the embed loads
+from `library_dir` have to say the same text (`tide_host_library_made_by`), and one that doesn't isn't loaded, with a
+`TIDE_EMBED_LOG_PROBLEM` record saying which tide built what and what to do. Said by the host library `tide unity`
+builds as it's loaded (a constructor in its generated `embed_host.c`), so the other program's side and the embed ABI
+are as they were. A linked game (`desc.game`) isn't checked, and a web program does nothing with it. `tide run`'s
+host has the same check through `tide_run_desc.made_by`, which tide doesn't set. notes/hot-reload.md, A library says
+which tide built it.
 
 ## Pausing, stepping and going back (2026-11-17)
 
@@ -895,7 +930,12 @@ changes, and no other host sets it. The loop handing local code's commands to th
 `restart` while the old build's code is still loaded; only the embed sets it (time travel's worlds and local state
 are the old build's), so `tide run`'s host is unchanged. Frames that show another tick than the latest don't go
 through `tide_run_frame`: the embed's `show_frame` runs the views over that world with a local state of its own and
-the host's draw list, GUI and devices (consumed after it), and writes the view packet from it.
+the host's draw list, GUI and devices (consumed after it), and writes the view packet from it. Since 2026-11-19 that
+local state's handlers hear the ticks shown (`travel_gather`, `tide_timeline_heard`: notes/unity.md, Time travel's
+gaps), and a background frame's own packet is written and dropped so what the match's taps heard isn't in the shown
+tick's. A sharded match's kept ticks hand their other worlds to `frame_shards` before the views and the packet
+(`hand_beside`). The dev menu's timelines carry the game's layout since then too (`tide_timeline_desc.layout`), so
+its recordings replay across a layout change.
 
 ## Runtime stats argument and documentation pages (2026-10-25)
 

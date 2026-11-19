@@ -291,6 +291,7 @@ _Noreturn void tide_host_run_library(const tide_run_desc *desc, const char *dir)
     reload.dir = dir;
     reload.running = 1;
     reload.loaded = 1;
+    library_made_by = desc ? desc->made_by : NULL;
     const tide_host_game *game = load(1, &reload.library, true);
     if (!game) exit(1);
     tide_run_game = game;

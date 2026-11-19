@@ -68,6 +68,9 @@ namespace Tide
         [Tooltip("Keep the game running while its window isn't the one in front (Application.runInBackground), as a Tide game's own window does: a match waits for nobody, and one this machine runs would stop for every player in it")]
         public bool runInBackground = true;
 
+        [Tooltip("Read every component of every shown entity, every singleton and every event from the match each frame, read or not. Off, the game's frame carries only what Unity reads: a component once one of it is enabled on a GameObject or a script asked for it (Read, a TideEntity's Has, TryGet and Get), a singleton once Get asked for it, an event while something hears it")]
+        public bool readEverything;
+
         [Tooltip("The camera the game's views start with, which Draw.WorldToScreen and Tide's 3D draws go through: the main camera when none is set")]
         public Camera viewCamera;
 
@@ -175,6 +178,30 @@ namespace Tide
         int[] rowsAt = Array.Empty<int>();
         bool[] rowsLocal = Array.Empty<bool>(); // Whether each type is a component's local fields
         int frames;
+        int packetSerial; // Moves with each packet read, the frame's and the same frame's written again
+
+        // What Unity reads of the match, which is all the game's frame puts in its packet (tide_embed_view_want): a bit
+        // for each of the schema's types. A component is read once one of it is enabled on a GameObject (unless the
+        // only ones there are disabled), a view rule names it or a script asked; a singleton once a script asked; an
+        // event while something hears it;
+        // Tide's Transform and UnityEngine.Source always, as the runner places and finds GameObjects by them.
+        ulong[] reads = Array.Empty<ulong>();     // What the embed was last told
+        ulong[] readsNext = Array.Empty<ulong>(); // ...and where the next is worked out
+        ulong[] sent = Array.Empty<ulong>();      // What the packet in hand was written with
+        bool readsSaid;      // `reads` was said, of the build running
+        bool sentAll = true; // The packet in hand has everything: nothing was said before it was written
+        int sentSerial;      // Moves as what the packet in hand carries does
+        bool readsStale = true;
+        int enabledSeen = -1, hearingSeen = -1;
+        bool everythingSeen;
+        bool[] asked = Array.Empty<bool>(); // The types a script asked for, read from then on...
+        int[] askedAt = Array.Empty<int>(); // ...the packet each was last written again for...
+        readonly HashSet<string> askedNames = new HashSet<string>(); // ...and their names, which a new build's schema keeps
+        int[] ownerOf = Array.Empty<int>(); // A type of local fields: its component's or singleton's; any other, itself
+        // The schema's type of each generated component and singleton class, and where each is among those bound
+        readonly Dictionary<Type, int> typeOfKind = new Dictionary<Type, int>();
+        readonly Dictionary<Type, int> singletonOf = new Dictionary<Type, int>();
+        int shownCount; // The entities of the packet in hand that Show went through
 
         // Which GameObject shows an entity of the project's prefabs and scenes
         public TideUnityMap Map { get; private set; } = new TideUnityMap();
@@ -205,6 +232,7 @@ namespace Tide
                 return;
             }
             Current = this;
+            TideComponent.StartOver(); // What's read is this runner's to find out
             // The match decides which of the project's scenes are loaded: this goes on whichever it unloads
             if (Application.isPlaying && transform.parent == null) DontDestroyOnLoad(gameObject);
             scenesOpen.Clear();
@@ -228,6 +256,12 @@ namespace Tide
             }
             embed = Create();
             quitHeard = false;
+            externals.Clear(); // Another game: its fields hold none of the last one's
+            externalIds.Clear();
+            objects.Clear();
+            objectIds.Clear();
+            assetsRun++;
+            assets ??= new TideAssets(this);
             Said(); // Why it didn't start, or what its start said
             if (embed == IntPtr.Zero)
             {
@@ -251,6 +285,8 @@ namespace Tide
             {
                 render = Ensure<TideRender>(gameObject);
                 render.Runner = this;
+                render.Externals = ExternalOf;
+                render.Objects = ObjectOf;
                 render.enabled = true;
                 library.RenderFormats(embed, TideRender.BlockFormats); // The pack's compressed images go as they are
             }
@@ -386,6 +422,30 @@ namespace Tide
             rows = Array.Empty<int[]>(); // By the schema's types
             rowsAt = Array.Empty<int>();
             rowsLocal = Array.Empty<bool>();
+            // Its types are numbered anew: nothing's said of it yet, so its packets carry everything until it is
+            var types = Schema?.types.Length ?? 0;
+            readsSaid = false;
+            readsStale = true;
+            sentAll = true;
+            sentSerial++;
+            asked = new bool[types];
+            askedAt = new int[types];
+            ownerOf = new int[types];
+            for (var i = 0; i < types; i++)
+            {
+                ownerOf[i] = i;
+                askedAt[i] = -1;
+            }
+            for (var i = 0; i < types; i++)
+            {
+                var local = Schema.types[i].local;
+                if ((uint)local < (uint)types) ownerOf[local] = i;
+            }
+            foreach (var name in askedNames)
+            {
+                var type = Schema?.TypeIndex(name) ?? -1;
+                if (type >= 0) asked[ownerOf[type]] = true;
+            }
             LoadMap();
         }
 
@@ -396,6 +456,7 @@ namespace Tide
             public int type, local; // The schema's type, and its local fields' (-1 for none)
             public uint size;
             public Type kind;
+            public bool assets; // Its class hands Tide assets of Unity's (WriteAssets)
         }
 
         struct LiveSingleton
@@ -404,6 +465,105 @@ namespace Tide
             public uint size;
             public Type kind;
             public Func<object> make;
+            public bool assets;
+        }
+
+        // Unity's own textures that Tide's local Texture fields hold: each has a number, from 1, which is all Tide
+        // keeps of it (tide_embed_local_texture) and what its renderer's commands name it by, for TideRender to bind
+        // the texture itself. Kept while the game runs, as a field keeps its number through hot reloads.
+        readonly List<Texture> externals = new List<Texture>();
+        readonly Dictionary<Texture, uint> externalIds = new Dictionary<Texture, uint>();
+        TideAssets assets;
+        int assetsRun; // Goes up with each game started and each schema bound: what was handed before is handed again
+
+        Texture ExternalOf(uint id) => id >= 1 && id <= (uint)externals.Count ? externals[(int)id - 1] : null;
+
+        // Hands Tide `texture` (null for none) for the Texture field at `offset` of the local fields `type`, the
+        // entity `entity`'s for a component's: how it's sampled where a draw doesn't say is Unity's import of it.
+        // False where the game has no such field, or the texture is none Tide draws (not 2D, or a side past 65,535).
+        internal bool Give(int type, uint offset, TideEntityId entity, Texture texture)
+        {
+            if (embed == IntPtr.Zero || type < 0) return false;
+            if (texture == null) return library.LocalTexture(embed, (uint)type, offset, entity.birth, entity.lineage, 0, 0, 0, 0, 0) != 0;
+            if (texture.dimension != UnityEngine.Rendering.TextureDimension.Tex2D)
+            {
+                Debug.LogError($"Tide: {texture.name} is a {texture.dimension} texture, and a Tide Texture is a 2D image: its field is left as it was.", texture);
+                return false;
+            }
+            if (!externalIds.TryGetValue(texture, out var id))
+            {
+                externals.Add(texture);
+                id = (uint)externals.Count;
+                externalIds[texture] = id;
+            }
+            // Tide's Bilinear reads no smaller images and Unity's does, so a texture that has them is read between them
+            var filter = texture.filterMode == FilterMode.Point ? 0u : texture.mipmapCount > 1 ? (texture.anisoLevel > 1 ? 3u : 2u) : 1u;
+            var wrap = texture.wrapMode == TextureWrapMode.Repeat ? 1u : texture.wrapMode == TextureWrapMode.Mirror ? 2u : 0u;
+            return library.LocalTexture(embed, (uint)type, offset, entity.birth, entity.lineage, id, (uint)texture.width, (uint)texture.height,
+                                        filter, wrap) != 0;
+        }
+
+        // ...and its meshes, materials and sounds, which Tide only hands back (Draw.UnityMesh, Audio.Play): one table
+        // of them, numbered from 1, which TideRender draws from and the frame's sounds are found in
+        readonly List<UnityEngine.Object> objects = new List<UnityEngine.Object>();
+        readonly Dictionary<UnityEngine.Object, uint> objectIds = new Dictionary<UnityEngine.Object, uint>();
+        AudioSource sounds; // What plays Unity's own clips that Tide's code asks for
+        static readonly bool hidden = IsHidden();
+
+        // How many of Unity's own clips Tide's code has asked to be played since the runner started: what a test
+        // counts in a run nobody hears
+        public int UnitySoundsPlayed { get; private set; }
+
+        UnityEngine.Object ObjectOf(uint id) => id >= 1 && id <= (uint)objects.Count ? objects[(int)id - 1] : null;
+
+        internal bool GiveObject(int type, uint offset, TideEntityId entity, UnityEngine.Object item)
+        {
+            if (embed == IntPtr.Zero || type < 0) return false;
+            uint id = 0;
+            if (item != null && !objectIds.TryGetValue(item, out id))
+            {
+                objects.Add(item);
+                id = (uint)objects.Count;
+                objectIds[item] = id;
+            }
+            return library.LocalObject(embed, (uint)type, offset, entity.birth, entity.lineage, id) != 0;
+        }
+
+        static bool IsHidden()
+        {
+            var value = Environment.GetEnvironmentVariable("TIDE_HIDDEN");
+            return !string.IsNullOrEmpty(value) && value != "0";
+        }
+
+        // Unity's own clips that the frame's Tide code played (Audio.Play of a UnityEngine.AudioClip), through an
+        // AudioSource of the runner's: Unity's sound, at the volume asked. Silent in a run nobody watches
+        // (TIDE_HIDDEN), as Tide's own sound is.
+        void PlaySounds()
+        {
+            uint count = 0;
+            var played = library.Sounds(embed, &count);
+            for (uint i = 0; played != null && i < count; i++)
+            {
+                if (!(ObjectOf(played[i].clip) is AudioClip clip) || clip == null) continue;
+                UnitySoundsPlayed++;
+                if (hidden) continue;
+                if (sounds == null)
+                {
+                    var speaker = new GameObject("Tide Sounds");
+                    speaker.transform.SetParent(transform, false);
+                    sounds = speaker.AddComponent<AudioSource>();
+                    sounds.playOnAwake = false;
+                    sounds.outputAudioMixerGroup = audioOutput;
+                }
+                sounds.PlayOneShot(clip, played[i].volume);
+            }
+        }
+
+        static bool HandsAssets(Type kind)
+        {
+            var method = kind.GetMethod("WriteAssets", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic
+                                                       | System.Reflection.BindingFlags.Public);
+            return method != null && method.DeclaringType != typeof(TideComponent) && method.DeclaringType != typeof(TideSingleton);
         }
 
         struct LiveEvent
@@ -427,7 +587,11 @@ namespace Tide
             bound = Schema;
             boundTypes = TideTypes.Version;
             live = Schema != null && TideTypes.Hash == Schema.Hash;
+            assetsRun++; // Another layout's fields are elsewhere: what Unity holds for them is handed again
             singletons.Clear();
+            typeOfKind.Clear();
+            singletonOf.Clear();
+            readsStale = true;
             transformType = -1;
             liveComponents = Array.Empty<LiveComponent>();
             liveSingletons = Array.Empty<LiveSingleton>();
@@ -453,7 +617,9 @@ namespace Tide
                 var type = Schema.Type(index);
                 var kind = TideTypes.Of(type?.name);
                 if (kind == null || !typeof(TideComponent).IsAssignableFrom(kind)) continue;
-                components.Add(new LiveComponent { type = index, local = type.local, size = type.size, kind = kind });
+                components.Add(new LiveComponent { type = index, local = type.local, size = type.size, kind = kind,
+                                                   assets = type.local >= 0 && HandsAssets(kind) });
+                typeOfKind[kind] = index;
             }
             liveComponents = components.ToArray();
             var values = new List<LiveSingleton>();
@@ -462,7 +628,10 @@ namespace Tide
                 var type = Schema.Type(index);
                 var kind = TideTypes.Of(type?.name);
                 if (kind == null || !typeof(TideSingleton).IsAssignableFrom(kind)) continue;
-                values.Add(new LiveSingleton { type = index, local = type.local, size = type.size, kind = kind, make = TideTypes.Maker(type.name) });
+                singletonOf[kind] = values.Count;
+                typeOfKind[kind] = index;
+                values.Add(new LiveSingleton { type = index, local = type.local, size = type.size, kind = kind, make = TideTypes.Maker(type.name),
+                                               assets = type.local >= 0 && HandsAssets(kind) });
             }
             liveSingletons = values.ToArray();
             liveEvents = new LiveEvent[Schema.types.Length];
@@ -510,7 +679,7 @@ namespace Tide
         {
             asset = node = -1;
             if (sourceType < 0) return false;
-            var r = RowOf(sourceType, row);
+            var r = Row(sourceType, row);
             if (r < 0) return false;
             var value = Packet.Row((uint)sourceType, r, out _);
             if (value == null) return false;
@@ -615,6 +784,11 @@ namespace Tide
                 width = seen.pixelWidth;
                 height = seen.pixelHeight;
             }
+            if (Schema != null)
+            {
+                Bind();
+                SendReads(); // What the frame's packet carries
+            }
             frameMarker.Begin();
             fixed (TideEmbedInput* p = &input)
             {
@@ -631,6 +805,7 @@ namespace Tide
                 render.Replay(commands, drawn, seen);
                 renderMarker.End();
             }
+            PlaySounds();
             fixed (TideEmbedStatus* p = &status) library.Status(embed, p);
             fixed (TideTravel* p = &travel) library.Travel(embed, p);
             if (audio != null) audio.Listen(status.microphone != 0);
@@ -639,12 +814,14 @@ namespace Tide
             uint size = 0;
             var bytes = library.View(embed, &size);
             frames++;
+            packetSerial++;
             if (!Packet.Read(bytes, size))
             {
                 Show(false);
                 return;
             }
             if (Schema == null || Packet.SchemaHash != Schema.Hash) LoadSchema(); // A new build of the game came in
+            else TakeSent();
             if (Schema == null || Packet.SchemaHash != Schema.Hash)
             {
                 if (!schemaWarned) Debug.LogWarning("Tide: the view packet isn't the schema's: the game's build and its schema disagree.", this);
@@ -694,8 +871,12 @@ namespace Tide
             var count = read ? Packet.EntityCount : 0;
             if (byRow.Length < count) byRow = new TideEntity[Math.Max(count, byRow.Length * 2)];
             for (var i = 0; i < count; i++) byRow[i] = null;
+            shownCount = count;
             FollowScenes(count);
             for (var i = 0; i < count; i++) ViewOf(i);
+            // A GameObject made for an entity may hold components nothing read till now (its prefab's): the frame's
+            // packet is written again with them, so they're its entity's values from its first frame
+            if (read && SendReads()) Reread();
             gone.Clear();
             foreach (var pair in shown)
             {
@@ -725,53 +906,235 @@ namespace Tide
         {
             if (count == 0 || !live) return;
             liveFrame++;
-            for (var b = 0; b < liveComponents.Length; b++)
-            {
-                var binding = liveComponents[b];
-                var n = Packet.Rows((uint)binding.type, out var stride, out var entities, out var values);
-                if (n == 0 || stride != binding.size) continue;
-                // Its local fields: each entity's row of its component's local section
-                int[] localRows = null;
-                byte* localValues = null;
-                uint localStride = 0;
-                var localCount = 0;
-                if (binding.local >= 0)
-                {
-                    localCount = Packet.Rows((uint)binding.local, out localStride, out _, out localValues, true);
-                    if (localCount > 0) localRows = RowsOf(binding.local);
-                }
-                for (var r = 0; r < n; r++, values += stride)
-                {
-                    var e = entities[r];
-                    if (e >= (uint)count) continue;
-                    var view = byRow[e];
-                    if (view == null) continue;
-                    var component = view.Live(binding.kind);
-                    if (component == null) continue;
-                    byte* locals = null;
-                    if (localRows != null)
-                    {
-                        var row = localRows[e];
-                        if ((uint)row < (uint)localCount) locals = localValues + (long)row * localStride;
-                    }
-                    if (view.LiveSeenAt != liveFrame)
-                    {
-                        view.LiveSeenAt = liveFrame;
-                        view.LiveSeen = 0;
-                    }
-                    view.LiveSeen++;
-                    component.LiveFrame = liveFrame;
-                    component.ReadLive(values, locals, Packet, this);
-                }
-            }
-            // A component the entity lost: only the GameObjects holding more than the entity has are looked through
+            for (var b = 0; b < liveComponents.Length; b++) LiveOf(b, count);
+            // A component the entity lost: only the GameObjects holding more than the entity has are looked through.
+            // One of a type the packet doesn't carry is neither written nor taken away.
             for (var i = 0; i < count; i++)
             {
                 var view = byRow[i];
                 if (view == null) continue;
+                if (view.LiveUnreadAt != sentSerial) view.CountUnread(this, sentSerial);
                 var seen = view.LiveSeenAt == liveFrame ? view.LiveSeen : 0;
-                if (seen != view.LiveCount) view.DropStale(liveFrame);
+                if (seen + view.LiveUnread != view.LiveCount) view.DropStale(liveFrame, this);
             }
+        }
+
+        // The packet's rows of the `b`th bound component into its entities' GameObjects' components
+        void LiveOf(int b, int count)
+        {
+            var binding = liveComponents[b];
+            var n = Packet.Rows((uint)binding.type, out var stride, out var entities, out var values);
+            if (n == 0 || stride != binding.size) return;
+            // Its local fields: each entity's row of its component's local section
+            int[] localRows = null;
+            byte* localValues = null;
+            uint localStride = 0;
+            var localCount = 0;
+            if (binding.local >= 0)
+            {
+                localCount = Packet.Rows((uint)binding.local, out localStride, out _, out localValues, true);
+                if (localCount > 0) localRows = RowsOf(binding.local);
+            }
+            for (var r = 0; r < n; r++, values += stride)
+            {
+                var e = entities[r];
+                if (e >= (uint)count) continue;
+                var view = byRow[e];
+                if (view == null) continue;
+                var component = view.Live(binding.kind);
+                if (component == null) continue;
+                byte* locals = null;
+                if (localRows != null)
+                {
+                    var row = localRows[e];
+                    if ((uint)row < (uint)localCount) locals = localValues + (long)row * localStride;
+                }
+                if (view.LiveSeenAt != liveFrame)
+                {
+                    view.LiveSeenAt = liveFrame;
+                    view.LiveSeen = 0;
+                }
+                if (component.LiveFrame != liveFrame) view.LiveSeen++;
+                component.LiveFrame = liveFrame;
+                component.ReadLive(values, locals, Packet, this);
+                if (binding.assets)
+                {
+                    // What its fields hold of Unity's, for Tide's views: all of it for an entity it wasn't handed to
+                    // yet, then what changes
+                    assets.Type = binding.local;
+                    assets.Entity = view.Entity;
+                    assets.All = component.AssetsRun != assetsRun || component.AssetsOf != view.Entity;
+                    component.AssetsRun = assetsRun;
+                    component.AssetsOf = view.Entity;
+                    component.WriteAssets(assets);
+                }
+            }
+        }
+
+        // Says what's read to the embed where that changed, for the packets from here on: true where it's more than the
+        // packet in hand carries.
+        bool SendReads()
+        {
+            if (Schema == null || embed == IntPtr.Zero) return false;
+            if (!readsStale && readsSaid && enabledSeen == TideComponent.EnabledVersion && hearingSeen == TideHearing.Version
+                && everythingSeen == readEverything)
+            {
+                return false;
+            }
+            readsStale = false;
+            enabledSeen = TideComponent.EnabledVersion;
+            hearingSeen = TideHearing.Version;
+            everythingSeen = readEverything;
+            var types = Schema.types.Length;
+            var words = (types + 63) >> 6;
+            if (readsNext.Length != words) readsNext = new ulong[words];
+            var next = readsNext;
+            for (var i = 0; i < words; i++) next[i] = readEverything ? ulong.MaxValue : 0ul;
+            if (!readEverything)
+            {
+                Mark(next, transformType);
+                Mark(next, sourceType);
+                foreach (var rule in views)
+                {
+                    if (rule != null && rule.prefab != null) Mark(next, Schema.TypeIndex(rule.match));
+                }
+                for (var i = 0; i < asked.Length; i++)
+                {
+                    if (asked[i]) Mark(next, i);
+                }
+                if (live)
+                {
+                    for (var b = 0; b < liveComponents.Length; b++)
+                    {
+                        if (TideComponent.AnyEnabled(liveComponents[b].kind)) Mark(next, liveComponents[b].type);
+                    }
+                    for (var i = 0; i < liveEvents.Length; i++)
+                    {
+                        if (liveEvents[i].kind != null && TideHearing.Heard(liveEvents[i].kind)) Mark(next, i);
+                    }
+                }
+            }
+            var same = readsSaid && reads.Length == words;
+            for (var i = 0; same && i < words; i++) same = reads[i] == next[i];
+            if (same) return false;
+            readsNext = reads;
+            reads = next;
+            readsSaid = true;
+            fixed (ulong* bits = reads) library.ViewWant(embed, bits, (uint)types);
+            if (sentAll || sent.Length != words) return false;
+            for (var i = 0; i < words; i++)
+            {
+                if ((reads[i] & ~sent[i]) != 0) return true;
+            }
+            return false;
+        }
+
+        void Mark(ulong[] bits, int type)
+        {
+            if ((uint)type < (uint)ownerOf.Length) type = ownerOf[type];
+            if (type >= 0 && (type >> 6) < bits.Length) bits[type >> 6] |= 1ul << (type & 63);
+        }
+
+        // The packet just read was written with what was last said
+        void TakeSent()
+        {
+            if (!readsSaid)
+            {
+                if (!sentAll) sentSerial++;
+                sentAll = true;
+                return;
+            }
+            var changed = sentAll || sent.Length != reads.Length;
+            if (sent.Length != reads.Length) sent = new ulong[reads.Length];
+            for (var i = 0; i < reads.Length; i++)
+            {
+                changed |= sent[i] != reads[i];
+                sent[i] = reads[i];
+            }
+            sentAll = false;
+            if (changed) sentSerial++;
+        }
+
+        // The frame's packet written again with what's read now, and read: its entities are where they were, and what
+        // it had it has. False where the embed couldn't (the next frame's packet has what's read).
+        bool Reread()
+        {
+            if (embed == IntPtr.Zero || library.ViewAgain(embed) == 0) return false;
+            uint size = 0;
+            var bytes = library.View(embed, &size);
+            packetSerial++;
+            if (!Packet.Read(bytes, size) || Schema == null || Packet.SchemaHash != Schema.Hash) return false;
+            TakeSent();
+            return true;
+        }
+
+        // Whether the packet in hand carries the schema's type `type` (a component's or singleton's own, not its local
+        // fields')
+        bool InPacket(int type)
+        {
+            return sentAll || ((type >> 6) < sent.Length && (sent[type >> 6] >> (type & 63) & 1ul) != 0);
+        }
+
+        // Whether the packet in hand carries the values of generated component `kind`: true for a class that isn't the
+        // running build's
+        internal bool Carries(Type kind)
+        {
+            return !typeOfKind.TryGetValue(kind, out var type) || InPacket(type);
+        }
+
+        // Something reads the schema's type `type`: it's read from the match from here on, and the packet in hand,
+        // written again where it hadn't it, has it now. False where it couldn't be written again: the next frame's has it.
+        bool Ask(int type)
+        {
+            if (Schema == null || (uint)type >= (uint)asked.Length) return false;
+            type = ownerOf[type];
+            if (!asked[type])
+            {
+                asked[type] = true;
+                askedNames.Add(Schema.types[type].name);
+                readsStale = true;
+            }
+            if (InPacket(type)) return true;
+            if (askedAt[type] == packetSerial) return false; // Tried for this packet
+            askedAt[type] = packetSerial;
+            SendReads();
+            return Reread() && InPacket(type);
+        }
+
+        // Reads component `T` from the match from here on, whether or not a GameObject has one enabled: every shown
+        // entity that has it gets its `T`, this frame's too. For a component the game gives entities as it runs, which
+        // no prefab or scene has, and a script reads with GetComponent.
+        public void Read<T>() where T : TideComponent
+        {
+            Read(TideTypes.NameOf(typeof(T)));
+        }
+
+        // ...or by its Tide name (Combat.Health), a component's, a singleton's or an event's. False for a name the
+        // running game's schema hasn't: it's read once a build has it.
+        public bool Read(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return false;
+            askedNames.Add(name);
+            if (Schema == null) return false;
+            Bind();
+            var type = Schema.TypeIndex(name);
+            if (type < 0) return false;
+            type = ownerOf[type];
+            var had = InPacket(type);
+            if (!Ask(type) || had || !live) return true;
+            for (var b = 0; b < liveComponents.Length; b++)
+            {
+                if (liveComponents[b].type == type) LiveOf(b, Math.Min(shownCount, Packet.EntityCount));
+            }
+            return true;
+        }
+
+        // Whether the packet in hand carries the type named `name` (a component, with its local fields, a singleton or
+        // an event): what an editor shows without asking for it.
+        public bool Reads(string name)
+        {
+            var type = Schema?.TypeIndex(name) ?? -1;
+            return type >= 0 && InPacket(ownerOf[type]);
         }
 
         readonly Dictionary<Type, TideSingleton> singletons = new Dictionary<Type, TideSingleton>();
@@ -784,26 +1147,54 @@ namespace Tide
                 if (singletons.Count > 0) singletons.Clear();
                 return;
             }
-            for (var b = 0; b < liveSingletons.Length; b++)
+            for (var b = 0; b < liveSingletons.Length; b++) ReadSingleton(b);
+        }
+
+        // The `b`th bound singleton's value in the packet into the object the runner keeps of it: false where the
+        // packet hasn't it
+        bool ReadSingleton(int b)
+        {
+            var binding = liveSingletons[b];
+            var values = Packet.Singleton((uint)binding.type, out var stride);
+            if (values == null || stride != binding.size)
             {
-                var binding = liveSingletons[b];
-                var values = Packet.Singleton((uint)binding.type, out var stride);
-                if (values == null || stride != binding.size) continue;
-                var locals = binding.local >= 0 ? Packet.Singleton((uint)binding.local, out _, true) : null;
-                if (!singletons.TryGetValue(binding.kind, out var singleton))
-                {
-                    singleton = (TideSingleton)(binding.make != null ? binding.make() : Activator.CreateInstance(binding.kind));
-                    singletons[binding.kind] = singleton;
-                }
-                singleton.ReadLive(values, locals, Packet, this);
+                if (singletons.Count > 0) singletons.Remove(binding.kind); // Read no more
+                return false;
             }
+            var locals = binding.local >= 0 ? Packet.Singleton((uint)binding.local, out _, true) : null;
+            if (!singletons.TryGetValue(binding.kind, out var singleton))
+            {
+                singleton = (TideSingleton)(binding.make != null ? binding.make() : Activator.CreateInstance(binding.kind));
+                singletons[binding.kind] = singleton;
+            }
+            singleton.ReadLive(values, locals, Packet, this);
+            if (binding.assets)
+            {
+                // What a script set of Unity's on it, for Tide's views
+                assets.Type = binding.local;
+                assets.Entity = default;
+                assets.All = singleton.AssetsRun != assetsRun;
+                singleton.AssetsRun = assetsRun;
+                singleton.WriteAssets(assets);
+            }
+            return true;
         }
 
         // The match's singleton `T` this frame, as Tide's views see it: null outside a match. Its lists, maps, sets and
-        // grids are the ones it had the frame before, filled again: copy what should outlast the frame.
+        // grids are the ones it had the frame before, filled again: copy what should outlast the frame. A singleton is
+        // read from the match once this asked for it: the first time, the frame's packet is written again with it.
         public T Get<T>() where T : TideSingleton
         {
-            return singletons.TryGetValue(typeof(T), out var singleton) ? (T)singleton : null;
+            if (singletons.TryGetValue(typeof(T), out var singleton)) return (T)singleton;
+            if (Schema != null) Bind();
+            if (!live || !singletonOf.TryGetValue(typeof(T), out var b))
+            {
+                var name = TideTypes.NameOf(typeof(T)); // Read once a build this C# is of runs
+                if (name != null && askedNames.Add(name)) readsStale = true;
+                return null;
+            }
+            if (!Ask(liveSingletons[b].type) || !Packet.InMatch || !ReadSingleton(b)) return null;
+            return (T)singletons[typeof(T)];
         }
 
         readonly Dictionary<Type, TideHearing> hearing = new Dictionary<Type, TideHearing>();
@@ -1046,7 +1437,7 @@ namespace Tide
                 if (rule.prefab == null || string.IsNullOrEmpty(rule.match)) continue;
                 if (rule.match == prefabName) return rule.prefab;
                 var type = Schema.TypeIndex(rule.match);
-                if (type >= 0 && RowOf(type, row) >= 0) return rule.prefab;
+                if (type >= 0 && RowOf(type, row) >= 0) return rule.prefab; // Asked for, where a rule's new
             }
             return null;
         }
@@ -1064,7 +1455,7 @@ namespace Tide
             var under = parent != null ? parent.transform : null;
             if (!view.Authored && view.transform.parent != under) view.transform.SetParent(under, false);
             if (transformType < 0) return;
-            var r = RowOf(transformType, row);
+            var r = Row(transformType, row);
             if (r < 0) return;
             var value = Packet.Row((uint)transformType, r, out _);
             if (value == null) return;
@@ -1303,8 +1694,15 @@ namespace Tide
             return b != 0f ? a / b : a;
         }
 
-        // The row of the packet's entity `entity` in type `type`'s section this frame, or -1.
+        // The row of the packet's entity `entity` in type `type`'s section this frame, or -1. Asking reads the type
+        // from the match from then on.
         public int RowOf(int type, int entity)
+        {
+            Ask(type);
+            return Row(type, entity);
+        }
+
+        int Row(int type, int entity)
         {
             if ((uint)entity >= (uint)Packet.EntityCount) return -1;
             var table = RowsOf(type);
@@ -1327,9 +1725,9 @@ namespace Tide
             var table = rows[type];
             // Room to grow into, so entities coming one at a time don't make a table each
             if (table == null || table.Length < count) table = rows[type] = new int[Math.Max(Math.Max(count, 16), (table?.Length ?? 0) * 2)];
-            if (rowsAt[type] != frames)
+            if (rowsAt[type] != packetSerial)
             {
-                rowsAt[type] = frames;
+                rowsAt[type] = packetSerial;
                 for (var i = 0; i < count; i++) table[i] = -1;
                 var n = Packet.Rows((uint)type, out _, out var entities, out _, rowsLocal[type]);
                 for (var k = 0; k < n; k++)
@@ -1346,8 +1744,8 @@ namespace Tide
         {
             value = default;
             var type = TypeOf<T>.Index(Schema);
-            if (type < 0) return false;
-            var row = RowOf(type, entity);
+            if (type < 0 || !Ask(type)) return false;
+            var row = Row(type, entity);
             if (row < 0) return false;
             var bytes = Packet.Row((uint)type, row, out _, TypeOf<T>.Local);
             var stride = Schema.types[type].size;
@@ -1361,7 +1759,7 @@ namespace Tide
         {
             value = default;
             var type = TypeOf<T>.Index(Schema);
-            if (type < 0) return false;
+            if (type < 0 || !Ask(type)) return false;
             var bytes = Packet.Singleton((uint)type, out var stride, TypeOf<T>.Local);
             if (bytes == null || stride != (uint)sizeof(T)) return false;
             value = *(T*)bytes;

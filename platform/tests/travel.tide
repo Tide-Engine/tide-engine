@@ -48,9 +48,24 @@ system Drift(mut Score score, Time time)
     score.drift += time.dt * 0.5;
 }
 
+// What a Bump did, for this machine's local handlers, which hear it again at the ticks time travel shows
+event Bumped { int by; }
+
 command(Bump bump, PlayerID sender) Apply(mut Score score)
 {
     score.total += bump.by;
+    Send(Bumped { by = bump.by });
+}
+
+local singleton Ears { int heard; }
+
+extern void HeardBump(int by, int heard, int total);
+
+// Its handler reads the match as the tick that sent it left it, and counts in this machine's own state
+local event(Bumped bumped) Hear(mut Ears ears, Score score)
+{
+    ears.heard += 1;
+    HeardBump(bumped.by, ears.heard, score.total);
 }
 
 extern void Saw(int steps, float x, int jumps);

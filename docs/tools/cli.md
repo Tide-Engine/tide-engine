@@ -456,6 +456,8 @@ Carrying the game over works like this:
 
 When the game gets into a state you don't want, press **Ctrl+R** in the game, or type `r` and press Enter in `tide`'s terminal, to fully reload it. On the web, Cmd+R does the same on macOS. This starts the match, local state, GUI and the game's C or C++ globals over, without carrying state from the old run. With a match on several windows (`--host` in one, `--connect localhost` in another), each window hot reloads when you save, and players stay in the match. A window that joined another's match joins it again a second after that match ends without it: when the other window starts it over, or is still on a build with another data layout. On the web, a hot reload goes on with the match closed for now: the room closes, and the other players drop out.
 
+If `tide` itself is upgraded or installed again while a game runs on desktop, the next save isn't built: `tide run` says its installation changed, and the game goes on with the build it has. Stop the run and start `tide run` again. In Unity, leave Play and enter it again once `tide` has built.
+
 `tide run --web --stats` hot reloads too. `tide` serves the game's page at an address on your machine, like `http://127.0.0.1:52407/?stats`, opens it in your browser, and keeps running until you press Ctrl+C. What each hot reload did shows in the browser's console. VS Code and JetBrains IDEs can play it beside your code instead (see [Editors](editors.md)).
 
 Hot reload is for `tide run`. `tide build` makes a plain program, or a page with nothing of it. Runs [without a window](#without-a-window) play once, with no hot reload.
@@ -643,14 +645,18 @@ inspectors and Tide's drawing following it), goes on from a tick shown, and
 saves and replays recordings of matches, each tick checked against the
 recording, so a tester's bug report replays bit for bit and a changed build
 shows the first tick it changes. With other machines in the match, it never
-stops for them: the match goes on behind the tick shown. The package's README
+stops for them: the match goes on behind the tick shown. A match another
+machine runs is recorded in this editor too, from what it's sent, where the
+game hides nothing from players; where it hides state, and in a sharded match,
+the latest ticks confirmed here are kept to look through. The package's README
 has the details.
 
 Tide's views draw in Unity's frame with Tide's own renderer: 2D, text, 3D
 drawn with the camera's depth (so Tide's meshes and Unity's scene hide each
 other), render targets, stencil, the game's own frags and verts, and its
 compute kernels, GPU lists and their reads back, as Tide draws them in its own
-window. The views' 3D camera is the runner's View Camera, or the main camera.
+window. The views' 3D camera is the runner's View Camera, or the main camera,
+perspective or orthographic.
 tide writes a Unity shader for each of the game's shaders, a compute shader
 for each kernel, and the same for Tide's own, into
 `Packages/com.tide.game/Resources/TideShaders`, which Unity compiles for every
@@ -662,6 +668,25 @@ whose pass the package adds by itself. In Play, the editor's scene view shows
 Tide's 3D too, through its own camera. The game's sound plays through Unity's
 audio, and `Clip.Microphone` is Unity's microphone; a WebGL player's Tide
 program plays through the page, and hears its microphone, itself.
+
+A view draws textures Unity imported, too. A local `Texture` field of a match
+component (`local Texture face;`) is a Texture field of its Unity component,
+set in the inspector on a prefab or in a scene, and the view that reads it
+draws with Unity's own image: its import settings are Unity's, nothing is
+imported a second time, and `face.size` is its size. It's this machine's, as
+every local field, so the match and other machines have nothing of it, and it
+has no texture until Unity shows the entity's GameObject, a frame after the
+entity appears: `if (card.face.size.x == 0) return;` skips the draw until
+then. A script sets it in Play, and a singleton's from
+`runner.Get<Tide.Game.Hud>().logo`. Such a value exists in a Unity project
+alone; `asset Texture logo = "logo.png";` in a `.tide` file is Tide's own
+import of the file, which every host draws. Unity's meshes, materials and
+sounds are local fields of types of their own, `UnityEngine.Mesh`,
+`UnityEngine.Material` and `UnityEngine.AudioClip`, which Tide's code only
+hands back to Unity: `Draw.UnityMesh(mesh, material, transform)` has Unity
+draw the mesh in the material where the call is among the view's draws, and
+`Audio.Play(clip, volume)` plays the clip through Unity's audio. The package's
+README has more.
 
 A package's components are authored on GameObjects like the game's own, as
 a `unity.json` in its folder says (see

@@ -1,0 +1,78 @@
+// platform/tests/travel.tide's game, laid out otherwise, for platform/tests/travel_layout.c: a build of it replays a
+// recording travel.c's build made. Its components' fields are in another order with new ones among them, and it has a
+// singleton more; its input, its command and what its ticks do with them are the same, so the recording's ticks run.
+settings { tickRate = 30; maxPlayers = 4; }
+
+scene Main { }
+
+component Walker
+{
+    int lives = 3;
+    int jumps;
+    float x;
+    int steps;
+}
+
+singleton Score
+{
+    int bonus = 10;
+    int drift = 7; // A float there: a type it doesn't convert from, so it starts at this
+    int total;
+}
+
+singleton Season
+{
+    int number = 2;
+}
+
+input Move
+{
+    float right;
+    bool jump;
+
+    Sample(Devices devices)
+    {
+        right = devices.keyboard.d.pressed ? 1.0 : 0.0;
+        jump = devices.keyboard.space.pressed;
+    }
+}
+
+command Bump { int by; }
+
+event(PlayerJoined joined) Arrive()
+{
+    Spawn(Walker { }, Owner { player = joined.player });
+}
+
+system Walk(Move move, mut Walker walker, Time time)
+{
+    walker.x += move.right * time.dt;
+    walker.steps += 1;
+    if (move.jump) walker.jumps += 1;
+}
+
+system Drift(mut Score score)
+{
+    score.drift += 1;
+}
+
+event Bumped { int by; }
+
+command(Bump bump, PlayerID sender) Apply(mut Score score)
+{
+    score.total += bump.by;
+    Send(Bumped { by = bump.by });
+}
+
+extern void Saw(int steps, float x, int jumps, int lives);
+extern void Totalled(int total, int bonus, int season);
+
+view Show(Walker walker)
+{
+    Saw(walker.steps, walker.x, walker.jumps, walker.lives);
+}
+
+view Count(Score score, Season season)
+{
+    Totalled(score.total, score.bonus, season.number);
+}

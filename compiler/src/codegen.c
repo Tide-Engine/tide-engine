@@ -5945,6 +5945,12 @@ static void gen_builtin_call(gen *g, sb *o, const expr *e)
             && (strcmp(e->c_callee, "tide_audio_set_bus_volume") == 0 || strcmp(e->c_callee, "tide_audio_set_bus_effect_value") == 0)) {
             sb_put(o, "(uint32_t)");
         }
+        if (want.kind == TY_UNITY_CLIP) { // One of Unity's sounds: the call takes its number there
+            sb_put(o, "(");
+            gen_as(g, o, e->args.items[i], want);
+            sb_put(o, ").id");
+            continue;
+        }
         if (want.kind == TY_CLIP) { // A Clip names a sound of the pack's: the call takes its samples
             sb_put(o, "tide_clip_of(");
             gen_as(g, o, e->args.items[i], want);
@@ -5968,7 +5974,7 @@ static void gen_builtin_call(gen *g, sb *o, const expr *e)
     }
     if (e->c_pack) sb_put(o, ")");
     if (e->call == CALL_AUDIO && str_eq_c(e->name, "Play")) { // Audio.Play's volume and pitch, 1 each where the call leaves them out
-        const int takes = strcmp(e->c_callee, "tide_audio_play") == 0 ? 3 : 4;
+        const int takes = strcmp(e->c_callee, "tide_audio_play") == 0 || strcmp(e->c_callee, "tide_audio_play_external") == 0 ? 3 : 4;
         for (int i = e->args.count; i < takes; i++) sb_put(o, ", 1.0f");
     }
     if (e->call == CALL_BUILTIN && noise_call(e->c_callee) && e->args.count == 1) sb_put(o, ", 0"); // Its seed, left out

@@ -1,3 +1,19 @@
+## UnityEngine.Mesh, UnityEngine.Material, UnityEngine.AudioClip (2026-11-19)
+
+Three builtin types for a game made in Unity (the owner's direction; every rule mine, Provisional: docs/spec.md,
+Assets; the whole path in notes/unity.md, top section). In the compiler they're three kinds (`TY_UNITY_MESH`,
+`TY_UNITY_MATERIAL`, `TY_UNITY_CLIP`, appended to `type_kind`) whose names in `types.c`'s table are dotted, which
+`builtin_type_named` matches whole as the resolver hands it a type's written name: so `UnityEngine.Mesh` is found
+before any declaration is looked for, with or without a Unity project, and `Mesh` alone stays Tide's generic. Each is
+8 bytes (`tide_external_ref`), a rendering resource to the checker (`holds_render_resource_in`: local code alone,
+which is what keeps them out of the match with the existing error), a field, an array's element (lists and maps of them: not tried),
+impure, and not a worker's. Nothing has members. Two table entries use them: `Draw.UnityMesh` (three
+arguments, `tide_draw_external_mesh`) and an `Audio.Play` overload (`tide_audio_play_external`, whose argument
+codegen passes as the reference's number, and which takes the frame's audio list first as the other plays do).
+`tidec --embed`'s `tide_embed_set_local` takes fields of them beside a Texture's (`embed_given`). No error message
+is new, and no test of the language's own: the embed fixture (`platform/tests/embed.tide`) and the Unity Sample
+compile and run them. Not done: completion and member lists in tidels beyond the hover text.
+
 ## Tweaks, step 5: .tweaks files in place of tweaks.json (2026-11-16)
 
 The owner asked for the file not to be JSON, then for several to a game and values worked out with math and constants;
@@ -4088,6 +4104,17 @@ packet's unchanged and nothing is remapped. `tide_packet_text`/`_list` start eac
 (`align_text` in `engine/src/embed_game.c`), so another language reads elements in place. Packet version 4. Test:
 `embed_containers` (a singleton's `List<string>`, `List<Note>`, `Map<string, int>`, `Set<int>` and `Grid2<byte>`,
 each read back as the header says), and Ticked's `List<string>` through `embed_heard_events`.
+
+**The packet carries what's read (2026-11-19; notes/unity.md, The packet carries what Unity reads).** `gen_packet_view`
+puts each component's block (its rows and values, and its local fields' block) and each singleton's (and its local
+fields') inside `if (tide_packet_wants(out, <its layout type>))`, the host's set of what the other program reads
+(`tide_packet.wanted`; NULL for everything, which is what the dev inspector's packets have). What isn't read costs that
+test: no count pass, no blend, no heap fields packed into STRINGS. The entities' rows and parents are always written.
+A tap (`tide_embed_heard_<E>`) returns before copying anything for an event that isn't read
+(`tide_embed_heard_wants`, by the pointer and count the last `tide_embed_view` call was given), and the heard store is
+dropped by `tide_embed_heard_taken`: set as a packet takes the records, acted on by the next tap or the next packet
+that isn't `tide_packet.again`, so the same frame's packet can be written again with its events. The packet's format
+and version are as they were: a section is there or it isn't, which readers already took.
 
 For `tide unity --assets`: `compile_input.text` gives a file's text in place
 of reading `path` (the CLI's Tide text of a Unity prefab or scene), and

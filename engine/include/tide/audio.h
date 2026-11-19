@@ -56,6 +56,9 @@ typedef struct tide_clip {
     uint64_t name;                     // The Clip it came from, where it's the pack's (tide_clip_of); 0 otherwise
     const struct tide_vorbis *stream;  // A long Ogg Vorbis clip, decoded as it plays (tide/vorbis.h), with no `samples`
     bool microphone;                   // The capture device's frames (Clip.Microphone): no samples, mono at TIDE_AUDIO_RATE
+    // A sound of the program Tide runs inside (its number there, from 1): no samples here, so the mixer plays nothing
+    // of it, and that program plays it itself (tide_audio_play_external). 0 for every other clip.
+    uint32_t external;
 } tide_clip;
 
 // Tide's `Clip.Microphone`: the capture device, as a clip a `Sound` plays. A
@@ -165,6 +168,11 @@ void tide_audio_free(tide_audio_frame *f);
 void tide_audio_play(tide_audio_frame *f, tide_clip clip, float volume, float pitch);
 // ...placed at `position` under the listener.
 void tide_audio_play_at(tide_audio_frame *f, tide_clip clip, tide_float3 position, float volume, float pitch);
+// A one-shot of a sound the program Tide runs inside has (`clip` its number there: Tide's UnityEngine.AudioClip),
+// which that program plays through its own audio at `volume` and `pitch`: recorded among the frame's one-shots with
+// no samples, for a host that embeds the game to hand over (tide_embed_sounds). Nothing for none, and nothing is
+// heard of it under a host that plays for itself.
+void tide_audio_play_external(tide_audio_frame *f, uint64_t clip, float volume, float pitch);
 
 // ...at a float2, which is a float3 with z 0 (Tide's 2D form).
 static inline void tide_audio_play_at2(tide_audio_frame *f, const tide_clip clip, const tide_float2 position, const float volume,

@@ -179,6 +179,7 @@ tide_int2 tide_texture_size(const tide_texture_ref texture)
         return target_pixels ? target_pixels(target.size) : tide_i2(0, 0);
     }
     if (texture.image.height == TIDE_TEXTURE_DEPTH) return tide_i2(0, 0);
+    if (tide_texture_is_external(texture)) return tide_texture_external_size(texture.image.version & TIDE_TEXTURE_NAME);
     if (texture.image.height == TIDE_TEXTURE_GRID) {
         tide_grid grid;
         tide_grid_shape shape;

@@ -87,6 +87,16 @@ void tide_audio_play(tide_audio_frame *f, const tide_clip clip, const float volu
     v->pitch = pitch;
 }
 
+void tide_audio_play_external(tide_audio_frame *f, const uint64_t clip, const float volume, const float pitch)
+{
+    if (!f || !clip || clip > UINT32_MAX) return;
+    tide_voice *v = add_voice(f);
+    v->clip = (tide_clip){.external = (uint32_t)clip};
+    v->playing = true;
+    v->volume = volume;
+    v->pitch = pitch;
+}
+
 void tide_audio_play_at(tide_audio_frame *f, const tide_clip clip, const tide_float3 position, const float volume,
                         const float pitch)
 {

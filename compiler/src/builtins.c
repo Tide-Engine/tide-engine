@@ -52,6 +52,10 @@ static const type T_CULL = {TY_ENUM, &cull_enum};
 static const decl *cull_decl;
 // And Font, which Draw.Text and Draw.MeasureText take.
 static const type T_FONT = {TY_FONT, NULL};
+// ...and Unity's own objects, in a game made in Unity: what Draw.UnityMesh and Audio.Play take.
+static const type T_UNITY_MESH = {TY_UNITY_MESH, NULL};
+static const type T_UNITY_MATERIAL = {TY_UNITY_MATERIAL, NULL};
+static const type T_UNITY_CLIP = {TY_UNITY_CLIP, NULL};
 // ...and the Format enum, what a render target is made to hold.
 static decl format_enum;
 static const type T_FORMAT = {TY_ENUM, &format_enum};
@@ -655,6 +659,13 @@ static void build_signatures(void)
         describe(play, "clip, volume, pitch",
                  "Plays a clip once, from its start: a one-shot the mixer owns from then on, with nothing to stop it. `volume` "
                  "1 is the clip as it is, and `pitch` 1 its own speed (2 an octave up). Plain stereo, from nowhere in particular.");
+        signature *unity = add("Audio", "Play", T_NONE, "tide_audio_play_external", 2, T_UNITY_CLIP, T_F, T_NONE);
+        unity->optional = 1;
+        unity->defaults[1] = "1";
+        describe(unity, "clip, volume",
+                 "In a game made in Unity: plays one of Unity's AudioClips once, through Unity's own audio, at `volume`. "
+                 "It's Unity's sound: Tide's buses, effects and `Sound` fields have nothing of it. The clip is a local "
+                 "field a prefab or a scene sets in Unity's inspector; unset, and outside Unity, nothing plays.");
         signature *flat = add("Audio", "Play", T_NONE, "tide_audio_play_at2", 4, T_CLIP, T_F2, T_F);
         flat->params[3] = T_F;
         flat->optional = 2;
@@ -1014,6 +1025,12 @@ static void build_signatures(void)
     describe(add("RenderTarget", "Window", T_TARGET, "tide_render_target_screen_as", 2, T_F, T_FORMAT, T_NONE), "factor, format",
              window_format_doc);
 
+    describe(add("Draw", "UnityMesh", T_NONE, "tide_draw_external_mesh", 3, T_UNITY_MESH, T_UNITY_MATERIAL, T_F4X4),
+             "mesh, material, transform",
+             "In a game made in Unity: draws one of Unity's meshes with one of Unity's materials, placed by `transform`, where "
+             "this call is in the frame's drawing. Unity draws it, through its own camera, into the screen alone (a render "
+             "target of Tide's gets nothing of it), with every submesh in that material. Both are local fields a prefab or a "
+             "scene sets in Unity's inspector; with either unset, and outside Unity, it draws nothing.");
     describe(add("Draw", "Cube", T_NONE, "tide_draw_cube", 3, T_F3, T_F3, T_COLOR),
              "center, size, color", "A filled cube, centered in the world, with the full size along each axis.");
     signature *cube = add("Draw", "Cube", T_NONE, "tide_draw_cube_rotated", 3, T_F3, T_F3, T_Q);

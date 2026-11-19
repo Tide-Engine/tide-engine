@@ -90,6 +90,23 @@ var TideWebLibrary = {
         return at && n ? TideWeb.copyOut('view', at, n) : 0;
     },
 
+    // What Unity reads of the match (tide_embed_view_want): a bit for each of the schema's first `types` types
+    TideWebViewWant__deps: ['$TideWeb'],
+    TideWebViewWant: function (bits, types) {
+        var x = TideWeb.program();
+        if (!x) return;
+        var size = ((types + 63) >>> 6) * 8;
+        var at = size ? TideWeb.copyIn(x, bits, size) : 0;
+        x.tide_unity_view_want(at, at ? types : 0);
+    },
+
+    // The last frame's packet written again with what's read now, for TideWebView to copy out
+    TideWebViewAgain__deps: ['$TideWeb'],
+    TideWebViewAgain: function () {
+        var x = TideWeb.program();
+        return x ? x.tide_unity_view_again() : 0;
+    },
+
     TideWebSchema__deps: ['$TideWeb'],
     TideWebSchema: function (size) {
         var x = TideWeb.program();
@@ -171,6 +188,31 @@ var TideWebLibrary = {
         var at = size ? TideWeb.copyIn(x, value, size) : 0;
         if (size && !at) return 0;
         return x.tide_unity_command(type, birthLow, birthHigh, lineageLow, lineageHigh, at, size);
+    },
+
+    // One of Unity's textures into a Texture field of the game's local state (tide_embed_local_texture): numbers
+    // alone cross, as the image stays Unity's
+    TideWebLocalTexture__deps: ['$TideWeb'],
+    TideWebLocalTexture: function (type, offset, birthLow, birthHigh, lineageLow, lineageHigh, image, width, height, sampling) {
+        var x = TideWeb.program();
+        if (!x || !x.tide_unity_local_texture) return 0;
+        return x.tide_unity_local_texture(type, offset, birthLow, birthHigh, lineageLow, lineageHigh, image, width, height, sampling);
+    },
+
+    TideWebLocalObject__deps: ['$TideWeb'],
+    TideWebLocalObject: function (type, offset, birthLow, birthHigh, lineageLow, lineageHigh, item) {
+        var x = TideWeb.program();
+        if (!x || !x.tide_unity_local_object) return 0;
+        return x.tide_unity_local_object(type, offset, birthLow, birthHigh, lineageLow, lineageHigh, item);
+    },
+
+    // The frame's plays of Unity's own sounds (tide_embed_sounds): 12 bytes each, copied into Unity's heap
+    TideWebSounds__deps: ['$TideWeb'],
+    TideWebSounds: function (count) {
+        var x = TideWeb.program();
+        var at = x && x.tide_unity_sounds ? x.tide_unity_sounds() : 0, n = at ? x.tide_unity_sound_count() : 0;
+        HEAPU32[count >> 2] = at ? n : 0;
+        return at && n ? TideWeb.copyOut('sounds', at, n * 12) : 0;
     },
 
     // Time travel (tide/embed.h): the program's own match, recorded, paused and replayed

@@ -8,6 +8,7 @@ static bool worker_value_type(const type t, const int depth)
     case TY_INPUT: case TY_RECORD: case TY_ACTION: case TY_DRAW_LIST:
     case TY_TEXTURE: case TY_DEPTH_TEXTURE: case TY_CUBEMAP: case TY_RENDER_TARGET:
     case TY_CLIP: case TY_RESIDENT: case TY_GRID: case TY_MESH: return false;
+    case TY_UNITY_MESH: case TY_UNITY_MATERIAL: case TY_UNITY_CLIP: return false;
     case TY_STRUCT: case TY_EVENT: case TY_ARRAY: case TY_LIST: case TY_MAP:
     case TY_SET: case TY_OPTIONAL: case TY_FAILABLE:
         for (int i = 0; i < t.decl->fields.count; i++) {

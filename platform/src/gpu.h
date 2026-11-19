@@ -26,6 +26,10 @@
 
 typedef uint32_t tide_gpu_id; // A buffer, texture, pipeline or target; 0 is none, and the window as a target
 
+// How an image of the program Tide runs inside is read (`external`'s flags)
+#define TIDE_GPU_EXTERNAL_LINEAR 1u
+#define TIDE_GPU_EXTERNAL_RAW 2u
+
 // TIDE_GPU_STORAGE is a buffer shaders read and compute shaders write (WGSL's
 // var<storage>), which is also usable as a draw's vertices or indices, as
 // indirect arguments (draw_indirect, dispatch_indirect), and as either side of
@@ -502,6 +506,18 @@ typedef struct tide_gpu {
     // and is read as TIDE_GPU_FILTER_LINEAR.
     void (*mipmaps)(tide_gpu_id texture);
     void (*texture_free)(tide_gpu_id texture);
+    // Optional: a texture that's an image of the program Tide runs inside (tide_texture_external), `external` the
+    // number that program knows it by, `width` by `height` pixels as the game was told. Nothing is uploaded, written
+    // or made smaller images of: it's that program's as it is, and freeing the texture frees nothing of its. `flags`
+    // says how it's read: TIDE_GPU_EXTERNAL_LINEAR for a [Linear] read (its colors as linear light) and
+    // TIDE_GPU_EXTERNAL_RAW for a [Raw] one (its channels as numbers, no alpha worked in); with neither, its colors
+    // are read as every texture's here are, each times its alpha, which that program sees to as it's sampled. NULL
+    // on a backend that draws for itself, where such a reference is no texture.
+    tide_gpu_id (*external)(uint32_t external, int width, int height, uint32_t flags);
+    // Optional, with `external`: in a pass on the window, a mesh of that program's drawn by it with a material of its
+    // own, both by its numbers for them, placed by `matrix` (16 floats, column by column, from the mesh to the
+    // world), in the pass's order. Its camera and everything its material does are that program's.
+    void (*external_draw)(uint32_t mesh, uint32_t material, const float *matrix);
     // Optional, for an asynchronously validated volume allocation: 0 pending, 1 ready,
     // -1 failed. Other textures are ready. A pending/failed image must never be bound.
     int (*texture_status)(tide_gpu_id texture);

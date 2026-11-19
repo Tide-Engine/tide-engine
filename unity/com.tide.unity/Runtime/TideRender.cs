@@ -43,7 +43,7 @@ namespace Tide
             PipelineFree, Target, TargetFree, ResolveDepth, Begin, End, Scissor, Use, Stencil, Uniforms, Image, Vertices,
             Indices, Draw, DrawIndexed, PipelineStorage, Storage, ComputeBegin, ComputeEnd, Dispatch, DispatchIndirect,
             DrawIndirect, DrawIndexedIndirect, BufferCopy, BufferRead, DrawIndexedIndirectCount, Sampler, Array, ArrayLayer,
-            ArrayOf, ArrayWrite, TextureBlocks, ArrayBlocks, Volume, VolumeWrite, PipelineImages, DepthBias,
+            ArrayOf, ArrayWrite, TextureBlocks, ArrayBlocks, Volume, VolumeWrite, PipelineImages, DepthBias, External, ExternalDraw,
         }
 
         // A buffer: vertices, read by the shaders as bytes, or indices, which Unity draws through as an index buffer
@@ -87,6 +87,12 @@ namespace Tide
             public RenderTexture drawn, mipped;
             public int drawnUsed = -1, mippedUsed = -1;
             public RenderTexture faceColor; // A cube drawn into: the one 2D image its faces' passes draw into (MakeCubeFace)
+            // One of Unity's own textures, bound as it is (MakeExternal): never written, made smaller images of or
+            // destroyed here, and how a sampler's read of it is made what Tide's own textures give (_TideForeign).
+            // Its rows count from the bottom, as Unity keeps an image it imported, where Tide's own count from the
+            // top: its reads are turned (_TideTurned)
+            public bool external;
+            public uint foreign;
         }
 
         sealed class Target
@@ -135,7 +141,7 @@ namespace Tide
             public MaterialPropertyBlock properties;
         }
 
-        enum Kind : byte { Begin, End, Scissor, Draw, Mipmaps, ResolveDepth }
+        enum Kind : byte { Begin, End, Scissor, Draw, Mipmaps, ResolveDepth, External }
 
         // What a camera's commands get: a pass, a rect, a draw with everything it reads, smaller images made...
         struct Command
@@ -149,10 +155,12 @@ namespace Tide
             public MaterialPropertyBlock properties; // ...and its pipeline's attributes and slots
             public GraphicsBuffer v0, v1, v2, index;
             public int o0, o1, o2, count, instances, textures, textureCount, uniformAt, uniformSize, shaderPass;
-            public uint first, sampling, samplingHigh, unmipped, own, ownHigh;
+            public uint first, sampling, samplingHigh, unmipped, own, ownHigh, foreign, turned;
             public RenderTexture mipmapped; // Mipmaps
             public int storage, storageCount; // Draw: the storage buffers it reads, in its recording's `storage`
             public GraphicsBuffer arguments; // ...and an indirect one's numbers, copied where it is in the frame
+            public Mesh mesh;       // External: one of Unity's meshes, drawn by Unity with `material`...
+            public Matrix4x4 place; // ...placed so
         }
 
         // A frame's commands for one camera, kept: its draws, the textures they read, and their uniforms.
@@ -267,6 +275,8 @@ namespace Tide
         static readonly int First = Shader.PropertyToID("_TideFirst"), Sampling = Shader.PropertyToID("_TideSampling");
         static readonly int SamplingHigh = Shader.PropertyToID("_TideSamplingHigh");
         static readonly int Unmipped = Shader.PropertyToID("_TideUnmipped");
+        static readonly int ForeignBits = Shader.PropertyToID("_TideForeign");
+        static readonly int TurnedBits = Shader.PropertyToID("_TideTurned");
         static readonly int OwnLow = Shader.PropertyToID("_TideOwn"), OwnHigh = Shader.PropertyToID("_TideOwnHigh");
         static readonly int Uniforms = Shader.PropertyToID("TideUniforms"), DepthMS = Shader.PropertyToID("_TideDepthMS");
         static readonly int[] Offsets = { Shader.PropertyToID("_TideOffset0"), Shader.PropertyToID("_TideOffset1"), Shader.PropertyToID("_TideOffset2") };
@@ -735,6 +745,8 @@ namespace Tide
                     }
                     break;
                 case Op.Texture: MakeTexture(W(0), (int)W(1), (int)W(2), (int)W(3), W(4) != 0 ? p + 20 : null); break;
+                case Op.External: MakeExternal(W(0), W(1), (int)W(2), (int)W(3), W(4)); break;
+                case Op.ExternalDraw: ExternalDraw(W(0), W(1), (float*)(p + 8)); break;
                 case Op.TextureWrite:
                     Flush(); // After the work before it, which may sample it
                     WriteTexture(W(0), (int)W(1), (int)W(2), (int)W(3), (int)W(4), p + 20);
@@ -1237,6 +1249,61 @@ namespace Tide
         void IntegersInto(RenderTexture to, int x, int y, int z, int width, int height, int depth, int pixelBytes, byte[] pixels)
         {
             fixed (byte* p = pixels) IntegersInto(to, x, y, z, width, height, depth, pixelBytes, p);
+        }
+
+        // Unity's own meshes and materials that Tide's fields hold (the runner's, by number)
+        internal Func<uint, UnityEngine.Object> Objects;
+
+        // One of Unity's meshes drawn with one of Unity's materials (TIDE_EMBED_RENDER_EXTERNAL_DRAW), where the
+        // command is among the camera's pass's draws: Unity's own draw, every submesh in the material's first pass,
+        // through the camera the commands are recorded for. One of the two gone, or not what it's drawn as, draws
+        // nothing.
+        void ExternalDraw(uint mesh, uint material, float* matrix)
+        {
+            if (!inPass || offscreenPass || Objects == null) return;
+            if (!(Objects(mesh) is Mesh drawn) || drawn == null || !(Objects(material) is Material with) || with == null) return;
+            var place = new Matrix4x4();
+            for (var i = 0; i < 16; i++) place[i] = matrix[i]; // Column by column, as Unity's own index goes
+            into.commands.Add(new Command { kind = Kind.External, mesh = drawn, material = with, place = place });
+        }
+
+        // Unity's own textures that Tide's Texture fields hold, by the number the embed knows each by
+        // (tide_embed_local_texture): the runner's, which keeps them while it runs. Null for none of that number.
+        internal Func<uint, Texture> Externals;
+
+        // A texture that's one of Unity's own (TIDE_EMBED_RENDER_EXTERNAL): bound as it is wherever Tide reads the
+        // texture, with nothing copied. One that's gone, or isn't a 2D image a sampler reads, is no image: its reads
+        // get what a missing texture's do.
+        void MakeExternal(uint id, uint external, int width, int height, uint flags)
+        {
+            var texture = Externals != null ? Externals(external) : null;
+            if (texture != null && texture.dimension != TextureDimension.Tex2D) texture = null;
+            images[id] = new Image
+            {
+                texture = texture, width = width, height = height, owned = false, external = true, authored = true,
+                mips = texture != null && texture.mipmapCount > 1, foreign = Foreign(texture, flags),
+            };
+        }
+
+        // How a sampler's read of one of Unity's textures becomes what Tide's own give (hlsl.c's tidehl_foreign).
+        // Tide stores a color times its alpha, in display encoding, or as linear light under [Linear]; Unity stores
+        // it without, and its hardware hands an sRGB texture's colors over as linear light in a Linear project.
+        // `flags`: bit 0 a [Linear] read, bit 1 a [Raw] one, whose channels are numbers and stay as they are.
+        static uint Foreign(Texture texture, uint flags)
+        {
+            if (texture == null || (flags & 2) != 0) return 0;
+            var decoded = QualitySettings.activeColorSpace == ColorSpace.Linear && GraphicsFormatUtility.IsSRGBFormat(texture.graphicsFormat);
+            return (flags & 1) != 0 ? (decoded ? 1u : 3u) : decoded ? 2u : 1u;
+        }
+
+        // How one of Unity's textures samples itself, as OpenGL Core's shaders are told (_TideOwn): its import
+        // settings, which are never changed here, so a read that asks otherwise is emulated from its pixels.
+        static uint OwnOf(Texture texture)
+        {
+            var filter = texture.filterMode == FilterMode.Point ? 0u : texture.filterMode == FilterMode.Bilinear ? 1u
+                       : texture.anisoLevel > 1 ? 3u : 2u;
+            var wrap = texture.wrapMode == TextureWrapMode.Repeat ? 1u : texture.wrapMode == TextureWrapMode.Mirror ? 2u : 0u;
+            return filter | wrap << 2;
         }
 
         void MakeTexture(uint id, int format, int width, int height, byte* pixels)
@@ -2146,7 +2213,7 @@ namespace Tide
                 c.index = IndexView(ib, indexWide);
             }
             Modes(pipeline, out var modes, out var modesHigh);
-            uint unmipped = 0;
+            uint unmipped = 0, foreign = 0, turned = 0;
             ulong owns = AllUnknown;
             for (var i = 0; i < pipeline.textureCount && i < MaxTextures; i++)
             {
@@ -2158,7 +2225,13 @@ namespace Tide
                     if (!image.mips) unmipped |= 1u << i; // No smaller images yet: blended, as gpu.h has it (tidehl_mode)
                     texture = image.texture;
                     element = image.element;
-                    if (ownSamplers && element == RenderTextureSubElement.Default) owns = OwnBits(owns, i, Own(image, OwnMode(pipeline, i, image.mips)));
+                    if (image.external)
+                    {
+                        foreign |= image.foreign << (2 * i);
+                        turned |= 1u << i;
+                        if (ownSamplers) owns = OwnBits(owns, i, OwnOf(texture)); // Unity's, as it's imported
+                    }
+                    else if (ownSamplers && element == RenderTextureSubElement.Default) owns = OwnBits(owns, i, Own(image, OwnMode(pipeline, i, image.mips)));
                     image.used = Time.frameCount;
                 }
                 into.textures.Add(texture);
@@ -2168,6 +2241,8 @@ namespace Tide
             c.sampling = modes;
             c.samplingHigh = modesHigh;
             c.unmipped = unmipped;
+            c.foreign = foreign;
+            c.turned = turned;
             c.own = (uint)owns;
             c.ownHigh = (uint)(owns >> 32);
             into.commands.Add(c);
@@ -2394,7 +2469,7 @@ namespace Tide
                 cb.SetComputeConstantBufferParam(cs, Uniforms, into.uniformBuffer, uniformAt, Math.Max(16, (pipeline.uniformSize + 15) / 16 * 16));
             cb.SetComputeConstantBufferParam(cs, Groups, groupsBuffer, 0, 16);
             Modes(pipeline, out var modes, out var modesHigh);
-            uint unmipped = 0;
+            uint unmipped = 0, foreign = 0, turned = 0;
             ulong owns = AllUnknown;
             for (var i = 0; i < pipeline.textureCount && i < MaxTextures; i++)
             {
@@ -2406,8 +2481,14 @@ namespace Tide
                     if (!image.mips) unmipped |= 1u << i;
                     texture = image.texture;
                     element = image.element;
-                    if (ownSamplers && element == RenderTextureSubElement.Default) owns = OwnBits(owns, i, Own(image, OwnMode(pipeline, i, image.mips)));
-                    if ((pipeline.imageWrites >> i & 1) != 0) image.mips = false;
+                    if (image.external)
+                    {
+                        foreign |= image.foreign << (2 * i);
+                        turned |= 1u << i;
+                        if (ownSamplers) owns = OwnBits(owns, i, OwnOf(texture));
+                    }
+                    else if (ownSamplers && element == RenderTextureSubElement.Default) owns = OwnBits(owns, i, Own(image, OwnMode(pipeline, i, image.mips)));
+                    if ((pipeline.imageWrites >> i & 1) != 0 && !image.external) image.mips = false;
                 }
                 if (element == RenderTextureSubElement.Depth)
                     cb.SetComputeTextureParam(cs, kernel, Textures[i], new RenderTargetIdentifier(texture), 0, RenderTextureSubElement.Depth);
@@ -2416,6 +2497,8 @@ namespace Tide
             cb.SetComputeIntParam(cs, Sampling, (int)modes);
             cb.SetComputeIntParam(cs, SamplingHigh, (int)modesHigh);
             cb.SetComputeIntParam(cs, Unmipped, (int)unmipped);
+            cb.SetComputeIntParam(cs, ForeignBits, (int)foreign);
+            cb.SetComputeIntParam(cs, TurnedBits, (int)turned);
             cb.SetComputeIntParam(cs, OwnLow, (int)(uint)owns);
             cb.SetComputeIntParam(cs, OwnHigh, (int)(uint)(owns >> 32));
             if (indirect) cb.DispatchCompute(cs, kernel, numbers, 0);
@@ -2582,6 +2665,10 @@ namespace Tide
                     case Kind.Mipmaps:
                         cb.GenerateMips(c.mipmapped);
                         break;
+                    case Kind.External:
+                        if (c.mesh == null || c.material == null) break; // Gone since the frame was read
+                        for (var sub = 0; sub < c.mesh.subMeshCount; sub++) cb.DrawMesh(c.mesh, c.place, c.material, sub, 0);
+                        break;
                     case Kind.ResolveDepth:
                         if (resolveDepth == null) break;
                         cb.SetRenderTarget(new RenderTargetIdentifier(c.target.resolved));
@@ -2607,6 +2694,8 @@ namespace Tide
                         cb.SetGlobalInteger(Sampling, (int)c.sampling);
                         cb.SetGlobalInteger(SamplingHigh, (int)c.samplingHigh);
                         cb.SetGlobalInteger(Unmipped, (int)c.unmipped);
+                        cb.SetGlobalInteger(ForeignBits, (int)c.foreign);
+                        cb.SetGlobalInteger(TurnedBits, (int)c.turned);
                         cb.SetGlobalInteger(OwnLow, (int)c.own);
                         cb.SetGlobalInteger(OwnHigh, (int)c.ownHigh);
                         if (c.uniformSize > 0) cb.SetGlobalConstantBuffer(r.uniformBuffer, Uniforms, c.uniformAt, c.uniformSize);

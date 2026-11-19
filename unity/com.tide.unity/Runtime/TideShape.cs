@@ -102,6 +102,7 @@ namespace Tide
 
     // A component that makes its entity a part of another's body (its package's unity.json, "part"): `Of`, its field
     // naming the body's GameObject (none: the nearest above with the body, which the package finds as the match starts).
+    // The generated class gives that GameObject itself (ITidePart), which is what TideParts asks.
     [AttributeUsage(AttributeTargets.Class, Inherited = false)]
     public sealed class TidePartAttribute : Attribute
     {
@@ -123,27 +124,18 @@ namespace Tide
     // GameObject as authored: a part's from its body's GameObject, any other's divided by its scale.
     public static class TideParts
     {
-        static readonly System.Collections.Generic.Dictionary<Type, System.Reflection.FieldInfo> partFields =
-            new System.Collections.Generic.Dictionary<Type, System.Reflection.FieldInfo>();
-
-        static readonly List<TideComponent> beside = new List<TideComponent>();
-
-        // The GameObject whose body `shape`'s entity is a part of, or null for none
+        // The GameObject whose body `shape`'s entity is a part of, or null for none. Asked of every shape each frame:
+        // a component the runner writes knows the TideEntity it's beside, which keeps its GameObject's part, and the
+        // part says its body through the accessor tide generated for it (ITidePart), so nothing looks through the
+        // GameObject or reads a field by its name. Any other component (one outside Play, a test's) asks its GameObject.
         public static GameObject BodyOf(Component shape)
         {
-            shape.GetComponents(beside); // Into a list kept: this is asked of every shape each frame
-            foreach (var c in beside)
-            {
-                var type = c.GetType();
-                if (!partFields.TryGetValue(type, out var field))
-                {
-                    var part = (TidePartAttribute)Attribute.GetCustomAttribute(type, typeof(TidePartAttribute), false);
-                    field = part != null ? type.GetField(part.Of) : null;
-                    partFields[type] = field;
-                }
-                if (field?.GetValue(c) is GameObject body && body != shape.gameObject) return body;
-            }
-            return null;
+            ITidePart part;
+            if (shape is TideComponent written && written.Beside != null) part = written.Beside.Part;
+            else if (!shape.TryGetComponent(out part)) return null;
+            if (part == null || (part is UnityEngine.Object held && held == null)) return null; // None, or destroyed
+            var body = part.TidePartOf;
+            return body != null && body != shape.gameObject ? body : null;
         }
 
         static Vector3 FromBody(Vector3 value, Component shape, GameObject body)

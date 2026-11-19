@@ -14,6 +14,7 @@
 #include <string.h>
 
 #include "tide/checkpoint.h"
+#include "tide/embed_game.h"
 #include "tide/timeline.h"
 #include "tide/layout.h"
 #include "tide/hosting.h"
@@ -54,6 +55,9 @@ typedef struct tide_run_desc {
     // no window (see tide/run.h)
     int argc;
     char **argv;
+    // tide_host_run_library: which tide built this host, as a game's library says it (TIDE_HOST_LIBRARY_MADE_BY).
+    // A library that says another isn't loaded. NULL to take any
+    const char *made_by;
 } tide_run_desc;
 
 // A game as a host runs it: what sessions run (tide_game), and this machine's
@@ -168,8 +172,15 @@ typedef struct tide_host_game {
 // game through are. A library another tide built, whose tables are laid out otherwise, says another number (or has
 // no such function), and the host says so rather than load it and call through members that aren't where it looks.
 #define TIDE_HOST_LIBRARY_SHAPE "tide_host_library_shape"
+// ...and this one, which returns which tide built the library, as text: its version and a number of what it built
+// with (itself, the installation's headers, engine and platform layer), which tide writes. A host that says which
+// tide built it (tide_run_desc.made_by, tide_embed_made_by) loads only libraries that say the same text: tables of
+// one size can still mean other things between two tides, and each library has an engine copy of its own, which the
+// host's has to agree with. A host that doesn't say takes any library of its shape.
+#define TIDE_HOST_LIBRARY_MADE_BY "tide_host_library_made_by"
 #define TIDE_HOST_SHAPE                                                                                               \
-    ((uint64_t)(sizeof(tide_host_game) & 0xFFFF) | (uint64_t)(sizeof(tide_game) & 0xFFFF) << 16                       \
+    ((uint64_t)((sizeof(tide_host_game) + sizeof(struct tide_embed_game)) & 0xFFFF) /* ...and what it embeds by */    \
+     | (uint64_t)(sizeof(tide_game) & 0xFFFF) << 16                                                                   \
      | (uint64_t)((sizeof(tide_io) + sizeof(tide_gpu_reads)) & 0xFFFF) << 32 /* The read table the host shares */     \
      | (uint64_t)((sizeof(tide_layout) + 3u * sizeof(tide_layout_type) + 7u * sizeof(tide_layout_field)) & 0xFFFF) << 48)
 #ifdef _WIN32
@@ -3140,7 +3151,8 @@ static inline void tide_run_travel_follow(void)
         }
     }
     if (wanted && !tide_run_travel.live) {
-        tide_run_travel.live = tide_timeline_create(&(tide_timeline_desc){.game = game->game, .jobs = tide_run_jobs()});
+        tide_run_travel.live = tide_timeline_create(&(tide_timeline_desc){.game = game->game, .jobs = tide_run_jobs(),
+                                                                          .layout = game->layout});
         if (!tide_run_travel.live) return;
         tide_run_travel.recorded = tide_run_session;
         tide_run_travel.game = game->game;
@@ -3312,7 +3324,8 @@ static inline void tide_run_travel_replay(const char *name)
     bytes = tide_checkpoint_read(tide_run_checkpoints, name, ".recording", &size, why, sizeof why);
 #endif
     tide_timeline_about about = {0};
-    tide_timeline *r = bytes ? tide_timeline_load(&(tide_timeline_desc){.game = tide_run_game->game, .jobs = tide_run_jobs()},
+    tide_timeline *r = bytes ? tide_timeline_load(&(tide_timeline_desc){.game = tide_run_game->game, .jobs = tide_run_jobs(),
+                                                                        .layout = tide_run_game->layout},
                                                   bytes, size, &about, why, sizeof why)
                              : NULL;
     free(bytes);
@@ -3334,7 +3347,8 @@ static inline void tide_run_travel_replay(const char *name)
     tide_run_travel.playing = true;
     tide_run_travel.played = 0.0;
     snprintf(tide_run_travel.said, sizeof tide_run_travel.said, "Replaying %s%s", name,
-             about.other_build ? ", recorded by another build: its ticks may go otherwise" : "");
+             about.other_layout ? ", recorded by a build laid out otherwise: carried over by name, its ticks unchecked"
+             : about.other_build ? ", recorded by another build: its ticks may go otherwise" : "");
 }
 
 // A new build takes over (reload_library.inc's reload_before, while the old one's code is still loaded): one of the
@@ -3345,6 +3359,8 @@ static inline void tide_run_travel_reload(const tide_host_game *old, const tide_
     if (next && next->game->hash == old->game->hash) {
         tide_timeline_set_game(tide_run_travel.live, next->game);
         tide_timeline_set_game(tide_run_travel.replay, next->game);
+        tide_timeline_set_layout(tide_run_travel.live, next->layout); // The old build's description goes with its code
+        tide_timeline_set_layout(tide_run_travel.replay, next->layout);
         if (tide_run_travel.live) tide_run_travel.game = next->game;
         return;
     }

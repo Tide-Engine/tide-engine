@@ -101,15 +101,25 @@ namespace Tide
         public uint differs;    // ...the first whose world wasn't the recording's (0: none)
         public uint unreadable; // ...the first this build couldn't replay (0: none)
         public byte playing;    // Replaying: it plays at the tick rate
-        public byte otherBuild; // The recording was made by a build whose simulation code was another
+        public byte otherBuild; // The recording was made by a build whose simulation code was another (1), or whose
+                                // data was laid out otherwise (2): its worlds carried over by name, its ticks unchecked
         public byte background; // Other machines are in the match: it goes on behind what's shown
-        public byte pad;
+        public byte followed;   // 1, 2: followed, not recorded: the ticks this machine had confirmed are kept (from
+                                // `first`), and it can't be taken back or recorded from here. 1: another machine's
+                                // match in a game that hides state; 2: a sharded match (each tick its player's home
+                                // shard with the others beside it). 3: another machine's match recorded here from what
+                                // it sends (a game that hides nothing): all but taking it back
         public ulong hash;      // The shown world's
         public ulong expected, got; // At `differs`: the recording's hash, and this build's
         public fixed byte why[128];
         public fixed byte refused[128];
+        // A recording of another layout (otherBuild 2): what didn't carry over by name
+        public uint fieldsReset;      // Fields whose type changed to one they don't convert to: at their defaults
+        public uint entitiesDropped;  // Entities no storage of this build takes
+        public uint tasksDropped;     // Waiting tasks whose code changed
+        public uint padEnd;
 
-        public const int Size = 320;
+        public const int Size = 336;
 
         // Why the match can't pause now, "" when it can
         public string Why
@@ -163,5 +173,14 @@ namespace Tide
         public IntPtr gameName;    // const char *
         public IntPtr relay;       // const char *
         public IntPtr libraryDir;  // const char *: the folder tide writes game-<n> libraries to
+    }
+
+    // tide_embed_sound: a play of one of Unity's own sounds that the frame's local code asked for
+    [StructLayout(LayoutKind.Sequential)]
+    public struct TideEmbedSound
+    {
+        public uint clip;    // The number the runner gave the clip (TideRunner.Give)
+        public float volume; // 1 is the clip as it is
+        public float pitch;
     }
 }

@@ -21,6 +21,12 @@ float4 _TideAttributes[16];
 float4 _TideSlots[3];
 uint _TideOffset0, _TideOffset1, _TideOffset2, _TideFirst, _TideSampling, _TideSamplingHigh, _TideUnmipped;
 uint _TideOwn, _TideOwnHigh; // OpenGL Core's: how each texture samples itself, 4 bits each, 15 for unknown
+// An image of Unity's own bound where Tide reads a texture (TideRender's External), 2 bits a texture: 0 for Tide's
+// own or one read as numbers; 1 its colors times its alpha, as Tide's are stored; 2 its linear light made display
+// colors first (a Linear project's sRGB texture); 3 its display colors made linear light first (a [Linear] read
+// of one no hardware decodes). And a bit a texture for each whose rows Unity keeps from the bottom, as it does an
+// image it imported: read from the top, as Tide's uv counts them
+uint _TideForeign, _TideTurned;
 ByteAddressBuffer _TideVertices0, _TideVertices1, _TideVertices2;
 SamplerState tidehl_point_clamp_sampler, tidehl_point_repeat_sampler, tidehl_point_mirror_sampler;
 SamplerState tidehl_linear_clamp_sampler, tidehl_linear_repeat_sampler, tidehl_linear_mirror_sampler;
@@ -36,7 +42,34 @@ uint tidehl_mode(uint mode, uint t) {
     uint own = (t < 8u ? _TideOwn >> (4u * t) : _TideOwnHigh >> (4u * (t - 8u))) & 15u;
     m = (m & 15u) | (own << 4) | 256u;
 #endif
-    return m;
+    return m | (((_TideForeign >> (2u * t)) & 3u) << 9) | (((_TideTurned >> t) & 1u) << 11);
+}
+// Where a read of an image whose rows count from the bottom reads (bit 11 of its mode), and its derivatives
+float2 tidehl_turned(float2 at, uint mode) { return (mode & 2048u) != 0u ? float2(at.x, 1.0 - at.y) : at; }
+float3 tidehl_turned(float3 at, uint mode) { return at; }
+float2 tidehl_turned_by(float2 d, uint mode) { return (mode & 2048u) != 0u ? float2(d.x, -d.y) : d; }
+float3 tidehl_turned_by(float3 d, uint mode) { return d; }
+// A loaded pixel's place in one: its row from the other end
+int2 tidehl_turned_row(Texture2D<float4> t, int2 at, int level, uint slot) {
+    if (((_TideTurned >> slot) & 1u) != 0u) {
+        uint w, h, levels;
+        t.GetDimensions((uint)level, w, h, levels);
+        at.y = (int)h - 1 - at.y;
+    }
+    return at;
+}
+// What a sampler read of an image of Unity's, as Tide's own textures give it (bits 9 and 10 of its mode)
+float4 tidehl_foreign(float4 c, uint mode) {
+    uint f = (mode >> 9) & 3u;
+    if (f == 2u) {
+        float3 l = abs(c.rgb);
+        c.rgb = l <= 0.0031308 ? l * 12.92 : 1.055 * pow(l, 1.0 / 2.4) - 0.055;
+    } else if (f == 3u) {
+        float3 s = saturate(c.rgb);
+        c.rgb = s <= 0.04045 ? s / 12.92 : pow((s + 0.055) / 1.055, 2.4);
+    }
+    if (f != 0u) c.rgb *= c.a;
+    return c;
 }
 // Which way up the target is: -1 where Unity keeps its rows from the bottom
 float tidehl_flip() { return _TideFlip != 0.0 ? sign(_TideFlip) : _ProjectionParams.x; }
@@ -241,22 +274,25 @@ float tidehl_layer(float3 at) { return at.z; }
 #define TIDEHL_SAMPLE(T, C, D, MASK, PLACE) /* D: a derivative, which an array coordinate's layer has none of */ \
 float4 tidehl_sample_grad(T t, SamplerState own, uint mode, C at, D dx, D dy) {                        \
     float4 r;                                                                                          \
+    at = tidehl_turned(at, mode); dx = tidehl_turned_by(dx, mode); dy = tidehl_turned_by(dy, mode);    \
     if (tidehl_emulates(mode, MASK)) r = tidehl_emulated(t, own, mode, PLACE(at), tidehl_layer(at), tidehl_lod_of(t, at, dx, dy)); \
     else if ((mode & 3u) >= 2u) r = t.SampleGrad(own, at, dx, dy);                                     \
     else r = t.SampleLevel(own, at, 0.0);                                                              \
-    return r;                                                                                          \
+    return tidehl_foreign(r, mode);                                                                    \
 }                                                                                                      \
 float4 tidehl_sample_level(T t, SamplerState own, uint mode, C at, float level) {                      \
     float4 r;                                                                                          \
+    at = tidehl_turned(at, mode);                                                                      \
     if (tidehl_emulates(mode, MASK)) r = tidehl_emulated(t, own, mode, PLACE(at), tidehl_layer(at), level); \
     else r = t.SampleLevel(own, at, (mode & 3u) >= 2u ? level : 0.0);                                  \
-    return r;                                                                                          \
+    return tidehl_foreign(r, mode);                                                                    \
 }
 #else
 #define TIDEHL_SAMPLE(T, C, D) /* D: a derivative, which an array coordinate's layer has none of */    \
 float4 tidehl_sample_grad(T t, SamplerState own, uint mode, C at, D dx, D dy) {                        \
     uint filter = mode & 3u, wrap = (mode >> 2) & 3u;                                                  \
     float4 r;                                                                                          \
+    at = tidehl_turned(at, mode); dx = tidehl_turned_by(dx, mode); dy = tidehl_turned_by(dy, mode);    \
     if (filter == 3u) {                                                                                \
         if (wrap == 1u) r = t.SampleGrad(tidehl_trilinear_repeat_aniso8_sampler, at, dx, dy);        \
         else if (wrap == 2u) r = t.SampleGrad(tidehl_trilinear_mirror_aniso8_sampler, at, dx, dy);   \
@@ -274,16 +310,17 @@ float4 tidehl_sample_grad(T t, SamplerState own, uint mode, C at, D dx, D dy) { 
         else if (wrap == 2u) r = t.SampleLevel(tidehl_point_mirror_sampler, at, 0.0);                 \
         else r = t.SampleLevel(tidehl_point_clamp_sampler, at, 0.0);                                  \
     }                                                                                                  \
-    return r;                                                                                          \
+    return tidehl_foreign(r, mode);                                                                    \
 }                                                                                                      \
 float4 tidehl_sample_level(T t, SamplerState own, uint mode, C at, float level) {                      \
     uint filter = mode & 3u, wrap = (mode >> 2) & 3u;                                                  \
     float4 r;                                                                                          \
-    if (filter < 2u) r = tidehl_sample_grad(t, own, mode, at, (D)0, (D)0);                             \
+    at = tidehl_turned(at, mode);                                                                      \
+    if (filter < 2u) r = tidehl_sample_grad(t, own, mode & 511u, at, (D)0, (D)0);                      \
     else if (wrap == 1u) r = t.SampleLevel(tidehl_trilinear_repeat_sampler, at, level);               \
     else if (wrap == 2u) r = t.SampleLevel(tidehl_trilinear_mirror_sampler, at, level);               \
     else r = t.SampleLevel(tidehl_trilinear_clamp_sampler, at, level);                                \
-    return r;                                                                                          \
+    return tidehl_foreign(r, mode);                                                                    \
 }
 #endif
 #define TIDEHL_SAMPLE_DERIVED(T, C, S) /* S: the part of the coordinate a derivative is of */           \
@@ -537,7 +574,7 @@ float2 tide_number0_0_11(float2 uv)
     float2 tide_uv = clamp(uv, ((float2)(0.0)), ((float2)(1.0)));
     int2 tide_size = ((int2)(tidehl_size(_TideTexture0, uint(0))));
     int2 tide_at = clamp(tidehl_f2i(floor((tide_uv * ((float2)(tide_size))))), ((int2)(0)), (tide_size - ((int2)(1))));
-    return tidehl_load(_TideTexture0, int2(tide_at), int(0)).xy;
+    return tidehl_load(_TideTexture0, tidehl_turned_row(_TideTexture0, int2(tide_at), int(0), 0u), int(0)).xy;
 }
 
 float2 tf_ReadUv(int t_x, int t_y, int t_across, int t_down)
