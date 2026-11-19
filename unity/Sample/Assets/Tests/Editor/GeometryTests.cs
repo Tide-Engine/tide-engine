@@ -29,6 +29,33 @@ public class GeometryTests
         made.Clear();
     }
 
+    // A shape the runner writes finds its body through the TideEntity that keeps its GameObject's part, and the part's
+    // own accessor (ITidePart): no look through the GameObject, no field read by name. One nothing keeps asks its
+    // GameObject.
+    [Test]
+    public void AShapesBodyComesFromThePartItsEntityKeeps()
+    {
+        var body = Thing("Body");
+        var limb = Thing("Limb");
+        var entity = limb.AddComponent<TideEntity>();
+        var part = limb.AddComponent<GeometryPart>();
+        var polygon = limb.AddComponent<GeometryPolygon>();
+        part.of = body;
+        Assert.AreSame(body, TideParts.BodyOf(polygon), "asked of the GameObject, where no runner writes it");
+        entity.CollectLive();
+        Assert.AreSame(entity, polygon.Beside);
+        Assert.AreSame(part, entity.Part);
+        Assert.AreSame(body, TideParts.BodyOf(polygon), "from the entity's part");
+        part.of = limb;
+        Assert.IsNull(TideParts.BodyOf(polygon), "a part of its own GameObject is a part of none");
+        part.of = body;
+        Object.DestroyImmediate(part);
+        Assert.IsNull(TideParts.BodyOf(polygon), "a part that went is none");
+        entity.CollectLive();
+        Assert.IsNull(entity.Part);
+        Assert.IsNull(TideParts.BodyOf(polygon));
+    }
+
     static void Near(Vector3 expected, Vector3 actual, string what = "")
     {
         Assert.Less(Vector3.Distance(expected, actual), 1e-4f, $"{what}: {expected} is not {actual}");

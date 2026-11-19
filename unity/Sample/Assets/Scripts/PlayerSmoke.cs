@@ -48,7 +48,9 @@ public sealed class PlayerSmoke : MonoBehaviour
         var turned = pillar != null && Quaternion.Angle(before, pillar.rotation) > 10f;
         var drew = "no GPU";
         if (SystemInfo.graphicsDeviceType != UnityEngine.Rendering.GraphicsDeviceType.Null) yield return Drew(ball, seen => drew = seen);
-        var ok = runner != null && runner.Running && ball != null && ball.Mine && turned && (drew == "no GPU" || drew == "yes");
+        // A GPU Tide's renderer doesn't draw with (Unity's WebGL 2, which has no compute) shows the match all the same
+        var drawn = drew == "no GPU" || drew == "yes" || (!TideRender.Supported && drew.StartsWith("not with Tide's renderer"));
+        var ok = runner != null && runner.Running && ball != null && ball.Mine && turned && drawn;
         Debug.Log($"Tide smoke: running {runner != null && runner.Running}, ball {(ball != null ? ball.transform.position.ToString("F2") : "none")}, " +
                   $"mine {ball != null && ball.Mine}, pillar turned {turned}, drew {drew}: {(ok ? "PASS" : "FAIL")}");
         Application.Quit(ok ? 0 : 1);

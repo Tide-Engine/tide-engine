@@ -135,6 +135,37 @@ namespace Tide.Editor
                 }
             }
             serializedObject.ApplyModifiedProperties();
+            if (playing) Unread();
+        }
+
+        // In Play: the game's components Unity doesn't read (no GameObject has one enabled, and no script asked), which
+        // is why none shows here whichever entities have them, each with a button that reads it from then on, as
+        // TideRunner.Read does
+        static void Unread()
+        {
+            var runner = TideRunner.Current;
+            var schema = runner != null ? runner.Schema : null;
+            if (schema == null || runner.readEverything) return;
+            var any = false;
+            foreach (var index in schema.components)
+            {
+                var type = schema.Type(index);
+                if (type == null || type.scene || type.name == "Transform" || type.name.StartsWith("UnityEngine.")) continue;
+                if (TideEditorSchema.ComponentType(type.name) == null || runner.Reads(type.name)) continue;
+                if (!any)
+                {
+                    EditorGUILayout.Space();
+                    EditorGUILayout.LabelField("Not read in Unity", EditorStyles.boldLabel);
+                    EditorGUILayout.HelpBox("No GameObject has one of these enabled and no script asked, so the match's values " +
+                                            "of them stay out of Unity's frame, and an entity that has one shows none here.", MessageType.None);
+                    any = true;
+                }
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    EditorGUILayout.LabelField(type.name);
+                    if (GUILayout.Button("Read", GUILayout.Width(60))) runner.Read(type.name);
+                }
+            }
         }
 
         void AddMenu(TideSchema schema, SerializedProperty components)

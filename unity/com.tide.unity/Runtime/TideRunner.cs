@@ -876,6 +876,7 @@ namespace Tide
             // A GameObject made for an entity may hold components nothing read till now (its prefab's): the frame's
             // packet is written again with them, so they're its entity's values from its first frame
             if (read && SendReads()) Reread();
+            if (Packet.EntityCount < count) return; // A packet that didn't read again: the next frame's shows
             gone.Clear();
             foreach (var pair in shown)
             {
@@ -1222,6 +1223,12 @@ namespace Tide
         public void OffVerified<T>(Action<T> heard) where T : TideEvent
         {
             TideHearing.Listen(hearingVerified, heard, false);
+        }
+
+        void OnDestroy()
+        {
+            TideHearing.Forget(hearing);
+            TideHearing.Forget(hearingVerified);
         }
 
         // The packet's events to what hears them: the runner's, then the entity's view's. One nothing hears isn't made.
