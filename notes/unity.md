@@ -446,12 +446,13 @@ game's frame writes the entities and those types alone:
 - **A component**, once one of it is enabled on a GameObject (a prefab's, a scene's, one a script added), and from
   then on, GameObjects of it coming and going or not: `TideComponent` counts its own `Awake`, `OnEnable`,
   `OnDisable` and `OnDestroy` by type (`Said`: enabled on active GameObjects, disabled by their own checkbox, ever
-  enabled). While it's read, every shown entity that has it has its component, added by the runner where the
+  enabled; "ever" is a runner's, which starts over from what's enabled as it starts, `StartOver`). While it's read, every shown entity that has it has its component, added by the runner where the
   GameObject hasn't one and taken away where the entity hasn't, exactly as before.
 - **A singleton**, once `TideRunner.Get<T>()` or `TryGetSingleton` asked for it. Before, every singleton with a class
   was read into its object each frame, asked for or not.
 - **An event**, while something hears it (`TideRunner.On`/`OnVerified`, a `TideEntity`'s; counted in
-  `TideHearing.Listen`). One nothing hears isn't kept by its tap at all, where its record was written and skipped.
+  `TideHearing.Listen`, and taken away with a runner or a `TideEntity` destroyed with handlers still on it,
+  `TideHearing.Forget`). One nothing hears isn't kept by its tap at all, where its record was written and skipped.
 - **Whatever a script asks for**: `TideRunner.Read<T>()` and `Read(name)`, a `TideEntity`'s `Has`, `TryGet` and
   `Get` of a `Value`, `RowOf`. Asked once, read from then on; the names are kept across a new build's schema.
 - **Everything**, with the runner's `readEverything` ("Read Everything", off by default): what the packet carried
@@ -475,7 +476,7 @@ read.
 
 **What a game's C# sees.** One that reads everything through GameObjects' components sees what it did: authored
 components are live from the entity's first frame, singletons come from `Get<T>()`, events from `On`. Changed
-(the Provisional pick to confirm): **a component the game gives an entity as it runs, which no prefab, scene or
+(the owner's since, below): **a component the game gives an entity as it runs, which no prefab, scene or
 script has put on a GameObject, isn't added to its GameObject until something asks** (`runner.Read<T>()` once, or
 `Has`/`TryGet`/`Get`); the Sample's own case is `Owner` on a player's ball. Before, the runner added every component
 of every entity, so `GetComponent<Owner>()` found it. Weighed: reading every type that has a C# class by default
@@ -484,7 +485,9 @@ only where a GameObject has one enabled right now (a type flickering in and out 
 written twice at each return). `readEverything` is the old behaviour whole. Also changed: `TideRunner.Packet` holds
 what's read, so code reading sections from it directly finds only those (`Reads(name)` says which); the `.tide`
 file inspector says "not read in Unity" for such a component rather than asking (asking would add components while
-it's looked at), and asks for a singleton it shows.
+it's looked at), and asks for a singleton it shows. A `TideEntity`'s inspector in Play lists the game's components
+that aren't read ("Not read in Unity"), each with a Read button (`TideRunner.Read`), since an entity that has one
+shows none of it there.
 
 **Built.**
 
@@ -520,8 +523,12 @@ two runs, on a machine other sessions were building on):
 | The runner's frame (the game's own frame, the packet, the render) | 1.23 and 1.42 ms | 1.28 ms (and 2.00 in the run another build disturbed) | 1.01 and 1.10 ms |
 | Showing the packet in Unity | 0.25 and 0.27 ms | 0.19 and 0.28 ms | 0.135 and 0.14 ms |
 
-"Everything" is `readEverything` on the same build, not the package before this: its writer is the old one with a
-bit test before each type. What the scene reads by itself leaves out the singletons (Extras's list of the 1,000
+"Everything" is `readEverything` on the same build. Against the commit before this one, built and installed as its
+own tide with its own package, the same day, the same way (`ABusyMatchsFramesMakeNothingNew`, which asks for both
+singletons and whose balls have their `Ball`, so it reads all it has, two runs each): the runner's frame 1.30 and
+1.31 ms before, 1.25 and 1.31 after; showing 0.262 and 0.266 ms before, 0.257 and 0.291 after. A game that reads
+everything costs what it did. Two more runs of the three ways of reading, taken with those: 1.26 and 1.29 ms
+(showing 0.257 and 0.259), 1.17 and 1.15 (0.179 and 0.175), 0.99 and 1.03 (0.134 and 0.134). What the scene reads by itself leaves out the singletons (Extras's list of the 1,000
 balls among them: nothing in that test asks for one), `Owner` and the scenes' tags; the balls' `Ball`, which their
 prefab has, is still read, so this game's frame is about what it was, as it should be for a game that reads what it
 has. With the balls' `Ball` unread the frame is about 0.2 ms shorter and showing takes half the time. The frame's
@@ -543,25 +550,49 @@ Unity 6000.6.0f1 in this checkout's `unity/Sample`, hidden batch, BelowNormal, `
 checkout's mingw-release and debug trees with `-tide-command`): PlayMode 68 of 68 on Direct3D 11; EditMode 49 of 52,
 two skipped (the shader compile under `-nographics`, the ABI-5 fixture) and the launch-argument test failing only for
 `-tide-command`, as before. Native debug: `tide_platform_embed` 33/33, `tide_platform_travel` 11/11,
-`tide_platform_embed_shards`, `tide_cli_tests`' unity cases 13/13; the first three under Windows ASan before the
-merge (33, 10, 1). Web debug: `tide_platform_embed` builds for wasm (it isn't run there). Not run: a Unity WebGL
-player (the jslib's two functions and the program's two exports are compiled by nothing here: `tide unity --web`
-wasn't run), IL2CPP and Android players, Vulkan, Direct3D 12 and OpenGL Core (no drawing code changed), a physics
-package's parts in a running Unity game (the accessor is generated and unit-tested, and `GeometryTests` place a
-part's points through `ITidePart`; no Sample game has a `Part`), and the `.tide` file inspector's new line (no
-window).
+`tide_platform_embed_shards`, `tide_cli_tests`' unity cases 13/13, and all four under Windows ASan after the merges
+(33, 12, 1, 13). Web debug: `tide_platform_embed` builds for wasm (it isn't run there). With the later changes
+(the hearing's counts, the inspector's list, the part's test): EditMode 50 of 53, the new
+`GeometryTests.AShapesBodyComesFromThePartItsEntityKeeps` among them (a shape's body from the part its `TideEntity`
+keeps, none for a part of its own GameObject or a part destroyed), and PlayMode 68 of 68 again.
+
+**A WebGL player** (the web bridge's side, run): `tide unity --web --once` builds the Sample's program with
+`tide_unity_view_want` and `_again` (a web-release platform library installed beside the others),
+`SampleSetup.BuildWeb` builds the player, and `web-smoke.mjs` runs it in headless Chrome (muted): the match runs,
+this machine's ball is found by its `Ball` component, placed by the match (so the prefab's component was read
+through `TideWebViewWant`, and its first frame's packet written again through `TideWebViewAgain`), and the pillars
+turn. The smoke's last check, that Tide's renderer drew, had failed there since 2026-11-05, when Unity's WebGL 2
+stopped taking the renderer (Unity's OpenGL: Core stays, ES 3 and WebGL go): `PlayerSmoke` now passes where
+`TideRender.Supported` says the GPU can't, saying so in its line.
+
+**On the tree as merged** (origin/dev at f20db14d6, where other work took embed ABI 28 to 30 and gave the
+Sample's `Ball` local fields of Unity's, so its packets are larger than the tables above: 76,048, 70,360 and 26,960
+bytes at 300 balls): native debug `tide_platform_embed` 36/36, `tide_platform_travel` 13/13,
+`tide_platform_embed_shards` 2/2, the CLI's unity cases 13/13; EditMode 52 of 55 (the same two skipped and one
+failing for `-tide-command`); PlayMode 70 of 70 on Direct3D 11; the WebGL player built again and its smoke PASS.
+
+Not run: IL2CPP and Android players, Vulkan, Direct3D 12 and OpenGL Core (no drawing code changed), a physics
+package's parts in a running Unity game (no Sample game has a `Part`; the accessor is generated, unit-tested, and
+exercised by the test above), and the two inspectors' new lines in a window (batch runs have none).
+
+**Owner (2026-11-19), asked about what was still open: "i want you to go with your recommendations".** So these
+stand as decided, no longer picks to confirm:
+
+- **Reading by need is the default.** A component the game gives an entity as it runs, which no GameObject has, is
+  read once a script asks (`Read<T>()`, `Has`, `TryGet`, `Get`); `readEverything` stays off by default, as the
+  switch for a project that wants every component on every GameObject.
+- **Whole types, not rows.** A component is read for every shown entity that has it or for none, which is what lets
+  the rule be "while it's read, every entity that has it has its component". A game that reads `Health` of one boss
+  among a thousand entities pays for all of them. Reading by entity would have the runner say entities, which
+  change every frame, where types change a few times a match, and would make which GameObjects have a component
+  depend on which were asked about: not built, and not planned unless a game's frame shows the need.
+- **Whole components, not fields.** A component's row is tens of bytes; what costs is the rows, and a container a
+  field holds, which comes with its component. Not built.
 
 **Left.**
 
-- Whole types, not rows: a component is read for every shown entity or none. A game that reads `Health` of one boss
-  among a thousand entities pays for all of them. Per-entity reading needs the runner to say entities, which change
-  every frame, where types change rarely.
-- Whole components, not fields.
-- Unity's Inspector in Play shows the components that are read; one that isn't doesn't appear on the GameObject.
-  Listing an entity's other components there (with a button to read one) is editor work this left alone, as other
-  sessions were in the editor's files.
-- `TideHearing`'s counts never fall for a handler whose GameObject was destroyed without `Off`: its event stays
-  read for the session.
+- The inspector's "Not read in Unity" list is of the game's components, not of the selected entity's: which
+  entities have a component that isn't read isn't known in Unity, which is the point of not reading it.
 
 ## Physics shapes in the Scene view: drawn as Unity's colliders are, and checked against them (2026-11-19)
 

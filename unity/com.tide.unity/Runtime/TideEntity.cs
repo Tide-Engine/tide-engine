@@ -99,6 +99,12 @@ namespace Tide
             TideHearing.Listen(hearingVerified, heard, false);
         }
 
+        void OnDestroy()
+        {
+            TideHearing.Forget(hearing);
+            TideHearing.Forget(hearingVerified);
+        }
+
         // Whether anything here hears events of `kind`, as predicted or once verified
         internal bool Hears(Type kind, bool verified)
         {
@@ -130,6 +136,7 @@ namespace Tide
         internal void CollectLive()
         {
             LiveCount = 0;
+            Part = null;
             GetComponents(found);
             foreach (var component in found) AddLive(component, component.GetType());
             found.Clear();

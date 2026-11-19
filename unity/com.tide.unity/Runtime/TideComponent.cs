@@ -349,7 +349,22 @@ namespace Tide
     internal abstract class TideHearing
     {
         public abstract bool Empty { get; }
+        public abstract int Count { get; }
         public abstract void Tell(TideEvent e, UnityEngine.Object context);
+
+        // What `table` heard goes with its owner (a runner or a TideEntity destroyed with handlers still on it): its
+        // events are heard by that much less
+        public static void Forget(Dictionary<Type, TideHearing> table)
+        {
+            foreach (var pair in table)
+            {
+                if (!heardBy.TryGetValue(pair.Key, out var count) || count <= 0) continue;
+                var left = Math.Max(0, count - pair.Value.Count);
+                heardBy[pair.Key] = left;
+                if (left == 0) Version++;
+            }
+            table.Clear();
+        }
 
         // How many handlers hear each kind of event, the runner's and every TideEntity's: an event nothing hears isn't
         // read from the match
@@ -412,6 +427,7 @@ namespace Tide
         Action<T>[] handlers = Array.Empty<Action<T>>();
 
         public override bool Empty => handlers.Length == 0;
+        public override int Count => handlers.Length;
 
         public void Add(Action<T> heard)
         {
