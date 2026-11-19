@@ -63,7 +63,9 @@ public sealed class PlayerSmoke : MonoBehaviour
         var turned = pillar != null && Quaternion.Angle(before, pillar.rotation) > 10f;
         var drew = "no GPU";
         if (SystemInfo.graphicsDeviceType != UnityEngine.Rendering.GraphicsDeviceType.Null) yield return Drew(ball, seen => drew = seen);
-        var ok = runner != null && runner.Running && ball != null && ball.Mine && turned && (drew == "no GPU" || drew == "yes");
+        // The iOS simulator's GPU has no indirect draws, which Tide's renderer needs: there the match is all there is to check
+        var simulated = SystemInfo.graphicsDeviceName.Contains("simulator") && !TideRender.Supported;
+        var ok = runner != null && runner.Running && ball != null && ball.Mine && turned && (drew == "no GPU" || drew == "yes" || simulated);
         shown = $"Tide smoke: running {runner != null && runner.Running}, ball {(ball != null ? ball.transform.position.ToString("F2") : "none")}, " +
                 $"mine {ball != null && ball.Mine}, pillar turned {turned}, drew {drew} ({SystemInfo.graphicsDeviceType}): {(ok ? "PASS" : "FAIL")}";
         Debug.Log(shown);
@@ -83,8 +85,11 @@ public sealed class PlayerSmoke : MonoBehaviour
         }
         if (TideRunner.Current == null || !TideRunner.Current.TryGetComponent(out TideRender render) || !render.enabled)
         {
-            said($"not with Tide's renderer ({SystemInfo.graphicsDeviceType}, shader level {SystemInfo.graphicsShaderLevel}, " +
-                 $"constant buffers {SystemInfo.supportsSetConstantBuffer})");
+            var there = TideRunner.Current != null && TideRunner.Current.TryGetComponent(out TideRender made) ? $"there, enabled {made.enabled}" : "not there";
+            said($"not with Tide's renderer ({there}; {SystemInfo.graphicsDeviceName}, {SystemInfo.graphicsDeviceType}, shader level {SystemInfo.graphicsShaderLevel}, " +
+                 $"constant buffers {SystemInfo.supportsSetConstantBuffer}, compute {SystemInfo.supportsComputeShaders}, indirect {SystemInfo.supportsIndirectArgumentsBuffer}, " +
+                 $"storage buffers a kernel {SystemInfo.maxComputeBufferInputsCompute}, a frag {SystemInfo.maxComputeBufferInputsFragment}, " +
+                 $"a vert {SystemInfo.maxComputeBufferInputsVertex}; pipeline {(UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline != null ? "scriptable" : "built-in")})");
             yield break;
         }
         Texture2D read;

@@ -80,7 +80,7 @@ function run(command, list, options = {}) {
 
 // Builds the folder's sources and the host into `name` with `compiler` and `target` flags; null where it failed.
 async function build(name, compiler, target, link) {
-    const objects = join(work, name);
+    const objects = join(work, name + '-objects');
     mkdirSync(objects, { recursive: true });
     const jobs = sources.map((source, index) => ({
         source, object: join(objects, `${index}-${basename(source.path)}.o`),

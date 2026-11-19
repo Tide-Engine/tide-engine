@@ -321,8 +321,8 @@ endif()
 # it in bin/, beside them.
 # ...and its sources, for a player that's compiled where tide isn't: a Unity iOS player's Xcode project takes the
 # platform layer with no window of its own as files (tide unity --ios, compiler/cli/build.c), with what this build
-# generates for it (the font, the renderer's SPIR-V and kernels). From a desktop tree alone: every package has one.
-if(NOT TIDE_WEB AND NOT TIDE_ANDROID AND NOT TIDE_IOS)
+# generates for it (the font, the renderer's SPIR-V and kernels). From the desktop tree whose platform layer the package has (on Windows, MinGW's), which is the one built whole.
+if(TIDE_PACKAGE_LIBS AND NOT TIDE_WEB AND NOT TIDE_ANDROID)
     install(DIRECTORY src/ DESTINATION src/platform/src COMPONENT tide
         FILES_MATCHING PATTERN "*.c" PATTERN "*.h" PATTERN "*.inc")
     install(DIRECTORY embedded/ DESTINATION src/platform/embedded COMPONENT tide FILES_MATCHING PATTERN "*.c")
