@@ -639,7 +639,9 @@ inspectors and Tide's drawing following it), goes on from a tick shown, and
 saves and replays recordings of matches, each tick checked against the
 recording, so a tester's bug report replays bit for bit and a changed build
 shows the first tick it changes. With other machines in the match, it never
-stops for them: the match goes on behind the tick shown. The package's README
+stops for them: the match goes on behind the tick shown. A match another
+machine runs is followed rather than recorded: the latest ticks confirmed in
+this editor are kept, and a pause holds them to look through. The package's README
 has the details.
 
 Tide's views draw in Unity's frame with Tide's own renderer: 2D, text, 3D
@@ -659,6 +661,19 @@ whose pass the package adds by itself. In Play, the editor's scene view shows
 Tide's 3D too, through its own camera. The game's sound plays through Unity's
 audio, and `Clip.Microphone` is Unity's microphone; a WebGL player's Tide
 program plays through the page, and hears its microphone, itself.
+
+A view draws textures Unity imported, too. A local `Texture` field of a match
+component (`local Texture face;`) is a Texture field of its Unity component,
+set in the inspector on a prefab or in a scene, and the view that reads it
+draws with Unity's own image: its import settings are Unity's, nothing is
+imported a second time, and `face.size` is its size. It's this machine's, as
+every local field, so the match and other machines have nothing of it, and it
+has no texture until Unity shows the entity's GameObject, a frame after the
+entity appears: `if (card.face.size.x == 0) return;` skips the draw until
+then. A script sets it in Play, and a singleton's from
+`runner.Get<Tide.Game.Hud>().logo`. Such a value exists in a Unity project
+alone; `asset Texture logo = "logo.png";` in a `.tide` file is Tide's own
+import of the file, which every host draws. The package's README has more.
 
 A package's components are authored on GameObjects like the game's own, as
 a `unity.json` in its folder says (see

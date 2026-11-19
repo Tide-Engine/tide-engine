@@ -90,6 +90,23 @@ var TideWebLibrary = {
         return at && n ? TideWeb.copyOut('view', at, n) : 0;
     },
 
+    // What Unity reads of the match (tide_embed_view_want): a bit for each of the schema's first `types` types
+    TideWebViewWant__deps: ['$TideWeb'],
+    TideWebViewWant: function (bits, types) {
+        var x = TideWeb.program();
+        if (!x) return;
+        var size = ((types + 63) >>> 6) * 8;
+        var at = size ? TideWeb.copyIn(x, bits, size) : 0;
+        x.tide_unity_view_want(at, at ? types : 0);
+    },
+
+    // The last frame's packet written again with what's read now, for TideWebView to copy out
+    TideWebViewAgain__deps: ['$TideWeb'],
+    TideWebViewAgain: function () {
+        var x = TideWeb.program();
+        return x ? x.tide_unity_view_again() : 0;
+    },
+
     TideWebSchema__deps: ['$TideWeb'],
     TideWebSchema: function (size) {
         var x = TideWeb.program();
@@ -171,6 +188,15 @@ var TideWebLibrary = {
         var at = size ? TideWeb.copyIn(x, value, size) : 0;
         if (size && !at) return 0;
         return x.tide_unity_command(type, birthLow, birthHigh, lineageLow, lineageHigh, at, size);
+    },
+
+    // One of Unity's textures into a Texture field of the game's local state (tide_embed_local_texture): numbers
+    // alone cross, as the image stays Unity's
+    TideWebLocalTexture__deps: ['$TideWeb'],
+    TideWebLocalTexture: function (type, offset, birthLow, birthHigh, lineageLow, lineageHigh, image, width, height, sampling) {
+        var x = TideWeb.program();
+        if (!x || !x.tide_unity_local_texture) return 0;
+        return x.tide_unity_local_texture(type, offset, birthLow, birthHigh, lineageLow, lineageHigh, image, width, height, sampling);
     },
 
     // Time travel (tide/embed.h): the program's own match, recorded, paused and replayed

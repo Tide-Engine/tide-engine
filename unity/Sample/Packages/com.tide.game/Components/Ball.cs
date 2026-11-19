@@ -20,6 +20,13 @@ namespace Tide.Game
         public global::Tide.Game.Trail trail = new global::Tide.Game.Trail { length = 0f, tint = new global::UnityEngine.Color(0f, 0f, 0f, 0f) };
         /// <summary>This machine's, as its local handler counts its bounces (Heard)</summary>
         [global::System.NonSerialized] public int heard;
+        /// <summary>
+        /// One of Unity's own textures, set on the prefab in Unity's inspector (Roller.prefab: Mark.png, as Unity
+        /// imported it), which Marks draws
+        /// </summary>
+        [global::UnityEngine.Tooltip("One of Unity's textures, which Tide's views draw: this machine's, never the match's")]
+        public global::UnityEngine.Texture mark;
+        [global::System.NonSerialized] global::UnityEngine.Texture tideGiven_mark;
 
         public override string TideName => "Ball";
 
@@ -36,6 +43,11 @@ namespace Tide.Game
                 var l = *(global::Tide.Game.BallLocal*)locals;
                 heard = l.heard;
             }
+        }
+
+        protected override void WriteAssets(global::Tide.TideAssets assets)
+        {
+            assets.Texture(8u, mark, ref tideGiven_mark);
         }
 
         // Tide's component Ball, as the game's C lays it out

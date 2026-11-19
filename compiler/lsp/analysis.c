@@ -12336,7 +12336,8 @@ static void unity_key(const str name, const char *owner, char *out, const size_t
         jb_free(&k);
         k = p;
     }
-    static const char *const members[] = {"Value", "TideName", "ReadLive", "Pack", "From", "Tick", "Verified", "Target", "TargetEntity"};
+    static const char *const members[] = {"Value", "TideName", "ReadLive", "Pack", "From", "Tick", "Verified", "Target", "TargetEntity",
+                                          "WriteAssets"};
     bool reserved = strcmp(k.data, owner) == 0;
     for (size_t i = 0; i < sizeof members / sizeof members[0]; i++) reserved |= strcmp(k.data, members[i]) == 0;
     snprintf(out, size, "%s%s", k.data, reserved ? "_" : "");

@@ -1,3 +1,38 @@
+## A texture of the other program's own (2026-11-19)
+
+**For the owner to confirm** (built as a clear win under the 2026-11-17 rule: additive, inert outside an embed, no
+result of any existing draw changed, tested; notes/unity.md, top section). The generated-C/runtime boundary gained:
+
+- `tide_texture_ref`'s fourth kind (`engine/include/tide/draw.h`): `TIDE_TEXTURE_EXTERNAL` as its `image.height`,
+  `tide_texture_external`, `tide_texture_is_external`, `tide_texture_external_id`, `_size`. Generated code calls
+  none of them: it reads such a reference through the calls it already made (`tide_texture_size`, the
+  `tide_draw_texture_source*` functions), which now know the kind (`engine/src/mesh.c`, `engine/src/draw.c`).
+  `Texture`'s layout is as it was, 48 bytes.
+- `TIDE_PIXELS_EXTERNAL` and `TIDE_PIXELS_EXTERNAL_RAW` (`draw.h`): a draw-list texture with no pixels.
+- `tide_embed_game.set_local` (`engine/include/tide/embed_game.h`), a new last member that `tidec --embed` fills
+  (`tide_embed_set_local`, `embed_codegen.inc`): a local `Texture` field of a component's or singleton's own, by
+  its type and offset, through the existing `tide_get_<part>`/`tide_set_<part>`. The table's size is now part of
+  `TIDE_HOST_SHAPE` (`tide/host.h`, with `tide_host_game`'s), so a library another tide built with a shorter one is
+  refused rather than called through a member it hasn't; `TIDE_EMBED_ABI` is 28.
+- The platform's (the agent's): `gpu.h`'s optional `external`, `TIDE_GPU_EXTERNAL_LINEAR`/`_RAW`,
+  `gpu_record.c`'s `record_external`, `TIDE_EMBED_RENDER_EXTERNAL`, and `tide_embed_local_texture` (`embed.c`).
+
+No world byte, hash, snapshot or wire byte changes: local fields alone take one, and a game's layout is as it was.
+
+## The view packet carries what's read (2026-11-19)
+
+Mine, a clear win under the guide's rule (measured, what a reader of everything gets unchanged, tested;
+notes/unity.md, The packet carries what Unity reads). `tide_packet` (`tide/embed_game.h`) gained `wanted`,
+`wanted_types` and `again`, which a host sets before each `tide_embed_game.view` call, and the inline
+`tide_packet_wants(p, type)`. Generated C (`embed_codegen.inc`) tests it around each component's and singleton's
+block, and its event taps keep a record only for an event that's wanted (`tide_embed_heard_wants`, from the pointer
+the last view call was given: the host keeps the bits where they are). The heard events now go as the next is heard
+or the next frame's packet is written, where the packet's end dropped them, so the same frame's packet written again
+(`again`) carries them again. No `tide_embed_game` member, signature or `tide_host_game` member changed, so
+`TIDE_HOST_SHAPE` is as it was; a zeroed packet (`wanted` NULL: the dev inspector's, any host that never says) gets
+everything, as before. `tide/embed.h` gained `tide_embed_view_want` and `tide_embed_view_again` (embed ABI 27, with
+Unity's `TideLibrary.Abi`). Hosts, libraries and generated games rebuild together, as for any `tide_packet` change.
+
 ## Which tide built a library (2026-11-19)
 
 Clear win, no sign-off (measured: nothing in a frame; results unchanged; tested): a game's library built by
@@ -1380,7 +1415,10 @@ the embed's travel calls (embed ABI 7), `tide_run_unblended` in `tide/host.h` an
 2026-11-19 (notes/unity.md, Time travel's gaps): `tide_replay_heard` in `session.c` (a replayed tick's events, by the
 existing `tick_events` / `tick_client_events`) and `tide_timeline_heard` in `tide/timeline.h`, both host-side and
 agent-maintained. Generated code calls nothing new, no `tide_game` member is new, and no layout, hash or wire
-format changed.
+format changed. The same day: `tide_session_recorder.verified` (a client's confirmed ticks to a recorder, read from
+its ring after its update) and `tide_timeline_follow` / `_follows`, on the same terms. And
+`tide_timeline_desc.layout`, `tide_timeline_set_layout` and the recording file's version 2 (its layout and its
+worlds as `pack_world` has them, carried over by `tide_migrate_world`): platform-side, nothing in the engine.
 
 ## Twelve texture drawing boundary (2026-10-25)
 

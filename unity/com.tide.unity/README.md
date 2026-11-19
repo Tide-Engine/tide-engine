@@ -250,6 +250,24 @@ when something hears its kind. In Unity's Profiler the runner's frame is
 drawing read for Unity's cameras) and `Tide.Show` (the entities shown through
 their GameObjects, their components and the singletons read, events told).
 
+The game's frame hands Unity what Unity reads of the match, and nothing else:
+
+- **A component** is read once one of it is enabled on a GameObject: a
+  prefab's or a scene's, or one a script added. Every shown entity that has
+  it then has its component, with its values. One the game gives entities as
+  it runs, which no GameObject has, isn't read until a script asks:
+  `runner.Read<Tide.Game.Stunned>()` once, or an entity's `Has`, `TryGet` or
+  `Get` of its value.
+- **A singleton** is read once `runner.Get<T>()` asks for it, and **an event**
+  while something hears it.
+- What's asked for the first time is there in the same frame.
+- Disabling a Tide component doesn't take it from its entity: it says that
+  GameObject doesn't read it. While the only ones of a component there are
+  disabled ones, it costs the frame nothing, and they stay as they were.
+- The runner's **Read Everything** reads every component of every shown
+  entity, every singleton and every event each frame, as the package did before
+  it read by need.
+
 The game's views draw with Unity's camera: the runner's View Camera, or the
 main camera, is the 3D camera Tide's views start with, so
 `Draw.WorldToScreen(position)` is where Unity shows that point, in screen
@@ -280,6 +298,43 @@ and `await list.Read()`), in Unity's built-in render pipeline and in URP. That
 takes a GPU that runs compute shaders, as every renderer of Tide's does:
 Direct3D 11 and 12, Vulkan, Metal, desktop OpenGL or WebGPU. On one without
 them (OpenGL ES 3, WebGL 2), the views' 2D is drawn with Unity's GL alone.
+
+A Tide view can draw a texture Unity imported. Give a component a local
+`Texture` field, and it's a Texture field of its Unity component, set in the
+inspector like any other (a Texture2D or a RenderTexture):
+
+```tide
+component Card
+{
+    float2 at;
+    local Texture face; // Set on the prefab or in the scene, in Unity's inspector
+}
+
+view Cards(Card card)
+{
+    if (card.face.size.x == 0) return; // Until Unity has shown the card's GameObject
+    Draw.Sprite(card.face, card.at, float2(1, 1));
+}
+```
+
+The view draws with Unity's own image, as Unity imported it (its Max Size,
+compression, mipmaps and color space), with nothing imported twice and no
+pixels copied; `face.size` is its size, and its Filter Mode and Wrap Mode are
+how it's sampled where the draw says nothing. Only local fields take one: a
+texture is this machine's, so nothing of it is in the match. Unity hands it
+over as it shows the entity's GameObject, a frame after the entity appears, so
+the field has no texture in the views' first frame of it: skip the draw until
+it has a size, as above. A script can set the field in Play
+(`GetComponent<Tide.Game.Card>().face = other;`), which Tide's views draw from
+the next frame; a field left empty keeps the default its Tide declaration
+gives it. A singleton's local `Texture` field is set the same way from a
+script, `runner.Get<Tide.Game.Hud>().logo = texture;`, as a singleton has no
+inspector. A player build keeps the textures as it keeps anything a prefab or
+a scene references. An image the game declares itself, `asset Texture logo =
+"logo.png";` in a `.tide` file, is Tide's own import of that file and draws in
+every host, Unity included; one set in Unity's inspector exists in the Unity
+project alone. Unity's meshes, sounds and materials aren't Tide's to draw or
+play yet.
 
 A physics package's components are on GameObjects like the game's own: with
 `box3d`, a `Body` and a `Box`, `Sphere` or `Capsule` (Add Component, Tide/Box3D).
@@ -357,6 +412,14 @@ default).
   player as if it let go of everything), and Resume shows its latest tick
   again. Continue From Here takes them back too: they're sent the match's world
   again, as when a client goes wrong.
+- In a match **another machine runs**, the editor follows it instead of
+  recording it: the last Keep Seconds of ticks this machine had confirmed are
+  kept, as this machine has them (what its player may see, in a game that
+  hides state). Pause holds those to show while the match goes on, the Tick
+  slider and Step go through them with what each sent, and Resume shows the
+  match's latest again and follows it from there. Its ticks before those
+  kept can't be made again here, and it can't be taken back or recorded from
+  here: the machine that runs it does that.
 - **Save Recording** writes the match's recording (a `.tiderec`) and **Open
   Recording** replays one, a tester's from a bug report say, on any machine with
   a build of the same data layout (the game's components, input and commands as
@@ -365,6 +428,16 @@ default).
   the first tick whose world went otherwise, which after a change to the game's
   code is where that change first matters. **Replay This Match** replays the
   current one.
+- A recording also replays in a build whose **data is laid out otherwise** (a
+  component gained a field, fields moved, a singleton is new): it says the
+  layout it was recorded with, and its worlds are carried over by name as a hot
+  reload carries a match (a field of the same name keeps its value, a new one
+  has its default). Its ticks then run with this build's code from what went
+  into them. Nothing checks them, as the recording's hashes are of worlds laid
+  out the old way, and the window says so. A tick whose input or commands
+  changed shape can't be run: the window says which tick it stops at.
+  Recordings saved before this (and a game's that tide describes no layout
+  for) only replay in a build of their own layout.
 
 In C#: `runner.Pause()`, `Step()`, `Resume()`, `ShowTick(n)`,
 `ContinueFromHere()`, `Recording()` and `SaveRecording(path)`,
@@ -374,8 +447,7 @@ editor (the default), nowhere, or in player builds too, so a game can save a
 tester's recording for a bug report. A hot reload while paused comes in as
 any: the match stays paused, its kept ticks with it if the data layout is the
 same (another starts the recording over), and the next step runs the new code.
-Only a match this machine runs is kept; one joined on another machine, and a
-sharded one, aren't.
+A sharded match isn't kept.
 
 ## Build
 

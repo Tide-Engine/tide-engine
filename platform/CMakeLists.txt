@@ -428,9 +428,19 @@ tide_add_game(tide_platform_travel SOURCES tests/travel.tide NAME game EMBED
     HOST tests/travel.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
 target_include_directories(tide_platform_travel PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)
 target_link_libraries(tide_platform_travel PRIVATE tide_platform)
+# ...and a recording replayed by a build laid out otherwise (tests/travel_layout.tide: the same game, its fields in
+# another order with new ones among them): the first test's build leaves its recordings where the second's reads them
+tide_add_game(tide_platform_travel_layout SOURCES tests/travel_layout.tide NAME game EMBED
+    HOST tests/travel_layout.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+target_include_directories(tide_platform_travel_layout PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)
+target_link_libraries(tide_platform_travel_layout PRIVATE tide_platform)
 if(NOT TIDE_WEB)
     add_test(NAME tide_platform_travel COMMAND tide_platform_travel)
-    set_tests_properties(tide_platform_travel PROPERTIES TIMEOUT 120)
+    add_test(NAME tide_platform_travel_layout COMMAND tide_platform_travel_layout)
+    set_tests_properties(tide_platform_travel tide_platform_travel_layout PROPERTIES TIMEOUT 120
+        ENVIRONMENT "TIDE_TRAVEL_RECORDING=${CMAKE_CURRENT_BINARY_DIR}/travel-layout.tiderec")
+    set_tests_properties(tide_platform_travel PROPERTIES FIXTURES_SETUP tide_travel_recording)
+    set_tests_properties(tide_platform_travel_layout PROPERTIES FIXTURES_REQUIRED tide_travel_recording)
 endif()
 
 # A sharded game inside another program: its view packet has every shard it watches

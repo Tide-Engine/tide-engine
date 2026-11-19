@@ -661,6 +661,20 @@ public sealed unsafe class BounceTests
         var yellow = new Color(1f, 1f, 0f);
         var green = new Color(0f, 0.6f, 0f);
         Color Screen(int x, int y) => read.GetPixel(x, 480 - 1 - y);
+        // One of Unity's own textures, set on the ball's prefab in the inspector and drawn by Tide's Marks view with
+        // the image Unity imported (Mark.png, 4 by 4, each pixel 16 on the screen): red at its top left and green at
+        // its top right, so its rows are the image's from the top; below them a violet of middling channels, which is
+        // the file's color in a Gamma project and in a Linear one alike (there the GPU hands it over as linear light,
+        // and Tide's draw takes it back to the color it shows); and its half-clear white over the view's black square
+        // a gray, which is the color times its alpha: half, blended as the project blends (a Linear project's half
+        // of white's light shows as 0.735)
+        Assert.AreEqual("Mark", live.mark != null ? live.mark.name : null, $"{when}the ball's prefab holds Unity's texture");
+        Assert.IsTrue(Near(Screen(32, 224), new Color(1f, 0f, 0f), 0.03f), $"{when}Unity's texture, drawn by Tide: red at its top left: {Screen(32, 224)}");
+        Assert.IsTrue(Near(Screen(64, 224), new Color(0f, 1f, 0f), 0.03f), $"{when}green at its top right: {Screen(64, 224)}");
+        Assert.IsTrue(Near(Screen(32, 256), new Color(128 / 255f, 64 / 255f, 191 / 255f), 0.03f), $"{when}its violet at its bottom left: {Screen(32, 256)}");
+        var half = QualitySettings.activeColorSpace == ColorSpace.Linear ? 0.735f : 0.5f;
+        Assert.IsTrue(Near(Screen(64, 256), new Color(half, half, half), 0.03f), $"{when}its half-clear white over black a gray: {Screen(64, 256)}");
+        Assert.IsTrue(Near(Screen(15, 240), new Color(0f, 0f, 0f), 0.03f), $"{when}and the view's black square around it: {Screen(15, 240)}");
         Assert.IsTrue(Near(Screen(640 - 80 + 8, 16 + 4), yellow, 0.03f), $"{when}the target's top left is yellow: {Screen(640 - 80 + 8, 16 + 4)}");
         Assert.IsTrue(Near(Screen(640 - 80 + 8, 16 + 50), green, 0.03f), $"{when}its bottom left green: {Screen(640 - 80 + 8, 16 + 50)}");
         Assert.IsTrue(Near(Screen(640 - 80 + 50, 16 + 4), green, 0.03f), $"{when}its top right green: {Screen(640 - 80 + 50, 16 + 4)}");

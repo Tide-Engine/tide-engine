@@ -3224,6 +3224,15 @@ For Unity's time travel (notes/unity.md, Time travel), host-side session calls; 
   it drops and `heard` as its `all` in a game with projections, else `tick_events`, else `tick`; a scene's
   preparation records into it too. The world and its hash are the same with or without. A debugger's frames hear a
   tick made again through it (`tide_timeline_heard`).
+- `tide_session_recorder.verified(user, tick, world, heard)` (2026-11-19, optional; notes/unity.md, Time travel's
+  gaps, 2): a match another machine runs, followed. `record_client`, after the client's update in
+  `tide_session_update`, tells each tick confirmed since the last told (`tide_session.followed`), reading
+  `world_at(c, tick)` for the ticks from `max(first_tick, ahead + 2 - ring)` to `verified`, which the client's ring
+  still holds as confirmed, and copying from the session's log (`s->heard`, where the host takes it) the records
+  of the tick before with `as == TIDE_HEARD_VERIFIED`, as 0. It starts over at the latest tick (one call) when the
+  client changed, a world came whole (`first_tick`), `verified` went back, or the next tick is out of the ring;
+  `tide_session_record` starts it over too. Nothing on a server's machine or in a sharded match. No client state
+  changes and nothing is sent: it only reads.
 - `tide_session_remote_players(s)`: connections on the server here that aren't this machine's (used, connected or
   joining).
 - `tide_session_rewind(s, world)`: the server's world becomes `world`, then the new optional

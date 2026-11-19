@@ -165,6 +165,8 @@ namespace Tide.Editor
             if (runner == null || schema == null || d.local || d.kind != "component" && d.kind != "scene") return null;
             var index = schema.TypeIndex(d.name);
             if (index < 0) return null;
+            // Not asked for: reading it would give every entity's GameObject its component while this is looked at
+            if (!runner.Reads(d.name)) return "not read in Unity";
             var count = runner.Packet.Count((uint)index, out _);
             return count == 1 ? "1 entity" : $"{count} entities";
         }
@@ -187,6 +189,8 @@ namespace Tide.Editor
 
         static unsafe byte[] SingletonBytes(TideRunner runner, int index, uint size)
         {
+            var type = runner.Schema?.Type(index);
+            if (type != null) runner.Read(type.name); // Looked at, so read from the match from here on
             var at = runner.Packet.Singleton((uint)index, out var stride);
             if (at == null || stride < size) return null;
             var bytes = new byte[size];

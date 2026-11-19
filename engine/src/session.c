@@ -8336,7 +8336,45 @@ struct tide_session {
     uint64_t shard_nonce;
 
     tide_session_recorder recorder; // What records the match this machine runs (tide_session_record)
+    // ...or follows one another machine runs: the last tick its recorder was told, of this client's world that came
+    // last whole (`followed_first`: tide_client.first_tick)
+    bool following;
+    uint32_t followed, followed_first;
+    const tide_client *followed_client;
+    tide_event_log followed_heard; // What a tick told sent, for the call
 };
+
+// A match another machine runs, to its recorder: each tick this machine's client has had confirmed since the last
+// one told, from the worlds the client still keeps of them (its ring holds the ticks up to the one it's ahead at,
+// and a confirmed tick's world isn't made again), with what the session's log has of the tick that made each, as
+// confirmed. After the client's update, before the host takes the log.
+static void record_client(tide_session *s)
+{
+    const tide_client *c = s->client;
+    if (!s->recorder.verified || s->server || s->shards || s->shard_client || !c || !c->loaded) {
+        s->following = false;
+        return;
+    }
+    const uint32_t kept = c->ahead + 2u > c->ring ? c->ahead + 2u - c->ring : 0u;
+    const uint32_t lowest = kept > c->first_tick ? kept : c->first_tick;
+    const bool on = s->following && s->followed_client == c && s->followed_first == c->first_tick
+                 && s->followed <= c->verified && s->followed + 1u >= lowest;
+    if (on && s->followed == c->verified) return;
+    for (uint32_t tick = on ? s->followed + 1u : c->verified; tick <= c->verified; tick++) {
+        tide_event_log_clear(&s->followed_heard);
+        uint32_t at = 0;
+        for (const tide_heard *heard; on && s->heard.taken && (heard = tide_event_log_next(&s->heard, &at));) {
+            if (heard->tick + 1u == tick && heard->as == TIDE_HEARD_VERIFIED) {
+                tide_event_log_copy(&s->followed_heard, &s->heard, heard, 0); // For both kinds of handler, as a tick's own
+            }
+        }
+        s->recorder.verified(s->recorder.user, tick, world_at(c, tick), &s->followed_heard);
+    }
+    s->following = true;
+    s->followed = c->verified;
+    s->followed_first = c->first_tick;
+    s->followed_client = c;
+}
 
 // Each tick of the match this machine runs, to its recorder
 static void recorded_tick(void *user, const uint32_t tick, const uint8_t *record, const uint32_t size)
@@ -8449,6 +8487,7 @@ void tide_session_destroy(tide_session *s)
     if (!s) return;
     tear_down(s);
     tide_event_log_free(&s->heard);
+    tide_event_log_free(&s->followed_heard);
     free(s);
 }
 
@@ -8839,6 +8878,7 @@ void tide_session_update(tide_session *s, const double now)
         update_client(s->client, t); // What the server just said
     }
 
+    record_client(s);
     const tide_client_status status = tide_client_status_of(s->client);
     if (!s->server && status.cookie) s->cookie = status.cookie;
     if (status.state == TIDE_SESSION_CONNECTED) s->kicked = false; // Played there since
@@ -9635,5 +9675,6 @@ void tide_session_record(tide_session *s, const tide_session_recorder *recorder)
 {
     settle(s);
     s->recorder = recorder ? *recorder : (tide_session_recorder){0};
+    s->following = false; // A match followed is told to this one from its latest tick
     record_server(s);
 }

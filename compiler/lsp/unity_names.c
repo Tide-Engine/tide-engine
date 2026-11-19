@@ -16,7 +16,8 @@ static const char *const csharp_keywords[] = {
     "virtual", "void", "volatile", "while", "var", NULL};
 
 // What a class's or a C# struct's fields keep clear of: the members the package's classes and generated structs have
-static const char *const members[] = {"Value", "TideName", "ReadLive", "Pack", "From", "Tick", "Verified", "Target", "TargetEntity"};
+static const char *const members[] = {"Value", "TideName", "ReadLive", "Pack", "From", "Tick", "Verified", "Target", "TargetEntity",
+                                      "WriteAssets"};
 
 static char *grow(char *s, size_t *n, size_t *cap, const char *add, const size_t m)
 {

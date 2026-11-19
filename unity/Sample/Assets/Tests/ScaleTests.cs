@@ -44,6 +44,77 @@ public sealed class ScaleTests
     // How many balls: TIDE_UNITY_CROWD for another number, to measure with
     static int Crowd => int.TryParse(Environment.GetEnvironmentVariable("TIDE_UNITY_CROWD"), out var n) && n > 0 ? n : 300;
 
+    // What the packet costs by what's read of it, on one match of a crowd: everything (as the packet was before it
+    // carried what's read alone: every component, and every singleton, the list of the crowd among them), what this
+    // scene reads by itself (the balls' Ball, which their prefab has; no singleton, as nothing here asks for one), and
+    // with the balls' Ball disabled, so Unity places them and reads nothing else. Each smaller than the one before;
+    // the times are logged, to measure with.
+    [UnityTest]
+    public IEnumerator WhatUnityDoesNotReadIsNotInItsFrames()
+    {
+        SceneManager.LoadScene(Bounce);
+        yield return null;
+        var runner = Object.FindAnyObjectByType<TideRunner>();
+        yield return Until(() => runner.State == TideSessionState.Connected && runner.Packet.InMatch, 10f);
+        Assert.AreEqual(TideSessionState.Connected, runner.State);
+        var crowd = Crowd;
+        Assert.IsTrue(runner.Send(new Tide.Game.Crowd { count = crowd }));
+        yield return Until(() => Shown() > crowd, 60f);
+        Assert.Greater(Shown(), crowd, "the crowd's balls and this machine's show");
+        var rested = Time.realtimeSinceStartup + 6f;
+        while (Time.realtimeSinceStartup < rested) yield return null;
+
+        const BindingFlags own = BindingFlags.Instance | BindingFlags.NonPublic;
+        var frame = (Action)Delegate.CreateDelegate(typeof(Action), runner, typeof(TideRunner).GetMethod("Update", own));
+        var show = (Action<bool>)Delegate.CreateDelegate(typeof(Action<bool>), runner, typeof(TideRunner).GetMethod("Show", own));
+        const int frames = 240;
+        var took = new double[frames];
+        var showing = new double[frames];
+        var medians = new double[3, 2];
+        var sizes = new uint[3];
+        var balls = Object.FindObjectsByType<Tide.Game.Ball>();
+        Assert.Greater(balls.Length, crowd);
+        for (var pass = 0; pass < 3; pass++)
+        {
+            runner.readEverything = pass == 0;
+            if (pass == 2)
+            {
+                foreach (var ball in balls) ball.enabled = false;
+            }
+            for (var i = 0; i < 30; i++) yield return null;
+            for (var i = 0; i < frames; i++)
+            {
+                var start = Stopwatch.GetTimestamp();
+                frame();
+                var middle = Stopwatch.GetTimestamp();
+                show(true);
+                var end = Stopwatch.GetTimestamp();
+                took[i] = (middle - start) * 1000.0 / Stopwatch.Frequency;
+                showing[i] = (end - middle) * 1000.0 / Stopwatch.Frequency;
+                yield return null;
+            }
+            Array.Sort(took);
+            Array.Sort(showing);
+            medians[pass, 0] = took[frames / 2];
+            medians[pass, 1] = showing[frames / 2];
+            sizes[pass] = runner.Packet.Size;
+            Assert.AreEqual(pass == 0, runner.Reads("Extras"), "a singleton is read only where everything is, as nothing asked");
+            Assert.AreEqual(pass < 2, runner.Reads("Ball"));
+            Assert.Greater(Shown(), crowd, "every ball shows, read or not");
+        }
+        Debug.Log($"Tide read: {Shown()} entities shown; a frame of the runner's, and of it showing them in Unity (medians of {frames}): " +
+                  $"everything {medians[0, 0]:0.000} ms and {medians[0, 1]:0.000} ms, a packet of {sizes[0]} bytes; " +
+                  $"what's read {medians[1, 0]:0.000} ms and {medians[1, 1]:0.000} ms, {sizes[1]} bytes; " +
+                  $"the balls unread {medians[2, 0]:0.000} ms and {medians[2, 1]:0.000} ms, {sizes[2]} bytes");
+        Assert.Less(sizes[1], sizes[0], "what nothing reads is left out");
+        Assert.Less(sizes[2], sizes[1], "and a component no GameObject has enabled");
+        // Read again as one is enabled, with the match's values
+        balls[0].enabled = true;
+        yield return null;
+        yield return null;
+        Assert.IsTrue(runner.Reads("Ball"));
+    }
+
     [UnityTest]
     public IEnumerator ABusyMatchsFramesMakeNothingNew()
     {

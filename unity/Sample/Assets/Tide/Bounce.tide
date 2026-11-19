@@ -152,6 +152,9 @@ component Ball
     int bounces;
     Trail trail;
     local int heard; // This machine's, as its local handler counts its bounces (Heard)
+    // One of Unity's own textures, set on the prefab in Unity's inspector (Roller.prefab: Mark.png, as Unity
+    // imported it), which Marks draws
+    local Texture mark;
 }
 
 // A ball hitting the floor: C# hears it as local handlers do (TideRunner.On, OnVerified, the ball's TideEntity.On)
@@ -202,6 +205,19 @@ view Ring(Ball ball, Transform transform)
     Draw.Screen()
     {
         Draw.WireCircle(at.xy, 24, ball.color);
+    }
+}
+
+// A texture Unity imported, drawn by Tide: the first player's ball's `mark`, at the left of the screen over a black
+// square, so its half-clear pixels show how much of it there is. It's this machine's, and no texture until Unity
+// shows the ball's GameObject and hands it over, a frame after the ball spawns
+view Marks(Ball ball)
+{
+    if (ball.seat != 0 || ball.mark.size.x == 0) return;
+    Draw.Screen()
+    {
+        Draw.Rect(float2(48, Screen.height / 2), float2(72, 72), Color.black);
+        Draw.Sprite(ball.mark, float2(48, Screen.height / 2), float2(64, 64));
     }
 }
 

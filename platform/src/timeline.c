@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "tide/migrate.h"
 #include "tide/page.h"
 
 #define KEEP_DEFAULT 600u
@@ -17,12 +18,17 @@
 // A recording as bytes: "TIDETIME", the version, the game's layout hash and
 // simulation, the tick rate, the player, the first tick, how its worlds are
 // packed (1 as a delta from nothing, tide_game.pack_delta, which every
-// platform reads; 2 as the raw world, for a game without one), its first
-// world, the records, each its size and bytes, then the jumps (the worlds a
-// debugger made the match go back to), each its tick and its world. Numbers
-// are little-endian u32s and u64s, a world its size and bytes.
+// platform reads; 2 as the raw world, for a game without one), the layout it
+// was recorded with (tide_layout_pack: its size, 0 for none, and bytes), its
+// first world, the records, each its size and bytes, then the jumps (the
+// worlds a debugger made the match go back to), each its tick and its world.
+// Numbers are little-endian u32s and u64s. A world is its size and bytes as
+// packed, then its size and bytes as its layout has them
+// (tide_game.pack_world; size 0 without a layout), which a build of another
+// layout carries over by name. Version 1 had no layout and no second form of
+// a world, and still loads into a build of its layout.
 static const char MAGIC[8] = {'T', 'I', 'D', 'E', 'T', 'I', 'M', 'E'};
-#define VERSION 1u
+#define VERSION 2u
 #define PACKED_DELTA 1u
 #define PACKED_RAW 2u
 
@@ -30,6 +36,7 @@ typedef struct kept {
     void *world;
     uint32_t tick;
     bool used;
+    tide_event_log heard; // A match followed: what the tick that made it sent (tide_timeline_follow)
 } kept;
 
 // The match went on from `world` as tick `tick`'s, whatever replaying makes of it (tide_timeline_cut)
@@ -40,9 +47,12 @@ typedef struct jump {
 
 struct tide_timeline {
     const tide_game *game;
+    const tide_layout *layout; // The game's, which its recordings carry (tide_timeline_desc.layout), or NULL
     const tide_jobs *jobs;
     uint32_t keep;
+    bool unchecked;  // A recording of another layout, carried over: its ticks' hashes aren't of this build's worlds
     bool started;
+    bool following;  // A match another machine runs: no records, the worlds kept alone (tide_timeline_follow)
     uint32_t first;  // The tick it starts at...
     void *start;     // ...and its world
     uint8_t **records;
@@ -97,8 +107,10 @@ static void clear(tide_timeline *t)
     t->seek_had = false;
     for (uint32_t i = 0; i < t->keep; i++) {
         drop_world(t, t->kept[i].world);
+        tide_event_log_free(&t->kept[i].heard);
         t->kept[i] = (kept){0};
     }
+    t->following = false;
     for (uint32_t i = 0; i < t->count; i++) free(t->records[i]);
     t->count = 0;
     t->record_bytes = 0;
@@ -114,6 +126,7 @@ tide_timeline *tide_timeline_create(const tide_timeline_desc *desc)
     tide_timeline *t = calloc(1, sizeof *t);
     if (!t) return NULL;
     t->game = desc->game;
+    t->layout = desc->layout;
     t->jobs = desc->jobs;
     t->keep = desc->keep ? desc->keep : KEEP_DEFAULT;
     if (t->keep < 2u) t->keep = 2u; // A tick's world and the one it's made from
@@ -149,6 +162,7 @@ static void *slot_for(tide_timeline *t, const uint32_t tick)
     if (!k->world) k->world = new_world(t);
     k->used = false;
     k->tick = tick;
+    tide_event_log_clear(&k->heard);
     return k->world;
 }
 
@@ -246,7 +260,7 @@ static void trim(tide_timeline *t)
 
 void tide_timeline_tick(tide_timeline *t, const uint32_t tick, const uint8_t *record, const uint32_t size, const void *world)
 {
-    if (!t || !t->started || !record || !world || t->made != t->first + t->count) return;
+    if (!t || !t->started || t->following || !record || !world || t->made != t->first + t->count) return;
     if (t->server_next != UINT32_MAX && tick != t->server_next) return;
     t->server_next = tick + 1u;
     add_record(t, record, size);
@@ -254,6 +268,28 @@ void tide_timeline_tick(tide_timeline *t, const uint32_t tick, const uint8_t *re
     t->made++;
     t->check.checked = t->made; // The server made it: it's its own world
     if (t->record_bytes > RECORDS_MOST) trim(t);
+}
+
+void tide_timeline_follow(tide_timeline *t, const uint32_t tick, const void *world, const tide_event_log *heard)
+{
+    if (!t || !world) return;
+    if (!t->started || !t->following || tick != t->made + 1u) { // From here: nothing says what came between
+        tide_timeline_begin(t, world, tick);
+        t->following = true;
+        return;
+    }
+    keep_world(t, tick, world);
+    tide_event_log *log = &t->kept[tick % t->keep].heard;
+    uint32_t at = 0;
+    for (const tide_heard *one; heard && (one = tide_event_log_next(heard, &at));) tide_event_log_copy(log, heard, one, one->as);
+    t->made = tick;
+    t->first = tide_timeline_kept(t); // Nothing before the worlds it keeps
+    t->check.checked = tick;
+}
+
+bool tide_timeline_follows(const tide_timeline *t)
+{
+    return t && t->started && t->following;
 }
 
 static void recorder_begin(void *user, const void *world, const uint32_t tick)
@@ -266,14 +302,27 @@ static void recorder_tick(void *user, const uint32_t tick, const uint8_t *record
     tide_timeline_tick(user, tick, record, size, world);
 }
 
+static void recorder_verified(void *user, const uint32_t tick, const void *world, const tide_event_log *heard)
+{
+    tide_timeline_follow(user, tick, world, heard);
+}
+
 tide_session_recorder tide_timeline_recorder(tide_timeline *t)
 {
-    return (tide_session_recorder){.user = t, .begin = recorder_begin, .tick = recorder_tick};
+    return (tide_session_recorder){.user = t, .begin = recorder_begin, .tick = recorder_tick, .verified = recorder_verified};
 }
 
 void tide_timeline_set_game(tide_timeline *t, const tide_game *game)
 {
-    if (t && game) t->game = game;
+    if (!t || !game) return;
+    // What a followed match's ticks sent is laid out as the build that heard it has it: not this one's to hear
+    for (uint32_t i = 0; t->game != game && i < t->keep; i++) tide_event_log_clear(&t->kept[i].heard);
+    t->game = game;
+}
+
+void tide_timeline_set_layout(tide_timeline *t, const tide_layout *layout)
+{
+    if (t) t->layout = layout;
 }
 
 bool tide_timeline_started(const tide_timeline *t)
@@ -288,7 +337,7 @@ uint32_t tide_timeline_first(const tide_timeline *t)
 
 uint32_t tide_timeline_last(const tide_timeline *t)
 {
-    return t && t->started ? t->first + t->count : 0u;
+    return !t || !t->started ? 0u : t->following ? t->made : t->first + t->count;
 }
 
 uint32_t tide_timeline_made(const tide_timeline *t)
@@ -308,12 +357,12 @@ static bool replay(tide_timeline *t, void *world, const uint32_t tick)
         if (!t->check.unreadable || made < t->check.unreadable) t->check.unreadable = made;
         return false;
     }
-    if (result == TIDE_REPLAY_DIFFERENT && (!t->check.differs || made < t->check.differs)) {
+    if (!t->unchecked && result == TIDE_REPLAY_DIFFERENT && (!t->check.differs || made < t->check.differs)) {
         t->check.differs = made;
         t->check.expected = expected;
         t->check.got = got;
     }
-    if (made > t->check.checked) t->check.checked = made;
+    if (!t->unchecked && made > t->check.checked) t->check.checked = made;
     const jump *j = jump_at(t, made);
     if (j) t->game->copy_world(world, j->world);
     return true;
@@ -323,7 +372,7 @@ const void *tide_timeline_world(tide_timeline *t, const uint32_t tick)
 {
     if (!t || !t->started || tick < t->first || tick > tide_timeline_last(t)) return NULL;
     const void *world = kept_at(t, tick);
-    if (world) return world;
+    if (world || t->following) return world;
     if (tick > t->made) { // Onwards from the last one made, each kept
         for (uint32_t at = t->made; at < tick; at++) {
             const void *from = kept_at(t, at);
@@ -362,6 +411,13 @@ const void *tide_timeline_world(tide_timeline *t, const uint32_t tick)
 bool tide_timeline_heard(tide_timeline *t, const uint32_t tick, tide_event_log *heard)
 {
     if (!t || !t->started || !heard || tick <= t->first || tick > tide_timeline_last(t)) return false;
+    if (t->following) {
+        const kept *k = &t->kept[tick % t->keep];
+        if (!k->used || k->tick != tick) return false;
+        uint32_t at = 0;
+        for (const tide_heard *one; (one = tide_event_log_next(&k->heard, &at));) tide_event_log_copy(heard, &k->heard, one, one->as);
+        return true;
+    }
     const void *before = kept_at(t, tick - 1u);
     if (!before && t->seeking && t->seek_had && t->seek_tick == tick) before = t->seek_before;
     if (!before) before = tide_timeline_world(t, tick - 1u);
@@ -378,7 +434,7 @@ bool tide_timeline_heard(tide_timeline *t, const uint32_t tick, tide_event_log *
 
 bool tide_timeline_cut(tide_timeline *t, const uint32_t tick, const void *world)
 {
-    if (!t || !t->started || !world || tick < t->first || tick > tide_timeline_last(t)) return false;
+    if (!t || !t->started || t->following || !world || tick < t->first || tick > tide_timeline_last(t)) return false;
     const void *made = tide_timeline_world(t, tick);
     const bool same = made && t->game->hash_world(made) == t->game->hash_world(world);
     drop_jumps_after(t, tick > t->first ? tick - 1u : 0u); // A jump at `tick` is this one's now
@@ -451,24 +507,47 @@ static bool unpack(const tide_game *g, void *world, const uint32_t packed, const
 
 #define HEAD_SIZE (8u + 4u + 8u + 32u + 4u + 4u + 4u + 4u)
 
+// A world as the build that recorded it lays it out (tide_game.pack_world), for a build of another layout to carry
+// over: only where the recording carries its layout too
+static uint8_t *pack_raw(const tide_timeline *t, const void *world, uint32_t *size)
+{
+    *size = 0;
+    if (!t->layout || !t->game->pack_world) return NULL;
+    const uint32_t n = t->game->pack_world(world, NULL, 0);
+    uint8_t *bytes = malloc(n ? n : 1u);
+    if (bytes) t->game->pack_world(world, bytes, n);
+    *size = bytes ? n : 0u;
+    return bytes;
+}
+
 uint8_t *tide_timeline_save(tide_timeline *t, const uint32_t tick_rate, const uint32_t player, uint32_t *size)
 {
     if (size) *size = 0;
-    if (!t || !t->started || !size) return NULL;
+    // Not one carried over from another layout: its records' hashes are of that layout's worlds, which a recording
+    // of this build's layout would be checked against
+    if (!t || !t->started || t->following || t->unchecked || !size) return NULL;
     const tide_game *g = t->game;
     const uint32_t packed = g->pack_delta ? PACKED_DELTA : PACKED_RAW;
     if (packed == PACKED_RAW && !g->pack_world) return NULL;
-    // Its first world and its jumps' worlds as bytes
+    uint32_t layout_size = 0;
+    void *layout = t->layout && g->pack_world ? tide_layout_pack(t->layout, &layout_size) : NULL;
+    if (!layout) layout_size = 0;
+    // Its first world and its jumps' worlds as bytes, and as their layout has them
     const uint32_t worlds = 1u + t->jump_count;
-    uint8_t **bytes = calloc(worlds, sizeof *bytes);
-    uint32_t *sizes = calloc(worlds, sizeof *sizes);
-    bool ok = bytes && sizes;
+    uint8_t **bytes = calloc(worlds, sizeof *bytes), **raw = calloc(worlds, sizeof *raw);
+    uint32_t *sizes = calloc(worlds, sizeof *sizes), *raw_sizes = calloc(worlds, sizeof *raw_sizes);
+    bool ok = bytes && raw && sizes && raw_sizes;
     for (uint32_t i = 0; ok && i < worlds; i++) {
-        bytes[i] = pack(g, i ? t->jumps[i - 1u].world : t->start, packed, &sizes[i]);
+        const void *world = i ? t->jumps[i - 1u].world : t->start;
+        bytes[i] = pack(g, world, packed, &sizes[i]);
         ok = bytes[i] != NULL;
+        if (ok && layout) {
+            raw[i] = pack_raw(t, world, &raw_sizes[i]);
+            ok = raw[i] != NULL;
+        }
     }
-    uint64_t total = (uint64_t)HEAD_SIZE + 4u + 4u;
-    for (uint32_t i = 0; ok && i < worlds; i++) total += 4u + (uint64_t)sizes[i] + (i ? 4u : 0u);
+    uint64_t total = (uint64_t)HEAD_SIZE + 4u + layout_size + 4u + 4u;
+    for (uint32_t i = 0; ok && i < worlds; i++) total += 4u + (uint64_t)sizes[i] + 4u + (uint64_t)raw_sizes[i] + (i ? 4u : 0u);
     for (uint32_t i = 0; i < t->count; i++) total += 4u + (uint64_t)t->sizes[i];
     uint8_t *out = ok && total <= UINT32_MAX ? malloc((size_t)total) : NULL;
     if (out) {
@@ -481,8 +560,12 @@ uint8_t *tide_timeline_save(tide_timeline *t, const uint32_t tick_rate, const ui
         put_u32(at, player), at += 4;
         put_u32(at, t->first), at += 4;
         put_u32(at, packed), at += 4;
+        put_u32(at, layout_size), at += 4;
+        if (layout_size) memcpy(at, layout, layout_size), at += layout_size;
         put_u32(at, sizes[0]), at += 4;
         memcpy(at, bytes[0], sizes[0]), at += sizes[0];
+        put_u32(at, raw_sizes[0]), at += 4;
+        if (raw_sizes[0]) memcpy(at, raw[0], raw_sizes[0]), at += raw_sizes[0];
         put_u32(at, t->count), at += 4;
         for (uint32_t i = 0; i < t->count; i++) {
             put_u32(at, t->sizes[i]), at += 4;
@@ -493,12 +576,20 @@ uint8_t *tide_timeline_save(tide_timeline *t, const uint32_t tick_rate, const ui
             put_u32(at, t->jumps[i - 1u].tick), at += 4;
             put_u32(at, sizes[i]), at += 4;
             memcpy(at, bytes[i], sizes[i]), at += sizes[i];
+            put_u32(at, raw_sizes[i]), at += 4;
+            if (raw_sizes[i]) memcpy(at, raw[i], raw_sizes[i]), at += raw_sizes[i];
         }
         *size = (uint32_t)total;
     }
-    for (uint32_t i = 0; bytes && i < worlds; i++) free(bytes[i]);
+    for (uint32_t i = 0; i < worlds; i++) {
+        if (bytes) free(bytes[i]);
+        if (raw) free(raw[i]);
+    }
     free(bytes);
+    free(raw);
     free(sizes);
+    free(raw_sizes);
+    free(layout);
     return out;
 }
 
@@ -532,6 +623,28 @@ static const uint8_t *read_bytes(reader *r, const uint32_t n)
     return bytes;
 }
 
+// A recording's world as this build has it: its bytes as they are for a build of its layout; for another, what the
+// recording's layout says of `raw` carried over by name (tide/migrate.h), with what didn't carry counted in `about`
+static bool take_world(const tide_game *g, void *world, const uint32_t packed, const uint8_t *bytes, const uint32_t size,
+                       const tide_layout *old, const tide_layout *now, const uint8_t *raw, const uint32_t raw_size,
+                       tide_timeline_about *about, char *why, const size_t room)
+{
+    if (!old) return unpack(g, world, packed, bytes, size);
+    void *carried = NULL;
+    uint32_t carried_size = 0;
+    tide_migration m = {0};
+    bool ok = raw && tide_migrate_world(old, &old->match, raw, raw_size, now, &now->match, &carried, &carried_size, &m);
+    if (ok && !g->unpack_world(world, carried, carried_size)) {
+        snprintf(m.failed, sizeof m.failed, "this build couldn't take what was carried over");
+        ok = false;
+    }
+    free(carried);
+    about->entities_dropped += m.entities_dropped;
+    about->tasks_dropped += m.tasks_dropped;
+    if (!ok && m.failed[0]) snprintf(why, room, "a world of it can't be carried over to this build's layout: %s", m.failed);
+    return ok;
+}
+
 tide_timeline *tide_timeline_load(const tide_timeline_desc *desc, const uint8_t *data, const size_t size,
                                   tide_timeline_about *about, char *why, const size_t why_size)
 {
@@ -550,16 +663,12 @@ tide_timeline *tide_timeline_load(const tide_timeline_desc *desc, const uint8_t 
     const tide_game *g = desc->game;
     const uint8_t *at = data + 8;
     const uint32_t version = get_u32(at);
-    if (version != VERSION) {
-        snprintf(why, room, "it's a recording of version %u, and this tide reads version %u", (unsigned)version, VERSION);
+    if (version != VERSION && version != 1u) {
+        snprintf(why, room, "it's a recording of version %u, and this tide reads versions 1 and %u", (unsigned)version, VERSION);
         return NULL;
     }
     at += 4;
-    if (get_u64(at) != g->hash) {
-        snprintf(why, room, "it was recorded by a build whose data is laid out otherwise (a component, input, command or "
-                            "setting changed): replay it with a build of that layout");
-        return NULL;
-    }
+    const bool same_layout = get_u64(at) == g->hash;
     at += 8;
     about->other_build = memcmp(at, g->simulation, 32) != 0;
     at += 32;
@@ -568,20 +677,53 @@ tide_timeline *tide_timeline_load(const tide_timeline_desc *desc, const uint8_t 
     about->player = read_u32(&r);
     const uint32_t first = read_u32(&r);
     const uint32_t packed = read_u32(&r);
+    // Version 2 on: the layout it was recorded with, and each world as that layout has it, where it had one to say
+    const uint32_t layout_size = version >= 2u ? read_u32(&r) : 0u;
+    const uint8_t *layout_bytes = read_bytes(&r, layout_size);
     const uint32_t world_size = read_u32(&r);
     const uint8_t *world = read_bytes(&r, world_size);
-    tide_timeline *t = world ? tide_timeline_create(desc) : NULL;
+    const uint32_t raw_size = version >= 2u ? read_u32(&r) : 0u;
+    const uint8_t *raw = read_bytes(&r, raw_size);
+    if (r.short_ || !world) {
+        snprintf(why, room, "it's cut short");
+        return NULL;
+    }
+    // A build of another layout carries its worlds over, by what the recording says its layout was
+    void *old_block = NULL;
+    const tide_layout *old = NULL;
+    if (!same_layout) {
+        if (!layout_size || !desc->layout || !g->unpack_world) {
+            snprintf(why, room, "it was recorded by a build whose data is laid out otherwise (a component, input, command or "
+                                "setting changed)%s: replay it with a build of that layout",
+                     layout_size ? "" : ", and it doesn't say how (an older tide's recording, or a game without a layout to say)");
+            return NULL;
+        }
+        old_block = malloc(layout_size); // 8-aligned, as the layout's own block was
+        if (old_block) memcpy(old_block, layout_bytes, layout_size);
+        old = old_block ? tide_layout_unpack(old_block, layout_size) : NULL;
+        if (!old) {
+            free(old_block);
+            snprintf(why, room, "the layout it says it was recorded with didn't read");
+            return NULL;
+        }
+        about->other_layout = true;
+        about->fields_reset = tide_layout_fields_reset(old, desc->layout);
+    }
+    tide_timeline *t = tide_timeline_create(desc);
     if (!t) {
-        snprintf(why, room, world ? "there wasn't the memory" : "it's cut short");
+        free(old_block);
+        snprintf(why, room, "there wasn't the memory");
         return NULL;
     }
     void *start = new_world(t);
-    const bool unpacked = unpack(g, start, packed, world, world_size);
+    const bool unpacked = take_world(g, start, packed, world, world_size, old, desc->layout, raw_size ? raw : NULL, raw_size,
+                                     about, why, room);
     if (unpacked) tide_timeline_begin(t, start, first);
     drop_world(t, start);
     if (!unpacked) {
         tide_timeline_destroy(t);
-        snprintf(why, room, "its first world isn't one this build can read");
+        free(old_block);
+        if (!why[0]) snprintf(why, room, "its first world isn't one this build can read");
         return NULL;
     }
     const uint32_t count = read_u32(&r);
@@ -597,23 +739,29 @@ tide_timeline *tide_timeline_load(const tide_timeline_desc *desc, const uint8_t 
         const uint32_t tick = read_u32(&r);
         const uint32_t n = read_u32(&r);
         const uint8_t *bytes = read_bytes(&r, n);
-        if (!bytes) break;
+        const uint32_t raw_n = version >= 2u ? read_u32(&r) : 0u;
+        const uint8_t *raw_bytes = read_bytes(&r, raw_n);
+        if (!bytes || r.short_) break;
         void *to = new_world(t);
-        const bool ok = tick > after && tick <= first + count && unpack(g, to, packed, bytes, n);
+        const bool ok = tick > after && tick <= first + count
+                     && take_world(g, to, packed, bytes, n, old, desc->layout, raw_n ? raw_bytes : NULL, raw_n, about, why, room);
         if (ok) add_jump(t, tick, to);
         drop_world(t, to);
         if (!ok) {
             tide_timeline_destroy(t);
-            snprintf(why, room, "a world it goes back to isn't one this build can read");
+            free(old_block);
+            if (!why[0]) snprintf(why, room, "a world it goes back to isn't one this build can read");
             return NULL;
         }
         after = tick;
     }
+    free(old_block);
     if (r.short_ || r.at != r.end) {
         tide_timeline_destroy(t);
         snprintf(why, room, r.short_ ? "it's cut short" : "it has bytes after its end");
         return NULL;
     }
+    t->unchecked = !same_layout; // Its hashes are of worlds laid out otherwise: nothing here to check a tick against
     t->check.checked = first; // Nothing replayed yet
     return t;
 }
