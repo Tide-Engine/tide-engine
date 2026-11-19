@@ -59,8 +59,8 @@ own"; README, Run; docs/tools/cli.md, Unity.
   materials would need the type in a list handed over, which `set_local` doesn't take).
 - **Sounds**: one-shots only; no pitch, position, loop, stop, or Tide bus. On the web the calls exist and nothing
   was run.
-- The first-frame lag and time travel's other ticks are as for textures (below): a frame of a tick shown again
-  draws no Unity mesh and plays no Unity clip, as its local state was handed nothing.
+- The first-frame lag is as for textures (below). Time travel's other ticks were a gap and aren't (closed the same
+  day, at the end of this section).
 - `target.UnityMesh` exists as a method (a render target has Draw's methods) and draws nothing.
 
 **Tests.** `tide_platform_embed`'s `embed_local_objects_are_handed_back`: the fixture's `Counter` has the three
@@ -80,6 +80,26 @@ the existing errors for a match use of such a field and for the two arguments th
 **Not run:** sanitize, web, a lit material (the Sample's is unlit, so lighting isn't pinned), a mesh of several
 submeshes, a Linear project, a scene view's picture of it, Direct3D 12, players, and the sound by ear (hidden runs
 are silent; the play is counted).
+
+**A tick shown again has what was given** (the owner, away: "I need you to be independent here with your
+decisions"; so the gaps that were bounded and testable were closed rather than left). While time travel keeps
+anything (`keep_seconds` above 0), `embed.c` remembers what `tide_embed_local_texture` and `_object` gave, the
+latest for each field of each entity (`embed_given`, `remember_given`; of the running build's layout, at most 16,384,
+the oldest going first), gives it all to the separate local state as `show_frame` makes it (`give_again`), and gives
+that state whatever is given while it's there. So a scrubbed tick, the background mode and a recording draw with
+Unity's textures and meshes as the match's own frames do. Nothing is remembered with time travel off (a player by
+default), so a shipped game pays nothing. No ABI change: the same calls do more. Left: an entity that only an older
+tick has (gone from the match since) is given nothing new, as Unity shows no GameObject to take it from; what it was
+given while it lived is still remembered. Test: `embed_shown_ticks_have_what_was_given` (a texture given, then a
+pause and an earlier tick shown: its size read and no draw of a mesh; a mesh and material given while it shows,
+drawn the next frame; both there as the match goes on). Runs: at the end of the Runs paragraph above this one's
+tests, and below.
+
+**Runs after that change:** native debug `tide_platform_embed` 36 of 36 and `tide_platform_travel`, and both again
+under Windows ASan (`sanitize`), which the work above hadn't run. Unity, as before: PlayMode `TravelTests` and
+`BounceTests` on Direct3D 11, 26 of 26; the frame tests on Direct3D 12, 3 of 3, and with the Sample's color space
+Linear for the run, 3 of 3 (the Unity mesh's magenta and the texture's colors there too). Still not run: web, a lit
+material, a mesh of several submeshes, players, and a scrubbed tick's picture in Unity itself (pinned natively).
 
 ## Unity's own textures in Tide's views: embed ABI 28 (2026-11-19)
 
@@ -176,9 +196,9 @@ takes one of Unity's textures"; package README, Run; docs/tools/cli.md, Unity.
   text can't set a local field, and what a late joiner or a migrated host learns of the entity is its
   `UnityEngine.Source` alone, so it would be a table by asset and node that generated local code applies at spawn:
   a compiler feature) or a frame split in two so C# binds between ticks and views. Neither is small.
-- **Time travel's other ticks.** `show_frame` runs the views on a local state of its own (`travel.local`), which
-  nothing was handed: a scrubbed tick's or a recording's frames draw without Unity's textures. The fix belongs with
-  that state (hand it the same fields as it's made); another thread has time travel's gaps now.
+- **Time travel's other ticks** (closed the same day: the section above, "A tick shown again has what was given").
+  `show_frame` runs the views on a local state of its own (`travel.local`), which nothing was handed: a scrubbed
+  tick's or a recording's frames drew without Unity's textures.
 - **A `Texture` parameter of a function a frag calls** carries no mode in the HLSL (as it carries no own-sampler
   mode), so a read of an external through one gets its rows and channels as Unity stores them. A loaded pixel
   (`textureLoad`) of a module's 2D float image has its row turned, not its alpha worked in.

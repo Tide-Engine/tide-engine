@@ -1374,6 +1374,48 @@ TIDE_TEST(embed_local_textures_are_the_other_programs)
     TIDE_CHECK(!tide_embed_local_texture(e, (uint32_t)locals, face, key[0], key[1], 7, 64, 32, point, repeat)); // No embed
 }
 
+// A tick shown again (time travel: a pause, then an earlier tick) runs the views on a local state of its own, which
+// is given what the other program gave the match's: the game reads the image's size and the frame names it there
+// too, for what was given before the pause and for what's given while an earlier tick shows.
+TIDE_TEST(embed_shown_ticks_have_what_was_given)
+{
+    char *argv[] = {program};
+    tide_embed *e = start(1, argv);
+    TIDE_REQUIRE(e != NULL);
+    tide_embed_travel_keep(e, 10.0f);
+    frames(e, 20, NULL);
+    uint32_t size = 0, count = 0;
+    const uint8_t *p = tide_embed_view(e, &size);
+    const uint8_t *rows = NULL;
+    TIDE_REQUIRE(p && section(p, size, TIDE_PACKET_COMPONENT, type_named("Counter"), &count, &rows) && count == 1u);
+    uint64_t key[2];
+    memcpy(key, p + TIDE_PACKET_HEADER + u32_at(rows, 0) * TIDE_PACKET_ENTITY, sizeof key);
+    const int32_t locals = type_named("Counter local");
+    const uint32_t face = local_field(locals, "face"), shape = local_field(locals, "shape"), look = local_field(locals, "look");
+    TIDE_REQUIRE(face != UINT32_MAX && shape != UINT32_MAX && look != UINT32_MAX);
+    TIDE_CHECK(tide_embed_local_texture(e, (uint32_t)locals, face, key[0], key[1], 7, 64, 32, 0, 0));
+    frames(e, 20, NULL);
+    tide_embed_travel travel;
+    tide_embed_travel_of(e, &travel);
+    TIDE_REQUIRE(travel.state == TIDE_TRAVEL_LIVE && travel.last > travel.first + 4u);
+    TIDE_REQUIRE(tide_embed_pause(e, true));
+    TIDE_REQUIRE(tide_embed_show(e, travel.last - 3u));
+    faced_face = tide_i2(0, 0);
+    frames(e, 1, NULL);
+    TIDE_CHECK(faced_face.x == 64 && faced_face.y == 32); // The shown tick's own local state has it
+    TIDE_CHECK(render(e).ops[TIDE_EMBED_RENDER_EXTERNAL_DRAW] == 0u);
+    // Given while it shows: there the next frame
+    TIDE_CHECK(tide_embed_local_object(e, (uint32_t)locals, shape, key[0], key[1], 11));
+    TIDE_CHECK(tide_embed_local_object(e, (uint32_t)locals, look, key[0], key[1], 12));
+    frames(e, 1, NULL);
+    TIDE_CHECK(render(e).ops[TIDE_EMBED_RENDER_EXTERNAL_DRAW] == 1u);
+    // ...and the match's own has both as it goes on
+    TIDE_REQUIRE(tide_embed_pause(e, false));
+    frames(e, 2, NULL);
+    TIDE_CHECK(faced_face.x == 64 && render(e).ops[TIDE_EMBED_RENDER_EXTERNAL_DRAW] == 1u);
+    tide_embed_destroy(e);
+}
+
 // The other program's own mesh, material and sound in local fields of those types: the game reads nothing of them
 // and hands their numbers back, the mesh and material in a draw recorded where the view made it, with its matrix,
 // for that program to draw itself, and the sound among the frame's sounds for it to play, once. With either of a
