@@ -1,5 +1,25 @@
 # Dedicated servers
 
+## Standalone match isolation
+
+`tide_hosting_update` drains bounded ingress, then updates each match in slot
+order on the caller's thread before processing admission expiry. The session's
+eight-tick catch-up cap bounds tick counts. A single slow tick still holds later
+matches and the next transport update, and a fatal native fault ends the whole
+host. The shared jobs pool runs work within ticks. Moving matches to threads
+would need callback, shared C state, transport and jobs-pool ownership contracts
+and would leave native crashes process-wide.
+
+For fault isolation, the smallest candidate is an opt-in supervisor running
+one unsharded match per child, using the existing `--max-matches 1` and a
+distinct `--port` for each. The owner decision is whether isolated matches may
+advertise distinct endpoints. Keeping one public endpoint would also require a
+front end to own admission and transport, map routes to children, and report
+child loss. A local acceptance test should hold one child's tick, then terminate
+it, while a separate client keeps verifying ticks on another child. The hosting
+loop was inspected for this review. Runtime fault injection and process isolation
+remain future work.
+
 ## Bans (2026-11-04)
 
 A dedicated server has no local code, so `Session.Ban` doesn't reach it; its
