@@ -933,7 +933,9 @@ through `tide_run_frame`: the embed's `show_frame` runs the views over that worl
 the host's draw list, GUI and devices (consumed after it), and writes the view packet from it. Since 2026-11-19 that
 local state's handlers hear the ticks shown (`travel_gather`, `tide_timeline_heard`: notes/unity.md, Time travel's
 gaps), and a background frame's own packet is written and dropped so what the match's taps heard isn't in the shown
-tick's.
+tick's. A sharded match's kept ticks hand their other worlds to `frame_shards` before the views and the packet
+(`hand_beside`). The dev menu's timelines carry the game's layout since then too (`tide_timeline_desc.layout`), so
+its recordings replay across a layout change.
 
 ## Runtime stats argument and documentation pages (2026-10-25)
 

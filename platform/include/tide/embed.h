@@ -23,7 +23,7 @@ typedef struct tide_embed tide_embed;
 
 // What another language binds against: a change to anything here that it lays
 // out or calls changes the number, and tide_embed_abi says it.
-#define TIDE_EMBED_ABI 27u
+#define TIDE_EMBED_ABI 28u
 uint32_t tide_embed_abi(void);
 
 typedef struct tide_embed_desc {
@@ -386,15 +386,23 @@ void tide_embed_microphone(tide_embed *e, const float *samples, uint32_t frames,
 // match goes on behind what's shown (`background`), this machine's player as
 // if it let go of everything, and going on shows its latest tick again.
 //
-// A match another machine runs has no journal here, so it's followed
-// (`followed`) rather than recorded: the worlds of the latest ticks this
+// A match another machine runs is recorded here too where the game hides
+// nothing from its players: this machine is sent all that goes into a tick,
+// so its ticks since it joined are kept, made again, heard and saved as its
+// own match's are (`followed` 3); it never stops for this machine, and isn't
+// this machine's to take back. Where the game hides state, it has no journal
+// here, so it's followed
+// (`followed` 1) rather than recorded: the worlds of the latest ticks this
 // machine had confirmed are kept, as it may have them (what its player may
 // see, in a game that hides state), with what each tick sent. Pausing holds
 // those ticks to show (the match going on behind, as above, and none of the
 // ticks it runs meanwhile kept) and going on follows it again from its
 // latest. It can't be stepped past what's kept, taken back or recorded from
-// here: the machine that runs it does those. A sharded match isn't kept at
-// all: tide_embed_travel says why. A
+// here: the machine that runs it does those. A sharded match is followed the
+// same way wherever it runs, as its player has it: each tick the home
+// shard's world with the worlds of the other shards it follows beside it,
+// named by the home's tick (shards count alike). One this machine runs with
+// nobody else in it really pauses and steps, every shard at once. A
 // frame that shows another tick than the latest runs the views on a local
 // state of their own, so the match's is as it was when it goes on, and what's
 // pressed or sent there never reaches the match.
@@ -427,15 +435,27 @@ typedef struct tide_embed_travel {
     // against (`checked` stays at `first`, `differs` 0)
     uint8_t other_build;
     uint8_t background;  // Players of other machines are in the match: it goes on behind what's shown
-    uint8_t followed;    // The match is another machine's: the ticks this machine had confirmed are kept and shown
-                         // (`first` the first of them), and it can't be stepped, taken back or recorded from here
+    // Not a match this machine runs alone to record, 0. 1, 2: followed rather than recorded: the ticks this machine
+    // had confirmed are kept and shown (`first` the first of them), and it can't be taken back or recorded from here.
+    // 1: another machine's, in a game that hides state from its players. 2: a sharded match, here or elsewhere: each
+    // tick is its player's home shard's world with the other shards it followed beside it, and one this machine runs
+    // alone really pauses and steps. 3: another machine's in a game that hides nothing, recorded here from what this
+    // machine is sent, as its own would be (every tick since it joined, a recording to save), but not taken back
+    uint8_t followed;
     uint64_t hash;       // The shown world's
     uint64_t expected, got;
     char why[TIDE_EMBED_TRAVEL_TEXT];     // Why it can't pause the match now, "" when it can
     char refused[TIDE_EMBED_TRAVEL_TEXT]; // Why the last recording given to replay wasn't, "" when it was
+    // A recording of another layout shown (`other_build` 2): what didn't carry over by name. Fields both layouts
+    // have whose type changed to one they don't convert to (they start at their defaults), entities no storage of
+    // this build takes, and waiting tasks whose code changed
+    uint32_t fields_reset;
+    uint32_t entities_dropped;
+    uint32_t tasks_dropped;
+    uint32_t tide_pad_end;
 } tide_embed_travel;
 
-_Static_assert(sizeof(tide_embed_travel) == 64 + 2 * TIDE_EMBED_TRAVEL_TEXT,
+_Static_assert(sizeof(tide_embed_travel) == 80 + 2 * TIDE_EMBED_TRAVEL_TEXT,
                "tide_embed_travel has no padding the compiler adds");
 
 void tide_embed_travel_of(const tide_embed *e, tide_embed_travel *out);

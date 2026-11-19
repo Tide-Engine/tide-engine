@@ -21,6 +21,12 @@ event(Spawned) Make(with Main)
     for (int i = 0; i < 6; i++) Spawn(Rock { position = float2(-15 + i * 6, 0), id = i });
 }
 
+// Each rock drifts right, a fiftieth a tick: those left of the border cross it, one shard handing them to the other
+system Drift(mut Rock rock)
+{
+    rock.position.x += 0.02;
+}
+
 view Watch()
 {
     Session.Watch(float2(0, 0), float2(40, 10));

@@ -5067,6 +5067,10 @@ struct tide_client {
     tide_client_desc desc;
     tide_local_data_fn local_receive;
     void *local_user;
+    // Its session's, for a recorder (tide_session_record): each tick it confirms from the server's frame, as a
+    // journal record of it (journal_tick's: the frame and the downloads it names), with the worlds before and after
+    void (*journal)(void *user, uint32_t tick, const uint8_t *record, uint32_t size, const void *before, const void *after);
+    void *journal_user;
     bool local_subscribed;
     double local_sent;
     const tide_game *game;
@@ -6352,6 +6356,26 @@ static void *world_at(const tide_client *c, const uint32_t tick)
     return c->worlds[tick % c->ring];
 }
 
+// The tick a client just confirmed, to its session's recorder: the record a server's journal has of it, made of the
+// frame this machine was sent, which in a game that hides nothing is the server's own (tide_replay runs it again)
+static void client_journal(tide_client *c, const uint32_t tick, const pending_frame *f)
+{
+    tide_writer w = {.grows = true};
+    tide_write_u32(&w, tick);
+    tide_write_u32(&w, f->size);
+    tide_write_bytes(&w, f->data, f->size);
+    tide_write_u32(&w, f->name_count);
+    for (uint32_t i = 0; i < f->name_count; i++) {
+        const download *d = download_by_number(c, f->names[i]); // Whole, or its frame wasn't complete
+        tide_write_u32(&w, f->names[i]);
+        tide_write_u32(&w, d ? d->size : 0u);
+        if (d) tide_write_bytes(&w, d->data, d->size);
+    }
+    if (w.overflow) tide_out_of_memory();
+    c->journal(c->journal_user, tick, w.data, w.size, world_at(c, tick), world_at(c, tick + 1u));
+    free(w.data);
+}
+
 // Whether the server ran a frame's tick without this machine's input, which
 // came too late for it.
 static bool own_late(const tide_client *c, const pending_frame *f)
@@ -7546,6 +7570,7 @@ static void play(tide_client *c)
         }
         if (c->game->tick_client_events) hear_authoritative_events(c, &f->events, tick);
         hear_visibility_tick(c, world_at(c, tick + 1u), world_at(c, tick), f, tick);
+        if (c->journal) client_journal(c, tick, f);
         drop_frame(f);
         tide_hearing_confirm(&c->hearing, tick); // What it sent is certain now
         c->verified++;
@@ -8340,9 +8365,66 @@ struct tide_session {
     // last whole (`followed_first`: tide_client.first_tick)
     bool following;
     uint32_t followed, followed_first;
-    const tide_client *followed_client;
+    const void *followed_client; // ...or of this shard client's
+    // ...or, where the game hides nothing, records it from the frames it's sent (client_journaled)
+    bool journaling;
+    uint32_t journaled;
+    const tide_client *journaled_client;
     tide_event_log followed_heard; // What a tick told sent, for the call
 };
+
+// A match another machine runs, recorded here: in a game that hides nothing a client is sent all that goes into a
+// tick, so its recorder is told as the server's machine's is, `begin` from the world it had confirmed and `tick` with
+// a journal record of each tick it confirms after. A tick that isn't the one after the last (a world that came whole
+// in between) begins again from there.
+static void client_journaled(void *user, const uint32_t tick, const uint8_t *record, const uint32_t size, const void *before,
+                             const void *after)
+{
+    tide_session *s = user;
+    if (!s->recorder.begin || !s->recorder.tick) return;
+    if (!s->journaling || s->journaled_client != s->client || tick != s->journaled + 1u) {
+        s->recorder.begin(s->recorder.user, before, tick);
+    }
+    s->recorder.tick(s->recorder.user, tick, record, size, after);
+    s->journaling = true;
+    s->journaled = tick;
+    s->journaled_client = s->client;
+}
+
+// Which way this machine's client's match reaches the recorder, asked before each update: journaled where the game
+// hides nothing and the recorder takes records; else followed (record_client)
+static void journal_client(tide_session *s)
+{
+    tide_client *c = s->client;
+    if (!c) return;
+    const bool journaled = s->recorder.begin && s->recorder.tick && !s->server && !s->shards && !s->shard_client
+                        && !c->game->client_state;
+    c->journal = journaled ? client_journaled : NULL;
+    c->journal_user = s;
+    if (!journaled) s->journaling = false;
+}
+
+// The other shards this machine's player follows, to its recorder, beside its home's world at `tick`: each one's
+// world as its client had it confirmed at that tick, or at its latest before it (shards' clients confirm apart)
+static void record_beside(tide_session *s, const uint32_t tick)
+{
+    tide_view_worlds views[TIDE_SESSION_VIEWS];
+    uint32_t shards[TIDE_SESSION_VIEWS];
+    const void *worlds[TIDE_SESSION_VIEWS];
+    uint32_t count = tide_shard_client_views(s->shard_client, views, shards, TIDE_SESSION_VIEWS);
+    if (count > TIDE_SESSION_VIEWS) count = TIDE_SESSION_VIEWS;
+    uint32_t told = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        const tide_client *c = tide_shard_client_session(s->shard_client, shards[i]);
+        if (!c || !c->loaded) continue;
+        const uint32_t at = tick < c->verified ? tick : c->verified;
+        const uint32_t kept = c->ahead + 2u > c->ring ? c->ahead + 2u - c->ring : 0u;
+        if (at < kept || at < c->first_tick) continue; // Not this client's any more, or not yet
+        worlds[told] = world_at(c, at);
+        shards[told++] = shards[i];
+    }
+    s->recorder.beside(s->recorder.user, tick, told, worlds, shards);
+}
 
 // A match another machine runs, to its recorder: each tick this machine's client has had confirmed since the last
 // one told, from the worlds the client still keeps of them (its ring holds the ticks up to the one it's ahead at,
@@ -8351,13 +8433,16 @@ struct tide_session {
 static void record_client(tide_session *s)
 {
     const tide_client *c = s->client;
-    if (!s->recorder.verified || s->server || s->shards || s->shard_client || !c || !c->loaded) {
+    if (!s->recorder.verified || s->server || !c || !c->loaded || c->journal) { // (journaled: recorded, not followed)
         s->following = false;
         return;
     }
     const uint32_t kept = c->ahead + 2u > c->ring ? c->ahead + 2u - c->ring : 0u;
     const uint32_t lowest = kept > c->first_tick ? kept : c->first_tick;
-    const bool on = s->following && s->followed_client == c && s->followed_first == c->first_tick
+    // In a sharded match the home moves from shard to shard, whose ticks are numbered alike: it goes on through that,
+    // while the shard it's at has the next tick confirmed
+    const void *whose = s->shard_client ? (const void *)s->shard_client : (const void *)c;
+    const bool on = s->following && s->followed_client == whose && (s->shard_client || s->followed_first == c->first_tick)
                  && s->followed <= c->verified && s->followed + 1u >= lowest;
     if (on && s->followed == c->verified) return;
     for (uint32_t tick = on ? s->followed + 1u : c->verified; tick <= c->verified; tick++) {
@@ -8369,11 +8454,12 @@ static void record_client(tide_session *s)
             }
         }
         s->recorder.verified(s->recorder.user, tick, world_at(c, tick), &s->followed_heard);
+        if (s->shard_client && s->recorder.beside) record_beside(s, tick);
     }
     s->following = true;
     s->followed = c->verified;
     s->followed_first = c->first_tick;
-    s->followed_client = c;
+    s->followed_client = whose;
 }
 
 // Each tick of the match this machine runs, to its recorder
@@ -8838,6 +8924,7 @@ void tide_session_update(tide_session *s, const double now)
     if (!s->client) return;
     s->client->local_receive = s->local_receive;
     s->client->local_user = s->local_user;
+    journal_client(s);
     // This machine's server stops whenever the machine does (a breakpoint, a
     // browser that froze the page), and its player with it. Beyond the ticks
     // the server can run in one update, which it would drop anyway, that time
@@ -9620,6 +9707,14 @@ uint32_t tide_session_remote_players(const tide_session *s)
 {
     const tide_server *server = s ? s->server : NULL;
     uint32_t count = 0;
+    if (s && s->shards && s->client) { // A sharded match here: everyone joins at its root, this machine's player too
+        const tide_server *shard_root = tide_shards_server(s->shards, 0);
+        const uint32_t own = (uint32_t)s->client->player;
+        for (uint32_t p = 0; shard_root && p < shard_root->players; p++) {
+            if (shard_root->connections[p].used && p != own) count++;
+        }
+        return count;
+    }
     for (uint32_t p = 0; server && p < server->players; p++) {
         if (server->connections[p].used && !server->connections[p].local) count++;
     }
@@ -9675,6 +9770,6 @@ void tide_session_record(tide_session *s, const tide_session_recorder *recorder)
 {
     settle(s);
     s->recorder = recorder ? *recorder : (tide_session_recorder){0};
-    s->following = false; // A match followed is told to this one from its latest tick
+    s->following = s->journaling = false; // A match followed or journaled is told to this one from its latest tick
     record_server(s);
 }

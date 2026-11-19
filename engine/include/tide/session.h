@@ -1009,7 +1009,14 @@ void tide_session_set_view_corrector(tide_session *s, tide_view_correct_fn corre
 // thread updating the session, the world and bytes theirs only for the call.
 // Sharded matches aren't recorded.
 //
-// A match another machine runs has no journal here, so it's followed rather
+// A match another machine runs is recorded here too where the game hides
+// nothing from its players (no visibility): this machine is sent all that
+// goes into a tick, so `begin` and `tick` are told as on the server's machine,
+// each tick it confirms with a journal record made of the frame it was sent
+// (tide_replay runs it again), beginning again where a world came whole.
+//
+// Where the game hides state, or the recorder has no `tick`, such a match has
+// no journal here, so it's followed rather
 // than recorded: `verified` (optional) says each tick this machine has had
 // confirmed, once, with the world after `tick` ticks as this machine has it
 // (what its player may have of it, in a game that hides state) and, in
@@ -1018,18 +1025,27 @@ void tide_session_set_view_corrector(tide_session *s, tide_view_correct_fn corre
 // NULL or empty otherwise. Ticks come in order while they follow one another;
 // one that isn't the tick after the last told (the first, a world that came
 // whole, ticks confirmed faster than they're kept) starts over.
+//
+// A sharded match, on this machine or another, is followed the same way, as
+// this machine's player has it: `verified` says its home shard's world at each
+// tick (whichever shard its home is then), and `beside` (optional), right
+// after it, the worlds of the other shards it follows, as each was confirmed
+// at that tick, or at its latest before it: what a frame draws beside the
+// home's (tide_session_views), with which shard each is.
 typedef struct tide_session_recorder {
     void *user;
     void (*begin)(void *user, const void *world, uint32_t tick);
     void (*tick)(void *user, uint32_t tick, const uint8_t *record, uint32_t size, const void *world);
     void (*verified)(void *user, uint32_t tick, const void *world, const tide_event_log *heard);
+    void (*beside)(void *user, uint32_t tick, uint32_t count, const void *const *worlds, const uint32_t *shards);
 } tide_session_recorder;
 
 // Copied; NULL stops recording.
 void tide_session_record(tide_session *s, const tide_session_recorder *recorder);
 
 // Players on other machines in the match this machine runs (connected, or
-// joining); 0 for none, and on a client.
+// joining); 0 for none, and on a client. In a sharded match here, the players
+// its root has but this machine's.
 uint32_t tide_session_remote_players(const tide_session *s);
 
 // The match this machine runs goes on from `world` (a world of it, such as

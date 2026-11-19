@@ -515,24 +515,35 @@ static void drop_replay(void)
 static const char *travel_why(const bool recorded)
 {
     if (!tide_run_session || !tide_run_game) return "there's no match";
-    if (tide_run_game->game->shards) return "a sharded match isn't recorded";
     const tide_session_status status = tide_session_status_of(tide_run_session);
     if (!status.server && status.client.state != TIDE_SESSION_CONNECTED) {
         return status.client.state == TIDE_SESSION_OFFLINE ? "this machine is in no match" : "this machine isn't in the match yet";
     }
     if (travel.keep_seconds <= 0.0f) return "time travel is off";
     if (recorded && !tide_timeline_started(travel.live)) {
-        return status.server ? "the match hasn't started" : "none of the match's ticks is confirmed here yet";
+        return status.server && !tide_run_game->game->shards ? "the match hasn't started"
+                                                             : "none of the match's ticks is confirmed here yet";
     }
     return "";
 }
+
+static bool travel_background(void);
 
 // A match another machine runs, followed (tide_session_recorder.verified): each tick this machine has had confirmed
 // is kept, but while the frames hold a tick of it (or show a recording): the ticks they can show stay as they were at
 // the pause, and it's followed again, from its latest, as they go on
 static void travel_verified(void *user, const uint32_t tick, const void *world, const tide_event_log *heard)
 {
-    if (!travel.paused) tide_timeline_follow(user, tick, world, heard);
+    if (!travel.paused || !travel_background()) tide_timeline_follow(user, tick, world, heard);
+}
+
+// ...and a sharded match's other worlds beside it (tide_session_recorder.beside), held alike. A sharded match this
+// machine runs with nobody else in it really pauses, so it's followed through a pause: its steps are kept as they're
+// confirmed
+static void travel_beside(void *user, const uint32_t tick, const uint32_t count, const void *const *worlds,
+                          const uint32_t *shards)
+{
+    if (!travel.paused || !travel_background()) tide_timeline_follow_beside(user, tick, count, worlds, shards);
 }
 
 #if !defined(__wasm__)
@@ -560,7 +571,7 @@ static void travel_reload(const tide_host_game *old, const tide_host_game *next)
 // The match recorded, as time travel is on and there's one this machine runs; and a pause that can't last ends
 static void travel_follow(void)
 {
-    const bool wanted = travel.keep_seconds > 0.0f && tide_run_session && tide_run_game && !tide_run_game->game->shards;
+    const bool wanted = travel.keep_seconds > 0.0f && tide_run_session && tide_run_game;
     if (!wanted || (travel.live && (travel.recorded != tide_run_session || travel.game != tide_run_game->game))) {
         const bool paused = travel.paused;
         drop_live();
@@ -575,12 +586,15 @@ static void travel_follow(void)
         travel.game = tide_run_game->game;
         tide_session_recorder recorder = tide_timeline_recorder(travel.live);
         recorder.verified = travel_verified;
+        recorder.beside = travel_beside;
         tide_session_record(tide_run_session, &recorder);
     }
-    // A match this machine was in and runs now (it took it over), or the other way: what was kept isn't the same match's
-    // way of keeping, and starts over with what the session says next
-    if (travel.live && tide_timeline_started(travel.live)
-        && tide_timeline_follows(travel.live) == tide_session_status_of(tide_run_session).server) {
+    // A match kept the other way than it is now (this machine took over one it followed, say): it starts over with
+    // what the session says next. Followed: a sharded match wherever it runs (its player's shards' confirmed worlds),
+    // and another machine's in a game that hides state; any other is recorded, another machine's from what it sends
+    const bool follows = tide_run_game->game->shards
+        || (!tide_session_status_of(tide_run_session).server && tide_run_game->game->client_state);
+    if (travel.live && tide_timeline_started(travel.live) && tide_timeline_follows(travel.live) != follows) {
         const bool paused = travel.paused;
         drop_live();
         travel.paused = paused;
@@ -616,6 +630,22 @@ static const void *travel_world(tide_timeline *t, const uint32_t tick)
 {
     travel_gather(t, tick);
     return tide_timeline_world(t, tick);
+}
+
+// A sharded match's other worlds kept beside the tick shown (travel_gather's timeline), handed to the game as a
+// frame's are (tide_session_views): for the frame or the packet that comes next, which lets go of them
+static void hand_beside(const uint32_t tick)
+{
+    if (!tide_run_game->frame_shards) return;
+    const void *worlds[TIDE_SESSION_VIEWS];
+    uint32_t shards[TIDE_SESSION_VIEWS];
+    tide_view_worlds more[TIDE_SESSION_VIEWS];
+    const uint32_t n = travel.heard_of ? tide_timeline_beside(travel.heard_of, tick, worlds, shards, TIDE_SESSION_VIEWS) : 0u;
+    for (uint32_t i = 0; i < n; i++) {
+        more[i] = (tide_view_worlds){.current = worlds[i], .alpha = 1.0f, .verified = worlds[i], .verified_alpha = 1.0f,
+                                     .verified_tick = tick};
+    }
+    tide_run_game->frame_shards(more, n);
 }
 
 // A frame showing `world`, the world after `tick` ticks, with `player` this machine's: the views on a local state
@@ -654,6 +684,7 @@ static void show_frame(const void *world, const uint32_t tick, const uint32_t pl
     if (game->events) game->events(local, &travel.events);
     if (game->audio) game->audio(local, &tide_run_audio);
     const tide_jobs *const loops_before = tide_loops_enter(tide_run_gui.jobs); // As a frame's views have it (tide/host.h)
+    hand_beside(tick);
     game->frame(world, NULL, 1.0f, world, NULL, 1.0f, local, &tide_run_draw, &tide_run_gui);
     tide_loops_leave(loops_before);
     tide_gui_end(&tide_run_gui, &tide_run_draw);
@@ -673,7 +704,10 @@ static void show_frame(const void *world, const uint32_t tick, const uint32_t pl
     last_view = travel.replay ? VIEW_REPLAYED : VIEW_SHOWN;
     last_view_tick = tick;
     packet_wanted(false);
-    if (embed && embed->view) embed->view(world, NULL, 1.0f, local, tick, &packet);
+    if (embed && embed->view) {
+        hand_beside(tick); // In the packet too, as write_view's
+        embed->view(world, NULL, 1.0f, local, tick, &packet);
+    }
 }
 
 // Players of other machines are in the match, or it's another machine's: it never stops for them
@@ -800,6 +834,9 @@ void tide_embed_travel_of(const tide_embed *e, tide_embed_travel *out)
         out->shown = travel.replay_shown;
         out->playing = travel.playing;
         out->other_build = travel.about.other_layout ? 2u : travel.about.other_build ? 1u : 0u;
+        out->fields_reset = travel.about.fields_reset;
+        out->entities_dropped = travel.about.entities_dropped;
+        out->tasks_dropped = travel.about.tasks_dropped;
         if (travel.about.tick_rate) out->tick_rate = travel.about.tick_rate;
         tide_timeline_check check;
         tide_timeline_check_of(r, &check);
@@ -816,7 +853,8 @@ void tide_embed_travel_of(const tide_embed *e, tide_embed_travel *out)
         out->last = tide_timeline_last(t);
         out->state = travel.paused ? TIDE_TRAVEL_PAUSED : out->why[0] ? TIDE_TRAVEL_NONE : TIDE_TRAVEL_LIVE;
         out->background = travel_background();
-        out->followed = tide_timeline_follows(t);
+        out->followed = tide_timeline_follows(t) ? (tide_run_game->game->shards ? 2u : 1u)
+                      : tide_session_status_of(tide_run_session).server ? 0u : 3u;
         out->shown = travel.paused && travel.shown < out->last ? travel.shown : out->last;
         if (travel.paused) shown = tide_timeline_world(t, out->shown);
     } else {
@@ -1007,6 +1045,7 @@ bool tide_embed_view_again(tide_embed *e)
         const void *world = kept && travel.local ? tide_timeline_world(kept, last_view_tick) : NULL;
         if (!world) return false;
         packet_wanted(true);
+        hand_beside(last_view_tick);
         embed->view(world, NULL, 1.0f, travel.local, last_view_tick, &packet);
         return true;
     }

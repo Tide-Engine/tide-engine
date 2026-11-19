@@ -422,11 +422,15 @@ migration (`tide/migrate.h`, as a checkpoint is loaded by another layout's build
   change in Unity (the Sample's game changed, built and reloaded mid-test) isn't a PlayMode test; the two-program
   native test is that case.
 
-### 4. Sharded matches: a proposal for the owner, nothing built
+### 4. Sharded matches: a proposal for the owner
 
-Stopped at a proposal, as asked where a real trade-off shows: three do (A to C below). Nothing of it is built; a
-sharded match still says "a sharded match isn't recorded" (`travel_why`), the session's recorder is told nothing of
-one and `tide_session_rewind` refuses it.
+(Since, the same day: a sharded match is **followed**, which is this proposal's step 1 and its last, on A1 and B1,
+built another way than sketched below: by what the player's clients confirmed, not the servers' worlds. Section 5.
+Recordings, ticks before those kept and Continue From Here are still as proposed here, and C is still the owner's.)
+
+Stopped at a proposal, as asked where a real trade-off shows: three do (A to C below). As first written, nothing
+of it was built: a sharded match said "a sharded match isn't recorded" (`travel_why`), the session's recorder was
+told nothing of one, and `tide_session_rewind` refuses it (it still does).
 
 **What a sharded match is to a debugger** (notes/sharding.md). On this machine it's a `tide_shards` inside the
 session: a root and regions, each a server with its own world, tick count and journal, and a coordinator that
@@ -486,6 +490,81 @@ is a match's and would be a shard's.
 sharded world last. 1 and 2 touch the session (a recorder callback after each orchestrator update, with the shards'
 worlds, ticks and the player's follows), the timeline (a set of them), the embed's `show_frame` and the window; no
 generated code, layout, hash or wire format.
+
+### 5. What those left, closed (2026-11-19, later)
+
+The owner, on the report of 1 to 4: "try to close all gaps that make sense please". Taken as leave to go by my
+recommendations where a gap had one; every pick stays mine (Provisional). What made sense, in the order built:
+
+- **The dev menu's recordings say their layout** (`tide/host.h`): its timelines are made and loaded with
+  `tide_host_game.layout` and handed the new build's at a same-layout reload, so a recording it saves replays in a
+  build laid out otherwise, as Unity's do; its line says "recorded by a build laid out otherwise: carried over by
+  name, its ticks unchecked". `tide_platform_dev_menu` passes as it was.
+- **What didn't carry over is said (embed ABI 28).** `tide_embed_travel` has `fields_reset`, `entities_dropped`
+  and `tasks_dropped` after its texts (16 bytes more: `TideTravel.Size` 336, `TideLibrary.Abi` 28, taken as the next
+  number after the view packet's 27). The window adds "Not carried over: ..." under a carried-over recording when
+  any is more than none. `travel_layout.tide`'s `Score.drift` is an int where the recording's was a float, which
+  doesn't convert: one field reset, checked through the embed and the timeline.
+- **Another machine's match is recorded here, where the game hides nothing** (2's "not built"). A client is sent
+  all that goes into a tick (the frame a journal record is made of), so:
+  - `session.c`: a client confirming a tick from its frame hands its session a journal record of it
+    (`client_journal`: the tick, the frame, the downloads it names, as `journal_tick` writes them) with the worlds
+    before and after; `client_journaled` tells the recorder `begin` (from the world before, at the first, at a new
+    client, or where a tick isn't the one after the last: a world came whole) and `tick`. `journal_client`, before
+    each update, turns it on where the recorder takes records, the match is another machine's, isn't sharded and
+    the game has no projections (`client_state`); such a client isn't followed too.
+  - So the embed's timeline of it is a recording like its own match's: every tick since this machine came in, ticks
+    before the ring made again, replay checks, the ticks' events by running them again (gap 1's way), and
+    **Save Recording works on a client** (a tester's machine in someone else's match). It never stops for this
+    machine (the background mode, recorded on behind the tick shown, so nothing is held) and isn't this machine's
+    to take back. `tide_embed_travel.followed` is 3 for it; the window says "Recording another machine's match:
+    tick N, from tick M, where this machine came in" and greys Continue From Here alone.
+  - Following (`followed` 1) is what's left for a game that hides state, where a client's frames aren't the whole
+    tick, and for a recorder with no `tick`.
+  - Tests: `travel_records_another_machines_match` (was `travel_follows_...`): `followed` 3, the first tick where
+    it came in and staying there, a pause showing a tick while the match is recorded on behind it, every tick back
+    to the first the server's world by hash (those before the ring made again), the Bump heard where landed on and
+    in the packet, no step at the latest, no taking back, and its recording saved there replaying bit for bit,
+    every hash the server's machine's, all checked. `timeline_follows_a_client_that_keeps_no_records`: following
+    itself, at the session and timeline (a recorder without `tick` on a client of three machines over the lossy
+    loopback): the last 20 confirmed ticks, each the server's world, the Bump's event at its tick, nothing before,
+    no save, no cut.
+- **Sharded matches are followed** (4's first step and its last, on A1 and B1). A sharded match, on this machine or
+  another, reaches the recorder as its player has it:
+  - `session.c`: `record_client` follows the home shard's client through the home moving from shard to shard
+    (shards count ticks alike, so it goes on while the shard it's at has the next tick confirmed), and
+    `tide_session_recorder.beside`, right after each `verified`, has the other followed shards' worlds: each as its
+    client had it confirmed at that tick, or at its latest before (`record_beside`, by
+    `tide_shard_client_session`). `tide_session_remote_players` counts a sharded match's root's players but this
+    machine's.
+  - `timeline.c`: `tide_timeline_follow_beside` keeps them with the tick's slot (page-sharing copies, their
+    shards' numbers), `tide_timeline_beside` gives them back.
+  - `embed.c`: no refusal for a sharded game; `hand_beside` gives a shown tick's other worlds to the game's
+    `frame_shards` before its views and again before its packet (and before `tide_embed_view_again`'s), as
+    `write_view` does a live frame's. A sharded match this machine runs with nobody else in it **really pauses**
+    (no shard ticks) and **steps** (every shard a tick, kept once the player's clients confirmed it): it's followed
+    through such a pause. With others in it, or on another machine, a pause holds the ticks kept, as 2's.
+    `followed` 2; the window says so.
+  - Not for it: Continue From Here and recordings (4's decision C and step 2, still the owner's: below).
+  - Test: `tide_platform_embed_shards`' `embed_shows_a_sharded_matchs_kept_ticks` (its rocks drift now, a fiftieth
+    a tick, so one crosses the border): `followed` 2 and no background; a pause runs no tick in a second of
+    frames; a step is one tick; back through 300 kept ticks every rock is in the packet once at every tick after
+    this machine followed the regions (its first few ticks are its home's world alone, the root's, which has no
+    rock), each exactly one tick's drift on from the tick before, through rock 2's crossing from one shard to the
+    other; no taking back, no recording; going on, followed again.
+- **Still not built, and why:**
+  - *A sharded match's recording, ticks before those kept, and Continue From Here* (4's steps 2 and 3): each needs
+    what following doesn't have (every shard's journal on this machine, and for going back the coordinator's own
+    state), and decision C is a real trade-off that stays the owner's. Following needs neither and works for a
+    sharded world on another machine too, so it came first. 4's text stands for those.
+  - *The standard host's own pause hearing earlier ticks:* it shows them through the match's own local state, so
+    handlers hearing them again would count twice in the state the match goes on with. It would need the separate
+    local state the embed has, which is that host's design to change.
+  - *Input and command changes across a layout change:* their packed bytes are the recording build's alone to read.
+  - *Unity tests of the followed, recorded-client and sharded cases:* the Sample's PlayMode tests are one editor
+    with one game that isn't sharded; those run natively through the same embed.
+  - *The embed's travel on the web:* its tests are native (`if(NOT TIDE_WEB)`), as the embed's are; the code is the
+    same C, compiled for the web each time.
 
 ## The replay of 2026-11-14's GPU work, Gamma [Linear] images, multisampled mipmaps, triangle sides (2026-11-15)
 

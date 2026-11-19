@@ -3231,8 +3231,19 @@ For Unity's time travel (notes/unity.md, Time travel), host-side session calls; 
   still holds as confirmed, and copying from the session's log (`s->heard`, where the host takes it) the records
   of the tick before with `as == TIDE_HEARD_VERIFIED`, as 0. It starts over at the latest tick (one call) when the
   client changed, a world came whole (`first_tick`), `verified` went back, or the next tick is out of the ring;
-  `tide_session_record` starts it over too. Nothing on a server's machine or in a sharded match. No client state
-  changes and nothing is sent: it only reads.
+  `tide_session_record` starts it over too. Nothing on a server's machine. No client state
+  changes and nothing is sent: it only reads. Since the same day, later (notes/unity.md, Time travel's gaps, 5):
+  a sharded match is followed too, through its home moving between shards (kept by the shard client, not a client),
+  with `tide_session_recorder.beside` after each `verified` (`record_beside`: the other followed shards' clients'
+  worlds at that tick or their latest before it); and a client of a game with no projections isn't followed but
+  **journaled**: `journal_client` (before each update) sets `tide_client.journal`, and the client, as it confirms a
+  tick from its frame (before `drop_frame`), hands over a record made as `journal_tick` makes one (tick, the frame's
+  size and bytes, the count of downloads it names and each one's number, size and bytes) with `world_at(c, tick)`
+  and `world_at(c, tick + 1)`; `client_journaled` tells the recorder `begin` and `tick` as a server's machine's is
+  told. It relies on a client's frame of such a game being the bytes the server journals (it is where no private
+  journal is kept: `journal_tick`'s `private` is a projection game's), which `travel_records_another_machines_match`
+  pins by replaying a client's recording against the server's hashes. `tide_session_remote_players` counts a
+  sharded match's root's connections but this machine's.
 - `tide_session_remote_players(s)`: connections on the server here that aren't this machine's (used, connected or
   joining).
 - `tide_session_rewind(s, world)`: the server's world becomes `world`, then the new optional

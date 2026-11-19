@@ -16,7 +16,7 @@ component Walker
 singleton Score
 {
     int bonus = 10;
-    float drift;
+    int drift = 7; // A float there: a type it doesn't convert from, so it starts at this
     int total;
 }
 
@@ -51,9 +51,9 @@ system Walk(Move move, mut Walker walker, Time time)
     if (move.jump) walker.jumps += 1;
 }
 
-system Drift(mut Score score, Time time)
+system Drift(mut Score score)
 {
-    score.drift += time.dt * 0.5;
+    score.drift += 1;
 }
 
 event Bumped { int by; }

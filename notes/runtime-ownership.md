@@ -1398,6 +1398,10 @@ format changed. The same day: `tide_session_recorder.verified` (a client's confi
 its ring after its update) and `tide_timeline_follow` / `_follows`, on the same terms. And
 `tide_timeline_desc.layout`, `tide_timeline_set_layout` and the recording file's version 2 (its layout and its
 worlds as `pack_world` has them, carried over by `tide_migrate_world`): platform-side, nothing in the engine.
+Later that day: `tide_session_recorder.beside` (a sharded match's other followed worlds), a client's journal for its
+session's recorder (`tide_client.journal`, internal to session.c), `tide_timeline_follow_beside` / `_beside`, and
+embed ABI 28 (`tide_embed_travel`'s three counts). Still nothing generated code calls, and no layout, hash or wire
+change.
 
 ## Twelve texture drawing boundary (2026-10-25)
 

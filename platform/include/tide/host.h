@@ -3149,7 +3149,8 @@ static inline void tide_run_travel_follow(void)
         }
     }
     if (wanted && !tide_run_travel.live) {
-        tide_run_travel.live = tide_timeline_create(&(tide_timeline_desc){.game = game->game, .jobs = tide_run_jobs()});
+        tide_run_travel.live = tide_timeline_create(&(tide_timeline_desc){.game = game->game, .jobs = tide_run_jobs(),
+                                                                          .layout = game->layout});
         if (!tide_run_travel.live) return;
         tide_run_travel.recorded = tide_run_session;
         tide_run_travel.game = game->game;
@@ -3321,7 +3322,8 @@ static inline void tide_run_travel_replay(const char *name)
     bytes = tide_checkpoint_read(tide_run_checkpoints, name, ".recording", &size, why, sizeof why);
 #endif
     tide_timeline_about about = {0};
-    tide_timeline *r = bytes ? tide_timeline_load(&(tide_timeline_desc){.game = tide_run_game->game, .jobs = tide_run_jobs()},
+    tide_timeline *r = bytes ? tide_timeline_load(&(tide_timeline_desc){.game = tide_run_game->game, .jobs = tide_run_jobs(),
+                                                                        .layout = tide_run_game->layout},
                                                   bytes, size, &about, why, sizeof why)
                              : NULL;
     free(bytes);
@@ -3343,7 +3345,8 @@ static inline void tide_run_travel_replay(const char *name)
     tide_run_travel.playing = true;
     tide_run_travel.played = 0.0;
     snprintf(tide_run_travel.said, sizeof tide_run_travel.said, "Replaying %s%s", name,
-             about.other_build ? ", recorded by another build: its ticks may go otherwise" : "");
+             about.other_layout ? ", recorded by a build laid out otherwise: carried over by name, its ticks unchecked"
+             : about.other_build ? ", recorded by another build: its ticks may go otherwise" : "");
 }
 
 // A new build takes over (reload_library.inc's reload_before, while the old one's code is still loaded): one of the
@@ -3354,6 +3357,8 @@ static inline void tide_run_travel_reload(const tide_host_game *old, const tide_
     if (next && next->game->hash == old->game->hash) {
         tide_timeline_set_game(tide_run_travel.live, next->game);
         tide_timeline_set_game(tide_run_travel.replay, next->game);
+        tide_timeline_set_layout(tide_run_travel.live, next->layout); // The old build's description goes with its code
+        tide_timeline_set_layout(tide_run_travel.replay, next->layout);
         if (tide_run_travel.live) tide_run_travel.game = next->game;
         return;
     }

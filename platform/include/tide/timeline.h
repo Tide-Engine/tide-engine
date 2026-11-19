@@ -50,6 +50,16 @@ void tide_timeline_tick(tide_timeline *t, uint32_t tick, const uint8_t *record, 
 // and it can't be cut or saved. A tick that isn't the one after its last
 // starts it over from there.
 void tide_timeline_follow(tide_timeline *t, uint32_t tick, const void *world, const tide_event_log *heard);
+// ...and, of a sharded match, the worlds a frame draws beside that one at
+// `tick` (tide_session_recorder.beside: copied), which must be the tick last
+// followed.
+void tide_timeline_follow_beside(tide_timeline *t, uint32_t tick, uint32_t count, const void *const *worlds,
+                                 const uint32_t *shards);
+// The worlds kept beside the one of `tick`, up to `capacity` of them, with
+// which shard each is: how many. Theirs until the next call that makes or
+// follows a tick.
+uint32_t tide_timeline_beside(const tide_timeline *t, uint32_t tick, const void **worlds, uint32_t *shards,
+                              uint32_t capacity);
 // Whether it follows a match (tide_timeline_follow) rather than records one.
 bool tide_timeline_follows(const tide_timeline *t);
 // The recorder that does all three, for tide_session_record.

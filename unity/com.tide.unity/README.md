@@ -375,14 +375,23 @@ default).
   player as if it let go of everything), and Resume shows its latest tick
   again. Continue From Here takes them back too: they're sent the match's world
   again, as when a client goes wrong.
-- In a match **another machine runs**, the editor follows it instead of
-  recording it: the last Keep Seconds of ticks this machine had confirmed are
-  kept, as this machine has them (what its player may see, in a game that
-  hides state). Pause holds those to show while the match goes on, the Tick
-  slider and Step go through them with what each sent, and Resume shows the
-  match's latest again and follows it from there. Its ticks before those
-  kept can't be made again here, and it can't be taken back or recorded from
-  here: the machine that runs it does that.
+- A match **another machine runs** is recorded here too, from what this
+  machine is sent, where the game hides nothing from its players: every tick
+  since this machine came in shows again, and Save Recording works, so a
+  tester in someone else's match can save what they saw. It never stops for
+  this machine (Pause shows a tick while it goes on), and it isn't this
+  machine's to take back: Continue From Here is the machine's that runs it.
+- In a game that **hides state** from players (visibility), another machine's
+  match is followed instead: the last Keep Seconds of ticks this machine had
+  confirmed are kept, as its player may have them. Pause holds those to show
+  while the match goes on, the Tick slider and Step go through them with what
+  each sent, and Resume follows it again from its latest. Nothing before them
+  can be made again here, and there's no recording.
+- A **sharded match** is followed the same way, on this machine or another,
+  as its player has it: each tick is the player's home shard's world with the
+  other shards it follows beside it, so a tick shown has what the game drew
+  then. One this machine runs with nobody else in it really pauses, and Step
+  runs every shard a tick. It isn't recorded or taken back yet.
 - **Save Recording** writes the match's recording (a `.tiderec`) and **Open
   Recording** replays one, a tester's from a bug report say, on any machine with
   a build of the same data layout (the game's components, input and commands as
@@ -410,7 +419,7 @@ editor (the default), nowhere, or in player builds too, so a game can save a
 tester's recording for a bug report. A hot reload while paused comes in as
 any: the match stays paused, its kept ticks with it if the data layout is the
 same (another starts the recording over), and the next step runs the new code.
-A sharded match isn't kept.
+A sharded match's ticks are kept as its player's shards confirmed them (above).
 
 ## Build
 

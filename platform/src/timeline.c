@@ -37,6 +37,9 @@ typedef struct kept {
     uint32_t tick;
     bool used;
     tide_event_log heard; // A match followed: what the tick that made it sent (tide_timeline_follow)
+    void **beside;        // ...and a sharded one's other worlds drawn beside it, with their shards
+    uint32_t *beside_shards;
+    uint32_t beside_count, beside_room;
 } kept;
 
 // The match went on from `world` as tick `tick`'s, whatever replaying makes of it (tide_timeline_cut)
@@ -86,6 +89,12 @@ static void drop_world(const tide_timeline *t, void *world)
     free(world);
 }
 
+static void drop_beside(const tide_timeline *t, kept *k)
+{
+    for (uint32_t i = 0; i < k->beside_count; i++) drop_world(t, k->beside[i]);
+    k->beside_count = 0;
+}
+
 static void drop_jumps_after(tide_timeline *t, const uint32_t tick)
 {
     while (t->jump_count && t->jumps[t->jump_count - 1u].tick > tick) {
@@ -108,6 +117,9 @@ static void clear(tide_timeline *t)
     for (uint32_t i = 0; i < t->keep; i++) {
         drop_world(t, t->kept[i].world);
         tide_event_log_free(&t->kept[i].heard);
+        drop_beside(t, &t->kept[i]);
+        free(t->kept[i].beside);
+        free(t->kept[i].beside_shards);
         t->kept[i] = (kept){0};
     }
     t->following = false;
@@ -163,6 +175,7 @@ static void *slot_for(tide_timeline *t, const uint32_t tick)
     k->used = false;
     k->tick = tick;
     tide_event_log_clear(&k->heard);
+    drop_beside(t, k);
     return k->world;
 }
 
@@ -287,6 +300,44 @@ void tide_timeline_follow(tide_timeline *t, const uint32_t tick, const void *wor
     t->check.checked = tick;
 }
 
+void tide_timeline_follow_beside(tide_timeline *t, const uint32_t tick, const uint32_t count, const void *const *worlds,
+                                 const uint32_t *shards)
+{
+    if (!t || !t->started || !t->following || tick != t->made) return;
+    kept *k = &t->kept[tick % t->keep];
+    if (!k->used || k->tick != tick) return;
+    drop_beside(t, k);
+    if (count > k->beside_room) {
+        void **grown = realloc(k->beside, count * sizeof *grown);
+        if (!grown) tide_out_of_memory();
+        k->beside = grown;
+        uint32_t *numbers = realloc(k->beside_shards, count * sizeof *numbers);
+        if (!numbers) tide_out_of_memory();
+        k->beside_shards = numbers;
+        k->beside_room = count;
+    }
+    for (uint32_t i = 0; i < count; i++) {
+        k->beside[i] = new_world(t);
+        t->game->copy_world(k->beside[i], worlds[i]);
+        k->beside_shards[i] = shards[i];
+    }
+    k->beside_count = count;
+}
+
+uint32_t tide_timeline_beside(const tide_timeline *t, const uint32_t tick, const void **worlds, uint32_t *shards,
+                              const uint32_t capacity)
+{
+    if (!t || !t->started) return 0;
+    const kept *k = &t->kept[tick % t->keep];
+    if (!k->used || k->tick != tick) return 0;
+    const uint32_t count = k->beside_count < capacity ? k->beside_count : capacity;
+    for (uint32_t i = 0; i < count; i++) {
+        worlds[i] = k->beside[i];
+        shards[i] = k->beside_shards[i];
+    }
+    return count;
+}
+
 bool tide_timeline_follows(const tide_timeline *t)
 {
     return t && t->started && t->following;
@@ -307,9 +358,16 @@ static void recorder_verified(void *user, const uint32_t tick, const void *world
     tide_timeline_follow(user, tick, world, heard);
 }
 
+static void recorder_beside(void *user, const uint32_t tick, const uint32_t count, const void *const *worlds,
+                            const uint32_t *shards)
+{
+    tide_timeline_follow_beside(user, tick, count, worlds, shards);
+}
+
 tide_session_recorder tide_timeline_recorder(tide_timeline *t)
 {
-    return (tide_session_recorder){.user = t, .begin = recorder_begin, .tick = recorder_tick, .verified = recorder_verified};
+    return (tide_session_recorder){.user = t, .begin = recorder_begin, .tick = recorder_tick, .verified = recorder_verified,
+                                   .beside = recorder_beside};
 }
 
 void tide_timeline_set_game(tide_timeline *t, const tide_game *game)

@@ -99,6 +99,7 @@ TIDE_TEST(travel_replays_a_recording_of_another_layout)
     TIDE_REQUIRE(replayed);
     TIDE_CHECK(t.state == TIDE_TRAVEL_REPLAY);
     TIDE_CHECK(t.other_build == 2u); // Laid out otherwise, and carried over
+    TIDE_CHECK(t.fields_reset == 1u && t.entities_dropped == 0u && t.tasks_dropped == 0u); // Score.drift, a float there
     TIDE_CHECK(t.first == ticks[0] && t.last == ticks[2]);
     for (int i = 0; i < 3; i++) {
         TIDE_REQUIRE(tide_embed_show(e, ticks[i]));
@@ -127,13 +128,13 @@ TIDE_TEST(travel_replays_a_recording_of_another_layout)
     TIDE_CHECK(seen_steps == steps[2] && seen_total == totals[2]);
     tide_embed_destroy(e);
 
-    // The timeline's own account: carried over, with nothing lost of a layout whose fields kept their types
+    // The timeline's own account: carried over, but for the one field whose type changed
     tide_timeline_about about;
     char why[200];
     tide_timeline *timeline = tide_timeline_load(&(tide_timeline_desc){.game = &tide_game_api, .layout = &tide_game_layout},
                                                  bytes, size, &about, why, sizeof why);
     TIDE_REQUIRE(timeline != NULL);
-    TIDE_CHECK(about.other_layout && about.fields_reset == 0 && about.entities_dropped == 0 && about.tick_rate == 30u);
+    TIDE_CHECK(about.other_layout && about.fields_reset == 1 && about.entities_dropped == 0 && about.tick_rate == 30u);
     TIDE_CHECK(tide_timeline_world(timeline, tide_timeline_last(timeline)) != NULL);
     tide_timeline_check check;
     tide_timeline_check_of(timeline, &check);
