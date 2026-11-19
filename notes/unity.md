@@ -493,7 +493,9 @@ mine (Provisional).
   65 of 65 on Direct3D 11, and BounceTests 20 of 20 on each of Direct3D 11, Direct3D 12, Vulkan and OpenGL Core (the
   end-to-end test above on all four); EditMode on Direct3D 11, 52 of 54: one skipped as before (the ABI-5 host
   fixture), and the launch-argument test failing only because these runs pass `-tide-command` (it checks a launch
-  without one, which here would be the owner's installed tide). No C# warnings.
+  without one, which here would be the owner's installed tide). No C# warnings. Again after the day's last merge with dev (time
+  travel's gaps, the view packet and Unity assets in views): PlayMode whole 70 of 70 on Direct3D 11, EditMode 52 of 54
+  as before.
 - **Not run:** `tide upgrade` itself or the Versions window's switch while Play runs (what they do to the files is
   what the two live tests do); a watching `tide run` end to end, which needs a window (its host's check is
   `tide_platform_reload`'s, its texts the CLI test's, and `run_build`'s refusal is read, not run); Linux and macOS
