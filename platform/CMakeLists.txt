@@ -5,7 +5,12 @@
 file(GLOB TIDE_PLATFORM_SOURCES CONFIGURE_DEPENDS src/*.c)
 if(TIDE_WEB)
     list(REMOVE_ITEM TIDE_PLATFORM_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu_vk.c") # The web has WebGPU
-else()
+endif()
+if(TIDE_IOS)
+    # Inside another program, which draws what the recorder wrote down (src/gpu_record.c): no Vulkan of Tide's own
+    list(REMOVE_ITEM TIDE_PLATFORM_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu_vk.c")
+endif()
+if(NOT TIDE_WEB)
     # Vulkan's SPIR-V of the renderer's own shaders, from their WGSL (tools/spirv_shaders.c)
     set(TIDE_SPIRV_C "${CMAKE_CURRENT_BINARY_DIR}/shaders_spirv.c")
     add_custom_command(OUTPUT "${TIDE_SPIRV_C}"
@@ -43,6 +48,9 @@ if(TIDE_WEB)
     list(APPEND TIDE_PLATFORM_SOURCES web/canvas.c web/gpu_web.c web/audio.c src/gpu_none.c)
 elseif(TIDE_ANDROID)
     list(APPEND TIDE_PLATFORM_SOURCES android/activity.c android/audio.c)
+elseif(TIDE_IOS)
+    # None of its own: the other program's (embedded/, tide/embed.h)
+    list(APPEND TIDE_PLATFORM_SOURCES embedded/window.c embedded/audio.c)
 else()
     include("${PROJECT_SOURCE_DIR}/cmake/GLFW.cmake")
     if(APPLE)
@@ -96,11 +104,13 @@ target_include_directories(tide_platform PUBLIC include PRIVATE src third_party 
 target_link_libraries(tide_platform PUBLIC tide)
 if(TIDE_ANDROID)
     target_link_libraries(tide_platform PUBLIC android log aaudio) # ...and the audio device
-elseif(NOT TIDE_WEB)
+elseif(NOT TIDE_WEB AND NOT TIDE_IOS)
     target_link_libraries(tide_platform PRIVATE glfw)
 endif()
 if(WIN32)
     target_link_libraries(tide_platform PUBLIC ws2_32 secur32 ole32) # UDP, for sessions; TLS, for the relay; COM, for WASAPI
+elseif(TIDE_IOS)
+    target_link_libraries(tide_platform PUBLIC "-framework Security" "-framework CoreFoundation") # TLS, for the relay
 elseif(APPLE)
     target_link_libraries(tide_platform PUBLIC "-framework Security" "-framework AudioToolbox" "-framework CoreAudio") # TLS, for the relay; the audio device, and whether there's one
 endif()
@@ -274,7 +284,7 @@ elseif(TIDE_ANDROID)
     set(TIDE_PACKAGE_LIBS lib/android/${TIDE_ANDROID_ABI})
     install(FILES "${PROJECT_SOURCE_DIR}/tools/tide-vscode/icon.png" DESTINATION lib/android COMPONENT tide)
     install(FILES android/game.exports DESTINATION lib/android COMPONENT tide)
-elseif(NOT WIN32)
+elseif(NOT WIN32 AND NOT TIDE_IOS)
     set(TIDE_PACKAGE_LIBS lib/native)
 endif()
 # On Windows, only the MinGW build's platform layer goes in the package.
@@ -309,6 +319,12 @@ endif()
 # its own beside the game's, which src/log.c starts. tide build copies it from
 # the package (lib/native) beside every desktop game; repository games find
 # it in bin/, beside them.
+if(TIDE_IOS)
+    # The tests of a build with no window of its own, and nothing else of this file: the rest open windows, or are
+    # desktop hosts'
+    include(tests/ios.cmake)
+    return()
+endif()
 if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     # It sends a report with the engine's HTTP (src/fetch.c) over the system's TLS (src/rtc/tls.c)
     set(TIDE_CRASH_SOURCES crash/crash.c crash/scrub.c src/fetch.c src/rtc/net.c src/rtc/tls.c)

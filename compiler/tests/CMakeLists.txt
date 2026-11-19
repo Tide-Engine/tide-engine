@@ -643,7 +643,7 @@ if(TIDE_PLATFORM)
     target_compile_definitions(tidec_e2e_task_handles PRIVATE TIDE_TASK_MIGRATION=1)
 endif()
 tide_e2e_test(worker_values)
-if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID AND NOT TIDE_IOS)
     # Worker snapshots must preserve the debugger's typed local-list wrappers.
     tide_add_game(tidec_e2e_worker_values_visualizers VISUALIZERS
         SOURCES e2e/worker_values.tide NAME game
@@ -893,7 +893,7 @@ if(TIDE_PLATFORM) # ...on the platform layer's threads, where there are some
 endif()
 tide_e2e_test(cpp SOURCES e2e/cpp.tide e2e/cpp_code.cpp) # ...and from its C++ file, with no C++ runtime
 tide_e2e_test(fails SOURCES e2e/fails.tide e2e/fails_c.c) # Errors as values, and T?
-if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID AND NOT TIDE_IOS)
     # The names `is` gives must be the debugger's typed list wrappers, as other list locals are.
     tide_add_game(tidec_e2e_fails_visualizers VISUALIZERS
         SOURCES e2e/fails.tide e2e/fails_c.c NAME game
@@ -929,7 +929,7 @@ if(TIDE_PLATFORM)
                 --routes "${PROJECT_SOURCE_DIR}/platform/tests/fetch_routes.mjs")
         # The guard around the runner's own 100 seconds and what it asks the page after them (cmake/WebTest.cmake)
         set_tests_properties(tidec_e2e_fetch_web PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 150)
-    elseif(NOT TIDE_ANDROID AND TIDE_NODE)
+    elseif(NOT TIDE_ANDROID AND NOT TIDE_IOS AND TIDE_NODE)
         tide_add_game(tidec_e2e_fetch SOURCES e2e/fetch.tide NAME game
             HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/fetch_test.c")
         target_include_directories(tidec_e2e_fetch PRIVATE "${PROJECT_SOURCE_DIR}/tests")
@@ -971,7 +971,7 @@ foreach(source IN LISTS TIDE_SAFETY_TESTS)
     if(TIDE_PLATFORM)
         target_link_libraries(${target} PRIVATE tide_platform)
         target_compile_definitions(${target} PRIVATE TIDE_SAFETY_THREADS=1)
-        if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+        if(NOT TIDE_WEB AND NOT TIDE_ANDROID AND NOT TIDE_IOS)
             target_compile_definitions(${target} PRIVATE TIDE_SAFETY_RENDERER=1)
         endif()
     endif()
@@ -985,7 +985,7 @@ foreach(source IN LISTS TIDE_SAFETY_TESTS)
     # One that draws (`// draws` among its first lines) goes through the
     # renderer too, where tests have a window and a GPU for it (label `gpu`)
     file(STRINGS "${source}" draws LIMIT_COUNT 1 REGEX "^// draws")
-    if(draws AND TIDE_PLATFORM AND NOT TIDE_WEB AND NOT TIDE_ANDROID)
+    if(draws AND TIDE_PLATFORM AND NOT TIDE_WEB AND NOT TIDE_ANDROID AND NOT TIDE_IOS)
         add_test(NAME ${target}_gpu
             COMMAND "${CMAKE_COMMAND}"
                 "-DRUN=$<TARGET_FILE:${target}>"
@@ -1064,7 +1064,7 @@ set_tests_properties(tidec_scale PROPERTIES TIMEOUT 600)
 
 # tide_add_game packs again when a file an asset glob matched is deleted or
 # added (asset_deletion.cmake): a project of its own, built with Ninja.
-if(NOT TIDE_WEB AND NOT TIDE_ANDROID AND CMAKE_GENERATOR MATCHES "Ninja")
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID AND NOT TIDE_IOS AND CMAKE_GENERATOR MATCHES "Ninja")
     add_test(NAME tide_add_game_asset_deletion
         COMMAND "${CMAKE_COMMAND}"
             "-DTIDEC=${TIDEC_PATH}"
@@ -1344,7 +1344,7 @@ endif()
 # .pdb, under Windows' own debugger engine on Windows, and LLDB with the game's LLDB views where there's an LLDB.
 # The game's code unoptimized whatever the build type, and its generated plumbing optimized, as tide builds a game
 # to debug it.
-if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID AND NOT TIDE_IOS)
     tide_add_game(tidec_debugger_fixture VISUALIZERS SPLIT_PLUMBING SOURCES debugger/fixture.tide NAME game
         HOST "${CMAKE_CURRENT_SOURCE_DIR}/debugger/fixture_main.c")
     target_compile_options(tidec_debugger_fixture PRIVATE -O0 -g)
@@ -1375,7 +1375,7 @@ if(TIDE_NODE)
     add_test(NAME tidec_read_target_builtin COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/read_target_builtin.mjs" "${TIDEC_PATH}" "${PROJECT_SOURCE_DIR}")
 endif()
 tide_e2e_test(storage) # The server's store from match code: saves, loads, deletes and listings, the same on every machine
-if(TIDE_PLATFORM AND NOT TIDE_WEB AND NOT TIDE_ANDROID)
+if(TIDE_PLATFORM AND NOT TIDE_WEB AND NOT TIDE_ANDROID AND NOT TIDE_IOS)
     # ...and a desktop's own files, in a folder of the test's, with requests on the provider's own thread. (A page's
     # files have no thread, and are the browser's to keep: none in the page tests' runner)
     target_link_libraries(tidec_e2e_storage PRIVATE tide_platform)

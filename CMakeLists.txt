@@ -46,6 +46,14 @@ if(CMAKE_C_COMPILER_TARGET MATCHES "android")
 else()
     set(TIDE_ANDROID OFF)
 endif()
+# iOS builds: through Xcode's clang (cmake/ios-toolchain.cmake). A game there runs inside another program's window,
+# Unity's (tide/embed.h), so this builds the engine, the platform layer with no window of its own and the tests
+# that need none, which run in the simulator.
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(TIDE_IOS ON)
+else()
+    set(TIDE_IOS OFF)
+endif()
 
 include(cmake/Sanitizers.cmake)
 include(cmake/TideFlags.cmake)
@@ -130,13 +138,18 @@ install(DIRECTORY packages/ DESTINATION src/packages COMPONENT tide OPTIONAL
     PATTERN ".tide" EXCLUDE PATTERN "build" EXCLUDE
     # This repo's own: how it builds the packages' tests, and the tests
     PATTERN "CMakeLists.txt" EXCLUDE PATTERN "test" EXCLUDE)
-if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID AND NOT TIDE_IOS)
     add_subdirectory(tools) # Editor support
 endif()
 
 add_subdirectory(engine)
 
 enable_testing()
+if(TIDE_IOS)
+    # A test starts in the simulator, from its own folder (cmake/run_ios.sh, tests/ios/ios_run.c)
+    add_executable(tide_ios_run tests/ios/ios_run.c)
+    set(CMAKE_CROSSCOMPILING_EMULATOR sh "${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_ios.sh" "${CMAKE_BINARY_DIR}/bin/tide_ios_run")
+endif()
 add_subdirectory(tests)
 add_subdirectory(compiler)
 
@@ -154,6 +167,12 @@ endif()
 
 if(TIDE_PLATFORM)
     add_subdirectory(platform)
+    if(TIDE_IOS)
+        # Games with a window of their own, the packages and the examples aren't iOS's yet: what's built is what a
+        # game inside another program is made of, and `tide_ios_tests` is the tests of it (cmake/ios_tests.cmake)
+        include(cmake/ios_tests.cmake)
+        return()
+    endif()
     if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
         tide_add_game(tide_server_smoke SERVER NAME game SOURCES "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/server_build.tide")
         add_test(NAME tide_server_smoke COMMAND tide_server_smoke --anonymous --udp-only --frames 2)

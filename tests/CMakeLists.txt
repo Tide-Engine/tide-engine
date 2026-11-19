@@ -54,7 +54,7 @@ endif()
 # A run nobody watches (TIDE_HIDDEN, see tide/page.h): what the variable does
 # to a program with no window, with it set and with it empty, whichever the
 # one who runs the tests has.
-if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID AND NOT TIDE_IOS)
     add_test(NAME tide_tests_hidden COMMAND tide_tests hidden_is_what_the_environment_says)
     set_tests_properties(tide_tests_hidden PROPERTIES ENVIRONMENT TIDE_HIDDEN=1)
     add_test(NAME tide_tests_watched COMMAND tide_tests hidden_is_what_the_environment_says)

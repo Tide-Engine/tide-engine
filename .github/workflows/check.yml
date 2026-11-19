@@ -342,6 +342,34 @@ jobs:
           bash .github/wait-for-android.sh
           ctest --preset android-debug
 
+      # iOS: what a game inside Unity's player is made of (the engine, the
+      # platform layer with no window of its own), compiled by Xcode's clang as
+      # an Xcode project compiles it, and its tests in the simulator, the
+      # cross-platform determinism tests among them (cmake/ios_tests.cmake).
+      # Then the two libraries for a device's SDK, which only builds.
+      - name: Test (iOS simulator)
+        if: inputs.preset == 'ios-simulator'
+        run: |
+          xcodebuild -version
+          # The newest iPhone the image's simulators have
+          device=$(xcrun simctl list devices available --json | node -e '
+            const all = JSON.parse(require("node:fs").readFileSync(0, "utf8")).devices;
+            const runtimes = Object.keys(all).filter((name) => /SimRuntime\.iOS-/.test(name)).sort((a, b) =>
+              a.localeCompare(b, undefined, { numeric: true }));
+            for (const runtime of runtimes.reverse()) {
+              const phone = all[runtime].find((d) => d.isAvailable && /^iPhone/.test(d.name));
+              if (phone) { console.log(phone.udid); process.exit(0); }
+            }
+            process.exit(1);')
+          xcrun simctl boot "$device"
+          cmake --preset ios-simulator -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
+          cmake --build --preset ios-simulator --target tide_ios_tests
+          xcrun simctl bootstatus "$device"
+          TIDE_IOS_SIMULATOR="$device" ctest --preset ios-simulator -R "$(cat build/ios-simulator/ios_tests.txt)"
+          xcrun simctl shutdown "$device"
+          cmake --preset ios-device -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
+          cmake --build --preset ios-device --target tide tide_platform
+
       # The package's Android half is the platform layer for each CPU, built
       # with the runner's NDK (ANDROID_NDK_HOME).
       - uses: actions/download-artifact@v4
