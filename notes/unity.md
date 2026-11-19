@@ -343,7 +343,7 @@ read.
 
 **What a game's C# sees.** One that reads everything through GameObjects' components sees what it did: authored
 components are live from the entity's first frame, singletons come from `Get<T>()`, events from `On`. Changed
-(the Provisional pick to confirm): **a component the game gives an entity as it runs, which no prefab, scene or
+(the owner's since, below): **a component the game gives an entity as it runs, which no prefab, scene or
 script has put on a GameObject, isn't added to its GameObject until something asks** (`runner.Read<T>()` once, or
 `Has`/`TryGet`/`Get`); the Sample's own case is `Owner` on a player's ball. Before, the runner added every component
 of every entity, so `GetComponent<Owner>()` found it. Weighed: reading every type that has a C# class by default
@@ -442,12 +442,22 @@ Not run: IL2CPP and Android players, Vulkan, Direct3D 12 and OpenGL Core (no dra
 package's parts in a running Unity game (no Sample game has a `Part`; the accessor is generated, unit-tested, and
 exercised by the test above), and the two inspectors' new lines in a window (batch runs have none).
 
+**Owner (2026-11-19), asked about what was still open: "i want you to go with your recommendations".** So these
+stand as decided, no longer picks to confirm:
+
+- **Reading by need is the default.** A component the game gives an entity as it runs, which no GameObject has, is
+  read once a script asks (`Read<T>()`, `Has`, `TryGet`, `Get`); `readEverything` stays off by default, as the
+  switch for a project that wants every component on every GameObject.
+- **Whole types, not rows.** A component is read for every shown entity that has it or for none, which is what lets
+  the rule be "while it's read, every entity that has it has its component". A game that reads `Health` of one boss
+  among a thousand entities pays for all of them. Reading by entity would have the runner say entities, which
+  change every frame, where types change a few times a match, and would make which GameObjects have a component
+  depend on which were asked about: not built, and not planned unless a game's frame shows the need.
+- **Whole components, not fields.** A component's row is tens of bytes; what costs is the rows, and a container a
+  field holds, which comes with its component. Not built.
+
 **Left.**
 
-- Whole types, not rows: a component is read for every shown entity or none. A game that reads `Health` of one boss
-  among a thousand entities pays for all of them. Per-entity reading needs the runner to say entities, which change
-  every frame, where types change rarely.
-- Whole components, not fields.
 - The inspector's "Not read in Unity" list is of the game's components, not of the selected entity's: which
   entities have a component that isn't read isn't known in Unity, which is the point of not reading it.
 
