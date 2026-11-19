@@ -14,6 +14,11 @@ component Counter
     string label = "counted";
     List<int> marks;
     float rate = 2.5;
+    // This machine's: an image of the other program's own, which it gives (tide_embed_local_texture) and Faces draws
+    local Texture face;
+    [Raw] local Texture bumps;
+    local int drawn;
+    local string note = "kept"; // A default the other program's write of another field leaves as declared
 }
 
 singleton Tally
@@ -22,6 +27,7 @@ singleton Tally
     int bumps;
     string name;
     List<byte> marks;
+    local Texture logo;
 }
 
 command Bump { int by; }
@@ -121,6 +127,35 @@ view Show(Counter counter)
     Draw.Screen()
     {
         Draw.Circle(seen.xy, 3, Color(1, 1, 0));
+    }
+}
+
+// The other program's images, where it gave any: their sizes as the game reads them, and each drawn, the second as
+// numbers by a frag
+extern void Faced(int2 face, int2 bumps, int2 logo, int note);
+
+frag Bumpy(Vertex vertex, out Color color, [Raw] Texture source) { color = source.Sample(vertex.uv); }
+
+view Faces(mut Counter counter, Tally tally)
+{
+    Faced(counter.face.size, counter.bumps.size, tally.logo.size, counter.note.length);
+    Draw.Screen()
+    {
+        if (counter.face.size.x > 0)
+        {
+            Draw.Sprite(counter.face, float2(100, 100), float2(32, 32));
+            counter.drawn += 1;
+        }
+        if (counter.bumps.size.x > 0)
+        {
+            List<Vertex> corners = [
+                Vertex { position = float2(200, 100) },
+                Vertex { position = float2(232, 100), uv = float2(1, 0) },
+                Vertex { position = float2(232, 132), uv = float2(1, 1) },
+            ];
+            Draw.Mesh(corners, [0, 1, 2], counter.bumps, Bumpy);
+        }
+        if (tally.logo.size.x > 0) Draw.Sprite(tally.logo, float2(300, 100), float2(32, 32));
     }
 }
 

@@ -14,6 +14,7 @@
 #include <string.h>
 
 #include "tide/checkpoint.h"
+#include "tide/embed_game.h"
 #include "tide/timeline.h"
 #include "tide/layout.h"
 #include "tide/hosting.h"
@@ -169,7 +170,8 @@ typedef struct tide_host_game {
 // no such function), and the host says so rather than load it and call through members that aren't where it looks.
 #define TIDE_HOST_LIBRARY_SHAPE "tide_host_library_shape"
 #define TIDE_HOST_SHAPE                                                                                               \
-    ((uint64_t)(sizeof(tide_host_game) & 0xFFFF) | (uint64_t)(sizeof(tide_game) & 0xFFFF) << 16                       \
+    ((uint64_t)((sizeof(tide_host_game) + sizeof(struct tide_embed_game)) & 0xFFFF) /* ...and what it embeds by */    \
+     | (uint64_t)(sizeof(tide_game) & 0xFFFF) << 16                                                                   \
      | (uint64_t)((sizeof(tide_io) + sizeof(tide_gpu_reads)) & 0xFFFF) << 32 /* The read table the host shares */     \
      | (uint64_t)((sizeof(tide_layout) + 3u * sizeof(tide_layout_type) + 7u * sizeof(tide_layout_field)) & 0xFFFF) << 48)
 #ifdef _WIN32

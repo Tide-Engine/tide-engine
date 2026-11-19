@@ -1,3 +1,24 @@
+## A texture of the other program's own (2026-11-19)
+
+**For the owner to confirm** (built as a clear win under the 2026-11-17 rule: additive, inert outside an embed, no
+result of any existing draw changed, tested; notes/unity.md, top section). The generated-C/runtime boundary gained:
+
+- `tide_texture_ref`'s fourth kind (`engine/include/tide/draw.h`): `TIDE_TEXTURE_EXTERNAL` as its `image.height`,
+  `tide_texture_external`, `tide_texture_is_external`, `tide_texture_external_id`, `_size`. Generated code calls
+  none of them: it reads such a reference through the calls it already made (`tide_texture_size`, the
+  `tide_draw_texture_source*` functions), which now know the kind (`engine/src/mesh.c`, `engine/src/draw.c`).
+  `Texture`'s layout is as it was, 48 bytes.
+- `TIDE_PIXELS_EXTERNAL` and `TIDE_PIXELS_EXTERNAL_RAW` (`draw.h`): a draw-list texture with no pixels.
+- `tide_embed_game.set_local` (`engine/include/tide/embed_game.h`), a new last member that `tidec --embed` fills
+  (`tide_embed_set_local`, `embed_codegen.inc`): a local `Texture` field of a component's or singleton's own, by
+  its type and offset, through the existing `tide_get_<part>`/`tide_set_<part>`. The table's size is now part of
+  `TIDE_HOST_SHAPE` (`tide/host.h`, with `tide_host_game`'s), so a library another tide built with a shorter one is
+  refused rather than called through a member it hasn't; `TIDE_EMBED_ABI` is 27.
+- The platform's (the agent's): `gpu.h`'s optional `external`, `TIDE_GPU_EXTERNAL_LINEAR`/`_RAW`,
+  `gpu_record.c`'s `record_external`, `TIDE_EMBED_RENDER_EXTERNAL`, and `tide_embed_local_texture` (`embed.c`).
+
+No world byte, hash, snapshot or wire byte changes: local fields alone take one, and a game's layout is as it was.
+
 ## A check's rows on the tick's pool (2026-11-17, parts)
 
 **For the owner to confirm**: `tide_game.client_hashes` (tide/session.h) may now share its work out on the threads

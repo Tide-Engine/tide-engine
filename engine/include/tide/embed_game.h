@@ -172,6 +172,12 @@ typedef struct tide_embed_game {
     // The match's events whose records the packet carries (EVENTS), by the schema's type
     uint32_t event_count;
     const tide_embed_named *events;
+    // Gives a local field what another program has for it: the `size` bytes of `value` into the field at `offset` of
+    // the local fields `type` (the layout's: a component's, of the entity `birth`/`lineage`, or a singleton's). Only
+    // a field that's a Texture of its own takes one, its value a tide_texture_ref, which is all the game's local
+    // state takes from outside: false for any other type, offset or size, and for no entity where one is needed.
+    bool (*set_local)(void *local, int32_t type, uint32_t offset, uint64_t birth, uint64_t lineage, const void *value,
+                      uint32_t size);
 } tide_embed_game;
 
 // The schema another program binds a game by, as JSON: the layout's types with their fields' offsets, what each

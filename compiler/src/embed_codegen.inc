@@ -690,6 +690,44 @@ static void gen_embed(gen *g)
     }
     sb_put(o, "    default:\n        return false;\n    }\n}\n\n");
 
+    // The local fields another program gives a value (tide_embed_local_texture): a Texture of a component's or a
+    // singleton's own local fields, by its place. The match holds no rendering resource, so there's nothing of its
+    // here, and a Texture inside a struct or a list is the game's own to fill.
+    sb_put(o, "static bool tide_embed_set_local(void *local_state, int32_t type, uint32_t offset, uint64_t birth, uint64_t lineage,\n"
+              "                                 const void *value, uint32_t size)\n{\n"
+              "    tide_local *l = local_state;\n    const tide_entity e = {birth, lineage};\n"
+              "    (void)l;\n    (void)e;\n    (void)offset;\n    (void)value;\n"
+              "    if (size != sizeof(tide_texture_ref)) return false;\n    switch (type) {\n");
+    for (int i = 0; i < prog->local_parts.count; i++) {
+        const decl *part = prog->local_parts.items[i];
+        const int index = layout_index(&types, part);
+        int textures = 0;
+        for (int k = 0; k < part->fields.count; k++) textures += part->fields.items[k].type.kind == TY_TEXTURE;
+        if (index < 0 || !textures || !part->part_of) continue;
+        const char *name = type_cname(part);
+        sb_printf(o, "    case %d: { // " STR_FMT "'s local fields\n        if (", index, STR_ARG(part->part_of->qualified));
+        for (int k = 0, said = 0; k < part->fields.count; k++) {
+            const field *f = &part->fields.items[k];
+            if (f->type.kind != TY_TEXTURE) continue;
+            sb_printf(o, "%soffset != offsetof(%s, %s)", said++ ? " && " : "", name, field_cname(f));
+        }
+        sb_put(o, ") return false;\n");
+        if (part->kind == DECL_COMPONENT) {
+            // Into the entity's row where it is, made with its declared defaults where it has none (what it was born
+            // as isn't known here: 0, which the row keeps until the frame's sweep lets it go with its entity)
+            const char *table = fields_table(part), *columns = fields_columns(part);
+            sb_printf(o, "        if (!birth && !lineage) return false;\n"
+                         "        uint32_t row = tide_attached_find(&l->%s, %s, e);\n"
+                         "        if (row == TIDE_ATTACHED_NONE) row = tide_attach_%s(l, e, 0u);\n"
+                         "        memcpy((uint8_t *)tide_attached_cell(&l->%s, %s, row) + offset, value, size);\n",
+                      table, columns, name, table, columns);
+        } else {
+            sb_printf(o, "        memcpy((uint8_t *)&l->%s_local + offset, value, size);\n", type_cname(part->part_of));
+        }
+        sb_put(o, "        return true;\n    }\n");
+    }
+    sb_put(o, "    default:\n        return false;\n    }\n}\n\n");
+
     // The tables
     int components = 0;
     for (int c = 0; c < prog->components.count; c++) components += embed_component_listed(g, c);
@@ -801,7 +839,7 @@ static void gen_embed(gen *g)
     sb_printf(o, "\nconst tide_embed_game tide_game_embed = {\n"
                  "    %d, %s, %s, %s,\n    %d, %s, %s,\n    %d, %s,\n    %d, %s,\n    %d, %s,\n    %d, %s,\n    %d, %s,\n"
                  "    tide_embed_view, tide_embed_command, tide_embed_start, tide_embed_schema, tide_embed_defaults,\n"
-                 "    %d, %s,\n};\n",
+                 "    %d, %s,\n    tide_embed_set_local,\n};\n",
               components, components ? "tide_embed_components" : "NULL", components ? "tide_embed_component_locals" : "NULL",
               components ? "tide_embed_component_scenes" : "NULL",
               singletons, singletons ? "tide_embed_singletons" : "NULL", singletons ? "tide_embed_singleton_locals" : "NULL",

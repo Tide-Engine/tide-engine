@@ -2821,6 +2821,23 @@ static uint32_t pack_slot(tide_draw_list *d, const tide_texture *texture, const 
     return slot;
 }
 
+// The list's texture for an image of the program Tide runs inside (tide_texture_external), which has no pixels
+// here: `named` its name, with TIDE_PIXELS_EXTERNAL_RAW for a read of its channels as they are.
+static uint32_t external_texture(tide_draw_list *d, const uint64_t named)
+{
+    const tide_int2 size = tide_texture_external_size(named);
+    if (!tide_texture_external_id(named) || size.x <= 0 || size.y <= 0) return 0;
+    tide_draw_texture *t = find_texture(d, TIDE_PIXELS_EXTERNAL, named);
+    if (!t) t = add_texture(d, (tide_draw_texture){.id = named, .space = TIDE_PIXELS_EXTERNAL, .epoch = d->epoch});
+    t->version = named;
+    t->format = TIDE_TEXELS_BYTES;
+    t->width = size.x;
+    t->height = size.y;
+    t->frame = d->frame;
+    t->pixels = NULL;
+    return (uint32_t)(t - d->textures) + 1u;
+}
+
 // A grid's Texture, as its cells are: colors (or, `raw`, as numbers) and floats, or a grid of numbers. 0 for a
 // texture that's no grid's, which `*grid_of` then says.
 static uint32_t grid_source(tide_draw_list *d, const tide_texture_ref texture, const bool raw, bool *grid_of)
@@ -2841,6 +2858,7 @@ static uint32_t texture_source(tide_draw_list *d, const tide_texture_ref texture
         bool grid;
         const uint32_t slot = grid_source(d, texture, false, &grid);
         if (grid) return slot;
+        if (texture.image.height == TIDE_TEXTURE_EXTERNAL) return external_texture(d, texture.image.version & TIDE_TEXTURE_NAME);
         return pack_slot(d, &texture.image, linear);
     }
     const tide_render_target target = tide_render_target_resolve(texture.target);
@@ -2856,7 +2874,12 @@ uint32_t tide_draw_texture_source_raw(tide_draw_list *d, const tide_texture_ref 
 {
     bool grid;
     const uint32_t slot = grid_source(d, texture, true, &grid);
-    return grid ? slot : texture_source(d, texture, false);
+    if (grid) return slot;
+    // The other program's image has no alpha worked in as it's stored, so a read of it as numbers is another read
+    if (tide_texture_is_external(texture)) {
+        return external_texture(d, (texture.image.version & TIDE_TEXTURE_NAME) | TIDE_PIXELS_EXTERNAL_RAW);
+    }
+    return texture_source(d, texture, false);
 }
 
 // Static [Linear] captures share borrowed source storage but keep a distinct draw/GPU cache entry.
@@ -5168,6 +5191,7 @@ static uint32_t append_texture_plain(tide_draw_list *d, const tide_draw_list *fr
         return slot;
     }
     if (t->space == TIDE_PIXELS_PACK_CUBE) return pack_cube(d, t->id, t->width, (const uint8_t *const *)(uintptr_t)t->pixels);
+    if (t->space == TIDE_PIXELS_EXTERNAL) return external_texture(d, t->id);
     // An atlas page keeps its identity across source frames. Its appended
     // image is a snapshot: resetting and appending that source again cannot
     // replace pixels still used by earlier commands in this destination.

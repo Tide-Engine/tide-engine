@@ -173,6 +173,15 @@ var TideWebLibrary = {
         return x.tide_unity_command(type, birthLow, birthHigh, lineageLow, lineageHigh, at, size);
     },
 
+    // One of Unity's textures into a Texture field of the game's local state (tide_embed_local_texture): numbers
+    // alone cross, as the image stays Unity's
+    TideWebLocalTexture__deps: ['$TideWeb'],
+    TideWebLocalTexture: function (type, offset, birthLow, birthHigh, lineageLow, lineageHigh, image, width, height, sampling) {
+        var x = TideWeb.program();
+        if (!x || !x.tide_unity_local_texture) return 0;
+        return x.tide_unity_local_texture(type, offset, birthLow, birthHigh, lineageLow, lineageHigh, image, width, height, sampling);
+    },
+
     // Time travel (tide/embed.h): the program's own match, recorded, paused and replayed
     TideWebTravel__deps: ['$TideWeb'],
     TideWebTravel: function (travel, size) {

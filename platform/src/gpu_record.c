@@ -104,6 +104,21 @@ static tide_gpu_id record_texture(const tide_gpu_format format, const int width,
     return id;
 }
 
+// An image of the other program's own (tide_texture_external): its number there, and how it's read. Nothing of it
+// is here, so nothing is written to it, and freeing it frees the replay's name for it alone.
+static tide_gpu_id record_external(const uint32_t external, const int width, const int height, const uint32_t flags)
+{
+    if (!external || width <= 0 || height <= 0) return 0;
+    const uint32_t id = ++next_id;
+    op(TIDE_EMBED_RENDER_EXTERNAL, 20u);
+    u32(id);
+    u32(external);
+    u32((uint32_t)width);
+    u32((uint32_t)height);
+    u32(flags);
+    return id;
+}
+
 static uint32_t block_formats; // 1 << format for each the other program samples (tide_embed_render_formats)
 
 void tide_gpu_record_block_formats(const uint32_t formats)
@@ -842,6 +857,7 @@ const tide_gpu tide_gpu_record = {
     .texture_write_part = record_texture_write_part,
     .mipmaps = record_mipmaps,
     .texture_free = record_texture_free,
+    .external = record_external,
     .cube = record_cube,
     .cube_face = record_cube_face,
     .array = record_array,

@@ -21,7 +21,46 @@ namespace Tide
         // `locals` its local fields' (null for a component with none)
         protected internal abstract unsafe void ReadLive(byte* values, byte* locals, TidePacket packet, TideRunner runner);
 
+        // What its fields hold of Unity's own, handed to Tide (TideAssets): generated for a component with a local
+        // Texture field, which is set in Unity's inspector, or by a script, and drawn by Tide's views. Each frame its
+        // entity is shown, after ReadLive.
+        protected internal virtual void WriteAssets(TideAssets assets)
+        {
+        }
+
         internal int LiveFrame = -1; // The runner's frame that last wrote it: one the entity lost isn't
+        internal int AssetsRun = -1; // The runner's game its assets were handed to (TideRunner.Live)...
+        internal TideEntityId AssetsOf; // ...and for which entity
+    }
+
+    // Unity's assets on their way into the game's local state: what a generated component's or singleton's
+    // WriteAssets hands over, a field at a time. Local fields alone take them, as the match holds no rendering
+    // resource, so nothing here reaches the match, a hash or another machine.
+    public sealed class TideAssets
+    {
+        readonly TideRunner runner;
+        internal int Type;           // The schema's type of the local fields written
+        internal TideEntityId Entity; // Whose they are: none for a singleton's
+        internal bool All;           // The entity, or the game, is another than last time: every field is handed again
+
+        internal TideAssets(TideRunner runner)
+        {
+            this.runner = runner;
+        }
+
+        // The Texture field at `offset` of the local fields. Tide is handed `texture` when it's another than `given`,
+        // the one handed last, which the caller keeps. A field left with none stays as Tide has it (its declared
+        // default, or what the game's own code gave it), and one whose texture is taken away is left with none.
+        public void Texture(uint offset, UnityEngine.Texture texture, ref UnityEngine.Texture given)
+        {
+            if (All) given = null;
+            if (texture == null) // None, or one Unity destroyed
+            {
+                if (!ReferenceEquals(given, null) && runner.Give(Type, offset, Entity, null)) given = null;
+                return;
+            }
+            if (!ReferenceEquals(texture, given) && runner.Give(Type, offset, Entity, texture)) given = texture;
+        }
     }
 
     // The Inspector's icons of Tide's scripts (com.tide.unity's Editor/Icons): the generated components name Component
@@ -40,6 +79,13 @@ namespace Tide
         public abstract string TideName { get; }
 
         protected internal abstract unsafe void ReadLive(byte* values, byte* locals, TidePacket packet, TideRunner runner);
+
+        // As a component's: a local Texture field's texture, which a script sets (a singleton has no inspector)
+        protected internal virtual void WriteAssets(TideAssets assets)
+        {
+        }
+
+        internal int AssetsRun = -1;
     }
 
     // One of the match's events, as this machine's local handlers hear it (TideRunner.On, OnVerified, and an entity's

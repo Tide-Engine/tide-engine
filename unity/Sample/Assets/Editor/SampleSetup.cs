@@ -32,7 +32,8 @@ public static class SampleSetup
         sphere.name = "Roller";
         Object.DestroyImmediate(sphere.GetComponent<Collider>());
         sphere.GetComponent<MeshRenderer>().sharedMaterial = material;
-        sphere.AddComponent<Tide.Game.Ball>();
+        // One of Unity's own textures in a local Texture field, which Tide's Marks view draws (Mark.png, as imported)
+        sphere.AddComponent<Tide.Game.Ball>().mark = AssetDatabase.LoadAssetAtPath<Texture2D>(Folder + "/Mark.png");
         sphere.AddComponent<BallTint>();
         PrefabUtility.SaveAsPrefabAsset(sphere, Folder + "/Roller.prefab");
         Object.DestroyImmediate(sphere);

@@ -1113,9 +1113,25 @@ static void put_live_field(out *o, out *live, game *g, const type *t, const fiel
     free(cs);
 }
 
+// Whether a local field is a Texture of its own (its type as the schema says it: "Texture", with "[Raw] " or
+// "[Linear] " before it for one read so): the one kind of field Unity gives a value, a texture of its own.
+static bool texture_field(const field *f)
+{
+    const char *type = f->type;
+    while (*type == '[') {
+        const char *end = strchr(type, ']');
+        if (!end) return false;
+        type = end + 1;
+        while (*type == ' ') type++;
+    }
+    return strcmp(type, "Texture") == 0 && f->size == 48;
+}
+
 // The fields of a type's local part, after its own, and their lines of ReadLive: Unity doesn't keep them (they're
-// this machine's, never authored), and the inspector shows them in Play.
-static void put_local_fields(out *o, out *live, game *g, const type *t)
+// this machine's, never authored), and the inspector shows them in Play. But a Texture: that one is Unity's to set,
+// in the inspector for a component, as it draws with an image Unity imported (tide_embed_local_texture). Its lines
+// of WriteAssets go into `assets`, with a field beside it for the texture Tide was handed last.
+static void put_local_fields(out *o, out *live, out *assets, game *g, const type *t, const bool component)
 {
     if (t->local < 0 || !t->local_ids) return;
     const type *part = &g->types[t->local];
@@ -1125,6 +1141,20 @@ static void put_local_fields(out *o, out *live, game *g, const type *t)
         const field *f = &part->fields[i];
         char *id = copy(t->local_ids[i]);
         char *value = copy(part->ids[i]); // As write_value names its struct's
+        if (texture_field(f)) {
+            const char *plain = id[0] == '@' ? id + 1 : id;
+            put_field_summary(o, g, part, f, "        ");
+            if (component) {
+                puts_(o, "        [global::UnityEngine.Tooltip(\"One of Unity's textures, which Tide's views draw: this machine's, "
+                         "never the match's\")]\n");
+            }
+            putf(o, "        public global::UnityEngine.Texture %s;\n", id);
+            putf(o, "        [global::System.NonSerialized] global::UnityEngine.Texture tideGiven_%s;\n", plain);
+            putf(assets, "            assets.Texture(%uu, %s, ref tideGiven_%s);\n", f->offset, id, plain);
+            free(value);
+            free(id);
+            continue;
+        }
         out from = {0};
         putf(&from, "l.%s", value);
         put_live_field(o, &lines, g, part, f, field_ctype(g, f), id, from.s, "", "[global::System.NonSerialized] ", "        ");
@@ -1370,9 +1400,10 @@ static void write_class(out *o, game *g, const type *t, out *map)
         free(from.s);
         free(id);
     }
-    out locals = {0};
+    out locals = {0}, assets = {0};
     puts_(&locals, "");
-    if (!command && !event) put_local_fields(o, &locals, g, t);
+    puts_(&assets, "");
+    if (!command && !event) put_local_fields(o, &locals, &assets, g, t, component);
     if (component) puts_(map, "]}");
     puts_(o, "\n        public override string TideName => \"");
     put_escaped(o, t->bare);
@@ -1391,6 +1422,12 @@ static void write_class(out *o, game *g, const type *t, out *map)
         puts_(o, locals.s);
         puts_(o, "        }\n\n");
     }
+    if (assets.n) {
+        puts_(o, "        protected override void WriteAssets(global::Tide.TideAssets assets)\n        {\n");
+        puts_(o, assets.s);
+        puts_(o, "        }\n\n");
+    }
+    free(assets.s);
     free(locals.s);
     free(live.s);
     write_value(o, g, t, "        ", true);

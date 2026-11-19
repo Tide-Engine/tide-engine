@@ -228,6 +228,10 @@ namespace Tide
             }
             embed = Create();
             quitHeard = false;
+            externals.Clear(); // Another game: its fields hold none of the last one's
+            externalIds.Clear();
+            assetsRun++;
+            assets ??= new TideAssets(this);
             Said(); // Why it didn't start, or what its start said
             if (embed == IntPtr.Zero)
             {
@@ -251,6 +255,7 @@ namespace Tide
             {
                 render = Ensure<TideRender>(gameObject);
                 render.Runner = this;
+                render.Externals = ExternalOf;
                 render.enabled = true;
                 library.RenderFormats(embed, TideRender.BlockFormats); // The pack's compressed images go as they are
             }
@@ -395,6 +400,7 @@ namespace Tide
             public int type, local; // The schema's type, and its local fields' (-1 for none)
             public uint size;
             public Type kind;
+            public bool assets; // Its class hands Tide assets of Unity's (WriteAssets)
         }
 
         struct LiveSingleton
@@ -403,6 +409,49 @@ namespace Tide
             public uint size;
             public Type kind;
             public Func<object> make;
+            public bool assets;
+        }
+
+        // Unity's own textures that Tide's local Texture fields hold: each has a number, from 1, which is all Tide
+        // keeps of it (tide_embed_local_texture) and what its renderer's commands name it by, for TideRender to bind
+        // the texture itself. Kept while the game runs, as a field keeps its number through hot reloads.
+        readonly List<Texture> externals = new List<Texture>();
+        readonly Dictionary<Texture, uint> externalIds = new Dictionary<Texture, uint>();
+        TideAssets assets;
+        int assetsRun; // Goes up with each game started and each schema bound: what was handed before is handed again
+
+        Texture ExternalOf(uint id) => id >= 1 && id <= (uint)externals.Count ? externals[(int)id - 1] : null;
+
+        // Hands Tide `texture` (null for none) for the Texture field at `offset` of the local fields `type`, the
+        // entity `entity`'s for a component's: how it's sampled where a draw doesn't say is Unity's import of it.
+        // False where the game has no such field, or the texture is none Tide draws (not 2D, or a side past 65,535).
+        internal bool Give(int type, uint offset, TideEntityId entity, Texture texture)
+        {
+            if (embed == IntPtr.Zero || type < 0) return false;
+            if (texture == null) return library.LocalTexture(embed, (uint)type, offset, entity.birth, entity.lineage, 0, 0, 0, 0, 0) != 0;
+            if (texture.dimension != UnityEngine.Rendering.TextureDimension.Tex2D)
+            {
+                Debug.LogError($"Tide: {texture.name} is a {texture.dimension} texture, and a Tide Texture is a 2D image: its field is left as it was.", texture);
+                return false;
+            }
+            if (!externalIds.TryGetValue(texture, out var id))
+            {
+                externals.Add(texture);
+                id = (uint)externals.Count;
+                externalIds[texture] = id;
+            }
+            // Tide's Bilinear reads no smaller images and Unity's does, so a texture that has them is read between them
+            var filter = texture.filterMode == FilterMode.Point ? 0u : texture.mipmapCount > 1 ? (texture.anisoLevel > 1 ? 3u : 2u) : 1u;
+            var wrap = texture.wrapMode == TextureWrapMode.Repeat ? 1u : texture.wrapMode == TextureWrapMode.Mirror ? 2u : 0u;
+            return library.LocalTexture(embed, (uint)type, offset, entity.birth, entity.lineage, id, (uint)texture.width, (uint)texture.height,
+                                        filter, wrap) != 0;
+        }
+
+        static bool HandsAssets(Type kind)
+        {
+            var method = kind.GetMethod("WriteAssets", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic
+                                                       | System.Reflection.BindingFlags.Public);
+            return method != null && method.DeclaringType != typeof(TideComponent) && method.DeclaringType != typeof(TideSingleton);
         }
 
         struct LiveEvent
@@ -426,6 +475,7 @@ namespace Tide
             bound = Schema;
             boundTypes = TideTypes.Version;
             live = Schema != null && TideTypes.Hash == Schema.Hash;
+            assetsRun++; // Another layout's fields are elsewhere: what Unity holds for them is handed again
             singletons.Clear();
             transformType = -1;
             liveComponents = Array.Empty<LiveComponent>();
@@ -452,7 +502,8 @@ namespace Tide
                 var type = Schema.Type(index);
                 var kind = TideTypes.Of(type?.name);
                 if (kind == null || !typeof(TideComponent).IsAssignableFrom(kind)) continue;
-                components.Add(new LiveComponent { type = index, local = type.local, size = type.size, kind = kind });
+                components.Add(new LiveComponent { type = index, local = type.local, size = type.size, kind = kind,
+                                                   assets = type.local >= 0 && HandsAssets(kind) });
             }
             liveComponents = components.ToArray();
             var values = new List<LiveSingleton>();
@@ -461,7 +512,8 @@ namespace Tide
                 var type = Schema.Type(index);
                 var kind = TideTypes.Of(type?.name);
                 if (kind == null || !typeof(TideSingleton).IsAssignableFrom(kind)) continue;
-                values.Add(new LiveSingleton { type = index, local = type.local, size = type.size, kind = kind, make = TideTypes.Maker(type.name) });
+                values.Add(new LiveSingleton { type = index, local = type.local, size = type.size, kind = kind, make = TideTypes.Maker(type.name),
+                                               assets = type.local >= 0 && HandsAssets(kind) });
             }
             liveSingletons = values.ToArray();
             liveEvents = new LiveEvent[Schema.types.Length];
@@ -761,6 +813,17 @@ namespace Tide
                     view.LiveSeen++;
                     component.LiveFrame = liveFrame;
                     component.ReadLive(values, locals, Packet, this);
+                    if (binding.assets)
+                    {
+                        // What its fields hold of Unity's, for Tide's views: all of it for an entity it wasn't handed
+                        // to yet, then what changes
+                        assets.Type = binding.local;
+                        assets.Entity = view.Entity;
+                        assets.All = component.AssetsRun != assetsRun || component.AssetsOf != view.Entity;
+                        component.AssetsRun = assetsRun;
+                        component.AssetsOf = view.Entity;
+                        component.WriteAssets(assets);
+                    }
                 }
             }
             // A component the entity lost: only the GameObjects holding more than the entity has are looked through
@@ -795,6 +858,14 @@ namespace Tide
                     singletons[binding.kind] = singleton;
                 }
                 singleton.ReadLive(values, locals, Packet, this);
+                if (binding.assets)
+                {
+                    assets.Type = binding.local;
+                    assets.Entity = default;
+                    assets.All = singleton.AssetsRun != assetsRun;
+                    singleton.AssetsRun = assetsRun;
+                    singleton.WriteAssets(assets);
+                }
             }
         }
 

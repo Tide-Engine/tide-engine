@@ -4893,7 +4893,15 @@ static gpu_texture *texture_for(const tide_draw_texture *t)
     const tide_draw_area *areas;
     uint32_t count = 1;
     bool resident_mips = false;
-    if (t->space == TIDE_PIXELS_PACK_CUBE) { // A cube of the pack's: its six faces' pixels, where the pack has them
+    if (t->space == TIDE_PIXELS_EXTERNAL) {
+        // The other program's own image (tide_texture_external): named to it, with nothing uploaded and its smaller
+        // images its own. No texture where the backend draws for itself.
+        if (g->texture) free_texture(g->texture);
+        g->texture = gpu->external ? gpu->external(tide_texture_external_id(t->id), t->width, t->height,
+                                                   (t->linear ? TIDE_GPU_EXTERNAL_LINEAR : 0u)
+                                                   | (t->id & TIDE_PIXELS_EXTERNAL_RAW ? TIDE_GPU_EXTERNAL_RAW : 0u)) : 0;
+        resident_mips = true;
+    } else if (t->space == TIDE_PIXELS_PACK_CUBE) { // A cube of the pack's: its six faces' pixels, where the pack has them
         if (g->texture) free_texture(g->texture);
         g->texture = made_cube(t->linear ? TIDE_GPU_COLOR_SRGB : TIDE_GPU_COLOR_BYTES, t->width, (const void *const *)(uintptr_t)t->pixels);
     } else if (t->space == TIDE_PIXELS_PACK_ARRAY) { // An array of the pack's: its layers, where the pack has them

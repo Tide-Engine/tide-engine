@@ -1075,6 +1075,21 @@ bool tide_embed_command(tide_embed *e, const uint32_t type, const uint64_t targe
         && embed->command(tide_run_local, (int32_t)type, target_birth, target_lineage, value, size);
 }
 
+bool tide_embed_local_texture(tide_embed *e, const uint32_t type, const uint32_t offset, const uint64_t birth,
+                              const uint64_t lineage, const uint32_t image, const uint32_t width, const uint32_t height,
+                              const uint32_t filter, const uint32_t wrap)
+{
+    if (e != &the_embed || !running || !tide_run_game || !tide_run_local || type > INT32_MAX) return false;
+    const tide_embed_game *embed = tide_run_game->embed;
+    if (!embed || !embed->set_local) return false;
+    tide_texture_ref texture = {0};
+    if (image) {
+        texture = tide_texture_external(image, width, height, tide_sampling_bits((int32_t)filter, (int32_t)wrap));
+        if (!tide_texture_is_external(texture)) return false;
+    }
+    return embed->set_local(tide_run_local, (int32_t)type, offset, birth, lineage, &texture, (uint32_t)sizeof texture);
+}
+
 void tide_embed_camera(tide_embed *e, const float *transform, const float *projection)
 {
     if (e != &the_embed || !running) return;

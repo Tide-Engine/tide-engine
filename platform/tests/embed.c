@@ -38,6 +38,18 @@ void Seen(const int ticks, const int presses, const float width, const float hei
     seen_height = height;
 }
 
+// The sizes of the other program's images, as the game's view read them at the last frame (embed.tide's Faces).
+static tide_int2 faced_face, faced_bumps, faced_logo;
+static int faced_note; // ...and how long its `note` is, a local field beside them with a declared default
+
+void Faced(const tide_int2 face, const tide_int2 bumps, const tide_int2 logo, const int note)
+{
+    faced_face = face;
+    faced_bumps = bumps;
+    faced_logo = logo;
+    faced_note = note;
+}
+
 static char program[] = "embed";
 
 static tide_embed *start(int argc, char **argv)
@@ -461,7 +473,12 @@ TIDE_TEST(embed_camera)
 #if !defined(__wasm__)
 // What a frame's render commands hold, read as the other program reads them (tide_embed_render).
 typedef struct rendered {
-    uint32_t ops[TIDE_EMBED_RENDER_DEPTH_BIAS + 1];
+    uint32_t ops[TIDE_EMBED_RENDER_EXTERNAL + 1];
+    // The other program's images named (EXTERNAL), the first 4: each one's id, image, width, height and flags, whether
+    // an IMAGE bound it after, and whether it was freed
+    uint32_t externals[4][5];
+    bool external_bound[4], external_freed[4];
+    uint32_t external_count;
     uint32_t used[16]; // The pipelines USE named, the first 16
     uint32_t used_count;
     uint32_t pipelines[32]; // ...and those made, by `keys`' places
@@ -485,7 +502,7 @@ static rendered read_commands(const uint8_t *p, const uint32_t size)
         }
         memcpy(head, p + at, 8u);
         at += 8u;
-        if (head[1] % 4u || head[1] > size - at || head[0] == 0 || head[0] > TIDE_EMBED_RENDER_DEPTH_BIAS) {
+        if (head[1] % 4u || head[1] > size - at || head[0] == 0 || head[0] > TIDE_EMBED_RENDER_EXTERNAL) {
             r.whole = false;
             break;
         }
@@ -500,6 +517,17 @@ static rendered read_commands(const uint8_t *p, const uint32_t size)
         if (head[0] == TIDE_EMBED_RENDER_USE && r.used_count < 16u) r.used[r.used_count++] = words[0];
         if (head[0] == TIDE_EMBED_RENDER_UNIFORMS && r.ops[head[0]] == 1u && head[1] >= 68u) memcpy(r.camera, p + at + 4, 64);
         if (head[0] == TIDE_EMBED_RENDER_BEGIN && words[0] == 0 && words[1]) r.window_cleared = true;
+        if (head[0] == TIDE_EMBED_RENDER_EXTERNAL && head[1] == 20u && r.external_count < 4u) {
+            memcpy(r.externals[r.external_count++], p + at, 20u);
+        }
+        for (uint32_t i = 0; i < r.external_count; i++) {
+            if (head[0] == TIDE_EMBED_RENDER_IMAGE && words[1] == r.externals[i][0]) r.external_bound[i] = true;
+            if (head[0] == TIDE_EMBED_RENDER_TEXTURE_FREE && words[0] == r.externals[i][0]) r.external_freed[i] = true;
+            // Nothing of the other program's image is written or made smaller images of
+            if ((head[0] == TIDE_EMBED_RENDER_TEXTURE_WRITE || head[0] == TIDE_EMBED_RENDER_MIPMAPS) && words[0] == r.externals[i][0]) {
+                r.whole = false;
+            }
+        }
         at += head[1];
     }
     return r;
@@ -1117,6 +1145,98 @@ TIDE_TEST(embed_render)
     TIDE_CHECK(again.ops[TIDE_EMBED_RENDER_TEXTURE] >= 1u);
     TIDE_CHECK(again.first_pipeline > 0u && again.first_pipeline <= first.first_pipeline);
     tide_embed_destroy(e);
+}
+
+// Where the local fields `type` have their field `name`: its offset, or UINT32_MAX.
+static uint32_t local_field(const int32_t type, const char *name)
+{
+    if (type < 0) return UINT32_MAX;
+    const tide_layout_type *t = &tide_game_layout.types[type];
+    for (uint32_t i = 0; i < t->field_count; i++) {
+        if (strcmp(t->fields[i].name, name) == 0) return t->fields[i].offset;
+    }
+    return UINT32_MAX;
+}
+
+// An image of the other program's own (Unity's imported texture) in a local Texture field: the game reads the size
+// it was told and draws with it, and what's recorded names the image by the other program's number, with nothing of
+// it uploaded, written or made smaller images of. A [Raw] field's read says so, a singleton's field takes one with
+// no entity, the field keeps it from frame to frame and across a reset of the other program's GPU, and an image of
+// 0 leaves the field with no texture. No other field takes one, and the match's hash is as it was.
+TIDE_TEST(embed_local_textures_are_the_other_programs)
+{
+    char *argv[] = {program};
+    tide_embed *e = start(1, argv);
+    TIDE_REQUIRE(e != NULL);
+    frames(e, 10, NULL);
+    uint32_t size = 0, count = 0;
+    const uint8_t *p = tide_embed_view(e, &size);
+    const uint8_t *rows = NULL;
+    TIDE_REQUIRE(p && section(p, size, TIDE_PACKET_COMPONENT, type_named("Counter"), &count, &rows) && count == 1u);
+    uint64_t key[2];
+    memcpy(key, p + TIDE_PACKET_HEADER + u32_at(rows, 0) * TIDE_PACKET_ENTITY, sizeof key);
+    const int32_t locals = type_named("Counter local"), tally = type_named("Tally local");
+    const uint32_t face = local_field(locals, "face"), bumps = local_field(locals, "bumps"), logo = local_field(tally, "logo");
+    TIDE_REQUIRE(locals >= 0 && tally >= 0 && face != UINT32_MAX && bumps != UINT32_MAX && logo != UINT32_MAX);
+    TIDE_CHECK(faced_face.x == 0 && faced_bumps.x == 0 && faced_logo.x == 0 && faced_note == 4);
+    const rendered before = render(e);
+    TIDE_REQUIRE(before.whole && before.ops[TIDE_EMBED_RENDER_EXTERNAL] == 0u);
+
+    // What takes none: a field that's no Texture, another type, no entity for a component's, a size that's none
+    const uint32_t point = (uint32_t)TIDE_FILTER_POINT, repeat = (uint32_t)TIDE_WRAP_REPEAT;
+    TIDE_CHECK(!tide_embed_local_texture(e, (uint32_t)locals, local_field(locals, "drawn"), key[0], key[1], 7, 64, 32, point, repeat));
+    TIDE_CHECK(!tide_embed_local_texture(e, (uint32_t)locals, face + 4u, key[0], key[1], 7, 64, 32, point, repeat));
+    TIDE_CHECK(!tide_embed_local_texture(e, (uint32_t)type_named("Counter"), 0, key[0], key[1], 7, 64, 32, point, repeat));
+    TIDE_CHECK(!tide_embed_local_texture(e, (uint32_t)locals, face, 0, 0, 7, 64, 32, point, repeat));
+    TIDE_CHECK(!tide_embed_local_texture(e, (uint32_t)locals, face, key[0], key[1], 7, 0, 32, point, repeat));
+    TIDE_CHECK(!tide_embed_local_texture(e, (uint32_t)locals, face, key[0], key[1], 7, 64, 65536, point, repeat));
+    TIDE_CHECK(!tide_embed_local_texture(e, 1000000u, face, key[0], key[1], 7, 64, 32, point, repeat));
+    frames(e, 1, NULL);
+    TIDE_CHECK(faced_face.x == 0 && render(e).ops[TIDE_EMBED_RENDER_EXTERNAL] == 0u);
+
+    const uint64_t hash = tide_game_api.hash;
+    TIDE_CHECK(tide_embed_local_texture(e, (uint32_t)locals, face, key[0], key[1], 7, 64, 32, point, repeat));
+    TIDE_CHECK(tide_embed_local_texture(e, (uint32_t)locals, bumps, key[0], key[1], 8, 16, 16, 1, 0));
+    TIDE_CHECK(tide_embed_local_texture(e, (uint32_t)tally, logo, 0, 0, 9, 256, 128, 2, 0));
+    frames(e, 1, NULL);
+    TIDE_CHECK(faced_face.x == 64 && faced_face.y == 32);
+    TIDE_CHECK(faced_bumps.x == 16 && faced_bumps.y == 16);
+    TIDE_CHECK(faced_logo.x == 256 && faced_logo.y == 128);
+    TIDE_CHECK(faced_note == 4); // The row the write made has the other fields' declared defaults
+    TIDE_CHECK(tide_game_api.hash == hash);
+    const rendered given = render(e);
+    TIDE_REQUIRE(given.whole && given.external_count == 3u);
+    bool found[3] = {false, false, false};
+    for (uint32_t i = 0; i < given.external_count; i++) {
+        const uint32_t *x = given.externals[i];
+        TIDE_CHECK(x[0] != 0u && given.external_bound[i] && !given.external_freed[i]);
+        if (x[1] == 7u) found[0] = x[2] == 64u && x[3] == 32u && x[4] == 0u;
+        if (x[1] == 8u) found[1] = x[2] == 16u && x[3] == 16u && x[4] == 2u; // [Raw]: its channels as they are
+        if (x[1] == 9u) found[2] = x[2] == 256u && x[3] == 128u && x[4] == 0u;
+    }
+    TIDE_CHECK(found[0] && found[1] && found[2]);
+
+    // The fields keep them: drawn again with nothing named again, and named again once the other program's GPU
+    // starts over
+    frames(e, 1, NULL);
+    const rendered kept = render(e);
+    TIDE_REQUIRE(kept.whole);
+    TIDE_CHECK(kept.ops[TIDE_EMBED_RENDER_EXTERNAL] == 0u && faced_face.x == 64);
+    tide_embed_render_reset(e);
+    frames(e, 1, NULL);
+    const rendered again = render(e);
+    TIDE_REQUIRE(again.whole);
+    TIDE_CHECK(again.external_count == 3u && again.external_bound[0] && again.external_bound[1] && again.external_bound[2]);
+
+    // None again: the field has no texture, and its name is let go of, which frees nothing of the other program's
+    TIDE_CHECK(tide_embed_local_texture(e, (uint32_t)locals, face, key[0], key[1], 0, 0, 0, 0, 0));
+    frames(e, 1, NULL);
+    TIDE_CHECK(faced_face.x == 0 && faced_face.y == 0 && faced_bumps.x == 16);
+    const rendered taken = render(e);
+    TIDE_REQUIRE(taken.whole);
+    TIDE_CHECK(taken.ops[TIDE_EMBED_RENDER_EXTERNAL] == 0u && taken.ops[TIDE_EMBED_RENDER_TEXTURE_FREE] >= 1u);
+    tide_embed_destroy(e);
+    TIDE_CHECK(!tide_embed_local_texture(e, (uint32_t)locals, face, key[0], key[1], 7, 64, 32, point, repeat)); // No embed
 }
 #endif
 
