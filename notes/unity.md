@@ -88,8 +88,9 @@ module installed here through the `unity` CLI; Xcode 26.6 on GitHub's `macos-lat
   kernel 31, a frag 31, a vert 31)`: the simulator's GPU has no indirect draws, which `TideRender.Supported`
   asks for, so the package drew with its OnGUI path there, as designed. `PlayerSmoke` now passes a simulator on
   the match alone and says so (changed after those runs; not run again).
-- The same sources outside Unity, in CI's package jobs (`unity_ios_test.mjs`, `notes/cli-and-packages.md`).
-  On this machine (Windows, clang 23, the Sample): tick 119's world is `b22f206cd96c179c`.
+- The same sources outside Unity, in CI's package jobs (`unity_ios_test.mjs`, `notes/cli-and-packages.md`; run
+  44530030202): the Sample's match through a stand-in for the player says tick 119's world is `b22f206cd96c179c`
+  in the iOS simulator under Xcode's clang, as on Linux, Windows and the Mac under LLVM.
 - The engine under Xcode's clang in the simulator, with the pinned cross-platform bits: `notes/ios.md`.
 
 **What only the iPhone shows:** Tide's renderer on a real device's Metal (the smoke's `drew yes`), touch input,

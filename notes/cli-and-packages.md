@@ -26,7 +26,9 @@ The agent's picks, Provisional; the design and the Unity side are in `notes/unit
   simulator with Xcode's clang and runs it there; `--also <clang>` builds it again for the machine with another
   compiler and requires the same lines; `--syntax` only compiles. CI's package jobs run it on the Unity sample
   (`check.yml`, Try the package (Unity iOS)): on the Mac in the simulator and again natively with LLVM's clang,
-  on Windows and Linux natively.
+  on Windows and Linux natively. Run 44530030202 (2026-11-19): all four builds passed and said the same four
+  lines, tick 119's world `b22f206cd96c179c`, as this Windows machine's clang 23 does: Linux and Windows with
+  LLVM 23, the Mac with Homebrew's LLVM, and the iOS simulator with Xcode's AppleClang 21.
 
 ## Two of tidec's phases beside each other, and the [Parts] models read ahead (2026-11-18, later)
 
