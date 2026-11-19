@@ -436,6 +436,67 @@ static bool give_record(void *user, const uint32_t shard, const uint32_t index, 
     return true;
 }
 
+static bool changed_wallet;
+
+static void tick_with_changed_rules(void *world, const tide_jobs *jobs)
+{
+    tide_game_api.tick(world, jobs);
+    tide_world *w = world;
+    for (uint32_t i = 0; i < w->entities.next_unused; i++) {
+        const tide_entity e = tide_entity_in_slot(&w->entities, i);
+        if (!tide_entity_alive(&w->entities, e) || !tide_has_Mover(w, e)) continue;
+        Mover m = tide_get_Mover(w, e);
+        m.wallet ^= 1;
+        tide_set_Mover(w, e, m);
+        changed_wallet = true;
+        break;
+    }
+}
+
+TIDE_TEST(shards_reject_divergent_replay_after_decoding_a_checkpoint)
+{
+    memset(&journal, 0, sizeof journal);
+    tide_shards_desc d = desc_of(0);
+    d.split[0] = 1;
+    d.transports = NULL;
+    d.journal = keep_record;
+    tide_shards *source = tide_shards_create(&d, 0.0);
+    TIDE_REQUIRE(source != NULL);
+    tide_shards_update(source, 0.1);
+    uint32_t size = 0;
+    uint8_t *saved = tide_shards_save(source, &size);
+    TIDE_REQUIRE(saved != NULL && size > 0);
+    forget_records();
+    tide_shards_update(source, 0.2);
+    TIDE_REQUIRE(journal.counts[TIDE_SHARD_ROOT] > 0);
+    const uint64_t expected = tide_game_api.hash_world(tide_shards_world(source, TIDE_SHARD_ROOT));
+    tide_shards_destroy(source);
+
+    // Model a release that changes match rules while keeping the checkpoint reader and world layout.
+    tide_game changed = tide_game_api;
+    changed.simulation[0] ^= 1u;
+    changed.tick = tick_with_changed_rules;
+    changed_wallet = false;
+    d.game = &changed;
+    d.journal = NULL;
+    tide_shards *recovered = tide_shards_recover(&d, saved, size, give_record, NULL, 0.2);
+    TIDE_CHECK(changed_wallet); // Recovery decoded the checkpoint and reached the changed tick.
+    TIDE_CHECK(recovered == NULL);
+    if (recovered) tide_shards_destroy(recovered);
+
+    d.game = &tide_game_api;
+    recovered = tide_shards_recover(&d, saved, size, give_record, NULL, 0.2);
+    TIDE_CHECK(recovered != NULL);
+    if (recovered) {
+        TIDE_CHECK(tide_game_api.hash_world(tide_shards_world(recovered, TIDE_SHARD_ROOT)) == expected);
+        tide_shards_destroy(recovered);
+    }
+    forget_records();
+    free(journal.records[TIDE_SHARD_ROOT]);
+    free(journal.sizes[TIDE_SHARD_ROOT]);
+    free(saved);
+}
+
 static void crash_and_recover(const uint32_t most)
 {
     memset(&journal, 0, sizeof journal);
