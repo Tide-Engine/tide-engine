@@ -166,6 +166,9 @@ TIDE_TEST(unity_code_writes_a_physics_packages_rules)
     free(body);
     char *part = read_written(dir, "Components/Box3D/Part.cs");
     TIDE_CHECK(part && strstr(part, "    [global::Tide.TidePart(\"of\")]\n") != NULL && strstr(part, "        public long box") == NULL);
+    // ...and gives its body's GameObject itself, which the shapes beside it ask each frame
+    TIDE_CHECK(part && strstr(part, " : global::Tide.TideComponent, global::Tide.ITidePart\n") != NULL
+               && strstr(part, "        global::UnityEngine.GameObject global::Tide.ITidePart.TidePartOf => of;\n") != NULL);
     free(part);
     char *sphere = read_written(dir, "Components/Box3D/Sphere.cs");
     TIDE_CHECK(sphere && strstr(sphere, "            offset = global::Tide.TideParts.Placed(offset, this, global::Tide.TideScale.By.Scale);\n") != NULL

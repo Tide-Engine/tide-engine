@@ -37,7 +37,17 @@ void tide_timeline_begin(tide_timeline *t, const void *world, uint32_t tick);
 // ...and each tick after it: its journal record and the world after it. A
 // record that isn't the server's next tick's is left out.
 void tide_timeline_tick(tide_timeline *t, uint32_t tick, const uint8_t *record, uint32_t size, const void *world);
-// The recorder that does both, for tide_session_record.
+// Following a match another machine runs, which has no journal here: the
+// world after `tick` ticks as this machine had it confirmed (copied), with
+// what the tick that made it sent for local handlers (copied; or NULL). Its
+// worlds are kept as a recorded match's latest are, and that's all it has:
+// it starts at the first tick it keeps, nothing before can be made again,
+// and it can't be cut or saved. A tick that isn't the one after its last
+// starts it over from there.
+void tide_timeline_follow(tide_timeline *t, uint32_t tick, const void *world, const tide_event_log *heard);
+// Whether it follows a match (tide_timeline_follow) rather than records one.
+bool tide_timeline_follows(const tide_timeline *t);
+// The recorder that does all three, for tide_session_record.
 tide_session_recorder tide_timeline_recorder(tide_timeline *t);
 
 // A build of the same data layout runs the game from now on (a hot reload):
@@ -55,6 +65,16 @@ uint32_t tide_timeline_made(const tide_timeline *t);  // The last tick whose wor
 // Its until the next call; NULL outside them, or past a tick this build can't
 // replay.
 const void *tide_timeline_world(tide_timeline *t, uint32_t tick);
+
+// What the tick that made the world after `tick` ticks sent for the game's
+// local handlers (tide/events.h), put at the end of `heard`: that tick run
+// again from the world before it, as the machine that ran the match heard it,
+// for a debugger's frames to hear a tick they show. A world
+// tide_timeline_world gave before is no longer the caller's. False, with
+// nothing more in `heard`, for its first tick (no tick it has made that
+// world), one outside it, or one this build can't replay. A match followed
+// says what it was told the tick sent (tide_timeline_follow).
+bool tide_timeline_heard(tide_timeline *t, uint32_t tick, tide_event_log *heard);
 
 // What replaying found: every tick to `checked` made the world the server's
 // had, or the first that didn't, `differs` (its world's hash `got`, the

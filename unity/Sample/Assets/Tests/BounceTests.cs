@@ -454,6 +454,20 @@ public sealed unsafe class BounceTests
         yield return DrawsIntoUnitysFrame(reload: true);
     }
 
+    // ...and through an orthographic Unity camera: Tide's 3D where that camera sees it, hidden by its depth where
+    // Unity's floor is nearer, the ring where its WorldToScreenPoint has the ball. The embed takes Unity's matrices as
+    // they are (tide_embed_camera), so nothing of it is a perspective camera's alone.
+    [UnityTest]
+    public IEnumerator TideDrawsIntoAnOrthographicCamerasFrame()
+    {
+        if (SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null)
+        {
+            Assert.Ignore("no GPU in this run (-nographics)");
+            yield break;
+        }
+        yield return DrawsIntoUnitysFrame(orthographic: true);
+    }
+
     // ...in URP too, through its pass (Tide.Runtime.URP), with the project's pipeline URP's for the while.
     [UnityTest]
     public IEnumerator TideDrawsIntoUnitysFrameInURP()
@@ -497,12 +511,18 @@ public sealed unsafe class BounceTests
 #endif
     }
 
-    IEnumerator DrawsIntoUnitysFrame(bool universal = false, bool reload = false)
+    IEnumerator DrawsIntoUnitysFrame(bool universal = false, bool reload = false, bool orthographic = false)
     {
         SceneManager.LoadScene(Bounce);
         yield return null;
         var runner = Object.FindAnyObjectByType<TideRunner>();
         var camera = Camera.main;
+        if (orthographic)
+        {
+            // The scene's own camera, seeing 14 units from top to bottom: the box, its plates and the ball in view
+            camera.orthographic = true;
+            camera.orthographicSize = 7f;
+        }
         var target = new RenderTexture(640, 480, 24);
         camera.targetTexture = target;
         yield return Connected(runner);
@@ -529,7 +549,9 @@ public sealed unsafe class BounceTests
                 r.material = new Material(lit) { color = color };
             }
         }
-        Check(camera, target, ball, "");
+        // The ring is a pixel wide and smooth: where its middle falls between two pixels each has half of it over the
+        // floor, as through this camera, so the ring's pixels are taken by more there (the floor alone is 0.6 away)
+        Check(camera, target, ball, "", orthographic ? 0.5f : 0.35f);
         if (reload)
         {
             // The same build again, as tide makes one for an edit of the game's code: the embed takes the newest
@@ -567,7 +589,7 @@ public sealed unsafe class BounceTests
     }
 
     // The frame `camera` renders into `target` has Tide's drawing as DrawsIntoUnitysFrame says
-    static void Check(Camera camera, RenderTexture target, TideEntity ball, string when)
+    static void Check(Camera camera, RenderTexture target, TideEntity ball, string when, float ringBy = 0.35f)
     {
         camera.Render(); // A batch run's frames have no end to wait for: this frame's drawing, again, now
         var read = new Texture2D(640, 480, TextureFormat.RGBA32, false);
@@ -603,7 +625,7 @@ public sealed unsafe class BounceTests
             {
                 var x = Mathf.RoundToInt(middle.x + Mathf.Cos(angle) * r);
                 var y = Mathf.RoundToInt(middle.y + Mathf.Sin(angle) * r);
-                if (Near(read.GetPixel(x, y), live.color, 0.35f))
+                if (Near(read.GetPixel(x, y), live.color, ringBy))
                 {
                     ringed++;
                     break;
@@ -704,6 +726,21 @@ public sealed unsafe class BounceTests
         var p = scene.WorldToScreenPoint(ball.transform.position + new Vector3(0, 1.2f, 0));
         var cube = read.GetPixel(Mathf.RoundToInt(p.x), Mathf.RoundToInt(p.y));
         Assert.IsTrue(Near(cube, live.color, 0.03f), $"the cube over the ball, where the scene view sees it: {cube} for {live.color}");
+        // ...and through a scene view that's orthographic (its Iso mode), where that sees it
+        scene.orthographic = true;
+        scene.orthographicSize = 5f;
+        scene.Render();
+        RenderTexture.active = target;
+        read.ReadPixels(new Rect(0, 0, 320, 240), 0, 0);
+        read.Apply();
+        RenderTexture.active = null;
+        p = scene.WorldToScreenPoint(ball.transform.position + new Vector3(0, 1.2f, 0));
+        cube = read.GetPixel(Mathf.RoundToInt(p.x), Mathf.RoundToInt(p.y));
+        Assert.IsTrue(Near(cube, live.color, 0.03f), $"the cube over the ball, where an orthographic scene view sees it: {cube} for {live.color}");
+        // A unit beside the cube (0.4 across) there's none of it: the cube is its size on the screen too
+        var beside = scene.WorldToScreenPoint(ball.transform.position + new Vector3(0, 1.2f, 0) + scene.transform.right);
+        Assert.IsFalse(Near(read.GetPixel(Mathf.RoundToInt(beside.x), Mathf.RoundToInt(beside.y)), live.color, 0.03f),
+            "and not a unit beside it");
         var white = 0;
         for (var x = 0; x < 120; x++)
         {
@@ -717,6 +754,76 @@ public sealed unsafe class BounceTests
         scene.targetTexture = null;
         Object.Destroy(target);
         Object.Destroy(scene.gameObject);
+    }
+
+    // A build another tide made, published while the game runs: tide installed again, or a development tide built
+    // again, under the running editor, whose next build is the new tide's while the host Unity loaded is the old one's.
+    // The host says so in the Console, with what to do, and the match goes on with the build it has, where it used to
+    // load the build and call through tables laid out otherwise (a crash). The library here is the running build's
+    // with the text that says which tide built it (tide/host.h's TIDE_HOST_LIBRARY_MADE_BY) changed by a digit.
+    [UnityTest]
+    public IEnumerator ABuildAnotherTideMadeIsntLoaded()
+    {
+        SceneManager.LoadScene(Bounce);
+        yield return null;
+        var runner = Object.FindAnyObjectByType<TideRunner>();
+        yield return Connected(runner);
+        var folder = TideLibrary.BuildFolder;
+        int Newest(string prefix)
+        {
+            var newest = 0;
+            foreach (var file in System.IO.Directory.GetFiles(folder, prefix + "*" + TideLibrary.LibrarySuffix))
+            {
+                var name = System.IO.Path.GetFileNameWithoutExtension(file);
+                if (int.TryParse(name.Substring(prefix.Length), out var n) && n > newest) newest = n;
+            }
+            return newest;
+        }
+        var running = Newest("loaded-");
+        var built = Newest("game-");
+        Assert.Greater(running, 0, "the embed runs a build of the game");
+        var library = System.IO.File.ReadAllBytes(System.IO.Path.Combine(folder, $"game-{built}{TideLibrary.LibrarySuffix}"));
+        // Which tide built it, as tide wrote into the library's C: its version and a number in brackets
+        var said = System.Text.RegularExpressions.Regex.Match(
+            System.IO.File.ReadAllText(System.IO.Path.Combine(folder, "gen", "library.c")), @"""([^""\n]+ \([0-9a-f]{16}\))""");
+        Assert.IsTrue(said.Success, "tide wrote which tide built the game's library");
+        var mine = System.Text.Encoding.ASCII.GetBytes(said.Groups[1].Value);
+        var found = 0;
+        for (var at = 0; at + mine.Length <= library.Length; at++)
+        {
+            var same = true;
+            for (var i = 0; same && i < mine.Length; i++) same = library[at + i] == mine[i];
+            if (!same) continue;
+            var digit = at + mine.Length - 2; // The number's last digit, before its bracket
+            library[digit] = (byte)(library[digit] == (byte)'0' ? '1' : '0');
+            found++;
+        }
+        Assert.AreEqual(1, found, "the library says which tide built it, once");
+        var foreign = System.IO.Path.Combine(folder, $"game-{built + 1}{TideLibrary.LibrarySuffix}");
+        LogAssert.Expect(LogType.Error, new System.Text.RegularExpressions.Regex(
+            "was built by tide .*, and what runs it by tide .*, so it isn't loaded.*leave Play, wait for tide's build, and enter Play again"));
+        try
+        {
+            System.IO.File.WriteAllBytes(foreign, library);
+            var tick = runner.Status.predictedTick;
+            yield return Until(() => false, 1.5f); // The embed looks for a newer build ten times a second
+            Assert.AreEqual(running, Newest("loaded-"), "the build that was running still is: no copy of the other was kept");
+            Assert.IsTrue(runner.Running, "the game goes on");
+            Assert.AreEqual(TideSessionState.Connected, runner.State);
+            Assert.Greater(runner.Status.predictedTick, tick + 30, "and its match with it");
+        }
+        finally
+        {
+            System.IO.File.Delete(foreign); // The next Play takes the newest build there, which must be this tide's
+        }
+        // What the message says to do works: the game ended and started again runs the newest build of this tide's
+        Object.Destroy(runner.gameObject);
+        yield return null;
+        SceneManager.LoadScene(Bounce);
+        yield return null;
+        runner = Object.FindAnyObjectByType<TideRunner>();
+        yield return Connected(runner);
+        Assert.AreEqual(TideSessionState.Connected, runner.State, "Play entered again runs this tide's build");
     }
 
     [UnityTest]
@@ -760,6 +867,18 @@ public sealed unsafe class BounceTests
         var seen = Camera.main.WorldToScreenPoint(ball.transform.position);
         var expected = new Vector2(seen.x, Screen.height - seen.y); // Tide's screen is from the top left, y down
         Assert.Less(Vector2.Distance(ring, expected), 1.5f, $"the ring at {ring} is around the ball at {expected}");
+        // ...an orthographic camera too, which puts the ball elsewhere on the screen: Draw.WorldToScreen follows it
+        var camera = Camera.main;
+        camera.orthographic = true;
+        camera.orthographicSize = 4f;
+        yield return null;
+        yield return null;
+        Assert.IsTrue(Ringed(runner, out var flat), "the draw packet has the ball's ring through an orthographic camera");
+        seen = camera.WorldToScreenPoint(ball.transform.position);
+        var flatExpected = new Vector2(seen.x, Screen.height - seen.y);
+        Assert.Greater(Vector2.Distance(expected, flatExpected), 8f, "the two cameras see the ball at different places");
+        Assert.Less(Vector2.Distance(flat, flatExpected), 1.5f, $"the ring at {flat} is around the ball at {flatExpected} through an orthographic camera");
+        camera.orthographic = false;
         for (var i = 0; i < 2; i++)
         {
             var pillar = pillars.GetChild(i);

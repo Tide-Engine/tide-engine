@@ -320,14 +320,29 @@ static void gen_embed_heard(gen *g)
     const layout_decls types = layout_types(prog);
     sb_put(o, "// The match's events this machine heard since the last view packet, as its local handlers would, for another\n"
               "// program (tide/embed.h): the packet's EVENTS records, and in its text what their heap fields held\n"
-              "static tide_packet tide_embed_heard_store;\nstatic uint32_t tide_embed_heard_count;\n\n");
+              "static tide_packet tide_embed_heard_store;\nstatic uint32_t tide_embed_heard_count;\n"
+              "// A packet took them: they go as the next is heard or the next frame's packet is written, and till then\n"
+              "// the same packet written again (tide_packet.again) carries them again\n"
+              "static bool tide_embed_heard_taken;\n"
+              "// Which events the other program hears (the last packet's tide_packet.wanted): the rest aren't kept\n"
+              "static const uint64_t *tide_embed_heard_wanted;\nstatic uint32_t tide_embed_heard_wanted_types;\n\n"
+              "static void tide_embed_heard_drop(void)\n{\n"
+              "    tide_embed_heard_store.size = 0;\n    tide_embed_heard_store.text_size = 0;\n"
+              "    tide_embed_heard_store.entry_count = 0;\n    tide_embed_heard_count = 0;\n"
+              "    tide_embed_heard_taken = false;\n}\n\n"
+              "TIDE_HELPER bool tide_embed_heard_wants(const uint32_t type)\n{\n"
+              "    return !tide_embed_heard_wanted || type >= tide_embed_heard_wanted_types\n"
+              "        || (tide_embed_heard_wanted[type >> 6] >> (type & 63u) & 1u) != 0;\n}\n\n");
     for (int i = 0; i < prog->events.count; i++) {
         const decl *d = prog->events.items[i];
         if (!embed_tapped(d)) continue;
         const char *name = type_cname(d);
         const bool fix = embed_has_fix(d);
         sb_printf(o, "TIDE_HELPER void tide_embed_heard_%s(const %s *value, const bool verified, const tide_entity target, "
-                     "const uint32_t tick)\n{\n    %s v = *value;\n", name, name, name);
+                     "const uint32_t tick)\n{\n"
+                     "    if (tide_embed_heard_taken) tide_embed_heard_drop(); // The last packet had what was heard before\n"
+                     "    if (!tide_embed_heard_wants(%du)) return;\n    %s v = *value;\n",
+                  name, name, embed_event_type(prog, &types, d), name);
         if (fix) {
             sb_printf(o, "    const uint64_t mark = tide_scratch_mark();\n    tide_embed_fix_%s(&v, &tide_embed_heard_store);\n"
                          "    tide_scratch_reset(mark);\n", name);
@@ -340,10 +355,7 @@ static void gen_embed_heard(gen *g)
                      "    tide_embed_heard_count++;\n}\n\n",
                   embed_event_type(prog, &types, d));
     }
-    sb_put(o, "static void tide_embed_heard_drop(void)\n{\n"
-              "    tide_embed_heard_store.size = 0;\n    tide_embed_heard_store.text_size = 0;\n"
-              "    tide_embed_heard_store.entry_count = 0;\n    tide_embed_heard_count = 0;\n}\n\n"
-              "// The store's STRINGS into a packet that has none yet: its handles, entry for entry, are the packet's\n"
+    sb_put(o, "// The store's STRINGS into a packet that has none yet: its handles, entry for entry, are the packet's\n"
               "static void tide_embed_heard_strings(tide_packet *out)\n{\n"
               "    for (uint32_t i = 0; i < tide_embed_heard_store.entry_count; i++) {\n"
               "        const uint32_t *entry = tide_embed_heard_store.entries + (size_t)i * 2u;\n"
@@ -362,7 +374,7 @@ static void gen_embed_heard(gen *g)
               "        head[8] = tide_packet_find_entity(out, target);\n"
               "        memcpy(records + at, head, sizeof head);\n"
               "        at += head[0] ? head[0] : size;\n    }\n"
-              "    tide_embed_heard_drop();\n}\n\n");
+              "    tide_embed_heard_taken = true;\n}\n\n");
 }
 
 // The view packet: what views see this frame (tide/embed_game.h says its bytes), as function `fn`. With `heard_wanted`,
@@ -380,6 +392,10 @@ static void gen_packet_view(gen *g, const char *fn, const bool heard_wanted)
               "    const tide_local *l = local_state;\n    (void)previous;\n    (void)l;\n"
               "    tide_packet_begin(out);\n", strncmp(fn, "tide_inspect", 12) == 0 ? "__attribute__((cold, minsize)) " : "", fn);
     const bool heard = heard_wanted && embed_event_count(prog) > 0;
+    if (heard) {
+        sb_put(o, "    tide_embed_heard_wanted = out->wanted;\n    tide_embed_heard_wanted_types = out->wanted_types;\n"
+                  "    if (tide_embed_heard_taken && !out->again) tide_embed_heard_drop(); // The last packet's\n");
+    }
     sb_printf(o, "    if (!w) {\n%s        tide_packet_end(out, 0x%016llXull, false, 0, verified_tick, 1.0f, 0);\n        return;\n    }\n",
               heard ? "        tide_embed_heard_drop(); // Nothing's heard outside a match\n" : "", (unsigned long long)g->game_hash);
     sb_put(o, "    if (!(alpha >= 0.0f && alpha <= 1.0f)) alpha = 1.0f;\n");
@@ -441,7 +457,8 @@ static void gen_packet_view(gen *g, const char *fn, const bool heard_wanted)
         const decl *d = prog->components.items[c];
         if (!embed_component_kept(g, c)) continue;
         const char *name = type_cname(d);
-        sb_printf(o, "    { // %s\n        uint32_t count = 0;\n", name);
+        // Only what the other program reads (tide_packet.wanted): the rest costs this test
+        sb_printf(o, "    if (tide_packet_wants(out, %du)) { // %s\n        uint32_t count = 0;\n", layout_index(&types, d), name);
         gen_embed_rows(g, c, "            count++;\n");
         sb_printf(o, "        uint32_t *rows;\n"
                      "        uint8_t *values = tide_packet_section(out, TIDE_PACKET_COMPONENT, %du, count, (uint32_t)sizeof(%s), &rows);\n"
@@ -463,7 +480,8 @@ static void gen_packet_view(gen *g, const char *fn, const bool heard_wanted)
         if (d->local_part) {
             const decl *part = d->local_part;
             const char *part_name = type_cname(part);
-            sb_printf(o, "    { // %s's local fields\n        uint32_t count = 0;\n", name);
+            sb_printf(o, "    if (tide_packet_wants(out, %du)) { // %s's local fields\n        uint32_t count = 0;\n",
+                      layout_index(&types, d), name);
             gen_embed_rows(g, c, "            count++;\n");
             sb_printf(o, "        uint32_t *rows;\n"
                          "        uint8_t *values = tide_packet_section(out, TIDE_PACKET_COMPONENT_LOCAL, %du, count, (uint32_t)sizeof(%s), &rows);\n"
@@ -482,7 +500,7 @@ static void gen_packet_view(gen *g, const char *fn, const bool heard_wanted)
         const decl *d = prog->singletons.items[i];
         if (d->is_local || layout_index(&types, d) < 0) continue;
         const char *name = type_cname(d);
-        sb_printf(o, "    { // %s\n        %s value = w->%s;\n", name, name, name);
+        sb_printf(o, "    if (tide_packet_wants(out, %du)) { // %s\n        %s value = w->%s;\n", layout_index(&types, d), name, name, name);
         if (decl_blends(d)) {
             if (blend_reads_heap(d)) sb_printf(o, "        tide_blend_owned_%s(&value, previous ? &previous->%s : NULL, alpha, previous, w);\n", name, name);
             else sb_printf(o, "        tide_blend_%s(&value, previous ? &previous->%s : NULL, alpha);\n", name, name);
@@ -492,7 +510,8 @@ static void gen_packet_view(gen *g, const char *fn, const bool heard_wanted)
                   layout_index(&types, d));
         if (d->local_part && layout_index(&types, d->local_part) >= 0) {
             const char *part_name = type_cname(d->local_part);
-            sb_printf(o, "    { // %s's local fields\n        %s value = l->%s_local;\n", name, part_name, name);
+            sb_printf(o, "    if (tide_packet_wants(out, %du)) { // %s's local fields\n        %s value = l->%s_local;\n",
+                      layout_index(&types, d), name, part_name, name);
             if (embed_has_fix(d->local_part)) sb_printf(o, "        tide_embed_fix_%s(&value, out);\n", part_name);
             sb_printf(o, "        memcpy(tide_packet_section(out, TIDE_PACKET_SINGLETON_LOCAL, %du, 1, (uint32_t)sizeof value, NULL), &value, sizeof value);\n    }\n",
                       layout_index(&types, d->local_part));

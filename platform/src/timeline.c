@@ -30,6 +30,7 @@ typedef struct kept {
     void *world;
     uint32_t tick;
     bool used;
+    tide_event_log heard; // A match followed: what the tick that made it sent (tide_timeline_follow)
 } kept;
 
 // The match went on from `world` as tick `tick`'s, whatever replaying makes of it (tide_timeline_cut)
@@ -43,6 +44,7 @@ struct tide_timeline {
     const tide_jobs *jobs;
     uint32_t keep;
     bool started;
+    bool following;  // A match another machine runs: no records, the worlds kept alone (tide_timeline_follow)
     uint32_t first;  // The tick it starts at...
     void *start;     // ...and its world
     uint8_t **records;
@@ -57,6 +59,8 @@ struct tide_timeline {
     void *seek;      // A world made again from the start, before the ones kept...
     uint32_t seek_tick;
     bool seeking;    // ...while it's at seek_tick
+    void *seek_before; // ...and the one it was made from, for what its tick sent (tide_timeline_heard)
+    bool seek_had;     // ...while that's the world after seek_tick - 1 ticks
     tide_timeline_check check;
 };
 
@@ -90,10 +94,15 @@ static void clear(tide_timeline *t)
     drop_world(t, t->seek);
     t->seek = NULL;
     t->seeking = false;
+    drop_world(t, t->seek_before);
+    t->seek_before = NULL;
+    t->seek_had = false;
     for (uint32_t i = 0; i < t->keep; i++) {
         drop_world(t, t->kept[i].world);
+        tide_event_log_free(&t->kept[i].heard);
         t->kept[i] = (kept){0};
     }
+    t->following = false;
     for (uint32_t i = 0; i < t->count; i++) free(t->records[i]);
     t->count = 0;
     t->record_bytes = 0;
@@ -144,6 +153,7 @@ static void *slot_for(tide_timeline *t, const uint32_t tick)
     if (!k->world) k->world = new_world(t);
     k->used = false;
     k->tick = tick;
+    tide_event_log_clear(&k->heard);
     return k->world;
 }
 
@@ -241,7 +251,7 @@ static void trim(tide_timeline *t)
 
 void tide_timeline_tick(tide_timeline *t, const uint32_t tick, const uint8_t *record, const uint32_t size, const void *world)
 {
-    if (!t || !t->started || !record || !world || t->made != t->first + t->count) return;
+    if (!t || !t->started || t->following || !record || !world || t->made != t->first + t->count) return;
     if (t->server_next != UINT32_MAX && tick != t->server_next) return;
     t->server_next = tick + 1u;
     add_record(t, record, size);
@@ -249,6 +259,28 @@ void tide_timeline_tick(tide_timeline *t, const uint32_t tick, const uint8_t *re
     t->made++;
     t->check.checked = t->made; // The server made it: it's its own world
     if (t->record_bytes > RECORDS_MOST) trim(t);
+}
+
+void tide_timeline_follow(tide_timeline *t, const uint32_t tick, const void *world, const tide_event_log *heard)
+{
+    if (!t || !world) return;
+    if (!t->started || !t->following || tick != t->made + 1u) { // From here: nothing says what came between
+        tide_timeline_begin(t, world, tick);
+        t->following = true;
+        return;
+    }
+    keep_world(t, tick, world);
+    tide_event_log *log = &t->kept[tick % t->keep].heard;
+    uint32_t at = 0;
+    for (const tide_heard *one; heard && (one = tide_event_log_next(heard, &at));) tide_event_log_copy(log, heard, one, one->as);
+    t->made = tick;
+    t->first = tide_timeline_kept(t); // Nothing before the worlds it keeps
+    t->check.checked = tick;
+}
+
+bool tide_timeline_follows(const tide_timeline *t)
+{
+    return t && t->started && t->following;
 }
 
 static void recorder_begin(void *user, const void *world, const uint32_t tick)
@@ -261,14 +293,22 @@ static void recorder_tick(void *user, const uint32_t tick, const uint8_t *record
     tide_timeline_tick(user, tick, record, size, world);
 }
 
+static void recorder_verified(void *user, const uint32_t tick, const void *world, const tide_event_log *heard)
+{
+    tide_timeline_follow(user, tick, world, heard);
+}
+
 tide_session_recorder tide_timeline_recorder(tide_timeline *t)
 {
-    return (tide_session_recorder){.user = t, .begin = recorder_begin, .tick = recorder_tick};
+    return (tide_session_recorder){.user = t, .begin = recorder_begin, .tick = recorder_tick, .verified = recorder_verified};
 }
 
 void tide_timeline_set_game(tide_timeline *t, const tide_game *game)
 {
-    if (t && game) t->game = game;
+    if (!t || !game) return;
+    // What a followed match's ticks sent is laid out as the build that heard it has it: not this one's to hear
+    for (uint32_t i = 0; t->game != game && i < t->keep; i++) tide_event_log_clear(&t->kept[i].heard);
+    t->game = game;
 }
 
 bool tide_timeline_started(const tide_timeline *t)
@@ -283,7 +323,7 @@ uint32_t tide_timeline_first(const tide_timeline *t)
 
 uint32_t tide_timeline_last(const tide_timeline *t)
 {
-    return t && t->started ? t->first + t->count : 0u;
+    return !t || !t->started ? 0u : t->following ? t->made : t->first + t->count;
 }
 
 uint32_t tide_timeline_made(const tide_timeline *t)
@@ -318,7 +358,7 @@ const void *tide_timeline_world(tide_timeline *t, const uint32_t tick)
 {
     if (!t || !t->started || tick < t->first || tick > tide_timeline_last(t)) return NULL;
     const void *world = kept_at(t, tick);
-    if (world) return world;
+    if (world || t->following) return world;
     if (tick > t->made) { // Onwards from the last one made, each kept
         for (uint32_t at = t->made; at < tick; at++) {
             const void *from = kept_at(t, at);
@@ -337,8 +377,14 @@ const void *tide_timeline_world(tide_timeline *t, const uint32_t tick)
         t->game->copy_world(t->seek, t->start);
         t->seek_tick = t->first;
         t->seeking = true;
+        t->seek_had = false;
     }
     while (t->seek_tick < tick) {
+        t->seek_had = t->seek_tick + 1u == tick; // The last one before it, kept: a copy shares its pages
+        if (t->seek_had) {
+            if (!t->seek_before) t->seek_before = new_world(t);
+            t->game->copy_world(t->seek_before, t->seek);
+        }
         if (!replay(t, t->seek, t->seek_tick)) {
             t->seeking = false;
             return NULL;
@@ -348,9 +394,33 @@ const void *tide_timeline_world(tide_timeline *t, const uint32_t tick)
     return t->seek;
 }
 
+bool tide_timeline_heard(tide_timeline *t, const uint32_t tick, tide_event_log *heard)
+{
+    if (!t || !t->started || !heard || tick <= t->first || tick > tide_timeline_last(t)) return false;
+    if (t->following) {
+        const kept *k = &t->kept[tick % t->keep];
+        if (!k->used || k->tick != tick) return false;
+        uint32_t at = 0;
+        for (const tide_heard *one; (one = tide_event_log_next(&k->heard, &at));) tide_event_log_copy(heard, &k->heard, one, one->as);
+        return true;
+    }
+    const void *before = kept_at(t, tick - 1u);
+    if (!before && t->seeking && t->seek_had && t->seek_tick == tick) before = t->seek_before;
+    if (!before) before = tide_timeline_world(t, tick - 1u);
+    if (!before) return false;
+    void *world = new_world(t);
+    t->game->copy_world(world, before);
+    uint64_t expected = 0, got = 0;
+    const uint32_t i = tick - 1u - t->first;
+    const tide_replay_result result =
+        tide_replay_heard(t->game, world, t->records[i], t->sizes[i], t->jobs, heard, &expected, &got);
+    drop_world(t, world);
+    return result != TIDE_REPLAY_UNREADABLE;
+}
+
 bool tide_timeline_cut(tide_timeline *t, const uint32_t tick, const void *world)
 {
-    if (!t || !t->started || !world || tick < t->first || tick > tide_timeline_last(t)) return false;
+    if (!t || !t->started || t->following || !world || tick < t->first || tick > tide_timeline_last(t)) return false;
     const void *made = tide_timeline_world(t, tick);
     const bool same = made && t->game->hash_world(made) == t->game->hash_world(world);
     drop_jumps_after(t, tick > t->first ? tick - 1u : 0u); // A jump at `tick` is this one's now
@@ -426,7 +496,7 @@ static bool unpack(const tide_game *g, void *world, const uint32_t packed, const
 uint8_t *tide_timeline_save(tide_timeline *t, const uint32_t tick_rate, const uint32_t player, uint32_t *size)
 {
     if (size) *size = 0;
-    if (!t || !t->started || !size) return NULL;
+    if (!t || !t->started || t->following || !size) return NULL;
     const tide_game *g = t->game;
     const uint32_t packed = g->pack_delta ? PACKED_DELTA : PACKED_RAW;
     if (packed == PACKED_RAW && !g->pack_world) return NULL;

@@ -8,8 +8,10 @@ using UnityEngine;
 
 namespace Tide.Editor
 {
-    // The Scene view's shapes of Tide components whose package gives one (from its unity.json): a wireframe of a
-    // selected one, as Unity draws a collider's, and an Edit Shape tool whose handles change it. A primitive's
+    // The Scene view's shapes of Tide components whose package gives one (from its unity.json): a wireframe, drawn when
+    // Unity draws a collider's (the GameObject or one above it selected; every one where Always Show Tide Shapes is
+    // on, as Physics 2D's Always Show Colliders, the rest fainter), and an Edit Shape tool whose handles change it.
+    // In Play the fields are the match's, read live, so what's drawn is the match's shape. A primitive's
     // (TideShape) size, radius, height and centre; an outline's (TideOutline) points; a joint's (TideJoint) anchors and
     // their turns. A mesh (TideMesh) and a height field (TideTerrain) are drawn, from the lists Unity's fill. The
     // fields are as authored; the shape is drawn with the GameObject's position, rotation and scale, the way Unity's
@@ -17,6 +19,51 @@ namespace Tide.Editor
     static class TideShapes
     {
         internal static readonly Color Wire = new Color(0.55f, 0.85f, 1f, 0.9f);
+        // ...and of one that's drawn though nothing of its GameObject is selected
+        internal static readonly Color Faint = new Color(0.55f, 0.85f, 1f, 0.35f);
+
+        // Every shape is drawn, selected or not, as Physics 2D's Always Show Colliders does Unity's: this machine's
+        // choice (Project Settings > Tide), off at first, as Unity's is
+        const string AlwaysKey = "Tide.AlwaysShowShapes";
+        static int always = -1;
+
+        internal static bool Always
+        {
+            get
+            {
+                if (always < 0) always = EditorPrefs.GetBool(AlwaysKey, false) ? 1 : 0;
+                return always == 1;
+            }
+            set
+            {
+                if (Always == value) return;
+                always = value ? 1 : 0;
+                EditorPrefs.SetBool(AlwaysKey, value);
+                SceneView.RepaintAll();
+            }
+        }
+
+        // Whether a component's type has anything to draw, found once a type: with Always on, Unity asks for every
+        // Tide component of the scene at each repaint
+        static readonly Dictionary<Type, bool> shaped = new Dictionary<Type, bool>();
+
+        internal static bool Shaped(Type type)
+        {
+            if (shaped.TryGetValue(type, out var has)) return has;
+            has = type.IsDefined(typeof(TideShapeAttribute), false) || type.IsDefined(typeof(TideOutlineAttribute), false)
+                  || type.IsDefined(typeof(TideJointAttribute), false) || type.IsDefined(typeof(TideMeshAttribute), false)
+                  || type.IsDefined(typeof(TideTerrainAttribute), false);
+            shaped[type] = has;
+            return has;
+        }
+
+        // Whether Unity's `type` for a gizmo is one a shape is drawn for, and whether as a selected one's: the
+        // GameObject's own selection or one above it, as a collider on a Rigidbody's child is drawn with its body
+        internal static bool Drawn(GizmoType type, out bool selected)
+        {
+            selected = (type & (GizmoType.Selected | GizmoType.Active | GizmoType.InSelectionHierarchy)) != 0;
+            return selected || Always;
+        }
 
         // A component's shape, read from its fields: false for a component without one, or fields it doesn't have
         internal struct Shape
@@ -90,41 +137,110 @@ namespace Tide.Editor
         // At most this many lines each way of a mesh's or height field's wireframe
         const int MostLines = 20000, MostGridLines = 64;
 
-        [DrawGizmo(GizmoType.Selected | GizmoType.Active)]
+        // A primitive as it's drawn: in `Matrix`, about `Center`, a box's or rect's `Size`, a round one's `Radius` and a
+        // capsule's `Height` end to end along y, the scale in them where the matrix leaves it out
+        internal struct Primitive
+        {
+            public string Kind;
+            public Matrix4x4 Matrix;
+            public Vector3 Center, Size;
+            public float Radius, Height;
+        }
+
+        internal static bool PrimitiveOf(TideComponent c, out Primitive p)
+        {
+            p = default;
+            if (!Read(c, out var shape)) return false;
+            p.Kind = shape.Of.Kind;
+            p.Matrix = Matrix(shape, c);
+            switch (p.Kind)
+            {
+                case "box":
+                    p.Center = Center(shape, c);
+                    p.Size = Size(shape, c);
+                    return true;
+                case "rect":
+                    p.Center = Center(shape, c);
+                    var r = Size(shape, c);
+                    p.Size = new Vector3(r.x, r.y, 0);
+                    return true;
+                case "sphere":
+                case "circle":
+                    p.Center = ScaledCenter(shape, c);
+                    p.Radius = Number(shape.Size, c) * RadiusFactor(shape, c);
+                    return true;
+                case "capsule":
+                    p.Center = ScaledCenter(shape, c);
+                    p.Radius = Number(shape.Size, c) * RadiusFactor(shape, c);
+                    p.Height = Number(shape.Height, c) * Mathf.Abs(c.transform.lossyScale.y);
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        // The box in the world, its sides along the axes, that holds what's drawn of a primitive: what Unity gives as
+        // a collider's bounds, which the tests hold it against, there being no window to look at in a batch run
+        internal static bool WorldBounds(TideComponent c, out Bounds bounds)
+        {
+            bounds = default;
+            if (!PrimitiveOf(c, out var p)) return false;
+            var m = p.Matrix;
+            if (p.Kind == "box" || p.Kind == "rect")
+            {
+                bounds = new Bounds(m.MultiplyPoint3x4(p.Center), Vector3.zero);
+                for (var i = 0; i < 8; i++)
+                {
+                    var corner = new Vector3((i & 1) != 0 ? 0.5f : -0.5f, (i & 2) != 0 ? 0.5f : -0.5f, (i & 4) != 0 ? 0.5f : -0.5f);
+                    bounds.Encapsulate(m.MultiplyPoint3x4(p.Center + Vector3.Scale(corner, p.Size)));
+                }
+                return true;
+            }
+            var center = m.MultiplyPoint3x4(p.Center);
+            if (p.Kind == "circle")
+            {
+                // A disc's reach along each axis is its radius times how much of the axis lies in its plane
+                var n = m.MultiplyVector(Vector3.forward).normalized;
+                var reach = new Vector3(Mathf.Sqrt(Mathf.Max(0, 1 - n.x * n.x)), Mathf.Sqrt(Mathf.Max(0, 1 - n.y * n.y)),
+                    Mathf.Sqrt(Mathf.Max(0, 1 - n.z * n.z))) * p.Radius;
+                bounds = new Bounds(center, reach * 2);
+                return true;
+            }
+            var half = p.Kind == "capsule" ? m.MultiplyVector(Vector3.up) * Mathf.Max(0, p.Height * 0.5f - p.Radius) : Vector3.zero;
+            bounds = new Bounds(center + half, Vector3.one * (p.Radius * 2));
+            bounds.Encapsulate(new Bounds(center - half, Vector3.one * (p.Radius * 2)));
+            return true;
+        }
+
+        [DrawGizmo(GizmoType.Selected | GizmoType.Active | GizmoType.InSelectionHierarchy | GizmoType.NonSelected)]
         static void Draw(TideComponent component, GizmoType type)
         {
-            if (component == null || !component.isActiveAndEnabled) return;
-            DrawOutline(component);
-            DrawJoint(component);
-            DrawMesh(component);
-            DrawTerrain(component);
-            if (!Read(component, out var shape) || Editing(component)) return;
-            using (new Handles.DrawingScope(Wire, Matrix(shape, component)))
+            if (component == null || !Drawn(type, out var selected) || !Shaped(component.GetType())) return;
+            if (!component.isActiveAndEnabled) return;
+            var color = selected ? Wire : Faint;
+            DrawOutline(component, color);
+            DrawJoint(component, color);
+            DrawMesh(component, color);
+            DrawTerrain(component, color);
+            if (Editing(component) || !PrimitiveOf(component, out var p)) return;
+            using (new Handles.DrawingScope(color, p.Matrix))
             {
-                var center = Center(shape, component);
-                switch (shape.Of.Kind)
+                switch (p.Kind)
                 {
                     case "box":
-                        Handles.DrawWireCube(center, Size(shape, component));
-                        break;
                     case "rect":
-                        var r = Size(shape, component);
-                        Handles.DrawWireCube(center, new Vector3(r.x, r.y, 0));
+                        Handles.DrawWireCube(p.Center, p.Size);
                         break;
                     case "sphere":
-                        var radius = Number(shape.Size, component) * RadiusFactor(shape, component);
-                        var at = ScaledCenter(shape, component);
-                        Handles.DrawWireDisc(at, Vector3.up, radius);
-                        Handles.DrawWireDisc(at, Vector3.right, radius);
-                        Handles.DrawWireDisc(at, Vector3.forward, radius);
+                        Handles.DrawWireDisc(p.Center, Vector3.up, p.Radius);
+                        Handles.DrawWireDisc(p.Center, Vector3.right, p.Radius);
+                        Handles.DrawWireDisc(p.Center, Vector3.forward, p.Radius);
                         break;
                     case "circle":
-                        Handles.DrawWireDisc(ScaledCenter(shape, component), Vector3.forward,
-                            Number(shape.Size, component) * RadiusFactor(shape, component));
+                        Handles.DrawWireDisc(p.Center, Vector3.forward, p.Radius);
                         break;
                     case "capsule":
-                        Capsule(ScaledCenter(shape, component), Number(shape.Size, component) * RadiusFactor(shape, component),
-                            Number(shape.Height, component) * Mathf.Abs(component.transform.lossyScale.y));
+                        Capsule(p.Center, p.Radius, p.Height);
                         break;
                 }
             }
@@ -132,14 +248,14 @@ namespace Tide.Editor
 
         // An outline's line through its points in the world, rounded by its radius times the scale's (a flat one's in
         // the GameObject's plane): each side of an open one, the outside of a closed one, with arcs where they meet
-        static void DrawOutline(TideComponent c)
+        static void DrawOutline(TideComponent c, Color color)
         {
             if (!TideGeometry.Outline(c, out var points, out var closed, out var radius, out var flat) || points.Count == 0) return;
             var t = c.transform;
             var world = points.ConvertAll(p => t.TransformPoint(p));
             var r = radius * TideScale.Factor(t.lossyScale, flat ? TideScale.By.LargestScaleXY : TideScale.By.LargestScale, 0);
             var normal = t.forward;
-            using (new Handles.DrawingScope(Wire))
+            using (new Handles.DrawingScope(color))
             {
                 var edges = closed ? world.Count : world.Count - 1;
                 if (r <= 0)
@@ -178,10 +294,10 @@ namespace Tide.Editor
         }
 
         // A joint: a line between its anchors, a dotted one from each body to its anchor
-        static void DrawJoint(TideComponent c)
+        static void DrawJoint(TideComponent c, Color color)
         {
             if (!TideGeometry.JointOf(c, out var joint) || Editing(c)) return;
-            using (new Handles.DrawingScope(Wire))
+            using (new Handles.DrawingScope(color))
             {
                 Handles.DrawLine(joint.WorldA, joint.WorldB);
                 var size = HandleUtility.GetHandleSize(joint.WorldA) * 0.04f;
@@ -193,10 +309,10 @@ namespace Tide.Editor
         }
 
         // A mesh's triangles, or a hull's points, in the GameObject's space with its scale
-        static void DrawMesh(TideComponent c)
+        static void DrawMesh(TideComponent c, Color color)
         {
             if (!TideGeometry.MeshOf(c, MostLines, out var lines, out var points)) return;
-            using (new Handles.DrawingScope(Wire, c.transform.localToWorldMatrix))
+            using (new Handles.DrawingScope(color, c.transform.localToWorldMatrix))
             {
                 if (lines != null)
                 {
@@ -212,10 +328,10 @@ namespace Tide.Editor
         }
 
         // A height field's grid, from the GameObject's origin, its corner
-        static void DrawTerrain(TideComponent c)
+        static void DrawTerrain(TideComponent c, Color color)
         {
             if (!TideGeometry.TerrainOf(c, MostGridLines, out var lines) || lines.Count == 0) return;
-            using (new Handles.DrawingScope(Wire, c.transform.localToWorldMatrix)) Handles.DrawLines(lines.ToArray());
+            using (new Handles.DrawingScope(color, c.transform.localToWorldMatrix)) Handles.DrawLines(lines.ToArray());
         }
 
         // A field's new value, with Undo and as a prefab instance's change

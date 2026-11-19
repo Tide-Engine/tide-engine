@@ -103,7 +103,8 @@ namespace Tide
         public byte playing;    // Replaying: it plays at the tick rate
         public byte otherBuild; // The recording was made by a build whose simulation code was another
         public byte background; // Other machines are in the match: it goes on behind what's shown
-        public byte pad;
+        public byte followed;   // The match is another machine's: the ticks this machine had confirmed are kept (from
+                                // `first`), and it can't be stepped past them, taken back or recorded from here
         public ulong hash;      // The shown world's
         public ulong expected, got; // At `differs`: the recording's hash, and this build's
         public fixed byte why[128];

@@ -90,6 +90,23 @@ var TideWebLibrary = {
         return at && n ? TideWeb.copyOut('view', at, n) : 0;
     },
 
+    // What Unity reads of the match (tide_embed_view_want): a bit for each of the schema's first `types` types
+    TideWebViewWant__deps: ['$TideWeb'],
+    TideWebViewWant: function (bits, types) {
+        var x = TideWeb.program();
+        if (!x) return;
+        var size = ((types + 63) >>> 6) * 8;
+        var at = size ? TideWeb.copyIn(x, bits, size) : 0;
+        x.tide_unity_view_want(at, at ? types : 0);
+    },
+
+    // The last frame's packet written again with what's read now, for TideWebView to copy out
+    TideWebViewAgain__deps: ['$TideWeb'],
+    TideWebViewAgain: function () {
+        var x = TideWeb.program();
+        return x ? x.tide_unity_view_again() : 0;
+    },
+
     TideWebSchema__deps: ['$TideWeb'],
     TideWebSchema: function (size) {
         var x = TideWeb.program();

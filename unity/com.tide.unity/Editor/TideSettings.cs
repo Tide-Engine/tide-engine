@@ -47,6 +47,10 @@ namespace Tide.Editor
                 settings.Save();
                 TideBuildService.Restart();
             }
+            // This machine's, as Unity's own gizmo choices are: not saved with the project
+            TideShapes.Always = EditorGUILayout.Toggle(new GUIContent("Always Show Tide Shapes",
+                "Draw every Tide physics shape in the Scene view, fainter where nothing of its GameObject is selected. Off, a shape is drawn "
+                + "while its GameObject or one above it is selected, as Unity's colliders are."), TideShapes.Always);
             EditorGUILayout.Space();
             if (GUILayout.Button("Manage Tide versions...")) TideVersionsWindow.Open();
             var tide = TideToolchain.Find(out var where, false);

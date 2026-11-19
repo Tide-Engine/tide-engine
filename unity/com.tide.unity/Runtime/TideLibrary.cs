@@ -47,11 +47,13 @@ namespace Tide
         delegate* unmanaged[Cdecl]<IntPtr, byte*, uint, byte> replayFn;
         delegate* unmanaged[Cdecl]<IntPtr, void> replayEndFn;
         delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*> logFn;
+        delegate* unmanaged[Cdecl]<IntPtr, ulong*, uint, void> viewWantFn;
+        delegate* unmanaged[Cdecl]<IntPtr, byte> viewAgainFn;
         delegate* unmanaged[Cdecl]<IntPtr, uint, uint, ulong, ulong, uint, uint, uint, uint, uint, byte> localTextureFn;
         delegate* unmanaged[Cdecl]<uint> abiFn;
 
         // What tide/embed.h's TIDE_EMBED_ABI says: a library that says otherwise was built by another tide.
-        public const uint Abi = 27;
+        public const uint Abi = 28;
 
         public static string LibraryName =>
             Application.platform == RuntimePlatform.Android ? AndroidLibrary
@@ -229,13 +231,15 @@ namespace Tide
             replayFn = (delegate* unmanaged[Cdecl]<IntPtr, byte*, uint, byte>)Find("tide_embed_replay");
             replayEndFn = (delegate* unmanaged[Cdecl]<IntPtr, void>)Find("tide_embed_replay_end");
             logFn = (delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*>)Find("tide_embed_log");
+            viewWantFn = (delegate* unmanaged[Cdecl]<IntPtr, ulong*, uint, void>)Find("tide_embed_view_want");
+            viewAgainFn = (delegate* unmanaged[Cdecl]<IntPtr, byte>)Find("tide_embed_view_again");
             localTextureFn = (delegate* unmanaged[Cdecl]<IntPtr, uint, uint, ulong, ulong, uint, uint, uint, uint, uint, byte>)Find("tide_embed_local_texture");
             if (createFn == null || destroyFn == null || frameFn == null || statusFn == null || requestFn == null || backgroundFn == null
                 || cameraFn == null || renderFn == null || renderResetFn == null || renderFormatsFn == null || renderReadFn == null
                 || renderViewFn == null
                 || viewFn == null || schemaFn == null || commandFn == null || drawFn == null || audioFn == null || microphoneFn == null
                 || travelFn == null || travelKeepFn == null || pauseFn == null || stepFn == null || showFn == null
-                || continueFn == null || recordingFn == null || replayFn == null || replayEndFn == null || logFn == null
+                || continueFn == null || recordingFn == null || replayFn == null || replayEndFn == null || logFn == null || viewWantFn == null || viewAgainFn == null
                 || localTextureFn == null)
             {
                 Debug.LogError($"Tide: {LibraryName} lacks some of tide/embed.h's functions: rebuild it with this tide.");
@@ -279,6 +283,8 @@ namespace Tide
             return null;
         }
         public byte* View(IntPtr embed, uint* size) => TideWebView(size);
+        public void ViewWant(IntPtr embed, ulong* bits, uint types) => TideWebViewWant(bits, types);
+        public byte ViewAgain(IntPtr embed) => (byte)TideWebViewAgain();
         public byte* Schema(IntPtr embed, uint* size) => TideWebSchema(size);
         public byte* Draw(IntPtr embed, uint* size) => TideWebDraw(size);
         public byte Command(IntPtr embed, uint type, ulong birth, ulong lineage, void* value, uint size) =>
@@ -317,6 +323,8 @@ namespace Tide
         [DllImport("__Internal")] static extern void TideWebBackground(byte hidden);
         [DllImport("__Internal")] static extern void TideWebCamera(float* matrices, int given);
         [DllImport("__Internal")] static extern byte* TideWebView(uint* size);
+        [DllImport("__Internal")] static extern void TideWebViewWant(ulong* bits, uint types);
+        [DllImport("__Internal")] static extern int TideWebViewAgain();
         [DllImport("__Internal")] static extern byte* TideWebSchema(uint* size);
         [DllImport("__Internal")] static extern byte* TideWebDraw(uint* size);
         [DllImport("__Internal")] static extern byte* TideWebRender(uint* size);
@@ -355,6 +363,10 @@ namespace Tide
         public byte* RenderView(IntPtr embed, Matrix4x4* transform, Matrix4x4* projection, int width, int height, uint* size) =>
             renderViewFn(embed, (float*)transform, (float*)projection, width, height, size);
         public byte* View(IntPtr embed, uint* size) => viewFn(embed, size);
+        // What of the match the packet carries from here on: a bit for each of the schema's first `types` types
+        public void ViewWant(IntPtr embed, ulong* bits, uint types) => viewWantFn(embed, bits, types);
+        // The last frame's packet written again with what's wanted now, for View to give: 0 where it can't be
+        public byte ViewAgain(IntPtr embed) => viewAgainFn(embed);
         public byte* Schema(IntPtr embed, uint* size) => schemaFn(embed, size);
         public byte* Draw(IntPtr embed, uint* size) => drawFn(embed, size);
         public byte Command(IntPtr embed, uint type, ulong birth, ulong lineage, void* value, uint size) =>

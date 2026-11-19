@@ -965,6 +965,12 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     target_compile_definitions(tide_platform_reload_game_other PRIVATE RELOAD_GAME_HASH=4343 RELOAD_OTHER_SHAPE)
     target_include_directories(tide_platform_reload_game_other PRIVATE include "${PROJECT_SOURCE_DIR}/engine/include")
     target_link_libraries(tide_platform_reload_game_other PRIVATE tide_flags)
+    # ...and one of the same tables that another tide built (its made-by text), which a host that says its own doesn't load
+    add_library(tide_platform_reload_game_foreign SHARED tests/reload_game.c)
+    target_compile_definitions(tide_platform_reload_game_foreign PRIVATE RELOAD_GAME_HASH=4343
+        "RELOAD_MADE_BY=\"9.9.9-test (0000000000000002)\"")
+    target_include_directories(tide_platform_reload_game_foreign PRIVATE include "${PROJECT_SOURCE_DIR}/engine/include")
+    target_link_libraries(tide_platform_reload_game_foreign PRIVATE tide_flags)
     add_executable(tide_platform_reload tests/reload_host.c)
     target_link_libraries(tide_platform_reload PRIVATE tide_platform)
     add_executable(tide_platform_reload_plain tests/reload_host.c tests/reload_game.c)
@@ -975,7 +981,7 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
             COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/reload.mjs" $<TARGET_FILE:tide_platform_reload>
                 $<TARGET_FILE:tide_platform_reload_plain> $<TARGET_FILE:tide_platform_reload_game>
                 "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_reload-run" $<TARGET_FILE:tide_platform_reload_game_next>
-                $<TARGET_FILE:tide_platform_reload_game_other>)
+                $<TARGET_FILE:tide_platform_reload_game_other> $<TARGET_FILE:tide_platform_reload_game_foreign>)
         set_tests_properties(tide_platform_reload PROPERTIES TIMEOUT 120)
         tide_gpu_test(tide_platform_reload)
     endif()

@@ -21,6 +21,12 @@ public class TravelWindowTests
         paused.background = 1;
         StringAssert.Contains("Showing tick 40 of 0 to 90", Said(paused));
         StringAssert.Contains("goes on behind what's shown", Said(paused));
+        // Another machine's match, followed
+        StringAssert.Contains("Following another machine's match", Said(new TideTravel { state = TideTravelState.Live, first = 61, last = 90, followed = 1 }));
+        StringAssert.Contains("61 to 90", Said(new TideTravel { state = TideTravelState.Live, first = 61, last = 90, followed = 1 }));
+        var held = new TideTravel { state = TideTravelState.Paused, first = 61, last = 90, shown = 70, background = 1, followed = 1 };
+        StringAssert.Contains("Showing tick 70 of 61 to 90", Said(held));
+        StringAssert.Contains("another machine's", Said(held));
         var replay = new TideTravel { state = TideTravelState.Replay, first = 0, last = 300, shown = 300, checkedTo = 300 };
         StringAssert.Contains("Every tick to 300", Said(replay));
         replay.differs = 213;

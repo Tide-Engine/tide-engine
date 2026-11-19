@@ -1298,7 +1298,16 @@ static void write_class(out *o, game *g, const type *t, out *map)
         putf(o, "    // Tide's singleton %s, as Tide's views see it this frame: TideRunner.Get (TideSingleton)\n", t->bare);
         put_type_summary(o, g, "    ", "singleton", t->bare, NULL);
     }
-    putf(o, "    public sealed partial class %s : global::Tide.%s\n    {\n", t->cs, t->base);
+    // A part's field naming its body's GameObject, which the shapes beside it are placed from each frame: read through
+    // the class itself (ITidePart), where reflection found the field by the attribute's name
+    const char *part_id = NULL;
+    for (int i = 0; rules && rules->part_of && i < t->field_count; i++) {
+        const field *f = &t->fields[i];
+        if (strcmp(f->name, rules->part_of) != 0 || native_field(g, t, f) || unity_field_read_back(rules, f->name)) continue;
+        const ctype *ct = field_ctype(g, f);
+        if (ct->kind == CK_ENTITY && authorable(g, ct)) part_id = t->ids[i];
+    }
+    putf(o, "    public sealed partial class %s : global::Tide.%s%s\n    {\n", t->cs, t->base, part_id ? ", global::Tide.ITidePart" : "");
     if (component) {
         char guid[33];
         unity_code_guid(t->bare, guid);
@@ -1408,6 +1417,10 @@ static void write_class(out *o, game *g, const type *t, out *map)
     puts_(o, "\n        public override string TideName => \"");
     put_escaped(o, t->bare);
     puts_(o, "\";\n\n");
+    if (part_id) {
+        putf(o, "        // The GameObject of the body its entity is a part of, for the shapes beside it (TideParts)\n"
+                "        global::UnityEngine.GameObject global::Tide.ITidePart.TidePartOf => %s;\n\n", part_id);
+    }
     if (command) {
         puts_(o, "        protected override void Pack(global::Tide.TideCommandWriter writer)\n        {\n            var v = new Value();\n");
         puts_(o, live.s);
