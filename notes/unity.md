@@ -1,3 +1,29 @@
+## An orthographic Unity camera (2026-11-19)
+
+"Not done: an orthographic Unity camera" (Unity's camera is the views', 2026-10-21) was left because the embed's
+camera then was a position, a rotation and a field of view, and Tide's 3D cameras were perspective ones. Both
+stopped being true a day later: `tide_embed_camera` takes Unity's two matrices as they are (ABI 4, 2026-10-22), and
+Tide has `Draw.Camera(transform, projection)` with `float4x4.Ortho`. So nothing needed building, no language or
+draw API change is proposed, and nothing is the owner's to decide: what was missing was any run of it in Unity.
+
+- **Run now** (the Sample's PlayMode `BounceTests`, the Sample's own camera made orthographic):
+  - `TideDrawsIntoAnOrthographicCamerasFrame`: the whole frame check of `TideDrawsIntoUnitysFrame` through an
+    orthographic camera (size 7): the game's frag plates where the camera sees them, the plate under Unity's floor
+    hidden by the camera's depth (so Tide's depth is Unity's orthographic depth, near and far planes included), the
+    cube over the ball at `WorldToScreenPoint`, the ring around it, and the screen-space Hud, target, stencil and
+    depth view as they were. The ring's pixels are matched by 0.5 there rather than 0.35: it's a pixel wide and
+    smooth, and where its middle falls between two pixels each is half floor (10 of 16 angles at 0.35, a matter of
+    the ball's place on the screen, not of the camera; the floor alone is 0.6 away).
+  - `TheMatchShowsItsBall`: the ring's place in the draw packet (`Draw.WorldToScreen`) within 1.5 pixels of
+    `Camera.main.WorldToScreenPoint` after the camera turns orthographic, and at another place than the perspective
+    camera had it. Runs without a GPU too.
+  - `SceneViewsShowTidesThreeD`: a scene camera made orthographic (the Scene view's Iso) shows the cube where it
+    sees it (`tide_embed_render_view`), and not a unit beside it.
+- **Runs:** Unity 6000.6.0f1, hidden batch with the GPU, `-noAudio`, Direct3D 11 (`-force-d3d11`), the built-in pipeline, this checkout's Sample with a scratch tide of this checkout: BounceTests 18 of 18. The frame was also saved (`TIDE_UNITY_DUMP`) and looked at: the box from above without perspective, the ring about the ball, the cube over it, the plate's stripes. Not on Direct3D 12, Vulkan or OpenGL Core: the camera's matrices reach the replay as uniforms, on every API alike.
+- **Not run:** URP with an orthographic camera (the pass takes the same matrices), an oblique or off-centre
+  projection (`Camera.projectionMatrix` set by hand: the same path, any matrix), and what a game's own view does
+  with a camera it assumes is perspective (`Draw.CameraProjection()` gives it the matrix to ask).
+
 ## A build says which tide made it, and the host loads only its own (2026-11-19)
 
 Closes "Found on the way, not changed" of 2026-10-25 (Tide's drawing after a hot reload): a host took any
@@ -2483,7 +2509,8 @@ in world units), so it moved into `Draw.Screen()` at (16, 30), and a `Ring`
 view draws a wire circle at each ball's `WorldToScreen`; the play mode test
 finds the ring within 1.5 pixels of `Camera.main.WorldToScreenPoint` of the
 ball (y flipped). Not done: an orthographic Unity camera (Tide's 3D cameras are
-perspective ones), and Unity's near and far planes for a projected depth.
+perspective ones), and Unity's near and far planes for a projected depth. (Both done a day later by the matrices of
+Tide's renderer in Unity, below; an orthographic camera first run in Unity on 2026-11-19, top.)
 
 **Stats and the runner's Arguments (2026-10-21).** The owner put `--stats` in
 TideRunner's Arguments and saw nothing: the embed dropped every flag it didn't

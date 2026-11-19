@@ -253,7 +253,9 @@ their GameObjects, their components and the singletons read, events told).
 The game's views draw with Unity's camera: the runner's View Camera, or the
 main camera, is the 3D camera Tide's views start with, so
 `Draw.WorldToScreen(position)` is where Unity shows that point, in screen
-pixels from the top left. Draw at it inside `Draw.Screen() { ... }`, whose
+pixels from the top left. The camera can be perspective or orthographic: Tide
+takes its placement and projection as they are, its near and far planes too,
+and `Draw.CameraTransform()` and `Draw.CameraProjection()` give them. Draw at it inside `Draw.Screen() { ... }`, whose
 calls are in screen pixels; outside it, 2D draws go through Tide's 2D camera,
 centered on the screen at a pixel a unit unless the view sets one.
 
