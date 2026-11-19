@@ -24,7 +24,7 @@ Before running commands, set `TIDE_HIDDEN=1` in the agent's shell: PowerShell `$
 
 Tide is a networking-first game engine written in strict C17 and compiled with clang. Simulation uses deterministic floats, not fixed point. Its language transpiles to C; game and engine code are optimized together, allowing calls to be inlined. The ECS derives data dependencies from the language and schedules work automatically. Rendering is secondary to simulation and networking.
 
-Desktop and consoles are the main targets. Android, then iOS, are mobile targets. WebAssembly is actively supported and tested, with WebGPU rendering. Desktop and web players share a deterministic simulation. Touch is input wherever available. A phone that backgrounds or closes leaves the match; enabled host migration transfers its hosted match, rather than continuing simulation in the background.
+Desktop and consoles are the main targets. Android, then iOS, are mobile targets; iOS is a game inside Unity's player only, built on CI's Macs (`notes/ios.md`). WebAssembly is actively supported and tested, with WebGPU rendering. Desktop and web players share a deterministic simulation. Touch is input wherever available. A phone that backgrounds or closes leaves the match; enabled host migration transfers its hosted match, rather than continuing simulation in the background.
 
 ## Building
 
@@ -214,4 +214,4 @@ Read the notes for every subsystem the task touches. Paths and former section re
 | RTC, rooms, UDP/relay transport and peer tests | `notes/webrtc-and-rooms.md` |
 | Modding requirements, implementation status and withdrawn decisions | `notes/modding.md` |
 | `tide publish`, inactive build service | `notes/build-service.md` in `Tide-Engine/tide-services` |
-| `unity/`, `tide unity`, `tide/embed.h`, `tide/timeline.h`: Unity as an authoring/rendering front end, its time travel | `notes/unity.md` |
+| `unity/`, `tide unity`, `tide/embed.h`, `tide/timeline.h`: Unity as an authoring/rendering front end, its time travel, its Android and iOS players | `notes/unity.md` |

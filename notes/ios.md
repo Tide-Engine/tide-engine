@@ -18,7 +18,8 @@ is in `notes/unity.md`, iOS players.
   (`CMAKE_MACOSX_BUNDLE OFF`).
 - **`TIDE_IOS`** (CMakeLists.txt) builds the engine, the compiler's and the engine's tests (games' C comes from a
   native tidec, `cmake/HostTidec.cmake`, as web and Android builds') and the platform layer, and stops there: no
-  tools, demo, bench, examples or packages, which open windows or are desktop hosts'. Wherever a CMake file says
+  tools, demo, bench or examples, which open windows or are desktop hosts' (the packages are configured, for their
+  physics tests). Wherever a CMake file says
   "desktop" as `NOT TIDE_WEB AND NOT TIDE_ANDROID`, it now also says `AND NOT TIDE_IOS`.
 - **The platform layer with no window of its own** (`platform/embedded/window.c`, `audio.c`; ownership:
   `notes/runtime-ownership.md`, top): every `src/window.h` function as a build inside another program has it (no
@@ -43,10 +44,13 @@ is in `notes/unity.md`, iOS players.
 - **CI**: Build's `Test (macos-arm64, ios-simulator, 1)` (`check.yml`, Test (iOS simulator);
   `.github/ios-simulator.sh` boots the newest iPhone the image has). It builds `tide_ios_tests`, runs them in the
   simulator, then builds `tide` and `tide_platform` for `ios-device`.
-- **Checked** (run 44513368734, scratch branch, 2026-11-19): Xcode 26.6, AppleClang 21.0.0, an iPhone 17 Pro
-  simulator; 38 of 38 tests passed at the first run (115 s of tests, the job about 10 minutes), every pinned bit
-  as on the other platforms, with no source change to the engine or the platform layer; the device libraries built.
-- **Not built, and why:** the packages' tests there (Box2D's and Box3D's pinned hashes under Apple's clang, the
-  first thing to add: a Unity iOS game with physics compiles their C with it); the rest of the e2e fixtures;
+- **The physics packages' tests too** (`packages/` is in an iOS build for them): `tide_box2d_stack`, `_course`,
+  `_complete`, `_rewind` and `tide_box3d_stack`, `_course`, `_complete`, `_rewind`, `_joints`, `_mesh`, whose
+  pinned hashes are the other platforms': a Unity iOS game with physics compiles that C with the same compiler.
+- **Checked** (2026-11-19, scratch branch): Xcode 26.6, AppleClang 21.0.0, an iPhone 17 Pro simulator. Run
+  44513368734: 38 of 38 at the first run (115 s of tests, the job about 10 minutes), every pinned bit as on the
+  other platforms, with no source change to the engine or the platform layer; the device libraries built. Run
+  44519312231, with the physics: 48 of 48.
+- **Not built, and why:** the rest of the packages' tests and of the e2e fixtures;
   `tide_platform_rooms` (a relay and browsers on the Mac against a program in the simulator: nothing rules it out,
   it wasn't tried); anything on a real phone's processor, which only a phone runs.

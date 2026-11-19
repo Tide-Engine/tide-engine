@@ -1,5 +1,18 @@
 # Releases, installing and CI
 
+## The iOS app workflow, and the package jobs' Unity iOS step (2026-11-19)
+
+- `.github/workflows/ios-app.yml` is a workflow of its own, started by hand or by `unity/ios-app.mjs`: it builds a
+  Unity iOS player's Xcode project, uploaded as a draft release's files, on `macos-latest`, into an unsigned
+  `.ipa` or a run in the simulator. It publishes nothing and no other workflow depends on it. `notes/unity.md`,
+  iOS players. It was tried before it was on `dev` by pushing copies of it with a `push` trigger to scratch
+  branches (a `workflow_dispatch` only starts a workflow the default branch has).
+- Package jobs gained Try the package (Unity iOS): `compiler/cli/tests/unity_ios_test.mjs` on the Unity sample
+  with the packaged tide, on the Mac for the iOS simulator and again natively, elsewhere natively
+  (`notes/cli-and-packages.md`). About a minute and a half.
+- Runs of one scratch ref wait for each other (`concurrency`'s `serial` group): a run dispatched after a push
+  waits for the last, so cancel the one it replaces.
+
 ## The iOS simulator job (2026-11-19)
 
 Build's test matrix has `macos-arm64` / `ios-simulator` (`check.yml`, Test (iOS simulator)): the engine and the

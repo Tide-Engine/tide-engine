@@ -1,3 +1,136 @@
+## iOS players (2026-11-19)
+
+The owner asked for a Unity iOS player of a Tide game, proven as far as it can be without a Mac: "i dont have a mac
+i only have an iphone", "feel free to use github actions". Tide on iOS is this and nothing else (no standalone app;
+`notes/ios.md` has the engine side and its simulator job). Every pick here is mine (Provisional).
+
+**Where the game is compiled: in the player's Xcode project, from sources.** iOS loads no library of an app's by
+name, so the game is linked into the player, and only Xcode's clang with Apple's SDK compiles for iOS, on a Mac.
+Weighed: (a) `tide unity --ios` run on a Mac making a static library: needs tide and its platform library for iOS
+on a Mac the owner hasn't; (b) the generated C and the engine's sources in Unity's Xcode project, each with its
+flags; (c) both. Built: (b) alone. A Windows editor's export is then a project a Mac builds with Xcode and nothing
+of Tide's installed, which is what lets a GitHub runner build it. (a) would only save the Mac compiling 140 files
+(under a minute of a build that takes many), so it isn't built.
+
+- **`tide unity --ios -o <path>`** (`tide_unity_ios` in `compiler/cli/build.c`; once; on any system, with no
+  compiler on it): `<path>/ios/Tide` gets `include/` (the engine's and the platform layer's headers), `engine/`
+  (the installed `src/engine`), `game/` (the generated C and a `library.c` giving `tide_host_library`),
+  `platform/` (the installed `src/platform`: `platform/src`, `platform/embedded`, stb_truetype and what a build
+  generates, `notes/ios.md`), `packages/<name>/` (each listed package's C with its headers) and `own/` (a plain
+  folder game's own C). `sources.txt` lists what to compile: `tide sources 1`, then tab-separated lines,
+  `framework <name>` (Security, CoreFoundation), `needs microphone` (the game says `Clip.Microphone`) and
+  `source <path> <flags>`, `@` in a flag standing for the folder. The game's lines are the compile commands tide
+  would run (`queue_game` into a list nothing compiles), cut to what says how code is made: `-std`, `-O`, `-D`,
+  the two header folders, C++'s four flags, and `-fno-fast-math -ffp-contract=off -w` on every file. No
+  `-flto`, target, sysroot or debugger flags. The pack goes to `<path>/ios/pack`, a file (an iOS app's files are
+  files: no `.incbin` as Android's library has), with `unity.json` and `game-hash` as the other players'.
+  A game's prebuilt libraries aren't added (tide can't tell an iOS one from a Mac's): each is a warning saying to
+  add an iOS build of it to the project. Nothing in the folder is iOS's but the frameworks: a console's project
+  would take it too.
+- **The package.** `TideBuildProcessor` takes `BuildTarget.iOS` (`tide unity --once --release --ios`), refuses a
+  graphics API list with anything but Metal, and fills Player Settings' Microphone Usage Description where it's
+  empty, with a warning: Unity builds no iOS player whose code names `Microphone` without it, and `TideAudio`
+  does. `Editor/iOS/TideIosBuild.cs` (`Tide.Editor.iOS`, define constraint `UNITY_IOS`, as Android's has its own;
+  `[PostProcessBuild]`) copies `ios/Tide` to the project's `Libraries/Tide`, makes a static library target of its
+  own, `TideGame`, which UnityFramework depends on and links, adds each listed source to it with its flags as that
+  file's Compiler Flags (`-I"$(SRCROOT)/Libraries/Tide/..."`), adds the frameworks to UnityFramework, puts the pack in `Data/Raw/Tide/pack` (`Application.streamingAssetsPath`) and writes
+  `NSLocalNetworkUsageDescription` (players on one Wi-Fi reach each other directly, which iOS asks about) and,
+  where the game needs it, `NSMicrophoneUsageDescription`, each only where the plist has none. A target of its
+  own because every file of UnityFramework is compiled with Unity's `Classes/Prefix.pch` before it (a project-level
+  setting), which brings CoreFoundation and Apple's `MacTypes.h`: the first Xcode build failed in `font.c`, whose
+  `outline` MacTypes.h has too, and a game's own type names would meet the same. `TideGame` has no prefix header, no
+  modules (`CLANG_ENABLE_MODULES NO`) and `SKIP_INSTALL`.
+- **`TideLibrary` binds without `dlopen`** where `TIDE_LINKED` is defined (`UNITY_IOS`, `UNITY_TVOS`, or a
+  project's own `TIDE_LINKED_GAME`, outside the editor): every embed function and `tide_host_library` is a
+  `[DllImport("__Internal")]` of its own name, the ABI is checked as elsewhere, and the pack is read from the
+  player's files. The runner gives `--data-dir Application.persistentDataPath` on iOS as on Android. Leaving a
+  match when the app goes to the background was already there (`tide_embed_background`, `TARGET_OS_IPHONE`).
+- **Found by exporting, and fixed: Tide's shaders didn't compile for Metal.** Unity compiles a player's shaders
+  for Metal on any system, and its translator refused 46 of the Sample's (every kernel, and every shader reading
+  a storage buffer): "Metal shading language does not support buffer size query from shader". `tidehl_length<i>`
+  asked the buffer (`GetDimensions`) to clamp a read as WebGPU does. Under `SHADER_API_METAL` it now reads
+  `_TideStorageBytes<i>`, which TideRender sets beside each storage buffer it binds (a draw's and a kernel's);
+  other APIs' HLSL is as it was inside the `#else`. The package's own copy kernel (`TideCompute.compute`'s
+  TideCopy) takes both buffers' sizes the same way on every API (`_TideCopySizes`). So "the shaders go through
+  Unity's Metal compiler as through its Vulkan one" (2026-10-22) was never true until now, on a Mac's editor
+  either. The Sample's 21 checked-in test shaders with the helper were patched to what the translator writes, and
+  its `com.tide.game` was written again by this tide.
+- **The Sample**: `SampleSetup.BuildIos` (`-tideOut <folder>`, `-tideSmoke`, `-tideSimulator`); `PlayerSmoke`
+  under the `TIDE_SMOKE` define checks itself as the app starts and, on an iPhone, stays open with what it found
+  on the screen, green or red (an app there has no log at hand).
+
+**Building it with no Mac: the iOS app workflow.** `.github/workflows/ios-app.yml` (`workflow_dispatch`: `release`,
+`simulator`, `expect`) downloads an Xcode project from a draft release's files (`xcode.tar.gz.*`), builds it with
+`xcodebuild` on `macos-latest`, and either packs the app unsigned as `app-unsigned.ipa` (artifact `ios-app`) or,
+for a project exported for the simulator, installs it in a booted iPhone simulator, launches it with its console,
+waits up to three minutes for a line with `expect` ("Tide smoke:") and fails where that line says FAIL (artifact
+`ios-simulator-log`). A failed build uploads `xcodebuild.log`. `unity/ios-app.mjs <folder> [--simulator]` is the
+one command around it: tar, split at 1 GiB, `gh release create --draft`, `gh workflow run`, wait, `gh run
+download`, delete the draft. A draft release because a workflow can't be handed files, the project is about
+1 GB (250 MB packed: Unity's libraries and IL2CPP's output), and a draft is readable by the repository's people
+alone. This repository is public, so its runs cost nothing; a private one's Mac minutes are billed.
+
+**What's proven, all on 2026-11-19, none of it on this machine past the export** (Unity 6000.6.0f1 with its iOS
+module installed here through the `unity` CLI; Xcode 26.6 on GitHub's `macos-latest`):
+
+- Windows, batch mode: `SampleSetup.BuildIos` exports the Xcode project (973 MB) with 140 Tide sources in
+  `TideGame`, each with `-ffp-contract=off`, the pack in `Data/Raw/Tide`, both plist keys, the two frameworks; no
+  C# warning; no shader error after the Metal fix (46 before it).
+- GitHub's Mac, device build (run 44519221362): `** BUILD SUCCEEDED **` for `iphoneos`, arm64, unsigned;
+  `app-unsigned.ipa` is 30 MB with `Data/Raw/Tide/pack` in it. So the sources compile with Xcode's flags around
+  them, and IL2CPP's `__Internal` calls link against `TideGame`.
+- GitHub's Mac, simulator (runs 44519229642 and 44523229777; a project exported with `-tideSimulator`, arm64):
+  built, installed and started in an iPhone simulator, where `PlayerSmoke` said `running True, ball (-2.25, 0.50,
+  0.00), mine True, pillar turned True`: the linked game was found and bound, its pack read from the app's files,
+  the match ran through the embed, this machine's ball was shown through the Unity prefab on the floor and the
+  scene's pillars were turned by Tide. Its drawing check said `not with Tide's renderer (not there; Apple iOS
+  simulator GPU, Metal, shader level 45, constant buffers True, compute True, indirect False, storage buffers a
+  kernel 31, a frag 31, a vert 31)`: the simulator's GPU has no indirect draws, which `TideRender.Supported`
+  asks for, so the package drew with its OnGUI path there, as designed. `PlayerSmoke` now passes a simulator on
+  the match alone and says so (changed after those runs; not run again).
+- The same sources outside Unity, in CI's package jobs (`unity_ios_test.mjs`, `notes/cli-and-packages.md`).
+  On this machine (Windows, clang 23, the Sample): tick 119's world is `b22f206cd96c179c`.
+- The engine under Xcode's clang in the simulator, with the pinned cross-platform bits: `notes/ios.md`.
+
+**What only the iPhone shows:** Tide's renderer on a real device's Metal (the smoke's `drew yes`), touch input,
+the local-network prompt and a match between the phone and another machine (a room through the relay, a LAN
+host), sound through Unity's audio, the microphone, the app going to the background and leaving its match.
+
+**For the owner, with the iPhone** (about a quarter of an hour, Apple ID sign-in aside; the app is built already):
+
+1. The Sample's app is `app-unsigned.ipa` from run 44519221362 (kept as `Downloads\TideSample-unsigned.ipa` on
+   this machine). To build it again, or another project: export with
+   `Unity.exe -batchmode -buildTarget iOS -projectPath unity/Sample -executeMethod SampleSetup.BuildIos -tideOut
+   <folder> -tideSmoke -quit` (or File > Build Profiles > iOS > Build), then `node unity/ios-app.mjs <folder>`.
+2. Install it from Windows with Sideloadly (sideloadly.io; it needs iTunes or Apple's device support installed):
+   plug the iPhone in, drop the .ipa on it, sign in with an Apple ID, Start. A free Apple ID signs for seven
+   days; nothing is published anywhere. On the phone: Settings > General > VPN & Device Management > trust the
+   Apple ID, and Settings > Privacy & Security > Developer Mode on (iOS 16 and later; the phone restarts).
+3. Open the app. Within a few seconds the top of the screen shows the smoke's line, green for PASS or red for
+   FAIL. `drew yes (Metal)` is Tide's renderer on the phone's Metal: the orange stripe on the plate and the cube
+   over the ball are Tide's drawing, the ball and pillars Unity's.
+4. If it fails, or the app closes at once: a screenshot of the line is enough for the first; for a crash, the
+   phone's Settings > Privacy & Security > Analytics & Improvements > Analytics Data has a file named `Sample-…`
+   to share.
+
+Whether to sign with a paid developer account in the workflow (TestFlight, no seven days) is the owner's: it
+needs the account's certificate and profile as the repository's secrets, and nothing here assumes it.
+
+**Metal on a Mac's editor** (the Sample's drawing tests, for whoever has a Mac with Unity 6000.6; about ten
+minutes; never run): from the repository, with tide on PATH,
+`/Applications/Unity/Hub/Editor/6000.6.0f1/Unity.app/Contents/MacOS/Unity -batchmode -noAudio -projectPath
+unity/Sample -runTests -testPlatform PlayMode -testFilter "BounceTests|ComputeReplayTests|ScaleTests"
+-testResults results.xml -logFile unity.log` (no `-nographics`: a Mac's batch mode has Metal; `TIDE_HIDDEN=1`).
+Send back `results.xml` and `unity.log`. Running that on GitHub's Macs needs a Unity licence activated there
+with the owner's account, which is the owner's to give.
+
+**Not done, and why:** tvOS (the define is there, nothing was exported); a game's prebuilt iOS libraries;
+`--distribution`'s cuts for the sources (the flags are `--release`'s: Xcode strips); a second export into the
+same folder (Unity's Append: the target is found again by its name and its files listed again, not tried);
+the packages' `unity.json` sources and a game with C in a package (Box3D) through the Xcode project (the list
+handles them, and `unity_ios_test.mjs` compiles whatever is listed, but the Sample has none); the URP Sample (its
+player is the built-in pipeline's, as checked in).
+
 ## The replay of 2026-11-14's GPU work, Gamma [Linear] images, multisampled mipmaps, triangle sides (2026-11-15)
 
 Everything the day's readback, number-image, checker-format and capability work records is now replayed and run
@@ -578,7 +711,8 @@ desktop, then iOS). Unity's Android and Windows IL2CPP modules were installed fo
 - **IL2CPP runs.** `SampleSetup.BuildPlayer -tideIl2cpp` builds a Windows IL2CPP player (GameAssembly.dll); with
   `-batchmode -tide-smoke` it passes with no GPU and on Direct3D 12 ("drew yes"): function pointers, the packet's
   unsafe reads, the generated C# and the renderer's native uploads, compiled ahead of time.
-- **Left:** iOS (a static library linked with `__Internal`, and a Mac to build on), another desktop system than
+- **Left:** iOS (a static library linked with `__Internal`, and a Mac to build on; built 2026-11-19: iOS players,
+  top), another desktop system than
   the editor's, consoles. An Android App Bundle whose assets are split out is untouched by this: the pack is in the
   library, which counts against the base module's size.
 
