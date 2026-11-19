@@ -23,7 +23,7 @@ typedef struct tide_embed tide_embed;
 
 // What another language binds against: a change to anything here that it lays
 // out or calls changes the number, and tide_embed_abi says it.
-#define TIDE_EMBED_ABI 26u
+#define TIDE_EMBED_ABI 27u
 uint32_t tide_embed_abi(void);
 
 typedef struct tide_embed_desc {
@@ -124,6 +124,20 @@ void tide_embed_status_of(const tide_embed *e, tide_embed_status *out);
 // views saw, blended between ticks. Valid until the next frame; NULL for a game
 // built without it (tidec --embed).
 const uint8_t *tide_embed_view(const tide_embed *e, uint32_t *size);
+
+// What of the match the other program reads, which is all the view packet carries from the next frame on: `bits`
+// has a bit for each of the schema's first `types` types (bit i of the 64-bit word i / 64), set for a component, a
+// singleton or an event that's read. A component's local fields and a singleton's come with it; an event that isn't
+// read isn't kept. The entities are always there, and so is any type past `types`. NULL or 0 types: everything,
+// as before the first call. It's of the build running: a build laid out otherwise coming in (its types are numbered
+// anew) brings everything back until this is called for it.
+void tide_embed_view_want(tide_embed *e, const uint64_t *bits, uint32_t types);
+
+// Writes the last frame's view packet again, with what's read now: the same worlds, entities in the same places and
+// events, so the other program can ask for a type the moment something of its reads it for the first time, without
+// waiting a frame. tide_embed_view gives it. False where that frame's worlds aren't there to write from any more (a
+// request or a time travel call since): the packet stays as it was, and the next frame's has what's read.
+bool tide_embed_view_again(tide_embed *e);
 
 // The game's schema, as JSON: its types as its C lays them out (tide/layout.h),
 // which are the packet's and the commands', with what they are, its enums,

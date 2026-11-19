@@ -1,3 +1,137 @@
+## The packet carries what Unity reads; a part's body by a generated accessor (2026-11-19)
+
+The owner asked for the Unity integration's known gaps to be closed; these are the two performance ones left on
+2026-11-10 (Made for production, "Not done, and why"): the view packet carrying every component of every shown
+entity, read or not, and `TideParts.BodyOf` finding a shape's body by reflection each frame. Phase 1's decision 4
+("every match component of shown entities and singletons") is replaced by what's below. Every pick is mine
+(Provisional); the one that changes what a game's C# must write is marked.
+
+**What's read.** The runner keeps a set of the schema's types Unity reads and tells the embed
+(`tide_embed_view_want`, embed ABI 27; notes/standard-host.md, The view packet by what the other program reads); the
+game's frame writes the entities and those types alone:
+
+- **Tide's `Transform` and `UnityEngine.Source`**, always: the runner places and finds GameObjects by them. A view
+  rule's component too.
+- **A component**, once one of it is enabled on a GameObject (a prefab's, a scene's, one a script added), and from
+  then on, GameObjects of it coming and going or not: `TideComponent` counts its own `Awake`, `OnEnable`,
+  `OnDisable` and `OnDestroy` by type (`Said`: enabled on active GameObjects, disabled by their own checkbox, ever
+  enabled). While it's read, every shown entity that has it has its component, added by the runner where the
+  GameObject hasn't one and taken away where the entity hasn't, exactly as before.
+- **A singleton**, once `TideRunner.Get<T>()` or `TryGetSingleton` asked for it. Before, every singleton with a class
+  was read into its object each frame, asked for or not.
+- **An event**, while something hears it (`TideRunner.On`/`OnVerified`, a `TideEntity`'s; counted in
+  `TideHearing.Listen`). One nothing hears isn't kept by its tap at all, where its record was written and skipped.
+- **Whatever a script asks for**: `TideRunner.Read<T>()` and `Read(name)`, a `TideEntity`'s `Has`, `TryGet` and
+  `Get` of a `Value`, `RowOf`. Asked once, read from then on; the names are kept across a new build's schema.
+- **Everything**, with the runner's `readEverything` ("Read Everything", off by default): what the packet carried
+  before.
+
+**Asked for the first time, it's there in the same frame.** `tide_embed_view_again` writes the frame's packet again
+with what's read now (the same worlds, entities in the same places, the same events), and the runner reads it
+(`Reread`): so `Get<T>()` gives the singleton, `Has` answers and `Read<T>()` puts the component on every GameObject
+whose entity has it, at the first call, not a frame later. The same when a GameObject made for an entity brings
+components nothing read till then (its prefab's): `Show` asks once its GameObjects are made, before their components
+are written, so a prefab's first instance has its entity's values in its first frame. One packet written twice, in
+the frame a type is first read; where the embed can't (a request or a time travel call since the frame), the next
+frame's has it.
+
+**Disabling says "not read here".** A disabled Tide component stays on its GameObject and its entity keeps the
+component in the match (tide never read `m_Enabled`). While the only ones of a type there are disabled ones, the
+type isn't read, and the runner neither writes nor takes away components of a type the packet doesn't carry
+(`TideEntity.DropStale` skips them; a GameObject's count of them, `LiveUnread`, keeps the every-frame check a
+compare). Enabling one reads the type again. A disabled one beside enabled ones is still written, as the type is
+read.
+
+**What a game's C# sees.** One that reads everything through GameObjects' components sees what it did: authored
+components are live from the entity's first frame, singletons come from `Get<T>()`, events from `On`. Changed
+(the Provisional pick to confirm): **a component the game gives an entity as it runs, which no prefab, scene or
+script has put on a GameObject, isn't added to its GameObject until something asks** (`runner.Read<T>()` once, or
+`Has`/`TryGet`/`Get`); the Sample's own case is `Owner` on a player's ball. Before, the runner added every component
+of every entity, so `GetComponent<Owner>()` found it. Weighed: reading every type that has a C# class by default
+(nothing changes, and nothing is saved for a game that reads through components, as every class is one), and reading
+only where a GameObject has one enabled right now (a type flickering in and out with its last GameObject, a packet
+written twice at each return). `readEverything` is the old behaviour whole. Also changed: `TideRunner.Packet` holds
+what's read, so code reading sections from it directly finds only those (`Reads(name)` says which); the `.tide`
+file inspector says "not read in Unity" for such a component rather than asking (asking would add components while
+it's looked at), and asks for a singleton it shows.
+
+**Built.**
+
+- Engine and generated C: `tide_packet.wanted`, `wanted_types`, `again` and `tide_packet_wants`; a test around each
+  component's and singleton's block of the packet writer; taps that keep only what's heard and keep it until the
+  next frame (notes/language.md, The packet carries what's read; notes/runtime-ownership.md). The packet's format and
+  version (5) are as they were: a section is there or it isn't.
+- `tide/embed.h` (`platform/src/embed.c`): `tide_embed_view_want`, `tide_embed_view_again`; `TIDE_EMBED_ABI` and
+  `TideLibrary.Abi` 27; both in `embed_exports`; the web program's `tide_unity_view_want` and `_again`
+  (`unity_web_read_exports`, a string of its own: one literal holds 4,095 characters) and `Tide.jslib`'s
+  `TideWebViewWant`/`TideWebViewAgain`.
+- `TideRunner`: `SendReads` (the set worked out when something moved: the components' and the hearing's versions,
+  an ask, the setting, a new schema; said before the frame and compared with what the packet in hand has),
+  `TakeSent`, `Reread`, `Ask`, `Carries`, `Read`, `Reads`, `readEverything`; `LiveOf` and `ReadSingleton` (a
+  binding's rows at once, for the same-frame answers); `packetSerial` in place of the frame number for the row
+  tables, as a frame can have two packets. `TidePacket.Size`.
+- **A part's body** (task 2). tide writes `global::Tide.ITidePart` on a component whose package's unity.json says
+  `"part"`, with `TidePartOf => <its entity field>` (`unity_code.c`, where the field is a GameObject's; the
+  `[TidePart]` attribute stays). `TideEntity` keeps its GameObject's part as it collects its Tide components
+  (`Part`, with each component's `Beside`), so `TideParts.BodyOf` is two field reads for a component the runner
+  writes; any other (outside Play, a test's) asks its GameObject once (`TryGetComponent<ITidePart>`). The reflection
+  (`GetComponents` into a list, an attribute and a `FieldInfo` by type, `GetValue`) is gone. A hand-written part
+  implements `ITidePart` (the Sample's `GeometryPart`).
+
+**Measured** (the 1,000-entity case of 2026-11-10: the Sample's `Crowd` of 1,000 balls nobody rolls, 1,003 entities
+shown, Unity 6000.6.0f1 editor (Mono), Direct3D 11, hidden batch, a debug build of the game; the new
+`ScaleTests.WhatUnityDoesNotReadIsNotInItsFrames` measures three ways of reading in one match, medians of 240 frames,
+two runs, on a machine other sessions were building on):
+
+| | everything (as before) | what the scene reads | the balls' `Ball` disabled |
+|---|---|---|---|
+| The packet | 173,576 bytes | 156,688 | 88,560 |
+| The runner's frame (the game's own frame, the packet, the render) | 1.23 and 1.42 ms | 1.28 ms (and 2.00 in the run another build disturbed) | 1.01 and 1.10 ms |
+| Showing the packet in Unity | 0.25 and 0.27 ms | 0.19 and 0.28 ms | 0.135 and 0.14 ms |
+
+"Everything" is `readEverything` on the same build, not the package before this: its writer is the old one with a
+bit test before each type. What the scene reads by itself leaves out the singletons (Extras's list of the 1,000
+balls among them: nothing in that test asks for one), `Owner` and the scenes' tags; the balls' `Ball`, which their
+prefab has, is still read, so this game's frame is about what it was, as it should be for a game that reads what it
+has. With the balls' `Ball` unread the frame is about 0.2 ms shorter and showing takes half the time. The frame's
+times move by more than that from run to run here (the 1.3 of 1.6 ms measured on 2026-11-10 is 1.2 to 1.4 now, the
+match's own ticks over 1,000 balls being most of it), so the bytes are the firmer number. At the Sample's usual 300
+balls, in the whole PlayMode run: 53,176, 47,488 and 26,960 bytes; 0.47, 0.44 and 0.41 ms; showing 0.076, 0.054 and
+0.042 ms. `ABusyMatchsFramesMakeNothingNew` still finds no object made in 120 of 120 frames of showing.
+
+**Tests.** Native: `embed_view_carries_what_is_read` (notes/standard-host.md), and
+`unity_code_writes_a_physics_packages_rules` checks Box3D's `Part` is an `ITidePart` giving `of`. The Sample's
+PlayMode `ReadTests`: a prefab's and the scene's components read and `Owner` not, with no `Owner` on the ball, until
+`Read<Owner>()` puts it there in the same frame with its value; an entity asked for `Owner.Value` answering at once;
+a singleton not read until `Get<Room>()`, there at once and the same object after, `TryGetSingleton` reading too, an
+event read once heard; a ball's `Ball` disabled leaving the packet smaller and the component in place, read again
+once enabled. `ScaleTests.WhatUnityDoesNotReadIsNotInItsFrames` asserts each packet smaller than the one before.
+
+**Runs** (after merging origin/dev, which brought time travel's heard ticks and the Scene view's shapes; Windows,
+Unity 6000.6.0f1 in this checkout's `unity/Sample`, hidden batch, BelowNormal, `-noAudio`, a tide installed from this
+checkout's mingw-release and debug trees with `-tide-command`): PlayMode 68 of 68 on Direct3D 11; EditMode 49 of 52,
+two skipped (the shader compile under `-nographics`, the ABI-5 fixture) and the launch-argument test failing only for
+`-tide-command`, as before. Native debug: `tide_platform_embed` 33/33, `tide_platform_travel` 11/11,
+`tide_platform_embed_shards`, `tide_cli_tests`' unity cases 13/13; the first three under Windows ASan before the
+merge (33, 10, 1). Web debug: `tide_platform_embed` builds for wasm (it isn't run there). Not run: a Unity WebGL
+player (the jslib's two functions and the program's two exports are compiled by nothing here: `tide unity --web`
+wasn't run), IL2CPP and Android players, Vulkan, Direct3D 12 and OpenGL Core (no drawing code changed), a physics
+package's parts in a running Unity game (the accessor is generated and unit-tested, and `GeometryTests` place a
+part's points through `ITidePart`; no Sample game has a `Part`), and the `.tide` file inspector's new line (no
+window).
+
+**Left.**
+
+- Whole types, not rows: a component is read for every shown entity or none. A game that reads `Health` of one boss
+  among a thousand entities pays for all of them. Per-entity reading needs the runner to say entities, which change
+  every frame, where types change rarely.
+- Whole components, not fields.
+- Unity's Inspector in Play shows the components that are read; one that isn't doesn't appear on the GameObject.
+  Listing an entity's other components there (with a button to read one) is editor work this left alone, as other
+  sessions were in the editor's files.
+- `TideHearing`'s counts never fall for a handler whose GameObject was destroyed without `Off`: its event stays
+  read for the session.
+
 ## Physics shapes in the Scene view: drawn as Unity's colliders are, and checked against them (2026-11-19)
 
 Phase 4's "gizmos for Tide physics shapes" and the authoring gaps' "gizmos". The wireframes were built on
@@ -948,9 +1082,9 @@ kept out) and `tide_tests` passes. The docs build.
   Profiler's markers.
 - The view packet still carries every component of every shown entity each frame, read or not (decision 4 of
   phase 1). At 1,000 entities the game's own frame was 1.3 ms of the runner's 1.6 in a debug build; a packet of
-  what C# asked for is a design of its own.
+  what C# asked for is a design of its own. (Built 2026-11-19: The packet carries what Unity reads, top.)
 - A physics shape still finds its body by reflection each frame (`TideParts.BodyOf`): no garbage now, but a
-  generated accessor would be cheaper.
+  generated accessor would be cheaper. (Built 2026-11-19, the same section.)
 
 ## Play waits for the install and the first build (2026-11-10)
 

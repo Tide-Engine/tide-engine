@@ -47,6 +47,17 @@ static bool running;
 static bool from_library; // The game is the libraries tide builds in a folder, swapped in as they come
 #endif
 static tide_packet packet;
+// What the other program reads (tide_embed_view_want), which is all the packet carries: kept here, where a game's
+// taps read it between two packets, with the layout of the build its types are numbered by. Types past its room are
+// all read.
+#define WANTED_WORDS 1024u
+static uint64_t wanted_bits[WANTED_WORDS];
+static uint32_t wanted_types; // 0: everything
+static uint64_t wanted_hash;
+// How the last frame's packet was written, for tide_embed_view_again: none once its worlds may have gone
+typedef enum view_kind { VIEW_NONE, VIEW_MATCH, VIEW_MATCH_UNBLENDED, VIEW_SHOWN, VIEW_REPLAYED } view_kind;
+static view_kind last_view;
+static uint32_t last_view_tick;
 // The draw packet (tide_embed_draw), made when it's asked for, from the frame's draw list
 static uint8_t *drawn;
 static size_t drawn_capacity;
@@ -378,6 +389,8 @@ void tide_embed_destroy(tide_embed *e)
     drop_replay();
     free(travel.saved);
     memset(&travel, 0, sizeof travel);
+    wanted_types = 0u; // The next game's types are its own
+    last_view = VIEW_NONE;
     tide_platform_audio_forget(); // The clips its voices play go with the game
     // ...and what's left of its last block, and of what its microphone heard, with it: the next game starts quiet.
     // The other program's audio thread said it's done (tide_embed_audio's NULL), as it must have
@@ -417,10 +430,21 @@ void tide_embed_destroy(tide_embed *e)
     running = false;
 }
 
-// The frame's view packet, from the worlds the frame's views drew.
-static void write_view(const bool unblended)
+// The packet about to be written carries what's read, where that was said of the build running
+static void packet_wanted(const bool again)
+{
+    const bool said = wanted_types && tide_run_game && tide_run_game->game->hash == wanted_hash;
+    packet.wanted = said ? wanted_bits : NULL;
+    packet.wanted_types = said ? wanted_types : 0u;
+    packet.again = again;
+}
+
+// The frame's view packet, from the worlds the frame's views drew; `again` for the last frame's, written again.
+static void write_view(const bool unblended, const bool again)
 {
     const tide_embed_game *embed = tide_run_game ? tide_run_game->embed : NULL;
+    last_view = unblended ? VIEW_MATCH_UNBLENDED : VIEW_MATCH;
+    packet_wanted(again);
     if (!embed || !embed->view) {
         tide_packet_begin(&packet);
         tide_packet_end(&packet, tide_run_game ? tide_run_game->game->hash : 0, false, 0, 0, 1.0f, 0);
@@ -459,6 +483,7 @@ static uint32_t travel_keep_ticks(void)
 // The local state of frames showing another tick, let go with the code of the build that made it
 static void drop_travel_local(void)
 {
+    last_view = VIEW_NONE; // What the last packet was written from may go with it: not written again
     if (travel.local && tide_run_game) tide_run_game->local_free(travel.local);
     free(travel.local);
     free(travel.start);
@@ -469,6 +494,7 @@ static void drop_travel_local(void)
 
 static void drop_live(void)
 {
+    last_view = VIEW_NONE;
     if (travel.live && tide_run_session && travel.recorded == tide_run_session) tide_session_record(tide_run_session, NULL);
     tide_timeline_destroy(travel.live);
     travel.live = NULL;
@@ -479,6 +505,7 @@ static void drop_live(void)
 
 static void drop_replay(void)
 {
+    last_view = VIEW_NONE;
     tide_timeline_destroy(travel.replay);
     travel.replay = NULL;
     travel.playing = false;
@@ -640,6 +667,9 @@ static void show_frame(const void *world, const uint32_t tick, const uint32_t pl
     tide_session_request request;
     while (game->take_request(local, &request, travel.start)) {}
     const tide_embed_game *embed = game->embed;
+    last_view = travel.replay ? VIEW_REPLAYED : VIEW_SHOWN;
+    last_view_tick = tick;
+    packet_wanted(false);
     if (embed && embed->view) embed->view(world, NULL, 1.0f, local, tick, &packet);
 }
 
@@ -658,7 +688,7 @@ static void background_frame(const float dt, const float width, const float heig
     tide_run_frame(NULL, dt);
     // What the match's own handlers heard of it is in no packet: the one the frame shows has the tick shown's
     // (the other program's taps keep what they hear until a packet takes it)
-    write_view(false);
+    write_view(false, false);
 }
 
 static uint32_t own_player(void)
@@ -696,6 +726,7 @@ double tide_embed_frame(tide_embed *e, const float seconds, const tide_embed_inp
     if (e != &the_embed || !running) return 0.0;
     // The session's clock is the frames' sum: a length that's none (NaN too) adds nothing
     const float dt = seconds >= 0.0f && seconds <= 3600.0f ? seconds : 0.0f;
+    last_view = VIEW_NONE;
 #if !defined(__wasm__)
     if (from_library) { // A new build, as tide run's host takes one: between two frames, paused or not
         reload.since_check += dt;
@@ -737,7 +768,7 @@ double tide_embed_frame(tide_embed *e, const float seconds, const tide_embed_inp
         tide_run_frame(NULL, step);
         tide_run_unblended = false;
         travel.shown = tide_timeline_last(travel.live);
-        write_view(true);
+        write_view(true, false);
         return 1.0 / travel_rate();
     }
     tide_platform_embed_frame(input, tide_f2(width, height), scale);
@@ -745,7 +776,7 @@ double tide_embed_frame(tide_embed *e, const float seconds, const tide_embed_inp
 #if !defined(__wasm__)
     if (from_library) rejoin(dt);
 #endif
-    write_view(false);
+    write_view(false, false);
     return tide_session_until_tick(tide_run_session);
 }
 
@@ -856,6 +887,7 @@ bool tide_embed_step(tide_embed *e)
 bool tide_embed_continue(tide_embed *e)
 {
     if (e != &the_embed || !running || !tide_run_game || travel.replay || !travel.paused || !travel.live) return false;
+    last_view = VIEW_NONE; // The match's world is another from here
     const uint32_t last = tide_timeline_last(travel.live);
     const uint32_t tick = travel.shown < last ? travel.shown : last;
     const void *world = tide_timeline_world(travel.live, tick);
@@ -940,6 +972,43 @@ const uint8_t *tide_embed_view(const tide_embed *e, uint32_t *size)
     if (e != &the_embed || !running || !packet.size) return NULL;
     if (size) *size = packet.size;
     return packet.bytes;
+}
+
+void tide_embed_view_want(tide_embed *e, const uint64_t *bits, uint32_t types)
+{
+    if (e != &the_embed || !running) return;
+    if (!bits || !types || !tide_run_game) {
+        wanted_types = 0u;
+        return;
+    }
+    if (types > WANTED_WORDS * 64u) types = WANTED_WORDS * 64u; // The rest are read, as any type past them is
+    memcpy(wanted_bits, bits, (size_t)((types + 63u) / 64u) * sizeof *bits);
+    wanted_types = types;
+    wanted_hash = tide_run_game->game->hash;
+}
+
+bool tide_embed_view_again(tide_embed *e)
+{
+    if (e != &the_embed || !running || !tide_run_game) return false;
+    const tide_embed_game *embed = tide_run_game->embed;
+    if (!embed || !embed->view) return false;
+    switch (last_view) {
+    case VIEW_MATCH:
+    case VIEW_MATCH_UNBLENDED:
+        write_view(last_view == VIEW_MATCH_UNBLENDED, true);
+        return true;
+    case VIEW_SHOWN:
+    case VIEW_REPLAYED: { // The tick shown, as its frame found it
+        tide_timeline *kept = last_view == VIEW_REPLAYED ? travel.replay : travel.live;
+        const void *world = kept && travel.local ? tide_timeline_world(kept, last_view_tick) : NULL;
+        if (!world) return false;
+        packet_wanted(true);
+        embed->view(world, NULL, 1.0f, travel.local, last_view_tick, &packet);
+        return true;
+    }
+    default:
+        return false;
+    }
 }
 
 static size_t draw_part(const size_t at, const uint64_t count, const size_t each, uint64_t *total)
@@ -1110,6 +1179,7 @@ void tide_embed_microphone(tide_embed *e, const float *samples, const uint32_t f
 bool tide_embed_request(tide_embed *e, const tide_session_request_kind kind, const char *text, const uint32_t port)
 {
     if (e != &the_embed || !running || !tide_run_game) return false;
+    last_view = VIEW_NONE; // A match may end or start with it
     tide_session_request request = {.kind = kind, .port = port};
     switch (kind) {
     case TIDE_REQUEST_START: // Main's match, or a scene by its name

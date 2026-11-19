@@ -350,6 +350,135 @@ TIDE_TEST(embed_view_packet)
     tide_embed_destroy(e);
 }
 
+// How many events of `type` the packet's EVENTS has
+static uint32_t heard_of(const uint8_t *p, const uint32_t size, const uint32_t type)
+{
+    uint32_t count = 0, found = 0, at = 0;
+    const uint8_t *records = section(p, size, TIDE_PACKET_EVENTS, 0, &count, NULL);
+    for (uint32_t i = 0; records && i < count; i++) {
+        found += u32_at(records, at + 4) == type;
+        at += u32_at(records, at);
+    }
+    return found;
+}
+
+static void want(uint64_t *bits, const int32_t type)
+{
+    bits[type >> 6] |= 1ull << (type & 63);
+}
+
+// The packet carries what the other program reads (tide_embed_view_want): a component, a singleton or an event
+// nothing reads is left out, the entities and what's read are as they were, and a type asked for between two frames
+// is in the same frame's packet written again (tide_embed_view_again), with the events it had.
+TIDE_TEST(embed_view_carries_what_is_read)
+{
+    char *argv[] = {program};
+    tide_embed *e = start(1, argv);
+    TIDE_CHECK(e != NULL);
+    frames(e, 30, NULL);
+    const int32_t counter = type_named("Counter"), tally = type_named("Tally"), shelf = type_named("Shelf");
+    const uint32_t ticked = tide_game_layout.type_count + 2u; // After the commands, Bump and Rename
+    const uint32_t types = tide_game_layout.type_count + 3u;
+    TIDE_REQUIRE(counter >= 0 && tally >= 0 && shelf >= 0 && types <= 256u);
+    uint32_t size = 0, count = 0;
+    const uint8_t *p = tide_embed_view(e, &size);
+    TIDE_REQUIRE(p != NULL);
+    const uint32_t whole = size;
+    TIDE_CHECK(section(p, size, TIDE_PACKET_COMPONENT, counter, &count, NULL) != NULL);
+    TIDE_CHECK(section(p, size, TIDE_PACKET_SINGLETON, shelf, &count, NULL) != NULL);
+
+    // The counter alone: no singleton, and none of Shelf's lists, maps and grid in STRINGS
+    uint64_t bits[4] = {0};
+    want(bits, counter);
+    tide_embed_view_want(e, bits, types);
+    frames(e, 1, NULL);
+    p = tide_embed_view(e, &size);
+    TIDE_REQUIRE(p != NULL && u32_at(p, 16) == size);
+    TIDE_CHECK(u32_at(p, 36) == 2u); // The entities are always there
+    const uint8_t *rows = NULL;
+    const uint8_t *values = section(p, size, TIDE_PACKET_COMPONENT, counter, &count, &rows);
+    TIDE_REQUIRE(values != NULL && count == 1u);
+    Counter read;
+    memcpy(&read, values, sizeof read);
+    TIDE_CHECK(read.ticks == seen_ticks);
+    uint32_t length = 0;
+    const uint8_t *label = strings_entry(p, size, read.label.at, &length);
+    TIDE_CHECK(label && length == 7u && memcmp(label, "counted", 7) == 0);
+    TIDE_CHECK(section(p, size, TIDE_PACKET_SINGLETON, tally, &count, NULL) == NULL);
+    TIDE_CHECK(section(p, size, TIDE_PACKET_SINGLETON, shelf, &count, NULL) == NULL);
+    TIDE_CHECK(size < whole);
+    const uint32_t small = size;
+
+    // Asked for after the frame: the same frame's packet again, with the singleton and the counter as it was
+    want(bits, tally);
+    tide_embed_view_want(e, bits, types);
+    TIDE_CHECK(tide_embed_view_again(e));
+    p = tide_embed_view(e, &size);
+    TIDE_REQUIRE(p != NULL && size > small && u32_at(p, 36) == 2u);
+    values = section(p, size, TIDE_PACKET_COMPONENT, counter, &count, &rows);
+    TIDE_REQUIRE(values != NULL && count == 1u);
+    Counter again;
+    memcpy(&again, values, sizeof again);
+    TIDE_CHECK(again.ticks == read.ticks && again.presses == read.presses);
+    const uint8_t *value = section(p, size, TIDE_PACKET_SINGLETON, tally, &count, NULL);
+    TIDE_CHECK(value != NULL && count == 1u);
+    TIDE_CHECK(section(p, size, TIDE_PACKET_SINGLETON, shelf, &count, NULL) == NULL);
+
+    // An event nothing hears isn't kept; one that is, is in its frame's packet, and in that packet written again
+    uint32_t unheard = 0;
+    for (int frame = 0; frame < 30; frame++) {
+        frames(e, 1, NULL);
+        p = tide_embed_view(e, &size);
+        TIDE_REQUIRE(p != NULL);
+        unheard += heard_of(p, size, ticked);
+    }
+    TIDE_CHECK(unheard == 0u);
+    want(bits, (int32_t)ticked);
+    tide_embed_view_want(e, bits, types);
+    uint32_t heard = 0, kept = 0, later = 0;
+    for (int frame = 0; frame < 30; frame++) {
+        frames(e, 1, NULL);
+        p = tide_embed_view(e, &size);
+        TIDE_REQUIRE(p != NULL);
+        const uint32_t now = heard_of(p, size, ticked);
+        if (!now) continue;
+        heard += now;
+        TIDE_CHECK(tide_embed_view_again(e));
+        p = tide_embed_view(e, &size);
+        TIDE_REQUIRE(p != NULL);
+        kept += heard_of(p, size, ticked);
+        frames(e, 1, NULL); // ...and never in the next frame's
+        p = tide_embed_view(e, &size);
+        TIDE_REQUIRE(p != NULL);
+        later += heard_of(p, size, ticked);
+        frame++;
+    }
+    TIDE_CHECK(heard >= 1u && kept == heard && later == 0u);
+
+    // A request may end the match: its frame's packet isn't written again
+    TIDE_CHECK(tide_embed_request(e, TIDE_REQUEST_LEAVE, NULL, 0));
+    TIDE_CHECK(!tide_embed_view_again(e));
+
+    // Everything again: with no bits, and for types past those said
+    tide_embed_view_want(e, NULL, 0);
+    char *argv2[] = {program};
+    tide_embed_destroy(e);
+    e = start(1, argv2);
+    TIDE_REQUIRE(e != NULL);
+    frames(e, 10, NULL);
+    p = tide_embed_view(e, &size);
+    TIDE_REQUIRE(p != NULL);
+    TIDE_CHECK(section(p, size, TIDE_PACKET_SINGLETON, shelf, &count, NULL) != NULL); // The next game starts with all
+    uint64_t none[1] = {0};
+    tide_embed_view_want(e, none, 1u); // Only the first type is said, and not read: every other is
+    frames(e, 1, NULL);
+    p = tide_embed_view(e, &size);
+    TIDE_REQUIRE(p != NULL);
+    TIDE_CHECK(section(p, size, TIDE_PACKET_SINGLETON, shelf, &count, NULL) != NULL || shelf == 0);
+    TIDE_CHECK(section(p, size, TIDE_PACKET_COMPONENT, counter, &count, NULL) != NULL || counter == 0);
+    tide_embed_destroy(e);
+}
+
 // What the views drew, for the other program to draw: the header says the parts, each from a multiple of 8, and
 // Show's rect and text are among the commands, the text's words in the text part.
 TIDE_TEST(embed_draw_packet)
