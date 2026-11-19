@@ -125,6 +125,8 @@ public static class SampleSetup
         var ios = UnityEditor.Build.NamedBuildTarget.iOS;
         PlayerSettings.SetApplicationIdentifier(ios, "dev.tide.unity.bounce");
         PlayerSettings.iOS.sdkVersion = System.Array.IndexOf(args, "-tideSimulator") >= 0 ? iOSSdkVersion.SimulatorSDK : iOSSdkVersion.DeviceSDK;
+        // An Apple-silicon Mac's simulator, which is what GitHub's Macs are: Unity's default is Intel's
+        PlayerSettings.iOS.simulatorSdkArchitecture = AppleMobileArchitectureSimulator.ARM64;
         var defines = PlayerSettings.GetScriptingDefineSymbols(ios);
         var smoke = System.Array.IndexOf(args, "-tideSmoke") >= 0;
         if (smoke) PlayerSettings.SetScriptingDefineSymbols(ios, defines.Length > 0 ? defines + ";TIDE_SMOKE" : "TIDE_SMOKE");

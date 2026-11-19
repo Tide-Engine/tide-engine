@@ -167,12 +167,16 @@ endif()
 
 if(TIDE_PLATFORM)
     add_subdirectory(platform)
-    if(TIDE_IOS)
-        # Games with a window of their own, the packages and the examples aren't iOS's yet: what's built is what a
-        # game inside another program is made of, and `tide_ios_tests` is the tests of it (cmake/ios_tests.cmake)
-        include(cmake/ios_tests.cmake)
-        return()
-    endif()
+endif()
+if(TIDE_IOS)
+    # Games with a window of their own and the examples aren't iOS's: what's built is what a game inside another
+    # program is made of, with the packages whose C such a game compiles, and `tide_ios_tests` is the tests of it
+    # (cmake/ios_tests.cmake)
+    add_subdirectory(packages)
+    include(cmake/ios_tests.cmake)
+    return()
+endif()
+if(TIDE_PLATFORM)
     if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
         tide_add_game(tide_server_smoke SERVER NAME game SOURCES "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/server_build.tide")
         add_test(NAME tide_server_smoke COMMAND tide_server_smoke --anonymous --udp-only --frames 2)

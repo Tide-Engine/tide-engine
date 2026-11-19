@@ -189,6 +189,7 @@ without those characters.
 | `-O0`, `-O1`, `-O2`, `-O3` | Overrides engine, game and package C/C++ optimization; deterministic math and the chosen build mode stay unchanged |
 | `--web` | A web page (WebGPU), built with clang's WebAssembly target |
 | `--android` | An Android app, for phones and the emulator (see [Android](#android)) |
+| `--ios` | With `unity`: a Unity iOS player's game, written as sources for the player's Xcode project (see [Unity](#unity)) |
 | `--scene <Name>` | Starts in the named prefab or scene for this run/build, over the project's `startScene` setting; use the qualified name for a declaration in a namespace. A scene can be given its fields, `--scene "Battle { side = 50 }"`, as a [scenario](dev-tools.md#scenarios) is |
 | `--define <SYMBOL>[=<value>]` | Defines a symbol for the game's [`#if` lines](../language/namespaces.md#symbols-of-your-own), as many times as there are symbols. With `=value`, code reads the value as a constant: `const int ARMY_SIDE = define(ARMY_SIDE, 500);` is 1000 with `--define ARMY_SIDE=1000` and 500 without it ([Values from the build](../language/namespaces.md#values-from-the-build)); a symbol named twice takes the later value. Builds also pass it as a C/C++ macro to the game's and its packages' handwritten sources: with value 1, or as `-D SYMBOL=value`, which C reads as tokens, not a string, so text with an apostrophe or one quote (`Don't stop`) is a warning in every C file there. `DEBUG` is defined in the default debug mode, including those C/C++ sources; the command line's own `--define DEBUG=2` is kept in its place, value and all. Changing symbols or values rebuilds these sources and changes custom-C simulation compatibility. `schedule` and `shaders` take it too |
 | `--title <title>` | The window's title, over the game's `title` setting (default: that, or the folder's name) |
@@ -479,7 +480,12 @@ game has, which the package's inspectors show. It ends when its input closes, as
 `--once` builds once and ends. `tide unity --android -o <path>` builds the
 game once for a Unity Android player: for each of Android's CPUs, a
 `libtide_game.so` in `<path>/android/<abi>` holding the game, Tide's host and
-the game's assets, which the package's build puts in the app. Unity and other Tide builds of the same game
+the game's assets, which the package's build puts in the app. `tide unity --ios -o <path>` writes the
+game once for a Unity iOS player, as sources: an iOS app links its game in, and only Xcode on a Mac compiles for
+iOS, so `<path>/ios/Tide` gets the game's generated C, its packages' C and the engine's sources, with `sources.txt`
+naming each file's compiler flags, and `<path>/ios/pack` the game's assets. `tide` compiles nothing for it, so it
+works on Windows and Linux too; the package's build adds the files to the Xcode project Unity exports, which then
+builds on a Mac that has no `tide`. Unity and other Tide builds of the same game
 play in the same matches. This is early, and its details may change.
 Debug and release libraries carry debug information: a native debugger attached to the Unity editor
 stops at breakpoints in `.tide` files, with the game's natvis in its `.pdb` and

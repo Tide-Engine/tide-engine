@@ -14,6 +14,9 @@ foreach(fixture crossplatform crossplatform_text random random_local_order rando
         shards visibility_repairs tasks parallel sort maps)
     list(APPEND TIDE_IOS_TESTS tidec_e2e_${fixture})
 endforeach()
+# The physics packages' C, which a game that lists one compiles with the same compiler: their pinned hashes
+list(APPEND TIDE_IOS_TESTS tide_box2d_stack tide_box2d_course tide_box2d_complete tide_box2d_rewind
+    tide_box3d_stack tide_box3d_course tide_box3d_complete tide_box3d_rewind tide_box3d_joints tide_box3d_mesh)
 foreach(test IN LISTS TIDE_IOS_TESTS)
     if(NOT TARGET ${test})
         message(FATAL_ERROR "cmake/ios_tests.cmake lists ${test}, which this build has no target of")

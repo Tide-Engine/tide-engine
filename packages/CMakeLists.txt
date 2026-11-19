@@ -429,7 +429,7 @@ if(TIDE_PLATFORM)
                 --routes "${CMAKE_CURRENT_SOURCE_DIR}/lobby/test/relay_routes.mjs")
         # The guard around the runner's own 100 seconds and what it asks the page after them (cmake/WebTest.cmake)
         set_tests_properties(tide_lobby_relay_web PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 150)
-    elseif(NOT TIDE_ANDROID AND TIDE_NODE)
+    elseif(NOT TIDE_ANDROID AND NOT TIDE_IOS AND TIDE_NODE)
         tide_add_game(tide_lobby_relay SOURCES lobby/test/relay.tide NAME game PACKAGES Lobbies ${lobby_files}
             HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" lobby/test/relay_test.c)
         target_include_directories(tide_lobby_relay PRIVATE "${PROJECT_SOURCE_DIR}/tests")
@@ -444,7 +444,7 @@ endif()
 # isn't here and nothing builds the package but this test, which links a Steam that isn't in the SDK's
 # library's place (steam/test/fake_steam.c): four users in one program, each with a session of its own,
 # from Steam's lobbies into a match on Steam's messages. Desktop only, as the package is.
-if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID AND NOT TIDE_IOS)
     tide_add_game(tide_steam_lobby SOURCES steam/test/game.tide steam/bridge.c steam/test/fake_steam.c NAME game
         PACKAGES Lobbies ${lobby_files} Steam steam/steam.tide
         HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" steam/test/steam_test.c)

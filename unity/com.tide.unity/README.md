@@ -366,7 +366,7 @@ sharded one, aren't.
 ## Build
 
 A player build (File > Build Profiles) builds the game with it, optimized, for
-the editor's own desktop platform (Mono or IL2CPP), WebGL or Android. The player runs the match as the
+the editor's own desktop platform (Mono or IL2CPP), WebGL, Android or iOS. The player runs the match as the
 editor does. A WebGL player runs Tide's own WebAssembly beside Unity's, with
 its threads: serve it cross-origin isolated (`Cross-Origin-Opener-Policy:
 same-origin` and `Cross-Origin-Embedder-Policy: require-corp`), as any Tide
@@ -382,6 +382,45 @@ app's own files (`Application.persistentDataPath`). It needs a device with
 Vulkan and compute shaders for Tide's drawing, as every renderer of Tide's
 does. An Android player has been built and packaged, not yet run on a phone.
 
+### iOS
+
+An iOS app links its game in, and only Xcode on a Mac compiles for iOS. So for an iOS player tide compiles nothing:
+it writes the game, Tide's engine and its networking as C sources, and the package adds them to the Xcode project
+Unity exports (`Libraries/Tide`), each file with its own compiler flags, the game's assets as a file of the app
+(`Data/Raw/Tide/pack`). The export works on Windows, Linux and a Mac alike, and the project then builds on any Mac
+with Xcode: it needs neither tide nor Unity there. Don't change those files' Compiler Flags in Xcode: they keep the
+game's arithmetic the same as on every other machine, and a match would drift apart without them.
+
+- Graphics API: Metal (Unity's default). Tide draws with compute shaders, which iOS has on Metal alone.
+- The app's Info.plist says why it looks at the local network (players on one Wi-Fi reach each other directly, and
+  iOS asks the player first) and why it may record (Unity asks for Microphone Usage Description, which the package
+  fills where it's empty; iOS only asks the player if the game listens to the microphone). Put your own words in
+  Player Settings > Microphone Usage Description, and in the project's Info.plist for the local network.
+- The game's saves are in the app's own files (`Application.persistentDataPath`). An app that goes to the
+  background leaves its match, as every phone's does.
+- A library the game's own C links (a `.a` in a package's folder) isn't added: tide says so as it builds. Add one
+  built for iOS to the Xcode project yourself.
+
+**Without a Mac.** Tide's repository has a workflow that builds an exported project on GitHub's Macs, and a command
+that sends it there and brings back what it made. You need `gh` (GitHub's command, signed in: `gh auth login`),
+Node 24, a fork or clone of the repository whose Actions you can run, and Unity's iOS Build Support module.
+
+1. Build the iOS player in Unity (File > Build Profiles > iOS > Build) into a folder, say `Builds/iOS`.
+2. `node <tide's repository>/unity/ios-app.mjs Builds/iOS`. It packs the folder (about 250 MB for a small game),
+   uploads it as a draft release only the repository's people can read, builds it on a Mac (about 20 minutes),
+   downloads `ios-app/app-unsigned.ipa` beside the folder and deletes the draft.
+3. The app isn't signed, and an iPhone runs only signed apps. Install it with a tool that signs it with your own
+   Apple ID as it installs: [Sideloadly](https://sideloadly.io) or [AltStore](https://altstore.io) on Windows. With
+   a free Apple ID the app runs for seven days, then needs installing again; a paid developer account signs for a
+   year and can use TestFlight. On the phone, trust your Apple ID once (Settings > General > VPN & Device
+   Management), and from iOS 16 turn on Developer Mode (Settings > Privacy & Security).
+4. To try a build with no phone at all: in Player Settings set Target SDK to Simulator SDK (and its architecture to
+   ARM64), build, and add `--simulator` to the command. The workflow then runs the app in an iPhone simulator and
+   brings back what it logged (`ios-app/app.log`).
+
+If the build fails, the command says so and downloads `xcodebuild.log`: the lines with `error:` say which file.
+Send that file with a report.
+
 The editor's game is a debug build (`DEBUG` is defined) and a player's isn't.
 Where the game's data differs between the two, a field inside `#if DEBUG`
 say, `Packages/com.tide.game` holds the game's C# for both, the editor's inside
@@ -391,8 +430,8 @@ your own inside `#if UNITY_EDITOR`. A player build checks that the C# in the
 project is of the game it builds, and says to let the editor's build finish
 where it isn't.
 
-Not built yet: players for another desktop system than the editor's, for iOS
-and for consoles. A
+Not built yet: players for another desktop system than the editor's and for
+consoles. A
 dedicated server needs none of them: it's a Tide build of the same game
 (`tide build --server --assets Assets`), which Unity's players join.
 

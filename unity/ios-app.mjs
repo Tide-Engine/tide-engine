@@ -19,6 +19,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { closeSync, existsSync, mkdirSync, openSync, readSync, rmSync, statSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const args = process.argv.slice(2);
 function taken(name) {
@@ -48,7 +49,9 @@ if (!existsSync(join(project, 'Libraries', 'Tide', 'sources.txt'))) {
     process.exit(2);
 }
 const where = repo ? ['--repo', repo] : [];
-const gh = (list, options = {}) => execFileSync('gh', list, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'], ...options });
+// gh works out the repository from the folder it runs in: this file's, in Tide's checkout, unless --repo says
+const here = dirname(fileURLToPath(import.meta.url));
+const gh = (list, options = {}) => execFileSync('gh', list, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'], cwd: here, ...options });
 
 // The project as one archive, cut into parts a release takes (2 GiB a file at most)
 const work = join(tmpdir(), `tide-ios-app-${process.pid}`);
@@ -104,13 +107,13 @@ try {
     }
     const into = resolve(out ?? join(dirname(project), 'ios-app'));
     mkdirSync(into, { recursive: true });
-    spawnSync('gh', ['run', 'download', String(run.databaseId), '--dir', into, ...where], { stdio: 'inherit' });
+    spawnSync('gh', ['run', 'download', String(run.databaseId), '--dir', into, ...where], { stdio: 'inherit', cwd: here });
     console.log(state.conclusion === 'success' ? `built: what it made is in ${into}` : `the build ${state.conclusion}: its log is in ${into}, and at ${run.url}`);
     code = state.conclusion === 'success' ? 0 : 1;
 } catch (error) {
     console.error(String(error.message ?? error));
 } finally {
-    if (!keep) spawnSync('gh', ['release', 'delete', tag, '--yes', ...where], { stdio: 'ignore' });
+    if (!keep) spawnSync('gh', ['release', 'delete', tag, '--yes', ...where], { stdio: 'ignore', cwd: here });
     rmSync(work, { recursive: true, force: true });
 }
 process.exit(code);
