@@ -50,10 +50,12 @@ namespace Tide
         delegate* unmanaged[Cdecl]<IntPtr, ulong*, uint, void> viewWantFn;
         delegate* unmanaged[Cdecl]<IntPtr, byte> viewAgainFn;
         delegate* unmanaged[Cdecl]<IntPtr, uint, uint, ulong, ulong, uint, uint, uint, uint, uint, byte> localTextureFn;
+        delegate* unmanaged[Cdecl]<IntPtr, uint, uint, ulong, ulong, uint, byte> localObjectFn;
+        delegate* unmanaged[Cdecl]<IntPtr, uint*, TideEmbedSound*> soundsFn;
         delegate* unmanaged[Cdecl]<uint> abiFn;
 
         // What tide/embed.h's TIDE_EMBED_ABI says: a library that says otherwise was built by another tide.
-        public const uint Abi = 28;
+        public const uint Abi = 29;
 
         public static string LibraryName =>
             Application.platform == RuntimePlatform.Android ? AndroidLibrary
@@ -234,13 +236,15 @@ namespace Tide
             viewWantFn = (delegate* unmanaged[Cdecl]<IntPtr, ulong*, uint, void>)Find("tide_embed_view_want");
             viewAgainFn = (delegate* unmanaged[Cdecl]<IntPtr, byte>)Find("tide_embed_view_again");
             localTextureFn = (delegate* unmanaged[Cdecl]<IntPtr, uint, uint, ulong, ulong, uint, uint, uint, uint, uint, byte>)Find("tide_embed_local_texture");
+            localObjectFn = (delegate* unmanaged[Cdecl]<IntPtr, uint, uint, ulong, ulong, uint, byte>)Find("tide_embed_local_object");
+            soundsFn = (delegate* unmanaged[Cdecl]<IntPtr, uint*, TideEmbedSound*>)Find("tide_embed_sounds");
             if (createFn == null || destroyFn == null || frameFn == null || statusFn == null || requestFn == null || backgroundFn == null
                 || cameraFn == null || renderFn == null || renderResetFn == null || renderFormatsFn == null || renderReadFn == null
                 || renderViewFn == null
                 || viewFn == null || schemaFn == null || commandFn == null || drawFn == null || audioFn == null || microphoneFn == null
                 || travelFn == null || travelKeepFn == null || pauseFn == null || stepFn == null || showFn == null
                 || continueFn == null || recordingFn == null || replayFn == null || replayEndFn == null || logFn == null || viewWantFn == null || viewAgainFn == null
-                || localTextureFn == null)
+                || localTextureFn == null || localObjectFn == null || soundsFn == null)
             {
                 Debug.LogError($"Tide: {LibraryName} lacks some of tide/embed.h's functions: rebuild it with this tide.");
                 return false;
@@ -314,6 +318,9 @@ namespace Tide
         public byte LocalTexture(IntPtr embed, uint type, uint offset, ulong birth, ulong lineage, uint image, uint width, uint height, uint filter, uint wrap) =>
             (byte)TideWebLocalTexture(type, offset, (uint)birth, (uint)(birth >> 32), (uint)lineage, (uint)(lineage >> 32), image, width, height,
                                       (filter & 255) | (wrap & 255) << 8);
+        public byte LocalObject(IntPtr embed, uint type, uint offset, ulong birth, ulong lineage, uint item) =>
+            (byte)TideWebLocalObject(type, offset, (uint)birth, (uint)(birth >> 32), (uint)lineage, (uint)(lineage >> 32), item);
+        public TideEmbedSound* Sounds(IntPtr embed, uint* count) => TideWebSounds(count);
 
         [DllImport("__Internal")] static extern IntPtr TideWebCreate(TideEmbedDesc* desc);
         [DllImport("__Internal")] static extern void TideWebDestroy();
@@ -342,6 +349,8 @@ namespace Tide
         [DllImport("__Internal")] static extern int TideWebReplay(byte* data, uint size);
         [DllImport("__Internal")] static extern void TideWebReplayEnd();
         [DllImport("__Internal")] static extern int TideWebLocalTexture(uint type, uint offset, uint birthLow, uint birthHigh, uint lineageLow, uint lineageHigh, uint image, uint width, uint height, uint sampling);
+        [DllImport("__Internal")] static extern int TideWebLocalObject(uint type, uint offset, uint birthLow, uint birthHigh, uint lineageLow, uint lineageHigh, uint item);
+        [DllImport("__Internal")] static extern TideEmbedSound* TideWebSounds(uint* count);
 
         // Tide's program on the page: it loads beside Unity's (TideWebBuild put it in the page), and starts when
         // TideRunner does.
@@ -389,6 +398,11 @@ namespace Tide
         // tide_embed_local_texture: one of Unity's textures into a Texture field of the game's local state
         public byte LocalTexture(IntPtr embed, uint type, uint offset, ulong birth, ulong lineage, uint image, uint width, uint height, uint filter, uint wrap) =>
             localTextureFn(embed, type, offset, birth, lineage, image, width, height, filter, wrap);
+        // tide_embed_local_object: one of Unity's meshes, materials or sounds into a local field of its type
+        public byte LocalObject(IntPtr embed, uint type, uint offset, ulong birth, ulong lineage, uint item) =>
+            localObjectFn(embed, type, offset, birth, lineage, item);
+        // tide_embed_sounds: the frame's plays of Unity's own sounds, once
+        public TideEmbedSound* Sounds(IntPtr embed, uint* count) => soundsFn(embed, count);
 #endif
 
         // The library stays loaded for the editor's life: a game running in it may hold memory and threads of it.

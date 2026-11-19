@@ -3,6 +3,13 @@
 // another program is the same game, by its hash, as one built otherwise.
 
 // What another language reads a field as, where the layout says plain.
+// Whether a local field of this type is one another program gives a value: a Texture (its image), or one of that
+// program's own objects (UnityEngine.Mesh, UnityEngine.Material, UnityEngine.AudioClip).
+static bool embed_given(const type t)
+{
+    return t.kind == TY_TEXTURE || t.kind == TY_UNITY_MESH || t.kind == TY_UNITY_MATERIAL || t.kind == TY_UNITY_CLIP;
+}
+
 static int embed_field_kind(const type t)
 {
     switch (t.kind) {
@@ -709,26 +716,28 @@ static void gen_embed(gen *g)
     }
     sb_put(o, "    default:\n        return false;\n    }\n}\n\n");
 
-    // The local fields another program gives a value (tide_embed_local_texture): a Texture of a component's or a
-    // singleton's own local fields, by its place. The match holds no rendering resource, so there's nothing of its
-    // here, and a Texture inside a struct or a list is the game's own to fill.
+    // The local fields another program gives a value (tide_embed_local_texture, tide_embed_local_object): a Texture,
+    // or one of that program's own objects, of a component's or a singleton's own local fields, by its place and
+    // size. The match holds none of these, so there's nothing of its here, and one inside a struct or a list is the
+    // game's own to fill.
     sb_put(o, "static bool tide_embed_set_local(void *local_state, int32_t type, uint32_t offset, uint64_t birth, uint64_t lineage,\n"
               "                                 const void *value, uint32_t size)\n{\n"
               "    tide_local *l = local_state;\n    const tide_entity e = {birth, lineage};\n"
               "    (void)l;\n    (void)e;\n    (void)offset;\n    (void)value;\n"
-              "    if (size != sizeof(tide_texture_ref)) return false;\n    switch (type) {\n");
+              "    (void)size;\n    switch (type) {\n");
     for (int i = 0; i < prog->local_parts.count; i++) {
         const decl *part = prog->local_parts.items[i];
         const int index = layout_index(&types, part);
         int textures = 0;
-        for (int k = 0; k < part->fields.count; k++) textures += part->fields.items[k].type.kind == TY_TEXTURE;
+        for (int k = 0; k < part->fields.count; k++) textures += embed_given(part->fields.items[k].type);
         if (index < 0 || !textures || !part->part_of) continue;
         const char *name = type_cname(part);
         sb_printf(o, "    case %d: { // " STR_FMT "'s local fields\n        if (", index, STR_ARG(part->part_of->qualified));
         for (int k = 0, said = 0; k < part->fields.count; k++) {
             const field *f = &part->fields.items[k];
-            if (f->type.kind != TY_TEXTURE) continue;
-            sb_printf(o, "%soffset != offsetof(%s, %s)", said++ ? " && " : "", name, field_cname(f));
+            if (!embed_given(f->type)) continue;
+            sb_printf(o, "%s(offset != offsetof(%s, %s) || size != sizeof(((%s *)0)->%s))", said++ ? " && " : "", name, field_cname(f),
+                      name, field_cname(f));
         }
         sb_put(o, ") return false;\n");
         if (part->kind == DECL_COMPONENT) {

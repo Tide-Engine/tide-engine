@@ -62,6 +62,9 @@ typedef enum tide_draw_kind {
     TIDE_DRAW_COMPUTE,   // compute: a kernel's run (tide_draw_list.computes), outside any pass, in order with draws
     TIDE_DRAW_GPU_LIST,  // gpu_list: Set, Clear or SetCount of a GPU list (tide_draw_list.gpu_ops), in order with draws
     TIDE_DRAW_CLEAR_IMAGES, // clear_images: four typed image values in the list's uniform bytes
+    // external: a mesh of the program Tide runs inside, drawn by that program with a material of its own, in order
+    // with the draws (tide_draw_external_mesh). Into the window alone; nothing where no such program replays the frame
+    TIDE_DRAW_EXTERNAL,
 } tide_draw_kind;
 
 // How what a command draws goes over what's there. Tide's `Blend` has the same
@@ -227,6 +230,11 @@ typedef struct tide_draw_command {
             uint32_t op; // Its place in tide_draw_list.gpu_ops
         } gpu_list;
         struct { uint32_t uniforms; } clear_images;
+        struct {               // TIDE_DRAW_EXTERNAL
+            uint32_t mesh;     // The other program's numbers for its mesh...
+            uint32_t material; // ...and its material (tide_external_ref)
+            uint32_t matrix;   // Its place in tide_draw_list.matrices: from the mesh to the world
+        } external;
         struct {             // TIDE_DRAW_TEXT, after its `a` and `b.x`
             tide_float2 at;  // `a`
             float size;      // `b.x`
@@ -1095,6 +1103,13 @@ static inline tide_int2 tide_texture_external_size(const uint64_t named)
 {
     return tide_i2((int32_t)(named >> 28 & TIDE_TEXTURE_EXTERNAL_SIDE), (int32_t)(named >> 44 & TIDE_TEXTURE_EXTERNAL_SIDE));
 }
+
+// An object of the program Tide runs inside that isn't a texture (Unity's mesh, material or sound, which Tide's
+// UnityEngine.Mesh, UnityEngine.Material and UnityEngine.AudioClip are): the number that program knows it by, from
+// 1, and nothing else. Nothing here reads one; a draw or a play hands it back to that program. 0 is none.
+typedef struct tide_external_ref {
+    uint64_t id;
+} tide_external_ref;
 
 // What texture `texture` of a shader's adds to its run's `sampling` when it's
 // read as its reference says: its filter's bit, or its wrap's.
@@ -3479,6 +3494,12 @@ void tide_draw_shaded_indirect(tide_draw_list *d, const tide_shader *shader, uin
 // A cube's `size` is its full width, height and depth. The rotated form
 // turns its local axes by `rotation` before placing it in the world.
 void tide_draw_cube(tide_draw_list *d, tide_float3 center, tide_float3 size, tide_color color);
+
+// A mesh of the program Tide runs inside, drawn by it with a material of its own, placed by `transform` (through the
+// 3D transform that's set), where this call is among the frame's draws: Tide's Draw.UnityMesh. Its camera, its
+// lighting and what its material does are that program's; it goes into the window alone. Nothing for none of
+// either, and nothing where no such program replays the frame.
+void tide_draw_external_mesh(tide_draw_list *d, tide_external_ref mesh, tide_external_ref material, tide_float4x4 transform);
 void tide_draw_cube_rotated(tide_draw_list *d, tide_float3 center, tide_float3 size, tide_quaternion rotation,
                              tide_color color);
 

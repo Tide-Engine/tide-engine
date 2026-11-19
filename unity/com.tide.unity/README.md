@@ -333,8 +333,36 @@ inspector. A player build keeps the textures as it keeps anything a prefab or
 a scene references. An image the game declares itself, `asset Texture logo =
 "logo.png";` in a `.tide` file, is Tide's own import of that file and draws in
 every host, Unity included; one set in Unity's inspector exists in the Unity
-project alone. Unity's meshes, sounds and materials aren't Tide's to draw or
-play yet.
+project alone.
+
+Unity's meshes, materials and sounds have types of their own in Tide, which
+name Unity's objects and read nothing of them: `UnityEngine.Mesh`,
+`UnityEngine.Material` and `UnityEngine.AudioClip`, as local fields set the
+same way.
+
+```tide
+component Statue
+{
+    local UnityEngine.Mesh shape;
+    local UnityEngine.Material look;
+    local UnityEngine.AudioClip hum;
+}
+
+view Statues(Statue statue, Transform transform)
+{
+    Draw.UnityMesh(statue.shape, statue.look, float4x4.Translate(transform.localPosition));
+}
+```
+
+`Draw.UnityMesh` has Unity draw the mesh with the material, every submesh,
+where the call is among Tide's own draws: through Unity's camera, into the
+screen (not into a Tide render target), lit as Unity lights a mesh drawn from
+a command buffer in your pipeline. `Audio.Play(statue.hum, 0.5)` plays the clip
+once through Unity's audio, an AudioSource under the runner ("Tide Sounds"),
+apart from Tide's mixer: its buses and effects don't touch it. Unset, each
+does nothing. A Tide `frag` can't draw a Unity mesh, and a Unity material
+can't draw a Tide mesh: for those, the mesh or the shader is Tide's
+(`asset Mesh<V>`, `frag`).
 
 A physics package's components are on GameObjects like the game's own: with
 `box3d`, a `Body` and a `Box`, `Sphere` or `Capsule` (Add Component, Tide/Box3D).

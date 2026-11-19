@@ -1127,6 +1127,16 @@ static bool texture_field(const field *f)
     return strcmp(type, "Texture") == 0 && f->size == 48;
 }
 
+// ...or one of Unity's own objects, which Tide hands back in a draw or a play: the C# type the field is, or NULL.
+static const char *unity_object_field(const field *f)
+{
+    if (f->size != 8) return NULL;
+    if (strcmp(f->type, "UnityEngine.Mesh") == 0) return "global::UnityEngine.Mesh";
+    if (strcmp(f->type, "UnityEngine.Material") == 0) return "global::UnityEngine.Material";
+    if (strcmp(f->type, "UnityEngine.AudioClip") == 0) return "global::UnityEngine.AudioClip";
+    return NULL;
+}
+
 // The fields of a type's local part, after its own, and their lines of ReadLive: Unity doesn't keep them (they're
 // this machine's, never authored), and the inspector shows them in Play. But a Texture: that one is Unity's to set,
 // in the inspector for a component, as it draws with an image Unity imported (tide_embed_local_texture). Its lines
@@ -1151,6 +1161,20 @@ static void put_local_fields(out *o, out *live, out *assets, game *g, const type
             putf(o, "        public global::UnityEngine.Texture %s;\n", id);
             putf(o, "        [global::System.NonSerialized] global::UnityEngine.Texture tideGiven_%s;\n", plain);
             putf(assets, "            assets.Texture(%uu, %s, ref tideGiven_%s);\n", f->offset, id, plain);
+            free(value);
+            free(id);
+            continue;
+        }
+        if (unity_object_field(f)) {
+            const char *plain = id[0] == '@' ? id + 1 : id;
+            put_field_summary(o, g, part, f, "        ");
+            if (component) {
+                puts_(o, "        [global::UnityEngine.Tooltip(\"One of Unity's own, which Tide's code hands back to Unity to draw or "
+                         "play: this machine's, never the match's\")]\n");
+            }
+            putf(o, "        public %s %s;\n", unity_object_field(f), id);
+            putf(o, "        [global::System.NonSerialized] global::UnityEngine.Object tideGiven_%s;\n", plain);
+            putf(assets, "            assets.Object(%uu, %s, ref tideGiven_%s);\n", f->offset, id, plain);
             free(value);
             free(id);
             continue;

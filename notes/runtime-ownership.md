@@ -19,6 +19,18 @@ result of any existing draw changed, tested; notes/unity.md, top section). The g
 
 No world byte, hash, snapshot or wire byte changes: local fields alone take one, and a game's layout is as it was.
 
+**Later the same day** (the owner's "introduce a Unity mesh type directly ... similar for others"; notes/unity.md,
+top section), more of the same kind, embed ABI 29:
+
+- `tide_external_ref` (`draw.h`: a number, 8 bytes), what generated code holds for Tide's `UnityEngine.Mesh`,
+  `UnityEngine.Material` and `UnityEngine.AudioClip`. Generated views call two new functions with it:
+  `tide_draw_external_mesh` (`draw.h`, `draw.c`: `TIDE_DRAW_EXTERNAL`, a command with its matrix, appended between
+  lists like the rest) and `tide_audio_play_external` (`tide/audio.h`, `audio.c`: a one-shot with no samples, by
+  `tide_clip.external`, a new member in what was padding, which the mixer plays nothing of).
+- `tide_embed_game.set_local` takes those fields too, by their size (8) against a Texture's (48).
+- The platform's: `gpu.h`'s optional `external_draw`, `platform.c`'s `STEP_EXTERNAL` (the window's passes alone),
+  `TIDE_EMBED_RENDER_EXTERNAL_DRAW`, `tide_embed_local_object`, `tide_embed_sounds`.
+
 ## The view packet carries what's read (2026-11-19)
 
 Mine, a clear win under the guide's rule (measured, what a reader of everything gets unchanged, tested;

@@ -671,7 +671,13 @@ entity appears: `if (card.face.size.x == 0) return;` skips the draw until
 then. A script sets it in Play, and a singleton's from
 `runner.Get<Tide.Game.Hud>().logo`. Such a value exists in a Unity project
 alone; `asset Texture logo = "logo.png";` in a `.tide` file is Tide's own
-import of the file, which every host draws. The package's README has more.
+import of the file, which every host draws. Unity's meshes, materials and
+sounds are local fields of types of their own, `UnityEngine.Mesh`,
+`UnityEngine.Material` and `UnityEngine.AudioClip`, which Tide's code only
+hands back to Unity: `Draw.UnityMesh(mesh, material, transform)` has Unity
+draw the mesh in the material where the call is among the view's draws, and
+`Audio.Play(clip, volume)` plays the clip through Unity's audio. The package's
+README has more.
 
 A package's components are authored on GameObjects like the game's own, as
 a `unity.json` in its folder says (see

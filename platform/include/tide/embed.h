@@ -23,7 +23,7 @@ typedef struct tide_embed tide_embed;
 
 // What another language binds against: a change to anything here that it lays
 // out or calls changes the number, and tide_embed_abi says it.
-#define TIDE_EMBED_ABI 28u
+#define TIDE_EMBED_ABI 29u
 uint32_t tide_embed_abi(void);
 
 typedef struct tide_embed_desc {
@@ -299,6 +299,11 @@ typedef enum tide_embed_render_op {
     // are). With neither, its colors are read as every texture's of Tide's are, each times its alpha, which the
     // other program sees to as it samples an image that's stored without (Unity's are), in display encoding.
     TIDE_EMBED_RENDER_EXTERNAL,
+    // mesh, material, then 16 floats: in a pass on the other program's own target, a mesh of its own drawn by it
+    // with a material of its own (the numbers it gave them, tide_embed_local_object), placed by the matrix, column by
+    // column, from the mesh to the world, where the command is among the pass's draws. Its camera, lighting and
+    // everything the material does are that program's (Unity's CommandBuffer.DrawMesh).
+    TIDE_EMBED_RENDER_EXTERNAL_DRAW,
 } tide_embed_render_op;
 
 const uint8_t *tide_embed_render(tide_embed *e, uint32_t *size);
@@ -353,6 +358,22 @@ bool tide_embed_command(tide_embed *e, uint32_t type, uint64_t target_birth, uin
 // (a side of 0 or past 65,535), or a game built without tidec's --embed.
 bool tide_embed_local_texture(tide_embed *e, uint32_t type, uint32_t offset, uint64_t birth, uint64_t lineage, uint32_t image,
                               uint32_t width, uint32_t height, uint32_t filter, uint32_t wrap);
+
+// ...and an object of the other program's that isn't a texture, into a local field that's a UnityEngine.Mesh, a
+// UnityEngine.Material or a UnityEngine.AudioClip: `object` the number that program knows it by, from 1, or 0 for
+// none. The game reads nothing of it: its draws and plays hand the number back (TIDE_EMBED_RENDER_EXTERNAL_DRAW,
+// tide_embed_sounds), so which kind of object a number is, is the other program's to keep. False as above.
+bool tide_embed_local_object(tide_embed *e, uint32_t type, uint32_t offset, uint64_t birth, uint64_t lineage, uint32_t object);
+
+// The sounds of the other program's own that the last frame's local code played (Audio.Play of a
+// UnityEngine.AudioClip), for it to play through its own audio: `count` of them, in the order played. Valid until
+// the next frame; each is said once, in the frame that played it.
+typedef struct tide_embed_sound {
+    uint32_t clip; // The number tide_embed_local_object gave the field
+    float volume;  // 1 is the clip as it is
+    float pitch;   // 1 is its own speed
+} tide_embed_sound;
+const tide_embed_sound *tide_embed_sounds(tide_embed *e, uint32_t *count);
 
 // What local code's Session calls do: TIDE_REQUEST_START (`text` a scene's
 // name in the schema, or NULL for Main's), _JOIN (`text` a room's code), _CONNECT (`text` an address, with

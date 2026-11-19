@@ -82,6 +82,7 @@ static const char *outside_type(const type t)
     case TY_RENDER_TARGET: return "uses a render target, which is this machine's";
     case TY_GPU_LIST: return "uses a GPU list, which is this machine's";
     case TY_FONT: return "uses a font, which is this machine's";
+    case TY_UNITY_MESH: case TY_UNITY_MATERIAL: case TY_UNITY_CLIP: return "uses an object of Unity's, which is this machine's";
     case TY_RESIDENT: return "uses a C library's state";
     case TY_RECORD: return "reads Devices";
     default: return NULL;

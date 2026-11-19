@@ -33,7 +33,12 @@ public static class SampleSetup
         Object.DestroyImmediate(sphere.GetComponent<Collider>());
         sphere.GetComponent<MeshRenderer>().sharedMaterial = material;
         // One of Unity's own textures in a local Texture field, which Tide's Marks view draws (Mark.png, as imported)
-        sphere.AddComponent<Tide.Game.Ball>().mark = AssetDatabase.LoadAssetAtPath<Texture2D>(Folder + "/Mark.png");
+        var ball = sphere.AddComponent<Tide.Game.Ball>();
+        ball.mark = AssetDatabase.LoadAssetAtPath<Texture2D>(Folder + "/Mark.png");
+        // ...and Unity's own mesh, material and sound, which Tide's code hands back to Unity (Draw.UnityMesh, Audio.Play)
+        ball.badge = Resources.GetBuiltinResource<Mesh>("Cube.fbx");
+        ball.badgeLook = AssetDatabase.LoadAssetAtPath<Material>(Folder + "/Badge.mat");
+        ball.chime = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Tide/bonk.wav");
         sphere.AddComponent<BallTint>();
         PrefabUtility.SaveAsPrefabAsset(sphere, Folder + "/Roller.prefab");
         Object.DestroyImmediate(sphere);

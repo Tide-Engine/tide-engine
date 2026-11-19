@@ -166,4 +166,13 @@ namespace Tide
         public IntPtr relay;       // const char *
         public IntPtr libraryDir;  // const char *: the folder tide writes game-<n> libraries to
     }
+
+    // tide_embed_sound: a play of one of Unity's own sounds that the frame's local code asked for
+    [StructLayout(LayoutKind.Sequential)]
+    public struct TideEmbedSound
+    {
+        public uint clip;    // The number the runner gave the clip (TideRunner.Give)
+        public float volume; // 1 is the clip as it is
+        public float pitch;
+    }
 }

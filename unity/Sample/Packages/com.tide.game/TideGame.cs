@@ -5,7 +5,7 @@ namespace Tide.Game
     // What this game's C# was made from: a view packet of another build isn't read by it.
     public static class TideGameSchema
     {
-        public const string Hash = "B252AA61B6DA2D50";
+        public const string Hash = "61809FA35CA5B3A1";
         public const string Game = "Bounce";
         public const int TickRate = 30;
         public static readonly string[] Scenes = {  };
@@ -932,11 +932,14 @@ namespace Tide.Game
 {
     // Tide's local Ball's local fields
     [global::Tide.TideType("Ball", true)]
-    [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 56)]
+    [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 80)]
     public unsafe partial struct BallLocal
     {
         [global::System.Runtime.InteropServices.FieldOffset(0)] public int heard;
         [global::System.Runtime.InteropServices.FieldOffset(8)] public fixed byte mark[48]; // Texture: its bytes
+        [global::System.Runtime.InteropServices.FieldOffset(56)] public fixed byte badge[8]; // UnityEngine.Mesh: its bytes
+        [global::System.Runtime.InteropServices.FieldOffset(64)] public fixed byte badgeLook[8]; // UnityEngine.Material: its bytes
+        [global::System.Runtime.InteropServices.FieldOffset(72)] public fixed byte chime[8]; // UnityEngine.AudioClip: its bytes
     }
 }
 namespace Tide.Game

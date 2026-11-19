@@ -19,6 +19,11 @@ component Counter
     [Raw] local Texture bumps;
     local int drawn;
     local string note = "kept"; // A default the other program's write of another field leaves as declared
+    // The other program's own objects, which it gives (tide_embed_local_object): Faces draws the mesh with the
+    // material, and plays the sound, by handing their numbers back
+    local UnityEngine.Mesh shape;
+    local UnityEngine.Material look;
+    local UnityEngine.AudioClip ding;
 }
 
 singleton Tally
@@ -157,6 +162,8 @@ view Faces(mut Counter counter, Tally tally)
         }
         if (tally.logo.size.x > 0) Draw.Sprite(tally.logo, float2(300, 100), float2(32, 32));
     }
+    Draw.UnityMesh(counter.shape, counter.look, float4x4.Translate(float3(1, 2, 3)));
+    Audio.Play(counter.ding, 0.5);
 }
 
 // What the other program plays (tide_embed_audio): a square wave a quarter loud while B is held, and the microphone

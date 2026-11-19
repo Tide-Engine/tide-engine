@@ -177,6 +177,23 @@ namespace Tide
             runner.Give(Type, offset, Entity, texture);
             given = texture;
         }
+
+        // The field at `offset` that's one of Unity's own objects to Tide (a UnityEngine.Mesh, Material or AudioClip
+        // field): handed over as a Texture is, when it's another than the one handed last. Tide reads nothing of it,
+        // and hands it back in a draw or a play.
+        public void Object(uint offset, UnityEngine.Object item, ref UnityEngine.Object given)
+        {
+            if (All) given = null;
+            if (item == null)
+            {
+                if (!ReferenceEquals(given, null)) runner.GiveObject(Type, offset, Entity, null);
+                given = null;
+                return;
+            }
+            if (ReferenceEquals(item, given)) return;
+            runner.GiveObject(Type, offset, Entity, item);
+            given = item;
+        }
     }
 
     // The Inspector's icons of Tide's scripts (com.tide.unity's Editor/Icons): the generated components name Component

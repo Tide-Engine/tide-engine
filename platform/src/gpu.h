@@ -514,6 +514,10 @@ typedef struct tide_gpu {
     // are read as every texture's here are, each times its alpha, which that program sees to as it's sampled. NULL
     // on a backend that draws for itself, where such a reference is no texture.
     tide_gpu_id (*external)(uint32_t external, int width, int height, uint32_t flags);
+    // Optional, with `external`: in a pass on the window, a mesh of that program's drawn by it with a material of its
+    // own, both by its numbers for them, placed by `matrix` (16 floats, column by column, from the mesh to the
+    // world), in the pass's order. Its camera and everything its material does are that program's.
+    void (*external_draw)(uint32_t mesh, uint32_t material, const float *matrix);
     // Optional, for an asynchronously validated volume allocation: 0 pending, 1 ready,
     // -1 failed. Other textures are ready. A pending/failed image must never be bound.
     int (*texture_status)(tide_gpu_id texture);

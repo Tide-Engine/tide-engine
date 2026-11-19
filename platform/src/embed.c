@@ -1236,6 +1236,44 @@ bool tide_embed_local_texture(tide_embed *e, const uint32_t type, const uint32_t
     return embed->set_local(tide_run_local, (int32_t)type, offset, birth, lineage, &texture, (uint32_t)sizeof texture);
 }
 
+bool tide_embed_local_object(tide_embed *e, const uint32_t type, const uint32_t offset, const uint64_t birth,
+                             const uint64_t lineage, const uint32_t object)
+{
+    if (e != &the_embed || !running || !tide_run_game || !tide_run_local || type > INT32_MAX) return false;
+    const tide_embed_game *embed = tide_run_game->embed;
+    if (!embed || !embed->set_local) return false;
+    const tide_external_ref value = {object};
+    return embed->set_local(tide_run_local, (int32_t)type, offset, birth, lineage, &value, (uint32_t)sizeof value);
+}
+
+// The frame's one-shots that are the other program's to play, out of what the frame recorded (tide_run_audio, which
+// stays as the frame left it until the next one starts)
+static tide_embed_sound *embed_sounds;
+static uint32_t embed_sound_capacity;
+
+const tide_embed_sound *tide_embed_sounds(tide_embed *e, uint32_t *count)
+{
+    if (count) *count = 0;
+    if (e != &the_embed || !running || !count) return NULL;
+    uint32_t found = 0;
+    for (uint32_t i = 0; i < tide_run_audio.voice_count; i++) {
+        const tide_voice *v = &tide_run_audio.voices[i];
+        if (v->id || !v->clip.external || !v->playing) continue;
+        if (found == embed_sound_capacity) {
+            const uint32_t capacity = embed_sound_capacity ? embed_sound_capacity * 2u : 16u;
+            embed_sounds = tide_realloc(embed_sounds, embed_sound_capacity * sizeof *embed_sounds, capacity * sizeof *embed_sounds);
+            embed_sound_capacity = capacity;
+        }
+        embed_sounds[found++] = (tide_embed_sound){v->clip.external, v->volume, v->pitch};
+    }
+    // Said once: a frame asked again has none left
+    for (uint32_t i = 0; i < tide_run_audio.voice_count; i++) {
+        if (!tide_run_audio.voices[i].id) tide_run_audio.voices[i].clip.external = 0;
+    }
+    *count = found;
+    return found ? embed_sounds : NULL;
+}
+
 void tide_embed_camera(tide_embed *e, const float *transform, const float *projection)
 {
     if (e != &the_embed || !running) return;

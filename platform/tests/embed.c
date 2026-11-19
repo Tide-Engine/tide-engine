@@ -602,7 +602,9 @@ TIDE_TEST(embed_camera)
 #if !defined(__wasm__)
 // What a frame's render commands hold, read as the other program reads them (tide_embed_render).
 typedef struct rendered {
-    uint32_t ops[TIDE_EMBED_RENDER_EXTERNAL + 1];
+    uint32_t ops[TIDE_EMBED_RENDER_EXTERNAL_DRAW + 1];
+    uint32_t drawn[2];      // The last EXTERNAL_DRAW's mesh and material...
+    float drawn_matrix[16]; // ...and its matrix
     // The other program's images named (EXTERNAL), the first 4: each one's id, image, width, height and flags, whether
     // an IMAGE bound it after, and whether it was freed
     uint32_t externals[4][5];
@@ -631,7 +633,7 @@ static rendered read_commands(const uint8_t *p, const uint32_t size)
         }
         memcpy(head, p + at, 8u);
         at += 8u;
-        if (head[1] % 4u || head[1] > size - at || head[0] == 0 || head[0] > TIDE_EMBED_RENDER_EXTERNAL) {
+        if (head[1] % 4u || head[1] > size - at || head[0] == 0 || head[0] > TIDE_EMBED_RENDER_EXTERNAL_DRAW) {
             r.whole = false;
             break;
         }
@@ -646,6 +648,10 @@ static rendered read_commands(const uint8_t *p, const uint32_t size)
         if (head[0] == TIDE_EMBED_RENDER_USE && r.used_count < 16u) r.used[r.used_count++] = words[0];
         if (head[0] == TIDE_EMBED_RENDER_UNIFORMS && r.ops[head[0]] == 1u && head[1] >= 68u) memcpy(r.camera, p + at + 4, 64);
         if (head[0] == TIDE_EMBED_RENDER_BEGIN && words[0] == 0 && words[1]) r.window_cleared = true;
+        if (head[0] == TIDE_EMBED_RENDER_EXTERNAL_DRAW && head[1] == 72u) {
+            memcpy(r.drawn, p + at, 8u);
+            memcpy(r.drawn_matrix, p + at + 8u, 64u);
+        }
         if (head[0] == TIDE_EMBED_RENDER_EXTERNAL && head[1] == 20u && r.external_count < 4u) {
             memcpy(r.externals[r.external_count++], p + at, 20u);
         }
@@ -1366,6 +1372,67 @@ TIDE_TEST(embed_local_textures_are_the_other_programs)
     TIDE_CHECK(taken.ops[TIDE_EMBED_RENDER_EXTERNAL] == 0u && taken.ops[TIDE_EMBED_RENDER_TEXTURE_FREE] >= 1u);
     tide_embed_destroy(e);
     TIDE_CHECK(!tide_embed_local_texture(e, (uint32_t)locals, face, key[0], key[1], 7, 64, 32, point, repeat)); // No embed
+}
+
+// The other program's own mesh, material and sound in local fields of those types: the game reads nothing of them
+// and hands their numbers back, the mesh and material in a draw recorded where the view made it, with its matrix,
+// for that program to draw itself, and the sound among the frame's sounds for it to play, once. With either of a
+// draw's two unset nothing is recorded; a field takes only what's its size, so an object is no texture's and the
+// other way round.
+TIDE_TEST(embed_local_objects_are_handed_back)
+{
+    char *argv[] = {program};
+    tide_embed *e = start(1, argv);
+    TIDE_REQUIRE(e != NULL);
+    frames(e, 10, NULL);
+    uint32_t size = 0, count = 0;
+    const uint8_t *p = tide_embed_view(e, &size);
+    const uint8_t *rows = NULL;
+    TIDE_REQUIRE(p && section(p, size, TIDE_PACKET_COMPONENT, type_named("Counter"), &count, &rows) && count == 1u);
+    uint64_t key[2];
+    memcpy(key, p + TIDE_PACKET_HEADER + u32_at(rows, 0) * TIDE_PACKET_ENTITY, sizeof key);
+    const int32_t locals = type_named("Counter local");
+    const uint32_t shape = local_field(locals, "shape"), look = local_field(locals, "look"), ding = local_field(locals, "ding");
+    const uint32_t face = local_field(locals, "face");
+    TIDE_REQUIRE(locals >= 0 && shape != UINT32_MAX && look != UINT32_MAX && ding != UINT32_MAX && face != UINT32_MAX);
+    TIDE_CHECK(render(e).ops[TIDE_EMBED_RENDER_EXTERNAL_DRAW] == 0u);
+    TIDE_CHECK(tide_embed_sounds(e, &count) == NULL && count == 0u);
+
+    // Each field takes its own size alone, and a component's wants its entity
+    TIDE_CHECK(!tide_embed_local_object(e, (uint32_t)locals, face, key[0], key[1], 11));
+    TIDE_CHECK(!tide_embed_local_texture(e, (uint32_t)locals, shape, key[0], key[1], 7, 64, 32, 0, 0));
+    TIDE_CHECK(!tide_embed_local_object(e, (uint32_t)locals, shape + 4u, key[0], key[1], 11));
+    TIDE_CHECK(!tide_embed_local_object(e, (uint32_t)locals, shape, 0, 0, 11));
+
+    // A mesh with no material draws nothing
+    TIDE_CHECK(tide_embed_local_object(e, (uint32_t)locals, shape, key[0], key[1], 11));
+    frames(e, 1, NULL);
+    TIDE_CHECK(render(e).ops[TIDE_EMBED_RENDER_EXTERNAL_DRAW] == 0u);
+    TIDE_CHECK(tide_embed_local_object(e, (uint32_t)locals, look, key[0], key[1], 12));
+    TIDE_CHECK(tide_embed_local_object(e, (uint32_t)locals, ding, key[0], key[1], 13));
+    frames(e, 1, NULL);
+    const rendered drawn = render(e);
+    TIDE_REQUIRE(drawn.whole && drawn.ops[TIDE_EMBED_RENDER_EXTERNAL_DRAW] == 1u);
+    TIDE_CHECK(drawn.drawn[0] == 11u && drawn.drawn[1] == 12u);
+    // Where the view placed it: the identity moved by (1, 2, 3), column by column
+    TIDE_CHECK(drawn.drawn_matrix[0] == 1.0f && drawn.drawn_matrix[5] == 1.0f && drawn.drawn_matrix[10] == 1.0f
+               && drawn.drawn_matrix[15] == 1.0f && drawn.drawn_matrix[1] == 0.0f);
+    TIDE_CHECK(drawn.drawn_matrix[12] == 1.0f && drawn.drawn_matrix[13] == 2.0f && drawn.drawn_matrix[14] == 3.0f);
+    const tide_embed_sound *sounds = tide_embed_sounds(e, &count);
+    TIDE_REQUIRE(sounds != NULL && count == 1u);
+    TIDE_CHECK(sounds[0].clip == 13u && sounds[0].volume == 0.5f && sounds[0].pitch == 1.0f);
+    TIDE_CHECK(tide_embed_sounds(e, &count) == NULL && count == 0u); // Said once
+    frames(e, 1, NULL);
+    TIDE_CHECK(tide_embed_sounds(e, &count) != NULL && count == 1u); // ...and again for the next frame's play
+
+    // None again: nothing drawn, nothing played
+    TIDE_CHECK(tide_embed_local_object(e, (uint32_t)locals, look, key[0], key[1], 0));
+    TIDE_CHECK(tide_embed_local_object(e, (uint32_t)locals, ding, key[0], key[1], 0));
+    frames(e, 1, NULL);
+    TIDE_CHECK(render(e).ops[TIDE_EMBED_RENDER_EXTERNAL_DRAW] == 0u);
+    TIDE_CHECK(tide_embed_sounds(e, &count) == NULL && count == 0u);
+    tide_embed_destroy(e);
+    TIDE_CHECK(!tide_embed_local_object(e, (uint32_t)locals, shape, key[0], key[1], 11)); // No embed
 }
 #endif
 

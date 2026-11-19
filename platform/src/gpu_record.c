@@ -119,6 +119,14 @@ static tide_gpu_id record_external(const uint32_t external, const int width, con
     return id;
 }
 
+static void record_external_draw(const uint32_t mesh, const uint32_t material, const float *matrix)
+{
+    op(TIDE_EMBED_RENDER_EXTERNAL_DRAW, 8u + 64u);
+    u32(mesh);
+    u32(material);
+    bytes(matrix, 64u);
+}
+
 static uint32_t block_formats; // 1 << format for each the other program samples (tide_embed_render_formats)
 
 void tide_gpu_record_block_formats(const uint32_t formats)
@@ -858,6 +866,7 @@ const tide_gpu tide_gpu_record = {
     .mipmaps = record_mipmaps,
     .texture_free = record_texture_free,
     .external = record_external,
+    .external_draw = record_external_draw,
     .cube = record_cube,
     .cube_face = record_cube_face,
     .array = record_array,

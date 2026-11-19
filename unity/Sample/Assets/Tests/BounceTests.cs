@@ -365,6 +365,8 @@ public sealed unsafe class BounceTests
         yield return Until(() => (loudest = Mathf.Max(loudest, audio.TakeLoudest())) > 0.1f, 10f);
         Assert.Greater(audio.Reads, 0, "Unity's audio thread reads the mixer");
         Assert.Greater(loudest, 0.1f, "the bonk was heard as the ball landed");
+        // ...and Unity's own clip, which the same handler plays through Unity's audio (Audio.Play of the ball's chime)
+        Assert.Greater(runner.UnitySoundsPlayed, 0, "Unity's clip was played as Tide's code asked");
         Assert.Less(loudest, 1f);
     }
 
@@ -612,6 +614,10 @@ public sealed unsafe class BounceTests
         var under = At(new Vector3(-1.1f, -0.05f, 1.75f));
         Assert.IsFalse(Near(under, orange, 0.2f) || Near(under, blue, 0.2f), $"{when}the plate under the floor is hidden: {under}");
         var live = ball.GetComponent<Tide.Game.Ball>();
+        // Unity's own mesh in Unity's own material, drawn by Unity where Tide's Emblem view said: an unlit magenta cube
+        // two units over the ball
+        var badge = At(ball.transform.position + new Vector3(0, 2f, 0));
+        Assert.IsTrue(Near(badge, new Color(1f, 0f, 1f), 0.03f), $"{when}Unity's mesh, drawn in Unity's material where Tide's view placed it: {badge}");
         var cube = At(ball.transform.position + new Vector3(0, 1.2f, 0));
         Assert.IsTrue(Near(cube, live.color, 0.03f), $"{when}the cube over the ball has its color: {cube} for {live.color}");
         // The ring: a pixel of nearly the ball's color on its lower half, 24 pixels from its middle (its edge is

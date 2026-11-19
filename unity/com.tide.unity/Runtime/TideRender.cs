@@ -43,7 +43,7 @@ namespace Tide
             PipelineFree, Target, TargetFree, ResolveDepth, Begin, End, Scissor, Use, Stencil, Uniforms, Image, Vertices,
             Indices, Draw, DrawIndexed, PipelineStorage, Storage, ComputeBegin, ComputeEnd, Dispatch, DispatchIndirect,
             DrawIndirect, DrawIndexedIndirect, BufferCopy, BufferRead, DrawIndexedIndirectCount, Sampler, Array, ArrayLayer,
-            ArrayOf, ArrayWrite, TextureBlocks, ArrayBlocks, Volume, VolumeWrite, PipelineImages, DepthBias, External,
+            ArrayOf, ArrayWrite, TextureBlocks, ArrayBlocks, Volume, VolumeWrite, PipelineImages, DepthBias, External, ExternalDraw,
         }
 
         // A buffer: vertices, read by the shaders as bytes, or indices, which Unity draws through as an index buffer
@@ -141,7 +141,7 @@ namespace Tide
             public MaterialPropertyBlock properties;
         }
 
-        enum Kind : byte { Begin, End, Scissor, Draw, Mipmaps, ResolveDepth }
+        enum Kind : byte { Begin, End, Scissor, Draw, Mipmaps, ResolveDepth, External }
 
         // What a camera's commands get: a pass, a rect, a draw with everything it reads, smaller images made...
         struct Command
@@ -159,6 +159,8 @@ namespace Tide
             public RenderTexture mipmapped; // Mipmaps
             public int storage, storageCount; // Draw: the storage buffers it reads, in its recording's `storage`
             public GraphicsBuffer arguments; // ...and an indirect one's numbers, copied where it is in the frame
+            public Mesh mesh;       // External: one of Unity's meshes, drawn by Unity with `material`...
+            public Matrix4x4 place; // ...placed so
         }
 
         // A frame's commands for one camera, kept: its draws, the textures they read, and their uniforms.
@@ -737,6 +739,7 @@ namespace Tide
                     break;
                 case Op.Texture: MakeTexture(W(0), (int)W(1), (int)W(2), (int)W(3), W(4) != 0 ? p + 20 : null); break;
                 case Op.External: MakeExternal(W(0), W(1), (int)W(2), (int)W(3), W(4)); break;
+                case Op.ExternalDraw: ExternalDraw(W(0), W(1), (float*)(p + 8)); break;
                 case Op.TextureWrite:
                     Flush(); // After the work before it, which may sample it
                     WriteTexture(W(0), (int)W(1), (int)W(2), (int)W(3), (int)W(4), p + 20);
@@ -1239,6 +1242,22 @@ namespace Tide
         void IntegersInto(RenderTexture to, int x, int y, int z, int width, int height, int depth, int pixelBytes, byte[] pixels)
         {
             fixed (byte* p = pixels) IntegersInto(to, x, y, z, width, height, depth, pixelBytes, p);
+        }
+
+        // Unity's own meshes and materials that Tide's fields hold (the runner's, by number)
+        internal Func<uint, UnityEngine.Object> Objects;
+
+        // One of Unity's meshes drawn with one of Unity's materials (TIDE_EMBED_RENDER_EXTERNAL_DRAW), where the
+        // command is among the camera's pass's draws: Unity's own draw, every submesh in the material's first pass,
+        // through the camera the commands are recorded for. One of the two gone, or not what it's drawn as, draws
+        // nothing.
+        void ExternalDraw(uint mesh, uint material, float* matrix)
+        {
+            if (!inPass || offscreenPass || Objects == null) return;
+            if (!(Objects(mesh) is Mesh drawn) || drawn == null || !(Objects(material) is Material with) || with == null) return;
+            var place = new Matrix4x4();
+            for (var i = 0; i < 16; i++) place[i] = matrix[i]; // Column by column, as Unity's own index goes
+            into.commands.Add(new Command { kind = Kind.External, mesh = drawn, material = with, place = place });
         }
 
         // Unity's own textures that Tide's Texture fields hold, by the number the embed knows each by
@@ -2632,6 +2651,10 @@ namespace Tide
                         break;
                     case Kind.Mipmaps:
                         cb.GenerateMips(c.mipmapped);
+                        break;
+                    case Kind.External:
+                        if (c.mesh == null || c.material == null) break; // Gone since the frame was read
+                        for (var sub = 0; sub < c.mesh.subMeshCount; sub++) cb.DrawMesh(c.mesh, c.place, c.material, sub, 0);
                         break;
                     case Kind.ResolveDepth:
                         if (resolveDepth == null) break;

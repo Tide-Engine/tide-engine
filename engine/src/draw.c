@@ -4862,6 +4862,20 @@ void tide_draw_set_storage(tide_draw_list *d, const tide_gpu_list *storage, cons
     d->storage_next = tide_draw_storage(d, storage, count);
 }
 
+void tide_draw_external_mesh(tide_draw_list *d, const tide_external_ref mesh, const tide_external_ref material,
+                             const tide_float4x4 transform)
+{
+    if (!mesh.id || !material.id || mesh.id > UINT32_MAX || material.id > UINT32_MAX) return;
+    const tide_float4x4 placed = d->place.moved & TIDE_DRAW_MOVED_3D ? tide_mul_f4x4(d->place.transform_3d, transform) : transform;
+    d->matrices = grow(d->matrices, d->matrix_count, &d->matrix_capacity, 1, sizeof(tide_float4x4), 256u);
+    const uint32_t at = d->matrix_count++;
+    d->matrices[at] = placed;
+    tide_draw_command *c = push(d, TIDE_DRAW_EXTERNAL, tide_f2(0.0f, 0.0f), tide_f2(0.0f, 0.0f), TIDE_COLOR_WHITE);
+    c->external.mesh = (uint32_t)mesh.id;
+    c->external.material = (uint32_t)material.id;
+    c->external.matrix = at;
+}
+
 // Instances of a 3D mesh whose transforms are the list's from `at`, all
 // mirrored or none: more of the run before them, when nothing came between
 // and it draws the same way, or a command of their own.
@@ -5594,6 +5608,15 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
             for (uint32_t k = 0; k < c->mesh.count && c->mesh.first + k < from->quad_count; k++) {
                 quad_placed(d, &from->quads[c->mesh.first + k], slot, (tide_filter)c->mesh.filter, (tide_wrap)c->mesh.wrap);
             }
+        } else if (c->kind == TIDE_DRAW_EXTERNAL) {
+            if (c->external.matrix >= from->matrix_count) continue;
+            d->matrices = grow(d->matrices, d->matrix_count, &d->matrix_capacity, 1, sizeof(tide_float4x4), 256u);
+            const uint32_t at = d->matrix_count++;
+            d->matrices[at] = from->matrices[c->external.matrix];
+            tide_draw_command *copy = push(d, TIDE_DRAW_EXTERNAL, tide_f2(0.0f, 0.0f), tide_f2(0.0f, 0.0f), TIDE_COLOR_WHITE);
+            copy->external.mesh = c->external.mesh;
+            copy->external.material = c->external.material;
+            copy->external.matrix = at;
         } else if (c->kind == TIDE_DRAW_MESH_3D) {
             if (!c->mesh3.mesh || c->mesh3.count == 0) continue;
             const uint32_t slot = append_mesh(d, from, c->mesh3.mesh);

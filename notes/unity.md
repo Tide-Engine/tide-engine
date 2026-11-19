@@ -1,3 +1,86 @@
+## Unity's meshes, materials and sounds as types of their own: embed ABI 29 (2026-11-19, later)
+
+**Owner**, on the report of the section below, which proposed copying a Unity mesh into a `Mesh<V>` and a clip into
+Tide's mixer: "the reference seems more relevant maybe we introduce a Unity mesh type directly instead of forcing
+current Mesh to behave correctly, I suppose similar for others", and to the shape I then described, "go with
+recommendations". So: separate types that name Unity's objects. Everything past that is my pick (Provisional), and
+one differs from what I described: the draw is `Draw.UnityMesh`, not an overload of `Draw.Mesh` (below).
+
+**What a user has.** `UnityEngine.Mesh`, `UnityEngine.Material` and `UnityEngine.AudioClip`: opaque, local fields
+only (the match can't hold one: they count as rendering resources), set in Unity's inspector on a component, by a
+script on a singleton, exactly as a local `Texture` is. `Draw.UnityMesh(mesh, material, transform)` and
+`Audio.Play(clip, volume)`. Spec: Assets, Provisional, "Unity's meshes, materials and sounds are types of their
+own"; README, Run; docs/tools/cli.md, Unity.
+
+**How it goes through:**
+
+- **The types** (`ast.h`, `types.c`): three kinds, `TY_UNITY_MESH`, `_MATERIAL`, `_CLIP`, named in the builtin table
+  by their dotted names, which the type resolver takes whole (so no `using` shortens them and Tide's `Mesh<V>` keeps
+  its name); 8 bytes, `tide_external_ref` in C, the number the other program knows the object by. They're in
+  `holds_render_resource` (local code only), field-able, array-able, not pure, not for workers. The schema says a
+  field's type by the same dotted name.
+- **`Draw.UnityMesh`** (`builtins.c`, a plain table entry) is `tide_draw_external_mesh` (`draw.c`): a
+  `TIDE_DRAW_EXTERNAL` command with the two numbers and a matrix of the list's (the 3D transform that's set worked
+  in). **Why not `Draw.Mesh(mesh, material, transform)`:** `Draw.Mesh`, `Instanced` and `SkinnedMesh` never reach the
+  table; `check_mesh_draw` takes them whole and works out vertices, indices, shaders and `lod:` by what each
+  argument is. An overload there means telling a Unity mesh from the rest before that function has checked its
+  arguments, in the checker's most special-cased call. A name of its own is one table line and can't change what a
+  Tide mesh draw does. The owner can ask for the overload; the runtime under it wouldn't change.
+- **The renderer** (`platform.c`): `STEP_EXTERNAL`, made only for the window (a target of Tide's gets none) and only
+  where the backend has `external_draw` (`gpu.h`), run in the window's pass in order with the other steps, and in a
+  scene view's picture too (`window_3d_step`). The recorder writes `TIDE_EMBED_RENDER_EXTERNAL_DRAW` (mesh,
+  material, 16 floats).
+- **The replay** (`TideRender.cs`): `Kind.External` in the camera's recording, `CommandBuffer.DrawMesh(mesh, matrix,
+  material, submesh, 0)` for each submesh, pass 0 (the forward pass of Unity's own lit and unlit shaders in both
+  pipelines). The runner's table says what a number is (`Objects`); one that isn't a Mesh or a Material, or that
+  Unity destroyed, draws nothing. Nothing of Tide's draw state is set for it: the camera's matrices are Unity's.
+- **`Audio.Play(UnityEngine.AudioClip, volume)`** is `tide_audio_play_external` (`audio.c`): a one-shot in the
+  frame's audio with `tide_clip.external` set and no samples, so Tide's mixer plays nothing of it.
+  `tide_embed_sounds(e, &count)` gives the frame's such plays once (clip, volume, pitch 1), and the runner plays
+  each with `PlayOneShot` on an AudioSource of its own ("Tide Sounds", through the runner's Audio Output group).
+  Silent under `TIDE_HIDDEN`, as Tide's sound is, with `TideRunner.UnitySoundsPlayed` counting for tests. No pitch
+  or position: `PlayOneShot` has neither, and a source a play would need a pool this didn't build.
+- **Handing over** is the texture's path with another size: `tide_embed_local_object(e, type, offset, birth, lineage,
+  object)`, the generated `set_local` taking a field by its offset and size (48 for a Texture, 8 for these), the
+  generated C# `public global::UnityEngine.Mesh x;` with `assets.Object(offset, x, ref tideGiven_x)`, and one table
+  of objects in the runner, numbered from 1, kinds mixed (what a number is, is Unity's to say, where it's used).
+  Web: `tide_unity_local_object`, `tide_unity_sounds`/`_sound_count`, `TideWebLocalObject`, `TideWebSounds`.
+  `TIDE_EMBED_ABI` and `TideLibrary.Abi` are 29.
+
+**What isn't there:**
+
+- **Lighting and shadows** are what a command-buffer draw gets. Unlit materials are exact (tested). A lit one in
+  the built-in pipeline is drawn after the forward passes with whatever light constants were last set, and casts
+  and receives no shadows; in URP it's drawn in Tide's pass after transparents, lit by the main light as set, with
+  no shadow casting. Drawing in the pipeline's own queues (a real renderer instead of a command) is another design.
+- **Unity's camera only, the screen only.** A view's own `Draw.Camera` doesn't move it, and a `RenderTarget` gets
+  none of it.
+- **One material for every submesh**, pass 0 alone (no multi-pass shaders, no per-submesh materials: a list of
+  materials would need the type in a list handed over, which `set_local` doesn't take).
+- **Sounds**: one-shots only; no pitch, position, loop, stop, or Tide bus. On the web the calls exist and nothing
+  was run.
+- The first-frame lag and time travel's other ticks are as for textures (below): a frame of a tick shown again
+  draws no Unity mesh and plays no Unity clip, as its local state was handed nothing.
+- `target.UnityMesh` exists as a method (a render target has Draw's methods) and draws nothing.
+
+**Tests.** `tide_platform_embed`'s `embed_local_objects_are_handed_back`: the fixture's `Counter` has the three
+fields and `Faces` draws and plays them; a mesh with no material records nothing; with both, one EXTERNAL_DRAW with
+the two numbers and the view's matrix (the identity moved by (1, 2, 3)); the sound once, at 0.5, then none until the
+next frame's play; a field takes only its own size (an object refused where a Texture is and the other way round),
+an offset inside the field, and no entity; unset, nothing. The Sample: `Ball.badge` (Unity's Cube), `badgeLook`
+(`Assets/Sample/Badge.mat`, Unlit/Color magenta) and `chime` (bonk.wav as Unity imported it) on `Roller.prefab`;
+`Emblem` draws the cube two units over the first player's ball and `Heard` plays the chime; the frame tests read
+magenta where Unity's camera sees that point, and the sound test counts a play.
+
+**Runs** (as the section below: Unity 6000.6.0f1, hidden batch, this checkout's Sample and tide): PlayMode on
+Direct3D 11 68 of 68; the frame tests and ComputeReplayTests on Vulkan 40 of 40; the frame tests on OpenGL Core 3 of
+3 (built-in pipeline, after a hot reload, URP: each reads the magenta cube); EditMode 50 of 52, the same two as
+before. Native debug: `tide_platform_embed` 35 of 35, `tide_cli_tests`, `tidels_tests`, the HLSL checks. tidec says
+the existing errors for a match use of such a field and for the two arguments the wrong way round (by hand).
+**Not run:** sanitize, web, a lit material (the Sample's is unlit, so lighting isn't pinned), a mesh of several
+submeshes, a Linear project, a scene view's picture of it, Direct3D 12, players, and the sound by ear (hidden runs
+are silent; the play is counted).
+
 ## Unity's own textures in Tide's views: embed ABI 28 (2026-11-19)
 
 The owner: "can we use assets from unity in views inside tide? if not is it possible?", then asked for it built.
@@ -144,6 +227,9 @@ compile for wasm32-wasip1-threads under the warnings (syntax alone; no web tree 
 on a reference kind no web host makes; `tide unity --web`'s new export and the jslib were not built into a page), a Unity WebGPU or Android player, Metal, `[Linear]` and `[Raw]` fields in
 Unity itself (the recorder's flags for them are pinned natively; modes 0, 1 and 2 ran, mode 3 didn't), a singleton's
 field from a script, and a player build's stripping (the reference is the prefab's own, as any serialized field's).
+
+**The three proposals below were answered the same day** (the owner chose references, as types of their own, over
+copies into `Mesh<V>` and `Clip`): built, in the section above this one. They stay as what was weighed.
 
 **Meshes: not built, and why (a language decision for the owner).** A Tide mesh is two CPU lists of the game's own
 vertex struct (`Mesh<V>`: an asset's ID or a made mesh's lists), which any code reads (`mesh.vertices`), and which

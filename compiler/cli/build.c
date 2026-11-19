@@ -4315,7 +4315,8 @@ static const char *const embed_exports[] = {"tide_embed_abi", "tide_embed_create
                                             "tide_embed_travel_of", "tide_embed_travel_keep", "tide_embed_pause",
                                             "tide_embed_step", "tide_embed_show", "tide_embed_continue", "tide_embed_recording", "tide_embed_replay",
                                             "tide_embed_replay_end", "tide_embed_log", "tide_embed_view_want",
-                                            "tide_embed_view_again", "tide_embed_local_texture", NULL};
+                                            "tide_embed_view_again", "tide_embed_local_texture", "tide_embed_local_object",
+                                            "tide_embed_sounds", NULL};
 
 typedef struct numbered {
     const char *prefix, *suffix;
@@ -5078,7 +5079,19 @@ static const char unity_web_asset_exports[] =
     "    return tide_embed_local_texture(unity_embed, type, offset, (uint64_t)birth_low | (uint64_t)birth_high << 32,\n"
     "                                    (uint64_t)lineage_low | (uint64_t)lineage_high << 32, image, width, height, sampling & 255u,\n"
     "                                    sampling >> 8 & 255u);\n"
-    "}\n";
+    "}\n"
+    "\n"
+    "TIDE_UNITY_EXPORT(tide_unity_local_object) int tide_unity_local_object(uint32_t type, uint32_t offset, uint32_t birth_low, uint32_t birth_high,\n"
+    "                                                                       uint32_t lineage_low, uint32_t lineage_high, uint32_t object)\n"
+    "{\n"
+    "    return tide_embed_local_object(unity_embed, type, offset, (uint64_t)birth_low | (uint64_t)birth_high << 32,\n"
+    "                                   (uint64_t)lineage_low | (uint64_t)lineage_high << 32, object);\n"
+    "}\n"
+    "\n"
+    "// The frame's sounds of Unity's own, for the page to copy out: where they are, and how many (12 bytes each)\n"
+    "static uint32_t unity_sound_count;\n"
+    "TIDE_UNITY_EXPORT(tide_unity_sounds) const tide_embed_sound *tide_unity_sounds(void) { return tide_embed_sounds(unity_embed, &unity_sound_count); }\n"
+    "TIDE_UNITY_EXPORT(tide_unity_sound_count) uint32_t tide_unity_sound_count(void) { return unity_sound_count; }\n";
 
 // ...and time travel's (tide/embed.h): its status, and what the jslib asks of it
 // What the page reads of the match (tide_embed_view_want, _again): a string of its own, as one literal holds 4,095

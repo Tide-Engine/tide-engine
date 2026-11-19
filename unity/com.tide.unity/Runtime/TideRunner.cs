@@ -258,6 +258,8 @@ namespace Tide
             quitHeard = false;
             externals.Clear(); // Another game: its fields hold none of the last one's
             externalIds.Clear();
+            objects.Clear();
+            objectIds.Clear();
             assetsRun++;
             assets ??= new TideAssets(this);
             Said(); // Why it didn't start, or what its start said
@@ -284,6 +286,7 @@ namespace Tide
                 render = Ensure<TideRender>(gameObject);
                 render.Runner = this;
                 render.Externals = ExternalOf;
+                render.Objects = ObjectOf;
                 render.enabled = true;
                 library.RenderFormats(embed, TideRender.BlockFormats); // The pack's compressed images go as they are
             }
@@ -497,6 +500,62 @@ namespace Tide
             var wrap = texture.wrapMode == TextureWrapMode.Repeat ? 1u : texture.wrapMode == TextureWrapMode.Mirror ? 2u : 0u;
             return library.LocalTexture(embed, (uint)type, offset, entity.birth, entity.lineage, id, (uint)texture.width, (uint)texture.height,
                                         filter, wrap) != 0;
+        }
+
+        // ...and its meshes, materials and sounds, which Tide only hands back (Draw.UnityMesh, Audio.Play): one table
+        // of them, numbered from 1, which TideRender draws from and the frame's sounds are found in
+        readonly List<UnityEngine.Object> objects = new List<UnityEngine.Object>();
+        readonly Dictionary<UnityEngine.Object, uint> objectIds = new Dictionary<UnityEngine.Object, uint>();
+        AudioSource sounds; // What plays Unity's own clips that Tide's code asks for
+        static readonly bool hidden = IsHidden();
+
+        // How many of Unity's own clips Tide's code has asked to be played since the runner started: what a test
+        // counts in a run nobody hears
+        public int UnitySoundsPlayed { get; private set; }
+
+        UnityEngine.Object ObjectOf(uint id) => id >= 1 && id <= (uint)objects.Count ? objects[(int)id - 1] : null;
+
+        internal bool GiveObject(int type, uint offset, TideEntityId entity, UnityEngine.Object item)
+        {
+            if (embed == IntPtr.Zero || type < 0) return false;
+            uint id = 0;
+            if (item != null && !objectIds.TryGetValue(item, out id))
+            {
+                objects.Add(item);
+                id = (uint)objects.Count;
+                objectIds[item] = id;
+            }
+            return library.LocalObject(embed, (uint)type, offset, entity.birth, entity.lineage, id) != 0;
+        }
+
+        static bool IsHidden()
+        {
+            var value = Environment.GetEnvironmentVariable("TIDE_HIDDEN");
+            return !string.IsNullOrEmpty(value) && value != "0";
+        }
+
+        // Unity's own clips that the frame's Tide code played (Audio.Play of a UnityEngine.AudioClip), through an
+        // AudioSource of the runner's: Unity's sound, at the volume asked. Silent in a run nobody watches
+        // (TIDE_HIDDEN), as Tide's own sound is.
+        void PlaySounds()
+        {
+            uint count = 0;
+            var played = library.Sounds(embed, &count);
+            for (uint i = 0; played != null && i < count; i++)
+            {
+                if (!(ObjectOf(played[i].clip) is AudioClip clip) || clip == null) continue;
+                UnitySoundsPlayed++;
+                if (hidden) continue;
+                if (sounds == null)
+                {
+                    var speaker = new GameObject("Tide Sounds");
+                    speaker.transform.SetParent(transform, false);
+                    sounds = speaker.AddComponent<AudioSource>();
+                    sounds.playOnAwake = false;
+                    sounds.outputAudioMixerGroup = audioOutput;
+                }
+                sounds.PlayOneShot(clip, played[i].volume);
+            }
         }
 
         static bool HandsAssets(Type kind)
@@ -745,6 +804,7 @@ namespace Tide
                 render.Replay(commands, drawn, seen);
                 renderMarker.End();
             }
+            PlaySounds();
             fixed (TideEmbedStatus* p = &status) library.Status(embed, p);
             fixed (TideTravel* p = &travel) library.Travel(embed, p);
             if (audio != null) audio.Listen(status.microphone != 0);

@@ -199,6 +199,22 @@ var TideWebLibrary = {
         return x.tide_unity_local_texture(type, offset, birthLow, birthHigh, lineageLow, lineageHigh, image, width, height, sampling);
     },
 
+    TideWebLocalObject__deps: ['$TideWeb'],
+    TideWebLocalObject: function (type, offset, birthLow, birthHigh, lineageLow, lineageHigh, item) {
+        var x = TideWeb.program();
+        if (!x || !x.tide_unity_local_object) return 0;
+        return x.tide_unity_local_object(type, offset, birthLow, birthHigh, lineageLow, lineageHigh, item);
+    },
+
+    // The frame's plays of Unity's own sounds (tide_embed_sounds): 12 bytes each, copied into Unity's heap
+    TideWebSounds__deps: ['$TideWeb'],
+    TideWebSounds: function (count) {
+        var x = TideWeb.program();
+        var at = x && x.tide_unity_sounds ? x.tide_unity_sounds() : 0, n = at ? x.tide_unity_sound_count() : 0;
+        HEAPU32[count >> 2] = at ? n : 0;
+        return at && n ? TideWeb.copyOut('sounds', at, n * 12) : 0;
+    },
+
     // Time travel (tide/embed.h): the program's own match, recorded, paused and replayed
     TideWebTravel__deps: ['$TideWeb'],
     TideWebTravel: function (travel, size) {

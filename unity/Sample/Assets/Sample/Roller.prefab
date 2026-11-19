@@ -136,3 +136,6 @@ MonoBehaviour:
   seat: 0
   bounces: 0
   mark: {fileID: 2800000, guid: 7d1e6f0c3b5a49f28e4c9a1b2d3f4e5a, type: 3}
+  badge: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
+  badgeLook: {fileID: 2100000, guid: 3c9a5e7b1d2f4a68b0c4e6f8a1b3d5e7, type: 2}
+  chime: {fileID: 8300000, guid: a9807f32a8e638443837a2b7cf1e7958, type: 3}
