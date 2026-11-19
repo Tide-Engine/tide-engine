@@ -6,8 +6,9 @@ import { spawnSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { extname, join, resolve } from 'node:path';
 
-const [hostArg, plainArg, libraryArg, scratchArg, nextArg, otherArg] = process.argv.slice(2);
-const [host, plain, library, scratch, next, other] = [hostArg, plainArg, libraryArg, scratchArg, nextArg, otherArg].map(path => resolve(path));
+const [hostArg, plainArg, libraryArg, scratchArg, nextArg, otherArg, foreignArg] = process.argv.slice(2);
+const [host, plain, library, scratch, next, other, foreignBuild] =
+    [hostArg, plainArg, libraryArg, scratchArg, nextArg, otherArg, foreignArg].map(path => resolve(path));
 rmSync(scratch, { recursive: true, force: true });
 mkdirSync(scratch, { recursive: true });
 copyFileSync(library, join(scratch, 'game-1' + extname(library)));
@@ -106,4 +107,37 @@ assert.ok(foreign.stderr.includes('was built by another tide than the one runnin
 const kept = groups(foreign.stdout);
 assert.equal(kept.length, 1, 'the build that was running is the only one that ran');
 assert.ok(kept[0].frames.length > 20, 'and it went on to the end of the script');
+
+// A build of the same tables that another tide made, as its made-by text says (TIDE_HOST_LIBRARY_MADE_BY): tide
+// installed again, or a development tide built again, while the game runs. A host that says which tide built it
+// (tide_run_desc.made_by) says what to do and goes on with the build it has; one that doesn't say takes the build,
+// as do the stages above, whose host says nothing.
+const mine = '9.9.9-test (0000000000000001)';
+for (const [madeBy, loads] of [[mine, false], [undefined, true], ['9.9.9-test (0000000000000003)', null]]) {
+    rmSync(join(scratch, 'game-2' + extname(library)), { force: true });
+    copyFileSync(library, join(scratch, 'game-1' + extname(library)));
+    const env = { ...process.env, TIDE_RELOAD_PUBLISH: foreignBuild };
+    delete env.TIDE_RELOAD_MADE_BY;
+    if (madeBy) env.TIDE_RELOAD_MADE_BY = madeBy;
+    const ran = spawnSync(host, [scratch, '--script', quiet, '--size', '64', '64'], {
+        cwd: scratch, encoding: 'utf8', timeout: 100000, env,
+    });
+    if (loads === null) {
+        // The host's own tide built neither: the first build isn't loaded, so nothing runs, and it says which built what
+        assert.notEqual(ran.status, 0, ran.stdout);
+        assert.ok(ran.stderr.includes('was built by tide 9.9.9-test (0000000000000001), and what runs it by tide '
+            + '9.9.9-test (0000000000000003)'), ran.stderr);
+        assert.equal(groups(ran.stdout).length, 0, 'no build ran');
+        continue;
+    }
+    assert.equal(ran.status, 0, `${ran.error || ''}\n${ran.stdout}\n${ran.stderr}`);
+    assert.ok(ran.stdout.includes('reload-test: next build published'), ran.stdout);
+    const said = ran.stderr.includes('was built by tide 9.9.9-test (0000000000000002), and what runs it by tide '
+        + '9.9.9-test (0000000000000001), so it isn\'t loaded');
+    assert.equal(said, !loads, ran.stderr);
+    if (!loads) assert.ok(ran.stderr.includes('leave Play, wait for tide\'s build, and enter Play again'), ran.stderr);
+    const ranBuilds = groups(ran.stdout);
+    assert.equal(ranBuilds.length, loads ? 2 : 1, ran.stdout);
+    assert.ok(ranBuilds[0].frames.length > 4 && ranBuilds.at(-1).frames.length > 4, 'the game went on to the script\'s end');
+}
 console.log('ok: Ctrl+R resets native local state, match and C statics, once per press and only in a watching host');

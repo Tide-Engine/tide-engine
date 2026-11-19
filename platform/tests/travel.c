@@ -33,6 +33,52 @@ void Totalled(const int total)
     seen_total = total;
 }
 
+// What the local handler of Bumped heard since `heard_bumps` was last zeroed (travel.tide's Hear): how many, the last
+// one's value, what its local state had counted and what the match's total was as its tick left it
+static int heard_bumps, heard_by, heard_count, heard_total;
+
+void HeardBump(const int by, const int heard, const int total)
+{
+    heard_bumps++;
+    heard_by = by;
+    heard_count = heard;
+    heard_total = total;
+}
+
+static uint32_t u32_at(const uint8_t *p, const uint32_t at)
+{
+    uint32_t v;
+    memcpy(&v, p + at, sizeof v);
+    return v;
+}
+
+// The last frame's packet's EVENTS, as another program reads them: how many it has as predicted and as confirmed,
+// with the tick and value of the last
+static void packet_events(const tide_embed *e, int *predicted, int *confirmed, uint32_t *tick, int *by)
+{
+    *predicted = *confirmed = 0;
+    uint32_t size = 0;
+    const uint8_t *p = tide_embed_view(e, &size);
+    if (!p) return;
+    const uint32_t entities = u32_at(p, 36), sections = u32_at(p, 40);
+    uint32_t at = TIDE_PACKET_HEADER + entities * TIDE_PACKET_ENTITY;
+    for (uint32_t s = 0; s < sections; s++) {
+        at = (at + 7u) & ~7u;
+        if (at + TIDE_PACKET_SECTION > size) return;
+        const uint32_t kind = u32_at(p, at), count = u32_at(p, at + 8), bytes = u32_at(p, at + 16);
+        const uint8_t *records = p + at + TIDE_PACKET_SECTION;
+        at += TIDE_PACKET_SECTION + bytes;
+        if (kind != TIDE_PACKET_EVENTS) continue;
+        for (uint32_t i = 0, r = 0; i < count; i++) {
+            if (u32_at(records, r + 8) == 1u) ++*predicted;
+            else ++*confirmed;
+            *tick = u32_at(records, r + 12);
+            memcpy(by, records + r + TIDE_PACKET_EVENT, sizeof *by);
+            r += u32_at(records, r);
+        }
+    }
+}
+
 static char program[] = "travel";
 
 static void sample_none(void *user, const uint32_t tick, void *input)
@@ -228,6 +274,119 @@ TIDE_TEST(travel_shows_kept_ticks_again)
     tide_embed_destroy(e);
 }
 
+// The ticks shown are heard: what each sent reaches the local handlers of the frames that show it, which read the
+// match as that tick left it and count in a local state of their own, and the packet's EVENTS, once as predicted
+// and once as confirmed. A tick shown again says nothing again; ticks come past going on are each heard, in order;
+// a tick gone back to is heard alone; and a recording's ticks are heard as it plays.
+TIDE_TEST(travel_shown_ticks_are_heard)
+{
+    tide_embed *e = start();
+    TIDE_REQUIRE(e != NULL);
+    tide_embed_travel_keep(e, 0.5f); // 15 ticks kept
+    frames(e, 10, NULL);
+    TIDE_REQUIRE(tide_embed_pause(e, true));
+    frames(e, 1, NULL);
+    const uint32_t from = travel_of(e).last;
+    heard_bumps = 0;
+    // 40 steps, a Bump in the ticks that make the worlds after from + 6, + 21 and + 31 ticks
+    for (int i = 0; i < 40; i++) {
+        if (i == 5 || i == 20 || i == 30) {
+            const Bump value = {.by = i};
+            TIDE_REQUIRE(tide_embed_command(e, bump_type(), 0, 0, &value, sizeof value));
+        }
+        TIDE_REQUIRE(tide_embed_step(e));
+        frames(e, 1, NULL);
+    }
+    TIDE_CHECK(heard_bumps == 3 && heard_count == 3 && heard_total == 55); // The match's own local handlers, live
+    const uint32_t last = travel_of(e).last;
+    TIDE_REQUIRE(last == from + 40u);
+    int predicted, confirmed, by = 0;
+    uint32_t tick = 0;
+
+    // Back before the ticks kept, to the world the first Bump's tick made
+    heard_bumps = 0;
+    TIDE_REQUIRE(tide_embed_show(e, from + 6u));
+    frames(e, 1, NULL);
+    TIDE_CHECK(heard_bumps == 1 && heard_by == 5);
+    TIDE_CHECK(heard_count == 1);  // The first its local state heard: not the match's, which had heard three
+    TIDE_CHECK(heard_total == 5);  // The match as that tick left it
+    packet_events(e, &predicted, &confirmed, &tick, &by);
+    TIDE_CHECK(predicted == 1 && confirmed == 1 && by == 5);
+    TIDE_CHECK(tick == from + 5u); // The tick that sent it: the one that made the world shown
+    frames(e, 3, NULL); // Shown again: said once
+    TIDE_CHECK(heard_bumps == 1);
+    packet_events(e, &predicted, &confirmed, &tick, &by);
+    TIDE_CHECK(predicted == 0 && confirmed == 0);
+    TIDE_CHECK(travel_of(e).hash != 0 && seen_total == 5);
+
+    // The tick before it sent nothing; a step on from it hears the Bump again
+    TIDE_REQUIRE(tide_embed_show(e, from + 5u));
+    frames(e, 1, NULL);
+    TIDE_CHECK(heard_bumps == 1 && seen_total == 0);
+    TIDE_REQUIRE(tide_embed_step(e));
+    frames(e, 1, NULL);
+    TIDE_CHECK(heard_bumps == 2 && heard_by == 5 && heard_count == 2 && seen_total == 5);
+    // Steps on, each tick heard as it's come to
+    for (uint32_t at = from + 7u; at <= from + 21u; at++) {
+        TIDE_CHECK(heard_bumps == 2);
+        TIDE_REQUIRE(tide_embed_step(e));
+        frames(e, 1, NULL);
+    }
+    TIDE_CHECK(travel_of(e).shown == from + 21u);
+    TIDE_CHECK(heard_bumps == 3 && heard_by == 20 && heard_total == 25);
+    // Several ticks on at once: those come past are heard too
+    TIDE_REQUIRE(tide_embed_show(e, from + 39u));
+    frames(e, 1, NULL);
+    TIDE_CHECK(heard_bumps == 4 && heard_by == 30 && heard_total == 55 && seen_total == 55);
+    packet_events(e, &predicted, &confirmed, &tick, &by);
+    TIDE_CHECK(predicted == 1 && confirmed == 1 && by == 30 && tick == from + 30u);
+    // Back: the tick landed on alone, which sent nothing here, and then one that did
+    TIDE_REQUIRE(tide_embed_show(e, from + 25u));
+    frames(e, 1, NULL);
+    TIDE_CHECK(heard_bumps == 4);
+    TIDE_REQUIRE(tide_embed_show(e, from + 21u));
+    frames(e, 1, NULL);
+    TIDE_CHECK(heard_bumps == 5 && heard_by == 20);
+    TIDE_CHECK(verified(e) == last); // The match ran nothing meanwhile
+
+    // The match's own local state heard none of that: its next Bump is its fourth
+    TIDE_REQUIRE(tide_embed_show(e, last));
+    frames(e, 1, NULL);
+    TIDE_CHECK(heard_bumps == 5);
+    const Bump one = {.by = 1};
+    TIDE_REQUIRE(tide_embed_command(e, bump_type(), 0, 0, &one, sizeof one));
+    TIDE_REQUIRE(tide_embed_step(e));
+    frames(e, 1, NULL);
+    TIDE_CHECK(heard_bumps == 6 && heard_by == 1 && heard_count == 4 && heard_total == 56);
+
+    // A recording of it, played: its four Bumps, in order, each with the match as its tick left it
+    uint32_t size = 0;
+    const uint8_t *saved = tide_embed_recording(e, &size);
+    TIDE_REQUIRE(saved != NULL && size > 0);
+    uint8_t *copy = malloc(size);
+    TIDE_REQUIRE(copy != NULL);
+    memcpy(copy, saved, size);
+    TIDE_REQUIRE(tide_embed_replay(e, copy, size));
+    free(copy);
+    heard_bumps = 0;
+    int packets = 0, order = 0;
+    static const int bys[4] = {5, 20, 30, 1}, totals[4] = {5, 25, 55, 56};
+    TIDE_REQUIRE(tide_embed_pause(e, false));
+    for (uint32_t frame = 0; frame < 2u * (last + 1u) + 20u; frame++) {
+        const int before = heard_bumps;
+        frames(e, 1, NULL);
+        if (heard_bumps == before) continue;
+        TIDE_REQUIRE(heard_bumps == before + 1 && before < 4);
+        order += heard_by == bys[before] && heard_total == totals[before];
+        packet_events(e, &predicted, &confirmed, &tick, &by);
+        packets += predicted == 1 && confirmed == 1 && by == bys[before] && tick + 1u == travel_of(e).shown;
+    }
+    TIDE_CHECK(!travel_of(e).playing && travel_of(e).shown == last + 1u);
+    TIDE_CHECK(heard_bumps == 4 && order == 4 && packets == 4);
+    TIDE_CHECK(travel_of(e).differs == 0 && travel_of(e).checked == last + 1u);
+    tide_embed_destroy(e);
+}
+
 // Each of the match's ticks' hashes, from first to last, as the match made them
 static uint32_t live_hashes(tide_embed *e, uint64_t *out, const uint32_t room)
 {
@@ -331,8 +490,10 @@ static uint8_t *record_in(uint8_t *recording, const uint32_t size, const uint32_
 {
     uint32_t at = 8u + 4u + 8u + 32u + 4u + 4u + 4u + 4u;
     uint32_t n;
-    memcpy(&n, recording + at, 4);
-    at += 4u + n;
+    for (int i = 0; i < 3; i++) { // Its layout, its first world, and that world as its layout has it
+        memcpy(&n, recording + at, 4);
+        at += 4u + n;
+    }
     uint32_t count;
     memcpy(&count, recording + at, 4);
     at += 4u;
@@ -382,9 +543,15 @@ TIDE_TEST(travel_replay_says_where_it_differs)
     tide_embed_replay_end(e);
 
     record[8] ^= 1u;
-    copy[8 + 4] ^= 1u; // Its layout's hash
-    TIDE_CHECK(!tide_embed_replay(e, copy, size));
-    TIDE_CHECK(strstr(travel_of(e).refused, "laid out otherwise") != NULL);
+    // Another layout's hash: the recording says its layout, so its worlds are carried over by name (here to the same
+    // fields) and its ticks run unchecked, where a recording without one was refused (travel_layout.c has a real one)
+    copy[8 + 4] ^= 1u;
+    TIDE_REQUIRE(tide_embed_replay(e, copy, size));
+    TIDE_CHECK(travel_of(e).other_build == 2u);
+    TIDE_REQUIRE(tide_embed_show(e, travel_of(e).last));
+    t = travel_of(e);
+    TIDE_CHECK(t.differs == 0 && t.unreadable == 0 && t.checked == t.first);
+    tide_embed_replay_end(e);
     copy[8 + 4] ^= 1u;
     TIDE_CHECK(!tide_embed_replay(e, copy, size - 3u));
     TIDE_CHECK(strstr(travel_of(e).refused, "cut short") != NULL);
@@ -393,6 +560,34 @@ TIDE_TEST(travel_replay_says_where_it_differs)
     TIDE_CHECK(travel_of(e).refused[0] == '\0');
     free(copy);
     tide_embed_destroy(e);
+}
+
+// For platform/tests/travel_layout.c, a build of this game laid out otherwise (TIDE_TRAVEL_RECORDING, set by ctest):
+// the recording shown, and beside it what the views drew of its first tick, of `middle` and of its last
+static void leave_recording(tide_embed *e, const uint8_t *bytes, const uint32_t size, const uint32_t middle)
+{
+    const char *path = getenv("TIDE_TRAVEL_RECORDING");
+    if (!path) return;
+    FILE *f = fopen(path, "wb");
+    TIDE_REQUIRE(f != NULL);
+    TIDE_CHECK(fwrite(bytes, 1, size, f) == size);
+    fclose(f);
+    char said[1100];
+    snprintf(said, sizeof said, "%s.txt", path);
+    f = fopen(said, "w");
+    TIDE_REQUIRE(f != NULL);
+    const tide_embed_travel t = travel_of(e);
+    const uint32_t ticks[3] = {t.first, middle, t.last};
+    for (int i = 0; i < 3; i++) {
+        TIDE_REQUIRE(tide_embed_show(e, ticks[i]));
+        seen_steps = seen_jumps = seen_total = -1;
+        seen_x = 0.0f;
+        frames(e, 1, NULL);
+        uint32_t bits;
+        memcpy(&bits, &seen_x, sizeof bits);
+        fprintf(f, "%u %d %u %d %d\n", (unsigned)ticks[i], seen_steps, (unsigned)bits, seen_jumps, seen_total);
+    }
+    fclose(f);
 }
 
 // Going on from a tick shown: the match goes back there, the ticks after it let go, a command applied after it
@@ -454,6 +649,7 @@ TIDE_TEST(travel_continues_from_a_tick_shown)
     }
     t = travel_of(e);
     TIDE_CHECK(t.differs == 0 && t.unreadable == 0 && t.checked == t.last);
+    leave_recording(e, copy, size, back);
     free(copy);
     tide_embed_destroy(e);
 }
@@ -532,6 +728,19 @@ TIDE_TEST(travel_never_stops_a_match_for_other_machines)
     TIDE_CHECK(seen_steps == shown_steps);
     TIDE_CHECK(verified(e) > paused_at + 45u);
     TIDE_CHECK(tide_session_status_of(guest).client.verified_tick + 10u >= verified(e));
+    // What the match sends behind the tick shown, its own local handlers hear; the packets, which show that tick, don't
+    const Bump quiet = {.by = 0};
+    heard_bumps = 0;
+    TIDE_REQUIRE(tide_embed_command(e, bump_type(), 0, 0, &quiet, sizeof quiet));
+    int in_packets = 0;
+    for (int i = 0; i < 20; i++) {
+        int predicted, confirmed, by = 0;
+        uint32_t tick = 0;
+        both(e, guest, 1);
+        packet_events(e, &predicted, &confirmed, &tick, &by);
+        in_packets += predicted + confirmed;
+    }
+    TIDE_CHECK(heard_bumps == 1 && in_packets == 0);
     TIDE_REQUIRE(tide_embed_step(e)); // Through the ticks kept, as the match goes on by itself
     both(e, guest, 1);
     TIDE_CHECK(travel_of(e).shown == paused_at + 1u);
@@ -556,6 +765,141 @@ TIDE_TEST(travel_never_stops_a_match_for_other_machines)
     TIDE_CHECK(tide_session_status_of(guest).client.verified_tick + 10u >= verified(e));
     tide_embed_destroy(e);
     tide_session_destroy(guest);
+    tide_network_set(NULL);
+    tide_loopback_destroy(guest_net);
+}
+
+// The embed's machine joins a match another machine runs: through endpoint 2, to the match at 1
+static bool away_host(void *self, tide_transport *out)
+{
+    (void)self;
+    *out = tide_loopback_endpoint(guest_net, 3); // Its own first match, which it leaves
+    return true;
+}
+
+// A game's network's addresses are its own kind (tide_network_match_join): the loopback's under them
+static tide_transport away_inner;
+
+static void away_send(void *self, const tide_address to, const void *data, const uint32_t size)
+{
+    (void)self;
+    away_inner.send(away_inner.self, tide_loopback_address(to.host), data, size);
+}
+
+static uint32_t away_receive(void *self, tide_address *from, void *data, const uint32_t capacity)
+{
+    (void)self;
+    const uint32_t size = away_inner.receive(away_inner.self, from, data, capacity);
+    if (size) from->kind = TIDE_ADDRESS_NETWORK;
+    return size;
+}
+
+static bool away_join(void *self, const char *address, tide_transport *out, tide_address *server)
+{
+    (void)self, (void)address;
+    away_inner = tide_loopback_endpoint(guest_net, 2);
+    *out = (tide_transport){.send = away_send, .receive = away_receive};
+    *server = tide_loopback_address(1);
+    return true;
+}
+
+static const tide_network away_network = {.host = away_host, .join = away_join, .address = guest_address};
+
+// A match another machine runs is followed: the ticks this machine had confirmed are kept, each world the server's;
+// a pause holds them while the match goes on, and they show again with what each sent; it can't be stepped past
+// them, taken back or recorded from here; going on follows it again from its latest
+TIDE_TEST(travel_follows_another_machines_match)
+{
+    guest_net = tide_loopback_create(3);
+    guest_now = 0.0;
+    tide_network_set(&away_network);
+    tide_session *host = tide_session_create(&(tide_session_desc){.game = &tide_game_api, .sample = sample_none});
+    tide_session_start(host, NULL, guest_now);
+    tide_session_open(host, tide_loopback_endpoint(guest_net, 1));
+    tide_embed *e = start();
+    TIDE_REQUIRE(e != NULL);
+    tide_embed_travel_keep(e, 1.0f); // 30 ticks kept
+    both(e, host, 5);
+    TIDE_REQUIRE(tide_embed_request(e, TIDE_REQUEST_JOIN, "loopback", 8));
+    static uint64_t host_hashes[1024];
+    #define BOTH_NOTING(count) \
+        for (int n = 0; n < (count); n++) { \
+            both(e, host, 1); \
+            const uint32_t at = tide_session_status_of(host).client.verified_tick; \
+            if (at < 1024u) host_hashes[at] = tide_game_api.hash_world(tide_session_server_world(host)); \
+        }
+    BOTH_NOTING(90);
+    tide_embed_status status;
+    tide_embed_status_of(e, &status);
+    TIDE_REQUIRE(status.state == TIDE_SESSION_CONNECTED && !status.server);
+    tide_embed_travel t = travel_of(e);
+    TIDE_CHECK(t.state == TIDE_TRAVEL_LIVE && t.followed && t.why[0] == '\0');
+    TIDE_CHECK(t.last == verified(e)); // Up to the latest tick it had confirmed...
+    TIDE_CHECK(t.first == t.kept && t.last - t.first == 29u); // ...the ticks kept, and nothing before them
+    // A Bump, which the other machine's match takes
+    const Bump value = {.by = 7};
+    TIDE_REQUIRE(tide_embed_command(e, bump_type(), 0, 0, &value, sizeof value));
+    BOTH_NOTING(20);
+    TIDE_CHECK(seen_total == 7);
+    TIDE_REQUIRE(tide_embed_pause(e, true));
+    BOTH_NOTING(1);
+    t = travel_of(e);
+    TIDE_CHECK(t.state == TIDE_TRAVEL_PAUSED && t.background && t.followed);
+    const uint32_t held = t.last, first = t.first;
+    TIDE_CHECK(t.shown == held);
+    const int steps = seen_steps;
+    BOTH_NOTING(60); // The match goes on behind it; the ticks to show are held
+    TIDE_CHECK(verified(e) > held + 20u);
+    t = travel_of(e);
+    TIDE_CHECK(t.last == held && t.first == first && t.shown == held);
+    TIDE_CHECK(seen_steps == steps);
+    TIDE_CHECK(tide_session_status_of(host).client.state == TIDE_SESSION_CONNECTED);
+    // Back through them: each the server's world, and the Bump's tick heard, as confirmed, where it's landed on
+    heard_bumps = 0;
+    uint32_t bumped = 0;
+    int before = 7, same = 0, in_packets = 0;
+    for (uint32_t tick = held; tick >= first && tick <= held; tick--) {
+        TIDE_REQUIRE(tide_embed_show(e, tick));
+        BOTH_NOTING(1);
+        t = travel_of(e);
+        same += t.shown == tick && t.hash == host_hashes[tick];
+        if (seen_total != before) {
+            bumped = tick + 1u; // The world before it: the one after has the Bump
+            before = seen_total;
+        }
+        int predicted, confirmed, by = 0;
+        uint32_t sent = 0;
+        packet_events(e, &predicted, &confirmed, &sent, &by);
+        in_packets += predicted == 1 && confirmed == 1 && by == 7 && sent + 1u == tick;
+    }
+    TIDE_CHECK(same == (int)(held - first + 1u));
+    TIDE_CHECK(bumped > first && bumped <= held && before == 0);
+    TIDE_CHECK(heard_bumps == 1 && heard_by == 7 && heard_total == 7 && in_packets == 1);
+    TIDE_CHECK(!tide_embed_show(e, first - 1u)); // Nothing before the ticks kept can be made again here
+    // On through them a step at a time, each tick heard as it's come to; none past the last held
+    TIDE_REQUIRE(tide_embed_show(e, bumped - 1u));
+    BOTH_NOTING(1);
+    TIDE_CHECK(heard_bumps == 1 && seen_total == 0);
+    TIDE_REQUIRE(tide_embed_step(e));
+    BOTH_NOTING(1);
+    TIDE_CHECK(heard_bumps == 2 && seen_total == 7);
+    TIDE_REQUIRE(tide_embed_show(e, held));
+    TIDE_CHECK(!tide_embed_step(e));
+    // Its match isn't this machine's to take back, nor to record
+    TIDE_CHECK(!tide_embed_continue(e));
+    uint32_t size = 7;
+    TIDE_CHECK(tide_embed_recording(e, &size) == NULL && size == 0);
+    // Going on: its latest again, followed from there
+    TIDE_REQUIRE(tide_embed_pause(e, false));
+    BOTH_NOTING(10);
+    t = travel_of(e);
+    TIDE_CHECK(t.state == TIDE_TRAVEL_LIVE && t.followed);
+    TIDE_CHECK(t.last == verified(e) && t.first > held + 20u);
+    tide_embed_status_of(e, &status);
+    TIDE_CHECK(status.state == TIDE_SESSION_CONNECTED);
+    #undef BOTH_NOTING
+    tide_embed_destroy(e);
+    tide_session_destroy(host);
     tide_network_set(NULL);
     tide_loopback_destroy(guest_net);
 }
@@ -765,6 +1109,14 @@ TIDE_TEST(timeline_rewinds_with_other_machines_in_the_match)
     uint32_t size = 0;
     uint8_t *bytes = tide_timeline_save(timeline, 30, 1, &size);
     TIDE_REQUIRE(bytes != NULL);
+    if (getenv("TIDE_TRAVEL_RECORDING")) { // One that doesn't say its layout, for travel_layout.c's build to refuse
+        char plain[1100];
+        snprintf(plain, sizeof plain, "%s.plain", getenv("TIDE_TRAVEL_RECORDING"));
+        FILE *f = fopen(plain, "wb");
+        TIDE_REQUIRE(f != NULL);
+        TIDE_CHECK(fwrite(bytes, 1, size, f) == size);
+        fclose(f);
+    }
     machines_stop();
     tide_timeline_destroy(timeline);
     tide_timeline *replayed = tide_timeline_load(&(tide_timeline_desc){.game = &tide_game_api, .keep = 4}, bytes, size,

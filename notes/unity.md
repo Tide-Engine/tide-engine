@@ -1,3 +1,492 @@
+## The packet carries what Unity reads; a part's body by a generated accessor (2026-11-19)
+
+The owner asked for the Unity integration's known gaps to be closed; these are the two performance ones left on
+2026-11-10 (Made for production, "Not done, and why"): the view packet carrying every component of every shown
+entity, read or not, and `TideParts.BodyOf` finding a shape's body by reflection each frame. Phase 1's decision 4
+("every match component of shown entities and singletons") is replaced by what's below. Every pick is mine
+(Provisional); the one that changes what a game's C# must write is marked.
+
+**What's read.** The runner keeps a set of the schema's types Unity reads and tells the embed
+(`tide_embed_view_want`, embed ABI 27; notes/standard-host.md, The view packet by what the other program reads); the
+game's frame writes the entities and those types alone:
+
+- **Tide's `Transform` and `UnityEngine.Source`**, always: the runner places and finds GameObjects by them. A view
+  rule's component too.
+- **A component**, once one of it is enabled on a GameObject (a prefab's, a scene's, one a script added), and from
+  then on, GameObjects of it coming and going or not: `TideComponent` counts its own `Awake`, `OnEnable`,
+  `OnDisable` and `OnDestroy` by type (`Said`: enabled on active GameObjects, disabled by their own checkbox, ever
+  enabled). While it's read, every shown entity that has it has its component, added by the runner where the
+  GameObject hasn't one and taken away where the entity hasn't, exactly as before.
+- **A singleton**, once `TideRunner.Get<T>()` or `TryGetSingleton` asked for it. Before, every singleton with a class
+  was read into its object each frame, asked for or not.
+- **An event**, while something hears it (`TideRunner.On`/`OnVerified`, a `TideEntity`'s; counted in
+  `TideHearing.Listen`). One nothing hears isn't kept by its tap at all, where its record was written and skipped.
+- **Whatever a script asks for**: `TideRunner.Read<T>()` and `Read(name)`, a `TideEntity`'s `Has`, `TryGet` and
+  `Get` of a `Value`, `RowOf`. Asked once, read from then on; the names are kept across a new build's schema.
+- **Everything**, with the runner's `readEverything` ("Read Everything", off by default): what the packet carried
+  before.
+
+**Asked for the first time, it's there in the same frame.** `tide_embed_view_again` writes the frame's packet again
+with what's read now (the same worlds, entities in the same places, the same events), and the runner reads it
+(`Reread`): so `Get<T>()` gives the singleton, `Has` answers and `Read<T>()` puts the component on every GameObject
+whose entity has it, at the first call, not a frame later. The same when a GameObject made for an entity brings
+components nothing read till then (its prefab's): `Show` asks once its GameObjects are made, before their components
+are written, so a prefab's first instance has its entity's values in its first frame. One packet written twice, in
+the frame a type is first read; where the embed can't (a request or a time travel call since the frame), the next
+frame's has it.
+
+**Disabling says "not read here".** A disabled Tide component stays on its GameObject and its entity keeps the
+component in the match (tide never read `m_Enabled`). While the only ones of a type there are disabled ones, the
+type isn't read, and the runner neither writes nor takes away components of a type the packet doesn't carry
+(`TideEntity.DropStale` skips them; a GameObject's count of them, `LiveUnread`, keeps the every-frame check a
+compare). Enabling one reads the type again. A disabled one beside enabled ones is still written, as the type is
+read.
+
+**What a game's C# sees.** One that reads everything through GameObjects' components sees what it did: authored
+components are live from the entity's first frame, singletons come from `Get<T>()`, events from `On`. Changed
+(the Provisional pick to confirm): **a component the game gives an entity as it runs, which no prefab, scene or
+script has put on a GameObject, isn't added to its GameObject until something asks** (`runner.Read<T>()` once, or
+`Has`/`TryGet`/`Get`); the Sample's own case is `Owner` on a player's ball. Before, the runner added every component
+of every entity, so `GetComponent<Owner>()` found it. Weighed: reading every type that has a C# class by default
+(nothing changes, and nothing is saved for a game that reads through components, as every class is one), and reading
+only where a GameObject has one enabled right now (a type flickering in and out with its last GameObject, a packet
+written twice at each return). `readEverything` is the old behaviour whole. Also changed: `TideRunner.Packet` holds
+what's read, so code reading sections from it directly finds only those (`Reads(name)` says which); the `.tide`
+file inspector says "not read in Unity" for such a component rather than asking (asking would add components while
+it's looked at), and asks for a singleton it shows.
+
+**Built.**
+
+- Engine and generated C: `tide_packet.wanted`, `wanted_types`, `again` and `tide_packet_wants`; a test around each
+  component's and singleton's block of the packet writer; taps that keep only what's heard and keep it until the
+  next frame (notes/language.md, The packet carries what's read; notes/runtime-ownership.md). The packet's format and
+  version (5) are as they were: a section is there or it isn't.
+- `tide/embed.h` (`platform/src/embed.c`): `tide_embed_view_want`, `tide_embed_view_again`; `TIDE_EMBED_ABI` and
+  `TideLibrary.Abi` 27; both in `embed_exports`; the web program's `tide_unity_view_want` and `_again`
+  (`unity_web_read_exports`, a string of its own: one literal holds 4,095 characters) and `Tide.jslib`'s
+  `TideWebViewWant`/`TideWebViewAgain`.
+- `TideRunner`: `SendReads` (the set worked out when something moved: the components' and the hearing's versions,
+  an ask, the setting, a new schema; said before the frame and compared with what the packet in hand has),
+  `TakeSent`, `Reread`, `Ask`, `Carries`, `Read`, `Reads`, `readEverything`; `LiveOf` and `ReadSingleton` (a
+  binding's rows at once, for the same-frame answers); `packetSerial` in place of the frame number for the row
+  tables, as a frame can have two packets. `TidePacket.Size`.
+- **A part's body** (task 2). tide writes `global::Tide.ITidePart` on a component whose package's unity.json says
+  `"part"`, with `TidePartOf => <its entity field>` (`unity_code.c`, where the field is a GameObject's; the
+  `[TidePart]` attribute stays). `TideEntity` keeps its GameObject's part as it collects its Tide components
+  (`Part`, with each component's `Beside`), so `TideParts.BodyOf` is two field reads for a component the runner
+  writes; any other (outside Play, a test's) asks its GameObject once (`TryGetComponent<ITidePart>`). The reflection
+  (`GetComponents` into a list, an attribute and a `FieldInfo` by type, `GetValue`) is gone. A hand-written part
+  implements `ITidePart` (the Sample's `GeometryPart`).
+
+**Measured** (the 1,000-entity case of 2026-11-10: the Sample's `Crowd` of 1,000 balls nobody rolls, 1,003 entities
+shown, Unity 6000.6.0f1 editor (Mono), Direct3D 11, hidden batch, a debug build of the game; the new
+`ScaleTests.WhatUnityDoesNotReadIsNotInItsFrames` measures three ways of reading in one match, medians of 240 frames,
+two runs, on a machine other sessions were building on):
+
+| | everything (as before) | what the scene reads | the balls' `Ball` disabled |
+|---|---|---|---|
+| The packet | 173,576 bytes | 156,688 | 88,560 |
+| The runner's frame (the game's own frame, the packet, the render) | 1.23 and 1.42 ms | 1.28 ms (and 2.00 in the run another build disturbed) | 1.01 and 1.10 ms |
+| Showing the packet in Unity | 0.25 and 0.27 ms | 0.19 and 0.28 ms | 0.135 and 0.14 ms |
+
+"Everything" is `readEverything` on the same build, not the package before this: its writer is the old one with a
+bit test before each type. What the scene reads by itself leaves out the singletons (Extras's list of the 1,000
+balls among them: nothing in that test asks for one), `Owner` and the scenes' tags; the balls' `Ball`, which their
+prefab has, is still read, so this game's frame is about what it was, as it should be for a game that reads what it
+has. With the balls' `Ball` unread the frame is about 0.2 ms shorter and showing takes half the time. The frame's
+times move by more than that from run to run here (the 1.3 of 1.6 ms measured on 2026-11-10 is 1.2 to 1.4 now, the
+match's own ticks over 1,000 balls being most of it), so the bytes are the firmer number. At the Sample's usual 300
+balls, in the whole PlayMode run: 53,176, 47,488 and 26,960 bytes; 0.47, 0.44 and 0.41 ms; showing 0.076, 0.054 and
+0.042 ms. `ABusyMatchsFramesMakeNothingNew` still finds no object made in 120 of 120 frames of showing.
+
+**Tests.** Native: `embed_view_carries_what_is_read` (notes/standard-host.md), and
+`unity_code_writes_a_physics_packages_rules` checks Box3D's `Part` is an `ITidePart` giving `of`. The Sample's
+PlayMode `ReadTests`: a prefab's and the scene's components read and `Owner` not, with no `Owner` on the ball, until
+`Read<Owner>()` puts it there in the same frame with its value; an entity asked for `Owner.Value` answering at once;
+a singleton not read until `Get<Room>()`, there at once and the same object after, `TryGetSingleton` reading too, an
+event read once heard; a ball's `Ball` disabled leaving the packet smaller and the component in place, read again
+once enabled. `ScaleTests.WhatUnityDoesNotReadIsNotInItsFrames` asserts each packet smaller than the one before.
+
+**Runs** (after merging origin/dev, which brought time travel's heard ticks and the Scene view's shapes; Windows,
+Unity 6000.6.0f1 in this checkout's `unity/Sample`, hidden batch, BelowNormal, `-noAudio`, a tide installed from this
+checkout's mingw-release and debug trees with `-tide-command`): PlayMode 68 of 68 on Direct3D 11; EditMode 49 of 52,
+two skipped (the shader compile under `-nographics`, the ABI-5 fixture) and the launch-argument test failing only for
+`-tide-command`, as before. Native debug: `tide_platform_embed` 33/33, `tide_platform_travel` 11/11,
+`tide_platform_embed_shards`, `tide_cli_tests`' unity cases 13/13; the first three under Windows ASan before the
+merge (33, 10, 1). Web debug: `tide_platform_embed` builds for wasm (it isn't run there). Not run: a Unity WebGL
+player (the jslib's two functions and the program's two exports are compiled by nothing here: `tide unity --web`
+wasn't run), IL2CPP and Android players, Vulkan, Direct3D 12 and OpenGL Core (no drawing code changed), a physics
+package's parts in a running Unity game (the accessor is generated and unit-tested, and `GeometryTests` place a
+part's points through `ITidePart`; no Sample game has a `Part`), and the `.tide` file inspector's new line (no
+window).
+
+**Left.**
+
+- Whole types, not rows: a component is read for every shown entity or none. A game that reads `Health` of one boss
+  among a thousand entities pays for all of them. Per-entity reading needs the runner to say entities, which change
+  every frame, where types change rarely.
+- Whole components, not fields.
+- Unity's Inspector in Play shows the components that are read; one that isn't doesn't appear on the GameObject.
+  Listing an entity's other components there (with a button to read one) is editor work this left alone, as other
+  sessions were in the editor's files.
+- `TideHearing`'s counts never fall for a handler whose GameObject was destroyed without `Off`: its event stays
+  read for the session.
+
+## Physics shapes in the Scene view: drawn as Unity's colliders are, and checked against them (2026-11-19)
+
+Phase 4's "gizmos for Tide physics shapes" and the authoring gaps' "gizmos". The wireframes were built on
+2026-10-22 and 2026-10-25 (Packages' components in Unity) for the selected GameObject alone and never checked
+against anything. All picks mine (Provisional).
+
+- **When a shape is drawn** (`TideShapes.Draw`, `Drawn`): while its GameObject **or one above it** is selected
+  (`GizmoType.InSelectionHierarchy`), as Unity draws the colliders under a selected Rigidbody: selecting a body
+  shows its parts' shapes, which it didn't. Unselected ones are drawn only with **Always Show Tide Shapes** on
+  (Project Settings > Tide; `TideShapes.Always`, EditorPrefs `Tide.AlwaysShowShapes`, this machine's, off at first),
+  as Physics 2D's Always Show Colliders does Unity's, and fainter (`Faint`, alpha 0.35 against 0.9). Unity's 3D
+  colliders have no such switch outside the Physics Debugger; one switch for both of Tide's is simpler than two.
+  Tide's blue is kept rather than Unity's green, so the two can be told apart where a GameObject has both.
+- **With it on, Unity asks for every Tide component each repaint**: `Shaped(type)` answers from a table whether a
+  type has any of the five attributes, before any reflection on the component.
+- **Edit mode and Play.** Outside Play the fields are the authored values. In Play they're the match's: the
+  generated `ReadLive` writes each frame's values into the same fields (a size divided by the scale again, a part's
+  offset or points brought back from its body's frame: `TideScale.Unscale`, `TideParts.Placed`/`Points`), and the
+  GameObject is where the match has the entity, so the same drawing shows the live shape. Nothing separate draws
+  in Play.
+- **One place for a primitive's geometry** (`TideShapes.PrimitiveOf`: matrix, centre, size, radius, height), which
+  the drawing uses, and `WorldBounds`, the box in the world that holds what's drawn: Unity's `Collider.bounds` of
+  the same shape, which is what the tests compare.
+- **Tests** (EditMode `ShapeTests`, fixtures `Assets/Tests/Geometry/GeometryBox`, `Sphere`, `Capsule`, `Rect`,
+  `Circle` with the attributes tide writes for Box3D's and Box2D's):
+  - a Tide box, sphere and capsule against a `BoxCollider`, `SphereCollider` and `CapsuleCollider` of the same
+    fields on the same GameObject, at five placements (plain; scaled per axis; turned and scaled; mirrored; under a
+    moved, turned, scaled parent): the bounds agree to 0.4 mm;
+  - a rect and a circle against `BoxCollider2D` and `CircleCollider2D`, turned about z, scaled and mirrored;
+  - a part's box in Play: its offset baked as tide bakes it, shown back by `TideParts.Placed` as authored, drawn
+    where Unity's collider is, and again after its body moved;
+  - when a shape is drawn: selected, under a selection, unselected with and without the switch, the switch kept in
+    EditorPrefs, which types have shapes, and the gizmo's own `DrawGizmo` flags.
+- **Runs:** Unity 6000.6.0f1, hidden batch, `-nographics`, this checkout's Sample: ShapeTests 4 of 4 and GeometryTests 5 of 5, within the EditMode run of 47 of 52 (the five others are the run's setup: A build says which tide made it, Runs). No C# warnings.
+- **Not seen:** the wireframes, the fainter unselected ones, the Project Settings toggle and Edit Shape's handles in
+  a window: agent runs open none, and a batch run has no Scene view to draw gizmos into. What's tested is the
+  geometry that's drawn and when; what `Handles` makes of it on the screen isn't.
+- **Left:** outlines, meshes, terrains and joints have no Unity collider to hold them against here (their geometry
+  is `GeometryTests`'); a sensor, an asleep body or a disabled component draws as any other (Unity's 2D has colors
+  for those); Unity hiding the gizmo of a component folded in the Inspector isn't asked for.
+
+## An orthographic Unity camera (2026-11-19)
+
+"Not done: an orthographic Unity camera" (Unity's camera is the views', 2026-10-21) was left because the embed's
+camera then was a position, a rotation and a field of view, and Tide's 3D cameras were perspective ones. Both
+stopped being true a day later: `tide_embed_camera` takes Unity's two matrices as they are (ABI 4, 2026-10-22), and
+Tide has `Draw.Camera(transform, projection)` with `float4x4.Ortho`. So nothing needed building, no language or
+draw API change is proposed, and nothing is the owner's to decide: what was missing was any run of it in Unity.
+
+- **Run now** (the Sample's PlayMode `BounceTests`, the Sample's own camera made orthographic):
+  - `TideDrawsIntoAnOrthographicCamerasFrame`: the whole frame check of `TideDrawsIntoUnitysFrame` through an
+    orthographic camera (size 7): the game's frag plates where the camera sees them, the plate under Unity's floor
+    hidden by the camera's depth (so Tide's depth is Unity's orthographic depth, near and far planes included), the
+    cube over the ball at `WorldToScreenPoint`, the ring around it, and the screen-space Hud, target, stencil and
+    depth view as they were. The ring's pixels are matched by 0.5 there rather than 0.35: it's a pixel wide and
+    smooth, and where its middle falls between two pixels each is half floor (10 of 16 angles at 0.35, a matter of
+    the ball's place on the screen, not of the camera; the floor alone is 0.6 away).
+  - `TheMatchShowsItsBall`: the ring's place in the draw packet (`Draw.WorldToScreen`) within 1.5 pixels of
+    `Camera.main.WorldToScreenPoint` after the camera turns orthographic, and at another place than the perspective
+    camera had it. Runs without a GPU too.
+  - `SceneViewsShowTidesThreeD`: a scene camera made orthographic (the Scene view's Iso) shows the cube where it
+    sees it (`tide_embed_render_view`), and not a unit beside it.
+- **Runs:** Unity 6000.6.0f1, hidden batch with the GPU, `-noAudio`, Direct3D 11 (`-force-d3d11`), the built-in pipeline, this checkout's Sample with a scratch tide of this checkout: BounceTests 18 of 18. The frame was also saved (`TIDE_UNITY_DUMP`) and looked at: the box from above without perspective, the ring about the ball, the cube over it, the plate's stripes. Not on Direct3D 12, Vulkan or OpenGL Core: the camera's matrices reach the replay as uniforms, on every API alike.
+- **Not run:** URP with an orthographic camera (the pass takes the same matrices), an oblique or off-centre
+  projection (`Camera.projectionMatrix` set by hand: the same path, any matrix), and what a game's own view does
+  with a camera it assumes is perspective (`Draw.CameraProjection()` gives it the matrix to ask).
+
+## A build says which tide made it, and the host loads only its own (2026-11-19)
+
+Closes "Found on the way, not changed" of 2026-10-25 (Tide's drawing after a hot reload): a host took any
+`game-<n>` that loaded. The shape check of 2026-11-10 (Made for production) refuses tables of another size; two
+tides that lay the tables out alike, or whose engine copies differ, still loaded each other's builds. All picks
+mine (Provisional).
+
+- **What a build carries.** `tide unity` works out which tide it is as each build starts (`made_by` in
+  `compiler/cli/build.c`): `<version> (<16 hex digits>)`, the digits a hash of tide's own executable, the
+  installation's headers, the engine's sources and the platform layer's library, by their stamps (path, size, time).
+  It writes that text into the game's library (`tide_host_library_made_by`, in `library.c`) and into the host Unity
+  loads (`embed_host.c`: a constructor calling `tide_embed_made_by`, so the host says it as it's loaded and C# calls
+  nothing new). Two tides of one version (a development tide built again) are two; so is one whose files changed.
+- **What the host does** (`reload_library.inc`'s `load`, after the shape check): a library that says another text,
+  or has no such function, isn't loaded. The Console gets an error through `tide_embed_log`, as for any build that
+  doesn't load: "tide: .../game-7.dll was built by tide 0.8.0-dev (36d2...240), and what runs it by tide 0.8.0-dev
+  (36d2...24f), so it isn't loaded: tide was installed again, or another one took its place, since the game started.
+  Stop the game and start it again once tide has built it (in Unity: leave Play, wait for tide's build, and enter
+  Play again), so that one tide built both". The match goes on with the build it has, and that build isn't tried
+  again. Where it's the first build (`tide_embed_create`), there's no embed and the same error.
+- **The installation changing under a running editor**, which "could do the same (not tried)":
+  - tide's loop (`unity_build`) sees that the text changed since it built the host, stamps the headers again, and
+    builds the host again before the game. So the host on disk and the newest game are always one tide's, and
+    entering Play again is enough: nothing is restarted by hand.
+  - A Play that's running keeps the host it loaded (a copy), which refuses the new build with the message above.
+  - `TideBuildService.FollowTide` (once a second, from `Drain`): where the tide executable the service started was
+    replaced (another size or time, as it is for two seconds: `Replaced`), it starts tide again. The running one is
+    the old program, which would go on compiling with the new installation's files.
+- **No embed ABI or packet change.** `tide_embed_made_by` is the host library's own business, not an export, and
+  `TideLibrary.Abi` stays. `tide_run_desc.made_by` gives `tide run`'s host the same check; tide doesn't set it
+  (one process builds that host and its games, and a running host can't be built again): left so.
+- **Not checked, as before:** a player's game (linked by the package from one build), Android's whole library and a
+  page's program (the game and the host are one link). A reinstall of the very same version is another tide to a
+  Play that's running (its files' times changed), which costs a Play restart and never a wrong load. Stamps, not
+  bytes: two installations whose files are the same bytes at the same paths and times are one.
+- **Tests:**
+  - `tide_platform_reload` (native, ASan): a foreign build published while the game runs is refused, both tides
+    named and the fix said, and the build running goes on; a host that says nothing loads it; a host of a third tide
+    loads neither (notes/hot-reload.md).
+  - `tide_cli_unity_made_by` (`compiler/cli/tests/unity_made_by_test.mjs`, a made-up installation and the controlled
+    compiler): the installation changed under a watching `tide unity`, part by part, gives another text in the
+    library and the host, the host compiled again; a change of the game alone leaves the host (notes/cli-and-packages.md).
+  - The Sample's PlayMode `BounceTests.ABuildAnotherTideMadeIsntLoaded`: the running build's library with one digit
+    of its text changed, published as the next `game-<n>` in Play. The Console's error is expected by its text
+    (`LogAssert`), no `loaded-<n>` copy stays, the match's ticks go on, and the game ended and started again runs.
+    This is the 2026-10-25 crash's case with the tables the same size, which the shape check let through.
+  - EditMode `ReplacedTests`: what counts as tide replaced (changing, settled, the same bytes at another time, gone,
+    put back).
+- **Runs:** Windows ASan (`sanitize`): `tide_platform_reload`, `tide_platform_embed`, `tide_cli_unity_made_by`, `tide_cli_generation` pass. `embed.c` compiles for wasm32-wasip1-threads under the warnings (syntax alone; no web tree was built). Unity 6000.6.0f1, hidden batch, `-noAudio`, this checkout's Sample with a scratch tide of this checkout's mingw-release tree (`-tide-command`), automatic builds off, the game built by `tide unity --once`: PlayMode BounceTests 18 of 18 on Direct3D 11; EditMode (`-nographics`) 47 of 52, two skipped as before, and three failing for the run's own setup, as in earlier runs: the two UnsavedTests want a running tide, and the launch-argument test a launch without `-tide-command`. No C# warnings.
+- **Not run:** the service restarting a real tide whose executable is replaced under an interactive editor (its
+  rule is tested, and tide's side by the CLI test); an upgrade through `tide upgrade` or the Versions window while
+  Play runs, end to end; Linux and macOS (constructors in a shared library, CI's).
+
+## Time travel's gaps (2026-11-19)
+
+The owner asked for the Unity integration's known gaps to be closed; these are the ones "Time travel (2026-10-26)"
+ended with, in its order. Every pick here is mine (Provisional).
+
+### 1. The ticks shown are heard
+
+Frames that show another tick than the match's latest (scrubbed back, the background mode, a recording) run the
+views on a local state of their own, which heard nothing: no local handler ran there and the packet's EVENTS were
+empty, so C#'s `On<E>` said nothing of a tick shown. Now:
+
+- **`tide_replay_heard`** (`tide/session.h`, `session.c`; notes/netcode.md): `tide_replay_check` with an event log,
+  which the tick is run with as the server's own machine runs its ticks for its player's local handlers
+  (`tick_events`, or a projection game's `tick_client_events` with its `all`; a scene's preparation's events too).
+  The world comes out the same.
+- **`tide_timeline_heard(t, tick, log)`** (`tide/timeline.h`): what the tick that made the world after `tick` ticks
+  sent, by running that tick again on a copy of the world before it (one it keeps; else the one a seek made its
+  world from, `seek_before`, a page-sharing copy taken at a seek's last step, so stepping through ticks before the
+  ring doesn't seek again from the start; else made by `tide_timeline_world`). Nothing for its first tick. One more
+  run of a tick for each tick heard: a debugger's cost.
+- **The embed** (`embed.c`): `travel_gather`, before the world of a frame's tick is asked for, puts into
+  `travel.events` what the frames come to hear, and `show_frame` hands it to the separate local state's handlers
+  (`game->events`) before its views, as `tide_run_frame` does a session's. The taps `tidec --embed` adds are among
+  those handlers, so the frame's packet has them as EVENTS and C# hears them as it hears the match's. As heard:
+  each event once as predicted and once as confirmed (a tick of a recorded match is the server's own). What's heard
+  when (`TRAVEL_HEARD_MOST`, 64):
+  - going on from the tick last shown (a step, a recording playing, a scrub forward of at most 64 ticks): every
+    tick come past, in order;
+  - any other tick come to (the first one shown, one before the last shown, one further on than 64 ticks): what the
+    tick that made its world sent, alone, so the tick a debugger lands on says what it did;
+  - a tick shown again: nothing again.
+  Handlers read the match as their event's tick left it (the log's own rows, as always) and count in the separate
+  local state, which starts fresh as before: the match's own local state hears none of it and is as it was when it
+  goes on. Its sounds play (`tide_platform_audio` after the frame) unless the match's own frame ran unseen in the
+  same frame (background mode), whose sound the frame's is.
+- **Fixed on the way:** in background mode the match's own frame ran unseen and its taps kept what they heard until
+  the next packet, which was the shown tick's: C# heard the live match's events on an old tick's picture. The
+  unseen frame's packet is written and dropped now (`background_frame`'s `write_view`).
+- No embed ABI or packet change: EVENTS are as they were, and the package's C# is untouched.
+- **Tests:** `tide_platform_travel`'s `travel_shown_ticks_are_heard` (travel.tide's new `Bumped` event, sent by
+  the Bump command's handler, and its local handler counting in a local singleton): a tick before the ring shown
+  hears its Bump once with the match as that tick left it, counted as its local state's first while the match's
+  had counted three, in the packet once as predicted and once as confirmed with the tick's number; shown again,
+  nothing; the tick before it nothing, a step on from it the Bump again; steps on each heard as come to; several
+  ticks on at once all heard; back, the tick landed on alone; the match's own next Bump its fourth; and a
+  recording played, its four in order, in the packets too. `travel_never_stops_a_match_for_other_machines`: a
+  command behind the tick shown is heard by the match's own handlers and is in none of the shown tick's packets.
+  The Sample's PlayMode `TravelTests.ShownTicksAreHeard` (the ball's `Bounced`: `On` and `OnVerified` at the tick
+  shown, the ball's local `heard` counted from 1 there, a step to it, a recording played hearing every bounce, the
+  match's own count as it was after).
+- **Runs:** native `sanitize` (Windows ASan): `tide_platform_travel` 11/11, `tide_platform_embed` 32/32. Web debug:
+  the platform layer and engine compile (`tide_platform`); no web test runs the embed's travel. Unity 6000.6.0f1,
+  this checkout's Sample, batch, `-nographics -noAudio`, `TIDE_HIDDEN`, `-tide-command` a tide installed from this
+  checkout's mingw-release and debug trees: PlayMode `TravelTests` 6/6 (the five there were in one run, the new one
+  alone in the next, after its test's own fixes). The Sample's `com.tide.game` as that tide wrote it for the runs
+  isn't committed (its hash is the build's). Not run: EditMode (no editor code changed), a GPU run, Unity on the web.
+- **Left:** the standard host's own pause (`tide/host.h`'s dev menu, notes/standard-host.md) shows earlier ticks
+  through the match's own local state and still hears nothing of them: it's another host's design (its local
+  state isn't separate), not Unity's. `Shown`/`Hidden` availability events aren't made for a tick come to by a
+  jump (the separate local state hears what ticks sent, not what differs between two worlds shown).
+
+### 2. A match another machine runs is followed
+
+A client had no time travel at all ("the match is another machine's"): the journal is its server's. Its confirmed
+worlds are kept now, which is what the section's note said could be. No journal is made on a client, so nothing of
+it replays: it's a window over the ticks this machine saw confirmed, not a recording.
+
+- **The session** (`session.c`, `tide/session.h`; notes/netcode.md): `tide_session_recorder.verified(user, tick,
+  world, heard)`, optional. After the client's update (`record_client`), each tick it has had confirmed since the
+  last one told is told once, from the worlds the client's ring still has of them (a confirmed tick's world isn't
+  made again; the ring holds the ticks up to the one it's ahead at), with what the session's log has of the tick
+  that made it as confirmed (`as` VERIFIED, copied for both kinds of handler). A world that came whole
+  (`first_tick` moved), ticks confirmed faster than the ring keeps, or the first told, start over at the latest:
+  the recorder sees a tick that isn't the one after its last. Not on the machine that runs the match, nor in a
+  sharded one. The events are there only where the session's host takes them (`tide_session_events`), and only
+  those with a confirmed handler: every event of the game's own in a `--embed` build, whose taps are both kinds.
+- **The timeline** (`tide/timeline.h`): `tide_timeline_follow(t, tick, world, heard)` keeps the world in the ring
+  and the tick's events beside it (`kept.heard`), with no record: `first` is the first tick kept, `last` the last
+  told, `tide_timeline_world` gives kept worlds alone, `tide_timeline_heard` what it was told, and
+  `tide_timeline_cut` and `_save` refuse. A tick out of order starts it over (`tide_timeline_begin`).
+  `tide_timeline_follows`. `tide_timeline_recorder` has the third callback; `tide_timeline_set_game` drops the kept
+  events (laid out as the build that heard them has them).
+- **The embed**: `travel_why` lets a connected client pause; the timeline's recorder goes to the session with
+  `travel_verified`, which follows only while the frames don't hold a tick (not paused, no recording shown): a
+  pause **holds** the ticks kept then, so the tick shown doesn't fall out of the ring while the match goes on, and
+  going on follows again from the match's latest (the ticks it ran meanwhile aren't kept). `travel_background` is
+  true on a client, so a pause is always the background mode: the match's own frame runs unseen with nothing held
+  (this machine's player as if it let go of everything, as on a host with others in), and `show_frame` shows the
+  tick held. Step goes through the ticks held and is refused at the last; `tide_embed_continue` is refused by
+  `tide_session_rewind`, `tide_embed_recording` gives none. A recording still opens there (the match held behind
+  it). A machine that takes the match over (host migration), or the other way, starts over with what the session
+  says next (`travel_follow`: a timeline that follows on a server, or records on a client, is dropped).
+  `tide_embed_travel.followed` (the pad byte; the struct's size is as it was) says so.
+- **No embed ABI bump** (mine): the byte was padding, zero from an older library and ignored by an older package;
+  nothing reads otherwise. Taking a number is for a layout or meaning that changes.
+- **The package**: `TideTravel.followed`; the window says "Following another machine's match: the ticks confirmed
+  here are kept, 61 to 90" and, paused, that the match goes on behind what's shown, and greys Continue From Here,
+  Save Recording and Replay This Match there.
+- **Picks:** a pause holds the kept ticks rather than following on behind (else the tick looked at is gone after
+  Keep Seconds, with no start to make it again from); the worlds are this machine's own confirmed ones, so a game
+  that hides state shows what this player may have, never more; no client-side journal.
+- **Tests:** `tide_platform_travel`'s `travel_follows_another_machines_match` (the embed joins a plain session's
+  match through a game's own network over loopback): followed and live with the last 30 ticks kept and none
+  before; a Bump it sends taken by the other machine's match; paused, the match goes on (20 ticks and more) while
+  first, last and shown stay; back through the held ticks each world has the hash the server's had, and the
+  Bump's tick is heard once where it's landed on, as predicted and confirmed in the packet; nothing before the
+  first shows; a step on from the tick before the Bump hears it; no step past the last; no going back, no
+  recording; going on, live and followed again from the latest, still connected. EditMode `TravelWindowTests`
+  (what the window says of a followed match, live and held).
+- **Runs:** native `sanitize`: `tide_platform_travel` 12/12, `tide_platform_embed` 32/32. Web debug: `tide_platform`
+  compiles. The docs build. Unity as for gap 1, the tide installed again from this checkout: PlayMode `TravelTests`
+  6/6, EditMode `TravelWindowTests` 2/2.
+- **Not built, not run:** a recording made on a client (its frames carry what a journal record does in a game that
+  hides nothing, so a client-side journal is possible; not asked for). Unity with a second machine: the Sample's
+  PlayMode tests run one editor, so the followed case runs natively alone.
+
+### 3. A recording replays across a layout change
+
+A recording was refused by any build whose layout hash wasn't its own, as it said nothing of how its worlds were
+laid out. It says now, and a build laid out otherwise carries its worlds over by name with the hot reload's own
+migration (`tide/migrate.h`, as a checkpoint is loaded by another layout's build: `platform/src/checkpoint.c`).
+
+- **The file** (`timeline.c`, `TIDETIME` version 2): after the head, the layout it was recorded with
+  (`tide_layout_pack`: its size, 0 for none, and bytes); and each world (the first, and each one gone back to) is
+  followed by itself as its layout has it (`tide_game.pack_world`; size 0 without a layout), since migration reads
+  those bytes and a delta pack is only the recording build's to read. Version 1 files still load, into a build of
+  their layout. The cost is the layout's description and a second copy of the first world and of each jump's.
+- **`tide_timeline_desc.layout`** (the build's own, `tide_host_game.layout`): with it a saved recording says its
+  layout, and `tide_timeline_load` takes one of another layout: each world through `tide_migrate_world` and this
+  build's `unpack_world`, the records as they are. `tide_timeline_about` says `other_layout`, `fields_reset`
+  (`tide_layout_fields_reset`), `entities_dropped`, `tasks_dropped`. `tide_timeline_set_layout` for a hot reload of
+  the same layout (the old build's description goes with its code).
+- **Nothing is checked there** (`unchecked`): a record's hash is of the recording build's world, laid out the old
+  way, so a carried-over replay reports no `differs` and its `checked` stays at its first tick, rather than every
+  tick "differing". Its ticks are this build's code run on what went into them. A tick whose input or commands this
+  build lays out otherwise doesn't read, and is where it stops (`unreadable`, as before). Such a timeline isn't saved
+  again (`tide_timeline_save` gives none): it would be a recording of this layout with the other's hashes.
+- **The embed** hands the timelines its game's layout (live and loaded, and the new build's at a same-layout
+  reload) and says `other_build` 2 for a recording carried over (1 was, and is, another build's code of the same
+  layout). No ABI or struct change. The package's window says so in place of its "Every tick to N made the
+  recording's world" line.
+- **Picks:** carried over by name with the reload's rules rather than a migration of its own; no check rather than
+  a hash of some layout-free form of the world (there is none); refusing to save a carried-over timeline; refused
+  still where the recording has no layout (version 1, or a game built without one) or this build has none to say.
+- **Tests:** `tide_platform_travel_layout` (new: `platform/tests/travel_layout.tide`, travel.tide's game with its
+  components' fields in another order, new fields with defaults among them and a new singleton, built as a second
+  program; ctest runs it after `tide_platform_travel`, which leaves its recordings where `TIDE_TRAVEL_RECORDING`
+  says, a fixture of the two tests): the other build's recording, with a going-back in it, replays through the
+  embed as `other_build` 2, the views drawing at its first tick, at the tick gone back to and at its last what the
+  recording's build drew there (steps, the walker's x to the bit, jumps, the score), the new fields at their
+  defaults, nothing unreadable, nothing checked, and played at its rate to its end; the timeline's own account
+  (`other_layout`, nothing reset or dropped), no save of it, a build with no layout to say refused, bytes cut
+  short inside the layout refused; and a recording that says no layout refused, saying so. `tide_platform_travel`:
+  a recording with its layout hash flipped is carried over (to the same fields) and replayed unchecked, where it
+  was refused; `record_in` reads the new file. `tide_platform_dev_menu` (the standard host's recordings, saved
+  and replayed through the same file) passes as it was. The Sample's PlayMode
+  `ARecordingReplaysFromAFileBitForBit`: the flipped hash carried over, the ball where the match had it, nothing
+  checked; a cut-short file refused. EditMode `TravelWindowTests` (what the window says of one).
+- **Runs:** native `sanitize`: `tide_platform_travel` 12/12, `tide_platform_travel_layout` 2/2, `tide_platform_embed`
+  32/32, `tide_platform_dev_menu`. Web debug: `tide_platform` compiles. Unity as before, the tide installed again
+  from this checkout: PlayMode `TravelTests` 6/6 (the Sample's own layout carried over to itself), EditMode
+  `TravelWindowTests` 2/2.
+- **Left:** the standard host's dev menu makes its timelines without a layout, so its recordings say none and it
+  refuses another layout's as before (one field, `tide_timeline_desc.layout`, in `tide/host.h`'s two calls, when
+  it's wanted there). The counts of what didn't carry (`fields_reset`, entities and tasks dropped) are in
+  `tide_timeline_about` and not in `tide_embed_travel`, which has no room for them without an ABI number. Input
+  and command changes aren't carried: their packed bytes are the recording build's alone to read. A real layout
+  change in Unity (the Sample's game changed, built and reloaded mid-test) isn't a PlayMode test; the two-program
+  native test is that case.
+
+### 4. Sharded matches: a proposal for the owner, nothing built
+
+Stopped at a proposal, as asked where a real trade-off shows: three do (A to C below). Nothing of it is built; a
+sharded match still says "a sharded match isn't recorded" (`travel_why`), the session's recorder is told nothing of
+one and `tide_session_rewind` refuses it.
+
+**What a sharded match is to a debugger** (notes/sharding.md). On this machine it's a `tide_shards` inside the
+session: a root and regions, each a server with its own world, tick count and journal, and a coordinator that
+carries their messages between updates, follows players, splits and merges regions and makes checkpoints. This
+machine's player is a shard client: a client for each shard it follows, one of them its home; a frame's views draw
+the home's world and the others' beside it (`frame_shards`), and the embed's packet has them all. So there's no
+single world to keep, no single tick to name, and no single journal to replay.
+
+**What's cheap, and safe to build on my picks once A and B are answered** (it only reads the match):
+
+1. *Showing kept ticks, pausing and stepping.* After each `tide_shards_update`, keep a page-sharing copy of every
+   shard's world on this machine, with which shard was the player's home and which it followed
+   (`tide_session_views`). A shown frame hands the home's world to the views and the others' to `frame_shards`,
+   as `write_view` does live. With nobody else in the match, a pause is the orchestrator not updated and a step is
+   one update (every server's tick, then one round of the coordinator); with others in, the background mode as it
+   is. Each followed shard's own events are heard as gap 1's are.
+2. *Ticks before those kept, and recordings.* A shard's journal record already carries the shard messages its tick
+   took, so a shard replays alone from its first world, with no orchestrator (`tide_replay`). A sharded recording is
+   then a timeline for each shard that ever was (its first tick and world, its records), and for each update the
+   player's home and followed shards. A split or merge starts or ends a shard's timeline. It needs a new file form
+   (TIDETIME 3, a container of today's), and memory by the shard.
+
+**The decisions:**
+
+- **A. What a tick is.** Each shard counts its own ticks (a split's shard starts at the root's count; the servers
+  tick within one update). (A1) The unit is the orchestrator's update, named by the root's tick: one slider, the
+  whole match at one moment. (A2) A slider a shard. *Recommend A1*: a match's moment is what a debugger scrubs, and
+  shards change hands of entities between updates, so two shards at different moments show an entity twice or not
+  at all.
+- **B. Which worlds a tick shown draws.** (B1) Those this player followed then, its home's first: what the game
+  showed live, which is what a game's views are written for (`Shards.Owns`, a home). (B2) Every shard this
+  machine runs: the whole world, which a debugger may want and a game's views never saw. *Recommend B1*, with the
+  window listing every shard's region and tick; B2 after it if wanted.
+- **C. Continue From Here.** Taking the match back needs every shard's world at one moment and the coordinator's
+  own state (the directory of entities away from home, index ranges, routes, what's acknowledged). The coordinator
+  captures itself only for a checkpoint, when the match is drained and idle (in `shards_test`'s busy world 86% of
+  updates are quiet, the longest stretch without one 16 updates).
+  - (C1) Only from quiet updates: each is kept whole (the worlds, and the coordinator's capture), and going on
+    from a tick shown goes back to the last quiet update at or before it, the window saying which. It needs the
+    orchestrator to capture and restore itself in memory beside worlds it shares pages with, where
+    `tide_shards_save`/`_load` pack everything to bytes today: new orchestrator surface.
+  - (C2) From any update, by the crash recovery's path: the last checkpoint, each shard's records up to the
+    update, the coordinator rebuilt from first reports (`tide_shards_recover`). It needs checkpoints on in the
+    editor's sharded matches, and with checkpoints on a split or merge waits for its checkpoint before it's told:
+    **time travel being on would change when a match reshapes**, so a match with the debugger kept on goes
+    another way than one without. That's a debugger changing what it debugs.
+  - (C3) Not for sharded matches.
+  *Recommend C1.* C2 is the larger feature and the one with a cost outside the debugger.
+
+**After those:** a sharded world another machine runs, followed as gap 2 follows a match: each followed shard's
+client's confirmed worlds, joined at the home's tick (the other shards' at their latest confirmed tick at or before
+it, as their clients confirm apart). And costs to measure before any of it ships: a world a shard a tick (shared
+pages, so what changed), up to the 512 shards a session may run here, and the timeline's 64 MiB of records, which
+is a match's and would be a shard's.
+
+**Order proposed:** 1, then 2, on A1 and B1; C1 once the owner agrees to the orchestrator's new calls; the followed
+sharded world last. 1 and 2 touch the session (a recorder callback after each orchestrator update, with the shards'
+worlds, ticks and the player's follows), the timeline (a set of them), the embed's `show_frame` and the window; no
+generated code, layout, hash or wire format.
+
 ## The replay of 2026-11-14's GPU work, Gamma [Linear] images, multisampled mipmaps, triangle sides (2026-11-15)
 
 Everything the day's readback, number-image, checker-format and capability work records is now replayed and run
@@ -740,9 +1229,9 @@ kept out) and `tide_tests` passes. The docs build.
   Profiler's markers.
 - The view packet still carries every component of every shown entity each frame, read or not (decision 4 of
   phase 1). At 1,000 entities the game's own frame was 1.3 ms of the runner's 1.6 in a debug build; a packet of
-  what C# asked for is a design of its own.
+  what C# asked for is a design of its own. (Built 2026-11-19: The packet carries what Unity reads, top.)
 - A physics shape still finds its body by reflection each frame (`TideParts.BodyOf`): no garbage now, but a
-  generated accessor would be cheaper.
+  generated accessor would be cheaper. (Built 2026-11-19, the same section.)
 
 ## Play waits for the install and the first build (2026-11-10)
 
@@ -1312,7 +1801,9 @@ session bit for bit (a tester's file too), with the first tick that differs when
 when the other program asks (`tide_embed_travel_keep`), the runner's Time Travel setting deciding where
 (`TideTimeTravel.Editor` by default: Play in the editor; `EditorAndPlayers` lets a game save testers' recordings;
 `Off`). Only a match this machine runs is recorded (the server's journal is the source); a client of another
-machine's match, and a sharded match, say why not (`tide_embed_travel.why`).
+machine's match, and a sharded match, say why not (`tide_embed_travel.why`). (Since 2026-11-19 a client's match is
+followed, its confirmed ticks kept, and a recording of another layout is carried over rather than refused: "Time
+travel's gaps", above. A sharded match still says why not.)
 
 What's built:
 
@@ -1406,7 +1897,7 @@ each, MicroDuck's turn as before), `tide_platform_travel` 10/10; the Sample's Ed
 `com.tide.game` written again by it (the schema hash moved with the Session ABI marker). After merging the type boundary's work (`unity_code.c`, the Sample's package): the native unity, CLI, LSP, outline, tidec, embed, reload and travel tests 2573/2573, the Sample's package as tide writes it unchanged, EditMode 33/33 and PlayMode 22/22. Not run: Unity on the web
 (the jslib and exports are built and compiled, not played), the window's drawing in a window, Linux and macOS.
 
-**Not done / gaps:** local handlers and the packet's EVENTS for replayed or scrubbed ticks (the separate local state
+**Not done / gaps** (worked through since: "Time travel's gaps (2026-11-19)", at the top)**:** local handlers and the packet's EVENTS for replayed or scrubbed ticks (the separate local state
 hears nothing); a client of another machine's match can't time travel (it has no journal; its verified worlds could be
 kept, not built); sharded matches; replays across a layout change (the old layout's description isn't in the
 recording); the window's drawing seen in a window (batch runs have none).
@@ -1985,7 +2476,7 @@ hand, an unknown field is a mistake. Test: `tidec_prefab_error_once` (a
 the error once).
 
 Gaps: unsaved scene and prefab edits (tide reads saved files), `Name#k` paths
-when names include `#`, and gizmos. (Asset fields aren't one: a match component
+when names include `#`, and gizmos (physics shapes' since: Packages' components in Unity, and 2026-11-19, top). (Asset fields aren't one: a match component
 can't hold a rendering resource, "rendering resources belong to this machine,
 so the match can't use them", and a `Mesh` can't be a field, so nothing of a
 component is a Unity asset; tidels renames reach Unity assets, Tooling below.)
@@ -2458,7 +2949,8 @@ in world units), so it moved into `Draw.Screen()` at (16, 30), and a `Ring`
 view draws a wire circle at each ball's `WorldToScreen`; the play mode test
 finds the ring within 1.5 pixels of `Camera.main.WorldToScreenPoint` of the
 ball (y flipped). Not done: an orthographic Unity camera (Tide's 3D cameras are
-perspective ones), and Unity's near and far planes for a projected depth.
+perspective ones), and Unity's near and far planes for a projected depth. (Both done a day later by the matrices of
+Tide's renderer in Unity, below; an orthographic camera first run in Unity on 2026-11-19, top.)
 
 **Stats and the runner's Arguments (2026-10-21).** The owner put `--stats` in
 TideRunner's Arguments and saw nothing: the embed dropped every flag it didn't
@@ -3391,7 +3883,8 @@ only Tide drawing is the rooms package's menu, in screen space.
   EditMode 24/24 on D3D11; the drawing tests also on Vulkan, OpenGL Core and D3D12. Reproduced first on a scratch
   copy of the owner's playground (its rooms menu: gone after a layout reload, and a frame after the first under its
   Enter Play Mode Options; shown in both with the fix).
-- **Found on the way, not changed:** a host takes any `game-<n>` that loads, with no check that the same tide made
+- **Found on the way, not changed** (closed since: the tables' sizes on 2026-11-10, Made for production, and which
+  tide built it on 2026-11-19, top): a host takes any `game-<n>` that loads, with no check that the same tide made
   it. A copy of the playground whose ProjectSettings named another tide (`tidePath`) loaded an embed of one tide and a
   build of the other, and Unity crashed in `tide_run_bind_io` (a pointer of the game's table, laid out otherwise).
   The same could come of tide's installation changing under a running editor, as each build reads the installed

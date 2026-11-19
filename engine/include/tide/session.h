@@ -548,6 +548,12 @@ typedef enum tide_replay_result {
 // differs, to show where it goes from there.
 tide_replay_result tide_replay_check(const tide_game *game, void *world, const uint8_t *record, uint32_t size,
                                      const tide_jobs *jobs, uint64_t *expected, uint64_t *got);
+// tide_replay_check, recording into `heard` (or NULL) what the tick sent that
+// the game's local handlers hear, as the machine that ran the match heard it
+// of its own tick (tide_game.tick_events): a debugger's local handlers hear a
+// tick made again. The world comes out the same with or without it.
+tide_replay_result tide_replay_heard(const tide_game *game, void *world, const uint8_t *record, uint32_t size,
+                                     const tide_jobs *jobs, tide_event_log *heard, uint64_t *expected, uint64_t *got);
 
 tide_server *tide_server_create(const tide_server_desc *desc, double now);
 // Tells every player the match is over, and closes the transports.
@@ -1001,11 +1007,22 @@ void tide_session_set_view_corrector(tide_session *s, tide_view_correct_fn corre
 // match over. Then `tick` after each tick the server runs: its journal record
 // (tide_server_desc.journal) and the world after it. Both are called on the
 // thread updating the session, the world and bytes theirs only for the call.
-// Matches on other machines and sharded ones aren't recorded.
+// Sharded matches aren't recorded.
+//
+// A match another machine runs has no journal here, so it's followed rather
+// than recorded: `verified` (optional) says each tick this machine has had
+// confirmed, once, with the world after `tick` ticks as this machine has it
+// (what its player may have of it, in a game that hides state) and, in
+// `heard`, what the tick that made it sent for the game's local handlers
+// (tide/events.h), where the session's host takes those (tide_session_events);
+// NULL or empty otherwise. Ticks come in order while they follow one another;
+// one that isn't the tick after the last told (the first, a world that came
+// whole, ticks confirmed faster than they're kept) starts over.
 typedef struct tide_session_recorder {
     void *user;
     void (*begin)(void *user, const void *world, uint32_t tick);
     void (*tick)(void *user, uint32_t tick, const uint8_t *record, uint32_t size, const void *world);
+    void (*verified)(void *user, uint32_t tick, const void *world, const tide_event_log *heard);
 } tide_session_recorder;
 
 // Copied; NULL stops recording.

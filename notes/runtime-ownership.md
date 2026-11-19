@@ -1,3 +1,27 @@
+## The view packet carries what's read (2026-11-19)
+
+Mine, a clear win under the guide's rule (measured, what a reader of everything gets unchanged, tested;
+notes/unity.md, The packet carries what Unity reads). `tide_packet` (`tide/embed_game.h`) gained `wanted`,
+`wanted_types` and `again`, which a host sets before each `tide_embed_game.view` call, and the inline
+`tide_packet_wants(p, type)`. Generated C (`embed_codegen.inc`) tests it around each component's and singleton's
+block, and its event taps keep a record only for an event that's wanted (`tide_embed_heard_wants`, from the pointer
+the last view call was given: the host keeps the bits where they are). The heard events now go as the next is heard
+or the next frame's packet is written, where the packet's end dropped them, so the same frame's packet written again
+(`again`) carries them again. No `tide_embed_game` member, signature or `tide_host_game` member changed, so
+`TIDE_HOST_SHAPE` is as it was; a zeroed packet (`wanted` NULL: the dev inspector's, any host that never says) gets
+everything, as before. `tide/embed.h` gained `tide_embed_view_want` and `tide_embed_view_again` (embed ABI 27, with
+Unity's `TideLibrary.Abi`). Hosts, libraries and generated games rebuild together, as for any `tide_packet` change.
+
+## Which tide built a library (2026-11-19)
+
+Clear win, no sign-off (measured: nothing in a frame; results unchanged; tested): a game's library built by
+`tide unity` exports `tide_host_library_made_by` (text, written by the CLI's `library.c`, not by tidec; no generated
+C or game header changes, so no hash moves), and hosts gain a way to say their own: `tide_run_desc.made_by`
+(`tide/host.h`, a new last member, NULL for any) and `tide_embed_made_by(text)` (`tide/embed.h`, the process's,
+called by a constructor in the host `tide unity` builds, never by the other program: no embed ABI change and no new
+export). `reload_library.inc`'s `load` refuses a library that says another text when the host says one.
+notes/hot-reload.md, A library says which tide built it; notes/unity.md, top.
+
 ## A check's rows on the tick's pool (2026-11-17, parts)
 
 **For the owner to confirm**: `tide_game.client_hashes` (tide/session.h) may now share its work out on the threads
@@ -1366,6 +1390,14 @@ header's Session ABI marker says `rewind (1)`, so hosts and games rebuild togeth
 `tide_session_rewind` and `tide_replay_check`. New platform surface: `tide/timeline.h` (`platform/src/timeline.c`),
 the embed's travel calls (embed ABI 7), `tide_run_unblended` in `tide/host.h` and `reload_before` in
 `reload_library.inc`. Contracts and tests: netcode.md and unity.md.
+
+2026-11-19 (notes/unity.md, Time travel's gaps): `tide_replay_heard` in `session.c` (a replayed tick's events, by the
+existing `tick_events` / `tick_client_events`) and `tide_timeline_heard` in `tide/timeline.h`, both host-side and
+agent-maintained. Generated code calls nothing new, no `tide_game` member is new, and no layout, hash or wire
+format changed. The same day: `tide_session_recorder.verified` (a client's confirmed ticks to a recorder, read from
+its ring after its update) and `tide_timeline_follow` / `_follows`, on the same terms. And
+`tide_timeline_desc.layout`, `tide_timeline_set_layout` and the recording file's version 2 (its layout and its
+worlds as `pack_world` has them, carried over by `tide_migrate_world`): platform-side, nothing in the engine.
 
 ## Twelve texture drawing boundary (2026-10-25)
 

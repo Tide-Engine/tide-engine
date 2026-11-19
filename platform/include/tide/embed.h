@@ -23,7 +23,7 @@ typedef struct tide_embed tide_embed;
 
 // What another language binds against: a change to anything here that it lays
 // out or calls changes the number, and tide_embed_abi says it.
-#define TIDE_EMBED_ABI 26u
+#define TIDE_EMBED_ABI 27u
 uint32_t tide_embed_abi(void);
 
 typedef struct tide_embed_desc {
@@ -125,6 +125,20 @@ void tide_embed_status_of(const tide_embed *e, tide_embed_status *out);
 // built without it (tidec --embed).
 const uint8_t *tide_embed_view(const tide_embed *e, uint32_t *size);
 
+// What of the match the other program reads, which is all the view packet carries from the next frame on: `bits`
+// has a bit for each of the schema's first `types` types (bit i of the 64-bit word i / 64), set for a component, a
+// singleton or an event that's read. A component's local fields and a singleton's come with it; an event that isn't
+// read isn't kept. The entities are always there, and so is any type past `types`. NULL or 0 types: everything,
+// as before the first call. It's of the build running: a build laid out otherwise coming in (its types are numbered
+// anew) brings everything back until this is called for it.
+void tide_embed_view_want(tide_embed *e, const uint64_t *bits, uint32_t types);
+
+// Writes the last frame's view packet again, with what's read now: the same worlds, entities in the same places and
+// events, so the other program can ask for a type the moment something of its reads it for the first time, without
+// waiting a frame. tide_embed_view gives it. False where that frame's worlds aren't there to write from any more (a
+// request or a time travel call since): the packet stays as it was, and the next frame's has what's read.
+bool tide_embed_view_again(tide_embed *e);
+
 // The game's schema, as JSON: its types as its C lays them out (tide/layout.h),
 // which are the packet's and the commands', with what they are, its enums,
 // commands, prefabs and scenes. Valid until a new build comes in; NULL for a game
@@ -143,6 +157,13 @@ enum {
     TIDE_EMBED_LOG_PROBLEM = 2, // The host's: something went wrong
 };
 const uint8_t *tide_embed_log(tide_embed *e, uint32_t *size);
+
+// Which tide built this host, as text that stays where it is (a literal): the games' libraries it loads from
+// tide_embed_desc.library_dir have to say the same (tide/host.h's TIDE_HOST_LIBRARY_MADE_BY), and one that says
+// another isn't loaded, with a problem in tide_embed_log saying what to do. The process's, said before
+// tide_embed_create: the host tide builds for Unity says it as it's loaded, so the other program never calls this.
+// NULL, or never said, takes any library. A game linked in (tide_embed_desc.game) isn't checked: one build made both.
+void tide_embed_made_by(const char *made_by);
 
 // What the frame's views drew (tide/draw.h's draw list), for the other program
 // to draw in its own window, as bytes: this header, then its arrays, each from
@@ -361,10 +382,19 @@ void tide_embed_microphone(tide_embed *e, const float *samples, uint32_t frames,
 // those ticks as bytes, which replay on any machine with a build of the same
 // data layout, each tick's world checked against the hash the server's had.
 //
-// Only a match this machine runs: tide_embed_travel says why not otherwise.
 // With players of other machines in it, pausing never stops it for them: the
 // match goes on behind what's shown (`background`), this machine's player as
-// if it let go of everything, and going on shows its latest tick again. A
+// if it let go of everything, and going on shows its latest tick again.
+//
+// A match another machine runs has no journal here, so it's followed
+// (`followed`) rather than recorded: the worlds of the latest ticks this
+// machine had confirmed are kept, as it may have them (what its player may
+// see, in a game that hides state), with what each tick sent. Pausing holds
+// those ticks to show (the match going on behind, as above, and none of the
+// ticks it runs meanwhile kept) and going on follows it again from its
+// latest. It can't be stepped past what's kept, taken back or recorded from
+// here: the machine that runs it does those. A sharded match isn't kept at
+// all: tide_embed_travel says why. A
 // frame that shows another tick than the latest runs the views on a local
 // state of their own, so the match's is as it was when it goes on, and what's
 // pressed or sent there never reaches the match.
@@ -392,9 +422,13 @@ typedef struct tide_embed_travel {
     uint32_t differs;
     uint32_t unreadable;
     uint8_t playing;     // Replaying: it goes on at the tick rate (tide_embed_pause false)
-    uint8_t other_build; // The recording was made by a build whose simulation was another
+    // The recording was made by a build whose simulation was another (1), or whose data was laid out otherwise (2):
+    // then its worlds were carried over by name and its ticks run with this build's code, with nothing to check them
+    // against (`checked` stays at `first`, `differs` 0)
+    uint8_t other_build;
     uint8_t background;  // Players of other machines are in the match: it goes on behind what's shown
-    uint8_t tide_pad[1];
+    uint8_t followed;    // The match is another machine's: the ticks this machine had confirmed are kept and shown
+                         // (`first` the first of them), and it can't be stepped, taken back or recorded from here
     uint64_t hash;       // The shown world's
     uint64_t expected, got;
     char why[TIDE_EMBED_TRAVEL_TEXT];     // Why it can't pause the match now, "" when it can
@@ -439,9 +473,12 @@ const uint8_t *tide_embed_recording(tide_embed *e, uint32_t *size);
 
 // Shows a recording (copied), from its first tick, paused: the match, if any,
 // pauses until tide_embed_replay_end. Its ticks are made again with this
-// build as they're shown, each world checked against the recording's. False,
-// saying why in tide_embed_travel's `refused`, for bytes that aren't a
-// recording, one of another data layout, or a match that can't pause.
+// build as they're shown, each world checked against the recording's. One a
+// build of another data layout saved replays too where it says that layout
+// (recordings do since version 2): its worlds carried over by name, its
+// ticks unchecked (`other_build` 2). False, saying why in tide_embed_travel's
+// `refused`, for bytes that aren't a recording, one of another data layout
+// that can't be carried over, or a match that can't pause.
 bool tide_embed_replay(tide_embed *e, const uint8_t *data, uint32_t size);
 
 // Back to the match from a recording, paused where it was.

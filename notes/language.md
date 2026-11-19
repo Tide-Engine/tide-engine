@@ -4089,6 +4089,17 @@ packet's unchanged and nothing is remapped. `tide_packet_text`/`_list` start eac
 `embed_containers` (a singleton's `List<string>`, `List<Note>`, `Map<string, int>`, `Set<int>` and `Grid2<byte>`,
 each read back as the header says), and Ticked's `List<string>` through `embed_heard_events`.
 
+**The packet carries what's read (2026-11-19; notes/unity.md, The packet carries what Unity reads).** `gen_packet_view`
+puts each component's block (its rows and values, and its local fields' block) and each singleton's (and its local
+fields') inside `if (tide_packet_wants(out, <its layout type>))`, the host's set of what the other program reads
+(`tide_packet.wanted`; NULL for everything, which is what the dev inspector's packets have). What isn't read costs that
+test: no count pass, no blend, no heap fields packed into STRINGS. The entities' rows and parents are always written.
+A tap (`tide_embed_heard_<E>`) returns before copying anything for an event that isn't read
+(`tide_embed_heard_wants`, by the pointer and count the last `tide_embed_view` call was given), and the heard store is
+dropped by `tide_embed_heard_taken`: set as a packet takes the records, acted on by the next tap or the next packet
+that isn't `tide_packet.again`, so the same frame's packet can be written again with its events. The packet's format
+and version are as they were: a section is there or it isn't, which readers already took.
+
 For `tide unity --assets`: `compile_input.text` gives a file's text in place
 of reading `path` (the CLI's Tide text of a Unity prefab or scene), and
 `parse_file` treats paths ending `.prefab` and `.unity` as `.tprefab` files,
