@@ -1,3 +1,12 @@
+## Metal: a storage buffer's length is told, not asked (2026-11-19)
+
+Unity's translator to Metal refuses `GetDimensions` on a buffer, which `tidehl_length<i>` used for a storage
+buffer's element count (what a read past the end clamps by). Under `SHADER_API_METAL` the helper reads a uniform,
+`_TideStorageBytes<i>`, which the program binding the buffer sets beside it (TideRender.cs); other APIs' text is
+unchanged inside the `#else`. Found by exporting an iOS player on Windows (`notes/unity.md`, iOS players).
+fxc doesn't compile the Metal branch (`expect_hlsl.cmake` defines D3D11 and GLCORE alone): Unity's own compile of
+a Metal player is its check.
+
 ## Helpers that cost the driver less to compile (2026-11-16)
 
 Owner, after the measurements in rendering.md (What the driver compiles cold): "lets start with 1", the helpers

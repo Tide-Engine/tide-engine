@@ -11,10 +11,13 @@ namespace Tide.Editor
     // An iOS player's game, into the Xcode project Unity makes for it. iOS loads no library of an app's by name, so
     // the game is linked into the player, and what compiles for iOS is Xcode, on a Mac: tide wrote the game, the
     // engine and the platform layer as sources with each file's flags (tide unity --ios: <built>/ios/Tide and its
-    // sources.txt), and this adds them to the project's UnityFramework target, so the project builds on a Mac that
-    // has no tide, whichever system exported it. Each file keeps its own flags there (Compiler Flags in Xcode's Build
-    // Phases): -ffp-contract=off and -fno-fast-math among them, without which the game's floats would differ from
-    // other machines' and its match would leave theirs. The game's pack goes among the app's files (Data/Raw/Tide),
+    // sources.txt), and this adds them to the project as a static library of their own, TideGame, which
+    // UnityFramework links, so the project builds on a Mac that has no tide, whichever system exported it. A target
+    // of their own because UnityFramework's files are all compiled with Unity's prefix header before them, whose
+    // names (Apple's MacTypes.h among them) aren't the game's to avoid. Each file keeps its own flags there (Compiler
+    // Flags in Xcode's Build Phases): -ffp-contract=off and -fno-fast-math among them, without which the game's
+    // floats would differ from other machines' and its match would leave theirs. The game's pack goes among the
+    // app's files (Data/Raw/Tide),
     // and Info.plist says why the app looks for devices on the local network (a match's players on one Wi-Fi) and,
     // where the game listens to the microphone, why it records. An assembly of its own, compiled only while iOS is
     // the build target: Unity's Xcode editor code is there only with its iOS module.
@@ -22,6 +25,8 @@ namespace Tide.Editor
     {
         // Where the sources go in the Xcode project, from its root
         public const string Folder = "Libraries/Tide";
+        // The static library the sources are built into, which UnityFramework links
+        public const string Target = "TideGame";
 
         [PostProcessBuild(100)]
         public static void OnPostprocessBuild(BuildTarget target, string path)
@@ -49,6 +54,20 @@ namespace Tide.Editor
             var project = new PBXProject();
             project.ReadFromFile(projectPath);
             var framework = project.GetUnityFrameworkTargetGuid();
+            var game = project.TargetGuidByName(Target);
+            if (game == null)
+            {
+                game = project.AddTarget(Target, ".a", "com.apple.product-type.library.static");
+                project.AddSourcesBuildPhase(game);
+                project.AddTargetDependency(framework, game);
+                project.AddFileToBuildSection(framework, project.GetFrameworksBuildPhaseByTarget(framework), project.GetTargetProductFileRef(game));
+            }
+            // Its files alone, as tide says to compile them: no header before them, no modules, and nothing installed
+            project.SetBuildProperty(game, "PRODUCT_NAME", Target);
+            project.SetBuildProperty(game, "GCC_PREFIX_HEADER", "");
+            project.SetBuildProperty(game, "GCC_PRECOMPILE_PREFIX_HEADER", "NO");
+            project.SetBuildProperty(game, "CLANG_ENABLE_MODULES", "NO");
+            project.SetBuildProperty(game, "SKIP_INSTALL", "YES");
             var microphone = false;
             var sources = 0;
             for (var i = 1; i < lines.Length; i++)
@@ -80,8 +99,8 @@ namespace Tide.Editor
                     var flags = string.Join(" ", words);
                     var guid = project.FindFileGuidByProjectPath(file);
                     if (guid == null) guid = project.AddFile(file, file, PBXSourceTree.Source);
-                    else project.RemoveFileFromBuild(framework, guid); // Listed again with this build's flags
-                    project.AddFileToBuildWithFlags(framework, guid, flags);
+                    else project.RemoveFileFromBuild(game, guid); // Listed again with this build's flags
+                    project.AddFileToBuildWithFlags(game, guid, flags);
                     sources++;
                 }
                 else

@@ -1,5 +1,33 @@
 # `tide`, packages and the package
 
+## `tide unity --ios`: a player's game as sources (2026-11-19)
+
+The agent's picks, Provisional; the design and the Unity side are in `notes/unity.md`, iOS players.
+
+- **`--ios`** (`build_options.ios`; `unity` alone, once, not with `--web` or `--android`; help.c's catalog and
+  docs/tools/cli.md have it) runs `tide_unity_ios`: generate as any Unity build, then `queue_game` into a compile
+  list in a cache of its own (`<cache>/unity-ios`, emptied first, so nothing is "up to date" and every file is
+  listed), and the list is written out instead of run: `<-o>/ios/Tide/sources.txt` and the files it names.
+  `setup` finds no compiler, target or SDK for it (`b->compiler` is the word "clang", for the stamps' text), so it
+  runs on a machine with none. The configuration folder is `ios-<mode>`.
+- **The package has the platform layer's sources** for it: a desktop tree installs `platform/src` (`.c`, `.h`,
+  `.inc`), `platform/embedded`, `third_party/stb_truetype.h` and the build's own `tide_font.c`,
+  `tide_font_bold.c`, `shaders_spirv.c` and `kernels/cull_kernels.h` under `src/platform` (about 3 MB). Without
+  them `--ios` says the installation can't build iOS games. Everything else it needs was installed already
+  (`include/`, `src/engine`, `src/packages`).
+- **Not in it:** `log.c`'s `TIDE_VERSION` (a macro with quotes, which an Xcode flag would have to escape: the
+  log says "unknown" there, and nothing under Unity opens that log); a game's prebuilt libraries (a warning each);
+  telemetry's `target` still says `native` for it, as adding `ios` there is a new value and the owner's decision
+  (`docs/tools/telemetry.md`).
+- **Tests:** `compiler/cli/tests/unity_ios_test.mjs` with `unity_ios_host.c`: runs `tide unity --ios` on a game,
+  checks the list (the files it must have, each one there, each with the two determinism flags), compiles every
+  file with its flags, links them with a stand-in for Unity's player and the frameworks, and runs it: 240 frames
+  through tide/embed.h, the match's tick and world hash every 60, then PASS. `--simulator` builds for the iOS
+  simulator with Xcode's clang and runs it there; `--also <clang>` builds it again for the machine with another
+  compiler and requires the same lines; `--syntax` only compiles. CI's package jobs run it on the Unity sample
+  (`check.yml`, Try the package (Unity iOS)): on the Mac in the simulator and again natively with LLVM's clang,
+  on Windows and Linux natively.
+
 ## Two of tidec's phases beside each other, and the [Parts] models read ahead (2026-11-18, later)
 
 Owner, on running tidec's independent phases in parallel: "yes go ahead". What turned out independent enough to

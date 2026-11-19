@@ -1249,11 +1249,6 @@ static bool run_compiles(build *b, compiles *list)
     return ok;
 }
 
-static char *copy_named(const char *text)
-{
-    return format("%s", text, NULL);
-}
-
 // Finds the compiler and makes the game's .tide folder. False after saying
 // what's wrong.
 static bool setup(build *b, const char *root, const build_options *opts, const bool library)
@@ -1295,7 +1290,7 @@ static bool setup(build *b, const char *root, const build_options *opts, const b
 #endif
 #else
     // An iOS player's sources are compiled elsewhere: this machine needs no compiler for them
-    b->compiler = opts->ios ? copy_named("clang") : opts->web ? find_web_clang() : find_clang();
+    b->compiler = opts->ios ? format("%s", "clang", NULL) : opts->web ? find_web_clang() : find_clang();
     if (!b->compiler) {
         fprintf(stderr, "tide: clang isn't installed, and tide needs it to build games\n");
         fprintf(stderr, "  = note: install LLVM (https://github.com/llvm/llvm-project/releases), add it to PATH, "
