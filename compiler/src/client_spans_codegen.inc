@@ -1784,7 +1784,11 @@ static void gen_client_hash_rows(gen *g, int *deniable, int *parts)
         sb_put(o, "            break;\n        }\n");
     }
     sb_put(o, "        default: break;\n        }\n    }\n"
-              "    if (journaling) {\n        uint64_t node;\n        TIDE_CLIENT_TIMED(14, node = tide_world_hash(w));\n"
+              "    if (journaling) {\n        uint64_t node;\n        TIDE_CLIENT_TIMED(14, node = world_hash ? *world_hash : tide_world_hash(w));\n"
+              "#ifdef TIDE_CLIENT_SPANS_CHECK\n"
+              "        if (world_hash && node != tide_world_hash(w)) {\n"
+              "            fprintf(stderr, \"tide: the projection journal was given another world's hash\\n\");\n"
+              "            abort();\n        }\n#endif\n"
               "        tide_client_journal_end(journal, node);\n    }\n"
               "    TIDE_CLIENT_MARK(3);\n");
     if (!prog->input) return;

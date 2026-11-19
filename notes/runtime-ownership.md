@@ -237,6 +237,17 @@ before any task starts and `done` after the last, on one thread each, nothing mo
 (`tide_entity_location_at` gives in `done` what it gave in `own`), and `tide_table_lanes_end_pieces` called for
 exactly the chunks `tide_table_lanes_begin_pieces` was.
 
+## The completed tick's hash at the projection boundary (2026-11-19)
+
+`tide_game.client_hashes` accepts a nullable pointer to the authoritative
+whole-world hash of the exact state it receives. The session passes
+`ticking.hash` for the completed tick. Generated code uses it only as the
+repair journal's node key and retains the value. Standalone callers pass
+NULL to compute the key there. The checked build compares a supplied hash
+with its own. The generated header marks Session ABI `client hashes (4)`
+so the host and game rebuild together. See netcode.md, Projection journals
+reuse the completed tick's hash.
+
 ## Frozen worlds (2026-11-17)
 
 `tide_game` gained `freeze_world(world)` (`tide/session.h`; optional, generated for a game whose servers repair by
@@ -352,7 +363,7 @@ No runtime function is new or changed, and `tide_game`'s `client_hashes` and `cl
 they did (netcode.md, top section). What generated code relies on now, all of it existing:
 
 - **A world's hash says what the world holds** (`tide_world_hash`, generated; `tide_page_hash` and the tables',
-  heaps' and entities' hashes under it): a server's check calls it once more a tick, and a repair once for the world
+  heaps' and entities' hashes under it): a server's check historically called it once more a tick, and a repair once for the world
   the player confirmed, to know a world as the one a check left. It relies on a copy of a world hashing as its
   source (pages shared, their hashes kept), on the hash taking in everything a projection reads (tables, heaps, the
   entity table's slots, the singletons), and on a kept hash of a page being right while the page is as it was.
@@ -360,8 +371,7 @@ they did (netcode.md, top section). What generated code relies on now, all of it
   with it, so they go where it goes.
 - **A test's symbol**: a build that defines `TIDE_CLIENT_CHANGES_STATS` gets a global `tide_client_changes_stats[3]`
   in the game's C (repairs by the journal, repairs that walked, rows the first looked at). No other build has it.
-- Not done, and the owner's to agree: the session handing the tick's hash to `client_hashes` and each world's to
-  `client_changes`, which would save the hashes above (netcode.md, top section, Left).
+- The session now passes the tick's hash to `client_hashes` (2026-11-19, above).
 
 ## Projection hashes: rows by their bytes, big containers by their chunks (2026-11-16)
 

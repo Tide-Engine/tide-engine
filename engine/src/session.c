@@ -3818,7 +3818,7 @@ static void tick_end(tide_server *s, ticking *t)
         }
         // (On the tick's threads where the game's check reads its rows in parts: the same hashes either way)
         const tide_jobs *loops = tide_loops_enter(t->jobs);
-        if (g->client_hashes && count) g->client_hashes(s->world, recipients, count, hashes);
+        if (g->client_hashes && count) g->client_hashes(s->world, recipients, count, hashes, &t->hash);
         else for (uint32_t i = 0; i < count; i++) hashes[i] = g->client_hash(s->world, recipients[i]);
         tide_loops_leave(loops);
         if (g->client_came && count) {

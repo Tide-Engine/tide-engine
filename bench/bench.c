@@ -567,10 +567,11 @@ static uint64_t timed_client_hash(const void *world, const tide_player_id recipi
 }
 
 // ...or every player's at once, as a server asks
-static void timed_client_hashes(const void *world, const tide_player_id *recipients, const uint32_t count, uint64_t *out)
+static void timed_client_hashes(const void *world, const tide_player_id *recipients, const uint32_t count, uint64_t *out,
+                                const uint64_t *world_hash)
 {
     const uint64_t start = tide_time_now_ns();
-    real->client_hashes(world, recipients, count, out);
+    real->client_hashes(world, recipients, count, out, world_hash);
     const double ms = since(start);
     current->hash_ms += ms;
     current->checks_ms += ms;

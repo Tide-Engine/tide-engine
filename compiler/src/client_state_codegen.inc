@@ -1223,8 +1223,8 @@ static void gen_client_hashes(gen *g)
 
     // (`again`: nothing kept is used or left: every row read, for TIDE_CLIENT_SPANS_CHECK)
     sb_put(o, "static void tide_client_hashes_work(const void *world, const tide_player_id *recipients, const uint32_t count, uint64_t *out,\n"
-              "                                    const bool again)\n{\n"
-              "    (void)again;\n"
+              "                                    const uint64_t *world_hash, const bool again)\n{\n"
+              "    (void)world_hash;\n    (void)again;\n"
               "    const tide_world *w = world;\n    tide_text_use((tide_heaps *)&w->heap, NULL);\n"
               "    const bool client = w->tide_visibility_state.client != 0;\n"
               "    tide_writer scratch = {.grows = true};\n"
@@ -1464,17 +1464,18 @@ static void gen_client_hashes(gen *g)
                          "    TIDE_CLIENT_MARK(4);\n    tide_client_memo_done(hs->memo, hs->heaps);\n    free(hs->out.data);\n    free(hs->reach);\n"
                          "#ifdef TIDE_CLIENT_COUNTS\n    tide_client_counting = false;\n#endif\n");
     sb_put(o, "    free(sums);\n    free(asked);\n    free(scratch.data);\n}\n\n"
-              "static void tide_game_client_hashes(const void *world, const tide_player_id *recipients, const uint32_t count, uint64_t *out)\n{\n"
-              "    tide_client_hashes_work(world, recipients, count, out, false);\n"
+              "static void tide_game_client_hashes(const void *world, const tide_player_id *recipients, const uint32_t count, uint64_t *out,\n"
+              "                                    const uint64_t *world_hash)\n{\n"
+              "    tide_client_hashes_work(world, recipients, count, out, world_hash, false);\n"
               "#ifdef TIDE_CLIENT_SPANS_CHECK // Every hash again from the rows themselves: what's kept is only ever a shortcut to it\n"
               "    uint64_t *rows = malloc((size_t)(count ? count : 1u) * sizeof *rows);\n    if (!rows) tide_out_of_memory();\n"
-              "    tide_client_hashes_work(world, recipients, count, rows, true);\n"
+              "    tide_client_hashes_work(world, recipients, count, rows, NULL, true);\n"
               "    for (uint32_t i = 0; i < count; i++) {\n        if (rows[i] == out[i]) continue;\n"
               "        fprintf(stderr, \"tide: player %u's projection hash from what's kept (%016llx) isn't its rows' own (%016llx)\\n\",\n"
               "                recipients[i].id, (unsigned long long)out[i], (unsigned long long)rows[i]);\n        abort();\n    }\n"
               "    free(rows);\n#endif\n}\n\n"
               "static uint64_t tide_game_client_hash(const void *world, tide_player_id recipient)\n{\n"
-              "    uint64_t hash;\n    tide_game_client_hashes(world, &recipient, 1u, &hash);\n    return hash;\n}\n\n");
+              "    uint64_t hash;\n    tide_game_client_hashes(world, &recipient, 1u, &hash, NULL);\n    return hash;\n}\n\n");
     // Whom entities came to (tide_game.client_came): the players a visibility group's audience gained in the checks
     // of this world since this was last asked, as the checks' own comparison of the directory found them
     sb_put(o, "static void tide_game_client_came(const void *world, const tide_player_id *recipients, const uint32_t count, bool *out)\n{\n"

@@ -63,7 +63,7 @@ static void hashes(const tide_world *w, uint64_t out[PLAYERS])
 {
     tide_player_id recipients[PLAYERS];
     for (uint32_t i = 0; i < PLAYERS; i++) recipients[i] = player(i);
-    tide_game_api.client_hashes(w, recipients, PLAYERS, out);
+    tide_game_api.client_hashes(w, recipients, PLAYERS, out, NULL);
     for (uint32_t i = 0; i < PLAYERS; i++) TIDE_CHECK(tide_game_api.client_hash(w, player(i)) == out[i]);
 }
 

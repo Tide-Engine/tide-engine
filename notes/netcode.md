@@ -1,5 +1,27 @@
 # Netcode: sessions, prediction, commands
 
+## Projection journals reuse the completed tick's hash (2026-11-19)
+
+`tick_run` computes the authoritative whole-world hash after simulation. The
+session already uses that hash for the frame and its replay record. The
+generated projection check used to fold the whole world again to name the
+same state in the repair journal. `tick_end` now passes the local hash to
+`client_hashes` together with that world. Each recipient still gets a
+projection computed from its permitted state every tick. The journal uses
+the supplied hash as its node key and computes the key itself for callers
+that pass NULL.
+
+The hash covers the exact post-tick state. Between hashing and projection
+checking, session work reads the world, updates connection and store state,
+and copies to other worlds. The hash pointer is valid only for the call.
+The journal keeps the value. `TIDE_CLIENT_SPANS_CHECK` independently recomputes
+the key and checks recipient hashes from the rows. The walk fixture compares
+repairs and the journal digest with and without a supplied key. The same
+wire protocol and snapshot format apply.
+
+See [Voxels at 100 spread bots](voxels.md#projection-journal-cost-at-100-spread-bots-2026-11-19)
+for the workload, measurements and remaining tick costs.
+
 ## A whole projection's entities found on the pool; no protocol change (2026-11-17, joins)
 
 What a player is sent of the world whole (a join, a transfer, a repair offer: generated `client_state`) asked
@@ -911,11 +933,9 @@ all of `tidec_e2e_visibility_*`, `tidec_e2e_task_visibility`, `_scene_preparatio
 `tide_tests visibility` and `session`. Sanitizers, the web and the other platforms are CI's.
 
 **Left.**
-- The world is hashed once more a tick, and once for each repair's base, to know them by what they hold. The
-  session has both numbers already (the tick's hash it sends; a kept world's is the tick before's), so handing them
-  to `client_hashes` and `client_changes` would take that away: a change to `tide_game` and `session.c`, trusting
-  the session to say which world it means, so not made here. About 1% of a server's update at 8 bots, 2% at twice
-  the view.
+- The current tick's journal key now comes from `tick_run` (2026-11-19, above).
+  The repair still looks up its base by its hash, which frozen worlds retain
+  after the first read.
 - A repair's own cost is its records: each chunk's grid encoded again for each player it comes to
   (`tide_client_put_record`), though the bytes are the same for all of them where nothing is denied.
 - A game whose `Audience` is more than 128 players keeps no mask: every row written between two worlds is looked

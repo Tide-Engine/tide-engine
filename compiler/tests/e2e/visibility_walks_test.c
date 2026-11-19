@@ -52,11 +52,11 @@ static const struct {
 
 static tide_player_id player(const uint32_t i) { return tide_player_from_index(i); }
 
-static void hashes(const tide_world *w, uint64_t out[PLAYERS])
+static void hashes(const tide_world *w, uint64_t out[PLAYERS], const uint64_t *world_hash)
 {
     tide_player_id recipients[PLAYERS];
     for (uint32_t i = 0; i < PLAYERS; i++) recipients[i] = player(i);
-    tide_game_api.client_hashes(w, recipients, PLAYERS, out);
+    tide_game_api.client_hashes(w, recipients, PLAYERS, out, world_hash);
 }
 
 typedef struct changes {
@@ -106,7 +106,7 @@ static void hashes_alone(const tide_world *w, uint64_t out[PLAYERS])
 {
     memset(&fresh, 0, sizeof fresh);
     tide_world_copy(&fresh, w);
-    hashes(&fresh, out);
+    hashes(&fresh, out, NULL);
     tide_world_free(&fresh);
 }
 
@@ -117,7 +117,8 @@ static void check(const char *what)
     changes read[PLAYERS];
     for (uint32_t p = 0; p < PLAYERS; p++) read[p] = changes_of(&world, &base, p);
     uint64_t kept[PLAYERS];
-    hashes(&world, kept);
+    const uint64_t world_hash = tide_world_hash(&world);
+    hashes(&world, kept, &world_hash);
     for (uint32_t p = 0; p < PLAYERS; p++) {
         changes again = changes_of(&world, &base, p);
         if (!same_changes(&read[p], &again)) {
@@ -233,9 +234,10 @@ static void both_tick(void)
 static void both_check(const tide_jobs *pool, const char *what)
 {
     uint64_t a[PLAYERS], b[PLAYERS];
-    hashes(&one, a);
+    hashes(&one, a, NULL);
+    const uint64_t world_hash = tide_world_hash(&many);
     const tide_jobs *was = tide_loops_enter(pool);
-    hashes(&many, b);
+    hashes(&many, b, &world_hash);
     tide_loops_leave(was);
     const uint64_t da = tide_client_check_digest(&one), db = tide_client_check_digest(&many);
     bool same = da == db;

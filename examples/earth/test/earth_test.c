@@ -911,7 +911,7 @@ TIDE_TEST(earth_a_machine_hashes_its_world_as_the_server_does)
     ticks(61); // Landed, and looked at who's near
     const tide_player_id all[3] = {player(0), player(1), player(2)};
     uint64_t together[3];
-    tide_game_api.client_hashes(&world, all, 3, together);
+    tide_game_api.client_hashes(&world, all, 3, together, NULL);
     for (int p = 0; p < 3; p++) {
         TIDE_CHECK(together[p] == tide_game_api.client_hash(&world, all[p]));
         uint32_t size = 0;

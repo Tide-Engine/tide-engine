@@ -147,7 +147,10 @@ typedef struct tide_game {
     // asks for every player's after each tick, with its threads handed to the
     // caller's (tide_loops_enter, tide/jobs.h), which the call may share its
     // work out on (its parallel loops): the same values either way.
-    void (*client_hashes)(const void *world, const tide_player_id *recipients, uint32_t count, uint64_t *out);
+    // `world_hash`, when supplied, is the whole-world hash of this exact
+    // state. Only the repair journal uses it. Other callers may pass NULL.
+    void (*client_hashes)(const void *world, const tide_player_id *recipients, uint32_t count, uint64_t *out,
+                          const uint64_t *world_hash);
     // Optional: whether entities came into each recipient's sight (a
     // visibility group's audience gained them) in the checks of `world`
     // (client_hashes) since this was last asked: what a recipient's own run

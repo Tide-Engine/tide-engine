@@ -43,7 +43,7 @@ static void hashes(const tide_world *w)
     tide_player_id recipients[PLAYERS];
     uint64_t out[PLAYERS];
     for (uint32_t i = 0; i < PLAYERS; i++) recipients[i] = player(i);
-    tide_game_api.client_hashes(w, recipients, PLAYERS, out);
+    tide_game_api.client_hashes(w, recipients, PLAYERS, out, NULL);
 }
 
 typedef struct changes {

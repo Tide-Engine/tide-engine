@@ -1777,6 +1777,89 @@ state as it was (p99 21 to 28 ms on the shared machine); hash, bytes and arrival
 is the steady state's hop ticks (handlers for the chunks spawned and destroyed, 10 to 26 ms) and the bots sharing the
 server's cores in the bench.
 
+### Projection journal cost at 100 spread bots (2026-11-19)
+
+**Workload.** Windows release, clang 23.1.2, Ryzen 9 7900X, 12 threads and
+BelowNormal process priority on shared hardware. `bench_voxels --players 100
+--spread 256 --seconds 30 --threads 12` joins bots 0.5 s apart, then plays for
+30 s with all in. The simulated network has 50 ms one-way latency, 10 ms
+jitter and 1% loss. The server finished with 79,210 chunks. The harness
+drives 100 predicting clients and the server in the same process.
+
+**Attribution.** The baseline's `--worst 35` run timed `tide_server_update`
+separately from the client updates and the observer. An average client
+used 15.94 ms per second of play and ran 2.1 ticks per tick played. The
+server used 540.70 ms per second. After all bots joined, server updates
+with a net change in entity count averaged 14.48 ms over 1,688 ticks,
+compared with 9.72 ms over 113 ticks with a stable count. Handlers and
+structural changes took 2.79 vs 0.69 ms in those groups. Generate,
+projection checks and repairs also appeared in the tail. Shared-machine
+outliers reached hundreds of milliseconds, including in client updates.
+
+An 8 s, 450 Hz main-thread stack sample during that run kept 601 of 3,601
+samples under `tide_server_update`. This distinguishes server activity
+from the rest of the harness window. It does not measure total worker CPU.
+`tide_heap_page_used` was the largest individual named leaf at 12.3% of
+the retained samples, and the full-world fold appeared in 14.0%. The
+stacks showed heap walks in tick hashing, repair bases and projection
+journaling. The selected change removes the second full-world fold in
+the completed tick's projection check. Repair bases can outlive the
+current tick and continue to use their frozen-world hashes.
+
+**Before and after.** Full run, one pass per build with the same settings.
+The 8-bot control uses `--players 8 --seconds 30 --threads 12` and the
+default spacing.
+
+| Workload | Server update median (ms) | Server update p99 (ms) | Server hashing (ms per second of play) |
+|---|---:|---:|---:|
+| 100 spread | 9.27 → 7.77 | 69.43 → 26.48 | 223.42 → 195.90 |
+| 8 bots | 0.30 → 0.41 | 6.23 → 15.03 | 35.88 → 21.00 |
+
+Simulation, pack timings and client timings also moved under shared load.
+The separate baseline diagnostic run had 38.67 ms server p99. The full-run
+table records observations with substantial run-to-run variation. The
+100-bot after run still exceeds the 16.7 ms budget at p99.
+
+To isolate the change, a temporary benchmark wrapper interleaved calls
+with the tick hash and with NULL across ticks in the same process. It timed
+the projection callback only once the server had all recipients, with the
+ordinary journal in use for both groups. The 100-spread run used
+`--join-every 0.1 --seconds 10 --watch 0` to shorten the ramp and remove
+observer work. It finished with 78,804 chunks. The 8-bot run used the full
+control settings above.
+
+| Projection callback | Checks, rehash / reuse | Mean (ms) | Median (ms) | p99 (ms) |
+|---|---:|---:|---:|---:|
+| 100 spread | 303 / 302 | 1.485 → 1.289 | 1.435 → 1.196 | 2.706 → 2.748 |
+| 8 bots | 903 / 903 | 0.081 → 0.072 | 0.060 → 0.052 | 0.304 → 0.340 |
+
+The high-load callback saved 0.196 ms on average, about 13%, with a
+0.239 ms median reduction. The callback p99 was similar. At 8 bots the
+average saving was 9 µs. The largest remaining tail work in the diagnostic
+run was split between hop churn, projection checks and repair bursts.
+
+**Verification.** Both full 100-bot runs end at tick 4,789 with world hash
+`0x5165130e825fa70f` and accepted transfer digest `0xb8fa79ab9a74ff3d`.
+They send 27.8 KB/s per bot and fill a hop's box in 31 ticks at the
+median. Both 8-bot runs end at tick 2,029 with world hash
+`0x1fdc545078ce68e8` and transfer digest `0xb4e8a59de2f669db`. The after
+runs required those pins and zero resyncs. The same-run 8-bot probe also
+passes both pins. Windows ASan and Node WASI each pass 14 focused generated
+tests (voxels, Earth, projection walks and repairs, shard visibility) and
+the engine's visibility and session filters (31 and 23 passes). The
+checked projection walks retain cumulative projection hash
+`0x3e12b0ac6ef30465` and final world hash `0x4fd29b092c60a8ea`.
+
+**Sharding.** This voxel fixture uses dimension scenes and a Streamer with
+each dimension's chunk directory. The harness offers `--split` only for
+sharded games. The measured sharding trade-off in Earth at 256 spread
+players was 57.8 ms single-server p99 vs 20.4 ms per-shard p99 with four
+regions, with aggregate view hashing rising from 739 to 818 ms per
+second and traffic from 22.5 to 42.2 KB/s per bot (benchmarks.md, Earth
+under load). Those measurements apply to Earth. Dividing the voxel
+streamer's ownership and agreeing on cross-border views would be a
+separate game design and measurement.
+
 ### What's left, most telling first
 
 1. ~~Inputs of every player, in every unacknowledged frame (section 5): 13 to 44 KB a second a player with real hands on the mice.~~ Cut the same day (section 5, the last paragraph of that bullet): 19.2 KB a second with 8 turning and standing, 10.6 flying; 32 are as they were (20.8 standing), each tick once, and a second copy of theirs is the owner's to weigh (netcode.md, Open).
