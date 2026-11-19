@@ -43,7 +43,7 @@ Requires CMake 3.25+, Ninja and clang. The toolchain finds clang through `$LLVM_
 | Run web tests | `ctest --preset web-debug` |
 | Run web pixel tests on this machine's GPU (optional: local validation focuses on native tests, owner 2026-11-05) | `ctest --preset web-hardware`, `web-hardware-d3d11` |
 
-Use `sanitize` for routine native correctness validation, including local GPU tests: ASan on Windows, ASan and UBSan on Linux/macOS. Keep ordinary release and web coverage, and measure performance without sanitizers. `debug` has no optimization; `release` and `sanitize` are optimized with debug information. Web, MinGW, Android and packaging presets are in `CMakePresets.json`; read their notes before using them. Use Node 24.22.1 or a newer 24.x patch for Node-based tooling and services (`notes/testing.md`); this includes the October 2026 security fixes and the Windows crash fix from 24.16.
+Use `sanitize` for routine native correctness validation, including local GPU tests: ASan on Windows, ASan and UBSan on Linux/macOS. Keep ordinary release and web coverage, and measure performance without sanitizers. `debug` has no optimization; `release` and `sanitize` are optimized with debug information. Web, MinGW, Android, iOS and packaging presets are in `CMakePresets.json`; read their notes before using them. Use Node 24.22.1 or a newer 24.x patch for Node-based tooling and services (`notes/testing.md`); this includes the October 2026 security fixes and the Windows crash fix from 24.16.
 
 Desktop configuration downloads pinned GLFW. Linux desktop builds need X11 development headers. `-DTIDE_PLATFORM=OFF` omits the platform layer and targets requiring it, useful offline. Ordinary native builds copy `tidels` to `build/tools/tidels` for the editors; sanitizer builds keep their test server separate. Build integration and layout details are in `notes/repository.md` and `notes/tide-programs.md`.
 
@@ -66,7 +66,7 @@ Test only what the change needs, once, before merging. Keep local validation foc
 | `tools/` only | That tool's tests |
 | Unbuilt text, including this guide and notes | No build or test suite; check references and the diff |
 
-Android emulator tests are CI's job unless the owner asks for Android work. Linux, macOS and MinGW are also CI validation for this Windows machine; native Windows ASan tests run locally. Tests needing a window, GPU or browser follow `notes/testing.md`; report unavailable coverage.
+Android emulator tests are CI's job unless the owner asks for Android work. Linux, macOS, the iOS simulator and MinGW are also CI validation for this Windows machine; native Windows ASan tests run locally. Tests needing a window, GPU or browser follow `notes/testing.md`; report unavailable coverage.
 
 Merge procedure: fetch, merge `origin/dev` into the task branch, then push `HEAD:dev`. Inspect `git diff --stat ORIG_HEAD HEAD` after a merge:
 
@@ -175,6 +175,7 @@ Read the notes for every subsystem the task touches. Paths and former section re
 | Native sanitizers, GPU/browser test runners, Node requirements, test labels | `notes/testing.md` |
 | `platform/web/`, WASI, `tide.js`, web threads and tests | `notes/web.md` |
 | MinGW/Android toolchains, APKs, signing, Android runner | `notes/android-and-mingw.md` |
+| iOS: the simulator build and its tests, the platform layer with no window (`platform/embedded/`), a game inside Unity's player only | `notes/ios.md` |
 | `bench/`, harness and saved measurements | `notes/benchmarks.md` |
 | `cmake/Tide.cmake`, `run_tidec.cmake`, generated host API/header | `notes/tide-programs.md` |
 | Docs site, pages/examples, SEO, hosting and docs workflow, `examples/earth/` (the home page's planet) | `notes/docs-site.md` |

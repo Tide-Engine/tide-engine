@@ -215,6 +215,12 @@ static const argument_help arguments[] = {
      "bundle and require the game's appId. unity --android builds the game's\n"
      "library for a Unity Android player, for each of Android's CPUs, once.\n"
      "Choose native, web or Android.", RUN | BUILD | UNITY},
+    {"--ios", "--ios", "Write a Unity iOS player's game as sources",
+     "With unity: the game's generated C, its packages' C and the engine's\n"
+     "sources go to <-o>/ios/Tide, with sources.txt naming each file's compiler\n"
+     "flags, and its pack to <-o>/ios/pack, once. tide compiles nothing: Unity's\n"
+     "Tide package puts them in the Xcode project it exports, which builds on a\n"
+     "Mac without tide. Works on every system.", UNITY},
     {"--define", "--define <SYMBOL>[=<value>]", "Define a symbol for #if lines, with a value code reads",
      "Repeat for as many symbols as needed, like --define FAST --define STEAM.\n"
      "SYMBOL=value also gives code a value: const int SIDE = define(SIDE, 500);\n"

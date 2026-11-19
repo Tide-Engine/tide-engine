@@ -94,7 +94,7 @@ static const char *dispatch_folder(int argc, char **argv)
     const char *zero[] = {
         "--server", "--strip-server-assets", "--strip-assets", "--asset-sizes", "--anonymous", "--udp-only",
         "--no-open", "--release", "--distribution", "--dev", "--no-dev", "--web", "--single-file",
-        "--android", "--stats", "--debug-views", "--ticks-alongside", "--paced", "--force"
+        "--android", "--ios", "--stats", "--debug-views", "--ticks-alongside", "--paced", "--force"
     };
     for (int i = 2; i < argc; i++) {
         const char *a = argv[i];
@@ -455,6 +455,7 @@ static int command_main(const int argc, char **argv)
         } else if (strcmp(a, "--web") == 0) opts.web = true;
         else if (build && strcmp(a, "--single-file") == 0) opts.single_file = true;
         else if (strcmp(a, "--android") == 0) opts.android = true;
+        else if (unity && strcmp(a, "--ios") == 0) opts.ios = true;
         else if (strcmp(a, "--stats") == 0) opts.stats = true;
         else if (strcmp(a, "--debug-views") == 0) opts.debug_views = true;
         else if (strcmp(a, "--define") == 0) {
@@ -526,10 +527,10 @@ static int command_main(const int argc, char **argv)
     // `dev` declarations: in what tide run builds, as a game is worked on, unless it says otherwise
     opts.dev = dev >= 0 ? dev == 1 : run && !opts.distribution;
     // Interactive runs reload as files change. Runs with no window end once.
-    opts.watch = (run && !headless && !opts.server) || (unity && !once && !opts.web && !opts.android); // A web or Android build is for a player: once
+    opts.watch = (run && !headless && !opts.server) || (unity && !once && !opts.web && !opts.android && !opts.ios); // A player's build: once
     opts.unity = unity;
     if (unity && (!opts.output || opts.server)) {
-        fprintf(stderr, opts.output ? "tide: unity builds for the Unity editor on this machine, a WebGL player with --web or an Android one with --android: not with --server\n"
+        fprintf(stderr, opts.output ? "tide: unity builds for the Unity editor on this machine, a WebGL player with --web, an Android one with --android or an iOS one with --ios: not with --server\n"
                                     : "tide: unity takes where to build, like `tide unity -o Library/Tide`\n");
         free(defines);
         return 2;
@@ -567,6 +568,11 @@ static int command_main(const int argc, char **argv)
     }
     if (opts.single_file && !opts.web) {
         fputs("tide: --single-file is for a web page: add --web\n", stderr);
+        free(defines);
+        return 2;
+    }
+    if (opts.ios && (opts.web || opts.android)) {
+        fputs("tide: a Unity player's build is for one system; use only one of --web, --android and --ios\n", stderr);
         free(defines);
         return 2;
     }

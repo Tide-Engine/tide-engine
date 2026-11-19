@@ -446,7 +446,12 @@ cbuffer TideGroups {
     uint3 _TideGroups; // num_workgroups: the dispatch's size, in workgroups
 };
 
+#if defined(SHADER_API_METAL)
+uint _TideStorageBytes0;
+uint tidehl_length0() { return _TideStorageBytes0 / 16u; }
+#else
 uint tidehl_length0() { uint n; _TideStorage0.GetDimensions(n); return n / 16u; }
+#endif
 uint tidehl_at0(uint i) { return min(i, tidehl_length0() - 1u) * 16u; }
 void compute();
 

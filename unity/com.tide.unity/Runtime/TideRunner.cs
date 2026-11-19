@@ -330,8 +330,9 @@ namespace Tide
                 Debug.LogWarning($"Tide: the runner's Arguments have {unknown}, which the game doesn't take in Unity: it takes " +
                                  "--host [port], --join <code>, --connect <address>, --seed <n>, --data-dir <folder> and --stats", this);
             }
-            // An Android app's own files are where Unity says: the game's saves go beside Unity's
-            if (Application.platform == RuntimePlatform.Android && !words.Contains("--data-dir"))
+            // A phone's app's own files are where Unity says: the game's saves go beside Unity's
+            if ((Application.platform == RuntimePlatform.Android || Application.platform == RuntimePlatform.IPhonePlayer)
+                && !words.Contains("--data-dir"))
             {
                 words.Add("--data-dir");
                 words.Add(Application.persistentDataPath);

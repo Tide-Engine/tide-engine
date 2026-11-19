@@ -457,9 +457,19 @@ cbuffer TideGroups {
     uint3 _TideGroups; // num_workgroups: the dispatch's size, in workgroups
 };
 
+#if defined(SHADER_API_METAL)
+uint _TideStorageBytes0;
+uint tidehl_length0() { return _TideStorageBytes0 / 4u; }
+#else
 uint tidehl_length0() { uint n; _TideStorage0.GetDimensions(n); return n / 4u; }
+#endif
 uint tidehl_at0(uint i) { return min(i, tidehl_length0() - 1u) * 4u; }
+#if defined(SHADER_API_METAL)
+uint _TideStorageBytes2;
+uint tidehl_length2() { return _TideStorageBytes2 / 4u; }
+#else
 uint tidehl_length2() { uint n; _TideStorage2.GetDimensions(n); return n / 4u; }
+#endif
 uint tidehl_at2(uint i) { return min(i, tidehl_length2() - 1u) * 4u; }
 float tide_depth(float d);
 float4 tide_straight(float4 c);

@@ -276,8 +276,15 @@ namespace Tide
             Shader.PropertyToID("_TideStorage0"), Shader.PropertyToID("_TideStorage1"), Shader.PropertyToID("_TideStorage2"),
             Shader.PropertyToID("_TideStorage3"),
         };
+        // Each storage buffer's bytes, beside it: Metal's shaders can't ask a buffer its size, so they're told (hlsl.c's tidehl_length)
+        static readonly int[] StorageBytes =
+        {
+            Shader.PropertyToID("_TideStorageBytes0"), Shader.PropertyToID("_TideStorageBytes1"), Shader.PropertyToID("_TideStorageBytes2"),
+            Shader.PropertyToID("_TideStorageBytes3"),
+        };
         static readonly int Groups = Shader.PropertyToID("TideGroups");
         static readonly int CopyFrom = Shader.PropertyToID("_TideFrom"), CopyTo = Shader.PropertyToID("_TideTo");
+        static readonly int CopySizes = Shader.PropertyToID("_TideCopySizes");
         static readonly int CopyWords = Shader.PropertyToID("_TideCopy");
         static readonly int[] Textures =
         {
@@ -2311,6 +2318,7 @@ namespace Tide
             cb.SetComputeBufferParam(copier, copyKernel, CopyFrom, from);
             cb.SetComputeBufferParam(copier, copyKernel, CopyTo, to);
             cb.SetComputeIntParams(copier, CopyWords, (int)fromOffset, (int)toOffset, (int)words, (int)x);
+            cb.SetComputeIntParams(copier, CopySizes, from.count * from.stride, to.count * to.stride, 0, 0);
             cb.DispatchCompute(copier, copyKernel, (int)x, (int)y, 1);
         }
 
@@ -2376,7 +2384,12 @@ namespace Tide
                 groupsBuffer.SetData(groupWords);
             }
             var cb = Work();
-            for (var i = 0; i < pipeline.storageCount; i++) cb.SetComputeBufferParam(cs, kernel, Storage[i], StorageBuffer(i, (pipeline.storageWrites >> i & 1) != 0));
+            for (var i = 0; i < pipeline.storageCount; i++)
+            {
+                var bound = StorageBuffer(i, (pipeline.storageWrites >> i & 1) != 0);
+                cb.SetComputeBufferParam(cs, kernel, Storage[i], bound);
+                if (bound != null) cb.SetComputeIntParam(cs, StorageBytes[i], bound.count * bound.stride);
+            }
             if (pipeline.uniformSize > 0 && into.uniformBuffer != null)
                 cb.SetComputeConstantBufferParam(cs, Uniforms, into.uniformBuffer, uniformAt, Math.Max(16, (pipeline.uniformSize + 15) / 16 * 16));
             cb.SetComputeConstantBufferParam(cs, Groups, groupsBuffer, 0, 16);
@@ -2597,7 +2610,12 @@ namespace Tide
                         cb.SetGlobalInteger(OwnLow, (int)c.own);
                         cb.SetGlobalInteger(OwnHigh, (int)c.ownHigh);
                         if (c.uniformSize > 0) cb.SetGlobalConstantBuffer(r.uniformBuffer, Uniforms, c.uniformAt, c.uniformSize);
-                        for (var i = 0; i < c.storageCount; i++) cb.SetGlobalBuffer(Storage[i], r.storage[c.storage + i]);
+                        for (var i = 0; i < c.storageCount; i++)
+                        {
+                            var bound = r.storage[c.storage + i];
+                            cb.SetGlobalBuffer(Storage[i], bound);
+                            if (bound != null) cb.SetGlobalInteger(StorageBytes[i], bound.count * bound.stride);
+                        }
                         if (c.arguments != null)
                         {
                             // Its numbers on the GPU: the first vertex or index is theirs, not _TideFirst's

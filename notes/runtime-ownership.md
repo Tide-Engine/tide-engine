@@ -1,3 +1,19 @@
+## A platform layer with no window of its own, for iOS (2026-11-19)
+
+New, the agent's, under the `platform/` maintenance below; Provisional. `platform/embedded/window.c` and `audio.c`
+implement `src/window.h`, `src/audio_out.h` and `src/audio_in.h` for a build that lives inside another program
+(tide/embed.h) and has no window, GPU or audio device of its own: an iOS game under Unity, and a console's the same
+way. Every function answers as "none": no window opens (`tide_window_open` says why and returns false), no key is
+held, no pack is beside a program, no device opens. No new function, no changed signature, nothing an existing build
+compiles: the files are in `tide_platform` only where `TIDE_IOS` is set, in place of `desktop/glfw.c`,
+`desktop/audio.c` and `src/gpu_vk.c`. Generated C calls nothing new; no layout, hash, snapshot, wire, embed ABI or
+host shape changed. The rest of the platform layer builds for iOS unchanged, through its `__APPLE__` branches.
+`tide unity --ios` gives the same files to a Unity player's Xcode project as sources (`notes/unity.md`, iOS
+players), for which a desktop package installs `platform/src`, `platform/embedded` and what a build generates for
+them (the font, the renderer's SPIR-V and kernels) under `src/platform`. Contracts and tests: `notes/ios.md`.
+If the owner takes this over: a window of Tide's own on iOS (a standalone app, Metal) would be another backend
+beside this one, not a change to it.
+
 ## A check's rows on the tick's pool (2026-11-17, parts)
 
 **For the owner to confirm**: `tide_game.client_hashes` (tide/session.h) may now share its work out on the threads

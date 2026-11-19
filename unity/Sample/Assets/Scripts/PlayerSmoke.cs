@@ -29,8 +29,23 @@ public sealed class PlayerSmoke : MonoBehaviour
         {
         }
 #endif
+#if TIDE_SMOKE
+        // A player built to check itself (SampleSetup.BuildIos -tideSmoke): a phone's app has no command line
+        asked = true;
+#endif
         if (!asked) return;
         new GameObject("Player smoke").AddComponent<PlayerSmoke>();
+    }
+
+    // What it found, on the screen, where the player stays open: an iPhone's app has no log at hand and doesn't quit
+    string shown = "Tide smoke: running...";
+
+    void OnGUI()
+    {
+        if (Application.platform != RuntimePlatform.IPhonePlayer) return;
+        var style = new GUIStyle(GUI.skin.label) { fontSize = Mathf.Max(18, Screen.height / 32), wordWrap = true };
+        style.normal.textColor = shown.EndsWith("PASS") ? Color.green : shown.EndsWith("FAIL") ? Color.red : Color.white;
+        GUI.Label(new Rect(Screen.width * 0.05f, Screen.height * 0.08f, Screen.width * 0.9f, Screen.height * 0.5f), shown, style);
     }
 
     IEnumerator Start()
@@ -49,8 +64,10 @@ public sealed class PlayerSmoke : MonoBehaviour
         var drew = "no GPU";
         if (SystemInfo.graphicsDeviceType != UnityEngine.Rendering.GraphicsDeviceType.Null) yield return Drew(ball, seen => drew = seen);
         var ok = runner != null && runner.Running && ball != null && ball.Mine && turned && (drew == "no GPU" || drew == "yes");
-        Debug.Log($"Tide smoke: running {runner != null && runner.Running}, ball {(ball != null ? ball.transform.position.ToString("F2") : "none")}, " +
-                  $"mine {ball != null && ball.Mine}, pillar turned {turned}, drew {drew}: {(ok ? "PASS" : "FAIL")}");
+        shown = $"Tide smoke: running {runner != null && runner.Running}, ball {(ball != null ? ball.transform.position.ToString("F2") : "none")}, " +
+                $"mine {ball != null && ball.Mine}, pillar turned {turned}, drew {drew} ({SystemInfo.graphicsDeviceType}): {(ok ? "PASS" : "FAIL")}";
+        Debug.Log(shown);
+        if (Application.platform == RuntimePlatform.IPhonePlayer) yield break; // It stays, with what it found on the screen
         Application.Quit(ok ? 0 : 1);
     }
 

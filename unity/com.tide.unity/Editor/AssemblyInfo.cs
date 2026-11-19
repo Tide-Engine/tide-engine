@@ -4,3 +4,4 @@ using System.Runtime.CompilerServices;
 [assembly: InternalsVisibleTo("Tide.Sample.EditorTests")]
 // The Android build's part, an assembly compiled only where Unity's Android module is
 [assembly: InternalsVisibleTo("Tide.Editor.Android")]
+[assembly: InternalsVisibleTo("Tide.Editor.iOS")]

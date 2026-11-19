@@ -351,20 +351,9 @@ jobs:
         if: inputs.preset == 'ios-simulator'
         run: |
           xcodebuild -version
-          # The newest iPhone the image's simulators have
-          device=$(xcrun simctl list devices available --json | node -e '
-            const all = JSON.parse(require("node:fs").readFileSync(0, "utf8")).devices;
-            const runtimes = Object.keys(all).filter((name) => /SimRuntime\.iOS-/.test(name)).sort((a, b) =>
-              a.localeCompare(b, undefined, { numeric: true }));
-            for (const runtime of runtimes.reverse()) {
-              const phone = all[runtime].find((d) => d.isAvailable && /^iPhone/.test(d.name));
-              if (phone) { console.log(phone.udid); process.exit(0); }
-            }
-            process.exit(1);')
-          xcrun simctl boot "$device"
           cmake --preset ios-simulator -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
           cmake --build --preset ios-simulator --target tide_ios_tests
-          xcrun simctl bootstatus "$device"
+          device=$(bash .github/ios-simulator.sh)
           TIDE_IOS_SIMULATOR="$device" ctest --preset ios-simulator -R "$(cat build/ios-simulator/ios_tests.txt)"
           xcrun simctl shutdown "$device"
           cmake --preset ios-device -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
@@ -410,6 +399,24 @@ jobs:
           cmake -DTIDE="$PWD/build/dist/tide/bin/tide${{ runner.os == 'Windows' && '.exe' || '' }}" \
             -DBUNDLE="$PWD/build/dist/tide/editors/tide-jetbrains-installer.zip" \
             -DWORK="$PWD/build/try-editors" -P compiler/cli/tests/jetbrains_test.cmake
+      # A Unity iOS player's game, which tide writes as sources for the player's
+      # Xcode project (tide unity --ios): the Unity sample's, compiled with each
+      # file's flags and linked into a stand-in for the player, which runs its
+      # match. On a Mac, for the iOS simulator with Xcode's clang, as an Xcode
+      # project compiles it, and again for the Mac with LLVM's: the two must
+      # say the same world hashes. Elsewhere, for this machine.
+      - name: Try the package (Unity iOS)
+        if: inputs.preset == 'package'
+        run: |
+          tide="build/dist/tide/bin/tide${{ runner.os == 'Windows' && '.exe' || '' }}"
+          clang="$LLVM_ROOT/bin/clang${{ runner.os == 'Windows' && '.exe' || '' }}"
+          if [ "$RUNNER_OS" = macOS ]; then
+            device=$(bash .github/ios-simulator.sh)
+            node compiler/cli/tests/unity_ios_test.mjs --tide "$tide" --game unity/Sample/Assets --work build/try-ios               --simulator "$device" --also "$clang"
+            xcrun simctl shutdown "$device"
+          else
+            node compiler/cli/tests/unity_ios_test.mjs --tide "$tide" --game unity/Sample/Assets --work build/try-ios               --clang "$clang"
+          fi
       # A game's C++, which builds with no C++ runtime: that it builds for each
       # target with the package's own compiler and headers, and what tide says
       # when it can't.

@@ -1,4 +1,4 @@
-// the renderer's target_pixels
+// the renderer's hiz_one
 // Made by tide unity from the game's WGSL. Do not edit: it's made again as the game is built.
 #pragma kernel tidehl_compute
 #include "Packages/com.tide.unity/Runtime/Shaders/TideWarnings.hlsl"
@@ -433,197 +433,199 @@ float2 tidehl_unpack2x16unorm(uint u) { return float2(u & 0xFFFFu, u >> 16) / 65
 float2 tidehl_unpack2x16snorm(uint u) { int2 b = asint(uint2(u << 16, u)) >> 16; return max(float2(b) / 32767.0, -1.0); }
 float2 tidehl_unpack2x16float(uint u) { return float2(f16tof32(u & 0xFFFFu), f16tof32(u >> 16)); }
 
-struct tide_uniforms {
-    int4 tide_v0;
-    int4 tide_v1;
-    int4 tide_v2;
+struct HiZ {
+    uint4 size;
+    uint4 at;
 };
+struct tidehl_a10 { int v[256]; };
 
 static const bool tide_reversed_depth = true;
-cbuffer TideUniforms {
-    int4 tidehl_u_tide_v0;
-    int4 tidehl_u_tide_v1;
-    int4 tidehl_u_tide_v2;
-};
-Texture2D<float4> _TideTexture0;
+Texture2D<float> _TideTexture0;
 SamplerState sampler_TideTexture0;
+cbuffer TideUniforms {
+    uint4 tidehl_u_size;
+    uint4 tidehl_u_at;
+};
 RWByteAddressBuffer _TideStorage0;
-ByteAddressBuffer _TideStorage2;
-static int tide_inv_index = ((int)0);
-static int3 tide_inv_at = ((int3)0);
-static int3 tide_inv_local = ((int3)0);
-static int3 tide_inv_group = ((int3)0);
-static int3 tide_inv_count = ((int3)0);
+groupshared tidehl_a10 tile;
+groupshared uint finished;
 cbuffer TideGroups {
     uint3 _TideGroups; // num_workgroups: the dispatch's size, in workgroups
 };
 
+#if defined(SHADER_API_METAL)
+uint _TideStorageBytes0;
+uint tidehl_length0() { return _TideStorageBytes0 / 4u; }
+#else
 uint tidehl_length0() { uint n; _TideStorage0.GetDimensions(n); return n / 4u; }
+#endif
 uint tidehl_at0(uint i) { return min(i, tidehl_length0() - 1u) * 4u; }
-uint tidehl_length2() { uint n; _TideStorage2.GetDimensions(n); return n / 4u; }
-uint tidehl_at2(uint i) { return min(i, tidehl_length2() - 1u) * 4u; }
+void tidehl_atomicStore0(uint at, int v) {
+    int r;
+    _TideStorage0.InterlockedExchange(at, v, r);
+}
+int tidehl_atomicAdd0(uint at, int v) {
+    int r;
+    _TideStorage0.InterlockedAdd(at, v, r);
+    return r;
+}
+int tidehl_atomicLoad0(uint at) {
+    int r;
+    _TideStorage0.InterlockedOr(at, (int)0, r);
+    return r;
+}
 float tide_depth(float d);
-bool tide_nan(float x);
-float tide_min1(float a, float b);
-float tide_max1(float a, float b);
-float tide_clamp1(float a, float b, float c);
-float4 tide_straight(float4 c);
-uint tide_base0();
-uint tide_word0(uint tide_k);
-int tide_count0();
-int tide_capacity0();
-float4 tide_get0(int tide_i);
-void tide_put0(int tide_i, float4 tide_v);
-float2 tf_ReadUv(int t_x, int t_y, int t_across, int t_down);
-void ts_ReadTargetPixels();
-void compute(uint3 tide_gid, uint3 tide_lid, uint tide_lix, uint3 tide_wid, uint3 tide_groups);
+float tide_clip_depth(float4 p);
+float pixel(uint x, uint y);
+uint across(uint n, uint k);
+uint level_at(uint k);
+void put(uint k, uint x, uint y, int v);
+int most(uint k, uint x, uint y, int a, int b, int c, int d);
+int down(uint k, uint t, uint3 g);
+void compute(uint t, uint3 g);
 
 float tide_depth(float d)
 {
     return (tide_reversed_depth ? (1.0 - d) : d);
 }
 
-bool tide_nan(float x)
+float tide_clip_depth(float4 p)
 {
-    return ((asint(x) & 2147483647) > 2139095040);
+    return (tide_reversed_depth ? ((p.w - p.z) * 0.5) : ((p.z + p.w) * 0.5));
 }
 
-float tide_min1(float a, float b)
+float pixel(uint x, uint y)
 {
-    if (tide_nan(b)) {
-        return a;
-    } else {
-        if (tide_nan(a)) {
-            return b;
-        } else {
-            if ((a < b)) {
-                return a;
-            } else {
-                return b;
-            }
+    return tide_depth(tidehl_load(_TideTexture0, int2(int2(((int)(x)), ((int)(y)))), int(0)));
+}
+
+uint across(uint n, uint k)
+{
+    return (((n - 1u) >> ((k + 1u) & 31u)) + 1u);
+}
+
+uint level_at(uint k)
+{
+    uint at = tidehl_u_at.x;
+    {
+        uint j = 0u;
+        [loop] for (; (j < k); j = (j + 1u)) {
+            at = (at + (across(tidehl_u_size.x, j) * across(tidehl_u_size.y, j)));
         }
     }
+    return at;
 }
 
-float tide_max1(float a, float b)
+void put(uint k, uint x, uint y, int v)
 {
-    if (tide_nan(b)) {
-        return a;
-    } else {
-        if (tide_nan(a)) {
-            return b;
-        } else {
-            if ((a > b)) {
-                return a;
-            } else {
-                return b;
+    uint w = across(tidehl_u_size.x, k);
+    if ((((k < tidehl_u_size.z) && (x < w)) && (y < across(tidehl_u_size.y, k)))) {
+        tidehl_atomicStore0(tidehl_at0((uint)(((level_at(k) + (y * w)) + x))), (int)(v));
+    }
+}
+
+int most(uint k, uint x, uint y, int a, int b, int c, int d)
+{
+    bool right = (((2u * x) + 1u) < across(tidehl_u_size.x, (k - 1u)));
+    int top = (right ? max(a, b) : a);
+    int bottom = (right ? max(c, d) : c);
+    return ((((2u * y) + 1u) < across(tidehl_u_size.y, (k - 1u))) ? max(top, bottom) : top);
+}
+
+int down(uint k, uint t, uint3 g)
+{
+    uint n = (16u >> (k & 31u));
+    int m = 0;
+    if ((t < (n * n))) {
+        uint i = (((4u * n) * tidehl_div(t, n)) + (2u * tidehl_rem(t, n)));
+        m = most(k, ((g.x * n) + tidehl_rem(t, n)), ((g.y * n) + tidehl_div(t, n)), tile.v[min((uint)(i), 255u)], tile.v[min((uint)((i + 1u)), 255u)], tile.v[min((uint)((i + (2u * n))), 255u)], tile.v[min((uint)(((i + (2u * n)) + 1u)), 255u)]);
+        put(k, ((g.x * n) + tidehl_rem(t, n)), ((g.y * n) + tidehl_div(t, n)), m);
+    }
+    return m;
+}
+
+void compute(uint t, uint3 g)
+{
+    uint x = ((g.x * 16u) + tidehl_rem(t, 16u));
+    uint y = ((g.y * 16u) + tidehl_div(t, 16u));
+    int v = 0;
+    if (((x < across(tidehl_u_size.x, 0u)) && (y < across(tidehl_u_size.y, 0u)))) {
+        uint x1 = min(((2u * x) + 1u), (tidehl_u_size.x - 1u));
+        uint y1 = min(((2u * y) + 1u), (tidehl_u_size.y - 1u));
+        v = asint(max(max(pixel((2u * x), (2u * y)), pixel(x1, (2u * y))), max(pixel((2u * x), y1), pixel(x1, y1))));
+        tidehl_atomicStore0(tidehl_at0((uint)(((tidehl_u_at.x + (y * across(tidehl_u_size.x, 0u))) + x))), (int)(v));
+    }
+    tile.v[min((uint)(t), 255u)] = v;
+    GroupMemoryBarrierWithGroupSync();
+    int m = down(1u, t, g);
+    GroupMemoryBarrierWithGroupSync();
+    if ((t < 64u)) {
+        tile.v[min((uint)(t), 255u)] = m;
+    }
+    GroupMemoryBarrierWithGroupSync();
+    m = down(2u, t, g);
+    GroupMemoryBarrierWithGroupSync();
+    if ((t < 16u)) {
+        tile.v[min((uint)(t), 255u)] = m;
+    }
+    GroupMemoryBarrierWithGroupSync();
+    m = down(3u, t, g);
+    GroupMemoryBarrierWithGroupSync();
+    if ((t < 4u)) {
+        tile.v[min((uint)(t), 255u)] = m;
+    }
+    GroupMemoryBarrierWithGroupSync();
+    m = down(4u, t, g);
+    GroupMemoryBarrierWithGroupSync();
+    if ((t < 1u)) {
+        tile.v[min((uint)(t), 255u)] = m;
+    }
+    GroupMemoryBarrierWithGroupSync();
+    DeviceMemoryBarrierWithGroupSync();
+    if ((t == 0u)) {
+        finished = (((((uint)(tidehl_atomicAdd0(tidehl_at0((uint)(tidehl_u_at.z)), (int)(1)))) + 1u) == tidehl_u_at.y) ? 1u : 0u);
+    }
+    GroupMemoryBarrierWithGroupSync();
+    bool last = (finished == 1u);
+    {
+        uint k = 5u;
+        [loop] for (; (k < 16u); k = (k + 1u)) {
+            if ((last && (k < tidehl_u_size.z))) {
+                uint w = across(tidehl_u_size.x, k);
+                uint pw = across(tidehl_u_size.x, (k - 1u));
+                uint ph = across(tidehl_u_size.y, (k - 1u));
+                uint below = level_at((k - 1u));
+                uint to = level_at(k);
+                {
+                    uint i = t;
+                    [loop] for (; (i < (w * across(tidehl_u_size.y, k))); i = (i + 256u)) {
+                        uint x0 = (2u * tidehl_rem(i, w));
+                        uint y0 = (2u * tidehl_div(i, w));
+                        uint x1 = min((x0 + 1u), (pw - 1u));
+                        uint y1 = min((y0 + 1u), (ph - 1u));
+                        int a = max(tidehl_atomicLoad0(tidehl_at0((uint)(((below + (y0 * pw)) + x0)))), tidehl_atomicLoad0(tidehl_at0((uint)(((below + (y0 * pw)) + x1)))));
+                        int b = max(tidehl_atomicLoad0(tidehl_at0((uint)(((below + (y1 * pw)) + x0)))), tidehl_atomicLoad0(tidehl_at0((uint)(((below + (y1 * pw)) + x1)))));
+                        tidehl_atomicStore0(tidehl_at0((uint)((to + i))), (int)(max(a, b)));
+                    }
+                }
             }
+            DeviceMemoryBarrierWithGroupSync();
         }
     }
-}
-
-float tide_clamp1(float a, float b, float c)
-{
-    if (tide_nan(a)) {
-        return b;
-    } else {
-        return tide_max1(b, tide_min1(c, a));
+    if ((last && (t == 0u))) {
+        tidehl_atomicStore0(tidehl_at0((uint)(tidehl_u_at.z)), (int)(0));
     }
 }
 
-float4 tide_straight(float4 c)
-{
-    if ((c.a == 0.0)) {
-        return ((float4)(0.0));
-    } else {
-        return float4((c.rgb / c.a), c.a);
-    }
-}
-
-uint tide_base0()
-{
-    return ((uint)(tidehl_u_tide_v1.w));
-}
-
-uint tide_word0(uint tide_k)
-{
-    return (_TideStorage0.Load(tidehl_at0((uint)((tide_base0() + tide_k)))));
-}
-
-int tide_count0()
-{
-    return ((int)(min(tide_word0(0u), ((uint)(tidehl_u_tide_v2.x)))));
-}
-
-int tide_capacity0()
-{
-    return ((int)(min(tide_word0(1u), ((uint)(tidehl_u_tide_v2.x)))));
-}
-
-float4 tide_get0(int tide_i)
-{
-    if (((tide_i < 0) || (tide_i >= tide_count0()))) {
-        return ((float4)0);
-    } else {
-        uint tide_b = (4u + (((uint)(tide_i)) * 4u));
-        int4 tide_q0 = int4(asint(tide_word0((tide_b + 0u))), asint(tide_word0((tide_b + 1u))), asint(tide_word0((tide_b + 2u))), asint(tide_word0((tide_b + 3u))));
-        float4 tide_p0 = asfloat(tide_q0);
-        return tide_p0;
-    }
-}
-
-void tide_put0(int tide_i, float4 tide_v)
-{
-    if (((tide_i < 0) || (tide_i >= tide_capacity0()))) {
-        return;
-    } else {
-        uint tide_b = ((tide_base0() + 4u) + (((uint)(tide_i)) * 4u));
-        _TideStorage0.Store(tidehl_at0((uint)((tide_b + 0u))), asuint((uint)(asuint(tide_v.x))));
-        _TideStorage0.Store(tidehl_at0((uint)((tide_b + 1u))), asuint((uint)(asuint(tide_v.y))));
-        _TideStorage0.Store(tidehl_at0((uint)((tide_b + 2u))), asuint((uint)(asuint(tide_v.z))));
-        _TideStorage0.Store(tidehl_at0((uint)((tide_b + 3u))), asuint((uint)(asuint(tide_v.w))));
-    }
-}
-
-float2 tf_ReadUv(int t_x, int t_y, int t_across, int t_down)
-{
-    return ((float2(((float)(t_x)), ((float)(t_y))) + ((float2)(0.5))) / float2(((float)(t_across)), ((float)(t_down))));
-}
-
-void ts_ReadTargetPixels()
-{
-    if (((tide_inv_at.x >= tidehl_u_tide_v0.x) || (tide_inv_at.y >= tidehl_u_tide_v0.y))) {
-        return;
-    } else {
-        tide_put0(((tide_inv_at.y * tidehl_u_tide_v0.x) + tide_inv_at.x), tide_straight(tidehl_sample_level(_TideTexture0, sampler_TideTexture0, tidehl_mode(((_TideSampling >> 0u) & 15u), 0u), tf_ReadUv((tidehl_u_tide_v0.w + tide_inv_at.x), ((tidehl_u_tide_v1.x + tidehl_u_tide_v0.z) + tide_inv_at.y), tidehl_u_tide_v1.y, tidehl_u_tide_v1.z), float(tide_clamp1(0.0, 0.0, 31.0)))));
-    }
-}
-
-void compute(uint3 tide_gid, uint3 tide_lid, uint tide_lix, uint3 tide_wid, uint3 tide_groups)
-{
-    uint3 tide_size = uint3((_TideStorage2.Load(tidehl_at2((uint)(4)))), (_TideStorage2.Load(tidehl_at2((uint)(5)))), (_TideStorage2.Load(tidehl_at2((uint)(6)))));
-    tide_inv_at = ((int3)(tide_gid));
-    tide_inv_local = ((int3)(tide_lid));
-    tide_inv_group = ((int3)(tide_wid));
-    tide_inv_count = ((int3)(tide_size));
-    tide_inv_index = ((int)((tide_gid.x + (tide_size.x * (tide_gid.y + (tide_size.y * tide_gid.z))))));
-    if (all((tide_gid < tide_size))) {
-        ts_ReadTargetPixels();
-    }
-}
-
-[numthreads(64, 1, 1)]
+[numthreads(256, 1, 1)]
 void tidehl_compute(uint3 tidehl_global : SV_DispatchThreadID, uint3 tidehl_local : SV_GroupThreadID,
                     uint tidehl_index : SV_GroupIndex, uint3 tidehl_group : SV_GroupID) {
-    uint3 tidehl_p0 = ((uint3)0);
-    tidehl_p0 = tidehl_global;
+    { [loop] for (uint tidehl_z = tidehl_index; tidehl_z < 256u; tidehl_z += 256u) tile.v[tidehl_z] = ((int)0); };
+    if (tidehl_index == 0u) finished = ((uint)0);
+    GroupMemoryBarrierWithGroupSync();
+    uint tidehl_p0 = ((uint)0);
+    tidehl_p0 = tidehl_index;
     uint3 tidehl_p1 = ((uint3)0);
-    tidehl_p1 = tidehl_local;
-    uint tidehl_p2 = ((uint)0);
-    tidehl_p2 = tidehl_index;
-    uint3 tidehl_p3 = ((uint3)0);
-    tidehl_p3 = tidehl_group;
-    uint3 tidehl_p4 = ((uint3)0);
-    tidehl_p4 = _TideGroups;
-    compute(tidehl_p0, tidehl_p1, tidehl_p2, tidehl_p3, tidehl_p4);
+    tidehl_p1 = tidehl_group;
+    compute(tidehl_p0, tidehl_p1);
 }

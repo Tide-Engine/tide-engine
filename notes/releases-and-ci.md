@@ -1,5 +1,13 @@
 # Releases, installing and CI
 
+## The iOS simulator job (2026-11-19)
+
+Build's test matrix has `macos-arm64` / `ios-simulator` (`check.yml`, Test (iOS simulator)): the engine and the
+platform layer with no window of its own, compiled by Xcode's clang, their tests in a simulator
+(`.github/ios-simulator.sh` boots the newest iPhone the image has), then the two libraries for a device's SDK. About
+10 minutes, a sixth macOS job in a run (the account runs five at once). It has no ctest-cost cache and its own
+ccache family. `notes/ios.md`.
+
 ## No real GPU in CI (2026-11-05)
 
 CI tests WebGPU only on software adapters (SwiftShader on Windows and macOS, `gpu=none` on Linux), by the owner's decision: "im not always going to have my computer on and i dont want it stressing it out either so for now i guess CI wont test real GPUs". No self-hosted or GPU job exists, and none gates a release. Real-GPU WebGPU coverage is the local hardware lane (`ctest --preset web-hardware`, `notes/testing.md`, The hardware web lane), which agents run for rendering changes, as they run the native `gpu` tests on Vulkan.

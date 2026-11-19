@@ -1,0 +1,112 @@
+# Builds a Unity iOS player's Xcode project on a Mac, for whoever has none: unity/ios-app.mjs uploads the project
+# Unity exported (on any system) as a draft release's files and starts this, which builds it with Xcode and gives
+# back either the app for an iPhone, unsigned (an .ipa to sign and install from Windows: notes/unity.md, iOS
+# players), or, for a project exported for the simulator, what the app said when it ran in one here.
+name: iOS app
+run-name: iOS app (${{ inputs.release }}${{ inputs.simulator && ', simulator' || '' }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: The draft release whose files are the Xcode project (xcode.tar.gz.*), as unity/ios-app.mjs made it
+        required: true
+        type: string
+      simulator:
+        description: The project was exported for the iOS simulator; run the app in one and report what it says
+        default: false
+        type: boolean
+      expect:
+        description: With simulator, the text a line of the app's log must have for the run to pass
+        default: 'Tide smoke:'
+        type: string
+
+permissions:
+  contents: write # Draft releases are read with it
+
+jobs:
+  build:
+    name: Build
+    runs-on: macos-latest
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE: ${{ inputs.release }}
+      EXPECT: ${{ inputs.expect }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: The Xcode project
+        run: |
+          mkdir -p "$RUNNER_TEMP/upload" "$RUNNER_TEMP/xcode"
+          gh release download "$RELEASE" --repo "$GITHUB_REPOSITORY" --pattern 'xcode.tar.gz.*' --dir "$RUNNER_TEMP/upload"
+          cat "$RUNNER_TEMP"/upload/xcode.tar.gz.* | tar -xz -C "$RUNNER_TEMP/xcode"
+          rm -rf "$RUNNER_TEMP/upload"
+          test -d "$RUNNER_TEMP/xcode/Unity-iPhone.xcodeproj"
+          # Tide's sources are in it, each with the flags that keep its floats the same on every machine
+          test -f "$RUNNER_TEMP/xcode/Libraries/Tide/sources.txt"
+          grep -c 'ffp-contract=off' "$RUNNER_TEMP/xcode/Unity-iPhone.xcodeproj/project.pbxproj"
+          xcodebuild -version
+      - name: Build for an iPhone
+        if: ${{ !inputs.simulator }}
+        working-directory: ${{ runner.temp }}/xcode
+        run: |
+          set -o pipefail
+          # Not signed: whoever installs it signs it, with their own Apple ID
+          xcodebuild -project Unity-iPhone.xcodeproj -scheme Unity-iPhone -configuration Release -sdk iphoneos \
+            -derivedDataPath "$RUNNER_TEMP/derived" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= \
+            build | tee "$RUNNER_TEMP/xcodebuild.log" | grep -E '^(CompileC .*Libraries/Tide|Ld |error:|warning: .*Tide|\*\* )|: error:' || true
+          grep -q '\*\* BUILD SUCCEEDED \*\*' "$RUNNER_TEMP/xcodebuild.log"
+          app=$(ls -d "$RUNNER_TEMP"/derived/Build/Products/Release-iphoneos/*.app | head -1)
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$app" "$RUNNER_TEMP/ipa/Payload/"
+          (cd "$RUNNER_TEMP/ipa" && zip -qry "$RUNNER_TEMP/app-unsigned.ipa" Payload)
+          ls -l "$RUNNER_TEMP/app-unsigned.ipa"
+      - name: Build for the simulator, and run it there
+        if: ${{ inputs.simulator }}
+        working-directory: ${{ runner.temp }}/xcode
+        run: |
+          set -o pipefail
+          xcodebuild -project Unity-iPhone.xcodeproj -scheme Unity-iPhone -configuration Release -sdk iphonesimulator \
+            -derivedDataPath "$RUNNER_TEMP/derived" CODE_SIGNING_ALLOWED=NO \
+            build | tee "$RUNNER_TEMP/xcodebuild.log" | grep -E '^(CompileC .*Libraries/Tide|Ld |error:|warning: .*Tide|\*\* )|: error:' || true
+          grep -q '\*\* BUILD SUCCEEDED \*\*' "$RUNNER_TEMP/xcodebuild.log"
+          app=$(ls -d "$RUNNER_TEMP"/derived/Build/Products/Release-iphonesimulator/*.app | head -1)
+          bundle=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist")
+          device=$(bash "$GITHUB_WORKSPACE/.github/ios-simulator.sh")
+          xcrun simctl install "$device" "$app"
+          xcrun simctl launch --console-pty "$device" "$bundle" > "$RUNNER_TEMP/app.log" 2>&1 &
+          # Until the app says the line asked for, for three minutes at most
+          for _ in $(seq 180); do
+            if grep -q -- "$EXPECT" "$RUNNER_TEMP/app.log"; then break; fi
+            sleep 1
+          done
+          xcrun simctl terminate "$device" "$bundle" || true
+          xcrun simctl shutdown "$device" || true
+          echo "::group::What the app said"
+          cat "$RUNNER_TEMP/app.log"
+          echo "::endgroup::"
+          grep -- "$EXPECT" "$RUNNER_TEMP/app.log" | tee "$RUNNER_TEMP/said.txt"
+          # A check of itself (PlayerSmoke) says how it went
+          if grep -q 'FAIL' "$RUNNER_TEMP/said.txt"; then exit 1; fi
+      - uses: actions/upload-artifact@v4
+        if: ${{ !inputs.simulator }}
+        with:
+          name: ios-app
+          path: ${{ runner.temp }}/app-unsigned.ipa
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && inputs.simulator }}
+        with:
+          name: ios-simulator-log
+          path: |
+            ${{ runner.temp }}/app.log
+            ${{ runner.temp }}/said.txt
+          retention-days: 3
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: xcodebuild-log
+          path: ${{ runner.temp }}/xcodebuild.log
+          retention-days: 3

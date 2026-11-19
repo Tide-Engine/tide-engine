@@ -5,7 +5,7 @@ namespace Tide.Game
     // What this game's C# was made from: a view packet of another build isn't read by it.
     public static class TideGameSchema
     {
-        public const string Hash = "67198538C214791C";
+        public const string Hash = "5472ED8E30AEB7E3";
         public const string Game = "Bounce";
         public const int TickRate = 30;
         public static readonly string[] Scenes = {  };

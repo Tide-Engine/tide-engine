@@ -448,7 +448,11 @@ static void storage_helpers(translation *x, const int slot, const int elem)
     snprintf(name, sizeof name, "tidehl_length%d", slot);
     if (!first_time(x, name)) return;
     const uint32_t stride = storage_stride(x, elem);
-    hprintf(&x->helpers, "uint tidehl_length%d() { uint n; _TideStorage%d.GetDimensions(n); return n / %uu; }\n", slot, slot, stride);
+    // Metal has no way to ask a buffer its size from a shader (Unity's translator to it refuses the query), so there
+    // the program that binds the buffer says its bytes beside it (_TideStorageBytes<slot>: TideRender.cs)
+    hprintf(&x->helpers, "#if defined(SHADER_API_METAL)\nuint _TideStorageBytes%d;\n"
+                         "uint tidehl_length%d() { return _TideStorageBytes%d / %uu; }\n#else\n", slot, slot, slot, stride);
+    hprintf(&x->helpers, "uint tidehl_length%d() { uint n; _TideStorage%d.GetDimensions(n); return n / %uu; }\n#endif\n", slot, slot, stride);
     hprintf(&x->helpers, "uint tidehl_at%d(uint i) { return min(i, tidehl_length%d() - 1u) * %uu; }\n", slot, slot, stride);
 }
 

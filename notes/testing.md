@@ -1,5 +1,14 @@
 # Test infrastructure
 
+## Tests in the iOS simulator (2026-11-19)
+
+The `ios-simulator` preset's tests run in a booted simulator through `cmake/run_ios.sh` (`xcrun simctl spawn`, a
+test's `TIDE_` variables handed on, its working directory kept by `tide_ios_run`). They're the list in
+`cmake/ios_tests.cmake`, built by the `tide_ios_tests` target and selected with
+`ctest --preset ios-simulator -R "$(cat build/ios-simulator/ios_tests.txt)"`: other tests of that tree aren't built.
+A Mac with Xcode only: this machine can't run them, CI's `Test (macos-arm64, ios-simulator, 1)` does.
+`notes/ios.md` has what's in the list and why.
+
 ## A 4-sample pass ended and begun again (2026-11-05)
 
 `tide_platform_occlusion` failed every hardware-lane run at two pixels, (120, 54) and (121, 54), of the 4-sample target's shots 2 and 3 (walls at 6 and 4): `9033e5ff` and `9031fdff` with occlusion, `9133e6ff` and `9032fdff` on the CPU's path, which never drew the culled values in 32 more draws. Not occlusion's and not Tide's: Chrome's WebGPU on this machine's RTX 4080 SUPER (Dawn on D3D12, driver 32.0.16.1742, Chrome 156.0.8078.81) draws a box differently when the render pass it's drawn in began by loading what an earlier pass stored. Found, Claude's:

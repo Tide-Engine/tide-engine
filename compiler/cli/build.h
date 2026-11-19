@@ -13,6 +13,7 @@ typedef struct build_options {
     bool web;           // A web page, with clang's WebAssembly target: index.html, and the program and pack it downloads
     bool single_file;   // ...or one self-contained .html with them inside, which opens straight from disk
     bool android;       // An Android app (.apk), for arm64 phones and the x86-64 emulator
+    bool ios;           // tide unity alone: a Unity iOS player's game, as sources for its Xcode project
     bool server;        // Headless native process hosting independent matches.
     bool managed;       // Internal deploy target: single-match sandboxed WASM reactor.
     bool server_strip_assets; // Explicit promise that custom C has no hidden asset dependencies.

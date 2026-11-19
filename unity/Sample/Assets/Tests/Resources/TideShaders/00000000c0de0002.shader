@@ -300,9 +300,19 @@ cbuffer TideUniforms {
 ByteAddressBuffer _TideStorage0;
 ByteAddressBuffer _TideStorage1;
 
+#if defined(SHADER_API_METAL)
+uint _TideStorageBytes0;
+uint tidehl_length0() { return _TideStorageBytes0 / 8u; }
+#else
 uint tidehl_length0() { uint n; _TideStorage0.GetDimensions(n); return n / 8u; }
+#endif
 uint tidehl_at0(uint i) { return min(i, tidehl_length0() - 1u) * 8u; }
+#if defined(SHADER_API_METAL)
+uint _TideStorageBytes1;
+uint tidehl_length1() { return _TideStorageBytes1 / 4u; }
+#else
 uint tidehl_length1() { uint n; _TideStorage1.GetDimensions(n); return n / 4u; }
+#endif
 uint tidehl_at1(uint i) { return min(i, tidehl_length1() - 1u) * 4u; }
 float4 vertex(uint i);
 float4 fragment();

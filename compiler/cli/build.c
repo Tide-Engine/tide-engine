@@ -721,6 +721,7 @@ static bool find_target(const char *root, const build_options *opts)
 {
     const char *runtime = NULL;
     if (opts->android) return true; // Each of its CPUs, as it's built (build_android)
+    if (opts->ios) return true;     // Compiled by the Xcode project its sources go to (tide_unity_ios)
     if (opts->web) {
         build_target.flag = opts->managed ? "--target=wasm32-wasip1" : "--target=wasm32-wasip1-threads";
         runtime = "wasi";
@@ -1248,6 +1249,11 @@ static bool run_compiles(build *b, compiles *list)
     return ok;
 }
 
+static char *copy_named(const char *text)
+{
+    return format("%s", text, NULL);
+}
+
 // Finds the compiler and makes the game's .tide folder. False after saying
 // what's wrong.
 static bool setup(build *b, const char *root, const build_options *opts, const bool library)
@@ -1281,14 +1287,15 @@ static bool setup(build *b, const char *root, const build_options *opts, const b
 #ifdef __APPLE__
     // macOS's headers and libraries come with Apple's command line tools,
     // which clang finds through SDKROOT.
-    if (!opts->web && !find_macos_sdk()) {
+    if (!opts->web && !opts->ios && !find_macos_sdk()) {
         fprintf(stderr, "tide: building for macOS needs Apple's command line tools\n");
         fprintf(stderr, "  = note: install them with `xcode-select --install`\n");
         return false;
     }
 #endif
 #else
-    b->compiler = opts->web ? find_web_clang() : find_clang();
+    // An iOS player's sources are compiled elsewhere: this machine needs no compiler for them
+    b->compiler = opts->ios ? copy_named("clang") : opts->web ? find_web_clang() : find_clang();
     if (!b->compiler) {
         fprintf(stderr, "tide: clang isn't installed, and tide needs it to build games\n");
         fprintf(stderr, "  = note: install LLVM (https://github.com/llvm/llvm-project/releases), add it to PATH, "
@@ -1327,7 +1334,7 @@ static bool setup(build *b, const char *root, const build_options *opts, const b
     // Everything tide makes goes in <folder>/.tide/<configuration>.
     char *tide_dir = tide_work_folder(b->folder);
     char config[32];
-    snprintf(config, sizeof config, "%s-%s%s", opts->managed ? "managed" : opts->server ? "server" : opts->web ? "web" : opts->android ? "android" : "native",
+    snprintf(config, sizeof config, "%s-%s%s", opts->managed ? "managed" : opts->server ? "server" : opts->web ? "web" : opts->android ? "android" : opts->ios ? "ios" : "native",
              opts->distribution ? "distribution" : opts->release ? "release" : "debug",
              opts->optimization ? opts->optimization : "");
     b->cache = path_join(tide_dir, config);
@@ -5299,6 +5306,258 @@ static int tide_unity_android(const char *root, const build_options *opts)
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// tide unity --ios: a Unity iOS player's game, as sources. An iOS game is linked into the player (a static library:
+// iOS loads no library of an app's by name), and what compiles for iOS is Xcode's clang with Apple's SDK, on a Mac. So
+// tide compiles nothing here, on any system: into <-o>/ios/Tide go the game's generated C, its packages' C, the
+// engine's sources and the platform layer's with no window of its own (platform/embedded: tide/embed.h's host, files,
+// UDP and rooms), and <-o>/ios/Tide/sources.txt lists each file to compile with its flags, the determinism flags
+// among them, as tide would compile it. Unity's package adds them to the Xcode project it exports (TideIosBuild), which
+// then builds on a Mac that has no tide. The game's pack goes to <-o>/ios/pack, a file in the app.
+//
+// sources.txt: `tide sources 1`, then a line each, tab-separated:
+//   framework <name>           a system framework to link
+//   needs microphone           the game listens to the microphone, which an app says before its system lets it
+//   source <path> <flags>      a file to compile, from the folder's root, with its flags; `@` in a flag is the folder
+// Nothing in it is iOS's but the frameworks: a console's project would take the same folder.
+
+typedef struct tree_copy {
+    const char *from, *to;
+    const char *const *extensions; // NULL for every file
+    bool ok;
+} tree_copy;
+
+static void copy_tree_entry(void *user, const char *name, const bool is_dir)
+{
+    tree_copy *t = user;
+    if (!t->ok || name[0] == '.') return;
+    char *from = path_join(t->from, name), *to = path_join(t->to, name);
+    if (is_dir) {
+        tree_copy inner = {from, to, t->extensions, true};
+        sys_list(from, copy_tree_entry, &inner);
+        t->ok = inner.ok;
+    } else {
+        bool wanted = !t->extensions;
+        for (int i = 0; !wanted && t->extensions[i]; i++) wanted = has_extension(name, t->extensions[i]);
+        if (wanted) {
+            sys_mkdirs(t->to);
+            if (!sys_copy_file(from, to)) {
+                fprintf(stderr, "tide: can't copy %s to %s\n", from, to);
+                t->ok = false;
+            }
+        }
+    }
+    free(from);
+    free(to);
+}
+
+// Copies the files of `from` and its folders that have one of `extensions` into `to`, laid out the same.
+static bool copy_tree(const char *from, const char *to, const char *const *extensions)
+{
+    tree_copy t = {from, to, extensions, true};
+    sys_list(from, copy_tree_entry, &t);
+    return t.ok;
+}
+
+static bool is_slash(const char c)
+{
+    return c == '/' || c == '\\';
+}
+
+// What follows `base` in `path`, when `path` is inside it, whichever way their slashes lean; else NULL.
+static const char *path_under(const char *path, const char *base)
+{
+    size_t i = 0;
+    for (; base[i]; i++) {
+        if (is_slash(base[i]) ? !is_slash(path[i]) : path[i] != base[i]) return NULL;
+    }
+    if (i && is_slash(base[i - 1])) return path + i;
+    return is_slash(path[i]) ? path + i + 1 : NULL;
+}
+
+static void put_slashed(sb *out, const char *path)
+{
+    for (; *path; path++) sb_printf(out, "%c", *path == '\\' ? '/' : *path);
+}
+
+// A file tide would compile, as a line of sources.txt: where it is in the folder (`placed`), and of its compiler's
+// arguments the ones that say how its code is made (the language, the determinism flags, the optimization, macros and
+// the two folders of headers), not this machine's target, debugger or paths.
+static void put_source(sb *out, const build *b, const compile_job *job, const char *placed)
+{
+    static const char *const kept[] = {"-fno-fast-math", "-ffp-contract=off", "-w", "-nostdinc++", "-fno-exceptions",
+                                       "-fno-rtti", "-fno-threadsafe-statics", NULL};
+    sb_put(out, "source\t");
+    put_slashed(out, placed);
+    sb_put(out, "\t");
+    bool first = true;
+    for (int i = 0; i < job->a.count; i++) {
+        const char *a = job->a.items[i];
+        const char *flag = NULL;
+        char macro[1024];
+        if (strncmp(a, "-std=", 5) == 0 || (a[0] == '-' && a[1] == 'O')) flag = a;
+        else if (strcmp(a, "-D") == 0 && i + 1 < job->a.count) {
+            snprintf(macro, sizeof macro, "-D%s", job->a.items[++i]);
+            flag = macro;
+        } else if (strncmp(a, "-D", 2) == 0) flag = a;
+        else if (strncmp(a, "-I", 2) == 0) flag = strcmp(a + 2, b->include) == 0 ? "-I@/include" : "-I@/game";
+        for (int k = 0; !flag && kept[k]; k++) {
+            if (strcmp(a, kept[k]) == 0) flag = a;
+        }
+        if (!flag) continue;
+        sb_printf(out, "%s%s", first ? "" : " ", flag);
+        first = false;
+    }
+    sb_put(out, "\n");
+}
+
+typedef struct platform_sources {
+    sb *out;
+    const char *base; // <root>/src/platform
+} platform_sources;
+
+static void put_platform_source(void *user, const char *source)
+{
+    const platform_sources *p = user;
+    const char *rest = path_under(source, p->base);
+    // Vulkan is a window's: inside another program, what's drawn is written down for it (gpu_record.c)
+    if (!rest || strcmp(path_base(source), "gpu_vk.c") == 0) return;
+    sb_put(p->out, "source\tplatform/");
+    put_slashed(p->out, rest);
+    sb_put(p->out, "\t-std=c17 -fno-fast-math -ffp-contract=off -w -O2 -I@/include -I@/platform/src -I@/platform/third_party "
+                   "-I@/platform/gen/kernels\n");
+}
+
+static int tide_unity_ios(const char *root, const build_options *opts)
+{
+    build b = {0};
+    if (!build_setup(&b, root, opts, false)) return 1;
+    char *platform = path_join(root, "src/platform");
+    char *embedded = path_join(platform, "embedded/window.c");
+    if (!sys_exists(embedded)) {
+        fprintf(stderr, "tide: this installation can't build iOS games: %s is missing\n", platform);
+        fprintf(stderr, "  = note: reinstall tide, or for a build of this repo install its platform sources (the package preset)\n");
+        return 1;
+    }
+    free(embedded);
+    char *dir = path_absolute(opts->output);
+    char *gen = path_join(b.cache, "gen-unity");
+    sys_mkdirs(dir);
+    sys_mkdirs(gen);
+    if (!generate(&b, gen, true, NULL)) return 1;
+    char *main_c = path_join(gen, "library.c");
+    char *game_c = path_join(gen, "game.c");
+    if (!sys_write_text(main_c, "// Generated by tide. Do not edit.\n"
+                                "#define TIDE_HAS_EMBED 1 // tide/run.h's table has tide_game_embed and the layout\n"
+                                "#include \"game.h\"\n"
+                                "#include \"tide/run.h\"\n"
+                                "\n"
+                                "// The game, linked into the program that runs it (tide_embed_desc.game)\n"
+                                "TIDE_HOST_EXPORT const tide_host_game *tide_host_library(void)\n"
+                                "{\n"
+                                "    return &tide_host_game_api;\n"
+                                "}\n")) {
+        fprintf(stderr, "tide: can't write %s\n", main_c);
+        return 1;
+    }
+    // Every file of the build, as tide would compile it: nothing here was compiled before, so each is listed
+    char *cache = b.cache;
+    b.cache = path_join(cache, "unity-ios");
+    sys_remove_tree(b.cache);
+    sys_mkdirs(b.cache);
+    file_list objects = {0};
+    add_file(&objects, path_join(b.cache, "game.o"));
+    add_file(&objects, path_join(b.cache, "library.o"));
+    compiles list = {0};
+    c_side c = {0};
+    if (!queue_game(&b, &list, gen, game_c, main_c, &objects, &c)) return 1;
+    char *out = path_join(dir, "ios");
+    char *tide = path_join(out, "Tide");
+    sys_remove_tree(out);
+    sys_mkdirs(tide);
+    char *engine = path_join(root, "src/engine");
+    static const char *const code[] = {".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hh", ".hxx", ".inl", ".inc", NULL};
+    char *to_include = path_join(tide, "include"), *to_engine = path_join(tide, "engine"), *to_game = path_join(tide, "game");
+    char *to_platform = path_join(tide, "platform");
+    bool ok = copy_tree(b.include, to_include, NULL) && copy_tree(engine, to_engine, code) && copy_tree(gen, to_game, code)
+        && copy_tree(platform, to_platform, code);
+    sb text = {0};
+    sb_put(&text, "tide sources 1\nframework\tSecurity\nframework\tCoreFoundation\n");
+    if (b.info.microphone) sb_put(&text, "needs\tmicrophone\n"); // The game says Clip.Microphone: its app asks to record
+    for (int i = 0; i < list.count && ok; i++) {
+        const compile_job *job = &list.items[i];
+        const char *source = job->made[0], *rest;
+        char *placed = NULL;
+        if ((rest = path_under(source, engine))) placed = format("engine/%s", rest, NULL);
+        else if ((rest = path_under(source, gen))) placed = format("game/%s", rest, NULL);
+        for (int p = 0; !placed && p < b.packages.count; p++) {
+            if (!(rest = path_under(source, b.packages.items[p].folder))) continue;
+            // Its C with the headers beside it, once for the package
+            char *sub = format("packages/%s", b.packages.items[p].name, NULL);
+            char *to = path_join(tide, sub);
+            if (!sys_exists(to)) ok = copy_tree(b.packages.items[p].folder, to, code);
+            placed = format("%s/%s", sub, rest);
+            free(to);
+            free(sub);
+        }
+        if (!placed && (rest = path_under(source, b.folder))) {
+            char *to = path_join(tide, "own");
+            if (!sys_exists(to)) ok = copy_tree(b.folder, to, code);
+            placed = format("own/%s", rest, NULL);
+            free(to);
+        }
+        if (!placed) {
+            fprintf(stderr, "tide: %s is in none of the folders an iOS player's sources come from\n", source);
+            ok = false;
+            break;
+        }
+        put_source(&text, &b, job, placed);
+        free(placed);
+    }
+    platform_sources listed = {&text, platform};
+    char *platform_folder = path_join(platform, ""); // Ending in a slash, as folder_find takes one
+    if (ok) folder_find(platform_folder, ".c", put_platform_source, &listed);
+    free(platform_folder);
+    // Prebuilt libraries are the project's own to add: tide can't tell an iOS one from a Mac's
+    file_list libraries = own_files_of(b.folder, library_extensions);
+    for (int p = 0; p < b.packages.count; p++) {
+        file_list more = own_files_of(b.packages.items[p].folder, library_extensions);
+        for (int i = 0; i < more.count; i++) add_file(&libraries, more.items[i]);
+        free_files(&more);
+    }
+    for (int i = 0; i < libraries.count; i++) {
+        fprintf(stderr, "%s:1:1: warning: tide doesn't add this library to an iOS player: add one built for iOS to the "
+                        "Xcode project yourself, if the game's C needs it there\n", libraries.items[i]);
+    }
+    free_files(&libraries);
+    char *manifest = path_join(tide, "sources.txt");
+    if (ok && !sys_write_file(manifest, text.data ? text.data : "", text.len)) {
+        fprintf(stderr, "tide: can't write %s\n", manifest);
+        ok = false;
+    }
+    char *pack = pack_of(gen), *packed = path_join(out, "pack");
+    if (ok && sys_exists(pack) && !sys_copy_file(pack, packed)) {
+        fprintf(stderr, "tide: can't copy %s to %s\n", pack, packed);
+        ok = false;
+    }
+    char *map = path_join(dir, "unity.json");
+    const char *mapped = b.unity_map ? b.unity_map : "{\"assets\": []}\n";
+    if (ok && !sys_write_file(map, mapped, strlen(mapped))) {
+        fprintf(stderr, "tide: can't write %s\n", map);
+        ok = false;
+    }
+    if (ok) {
+        write_game_hash(gen, dir);
+        printf("tide: wrote the game for Unity's iOS player in %s\n", dir);
+    }
+    free_compiles(&list);
+    free_game_c(&c);
+    free_files(&objects);
+    free(b.cache);
+    b.cache = cache;
+    return ok ? 0 : 1;
+}
+
 // While the game's code doesn't build, the C# of its components still comes: a project starts with code that spawns a
 // Unity prefab, which doesn't build until the prefab is made, which needs the component the code declares. So after a
 // build that failed, tide unity builds the game's declarations alone (--declarations, quietly: the errors are the
@@ -5364,6 +5623,7 @@ int tide_unity(const char *root, const build_options *opts)
 {
     if (opts->web) return tide_unity_web(root, opts);
     if (opts->android) return tide_unity_android(root, opts);
+    if (opts->ios) return tide_unity_ios(root, opts);
     if (opts->declarations) return tide_unity_declared(root, opts);
     run r = {0};
     if (!build_setup(&r.b, root, opts, true)) return 1;

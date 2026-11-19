@@ -319,6 +319,18 @@ endif()
 # its own beside the game's, which src/log.c starts. tide build copies it from
 # the package (lib/native) beside every desktop game; repository games find
 # it in bin/, beside them.
+# ...and its sources, for a player that's compiled where tide isn't: a Unity iOS player's Xcode project takes the
+# platform layer with no window of its own as files (tide unity --ios, compiler/cli/build.c), with what this build
+# generates for it (the font, the renderer's SPIR-V and kernels). From a desktop tree alone: every package has one.
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID AND NOT TIDE_IOS)
+    install(DIRECTORY src/ DESTINATION src/platform/src COMPONENT tide
+        FILES_MATCHING PATTERN "*.c" PATTERN "*.h" PATTERN "*.inc")
+    install(DIRECTORY embedded/ DESTINATION src/platform/embedded COMPONENT tide FILES_MATCHING PATTERN "*.c")
+    install(FILES third_party/stb_truetype.h DESTINATION src/platform/third_party COMPONENT tide)
+    install(FILES "${TIDE_FONT_C}" "${TIDE_FONT_BOLD_C}" "${TIDE_SPIRV_C}" DESTINATION src/platform/gen COMPONENT tide)
+    install(FILES "${TIDE_KERNELS_H}" DESTINATION src/platform/gen/kernels COMPONENT tide)
+endif()
+
 if(TIDE_IOS)
     # The tests of a build with no window of its own, and nothing else of this file: the rest open windows, or are
     # desktop hosts'

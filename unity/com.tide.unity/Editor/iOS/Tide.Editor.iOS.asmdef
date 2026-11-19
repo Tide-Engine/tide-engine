@@ -1,0 +1,21 @@
+{
+    "name": "Tide.Editor.iOS",
+    "rootNamespace": "Tide.Editor",
+    "references": [
+        "Tide.Runtime",
+        "Tide.Editor"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "UNITY_IOS"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
