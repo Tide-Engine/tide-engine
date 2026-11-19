@@ -50,6 +50,19 @@ function once(args) {
     });
 }
 
+function once2(args, extra) {
+    const child = spawn(join(bin, `tide${suffix}`), args, { env: { ...env, ...extra }, windowsHide: true });
+    let said = "";
+    child.stdout.on("data", data => said += data);
+    child.stderr.on("data", data => said += data);
+    child.stdin.end();
+    const timer = setTimeout(() => child.kill(), 60000);
+    return new Promise((accept, reject) => {
+        child.on("error", reject);
+        child.on("close", code => { clearTimeout(timer); accept({ code, said }); });
+    });
+}
+
 const game = join(root, "game"), out = join(root, "out"), gen = join(out, "gen");
 const text = /"([^"\n]+ \([0-9a-f]{16}\))"/;
 // Which tide the game's library says built it, and which the host says: each as tide wrote its C
@@ -148,6 +161,27 @@ try {
     watching.stdin.end(); // The editor went away: tide ends
     await Promise.race([ended, new Promise((_, reject) => setTimeout(() => reject(new Error(`tide unity didn't end:\n${said}`)), 15000))]);
     watching = null;
+
+    // tide run's watching host says its tide too, and its game's library the same: the host's main is given the text
+    // (tide_run_desc.made_by) and library.c exports it. Only the controlled linker's inert program runs here, which
+    // loads nothing, opens no window and ends at once, so the run isn't hidden.
+    const played = join(root, "played");
+    put(join(played, "game.tide"), "scene Main { }\nsingleton State { int value; }\nsystem Tick(mut State state) { state.value = 1; }\n");
+    const ran = await once2(["run", played], { TIDE_HIDDEN: "0" });
+    const texts = [];
+    (function walk(folder) {
+        for (const entry of readdirSync(folder, { withFileTypes: true })) {
+            if (entry.isDirectory()) walk(join(folder, entry.name));
+            else if (entry.name === "host.c" || entry.name === "library.c") texts.push(join(folder, entry.name));
+        }
+    })(join(played, ".tide"));
+    const hostC = texts.find(path => path.endsWith("host.c")), libraryC = texts.find(path => path.endsWith("library.c"));
+    assert(hostC && libraryC, `tide run wrote its host and library:\n${ran.said}\n${texts}`);
+    const runs = /\.made_by = "([^"\n]+ \([0-9a-f]{16}\))"/.exec(readFileSync(hostC, "utf8"))?.[1];
+    assert(runs && runs.startsWith(`${versionText} (`), `tide run's host says which tide built it:\n${readFileSync(hostC, "utf8")}`);
+    assert.match(readFileSync(libraryC, "utf8"), /const char \*tide_host_library_made_by\(void\)/);
+    assert.equal(text.exec(readFileSync(libraryC, "utf8"))?.[1], runs, "and its game's library the same tide");
+    assert.equal(runs, last, "which is the tide the installation is now, for tide unity and tide run alike");
     console.log("ok: tide unity says which tide built the host and the game, and builds the host again when its installation changes");
 } finally {
     if (watching) watching.kill();

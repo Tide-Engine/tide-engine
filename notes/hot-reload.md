@@ -59,10 +59,13 @@ to stop the game and start it again once tide has built it (for Unity: leave Pla
 again). The game goes on with the build it has; where it's the first build, nothing runs (`tide_host_run_library`
 exits, `tide_embed_create` gives none). A host that says nothing takes any library of its shape, as before.
 
-Who says it today: the host `tide unity` builds for Unity and that command's libraries (notes/unity.md, top;
-`compiler/cli/build.c`'s `made_by`, per build, from the installation's files as they are). `tide run`'s host says
-none, and its libraries export none: one process builds host and game from one installation, and its host can't be
-built again while it runs. **Provisional (mine)**: left so; the field is there for it.
+Who says it: the host `tide unity` builds for Unity and that command's libraries (notes/unity.md, top;
+`compiler/cli/build.c`'s `made_by`, per build, from the installation's files as they are), and `tide run`'s
+watching host and its libraries (`host.c`'s `tide_run_desc.made_by`, `write_library`). `tide run`'s host can't be
+built again while it runs, and its headers are stamped once a run, so tide doesn't build at all once the
+installation is another tide than built the host (`run_build`): it says which it was and is, and to stop the run
+and start `tide run` again; the game goes on with the build it has. **Provisional (mine).** A full fix would
+restart the host with the match carried over, which a checkpoint could do; not built.
 
 Test: `tide_platform_reload`'s last stages (`reload_game.c` exports the text, `tide_platform_reload_game_foreign`
 another one's; `reload_host.c` takes the host's from `TIDE_RELOAD_MADE_BY`): a foreign build published while the

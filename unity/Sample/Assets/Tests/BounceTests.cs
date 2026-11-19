@@ -474,6 +474,18 @@ public sealed unsafe class BounceTests
     [UnityTest]
     public IEnumerator TideDrawsIntoUnitysFrameInURP()
     {
+        yield return InURP(false);
+    }
+
+    // ...and URP's pass with an orthographic camera
+    [UnityTest]
+    public IEnumerator TideDrawsIntoAnOrthographicCamerasFrameInURP()
+    {
+        yield return InURP(true);
+    }
+
+    IEnumerator InURP(bool orthographic)
+    {
         if (SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null)
         {
             Assert.Ignore("no GPU in this run (-nographics)");
@@ -485,7 +497,7 @@ public sealed unsafe class BounceTests
         QualitySettings.renderPipeline = null;
         try
         {
-            yield return DrawsIntoUnitysFrame(true);
+            yield return DrawsIntoUnitysFrame(true, orthographic: orthographic);
         }
         finally
         {
@@ -831,6 +843,104 @@ public sealed unsafe class BounceTests
         yield return Connected(runner);
         Assert.AreEqual(TideSessionState.Connected, runner.State, "Play entered again runs this tide's build");
     }
+
+#if UNITY_EDITOR
+    // The editor's build service, which this assembly doesn't reference: its running tide's process and executable
+    static readonly System.Type Service = System.Type.GetType("Tide.Editor.TideBuildService, Tide.Editor");
+
+    static T OfService<T>(string name) => Service == null ? default : (T)Service.GetProperty(name,
+        System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public)?.GetValue(null);
+
+    static void TellService(string line) => Service?.GetMethod("Tell",
+        System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)?.Invoke(null, new object[] { line });
+
+    // The real thing, end to end: tide's installation changes while Play runs (here its platform layer's library gets
+    // another time, as an upgrade or a development tide's install gives it), and the editor's own tide builds the game
+    // again. That build and the host tide builds with it are the new tide's; the Play that's running has the old host,
+    // says so in the Console and goes on; and leaving Play and entering it again runs the new host with the new game.
+    // Needs the editor's build service running a development tide (-tide-command): an installed tide's files aren't a
+    // test's to touch.
+    [UnityTest]
+    public IEnumerator TideInstalledAgainWhilePlayRunsIsSaidAndPlayAgainWorks()
+    {
+        var tide = OfService<string>("RunningTide");
+        if (OfService<int>("RunningId") == 0 || tide == null
+            || System.Array.IndexOf(System.Environment.GetCommandLineArgs(), "-tide-command") < 0)
+        {
+            Assert.Ignore("no development tide building for this editor (automatic builds off, or no -tide-command)");
+            yield break;
+        }
+        var folder = TideLibrary.BuildFolder;
+        var hostText = System.IO.Path.Combine(folder, "gen", "embed_host.c");
+        string Host() => System.Text.RegularExpressions.Regex.Match(System.IO.File.ReadAllText(hostText),
+            @"""([^""\n]+ \([0-9a-f]{16}\))""").Groups[1].Value;
+        int Newest(string prefix)
+        {
+            var newest = 0;
+            foreach (var file in System.IO.Directory.GetFiles(folder, prefix + "*" + TideLibrary.LibrarySuffix))
+            {
+                var name = System.IO.Path.GetFileNameWithoutExtension(file);
+                if (int.TryParse(name.Substring(prefix.Length), out var n) && n > newest) newest = n;
+            }
+            return newest;
+        }
+        // tide's first build of this editor session is done before the game starts
+        bool Building() => Service.GetMethod("Describe")?.Invoke(null, null) is string state && state == "building the game";
+        yield return Until(() => !Building() && Newest("game-") > 0 && System.IO.File.Exists(hostText), 180f);
+        Assert.IsFalse(Building(), "tide built the game for this editor");
+        SceneManager.LoadScene(Bounce);
+        yield return null;
+        var runner = Object.FindAnyObjectByType<TideRunner>();
+        yield return Connected(runner);
+        Assert.AreEqual(TideSessionState.Connected, runner.State);
+        var before = Host();
+        Assert.IsNotEmpty(before, "the host says which tide built it");
+        var running = Newest("loaded-");
+        var built = Newest("game-");
+        var library = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(System.IO.Path.GetDirectoryName(tide)), "lib", "native",
+            "libtide_platform.a");
+        Assert.IsTrue(System.IO.File.Exists(library), $"the installation's platform layer: {library}");
+        var written = System.IO.File.GetLastWriteTimeUtc(library);
+        LogAssert.Expect(LogType.Error, new System.Text.RegularExpressions.Regex(
+            "was built by tide .*, and what runs it by tide .*, so it isn't loaded.*leave Play, wait for tide's build, and enter Play again"));
+        var after = "";
+        try
+        {
+            System.IO.File.SetLastWriteTimeUtc(library, System.DateTime.UtcNow);
+            TellService("changed");
+            yield return Until(() => Newest("game-") > built && Host() != before, 120f);
+            after = Host();
+            Assert.AreNotEqual(before, after, "tide built the host again, as another tide");
+            Assert.Greater(Newest("game-"), built, "and the game with it");
+            var tick = runner.Status.predictedTick;
+            yield return Until(() => false, 1.5f);
+            Assert.AreEqual(running, Newest("loaded-"), "the Play that's running keeps the build it has");
+            Assert.AreEqual(TideSessionState.Connected, runner.State, "and goes on");
+            Assert.Greater(runner.Status.predictedTick, tick + 30);
+            // Play left and entered again: the new host, with the new tide's game
+            Object.Destroy(runner.gameObject);
+            yield return null;
+            SceneManager.LoadScene(Bounce);
+            yield return null;
+            runner = Object.FindAnyObjectByType<TideRunner>();
+            yield return Connected(runner);
+            Assert.AreEqual(TideSessionState.Connected, runner.State, "Play entered again runs the new tide's host and game");
+            Assert.Greater(Newest("loaded-"), running, "its newest build");
+            Object.Destroy(runner.gameObject);
+            yield return null;
+        }
+        finally
+        {
+            System.IO.File.SetLastWriteTimeUtc(library, written);
+        }
+        // The installation as it was: tide builds host and game once more, before any other test's Play could meet it
+        built = Newest("game-");
+        TellService("changed");
+        yield return Until(() => Newest("game-") > built && Host() == before, 120f);
+        Assert.AreEqual(before, Host(), "with the installation as it was, the host is the first tide's again");
+        yield return Until(() => false, 1f);
+    }
+#endif
 
     [UnityTest]
     public IEnumerator TheMatchShowsItsBall()
