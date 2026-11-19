@@ -1,5 +1,95 @@
 # Shards: one world across servers
 
+## Persistent-world upgrades (2026-11-19 audit and proposal)
+
+- **Admission.** `engine/src/session.c` (protocol 27) and `engine/src/hosting.c`
+  (protocol 2) compare the generated 32-byte simulation identity exactly. The
+  compiler combines the checked graph with the Tide version and the CMake
+  source digest (`compiler/src/asset_usage.c`, `compiler/CMakeLists.txt`). The
+  digest covers compiler and engine sources and headers, build flags and some
+  host/CLI code. A source-only or version change can invalidate admission even
+  when the game layout and a captured replay agree. `tide_game.hash` serves
+  layout and reload, and an immutable managed release ID selects the shipped
+  module, pack and client. Each answers a different question.
+- **Checkpoint and journal.** `engine/src/shards.c` loads the coordinator
+  envelope (currently version 6), then unpacks each generated world with its
+  game's layout. The recovery entry points do not check a release or simulation
+  ID in those bytes. They skip records older than the saved shard cursor and
+  require every subsequent record to run at its expected position and reproduce
+  its full-world hash through `tide_replay`. A readable checkpoint only checks
+  what the current reader can decode. A successful replay checks the captured
+  history. The native `--shard-journal` host relies on the operator starting the
+  matching executable and pack. The managed worker uses `shard_stage`,
+  `shard_replay` and `shard_begin` in that order, abandoning startup on a replay
+  failure. The ordinary managed checkpoint carries session metadata (including
+  reconnect identities, cookie digests and bans) beside the world. A game's C
+  save/load hooks replace the payload codec for that ordinary checkpoint.
+- **External storage.** A replay consumes recorded storage answers. It does
+  not redo external writes, and unanswered awaited requests can be reissued
+  when the recovered server starts. A checkpoint and the key/value store can
+  represent different points in time, especially across a shard crash. A
+  world handoff has to account for the store namespace and outstanding writes
+  and reads as well as the checkpoint and journal. See `notes/voxels.md`, §3d.
+- **Managed release selection.** Read-only service audit at
+  `Tide-Engine/tide-services` `702da514`. Ordinary match recovery reads the
+  saved match's immutable release and verifies its checkpoint digest before
+  restore (`hosting/matches.mjs`). A running sharded world uses its own bundle,
+  including for shard replacement, and match-zero serves that world's client.
+  On service restart, `Worlds.recover` calls the same `front`/`start` path as
+  an idle-world start for worlds it had recorded as running. If the project
+  points at a different release, `start`
+  discards the old world's row, checkpoint and journal files before starting a
+  fresh world, even when the two releases have equal simulation IDs. Release
+  pruning protects starting/running sharded worlds, while a stopped sharded
+  save alone does not pin its release (`hosting/maintenance.mjs`). The audited
+  service revision did not call the engine's managed key/value-store exports.
+  A scratch probe using that revision's `Store`, `Worlds` and `Maintenance`,
+  with a stub coordinator and disposable files, confirmed original-release
+  recovery and the changed-release discard on service restart.
+
+### Proposed first upgrade rehearsal
+
+1. Recover a copy with the original immutable server and pack. Check each
+   shard's journal against its saved cursor and hashes. Abort on a gap or
+   divergence. For a cutover, stop admission and player input, drain
+   old-build handoffs and pending lifecycle work, and flush old journal and
+   storage writes. Capture one complete coordinator checkpoint with all shard
+   cursors and the corresponding store state. `tide_shards_quiet` is a local
+   guard against pending old-code deliveries and checkpoint gathering. The
+   managed barrier would also need to coordinate the external store and hosts.
+2. Stage the target with that checkpoint on a copy. Start with a release pair
+   whose coordinator envelope, world layout, pending task frames and values
+   are compatible. For a later layout change, local reload shows a possible
+   implementation using the old layout, `tide_shard_checkpoint_rewrite` and
+   `tide_migrate_world`. Rewrite handles world payloads inside the current
+   envelope; a changed coordinator format or versioned game values need their
+   own explicit conversion. Reject unsupported work or state loss. Begin the
+   target's journal at the captured cursors, with every historical tick replayed
+   by the source build.
+3. Check entity keys, ownership, roster and reconnects, task state, and store
+   values against the cutover checkpoint. Drive bounded target ticks and
+   recover them with the target bundle to reproduce their hashes. For a live
+   cutover, publish the new generation's checkpoint, release and client
+   routing together only after the checks pass. Retain the source generation
+   through staging. Rolling back after the target accepts play or changes the
+   store requires a policy for those writes.
+
+The first owner decision is whether to keep saved sharded worlds pinned to
+their release until explicit replacement. That determines the retention and
+release-selection work required before any managed upgrade can safely stage a
+candidate. Rollout, retention, schema conversion and post-cutover rollback
+remain open. The spec's exact-release recovery contract still applies.
+
+**Regression.** `shards_reject_divergent_replay_after_decoding_a_checkpoint`
+uses a real generated checkpoint and retained shard records. A copy of the
+game table models a changed release with the same layout and reader. It reaches
+the replayed tick, changes a match value and is rejected. The original table
+recovers from the same bytes to the original full-world hash. This is a replay
+boundary check within one fixture. On Windows ASan and WASI, all five focused
+targets passed (`shards`, `managed_store`, `managed_store_shards`, `net`,
+`hosting`). The native `tide_server_shards_journal` process test also passed
+on Windows ASan. The change is limited to tests and notes.
+
 ## Logical keys, tagged dependencies and private slots (2026-11-06)
 
 The owner-approved Entity128 migration removes physical index ranges from shard
