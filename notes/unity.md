@@ -422,6 +422,71 @@ migration (`tide/migrate.h`, as a checkpoint is loaded by another layout's build
   change in Unity (the Sample's game changed, built and reloaded mid-test) isn't a PlayMode test; the two-program
   native test is that case.
 
+### 4. Sharded matches: a proposal for the owner, nothing built
+
+Stopped at a proposal, as asked where a real trade-off shows: three do (A to C below). Nothing of it is built; a
+sharded match still says "a sharded match isn't recorded" (`travel_why`), the session's recorder is told nothing of
+one and `tide_session_rewind` refuses it.
+
+**What a sharded match is to a debugger** (notes/sharding.md). On this machine it's a `tide_shards` inside the
+session: a root and regions, each a server with its own world, tick count and journal, and a coordinator that
+carries their messages between updates, follows players, splits and merges regions and makes checkpoints. This
+machine's player is a shard client: a client for each shard it follows, one of them its home; a frame's views draw
+the home's world and the others' beside it (`frame_shards`), and the embed's packet has them all. So there's no
+single world to keep, no single tick to name, and no single journal to replay.
+
+**What's cheap, and safe to build on my picks once A and B are answered** (it only reads the match):
+
+1. *Showing kept ticks, pausing and stepping.* After each `tide_shards_update`, keep a page-sharing copy of every
+   shard's world on this machine, with which shard was the player's home and which it followed
+   (`tide_session_views`). A shown frame hands the home's world to the views and the others' to `frame_shards`,
+   as `write_view` does live. With nobody else in the match, a pause is the orchestrator not updated and a step is
+   one update (every server's tick, then one round of the coordinator); with others in, the background mode as it
+   is. Each followed shard's own events are heard as gap 1's are.
+2. *Ticks before those kept, and recordings.* A shard's journal record already carries the shard messages its tick
+   took, so a shard replays alone from its first world, with no orchestrator (`tide_replay`). A sharded recording is
+   then a timeline for each shard that ever was (its first tick and world, its records), and for each update the
+   player's home and followed shards. A split or merge starts or ends a shard's timeline. It needs a new file form
+   (TIDETIME 3, a container of today's), and memory by the shard.
+
+**The decisions:**
+
+- **A. What a tick is.** Each shard counts its own ticks (a split's shard starts at the root's count; the servers
+  tick within one update). (A1) The unit is the orchestrator's update, named by the root's tick: one slider, the
+  whole match at one moment. (A2) A slider a shard. *Recommend A1*: a match's moment is what a debugger scrubs, and
+  shards change hands of entities between updates, so two shards at different moments show an entity twice or not
+  at all.
+- **B. Which worlds a tick shown draws.** (B1) Those this player followed then, its home's first: what the game
+  showed live, which is what a game's views are written for (`Shards.Owns`, a home). (B2) Every shard this
+  machine runs: the whole world, which a debugger may want and a game's views never saw. *Recommend B1*, with the
+  window listing every shard's region and tick; B2 after it if wanted.
+- **C. Continue From Here.** Taking the match back needs every shard's world at one moment and the coordinator's
+  own state (the directory of entities away from home, index ranges, routes, what's acknowledged). The coordinator
+  captures itself only for a checkpoint, when the match is drained and idle (in `shards_test`'s busy world 86% of
+  updates are quiet, the longest stretch without one 16 updates).
+  - (C1) Only from quiet updates: each is kept whole (the worlds, and the coordinator's capture), and going on
+    from a tick shown goes back to the last quiet update at or before it, the window saying which. It needs the
+    orchestrator to capture and restore itself in memory beside worlds it shares pages with, where
+    `tide_shards_save`/`_load` pack everything to bytes today: new orchestrator surface.
+  - (C2) From any update, by the crash recovery's path: the last checkpoint, each shard's records up to the
+    update, the coordinator rebuilt from first reports (`tide_shards_recover`). It needs checkpoints on in the
+    editor's sharded matches, and with checkpoints on a split or merge waits for its checkpoint before it's told:
+    **time travel being on would change when a match reshapes**, so a match with the debugger kept on goes
+    another way than one without. That's a debugger changing what it debugs.
+  - (C3) Not for sharded matches.
+  *Recommend C1.* C2 is the larger feature and the one with a cost outside the debugger.
+
+**After those:** a sharded world another machine runs, followed as gap 2 follows a match: each followed shard's
+client's confirmed worlds, joined at the home's tick (the other shards' at their latest confirmed tick at or before
+it, as their clients confirm apart). And costs to measure before any of it ships: a world a shard a tick (shared
+pages, so what changed), up to the 512 shards a session may run here, and the timeline's 64 MiB of records, which
+is a match's and would be a shard's.
+
+**Order proposed:** 1, then 2, on A1 and B1; C1 once the owner agrees to the orchestrator's new calls; the followed
+sharded world last. 1 and 2 touch the session (a recorder callback after each orchestrator update, with the shards'
+worlds, ticks and the player's follows), the timeline (a set of them), the embed's `show_frame` and the window; no
+generated code, layout, hash or wire format.
+
 ## The replay of 2026-11-14's GPU work, Gamma [Linear] images, multisampled mipmaps, triangle sides (2026-11-15)
 
 Everything the day's readback, number-image, checker-format and capability work records is now replayed and run
@@ -1708,7 +1773,9 @@ session bit for bit (a tester's file too), with the first tick that differs when
 when the other program asks (`tide_embed_travel_keep`), the runner's Time Travel setting deciding where
 (`TideTimeTravel.Editor` by default: Play in the editor; `EditorAndPlayers` lets a game save testers' recordings;
 `Off`). Only a match this machine runs is recorded (the server's journal is the source); a client of another
-machine's match, and a sharded match, say why not (`tide_embed_travel.why`).
+machine's match, and a sharded match, say why not (`tide_embed_travel.why`). (Since 2026-11-19 a client's match is
+followed, its confirmed ticks kept, and a recording of another layout is carried over rather than refused: "Time
+travel's gaps", above. A sharded match still says why not.)
 
 What's built:
 
