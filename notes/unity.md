@@ -538,6 +538,34 @@ installs tide (`TideToolchain.Find(install, wait)`), runs `tide unity --once --r
   launch-argument one failing under `-tide-command` as before). Not seen: the two progress bars (no window), and
   following an install in flight (needs a download under way as a build starts).
 
+## An Android player's match on translated ARM (2026-11-19)
+
+The owner has no phone that can be plugged in, and asked whether one could be emulated. It can, for the CPU: Google's
+`google_apis` x86-64 images run ARM64 apps through `libndk_translation` (`ro.product.cpu.abilist=x86_64,arm64-v8a`),
+which the `default` image of the `tide` AVD doesn't.
+
+- **The device:** `x86_64-34_r14.zip` (Android 14, `sys-img/google_apis`, SHA-1 checked against `sys-img2-3.xml`)
+  unpacked to `%LOCALAPPDATA%\Android\Sdk\system-images\android-34\google_apis\x86_64`, and an AVD `tide-arm`
+  written by hand beside `tide` (its `config.ini` with that image and `tag.id=google_apis`). Booted with
+  `-no-window -no-audio -no-boot-anim -no-snapshot-save`.
+- **Ran:** `SampleSetup.BuildAndroid` (IL2CPP, ARM64, this checkout's tide through `-tide-command`), installed, and
+  started with `am start -n dev.tide.unity.bounce/com.unity3d.player.UnityPlayerGameActivity -e unity -tide-smoke`
+  on `-gpu host -feature -Vulkan`: `Tide smoke: running True, ball (-2.25, 0.50, 0.00), mine True, pillar turned
+  True, drew not with Tide's renderer (OpenGLES3, ...): FAIL`. So `libtide_game.so` loads by name from the app, the
+  pack inside it is read, the match runs over loopback in Unity's process and the C# reads it, all as ARM64 code. The
+  FAIL is the drawing alone: Unity took OpenGL ES there, which Tide's renderer leaves out by design.
+- **Not shown: Tide's renderer on Unity's Android Vulkan.** With `-gpu host` (Vulkan 1.3; `cmd gpu vkjson` answers)
+  the emulator's own process dies (exit 139) as Unity makes its second `VkInstance`, twice of twice; nothing of the
+  app's is at fault that the log shows. `-gpu swiftshader_indirect` gives the app no Vulkan and OpenGL ES 3.0 only,
+  which Unity refuses, and an Android player doesn't take `-nographics`. Translated ARM also says nothing of a real
+  phone's float results or GPU driver. A phone is still what shows these.
+- **adb:** Unity's editors run their own adb (36.0.0), the SDK's is 37.0.1, and each kills the other's server, so
+  with any Unity editor open on the machine adb commands fail midway. `ANDROID_ADB_SERVER_PORT=5038` gives a run
+  a server of its own.
+- **Found:** the Sample's committed `Packages/com.tide.game` was of another build than dev's tide makes (its schema
+  hash), which the player build refuses with its message; `tide unity Assets -o Library/Tide --assets Assets --once`
+  wrote it again. Not committed from here, as the threads changing the Sample each write it again.
+
 ## Android players, and IL2CPP run (2026-11-10)
 
 The owner, on which players come first: "just keep going with your recommendations" (Android, then IL2CPP on
