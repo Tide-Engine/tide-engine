@@ -1,5 +1,37 @@
 # Desktop WebRTC, rooms and their tests
 
+## Room signaling during a stalled TURN request
+
+The relay sends ICE settings in its WebSocket hello, which both hosts and
+joiners wait for before asking for a room. On a cold start the credential cache
+is empty. One stalled Cloudflare fetch held every new hello while the relay's
+HTTP health check could still answer. The shared fetch now has a three-second
+deadline through the response body. A timed-out refresh uses cached ICE settings
+if present, or the existing STUN-only fallback on a cold start. A later socket
+can trigger a fresh fetch. Peers that require TURN still need usable credentials.
+
+On Windows with Node 24.22.1, a loopback HTTP provider sent headers and an
+unfinished JSON body. The regression timed out at eight seconds before the fix.
+With the deadline, two sockets shared the request, got the fallback, registered
+and joined a room in about three seconds. A later socket got TURN credentials
+once the provider recovered. Both relay test files pass (38 tests).
+
+A separate local process probe killed `relay/main.mjs` with an occupied room
+registration and lobby, then restarted it on the same port. The instance ID
+changed, the lobby returned 404, and the room returned `missing` until the host
+registered it again with the same code and key. The same bearer secret could
+create a new lobby with the same player ID. The probe exercised signaling
+messages and HTTP. The native and web room implementations keep already-open
+data channels while reconnecting the host's signaling socket.
+
+If lobby continuity across restarts is required, first decide how long an
+outage may preserve membership. A durable lobby store would need to commit
+mutations and quick join atomically and restore versions, member order, kicks
+and expiry. Live room registrations belong to their host sockets. To run more
+than one relay, design routing to each room's live socket owner and define when
+that ownership expires after a failure. A shared lobby store alone cannot route
+room signaling.
+
 ## The handover's joiner that never connects, again; the page says its channels (2026-11-17)
 
 `tide_platform_web_rooms_handover` failed twice more on CI's Macs (run 43973916251 at 2a733f57e, shard 1; run

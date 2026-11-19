@@ -100,6 +100,9 @@ export function cloudflareTurn(keyId, token, options = {}) {
                 method: 'POST',
                 headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
                 body: JSON.stringify({ ttl: 2 * 24 * 3600 }),
+                // Room registration waits for the hello. Bound the shared fetch,
+                // including its body, so a stalled provider can't hold every new socket.
+                signal: AbortSignal.timeout(3000),
             });
             if (!response.ok) throw new Error(`Cloudflare answered ${response.status}`);
             const body = await response.json();
