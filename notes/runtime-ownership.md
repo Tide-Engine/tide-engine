@@ -1416,7 +1416,9 @@ the embed's travel calls (embed ABI 7), `tide_run_unblended` in `tide/host.h` an
 existing `tick_events` / `tick_client_events`) and `tide_timeline_heard` in `tide/timeline.h`, both host-side and
 agent-maintained. Generated code calls nothing new, no `tide_game` member is new, and no layout, hash or wire
 format changed. The same day: `tide_session_recorder.verified` (a client's confirmed ticks to a recorder, read from
-its ring after its update) and `tide_timeline_follow` / `_follows`, on the same terms.
+its ring after its update) and `tide_timeline_follow` / `_follows`, on the same terms. And
+`tide_timeline_desc.layout`, `tide_timeline_set_layout` and the recording file's version 2 (its layout and its
+worlds as `pack_world` has them, carried over by `tide_migrate_world`): platform-side, nothing in the engine.
 
 ## Twelve texture drawing boundary (2026-10-25)
 

@@ -560,6 +560,125 @@ it replays: it's a window over the ticks this machine saw confirmed, not a recor
   hides nothing, so a client-side journal is possible; not asked for). Unity with a second machine: the Sample's
   PlayMode tests run one editor, so the followed case runs natively alone.
 
+### 3. A recording replays across a layout change
+
+A recording was refused by any build whose layout hash wasn't its own, as it said nothing of how its worlds were
+laid out. It says now, and a build laid out otherwise carries its worlds over by name with the hot reload's own
+migration (`tide/migrate.h`, as a checkpoint is loaded by another layout's build: `platform/src/checkpoint.c`).
+
+- **The file** (`timeline.c`, `TIDETIME` version 2): after the head, the layout it was recorded with
+  (`tide_layout_pack`: its size, 0 for none, and bytes); and each world (the first, and each one gone back to) is
+  followed by itself as its layout has it (`tide_game.pack_world`; size 0 without a layout), since migration reads
+  those bytes and a delta pack is only the recording build's to read. Version 1 files still load, into a build of
+  their layout. The cost is the layout's description and a second copy of the first world and of each jump's.
+- **`tide_timeline_desc.layout`** (the build's own, `tide_host_game.layout`): with it a saved recording says its
+  layout, and `tide_timeline_load` takes one of another layout: each world through `tide_migrate_world` and this
+  build's `unpack_world`, the records as they are. `tide_timeline_about` says `other_layout`, `fields_reset`
+  (`tide_layout_fields_reset`), `entities_dropped`, `tasks_dropped`. `tide_timeline_set_layout` for a hot reload of
+  the same layout (the old build's description goes with its code).
+- **Nothing is checked there** (`unchecked`): a record's hash is of the recording build's world, laid out the old
+  way, so a carried-over replay reports no `differs` and its `checked` stays at its first tick, rather than every
+  tick "differing". Its ticks are this build's code run on what went into them. A tick whose input or commands this
+  build lays out otherwise doesn't read, and is where it stops (`unreadable`, as before). Such a timeline isn't saved
+  again (`tide_timeline_save` gives none): it would be a recording of this layout with the other's hashes.
+- **The embed** hands the timelines its game's layout (live and loaded, and the new build's at a same-layout
+  reload) and says `other_build` 2 for a recording carried over (1 was, and is, another build's code of the same
+  layout). No ABI or struct change. The package's window says so in place of its "Every tick to N made the
+  recording's world" line.
+- **Picks:** carried over by name with the reload's rules rather than a migration of its own; no check rather than
+  a hash of some layout-free form of the world (there is none); refusing to save a carried-over timeline; refused
+  still where the recording has no layout (version 1, or a game built without one) or this build has none to say.
+- **Tests:** `tide_platform_travel_layout` (new: `platform/tests/travel_layout.tide`, travel.tide's game with its
+  components' fields in another order, new fields with defaults among them and a new singleton, built as a second
+  program; ctest runs it after `tide_platform_travel`, which leaves its recordings where `TIDE_TRAVEL_RECORDING`
+  says, a fixture of the two tests): the other build's recording, with a going-back in it, replays through the
+  embed as `other_build` 2, the views drawing at its first tick, at the tick gone back to and at its last what the
+  recording's build drew there (steps, the walker's x to the bit, jumps, the score), the new fields at their
+  defaults, nothing unreadable, nothing checked, and played at its rate to its end; the timeline's own account
+  (`other_layout`, nothing reset or dropped), no save of it, a build with no layout to say refused, bytes cut
+  short inside the layout refused; and a recording that says no layout refused, saying so. `tide_platform_travel`:
+  a recording with its layout hash flipped is carried over (to the same fields) and replayed unchecked, where it
+  was refused; `record_in` reads the new file. `tide_platform_dev_menu` (the standard host's recordings, saved
+  and replayed through the same file) passes as it was. The Sample's PlayMode
+  `ARecordingReplaysFromAFileBitForBit`: the flipped hash carried over, the ball where the match had it, nothing
+  checked; a cut-short file refused. EditMode `TravelWindowTests` (what the window says of one).
+- **Runs:** native `sanitize`: `tide_platform_travel` 12/12, `tide_platform_travel_layout` 2/2, `tide_platform_embed`
+  32/32, `tide_platform_dev_menu`. Web debug: `tide_platform` compiles. Unity as before, the tide installed again
+  from this checkout: PlayMode `TravelTests` 6/6 (the Sample's own layout carried over to itself), EditMode
+  `TravelWindowTests` 2/2.
+- **Left:** the standard host's dev menu makes its timelines without a layout, so its recordings say none and it
+  refuses another layout's as before (one field, `tide_timeline_desc.layout`, in `tide/host.h`'s two calls, when
+  it's wanted there). The counts of what didn't carry (`fields_reset`, entities and tasks dropped) are in
+  `tide_timeline_about` and not in `tide_embed_travel`, which has no room for them without an ABI number. Input
+  and command changes aren't carried: their packed bytes are the recording build's alone to read. A real layout
+  change in Unity (the Sample's game changed, built and reloaded mid-test) isn't a PlayMode test; the two-program
+  native test is that case.
+
+### 4. Sharded matches: a proposal for the owner, nothing built
+
+Stopped at a proposal, as asked where a real trade-off shows: three do (A to C below). Nothing of it is built; a
+sharded match still says "a sharded match isn't recorded" (`travel_why`), the session's recorder is told nothing of
+one and `tide_session_rewind` refuses it.
+
+**What a sharded match is to a debugger** (notes/sharding.md). On this machine it's a `tide_shards` inside the
+session: a root and regions, each a server with its own world, tick count and journal, and a coordinator that
+carries their messages between updates, follows players, splits and merges regions and makes checkpoints. This
+machine's player is a shard client: a client for each shard it follows, one of them its home; a frame's views draw
+the home's world and the others' beside it (`frame_shards`), and the embed's packet has them all. So there's no
+single world to keep, no single tick to name, and no single journal to replay.
+
+**What's cheap, and safe to build on my picks once A and B are answered** (it only reads the match):
+
+1. *Showing kept ticks, pausing and stepping.* After each `tide_shards_update`, keep a page-sharing copy of every
+   shard's world on this machine, with which shard was the player's home and which it followed
+   (`tide_session_views`). A shown frame hands the home's world to the views and the others' to `frame_shards`,
+   as `write_view` does live. With nobody else in the match, a pause is the orchestrator not updated and a step is
+   one update (every server's tick, then one round of the coordinator); with others in, the background mode as it
+   is. Each followed shard's own events are heard as gap 1's are.
+2. *Ticks before those kept, and recordings.* A shard's journal record already carries the shard messages its tick
+   took, so a shard replays alone from its first world, with no orchestrator (`tide_replay`). A sharded recording is
+   then a timeline for each shard that ever was (its first tick and world, its records), and for each update the
+   player's home and followed shards. A split or merge starts or ends a shard's timeline. It needs a new file form
+   (TIDETIME 3, a container of today's), and memory by the shard.
+
+**The decisions:**
+
+- **A. What a tick is.** Each shard counts its own ticks (a split's shard starts at the root's count; the servers
+  tick within one update). (A1) The unit is the orchestrator's update, named by the root's tick: one slider, the
+  whole match at one moment. (A2) A slider a shard. *Recommend A1*: a match's moment is what a debugger scrubs, and
+  shards change hands of entities between updates, so two shards at different moments show an entity twice or not
+  at all.
+- **B. Which worlds a tick shown draws.** (B1) Those this player followed then, its home's first: what the game
+  showed live, which is what a game's views are written for (`Shards.Owns`, a home). (B2) Every shard this
+  machine runs: the whole world, which a debugger may want and a game's views never saw. *Recommend B1*, with the
+  window listing every shard's region and tick; B2 after it if wanted.
+- **C. Continue From Here.** Taking the match back needs every shard's world at one moment and the coordinator's
+  own state (the directory of entities away from home, index ranges, routes, what's acknowledged). The coordinator
+  captures itself only for a checkpoint, when the match is drained and idle (in `shards_test`'s busy world 86% of
+  updates are quiet, the longest stretch without one 16 updates).
+  - (C1) Only from quiet updates: each is kept whole (the worlds, and the coordinator's capture), and going on
+    from a tick shown goes back to the last quiet update at or before it, the window saying which. It needs the
+    orchestrator to capture and restore itself in memory beside worlds it shares pages with, where
+    `tide_shards_save`/`_load` pack everything to bytes today: new orchestrator surface.
+  - (C2) From any update, by the crash recovery's path: the last checkpoint, each shard's records up to the
+    update, the coordinator rebuilt from first reports (`tide_shards_recover`). It needs checkpoints on in the
+    editor's sharded matches, and with checkpoints on a split or merge waits for its checkpoint before it's told:
+    **time travel being on would change when a match reshapes**, so a match with the debugger kept on goes
+    another way than one without. That's a debugger changing what it debugs.
+  - (C3) Not for sharded matches.
+  *Recommend C1.* C2 is the larger feature and the one with a cost outside the debugger.
+
+**After those:** a sharded world another machine runs, followed as gap 2 follows a match: each followed shard's
+client's confirmed worlds, joined at the home's tick (the other shards' at their latest confirmed tick at or before
+it, as their clients confirm apart). And costs to measure before any of it ships: a world a shard a tick (shared
+pages, so what changed), up to the 512 shards a session may run here, and the timeline's 64 MiB of records, which
+is a match's and would be a shard's.
+
+**Order proposed:** 1, then 2, on A1 and B1; C1 once the owner agrees to the orchestrator's new calls; the followed
+sharded world last. 1 and 2 touch the session (a recorder callback after each orchestrator update, with the shards'
+worlds, ticks and the player's follows), the timeline (a set of them), the embed's `show_frame` and the window; no
+generated code, layout, hash or wire format.
+
 ## The replay of 2026-11-14's GPU work, Gamma [Linear] images, multisampled mipmaps, triangle sides (2026-11-15)
 
 Everything the day's readback, number-image, checker-format and capability work records is now replayed and run
@@ -1099,6 +1218,34 @@ installs tide (`TideToolchain.Find(install, wait)`), runs `tide unity --once --r
   build fails with that message; the build after it succeeds. VersionTests 12 pass (one ignored, and the
   launch-argument one failing under `-tide-command` as before). Not seen: the two progress bars (no window), and
   following an install in flight (needs a download under way as a build starts).
+
+## An Android player's match on translated ARM (2026-11-19)
+
+The owner has no phone that can be plugged in, and asked whether one could be emulated. It can, for the CPU: Google's
+`google_apis` x86-64 images run ARM64 apps through `libndk_translation` (`ro.product.cpu.abilist=x86_64,arm64-v8a`),
+which the `default` image of the `tide` AVD doesn't.
+
+- **The device:** `x86_64-34_r14.zip` (Android 14, `sys-img/google_apis`, SHA-1 checked against `sys-img2-3.xml`)
+  unpacked to `%LOCALAPPDATA%\Android\Sdk\system-images\android-34\google_apis\x86_64`, and an AVD `tide-arm`
+  written by hand beside `tide` (its `config.ini` with that image and `tag.id=google_apis`). Booted with
+  `-no-window -no-audio -no-boot-anim -no-snapshot-save`.
+- **Ran:** `SampleSetup.BuildAndroid` (IL2CPP, ARM64, this checkout's tide through `-tide-command`), installed, and
+  started with `am start -n dev.tide.unity.bounce/com.unity3d.player.UnityPlayerGameActivity -e unity -tide-smoke`
+  on `-gpu host -feature -Vulkan`: `Tide smoke: running True, ball (-2.25, 0.50, 0.00), mine True, pillar turned
+  True, drew not with Tide's renderer (OpenGLES3, ...): FAIL`. So `libtide_game.so` loads by name from the app, the
+  pack inside it is read, the match runs over loopback in Unity's process and the C# reads it, all as ARM64 code. The
+  FAIL is the drawing alone: Unity took OpenGL ES there, which Tide's renderer leaves out by design.
+- **Not shown: Tide's renderer on Unity's Android Vulkan.** With `-gpu host` (Vulkan 1.3; `cmd gpu vkjson` answers)
+  the emulator's own process dies (exit 139) as Unity makes its second `VkInstance`, twice of twice; nothing of the
+  app's is at fault that the log shows. `-gpu swiftshader_indirect` gives the app no Vulkan and OpenGL ES 3.0 only,
+  which Unity refuses, and an Android player doesn't take `-nographics`. Translated ARM also says nothing of a real
+  phone's float results or GPU driver. A phone is still what shows these.
+- **adb:** Unity's editors run their own adb (36.0.0), the SDK's is 37.0.1, and each kills the other's server, so
+  with any Unity editor open on the machine adb commands fail midway. `ANDROID_ADB_SERVER_PORT=5038` gives a run
+  a server of its own.
+- **Found:** the Sample's committed `Packages/com.tide.game` was of another build than dev's tide makes (its schema
+  hash), which the player build refuses with its message; `tide unity Assets -o Library/Tide --assets Assets --once`
+  wrote it again. Not committed from here, as the threads changing the Sample each write it again.
 
 ## Android players, and IL2CPP run (2026-11-10)
 
@@ -1846,7 +1993,9 @@ session bit for bit (a tester's file too), with the first tick that differs when
 when the other program asks (`tide_embed_travel_keep`), the runner's Time Travel setting deciding where
 (`TideTimeTravel.Editor` by default: Play in the editor; `EditorAndPlayers` lets a game save testers' recordings;
 `Off`). Only a match this machine runs is recorded (the server's journal is the source); a client of another
-machine's match, and a sharded match, say why not (`tide_embed_travel.why`).
+machine's match, and a sharded match, say why not (`tide_embed_travel.why`). (Since 2026-11-19 a client's match is
+followed, its confirmed ticks kept, and a recording of another layout is carried over rather than refused: "Time
+travel's gaps", above. A sharded match still says why not.)
 
 What's built:
 

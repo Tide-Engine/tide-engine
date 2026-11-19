@@ -39,6 +39,12 @@ public class TravelWindowTests
         StringAssert.Contains("another", said);
         replay.unreadable = 5;
         StringAssert.Contains("can't replay tick 5", Said(replay));
+        // Another layout's recording, carried over: nothing is checked, and nothing says it was
+        var carried = new TideTravel { state = TideTravelState.Replay, first = 0, last = 300, shown = 120, checkedTo = 0, otherBuild = 2 };
+        StringAssert.Contains("laid out otherwise", Said(carried));
+        StringAssert.Contains("carried over by name", Said(carried));
+        StringAssert.DoesNotContain("made the recording's world", Said(carried));
+        StringAssert.DoesNotContain("code was another", Said(carried));
     }
 
     [Test]
