@@ -3218,6 +3218,12 @@ For Unity's time travel (notes/unity.md, Time travel), host-side session calls; 
   stops it (the server's journal is cleared).
 - `tide_replay_check(game, world, record, size, jobs, &expected, &got)`: `tide_replay`'s run of a record, saying
   `TIDE_REPLAY_SAME`, `_DIFFERENT` (both hashes) or `_UNREADABLE`; `tide_replay` is a wrapper of it, as it was.
+- `tide_replay_heard(game, world, record, size, jobs, heard, &expected, &got)` (2026-11-19; notes/unity.md, Time
+  travel's gaps): the same run with an event log, or NULL for `tide_replay_check`'s. The record's tick is run as
+  `tick_run` runs the server's own for its machine's local handlers: `tick_client_events` with per-player journals
+  it drops and `heard` as its `all` in a game with projections, else `tick_events`, else `tick`; a scene's
+  preparation records into it too. The world and its hash are the same with or without. A debugger's frames hear a
+  tick made again through it (`tide_timeline_heard`).
 - `tide_session_remote_players(s)`: connections on the server here that aren't this machine's (used, connected or
   joining).
 - `tide_session_rewind(s, world)`: the server's world becomes `world`, then the new optional

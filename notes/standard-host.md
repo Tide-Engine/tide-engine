@@ -895,7 +895,10 @@ changes, and no other host sets it. The loop handing local code's commands to th
 `restart` while the old build's code is still loaded; only the embed sets it (time travel's worlds and local state
 are the old build's), so `tide run`'s host is unchanged. Frames that show another tick than the latest don't go
 through `tide_run_frame`: the embed's `show_frame` runs the views over that world with a local state of its own and
-the host's draw list, GUI and devices (consumed after it), and writes the view packet from it.
+the host's draw list, GUI and devices (consumed after it), and writes the view packet from it. Since 2026-11-19 that
+local state's handlers hear the ticks shown (`travel_gather`, `tide_timeline_heard`: notes/unity.md, Time travel's
+gaps), and a background frame's own packet is written and dropped so what the match's taps heard isn't in the shown
+tick's.
 
 ## Runtime stats argument and documentation pages (2026-10-25)
 

@@ -548,6 +548,12 @@ typedef enum tide_replay_result {
 // differs, to show where it goes from there.
 tide_replay_result tide_replay_check(const tide_game *game, void *world, const uint8_t *record, uint32_t size,
                                      const tide_jobs *jobs, uint64_t *expected, uint64_t *got);
+// tide_replay_check, recording into `heard` (or NULL) what the tick sent that
+// the game's local handlers hear, as the machine that ran the match heard it
+// of its own tick (tide_game.tick_events): a debugger's local handlers hear a
+// tick made again. The world comes out the same with or without it.
+tide_replay_result tide_replay_heard(const tide_game *game, void *world, const uint8_t *record, uint32_t size,
+                                     const tide_jobs *jobs, tide_event_log *heard, uint64_t *expected, uint64_t *got);
 
 tide_server *tide_server_create(const tide_server_desc *desc, double now);
 // Tells every player the match is over, and closes the transports.

@@ -57,6 +57,8 @@ struct tide_timeline {
     void *seek;      // A world made again from the start, before the ones kept...
     uint32_t seek_tick;
     bool seeking;    // ...while it's at seek_tick
+    void *seek_before; // ...and the one it was made from, for what its tick sent (tide_timeline_heard)
+    bool seek_had;     // ...while that's the world after seek_tick - 1 ticks
     tide_timeline_check check;
 };
 
@@ -90,6 +92,9 @@ static void clear(tide_timeline *t)
     drop_world(t, t->seek);
     t->seek = NULL;
     t->seeking = false;
+    drop_world(t, t->seek_before);
+    t->seek_before = NULL;
+    t->seek_had = false;
     for (uint32_t i = 0; i < t->keep; i++) {
         drop_world(t, t->kept[i].world);
         t->kept[i] = (kept){0};
@@ -337,8 +342,14 @@ const void *tide_timeline_world(tide_timeline *t, const uint32_t tick)
         t->game->copy_world(t->seek, t->start);
         t->seek_tick = t->first;
         t->seeking = true;
+        t->seek_had = false;
     }
     while (t->seek_tick < tick) {
+        t->seek_had = t->seek_tick + 1u == tick; // The last one before it, kept: a copy shares its pages
+        if (t->seek_had) {
+            if (!t->seek_before) t->seek_before = new_world(t);
+            t->game->copy_world(t->seek_before, t->seek);
+        }
         if (!replay(t, t->seek, t->seek_tick)) {
             t->seeking = false;
             return NULL;
@@ -346,6 +357,23 @@ const void *tide_timeline_world(tide_timeline *t, const uint32_t tick)
         t->seek_tick++;
     }
     return t->seek;
+}
+
+bool tide_timeline_heard(tide_timeline *t, const uint32_t tick, tide_event_log *heard)
+{
+    if (!t || !t->started || !heard || tick <= t->first || tick > tide_timeline_last(t)) return false;
+    const void *before = kept_at(t, tick - 1u);
+    if (!before && t->seeking && t->seek_had && t->seek_tick == tick) before = t->seek_before;
+    if (!before) before = tide_timeline_world(t, tick - 1u);
+    if (!before) return false;
+    void *world = new_world(t);
+    t->game->copy_world(world, before);
+    uint64_t expected = 0, got = 0;
+    const uint32_t i = tick - 1u - t->first;
+    const tide_replay_result result =
+        tide_replay_heard(t->game, world, t->records[i], t->sizes[i], t->jobs, heard, &expected, &got);
+    drop_world(t, world);
+    return result != TIDE_REPLAY_UNREADABLE;
 }
 
 bool tide_timeline_cut(tide_timeline *t, const uint32_t tick, const void *world)

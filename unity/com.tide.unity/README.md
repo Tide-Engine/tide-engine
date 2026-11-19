@@ -335,6 +335,14 @@ default).
   before those kept are made again from the start as they're shown. What's
   clicked or sent on an older tick's picture never reaches the match, and the
   match's own local state is left as it was.
+- A tick shown is heard: the game's local handlers, and `runner.On<E>` and
+  `OnVerified<E>` in C#, hear what the tick sent, as the match's own machine
+  heard it. Going on from the tick shown (a step, a recording playing, the
+  slider moved on by up to 64 ticks) every tick come past is heard in order;
+  a tick gone back to, or jumped far on to, says what it sent alone; a tick
+  that stays shown says nothing again. Those handlers run on a local state of
+  the shown ticks' own, which starts empty, so what they count or keep is
+  apart from the match's.
 - **Continue From Here** takes the match back to the tick shown and on from
   there: the ticks after it are gone. Which commands are in the match stays as
   it was, so one already applied after that tick doesn't come again.

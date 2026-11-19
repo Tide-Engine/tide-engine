@@ -1,3 +1,64 @@
+## Time travel's gaps (2026-11-19)
+
+The owner asked for the Unity integration's known gaps to be closed; these are the ones "Time travel (2026-10-26)"
+ended with, in its order. Every pick here is mine (Provisional).
+
+### 1. The ticks shown are heard
+
+Frames that show another tick than the match's latest (scrubbed back, the background mode, a recording) run the
+views on a local state of their own, which heard nothing: no local handler ran there and the packet's EVENTS were
+empty, so C#'s `On<E>` said nothing of a tick shown. Now:
+
+- **`tide_replay_heard`** (`tide/session.h`, `session.c`; notes/netcode.md): `tide_replay_check` with an event log,
+  which the tick is run with as the server's own machine runs its ticks for its player's local handlers
+  (`tick_events`, or a projection game's `tick_client_events` with its `all`; a scene's preparation's events too).
+  The world comes out the same.
+- **`tide_timeline_heard(t, tick, log)`** (`tide/timeline.h`): what the tick that made the world after `tick` ticks
+  sent, by running that tick again on a copy of the world before it (one it keeps; else the one a seek made its
+  world from, `seek_before`, a page-sharing copy taken at a seek's last step, so stepping through ticks before the
+  ring doesn't seek again from the start; else made by `tide_timeline_world`). Nothing for its first tick. One more
+  run of a tick for each tick heard: a debugger's cost.
+- **The embed** (`embed.c`): `travel_gather`, before the world of a frame's tick is asked for, puts into
+  `travel.events` what the frames come to hear, and `show_frame` hands it to the separate local state's handlers
+  (`game->events`) before its views, as `tide_run_frame` does a session's. The taps `tidec --embed` adds are among
+  those handlers, so the frame's packet has them as EVENTS and C# hears them as it hears the match's. As heard:
+  each event once as predicted and once as confirmed (a tick of a recorded match is the server's own). What's heard
+  when (`TRAVEL_HEARD_MOST`, 64):
+  - going on from the tick last shown (a step, a recording playing, a scrub forward of at most 64 ticks): every
+    tick come past, in order;
+  - any other tick come to (the first one shown, one before the last shown, one further on than 64 ticks): what the
+    tick that made its world sent, alone, so the tick a debugger lands on says what it did;
+  - a tick shown again: nothing again.
+  Handlers read the match as their event's tick left it (the log's own rows, as always) and count in the separate
+  local state, which starts fresh as before: the match's own local state hears none of it and is as it was when it
+  goes on. Its sounds play (`tide_platform_audio` after the frame) unless the match's own frame ran unseen in the
+  same frame (background mode), whose sound the frame's is.
+- **Fixed on the way:** in background mode the match's own frame ran unseen and its taps kept what they heard until
+  the next packet, which was the shown tick's: C# heard the live match's events on an old tick's picture. The
+  unseen frame's packet is written and dropped now (`background_frame`'s `write_view`).
+- No embed ABI or packet change: EVENTS are as they were, and the package's C# is untouched.
+- **Tests:** `tide_platform_travel`'s `travel_shown_ticks_are_heard` (travel.tide's new `Bumped` event, sent by
+  the Bump command's handler, and its local handler counting in a local singleton): a tick before the ring shown
+  hears its Bump once with the match as that tick left it, counted as its local state's first while the match's
+  had counted three, in the packet once as predicted and once as confirmed with the tick's number; shown again,
+  nothing; the tick before it nothing, a step on from it the Bump again; steps on each heard as come to; several
+  ticks on at once all heard; back, the tick landed on alone; the match's own next Bump its fourth; and a
+  recording played, its four in order, in the packets too. `travel_never_stops_a_match_for_other_machines`: a
+  command behind the tick shown is heard by the match's own handlers and is in none of the shown tick's packets.
+  The Sample's PlayMode `TravelTests.ShownTicksAreHeard` (the ball's `Bounced`: `On` and `OnVerified` at the tick
+  shown, the ball's local `heard` counted from 1 there, a step to it, a recording played hearing every bounce, the
+  match's own count as it was after).
+- **Runs:** native `sanitize` (Windows ASan): `tide_platform_travel` 11/11, `tide_platform_embed` 32/32. Web debug:
+  the platform layer and engine compile (`tide_platform`); no web test runs the embed's travel. Unity 6000.6.0f1,
+  this checkout's Sample, batch, `-nographics -noAudio`, `TIDE_HIDDEN`, `-tide-command` a tide installed from this
+  checkout's mingw-release and debug trees: PlayMode `TravelTests` 6/6 (the five there were in one run, the new one
+  alone in the next, after its test's own fixes). The Sample's `com.tide.game` as that tide wrote it for the runs
+  isn't committed (its hash is the build's). Not run: EditMode (no editor code changed), a GPU run, Unity on the web.
+- **Left:** the standard host's own pause (`tide/host.h`'s dev menu, notes/standard-host.md) shows earlier ticks
+  through the match's own local state and still hears nothing of them: it's another host's design (its local
+  state isn't separate), not Unity's. `Shown`/`Hidden` availability events aren't made for a tick come to by a
+  jump (the separate local state hears what ticks sent, not what differs between two worlds shown).
+
 ## The replay of 2026-11-14's GPU work, Gamma [Linear] images, multisampled mipmaps, triangle sides (2026-11-15)
 
 Everything the day's readback, number-image, checker-format and capability work records is now replayed and run
@@ -1378,7 +1439,7 @@ each, MicroDuck's turn as before), `tide_platform_travel` 10/10; the Sample's Ed
 `com.tide.game` written again by it (the schema hash moved with the Session ABI marker). After merging the type boundary's work (`unity_code.c`, the Sample's package): the native unity, CLI, LSP, outline, tidec, embed, reload and travel tests 2573/2573, the Sample's package as tide writes it unchanged, EditMode 33/33 and PlayMode 22/22. Not run: Unity on the web
 (the jslib and exports are built and compiled, not played), the window's drawing in a window, Linux and macOS.
 
-**Not done / gaps:** local handlers and the packet's EVENTS for replayed or scrubbed ticks (the separate local state
+**Not done / gaps** (worked through since: "Time travel's gaps (2026-11-19)", at the top)**:** local handlers and the packet's EVENTS for replayed or scrubbed ticks (the separate local state
 hears nothing); a client of another machine's match can't time travel (it has no journal; its verified worlds could be
 kept, not built); sharded matches; replays across a layout change (the old layout's description isn't in the
 recording); the window's drawing seen in a window (batch runs have none).
