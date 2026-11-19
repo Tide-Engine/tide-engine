@@ -62,6 +62,9 @@ typedef enum tide_draw_kind {
     TIDE_DRAW_COMPUTE,   // compute: a kernel's run (tide_draw_list.computes), outside any pass, in order with draws
     TIDE_DRAW_GPU_LIST,  // gpu_list: Set, Clear or SetCount of a GPU list (tide_draw_list.gpu_ops), in order with draws
     TIDE_DRAW_CLEAR_IMAGES, // clear_images: four typed image values in the list's uniform bytes
+    // external: a mesh of the program Tide runs inside, drawn by that program with a material of its own, in order
+    // with the draws (tide_draw_external_mesh). Into the window alone; nothing where no such program replays the frame
+    TIDE_DRAW_EXTERNAL,
 } tide_draw_kind;
 
 // How what a command draws goes over what's there. Tide's `Blend` has the same
@@ -227,6 +230,11 @@ typedef struct tide_draw_command {
             uint32_t op; // Its place in tide_draw_list.gpu_ops
         } gpu_list;
         struct { uint32_t uniforms; } clear_images;
+        struct {               // TIDE_DRAW_EXTERNAL
+            uint32_t mesh;     // The other program's numbers for its mesh...
+            uint32_t material; // ...and its material (tide_external_ref)
+            uint32_t matrix;   // Its place in tide_draw_list.matrices: from the mesh to the world
+        } external;
         struct {             // TIDE_DRAW_TEXT, after its `a` and `b.x`
             tide_float2 at;  // `a`
             float size;      // `b.x`
@@ -978,7 +986,9 @@ static inline tide_float2 tide_render_target_logical(const tide_render_target t,
 // of the game's pack (an `asset Texture`: no pixels and no target, its size
 // and its version, which names its declaration: see tide_pack_texture_of), or
 // a grid of the game's (no pixels, no target and a height of
-// TIDE_TEXTURE_GRID: see tide_texture_of_grid in tide/mesh.h).
+// TIDE_TEXTURE_GRID: see tide_texture_of_grid in tide/mesh.h), or an image of
+// the program Tide runs inside (no pixels, no target and a height of
+// TIDE_TEXTURE_EXTERNAL: see tide_texture_external).
 // Copying this value never copies an image. The existing tide_texture remains
 // the CPU pixel descriptor used by C drawing callers.
 //
@@ -1009,6 +1019,7 @@ tide_target_pixels_fn tide_texture_target_pixels(tide_target_pixels_fn resolve);
 #define TIDE_TEXTURE_NAME ((UINT64_C(1) << TIDE_TEXTURE_SAMPLING_SHIFT) - 1u)
 #define TIDE_TEXTURE_GRID (-1) // A grid's reference's `image.height`
 #define TIDE_TEXTURE_DEPTH (-2) // Metadata-only depth reference for tide_texture_size; never sampled as color
+#define TIDE_TEXTURE_EXTERNAL (-3) // An image of the program Tide runs inside: its reference's `image.height`
 
 static inline uint32_t tide_sampling_bits(const int32_t filter, const int32_t wrap)
 {
@@ -1059,6 +1070,46 @@ static inline tide_texture_ref tide_texture_wrapped(const tide_texture_ref textu
 {
     return tide_texture_sampled(texture, (tide_texture_sampling(texture) & 3u) | (uint32_t)tide_wrap_of(wrap) << 2);
 }
+
+// An image of the program Tide runs inside (tide/embed.h: a texture Unity imported), which that program's GPU has
+// and draws with as it is: nothing of it is here but the number that program knows it by, from 1, and its size in
+// pixels, both in its name, so a copy of the reference is all a game keeps and tide_texture_size reads no table.
+// Only a host that records its drawing for that program draws one (gpu.h's `external`); to any other it's no
+// texture, as a zeroed reference is. None for a number or a side out of range.
+#define TIDE_TEXTURE_EXTERNAL_IDS (1u << 28)
+#define TIDE_TEXTURE_EXTERNAL_SIDE 65535u
+
+static inline tide_texture_ref tide_texture_external(const uint32_t id, const uint32_t width, const uint32_t height,
+                                                     const uint32_t sampling)
+{
+    if (!id || id >= TIDE_TEXTURE_EXTERNAL_IDS || !width || !height || width > TIDE_TEXTURE_EXTERNAL_SIDE
+        || height > TIDE_TEXTURE_EXTERNAL_SIDE) return (tide_texture_ref){0};
+    const uint64_t named = (uint64_t)id | (uint64_t)width << 28 | (uint64_t)height << 44;
+    return tide_texture_sampled((tide_texture_ref){.image = {.height = TIDE_TEXTURE_EXTERNAL, .version = named}}, sampling);
+}
+
+static inline bool tide_texture_is_external(const tide_texture_ref texture)
+{
+    return !texture.image.pixels && !texture.target.id && texture.image.height == TIDE_TEXTURE_EXTERNAL;
+}
+
+// What an external image's name says: its number, and its size.
+static inline uint32_t tide_texture_external_id(const uint64_t named)
+{
+    return (uint32_t)(named & (TIDE_TEXTURE_EXTERNAL_IDS - 1u));
+}
+
+static inline tide_int2 tide_texture_external_size(const uint64_t named)
+{
+    return tide_i2((int32_t)(named >> 28 & TIDE_TEXTURE_EXTERNAL_SIDE), (int32_t)(named >> 44 & TIDE_TEXTURE_EXTERNAL_SIDE));
+}
+
+// An object of the program Tide runs inside that isn't a texture (Unity's mesh, material or sound, which Tide's
+// UnityEngine.Mesh, UnityEngine.Material and UnityEngine.AudioClip are): the number that program knows it by, from
+// 1, and nothing else. Nothing here reads one; a draw or a play hands it back to that program. 0 is none.
+typedef struct tide_external_ref {
+    uint64_t id;
+} tide_external_ref;
 
 // What texture `texture` of a shader's adds to its run's `sampling` when it's
 // read as its reference says: its filter's bit, or its wrap's.
@@ -1385,7 +1436,12 @@ enum {
     TIDE_PIXELS_GRID_ARRAY,
     TIDE_PIXELS_TARGET_VOLUME,
     TIDE_PIXELS_GRID_VOLUME,
+    // An image of the program Tide runs inside (tide_texture_external): no pixels here, its `id` its name (its
+    // number and size), with TIDE_PIXELS_EXTERNAL_RAW set for a read of its channels as numbers ([Raw]), which that
+    // program then works no alpha into. Only a backend with `external` (gpu.h) has an image for it.
+    TIDE_PIXELS_EXTERNAL,
 };
+#define TIDE_PIXELS_EXTERNAL_RAW (UINT64_C(1) << 60)
 
 // What a list's texture holds for each pixel: red, green, blue and alpha, a
 // byte each, or one float of 16 bits (IEEE 754's half), which a shader reads
@@ -3059,7 +3115,8 @@ static inline __attribute__((always_inline)) bool tide_draw_same_source(const ti
     if (texture->target.id) return false;
     if (texture->image.pixels) return tide_draw_same_image(d, last, &texture->image);
     const uint64_t name = texture->image.version & TIDE_TEXTURE_NAME;
-    return texture->image.height != TIDE_TEXTURE_GRID && name && name == d->pack_named && d->pack_frame == d->frame
+    return texture->image.height != TIDE_TEXTURE_GRID && texture->image.height != TIDE_TEXTURE_EXTERNAL && name
+        && name == d->pack_named && d->pack_frame == d->frame
         && last->mesh.texture && last->mesh.texture == d->pack_slot;
 }
 
@@ -3437,6 +3494,12 @@ void tide_draw_shaded_indirect(tide_draw_list *d, const tide_shader *shader, uin
 // A cube's `size` is its full width, height and depth. The rotated form
 // turns its local axes by `rotation` before placing it in the world.
 void tide_draw_cube(tide_draw_list *d, tide_float3 center, tide_float3 size, tide_color color);
+
+// A mesh of the program Tide runs inside, drawn by it with a material of its own, placed by `transform` (through the
+// 3D transform that's set), where this call is among the frame's draws: Tide's Draw.UnityMesh. Its camera, its
+// lighting and what its material does are that program's; it goes into the window alone. Nothing for none of
+// either, and nothing where no such program replays the frame.
+void tide_draw_external_mesh(tide_draw_list *d, tide_external_ref mesh, tide_external_ref material, tide_float4x4 transform);
 void tide_draw_cube_rotated(tide_draw_list *d, tide_float3 center, tide_float3 size, tide_quaternion rotation,
                              tide_color color);
 

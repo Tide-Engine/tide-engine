@@ -1,7 +1,48 @@
-// the renderer's hiz_samples
+// Stripes on PlateCorner
 // Made by tide unity from the game's WGSL. Do not edit: it's made again as the game is built.
-#pragma kernel tidehl_compute
-#include "Packages/com.tide.unity/Runtime/Shaders/TideWarnings.hlsl"
+Shader "Hidden/Tide/7e6cbb6ef3a811ff"
+{
+    Properties
+    {
+        _TideSrcColor ("", Float) = 1
+        _TideDstColor ("", Float) = 10
+        _TideSrcAlpha ("", Float) = 1
+        _TideDstAlpha ("", Float) = 10
+        _TideZTest ("", Float) = 8
+        _TideZWrite ("", Float) = 0
+        _TideCull ("", Float) = 0
+        _TideStencilRef ("", Float) = 0
+        _TideStencilComp ("", Float) = 8
+        _TideStencilPass ("", Float) = 0
+        _TideAlphaToMask ("", Float) = 0
+    }
+    SubShader
+    {
+        Pass
+        {
+            Blend 0 [_TideSrcColor] [_TideDstColor], [_TideSrcAlpha] [_TideDstAlpha]
+            Blend 1 [_TideSrcColor] [_TideDstColor], [_TideSrcAlpha] [_TideDstAlpha]
+            Blend 2 [_TideSrcColor] [_TideDstColor], [_TideSrcAlpha] [_TideDstAlpha]
+            Blend 3 [_TideSrcColor] [_TideDstColor], [_TideSrcAlpha] [_TideDstAlpha]
+            ColorMask 0 1
+            ColorMask 0 2
+            ColorMask 0 3
+            ZTest [_TideZTest]
+            ZWrite [_TideZWrite]
+            Cull [_TideCull]
+            AlphaToMask [_TideAlphaToMask]
+            Stencil
+            {
+                Ref [_TideStencilRef]
+                Comp [_TideStencilComp]
+                Pass [_TideStencilPass]
+            }
+            HLSLPROGRAM
+            #pragma vertex tidehl_vertex
+            #pragma fragment tidehl_fragment
+            #pragma target 4.5
+            #pragma exclude_renderers gles3
+            #include "Packages/com.tide.unity/Runtime/Shaders/TideWarnings.hlsl"
 #define TIDEHL_SOURCE_REVERSED 1
 // Made by tidec from WGSL (compiler/src/hlsl.c). Do not edit.
 #if defined(SHADER_API_D3D11) || defined(SHADER_API_PSSL) || defined(SHADER_API_METAL) || defined(SHADER_API_VULKAN) \
@@ -21,6 +62,12 @@ float4 _TideAttributes[16];
 float4 _TideSlots[3];
 uint _TideOffset0, _TideOffset1, _TideOffset2, _TideFirst, _TideSampling, _TideSamplingHigh, _TideUnmipped;
 uint _TideOwn, _TideOwnHigh; // OpenGL Core's: how each texture samples itself, 4 bits each, 15 for unknown
+// An image of Unity's own bound where Tide reads a texture (TideRender's External), 2 bits a texture: 0 for Tide's
+// own or one read as numbers; 1 its colors times its alpha, as Tide's are stored; 2 its linear light made display
+// colors first (a Linear project's sRGB texture); 3 its display colors made linear light first (a [Linear] read
+// of one no hardware decodes). And a bit a texture for each whose rows Unity keeps from the bottom, as it does an
+// image it imported: read from the top, as Tide's uv counts them
+uint _TideForeign, _TideTurned;
 ByteAddressBuffer _TideVertices0, _TideVertices1, _TideVertices2;
 SamplerState tidehl_point_clamp_sampler, tidehl_point_repeat_sampler, tidehl_point_mirror_sampler;
 SamplerState tidehl_linear_clamp_sampler, tidehl_linear_repeat_sampler, tidehl_linear_mirror_sampler;
@@ -36,7 +83,34 @@ uint tidehl_mode(uint mode, uint t) {
     uint own = (t < 8u ? _TideOwn >> (4u * t) : _TideOwnHigh >> (4u * (t - 8u))) & 15u;
     m = (m & 15u) | (own << 4) | 256u;
 #endif
-    return m;
+    return m | (((_TideForeign >> (2u * t)) & 3u) << 9) | (((_TideTurned >> t) & 1u) << 11);
+}
+// Where a read of an image whose rows count from the bottom reads (bit 11 of its mode), and its derivatives
+float2 tidehl_turned(float2 at, uint mode) { return (mode & 2048u) != 0u ? float2(at.x, 1.0 - at.y) : at; }
+float3 tidehl_turned(float3 at, uint mode) { return at; }
+float2 tidehl_turned_by(float2 d, uint mode) { return (mode & 2048u) != 0u ? float2(d.x, -d.y) : d; }
+float3 tidehl_turned_by(float3 d, uint mode) { return d; }
+// A loaded pixel's place in one: its row from the other end
+int2 tidehl_turned_row(Texture2D<float4> t, int2 at, int level, uint slot) {
+    if (((_TideTurned >> slot) & 1u) != 0u) {
+        uint w, h, levels;
+        t.GetDimensions((uint)level, w, h, levels);
+        at.y = (int)h - 1 - at.y;
+    }
+    return at;
+}
+// What a sampler read of an image of Unity's, as Tide's own textures give it (bits 9 and 10 of its mode)
+float4 tidehl_foreign(float4 c, uint mode) {
+    uint f = (mode >> 9) & 3u;
+    if (f == 2u) {
+        float3 l = abs(c.rgb);
+        c.rgb = l <= 0.0031308 ? l * 12.92 : 1.055 * pow(l, 1.0 / 2.4) - 0.055;
+    } else if (f == 3u) {
+        float3 s = saturate(c.rgb);
+        c.rgb = s <= 0.04045 ? s / 12.92 : pow((s + 0.055) / 1.055, 2.4);
+    }
+    if (f != 0u) c.rgb *= c.a;
+    return c;
 }
 // Which way up the target is: -1 where Unity keeps its rows from the bottom
 float tidehl_flip() { return _TideFlip != 0.0 ? sign(_TideFlip) : _ProjectionParams.x; }
@@ -241,22 +315,25 @@ float tidehl_layer(float3 at) { return at.z; }
 #define TIDEHL_SAMPLE(T, C, D, MASK, PLACE) /* D: a derivative, which an array coordinate's layer has none of */ \
 float4 tidehl_sample_grad(T t, SamplerState own, uint mode, C at, D dx, D dy) {                        \
     float4 r;                                                                                          \
+    at = tidehl_turned(at, mode); dx = tidehl_turned_by(dx, mode); dy = tidehl_turned_by(dy, mode);    \
     if (tidehl_emulates(mode, MASK)) r = tidehl_emulated(t, own, mode, PLACE(at), tidehl_layer(at), tidehl_lod_of(t, at, dx, dy)); \
     else if ((mode & 3u) >= 2u) r = t.SampleGrad(own, at, dx, dy);                                     \
     else r = t.SampleLevel(own, at, 0.0);                                                              \
-    return r;                                                                                          \
+    return tidehl_foreign(r, mode);                                                                    \
 }                                                                                                      \
 float4 tidehl_sample_level(T t, SamplerState own, uint mode, C at, float level) {                      \
     float4 r;                                                                                          \
+    at = tidehl_turned(at, mode);                                                                      \
     if (tidehl_emulates(mode, MASK)) r = tidehl_emulated(t, own, mode, PLACE(at), tidehl_layer(at), level); \
     else r = t.SampleLevel(own, at, (mode & 3u) >= 2u ? level : 0.0);                                  \
-    return r;                                                                                          \
+    return tidehl_foreign(r, mode);                                                                    \
 }
 #else
 #define TIDEHL_SAMPLE(T, C, D) /* D: a derivative, which an array coordinate's layer has none of */    \
 float4 tidehl_sample_grad(T t, SamplerState own, uint mode, C at, D dx, D dy) {                        \
     uint filter = mode & 3u, wrap = (mode >> 2) & 3u;                                                  \
     float4 r;                                                                                          \
+    at = tidehl_turned(at, mode); dx = tidehl_turned_by(dx, mode); dy = tidehl_turned_by(dy, mode);    \
     if (filter == 3u) {                                                                                \
         if (wrap == 1u) r = t.SampleGrad(tidehl_trilinear_repeat_aniso8_sampler, at, dx, dy);        \
         else if (wrap == 2u) r = t.SampleGrad(tidehl_trilinear_mirror_aniso8_sampler, at, dx, dy);   \
@@ -274,16 +351,17 @@ float4 tidehl_sample_grad(T t, SamplerState own, uint mode, C at, D dx, D dy) { 
         else if (wrap == 2u) r = t.SampleLevel(tidehl_point_mirror_sampler, at, 0.0);                 \
         else r = t.SampleLevel(tidehl_point_clamp_sampler, at, 0.0);                                  \
     }                                                                                                  \
-    return r;                                                                                          \
+    return tidehl_foreign(r, mode);                                                                    \
 }                                                                                                      \
 float4 tidehl_sample_level(T t, SamplerState own, uint mode, C at, float level) {                      \
     uint filter = mode & 3u, wrap = (mode >> 2) & 3u;                                                  \
     float4 r;                                                                                          \
-    if (filter < 2u) r = tidehl_sample_grad(t, own, mode, at, (D)0, (D)0);                             \
+    at = tidehl_turned(at, mode);                                                                      \
+    if (filter < 2u) r = tidehl_sample_grad(t, own, mode & 511u, at, (D)0, (D)0);                      \
     else if (wrap == 1u) r = t.SampleLevel(tidehl_trilinear_repeat_sampler, at, level);               \
     else if (wrap == 2u) r = t.SampleLevel(tidehl_trilinear_mirror_sampler, at, level);               \
     else r = t.SampleLevel(tidehl_trilinear_clamp_sampler, at, level);                                \
-    return r;                                                                                          \
+    return tidehl_foreign(r, mode);                                                                    \
 }
 #endif
 #define TIDEHL_SAMPLE_DERIVED(T, C, S) /* S: the part of the coordinate a derivative is of */           \
@@ -433,51 +511,47 @@ float2 tidehl_unpack2x16unorm(uint u) { return float2(u & 0xFFFFu, u >> 16) / 65
 float2 tidehl_unpack2x16snorm(uint u) { int2 b = asint(uint2(u << 16, u)) >> 16; return max(float2(b) / 32767.0, -1.0); }
 float2 tidehl_unpack2x16float(uint u) { return float2(f16tof32(u & 0xFFFFu), f16tof32(u >> 16)); }
 
-struct HiZ {
-    uint4 size;
-    uint4 at;
+struct tide_uniforms {
+    float4x4 tide_camera;
+    float4 tide_screen;
+    float4 tide_tint;
+    float4 tide_origin;
 };
-struct tidehl_a10 { int v[256]; };
+struct tide_corner {
+    float4 tide_at;
+    float2 tide_s1;
+};
+struct tt_PlateCorner {
+    float3 m_position;
+    float2 m_uv;
+};
 
 static const bool tide_reversed_depth = true;
-Texture2DMS<float> _TideTexture0;
-SamplerState sampler_TideTexture0;
 cbuffer TideUniforms {
-    uint4 tidehl_u_size;
-    uint4 tidehl_u_at;
+    row_major float4x4 tidehl_u_tide_camera;
+    float4 tidehl_u_tide_screen;
+    float4 tidehl_u_tide_tint;
+    float4 tidehl_u_tide_origin;
 };
-RWByteAddressBuffer _TideStorage0;
-groupshared tidehl_a10 tile;
-groupshared uint finished;
-cbuffer TideGroups {
-    uint3 _TideGroups; // num_workgroups: the dispatch's size, in workgroups
-};
+static float4 tide_n0 = ((float4)0);
+static float4 tide_n1 = ((float4)0);
+static float4 tide_n2 = ((float4)0);
+static float4 tide_n3 = ((float4)0);
+static float4 tide_at = ((float4)0);
+static float3 tide_world = ((float3)0);
 
-uint tidehl_length0() { uint n; _TideStorage0.GetDimensions(n); return n / 4u; }
-uint tidehl_at0(uint i) { return min(i, tidehl_length0() - 1u) * 4u; }
-void tidehl_atomicStore0(uint at, int v) {
-    int r;
-    _TideStorage0.InterlockedExchange(at, v, r);
-}
-int tidehl_atomicAdd0(uint at, int v) {
-    int r;
-    _TideStorage0.InterlockedAdd(at, v, r);
-    return r;
-}
-int tidehl_atomicLoad0(uint at) {
-    int r;
-    _TideStorage0.InterlockedOr(at, (int)0, r);
+tt_PlateCorner tidehl_make_tt_PlateCorner(float3 v0, float2 v1) {
+    tt_PlateCorner r;
+    r.m_position = v0;
+    r.m_uv = v1;
     return r;
 }
 float tide_depth(float d);
 float tide_clip_depth(float4 p);
-float pixel(uint x, uint y);
-uint across(uint n, uint k);
-uint level_at(uint k);
-void put(uint k, uint x, uint y, int v);
-int most(uint k, uint x, uint y, int a, int b, int c, int d);
-int down(uint k, uint t, uint3 g);
-void compute(uint t, uint3 g);
+float4 tide_project(float4x4 model, float4 vertex);
+void ts_Stripes(tt_PlateCorner t_corner, inout float4 t_color);
+tide_corner vertex(float3 tide_a0, float2 tide_a1, float4 tide_in0, float4 tide_in1, float4 tide_in2, float4 tide_in3);
+float4 fragment(tide_corner in_w);
 
 float tide_depth(float d)
 {
@@ -489,147 +563,85 @@ float tide_clip_depth(float4 p)
     return (tide_reversed_depth ? ((p.w - p.z) * 0.5) : ((p.z + p.w) * 0.5));
 }
 
-float pixel(uint x, uint y)
+float4 tide_project(float4x4 model, float4 vertex)
 {
-    int2 p = int2(((int)(x)), ((int)(y)));
-    float far = tide_depth(tidehl_load(_TideTexture0, int2(p), int(0)));
-    int samples = ((int)(tidehl_samples(_TideTexture0)));
-    {
-        int s = 1;
-        [loop] for (; (s < samples); s = (s + 1)) {
-            far = max(far, tide_depth(tidehl_load(_TideTexture0, int2(p), int(s))));
+    float4x4 relative = float4x4((model[0] - (tidehl_u_tide_origin * model[0].w)), (model[1] - (tidehl_u_tide_origin * model[1].w)), (model[2] - (tidehl_u_tide_origin * model[2].w)), (model[3] - (tidehl_u_tide_origin * model[3].w)));
+    return mul(mul(vertex, relative), tidehl_u_tide_camera);
+}
+
+void ts_Stripes(tt_PlateCorner t_corner, inout float4 t_color)
+{
+    t_color = ((frac((t_corner.m_uv.x * 2.0)) < 0.5) ? float4(1.0, 0.5, 0.0, 1.0) : float4(0.100000001, 0.400000006, 1.0, 1.0));
+}
+
+tide_corner vertex(float3 tide_a0, float2 tide_a1, float4 tide_in0, float4 tide_in1, float4 tide_in2, float4 tide_in3)
+{
+    tide_n0 = tide_in0;
+    tide_n1 = tide_in1;
+    tide_n2 = tide_in2;
+    tide_n3 = tide_in3;
+    tt_PlateCorner tide_vertex = tidehl_make_tt_PlateCorner(tide_a0, tide_a1);
+    float4 tide_projected = tide_project(float4x4(tide_n0, tide_n1, tide_n2, tide_n3), float4(tide_vertex.m_position, 1.0));
+    float4 tide_clip = tide_projected;
+    tide_corner out_w = ((tide_corner)0);
+    out_w.tide_at = float4(tide_clip.xy, tide_clip_depth(tide_clip), tide_clip.w);
+    out_w.tide_s1 = tide_vertex.m_uv;
+    return out_w;
+}
+
+float4 fragment(tide_corner in_w)
+{
+    tide_at = in_w.tide_at;
+    float4 tide_color = float4(1.0, 1.0, 1.0, 1.0);
+    ts_Stripes(tidehl_make_tt_PlateCorner(((float3)0), in_w.tide_s1), tide_color);
+    tide_color = (tide_color * tidehl_u_tide_tint);
+    tide_color = float4((tide_color.rgb * tide_color.a), tide_color.a);
+    if ((tidehl_u_tide_screen.w > 0.0)) {
+        tide_color = float4((tide_color.rgb + (1.0 - tide_color.a)), tide_color.a);
+    }
+    return tide_color;
+}
+
+struct tidehl_varyings {
+    precise float4 position : SV_Position;
+    float2 l0 : TEXCOORD0;
+};
+
+tidehl_varyings tidehl_vertex(uint tidehl_v : SV_VertexID, uint tidehl_instance : SV_InstanceID) {
+    uint tidehl_vertex = tidehl_vertex_of(tidehl_v);
+    float3 tidehl_p0;
+    tidehl_p0 = tidehl_float_attribute(0u, tidehl_vertex, tidehl_instance).xyz;
+    float2 tidehl_p1;
+    tidehl_p1 = tidehl_float_attribute(1u, tidehl_vertex, tidehl_instance).xy;
+    float4 tidehl_p2;
+    tidehl_p2 = tidehl_float_attribute(2u, tidehl_vertex, tidehl_instance);
+    float4 tidehl_p3;
+    tidehl_p3 = tidehl_float_attribute(3u, tidehl_vertex, tidehl_instance);
+    float4 tidehl_p4;
+    tidehl_p4 = tidehl_float_attribute(4u, tidehl_vertex, tidehl_instance);
+    float4 tidehl_p5;
+    tidehl_p5 = tidehl_float_attribute(5u, tidehl_vertex, tidehl_instance);
+    tide_corner tidehl_r = vertex(tidehl_p0, tidehl_p1, tidehl_p2, tidehl_p3, tidehl_p4, tidehl_p5);
+    tidehl_varyings tidehl_o;
+    tidehl_o.position = tidehl_clip(tidehl_r.tide_at);
+    tidehl_o.l0 = tidehl_r.tide_s1;
+    return tidehl_o;
+}
+
+struct tidehl_targets {
+    float4 c0 : SV_Target0;
+};
+
+tidehl_targets tidehl_fragment(tidehl_varyings tidehl_i, bool tidehl_front : SV_IsFrontFace) {
+    tide_corner tidehl_p0 = ((tide_corner)0);
+    tidehl_p0.tide_at = tidehl_position(tidehl_i.position);
+    tidehl_p0.tide_s1 = tidehl_i.l0;
+    float4 tidehl_r = fragment(tidehl_p0);
+    tidehl_targets tidehl_o;
+    tidehl_o.c0 = tidehl_output(tidehl_r);
+    return tidehl_o;
+}
+            ENDHLSL
         }
     }
-    return far;
-}
-
-uint across(uint n, uint k)
-{
-    return (((n - 1u) >> ((k + 1u) & 31u)) + 1u);
-}
-
-uint level_at(uint k)
-{
-    uint at = tidehl_u_at.x;
-    {
-        uint j = 0u;
-        [loop] for (; (j < k); j = (j + 1u)) {
-            at = (at + (across(tidehl_u_size.x, j) * across(tidehl_u_size.y, j)));
-        }
-    }
-    return at;
-}
-
-void put(uint k, uint x, uint y, int v)
-{
-    uint w = across(tidehl_u_size.x, k);
-    if ((((k < tidehl_u_size.z) && (x < w)) && (y < across(tidehl_u_size.y, k)))) {
-        tidehl_atomicStore0(tidehl_at0((uint)(((level_at(k) + (y * w)) + x))), (int)(v));
-    }
-}
-
-int most(uint k, uint x, uint y, int a, int b, int c, int d)
-{
-    bool right = (((2u * x) + 1u) < across(tidehl_u_size.x, (k - 1u)));
-    int top = (right ? max(a, b) : a);
-    int bottom = (right ? max(c, d) : c);
-    return ((((2u * y) + 1u) < across(tidehl_u_size.y, (k - 1u))) ? max(top, bottom) : top);
-}
-
-int down(uint k, uint t, uint3 g)
-{
-    uint n = (16u >> (k & 31u));
-    int m = 0;
-    if ((t < (n * n))) {
-        uint i = (((4u * n) * tidehl_div(t, n)) + (2u * tidehl_rem(t, n)));
-        m = most(k, ((g.x * n) + tidehl_rem(t, n)), ((g.y * n) + tidehl_div(t, n)), tile.v[min((uint)(i), 255u)], tile.v[min((uint)((i + 1u)), 255u)], tile.v[min((uint)((i + (2u * n))), 255u)], tile.v[min((uint)(((i + (2u * n)) + 1u)), 255u)]);
-        put(k, ((g.x * n) + tidehl_rem(t, n)), ((g.y * n) + tidehl_div(t, n)), m);
-    }
-    return m;
-}
-
-void compute(uint t, uint3 g)
-{
-    uint x = ((g.x * 16u) + tidehl_rem(t, 16u));
-    uint y = ((g.y * 16u) + tidehl_div(t, 16u));
-    int v = 0;
-    if (((x < across(tidehl_u_size.x, 0u)) && (y < across(tidehl_u_size.y, 0u)))) {
-        uint x1 = min(((2u * x) + 1u), (tidehl_u_size.x - 1u));
-        uint y1 = min(((2u * y) + 1u), (tidehl_u_size.y - 1u));
-        v = asint(max(max(pixel((2u * x), (2u * y)), pixel(x1, (2u * y))), max(pixel((2u * x), y1), pixel(x1, y1))));
-        tidehl_atomicStore0(tidehl_at0((uint)(((tidehl_u_at.x + (y * across(tidehl_u_size.x, 0u))) + x))), (int)(v));
-    }
-    tile.v[min((uint)(t), 255u)] = v;
-    GroupMemoryBarrierWithGroupSync();
-    int m = down(1u, t, g);
-    GroupMemoryBarrierWithGroupSync();
-    if ((t < 64u)) {
-        tile.v[min((uint)(t), 255u)] = m;
-    }
-    GroupMemoryBarrierWithGroupSync();
-    m = down(2u, t, g);
-    GroupMemoryBarrierWithGroupSync();
-    if ((t < 16u)) {
-        tile.v[min((uint)(t), 255u)] = m;
-    }
-    GroupMemoryBarrierWithGroupSync();
-    m = down(3u, t, g);
-    GroupMemoryBarrierWithGroupSync();
-    if ((t < 4u)) {
-        tile.v[min((uint)(t), 255u)] = m;
-    }
-    GroupMemoryBarrierWithGroupSync();
-    m = down(4u, t, g);
-    GroupMemoryBarrierWithGroupSync();
-    if ((t < 1u)) {
-        tile.v[min((uint)(t), 255u)] = m;
-    }
-    GroupMemoryBarrierWithGroupSync();
-    DeviceMemoryBarrierWithGroupSync();
-    if ((t == 0u)) {
-        finished = (((((uint)(tidehl_atomicAdd0(tidehl_at0((uint)(tidehl_u_at.z)), (int)(1)))) + 1u) == tidehl_u_at.y) ? 1u : 0u);
-    }
-    GroupMemoryBarrierWithGroupSync();
-    bool last = (finished == 1u);
-    {
-        uint k = 5u;
-        [loop] for (; (k < 16u); k = (k + 1u)) {
-            if ((last && (k < tidehl_u_size.z))) {
-                uint w = across(tidehl_u_size.x, k);
-                uint pw = across(tidehl_u_size.x, (k - 1u));
-                uint ph = across(tidehl_u_size.y, (k - 1u));
-                uint below = level_at((k - 1u));
-                uint to = level_at(k);
-                {
-                    uint i = t;
-                    [loop] for (; (i < (w * across(tidehl_u_size.y, k))); i = (i + 256u)) {
-                        uint x0 = (2u * tidehl_rem(i, w));
-                        uint y0 = (2u * tidehl_div(i, w));
-                        uint x1 = min((x0 + 1u), (pw - 1u));
-                        uint y1 = min((y0 + 1u), (ph - 1u));
-                        int a = max(tidehl_atomicLoad0(tidehl_at0((uint)(((below + (y0 * pw)) + x0)))), tidehl_atomicLoad0(tidehl_at0((uint)(((below + (y0 * pw)) + x1)))));
-                        int b = max(tidehl_atomicLoad0(tidehl_at0((uint)(((below + (y1 * pw)) + x0)))), tidehl_atomicLoad0(tidehl_at0((uint)(((below + (y1 * pw)) + x1)))));
-                        tidehl_atomicStore0(tidehl_at0((uint)((to + i))), (int)(max(a, b)));
-                    }
-                }
-            }
-            DeviceMemoryBarrierWithGroupSync();
-        }
-    }
-    if ((last && (t == 0u))) {
-        tidehl_atomicStore0(tidehl_at0((uint)(tidehl_u_at.z)), (int)(0));
-    }
-}
-
-[numthreads(256, 1, 1)]
-void tidehl_compute(uint3 tidehl_global : SV_DispatchThreadID, uint3 tidehl_local : SV_GroupThreadID,
-                    uint tidehl_index : SV_GroupIndex, uint3 tidehl_group : SV_GroupID) {
-    { [loop] for (uint tidehl_z = tidehl_index; tidehl_z < 256u; tidehl_z += 256u) tile.v[tidehl_z] = ((int)0); };
-    if (tidehl_index == 0u) finished = ((uint)0);
-    GroupMemoryBarrierWithGroupSync();
-    uint tidehl_p0 = ((uint)0);
-    tidehl_p0 = tidehl_index;
-    uint3 tidehl_p1 = ((uint3)0);
-    tidehl_p1 = tidehl_group;
-    compute(tidehl_p0, tidehl_p1);
 }

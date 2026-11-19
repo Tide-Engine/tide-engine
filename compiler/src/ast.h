@@ -176,6 +176,12 @@ typedef enum type_kind {
     // DepthCubemap: a depth cube's depth (Cubemap(size, Format.Depth)), six faces of it, which a frag or vert reads by a
     // direction as a DepthTexture is read by a uv. Appended, as TY_DOUBLE was, to keep the kinds before it as they are
     TY_DEPTH_CUBEMAP,
+    // UnityEngine.Mesh, UnityEngine.Material and UnityEngine.AudioClip: objects of the program Tide runs inside
+    // (Unity's own assets), which only that program has. A local field holds one, set there; code hands it to a draw
+    // or a play and compares it, and reads nothing of it. A number each (tide_external_ref), 0 for none.
+    TY_UNITY_MESH,
+    TY_UNITY_MATERIAL,
+    TY_UNITY_CLIP,
 } type_kind;
 
 typedef struct type {

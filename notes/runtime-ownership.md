@@ -1,3 +1,36 @@
+## A texture of the other program's own (2026-11-19)
+
+**For the owner to confirm** (built as a clear win under the 2026-11-17 rule: additive, inert outside an embed, no
+result of any existing draw changed, tested; notes/unity.md, top section). The generated-C/runtime boundary gained:
+
+- `tide_texture_ref`'s fourth kind (`engine/include/tide/draw.h`): `TIDE_TEXTURE_EXTERNAL` as its `image.height`,
+  `tide_texture_external`, `tide_texture_is_external`, `tide_texture_external_id`, `_size`. Generated code calls
+  none of them: it reads such a reference through the calls it already made (`tide_texture_size`, the
+  `tide_draw_texture_source*` functions), which now know the kind (`engine/src/mesh.c`, `engine/src/draw.c`).
+  `Texture`'s layout is as it was, 48 bytes.
+- `TIDE_PIXELS_EXTERNAL` and `TIDE_PIXELS_EXTERNAL_RAW` (`draw.h`): a draw-list texture with no pixels.
+- `tide_embed_game.set_local` (`engine/include/tide/embed_game.h`), a new last member that `tidec --embed` fills
+  (`tide_embed_set_local`, `embed_codegen.inc`): a local `Texture` field of a component's or singleton's own, by
+  its type and offset, through the existing `tide_get_<part>`/`tide_set_<part>`. The table's size is now part of
+  `TIDE_HOST_SHAPE` (`tide/host.h`, with `tide_host_game`'s), so a library another tide built with a shorter one is
+  refused rather than called through a member it hasn't; `TIDE_EMBED_ABI` is 28.
+- The platform's (the agent's): `gpu.h`'s optional `external`, `TIDE_GPU_EXTERNAL_LINEAR`/`_RAW`,
+  `gpu_record.c`'s `record_external`, `TIDE_EMBED_RENDER_EXTERNAL`, and `tide_embed_local_texture` (`embed.c`).
+
+No world byte, hash, snapshot or wire byte changes: local fields alone take one, and a game's layout is as it was.
+
+**Later the same day** (the owner's "introduce a Unity mesh type directly ... similar for others"; notes/unity.md,
+top section), more of the same kind, embed ABI 29:
+
+- `tide_external_ref` (`draw.h`: a number, 8 bytes), what generated code holds for Tide's `UnityEngine.Mesh`,
+  `UnityEngine.Material` and `UnityEngine.AudioClip`. Generated views call two new functions with it:
+  `tide_draw_external_mesh` (`draw.h`, `draw.c`: `TIDE_DRAW_EXTERNAL`, a command with its matrix, appended between
+  lists like the rest) and `tide_audio_play_external` (`tide/audio.h`, `audio.c`: a one-shot with no samples, by
+  `tide_clip.external`, a new member in what was padding, which the mixer plays nothing of).
+- `tide_embed_game.set_local` takes those fields too, by their size (8) against a Texture's (48).
+- The platform's: `gpu.h`'s optional `external_draw`, `platform.c`'s `STEP_EXTERNAL` (the window's passes alone),
+  `TIDE_EMBED_RENDER_EXTERNAL_DRAW`, `tide_embed_local_object`, `tide_embed_sounds`.
+
 ## The view packet carries what's read (2026-11-19)
 
 Mine, a clear win under the guide's rule (measured, what a reader of everything gets unchanged, tested;
@@ -15,7 +48,7 @@ Unity's `TideLibrary.Abi`). Hosts, libraries and generated games rebuild togethe
 ## Which tide built a library (2026-11-19)
 
 Clear win, no sign-off (measured: nothing in a frame; results unchanged; tested): a game's library built by
-`tide unity` exports `tide_host_library_made_by` (text, written by the CLI's `library.c`, not by tidec; no generated
+`tide unity` or `tide run` exports `tide_host_library_made_by` (text, written by the CLI's `library.c`, not by tidec; no generated
 C or game header changes, so no hash moves), and hosts gain a way to say their own: `tide_run_desc.made_by`
 (`tide/host.h`, a new last member, NULL for any) and `tide_embed_made_by(text)` (`tide/embed.h`, the process's,
 called by a constructor in the host `tide unity` builds, never by the other program: no embed ABI change and no new
@@ -1400,7 +1433,7 @@ its ring after its update) and `tide_timeline_follow` / `_follows`, on the same 
 worlds as `pack_world` has them, carried over by `tide_migrate_world`): platform-side, nothing in the engine.
 Later that day: `tide_session_recorder.beside` (a sharded match's other followed worlds), a client's journal for its
 session's recorder (`tide_client.journal`, internal to session.c), `tide_timeline_follow_beside` / `_beside`, and
-embed ABI 28 (`tide_embed_travel`'s three counts). Still nothing generated code calls, and no layout, hash or wire
+embed ABI 30 (`tide_embed_travel`'s three counts). Still nothing generated code calls, and no layout, hash or wire
 change.
 
 ## Twelve texture drawing boundary (2026-10-25)

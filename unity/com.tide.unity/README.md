@@ -299,6 +299,71 @@ takes a GPU that runs compute shaders, as every renderer of Tide's does:
 Direct3D 11 and 12, Vulkan, Metal, desktop OpenGL or WebGPU. On one without
 them (OpenGL ES 3, WebGL 2), the views' 2D is drawn with Unity's GL alone.
 
+A Tide view can draw a texture Unity imported. Give a component a local
+`Texture` field, and it's a Texture field of its Unity component, set in the
+inspector like any other (a Texture2D or a RenderTexture):
+
+```tide
+component Card
+{
+    float2 at;
+    local Texture face; // Set on the prefab or in the scene, in Unity's inspector
+}
+
+view Cards(Card card)
+{
+    if (card.face.size.x == 0) return; // Until Unity has shown the card's GameObject
+    Draw.Sprite(card.face, card.at, float2(1, 1));
+}
+```
+
+The view draws with Unity's own image, as Unity imported it (its Max Size,
+compression, mipmaps and color space), with nothing imported twice and no
+pixels copied; `face.size` is its size, and its Filter Mode and Wrap Mode are
+how it's sampled where the draw says nothing. Only local fields take one: a
+texture is this machine's, so nothing of it is in the match. Unity hands it
+over as it shows the entity's GameObject, a frame after the entity appears, so
+the field has no texture in the views' first frame of it: skip the draw until
+it has a size, as above. A script can set the field in Play
+(`GetComponent<Tide.Game.Card>().face = other;`), which Tide's views draw from
+the next frame; a field left empty keeps the default its Tide declaration
+gives it. A singleton's local `Texture` field is set the same way from a
+script, `runner.Get<Tide.Game.Hud>().logo = texture;`, as a singleton has no
+inspector. A player build keeps the textures as it keeps anything a prefab or
+a scene references. An image the game declares itself, `asset Texture logo =
+"logo.png";` in a `.tide` file, is Tide's own import of that file and draws in
+every host, Unity included; one set in Unity's inspector exists in the Unity
+project alone.
+
+Unity's meshes, materials and sounds have types of their own in Tide, which
+name Unity's objects and read nothing of them: `UnityEngine.Mesh`,
+`UnityEngine.Material` and `UnityEngine.AudioClip`, as local fields set the
+same way.
+
+```tide
+component Statue
+{
+    local UnityEngine.Mesh shape;
+    local UnityEngine.Material look;
+    local UnityEngine.AudioClip hum;
+}
+
+view Statues(Statue statue, Transform transform)
+{
+    Draw.UnityMesh(statue.shape, statue.look, float4x4.Translate(transform.localPosition));
+}
+```
+
+`Draw.UnityMesh` has Unity draw the mesh with the material, every submesh,
+where the call is among Tide's own draws: through Unity's camera, into the
+screen (not into a Tide render target), lit as Unity lights a mesh drawn from
+a command buffer in your pipeline. `Audio.Play(statue.hum, 0.5)` plays the clip
+once through Unity's audio, an AudioSource under the runner ("Tide Sounds"),
+apart from Tide's mixer: its buses and effects don't touch it. Unset, each
+does nothing. A Tide `frag` can't draw a Unity mesh, and a Unity material
+can't draw a Tide mesh: for those, the mesh or the shader is Tide's
+(`asset Mesh<V>`, `frag`).
+
 A physics package's components are on GameObjects like the game's own: with
 `box3d`, a `Body` and a `Box`, `Sphere` or `Capsule` (Add Component, Tide/Box3D).
 A shape's size is by the GameObject's scale, as a collider's is. It's drawn in

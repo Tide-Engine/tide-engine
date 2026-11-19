@@ -1525,7 +1525,8 @@ static bool holds_render_resource_in(const type t, const resource_outer *outer, 
 {
     if (t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET
         || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY || t.kind == TY_TEXTURE3D || t.kind == TY_DEPTH_CUBEMAP
-        || t.kind == TY_CLIP || t.kind == TY_GPU_LIST || (fonts && t.kind == TY_FONT)) return true;
+        || t.kind == TY_CLIP || t.kind == TY_GPU_LIST || (fonts && t.kind == TY_FONT)
+        || t.kind == TY_UNITY_MESH || t.kind == TY_UNITY_MATERIAL || t.kind == TY_UNITY_CLIP) return true;
     if (t.kind != TY_STRUCT && t.kind != TY_LIST && t.kind != TY_MAP && t.kind != TY_SET
         && t.kind != TY_GRID && t.kind != TY_ARRAY && t.kind != TY_OPTIONAL && t.kind != TY_FAILABLE) return false;
     for (const resource_outer *p = outer; p; p = p->previous) {
@@ -2080,7 +2081,7 @@ static bool element_ok(const type t, const loc at, const type *key, const bool a
         return true;
     case TY_STRUCT:
     case TY_TEXTURE3D: case TY_TEXTURE: case TY_DEPTH_TEXTURE: case TY_RENDER_TARGET: case TY_CLIP: case TY_FONT: case TY_DEPTH_TEXTURE_ARRAY:
-    case TY_DEPTH_CUBEMAP:
+    case TY_DEPTH_CUBEMAP: case TY_UNITY_MESH: case TY_UNITY_MATERIAL: case TY_UNITY_CLIP:
         return true;
     case TY_TEXTURE_ARRAY:
         if (asset) {
@@ -2724,6 +2725,7 @@ static bool array_element_ok(const type t, const loc at)
     case TY_STRING: case TY_LIST: case TY_MAP: case TY_SET:
     case TY_TEXTURE: case TY_DEPTH_TEXTURE: case TY_CUBEMAP: case TY_RENDER_TARGET: case TY_CLIP: case TY_FONT:
     case TY_TEXTURE3D: case TY_TEXTURE_ARRAY: case TY_DEPTH_TEXTURE_ARRAY: case TY_DEPTH_CUBEMAP: return true;
+    case TY_UNITY_MESH: case TY_UNITY_MATERIAL: case TY_UNITY_CLIP: return true;
     case TY_GRID:
         diag_error(at, "an array's elements can't be grids");
         diag_note("a grid is its holder's alone, never copied: keep it in a component or a singleton");

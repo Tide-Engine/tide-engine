@@ -365,6 +365,8 @@ public sealed unsafe class BounceTests
         yield return Until(() => (loudest = Mathf.Max(loudest, audio.TakeLoudest())) > 0.1f, 10f);
         Assert.Greater(audio.Reads, 0, "Unity's audio thread reads the mixer");
         Assert.Greater(loudest, 0.1f, "the bonk was heard as the ball landed");
+        // ...and Unity's own clip, which the same handler plays through Unity's audio (Audio.Play of the ball's chime)
+        Assert.Greater(runner.UnitySoundsPlayed, 0, "Unity's clip was played as Tide's code asked");
         Assert.Less(loudest, 1f);
     }
 
@@ -472,6 +474,18 @@ public sealed unsafe class BounceTests
     [UnityTest]
     public IEnumerator TideDrawsIntoUnitysFrameInURP()
     {
+        yield return InURP(false);
+    }
+
+    // ...and URP's pass with an orthographic camera
+    [UnityTest]
+    public IEnumerator TideDrawsIntoAnOrthographicCamerasFrameInURP()
+    {
+        yield return InURP(true);
+    }
+
+    IEnumerator InURP(bool orthographic)
+    {
         if (SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null)
         {
             Assert.Ignore("no GPU in this run (-nographics)");
@@ -483,7 +497,7 @@ public sealed unsafe class BounceTests
         QualitySettings.renderPipeline = null;
         try
         {
-            yield return DrawsIntoUnitysFrame(true);
+            yield return DrawsIntoUnitysFrame(true, orthographic: orthographic);
         }
         finally
         {
@@ -612,6 +626,10 @@ public sealed unsafe class BounceTests
         var under = At(new Vector3(-1.1f, -0.05f, 1.75f));
         Assert.IsFalse(Near(under, orange, 0.2f) || Near(under, blue, 0.2f), $"{when}the plate under the floor is hidden: {under}");
         var live = ball.GetComponent<Tide.Game.Ball>();
+        // Unity's own mesh in Unity's own material, drawn by Unity where Tide's Emblem view said: an unlit magenta cube
+        // two units over the ball
+        var badge = At(ball.transform.position + new Vector3(0, 2f, 0));
+        Assert.IsTrue(Near(badge, new Color(1f, 0f, 1f), 0.03f), $"{when}Unity's mesh, drawn in Unity's material where Tide's view placed it: {badge}");
         var cube = At(ball.transform.position + new Vector3(0, 1.2f, 0));
         Assert.IsTrue(Near(cube, live.color, 0.03f), $"{when}the cube over the ball has its color: {cube} for {live.color}");
         // The ring: a pixel of nearly the ball's color on its lower half, 24 pixels from its middle (its edge is
@@ -649,6 +667,20 @@ public sealed unsafe class BounceTests
         var yellow = new Color(1f, 1f, 0f);
         var green = new Color(0f, 0.6f, 0f);
         Color Screen(int x, int y) => read.GetPixel(x, 480 - 1 - y);
+        // One of Unity's own textures, set on the ball's prefab in the inspector and drawn by Tide's Marks view with
+        // the image Unity imported (Mark.png, 4 by 4, each pixel 16 on the screen): red at its top left and green at
+        // its top right, so its rows are the image's from the top; below them a violet of middling channels, which is
+        // the file's color in a Gamma project and in a Linear one alike (there the GPU hands it over as linear light,
+        // and Tide's draw takes it back to the color it shows); and its half-clear white over the view's black square
+        // a gray, which is the color times its alpha: half, blended as the project blends (a Linear project's half
+        // of white's light shows as 0.735)
+        Assert.AreEqual("Mark", live.mark != null ? live.mark.name : null, $"{when}the ball's prefab holds Unity's texture");
+        Assert.IsTrue(Near(Screen(32, 224), new Color(1f, 0f, 0f), 0.03f), $"{when}Unity's texture, drawn by Tide: red at its top left: {Screen(32, 224)}");
+        Assert.IsTrue(Near(Screen(64, 224), new Color(0f, 1f, 0f), 0.03f), $"{when}green at its top right: {Screen(64, 224)}");
+        Assert.IsTrue(Near(Screen(32, 256), new Color(128 / 255f, 64 / 255f, 191 / 255f), 0.03f), $"{when}its violet at its bottom left: {Screen(32, 256)}");
+        var half = QualitySettings.activeColorSpace == ColorSpace.Linear ? 0.735f : 0.5f;
+        Assert.IsTrue(Near(Screen(64, 256), new Color(half, half, half), 0.03f), $"{when}its half-clear white over black a gray: {Screen(64, 256)}");
+        Assert.IsTrue(Near(Screen(15, 240), new Color(0f, 0f, 0f), 0.03f), $"{when}and the view's black square around it: {Screen(15, 240)}");
         Assert.IsTrue(Near(Screen(640 - 80 + 8, 16 + 4), yellow, 0.03f), $"{when}the target's top left is yellow: {Screen(640 - 80 + 8, 16 + 4)}");
         Assert.IsTrue(Near(Screen(640 - 80 + 8, 16 + 50), green, 0.03f), $"{when}its bottom left green: {Screen(640 - 80 + 8, 16 + 50)}");
         Assert.IsTrue(Near(Screen(640 - 80 + 50, 16 + 4), green, 0.03f), $"{when}its top right green: {Screen(640 - 80 + 50, 16 + 4)}");
@@ -811,6 +843,104 @@ public sealed unsafe class BounceTests
         yield return Connected(runner);
         Assert.AreEqual(TideSessionState.Connected, runner.State, "Play entered again runs this tide's build");
     }
+
+#if UNITY_EDITOR
+    // The editor's build service, which this assembly doesn't reference: its running tide's process and executable
+    static readonly System.Type Service = System.Type.GetType("Tide.Editor.TideBuildService, Tide.Editor");
+
+    static T OfService<T>(string name) => Service == null ? default : (T)Service.GetProperty(name,
+        System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public)?.GetValue(null);
+
+    static void TellService(string line) => Service?.GetMethod("Tell",
+        System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)?.Invoke(null, new object[] { line });
+
+    // The real thing, end to end: tide's installation changes while Play runs (here its platform layer's library gets
+    // another time, as an upgrade or a development tide's install gives it), and the editor's own tide builds the game
+    // again. That build and the host tide builds with it are the new tide's; the Play that's running has the old host,
+    // says so in the Console and goes on; and leaving Play and entering it again runs the new host with the new game.
+    // Needs the editor's build service running a development tide (-tide-command): an installed tide's files aren't a
+    // test's to touch.
+    [UnityTest]
+    public IEnumerator TideInstalledAgainWhilePlayRunsIsSaidAndPlayAgainWorks()
+    {
+        var tide = OfService<string>("RunningTide");
+        if (OfService<int>("RunningId") == 0 || tide == null
+            || System.Array.IndexOf(System.Environment.GetCommandLineArgs(), "-tide-command") < 0)
+        {
+            Assert.Ignore("no development tide building for this editor (automatic builds off, or no -tide-command)");
+            yield break;
+        }
+        var folder = TideLibrary.BuildFolder;
+        var hostText = System.IO.Path.Combine(folder, "gen", "embed_host.c");
+        string Host() => System.Text.RegularExpressions.Regex.Match(System.IO.File.ReadAllText(hostText),
+            @"""([^""\n]+ \([0-9a-f]{16}\))""").Groups[1].Value;
+        int Newest(string prefix)
+        {
+            var newest = 0;
+            foreach (var file in System.IO.Directory.GetFiles(folder, prefix + "*" + TideLibrary.LibrarySuffix))
+            {
+                var name = System.IO.Path.GetFileNameWithoutExtension(file);
+                if (int.TryParse(name.Substring(prefix.Length), out var n) && n > newest) newest = n;
+            }
+            return newest;
+        }
+        // tide's first build of this editor session is done before the game starts
+        bool Building() => Service.GetMethod("Describe")?.Invoke(null, null) is string state && state == "building the game";
+        yield return Until(() => !Building() && Newest("game-") > 0 && System.IO.File.Exists(hostText), 180f);
+        Assert.IsFalse(Building(), "tide built the game for this editor");
+        SceneManager.LoadScene(Bounce);
+        yield return null;
+        var runner = Object.FindAnyObjectByType<TideRunner>();
+        yield return Connected(runner);
+        Assert.AreEqual(TideSessionState.Connected, runner.State);
+        var before = Host();
+        Assert.IsNotEmpty(before, "the host says which tide built it");
+        var running = Newest("loaded-");
+        var built = Newest("game-");
+        var library = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(System.IO.Path.GetDirectoryName(tide)), "lib", "native",
+            "libtide_platform.a");
+        Assert.IsTrue(System.IO.File.Exists(library), $"the installation's platform layer: {library}");
+        var written = System.IO.File.GetLastWriteTimeUtc(library);
+        LogAssert.Expect(LogType.Error, new System.Text.RegularExpressions.Regex(
+            "was built by tide .*, and what runs it by tide .*, so it isn't loaded.*leave Play, wait for tide's build, and enter Play again"));
+        var after = "";
+        try
+        {
+            System.IO.File.SetLastWriteTimeUtc(library, System.DateTime.UtcNow);
+            TellService("changed");
+            yield return Until(() => Newest("game-") > built && Host() != before, 120f);
+            after = Host();
+            Assert.AreNotEqual(before, after, "tide built the host again, as another tide");
+            Assert.Greater(Newest("game-"), built, "and the game with it");
+            var tick = runner.Status.predictedTick;
+            yield return Until(() => false, 1.5f);
+            Assert.AreEqual(running, Newest("loaded-"), "the Play that's running keeps the build it has");
+            Assert.AreEqual(TideSessionState.Connected, runner.State, "and goes on");
+            Assert.Greater(runner.Status.predictedTick, tick + 30);
+            // Play left and entered again: the new host, with the new tide's game
+            Object.Destroy(runner.gameObject);
+            yield return null;
+            SceneManager.LoadScene(Bounce);
+            yield return null;
+            runner = Object.FindAnyObjectByType<TideRunner>();
+            yield return Connected(runner);
+            Assert.AreEqual(TideSessionState.Connected, runner.State, "Play entered again runs the new tide's host and game");
+            Assert.Greater(Newest("loaded-"), running, "its newest build");
+            Object.Destroy(runner.gameObject);
+            yield return null;
+        }
+        finally
+        {
+            System.IO.File.SetLastWriteTimeUtc(library, written);
+        }
+        // The installation as it was: tide builds host and game once more, before any other test's Play could meet it
+        built = Newest("game-");
+        TellService("changed");
+        yield return Until(() => Newest("game-") > built && Host() == before, 120f);
+        Assert.AreEqual(before, Host(), "with the installation as it was, the host is the first tide's again");
+        yield return Until(() => false, 1f);
+    }
+#endif
 
     [UnityTest]
     public IEnumerator TheMatchShowsItsBall()

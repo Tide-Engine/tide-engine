@@ -46,8 +46,15 @@ public class ShapeTests
     {
         Assert.IsTrue(TideShapes.WorldBounds(shape, out var drawn), $"{what}: it has a shape to draw");
         Assert.Greater(unity.size.magnitude, 0.01f, $"{what}: Unity's collider has its bounds in this run");
-        Assert.Less(Vector3.Distance(unity.center, drawn.center), 2e-4f, $"{what}: drawn about {drawn.center}, Unity's about {unity.center}");
-        Assert.Less(Vector3.Distance(unity.size, drawn.size), 4e-4f, $"{what}: drawn {drawn.size} across, Unity's {unity.size}");
+        const float by = 4e-4f;
+        Assert.Less(Vector3.Distance(unity.center, drawn.center), by, $"{what}: drawn about {drawn.center}, Unity's about {unity.center}");
+        Assert.Less(Vector3.Distance(unity.size, drawn.size), by, $"{what}: drawn {drawn.size} across, Unity's {unity.size}");
+        // ...and every point of the wires that are drawn is in that box, and on a round shape's surface (the next test)
+        var lines = new List<Vector3>();
+        Assert.IsTrue(TideShapes.Wires(shape, lines) && lines.Count > 0, $"{what}: it has wires");
+        var roomy = unity;
+        roomy.Expand(2e-3f);
+        foreach (var point in lines) Assert.IsTrue(roomy.Contains(point), $"{what}: a wire's point {point} is outside Unity's bounds {unity}");
     }
 
     // Placements a shape is tried at: plain, scaled each axis its own, turned, mirrored, and under a parent that's
@@ -187,6 +194,83 @@ public class ShapeTests
         body.transform.SetPositionAndRotation(new Vector3(-3, 4, 1), Quaternion.Euler(30, -45, 0));
         Physics.SyncTransforms();
         Same(unity.bounds, box, "a part's box after its body moved");
+    }
+
+    // The wires themselves, which are what the gizmo hands Unity to draw as lines: a box's are its twelve edges
+    // between its eight corners, a rect's its four sides, and every point of a round shape's is on its surface
+    [Test]
+    public void AShapesWiresAreItsEdgesAndRings()
+    {
+        var thing = Thing("Box");
+        thing.transform.SetPositionAndRotation(new Vector3(1, 2, 3), Quaternion.Euler(10, 20, 30));
+        thing.transform.localScale = new Vector3(2, 1, 0.5f);
+        var box = thing.AddComponent<GeometryBox>();
+        box.size = new Vector3(1, 2, 3);
+        box.offset = new Vector3(0.25f, 0, -1);
+        var lines = new List<Vector3>();
+        Assert.IsTrue(TideShapes.Wires(box, lines));
+        Assert.AreEqual(24, lines.Count, "twelve edges");
+        var corners = new HashSet<Vector3>();
+        for (var i = 0; i < lines.Count; i += 2)
+        {
+            // Each is an edge: its ends are corners (every axis at a side), and it runs along one axis of the box
+            Vector3 a = thing.transform.InverseTransformPoint(lines[i]) - box.offset, b = thing.transform.InverseTransformPoint(lines[i + 1]) - box.offset;
+            var along = 0;
+            for (var axis = 0; axis < 3; axis++)
+            {
+                Assert.AreEqual(box.size[axis] * 0.5f, Mathf.Abs(a[axis]), 1e-4f, $"edge {i / 2} starts at a corner: {a}");
+                Assert.AreEqual(box.size[axis] * 0.5f, Mathf.Abs(b[axis]), 1e-4f, $"edge {i / 2} ends at a corner: {b}");
+                if (Mathf.Abs(a[axis] - b[axis]) > 1e-4f) along++;
+            }
+            Assert.AreEqual(1, along, $"edge {i / 2} runs along one axis: {a} to {b}");
+            corners.Add(new Vector3(Mathf.Round(a.x * 100), Mathf.Round(a.y * 100), Mathf.Round(a.z * 100)));
+            corners.Add(new Vector3(Mathf.Round(b.x * 100), Mathf.Round(b.y * 100), Mathf.Round(b.z * 100)));
+        }
+        Assert.AreEqual(8, corners.Count, "between all eight corners");
+
+        var flat = Thing("Rect").AddComponent<GeometryRect>();
+        flat.size = new Vector2(2, 1);
+        lines.Clear();
+        Assert.IsTrue(TideShapes.Wires(flat, lines));
+        Assert.AreEqual(8, lines.Count, "a rect's four sides");
+        foreach (var point in lines)
+        {
+            Assert.AreEqual(1f, Mathf.Abs(point.x), 1e-5f);
+            Assert.AreEqual(0.5f, Mathf.Abs(point.y), 1e-5f);
+            Assert.AreEqual(0f, point.z, 1e-5f);
+        }
+
+        var ball = Thing("Sphere");
+        ball.transform.position = new Vector3(-2, 0, 4);
+        ball.transform.localScale = new Vector3(1, 3, 2);
+        var sphere = ball.AddComponent<GeometrySphere>();
+        sphere.radius = 0.5f;
+        lines.Clear();
+        Assert.IsTrue(TideShapes.Wires(sphere, lines));
+        Assert.AreEqual(3 * 64 * 2, lines.Count, "three rings");
+        foreach (var point in lines) Assert.AreEqual(1.5f, Vector3.Distance(point, ball.transform.position), 1e-4f, "on the sphere, by its largest scale");
+        for (var i = 1; i + 1 < 64 * 2; i += 2) Assert.Less(Vector3.Distance(lines[i], lines[i + 1]), 1e-5f, "a ring's lines join");
+        Assert.Less(Vector3.Distance(lines[0], lines[64 * 2 - 1]), 1e-4f, "and close");
+
+        var pill = Thing("Capsule").AddComponent<GeometryCapsule>();
+        pill.radius = 0.5f;
+        pill.height = 3;
+        lines.Clear();
+        Assert.IsTrue(TideShapes.Wires(pill, lines));
+        foreach (var point in lines)
+        {
+            // On the capsule: half a unit from its middle line, which runs a unit up and a unit down
+            var onLine = new Vector3(0, Mathf.Clamp(point.y, -1, 1), 0);
+            Assert.AreEqual(0.5f, Vector3.Distance(point, onLine), 1e-4f, $"on the capsule: {point}");
+        }
+        var most = 0f;
+        foreach (var point in lines) most = Mathf.Max(most, Mathf.Abs(point.y));
+        Assert.AreEqual(1.5f, most, 1e-4f, "its height from end to end");
+        // One shorter than it's wide is a sphere, as Box3D makes it
+        pill.height = 0.2f;
+        lines.Clear();
+        TideShapes.Wires(pill, lines);
+        foreach (var point in lines) Assert.AreEqual(0.5f, point.magnitude, 1e-4f);
     }
 
     // A shape is drawn while its GameObject or one above it is selected, as a collider on a Rigidbody's child is drawn

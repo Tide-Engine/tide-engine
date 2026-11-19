@@ -152,6 +152,14 @@ component Ball
     int bounces;
     Trail trail;
     local int heard; // This machine's, as its local handler counts its bounces (Heard)
+    // One of Unity's own textures, set on the prefab in Unity's inspector (Roller.prefab: Mark.png, as Unity
+    // imported it), which Marks draws
+    local Texture mark;
+    // Unity's own objects, set on the prefab the same way, which Tide's code hands back to Unity: Emblem draws the
+    // mesh with the material over the ball, and Heard plays the clip through Unity's audio
+    local UnityEngine.Mesh badge;
+    local UnityEngine.Material badgeLook;
+    local UnityEngine.AudioClip chime;
 }
 
 // A ball hitting the floor: C# hears it as local handlers do (TideRunner.On, OnVerified, the ball's TideEntity.On)
@@ -164,6 +172,7 @@ local event(Bounced bounced) Heard(mut Ball ball)
 {
     ball.heard += 1;
     Audio.Play(bonk, Math.Min(bounced.speed / 5, 1));
+    Audio.Play(ball.chime, 0.5); // Unity's clip, through Unity's own audio
 }
 
 // Sent to a ball: TideRunner.Send(new Paint { ... }, ballGameObject) in C#
@@ -203,6 +212,28 @@ view Ring(Ball ball, Transform transform)
     {
         Draw.WireCircle(at.xy, 24, ball.color);
     }
+}
+
+// A texture Unity imported, drawn by Tide: the first player's ball's `mark`, at the left of the screen over a black
+// square, so its half-clear pixels show how much of it there is. It's this machine's, and no texture until Unity
+// shows the ball's GameObject and hands it over, a frame after the ball spawns
+view Marks(Ball ball)
+{
+    if (ball.seat != 0 || ball.mark.size.x == 0) return;
+    Draw.Screen()
+    {
+        Draw.Rect(float2(48, Screen.height / 2), float2(72, 72), Color.black);
+        Draw.Sprite(ball.mark, float2(48, Screen.height / 2), float2(64, 64));
+    }
+}
+
+// A mesh and a material of Unity's own, drawn by Unity where this view says, among Tide's own draws: a small cube
+// two units over the first player's ball
+view Emblem(Ball ball, Transform transform)
+{
+    if (ball.seat != 0) return;
+    Draw.UnityMesh(ball.badge, ball.badgeLook,
+        float4x4.TRS(transform.localPosition + float3(0, 2, 0), quaternion.identity, float3(0.3, 0.3, 0.3)));
 }
 
 // Tide's 3D, which Unity draws with its camera's depth: a cube over each ball, and two plates in a frag of the

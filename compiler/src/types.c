@@ -49,6 +49,9 @@ static const struct {
     {"Font", TY_FONT, "font", "tide_font_ref"},
     {"Resident", TY_RESIDENT, "resident", "tide_resident"},
     {"DepthCubemap", TY_DEPTH_CUBEMAP, "depthcube", "tide_depth_ref"},
+    {"UnityEngine.Mesh", TY_UNITY_MESH, "unitymesh", "tide_external_ref"},
+    {"UnityEngine.Material", TY_UNITY_MATERIAL, "unitymaterial", "tide_external_ref"},
+    {"UnityEngine.AudioClip", TY_UNITY_CLIP, "unityclip", "tide_external_ref"},
 };
 
 #define BUILTIN_COUNT (sizeof builtins / sizeof builtins[0])
@@ -194,6 +197,7 @@ layout type_layout(const type t)
     if (t.kind == TY_DEPTH_CUBEMAP) return (layout){24, 8};        // tide_depth_ref: the cube's target
     if (t.kind == TY_CLIP) return (layout){8, 8};           // tide_clip_ref: a name
     if (t.kind == TY_FONT) return (layout){8, 8};           // tide_font_ref: a number of the registry's
+    if (t.kind == TY_UNITY_MESH || t.kind == TY_UNITY_MATERIAL || t.kind == TY_UNITY_CLIP) return (layout){8, 8}; // tide_external_ref
     if (t.kind == TY_RESIDENT) return (layout){32, 8};      // tide_resident: its pages, then what the hash covers
     if (t.kind == TY_GPU_LIST) return (layout){16, 8};      // tide_gpu_list: its id, then its capacity and stride
     // Text, lists and grids are a handle each (tide_handle: 64 bits, see tide/text.h)

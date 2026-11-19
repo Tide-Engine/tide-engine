@@ -20,6 +20,26 @@ namespace Tide.Game
         public global::Tide.Game.Trail trail = new global::Tide.Game.Trail { length = 0f, tint = new global::UnityEngine.Color(0f, 0f, 0f, 0f) };
         /// <summary>This machine's, as its local handler counts its bounces (Heard)</summary>
         [global::System.NonSerialized] public int heard;
+        /// <summary>
+        /// One of Unity's own textures, set on the prefab in Unity's inspector (Roller.prefab: Mark.png, as Unity
+        /// imported it), which Marks draws
+        /// </summary>
+        [global::UnityEngine.Tooltip("One of Unity's textures, which Tide's views draw: this machine's, never the match's")]
+        public global::UnityEngine.Texture mark;
+        [global::System.NonSerialized] global::UnityEngine.Texture tideGiven_mark;
+        /// <summary>
+        /// Unity's own objects, set on the prefab the same way, which Tide's code hands back to Unity: Emblem draws the
+        /// mesh with the material over the ball, and Heard plays the clip through Unity's audio
+        /// </summary>
+        [global::UnityEngine.Tooltip("One of Unity's own, which Tide's code hands back to Unity to draw or play: this machine's, never the match's")]
+        public global::UnityEngine.Mesh badge;
+        [global::System.NonSerialized] global::UnityEngine.Object tideGiven_badge;
+        [global::UnityEngine.Tooltip("One of Unity's own, which Tide's code hands back to Unity to draw or play: this machine's, never the match's")]
+        public global::UnityEngine.Material badgeLook;
+        [global::System.NonSerialized] global::UnityEngine.Object tideGiven_badgeLook;
+        [global::UnityEngine.Tooltip("One of Unity's own, which Tide's code hands back to Unity to draw or play: this machine's, never the match's")]
+        public global::UnityEngine.AudioClip chime;
+        [global::System.NonSerialized] global::UnityEngine.Object tideGiven_chime;
 
         public override string TideName => "Ball";
 
@@ -36,6 +56,14 @@ namespace Tide.Game
                 var l = *(global::Tide.Game.BallLocal*)locals;
                 heard = l.heard;
             }
+        }
+
+        protected override void WriteAssets(global::Tide.TideAssets assets)
+        {
+            assets.Texture(8u, mark, ref tideGiven_mark);
+            assets.Object(56u, badge, ref tideGiven_badge);
+            assets.Object(64u, badgeLook, ref tideGiven_badgeLook);
+            assets.Object(72u, chime, ref tideGiven_chime);
         }
 
         // Tide's component Ball, as the game's C lays it out

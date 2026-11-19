@@ -89,6 +89,7 @@ static struct {
 } travel;
 
 static void drop_travel_local(void);
+static void forget_givens(void);
 static void drop_live(void);
 static void drop_replay(void);
 #if !defined(__wasm__)
@@ -385,6 +386,7 @@ void tide_embed_destroy(tide_embed *e)
     if (e != &the_embed || !running) return;
     // What time travel kept, with the code of the build that made it
     drop_travel_local();
+    forget_givens();
     drop_live();
     drop_replay();
     free(travel.saved);
@@ -479,6 +481,42 @@ static uint32_t travel_keep_ticks(void)
     const double ticks = (double)travel.keep_seconds * (double)travel_rate() + 0.5;
     return ticks < 2.0 ? 2u : ticks > 1e6 ? 1000000u : (uint32_t)ticks;
 }
+
+// What the other program gave the game's local fields (tide_embed_local_texture, _object), kept while time travel
+// keeps anything: frames that show another tick run on a local state of their own (show_frame), which is given the
+// same as it's made and as more is given, so a tick shown again draws with the other program's images and meshes
+// as the match's own frames do. By field and entity, the latest of each; of the build that's running (another
+// layout's fields are elsewhere, and the other program gives them again).
+typedef struct embed_given {
+    uint32_t type, offset, size;
+    uint64_t birth, lineage;
+    uint8_t value[sizeof(tide_texture_ref)];
+} embed_given;
+enum { EMBED_GIVEN_MOST = 16384 }; // Past this many the oldest goes: a debugger's memory, not a game's
+
+static embed_given *givens;
+static uint32_t given_count, given_capacity, given_next;
+static uint64_t givens_of; // The layout's hash they're of
+
+static void forget_givens(void)
+{
+    free(givens);
+    givens = NULL;
+    given_count = given_capacity = given_next = 0;
+}
+
+static void give_again(void *local)
+{
+    const tide_embed_game *embed = tide_run_game ? tide_run_game->embed : NULL;
+    if (!embed || !embed->set_local || givens_of != tide_run_game->game->hash) return;
+    for (uint32_t i = 0; i < given_count; i++) {
+        const embed_given *g = &givens[i];
+        embed->set_local(local, (int32_t)g->type, g->offset, g->birth, g->lineage, g->value, g->size);
+    }
+}
+
+static void remember_given(const uint32_t type, const uint32_t offset, const uint64_t birth, const uint64_t lineage,
+                           const void *value, const uint32_t size);
 
 // The local state of frames showing another tick, let go with the code of the build that made it
 static void drop_travel_local(void)
@@ -661,6 +699,7 @@ static void show_frame(const void *world, const uint32_t tick, const uint32_t pl
         if (!travel.local || !travel.start) tide_out_of_memory();
         tide_run_bind_io(game, travel.local);
         game->local_init(travel.local);
+        give_again(travel.local); // What the other program gave the match's own local fields
     }
     void *local = travel.local;
     tide_platform_embed_frame(input, tide_f2(width, height), scale);
@@ -1258,6 +1297,90 @@ bool tide_embed_command(tide_embed *e, const uint32_t type, const uint64_t targe
     const tide_embed_game *embed = tide_run_game->embed;
     return embed && embed->command
         && embed->command(tide_run_local, (int32_t)type, target_birth, target_lineage, value, size);
+}
+
+bool tide_embed_local_texture(tide_embed *e, const uint32_t type, const uint32_t offset, const uint64_t birth,
+                              const uint64_t lineage, const uint32_t image, const uint32_t width, const uint32_t height,
+                              const uint32_t filter, const uint32_t wrap)
+{
+    if (e != &the_embed || !running || !tide_run_game || !tide_run_local || type > INT32_MAX) return false;
+    const tide_embed_game *embed = tide_run_game->embed;
+    if (!embed || !embed->set_local) return false;
+    tide_texture_ref texture = {0};
+    if (image) {
+        texture = tide_texture_external(image, width, height, tide_sampling_bits((int32_t)filter, (int32_t)wrap));
+        if (!tide_texture_is_external(texture)) return false;
+    }
+    if (!embed->set_local(tide_run_local, (int32_t)type, offset, birth, lineage, &texture, (uint32_t)sizeof texture)) return false;
+    remember_given(type, offset, birth, lineage, &texture, (uint32_t)sizeof texture);
+    return true;
+}
+
+static void remember_given(const uint32_t type, const uint32_t offset, const uint64_t birth, const uint64_t lineage,
+                           const void *value, const uint32_t size)
+{
+    if (travel.keep_seconds <= 0.0f || size > sizeof givens->value || !tide_run_game) return;
+    if (givens_of != tide_run_game->game->hash) {
+        given_count = given_next = 0;
+        givens_of = tide_run_game->game->hash;
+    }
+    embed_given *g = NULL;
+    for (uint32_t i = 0; i < given_count && !g; i++) {
+        if (givens[i].type == type && givens[i].offset == offset && givens[i].birth == birth && givens[i].lineage == lineage) g = &givens[i];
+    }
+    if (!g && given_count < EMBED_GIVEN_MOST) {
+        if (given_count == given_capacity) {
+            const uint32_t capacity = given_capacity ? given_capacity * 2u : 64u;
+            givens = tide_realloc(givens, given_capacity * sizeof *givens, capacity * sizeof *givens);
+            given_capacity = capacity;
+        }
+        g = &givens[given_count++];
+    }
+    if (!g) g = &givens[given_next++ % EMBED_GIVEN_MOST];
+    *g = (embed_given){.type = type, .offset = offset, .size = size, .birth = birth, .lineage = lineage};
+    memcpy(g->value, value, size);
+    // ...and to the frames showing another tick now
+    if (travel.local) tide_run_game->embed->set_local(travel.local, (int32_t)type, offset, birth, lineage, value, size);
+}
+
+bool tide_embed_local_object(tide_embed *e, const uint32_t type, const uint32_t offset, const uint64_t birth,
+                             const uint64_t lineage, const uint32_t object)
+{
+    if (e != &the_embed || !running || !tide_run_game || !tide_run_local || type > INT32_MAX) return false;
+    const tide_embed_game *embed = tide_run_game->embed;
+    if (!embed || !embed->set_local) return false;
+    const tide_external_ref value = {object};
+    if (!embed->set_local(tide_run_local, (int32_t)type, offset, birth, lineage, &value, (uint32_t)sizeof value)) return false;
+    remember_given(type, offset, birth, lineage, &value, (uint32_t)sizeof value);
+    return true;
+}
+
+// The frame's one-shots that are the other program's to play, out of what the frame recorded (tide_run_audio, which
+// stays as the frame left it until the next one starts)
+static tide_embed_sound *embed_sounds;
+static uint32_t embed_sound_capacity;
+
+const tide_embed_sound *tide_embed_sounds(tide_embed *e, uint32_t *count)
+{
+    if (count) *count = 0;
+    if (e != &the_embed || !running || !count) return NULL;
+    uint32_t found = 0;
+    for (uint32_t i = 0; i < tide_run_audio.voice_count; i++) {
+        const tide_voice *v = &tide_run_audio.voices[i];
+        if (v->id || !v->clip.external || !v->playing) continue;
+        if (found == embed_sound_capacity) {
+            const uint32_t capacity = embed_sound_capacity ? embed_sound_capacity * 2u : 16u;
+            embed_sounds = tide_realloc(embed_sounds, embed_sound_capacity * sizeof *embed_sounds, capacity * sizeof *embed_sounds);
+            embed_sound_capacity = capacity;
+        }
+        embed_sounds[found++] = (tide_embed_sound){v->clip.external, v->volume, v->pitch};
+    }
+    // Said once: a frame asked again has none left
+    for (uint32_t i = 0; i < tide_run_audio.voice_count; i++) {
+        if (!tide_run_audio.voices[i].id) tide_run_audio.voices[i].clip.external = 0;
+    }
+    *count = found;
+    return found ? embed_sounds : NULL;
 }
 
 void tide_embed_camera(tide_embed *e, const float *transform, const float *projection)

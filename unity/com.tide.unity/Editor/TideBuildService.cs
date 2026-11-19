@@ -406,6 +406,10 @@ namespace Tide.Editor
             return now - replacedAt >= settled;
         }
 
+        // The running tide's process, 0 for none, and its executable: tests follow it being started again
+        internal static int RunningId => process != null && !process.HasExited ? process.Id : 0;
+        internal static string RunningTide => runningTide;
+
         static void FollowTide()
         {
             if (process == null || runningTide == null || EditorApplication.timeSinceStartup - lookedAt < 1) return;

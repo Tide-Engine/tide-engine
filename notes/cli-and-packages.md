@@ -3,7 +3,8 @@
 ## `tide unity` says which tide builds (2026-11-19)
 
 `made_by` (`build.c`): `<TIDE_VERSION> (<16 hex digits>)`, the digits FNV-1a over tide's own executable (path, size
-and time), the installation's headers (`header_stamp(include)`), the engine's sources (`src/engine`, headers and
+and time, as it was when the process first asked: the file replaced under a running tide doesn't make the running
+program the new one), its compiler (clang where tide hasn't it built in), the installation's headers (`header_stamp(include)`), the engine's sources (`src/engine`, headers and
 `.c` files, summed so the folder's order doesn't matter) and `lib/native/libtide_platform.a`: everything the host
 Unity loads and a game's library are made of, by their stamps (`sys_file_stamp`), not their bytes. Worked out as
 each build starts, about 180 files' stamps (4 ms in Python on this machine's installation, against builds of seconds). `write_unity_library` writes it into
@@ -13,16 +14,24 @@ says which tide built it; notes/unity.md, top).
 
 **The installation changing under a watching `tide unity`** (an upgrade, a reinstall, a development tide's
 `cmake --install` while the editor is open): each build reads the installed files as they are, so the next game was
-another tide's than the host built at the start. `unity_build` (the loop's two builds) works the text out again,
+another tide's than the host built at the start (and, as "Replacing installed headers requires restarting a running
+`tide run`" below says of that command, old objects went on being used). `unity_build` (the loop's two builds) works the text out again,
 and where it isn't `run.made_by`, stamps the headers again (`b.headers`: objects compiled with the old ones aren't
 reused), has the engine's objects looked at again (`engine_built`), and writes `library.c` and builds the host
-again before the game. So after any build, the host on disk and the newest game are one tide's.
+again before the game; a host that didn't build is tried again with the next build. So after any build, the host on
+disk and the newest game are one tide's. `embed_host.c` is no longer one line: it has the constructor.
+
+**`tide run`** (watching): `write_library` exports the text and `queue_host` gives it to the host
+(`tide_run_desc.made_by`). Its host can't be built again while it runs, so `run_build` builds nothing once the text
+isn't the run's, and says to start `tide run` again (notes/hot-reload.md). Not in the number: `mingw/` and
+`lib/clang/` (thousands of files; they change with tide itself) and macOS's MoltenVK.
 
 Test: `tide_cli_unity_made_by` (`tests/unity_made_by_test.mjs`, with `tide_cli_build_compiler`'s controlled
 compiler and a made-up installation, as `tide_cli_generation`): both texts are tide's version and one number; a
 change of the game leaves the host as it is (not compiled or linked again); the platform layer's library, a
 header, an engine source and a new engine file changing each give another number in both, with the host compiled
-again; then nothing more changes. The controlled linker's library isn't one, so each build ends at the schema's
+again; then nothing more changes; and a `tide run` of the controlled host writes the same tide into `host.c` and
+`library.c`. The controlled linker's library isn't one, so each build ends at the schema's
 read, after what's checked. Not covered there: tide's own executable changing (it's the running program; the
 editor's build service starts tide again for that, notes/unity.md).
 

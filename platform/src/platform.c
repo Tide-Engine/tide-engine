@@ -1141,7 +1141,10 @@ typedef struct quad {
 enum { STEP_SHAPES, STEP_CLEAR, STEP_TEXT, STEP_MESH, STEP_CLIP, STEP_NO_CLIP, STEP_MESH_3D, STEP_SHADED,
        STEP_TARGET, STEP_BLIT, STEP_STENCIL,
        STEP_COMPUTE, // A kernel's run (tide_draw_list.computes, `first`), outside passes
-       STEP_GPU_OP }; // A GPU list's Set, Clear or SetCount (tide_draw_list.gpu_ops, `first`), outside passes
+       STEP_GPU_OP,   // A GPU list's Set, Clear or SetCount (tide_draw_list.gpu_ops, `first`), outside passes
+       // A mesh of the program Tide runs inside, drawn by it (TIDE_DRAW_EXTERNAL): `first` its matrix's place in the
+       // list's, `mesh` and `count` that program's numbers for its mesh and its material
+       STEP_EXTERNAL };
 
 typedef struct draw_step {
     bool camera_mirrored;
@@ -3743,6 +3746,7 @@ static bool writes_depth(const tide_draw_list *list, const draw_step *s)
     case STEP_TEXT:
     case STEP_MESH: return stencil_stores(s->stencil);
     case STEP_MESH_3D: return depth_written(s->depth) || stencil_stores(s->stencil);
+    case STEP_EXTERNAL: return false; // The window's alone, which is never a target of depth alone
     case STEP_SHADED: return (list->runs[s->first].shader->dims == 3 && depth_written(s->depth)) || stencil_stores(s->stencil);
     default: return true; // A clear, and what only says where the steps after it go
     }
@@ -4893,7 +4897,15 @@ static gpu_texture *texture_for(const tide_draw_texture *t)
     const tide_draw_area *areas;
     uint32_t count = 1;
     bool resident_mips = false;
-    if (t->space == TIDE_PIXELS_PACK_CUBE) { // A cube of the pack's: its six faces' pixels, where the pack has them
+    if (t->space == TIDE_PIXELS_EXTERNAL) {
+        // The other program's own image (tide_texture_external): named to it, with nothing uploaded and its smaller
+        // images its own. No texture where the backend draws for itself.
+        if (g->texture) free_texture(g->texture);
+        g->texture = gpu->external ? gpu->external(tide_texture_external_id(t->id), t->width, t->height,
+                                                   (t->linear ? TIDE_GPU_EXTERNAL_LINEAR : 0u)
+                                                   | (t->id & TIDE_PIXELS_EXTERNAL_RAW ? TIDE_GPU_EXTERNAL_RAW : 0u)) : 0;
+        resident_mips = true;
+    } else if (t->space == TIDE_PIXELS_PACK_CUBE) { // A cube of the pack's: its six faces' pixels, where the pack has them
         if (g->texture) free_texture(g->texture);
         g->texture = made_cube(t->linear ? TIDE_GPU_COLOR_SRGB : TIDE_GPU_COLOR_BYTES, t->width, (const void *const *)(uintptr_t)t->pixels);
     } else if (t->space == TIDE_PIXELS_PACK_ARRAY) { // An array of the pack's: its layers, where the pack has them
@@ -5980,7 +5992,7 @@ static tide_float4x4 view_world_to_clip;
 static bool window_3d_step(const tide_draw_list *list, const draw_step *s)
 {
     if (draw_target) return false;
-    if (s->kind == STEP_MESH_3D) return true;
+    if (s->kind == STEP_MESH_3D || s->kind == STEP_EXTERNAL) return true;
     return s->kind == STEP_SHADED && list->runs[s->first].shader && list->runs[s->first].shader->dims == 3;
 }
 
@@ -6654,6 +6666,15 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             s->tint = c->color;
             break;
         }
+        case TIDE_DRAW_EXTERNAL: {
+            // The other program's own draw, into its own picture: a target of Tide's has nothing of it
+            if (draw_target || !gpu->external_draw || c->external.matrix >= list->matrix_count) break;
+            draw_step *s = add_step(STEP_EXTERNAL);
+            s->first = c->external.matrix;
+            s->mesh = c->external.mesh;
+            s->count = c->external.material;
+            break;
+        }
         case TIDE_DRAW_SHADED:
         case TIDE_DRAW_BLIT: {
             if (!run_draws(list, c->shaded.run)) break;
@@ -6913,6 +6934,12 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         case STEP_NO_CLIP:
             frame_targets[draw_target].clipping = *s;
             if (pass_active) clip(s);
+            break;
+        case STEP_EXTERNAL:
+            if (gpu->external_draw && s->first < list->matrix_count) {
+                gpu->external_draw(s->mesh, s->count, &list->matrices[s->first].c0.x);
+                calls++;
+            }
             break;
         default: // Text
             if (s->count == 0 || !gpu_state.atlas || !pipeline_made(s)) break;

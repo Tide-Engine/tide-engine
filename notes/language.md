@@ -1,3 +1,19 @@
+## UnityEngine.Mesh, UnityEngine.Material, UnityEngine.AudioClip (2026-11-19)
+
+Three builtin types for a game made in Unity (the owner's direction; every rule mine, Provisional: docs/spec.md,
+Assets; the whole path in notes/unity.md, top section). In the compiler they're three kinds (`TY_UNITY_MESH`,
+`TY_UNITY_MATERIAL`, `TY_UNITY_CLIP`, appended to `type_kind`) whose names in `types.c`'s table are dotted, which
+`builtin_type_named` matches whole as the resolver hands it a type's written name: so `UnityEngine.Mesh` is found
+before any declaration is looked for, with or without a Unity project, and `Mesh` alone stays Tide's generic. Each is
+8 bytes (`tide_external_ref`), a rendering resource to the checker (`holds_render_resource_in`: local code alone,
+which is what keeps them out of the match with the existing error), a field, an array's element (lists and maps of them: not tried),
+impure, and not a worker's. Nothing has members. Two table entries use them: `Draw.UnityMesh` (three
+arguments, `tide_draw_external_mesh`) and an `Audio.Play` overload (`tide_audio_play_external`, whose argument
+codegen passes as the reference's number, and which takes the frame's audio list first as the other plays do).
+`tidec --embed`'s `tide_embed_set_local` takes fields of them beside a Texture's (`embed_given`). No error message
+is new, and no test of the language's own: the embed fixture (`platform/tests/embed.tide`) and the Unity Sample
+compile and run them. Not done: completion and member lists in tidels beyond the hover text.
+
 ## Tweaks, step 5: .tweaks files in place of tweaks.json (2026-11-16)
 
 The owner asked for the file not to be JSON, then for several to a game and values worked out with math and constants;

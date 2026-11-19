@@ -1,3 +1,301 @@
+## Unity's meshes, materials and sounds as types of their own: embed ABI 29 (2026-11-19, later)
+
+**Owner**, on the report of the section below, which proposed copying a Unity mesh into a `Mesh<V>` and a clip into
+Tide's mixer: "the reference seems more relevant maybe we introduce a Unity mesh type directly instead of forcing
+current Mesh to behave correctly, I suppose similar for others", and to the shape I then described, "go with
+recommendations". So: separate types that name Unity's objects. Everything past that is my pick (Provisional), and
+one differs from what I described: the draw is `Draw.UnityMesh`, not an overload of `Draw.Mesh` (below).
+
+**What a user has.** `UnityEngine.Mesh`, `UnityEngine.Material` and `UnityEngine.AudioClip`: opaque, local fields
+only (the match can't hold one: they count as rendering resources), set in Unity's inspector on a component, by a
+script on a singleton, exactly as a local `Texture` is. `Draw.UnityMesh(mesh, material, transform)` and
+`Audio.Play(clip, volume)`. Spec: Assets, Provisional, "Unity's meshes, materials and sounds are types of their
+own"; README, Run; docs/tools/cli.md, Unity.
+
+**How it goes through:**
+
+- **The types** (`ast.h`, `types.c`): three kinds, `TY_UNITY_MESH`, `_MATERIAL`, `_CLIP`, named in the builtin table
+  by their dotted names, which the type resolver takes whole (so no `using` shortens them and Tide's `Mesh<V>` keeps
+  its name); 8 bytes, `tide_external_ref` in C, the number the other program knows the object by. They're in
+  `holds_render_resource` (local code only), field-able, array-able, not pure, not for workers. The schema says a
+  field's type by the same dotted name.
+- **`Draw.UnityMesh`** (`builtins.c`, a plain table entry) is `tide_draw_external_mesh` (`draw.c`): a
+  `TIDE_DRAW_EXTERNAL` command with the two numbers and a matrix of the list's (the 3D transform that's set worked
+  in). **Why not `Draw.Mesh(mesh, material, transform)`:** `Draw.Mesh`, `Instanced` and `SkinnedMesh` never reach the
+  table; `check_mesh_draw` takes them whole and works out vertices, indices, shaders and `lod:` by what each
+  argument is. An overload there means telling a Unity mesh from the rest before that function has checked its
+  arguments, in the checker's most special-cased call. A name of its own is one table line and can't change what a
+  Tide mesh draw does. The owner can ask for the overload; the runtime under it wouldn't change.
+- **The renderer** (`platform.c`): `STEP_EXTERNAL`, made only for the window (a target of Tide's gets none) and only
+  where the backend has `external_draw` (`gpu.h`), run in the window's pass in order with the other steps, and in a
+  scene view's picture too (`window_3d_step`). The recorder writes `TIDE_EMBED_RENDER_EXTERNAL_DRAW` (mesh,
+  material, 16 floats).
+- **The replay** (`TideRender.cs`): `Kind.External` in the camera's recording, `CommandBuffer.DrawMesh(mesh, matrix,
+  material, submesh, 0)` for each submesh, pass 0 (the forward pass of Unity's own lit and unlit shaders in both
+  pipelines). The runner's table says what a number is (`Objects`); one that isn't a Mesh or a Material, or that
+  Unity destroyed, draws nothing. Nothing of Tide's draw state is set for it: the camera's matrices are Unity's.
+- **`Audio.Play(UnityEngine.AudioClip, volume)`** is `tide_audio_play_external` (`audio.c`): a one-shot in the
+  frame's audio with `tide_clip.external` set and no samples, so Tide's mixer plays nothing of it.
+  `tide_embed_sounds(e, &count)` gives the frame's such plays once (clip, volume, pitch 1), and the runner plays
+  each with `PlayOneShot` on an AudioSource of its own ("Tide Sounds", through the runner's Audio Output group).
+  Silent under `TIDE_HIDDEN`, as Tide's sound is, with `TideRunner.UnitySoundsPlayed` counting for tests. No pitch
+  or position: `PlayOneShot` has neither, and a source a play would need a pool this didn't build.
+- **Handing over** is the texture's path with another size: `tide_embed_local_object(e, type, offset, birth, lineage,
+  object)`, the generated `set_local` taking a field by its offset and size (48 for a Texture, 8 for these), the
+  generated C# `public global::UnityEngine.Mesh x;` with `assets.Object(offset, x, ref tideGiven_x)`, and one table
+  of objects in the runner, numbered from 1, kinds mixed (what a number is, is Unity's to say, where it's used).
+  Web: `tide_unity_local_object`, `tide_unity_sounds`/`_sound_count`, `TideWebLocalObject`, `TideWebSounds`.
+  `TIDE_EMBED_ABI` and `TideLibrary.Abi` are 29.
+
+**What isn't there:**
+
+- **Lighting and shadows** are what a command-buffer draw gets. Unlit materials are exact (tested). A lit one in
+  the built-in pipeline is drawn after the forward passes with whatever light constants were last set, and casts
+  and receives no shadows; in URP it's drawn in Tide's pass after transparents, lit by the main light as set, with
+  no shadow casting. Drawing in the pipeline's own queues (a real renderer instead of a command) is another design.
+- **Unity's camera only, the screen only.** A view's own `Draw.Camera` doesn't move it, and a `RenderTarget` gets
+  none of it.
+- **One material for every submesh**, pass 0 alone (no multi-pass shaders, no per-submesh materials: a list of
+  materials would need the type in a list handed over, which `set_local` doesn't take).
+- **Sounds**: one-shots only; no pitch, position, loop, stop, or Tide bus. On the web the calls exist and nothing
+  was run.
+- The first-frame lag is as for textures (below). Time travel's other ticks were a gap and aren't (closed the same
+  day, at the end of this section).
+- `target.UnityMesh` exists as a method (a render target has Draw's methods) and draws nothing.
+
+**Tests.** `tide_platform_embed`'s `embed_local_objects_are_handed_back`: the fixture's `Counter` has the three
+fields and `Faces` draws and plays them; a mesh with no material records nothing; with both, one EXTERNAL_DRAW with
+the two numbers and the view's matrix (the identity moved by (1, 2, 3)); the sound once, at 0.5, then none until the
+next frame's play; a field takes only its own size (an object refused where a Texture is and the other way round),
+an offset inside the field, and no entity; unset, nothing. The Sample: `Ball.badge` (Unity's Cube), `badgeLook`
+(`Assets/Sample/Badge.mat`, Unlit/Color magenta) and `chime` (bonk.wav as Unity imported it) on `Roller.prefab`;
+`Emblem` draws the cube two units over the first player's ball and `Heard` plays the chime; the frame tests read
+magenta where Unity's camera sees that point, and the sound test counts a play.
+
+**Runs** (as the section below: Unity 6000.6.0f1, hidden batch, this checkout's Sample and tide): PlayMode on
+Direct3D 11 68 of 68; the frame tests and ComputeReplayTests on Vulkan 40 of 40; the frame tests on OpenGL Core 3 of
+3 (built-in pipeline, after a hot reload, URP: each reads the magenta cube); EditMode 50 of 52, the same two as
+before. Native debug: `tide_platform_embed` 35 of 35, `tide_cli_tests`, `tidels_tests`, the HLSL checks. tidec says
+the existing errors for a match use of such a field and for the two arguments the wrong way round (by hand).
+**Not run:** sanitize, web, a lit material (the Sample's is unlit, so lighting isn't pinned), a mesh of several
+submeshes, a Linear project, a scene view's picture of it, Direct3D 12, players, and the sound by ear (hidden runs
+are silent; the play is counted).
+
+**A tick shown again has what was given** (the owner, away: "I need you to be independent here with your
+decisions"; so the gaps that were bounded and testable were closed rather than left). While time travel keeps
+anything (`keep_seconds` above 0), `embed.c` remembers what `tide_embed_local_texture` and `_object` gave, the
+latest for each field of each entity (`embed_given`, `remember_given`; of the running build's layout, at most 16,384,
+the oldest going first), gives it all to the separate local state as `show_frame` makes it (`give_again`), and gives
+that state whatever is given while it's there. So a scrubbed tick, the background mode and a recording draw with
+Unity's textures and meshes as the match's own frames do. Nothing is remembered with time travel off (a player by
+default), so a shipped game pays nothing. No ABI change: the same calls do more. Left: an entity that only an older
+tick has (gone from the match since) is given nothing new, as Unity shows no GameObject to take it from; what it was
+given while it lived is still remembered. Test: `embed_shown_ticks_have_what_was_given` (a texture given, then a
+pause and an earlier tick shown: its size read and no draw of a mesh; a mesh and material given while it shows,
+drawn the next frame; both there as the match goes on). Runs: at the end of the Runs paragraph above this one's
+tests, and below.
+
+**Runs after that change:** native debug `tide_platform_embed` 36 of 36 and `tide_platform_travel`, and both again
+under Windows ASan (`sanitize`), which the work above hadn't run. Unity, as before: PlayMode `TravelTests` and
+`BounceTests` on Direct3D 11, 26 of 26; the frame tests on Direct3D 12, 3 of 3, and with the Sample's color space
+Linear for the run, 3 of 3 (the Unity mesh's magenta and the texture's colors there too). Still not run: web, a lit
+material, a mesh of several submeshes, players, and a scrubbed tick's picture in Unity itself (pinned natively).
+
+## Unity's own textures in Tide's views: embed ABI 28 (2026-11-19)
+
+The owner: "can we use assets from unity in views inside tide? if not is it possible?", then asked for it built.
+Until now only a path declaration drew in Unity (`asset Texture x = "x.png";`, Tide's own import of the file, which
+stays as it is), and an inspector reference to an asset had nowhere to go: a match component can't hold a rendering
+resource. Textures are built; meshes, sounds and materials are proposals at the end. **Every pick here is mine
+(Provisional)**: the owner asked for the feature and ruled on none of its details. No syntax is new.
+
+**What a user has.** `local Texture face;` on a match component is, in its generated Unity component, a serialized
+`public UnityEngine.Texture face;` (a Texture2D or a RenderTexture), set in the inspector on a prefab or in a scene.
+Tide's views draw with it as with any `Texture`, and the image on the GPU is Unity's own imported object, bound by
+the replay: no second import, no pixel upload, no copy. A match singleton's local `Texture` is the same field on its
+C# class, which a script sets (a singleton has no inspector). Spec: Assets, Provisional, "A local `Texture` field
+takes one of Unity's textures"; package README, Run; docs/tools/cli.md, Unity.
+
+**How it goes through, layer by layer:**
+
+- **The reference** (`engine/include/tide/draw.h`). A `Texture` is a `tide_texture_ref`; a fourth kind beside C's
+  pixels, a rendered image and a pack's name: no pixels, no target, `image.height == TIDE_TEXTURE_EXTERNAL` (-3),
+  and in its name (the low 60 bits of `image.version`, under the sampling bits every reference has) the number the
+  other program knows the image by (28 bits, from 1) and its width and height (16 bits each).
+  `tide_texture_external(id, width, height, sampling)` makes one, `tide_texture_is_external` tells one.
+  The size is in the value because each game library has its own engine copy: `tide_texture_size` (`mesh.c`) reads
+  it with no table to reach. To every reader that doesn't know the kind it's a pack name nothing has: no texture.
+  A hot reload's carry-over keeps it (it zeroes references with pixels or dead targets alone).
+- **The draw list** (`engine/src/draw.c`). `TIDE_PIXELS_EXTERNAL`: a texture with no pixels, its `id` the name,
+  with `TIDE_PIXELS_EXTERNAL_RAW` (bit 60) for a `[Raw]` read (`tide_draw_texture_source_raw`), since a read of its
+  channels as numbers is another read for the other program (no alpha worked in). A `[Linear]` read is the list's
+  usual twin (`linear`). Appending one list to another re-names it (`append_texture_plain`). The run-of-sprites
+  shortcut (`tide_draw_same_source`) leaves external references out: it matches pack names.
+- **The renderer** (`platform/src/platform.c`, `texture_for`): asks the backend's new optional
+  `gpu.h external(external, width, height, flags)` (`TIDE_GPU_EXTERNAL_LINEAR`, `_RAW`) and uploads nothing; its
+  smaller images are taken as there (`mipped`), so no `mipmaps` call is made. A backend that draws for itself has no
+  `external` (Vulkan, WebGPU, none): the texture is 0 and reads get the usual fallback. So such a field draws only
+  where the recorder is the backend, which is by nature: Unity's prefabs exist in a Unity project alone.
+- **The recorder** (`gpu_record.c`): `TIDE_EMBED_RENDER_EXTERNAL` (id, image, width, height, flags), after
+  DEPTH_BIAS. `TEXTURE_FREE` of that id lets go of the number alone. Nothing else is recorded of it.
+- **The embed** (`tide/embed.h`): `tide_embed_local_texture(e, type, offset, birth, lineage, image, width, height,
+  filter, wrap)`: `type` the schema's type of the local fields (a component's, with its entity, or a singleton's,
+  with zeros), `offset` the field's. `image` 0 gives the field no texture. False for anything that's no Texture
+  field of the game's local state. It goes through the game's generated `tide_embed_game.set_local` (new, last
+  member; `embed_codegen.inc`), a switch over the local parts with a `Texture` field of their own, by exact offset:
+  a component's through the existing `tide_get_<part>`/`tide_set_<part>` (a row made where the entity has none,
+  born unknown, which the frame's own sweep lets go of with the entity), a singleton's in place. A `Texture` inside
+  a struct, list or map takes none. `embed_exports` and the web program (`tide_unity_local_texture`,
+  `TideWebLocalTexture` in the jslib: ten numbers, no pointers) have it. `TIDE_EMBED_ABI` and `TideLibrary.Abi` are 28 (27 is the view packet's reads, below, merged the same day).
+- **The generated C#** (`unity_code.c`, `put_local_fields`): a local part's field whose schema type is `Texture`
+  (with `[Raw] ` or `[Linear] ` before it) is `public global::UnityEngine.Texture <name>;` (serialized, with a
+  tooltip on a component) beside a `[NonSerialized] tideGiven_<name>`, and the class overrides
+  `WriteAssets(TideAssets assets)` with a line each, `assets.Texture(<offset>u, name, ref tideGiven_name)`. Every
+  other local field is `[NonSerialized]` and read live, as before. `WriteAssets` joined the member names a Tide field
+  keeps clear of (`unity_names.c`, and `analysis.c`'s copy of the list).
+- **The bake** needed nothing: `components.json` lists match fields alone, and the converter already leaves out a
+  serialized key its component hasn't. (The "not assets yet" error is for an asset in a TideEntity's `references`,
+  which an entity field's `@n` names; it stands.) The value never enters a prefab's Tide text, which can't name a
+  local field anyway (spec, Local fields).
+- **The runner** (`TideRunner.cs`, `TideComponent.cs`): `LiveOf` calls a component's `WriteAssets` after `ReadLive`
+  where its class overrides it (`LiveComponent.assets`, found once a schema by reflection), with a `TideAssets`
+  saying the local type and the entity. So it's handed for a component that's read (the section below, merged the
+  same day): one enabled on a GameObject, which a prefab's or a scene's is; a disabled one hands nothing, and a
+  singleton's is handed once a script asked for it (`Get<T>()`, which is how a script sets its field anyway). `TideAssets.Texture` hands over a texture that's another than the one
+  handed last (a reference compare: nothing is made, and nothing is called for a texture that hasn't changed),
+  everything again for another entity or another game (`AssetsRun`, `AssetsOf`: a pooled GameObject's next entity,
+  a schema bound again, an embed started again), none when a script takes it away, and nothing for a field Unity
+  leaves empty, so a Tide default (`local Texture face = logo;`) stays. `Give` numbers each distinct texture from 1
+  (`externals`, kept while the embed lives, as a field keeps its number) and passes its size and how it samples:
+  Point as `Filter.Point`; a texture with smaller images as `Filter.Trilinear`, `Anisotropic` where its Aniso Level
+  is above 1 (Unity's Bilinear reads the nearest smaller image and Tide's reads none, so this is the nearer look);
+  its Wrap Mode. A texture that isn't 2D is refused with an error naming it, once: the field is left as it was and
+  the texture counts as handed. `ReadSingleton` does the same for a singleton's.
+- **The replay** (`TideRender.cs`): `Op.External` makes an `Image` that wraps the runner's texture
+  (`Externals`), never owned, written, renamed or given smaller images (`external`, `authored`); one that's been
+  destroyed, or isn't 2D, reads as a missing image does. Two things make its reads what Tide's own textures give,
+  both in the shader, since the image itself isn't touched:
+  - `_TideForeign`, 2 bits a texture (`tidehl_foreign`, `hlsl.c`): 1 multiplies the color by its alpha after the
+    sampler (Tide stores each color times its alpha, Unity beside it); 2 first makes linear light display colors (a
+    Linear project's sRGB texture, read by an unmarked field); 3 first makes display colors linear light (a
+    `[Linear]` field in a Gamma project, or of a texture no hardware decodes). A `[Raw]` read is 0.
+  - `_TideTurned`, a bit a texture (`tidehl_turned`, `_by`, `_turned_row`): Unity keeps an imported image's rows
+    from the bottom and Tide's uv counts from the top, so `v`, its derivatives and a loaded pixel's row are turned.
+  Both ride in the sampler mode `tidehl_mode` already builds per module texture (bits 9 to 11), so every generated
+  shader's and kernel's text gains the prelude lines and nothing else; keys don't change. On OpenGL Core, whose
+  textures carry their sampling, the image's own filter and wrap are reported as they are (`OwnOf`) and never
+  changed, so a draw that asks otherwise is emulated from its pixels, as for any texture read two ways.
+- **Players** keep the texture because the prefab or scene references it, as any Unity object field's value: the
+  registry of "Runtime binding" keeps the prefabs, and they keep it. No name lookup.
+
+**What isn't there, and what to do about each:**
+
+- **The first frame.** Unity shows an entity through a GameObject after the frame's views ran, so the field has no
+  texture in the views' first frame of the entity, and for as long as a scene of Unity's is still loading. A view
+  asks `if (x.face.size.x == 0) return;`. Removing it means either the bake carrying the value (a prefab's Tide
+  text can't set a local field, and what a late joiner or a migrated host learns of the entity is its
+  `UnityEngine.Source` alone, so it would be a table by asset and node that generated local code applies at spawn:
+  a compiler feature) or a frame split in two so C# binds between ticks and views. Neither is small.
+- **Time travel's other ticks** (closed the same day: the section above, "A tick shown again has what was given").
+  `show_frame` runs the views on a local state of its own (`travel.local`), which nothing was handed: a scrubbed
+  tick's or a recording's frames drew without Unity's textures.
+- **A `Texture` parameter of a function a frag calls** carries no mode in the HLSL (as it carries no own-sampler
+  mode), so a read of an external through one gets its rows and channels as Unity stores them. A loaded pixel
+  (`textureLoad`) of a module's 2D float image has its row turned, not its alpha worked in.
+- **Float and HDR textures in a Linear project** are taken as display colors where they aren't an sRGB format.
+- **Sprites, cubemaps, arrays, volumes.** A `Sprite` needs its rectangle beside its texture (a `Draw.Sprite` part),
+  which wants a value type of its own or two fields; the others need their reference kinds made external the same
+  way (`tide_cubemap_ref`, `tide_texture_array_ref`).
+- **The inspector in Play** shows the field grayed with the rest (`TideComponentEditor` disables the default
+  inspector there); a script sets it.
+- **WebGL** players draw none of Tide's views (no compute); a WebGPU player would replay this like the rest. The
+  export and the jslib are built and compiled, not run in a browser.
+- The Sample's hand-made test shaders (`Assets/Tests/Resources/TideShaders`) weren't written again with the new
+  prelude: they bind no external image, and an undeclared `_TideForeign` reads as nothing set.
+
+**Tests.** `tide_platform_embed`'s `embed_local_textures_are_the_other_programs` (the fixture's `Counter` has
+`local Texture face`, `[Raw] local Texture bumps`, and `Tally` a `local Texture logo`; `Faces` draws them): sizes
+as the game reads them, the three EXTERNAL packets with their numbers, sizes and flags (2 for the `[Raw]` read),
+each bound by an IMAGE and never written or mipmapped, nothing named again the next frame, all named again after a
+reset, an image of 0 freeing the name, every refusal (another field, an offset inside the field, a match type, no
+entity, a side of 0 or 65,536, an unknown type, no embed), and the game's hash unchanged.
+`unity_code_writes_the_samples_package` covers the generated field and `WriteAssets` (the Sample's `Ball.mark`).
+The Sample: `Assets/Sample/Mark.png` (4 by 4: red, green, a violet of middling channels (128, 64, 191), half-clear
+white; Point, uncompressed, sRGB), set on `Roller.prefab`'s `Ball`, drawn by Bounce.tide's `Marks` view over a black
+square for the first player's ball; the frame tests' `Check` reads red at its top left, green at its top right, the
+violet below (which a color-space mistake would darken, where pure channels read the same either way), and gray
+where the half-clear white is over black (the color times its alpha: 0.5 in a Gamma project, 0.735 in a Linear
+one, which blends light), so rows, channels, alpha and color space are all pinned, in the built-in pipeline, after
+a hot reload and in URP.
+
+**Runs** (Unity 6000.6.0f1, Windows, hidden batch with the GPU, `-noAudio`, in this checkout's `unity/Sample`, a
+tide installed from this checkout's mingw-release and debug trees given by `-tide-command`, the game built with
+`tide unity Assets -o Library/Tide --assets Assets --once`): all PlayMode tests on Direct3D 11, 60 of 60 (ScaleTests
+quiet with the new per-frame `WriteAssets`); the three frame tests and ComputeReplayTests on Vulkan and OpenGL Core,
+40 of 40 each; the frame tests on Direct3D 12, 3 of 3; the frame tests with the Sample's Player Color Space set to
+Linear for the run (and put back) on Direct3D 11 and Vulkan, 3 of 3 each, which is `_TideForeign`'s mode 2;
+EditMode on Direct3D 11, 45 of 47 (one ignored as before, the launch-argument test failing only for
+`-tide-command`), ShaderTests compiling every shader with the new prelude with nothing said. Native debug:
+`tide_platform_embed` 33 of 33, `tide_platform_reload`, `_reload_reads`, `_travel`, `_embed_shards`,
+`tide_cli_tests`, and every `tidec_hlsl_*`, `wgsl_hlsl_*` and `tide_hlsl_shaders_valid` (fxc, warnings as errors,
+OpenGL Core's defines too). The docs build. **After merging origin/dev** (the reads, the shapes, the orthographic
+camera, which tide built a library, time travel's gaps; ABI 28 taken): PlayMode on Direct3D 11 68 of 68, the frame
+tests and ComputeReplayTests on Vulkan 40 of 40, EditMode 50 of 52 (the same two), and natively the embed, reload,
+travel, shards, CLI, made-by and HLSL tests again. `draw.c`, `mesh.c`, `embed.c`, `gpu_record.c` and `platform.c`
+compile for wasm32-wasip1-threads under the warnings (syntax alone; no web tree was built).
+**Not run:** sanitize (the tests above ran in the debug tree), a web suite (the engine's change is three branches
+on a reference kind no web host makes; `tide unity --web`'s new export and the jslib were not built into a page), a Unity WebGPU or Android player, Metal, `[Linear]` and `[Raw]` fields in
+Unity itself (the recorder's flags for them are pinned natively; modes 0, 1 and 2 ran, mode 3 didn't), a singleton's
+field from a script, and a player build's stripping (the reference is the prefab's own, as any serialized field's).
+
+**The three proposals below were answered the same day** (the owner chose references, as types of their own, over
+copies into `Mesh<V>` and `Clip`): built, in the section above this one. They stay as what was weighed.
+
+**Meshes: not built, and why (a language decision for the owner).** A Tide mesh is two CPU lists of the game's own
+vertex struct (`Mesh<V>`: an asset's ID or a made mesh's lists), which any code reads (`mesh.vertices`), and which
+the draw list copies, batches, culls and levels by. A Unity `Mesh` is GPU buffers in Unity's layout, with CPU
+arrays only where Read/Write is on. Two ways, each with a cost that's the owner's to weigh:
+
+1. **Copy it in.** C# reads the mesh (`vertices`, `normals`, `uv`, `colors`, `tangents`, `triangles`) and fills a
+   `local Mesh<V>` field's lists by `V`'s field names, as tidec's importers fill a model's (`position`, `normal`,
+   `uv`, `uv2`, `color`, `tangent`; other fields their defaults). Everything of Tide's then works (`Draw.Mesh`, a
+   custom `vert`, instancing, `lod:`, code reading the lists). Costs: a second copy of the geometry in memory and on
+   the GPU, a player needs Read/Write Enabled on the mesh (the build processor could set or check it), and Unity's
+   submeshes become one mesh. It needs `set_local` to take lists (heap ownership in local state) and C# that packs
+   `V` from the schema. This is the one I'd build.
+2. **Bind Unity's buffers.** The replay already reads vertices from raw buffers by a per-pipeline table of slot,
+   offset and format, so a Unity vertex buffer could be bound with a table made from `Mesh.GetVertexAttribute*`,
+   matched to `V` by name. Costs: `Mesh<V>` gains a kind whose lists no code can read (a language change), the draw
+   list and renderer gain a draw that bypasses batching, culling and levels, Unity must be told to keep the buffer
+   raw-bindable (`vertexBufferTarget |= Raw` before upload), formats Tide's vertex pull hasn't (half floats,
+   normalized shorts, which mesh compression makes) need adding, and an attribute the mesh lacks has nowhere to get
+   `V`'s default from.
+
+**Sounds: not built, and why.** A `Clip` is a name (`tide_clip_ref`, 8 bytes) that generated code resolves to
+samples inside the game library (`tide_clip_of`), which Tide's mixer then plays on the audio thread. Two ways:
+
+1. **Through Tide's mixer:** C# hands the clip's samples over once (`AudioClip.GetData`), a `local Clip` field
+   names them, and everything of `Sound` works (volume, pitch, buses, effects, `audio` declarations). Costs: the
+   samples are copied (a clip must be Decompress On Load; a streaming one has no samples to give), and the table of
+   handed clips has to live where `tide_clip_of` runs, so a new hook into each game library's engine copy that
+   survives hot reloads.
+2. **Through Unity's:** `Audio.Play(clip)` of an external clip becomes a record the runner plays with
+   `AudioSource.PlayOneShot`. Nothing is copied and Unity's import is used whole, but Tide's `Sound` controls, buses
+   and effects don't apply, and the two mixers' voices are counted apart.
+
+I'd build the first, for the same reason as for meshes: Tide's features keep working on it.
+
+**Materials: a proposal only.** A Tide draw with a Unity `Material` can't go through Tide's renderer as it is: the
+replay draws procedurally from raw buffers with Tide's generated shaders, and a Unity material's shader expects
+Unity's vertex streams, per-object constants and passes. What could work is a draw the replay hands to Unity
+whole: a new draw-list command "this mesh, this external material, this matrix", recorded as a packet the replay
+turns into `CommandBuffer.DrawMesh(mesh, matrix, material, submesh, pass)` at its place in the frame's order, with
+Unity's own mesh (so it wants the meshes decision first, and way 2's external mesh at that) and Unity's lighting
+as far as a command buffer draw gets it (in URP, a pass drawn after the pipeline's own lights are set up; no
+shadows cast unless drawn in the shadow passes too). The language side would be a `Material` resource type that
+only a local field holds and only `Draw.Mesh` takes, with no fields Tide code reads. Until then the supported way
+to use a Unity material is what the package does already: the entity's GameObject wears it, and Unity draws it.
+
 ## The packet carries what Unity reads; a part's body by a generated accessor (2026-11-19)
 
 The owner asked for the Unity integration's known gaps to be closed; these are the two performance ones left on
@@ -152,26 +450,40 @@ against anything. All picks mine (Provisional).
   offset or points brought back from its body's frame: `TideScale.Unscale`, `TideParts.Placed`/`Points`), and the
   GameObject is where the match has the entity, so the same drawing shows the live shape. Nothing separate draws
   in Play.
-- **One place for a primitive's geometry** (`TideShapes.PrimitiveOf`: matrix, centre, size, radius, height), which
-  the drawing uses, and `WorldBounds`, the box in the world that holds what's drawn: Unity's `Collider.bounds` of
-  the same shape, which is what the tests compare.
+- **A primitive's wires are plain lines** (`TideShapes.Wires`, from `PrimitiveOf`'s matrix, centre, size, radius
+  and height): a box's twelve edges, a rect's four, a sphere's three rings, a circle's one, a capsule's two rings,
+  four sides and four half rings, a ring 64 lines. The gizmo hands them to `Handles.DrawLines` as they are, where
+  it called `DrawWireCube`, `DrawWireDisc` and `DrawWireArc`, so what the tests read is what's drawn, and nothing of
+  Tide's is between them and Unity's line drawing. `WorldBounds` is the box in the world that holds the shape,
+  Unity's `Collider.bounds` of the same one.
 - **Tests** (EditMode `ShapeTests`, fixtures `Assets/Tests/Geometry/GeometryBox`, `Sphere`, `Capsule`, `Rect`,
   `Circle` with the attributes tide writes for Box3D's and Box2D's):
   - a Tide box, sphere and capsule against a `BoxCollider`, `SphereCollider` and `CapsuleCollider` of the same
     fields on the same GameObject, at five placements (plain; scaled per axis; turned and scaled; mirrored; under a
     moved, turned, scaled parent): the bounds agree to 0.4 mm;
-  - a rect and a circle against `BoxCollider2D` and `CircleCollider2D`, turned about z, scaled and mirrored;
+  - a rect and a circle against `BoxCollider2D` and `CircleCollider2D`, turned about z, scaled and mirrored; in
+    each of these, every point of the wires is inside Unity's bounds;
+  - the wires themselves: a turned, scaled box's are twelve edges, each between two of its eight corners along one
+    axis; a rect's four sides; every point of a sphere's rings on the sphere, the rings joined and closed; every
+    point of a capsule's at its radius from its middle line, its height end to end, and one shorter than it's wide a
+    sphere, as Box3D makes it (notes/box3d.md);
   - a part's box in Play: its offset baked as tide bakes it, shown back by `TideParts.Placed` as authored, drawn
     where Unity's collider is, and again after its body moved;
   - when a shape is drawn: selected, under a selection, unselected with and without the switch, the switch kept in
     EditorPrefs, which types have shapes, and the gizmo's own `DrawGizmo` flags.
-- **Runs:** Unity 6000.6.0f1, hidden batch, `-nographics`, this checkout's Sample: ShapeTests 4 of 4 and GeometryTests 5 of 5, within the EditMode run of 47 of 52 (the five others are the run's setup: A build says which tide made it, Runs). No C# warnings.
-- **Not seen:** the wireframes, the fainter unselected ones, the Project Settings toggle and Edit Shape's handles in
-  a window: agent runs open none, and a batch run has no Scene view to draw gizmos into. What's tested is the
-  geometry that's drawn and when; what `Handles` makes of it on the screen isn't.
-- **Left:** outlines, meshes, terrains and joints have no Unity collider to hold them against here (their geometry
-  is `GeometryTests`'); a sensor, an asleep body or a disabled component draws as any other (Unity's 2D has colors
-  for those); Unity hiding the gizmo of a component folded in the Inspector isn't asked for.
+- **Read against the packages' notes** (notes/box2d.md and notes/box3d.md, whole, and the shapes' declarations):
+  sizes are whole sizes about the offset, a capsule stands along its body's y with its height end to end, as drawn;
+  no shape, joint or gizmo gap of Unity's is listed there.
+- **Runs:** Unity 6000.6.0f1, hidden batch, Direct3D 11, this checkout's Sample: ShapeTests 5 of 5 and GeometryTests
+  5 of 5. No C# warnings.
+- **Can't be seen from here:** the Scene view itself. Agent runs open no window, and Unity draws gizmos only inside
+  a window's repaint: `Handles` read the current GUI event, which can't be set outside one (tried: a repaint event
+  set by hand stays null, and `Handles.SetCamera` throws), so a batch run can't draw one into a texture either. What
+  is left unseen is Unity's own: that `Handles.DrawLines` draws these lines in the colour given, the Project
+  Settings toggle's row, and Edit Shape's handles (Unity's `BoxBoundsHandle` and the like, unchanged by this).
+- **By choice, not left:** outlines, meshes, terrains and joints have no Unity collider of the same fields to be
+  held against (their geometry is `GeometryTests`'); a sensor or an asleep body draws as any other, as Unity's 3D
+  colliders do.
 
 ## An orthographic Unity camera (2026-11-19)
 
@@ -194,10 +506,21 @@ draw API change is proposed, and nothing is the owner's to decide: what was miss
     camera had it. Runs without a GPU too.
   - `SceneViewsShowTidesThreeD`: a scene camera made orthographic (the Scene view's Iso) shows the cube where it
     sees it (`tide_embed_render_view`), and not a unit beside it.
-- **Runs:** Unity 6000.6.0f1, hidden batch with the GPU, `-noAudio`, Direct3D 11 (`-force-d3d11`), the built-in pipeline, this checkout's Sample with a scratch tide of this checkout: BounceTests 18 of 18. The frame was also saved (`TIDE_UNITY_DUMP`) and looked at: the box from above without perspective, the ring about the ball, the cube over it, the plate's stripes. Not on Direct3D 12, Vulkan or OpenGL Core: the camera's matrices reach the replay as uniforms, on every API alike.
-- **Not run:** URP with an orthographic camera (the pass takes the same matrices), an oblique or off-centre
-  projection (`Camera.projectionMatrix` set by hand: the same path, any matrix), and what a game's own view does
-  with a camera it assumes is perspective (`Draw.CameraProjection()` gives it the matrix to ask).
+  - `TideDrawsIntoAnOrthographicCamerasFrameInURP`: the same frame check through URP's pass.
+- **Read against the renderer's notes** (notes/rendering.md and notes/drawing.md, whole): nothing of Tide's that
+  takes something from the 3D camera needs a perspective one. Culling planes and `Draw.Bounds` come from the matrix
+  and are tested with orthographic ones; picking rays unproject through it; the mirror test is a determinant's
+  sign, and `Camera.projectionMatrix` is OpenGL's convention as a perspective one's; levels of detail go by `w`,
+  which doesn't change with distance there, as an object's size on the screen doesn't; occlusion and GPU culling
+  never run under the recorder. One thing that isn't about the projection, and older than this: a scene view draws
+  the frame's list again, which was culled and given its levels of detail for the game's camera, so what that
+  camera culled is missing from a scene view looking elsewhere (drawing.md, "Culling happens during recording").
+- **Runs:** Unity 6000.6.0f1, hidden batch with the GPU, `-noAudio`, this checkout's Sample with a scratch tide of
+  this checkout: BounceTests 20 of 20 on each of Direct3D 11, Direct3D 12, Vulkan and OpenGL Core, the built-in
+  pipeline's and URP's orthographic frames among them. The Direct3D 11 frame was also saved (`TIDE_UNITY_DUMP`) and
+  looked at: the box from above without perspective, the ring about the ball, the cube over it, the plate's stripes.
+- **Not run:** Metal (no Mac), and an oblique or off-centre projection set by hand (`Camera.projectionMatrix`:
+  the same path, any matrix; Tide's own tests cover arbitrary ones, drawing.md).
 
 ## A build says which tide made it, and the host loads only its own (2026-11-19)
 
@@ -207,8 +530,10 @@ tides that lay the tables out alike, or whose engine copies differ, still loaded
 mine (Provisional).
 
 - **What a build carries.** `tide unity` works out which tide it is as each build starts (`made_by` in
-  `compiler/cli/build.c`): `<version> (<16 hex digits>)`, the digits a hash of tide's own executable, the
-  installation's headers, the engine's sources and the platform layer's library, by their stamps (path, size, time).
+  `compiler/cli/build.c`): `<version> (<16 hex digits>)`, the digits a hash of tide's own executable (as it was
+  when the process first asked: a tide replaced on disk under a running one is still the old program), its compiler,
+  the installation's headers, the engine's sources and the platform layer's library, by their stamps (path, size,
+  time).
   It writes that text into the game's library (`tide_host_library_made_by`, in `library.c`) and into the host Unity
   loads (`embed_host.c`: a constructor calling `tide_embed_made_by`, so the host says it as it's loaded and C# calls
   nothing new). Two tides of one version (a development tide built again) are two; so is one whose files changed.
@@ -222,16 +547,25 @@ mine (Provisional).
 - **The installation changing under a running editor**, which "could do the same (not tried)":
   - tide's loop (`unity_build`) sees that the text changed since it built the host, stamps the headers again, and
     builds the host again before the game. So the host on disk and the newest game are always one tide's, and
-    entering Play again is enough: nothing is restarted by hand.
+    entering Play again is enough: nothing is restarted by hand. A host that fails to build is tried again with
+    the next build (`made_by` is forgotten), rather than left the old tide's beside new games.
   - A Play that's running keeps the host it loaded (a copy), which refuses the new build with the message above.
   - `TideBuildService.FollowTide` (once a second, from `Drain`): where the tide executable the service started was
     replaced (another size or time, as it is for two seconds: `Replaced`), it starts tide again. The running one is
     the old program, which would go on compiling with the new installation's files.
 - **No embed ABI or packet change.** `tide_embed_made_by` is the host library's own business, not an export, and
-  `TideLibrary.Abi` stays. `tide_run_desc.made_by` gives `tide run`'s host the same check; tide doesn't set it
-  (one process builds that host and its games, and a running host can't be built again): left so.
+  `TideLibrary.Abi` stays.
+- **`tide run` too** (the same day, after a review against notes/cli-and-packages.md and notes/hot-reload.md: its
+  watching host and its libraries can be two tides' as Unity's can, and its headers are stamped once a run, so a
+  build after an install mixed old objects with new headers). Its host says its tide (`tide_run_desc.made_by`, in
+  the generated `host.c`) and its libraries export the text (`write_library`). The host can't be built again while
+  it runs, so tide doesn't build at all once the installation is another tide (`run_build`): "tide's installation
+  changed since this run started (it was tide ..., and is tide ... now), so the game isn't built again ... stop
+  this run and start `tide run` again". The game goes on with the build it has.
 - **Not checked, as before:** a player's game (linked by the package from one build), Android's whole library and a
-  page's program (the game and the host are one link). A reinstall of the very same version is another tide to a
+  page's program (the game and the host are one link). Not in the number: the installation's `mingw/` and
+  `lib/clang/` (thousands of files to stamp each build; they change only with tide itself, which is in it) and
+  macOS's MoltenVK (the host's alone). A reinstall of the very same version is another tide to a
   Play that's running (its files' times changed), which costs a Play restart and never a wrong load. Stamps, not
   bytes: two installations whose files are the same bytes at the same paths and times are one.
 - **Tests:**
@@ -240,17 +574,38 @@ mine (Provisional).
     loads neither (notes/hot-reload.md).
   - `tide_cli_unity_made_by` (`compiler/cli/tests/unity_made_by_test.mjs`, a made-up installation and the controlled
     compiler): the installation changed under a watching `tide unity`, part by part, gives another text in the
-    library and the host, the host compiled again; a change of the game alone leaves the host (notes/cli-and-packages.md).
+    library and the host, the host compiled again; a change of the game alone leaves the host; and `tide run`'s
+    `host.c` and `library.c` say the same tide (notes/cli-and-packages.md).
   - The Sample's PlayMode `BounceTests.ABuildAnotherTideMadeIsntLoaded`: the running build's library with one digit
     of its text changed, published as the next `game-<n>` in Play. The Console's error is expected by its text
     (`LogAssert`), no `loaded-<n>` copy stays, the match's ticks go on, and the game ended and started again runs.
     This is the 2026-10-25 crash's case with the tables the same size, which the shape check let through.
+  - PlayMode `BounceTests.TideInstalledAgainWhilePlayRunsIsSaidAndPlayAgainWorks`, the real thing end to end with
+    the editor's own build service and tide: in Play, the installation's platform library gets another time and
+    the service is told of a change; tide builds the host again as another tide, and the game; the running Play
+    says the Console's error, keeps its build and its ticks go on; the game ended and started again runs the new
+    host with the new game; then the installation is put back and tide builds both once more. It runs only with
+    automatic builds on and `-tide-command` (a development tide: an installed tide's files aren't a test's to
+    touch), and is ignored otherwise.
   - EditMode `ReplacedTests`: what counts as tide replaced (changing, settled, the same bytes at another time, gone,
-    put back).
-- **Runs:** Windows ASan (`sanitize`): `tide_platform_reload`, `tide_platform_embed`, `tide_cli_unity_made_by`, `tide_cli_generation` pass. `embed.c` compiles for wasm32-wasip1-threads under the warnings (syntax alone; no web tree was built). Unity 6000.6.0f1, hidden batch, `-noAudio`, this checkout's Sample with a scratch tide of this checkout's mingw-release tree (`-tide-command`), automatic builds off, the game built by `tide unity --once`: PlayMode BounceTests 18 of 18 on Direct3D 11; EditMode (`-nographics`) 47 of 52, two skipped as before, and three failing for the run's own setup, as in earlier runs: the two UnsavedTests want a running tide, and the launch-argument test a launch without `-tide-command`. No C# warnings.
-- **Not run:** the service restarting a real tide whose executable is replaced under an interactive editor (its
-  rule is tested, and tide's side by the CLI test); an upgrade through `tide upgrade` or the Versions window while
-  Play runs, end to end; Linux and macOS (constructors in a shared library, CI's).
+    put back), and `TheRunningTideIsStartedAgainWhenItsFileIsReplaced`, live: the running tide's executable moved
+    aside and a new file put in its place, as an installer replaces a running program (Windows refuses a write of
+    one, its time included), and the service's tide is another process within seconds, once. Under the same
+    conditions as the test above.
+- **Runs:** Windows ASan (`sanitize`): `tide_platform_reload`, `tide_platform_embed`, `tide_platform_travel`,
+  `tide_cli_unity_made_by`, `tide_cli_generation`, `tide_cli_build_overlap`, `tide_cli_build_report` pass. Web debug:
+  `tide_platform_embed` builds and links. Unity 6000.6.0f1, hidden batch, `-noAudio`, this checkout's Sample with a
+  scratch tide of this checkout's mingw-release tree (`-tide-command`), the editor's build service on: PlayMode whole,
+  65 of 65 on Direct3D 11, and BounceTests 20 of 20 on each of Direct3D 11, Direct3D 12, Vulkan and OpenGL Core (the
+  end-to-end test above on all four); EditMode on Direct3D 11, 52 of 54: one skipped as before (the ABI-5 host
+  fixture), and the launch-argument test failing only because these runs pass `-tide-command` (it checks a launch
+  without one, which here would be the owner's installed tide). No C# warnings. Again after the day's last merge with dev (time
+  travel's gaps, the view packet and Unity assets in views): PlayMode whole 70 of 70 on Direct3D 11, EditMode 52 of 54
+  as before.
+- **Not run:** `tide upgrade` itself or the Versions window's switch while Play runs (what they do to the files is
+  what the two live tests do); a watching `tide run` end to end, which needs a window (its host's check is
+  `tide_platform_reload`'s, its texts the CLI test's, and `run_build`'s refusal is read, not run); Linux and macOS
+  (CI's).
 
 ## Time travel's gaps (2026-11-19)
 
@@ -500,9 +855,9 @@ recommendations where a gap had one; every pick stays mine (Provisional). What m
   `tide_host_game.layout` and handed the new build's at a same-layout reload, so a recording it saves replays in a
   build laid out otherwise, as Unity's do; its line says "recorded by a build laid out otherwise: carried over by
   name, its ticks unchecked". `tide_platform_dev_menu` passes as it was.
-- **What didn't carry over is said (embed ABI 28).** `tide_embed_travel` has `fields_reset`, `entities_dropped`
-  and `tasks_dropped` after its texts (16 bytes more: `TideTravel.Size` 336, `TideLibrary.Abi` 28, taken as the next
-  number after the view packet's 27). The window adds "Not carried over: ..." under a carried-over recording when
+- **What didn't carry over is said (embed ABI 30).** `tide_embed_travel` has `fields_reset`, `entities_dropped`
+  and `tasks_dropped` after its texts (16 bytes more: `TideTravel.Size` 336, `TideLibrary.Abi` 30, the next
+  number at the merge: 28 and 29 went to other work meanwhile). The window adds "Not carried over: ..." under a carried-over recording when
   any is more than none. `travel_layout.tide`'s `Score.drift` is an int where the recording's was a float, which
   doesn't convert: one field reset, checked through the embed and the timeline.
 - **Another machine's match is recorded here, where the game hides nothing** (2's "not built"). A client is sent
@@ -552,6 +907,10 @@ recommendations where a gap had one; every pick stays mine (Provisional). What m
     this machine followed the regions (its first few ticks are its home's world alone, the root's, which has no
     rock), each exactly one tick's drift on from the tick before, through rock 2's crossing from one shard to the
     other; no taking back, no recording; going on, followed again.
+- **Runs:** native `sanitize`: `tide_platform_travel` 13/13, `tide_platform_travel_layout` 2/2,
+  `tide_platform_embed`, `tide_platform_embed_shards` 2/2, `tide_platform_dev_menu`, again on the merge that made
+  the ABI 30. Web debug: `tide_platform` compiles. The docs build. Unity as before, the tide installed from the
+  merged tree: PlayMode `TravelTests` 6/6, EditMode `TravelWindowTests` 2/2.
 - **Still not built, and why:**
   - *A sharded match's recording, ticks before those kept, and Continue From Here* (4's steps 2 and 3): each needs
     what following doesn't have (every shard's journal on this machine, and for going back the coordinator's own
@@ -1105,6 +1464,34 @@ installs tide (`TideToolchain.Find(install, wait)`), runs `tide unity --once --r
   build fails with that message; the build after it succeeds. VersionTests 12 pass (one ignored, and the
   launch-argument one failing under `-tide-command` as before). Not seen: the two progress bars (no window), and
   following an install in flight (needs a download under way as a build starts).
+
+## An Android player's match on translated ARM (2026-11-19)
+
+The owner has no phone that can be plugged in, and asked whether one could be emulated. It can, for the CPU: Google's
+`google_apis` x86-64 images run ARM64 apps through `libndk_translation` (`ro.product.cpu.abilist=x86_64,arm64-v8a`),
+which the `default` image of the `tide` AVD doesn't.
+
+- **The device:** `x86_64-34_r14.zip` (Android 14, `sys-img/google_apis`, SHA-1 checked against `sys-img2-3.xml`)
+  unpacked to `%LOCALAPPDATA%\Android\Sdk\system-images\android-34\google_apis\x86_64`, and an AVD `tide-arm`
+  written by hand beside `tide` (its `config.ini` with that image and `tag.id=google_apis`). Booted with
+  `-no-window -no-audio -no-boot-anim -no-snapshot-save`.
+- **Ran:** `SampleSetup.BuildAndroid` (IL2CPP, ARM64, this checkout's tide through `-tide-command`), installed, and
+  started with `am start -n dev.tide.unity.bounce/com.unity3d.player.UnityPlayerGameActivity -e unity -tide-smoke`
+  on `-gpu host -feature -Vulkan`: `Tide smoke: running True, ball (-2.25, 0.50, 0.00), mine True, pillar turned
+  True, drew not with Tide's renderer (OpenGLES3, ...): FAIL`. So `libtide_game.so` loads by name from the app, the
+  pack inside it is read, the match runs over loopback in Unity's process and the C# reads it, all as ARM64 code. The
+  FAIL is the drawing alone: Unity took OpenGL ES there, which Tide's renderer leaves out by design.
+- **Not shown: Tide's renderer on Unity's Android Vulkan.** With `-gpu host` (Vulkan 1.3; `cmd gpu vkjson` answers)
+  the emulator's own process dies (exit 139) as Unity makes its second `VkInstance`, twice of twice; nothing of the
+  app's is at fault that the log shows. `-gpu swiftshader_indirect` gives the app no Vulkan and OpenGL ES 3.0 only,
+  which Unity refuses, and an Android player doesn't take `-nographics`. Translated ARM also says nothing of a real
+  phone's float results or GPU driver. A phone is still what shows these.
+- **adb:** Unity's editors run their own adb (36.0.0), the SDK's is 37.0.1, and each kills the other's server, so
+  with any Unity editor open on the machine adb commands fail midway. `ANDROID_ADB_SERVER_PORT=5038` gives a run
+  a server of its own.
+- **Found:** the Sample's committed `Packages/com.tide.game` was of another build than dev's tide makes (its schema
+  hash), which the player build refuses with its message; `tide unity Assets -o Library/Tide --assets Assets --once`
+  wrote it again. Not committed from here, as the threads changing the Sample each write it again.
 
 ## Android players, and IL2CPP run (2026-11-10)
 
