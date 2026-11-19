@@ -705,6 +705,76 @@ public sealed unsafe class BounceTests
         Object.Destroy(scene.gameObject);
     }
 
+    // A build another tide made, published while the game runs: tide installed again, or a development tide built
+    // again, under the running editor, whose next build is the new tide's while the host Unity loaded is the old one's.
+    // The host says so in the Console, with what to do, and the match goes on with the build it has, where it used to
+    // load the build and call through tables laid out otherwise (a crash). The library here is the running build's
+    // with the text that says which tide built it (tide/host.h's TIDE_HOST_LIBRARY_MADE_BY) changed by a digit.
+    [UnityTest]
+    public IEnumerator ABuildAnotherTideMadeIsntLoaded()
+    {
+        SceneManager.LoadScene(Bounce);
+        yield return null;
+        var runner = Object.FindAnyObjectByType<TideRunner>();
+        yield return Connected(runner);
+        var folder = TideLibrary.BuildFolder;
+        int Newest(string prefix)
+        {
+            var newest = 0;
+            foreach (var file in System.IO.Directory.GetFiles(folder, prefix + "*" + TideLibrary.LibrarySuffix))
+            {
+                var name = System.IO.Path.GetFileNameWithoutExtension(file);
+                if (int.TryParse(name.Substring(prefix.Length), out var n) && n > newest) newest = n;
+            }
+            return newest;
+        }
+        var running = Newest("loaded-");
+        var built = Newest("game-");
+        Assert.Greater(running, 0, "the embed runs a build of the game");
+        var library = System.IO.File.ReadAllBytes(System.IO.Path.Combine(folder, $"game-{built}{TideLibrary.LibrarySuffix}"));
+        // Which tide built it, as tide wrote into the library's C: its version and a number in brackets
+        var said = System.Text.RegularExpressions.Regex.Match(
+            System.IO.File.ReadAllText(System.IO.Path.Combine(folder, "gen", "library.c")), @"""([^""\n]+ \([0-9a-f]{16}\))""");
+        Assert.IsTrue(said.Success, "tide wrote which tide built the game's library");
+        var mine = System.Text.Encoding.ASCII.GetBytes(said.Groups[1].Value);
+        var found = 0;
+        for (var at = 0; at + mine.Length <= library.Length; at++)
+        {
+            var same = true;
+            for (var i = 0; same && i < mine.Length; i++) same = library[at + i] == mine[i];
+            if (!same) continue;
+            var digit = at + mine.Length - 2; // The number's last digit, before its bracket
+            library[digit] = (byte)(library[digit] == (byte)'0' ? '1' : '0');
+            found++;
+        }
+        Assert.AreEqual(1, found, "the library says which tide built it, once");
+        var foreign = System.IO.Path.Combine(folder, $"game-{built + 1}{TideLibrary.LibrarySuffix}");
+        LogAssert.Expect(LogType.Error, new System.Text.RegularExpressions.Regex(
+            "was built by tide .*, and what runs it by tide .*, so it isn't loaded.*leave Play, wait for tide's build, and enter Play again"));
+        try
+        {
+            System.IO.File.WriteAllBytes(foreign, library);
+            var tick = runner.Status.predictedTick;
+            yield return Until(() => false, 1.5f); // The embed looks for a newer build ten times a second
+            Assert.AreEqual(running, Newest("loaded-"), "the build that was running still is: no copy of the other was kept");
+            Assert.IsTrue(runner.Running, "the game goes on");
+            Assert.AreEqual(TideSessionState.Connected, runner.State);
+            Assert.Greater(runner.Status.predictedTick, tick + 30, "and its match with it");
+        }
+        finally
+        {
+            System.IO.File.Delete(foreign); // The next Play takes the newest build there, which must be this tide's
+        }
+        // What the message says to do works: the game ended and started again runs the newest build of this tide's
+        Object.Destroy(runner.gameObject);
+        yield return null;
+        SceneManager.LoadScene(Bounce);
+        yield return null;
+        runner = Object.FindAnyObjectByType<TideRunner>();
+        yield return Connected(runner);
+        Assert.AreEqual(TideSessionState.Connected, runner.State, "Play entered again runs this tide's build");
+    }
+
     [UnityTest]
     public IEnumerator TheMatchShowsItsBall()
     {

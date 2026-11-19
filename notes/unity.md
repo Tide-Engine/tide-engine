@@ -1,3 +1,56 @@
+## A build says which tide made it, and the host loads only its own (2026-11-19)
+
+Closes "Found on the way, not changed" of 2026-10-25 (Tide's drawing after a hot reload): a host took any
+`game-<n>` that loaded. The shape check of 2026-11-10 (Made for production) refuses tables of another size; two
+tides that lay the tables out alike, or whose engine copies differ, still loaded each other's builds. All picks
+mine (Provisional).
+
+- **What a build carries.** `tide unity` works out which tide it is as each build starts (`made_by` in
+  `compiler/cli/build.c`): `<version> (<16 hex digits>)`, the digits a hash of tide's own executable, the
+  installation's headers, the engine's sources and the platform layer's library, by their stamps (path, size, time).
+  It writes that text into the game's library (`tide_host_library_made_by`, in `library.c`) and into the host Unity
+  loads (`embed_host.c`: a constructor calling `tide_embed_made_by`, so the host says it as it's loaded and C# calls
+  nothing new). Two tides of one version (a development tide built again) are two; so is one whose files changed.
+- **What the host does** (`reload_library.inc`'s `load`, after the shape check): a library that says another text,
+  or has no such function, isn't loaded. The Console gets an error through `tide_embed_log`, as for any build that
+  doesn't load: "tide: .../game-7.dll was built by tide 0.8.0-dev (36d2...240), and what runs it by tide 0.8.0-dev
+  (36d2...24f), so it isn't loaded: tide was installed again, or another one took its place, since the game started.
+  Stop the game and start it again once tide has built it (in Unity: leave Play, wait for tide's build, and enter
+  Play again), so that one tide built both". The match goes on with the build it has, and that build isn't tried
+  again. Where it's the first build (`tide_embed_create`), there's no embed and the same error.
+- **The installation changing under a running editor**, which "could do the same (not tried)":
+  - tide's loop (`unity_build`) sees that the text changed since it built the host, stamps the headers again, and
+    builds the host again before the game. So the host on disk and the newest game are always one tide's, and
+    entering Play again is enough: nothing is restarted by hand.
+  - A Play that's running keeps the host it loaded (a copy), which refuses the new build with the message above.
+  - `TideBuildService.FollowTide` (once a second, from `Drain`): where the tide executable the service started was
+    replaced (another size or time, as it is for two seconds: `Replaced`), it starts tide again. The running one is
+    the old program, which would go on compiling with the new installation's files.
+- **No embed ABI or packet change.** `tide_embed_made_by` is the host library's own business, not an export, and
+  `TideLibrary.Abi` stays. `tide_run_desc.made_by` gives `tide run`'s host the same check; tide doesn't set it
+  (one process builds that host and its games, and a running host can't be built again): left so.
+- **Not checked, as before:** a player's game (linked by the package from one build), Android's whole library and a
+  page's program (the game and the host are one link). A reinstall of the very same version is another tide to a
+  Play that's running (its files' times changed), which costs a Play restart and never a wrong load. Stamps, not
+  bytes: two installations whose files are the same bytes at the same paths and times are one.
+- **Tests:**
+  - `tide_platform_reload` (native, ASan): a foreign build published while the game runs is refused, both tides
+    named and the fix said, and the build running goes on; a host that says nothing loads it; a host of a third tide
+    loads neither (notes/hot-reload.md).
+  - `tide_cli_unity_made_by` (`compiler/cli/tests/unity_made_by_test.mjs`, a made-up installation and the controlled
+    compiler): the installation changed under a watching `tide unity`, part by part, gives another text in the
+    library and the host, the host compiled again; a change of the game alone leaves the host (notes/cli-and-packages.md).
+  - The Sample's PlayMode `BounceTests.ABuildAnotherTideMadeIsntLoaded`: the running build's library with one digit
+    of its text changed, published as the next `game-<n>` in Play. The Console's error is expected by its text
+    (`LogAssert`), no `loaded-<n>` copy stays, the match's ticks go on, and the game ended and started again runs.
+    This is the 2026-10-25 crash's case with the tables the same size, which the shape check let through.
+  - EditMode `ReplacedTests`: what counts as tide replaced (changing, settled, the same bytes at another time, gone,
+    put back).
+- **Runs:** Windows ASan (`sanitize`): `tide_platform_reload`, `tide_platform_embed`, `tide_cli_unity_made_by`, `tide_cli_generation` pass. `embed.c` compiles for wasm32-wasip1-threads under the warnings (syntax alone; no web tree was built). Unity 6000.6.0f1, hidden batch, `-noAudio`, this checkout's Sample with a scratch tide of this checkout's mingw-release tree (`-tide-command`), automatic builds off, the game built by `tide unity --once`: PlayMode BounceTests 18 of 18 on Direct3D 11; EditMode (`-nographics`) 47 of 52, two skipped as before, and three failing for the run's own setup, as in earlier runs: the two UnsavedTests want a running tide, and the launch-argument test a launch without `-tide-command`. No C# warnings.
+- **Not run:** the service restarting a real tide whose executable is replaced under an interactive editor (its
+  rule is tested, and tide's side by the CLI test); an upgrade through `tide upgrade` or the Versions window while
+  Play runs, end to end; Linux and macOS (constructors in a shared library, CI's).
+
 ## The replay of 2026-11-14's GPU work, Gamma [Linear] images, multisampled mipmaps, triangle sides (2026-11-15)
 
 Everything the day's readback, number-image, checker-format and capability work records is now replayed and run
@@ -3363,7 +3416,8 @@ only Tide drawing is the rooms package's menu, in screen space.
   EditMode 24/24 on D3D11; the drawing tests also on Vulkan, OpenGL Core and D3D12. Reproduced first on a scratch
   copy of the owner's playground (its rooms menu: gone after a layout reload, and a frame after the first under its
   Enter Play Mode Options; shown in both with the fix).
-- **Found on the way, not changed:** a host takes any `game-<n>` that loads, with no check that the same tide made
+- **Found on the way, not changed** (closed since: the tables' sizes on 2026-11-10, Made for production, and which
+  tide built it on 2026-11-19, top): a host takes any `game-<n>` that loads, with no check that the same tide made
   it. A copy of the playground whose ProjectSettings named another tide (`tidePath`) loaded an embed of one tide and a
   build of the other, and Unity crashed in `tide_run_bind_io` (a pointer of the game's table, laid out otherwise).
   The same could come of tide's installation changing under a running editor, as each build reads the installed

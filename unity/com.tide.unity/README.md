@@ -396,10 +396,13 @@ and for consoles. A
 dedicated server needs none of them: it's a Tide build of the same game
 (`tide build --server --assets Assets`), which Unity's players join.
 
-The editor's host and each build of the game it loads are made by one `tide`.
-If a build comes from another (a development `tide` rebuilt while Play runs),
-the host says it "was built by another tide than the one running it" and goes
-on with the build it has: start Play again.
+The editor's host and each build of the game it loads are made by one `tide`,
+and each says which: its version and a number of the files it builds with. If
+a build comes from another (`tide` installed again or upgraded while the editor
+is open, or a development `tide` rebuilt), the Console says which tide built
+the game and which the host, and Play goes on with the build it has. Leave
+Play, let `tide` finish its build, and enter Play again: `tide` builds the host
+again with the next game, so nothing has to be restarted.
 
 ## Requirements
 

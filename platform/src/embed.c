@@ -203,6 +203,15 @@ const uint8_t *tide_embed_log(tide_embed *e, uint32_t *size)
 #endif
 }
 
+void tide_embed_made_by(const char *made_by)
+{
+#if !defined(__wasm__)
+    library_made_by = made_by;
+#else
+    (void)made_by; // A page's program is linked with its game: nothing is loaded
+#endif
+}
+
 // --seed <n>, --data-dir <folder>, --stats, and a sharded game's --shards <n>
 // and --shard-width <w> from `desc`'s command line, as tide/run.h and tide run
 // read them, but a bad one is left out with a line saying so: the program Tide

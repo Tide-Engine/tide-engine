@@ -1,5 +1,15 @@
 # The standard host: runs with no window, the stats, debug views
 
+## An embed's host says which tide built it (2026-11-19)
+
+`tide_embed_made_by(text)` (`tide/embed.h`; the process's, before `tide_embed_create`): the libraries the embed loads
+from `library_dir` have to say the same text (`tide_host_library_made_by`), and one that doesn't isn't loaded, with a
+`TIDE_EMBED_LOG_PROBLEM` record saying which tide built what and what to do. Said by the host library `tide unity`
+builds as it's loaded (a constructor in its generated `embed_host.c`), so the other program's side and the embed ABI
+are as they were. A linked game (`desc.game`) isn't checked, and a web program does nothing with it. `tide run`'s
+host has the same check through `tide_run_desc.made_by`, which tide doesn't set. notes/hot-reload.md, A library says
+which tide built it.
+
 ## Pausing, stepping and going back (2026-11-17)
 
 The owner: part of the dev menu. Built on `tide/timeline.h` (Unity's time travel, notes/unity.md), mirroring

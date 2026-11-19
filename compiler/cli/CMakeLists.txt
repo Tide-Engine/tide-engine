@@ -129,6 +129,11 @@ if(TIDE_NODE AND NOT TIDE_EMBED_LLVM)
         "$<TARGET_FILE:tide_cli>" "$<TARGET_FILE:tide_cli_build_compiler>" "${CMAKE_CURRENT_BINARY_DIR}/build report test")
     add_test(NAME tide_cli_generation COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/generation_test.mjs"
         "$<TARGET_FILE:tide_cli>" "$<TARGET_FILE:tide_cli_build_compiler>" "${CMAKE_CURRENT_BINARY_DIR}/generation test")
+    # tide unity's host and games say which tide built them, and a running one builds its host again when the
+    # installation changes under it
+    add_test(NAME tide_cli_unity_made_by COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/unity_made_by_test.mjs"
+        "$<TARGET_FILE:tide_cli>" "$<TARGET_FILE:tide_cli_build_compiler>" "${CMAKE_CURRENT_BINARY_DIR}/unity made by test")
+    set_tests_properties(tide_cli_unity_made_by PROPERTIES TIMEOUT 180)
 endif()
 
 if(TIDE_NODE)
