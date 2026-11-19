@@ -1370,7 +1370,8 @@ the embed's travel calls (embed ABI 7), `tide_run_unblended` in `tide/host.h` an
 2026-11-19 (notes/unity.md, Time travel's gaps): `tide_replay_heard` in `session.c` (a replayed tick's events, by the
 existing `tick_events` / `tick_client_events`) and `tide_timeline_heard` in `tide/timeline.h`, both host-side and
 agent-maintained. Generated code calls nothing new, no `tide_game` member is new, and no layout, hash or wire
-format changed.
+format changed. The same day: `tide_session_recorder.verified` (a client's confirmed ticks to a recorder, read from
+its ring after its update) and `tide_timeline_follow` / `_follows`, on the same terms.
 
 ## Twelve texture drawing boundary (2026-10-25)
 

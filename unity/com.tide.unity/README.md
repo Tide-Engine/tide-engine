@@ -351,6 +351,14 @@ default).
   player as if it let go of everything), and Resume shows its latest tick
   again. Continue From Here takes them back too: they're sent the match's world
   again, as when a client goes wrong.
+- In a match **another machine runs**, the editor follows it instead of
+  recording it: the last Keep Seconds of ticks this machine had confirmed are
+  kept, as this machine has them (what its player may see, in a game that
+  hides state). Pause holds those to show while the match goes on, the Tick
+  slider and Step go through them with what each sent, and Resume shows the
+  match's latest again and follows it from there. Its ticks before those
+  kept can't be made again here, and it can't be taken back or recorded from
+  here: the machine that runs it does that.
 - **Save Recording** writes the match's recording (a `.tiderec`) and **Open
   Recording** replays one, a tester's from a bug report say, on any machine with
   a build of the same data layout (the game's components, input and commands as
@@ -368,8 +376,7 @@ editor (the default), nowhere, or in player builds too, so a game can save a
 tester's recording for a bug report. A hot reload while paused comes in as
 any: the match stays paused, its kept ticks with it if the data layout is the
 same (another starts the recording over), and the next step runs the new code.
-Only a match this machine runs is kept; one joined on another machine, and a
-sharded one, aren't.
+A sharded match isn't kept.
 
 ## Build
 

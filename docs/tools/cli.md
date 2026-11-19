@@ -637,7 +637,9 @@ inspectors and Tide's drawing following it), goes on from a tick shown, and
 saves and replays recordings of matches, each tick checked against the
 recording, so a tester's bug report replays bit for bit and a changed build
 shows the first tick it changes. With other machines in the match, it never
-stops for them: the match goes on behind the tick shown. The package's README
+stops for them: the match goes on behind the tick shown. A match another
+machine runs is followed rather than recorded: the latest ticks confirmed in
+this editor are kept, and a pause holds them to look through. The package's README
 has the details.
 
 Tide's views draw in Unity's frame with Tide's own renderer: 2D, text, 3D

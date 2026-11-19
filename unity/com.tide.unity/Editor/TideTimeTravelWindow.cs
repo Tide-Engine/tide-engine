@@ -50,9 +50,16 @@ namespace Tide.Editor
                 lines.Add("Nothing to pause: " + t.Why + ".");
                 break;
             case TideTravelState.Live:
-                lines.Add($"Recording: tick {t.last}, from tick {t.first}.");
+                lines.Add(t.followed != 0 ? $"Following another machine's match: the ticks confirmed here are kept, {t.first} to {t.last}."
+                                          : $"Recording: tick {t.last}, from tick {t.first}.");
                 break;
             case TideTravelState.Paused:
+                if (t.followed != 0)
+                {
+                    lines.Add($"Showing tick {t.shown} of {t.first} to {t.last}, the ticks confirmed here when it was paused.");
+                    lines.Add("The match is another machine's: it goes on behind what's shown. Resume shows its latest.");
+                    break;
+                }
                 lines.Add(t.shown == t.last ? $"Paused at tick {t.shown}." : $"Showing tick {t.shown} of {t.first} to {t.last}.");
                 if (t.background != 0) lines.Add($"Other machines are in the match: it goes on behind what's shown (at tick {t.last}). Resume shows it.");
                 break;
@@ -98,6 +105,10 @@ namespace Tide.Editor
                 using (new EditorGUI.DisabledScope(!paused))
                 {
                     if (GUILayout.Button("Step")) runner.Step();
+                }
+                // Another machine's match isn't this one's to take back
+                using (new EditorGUI.DisabledScope(!paused || t.followed != 0))
+                {
                     if (GUILayout.Button(new GUIContent("Continue From Here", "The match goes back to the tick shown and on from there: the ticks after it are gone, for every player"))) runner.ContinueFromHere();
                 }
             }
@@ -121,14 +132,15 @@ namespace Tide.Editor
             if (t.last <= t.first) return;
             var tick = EditorGUILayout.IntSlider("Tick", (int)t.shown, (int)t.first, (int)t.last);
             if (tick != (int)t.shown) runner.ShowTick((uint)tick);
-            if (t.kept > t.first) EditorGUILayout.LabelField($"Ticks before {t.kept} are made again from the start as they're shown.", EditorStyles.miniLabel);
+            if (t.kept > t.first && t.followed == 0) EditorGUILayout.LabelField($"Ticks before {t.kept} are made again from the start as they're shown.", EditorStyles.miniLabel);
         }
 
         static void Recordings(TideRunner runner, TideTravel t)
         {
             using (new EditorGUILayout.HorizontalScope())
             {
-                using (new EditorGUI.DisabledScope(t.state != TideTravelState.Live && t.state != TideTravelState.Paused))
+                // Recorded by the machine that runs the match: one followed has no recording here
+                using (new EditorGUI.DisabledScope((t.state != TideTravelState.Live && t.state != TideTravelState.Paused) || t.followed != 0))
                 {
                     if (GUILayout.Button("Save Recording..."))
                     {

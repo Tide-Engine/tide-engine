@@ -361,10 +361,19 @@ void tide_embed_microphone(tide_embed *e, const float *samples, uint32_t frames,
 // those ticks as bytes, which replay on any machine with a build of the same
 // data layout, each tick's world checked against the hash the server's had.
 //
-// Only a match this machine runs: tide_embed_travel says why not otherwise.
 // With players of other machines in it, pausing never stops it for them: the
 // match goes on behind what's shown (`background`), this machine's player as
-// if it let go of everything, and going on shows its latest tick again. A
+// if it let go of everything, and going on shows its latest tick again.
+//
+// A match another machine runs has no journal here, so it's followed
+// (`followed`) rather than recorded: the worlds of the latest ticks this
+// machine had confirmed are kept, as it may have them (what its player may
+// see, in a game that hides state), with what each tick sent. Pausing holds
+// those ticks to show (the match going on behind, as above, and none of the
+// ticks it runs meanwhile kept) and going on follows it again from its
+// latest. It can't be stepped past what's kept, taken back or recorded from
+// here: the machine that runs it does those. A sharded match isn't kept at
+// all: tide_embed_travel says why. A
 // frame that shows another tick than the latest runs the views on a local
 // state of their own, so the match's is as it was when it goes on, and what's
 // pressed or sent there never reaches the match.
@@ -394,7 +403,8 @@ typedef struct tide_embed_travel {
     uint8_t playing;     // Replaying: it goes on at the tick rate (tide_embed_pause false)
     uint8_t other_build; // The recording was made by a build whose simulation was another
     uint8_t background;  // Players of other machines are in the match: it goes on behind what's shown
-    uint8_t tide_pad[1];
+    uint8_t followed;    // The match is another machine's: the ticks this machine had confirmed are kept and shown
+                         // (`first` the first of them), and it can't be stepped, taken back or recorded from here
     uint64_t hash;       // The shown world's
     uint64_t expected, got;
     char why[TIDE_EMBED_TRAVEL_TEXT];     // Why it can't pause the match now, "" when it can

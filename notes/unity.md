@@ -59,6 +59,61 @@ empty, so C#'s `On<E>` said nothing of a tick shown. Now:
   state isn't separate), not Unity's. `Shown`/`Hidden` availability events aren't made for a tick come to by a
   jump (the separate local state hears what ticks sent, not what differs between two worlds shown).
 
+### 2. A match another machine runs is followed
+
+A client had no time travel at all ("the match is another machine's"): the journal is its server's. Its confirmed
+worlds are kept now, which is what the section's note said could be. No journal is made on a client, so nothing of
+it replays: it's a window over the ticks this machine saw confirmed, not a recording.
+
+- **The session** (`session.c`, `tide/session.h`; notes/netcode.md): `tide_session_recorder.verified(user, tick,
+  world, heard)`, optional. After the client's update (`record_client`), each tick it has had confirmed since the
+  last one told is told once, from the worlds the client's ring still has of them (a confirmed tick's world isn't
+  made again; the ring holds the ticks up to the one it's ahead at), with what the session's log has of the tick
+  that made it as confirmed (`as` VERIFIED, copied for both kinds of handler). A world that came whole
+  (`first_tick` moved), ticks confirmed faster than the ring keeps, or the first told, start over at the latest:
+  the recorder sees a tick that isn't the one after its last. Not on the machine that runs the match, nor in a
+  sharded one. The events are there only where the session's host takes them (`tide_session_events`), and only
+  those with a confirmed handler: every event of the game's own in a `--embed` build, whose taps are both kinds.
+- **The timeline** (`tide/timeline.h`): `tide_timeline_follow(t, tick, world, heard)` keeps the world in the ring
+  and the tick's events beside it (`kept.heard`), with no record: `first` is the first tick kept, `last` the last
+  told, `tide_timeline_world` gives kept worlds alone, `tide_timeline_heard` what it was told, and
+  `tide_timeline_cut` and `_save` refuse. A tick out of order starts it over (`tide_timeline_begin`).
+  `tide_timeline_follows`. `tide_timeline_recorder` has the third callback; `tide_timeline_set_game` drops the kept
+  events (laid out as the build that heard them has them).
+- **The embed**: `travel_why` lets a connected client pause; the timeline's recorder goes to the session with
+  `travel_verified`, which follows only while the frames don't hold a tick (not paused, no recording shown): a
+  pause **holds** the ticks kept then, so the tick shown doesn't fall out of the ring while the match goes on, and
+  going on follows again from the match's latest (the ticks it ran meanwhile aren't kept). `travel_background` is
+  true on a client, so a pause is always the background mode: the match's own frame runs unseen with nothing held
+  (this machine's player as if it let go of everything, as on a host with others in), and `show_frame` shows the
+  tick held. Step goes through the ticks held and is refused at the last; `tide_embed_continue` is refused by
+  `tide_session_rewind`, `tide_embed_recording` gives none. A recording still opens there (the match held behind
+  it). A machine that takes the match over (host migration), or the other way, starts over with what the session
+  says next (`travel_follow`: a timeline that follows on a server, or records on a client, is dropped).
+  `tide_embed_travel.followed` (the pad byte; the struct's size is as it was) says so.
+- **No embed ABI bump** (mine): the byte was padding, zero from an older library and ignored by an older package;
+  nothing reads otherwise. Taking a number is for a layout or meaning that changes.
+- **The package**: `TideTravel.followed`; the window says "Following another machine's match: the ticks confirmed
+  here are kept, 61 to 90" and, paused, that the match goes on behind what's shown, and greys Continue From Here,
+  Save Recording and Replay This Match there.
+- **Picks:** a pause holds the kept ticks rather than following on behind (else the tick looked at is gone after
+  Keep Seconds, with no start to make it again from); the worlds are this machine's own confirmed ones, so a game
+  that hides state shows what this player may have, never more; no client-side journal.
+- **Tests:** `tide_platform_travel`'s `travel_follows_another_machines_match` (the embed joins a plain session's
+  match through a game's own network over loopback): followed and live with the last 30 ticks kept and none
+  before; a Bump it sends taken by the other machine's match; paused, the match goes on (20 ticks and more) while
+  first, last and shown stay; back through the held ticks each world has the hash the server's had, and the
+  Bump's tick is heard once where it's landed on, as predicted and confirmed in the packet; nothing before the
+  first shows; a step on from the tick before the Bump hears it; no step past the last; no going back, no
+  recording; going on, live and followed again from the latest, still connected. EditMode `TravelWindowTests`
+  (what the window says of a followed match, live and held).
+- **Runs:** native `sanitize`: `tide_platform_travel` 12/12, `tide_platform_embed` 32/32. Web debug: `tide_platform`
+  compiles. The docs build. Unity as for gap 1, the tide installed again from this checkout: PlayMode `TravelTests`
+  6/6, EditMode `TravelWindowTests` 2/2.
+- **Not built, not run:** a recording made on a client (its frames carry what a journal record does in a game that
+  hides nothing, so a client-side journal is possible; not asked for). Unity with a second machine: the Sample's
+  PlayMode tests run one editor, so the followed case runs natively alone.
+
 ## The replay of 2026-11-14's GPU work, Gamma [Linear] images, multisampled mipmaps, triangle sides (2026-11-15)
 
 Everything the day's readback, number-image, checker-format and capability work records is now replayed and run

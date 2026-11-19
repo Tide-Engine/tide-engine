@@ -481,13 +481,22 @@ static const char *travel_why(const bool recorded)
     if (!tide_run_session || !tide_run_game) return "there's no match";
     if (tide_run_game->game->shards) return "a sharded match isn't recorded";
     const tide_session_status status = tide_session_status_of(tide_run_session);
-    if (!status.server) {
-        return status.client.state == TIDE_SESSION_OFFLINE ? "this machine is in no match"
-                                                            : "the match is another machine's: only one this machine runs pauses";
+    if (!status.server && status.client.state != TIDE_SESSION_CONNECTED) {
+        return status.client.state == TIDE_SESSION_OFFLINE ? "this machine is in no match" : "this machine isn't in the match yet";
     }
     if (travel.keep_seconds <= 0.0f) return "time travel is off";
-    if (recorded && !tide_timeline_started(travel.live)) return "the match hasn't started";
+    if (recorded && !tide_timeline_started(travel.live)) {
+        return status.server ? "the match hasn't started" : "none of the match's ticks is confirmed here yet";
+    }
     return "";
+}
+
+// A match another machine runs, followed (tide_session_recorder.verified): each tick this machine has had confirmed
+// is kept, but while the frames hold a tick of it (or show a recording): the ticks they can show stay as they were at
+// the pause, and it's followed again, from its latest, as they go on
+static void travel_verified(void *user, const uint32_t tick, const void *world, const tide_event_log *heard)
+{
+    if (!travel.paused) tide_timeline_follow(user, tick, world, heard);
 }
 
 #if !defined(__wasm__)
@@ -525,8 +534,18 @@ static void travel_follow(void)
         if (!travel.live) return;
         travel.recorded = tide_run_session;
         travel.game = tide_run_game->game;
-        const tide_session_recorder recorder = tide_timeline_recorder(travel.live);
+        tide_session_recorder recorder = tide_timeline_recorder(travel.live);
+        recorder.verified = travel_verified;
         tide_session_record(tide_run_session, &recorder);
+    }
+    // A match this machine was in and runs now (it took it over), or the other way: what was kept isn't the same match's
+    // way of keeping, and starts over with what the session says next
+    if (travel.live && tide_timeline_started(travel.live)
+        && tide_timeline_follows(travel.live) == tide_session_status_of(tide_run_session).server) {
+        const bool paused = travel.paused;
+        drop_live();
+        travel.paused = paused;
+        return;
     }
     if (travel.paused && !travel.replay && travel_why(true)[0]) travel.paused = travel.step = false; // It goes on
 }
@@ -615,10 +634,11 @@ static void show_frame(const void *world, const uint32_t tick, const uint32_t pl
     if (embed && embed->view) embed->view(world, NULL, 1.0f, local, tick, &packet);
 }
 
-// Players of other machines are in the match: it never stops for them
+// Players of other machines are in the match, or it's another machine's: it never stops for them
 static bool travel_background(void)
 {
-    return tide_run_session && tide_session_remote_players(tide_run_session) > 0u;
+    return tide_run_session
+        && (tide_session_remote_players(tide_run_session) > 0u || !tide_session_status_of(tide_run_session).server);
 }
 
 // The match's frame, unseen, while the frames show another tick: as if this machine's player let go of everything
@@ -753,6 +773,7 @@ void tide_embed_travel_of(const tide_embed *e, tide_embed_travel *out)
         out->last = tide_timeline_last(t);
         out->state = travel.paused ? TIDE_TRAVEL_PAUSED : out->why[0] ? TIDE_TRAVEL_NONE : TIDE_TRAVEL_LIVE;
         out->background = travel_background();
+        out->followed = tide_timeline_follows(t);
         out->shown = travel.paused && travel.shown < out->last ? travel.shown : out->last;
         if (travel.paused) shown = tide_timeline_world(t, out->shown);
     } else {
