@@ -1,3 +1,44 @@
+## Physics shapes in the Scene view: drawn as Unity's colliders are, and checked against them (2026-11-19)
+
+Phase 4's "gizmos for Tide physics shapes" and the authoring gaps' "gizmos". The wireframes were built on
+2026-10-22 and 2026-10-25 (Packages' components in Unity) for the selected GameObject alone and never checked
+against anything. All picks mine (Provisional).
+
+- **When a shape is drawn** (`TideShapes.Draw`, `Drawn`): while its GameObject **or one above it** is selected
+  (`GizmoType.InSelectionHierarchy`), as Unity draws the colliders under a selected Rigidbody: selecting a body
+  shows its parts' shapes, which it didn't. Unselected ones are drawn only with **Always Show Tide Shapes** on
+  (Project Settings > Tide; `TideShapes.Always`, EditorPrefs `Tide.AlwaysShowShapes`, this machine's, off at first),
+  as Physics 2D's Always Show Colliders does Unity's, and fainter (`Faint`, alpha 0.35 against 0.9). Unity's 3D
+  colliders have no such switch outside the Physics Debugger; one switch for both of Tide's is simpler than two.
+  Tide's blue is kept rather than Unity's green, so the two can be told apart where a GameObject has both.
+- **With it on, Unity asks for every Tide component each repaint**: `Shaped(type)` answers from a table whether a
+  type has any of the five attributes, before any reflection on the component.
+- **Edit mode and Play.** Outside Play the fields are the authored values. In Play they're the match's: the
+  generated `ReadLive` writes each frame's values into the same fields (a size divided by the scale again, a part's
+  offset or points brought back from its body's frame: `TideScale.Unscale`, `TideParts.Placed`/`Points`), and the
+  GameObject is where the match has the entity, so the same drawing shows the live shape. Nothing separate draws
+  in Play.
+- **One place for a primitive's geometry** (`TideShapes.PrimitiveOf`: matrix, centre, size, radius, height), which
+  the drawing uses, and `WorldBounds`, the box in the world that holds what's drawn: Unity's `Collider.bounds` of
+  the same shape, which is what the tests compare.
+- **Tests** (EditMode `ShapeTests`, fixtures `Assets/Tests/Geometry/GeometryBox`, `Sphere`, `Capsule`, `Rect`,
+  `Circle` with the attributes tide writes for Box3D's and Box2D's):
+  - a Tide box, sphere and capsule against a `BoxCollider`, `SphereCollider` and `CapsuleCollider` of the same
+    fields on the same GameObject, at five placements (plain; scaled per axis; turned and scaled; mirrored; under a
+    moved, turned, scaled parent): the bounds agree to 0.4 mm;
+  - a rect and a circle against `BoxCollider2D` and `CircleCollider2D`, turned about z, scaled and mirrored;
+  - a part's box in Play: its offset baked as tide bakes it, shown back by `TideParts.Placed` as authored, drawn
+    where Unity's collider is, and again after its body moved;
+  - when a shape is drawn: selected, under a selection, unselected with and without the switch, the switch kept in
+    EditorPrefs, which types have shapes, and the gizmo's own `DrawGizmo` flags.
+- **Runs:** Unity 6000.6.0f1, hidden batch, `-nographics`, this checkout's Sample: ShapeTests 4 of 4 and GeometryTests 5 of 5, within the EditMode run of 47 of 52 (the five others are the run's setup: A build says which tide made it, Runs). No C# warnings.
+- **Not seen:** the wireframes, the fainter unselected ones, the Project Settings toggle and Edit Shape's handles in
+  a window: agent runs open none, and a batch run has no Scene view to draw gizmos into. What's tested is the
+  geometry that's drawn and when; what `Handles` makes of it on the screen isn't.
+- **Left:** outlines, meshes, terrains and joints have no Unity collider to hold them against here (their geometry
+  is `GeometryTests`'); a sensor, an asleep body or a disabled component draws as any other (Unity's 2D has colors
+  for those); Unity hiding the gizmo of a component folded in the Inspector isn't asked for.
+
 ## An orthographic Unity camera (2026-11-19)
 
 "Not done: an orthographic Unity camera" (Unity's camera is the views', 2026-10-21) was left because the embed's
@@ -2036,7 +2077,7 @@ hand, an unknown field is a mistake. Test: `tidec_prefab_error_once` (a
 the error once).
 
 Gaps: unsaved scene and prefab edits (tide reads saved files), `Name#k` paths
-when names include `#`, and gizmos. (Asset fields aren't one: a match component
+when names include `#`, and gizmos (physics shapes' since: Packages' components in Unity, and 2026-11-19, top). (Asset fields aren't one: a match component
 can't hold a rendering resource, "rendering resources belong to this machine,
 so the match can't use them", and a `Mesh` can't be a field, so nothing of a
 component is a Unity asset; tidels renames reach Unity assets, Tooling below.)

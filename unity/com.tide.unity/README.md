@@ -283,8 +283,12 @@ them (OpenGL ES 3, WebGL 2), the views' 2D is drawn with Unity's GL alone.
 
 A physics package's components are on GameObjects like the game's own: with
 `box3d`, a `Body` and a `Box`, `Sphere` or `Capsule` (Add Component, Tide/Box3D).
-A shape's size is by the GameObject's scale, as a collider's is, a selected one
-is drawn in the Scene view, and Edit Shape gives it handles. The body starts
+A shape's size is by the GameObject's scale, as a collider's is. It's drawn in
+the Scene view while its GameObject or one above it is selected, as Unity's
+colliders are (select a body to see its parts' shapes), and Edit Shape gives it
+handles. With Always Show Tide Shapes on (Project Settings > Tide, this
+machine's choice), every shape is drawn, the unselected ones fainter. In Play
+the shapes are the match's: each is drawn from its component's live values. The body starts
 where the GameObject is, and the GameObject follows it. A shape on a child
 GameObject with a `Part` is on the body above it, where the child puts it. A
 mesh collider fills from the GameObject's MeshFilter, a height field from its
