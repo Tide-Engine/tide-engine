@@ -102,7 +102,7 @@ CI's.
 - Decided (the owner left both to the agent, 2026-11-20): the line stays at 4 MiB, the repairs' own, as the wait it
   costs is hardly measurable and 1 MiB doubles it for 7 ms of the longest update; and the stop rule above stands as
   built. Several worlds at once on the pool isn't begun: it needs the generated `client_state` checked for use from
-  several threads first, and the longest update here is no longer the worlds'.
+  several threads first.
 - For reference, 4 MiB is four or five such worlds an update (10 to 15 ms of
   it here) and costs a player 0.05 to 0.08 s; 1 MiB halves the longest update's share and doubles the wait.
 - The projections are prepared one after another on the update's thread (each finds its entities on the pool).
