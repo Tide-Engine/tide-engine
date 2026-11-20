@@ -1,0 +1,23 @@
+// warnings: 1
+// expect: only the server's machine hears this 'Played': 'Play' handles a command
+// expect: write what they should show into a component or singleton they may see
+component Card { int value; }
+singleton Table { VisibilityGroup hands; int played; }
+local singleton Hud { int cards; }
+event Played { int value; }
+event Dealt { int value; }
+command PlayCard { int value; }
+scene Main { }
+event(Spawned) Setup(with Main, mut Table table)
+{
+    table.hands = Visibility.CreateGroup(Audience.None);
+    Spawn(Card { value = 3 }, Visibility { group = table.hands });
+    Send(Dealt { value = 3 }); // A system's or an ordinary handler's every machine runs: no warning
+}
+command(PlayCard play, PlayerID sender) Play(mut Table table)
+{
+    table.played += play.value;
+    Send(Played { value = play.value });
+}
+local event(Played played) ShowPlayed(mut Hud hud) { hud.cards += played.value; }
+local event(Dealt dealt) ShowDealt(mut Hud hud) { hud.cards += dealt.value; }

@@ -1045,6 +1045,14 @@ typedef struct connection {
     tide_event_log repair_events;
     double *chunk_sent;
     uint8_t *chunk_fast; // One selective-acknowledgement retry per chunk before its timeout.
+    // A projected transfer under SPARE_LEAST chunks, which has no spares: the datagrams each chunk has gone in, and
+    // the bytes its chunks' further copies may still take (send_chunks), FRAME_COPIES_ROOM more each tick...
+    uint8_t *chunk_copies;
+    uint32_t copy_room, copy_tick;
+    // ...and how many datagrams such a chunk goes in for this player, by the chunks shown lost in every one they
+    // went in (chunk_copies_for); `copies_raised`: by one of what's being sent, which says so once
+    uint8_t copies_most;
+    bool copies_raised;
     uint32_t chunk_ack;  // It has every chunk before this one
     uint8_t *chunk_had;  // ...and these after it, as its CLIENTs said (a byte each)
     uint32_t chunk_top;  // ...the last of them, plus one
@@ -1375,11 +1383,13 @@ static void drop_snapshot(tide_server *s, connection *c)
     }
     free(c->chunk_sent);
     free(c->chunk_fast);
+    free(c->chunk_copies);
     free(c->chunk_had);
     c->snapshot = NULL;
     c->shared = NULL;
     c->chunk_sent = NULL;
     c->chunk_fast = NULL;
+    c->chunk_copies = NULL;
     c->chunk_had = NULL;
 }
 
@@ -1490,6 +1500,11 @@ static void send_in_chunks(tide_server *s, connection *c, const uint8_t kind, ui
     if (!c->chunk_sent || !c->chunk_fast || !c->chunk_had) tide_out_of_memory();
     c->chunk_ack = 0;
     c->chunk_top = 0;
+    c->chunk_copies = kind >= SEND_CLIENT_WORLD && c->chunk_count && c->chunk_count < SPARE_LEAST
+        ? tide_alloc_zeroed(c->chunk_count, sizeof *c->chunk_copies) : NULL;
+    c->copy_room = 0;
+    c->copy_tick = s->tick;
+    c->copies_raised = false;
     c->chunks_gone = 0;
     c->spare_group = c->chunk_count >= SPARE_LEAST ? spare_group(c) : 0u;
     c->spares_gone = 0;
@@ -2539,6 +2554,7 @@ static void servers_read(connection *c, const uint16_t echo, const uint8_t read)
         c->frame_copies = copies_for(c->loss_lost, c->loss_sent);
         c->loss_sent = c->loss_lost = 0;
         c->loss_counted = true;
+        if (c->frame_copies <= FRAME_COPIES) c->copies_most = 0; // Counted, and none to speak of lost (chunk_copies_for)
     }
     const uint8_t soon = copies_for(c->soon_lost, LOSS_SOON);
     if (soon > c->frame_copies) c->frame_copies = soon;
@@ -4206,20 +4222,56 @@ static void send_welcome(tide_server *s, connection *c)
     c->said_any = true;
 }
 
+// A projected transfer under SPARE_LEAST chunks has no spares, and a chunk of it that's lost is otherwise sent again
+// only once it should have been acknowledged (resend_after), a round trip and a half: for a streamed repair, which
+// is a datagram, each loss put the player's confirmed world that much further behind. So to a player whose network
+// loses datagrams its chunks go in several, the further copies in the updates after, the chunks that went in the
+// fewest first, and in no more bytes than ticks' copies may take of a datagram (FRAME_COPIES_ROOM a tick, which no
+// tick's copies are taking: no SERVER goes meanwhile). One acknowledged gets none.
+// How many: as many as a tick goes in, once its SERVERs' loss is counted and takes more than ticks always have
+// (servers_read); and, as no SERVER goes between a stream's repairs for that to count, FRAME_COPIES more than a
+// chunk went in that had to be sent again when it should have been acknowledged, which shows it lost in all of
+// them (FRAME_COPIES_MOST at most; one such chunk of a transfer says so, and a count that finds no loss to speak of
+// takes it back). A player that loses none has one datagram a chunk, as before.
+static uint8_t chunk_copies_for(const connection *c)
+{
+    const uint8_t counted = c->loss_counted && c->frame_copies > FRAME_COPIES ? c->frame_copies : 1u;
+    return counted > c->copies_most ? counted : c->copies_most;
+}
+
 static void send_chunks(tide_server *s, connection *c)
 {
     const double again = resend_after(c->rtt_ms);
     uint32_t sent = 0;
+    const uint8_t copies = chunk_copies_for(c);
+    uint8_t fewest = UINT8_MAX; // The datagrams the chunk it lacks that went in the fewest went in
+    for (uint32_t i = c->chunk_ack; c->chunk_copies && i < c->chunk_count; i++) {
+        if (!c->chunk_had[i] && c->chunk_copies[i] < fewest) fewest = c->chunk_copies[i];
+    }
+    if (c->chunk_copies && c->copy_tick != s->tick) {
+        c->copy_tick = s->tick;
+        c->copy_room = c->copy_room + FRAME_COPIES_ROOM < CHUNK ? c->copy_room + FRAME_COPIES_ROOM : CHUNK;
+    }
     for (uint32_t i = c->chunk_ack; i < c->chunk_count && sent < CHUNKS_PER_UPDATE; i++) {
         if (c->chunk_had[i]) continue;
+        const uint32_t from = i * CHUNK;
+        const uint32_t size = c->snapshot_size - from < CHUNK ? c->snapshot_size - from : CHUNK;
         if (c->chunk_sent[i] > 0.0 && s->now - c->chunk_sent[i] < again) {
             // Later chunks prove the receiver reached this burst. Recover one
             // hole promptly; reordering can cost at most one extra copy here.
-            if (c->snapshot_kind < SEND_CLIENT_WORLD || c->chunk_fast[i] || i + 1u >= c->chunk_top) continue;
-            c->chunk_fast[i] = 1;
+            if (c->chunk_copies && c->chunk_copies[i] == fewest && fewest < copies && c->copy_room >= size) {
+                c->copy_room -= size;
+            } else if (c->snapshot_kind < SEND_CLIENT_WORLD || c->chunk_fast[i] || i + 1u >= c->chunk_top) {
+                continue;
+            } else {
+                c->chunk_fast[i] = 1;
+            }
+        } else if (c->chunk_copies && c->chunk_sent[i] > 0.0 && c->chunk_copies[i] >= copies && !c->copies_raised) {
+            c->copies_raised = true;
+            const uint32_t more = copies + FRAME_COPIES;
+            c->copies_most = (uint8_t)(more < FRAME_COPIES_MOST ? more : FRAME_COPIES_MOST);
         }
-        const uint32_t from = i * CHUNK;
-        const uint32_t size = c->snapshot_size - from < CHUNK ? c->snapshot_size - from : CHUNK;
+        if (c->chunk_copies && c->chunk_copies[i] < UINT8_MAX) c->chunk_copies[i]++;
         tide_writer w = {s->packet, TIDE_NET_MTU, 0, false, false};
         authenticated_header(&w, MSG_CHUNK, s->cookies[c - s->connections], c->nonce);
         tide_write_u32(&w, c->snapshot_number);

@@ -74,6 +74,7 @@ typedef struct checker {
     VEC(const expr *) dropped; // Calls written as statements whose value nothing takes (warn_dropped_values)
     VEC(expr *) spawns;       // Spawn calls, patched with archetype indices at the end.
     VEC(expr *) sends;        // Send calls, checked against the handlers at the end.
+    VEC(const decl *) send_code; // ...and the system or handler each is in (NULL in a function's own body)
     VEC(struct call_site) calls; // Calls of functions and methods: which draw, and which read devices.
     VEC(struct heap_pass) heap_passes; // Components and parameters passed whole to a function's `mut` or `out` parameter (settle_heap_passes)
     VEC(struct c_lend) c_lends; // Components and singletons handed, whole or in part, to a callee's `mut` or `out` parameter (assign_heaps)
@@ -5295,6 +5296,7 @@ static type check_send(checker *c, expr *e)
         e->local_world = true;
         if (inherits(c)) note_act(c, true, e->at, act_what("sends the command", event), false, false);
         vec_push(c->sends, e);
+        vec_push(c->send_code, NULL);
         return T_VOID_;
     }
     if (e->kind == E_METHOD && !check_entity_side(c, e)) return T_ERR;
@@ -5344,6 +5346,7 @@ static type check_send(checker *c, expr *e)
         if (!known) vec_push(sender->sent_events, event);
     }
     vec_push(c->sends, e);
+    vec_push(c->send_code, c->method ? NULL : c->system);
     return T_VOID_;
 }
 
@@ -18259,7 +18262,7 @@ static void check_settings(checker *c)
             } else if (str_eq_c(f->name, "hostMigration")) {
                 const expr *known = bool_literal(value);
                 if (!known) diag_error(value->at, "hostMigration is true or false, or a constant that is");
-                else prog->host_migration = known->bool_value;
+                else { prog->host_migration = known->bool_value; prog->host_migration_at = value->at; }
             } else if (str_eq_c(f->name, "stats")) {
                 const expr *known = bool_literal(value);
                 if (!known) diag_error(value->at, "stats is true or false, or a constant that is");
@@ -24225,6 +24228,32 @@ static void check_sends(const checker *c)
         diag_error(e->at, "'" STR_FMT "' needs the entity a " STR_FMT " is sent to, and this Send has none",
                    STR_ARG(event->needs_target->name), STR_ARG(event->name));
         diag_note("send it to an entity: 'entity.Send(" STR_FMT " { ... })'", STR_ARG(event->name));
+    }
+    // Where the match hides state, a command's handler runs on the server alone, and only the engine's own events
+    // are told to the machines that may hear them: what such a handler sends, no other machine's local handler hears
+    for (int i = 0; c->prog->visibility_state && i < c->sends.count; i++) {
+        const expr *e = c->sends.items[i];
+        const decl *event = e->type_decl, *code = c->send_code.items[i];
+        if (!code || !code->is_handler || !code->event || !code->event->is_command || !event || event->is_local
+            || event->is_command) continue;
+        bool heard = false; // By a local handler (the events' `listeners` aren't gathered yet)
+        for (int h = 0; h < c->prog->handlers.count && !heard; h++) {
+            const decl *handler = c->prog->handlers.items[h];
+            heard = handler->is_local && handler->event == event;
+        }
+        if (!heard) continue;
+        diag_warning(e->at, "only the server's machine hears this '" STR_FMT "': '" STR_FMT "' handles a command, which "
+                     "runs on the server alone in a match that hides state", STR_ARG(event->name), STR_ARG(code->name));
+        diag_note("other machines' local handlers of '" STR_FMT "' never run for it; write what they should show into "
+                  "a component or singleton they may see, which reaches them with the server's correction",
+                  STR_ARG(event->name));
+    }
+    // No player's machine has the whole of a match that hides state, and none may be given it: there's nothing for
+    // another to go on from
+    if (c->prog->visibility_state && c->prog->host_migration) {
+        diag_error(c->prog->host_migration_at, "a match that hides state from players can't change hands (hostMigration = true)");
+        diag_note("no player's machine has the whole match to go on from; take out hostMigration, or run the match "
+                  "on a dedicated server, which stays");
     }
     // The store, and the answers on their way, are the hosting machine's: a match can't move to another with them
     if (c->prog->uses_storage && c->prog->host_migration) {

@@ -1993,6 +1993,7 @@ typedef struct program {
     const expr *app_id;        // appId, likewise
     const expr *version;       // version, likewise
     bool host_migration;       // hostMigration
+    loc host_migration_at;
     bool delay_prediction;     // prediction = Prediction.Delay: clients never predict (tide_prediction)
     bool owned_prediction;     // Prediction.Owned: predict owned entities and descendants
     bool stats;                // stats: the host shows its stats overlay
