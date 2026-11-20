@@ -25,6 +25,10 @@
 #include "tide/platform.h"
 
 static const char *mode;
+// The last run's file holds less of the driver's data than the header in it says it has (or than a header at all):
+// what the driver gave is cut short, as the Android emulator's lavapipe gives 20 bytes of a 32-byte header. No run
+// reads such a file, and there's nothing of it to spoil.
+static bool cut_by_driver;
 
 static char *cache_file(void)
 {
@@ -100,7 +104,7 @@ static int frame(void *user, const float seconds)
     const bool keeps = tide_gpu_vk_pipeline_cache_keeps();
     printf("pipeline cache: this device's driver keeps %s\n", keeps ? "its pipelines" : "no pipelines, only its 32-byte header");
     const size_t headers = 24u + 32u;
-    if (strcmp(mode, "outgrown") == 0) { // A whole file of this device's, which a warm run would read
+    if (strcmp(mode, "outgrown") == 0 && !cut_by_driver) { // A whole file of this device's, which a warm run would read
         char *file = cache_file();
         size_t size = 0;
         uint8_t *bytes = file ? tide_file_read_whole(file, SIZE_MAX, &size) : NULL;
@@ -112,10 +116,10 @@ static int frame(void *user, const float seconds)
         if (!whole) return 1;
     }
     // A warm run takes the driver's pipelines, not its header alone, where it keeps them
-    const bool took = wants ? read > (keeps ? 32u : 0u) : read == 0;
+    const bool took = wants && !cut_by_driver ? read > (keeps ? 32u : 0u) : read == 0;
     const bool drew = got == 0xFF0000FFu;
     printf("%s: a %s run read %zu bytes of pipelines, where it reads %s\n", took ? "ok" : "FAIL", mode, read,
-           !wants ? "none" : keeps ? "more than the driver's header" : "the driver's header");
+           !wants || cut_by_driver ? "none" : keeps ? "more than the driver's header" : "the driver's header");
     printf("%s: and drew with them (0x%08X)\n", drew ? "ok" : "FAIL", got);
     return took && drew ? 0 : 1;
 }
@@ -129,8 +133,20 @@ int main(const int argc, char **argv)
         printf("FAIL: the game has no temporary cache folder\n");
         return 1;
     }
-    bool ready = spoil(file);
-    if (ready && strcmp(mode, "outgrown") == 0) {
+    if (strcmp(mode, "fresh") != 0) {
+        size_t size = 0;
+        uint8_t *bytes = tide_file_read_whole(file, SIZE_MAX, &size);
+        uint32_t claimed = 0;
+        if (bytes && size >= 24u + 4u) memcpy(&claimed, bytes + 24, 4);
+        cut_by_driver = bytes && size > 24u && (size < 24u + 32u || claimed > size - 24u);
+        if (cut_by_driver) {
+            printf("pipeline cache: this device's driver gave %zu bytes, short of the %u its header says: no run reads them\n",
+                   size - 24u, (unsigned)claimed);
+        }
+        free(bytes);
+    }
+    bool ready = cut_by_driver || spoil(file);
+    if (ready && !cut_by_driver && strcmp(mode, "outgrown") == 0) {
         // A byte less than the driver's data in the file the last run read: whatever its driver keeps. A desktop's
         // keeps kilobytes, the Android emulator's no more than the 32 bytes of its header
         size_t size = 0;

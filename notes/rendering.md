@@ -325,9 +325,14 @@ What held the frame's thread, found by attaching LLDB during the stall and by ti
   says when; `tide_platform_prewarm` asks for nothing until then (pipelines asked for earlier would compile from
   nothing) and `tide_platform_prewarm_waiting` is 1 meanwhile, so the loader waits. Whatever writes, switches or
   lets go of the cache takes the read first (`finish_cache_read`). Without background (headless, custom hosts) it's
-  read in place as before. The tests' `tide_gpu_vk_pipeline_cache_read` takes the read first too (2026-11-20):
-  `tide_platform_pipeline_cache_app` asked at its first frame, and on CI's Android emulator once got 0 bytes of a
-  warm file whose read hadn't been taken yet.
+  read in place as before.
+- **A driver whose cache data is short of its own header (2026-11-20).** CI's Android emulator (`-gpu lavapipe`,
+  installed new each run) began giving 20 bytes from `vkGetPipelineCacheData`: a header saying it is 32 long, cut
+  4 bytes into its UUID (`26.2`). `write_pipeline_cache` writes them as given and `cache_for_device` refuses the
+  file at the next run, so such a device compiles from nothing each run, as one with no file. The engine is
+  unchanged. `pipeline_cache.c` reads the last run's file before its own: where the driver's data is shorter than
+  the header it claims, every run must read 0 bytes and the spoiling modes have nothing to spoil; it says so and
+  prints the file's size and first bytes. Until then `tide_platform_pipeline_cache_app` failed at its warm run.
 - **Two files were read.** The platform followed the cache folder of a game with no name yet (`dev.tide.game`,
   another 268 MB here: every unnamed `game.exe` shares it), then at `tide_run_name_game`, after the pack, switched:
   a `vkGetPipelineCacheData` and hash of the first (0.37 s) and a read of the second. The loader now names the game
