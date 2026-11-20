@@ -4242,6 +4242,7 @@ static void vk_pipeline_cache(const char *file)
 
 size_t tide_gpu_vk_pipeline_cache_read(void)
 {
+    finish_cache_read(); // A read still in the background is waited for: what it gives is the answer
     return vk.cache_read;
 }
 
