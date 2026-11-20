@@ -1444,3 +1444,187 @@ TIDE_TEST(visibility_full_entity_destroyed_frames_verify_and_replay)
     free(frame.data);
     free(record.data);
 }
+
+// A transport that goes on sending while it hears nothing: what a player's machine is when datagrams reach the
+// server and none come back.
+typedef struct visibility_deaf {
+    tide_transport inner;
+    bool deaf;
+} visibility_deaf;
+
+static void visibility_deaf_send(void *self, tide_address to, const void *data, uint32_t size)
+{
+    visibility_deaf *d = self;
+    d->inner.send(d->inner.self, to, data, size);
+}
+
+static uint32_t visibility_deaf_receive(void *self, tide_address *from, void *data, uint32_t capacity)
+{
+    visibility_deaf *d = self;
+    for (;;) {
+        const uint32_t size = d->inner.receive(d->inner.self, from, data, capacity);
+        if (!size || !d->deaf) return size;
+    }
+}
+
+static void visibility_deaf_close(void *self)
+{
+    visibility_deaf *d = self;
+    if (d->inner.close) d->inner.close(d->inner.self);
+}
+
+// A match with no secret: nothing a player's own run of a tick gets wrong, so no player asks for a repair.
+static void visibility_calm_start(void *world, float dt, const void *start, uint32_t seed)
+{
+    visibility_start(world, dt, start, seed);
+    ((visibility_world *)world)->secret = 0;
+}
+
+TIDE_TEST(visibility_a_player_too_far_behind_takes_the_world_it_never_asked_for)
+{
+    // A player that hears nothing for longer than the server keeps ticks (4 s) and goes on sending is sent its world
+    // again, unasked. What it sends before it hears of that says it wants nothing, as it did all along: taken as
+    // "it needs nothing", that stopped the transfer before any of it went, and left the player with neither the
+    // world nor the ticks before it, the same every 4 s for good. (In a match where nothing has it ask for a repair:
+    // one in the midst of a repair says it wants one all along, which kept the transfer going.)
+    visibility_loads = visibility_starts = visibility_private_inputs = 0;
+    visibility_private_commands = 0;
+    visibility_deaths = visibility_hides = 0;
+    visibility_bulk_filters = visibility_slot_filters = 0;
+    visibility_continuous = false;
+    tide_loopback *net = tide_loopback_create(541254);
+    TIDE_REQUIRE(net);
+    tide_loopback_set_conditions(net, (tide_net_conditions){.latency = 0.05});
+    tide_game calm = visibility_game;
+    calm.start = visibility_calm_start;
+    tide_server *server = tide_server_create(&(tide_server_desc){.game = &calm,
+        .transports = {tide_loopback_endpoint(net, 1)}}, 0);
+    TIDE_REQUIRE(server);
+    uint32_t sampled[2] = {3, 7};
+    visibility_deaf deaf = {.inner = tide_loopback_endpoint(net, 2)};
+    tide_client *clients[2];
+    clients[0] = tide_client_create(&(tide_client_desc){.game = &calm,
+        .transport = {.self = &deaf, .send = visibility_deaf_send, .receive = visibility_deaf_receive,
+                      .close = visibility_deaf_close},
+        .server = tide_loopback_address(1), .sample = visibility_sample, .user = &sampled[0], .lead = 2}, 0);
+    clients[1] = tide_client_create(&(tide_client_desc){.game = &calm,
+        .transport = tide_loopback_endpoint(net, 3), .server = tide_loopback_address(1),
+        .sample = visibility_sample, .user = &sampled[1], .lead = 2}, 0);
+    TIDE_REQUIRE(clients[0] && clients[1]);
+    uint32_t behind_after = 0;
+    for (uint32_t step = 1; step <= 1320; step++) { // 11 s: deaf from 3 s to 7.5 s, less than a connection's timeout
+        const double now = (double)step / 120.0;
+        tide_loopback_set_time(net, now);
+        deaf.deaf = step >= 360 && step < 900;
+        for (uint32_t p = 0; p < 2; p++) tide_client_update(clients[p], now);
+        tide_server_update(server, now);
+        if (step == 1080) { // A second and a half after it hears again
+            const tide_client_status status = tide_client_status_of(clients[0]);
+            behind_after = tide_server_tick(server) - status.verified_tick;
+        }
+    }
+    for (uint32_t p = 0; p < 2; p++) {
+        const tide_client_status status = tide_client_status_of(clients[p]);
+        TIDE_CHECK(status.state == TIDE_SESSION_CONNECTED);
+        TIDE_CHECK(status.resyncs == (p == 0 ? 1u : 0u)); // Its world again, once
+        TIDE_CHECK(tide_server_tick(server) - status.verified_tick < 30u);
+    }
+    TIDE_CHECK(behind_after < 30u);
+    for (uint32_t p = 0; p < 2; p++) tide_client_destroy(clients[p]);
+    tide_server_destroy(server);
+    tide_loopback_destroy(net);
+}
+
+// Everything a player may have, and 5 MiB after it: more than an update reads of whole projections before the rest
+// wait (session.c's WHOLE_UPDATE_MOST, 4 MiB), so each is an update's allowance by itself. Which player's the
+// session asked for, in order.
+#define VISIBILITY_BULK (5u * 1024u * 1024u)
+static uint8_t visibility_bulky_asked[4096];
+static uint32_t visibility_bulky_count;
+
+static uint8_t *visibility_bulky_state(const void *world, tide_player_id player, uint32_t *size)
+{
+    uint32_t small_size = 0;
+    uint8_t *small = visibility_state(world, player, &small_size);
+    if (!small) return NULL;
+    uint8_t *out = calloc(1, small_size + VISIBILITY_BULK);
+    if (out) memcpy(out, small, small_size);
+    free(small);
+    if (!out) return NULL;
+    if (visibility_bulky_count < sizeof visibility_bulky_asked) {
+        visibility_bulky_asked[visibility_bulky_count] = (uint8_t)tide_player_index(player);
+    }
+    visibility_bulky_count++;
+    *size = small_size + VISIBILITY_BULK;
+    return out;
+}
+
+static bool visibility_bulky_load(void *world, const uint8_t *data, uint32_t size)
+{
+    if (size != sizeof(visibility_world) + VISIBILITY_BULK) return false;
+    return visibility_load(world, data, sizeof(visibility_world));
+}
+
+TIDE_TEST(visibility_whole_projections_wait_their_turn_past_an_updates_allowance)
+{
+    // Two players join in the same update, and at tick 90 both find their worlds wrong in the same tick (a hidden
+    // effect neither can predict), which this game repairs by a hash offer: a whole projection each, and another
+    // when each says what it lacks. An update prepares the one that asked first and the other waits for the next
+    // update, whatever asked for it: no update reads whole projections for two players.
+    visibility_loads = visibility_starts = visibility_private_inputs = 0;
+    visibility_private_commands = 0;
+    visibility_deaths = visibility_hides = 0;
+    visibility_bulk_filters = visibility_slot_filters = 0;
+    visibility_continuous = false;
+    visibility_bulky_count = 0;
+    tide_game bulky = visibility_game;
+    bulky.client_state = visibility_bulky_state;
+    bulky.load_client_state = visibility_bulky_load;
+    tide_loopback *net = tide_loopback_create(541254);
+    TIDE_REQUIRE(net);
+    tide_server *server = tide_server_create(&(tide_server_desc){.game = &bulky,
+        .transports = {tide_loopback_endpoint(net, 1)}}, 0);
+    TIDE_REQUIRE(server);
+    uint32_t sampled[2] = {3, 7};
+    tide_client *clients[2];
+    for (uint32_t p = 0; p < 2; p++) clients[p] = tide_client_create(&(tide_client_desc){.game = &bulky,
+        .transport = tide_loopback_endpoint(net, p + 2u), .server = tide_loopback_address(1),
+        .sample = visibility_sample, .user = &sampled[p], .lead = 2}, 0);
+    TIDE_REQUIRE(clients[0] && clients[1]);
+    uint32_t updates_for_both = 0, updates_with_any = 0, first_asked = UINT32_MAX;
+    bool asked[2] = {false, false};
+    for (uint32_t step = 1; step <= 480; step++) {
+        const double now = (double)step / 120.0;
+        tide_loopback_set_time(net, now);
+        for (uint32_t p = 0; p < 2; p++) tide_client_update(clients[p], now);
+        const uint32_t before = visibility_bulky_count;
+        tide_server_update(server, now);
+        TIDE_REQUIRE(visibility_bulky_count <= sizeof visibility_bulky_asked);
+        bool of[2] = {false, false};
+        for (uint32_t i = before; i < visibility_bulky_count; i++) of[visibility_bulky_asked[i]] = true;
+        updates_for_both += of[0] && of[1];
+        updates_with_any += of[0] || of[1];
+        if (first_asked == UINT32_MAX && (of[0] || of[1])) first_asked = step;
+        // The second to join has its world the update after the first's: it waited one update, not longer
+        if (first_asked != UINT32_MAX && step <= first_asked + 1u) {
+            asked[0] |= of[0];
+            asked[1] |= of[1];
+        }
+    }
+    TIDE_CHECK(updates_for_both == 0);
+    TIDE_CHECK(asked[0] && asked[1]);
+    TIDE_CHECK(updates_with_any >= 6u); // The two worlds, and each one's repair at tick 90: its offer and what it lacked
+    for (uint32_t p = 0; p < 2; p++) {
+        const tide_client_status status = tide_client_status_of(clients[p]);
+        TIDE_CHECK(status.state == TIDE_SESSION_CONNECTED);
+        TIDE_CHECK(status.resyncs == 0);
+        TIDE_CHECK(status.repairs >= 1u);
+        TIDE_CHECK(tide_server_tick(server) - status.verified_tick < 30u);
+        const visibility_world *w = tide_client_verified_world(clients[p]);
+        TIDE_REQUIRE(w);
+        TIDE_CHECK(w->health == 83u); // The hidden effect, repaired
+    }
+    for (uint32_t p = 0; p < 2; p++) tide_client_destroy(clients[p]);
+    tide_server_destroy(server);
+    tide_loopback_destroy(net);
+}

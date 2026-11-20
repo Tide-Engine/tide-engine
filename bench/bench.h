@@ -70,6 +70,12 @@ typedef struct bench_options {
     // server's world, a bot's worlds, the process, the last stretch's
     // updates): whether anything grows in a long run. 0: none.
     double every;
+    // A network outage once everyone's in: every datagram to and from the first `outage_bots` bots (0: every bot) is
+    // lost for `outage` seconds, from OUTAGE_AT seconds after the last caught up. Past the ticks a server keeps, each
+    // of them is sent its world again, all at once: what that costs the server's updates, and how long after the
+    // outage each has a verified world near the server's again. 0: none.
+    double outage;
+    uint32_t outage_bots;
 } bench_options;
 
 typedef struct bench_desc {

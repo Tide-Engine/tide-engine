@@ -48,6 +48,13 @@ and its players' projections': a game that hides state hashes the world as part 
 `--every <s>` prints a line every so many made-up seconds: the server's
 world in memory and what it holds, bot 0's, the process's memory (Windows and Linux), and the server's updates
 since the last line, on average and at most; and every report ends with the most the process held.
+`--outage <s>` (any session benchmark) cuts the bots off 3 s after the last one caught up: nothing goes to or from
+them for that long (`--outage-bots <n>`: the first n of them alone, the rest playing on). Past the 4 s of ticks a
+server keeps (and under the 5 s a connection waits before it gives up), every bot cut off is sent its world again
+when it's back, all at once. The report then has the server's updates from the outage's start until every such bot
+is back as a row of their own (`server, during an outage`; the `server` row is the rest), how long after the
+outage's end a bot's verified world was within half a second of the server's again (median and at most), and how
+many worlds they were sent; a bot that never is fails the run (`notes/netcode.md`, top section).
 `bench_desc.watch_server` is `watch` for the server's world, called before the bots' of the frame. Voxels' report
 says with it where a hop's time goes: how many ticks after the bot's machine hopped the server had asked for its
 box, had nine tenths of it made and had all of it, beside when the bot's machine had them. Its new flags: `--make`

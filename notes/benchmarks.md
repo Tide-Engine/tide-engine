@@ -1,5 +1,16 @@
 # Benchmarks
 
+## An outage for every session bench (2026-11-20)
+
+`--outage <s>` and `--outage-bots <n>` (bench/bench.c, bench/README.md): 3 s after the last bot caught up, nothing
+goes to or from the bots (or the first n of them) for that long; the wire drops their datagrams both ways
+(`port.cut`, `wire.cut_from`, `cut_until`). A bot cut off isn't held to the lag limit until it's back (a verified
+world within `CAUGHT_UP` ticks of the server's, after the outage's end), the worlds it's sent again meanwhile are
+counted as the outage's and not as worlds gone wrong, and one that never is back fails the run. The server's
+updates from the outage's start until every such bot is back are a row of their own, so the `server` row stays the
+steady state's. Past 4 s (the ticks a server keeps) and under 5 (a connection's timeout) it's every bot's world
+again at once: what notes/netcode.md's top section measures. `bench_voxels_outage_1` and `_12` pin a small one.
+
 ## A view arriving, the sweep again, and what a server's worst update is made of (2026-11-16, last)
 
 `bench_voxels` with a whole view arriving faster (notes/voxels.md, A whole view arriving) and every "At scale" table

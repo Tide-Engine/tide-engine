@@ -1,5 +1,110 @@
 # Netcode: sessions, prediction, commands
 
+## Whole projections wait their turn; a world sent unasked is no longer stopped before it goes; no protocol change (2026-11-20)
+
+A review of the repairs' allowance (`REPAIR_UPDATE_MOST`, 4 MiB of what repairs by what changed read an update):
+it counts those reads only. A repair that comes to the player's world again (`REPAIR_SNAPSHOT`) or to the hash offer
+(`REPAIR_OFFER`) was counted as nothing and then read a whole projection, and a player's world asked for in a packet
+(`start_snapshot`) and what one lacks of a hash offer (`send_client_lacking`) were read as the packet was. All in
+`engine/src/session.c` (agent-maintained). **Nothing on the wire changed** (`PROTOCOL` as it was), nor any world or
+hash.
+
+**Measured** (`bench_voxels --players 100 --spread 256 --join-every 0.1 --seconds 20 --threads 12 --outage 4.5`: the
+bench's new `--outage`, bench/README.md; Windows release, 12 threads, BelowNormal, the machine shared; timers put in
+for the runs and taken out). Every bot is cut off for 4.5 s, past the 4 s of ticks the server keeps, and asks for a
+repair as it's back: its base is gone, so each is its world again, in the update's sending, one after another. 50
+of them in one update took 152.7 ms of its 162.4 (3.0 to 3.6 ms each: a projection of about 0.9 MB, 94 KB as
+sent), 22 in a later one 82 of 95. And 13 of the 100 bots never had the server's world again (below).
+
+| The outage, all 100 cut off | Longest update (ms) | p99 (ms) | Back after it: median, at most (s) | Never back |
+|---|---:|---:|---:|---:|
+| Before (two runs) | 152.0, 162.4 | 28.8, 32.6 | 0.28, 12.42 (of 87) | 13 |
+| The transfer fix alone, no allowance | 146.2 | 32.0 | 0.30, 0.70 | 0 |
+| An allowance of 4 MiB (built) | 32.7 | 29.2 | 0.38, 0.75 | 0 |
+| ...of 2 MiB | 34.9 | 27.6 | 0.52, 0.95 | 0 |
+| ...of 1 MiB | 25.8 | 22.8 | 0.67, 1.25 | 0 |
+
+The updates are those from the outage's start until every bot is back; "back" is a verified world within half a
+second of the server's, counted from the outage's end. With 20 of the 100 cut off (`--outage-bots 20`): longest
+update 45.5 ms to 23.6, back 0.28 s at the median and 0.50 at most to 0.32 and 0.48; the 80 who played on were 49
+ticks behind at most without the allowance and 45 with it, 25 or fewer in 99 frames of 100 both ways. One run each
+but the first row; the p99 column is within the machine's noise, the longest update isn't.
+
+- **A whole projection waits its turn** (`want_whole`, `prepare_wanted`, `connection.whole_wanted`,
+  `WHOLE_UPDATE_MOST`). A player's world again, a repair by the hash offer and what a player lacks of one are asked
+  for and kept on the connection (which, since when, the offer's tick, the mask of what's lacking), and an update
+  prepares them, the one that has waited longest first, until it has read `WHOLE_UPDATE_MOST` (4 MiB, the repairs'
+  line) of projections' bytes (`tide_server.whole_work`: what `client_state` gave, of the world and of the base
+  where one is compared; a world packed whole for a game without projections counts as packed, once where players
+  share the pack). The first of an update always goes. It's an allowance of its own beside the repairs': an update
+  reads at most one of each, and neither keeps the other waiting.
+- **Prepared where it was** (`tide_server_update`): after the update's packets and timeouts (a world a packet asked
+  for, what one lacks), after its repairs are read and packed (`repair_wants_whole`: those that came to a world
+  again or to the offer), and after its sending (a player `send_frames` found too far behind). So one within the
+  allowance is read from the same world, at the same point, and goes in the same datagrams in the same update as
+  before; only what's past the allowance moves, by whole updates. A repair by the offer that waited gathers its
+  ends again as it's prepared (`repair_ends`, which `repair_read` uses too): the tick it was to, unless the player
+  has it since or something else is on its way; its world again where the ends aren't kept any more.
+- **While it waits**: a player whose world waits is sent a `WELCOME` naming no transfer each update (what a joiner
+  gets until it writes back: "nothing yet") and no ticks, which it couldn't run; no repair is started for it
+  (the due list leaves it out, as one being made) and none is taken from its packets (`on_client`: as one being
+  sent). A put-off repair isn't sent over a world that waits. `stop_sending` lets go of what waits, with the mask.
+  A hot reload still starts its players' worlds again at once (`start_snapshot`, counted in the update's work), one
+  that waited among them.
+- **A world sent unasked isn't stopped by what the player wrote before it heard of it** (`connection.sending_world`,
+  `welcomed_number`, `welcomed_said`, `welcome_heard`; `send_welcome`, `on_client`). A `CLIENT` that wants nothing
+  stops a transfer ("it has the world, or one that needs nothing"). A player too far behind for the ticks kept is
+  sent its world without having asked, and went on saying it wanted nothing, as it had all along, until the
+  `WELCOME` reached it: the server stopped the transfer on the next `CLIENT`, before any datagram of it had gone
+  (it starts in the update's sending, and the next update reads packets first), having already moved the player's
+  acknowledged tick to the world's. The player then had neither the world nor the ticks before it, asked for
+  nothing, and the same happened every 4 s for good: the 13 bots above, each one that had loaded an old repair
+  just as it came back and so asked for none. Now, for a player's world again, such a `CLIENT` stops the transfer
+  only once one of its `CLIENT`s has echoed the time of a `WELCOME` naming the transfer, or a later one (the echo
+  is the last time it heard the server say: `their_time`). Repairs, offers and patches stop as before: the player
+  asked for those. A player on the server's machine names the transfer whole and stops it as before.
+
+**Why everything else is the same.** Which projections an update prepares goes by their order of asking and the
+bytes read, never by a clock or a thread. `bench_voxels` at 100 apart and at 8 bots ends on the pins of 2026-11-19
+(hash `0x5165130e825fa70f` and what the bots took `0xb8fa79ab9a74ff3d`; `0x1fdc545078ce68e8` and
+`0xb4e8a59de2f669db`): joins half a second apart never meet the allowance. Server updates in that 100-apart run:
+7.41 ms median, 22.32 p99 (7.77 and 26.48 on 2026-11-19; one run, the machine shared).
+
+**Found on the way**: with the worlds waiting, a bot's repair request that came during the wait was taken (its
+acknowledged tick hadn't moved yet), outlived the world it was sent, and became a repair nobody asked for, which
+the bot refused and paid for with its world again (3 to 9 of 100 in the first runs with an allowance; the 2 MiB
+row is from before this was closed). Hence no request is taken while one waits.
+
+**Tests.** `tests/test_visibility_session.c`:
+`visibility_a_player_too_far_behind_takes_the_world_it_never_asked_for` (a match nothing is repaired in, 50 ms each
+way, one player hearing nothing from 3 s to 7.5 s and sending all along: its world again once, verified within 30
+ticks a second and a half after; with the old rule it's still at tick 176 then) and
+`visibility_whole_projections_wait_their_turn_past_an_updates_allowance` (projections of 5 MiB: two players joining
+in one update, and both repaired by the hash offer at tick 90, are never read for in the same update, the second a
+single update after the first; without the allowance it fails). `bench_voxels_outage_1` and `_12`
+(bench/CMakeLists.txt): 16 players cut off for 4.5 s, each sent a megabyte's projection again, all back, the same
+world and the same taken on 1 and 12 threads; a run where a bot never is back fails.
+
+Run on Windows, no pin moved: release, `tide_tests` (all) and the 29 fixtures listed in notes/voxels.md, Tests; ASan
+(`sanitize`), `tide_tests visibility` (33) and `session` (24), `bench_voxels`, `_views`, `_reads_12`, `_outage_1`,
+`_12`, `tidec_e2e_net`, `_net_join_big`, `tidec_e2e_visibility_host_lifecycle` and `_repairs`; the web
+(`web-debug`, under Node), `tide_tests`, `bench_voxels`, `_reads_1`, `_outage_1` and `_12` (on the native pins),
+`tidec_e2e_net` and `tidec_e2e_visibility_repairs`. Each new engine test fails with its change out: the old stop
+rule back (the first), `WHOLE_UPDATE_MOST` out of reach (the second). The full suites and the other platforms are
+CI's.
+
+**Left.**
+- The line is the owner's to move, as the repairs' is: 4 MiB is four or five such worlds an update (10 to 15 ms of
+  it here) and costs a player 0.05 to 0.08 s; 1 MiB halves the longest update's share and doubles the wait.
+- The projections are prepared one after another on the update's thread (each finds its entities on the pool).
+  Several at once on the pool's threads, as repairs are read, would shorten both columns: `client_state` from
+  several threads at once isn't something the generated code has been checked for.
+- Voxels never reached the hash offer or what one lacks in these runs (no calls): they wait their turn by the same
+  rule, which the engine test above covers, with no timing of their own.
+- A game without projections whose player is sent a world of a tick it has already run past (`tick > ahead` is
+  what it takes one by) still refuses it; only projections are taken whenever the server starts one.
+- Nothing bounds a hot reload's worlds: every transfer starts again in the update that commits it, as before.
+
 ## Projection journals reuse the completed tick's hash (2026-11-19)
 
 `tick_run` computes the authoritative whole-world hash after simulation. The

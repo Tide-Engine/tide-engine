@@ -417,11 +417,13 @@ static void take_message(const tide_game *g, void *world, const uint8_t *data, c
 // is a verified logical tick, never the receiver's unverified prediction.
 static uint8_t *pack_client_state(const tide_game *g, const void *world, const void *base,
                                   const void *had, const tide_event_log *events, const tide_player_id player,
-                                  const uint32_t base_tick, uint32_t *size, const uint8_t *needs, uint32_t needs_size)
+                                  const uint32_t base_tick, uint32_t *size, const uint8_t *needs, uint32_t needs_size,
+                                  uint64_t *read)
 {
     uint32_t count = 0, previous_count = 0;
     uint8_t *bytes = g->client_state(world, player, &count);
     uint8_t *previous = base && !needs ? g->client_state(base, player, &previous_count) : NULL;
+    if (read) *read += (uint64_t)count + previous_count; // The projections' bytes read (tide_server.whole_work)
     if (!bytes || (base && !needs && !previous)) {
         free(bytes);
         free(previous);
@@ -1100,6 +1102,21 @@ typedef struct connection {
     // a repair asked for of a tick before it is sent as the world is now (repair_as_it_is_now)
     uint32_t came_at;
     bool repair_pending_stream;
+    // A whole projection it's to be sent, which waits for an update with allowance left for it (want_whole,
+    // prepare_wanted): which (WHOLE_NONE: none), since when among those waiting (the order they're prepared in), the
+    // tick a repair by the hash offer is to, and what it said its world lacks of the hashes it was offered, with the
+    // transfer it said so of
+    uint8_t whole_wanted;
+    uint64_t whole_asked;
+    uint32_t whole_tick;
+    uint8_t *whole_lacks;
+    uint32_t whole_lacks_size, whole_lacks_number;
+    // What it's being sent is its world again (start_snapshot_on), which it may not have asked for; the transfer a
+    // WELCOME last named to it and when; and whether a CLIENT of its echoed that time or a later one, so was sent
+    // knowing of the transfer (see on_client, where a CLIENT that wants nothing stops one)
+    bool sending_world, welcome_heard;
+    uint32_t welcomed_number;
+    uint16_t welcomed_said;
     // It was sent the world and needs every tick from it on, however long
     // that took: the server keeps them until it catches up (keep_needed)
     bool catching_up;
@@ -1218,6 +1235,11 @@ struct tide_server {
     // Bytes of repairs by what changed that this update read from its worlds: past REPAIR_UPDATE_MOST, the repairs
     // still to start wait for the next update
     uint64_t repair_work;
+    // Whole projections waiting to be prepared (connection.whole_wanted), the last one's place in their order, and
+    // the bytes of them this update read from its worlds: past WHOLE_UPDATE_MOST, the rest wait for the next update
+    uint32_t whole_waiting;
+    uint64_t whole_asks;
+    uint64_t whole_work;
     struct repair_start *repair_starts; // The repairs an update starts (a player's room each), or NULL before the first
     read_room read_rooms; // Room for what they read, used again
     // A kept tick's world the ring let go of, being let go of on the pool's threads (let_go): a pass over every page
@@ -1402,6 +1424,46 @@ static uint32_t spare_group(const connection *c)
 // at once (a crowd through a portal, players joining together) were one update several times as long as a tick.
 #define REPAIR_UPDATE_MOST REPAIR_HEAVY
 
+// Whole projections: a player's world again (start_snapshot_on), a repair by the hash offer (offer_client_repair_on)
+// and what a player lacks of one (send_client_lacking_on). Each reads everything a player may have of a world, once or
+// twice, whatever changed, and what asks for them comes for many players at once: an outage that ends, a server that
+// stalled, players who join or come back together. One for each of them in the update that asked was that update's
+// whole length many times over (fifty players' worlds again in one update: 150 ms, notes/netcode.md, top section).
+// So one that's asked for waits (connection.whole_wanted), and an update prepares them oldest first (prepare_wanted)
+// until it has read WHOLE_UPDATE_MOST bytes of projections; the rest wait for the next update, in their order. The
+// first of an update is always prepared, and it's prepared where it was before this (after the update's packets,
+// after its repairs are read, after its sending), so one within the allowance is the same datagrams in the same
+// update. By the bytes read, so the same on any machine with any number of threads.
+#define WHOLE_UPDATE_MOST REPAIR_UPDATE_MOST
+enum {
+    WHOLE_NONE,
+    WHOLE_LACKING, // What it lacks of the hashes it was offered (connection.whole_lacks)
+    WHOLE_OFFER,   // A repair to connection.whole_tick by the hash offer, or a whole projection against its base
+    WHOLE_WORLD,   // Its world again: in place of whatever else it waited for
+};
+
+// Nothing whole waits for the player any more.
+static void unwant_whole(tide_server *s, connection *c)
+{
+    if (c->whole_wanted) s->whole_waiting--;
+    c->whole_wanted = WHOLE_NONE;
+    free(c->whole_lacks);
+    c->whole_lacks = NULL;
+    c->whole_lacks_size = 0;
+}
+
+// The player is to be sent a whole projection (`kind`), once an update has allowance for it. One already waiting
+// keeps its place; its world again takes the place of anything else it waited for.
+static void want_whole(tide_server *s, connection *c, const uint8_t kind)
+{
+    if (c->whole_wanted == WHOLE_WORLD) return;
+    if (!c->whole_wanted) {
+        c->whole_asked = ++s->whole_asks;
+        s->whole_waiting++;
+    }
+    c->whole_wanted = kind;
+}
+
 typedef struct repair_making {
     repair_made made;       // Read, to be packed: emptied once it is
     uint32_t to;            // The tick it repairs to
@@ -1459,6 +1521,8 @@ static void drop_making(connection *c)
 
 static void stop_sending(tide_server *s, connection *c)
 {
+    unwant_whole(s, c); // What it waited for was a part of what stops, or is asked for again by whoever stops it
+    c->sending_world = false;
     drop_making(c);
     drop_snapshot(s, c);
     free_world(s->game, c->hashed);
@@ -1480,6 +1544,7 @@ static void send_in_chunks(tide_server *s, connection *c, const uint8_t kind, ui
     c->snapshot = bytes;
     c->shared = shared;
     c->snapshot_number++;
+    c->welcome_heard = false;
     c->snapshot_kind = kind;
     c->snapshot_size = size;
     c->chunk_count = chunks_of(size);
@@ -1596,8 +1661,8 @@ static void finish_client_repair(tide_server *s, connection *c)
     repair_making *m = c->making;
     c->making = NULL;
     packed_making(m);
-    // (Sending already: something else started meanwhile, a whole world)
-    if (m->bytes && !c->sending) send_client_repair(s, c, m->bytes, m->size, m->to, m->as_now);
+    // (Sending already, or about to be: something else started meanwhile, a whole world)
+    if (m->bytes && !c->sending && !c->whole_wanted) send_client_repair(s, c, m->bytes, m->size, m->to, m->as_now);
     else free(m->bytes);
     free(m);
 }
@@ -1609,9 +1674,9 @@ static void finish_client_repair(tide_server *s, connection *c)
 // the packing is a function of the bytes read.
 typedef enum repair_kind {
     REPAIR_NONE,     // Nothing to send this update: not one to start now, or put off (connection.making)
-    REPAIR_SNAPSHOT, // Its world again (start_snapshot)
+    REPAIR_SNAPSHOT, // Its world again (WHOLE_WORLD)
     REPAIR_READ,     // What changed was read (`made`, and `made_now` where it's arriving): packed, then sent
-    REPAIR_OFFER,    // The hash offer, or a whole projection against its base (offer_client_repair)
+    REPAIR_OFFER,    // The hash offer, or a whole projection against its base (WHOLE_OFFER)
 } repair_kind;
 
 typedef struct repair_start {
@@ -1637,6 +1702,31 @@ typedef struct repair_start {
     bool read_done; // Read on the pool (repairs_read)
 } repair_start;
 
+// The worlds a repair to `tick` goes between for a player (the one it confirmed, `base`, and the tick's, `world`) and
+// what it heard between them, added to `events`. False where they aren't all kept any more: its world goes again.
+// It reads the server's kept worlds and the player's connection, and writes `events` alone.
+static bool repair_ends(const tide_server *s, const connection *c, const uint32_t tick, const void **world,
+                        const void **base, tide_event_log *events)
+{
+    const void *verified = verified_of(s, c);
+    *world = server_world_at(s, tick);
+    *base = verified && c->verified_tick == c->frame_ack ? verified : server_world_at(s, c->frame_ack);
+    if (!*world || !*base || tick - c->frame_ack > s->w.history) return false;
+    for (uint32_t t = c->frame_ack; t < tick; t++) {
+        const stored_frame *frame = c->client_frames ? &c->client_frames[t % s->w.history] : NULL;
+        if (!frame || frame->tick != t || !frame->data) {
+            tide_event_log_free(events);
+            return false;
+        }
+        for (uint32_t at = 0; at < frame->events.size;) {
+            const tide_heard *heard = (const tide_heard *)(frame->events.bytes + at);
+            at += heard->size;
+            tide_event_log_copy(events, &frame->events, heard, 0);
+        }
+    }
+    return true;
+}
+
 // Reads what changed for a player (`c`, a repair to `tick`). It changes nothing but `r` and the room it reads into
 // (tide_server.read_rooms, under its lock), and what it reads is a function of the server's worlds and the player's
 // connection alone, so the repairs of several players are read on several threads at once (repairs_read): the
@@ -1645,26 +1735,11 @@ static void repair_read(tide_server *s, connection *c, const uint32_t tick, repa
 {
     *r = (repair_start){.c = c, .tick = tick, .kind = REPAIR_NONE};
     if (tick <= c->frame_ack || tick > s->tick || c->sending || c->making) return;
-    const void *world = server_world_at(s, tick);
-    const void *verified = verified_of(s, c);
-    const void *base = verified && c->verified_tick == c->frame_ack ? verified : server_world_at(s, c->frame_ack);
-    if (!world || !base || tick - c->frame_ack > s->w.history) { r->kind = REPAIR_SNAPSHOT; return; }
+    const void *world, *base;
+    if (!repair_ends(s, c, tick, &world, &base, &r->events)) { r->kind = REPAIR_SNAPSHOT; return; }
     r->world = world;
     r->base = base;
     const tide_player_id player = tide_player_from_index((int32_t)(c - s->connections));
-    for (uint32_t t = c->frame_ack; t < tick; t++) {
-        const stored_frame *frame = c->client_frames ? &c->client_frames[t % s->w.history] : NULL;
-        if (!frame || frame->tick != t || !frame->data) {
-            tide_event_log_free(&r->events);
-            r->kind = REPAIR_SNAPSHOT;
-            return;
-        }
-        for (uint32_t at = 0; at < frame->events.size;) {
-            const tide_heard *heard = (const tide_heard *)(frame->events.bytes + at);
-            at += heard->size;
-            tide_event_log_copy(&r->events, &frame->events, heard, 0);
-        }
-    }
     // What changed for the player, entity by entity, unless most of it is entities it already had, where
     // comparing its own run of the tick (offer_client_repair) may send far less
     const stored_frame *last = c->client_frames ? &c->client_frames[(tick - 1u) % s->w.history] : NULL;
@@ -1733,41 +1808,46 @@ static void repair_pack(repair_start *r)
     if (r->arriving) r->now = client_changes_pack(&r->made_now, &r->size_now, &r->mostly_now);
 }
 
-static void offer_client_repair(tide_server *s, connection *c, const uint32_t tick, const void *world, const void *base,
-                                tide_event_log events);
+// A repair read and packed that isn't one by what changed after all is a whole projection, which waits its turn
+// (want_whole, prepare_wanted): the player's world again, or a repair by the hash offer, where what changed couldn't
+// be read or is mostly other values of entities the player had. True where it was one: nothing is left of it to send.
+static bool repair_wants_whole(tide_server *s, repair_start *r)
+{
+    connection *c = r->c;
+    if (r->kind == REPAIR_SNAPSHOT) {
+        want_whole(s, c, WHOLE_WORLD);
+    } else if (r->kind == REPAIR_OFFER || (r->kind == REPAIR_READ && !(r->bytes && !r->mostly_changed))) {
+        want_whole(s, c, WHOLE_OFFER);
+        if (c->whole_wanted == WHOLE_OFFER) c->whole_tick = r->tick;
+    } else {
+        return false;
+    }
+    tide_event_log_free(&r->events); // (Gathered again as it's prepared: repair_ends)
+    free(r->now);
+    free(r->bytes);
+    r->now = r->bytes = NULL;
+    r->kind = REPAIR_NONE;
+    return true;
+}
 
 static void repair_send(tide_server *s, repair_start *r)
 {
     connection *c = r->c;
-    if (r->kind == REPAIR_SNAPSHOT) {
-        start_snapshot(s, c);
-        return;
-    }
-    if (r->kind == REPAIR_OFFER) {
-        offer_client_repair(s, c, r->tick, r->world, r->base, r->events);
-        return;
-    }
     if (r->kind != REPAIR_READ) return;
-    if (r->bytes && !r->mostly_changed) {
-        tide_event_log_free(&r->events);
-        uint8_t *bytes = r->bytes;
-        uint32_t size = r->size, to = r->tick;
-        uint8_t *now = r->now;
-        if (now && !r->mostly_now && r->size_now > size + size / 4u) {
-            free(bytes);
-            bytes = now;
-            size = r->size_now;
-            to = s->tick;
-        } else {
-            free(now);
-            now = NULL;
-        }
-        send_client_repair(s, c, bytes, size, to, now != NULL);
-        return;
+    tide_event_log_free(&r->events);
+    uint8_t *bytes = r->bytes;
+    uint32_t size = r->size, to = r->tick;
+    uint8_t *now = r->now;
+    if (now && !r->mostly_now && r->size_now > size + size / 4u) {
+        free(bytes);
+        bytes = now;
+        size = r->size_now;
+        to = s->tick;
+    } else {
+        free(now);
+        now = NULL;
     }
-    free(r->now);
-    free(r->bytes);
-    offer_client_repair(s, c, r->tick, r->world, r->base, r->events);
+    send_client_repair(s, c, bytes, size, to, now != NULL);
 }
 
 static void repair_pack_job(void *context)
@@ -1901,23 +1981,16 @@ static void repairs_read(tide_server *s, repair_start *starts, const uint32_t co
 // A repair by the hash offer (the player's own run of the tick compared block by block), or failing that a whole
 // projection against the world it confirmed: where what changed couldn't be read, or is mostly other values of
 // entities the player had.
+// The projections' bytes it reads are added to `read` (tide_server.whole_work). Called with the pool handed to the
+// thread (prepare_wanted): a whole projection is read on the pool (client_state).
 static void offer_client_repair_on(tide_server *s, connection *c, const uint32_t tick, const void *world,
-                                   const void *base, tide_event_log events);
-static void offer_client_repair(tide_server *s, connection *c, const uint32_t tick, const void *world, const void *base,
-                                tide_event_log events)
-{
-    const tide_jobs *const loops = tide_loops_enter(s->desc.jobs); // A whole projection is read on the pool (client_state)
-    offer_client_repair_on(s, c, tick, world, base, events);
-    tide_loops_leave(loops);
-}
-
-static void offer_client_repair_on(tide_server *s, connection *c, const uint32_t tick, const void *world,
-                                   const void *base, tide_event_log events)
+                                   const void *base, tide_event_log events, uint64_t *read)
 {
     const tide_player_id player = tide_player_from_index((int32_t)(c - s->connections));
     uint32_t size = 0;
     uint32_t canonical_size = 0, hashes_size = 0;
     uint8_t *canonical = s->game->client_state(world, player, &canonical_size);
+    *read += canonical_size;
     uint8_t *hashes = canonical && canonical_size >= CLIENT_HASH_MIN_BYTES
         ? tide_recipient_hashes(canonical, canonical_size, &hashes_size) : NULL;
     free(canonical);
@@ -1935,7 +2008,7 @@ static void offer_client_repair_on(tide_server *s, connection *c, const uint32_t
         send_in_chunks(s, c, SEND_CLIENT_HASHES, hashes, hashes_size, NULL);
         return;
     }
-    uint8_t *bytes = pack_client_state(s->game, world, base, base, &events, player, c->frame_ack, &size, NULL, 0);
+    uint8_t *bytes = pack_client_state(s->game, world, base, base, &events, player, c->frame_ack, &size, NULL, 0, read);
     tide_event_log_free(&events);
     if (!bytes) return;
     stop_sending(s, c);
@@ -1945,15 +2018,25 @@ static void offer_client_repair_on(tide_server *s, connection *c, const uint32_t
     send_in_chunks(s, c, SEND_CLIENT_REPAIR, bytes, size, NULL);
 }
 
-static void send_client_lacking_on(tide_server *s, connection *c, const uint8_t *needs, const uint32_t needs_size);
-static void send_client_lacking(tide_server *s, connection *c, const uint8_t *needs, const uint32_t needs_size)
+// What a player said its world lacks of the hashes it was offered is kept until an update has allowance for the
+// projections it's packed from (prepare_wanted). The transfer stays the hashes' until then, and what the player says
+// again meanwhile is the same.
+static void want_client_lacking(tide_server *s, connection *c, const uint8_t *needs, const uint32_t needs_size)
 {
-    const tide_jobs *const loops = tide_loops_enter(s->desc.jobs); // Whole projections are read on the pool (client_state)
-    send_client_lacking_on(s, c, needs, needs_size);
-    tide_loops_leave(loops);
+    if (c->whole_wanted > WHOLE_LACKING || needs_size > LACKS_BYTES) return;
+    uint8_t *kept = malloc(needs_size ? needs_size : 1u);
+    if (!kept) tide_out_of_memory();
+    memcpy(kept, needs, needs_size);
+    want_whole(s, c, WHOLE_LACKING);
+    free(c->whole_lacks);
+    c->whole_lacks = kept;
+    c->whole_lacks_size = needs_size;
+    c->whole_lacks_number = c->snapshot_number;
 }
 
-static void send_client_lacking_on(tide_server *s, connection *c, const uint8_t *needs, const uint32_t needs_size)
+// The projections' bytes it reads are added to `read`; called with the pool handed to the thread (prepare_wanted).
+static void send_client_lacking_on(tide_server *s, connection *c, const uint8_t *needs, const uint32_t needs_size,
+                                   uint64_t *read)
 {
     if (!c->hashed || !c->repair_base) return;
     const tide_player_id player = tide_player_from_index((int32_t)(c - s->connections));
@@ -1972,7 +2055,7 @@ static void send_client_lacking_on(tide_server *s, connection *c, const uint8_t 
     bool patch = missing <= blocks / 2u;
     uint32_t size = 0;
     uint8_t *bytes = pack_client_state(s->game, c->hashed, c->repair_base, c->repair_base,
-        &c->repair_events, player, c->repair_base_tick, &size, patch ? needs : NULL, patch ? needs_size : 0u);
+        &c->repair_events, player, c->repair_base_tick, &size, patch ? needs : NULL, patch ? needs_size : 0u, read);
     if (!bytes) return;
     // A modest fraction of a huge projection can still be much larger than
     // its sparse acknowledged-tick delta. Compare real encoded sizes when
@@ -1980,7 +2063,7 @@ static void send_client_lacking_on(tide_server *s, connection *c, const uint8_t 
     if (patch && missing > (64u * 1024u) / TIDE_RECIPIENT_BLOCK_BYTES) {
         uint32_t baseline_size = 0;
         uint8_t *baseline = pack_client_state(s->game, c->hashed, c->repair_base, c->repair_base,
-            &c->repair_events, player, c->repair_base_tick, &baseline_size, NULL, 0);
+            &c->repair_events, player, c->repair_base_tick, &baseline_size, NULL, 0, read);
         if (baseline && baseline_size < size) {
             free(bytes);
             bytes = baseline;
@@ -2016,15 +2099,19 @@ static uint8_t *hashes_of(const tide_server *s, const void *world, uint32_t *siz
 // player with a world to build it from (or that can start the match itself,
 // over a network), its pages' hashes first. A world that goes in one update
 // anyway goes whole: the hashes would only cost it a round trip.
-static void start_snapshot_on(tide_server *s, connection *c);
+// What it reads or packs of the world is added to `read` (tide_server.whole_work).
+static void start_snapshot_on(tide_server *s, connection *c, uint64_t *read);
+
+// A player's world again now, whatever the update's allowance (a hot reload's: every transfer of the old build's
+// starts again as the new one takes over). Anything else asks for it and waits its turn: want_whole(WHOLE_WORLD).
 static void start_snapshot(tide_server *s, connection *c)
 {
     const tide_jobs *const loops = tide_loops_enter(s->desc.jobs); // A whole projection is read on the pool (client_state)
-    start_snapshot_on(s, c);
+    start_snapshot_on(s, c, &s->whole_work);
     tide_loops_leave(loops);
 }
 
-static void start_snapshot_on(tide_server *s, connection *c)
+static void start_snapshot_on(tide_server *s, connection *c, uint64_t *read)
 {
     const tide_game *g = s->game;
     const bool verified = c->verified_world || c->verified_kept;
@@ -2035,6 +2122,7 @@ static void start_snapshot_on(tide_server *s, connection *c)
     c->snapshot_tick = s->tick;
     c->snapshot_stream = false;
     c->sending = true;
+    c->sending_world = true;
     c->frame_ack = s->tick;
     c->frame_mask = 0;
     c->catching_up = true;
@@ -2058,9 +2146,9 @@ static void start_snapshot_on(tide_server *s, connection *c)
                 if (heard->event == TIDE_HEARD_DESTROYED_CAUSE) tide_event_log_copy(&causes, &frame->events, heard, 0);
             }
         }
-        uint8_t *bytes = pack_client_state(g, s->world, NULL, had, &causes, player, 0, &size, NULL, 0);
+        uint8_t *bytes = pack_client_state(g, s->world, NULL, had, &causes, player, 0, &size, NULL, 0, read);
         tide_event_log_free(&causes);
-        if (!bytes) { c->sending = false; return; }
+        if (!bytes) { c->sending = c->sending_world = false; return; }
         send_in_chunks(s, c, SEND_CLIENT_WORLD, bytes, size, NULL);
         return;
     }
@@ -2071,6 +2159,7 @@ static void start_snapshot_on(tide_server *s, connection *c)
     if (c->hashed) {
         uint32_t size;
         uint8_t *bytes = hashes_of(s, c->hashed, &size);
+        *read += size;
         send_in_chunks(s, c, SEND_HASHES, bytes, size, NULL);
         return;
     }
@@ -2079,6 +2168,7 @@ static void start_snapshot_on(tide_server *s, connection *c)
     if (memcmp(asset_pack, c->asset_pack, 32) == 0 && memcmp(asset_pack, (uint8_t[32]){0}, 32) != 0) {
         uint32_t size;
         uint8_t *bytes = g->pack_delta(s->world, NULL, NULL, 0, true, &size);
+        *read += size;
         send_in_chunks(s, c, SEND_WORLD, bytes, size, NULL);
         return;
     }
@@ -2088,6 +2178,7 @@ static void start_snapshot_on(tide_server *s, connection *c)
         shared_pack *made = tide_alloc_zeroed(1, sizeof *made);
         made->tick = s->tick;
         made->bytes = g->pack_delta(s->world, NULL, NULL, 0, false, &made->size);
+        *read += made->size; // (Once: the players after it this tick share it)
         s->pack = made;
     }
     s->pack->refs++;
@@ -2107,6 +2198,52 @@ static void send_lacking(tide_server *s, connection *c, const uint8_t *lacks, co
     free(c->hashed);
     c->hashed = NULL;
     send_in_chunks(s, c, SEND_WORLD, delta, delta_size, NULL);
+}
+
+// The whole projections that wait (connection.whole_wanted) are prepared, the one that has waited longest first,
+// until the update has read WHOLE_UPDATE_MOST of them: the rest wait for the next one. Called where each kind was
+// prepared before it waited its turn: after an update's packets (a player that wants its world, what one lacks of a
+// hash offer), after its repairs are read (a repair that comes to the player's world again, or to the hash offer) and
+// after its sending (a player too far behind for the ticks kept).
+static void prepare_wanted(tide_server *s)
+{
+    if (!s->whole_waiting || s->ended) return;
+    const tide_jobs *const loops = tide_loops_enter(s->desc.jobs); // A whole projection is read on the pool (client_state)
+    while (s->whole_waiting && s->whole_work < WHOLE_UPDATE_MOST) {
+        connection *c = NULL;
+        for (uint32_t i = 0; i < s->players; i++) {
+            connection *o = &s->connections[i];
+            if (o->used && o->whole_wanted && (!c || o->whole_asked < c->whole_asked)) c = o;
+        }
+        if (!c) { // (None is left: a connection's wait goes with it, so this isn't reached)
+            s->whole_waiting = 0;
+            break;
+        }
+        const uint8_t kind = c->whole_wanted;
+        const uint32_t tick = c->whole_tick;
+        uint8_t *lacks = c->whole_lacks;
+        const uint32_t lacks_size = c->whole_lacks_size;
+        c->whole_lacks = NULL;
+        unwant_whole(s, c);
+        if (kind == WHOLE_WORLD) {
+            start_snapshot_on(s, c, &s->whole_work);
+        } else if (kind == WHOLE_OFFER) {
+            // The repair it waited for, unless it has the tick since or something else is on its way to it; where
+            // its ends aren't kept any more, its world again
+            const bool wanted = tick > c->frame_ack && tick <= s->tick && !c->sending && !c->making;
+            const void *world, *base;
+            tide_event_log events = {0};
+            if (wanted && repair_ends(s, c, tick, &world, &base, &events)) {
+                offer_client_repair_on(s, c, tick, world, base, events, &s->whole_work);
+            } else if (wanted) {
+                start_snapshot_on(s, c, &s->whole_work);
+            }
+        } else if (c->sending && c->snapshot_kind == SEND_CLIENT_HASHES && c->whole_lacks_number == c->snapshot_number) {
+            send_client_lacking_on(s, c, lacks, lacks_size, &s->whole_work);
+        }
+        free(lacks);
+    }
+    tide_loops_leave(loops);
 }
 
 static void stop_upload(connection *c)
@@ -2673,10 +2810,14 @@ static void on_client(tide_server *s, connection *c, tide_reader *r)
     }
     if (s->game->client_state) frames_had(s, c, frame_ack, frame_mask, newest);
 
+    // Whether it had heard of what it's being sent when it wrote this: it echoes the time of a WELCOME that named
+    // the transfer, or of something said after one
+    if (newest && c->sending && echo && c->welcomed_number == c->snapshot_number
+        && (int16_t)(uint16_t)(echo - c->welcomed_said) >= 0) c->welcome_heard = true;
     const bool was_sending = c->sending;
     if (newest && wants && !repair_tick && (c->snapshot_kind == SEND_CLIENT_HASHES || c->snapshot_kind == SEND_CLIENT_PATCH)) {
         stop_sending(s, c);
-        start_snapshot(s, c); // Its comparison was discarded by reload or timeline replacement.
+        want_whole(s, c, WHOLE_WORLD); // Its comparison was discarded by reload or timeline replacement.
     }
     if (c->sending) {
         if (chunk_number == c->snapshot_number) { // About what's being sent, not something older
@@ -2692,10 +2833,13 @@ static void on_client(tide_server *s, connection *c, tide_reader *r)
         if (c->snapshot_kind == SEND_HASHES && lacks && lacks_number == c->snapshot_number) {
             send_lacking(s, c, lacks, lacks_size);
         } else if (c->snapshot_kind == SEND_CLIENT_HASHES && lacks && lacks_number == c->snapshot_number) {
-            send_client_lacking(s, c, lacks, lacks_size);
+            want_client_lacking(s, c, lacks, lacks_size);
         } else if ((c->snapshot_kind != SEND_HASHES && c->snapshot_kind != SEND_CLIENT_HASHES && c->chunk_ack >= c->chunk_count
                     && (c->chunk_count || chunk_number == c->snapshot_number)) // An empty one once it said it had it (mirrors)
-                   || (newest && !wants)) {
+                   // Its world again is one it may not have asked for (it fell too far behind, a reload): what it
+                   // wrote before it heard of it says nothing about it, and stopping on that left it with neither
+                   // the world nor the ticks before it, for good
+                   || (newest && !wants && (!c->sending_world || c->welcome_heard))) {
             stop_sending(s, c); // It has the world, or one that needs nothing: ticks from here
         }
     }
@@ -2712,7 +2856,8 @@ static void on_client(tide_server *s, connection *c, tide_reader *r)
             // Stream requests are recent evidence too. A failed periodic
             // prediction probe must not restart at an old exact endpoint.
             c->repair_last = s->now;
-            if (!c->sending) {
+            // (Not while a whole projection waits for it either: it's as good as being sent one)
+            if (!c->sending && !c->whole_wanted) {
                 c->repair_pending = repair_tick;
                 c->repair_pending_stream = (flags & CLIENT_REPAIR_STREAM) || s->now < c->repair_stream_until;
             }
@@ -2720,7 +2865,7 @@ static void on_client(tide_server *s, connection *c, tide_reader *r)
     } else if (!was_sending && newest && wants) {
         c->has_world = (flags & CLIENT_HAS_WORLD) != 0;
         c->can_start = (flags & CLIENT_CAN_START) != 0;
-        start_snapshot(s, c); // Its world went wrong, or never came: sent again
+        want_whole(s, c, WHOLE_WORLD); // Its world went wrong, or never came: sent again
     } else if (!was_sending) {
         frames_had(s, c, frame_ack, frame_mask, newest);
     }
@@ -4201,6 +4346,10 @@ static void send_welcome(tide_server *s, connection *c)
     c->view_limit = s->tick;
     c->said = millis16(s->now);
     c->said_any = true;
+    if (c->sending && c->welcomed_number != c->snapshot_number) { // The first to name this transfer
+        c->welcomed_number = c->snapshot_number;
+        c->welcomed_said = c->said;
+    }
 }
 
 static void send_chunks(tide_server *s, connection *c)
@@ -4398,7 +4547,7 @@ static void send_frames(tide_server *s, connection *c)
     // Too far behind for the ticks kept: the whole world again. One catching
     // up with the world it was sent has them all kept for it (keep_needed).
     if (!c->catching_up && s->tick - c->frame_ack >= s->w.history) {
-        start_snapshot(s, c);
+        want_whole(s, c, WHOLE_WORLD);
         return;
     }
     c->view_limit = s->tick;
@@ -4750,11 +4899,13 @@ void tide_server_update(tide_server *s, const double now)
     land(s);
     s->now = now;
     s->updates++;
+    s->whole_work = 0;
     for (uint32_t i = 0; i < 2; i++) server_receive(s, i);
     for (uint32_t i = 0; i < s->players; i++) {
         connection *c = &s->connections[i];
         if (c->used && now - c->last_heard > (c->greeted ? TIMEOUT : HELLO_TIMEOUT)) drop_connection(s, c);
     }
+    prepare_wanted(s); // What waited from the updates before, then what this one's packets asked for
     // Players of the world it went on from who didn't come back in time left
     if (now >= s->present_until && tide_players_any(&s->present)) {
         for (uint32_t i = 0; i < s->players; i++) {
@@ -4801,7 +4952,7 @@ void tide_server_update(tide_server *s, const double now)
     uint32_t due = 0;
     for (uint32_t i = 0; !s->ended && i < s->players; i++) {
         connection *c = &s->connections[i];
-        if (!c->used || c->welcoming || c->making || !c->repair_pending
+        if (!c->used || c->welcoming || c->making || c->whole_wanted || !c->repair_pending
             || (c->repair_pending_stream && c->repair_gap > 1u && s->tick - c->repair_streamed < c->repair_gap)) continue;
         if (!s->repair_starts) s->repair_starts = tide_alloc_zeroed(s->players, sizeof *s->repair_starts);
         s->repair_starts[due++] = (repair_start){.c = c, .tick = c->repair_pending_stream ? s->tick : c->repair_pending};
@@ -4828,6 +4979,9 @@ void tide_server_update(tide_server *s, const double now)
         started++;
     }
     if (started) repairs_packed(s, s->repair_starts, started);
+    // Those that came to a whole projection wait for it, and it's prepared now where the update has allowance left
+    for (uint32_t i = 0; i < started; i++) (void)repair_wants_whole(s, &s->repair_starts[i]);
+    prepare_wanted(s);
     for (uint32_t i = 0, next = 0; i < s->players; i++) {
         connection *c = &s->connections[i];
         if (!c->used) continue;
@@ -4838,7 +4992,11 @@ void tide_server_update(tide_server *s, const double now)
         } else {
             if (next < started && s->repair_starts[next].c == c) repair_send(s, &s->repair_starts[next++]);
             else if (c->making && c->making->update != s->updates) finish_client_repair(s, c);
-            if (c->sending) {
+            if (c->whole_wanted == WHOLE_WORLD && !c->sending) {
+                // Its world waits for an update with allowance left: nothing yet, which a WELCOME says, and no tick
+                // (it couldn't run them)
+                send_welcome(s, c);
+            } else if (c->sending) {
                 send_welcome(s, c);
                 send_chunks(s, c);
                 if (c->snapshot_kind == SEND_CLIENT_HASHES) send_frames(s, c);
@@ -4848,6 +5006,7 @@ void tide_server_update(tide_server *s, const double now)
             }
         }
     }
+    prepare_wanted(s); // A player the sending found too far behind for the ticks kept
     if (s->published_count) forget_published(s);
     if (!s->ended) send_handover(s);
     if (fly) fly_tick(s, now);
@@ -9466,7 +9625,8 @@ static void commit_server(tide_server *s, const tide_game *g, server_migration *
     }
     bool *sending = tide_alloc_zeroed(s->players, sizeof *sending); // The old build's transfers start again
     for (uint32_t i = 0; i < s->players; i++) {
-        sending[i] = s->connections[i].used && (s->connections[i].sending || s->connections[i].making);
+        sending[i] = s->connections[i].used
+            && (s->connections[i].sending || s->connections[i].making || s->connections[i].whole_wanted);
         if (sending[i]) stop_sending(s, &s->connections[i]);
         clear_commands(&s->connections[i].commands); // Wire bytes describe the old layout
         stop_upload(&s->connections[i]);

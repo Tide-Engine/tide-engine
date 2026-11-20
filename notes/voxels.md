@@ -1860,6 +1860,31 @@ under load). Those measurements apply to Earth. Dividing the voxel
 streamer's ownership and agreeing on cross-border views would be a
 separate game design and measurement.
 
+### An outage's worlds, a few an update (2026-11-20)
+
+What the 100 spread bots cost the server when all of them need their world again at once (notes/netcode.md, top
+section, has the session's side and the table). `bench_voxels --players 100 --spread 256 --join-every 0.1 --seconds
+20 --threads 12 --outage 4.5` cuts every bot off for 4.5 s, 3 s after the last caught up (Windows release, 12
+threads, BelowNormal, the machine shared; the world at about 84,000 chunks, a bot's projection about 0.9 MB and
+94 KB as sent).
+
+- **Before**: 50 worlds prepared in one update, 152.7 ms of its 162.4, and 22 in another (95 ms); 87 bots back
+  0.28 s after the outage at the median, and 13 never (their world started again every 4 s and was stopped before
+  any of it went).
+- **Now**: the longest update from the outage's start until everyone is back 32.7 ms (four or five worlds an
+  update, 4 MiB of projections read), all 100 back, 0.38 s at the median and 0.75 at most; with no allowance and
+  the transfers fixed, 146.2 ms and 0.30 and 0.70 s.
+- **20 of the 100 cut off** (`--outage-bots 20`): longest update 45.5 ms to 23.6; the 20 back in 0.32 s at the
+  median and 0.48 at most (0.28 and 0.50); the 80 playing on as far behind as they were (45 ticks at most, 25 or
+  fewer in 99 frames of 100).
+- **The steady state is the same run**: `--players 100 --spread 256 --seconds 30 --threads 12` ends on the hash and
+  on what the bots took of 2026-11-19 (`0x5165130e825fa70f`, `0xb8fa79ab9a74ff3d`), 7.41 ms median and 22.32 p99
+  (7.77 and 26.48 then; one run each, within the machine's noise: still past 16.7 ms at p99, as it was), and the 8
+  bots on theirs (`0x1fdc545078ce68e8`, `0xb4e8a59de2f669db`).
+
+What's left of that update is the tick and the repairs beside four or five worlds read one after another: the
+worlds on the pool's threads at once is what would shorten it (netcode.md, Left).
+
 ### What's left, most telling first
 
 1. ~~Inputs of every player, in every unacknowledged frame (section 5): 13 to 44 KB a second a player with real hands on the mice.~~ Cut the same day (section 5, the last paragraph of that bullet): 19.2 KB a second with 8 turning and standing, 10.6 flying; 32 are as they were (20.8 standing), each tick once, and a second copy of theirs is the owner's to weigh (netcode.md, Open).
@@ -1882,6 +1907,13 @@ separate game design and measurement.
 
 ## Tests
 
+- 2026-11-20 (An outage's worlds, a few an update): no pin moved. New: `bench_voxels_outage_1` and `_12` (16 bots cut
+  off for 4.5 s, all back, world `0x3c0dadd2cc07a71b` and taken `0xd1ed3a70bc94f8bd` on 1 and 12 threads), and two
+  engine tests (netcode.md, top section, Tests). Release, Windows: `tide_tests` (all), `bench_voxels` and its
+  `_forgets`, `_wide`, `_arrives`, `_views`, `_reads_1`, `_4`, `_12`, `_outage_1`, `_12`, `_checked`, `bench_gallery`,
+  `bench_sand`, `bench_earth` (and `_split`, `_diverge`), `tidec_e2e_net*`, `tidec_e2e_visibility_host_lifecycle`,
+  `_lifecycle`, `_repairs`, `_runs`, `_projection`, `sumo_tests`, `towers_tests`: 30 of 30. The sanitizer and web
+  runs are listed in netcode.md.
 - 2026-11-17, parts (A check's rows on every thread): no pin moved; the runs above end on the base's world hashes
   and what the bots' machines took, before and after, 12 threads and 1. New: `tidec_e2e_visibility_walks_pool` (the
   checks on the platform's pool against one thread's, memo and journal by `tide_client_check_digest`), and the
