@@ -112,7 +112,28 @@ A dedicated server can keep its world in a folder, so a crash or a restart doesn
 tide run --server --anonymous --shards 4 --shard-journal world
 ```
 
-It writes a checkpoint now and then, and every tick of every shard since, to the disk before anything one shard sends reaches another. Started again with the same folder, it goes on where the world was, to the tick, and nothing that crossed a border is lost or happens twice. Players have 20 seconds to reconnect as themselves before the world sends `PlayerLeft`.
+It writes a checkpoint as the world starts and now and then after, and every tick of every shard since, to the disk before anything one shard sends reaches another. Started again with the same folder, it goes on where the world was, to the tick, and nothing that crossed a border is lost or happens twice. Players have 20 seconds to reconnect as themselves before the world sends `PlayerLeft`.
+
+The folder is all of the world. What its match saves with `Storage.Save` is in the folder's `store`, not in the game's own save folder, so copying the folder while the server is stopped copies the world, and putting a copy back puts the world back. The store keeps step with the journal: it hears of a tick only once the tick is on the disk, and a server that goes on from its journal writes again what those ticks saved. So after a crash the store has every save of the ticks the world has, and none of a tick it doesn't.
+
+A server that can't go on from the folder doesn't start, says why and leaves the folder as it was. That's a folder with records and no checkpoint, or the cases below.
+
+### A new build of the game
+
+A world goes on only with the build of the game that kept it. A server built from changed match code refuses the folder and says so, rather than run a world on rules it wasn't made with. To move a world to a new build:
+
+```sh
+# The build that has the world: stop its server, which seals the world. After a crash, seal it without a run:
+game-server --shard-journal world --shard-seal
+# The new build: look first, then take it up
+new-server --shard-journal world --shard-upgrade --shard-verify
+new-server --anonymous --shard-journal world --shard-upgrade
+```
+
+- A server that stops (Ctrl+C, or its service's stop) seals its world: a last checkpoint with nothing on its way between shards and everything saved in the store, and no records after it. A world that doesn't come to rest within two seconds keeps its journal instead, and its own build goes on from it.
+- `--shard-verify` reads the folder, runs the journal again, prints where each shard is and exits: 0 if this build goes on with the world. It writes nothing, keeps no store and listens on nothing, so it can run on a copy or beside nothing else. With `--shard-upgrade` it takes another build's sealed world up in memory and runs it for two seconds.
+- `--shard-upgrade` takes up a sealed world of another build whose match state is laid out the same: the same components, singletons, events, inputs and async code, with other rules. The world as its build sealed it stays in the folder as `checkpoint.<its build>`. Until the new server has started, the folder is still the old build's. After, the old build is refused, and there's no way back but a copy of the folder made before: the new build's saves are in the store.
+- A world that isn't sealed, or whose state is laid out differently, is refused. A change of layout isn't carried over yet.
 
 A server that can't read all of the folder doesn't start: it names the file it couldn't read (one another program holds open, or one this user isn't allowed to read) and leaves the folder as it was, rather than start a new world or go on without a shard's ticks. A record cut short by the crash at the end of a shard's file is passed over, as nothing its tick sent had gone on, and the server says so.
 

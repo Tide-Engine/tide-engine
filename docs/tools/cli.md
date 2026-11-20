@@ -729,7 +729,10 @@ reload. Server executables support:
 | `--udp-only` | Omit the shared WebRTC room |
 | `--shards <n>`, `--shard-width <units>` | A [sharded game](../multiplayer/shards.md)'s world as `n` regions along x, each this wide, each a match; players join the world at match 0 |
 | `--shard-most <n>` | Splits a sharded game's region in two when its shard owns more entities than this, and merges two neighbouring regions owning a quarter of it together |
-| `--shard-journal <folder>` | Keeps a sharded game's world in a folder: a checkpoint now and then and every shard's ticks since, on the disk before anything a shard sends goes on. Started again with the same folder, the server goes on where the world was |
+| `--shard-journal <folder>` | Keeps a sharded game's world in a folder: a checkpoint now and then and every shard's ticks since, on the disk before anything a shard sends goes on, and its match's store. Started again with the same folder, the server goes on where the world was. Only the build of the game that kept a world goes on with it |
+| `--shard-verify` | With `--shard-journal`: says whether this build goes on with the folder's world and where each shard is, then exits. Writes nothing and listens on nothing |
+| `--shard-seal` | With `--shard-journal`: goes on from the folder, seals the world as a server that stops does, and exits |
+| `--shard-upgrade` | With `--shard-journal`: takes up a world another build of the game sealed, when its match state is laid out the same |
 | `--frames <n>` | Bound a test run to this many service iterations |
 
 The service uses wall-clock time and sleeps between iterations, normally about

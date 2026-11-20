@@ -190,14 +190,15 @@ static bool resume(void)
     // A sharded match: every shard's world, carried over in its checkpoint
     uint8_t *shards = NULL;
     uint32_t shards_size = 0;
+    // (the checkpoint becomes this build's either way: one is only loaded by the build it says made it)
     if (ok && h.shards_size && h.hash == game->game->hash) {
-        shards = malloc(h.shards_size);
+        shards = tide_shard_checkpoint_rewrite(block + h.shards, h.shards_size, NULL, NULL, game->game->simulation,
+                                               game->game->hash, &shards_size);
         ok = shards != NULL;
-        if (ok) memcpy(shards, block + h.shards, h.shards_size);
-        shards_size = h.shards_size;
     } else if (ok && h.shards_size) {
         shard_carry carry = {old, {0}, {0}, 0};
-        shards = tide_shard_checkpoint_rewrite(block + h.shards, h.shards_size, carry_shard, &carry, &shards_size);
+        shards = tide_shard_checkpoint_rewrite(block + h.shards, h.shards_size, carry_shard, &carry, game->game->simulation,
+                                               game->game->hash, &shards_size);
         ok = shards != NULL;
         match_done = ok ? carry.first : carry.failed;
     }

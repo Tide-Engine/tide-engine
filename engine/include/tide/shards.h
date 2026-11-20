@@ -71,6 +71,9 @@ typedef struct tide_shards_desc {
     void (*flush)(void *user);
     void (*checkpoint)(void *user, const uint8_t *data, uint32_t size);
     double checkpoint_seconds;
+    // A new world's own name, in every checkpoint of it (tide_shard_checkpoint_id): a host's entropy, so its
+    // journal's files are told from another world's. A loaded world keeps its checkpoint's.
+    uint64_t world_id[2];
 } tide_shards_desc;
 
 // A dedicated server's matches as the shards (tide_shards_desc.host_start
@@ -115,13 +118,27 @@ uint32_t tide_shards_at(const tide_shards *s, const double p[3]);
 // A checkpoint: every shard's world and what the orchestrator keeps, at one
 // tick, between updates; bytes to free(). Loading one makes the orchestrator
 // it was, its shards' servers new (players connect again).
+// A checkpoint says which build made it (the game's simulation identity, tide_shard_checkpoint_identity), and
+// loading, recovering and restarting refuse another build's: tide_shard_checkpoint_fits says so beforehand.
 uint8_t *tide_shards_save(const tide_shards *s, uint32_t *size);
+// With a journal, the store hears of a tick only once its record is kept, and a checkpoint is kept only once the
+// store has everything asked before it. This returns once every shard's requests so far are carried out and on
+// the disk: for a host that saves a checkpoint itself (tide_shards_save). False where the store couldn't write.
+bool tide_shards_settle(tide_shards *s);
+// A sealed checkpoint: the world with nothing on its way between shards, nothing waiting on a border and
+// nothing owed to the store, so no journal goes with it and another build can take it up
+// (tide_shard_checkpoint_rewrite). NULL while the world isn't quiet (tide_shards_quiet): update and try again.
+uint8_t *tide_shards_seal(tide_shards *s, uint32_t *size);
+// The world's name and its last checkpoint's number (tide_shard_checkpoint_id).
+void tide_shards_identity(const tide_shards *s, uint64_t world_id[2], uint32_t *sequence);
 tide_shards *tide_shards_load(const tide_shards_desc *desc, const uint8_t *data, uint32_t size, double now);
 // A checkpoint, then each shard's journal records kept since it, run again:
 // the world as it was at the last records kept. `records` gives shard
 // `shard`'s records in turn (the `index`th from 0), false past the last;
 // records from before the checkpoint are passed over. NULL for a world whose
-// records don't make the ticks they say.
+// records don't make the ticks they say. What the replayed ticks asked the store to save and delete is carried
+// out again before it returns (`desc->io`), in the order of their ticks since the checkpoint and then their
+// shards: a save a crash kept from the disk is there again, and one that was there is written as it was.
 typedef bool (*tide_shards_records)(void *user, uint32_t shard, uint32_t index, const uint8_t **record, uint32_t *size);
 tide_shards *tide_shards_recover(const tide_shards_desc *desc, const uint8_t *data, uint32_t size,
                                  tide_shards_records records, void *records_user, double now);

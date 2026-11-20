@@ -249,7 +249,7 @@ if(TIDE_PLATFORM)
     add_test(NAME tidec_e2e_visibility_walks_pool COMMAND tidec_e2e_visibility_walks_pool)
 endif()
 tide_e2e_test(shards) # One world split across shards: moving, ghosts, waiting on borders, checkpoints and splits
-tide_e2e_test(shards_players) # A player's machine following their avatar from shard to shard
+tide_e2e_test(shards_players SOURCES e2e/shards_players.tide e2e/shards_players_walk.tide) # A player's machine following their avatar from shard to shard
 tide_e2e_test(shards_visibility) # A visibility group the root keeps, read on every shard and changed from a region
 tide_e2e_test(prefabs SOURCES e2e/prefabs.tide e2e/prefabs.tprefab)
 tide_e2e_test(scene_startup SOURCES e2e/scene_startup.tide e2e/scene_startup.tprefab)

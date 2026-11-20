@@ -1,5 +1,194 @@
 # Shards: one world across servers
 
+## Exact-build recovery, sealed upgrades and the store across a crash (2026-11-20)
+
+The engine review found two things. A checkpoint with no journal record since
+it loaded under any build that could decode the world, because the build is
+checked only when a player joins. And a tick's store requests went to the
+provider before the tick's journal record was written, while a replay asked
+the store nothing, so after a crash the store could hold a save of a tick the
+world doesn't have and lack one of a tick it has. Both were confirmed by
+scratch probes on Windows ASan before anything changed. The owner left the
+decisions to Claude (2026-11-20, "go with your gut"); they're Provisional in
+the spec (Shards, A kept world is its build's; The server's store, Across a
+crash) and listed under Picks below.
+
+### A checkpoint is its build's (envelope 7)
+
+- After the magic and `SAVE_VERSION` 7 the head has 61 bytes of identity: the
+  32-byte simulation identity, the layout identity (`tide_game.hash`), the
+  world's 16-byte name, a sequence number and a flags byte (bit 0: sealed).
+  `tide_shard_checkpoint_identity` reads it; `tide_shard_checkpoint_fits`
+  compares it with a build as admission does: the simulation, or for a table
+  with none, the layout.
+- `tide_shard_coordinator_load` refuses another build's, so `tide_shards_load`
+  and `_recover` do. `tide_shards_restart` checks before it stops the shard
+  it has. The managed module's `coordinator_load` and `checkpoint_world`
+  refuse too (it fills the identity from `tide_game_api`, and a new world's
+  name from the entropy import), so a shard is never staged from another
+  build's checkpoint. The service needs no change: it reads checkpoints only
+  through the module's exports, and each release has its own module.
+- The world's name is the host's (`tide_shards_desc.world_id`, the
+  coordinator desc's) for a new world and the checkpoint's for a loaded one.
+  The sequence counts every checkpoint the coordinator makes, gathered or
+  `tide_shard_coordinator_save`'s (which is why that takes a coordinator that
+  isn't const now).
+- `tide_shard_checkpoint_rewrite` gained `simulation` and `layout`: with them
+  the result is that build's and unsealed, and with no `world` function every
+  world stays as it is. It's the one way across builds. `platform/src/reload.c`
+  stamps the new build on both its paths (it copied the bytes where the layout
+  was the same, which the new program would now refuse), and
+  `tide_shards_rebuilt` gives the coordinator the new build's identity
+  (`tide_shard_coordinator_identity`) for a reload in place.
+- Journal records are as they were. With the checkpoint's build equal to the
+  running one, the per-tick hash check covers them.
+- `tide_game.hash` is the generated header's hash without its first line; the
+  simulation identity is appended after it's taken. It covers every type, the
+  world's tables and each task table's code-and-frame fingerprint, which is
+  what reload already trusts for "the same layout". A `--define` shows in the
+  header, so two builds that differ by a define have different layouts.
+
+### Sealing and taking a world up
+
+- `tide_shards_seal`: NULL unless `tide_shards_quiet`; then `tide_shards_settle`
+  and a checkpoint with the sealed flag. A sealed checkpoint loads as any.
+- `tide_serve`, with `--shard-journal`:
+  - Reads all of the folder before changing any of it (`serve_open`): this
+    build's checkpoint and its records, another build's (refused, both
+    simulations named, or with `--shard-upgrade` checked for sealed, the same
+    layout and no records after it), or nothing.
+  - A new world is checkpointed before the server listens, after what its
+    start saved is in the store. So records with no checkpoint are a folder
+    that lost its checkpoint, and are refused. This replaces the same day's
+    pick of removing them and starting anew, which was for a server that
+    ended before its first checkpoint; that can't happen now.
+  - Each log starts with 32 bytes: `TSLG`, a version, the world's name, the
+    sequence of the checkpoint it follows and its shard. A log of an earlier
+    sequence is from before the checkpoint (a crash between the checkpoint's
+    move and the logs' removal) and is passed over and said. Another world's,
+    another shard's or a later sequence's is refused. A file shorter than a
+    head is a cut-short one, passed over as a cut-short record is.
+  - As it stops (a signal, or `--frames` running out) it tries for two
+    seconds to seal the world, updating meanwhile, and says which it did. A
+    world that isn't sealed keeps its journal.
+  - `--shard-seal` goes on from the folder, skips the service loop, seals and
+    exits 0, or 1 if it couldn't.
+  - `--shard-upgrade` writes the sealed checkpoint beside as
+    `checkpoint.<first 8 bytes of its simulation, hex>`, rewrites it for this
+    build in memory, loads it and writes this build's checkpoint over
+    `checkpoint`. Until that move the folder is the old build's.
+  - `--shard-verify` runs before the port is opened, with shards the
+    orchestrator makes itself, no journal callbacks and no store: it recovers
+    (or with `--shard-upgrade` takes the world up and runs 240 updates),
+    prints each shard's tick and world hash and exits. Nothing is written.
+  - On POSIX the folder is synced after a checkpoint's move and in the flush
+    after a log is made (`serve_sync_folder`). Windows keeps names with the
+    file.
+- `tide run --server` passes the three flags on (`compiler/cli/main.c`,
+  `help.c`).
+
+### The store keeps step with the journal
+
+- `tide_server_desc.hold_store`: `tick_end` moves the tick's requests to
+  `held` instead of sending them, and `tide_server_store_release` sends them.
+  `shards.c` sets it for every shard of a world with a journal and releases
+  after `flush` in `tide_shards_update`, in `tide_shards_settle` and as a shard
+  stops. Before a server's first tick a release also sends what the start
+  asked, which no record has. A server with no journal is as before.
+- `tick_end` now hands requests over after `journal_tick`, not before, for
+  every server. A managed module's host gets the journal import before `keep`.
+  Answers reach the same tick as before.
+- `tide_storage_settle` waits for a line's batches and for the provider's
+  flush, leaving the answers. `tide_shards_settle` flushes the journal,
+  releases and settles every shard. A checkpoint action settles first and
+  aborts if the store couldn't write; `tide_serve` settles before the
+  checkpoints it saves itself.
+- `replay` in `shards.c` binds a store to the world while its records run and
+  keeps each tick's saves and deletes (`tide_storage_take_writes`). After
+  every shard has replayed, `carry_again` sorts them by ticks since the
+  checkpoint and then shard, carries them out on this thread
+  (`tide_storage_serve`) and waits for the flush, before `tide_shards_recover`
+  returns. `tide_shards_desc.io` is where; `tide_serve` sets it to the
+  hosting's. A journal's tick numbers are each shard's own count, so "ticks
+  since the checkpoint" is the common clock: every shard's cursor is the same
+  update.
+- `tide_shards_restart` drops what its replay gathered: the shard's `stop`
+  released and finished its line, and the provider is still this process's.
+- `tide_serve` keeps a journaled world's store in `<folder>/store`
+  (`tide_platform_io_init`'s directory), so the folder is all of the world.
+
+### Picks
+
+1. Envelope 7 with the identity, refused on a mismatch at every entry point.
+   Envelope 6 saves aren't read.
+2. Upgrades only from a sealed checkpoint, by `--shard-upgrade`, the same
+   layout, the source kept beside. A server seals as it stops.
+3. The store is never ahead of or behind the recovered world (option B of the
+   proposal). No stamp per key.
+4. A journaled world's store is in its journal folder.
+5. No way back after an upgrade but a copy of the folder.
+
+### Tests
+
+- `tests/test_shard_identity.c`, `shard_checkpoint_is_its_build_s_alone`:
+  identity read back, sequence counting, another simulation refused, tables
+  with no simulation by layout, envelope 6, a cut-short head and unknown flags
+  refused, seal, and a rewrite that is the other build's and unsealed with
+  every world's bytes as they were. The bounds test's offsets moved by 61.
+- `shards_refuse_a_checkpoint_of_another_build_with_no_records_since`
+  (`shards_test.c`): load, recover and restart refuse, none of the other
+  build's rules ran, the original recovers to its hash; then seal, rewrite,
+  load under the other build, whose rules run, and its checkpoint keeps the
+  world's name with a later sequence. The existing divergent-replay test no
+  longer changes the simulation, so it still reaches the replayed tick.
+- `storage_shards_ask_the_store_once_their_ticks_are_kept`
+  (`storage_await_shards_test.c`): no request reaches the provider between a
+  record being written and the next flush, and no checkpoint is handed over
+  with a request still posted, with checkpoints every 0.05 s.
+- `storage_shards_recovered_from_a_journal_save_again_what_their_ticks_saved`:
+  eight saves of journaled ticks removed from the disk are there again as
+  `tide_shards_recover` returns, with their bytes, and the waiting tasks find
+  them.
+- Each of the three fails with its fix taken out (identity compared as equal;
+  `hold_store` false; `carry_again` skipped).
+- `tide_server_shards_journal` (`server_journal.mjs`, now with a second server,
+  `tide_server_shards_next`: the same game with `shards_players_walk_next.tide`
+  in place of `shards_players_walk.tide`, one function's body, so the same
+  header and another simulation): records with no checkpoint refused; the next
+  build refused, and refused with `--shard-upgrade` while unsealed;
+  `--shard-verify` exits 0 with every file's SHA-256 unchanged; both
+  recoveries seal as they stop and leave no log; the next build is refused on
+  the sealed world, verifies it with `--shard-upgrade`, takes it up, leaves
+  `checkpoint.<id>` equal to the sealed bytes; the first build is then
+  refused; the next build's killed run is sealed by `--shard-seal`.
+- `tide_server_shards_store` (`server_store.mjs`, `storage_await_shards.tide` as
+  a server): the start's save and the eight movers' are under
+  `<folder>/store/Tide/store` after a run that stopped, and after a killed
+  server went on from its journal. This is the platform's real provider and
+  its flush.
+- Windows ASan: those, with `tidec_e2e_shards`, `_shards_players`,
+  `_shards_visibility`, `_storage`, `_storage_await`, `_storage_await_hidden`,
+  `_managed_store`, `_managed_store_shards`, `tide_server_shards` and
+  `earth_tests`, 13 of 13.
+
+### Gaps
+
+- A kept world can't cross to a build with another layout. Reload carries one
+  over with the old build's layout description, which a server build doesn't
+  have and a checkpoint doesn't hold.
+- An event-form load whose answer was on its way at a crash isn't asked
+  again (the proposal's step 4). It needs each shard's unanswered requests in
+  the checkpoint and matched against the records' answers. Waiting tasks do
+  ask again.
+- The managed side replays one shard beside live ones and writes nothing
+  again; that needs the stamp per key (option C) or the service's own fence.
+  The service's tests weren't run against this build.
+- Two shards saving one key in one update are written again in tick-then-
+  shard order, which can differ from the provider's first order.
+- The fixture has no `Storage.Delete`, so a delete run again is covered only
+  by `tide_storage_take_writes` keeping the tick's order.
+- POSIX folder syncs and MinGW are CI's.
+
 ## A journal that can't be read stops the start (2026-11-20)
 
 **The bug** (review of `ec94d6ca7`, Windows ASan): `platform/src/serve.c`'s
@@ -67,224 +256,6 @@ after it is passed over (records replayed are still checked by their world
 hashes). That's the journal's format, which is being designed elsewhere.
 The folder must exist before the server starts, as before. The managed
 host's journal is the service's and wasn't looked at here.
-
-## Exact-build recovery and the store across a crash (2026-11-20 audit and proposal)
-
-Nothing here is built. It records what the native host guarantees today, a
-staged design, its regression plan and the decisions that are the owner's.
-The 2026-11-19 section below is the managed side of the same question.
-
-### What the native host guarantees today
-
-Read from `engine/src/shards.c`, `shard_coordinator.c`, `session.c`,
-`storage.c` and `platform/src/serve.c`, and confirmed by two scratch probes on
-Windows ASan (temporary tests in `shards_test.c` and
-`storage_await_shards_test.c`, not kept).
-
-- **No identity in what is kept.** The checkpoint envelope starts with
-  `SAVE_MAGIC` and `SAVE_VERSION` 6 and nothing of the build. A shard log is
-  bare records (u32 size, record). `tide_game.simulation` and `.hash` are read
-  only at admission (`session.c`, `hosting.c`).
-- **An empty journal is accepted under any build that can decode the world.**
-  `replay` in `shards.c` runs no record, so nothing is compared. Probe: a
-  checkpoint with no record since, loaded through `tide_shards_recover` with a
-  table whose `simulation` and `hash` differ and whose tick changes a match
-  value, is accepted, and the changed rules run on the old world.
-- **A journal is checked only where the difference shows.** Records at or
-  after the cursor must be consecutive and reproduce their full-world hash. A
-  build whose change doesn't touch those ticks passes.
-- **A recovery replaces the source's state at once.** `tide_serve` checkpoints
-  right after recovering and removes every log. After an accepted start under
-  another build there's no copy of what the old build could recover from.
-- **A world isn't recoverable before its first checkpoint.** None is written at
-  creation. The first comes with the first membership or shape change, or after
-  60 seconds (`checkpoint_seconds` 0). A crash before it leaves logs with no
-  checkpoint; the next start makes a new world and appends to those logs.
-- **An interrupted checkpoint is safe on the engine's side.** `checkpoint.next`
-  is synced and moved over `checkpoint`; logs left from before it are skipped
-  by cursor; a cut-short last record is dropped. Unchecked: a read that fails
-  is taken as a missing file (the sibling task's fix), and on POSIX neither the
-  rename nor a new log's directory entry is synced.
-- **The store and the journal have no order between them.** `tick_end` hands
-  the tick's requests to the provider before `journal_tick` writes the record,
-  and `serve_flush` syncs the logs later in the update. The provider writes on
-  its own thread and its flush is not waited for. So after a crash a tick can
-  be in the journal with its save not on disk, or absent from the journal with
-  its save on disk.
-- **A replay asks nothing.** `tide_replay` runs the tick with no store bound.
-  Recorded answers are consumed as input. Saves and deletes of replayed ticks
-  are not written again. Probe: eight saves made in journaled ticks and lost
-  with the provider's queue are still missing after recovery and 120 updates,
-  and the tasks that load them get `NotFound`.
-- **Loads.** A waiting task asks again after recovery (`stored_again`). An
-  event-form load whose answer was on its way is never answered; the game has
-  to retry it.
-- **A clean stop loses nothing** (`tide_server_destroy` sends saves and waits).
-  An in-process `tide_shards_restart` keeps the provider, so it loses nothing
-  either. The loss is a whole-process crash.
-- **The store is the game's, the journal the world's.** `Tide/store` is under
-  the game's `appId` folder; `--shard-journal` is any folder. Copying the
-  journal folder copies no store, and two worlds of one game on a machine
-  share one.
-
-### Stage 1: exact-build recovery
-
-- Envelope 7. The head gains the 32-byte simulation identity, the layout
-  hash, a world ID made once at creation and kept for the world's life, a
-  checkpoint sequence number and a `sealed` flag (Stage 2).
-- `tide_shard_checkpoint_identity(data, size, &out)` reads them without
-  loading, for hosts and messages. `tide_shard_coordinator_load`,
-  `tide_shards_load`, `_recover` and `_restart`, and the managed `shard_stage`
-  and `coordinator_load` refuse another simulation (another `hash` for a
-  handwritten table, as admission does) with a result that says so.
-  `tide_shard_checkpoint_rewrite` stamps the build it rewrites for: reload and
-  the upgrade below are the only ways across builds.
-- Records stay as they are. With the checkpoint's identity equal to the running
-  build's, the hash check covers the records and no record needs a tag.
-- `tide_serve`: a checkpoint at creation, before listening. Logs or a
-  `checkpoint.next` with no `checkpoint` then mean a damaged folder, refused
-  with what to do. Each log starts with the world ID and the checkpoint
-  sequence it follows, so a stale log is recognised by name rather than by
-  tick. The folder is synced after the rename and after a log is made (POSIX).
-- A refusal names both identities and says to start the build that saved the
-  world or to run the upgrade. Nothing in the folder changes on a refusal.
-- Coordination: the sibling's failed-read fix decides when a read error stops
-  recovery. This stage needs only that a failed read is never "no file", and
-  that only a cut-short last record is dropped.
-
-### Stage 2: upgrade preflight and cutover
-
-- `--shard-verify <folder>`: recover with the running build, replay, print
-  each shard's cursor, tick and hash, write nothing, bind no store, listen on
-  nothing. Exit status says whether the folder recovers.
-- `--shard-seal <folder>`: recover, stop admission, wait for `tide_shards_quiet`
-  and an empty store line, flush the store, write a checkpoint with `sealed`
-  set and no log, exit. A sealed checkpoint is a world with no history left to
-  replay and no store write outstanding.
-- `--shard-upgrade`: a build started on a sealed checkpoint of another
-  simulation and the same layout hash copies it to `checkpoint.<source id>`,
-  loads it, and writes its own first checkpoint. Without the flag it's the
-  Stage 1 refusal; an unsealed checkpoint is refused with "seal it with the
-  build that saved it". With `--shard-verify` it loads, runs a bounded number
-  of ticks with no store and no listener, and reports.
-- Interrupted: until the new build's first checkpoint is moved into place the
-  folder is the sealed source, to retry or to start again with the old build.
-  After it, the folder is the new build's and `checkpoint.<source id>` is the
-  way back.
-- A changed layout is a later step. Reload carries a world over with the old
-  build loaded beside the new (`tide_migrate_world`); across processes the old
-  layout would have to be described in the checkpoint.
-
-### Stage 3: the store across a crash
-
-Three semantics. The owner chooses.
-
-- **A. As it is, said plainly.** After a crash a save can be missing or can
-  be of a tick the recovered world never ran. Games treat the store as a cache
-  they can rebuild. No engine work. A voxel world that saves a chunk and
-  destroys it loses the edits.
-- **B. Never ahead, never behind (recommended).**
-  1. A journaled server hands a tick's requests to the provider only once the
-     tick's record is kept (after `flush` in `tide_shards_update`). The whole
-     batch waits, so a save and a load of one key in one tick keep their
-     order. Answers come in the same update or the next. A managed module
-     calls the journal import before `keep`, so its host can order them.
-  2. A checkpoint is kept only once every request of ticks before its cursor
-     is carried out and flushed. Everything before a checkpoint is in the
-     store; everything after is in the journal.
-  3. `tide_shards_recover` replays with a collecting store bound and carries
-     out the replayed ticks' saves and deletes, in tick then shard order,
-     before any shard serves. They are whole-value puts and deletes, and
-     whichever of them the store already has, writing them all again in order
-     ends at the same values. Loads and listings the replay asks are dropped where a record
-     answered them.
-  4. Optional: each shard's unanswered loads and listings at the cursor go in
-     the checkpoint, and recovery asks again the event-form ones no record
-     answered, so a game needs no retry of its own.
-  Cost: store requests wait for one log sync (already paid every tick with
-  records); a checkpoint waits for the provider's flush; recovery writes the
-  saves since the checkpoint again.
-- **C. B, with a stamp per key.** Each value carries (world ID, tick, shard,
-  order) and the store refuses an older one; deletes leave tombstones until a
-  checkpoint passes them. It makes a single shard's replay safe beside live
-  shards on other hosts. Natively B needs none of it: only a whole-process
-  crash loses writes. It changes the store's file format and adds a read to
-  every save.
-
-With B, two shards saving one key in one update are written again in tick
-then shard order, which can differ from the order the provider first had
-them. The spec would say that order is the store's.
-
-### Regression plan
-
-Stage 1 (`shards_test.c`, `server_journal.mjs`):
-- A checkpoint with no record since, loaded with another `simulation`: refused
-  by `_load`, `_recover` and `_restart`; the original table recovers to the
-  same hash. Today: accepted (the probe).
-- The same with a zero `simulation` and another `hash`.
-- A checkpoint of envelope 6, a cut-short head and a head with a wrong
-  identity size: refused, nothing read past the head.
-- `tide_shard_checkpoint_rewrite` output loads under the build it was made
-  for and not under the source.
-- The existing divergent-replay test stays, with the identity made equal so
-  it still reaches the replayed tick.
-- Server process: killed before its first periodic checkpoint, it recovers
-  (today it starts a new world). A folder with logs and no checkpoint is
-  refused. A log of another world ID or an older sequence is passed over. A
-  leftover `checkpoint.next` is ignored and replaced. A second server binary
-  built from the fixture with one changed constant is refused on the first's
-  folder, and the folder's bytes are unchanged afterwards.
-- Managed (`managed_store_shards_test.c`): `shard_stage` and
-  `coordinator_load` refuse another simulation.
-
-Stage 2 (`server_journal.mjs`, the two fixture binaries):
-- `--shard-verify` leaves every file's bytes and times as they were, makes no
-  store file and opens no port; it fails on a gap and on a divergent record.
-- `--shard-seal` leaves a sealed checkpoint and no log; killed at each step
-  (before the checkpoint, between the move and the log removal) the folder
-  still recovers with the old build.
-- `--shard-upgrade` from unsealed: refused. From sealed: `checkpoint.<id>`
-  equals the sealed bytes, players come back with their cookies, entity
-  ownership and the roster match the sealed world. Killed before its first
-  checkpoint: the old build still starts on the folder. Another layout hash:
-  refused.
-
-Stage 3 (`storage_await_shards_test.c`, its `deferred` provider):
-- Saves of journaled ticks dropped with the provider's queue are on disk after
-  recovery, with the last value each key had. Today: missing (the probe).
-- No provider write happens for a tick before the test's `flush` has run for
-  it; a crash between the tick and the flush leaves the store without that
-  tick's save.
-- A save and a load of one key in one tick still find the saved value; a
-  delete then a replay doesn't bring the value back.
-- A checkpoint isn't handed to the host while a request of an earlier tick is
-  still posted.
-- Recovery from a checkpoint and records in whose ticks answers came asks
-  nothing again and writes each key once per save.
-- With 4: an event-form load pending at the crash is answered once after
-  recovery, from a checkpoint with records and from one with none.
-- `tidec_e2e_storage_await` and `managed_store` keep their counts: a server
-  with no journal behaves as before.
-
-### Owner decisions
-
-1. Envelope 7 with the identity, refused on a mismatch at every entry point.
-   Saves of envelope 6 are then unreadable by new builds. Managed worlds keep
-   recovering on their own release, which has its own reader. In the local
-   `tide-services` checkout the service reads checkpoints only through the
-   module's exports; that was a read-only look, not a test.
-2. Upgrades only from a sealed checkpoint, by an explicit flag, same layout
-   first, the source checkpoint kept beside.
-3. Store semantics A, B or C, and whether B includes step 4.
-4. Whether a journaled world's store lives in its journal folder, so that one
-   folder is the world to copy, back up and roll back. Today it's the game's
-   `appId` folder, shared with a player-hosted world of the same game.
-5. Rolling back after an upgrade. Proposed: none once the new build has
-   written to the store; sealing says to back up the journal folder and the
-   store together.
-
-The 2026-11-19 question (pin a saved sharded world to its release in the
-service) is still open and is the service's.
 
 ## Persistent-world upgrades (2026-11-19 audit and proposal)
 
@@ -705,7 +676,7 @@ native/web validation: notes/netcode.md, A server's journal.
 - **Acknowledging** (`acknowledge`): a sender lets go of a message only once every shard has applied everything it was handed (`drained`: no server has injected messages waiting) and those ticks were flushed. Until this change, carrying a message acknowledged it at once, so a crash between a receiver taking a message and applying it lost it.
 - **Reshaping** (`reshape`): more entity ranges, splits, merges and retired shards ending happen only when drained, and any of them (or `checkpoint_seconds` passing) is followed at once by a checkpoint. So no record kept after a checkpoint depends on a shape it doesn't have, and an orchestrator message on its way at a checkpoint is one loading sends again (map, ranges, retirement) or rebuilds (ghosts, routes).
 - **Recovering** (`tide_shards_recover`): the checkpoint, then each shard's records with ticks from the one it saved, through `tide_replay`; a gap, bytes that aren't a record or a hash that differs fail. What was carried and not applied is in its sender's outbox, sent again; what was applied, receivers drop by number. Players of the world have 20 seconds to come back as themselves (`PLAYER_AWAY_SECONDS`, also for a player who drops out briefly: `PlayerLeft` only after it), admitted with their cookies.
-- **A dedicated server's journal** (`--shard-journal <folder>`, `platform/src/serve.c`): `checkpoint` (written beside as `checkpoint.next`, synced, then moved over it) and `shard-<id>.log` (a u32 size and a record, over and over), synced by `flush` when a tick wrote records since the last (an update with none syncs nothing: on Windows each sync flushes the disk's cache, which CI's runners took long enough over, an update at a time, for `tide_server_shards_journal` to overrun 25 seconds; with each sync made 3 ms, a 400-update run took 5.1 s before and 1.9 s after); a checkpoint removes every log. Started with a folder holding a checkpoint, the server recovers from it (a record a crash cut short is passed over) and checkpoints at once, so nothing is written after a cut-short record. A journal that can't be written stops the server, and one that can't all be read stops the start with the folder as it was (2026-11-20, the section at the top).
+- **A dedicated server's journal** (`--shard-journal <folder>`, `platform/src/serve.c`; since 2026-11-20 a checkpoint at the world's start, a head on each log, the store in the folder, and sealing, verifying and upgrading: the section at the top): `checkpoint` (written beside as `checkpoint.next`, synced, then moved over it) and `shard-<id>.log` (a u32 size and a record, over and over), synced by `flush` when a tick wrote records since the last (an update with none syncs nothing: on Windows each sync flushes the disk's cache, which CI's runners took long enough over, an update at a time, for `tide_server_shards_journal` to overrun 25 seconds; with each sync made 3 ms, a 400-update run took 5.1 s before and 1.9 s after); a checkpoint removes every log. Started with a folder holding a checkpoint, the server recovers from it (a record a crash cut short is passed over) and checkpoints at once, so nothing is written after a cut-short record. A journal that can't be written stops the server, and one that can't all be read stops the start with the folder as it was (2026-11-20, the section at the top).
 
 ## Players (`tide/shard_client.h`, `engine/src/shard_client.c`; the orchestrator's `track_players`, `route_players`)
 
@@ -734,7 +705,7 @@ The orchestrator is two halves that talk in bytes, so the same code runs in one 
 - **Load** (`tide_shard_agent_busy`, `tide_shard_coordinator_desc.busiest`): a host says how busy each shard is, the share of the time its updates take; the agent reports it (after `injected`) and the coordinator smooths it (`BUSY_SMOOTHING` 0.05 a report) and trusts it after `BUSY_SETTLING` (120) reports since the region last changed. `too_much` splits a region by entities or by `busy > busiest`; `quiet_together` merges two only if both are a quarter of each limit set. `tide_shards` times each server's update over the time since the last (`busy`), unless `tide_shards_desc.busy` says (tests, hosts); `tide_session` and `tide_serve` don't set `busiest`, as their shards share one machine. Managed: `tide_managed_shard_busy`, and `busiest` is the coordinator description's last f32.
 - Merging: two regions whose boxes make one box (`joins`: equal on every axis but one, where they touch) and whose shards together own a quarter of `most_entities` at most merge, one at a time: the lower id's region becomes both, and the other leaves the map and is told `RETIRE` (into the lower), which its world keeps (`tide_shard_state.into`, the id + 1): its handoff sends what it owns by position, and what has no position (roots of trees) to that shard. Once it owns nothing, has nothing waiting, lent or unacknowledged, and nothing handed to apply, it's stopped (`finish_retiring`). Its id is never given again (`gone`: receivers keep its messages' last number), and a message routed to it goes to the shard it merged into (`live_shard`), so an entity lent to it on the way isn't lost. When the last region left is quiet with the root (which then has no region: it split away), it merges into the root (`maybe_merge`, `merge_into(c, ROOT, last, box)`), whose region becomes the whole world: the world is one shard again, as it started.
 - **A change of shape waits for its checkpoint.** With checkpoints on, a split or merge is decided and its new shard started, but the map (and a `RETIRE`) is told only once a checkpoint with the new shape is kept (`tell_after`, released by `kept`). So no shard's journal depends on a shape no checkpoint has. Without checkpoints it's told at once.
-- **Checkpoints** (`SAVE_VERSION` 5): when drained, idle and due (`checkpoint_seconds`, or the shape or ranges changed), the coordinator captures its own part (ranges, directory, players: whether each is in the world and their cookie) and asks every shard for its world; once all are in, the checkpoint is an action. Acknowledgements wait while one is gathered or kept. Loading starts every shard from its world (and journal records, recovering), and its first report rebuilds the directory from what it owns (one outside its own range, or in none, is listed) and tells each shard which of its entities others hold as ghosts; it sends each shard its ranges, a retiring one its `RETIRE` and every shard the regions again, as orchestrator messages on their way were lost with the servers, and admits the players everywhere with their cookies. `next_index` is the checkpoint's: a range is given only when drained and the change checkpointed.
+- **Checkpoints** (`SAVE_VERSION` 7 since 2026-11-20, whose head says which build made it: the section at the top): when drained, idle and due (`checkpoint_seconds`, or the shape or ranges changed), the coordinator captures its own part (ranges, directory, players: whether each is in the world and their cookie) and asks every shard for its world; once all are in, the checkpoint is an action. Acknowledgements wait while one is gathered or kept. Loading starts every shard from its world (and journal records, recovering), and its first report rebuilds the directory from what it owns (one outside its own range, or in none, is listed) and tells each shard which of its entities others hold as ghosts; it sends each shard its ranges, a retiring one its `RETIRE` and every shard the regions again, as orchestrator messages on their way were lost with the servers, and admits the players everywhere with their cookies. `next_index` is the checkpoint's: a range is given only when drained and the change checkpointed.
 - **One shard started again** (`tide_shard_coordinator_restarted`, `tide_shards_restart` in one process, `tide_shard_checkpoint_world` to find its world in a checkpoint): its host failed, so it starts elsewhere from the last checkpoint and its journal records. What it was handed and hadn't applied went with it, so every shard reports its unacknowledged messages again (`DO_FROM_START`, `delivered` back to `acked`; receivers drop what they had) and its ghosts whole (`DO_TARGETS` marks every entry of what it sent as of unknown bytes, so all goes again and what's gone is still dropped); the shard is told the regions, its ranges, its retirement and the players again, every route is told again, and its first report rebuilds where everything is. Tested by `shards_restart_one_shard_where_it_was`: shard 1 is started again mid-run, at the tick and hash it had, and the world goes on to the same end.
 - **Managed instances** (`platform/include/tide/managed_run.h`, for a game whose header defines `TIDE_GAME_SHARDED`): `tide_managed_shard_new` (from a CONFIG), `_stage`/`_replay`/`_begin` (from a checkpoint's world and its records), `_report`, `_apply`, and the coordinator's `tide_managed_coordinator_create`/`_load`/`_report`/`_step`/`_actions` (as bytes)/`_instructions`/`_kept`/`_restarted`/`_checkpointing`/`_count`/`_set_match`, with `tide_managed_checkpoint_world` and `tide_managed_checkpoint_ticks` (each shard's tick in a checkpoint: its journal's records from before it can go); bytes given the host are in `tide_managed_bytes()`. The shard's journal goes to the host through the import `tide_host.journal`, which only a sharded game's module imports, so other games' modules are as they were.
 - **In one process** (`engine/src/shards.c`), `tide_shards_update` updates every server, flushes the journal, then does a round: every agent reports, the coordinator steps, its actions are done (servers started from a CONFIG or a world, replaying records when recovering; stopped; checkpoints handed to `tide_shards_desc.checkpoint` and confirmed at once) and every agent applies its instructions. A checkpoint begun is gathered in another round within the same update. `tide_shards_save` packs every world at once (`tide_shard_coordinator_save`).

@@ -1208,6 +1208,7 @@ static void copy_message(char out[TIDE_MESSAGE_BYTES], const char *message, cons
 struct tide_server {
     tide_storage storage;     // What its last tick asked of the match's store (tide/storage.h)
     tide_storage_line stored; // ...and what the ticks before asked, on its way: carried out off this thread
+    tide_storage held;        // With hold_store: what ticks asked whose records aren't known kept yet
     tide_preparation *preparation;
     tide_event_log preparation_events;
     tide_event_log *preparation_journals;
@@ -3763,9 +3764,8 @@ static void tick_end(tide_server *s, ticking *t)
     const uint32_t tick = t->tick;
     // The store: what the tick asked goes to the provider's own thread, carried out after what the ticks before
     // asked, or here and now where it has none; what loads and listings found goes to the first tick after it's
-    // ready (receive_stored), which for one carried out here is the next
-    if (s->storage.count) tide_storage_send(&s->stored, &s->storage, s->desc.io, true);
-    receive_stored(s);
+    // ready (receive_stored), which for one carried out here is the next. It's handed over once the tick's journal
+    // record is written (below), so a host that keeps both has the record first.
     private_journal *private = t->private;
     void *before = t->before;
     tide_event_log *journals = t->journals;
@@ -3804,6 +3804,9 @@ static void tick_end(tide_server *s, ticking *t)
     // once, for every repair of a player who confirmed it
     if (before && g->freeze_world) g->freeze_world(before);
     if (s->desc.journal) journal_tick(s, tick, data, w.size, private); // What went into the tick, for tide_replay
+    if (s->desc.hold_store) tide_storage_take(&s->held, &s->storage); // Until its record is kept (store_release)
+    else if (s->storage.count) tide_storage_send(&s->stored, &s->storage, s->desc.io, true);
+    receive_stored(s);
     free(t->journal.commands.data);
     free(t->journal.shards.data);
     free(t->journal.downloads.data);
@@ -4622,9 +4625,11 @@ void tide_server_destroy(tide_server *s)
     tide_storage_unbind(s->world);
     // What was asked of the store is still carried out, but what loads and listings would find, which no tick will
     // take: a server that stops cleanly loses no save its ticks made, nor one its start or a preparation asked for
+    if (s->held.count) tide_storage_send(&s->stored, &s->held, s->desc.io, false);
     tide_storage_send(&s->stored, &s->storage, s->desc.io, false);
     tide_storage_finish(&s->stored);
     tide_storage_free(&s->storage);
+    tide_storage_free(&s->held);
     discard_preparation(s);
     for (uint32_t i = 0; s->connections && i < s->players; i++) {
         connection *c = &s->connections[i];
@@ -4857,6 +4862,19 @@ const void *tide_server_world(const tide_server *s)
 {
     land((tide_server *)(uintptr_t)s); // As it is after the tick that's running, if one is
     return s->world;
+}
+
+void tide_server_store_release(tide_server *s)
+{
+    land(s); // The line is the thread's that ends ticks
+    if (!s->tick) tide_storage_take(&s->held, &s->storage); // The start's, which no tick's record has
+    if (s->held.count) tide_storage_send(&s->stored, &s->held, s->desc.io, true);
+}
+
+bool tide_server_store_settle(tide_server *s)
+{
+    land(s);
+    return tide_storage_settle(&s->stored, s->desc.io);
 }
 
 bool tide_server_store_answer(tide_server *s, const uint64_t number, const uint32_t outcome, const uint8_t *data,

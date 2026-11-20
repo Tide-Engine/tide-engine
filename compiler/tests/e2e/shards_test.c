@@ -1,4 +1,5 @@
 #include "game.h"
+#include "tide/shard_coordinator.h"
 #include "tide/shards.h"
 #include "tide_test.h"
 
@@ -472,9 +473,10 @@ TIDE_TEST(shards_reject_divergent_replay_after_decoding_a_checkpoint)
     const uint64_t expected = tide_game_api.hash_world(tide_shards_world(source, TIDE_SHARD_ROOT));
     tide_shards_destroy(source);
 
-    // Model a release that changes match rules while keeping the checkpoint reader and world layout.
+    // Model a release that changes match rules while keeping the checkpoint reader and world layout, and that
+    // the checkpoint's own identity doesn't tell from the build that made it (a handwritten table, or C the
+    // identity doesn't cover): the replay is what's left to catch it.
     tide_game changed = tide_game_api;
-    changed.simulation[0] ^= 1u;
     changed.tick = tick_with_changed_rules;
     changed_wallet = false;
     d.game = &changed;
@@ -494,6 +496,84 @@ TIDE_TEST(shards_reject_divergent_replay_after_decoding_a_checkpoint)
     forget_records();
     free(journal.records[TIDE_SHARD_ROOT]);
     free(journal.sizes[TIDE_SHARD_ROOT]);
+    free(saved);
+}
+
+// A checkpoint is its build's alone. With no record since it nothing is run again, so nothing of the replay
+// could tell another build's rules from the ones that made the world: until the checkpoint said who made it,
+// such a world went on under any build that could read its layout, on rules it was never run with.
+TIDE_TEST(shards_refuse_a_checkpoint_of_another_build_with_no_records_since)
+{
+    memset(&journal, 0, sizeof journal);
+    tide_shards_desc d = desc_of(0);
+    d.transports = NULL;
+    tide_shards *source = tide_shards_create(&d, 0.0);
+    TIDE_REQUIRE(source != NULL);
+    tide_shards_update(source, 0.1);
+    uint32_t size = 0;
+    uint8_t *saved = tide_shards_save(source, &size);
+    TIDE_REQUIRE(saved != NULL && size > 0);
+    const uint64_t expected = tide_game_api.hash_world(tide_shards_world(source, TIDE_SHARD_ROOT));
+
+    tide_game changed = tide_game_api;
+    changed.simulation[5] ^= 0x40u;
+    changed.tick = tick_with_changed_rules;
+    changed_wallet = false;
+    tide_shards_desc other = d;
+    other.game = &changed;
+    TIDE_CHECK(tide_shard_checkpoint_fits(saved, size, changed.simulation, changed.hash) == TIDE_SHARD_CHECKPOINT_OTHER_BUILD);
+    TIDE_CHECK(tide_shards_load(&other, saved, size, 0.2) == NULL);
+    TIDE_CHECK(tide_shards_recover(&other, saved, size, give_record, NULL, 0.2) == NULL); // No records: nothing to run
+    TIDE_CHECK(!changed_wallet); // None of its rules ran on the world
+
+    // Nor is one shard started again from another build's checkpoint beside the rest
+    uint32_t other_size = 0;
+    uint8_t *others = tide_shard_checkpoint_rewrite(saved, size, NULL, NULL, changed.simulation, changed.hash, &other_size);
+    TIDE_REQUIRE(others != NULL);
+    TIDE_CHECK(!tide_shards_restart(source, 1, others, other_size, give_record, NULL, 0.2));
+    TIDE_CHECK(tide_shards_world(source, 1) != NULL); // ...and the shard it has is left running
+
+    // The build that made it goes on from it, where it was
+    TIDE_CHECK(tide_shard_checkpoint_fits(saved, size, tide_game_api.simulation, tide_game_api.hash) == TIDE_SHARD_CHECKPOINT_FITS);
+    tide_shards *recovered = tide_shards_recover(&d, saved, size, give_record, NULL, 0.2);
+    TIDE_REQUIRE(recovered != NULL);
+    TIDE_CHECK(tide_game_api.hash_world(tide_shards_world(recovered, TIDE_SHARD_ROOT)) == expected);
+    tide_shards_destroy(recovered);
+
+    // The one way across builds: the world at rest, sealed by the build that has it, then rewritten for the
+    // other, which takes it up with no journal
+    uint32_t sealed_size = 0;
+    uint8_t *sealed = NULL;
+    for (int i = 0; i < 600 && !sealed; i++) {
+        tide_shards_update(source, 0.2 + (double)i / 120.0);
+        sealed = tide_shards_seal(source, &sealed_size);
+    }
+    TIDE_REQUIRE(sealed != NULL);
+    tide_shard_checkpoint_id id;
+    TIDE_REQUIRE(tide_shard_checkpoint_identity(sealed, sealed_size, &id));
+    TIDE_CHECK(id.sealed && memcmp(id.simulation, tide_game_api.simulation, 32) == 0 && id.layout == tide_game_api.hash);
+    TIDE_CHECK(tide_shards_load(&other, sealed, sealed_size, 9.0) == NULL); // Sealed or not, it's its build's until rewritten
+    uint32_t taken_size = 0;
+    uint8_t *taken = tide_shard_checkpoint_rewrite(sealed, sealed_size, NULL, NULL, changed.simulation, changed.hash, &taken_size);
+    TIDE_REQUIRE(taken != NULL);
+    tide_shards *upgraded = tide_shards_load(&other, taken, taken_size, 9.0);
+    TIDE_REQUIRE(upgraded != NULL);
+    TIDE_CHECK(tide_shards_count(upgraded) == tide_shards_count(source));
+    tide_shards_update(upgraded, 9.1);
+    tide_shards_update(upgraded, 9.2);
+    TIDE_CHECK(changed_wallet); // On the new build's rules from here
+    uint32_t next_size = 0;
+    uint8_t *next = tide_shards_save(upgraded, &next_size);
+    tide_shard_checkpoint_id next_id;
+    TIDE_REQUIRE(next && tide_shard_checkpoint_identity(next, next_size, &next_id));
+    TIDE_CHECK(memcmp(next_id.simulation, changed.simulation, 32) == 0 && !next_id.sealed);
+    TIDE_CHECK(next_id.world_id[0] == id.world_id[0] && next_id.world_id[1] == id.world_id[1] && next_id.sequence > id.sequence);
+    free(next);
+    tide_shards_destroy(upgraded);
+    tide_shards_destroy(source);
+    free(taken);
+    free(sealed);
+    free(others);
     free(saved);
 }
 

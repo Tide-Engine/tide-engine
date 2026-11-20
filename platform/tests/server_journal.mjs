@@ -1,7 +1,9 @@
 // A sharded world's dedicated server with --shard-journal, killed outright
 // mid-run, goes on from its journal when it starts again; and a third run from
 // the checkpoint that one made. Between, it refuses to start from a journal it
-// can't read all of, leaving the folder as it was.
+// can't read all of, leaving the folder as it was. Then the world, sealed as
+// its server stopped, is refused by the game's next build, verified by it, and
+// taken up by it with --shard-upgrade, after which the first build is refused.
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createSocket } from 'node:dgram';
@@ -11,7 +13,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const [serverPath] = process.argv.slice(2);
+const [serverPath, nextPath] = process.argv.slice(2);
 const folder = mkdtempSync(join(tmpdir(), 'tide-shard-journal-'));
 const aside = mkdtempSync(join(tmpdir(), 'tide-shard-journal-aside-'));
 const env = { ...process.env, TIDE_HIDDEN: '1' };
@@ -37,9 +39,9 @@ function journalState() {
   }
 }
 
-function serve(frames) {
-  const server = spawn(serverPath, ['--anonymous', '--udp-only', '--port', String(port), '--frames', String(frames),
-    '--shards', '2', '--shard-width', '40', '--shard-journal', folder], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env });
+function serve(frames, more = [], path = serverPath) {
+  const server = spawn(path, ['--anonymous', '--udp-only', '--port', String(port), '--frames', String(frames),
+    '--shards', '2', '--shard-width', '40', '--shard-journal', folder, ...more], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env });
   let output = '';
   const begun = Date.now();
   // When each thing came, for a run that times out
@@ -89,16 +91,36 @@ try {
   // A journal file that's there and can't be read ends the start with the folder as it was: never a new
   // world (an unreadable checkpoint), nor the world short of a shard's ticks (an unreadable log), which is
   // what it did while a file that couldn't be opened was taken as one that isn't there.
-  const refused = async (what, named) => {
+  const refused = async (what, named, why = 'cannot read', more = [], path = serverPath) => {
     phase = `the start refused for ${what}`;
-    const run = current = serve(200);
+    const run = current = serve(200, more, path);
     const [code] = await run.ended;
     if (timedOut) throw timedOut;
     const said = run.output();
-    if (code !== 1 || !said.includes('cannot read') || !said.includes(named) || said.includes('goes on from its journal') ||
-        said.includes('sharded world of'))
-      throw new Error(`${what}: the server should have refused to start, naming ${named} (${code}): ${said}`);
+    if (code !== 1 || !said.includes(why) || !said.includes(named) || said.includes('goes on from its journal') ||
+        said.includes('sharded world of') || said.includes('goes on as this build'))
+      throw new Error(`${what}: the server should have refused to start, saying "${why}" and naming ${named} (${code}): ${said}`);
   };
+  // A start that must leave every file as it was
+  const untouched = async (what, start) => {
+    const before = folderBytes();
+    await start();
+    if (folderBytes() !== before) throw new Error(`${what} changed the folder:\n${before}\nto\n${folderBytes()}`);
+  };
+  // A run that only looks: no world made, nothing listened on, every file as it was
+  const verified = async (what, more, path, says) => {
+    phase = `verifying ${what}`;
+    await untouched(`verifying ${what}`, async () => {
+      const run = current = serve(200, ['--shard-verify', ...more], path);
+      const [code] = await run.ended;
+      if (timedOut) throw timedOut;
+      const said = run.output();
+      if (code !== 0 || !said.includes(says) || !/shard 0 at tick \d+, world [0-9a-f]{16}/.test(said) ||
+          !said.includes('nothing was written') || said.includes('listening on port'))
+        throw new Error(`verifying ${what} (${code}): ${said}`);
+    });
+  };
+  const logs = () => readdirSync(folder).filter(name => name.startsWith('shard-'));
   // A folder in a file's place can't be read as one on any platform
   for (const name of [log, 'checkpoint']) {
     renameSync(join(folder, name), join(aside, name));
@@ -137,10 +159,24 @@ try {
     }
     if (folderBytes() !== before) throw new Error(`a held ${log} changed the folder:\n${before}\nto\n${folderBytes()}`);
   }
+  // A world has a checkpoint from its start, so records with none are a folder that lost it: nothing is made
+  // over them (a new world would write its first checkpoint where the old one's belongs)
+  renameSync(join(folder, 'checkpoint'), join(aside, 'checkpoint'));
+  await untouched('records with no checkpoint', () => refused('records with no checkpoint', folder, 'records and no checkpoint'));
+  renameSync(join(aside, 'checkpoint'), join(folder, 'checkpoint'));
+  // A world goes on only with the build that kept it: the game's next build is refused, with or without
+  // --shard-upgrade, as this world's journal has ticks only its own build can run again
+  if (nextPath) {
+    await untouched('another build', () => refused('another build', folder, 'kept by another build', [], nextPath));
+    await untouched("another build's upgrade of a world that isn't sealed",
+      () => refused("an upgrade of a world that isn't sealed", folder, "isn't sealed", ['--shard-upgrade'], nextPath));
+  }
+  // Whether it goes on, and from where, without touching it
+  await verified('the killed world', [], serverPath, 'goes on with this build');
   // What a crash cut short at a log's end is passed over and said, and a log no shard of the checkpoint
   // has (a shard started since) goes with the rest at the checkpoint the start makes
   const records = readFileSync(join(folder, log));
-  let whole = 0;
+  let whole = 32; // Past the log's head
   while (records.length - whole >= 4 && records.readUInt32LE(whole) <= records.length - whole - 4)
     whole += 4 + records.readUInt32LE(whole);
   writeFileSync(join(folder, log), Buffer.concat([records.subarray(0, whole), Buffer.from([0xff, 0xff, 0xff, 0x7f, 1])]));
@@ -160,6 +196,42 @@ try {
       }
       if (existsSync(join(folder, 'shard-900.log'))) throw new Error('shard-900.log outlived the checkpoint the start made');
     }
+    // A server that stops seals its world: a checkpoint with nothing owed, and no log after it
+    if (!again.output().includes('is sealed in') || logs().length)
+      throw new Error(`run ${run + 1} didn't seal the world as it stopped (${logs()}): ${again.output()}`);
+  }
+  if (nextPath) {
+    // The game's next build: refused as it is, verified with --shard-upgrade, then the world is its own
+    const sealed = readFileSync(join(folder, 'checkpoint'));
+    await untouched('another build, of a sealed world', () => refused('another build, of a sealed world', folder,
+      'kept by another build', [], nextPath));
+    await verified("the next build's upgrade", ['--shard-upgrade'], nextPath, 'takes up the sealed world');
+    phase = "the next build's upgrade";
+    const upgrade = current = serve(200, ['--shard-upgrade'], nextPath);
+    const [code] = await upgrade.ended;
+    if (timedOut) throw timedOut;
+    if (code !== 0 || !upgrade.output().includes('goes on as this build') || !upgrade.output().includes('is sealed in'))
+      throw new Error(`the upgrade (${code}): ${upgrade.output()}`);
+    const left = readdirSync(folder).filter(name => /^checkpoint\.[0-9a-f]{16}$/.test(name));
+    if (left.length !== 1 || !readFileSync(join(folder, left[0])).equals(sealed))
+      throw new Error(`the upgrade didn't keep the sealed world beside its own: ${readdirSync(folder)}`);
+    // The world is the next build's now: the build before it is refused, and the next goes on
+    await untouched('the build before, after the upgrade', () => refused('the build before, after the upgrade', folder,
+      'kept by another build'));
+    phase = "the next build's run after its upgrade";
+    const on = current = serve(1000000, [], nextPath);
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    if (!on.output().includes('goes on from its journal')) throw new Error(`the next build's second run: ${on.output()}`);
+    on.server.kill('SIGKILL');
+    await on.ended;
+    if (!logs().length) throw new Error(`the next build's killed run kept no records: ${readdirSync(folder)}`);
+    // --shard-seal: a world left by a crash, gone on with and sealed, with no run between
+    phase = '--shard-seal';
+    const seal = current = serve(200, ['--shard-seal'], nextPath);
+    const [sealCode] = await seal.ended;
+    if (timedOut) throw timedOut;
+    if (sealCode !== 0 || !seal.output().includes('is sealed in') || logs().length)
+      throw new Error(`--shard-seal (${sealCode}, ${logs()}): ${seal.output()}`);
   }
   process.stdout.write('a killed sharded server went on from its journal\n');
 } finally {
