@@ -1,5 +1,73 @@
 # Shards: one world across servers
 
+## A journal that can't be read stops the start (2026-11-20)
+
+**The bug** (review of `ec94d6ca7`, Windows ASan): `platform/src/serve.c`'s
+`serve_read` returned NULL for any failure, and its callers took NULL as "no
+such file". A valid `shard-0.log` held open by another handle that denied
+reads and allowed deletion was skipped: `--shard-journal` reported a
+successful recovery, exited 0, saved a checkpoint without that shard's ticks
+(a different world from a readable control) and removed the log. The same
+conflation made an unreadable `checkpoint` start a new world over the old
+one's folder. `tide_server_shards_journal` passed throughout.
+
+**Now** (native host only; the engine's `tide_shards_recover`, replay and
+the checkpoint format are unchanged):
+
+- `serve_read` answers absent (`ENOENT` from `fopen`), read, or unreadable
+  with a reason: any other open failure, a path that isn't a file (POSIX
+  opens folders for reading, so it's checked with `fstat`), a size that
+  can't be had or is over 4 GiB, or a short read.
+- Starting reads the whole folder before changing anything in it. An
+  unreadable checkpoint, a folder that can't be listed, or any unreadable
+  `shard-<id>.log` prints which file and why and exits 1 with every file as
+  it was. Only after `tide_shards_recover` succeeds is the new checkpoint
+  written and the logs removed, as before.
+- Logs are found by listing the folder (`serve_list`: `FindFirstFileA`,
+  `opendir`), parsed strictly as `serve_log` names them. This replaces the
+  scan that gave up after 64 ids with no file: ids a merge ended are never
+  given again (`gone`), so a long-lived world's active ids can be further
+  apart than that, and its later shards' records were silently skipped. The
+  ids found are a list (`serve_world.left`), not a dense array, so a far id
+  costs nothing. The checkpoint's own membership isn't needed: the replay
+  asks only for the shards the coordinator loaded, and a log no shard of the
+  checkpoint has (a shard started since, whose shape was never told) is
+  removed with the rest at the checkpoint the start makes. An unreadable log
+  fails the start whether or not the checkpoint has its shard.
+- Each log is indexed once as it's read (`serve_kept.records`);
+  `serve_records` no longer walks from the file's start for every record.
+- Three cases, kept apart: a log that isn't there is a shard with no ticks
+  since the checkpoint (a checkpoint removes every log); an unreadable one
+  fails; bytes after the last whole record are a record cut short as it was
+  written, passed over as before, and now said on stderr with the count.
+- My pick, not asked: a folder with logs and no checkpoint (a server that
+  ended before its first checkpoint was kept) says so, removes them and
+  starts anew. Before, the new world appended its records after the old
+  one's until its first checkpoint removed them, and a crash between that
+  checkpoint and the removal could replay the old world's record at the new
+  one's tick and fail recovery.
+
+**Tests.** `platform/tests/server_journal.mjs`, between the kill and the two
+recoveries, each against the killed run's real files: a folder in the log's
+place, then in the checkpoint's (unreadable on every platform), must exit 1
+naming the file, with no new world and every file's SHA-256 as it was; a
+folder named `shard-900.log` must be refused too (the old scan never reached
+it); on Windows, PowerShell holds the log with `FileShare.Delete` only, as
+found, and the log must still be there with the folder unchanged. Then the
+log gets a cut-short record after its last whole one and a three-byte
+`shard-900.log` is added: the recovery must name both ends it passed over,
+and `shard-900.log` must be gone after it. On the old `serve.c` the test
+fails at the first case, the server having already replaced the checkpoint.
+Windows ASan: `tide_server_shards_journal` passes in 3.7 s, and
+`tide_server_smoke`. POSIX (`opendir`, `fstat`) and MinGW are CI's.
+
+**Gaps.** A length damaged in the middle of a log can't be told from a
+cut-short end: the records have no checksum of their own, so everything
+after it is passed over (records replayed are still checked by their world
+hashes). That's the journal's format, which is being designed elsewhere.
+The folder must exist before the server starts, as before. The managed
+host's journal is the service's and wasn't looked at here.
+
 ## Persistent-world upgrades (2026-11-19 audit and proposal)
 
 - **Admission.** `engine/src/session.c` (protocol 27) and `engine/src/hosting.c`
@@ -419,7 +487,7 @@ native/web validation: notes/netcode.md, A server's journal.
 - **Acknowledging** (`acknowledge`): a sender lets go of a message only once every shard has applied everything it was handed (`drained`: no server has injected messages waiting) and those ticks were flushed. Until this change, carrying a message acknowledged it at once, so a crash between a receiver taking a message and applying it lost it.
 - **Reshaping** (`reshape`): more entity ranges, splits, merges and retired shards ending happen only when drained, and any of them (or `checkpoint_seconds` passing) is followed at once by a checkpoint. So no record kept after a checkpoint depends on a shape it doesn't have, and an orchestrator message on its way at a checkpoint is one loading sends again (map, ranges, retirement) or rebuilds (ghosts, routes).
 - **Recovering** (`tide_shards_recover`): the checkpoint, then each shard's records with ticks from the one it saved, through `tide_replay`; a gap, bytes that aren't a record or a hash that differs fail. What was carried and not applied is in its sender's outbox, sent again; what was applied, receivers drop by number. Players of the world have 20 seconds to come back as themselves (`PLAYER_AWAY_SECONDS`, also for a player who drops out briefly: `PlayerLeft` only after it), admitted with their cookies.
-- **A dedicated server's journal** (`--shard-journal <folder>`, `platform/src/serve.c`): `checkpoint` (written beside as `checkpoint.next`, synced, then moved over it) and `shard-<id>.log` (a u32 size and a record, over and over), synced by `flush` when a tick wrote records since the last (an update with none syncs nothing: on Windows each sync flushes the disk's cache, which CI's runners took long enough over, an update at a time, for `tide_server_shards_journal` to overrun 25 seconds; with each sync made 3 ms, a 400-update run took 5.1 s before and 1.9 s after); a checkpoint removes every log. Started with a folder holding a checkpoint, the server recovers from it (a record a crash cut short is passed over) and checkpoints at once, so nothing is written after a cut-short record. A journal that can't be written stops the server.
+- **A dedicated server's journal** (`--shard-journal <folder>`, `platform/src/serve.c`): `checkpoint` (written beside as `checkpoint.next`, synced, then moved over it) and `shard-<id>.log` (a u32 size and a record, over and over), synced by `flush` when a tick wrote records since the last (an update with none syncs nothing: on Windows each sync flushes the disk's cache, which CI's runners took long enough over, an update at a time, for `tide_server_shards_journal` to overrun 25 seconds; with each sync made 3 ms, a 400-update run took 5.1 s before and 1.9 s after); a checkpoint removes every log. Started with a folder holding a checkpoint, the server recovers from it (a record a crash cut short is passed over) and checkpoints at once, so nothing is written after a cut-short record. A journal that can't be written stops the server, and one that can't all be read stops the start with the folder as it was (2026-11-20, the section at the top).
 
 ## Players (`tide/shard_client.h`, `engine/src/shard_client.c`; the orchestrator's `track_players`, `route_players`)
 

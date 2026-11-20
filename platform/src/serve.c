@@ -31,10 +31,14 @@ int tide_serve(const tide_serve_desc *desc)
 #include <windows.h>
 #include <io.h>
 #elif defined(__APPLE__)
+#include <dirent.h>
 #include <mach-o/dyld.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 #else
+#include <dirent.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 #endif
@@ -102,18 +106,27 @@ static bool serve_load(const tide_serve_desc *desc)
 // A sharded world's journal in a folder (--shard-journal): `checkpoint`, and
 // `shard-<id>.log`, each a u32 size and a record, over and over, from the
 // checkpoint on. On starting, a folder with a checkpoint is the world again.
+typedef struct serve_kept {
+    uint32_t shard;
+    uint8_t *bytes;
+    uint32_t *records; // Where each whole record's size is in `bytes`
+    uint32_t count;
+} serve_kept;
+
 typedef struct serve_world {
     tide_hosting *host;
     const char *folder;
     FILE **logs;
     uint32_t log_room;
-    uint32_t known; // Shards whose logs a journal read on starting may have left
+    // The shards whose logs the folder had on starting, whatever their ids: the next checkpoint removes them
+    uint32_t *left;
+    uint32_t left_count;
     bool written; // Records since the last flush
     bool failed;
-    // Recovering: each shard's records as read, back to back
-    uint8_t **read;
-    uint32_t *read_size;
+    // Recovering: the records of each log the folder had, as read
+    serve_kept *read;
     uint32_t read_count;
+    uint32_t read_last; // The one asked for last, as a shard's records are asked for in turn
 } serve_world;
 
 static tide_server *serve_world_start(void *user, const uint32_t shard, const tide_server_desc *d, uint64_t *match)
@@ -191,6 +204,32 @@ static void serve_flush(void *user)
     }
 }
 
+static void serve_remove_log(const serve_world *j, const uint32_t shard)
+{
+    char name[32], path[4096];
+    snprintf(name, sizeof name, "shard-%u.log", (unsigned)shard);
+    serve_path(path, sizeof path, j->folder, name);
+    if (remove(path) != 0 && errno != ENOENT) {
+        fprintf(stderr, "tide: cannot remove the shard journal %s; stopping\n", path);
+        exit(1);
+    }
+}
+
+// Every shard's log goes: the ones open, and the ones the folder had on starting
+static void serve_remove_logs(serve_world *j)
+{
+    for (uint32_t i = 0; i < j->log_room; i++) {
+        if (!j->logs[i]) continue;
+        fclose(j->logs[i]);
+        j->logs[i] = NULL;
+        serve_remove_log(j, i);
+    }
+    for (uint32_t i = 0; i < j->left_count; i++) serve_remove_log(j, j->left[i]);
+    free(j->left);
+    j->left = NULL;
+    j->left_count = 0;
+}
+
 // A checkpoint goes in whole beside the last, then over it, and the records
 // before it go
 static void serve_checkpoint(void *user, const uint8_t *data, const uint32_t size)
@@ -211,58 +250,191 @@ static void serve_checkpoint(void *user, const uint8_t *data, const uint32_t siz
         fprintf(stderr, "tide: cannot write the shard checkpoint %s; stopping\n", path);
         exit(1);
     }
-    // The records before it go: every shard's log, open or left from before
-    const uint32_t ids = j->log_room > j->known ? j->log_room : j->known;
-    for (uint32_t i = 0; i < ids; i++) {
-        if (i < j->log_room && j->logs[i]) {
-            fclose(j->logs[i]);
-            j->logs[i] = NULL;
-        }
-        char name[32];
-        snprintf(name, sizeof name, "shard-%u.log", (unsigned)i);
-        serve_path(path, sizeof path, j->folder, name);
-        if (remove(path) != 0 && errno != ENOENT) {
-            fprintf(stderr, "tide: cannot remove %s after a checkpoint; stopping\n", path);
-            exit(1);
-        }
-    }
+    serve_remove_logs(j); // The records before it go
 }
 
-static uint8_t *serve_read(const char *path, uint32_t *size)
+// A journal file's bytes. A file that isn't there is told from one that is and can't be read: the first is a
+// shard with no records (or a folder with no world yet), the second a world that mustn't be gone on from
+// without it. `why` says what kept an unreadable one from being read.
+typedef enum serve_got { SERVE_ABSENT, SERVE_READ, SERVE_UNREADABLE } serve_got;
+
+static serve_got serve_read(const char *path, uint8_t **bytes, uint32_t *size, const char **why)
 {
+    *bytes = NULL;
+    *size = 0;
+    errno = 0;
     FILE *f = fopen(path, "rb");
-    if (!f) return NULL;
-    bool ok = fseek(f, 0, SEEK_END) == 0;
-    const long n = ok ? ftell(f) : -1;
-    ok = n >= 0 && (uint64_t)n <= UINT32_MAX && fseek(f, 0, SEEK_SET) == 0;
-    uint8_t *bytes = ok ? malloc((size_t)n ? (size_t)n : 1u) : NULL;
-    ok = bytes && fread(bytes, 1, (size_t)n, f) == (size_t)n;
-    fclose(f);
-    if (!ok) {
-        free(bytes);
-        return NULL;
+    if (!f) {
+        if (errno == ENOENT) return SERVE_ABSENT;
+        *why = errno ? strerror(errno) : "it couldn't be opened";
+        return SERVE_UNREADABLE;
     }
+    *why = NULL;
+#ifndef _WIN32
+    // A folder opens for reading on these, and some say it's empty
+    struct stat st;
+    if (fstat(fileno(f), &st) != 0) *why = strerror(errno);
+    else if (!S_ISREG(st.st_mode)) *why = "it isn't a file";
+#endif
+    long n = -1;
+    errno = 0;
+    if (!*why && (fseek(f, 0, SEEK_END) != 0 || (n = ftell(f)) < 0 || fseek(f, 0, SEEK_SET) != 0))
+        *why = errno ? strerror(errno) : "its size couldn't be read";
+    if (!*why && (uint64_t)n > UINT32_MAX) *why = "it's over 4 GiB";
+    uint8_t *read = NULL;
+    if (!*why) {
+        read = malloc((size_t)n ? (size_t)n : 1u);
+        if (!read) tide_out_of_memory();
+        errno = 0;
+        if (fread(read, 1, (size_t)n, f) != (size_t)n) *why = errno ? strerror(errno) : "it ended before its size";
+    }
+    fclose(f);
+    if (*why) {
+        free(read);
+        return SERVE_UNREADABLE;
+    }
+    *bytes = read;
     *size = (uint32_t)n;
-    return bytes;
+    return SERVE_READ;
+}
+
+// `shard-<id>.log`'s id, written as serve_log writes it; false for any other name
+static bool serve_log_id(const char *name, uint32_t *id)
+{
+    if (strncmp(name, "shard-", 6u) != 0) return false;
+    const char *p = name + 6u;
+    if (*p < '0' || *p > '9' || (*p == '0' && p[1] != '.')) return false;
+    uint64_t n = 0;
+    for (; *p >= '0' && *p <= '9'; p++) {
+        n = n * 10u + (unsigned)(*p - '0');
+        if (n > UINT32_MAX) return false;
+    }
+    if (strcmp(p, ".log") != 0) return false;
+    *id = (uint32_t)n;
+    return true;
+}
+
+static void serve_left(serve_world *j, const char *name)
+{
+    uint32_t id;
+    if (!serve_log_id(name, &id)) return;
+    uint32_t *grown = realloc(j->left, (j->left_count + 1u) * sizeof *grown);
+    if (!grown) tide_out_of_memory();
+    j->left = grown;
+    j->left[j->left_count++] = id;
+}
+
+// Every shard log the folder has, by listing it: ids a merge ended are never given again, so the shards a
+// world has can be any distance apart, and a shard started since the checkpoint has a log the checkpoint
+// doesn't know of. False when the folder can't be listed; one that isn't there has none.
+static bool serve_list(serve_world *j, const char **why)
+{
+#ifdef _WIN32
+    char pattern[4096];
+    serve_path(pattern, sizeof pattern, j->folder, "shard-*.log");
+    WIN32_FIND_DATAA found;
+    const HANDLE list = FindFirstFileA(pattern, &found);
+    if (list == INVALID_HANDLE_VALUE) {
+        const DWORD error = GetLastError();
+        *why = "Windows wouldn't list it";
+        return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
+    }
+    do serve_left(j, found.cFileName);
+    while (FindNextFileA(list, &found));
+    const bool ok = GetLastError() == ERROR_NO_MORE_FILES;
+    FindClose(list);
+    *why = "Windows stopped listing it";
+    return ok;
+#else
+    DIR *list = opendir(j->folder);
+    if (!list) {
+        *why = strerror(errno);
+        return errno == ENOENT;
+    }
+    for (;;) {
+        errno = 0;
+        const struct dirent *entry = readdir(list);
+        if (!entry) break;
+        serve_left(j, entry->d_name);
+    }
+    const bool ok = errno == 0;
+    *why = strerror(errno);
+    closedir(list);
+    return ok;
+#endif
+}
+
+static void serve_forget_read(serve_world *j)
+{
+    for (uint32_t i = 0; i < j->read_count; i++) {
+        free(j->read[i].bytes);
+        free(j->read[i].records);
+    }
+    free(j->read);
+    j->read = NULL;
+    j->read_count = j->read_last = 0;
+}
+
+// Every log the folder has, read whole before the world is made again. A log that's there and can't be read
+// fails: its shard's ticks since the checkpoint are in it, and going on without them is another world. A
+// record a crash cut short at a log's end wasn't kept (nothing its tick sent had gone on) and is passed over.
+static bool serve_read_logs(serve_world *j)
+{
+    j->read = calloc(j->left_count ? j->left_count : 1u, sizeof *j->read);
+    if (!j->read) tide_out_of_memory();
+    for (uint32_t i = 0; i < j->left_count; i++) {
+        char name[32], path[4096];
+        snprintf(name, sizeof name, "shard-%u.log", (unsigned)j->left[i]);
+        serve_path(path, sizeof path, j->folder, name);
+        serve_kept *k = &j->read[j->read_count];
+        uint32_t size = 0;
+        const char *why = NULL;
+        const serve_got got = serve_read(path, &k->bytes, &size, &why);
+        if (got == SERVE_ABSENT) continue; // Gone since the folder was listed
+        if (got == SERVE_UNREADABLE) {
+            fprintf(stderr, "tide: cannot read the shard journal %s (%s), which has a shard's ticks since the checkpoint. "
+                            "The folder is left as it was: close whatever holds the file, or let this user read it, "
+                            "and start the server again\n", path, why);
+            return false;
+        }
+        k->shard = j->left[i];
+        j->read_count++;
+        uint32_t at = 0, room = 0;
+        while (size - at >= 4u) {
+            const uint8_t *p = k->bytes + at;
+            const uint32_t n = (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
+            if (n > size - at - 4u) break;
+            if (k->count == room) {
+                room = room ? room * 2u : 64u;
+                uint32_t *grown = realloc(k->records, room * sizeof *grown);
+                if (!grown) tide_out_of_memory();
+                k->records = grown;
+            }
+            k->records[k->count++] = at;
+            at += 4u + n;
+        }
+        if (at != size)
+            fprintf(stderr, "tide: %s ends in %u bytes of a record cut short as it was written; they're passed over\n",
+                    path, (unsigned)(size - at));
+    }
+    return true;
 }
 
 static bool serve_records(void *user, const uint32_t shard, const uint32_t index, const uint8_t **record, uint32_t *size)
 {
     serve_world *j = user;
-    if (shard >= j->read_count || !j->read[shard]) return false;
-    uint32_t at = 0;
-    for (uint32_t i = 0;; i++) {
-        if (at + 4u > j->read_size[shard]) return false;
-        const uint8_t *p = j->read[shard] + at;
-        const uint32_t n = (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
-        if (n > j->read_size[shard] - at - 4u) return false; // A record the crash cut short wasn't kept
-        if (i == index) {
-            *record = p + 4u;
-            *size = n;
-            return true;
-        }
-        at += 4u + n;
+    if (j->read_last >= j->read_count || j->read[j->read_last].shard != shard) {
+        uint32_t i = 0;
+        while (i < j->read_count && j->read[i].shard != shard) i++;
+        if (i == j->read_count) return false; // A shard with no log has no ticks since the checkpoint
+        j->read_last = i;
     }
+    const serve_kept *k = &j->read[j->read_last];
+    if (index >= k->count) return false;
+    const uint8_t *p = k->bytes + k->records[index];
+    *record = p + 4u;
+    *size = (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
+    return true;
 }
 
 int tide_serve(const tide_serve_desc *desc)
@@ -368,33 +540,45 @@ int tide_serve(const tide_serve_desc *desc)
             shards.journal = serve_record;
             shards.flush = serve_flush;
             shards.checkpoint = serve_checkpoint;
+            // Nothing in the folder changes until all of it has been read: a checkpoint or a log that's
+            // there and can't be read ends the start, rather than a new world or one short of its ticks
             char path[4096];
             serve_path(path, sizeof path, journal, "checkpoint");
-            checkpoint = serve_read(path, &checkpoint_size);
+            const char *why = NULL;
+            const serve_got got = serve_read(path, &checkpoint, &checkpoint_size, &why);
+            bool read = got != SERVE_UNREADABLE;
+            if (!read) {
+                fprintf(stderr, "tide: cannot read the shard checkpoint %s (%s), so the world it keeps can't go on. "
+                                "The folder is left as it was: close whatever holds the file, or let this user read it, "
+                                "and start the server again\n", path, why);
+            } else if (!serve_list(&kept, &why)) {
+                fprintf(stderr, "tide: cannot list the shard journal folder %s (%s) to find every shard's records. "
+                                "The folder is left as it was\n", journal, why);
+                read = false;
+            } else if (got == SERVE_READ) {
+                read = serve_read_logs(&kept);
+            } else if (kept.left_count) {
+                // Records with no checkpoint are of a world that ended before its first one was kept. The
+                // new world's records mustn't go after them
+                fprintf(stderr, "tide: the shard journal in %s has records and no checkpoint to go on from; "
+                                "they're removed and the world starts anew\n", journal);
+                serve_remove_logs(&kept);
+            }
+            if (!read) {
+                serve_forget_read(&kept);
+                free(kept.left);
+                free(checkpoint);
+                tide_hosting_destroy(h);
+                tide_pack_unload();
+                return 1;
+            }
         }
         if (checkpoint) { // The world as it was, from its checkpoint and the records kept since
-            for (uint32_t missing = 0; missing < 64u; kept.read_count++) { // Ids a merge ended have none
-                char name[32], path[4096];
-                snprintf(name, sizeof name, "shard-%u.log", (unsigned)kept.read_count);
-                serve_path(path, sizeof path, journal, name);
-                uint32_t n = 0;
-                uint8_t *bytes = serve_read(path, &n);
-                missing = bytes ? 0u : missing + 1u;
-                kept.read = realloc(kept.read, (kept.read_count + 1u) * sizeof *kept.read);
-                kept.read_size = realloc(kept.read_size, (kept.read_count + 1u) * sizeof *kept.read_size);
-                if (!kept.read || !kept.read_size) tide_out_of_memory();
-                kept.read[kept.read_count] = bytes;
-                kept.read_size[kept.read_count] = n;
-            }
-            kept.known = kept.read_count;
             world = tide_shards_recover(&shards, checkpoint, checkpoint_size, serve_records, &kept, now);
-            for (uint32_t i = 0; i < kept.read_count; i++) free(kept.read[i]);
-            free(kept.read);
-            free(kept.read_size);
-            kept.read = NULL;
-            kept.read_count = 0;
+            serve_forget_read(&kept);
             free(checkpoint);
             if (!world) {
+                free(kept.left);
                 fprintf(stderr, "tide: the shard journal in %s doesn't make the world it was; move it away to start anew\n", journal);
                 tide_hosting_destroy(h);
                 tide_pack_unload();
@@ -461,6 +645,7 @@ int tide_serve(const tide_serve_desc *desc)
         if (kept.logs[i]) fclose(kept.logs[i]);
     }
     free(kept.logs);
+    free(kept.left);
     tide_hosting_destroy(h);
     tide_pack_unload();
     return 0;

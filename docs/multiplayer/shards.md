@@ -114,6 +114,8 @@ tide run --server --anonymous --shards 4 --shard-journal world
 
 It writes a checkpoint now and then, and every tick of every shard since, to the disk before anything one shard sends reaches another. Started again with the same folder, it goes on where the world was, to the tick, and nothing that crossed a border is lost or happens twice. Players have 20 seconds to reconnect as themselves before the world sends `PlayerLeft`.
 
+A server that can't read all of the folder doesn't start: it names the file it couldn't read (one another program holds open, or one this user isn't allowed to read) and leaves the folder as it was, rather than start a new world or go on without a shard's ticks. A record cut short by the crash at the end of a shard's file is passed over, as nothing its tick sent had gone on, and the server says so.
+
 Tide's hosting service runs a sharded game's world across machines. The world starts as one shard; the service splits a region whose shard is steadily too busy, merges quiet neighbours back until the world is one shard again, and starts a shard whose machine fails again elsewhere, where it was. A world nobody is in stops after the project's empty timeout, as a match does, and goes on where it was when a player comes back.
 
 ## Physics
