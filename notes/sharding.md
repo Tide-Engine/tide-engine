@@ -40,7 +40,7 @@ the checkpoint format are unchanged):
   since the checkpoint (a checkpoint removes every log); an unreadable one
   fails; bytes after the last whole record are a record cut short as it was
   written, passed over as before, and now said on stderr with the count.
-- My pick, not asked: a folder with logs and no checkpoint (a server that
+- My pick, which the owner left to me for now (2026-11-20): a folder with logs and no checkpoint (a server that
   ended before its first checkpoint was kept) says so, removes them and
   starts anew. Before, the new world appended its records after the old
   one's until its first checkpoint removed them, and a crash between that
