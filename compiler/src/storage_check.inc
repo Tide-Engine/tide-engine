@@ -199,6 +199,7 @@ static type check_storage_static(checker *c, expr *e)
         // entity every load or listing names
         e->type_decl = answer;
         vec_push(c->sends, e);
+        vec_push(c->send_code, NULL); // (The engine's own event, whichever code asks: check_sends has nothing to say of it)
         if (!targeted && load && !prog->bare_load) {
             prog->bare_load = true;
             prog->bare_load_at = e->at;

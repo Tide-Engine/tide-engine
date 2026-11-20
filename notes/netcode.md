@@ -85,7 +85,12 @@ single update after the first; without the allowance it fails). `bench_voxels_ou
 (bench/CMakeLists.txt): 16 players cut off for 4.5 s, each sent a megabyte's projection again, all back, the same
 world and the same taken on 1 and 12 threads; a run where a bot never is back fails.
 
-Run on Windows, no pin moved: release, `tide_tests` (all) and the 29 fixtures listed in notes/voxels.md, Tests; ASan
+Merged with the same day's change to how a lost small repair goes again (the section below), which moved what the
+bots take in `bench_voxels_reads_*` (pinned again here: the same value with this work's session changes and without
+them) and so the outage fixtures' pins, taken on the merged build. That merge also brought a tidec that stopped
+without a word on `bench_voxels` (notes/language.md, Entity/component visibility, the correction), fixed with it.
+
+Run on Windows, no pin moved by this: release, `tide_tests` (all) and the 29 fixtures listed in notes/voxels.md, Tests; ASan
 (`sanitize`), `tide_tests visibility` (33) and `session` (24), `bench_voxels`, `_views`, `_reads_12`, `_outage_1`,
 `_12`, `tidec_e2e_net`, `_net_join_big`, `tidec_e2e_visibility_host_lifecycle` and `_repairs`; the web
 (`web-debug`, under Node), `tide_tests`, `bench_voxels`, `_reads_1`, `_outage_1` and `_12` (on the native pins),

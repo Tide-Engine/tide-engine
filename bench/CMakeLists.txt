@@ -55,7 +55,7 @@ add_test(NAME bench_voxels_views COMMAND bench_voxels --near 18 --lag 1200 --pla
 foreach(threads 1 4 12)
     add_test(NAME bench_voxels_reads_${threads} COMMAND bench_voxels --players 16 --join-every 0 --hop 1 --near 12
                                                         --far 1 --seconds 5 --lag 1200 --threads ${threads}
-                                                        --expect 0xec783e57193243bb --expect-taken 0xcbf6ede233a6a86c)
+                                                        --expect 0xec783e57193243bb --expect-taken 0x0d86b57d28825956)
 endforeach()
 # An outage longer than the server keeps ticks: sixteen players cut off for 4.5 s are each sent their world again as
 # they come back, a megabyte of projection each, more than an update prepares before the rest wait their turn (the
@@ -64,7 +64,7 @@ endforeach()
 foreach(threads 1 12)
     add_test(NAME bench_voxels_outage_${threads} COMMAND bench_voxels --players 16 --join-every 0 --seconds 9
                                                          --outage 4.5 --threads ${threads}
-                                                         --expect 0x3c0dadd2cc07a71b --expect-taken 0xd1ed3a70bc94f8bd)
+                                                         --expect 0xc6c1fce51bbb56b6 --expect-taken 0x209fdc0618c73f95)
 endforeach()
 # The same with every projection hash worked out twice, from what's kept of the rows that didn't change and from
 # the rows themselves: the run stops where the two differ (TIDE_CLIENT_SPANS_CHECK)

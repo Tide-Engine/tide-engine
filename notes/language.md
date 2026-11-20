@@ -5170,7 +5170,12 @@ Two checks came later (2026-11-20, `check_sends`; why and what else was offered:
 of a match event that has a local handler is a warning there. Both go by `program.visibility_state`, which naming
 `Visibility`, `VisibilityGroup` or `Audience` sets. `checker.send_code` keeps the system or handler each `Send` is
 in, beside `sends`; an event's `listeners` aren't gathered yet when `check_sends` runs, so it looks through
-`program.handlers`.
+`program.handlers`. Corrected the same day: `Storage.Load` and `Storage.List` with an entity put their answer's event
+in `sends` with nothing in `send_code` (`storage_check.inc`), and the two places that take a nested checker's `sends`
+into the outer one (`MERGE_CHECKS`: a placement body, a generic's) left `send_code` behind, so in a program that
+hides state and uses the store tidec read past the list's end and stopped without a word (`bench_voxels`, 19 sends
+for 15, which no longer built). Whatever is kept beside `sends` is pushed and merged with it; the store's answers
+have no code there (NULL), as they're the engine's.
 
 The owner approved client simulation culling for world chunks, individual
 players and private card state. Visibility applies to entities and whole

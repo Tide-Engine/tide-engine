@@ -1907,8 +1907,10 @@ worlds on the pool's threads at once is what would shorten it (netcode.md, Left)
 
 ## Tests
 
-- 2026-11-20 (An outage's worlds, a few an update): no pin moved. New: `bench_voxels_outage_1` and `_12` (16 bots cut
-  off for 4.5 s, all back, world `0x3c0dadd2cc07a71b` and taken `0xd1ed3a70bc94f8bd` on 1 and 12 threads), and two
+- 2026-11-20 (An outage's worlds, a few an update): no pin moved by this. New: `bench_voxels_outage_1` and `_12` (16 bots cut
+  off for 4.5 s, all back, world `0xc6c1fce51bbb56b6` and taken `0x209fdc0618c73f95` on 1 and 12 threads, after
+  merging the same day's change to how a lost small repair goes again, which moved both and `bench_voxels_reads_*`'s
+  taken, to `0x0d86b57d28825956`: the same with and without this work's session changes), and two
   engine tests (netcode.md, top section, Tests). Release, Windows: `tide_tests` (all), `bench_voxels` and its
   `_forgets`, `_wide`, `_arrives`, `_views`, `_reads_1`, `_4`, `_12`, `_outage_1`, `_12`, `_checked`, `bench_gallery`,
   `bench_sand`, `bench_earth` (and `_split`, `_diverge`), `tidec_e2e_net*`, `tidec_e2e_visibility_host_lifecycle`,

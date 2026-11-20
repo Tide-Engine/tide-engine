@@ -208,7 +208,7 @@ static void check_placement_body(checker *c, decl *m)
     check_method_body(&nested, m);
 #define MERGE_CHECKS(member) for (int i = 0; i < nested.member.count; i++) vec_push(c->member, nested.member.items[i])
     MERGE_CHECKS(linear_sources); MERGE_CHECKS(linear_uses); MERGE_CHECKS(raw_uses); MERGE_CHECKS(unused); MERGE_CHECKS(dropped); MERGE_CHECKS(spawns);
-    MERGE_CHECKS(sends); MERGE_CHECKS(calls); MERGE_CHECKS(heap_passes); MERGE_CHECKS(c_lends); MERGE_CHECKS(bare); MERGE_CHECKS(task_calls);
+    MERGE_CHECKS(sends); MERGE_CHECKS(send_code); MERGE_CHECKS(calls); MERGE_CHECKS(heap_passes); MERGE_CHECKS(c_lends); MERGE_CHECKS(bare); MERGE_CHECKS(task_calls);
 #undef MERGE_CHECKS
 }
 
@@ -6243,7 +6243,7 @@ static void place_generic_instance(checker *c, decl *d)
     if (diag_error_count() > errors) diag_note_at(d->generic_at, "in '%s', which this call instantiates", d->generic_name);
 #define MERGE_CHECKS(member) for (int i = 0; i < nested.member.count; i++) vec_push(c->member, nested.member.items[i])
     MERGE_CHECKS(linear_sources); MERGE_CHECKS(linear_uses); MERGE_CHECKS(raw_uses); MERGE_CHECKS(unused); MERGE_CHECKS(dropped); MERGE_CHECKS(spawns);
-    MERGE_CHECKS(sends); MERGE_CHECKS(calls); MERGE_CHECKS(heap_passes); MERGE_CHECKS(c_lends); MERGE_CHECKS(bare); MERGE_CHECKS(task_calls);
+    MERGE_CHECKS(sends); MERGE_CHECKS(send_code); MERGE_CHECKS(calls); MERGE_CHECKS(heap_passes); MERGE_CHECKS(c_lends); MERGE_CHECKS(bare); MERGE_CHECKS(task_calls);
     MERGE_CHECKS(access_warnings);
 #undef MERGE_CHECKS
     c->outs += nested.outs;
