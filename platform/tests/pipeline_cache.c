@@ -140,6 +140,15 @@ int main(const int argc, char **argv)
         if (ready) tide_gpu_vk_pipeline_cache_outgrown(size - 24u - 1u);
         else printf("FAIL: the last run left no file of pipelines to outgrow (%zu bytes)\n", size);
     }
+    // What the run starts from, said for a failure to be read by: no file, one of the headers alone, or more
+    if (ready) {
+        size_t size = 0;
+        uint8_t *bytes = tide_file_read_whole(file, SIZE_MAX, &size);
+        printf("pipeline cache: the file before this run is %s (%zu bytes)", bytes ? "there" : "not there", size);
+        for (size_t i = 0; bytes && i < size && i < 24u + 32u; i++) printf("%s%02X", i % 8u ? "" : " ", bytes[i]);
+        printf("\n");
+        free(bytes);
+    }
     free(file);
     if (!ready) return 1;
     tide_platform_open(&(tide_window_desc){.title = "pipeline cache", .width = 64, .height = 64, .hidden = true});
