@@ -125,7 +125,7 @@ target_link_libraries(bench_earth PRIVATE tide_bench)
 add_test(NAME bench_earth COMMAND bench_earth --quick --expect 0x8b1ac38f4c2e65c8)
 # A town hop changes shard and what the machine sees at once: corrections put it up to two seconds behind, as
 # the engine's visibility tests allow
-add_test(NAME bench_earth_split COMMAND bench_earth --quick --split 2 --lag 120 --expect 0x0bb9bd2c308ff057)
+add_test(NAME bench_earth_split COMMAND bench_earth --quick --split 2 --lag 120 --expect 0x1347c3f374fda50b)
 # Comparing one bot's world with what the server says it is, tick by tick
 add_test(NAME bench_earth_diverge COMMAND bench_earth --quick --diverge 1 --expect 0x8b1ac38f4c2e65c8)
 

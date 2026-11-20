@@ -1916,6 +1916,10 @@ worlds on the pool's threads at once is what would shorten it (netcode.md, Left)
   `bench_sand`, `bench_earth` (and `_split`, `_diverge`), `tidec_e2e_net*`, `tidec_e2e_visibility_host_lifecycle`,
   `_lifecycle`, `_repairs`, `_runs`, `_projection`, `sumo_tests`, `towers_tests`: 30 of 30. The sanitizer and web
   runs are listed in netcode.md.
+  After the push: `bench_earth_split`'s world pin (`0x0bb9bd2c308ff057`) had moved to `0x1347c3f374fda50b` with the same
+  day's merges on dev (the sharded world's store and the lost small repairs' copies, both in `session.c`), on all nine
+  of CI's configurations and here, the same with this work's session changes and with dev's file before them. Pinned
+  again; which of the two moved it wasn't taken apart (the file before both no longer links against the shards' store).
 - 2026-11-17, parts (A check's rows on every thread): no pin moved; the runs above end on the base's world hashes
   and what the bots' machines took, before and after, 12 threads and 1. New: `tidec_e2e_visibility_walks_pool` (the
   checks on the platform's pool against one thread's, memo and journal by `tide_client_check_digest`), and the
