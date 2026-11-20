@@ -414,7 +414,8 @@ static void visibility_run_case(tide_net_conditions conditions, bool commands, b
     TIDE_CHECK(visibility_bulk_filters > 0 && visibility_slot_filters == 0);
     TIDE_CHECK(visibility_deaths == 1);
     TIDE_CHECK(visibility_hides == 1);
-    if (continuous) TIDE_CHECK(most_lag < 120u);
+    // Under the ticks a client predicts past its confirmed world (60), so its own input never waits for a repair
+    if (continuous) TIDE_CHECK(most_lag < 60u);
     const uint32_t command_sender = (uint32_t)tide_player_index(tide_client_status_of(clients[0]).player);
     for (uint32_t p = 0; p < 2; p++) {
         const tide_client_status status = tide_client_status_of(clients[p]);
@@ -1443,4 +1444,78 @@ TIDE_TEST(visibility_full_entity_destroyed_frames_verify_and_replay)
     TIDE_CHECK(visibility_hash(&replay) == visibility_hash(&expected));
     free(frame.data);
     free(record.data);
+}
+
+// A streamed repair is one datagram, and no spare goes with so small a transfer: lost, it went again only once it
+// should have been acknowledged, a round trip and a half later, the player's confirmed world that much further
+// behind. A player who loses none still gets each once; once one was lost in every datagram it went in, the next
+// go in more, and one of those lost costs no wait.
+TIDE_TEST(visibility_small_repairs_go_in_more_datagrams_once_one_was_lost)
+{
+    visibility_continuous = true;
+    tide_loopback *net = tide_loopback_create(8841);
+    TIDE_REQUIRE(net);
+    tide_loopback_set_conditions(net, (tide_net_conditions){.latency = 0.08});
+    tide_server *server = tide_server_create(&(tide_server_desc){.game = &visibility_game,
+        .transports = {tide_loopback_endpoint(net, 1)}}, 0);
+    visibility_wire wire = {.inner = tide_loopback_endpoint(net, 2)};
+    const tide_transport transport = {.self = &wire, .send = visibility_wire_send, .receive = visibility_wire_receive,
+        .close = visibility_wire_close, .clock = visibility_wire_clock, .arrived = visibility_wire_arrived};
+    uint32_t sampled = 3;
+    tide_client *client = tide_client_create(&(tide_client_desc){.game = &visibility_game, .transport = transport,
+        .server = tide_loopback_address(1), .sample = visibility_sample, .user = &sampled, .lead = 2}, 0);
+    TIDE_REQUIRE(server && client);
+    // Three of the stream's repairs are watched, each the one after the newest the server has named: one on a
+    // network that has lost nothing, one whose only datagram is lost, and one after it whose first is lost
+    enum { CLEAN, LOST, COPIED, DONE };
+    uint32_t phase = CLEAN, named = 0, adopted = 0, waited[DONE] = {0}, seen[DONE] = {0};
+    for (uint32_t step = 1; step <= 1100 && phase < DONE; step++) {
+        const double now = (double)step / 120.0;
+        tide_loopback_set_time(net, now);
+        tide_client_update(client, now);
+        tide_server_update(server, now);
+        const tide_client_status status = tide_client_status_of(client);
+        if (tide_server_tick(server) < 200u || status.repairs < 3u) continue; // Its stream is under way
+        if (!wire.watch) {
+            wire.watch = wire.number + 1u;
+            wire.chunks_seen = wire.index_seen = 0;
+            wire.lose_index = 0;
+            wire.lose_times = phase == CLEAN ? 0u : 1u;
+            named = adopted = 0;
+            continue;
+        }
+        if (wire.number < wire.watch) continue;
+        if (!named) { // Its WELCOME was read in this update
+            TIDE_REQUIRE(wire.number == wire.watch && wire.kind == 3u); // A repair by what changed, the next one
+            named = step;
+        }
+        if (!adopted && status.verified_tick >= wire.tick) {
+            TIDE_REQUIRE(wire.number == wire.watch);
+            adopted = step;
+        }
+        // Once it's adopted, the copies still on their way are read before the next is watched
+        if (!adopted || step - adopted < 40u) continue;
+        waited[phase] = adopted - named;
+        seen[phase] = wire.chunks_seen;
+        wire.watch = 0;
+        phase++;
+    }
+    TIDE_REQUIRE(phase == DONE);
+    const tide_client_status status = tide_client_status_of(client);
+    TIDE_CHECK(status.state == TIDE_SESSION_CONNECTED && status.resyncs == 0);
+    // Nothing was ever lost: one datagram, as before
+    TIDE_CHECK(seen[CLEAN] == 1u);
+    // Its one datagram lost: sent again a round trip and a half after (160 ms: 240 ms, 29 updates of 120 a second),
+    // and again in the ticks after that, as the next ones are from the first
+    TIDE_CHECK(seen[LOST] >= 2u && seen[LOST] <= 3u && waited[LOST] >= 28u);
+    // From then they go in three, in the ticks after: the first lost, the second is there a tick later
+    TIDE_CHECK(seen[COPIED] == 3u && waited[COPIED] <= 4u);
+    if (getenv("TIDE_VISIBILITY_METRICS")) {
+        printf("small repairs: datagrams %u/%u/%u, updates from WELCOME to adopted %u/%u/%u\n",
+            seen[CLEAN], seen[LOST], seen[COPIED], waited[CLEAN], waited[LOST], waited[COPIED]);
+    }
+    tide_client_destroy(client);
+    tide_server_destroy(server);
+    tide_loopback_destroy(net);
+    visibility_continuous = false;
 }

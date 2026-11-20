@@ -1,5 +1,127 @@
 # Netcode: sessions, prediction, commands
 
+## A small repair that's lost goes again at once; what a stream's lag is made of; no protocol change (2026-11-20)
+
+From a review of visibility, rollback and host continuity. The recorded continuous-hidden-effects fixture
+(`visibility_continuous_hidden_effects_coalesce_without_rtt_per_tick`: 160 ms round trip, 60 ms jitter, 20% loss,
+hidden consequences on 480 ticks) had its clients' confirmed worlds up to 104 ticks behind (2026-10-15), 76 on `dev`
+before this, with no resync. Measured again with a scratch harness over the same game (one client, 120 updates a
+second, a frame marked presented every other one, the ticks 150 to 570; not in the tree), four things are in that
+number, and they aren't the same thing:
+
+- **What the player's own input does isn't late.** A client goes on predicting from each repair's endpoint
+  (`predict_again`): its predicted tick stayed its usual lead past the server's (7 to 10 ticks at this round trip),
+  with 0 or 1 inputs late, on every network measured. The exception is the one that matters: a client predicts no
+  further than its prediction window past its confirmed world (60 ticks), so **once confirmation is more than a
+  second behind, its own input stops too**. On a seed of the recorded network that happened (the predicted tick
+  stood at 155 + 60, then 167 + 60 for half a second, then 218 + 60). The fixture now asks that it never does.
+- **What's confirmed is as old as its repair's delivery.** In a stream the server sends one transfer at a time and
+  starts the next only once the last is acknowledged, so a confirmation comes once a round trip at best and the
+  confirmed world is about the way there plus half a round trip behind on the whole: 11.2 ticks at 160 ms with
+  nothing lost (the way is 5, the round trip 10). The stream's backoff (`repair_gap`) and its ending once a second,
+  which costs a round trip of ordinary frames before the next (the "probe"), add to that: with a scratch build
+  that never ends a stream while it's asked for, 9.5 ticks on the whole and 14 at the 95th hundredth, from 20; and
+  at no delay 1.0 from 4.8, with 610 repairs where the backoff sends 137, which is what the backoff is for.
+- **What's presented is what's confirmed.** A coalesced repair puts the confirmed view at its endpoint
+  (`load_snapshot`), so the confirmed presentation had no backlog of its own in any run (0 or 1 tick): the display's
+  age is the confirmation's, and nothing was waiting to be shown.
+- **Loss was what made it seconds.** A streamed repair of this game is 66 to 177 bytes: one chunk, one datagram. A
+  transfer under `SPARE_LEAST` chunks has no spares, the early retry needs a later chunk to be acknowledged, and a
+  tick's two copies (`FRAME_COPIES`) are a SERVER's, which doesn't go while a transfer does. So a lost repair went
+  again only after `resend_after`, a round trip and a half (0.3 to 0.4 s here), and two in a row were a second. And
+  the loss is never counted in a stream at this round trip: `servers_read` counts SERVERs, and none goes between
+  one repair's acknowledgement and the next one's start, so `loss_counted` stays false (and a big repair in such a
+  stream has no spares either).
+
+### What's built (`engine/src/session.c`, `send_chunks`; agent-maintained, server only, nothing on the wire)
+
+A projected transfer under `SPARE_LEAST` chunks keeps how many datagrams each chunk went in
+(`connection.chunk_copies`). To a player whose network loses datagrams, a chunk not yet acknowledged goes again in
+the updates after, the ones that went in the fewest first, up to `chunk_copies_for` datagrams each, and in no more
+bytes than a tick's copies may take of a datagram: `FRAME_COPIES_ROOM` (300 bytes) accrues each tick, to a chunk's
+size at most (`copy_room`), so it's 18 KB a second at the very most at 60 ticks, in place of the ticks' copies that
+aren't going. An acknowledged chunk gets none, and the timeout and the early retry are as they were.
+
+How many datagrams: as many as a tick goes in once its SERVERs' loss is counted and takes more than two; and,
+because that count doesn't happen in a stream, `FRAME_COPIES` more than a chunk went in each time one had to go
+again at its timeout, which shows it lost in all of them (`copies_most`: 1, 3, 5, 7, 8; one such chunk of a transfer
+says so; a count of SERVERs that finds no loss to speak of takes it back to 1). **A player who loses nothing gets
+each chunk once, as before**: the fixture's lossless runs send the same 74 chunk datagrams and 35,687 bytes.
+
+What was weighed: every small repair in as many datagrams as a tick from the start (`frame_copies`, 8 until the
+loss is counted, so 8 for a whole stream) was a little better under loss (12 to 16 ticks on the whole) and cost a
+lossless player seven copies of every small repair for nothing (361 chunk datagrams for 74). Two copies always was
+half the gain. Doubling where it's `FRAME_COPIES` more was slower to get there.
+
+### Measured (the scratch harness, sanitize, Windows; made-up time, the same every run)
+
+Confirmation lag in ticks over the stream, before and after, for the fixture's network and four seeds of it:
+
+| Network | On the whole | 95th hundredth | Most | Repairs adopted |
+|---|---|---|---|---|
+| 160 ms, nothing lost | 11.2 → 11.2 | 20 → 20 | 24 → 24 | 41 → 41 |
+| 160 ms, 20% lost | 17.1 → 11.9 | 43 → 22 | 56 → 30 | 36 → 39 |
+| 160 ms, 60 ms jitter, 20% lost | 20.1 → 16.2 | 40 → 31 | 54 → 41 | 27 → 30 |
+| (second seed: a join that took 1.2 s) | 42.6 → 18.5 | 72 → 36 | 80 → 71 | 15 → 30 |
+| (third seed) | 17.1 → 17.0 | 33 → 33 | 40 → 40 | 32 → 35 |
+| (fourth seed) | 18.5 → 16.7 | 35 → 32 | 51 → 38 | 34 → 30 |
+| 40 ms, 5 ms jitter, 3% lost | 5.8 → 5.8 | 14 → 14 | 15 → 16 | 83 → 83 |
+
+(The second seed's 71 is its join: a 33-chunk world whose fourth chunk was lost three times, then the ticks it was
+behind run with no prediction, into the first hidden effect. Its stream after that is as the others'.) Chunk
+datagrams under 20% loss went from 72-93 to 101-158 over the 8 seconds. The fixture itself: most lag 76 → 44 ticks,
+53 → 67 loads for its two clients, no resync; its bound is now under 60 (it was 120).
+`session_view_time_large_changing_repairs_keep_chunks_before_welcome` (3% loss) is unchanged: 131 confirmations,
+307/320 bounded stamps, worst lag 15, on native and WASI.
+
+### Tests
+
+`visibility_small_repairs_go_in_more_datagrams_once_one_was_lost` (`tests/test_visibility_session.c`): a stream at
+160 ms with nothing lost but what the test's wire loses. A watched repair on the clean network comes in 1 datagram;
+one whose datagram is lost comes 31 updates (258 ms) after its WELCOME; the next one's first datagram is lost too
+and it's adopted an update later, having gone in 3. Against the session before: 1, 2 and 2 datagrams, 31 and 30
+updates. The continuous fixture's bound of 60 ticks fails before as well (76).
+
+Validation: `tide_tests` filtered to visibility (32 cases), session, commands and shard on native sanitize (Windows
+ASan), and to visibility and session on web-debug (WASI, Node 24.22.1). No generated code, compiler or wire change,
+so no game was built. Other platforms are CI's.
+
+### Open: smaller steps that would help, not built (each crosses into the server's repair budget or the wire)
+
+- **A stream that doesn't wait for each acknowledgement.** The floor above (the way there plus half a round trip)
+  is stop-and-wait's. A streamed repair every `repair_gap` ticks against the last acknowledged baseline, a newer one
+  replacing the one in flight, would make it the way there plus half the gap: about 6 ticks for 11 at 160 ms. A
+  client must then drop, not fail on, a repair whose baseline it has already gone past (today that's `need_snapshot`),
+  and big repairs can't be replaced mid-flight. Test: this note's harness, lag on the whole under 8 at 160 ms.
+- **The probe at a stream's end costs a round trip while effects go on** (above: 20 → 14 at the 95th hundredth).
+  Sending the ticks' frames with a stream's last repair would let the client compare its own tick the moment it
+  adopts, in place of waiting for frames that start once the server hears of the adoption.
+- **Loss isn't counted while transfers follow each other.** Counting WELCOMEs as SERVERs are counted (a protocol
+  number), or letting frames go beside a small repair, would give `frame_copies` and `spare_group` their authority
+  in a stream, and this change's own count could go.
+- **A client whose confirmation is a prediction window behind stops predicting, silently.** `tide_client_status`
+  could say so (confirmed age beside `verified_tick`), for a game's own "connection problem" display.
+
+The server's side of repairs (what's read and packed an update, the backoff's numbers) was another task's the same
+day; nothing here changes it.
+
+### Open: the owner's (unchanged by this work; `docs/spec.md`, State visibility, already says both are open)
+
+- **Server-only custom events have no recipients.** In a visibility game commands, tasks' continuations and whatever
+  depends on hidden state run only on the server; only genuine `Spawned`/`Destroyed` are journaled to recipients
+  (`tick_client_events`). An event such code sends reaches no other machine's `local event` or `verified` handler,
+  and nothing says so at build time. Offered: (1) keep it and warn at the `send` (outcomes go in permitted state);
+  (2) journal an event that names an entity to those who may see that entity at the event's turn, as lifecycle
+  events are, scrubbing as they do, with events naming none either refused or public; (3) an explicit audience at
+  the `send`. Recommended: (1) now, (2) when a game needs it; (3) only if (2) proves too coarse.
+- **A visibility match ends with its host.** No player's machine has the whole state, and none may be given it, so
+  nothing a client holds is promoted (`visibility_host_migration_never_promotes_a_partial_world`). Offered: (1)
+  say so as the contract, with `hostMigration = true` an error in a program that uses visibility, as it is with
+  `Storage`, pointing at a dedicated or hosted server, whose recovery already keeps the whole match; (2) a
+  complete-state handover to a machine the game declares trusted (a standby server), never to a player; (3) state
+  escrowed encrypted with the relay or a service, which is a new trusted party. Recommended: (1); (2) if and when
+  self-hosted dedicated servers want failover; not (3).
+
 ## Projection journals reuse the completed tick's hash (2026-11-19)
 
 `tick_run` computes the authoritative whole-world hash after simulation. The
@@ -3801,7 +3923,8 @@ the continuous case bounds confirmation lag under 160 ms RTT, 60 ms jitter and
 20% loss. Fresh targeted native validation passes all six cases. The continuous
 case simulates 700 server ticks in 11.67 seconds with hidden consequences on 480
 ticks: both clients finish at verified tick 693, maximum observed confirmation
-lag is 104 ticks (1.73 seconds), and neither resyncs. Numbered canonical transfers
+lag is 104 ticks (1.73 seconds), and neither resyncs (76 ticks by 2026-11-20 and 44 since: the top section,
+which says what that lag is made of). Numbered canonical transfers
 send 33,835 and 33,551 bytes per client including the initial approximately 33 KiB
 projection; this excludes normal frame/input traffic. Generated
 visibility/group/projection/lifecycle fixtures exercise the language side. Final
