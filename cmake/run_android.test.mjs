@@ -69,8 +69,9 @@ function device(t) {
         else process.env.ANDROID_HOME = before.android;
         rmSync(root, { recursive: true, force: true });
     });
-    state.invoke = async (mode, fixture = 'state.bin', transfer = true) => {
-        process.argv = [process.execPath, 'run_android.mjs', ...(transfer ? ['--fixture', fixture] : []), program, mode, fixture];
+    state.invoke = async (mode, fixture = 'state.bin', transfer = true, beside = []) => {
+        process.argv = [process.execPath, 'run_android.mjs', ...(transfer ? ['--fixture', fixture] : []),
+            ...beside.flatMap(other => ['--fixture', other]), program, mode, fixture];
         try {
             await import(`./run_android.mjs?invocation=${++invocation}`);
             assert.fail('wrapper did not exit');
@@ -107,6 +108,18 @@ test('explicit fixture filenames can contain spaces', async t => {
     assert.equal(await d.invoke('write', 'state snapshot.bin'), 0);
     assert.equal(await d.invoke('read', 'state snapshot.bin'), 0);
     assert.equal(readFileSync('state snapshot.bin', 'utf8'), 'snapshot');
+    assert.equal(d.files.size, 0);
+});
+
+test('several fixtures each go to the device and come back', async t => {
+    const d = device(t);
+    writeFileSync('beside.txt', 'drawn');
+    assert.equal(await d.invoke('write', 'state.bin', true, ['beside.txt']), 0);
+    assert.equal(readFileSync('state.bin', 'utf8'), 'snapshot');
+    assert.equal(readFileSync('beside.txt', 'utf8'), 'drawn');
+    assert.deepEqual(d.calls.filter(args => args[0] === 'push').map(args => args[1]).slice(1), ['beside.txt']);
+    assert.deepEqual(d.calls.filter(args => args[0] === 'pull').map(args => args[2]), ['state.bin', 'beside.txt']);
+    assert.equal(await d.invoke('read', 'state.bin', true, ['beside.txt']), 0);
     assert.equal(d.files.size, 0);
 });
 

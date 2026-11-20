@@ -39,15 +39,25 @@ void Seen(const int ticks, const int presses, const float width, const float hei
 }
 
 // The sizes of the other program's images, as the game's view read them at the last frame (embed.tide's Faces).
+// The tests reading them draw, so the web's build, which has none of those, keeps nothing.
+#if !defined(__wasm__)
 static tide_int2 faced_face, faced_bumps, faced_logo;
 static int faced_note; // ...and how long its `note` is, a local field beside them with a declared default
+#endif
 
 void Faced(const tide_int2 face, const tide_int2 bumps, const tide_int2 logo, const int note)
 {
+#if !defined(__wasm__)
     faced_face = face;
     faced_bumps = bumps;
     faced_logo = logo;
     faced_note = note;
+#else
+    (void)face;
+    (void)bumps;
+    (void)logo;
+    (void)note;
+#endif
 }
 
 static char program[] = "embed";

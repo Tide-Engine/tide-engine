@@ -462,11 +462,22 @@ tide_add_game(tide_platform_travel_layout SOURCES tests/travel_layout.tide NAME 
     HOST tests/travel_layout.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
 target_include_directories(tide_platform_travel_layout PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)
 target_link_libraries(tide_platform_travel_layout PRIVATE tide_platform)
-if(NOT TIDE_WEB)
+if(TIDE_ANDROID)
+    # Each program runs in a device folder of its own: the recordings go through this folder (run_android.mjs)
+    foreach(test tide_platform_travel tide_platform_travel_layout)
+        add_test(NAME ${test} COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR} --fixture travel-layout.tiderec
+            --fixture travel-layout.tiderec.txt --fixture travel-layout.tiderec.plain "$<TARGET_FILE:${test}>"
+            WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    endforeach()
+    set_tests_properties(tide_platform_travel tide_platform_travel_layout PROPERTIES TIMEOUT 120
+        ENVIRONMENT "TIDE_TRAVEL_RECORDING=travel-layout.tiderec")
+elseif(NOT TIDE_WEB)
     add_test(NAME tide_platform_travel COMMAND tide_platform_travel)
     add_test(NAME tide_platform_travel_layout COMMAND tide_platform_travel_layout)
     set_tests_properties(tide_platform_travel tide_platform_travel_layout PROPERTIES TIMEOUT 120
         ENVIRONMENT "TIDE_TRAVEL_RECORDING=${CMAKE_CURRENT_BINARY_DIR}/travel-layout.tiderec")
+endif()
+if(NOT TIDE_WEB)
     set_tests_properties(tide_platform_travel PROPERTIES FIXTURES_SETUP tide_travel_recording)
     set_tests_properties(tide_platform_travel_layout PROPERTIES FIXTURES_REQUIRED tide_travel_recording)
 endif()

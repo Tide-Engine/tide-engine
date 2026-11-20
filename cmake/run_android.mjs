@@ -2,8 +2,9 @@
 // runs Android builds' tests: node run_android.mjs <program> [arguments...]
 // The program goes to a folder of its own under /data/local/tmp, runs there,
 // and goes again; the exit code is the program's.
-// --fixture <filename> before the program carries that one file from the
-// host working directory and back, for tests that share it between processes.
+// --fixture <filename> before the program, once or more, carries each such
+// file from the host working directory and back, for tests that share them
+// between processes.
 //
 // --app <package> [--back] [--vulkan] [--steps] [--env TIDE_<NAME>=<value>]... [--run <arguments>]... <apk>
 // [arguments...] runs an app instead: it's installed, its activity started with the
@@ -37,8 +38,8 @@ import { homedir, platform } from 'node:os';
 import { basename, join } from 'node:path';
 
 const argv = process.argv.slice(2);
-let fixture, app, back = false, vulkan = false, steps = false;
-const environment = [], runs = [];
+let app, back = false, vulkan = false, steps = false;
+const environment = [], runs = [], fixtures = [];
 if (argv[0] === '--app') {
     argv.shift();
     app = argv.shift();
@@ -58,12 +59,15 @@ if (argv[0] === '--app') {
         console.error(`run_android: --env takes a setting of Tide's, as TIDE_NAME=value with no spaces, not '${wrong}'`);
         process.exit(2);
     }
-} else if (argv[0] === '--fixture') {
-    argv.shift();
-    fixture = argv.shift();
-    if (!fixture || /[/\\]/.test(fixture) || fixture === '.' || fixture === '..') {
-        console.error('run_android: --fixture needs a filename in the working directory');
-        process.exit(2);
+} else {
+    while (argv[0] === '--fixture') {
+        argv.shift();
+        const fixture = argv.shift();
+        if (!fixture || /[/\\]/.test(fixture) || fixture === '.' || fixture === '..') {
+            console.error('run_android: --fixture needs a filename in the working directory');
+            process.exit(2);
+        }
+        fixtures.push(fixture);
     }
 }
 const [program, ...args] = argv;
@@ -275,7 +279,8 @@ function execute() {
         console.error(`run_android: can't copy ${program} to the device: ${(push.stderr || '').trim()}`);
         return 1;
     }
-    if (fixture && existsSync(fixture)) {
+    for (const fixture of fixtures) {
+        if (!existsSync(fixture)) continue;
         const input = run(['push', fixture, `${folder}/${fixture}`]);
         if (input.status !== 0) {
             console.error(`run_android: can't copy fixture ${fixture} to the device: ${(input.stderr || '').trim()}`);
@@ -284,7 +289,7 @@ function execute() {
     }
     const result = run(['shell', command], true);
     if (result.status !== 0) return result.status ?? 1;
-    if (fixture) {
+    for (const fixture of fixtures) {
         const output = run(['pull', `${folder}/${fixture}`, fixture]);
         if (output.status !== 0) {
             console.error(`run_android: can't copy fixture ${fixture} from the device: ${(output.stderr || '').trim()}`);
