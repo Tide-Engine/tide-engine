@@ -99,6 +99,9 @@ void tide_storage_ask(const void *world, uint32_t kind, tide_str key, tide_list 
 void tide_storage_clear(tide_storage *s);
 // Moves `from`'s requests to the end of `to`'s, in order, leaving `from` empty.
 void tide_storage_take(tide_storage *to, tide_storage *from);
+// Moves `from`'s saves and deletes to the end of `to`'s, in order, and drops its loads and listings: what a
+// tick run again (a journal's replay) asked the store to keep, where what it asked to find was answered already.
+void tide_storage_take_writes(tide_storage *to, tide_storage *from);
 void tide_storage_free(tide_storage *s);
 
 // What a load or a listing found, as the message a tick takes: its first byte is this, which no shard message's is.
@@ -255,6 +258,10 @@ void tide_storage_forget(tide_storage_line *line);
 // answers and all: a server that stops loses nothing it saved. A host's
 // batches are its own once handed over, and aren't waited for.
 void tide_storage_finish(tide_storage_line *line);
+// Returns once everything handed over to a provider's files is carried out and on the disk (`io`: the provider
+// the line's batches went to), leaving the answers for the ticks that take them: what a checkpoint waits for, so
+// that everything asked before it is kept. False where the provider's flush failed. A host's batches are its own.
+bool tide_storage_settle(tide_storage_line *line, const tide_io *io);
 // Batches handed over and not yet received.
 uint32_t tide_storage_waiting(const tide_storage_line *line);
 

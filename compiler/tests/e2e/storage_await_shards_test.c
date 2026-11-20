@@ -119,10 +119,14 @@ typedef struct posted_work {
 
 static posted_work posted[4096];
 static uint32_t posted_count;
+// A journal's record written and not yet kept (flushed), and requests that reached the store meanwhile
+static bool unkept;
+static uint32_t heard_early;
 
 static bool io_post(void *user, void (*work)(void *context), void *context)
 {
     (void)user;
+    if (unkept) heard_early++;
     if (posted_count == sizeof posted / sizeof posted[0]) return false;
     posted[posted_count++] = (posted_work){work, context};
     return true;
@@ -314,6 +318,7 @@ static void keep_record(void *user, const uint32_t shard, const uint32_t tick, c
 {
     (void)user;
     (void)tick;
+    unkept = true;
     if (shard >= 8u) return;
     if (record_counts[shard] == record_rooms[shard]) {
         record_rooms[shard] = record_rooms[shard] ? record_rooms[shard] * 2u : 256u;
@@ -382,5 +387,113 @@ TIDE_TEST(storage_await_shards_recovered_from_a_journal_have_their_answers)
         sizes[s] = NULL;
         record_counts[s] = record_rooms[s] = 0;
     }
+    forget_files();
+}
+
+static void forget_records(void)
+{
+    for (uint32_t s = 0; s < 8u; s++) {
+        for (uint32_t i = 0; i < record_counts[s]; i++) free(records[s][i]);
+        free(records[s]);
+        free(sizes[s]);
+        records[s] = NULL;
+        sizes[s] = NULL;
+        record_counts[s] = record_rooms[s] = 0;
+    }
+    unkept = false;
+    heard_early = 0;
+}
+
+static void keep_records(void *user)
+{
+    (void)user;
+    unkept = false;
+}
+
+static uint32_t unsettled_checkpoints, checkpoints_kept;
+
+static void keep_checkpoint(void *user, const uint8_t *data, const uint32_t size)
+{
+    (void)user;
+    (void)data;
+    (void)size;
+    checkpoints_kept++;
+    if (posted_count) unsettled_checkpoints++; // Something asked before it isn't carried out
+}
+
+static uint32_t mover_files(void)
+{
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < file_count; i++) count += strncmp(files[i].path, "Tide/store/mover/", 17) == 0;
+    return count;
+}
+
+// The store hears of a tick only once the tick's journal record is kept, and a checkpoint is kept only once
+// the store has carried out everything asked before it. Until this, a tick's requests went to the provider as
+// the tick ended, before its record was written: a crash then left a save of a tick no recovery has.
+TIDE_TEST(storage_shards_ask_the_store_once_their_ticks_are_kept)
+{
+    now = 0;
+    forget_records();
+    unsettled_checkpoints = checkpoints_kept = 0;
+    tide_shards_desc d = split_desc;
+    d.journal = keep_record;
+    d.flush = keep_records;
+    d.checkpoint = keep_checkpoint;
+    d.checkpoint_seconds = 0.05; // Often: some come while requests are on their way
+    shards = tide_shards_create(&d, now);
+    TIDE_REQUIRE(shards != NULL);
+    for (int frame = 0; frame < 480; frame++) {
+        step();
+        if (frame % 4 == 3) run_posted();
+    }
+    const movers m = gather();
+    for (int i = 0; i < 8; i++) TIDE_CHECK(m.owned[i] == 1 && m.got[i] == i + 1 && m.tries[i] == 1);
+    TIDE_CHECK(mover_files() == 8u);
+    TIDE_CHECK(heard_early == 0);
+    TIDE_CHECK(checkpoints_kept >= 4u && unsettled_checkpoints == 0);
+    tide_shards_destroy(shards);
+    shards = NULL;
+    forget_records();
+    forget_files();
+}
+
+// A whole server that stops with saves its journal has and its disk hasn't (the provider's queue went with the
+// process): recovering runs those ticks again and carries their saves out again, so the store has what the
+// world's history says it saved, and the tasks that load them find them. Until this the replay asked nothing,
+// the saves were gone for good and every such load found nothing.
+TIDE_TEST(storage_shards_recovered_from_a_journal_save_again_what_their_ticks_saved)
+{
+    now = 0;
+    forget_records();
+    tide_shards_desc d = split_desc;
+    d.journal = keep_record;
+    shards = tide_shards_create(&d, now);
+    TIDE_REQUIRE(shards != NULL);
+    uint32_t size = 0;
+    uint8_t *saved = tide_shards_save(shards, &size); // Before any tick
+    TIDE_REQUIRE(saved != NULL && size > 0);
+    until_waiting(); // The movers' saves and loads asked in journaled ticks, none answered
+    tide_shards_destroy(shards); // (Carries its saves out: undone next, as a crash before the provider wrote them)
+    TIDE_CHECK(mover_files() == 8u);
+    for (uint32_t i = 0; i < file_count;) {
+        if (strncmp(files[i].path, "Tide/store/mover/", 17) == 0) drop_file(&files[i]);
+        else i++;
+    }
+    tide_storage_forget_files(NULL);
+    TIDE_CHECK(mover_files() == 0u);
+    shards = tide_shards_recover(&d, saved, size, give_record, NULL, now);
+    free(saved);
+    TIDE_REQUIRE(shards != NULL);
+    // There again as the recovery returns, before any shard's next tick, each with the bytes its tick saved
+    TIDE_CHECK(mover_files() == 8u);
+    const kept_file *last = find_file("Tide/store/mover/7.bin");
+    TIDE_CHECK(last != NULL && last->size == 8u);
+    const kept_file *first = find_file("Tide/store/mover/0.bin");
+    TIDE_CHECK(first != NULL && first->size == 1u);
+    until_answered(); // ...and the tasks that waited for them ask again and find them
+    tide_shards_destroy(shards);
+    shards = NULL;
+    forget_records();
     forget_files();
 }

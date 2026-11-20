@@ -21,6 +21,13 @@ typedef struct journal_ref {
     uint32_t shard;
 } journal_ref;
 
+// What a replayed tick asked the store to save and delete
+typedef struct again {
+    uint32_t since; // Its ticks since the checkpoint
+    uint32_t shard;
+    tide_storage asked;
+} again;
+
 typedef struct here {
     tide_server *server;
     tide_shard_agent *agent;
@@ -43,6 +50,9 @@ struct tide_shards {
     tide_shards_records records;
     void *records_user;
     bool failed;
+    // ...and what their ticks asked the store to keep, to carry out again once every shard's are run
+    struct again *again;
+    uint32_t again_count, again_room;
     uint64_t ghost_bytes_gone; // What stopped shards' agents sent of ghosts
     double updated; // When it last updated
 };
@@ -82,14 +92,93 @@ static bool replay(tide_shards *s, const uint32_t shard, void *world, uint32_t *
 {
     const uint8_t *record = NULL;
     uint32_t size = 0;
-    for (uint32_t index = 0; s->records && s->records(s->records_user, shard, index, &record, &size); index++) {
+    const uint32_t from = *next;
+    // What each tick asks the store is gathered as it runs again: its saves and deletes are carried out again
+    // (carry_again); its loads and listings were answered in the records, or are asked again by the tasks that wait
+    tide_storage asked = {0};
+    bool ok = true;
+    if (s->game->stored) tide_storage_bind(world, &asked);
+    for (uint32_t index = 0; ok && s->records && s->records(s->records_user, shard, index, &record, &size); index++) {
         uint32_t tick;
-        if (!tide_replay_tick(record, size, &tick)) return false;
-        if (tick < *next) continue; // From before the checkpoint
-        if (tick != *next || !tide_replay(s->game, world, record, size, s->desc.jobs)) return false;
+        ok = tide_replay_tick(record, size, &tick);
+        if (!ok || tick < *next) continue; // From before the checkpoint
+        ok = tick == *next && tide_replay(s->game, world, record, size, s->desc.jobs);
+        if (!ok) break;
         (*next)++;
+        tide_storage writes = {0};
+        tide_storage_take_writes(&writes, &asked);
+        if (!writes.count) {
+            tide_storage_free(&writes);
+            continue;
+        }
+        if (s->again_count == s->again_room) {
+            s->again_room = s->again_room ? s->again_room * 2u : 64u;
+            again *grown = realloc(s->again, s->again_room * sizeof *grown);
+            if (!grown) tide_out_of_memory();
+            s->again = grown;
+        }
+        s->again[s->again_count++] = (again){tick - from, shard, writes};
     }
-    return true;
+    if (s->game->stored) tide_storage_unbind(world);
+    tide_storage_free(&asked);
+    return ok;
+}
+
+static int again_order(const void *a, const void *b)
+{
+    const again *x = a, *y = b;
+    if (x->since != y->since) return x->since < y->since ? -1 : 1;
+    return x->shard < y->shard ? -1 : x->shard > y->shard;
+}
+
+static void nobody(void *user, uint8_t *message, const uint32_t size)
+{
+    (void)user;
+    (void)size;
+    free(message);
+}
+
+static void forget_again(tide_shards *s)
+{
+    for (uint32_t i = 0; i < s->again_count; i++) tide_storage_free(&s->again[i].asked);
+    free(s->again);
+    s->again = NULL;
+    s->again_count = s->again_room = 0;
+}
+
+// The replayed ticks' saves and deletes, carried out again and on the disk before any shard's next tick
+static bool carry_again(tide_shards *s)
+{
+    bool ok = true;
+    if (s->again_count && s->desc.io) {
+        qsort(s->again, s->again_count, sizeof *s->again, again_order);
+        uint64_t next = 0;
+        for (uint32_t i = 0; i < s->again_count; i++) tide_storage_serve(&s->again[i].asked, s->desc.io, &next, nobody, NULL);
+        tide_storage_line none = {0};
+        ok = tide_storage_settle(&none, s->desc.io);
+    }
+    forget_again(s);
+    return ok;
+}
+
+// The ticks so far are kept: what they asked of the store goes to it
+static void release(tide_shards *s)
+{
+    if (!s->desc.journal) return;
+    for (uint32_t i = 0; i < s->room; i++) {
+        if (s->shards[i].server) tide_server_store_release(s->shards[i].server);
+    }
+}
+
+bool tide_shards_settle(tide_shards *s)
+{
+    bool ok = true;
+    if (s->desc.flush) s->desc.flush(s->desc.user);
+    release(s);
+    for (uint32_t i = 0; i < s->room; i++) {
+        if (s->shards[i].server && !tide_server_store_settle(s->shards[i].server)) ok = false;
+    }
+    return ok;
 }
 
 static void start(tide_shards *s, const tide_shard_action *a, const double now)
@@ -121,6 +210,7 @@ static void start(tide_shards *s, const tide_shard_action *a, const double now)
     d.seed = s->desc.seed;
     d.jobs = s->desc.jobs;
     d.io = s->desc.io;
+    d.hold_store = s->desc.journal != NULL; // The store hears of a tick once its record is kept (release)
     d.closed = a->shard != TIDE_SHARD_ROOT; // Players join the world at the root, and a region takes those it's told of
     if (s->desc.transports) s->desc.transports(s->desc.user, a->shard, d.transports);
     here *h = grow(s, a->shard);
@@ -147,6 +237,10 @@ static void stop(tide_shards *s, const uint32_t id)
 {
     if (id >= s->room) return;
     here *h = &s->shards[id];
+    if (h->server && s->desc.journal) { // What its last ticks asked of the store, their records kept first
+        if (s->desc.flush) s->desc.flush(s->desc.user);
+        tide_server_store_release(h->server);
+    }
     if (h->server && s->desc.host_start) {
         if (s->desc.host_stop) s->desc.host_stop(s->desc.user, id, h->match);
     } else if (h->server) {
@@ -169,6 +263,11 @@ static void act(tide_shards *s, const double now)
         case TIDE_SHARD_ACTION_START: start(s, a, now); break;
         case TIDE_SHARD_ACTION_STOP: stop(s, a->shard); break;
         case TIDE_SHARD_ACTION_CHECKPOINT:
+            // Everything asked of the store before it is there first: what's after it is in the journal
+            if (s->desc.checkpoint && !tide_shards_settle(s)) {
+                fputs("tide: the store couldn't keep what the world saved; no checkpoint is kept past it\n", stderr);
+                abort();
+            }
             if (s->desc.checkpoint) s->desc.checkpoint(s->desc.user, a->data, a->size);
             tide_shard_coordinator_kept(s->coordinator);
             break;
@@ -217,7 +316,7 @@ static bool setup(tide_shards *s, const tide_shards_desc *desc)
 
 static tide_shard_coordinator_desc coordinator_desc(const tide_shards *s)
 {
-    return (tide_shard_coordinator_desc){
+    tide_shard_coordinator_desc d = {
         .players = tide_game_players(s->game),
         .range = s->api->range,
         .dims = s->api->dims,
@@ -227,7 +326,11 @@ static tide_shard_coordinator_desc coordinator_desc(const tide_shards *s)
         .busiest = s->desc.busiest,
         .checkpoints = s->desc.checkpoint != NULL,
         .checkpoint_seconds = s->desc.checkpoint_seconds,
+        .layout = s->game->hash,
+        .world_id = {s->desc.world_id[0], s->desc.world_id[1]},
     };
+    memcpy(d.simulation, s->game->simulation, sizeof d.simulation);
+    return d;
 }
 
 tide_shards *tide_shards_create(const tide_shards_desc *desc, const double now)
@@ -251,6 +354,7 @@ void tide_shards_destroy(tide_shards *s)
 {
     if (!s) return;
     for (uint32_t i = 0; i < s->room; i++) stop(s, i);
+    forget_again(s);
     free(s->shards);
     tide_shard_coordinator_destroy(s->coordinator);
     free(s);
@@ -267,8 +371,9 @@ void tide_shards_update(tide_shards *s, const double now)
         const double took = (double)(tide_time_now_ns() - began) * 1e-9;
         s->shards[i].busy = since > 0.0 && since < 1.0 ? (float)(took / since) : 0.0f;
     }
-    // The ticks are kept before anything they sent goes on
+    // The ticks are kept before anything they sent goes on, and before the store hears of them
     if (s->desc.flush) s->desc.flush(s->desc.user);
+    release(s);
     round_of(s, now);
     // A checkpoint begun is gathered at once: every shard is here
     for (uint32_t rounds = 0; rounds < 4u && tide_shard_coordinator_checkpointing(s->coordinator); rounds++) round_of(s, now);
@@ -298,6 +403,7 @@ void tide_shards_rebuilt(tide_shards *s, const tide_game *game, const bool laid_
     s->desc.game = game;
     s->game = game;
     s->api = game->shards;
+    tide_shard_coordinator_identity(s->coordinator, game->simulation, game->hash); // Its checkpoints are this build's
     for (uint32_t i = 0; i < s->room; i++) {
         if (s->shards[i].server) (void)tide_server_drop_injected(s->shards[i].server, TIDE_SHARD_GHOSTS);
         tide_shard_agent_rebuilt(s->shards[i].agent, game);
@@ -381,6 +487,20 @@ uint8_t *tide_shards_save(const tide_shards *s, uint32_t *size)
     return tide_shard_coordinator_save(s->coordinator, world_of, (void *)(uintptr_t)s, size);
 }
 
+uint8_t *tide_shards_seal(tide_shards *s, uint32_t *size)
+{
+    *size = 0;
+    if (!tide_shards_quiet(s) || !tide_shards_settle(s)) return NULL;
+    uint8_t *saved = tide_shards_save(s, size);
+    if (saved) (void)tide_shard_checkpoint_seal(saved, *size);
+    return saved;
+}
+
+void tide_shards_identity(const tide_shards *s, uint64_t world_id[2], uint32_t *sequence)
+{
+    tide_shard_coordinator_world(s->coordinator, world_id, sequence);
+}
+
 static tide_shards *load(const tide_shards_desc *desc, const uint8_t *data, const uint32_t size,
                          const tide_shards_records records, void *records_user, const double now)
 {
@@ -400,7 +520,7 @@ static tide_shards *load(const tide_shards_desc *desc, const uint8_t *data, cons
     act(s, now); // Each shard from its world, and with records, run on through them
     s->records = NULL;
     s->records_user = NULL;
-    if (s->failed) {
+    if (s->failed || !carry_again(s)) {
         tide_shards_destroy(s);
         return NULL;
     }
@@ -424,6 +544,7 @@ bool tide_shards_restart(tide_shards *s, const uint32_t shard, const uint8_t *da
     const uint8_t *world = NULL;
     uint32_t world_size = 0, tick = 0;
     if (!s || shard >= s->room || !s->shards[shard].server
+        || tide_shard_checkpoint_fits(data, size, s->game->simulation, s->game->hash) != TIDE_SHARD_CHECKPOINT_FITS
         || !tide_shard_checkpoint_world(data, size, shard, &world, &world_size, &tick)) return false;
     stop(s, shard);
     s->records = records;
@@ -434,6 +555,8 @@ bool tide_shards_restart(tide_shards *s, const uint32_t shard, const uint8_t *da
     start(s, &a, now);
     s->records = NULL;
     s->records_user = NULL;
+    // What its ticks asked the store to keep went to it as it stopped (stop): the provider is still this process's
+    forget_again(s);
     if (s->failed) return false;
     tide_shard_coordinator_restarted(s->coordinator, shard);
     return true;

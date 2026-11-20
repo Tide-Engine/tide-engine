@@ -346,8 +346,21 @@ static const argument_help arguments[] = {
      "regions owning a quarter of n together merge back into one.", RUN},
     {"--shard-journal", "--shard-journal <folder>", "Keep a sharded server's world in a folder",
      "Requires run --server. A checkpoint now and then, and every shard's ticks\n"
-     "since, on the disk before anything a shard sends goes on: a server\n"
-     "started again with the same folder goes on where the world was.", RUN},
+     "since, on the disk before anything a shard sends goes on, and the\n"
+     "match's store: a server started again with the same folder goes on\n"
+     "where the world was. Only the build that kept a world goes on with it.", RUN},
+    {"--shard-verify", "--shard-verify", "Say whether a kept world goes on with this build",
+     "Requires run --server and --shard-journal. Reads the folder, runs its\n"
+     "journal again, prints where each shard is and exits. Writes nothing\n"
+     "and listens on nothing.", RUN},
+    {"--shard-seal", "--shard-seal", "Seal a kept world and exit",
+     "Requires run --server and --shard-journal. Goes on from the folder and\n"
+     "seals the world as a server that stops does: what another build of\n"
+     "the game takes up with --shard-upgrade.", RUN},
+    {"--shard-upgrade", "--shard-upgrade", "Take up a world another build sealed",
+     "Requires run --server and --shard-journal. For a build whose match\n"
+     "state is laid out as the sealing build's. The sealed world stays in\n"
+     "the folder as checkpoint.<its build>.", RUN},
     {"--interactive", "--interactive <replay.txt>", "Play dynamically over stdin without a window",
      "Draws frame 1, then waits for commands: future-frame script lines queue\n"
      "input; step <n> advances; capture <file.png> observes; quit or EOF ends.\n"

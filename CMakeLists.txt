@@ -192,9 +192,11 @@ if(TIDE_PLATFORM)
                 "$<TARGET_FILE:tide_server_smoke>" "$<TARGET_FILE:tide_server_pack_client>" room)
             set_tests_properties(tide_server_room PROPERTIES TIMEOUT 20)
             # A sharded world on a dedicated server, and a player walking across its border
-            tide_add_game(tide_server_shards SERVER NAME game SOURCES "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/shards_players.tide")
+            tide_add_game(tide_server_shards SERVER NAME game SOURCES "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/shards_players.tide"
+                "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/shards_players_walk.tide")
             tide_add_game(tide_server_shards_client NAME game
                 SOURCES "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/shards_players.tide"
+                "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/shards_players_walk.tide"
                 HOST "${PROJECT_SOURCE_DIR}/platform/tests/server_shards_client.c")
             target_link_libraries(tide_server_shards_client PRIVATE tide_platform)
             add_test(NAME tide_server_shards COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/platform/tests/server_pack.mjs"
@@ -202,13 +204,23 @@ if(TIDE_PLATFORM)
             add_test(NAME tide_server_shards_room COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/platform/tests/server_pack.mjs"
                 "$<TARGET_FILE:tide_server_shards>" "$<TARGET_FILE:tide_server_shards_client>" shards-room)
             # ...and the same server killed outright, going on from its journal
+            # Then verified, sealed as it stops, and taken up by the game's next build (the same layout, another rule)
+            tide_add_game(tide_server_shards_next SERVER NAME game SOURCES "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/shards_players.tide"
+                "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/shards_players_walk_next.tide")
             add_test(NAME tide_server_shards_journal COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/platform/tests/server_journal.mjs"
-                "$<TARGET_FILE:tide_server_shards>")
+                "$<TARGET_FILE:tide_server_shards>" "$<TARGET_FILE:tide_server_shards_next>")
+            # A sharded world whose match uses the store: kept in the journal's folder, there after a stop and a crash
+            tide_add_game(tide_server_shards_store SERVER NAME game
+                SOURCES "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/storage_await_shards.tide")
+            add_test(NAME tide_server_shards_store COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/platform/tests/server_store.mjs"
+                "$<TARGET_FILE:tide_server_shards_store>")
+            set_tests_properties(tide_server_shards_store PROPERTIES TIMEOUT 130 RUN_SERIAL TRUE)
             set_tests_properties(tide_server_shards tide_server_shards_room PROPERTIES TIMEOUT 30)
             # Do not overlap disk-synchronous recovery with installers and
             # other server/process tests on shared CI runners.
-            # The 2.5-second crash run, two 60-second recoveries, and cleanup.
-            set_tests_properties(tide_server_shards_journal PROPERTIES TIMEOUT 130 RUN_SERIAL TRUE)
+            # The 2.5-second crash run, two 60-second recoveries, the short refused and
+            # verifying starts, the next build's run, and cleanup.
+            set_tests_properties(tide_server_shards_journal PROPERTIES TIMEOUT 200 RUN_SERIAL TRUE)
         endif()
         tide_add_game(tide_server_entry SERVER NAME game SOURCES
             "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/server_menu.tide"

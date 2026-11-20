@@ -505,6 +505,10 @@ typedef struct tide_server_desc {
     // with the first tick's requests, before them. The server takes them,
     // leaving it empty. NULL: none.
     struct tide_storage *asked;
+    // The host keeps a journal that must be on the disk before the store hears of a tick: what each tick asks of
+    // the store waits beside the server until tide_server_store_release, which the host calls once the ticks'
+    // records are kept. So the store never holds a save of a tick a recovery doesn't have.
+    bool hold_store;
     // 64 bits nobody could guess, from the system, for the seed of the match
     // it starts (tide_game.seeded): no two matches go the same. NULL: the seed
     // is `seed`, and a run repeats exactly (tests and benchmarks). A match
@@ -572,6 +576,12 @@ const void *tide_server_world(const tide_server *s);
 // updates, on the thread that updates the server.
 bool tide_server_store_answer(tide_server *s, uint64_t number, uint32_t outcome, const uint8_t *data, uint32_t size,
                               bool more);
+// With tide_server_desc.hold_store: the ticks so far are kept, and what they asked of the store goes to it, in
+// order. Before its first tick, what the match's start asked goes too.
+void tide_server_store_release(tide_server *s);
+// Returns once everything the store was handed is carried out and on the disk (tide_storage_settle): before a
+// checkpoint is kept. False where it couldn't be written.
+bool tide_server_store_settle(tide_server *s);
 uint32_t tide_server_tick(const tide_server *s); // Ticks run so far
 uint32_t tide_server_player_count(const tide_server *s);
 // Host recovery metadata, separate from deterministic world bytes. Save together

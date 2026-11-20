@@ -230,6 +230,15 @@ void tide_storage_take(tide_storage *to, tide_storage *from)
     tide_storage_clear(from);
 }
 
+void tide_storage_take_writes(tide_storage *to, tide_storage *from)
+{
+    for (uint32_t i = 0; i < from->count; i++) {
+        const uint32_t kind = from->items[i].kind;
+        if (kind == TIDE_STORAGE_SAVE || kind == TIDE_STORAGE_DELETE) copy_request(to, from, &from->items[i]);
+    }
+    tide_storage_clear(from);
+}
+
 void tide_storage_clear(tide_storage *s)
 {
     s->count = 0;
@@ -1339,6 +1348,24 @@ void tide_storage_finish(tide_storage_line *line)
         b = next;
     }
     line->first = line->last = NULL;
+}
+
+bool tide_storage_settle(tide_storage_line *line, const tide_io *io)
+{
+    for (tide_storage_batch *b = line->first; b; b = b->next) {
+        if (b->hosted) continue;
+        if (!__atomic_load_n(&b->done, __ATOMIC_ACQUIRE)) b->io->settle(b->io->user, b);
+        while (!__atomic_load_n(&b->done, __ATOMIC_ACQUIRE)) {
+        }
+    }
+    tide_memory_sync();
+    if (line->host || !io || !io->flush_begin || !io->flush_poll) return true;
+    const uint32_t ticket = io->flush_begin(io->user);
+    if (!ticket) return true; // Nothing to write
+    tide_io_error error = TIDE_IO_NONE;
+    while (!io->flush_poll(io->user, ticket, &error)) {
+    }
+    return error == TIDE_IO_NONE;
 }
 
 uint32_t tide_storage_waiting(const tide_storage_line *line)

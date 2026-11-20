@@ -93,6 +93,7 @@ static const char *dispatch_folder(int argc, char **argv)
     };
     const char *zero[] = {
         "--server", "--strip-server-assets", "--strip-assets", "--asset-sizes", "--anonymous", "--udp-only",
+        "--shard-verify", "--shard-seal", "--shard-upgrade",
         "--no-open", "--release", "--distribution", "--dev", "--no-dev", "--web", "--single-file",
         "--android", "--ios", "--stats", "--debug-views", "--ticks-alongside", "--paced", "--force"
     };
@@ -284,7 +285,8 @@ static int command_main(const int argc, char **argv)
             opts.strip_assets = true;
         } else if (build && strcmp(a, "--asset-sizes") == 0) {
             opts.asset_sizes = &sizes;
-        } else if (run && (strcmp(a, "--anonymous") == 0 || strcmp(a, "--udp-only") == 0)) {
+        } else if (run && (strcmp(a, "--anonymous") == 0 || strcmp(a, "--udp-only") == 0 || strcmp(a, "--shard-verify") == 0
+                          || strcmp(a, "--shard-seal") == 0 || strcmp(a, "--shard-upgrade") == 0)) {
             server_args = true;
             game_args[game_arg_count++] = a;
         } else if (run && (strcmp(a, "--port") == 0 || strcmp(a, "--max-matches") == 0
@@ -544,7 +546,8 @@ static int command_main(const int argc, char **argv)
     // The game's tide.packages reads them too: its #if lines say which packages this build has
     packages_set_symbols(defines, opts.define_count);
     if (server_args && !opts.server) {
-        fputs("tide: --anonymous, --udp-only, --port, --shard-most, --shard-journal and server capacity options require --server\n", stderr);
+        fputs("tide: --anonymous, --udp-only, --port, --shard-most, --shard-journal (with --shard-verify, --shard-seal and "
+              "--shard-upgrade) and server capacity options require --server\n", stderr);
         free(defines);
         return 2;
     }
@@ -552,7 +555,8 @@ static int command_main(const int argc, char **argv)
         for (int i = 0; i < game_arg_count; i++) {
             const char *a = game_args[i];
             if (a[0] != '-') continue;
-            if (strcmp(a, "--anonymous") == 0 || strcmp(a, "--udp-only") == 0) continue;
+            if (strcmp(a, "--anonymous") == 0 || strcmp(a, "--udp-only") == 0 || strcmp(a, "--shard-verify") == 0
+                || strcmp(a, "--shard-seal") == 0 || strcmp(a, "--shard-upgrade") == 0) continue;
             if (strcmp(a, "--port") == 0 || strcmp(a, "--max-matches") == 0
                 || strcmp(a, "--max-connections") == 0 || strcmp(a, "--frames") == 0 || strcmp(a, "--shards") == 0
                 || strcmp(a, "--shard-width") == 0 || strcmp(a, "--shard-most") == 0 || strcmp(a, "--shard-journal") == 0) { i++; continue; }

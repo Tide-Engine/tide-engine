@@ -43,7 +43,28 @@ typedef struct tide_shard_coordinator_desc {
     // change of shape. False: none, and a change of shape is told at once.
     bool checkpoints;
     double checkpoint_seconds;
+    // What its checkpoints say made them, and what a checkpoint must say to be loaded: the game's simulation
+    // identity (tide_game.simulation) and its layout's (tide_game.hash). A checkpoint of another build isn't loaded.
+    uint8_t simulation[32];
+    uint64_t layout;
+    // A new world's own name, for its life (a host's entropy; a loaded world keeps its checkpoint's)
+    uint64_t world_id[2];
 } tide_shard_coordinator_desc;
+
+// What a checkpoint says of itself, before anything of it is loaded
+typedef struct tide_shard_checkpoint_id {
+    uint8_t simulation[32]; // The build that made it
+    uint64_t layout;
+    uint64_t world_id[2];
+    uint32_t sequence;      // Counts the world's checkpoints: a journal's records follow the one they name
+    bool sealed;            // Made with nothing on its way and nothing owed to the store: no journal goes with it
+} tide_shard_checkpoint_id;
+
+typedef enum tide_shard_checkpoint_fit {
+    TIDE_SHARD_CHECKPOINT_FITS,
+    TIDE_SHARD_CHECKPOINT_UNREADABLE,  // Not a checkpoint this engine reads
+    TIDE_SHARD_CHECKPOINT_OTHER_BUILD, // Another simulation's (for a table with none, another layout's)
+} tide_shard_checkpoint_fit;
 
 typedef enum tide_shard_action_kind {
     // Start shard `shard`: from `world` (its packed world, a checkpoint's) and
@@ -104,6 +125,19 @@ bool tide_shard_coordinator_checkpointing(const tide_shard_coordinator *c);
 // the old layout are no use to it, so one is made as soon as it can be.
 void tide_shard_coordinator_rebuilt(tide_shard_coordinator *c);
 
+// A checkpoint's identity: false for bytes that aren't one.
+bool tide_shard_checkpoint_identity(const uint8_t *data, uint32_t size, tide_shard_checkpoint_id *out);
+// Whether a build with this simulation identity and layout goes on from it: the same simulation, or where
+// both have none (handwritten game tables), the same layout, as a player's admission is decided.
+tide_shard_checkpoint_fit tide_shard_checkpoint_fits(const uint8_t *data, uint32_t size, const uint8_t simulation[32],
+                                                     uint64_t layout);
+// Marks a checkpoint sealed, in place: its maker's to say (tide_shards_seal). False for bytes that aren't one.
+bool tide_shard_checkpoint_seal(uint8_t *data, uint32_t size);
+// The coordinator's build changed in place (a hot reload): its later checkpoints are the new one's.
+void tide_shard_coordinator_identity(tide_shard_coordinator *c, const uint8_t simulation[32], uint64_t layout);
+// The world's name and the last checkpoint's number.
+void tide_shard_coordinator_world(const tide_shard_coordinator *c, uint64_t world_id[2], uint32_t *sequence);
+
 // One shard's world in a checkpoint (TIDE_SHARD_ACTION_CHECKPOINT's bytes),
 // and the tick its journal goes on from: false for none, or bytes that aren't one.
 bool tide_shard_checkpoint_world(const uint8_t *data, uint32_t size, uint32_t shard, const uint8_t **world,
@@ -111,15 +145,17 @@ bool tide_shard_checkpoint_world(const uint8_t *data, uint32_t size, uint32_t sh
 // A checkpoint with each shard's world made anew by `world` (from its packed
 // bytes, as bytes to free(), or NULL to fail): a hot reload's, carried over
 // to another layout. NULL for bytes that aren't a checkpoint, or a world that fails.
+// With no `world`, each stays as it is. With `simulation`, the checkpoint is that build's from then on (its
+// simulation identity and `layout`), unsealed: the one way a checkpoint crosses builds.
 typedef uint8_t *(*tide_shard_rewrite_fn)(void *user, uint32_t shard, const uint8_t *world, uint32_t size, uint32_t *out_size);
 uint8_t *tide_shard_checkpoint_rewrite(const uint8_t *data, uint32_t size, tide_shard_rewrite_fn world, void *user,
-                                       uint32_t *out_size);
+                                       const uint8_t *simulation, uint64_t layout, uint32_t *out_size);
 
 // A checkpoint now, its own part and each running shard's world as `world`
 // gives it (packed, with the tick its journal goes on from): for a host with
 // every shard at hand (tide_shards_save). Bytes to free().
 typedef uint8_t *(*tide_shard_world_fn)(void *user, uint32_t shard, uint32_t *size, uint32_t *tick);
-uint8_t *tide_shard_coordinator_save(const tide_shard_coordinator *c, tide_shard_world_fn world, void *user, uint32_t *size);
+uint8_t *tide_shard_coordinator_save(tide_shard_coordinator *c, tide_shard_world_fn world, void *user, uint32_t *size);
 
 // A player joined the world, or left it: the root sends PlayerJoined or PlayerLeft.
 void tide_shard_coordinator_player(tide_shard_coordinator *c, tide_player_id player, bool joined);

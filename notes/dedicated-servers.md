@@ -42,7 +42,9 @@ regions' matches take join requests without credentials (`tide_hosting_open`):
 their servers admit by the root's cookie. Tested by `tide_server_shards` and
 `tide_server_shards_room`, a server and a client process. `--shard-journal <folder>` keeps
 the world in a folder and goes on from it (`tide_server_shards_journal` kills one
-outright and starts it again). Details and gaps:
+outright and starts it again), with its store, for the build that kept it;
+`--shard-verify`, `--shard-seal` and `--shard-upgrade` look at, seal and take up
+such a world. Details and gaps:
 notes/sharding.md.
 
 ## Shared player/connection ceiling (2026-10-20)

@@ -532,7 +532,9 @@ static bool tide_managed_coordinator_desc(const uint8_t *data, const uint32_t si
     const uint8_t *lo = tide_read_bytes(&r, 24u), *hi = tide_read_bytes(&r, 24u);
     if (!lo || !hi || !tide_game_api.shards) return false;
     *out = (tide_shard_coordinator_desc){.players = tide_game_players(&tide_game_api), .range = tide_game_api.shards->range,
-                                         .dims = tide_game_api.shards->dims};
+                                         .dims = tide_game_api.shards->dims, .layout = tide_game_api.hash};
+    // Its checkpoints say this build made them, and only this build's are loaded (tide_shard_checkpoint_id)
+    memcpy(out->simulation, tide_game_api.simulation, sizeof out->simulation);
     memcpy(out->world.lo, lo, 24u);
     memcpy(out->world.hi, hi, 24u);
     for (uint32_t k = 0; k < 3u; k++) out->split[k] = tide_read_u32(&r);
@@ -550,6 +552,8 @@ uint32_t tide_managed_coordinator_create(const double now, const uint8_t *desc, 
 {
     tide_shard_coordinator_desc d;
     if (tide_managed_server || tide_managed_coordinator || !tide_managed_coordinator_desc(desc, size, &d)) return 0;
+    d.world_id[0] = tide_managed_entropy(); // The world's own name, in each of its checkpoints
+    d.world_id[1] = tide_managed_entropy();
     tide_managed_coordinator = tide_shard_coordinator_create(&d, now);
     return tide_managed_coordinator != NULL;
 }
@@ -645,7 +649,9 @@ uint32_t tide_managed_checkpoint_world(const uint8_t *data, const uint32_t size,
 {
     const uint8_t *world = NULL;
     uint32_t world_size = 0, tick = 0;
-    if (!tide_shard_checkpoint_world(data, size, shard, &world, &world_size, &tick)) return tide_managed_give(NULL, 0);
+    // Another build's checkpoint has no world for this one: a shard isn't staged from it
+    if (tide_shard_checkpoint_fits(data, size, tide_game_api.simulation, tide_game_api.hash) != TIDE_SHARD_CHECKPOINT_FITS
+        || !tide_shard_checkpoint_world(data, size, shard, &world, &world_size, &tick)) return tide_managed_give(NULL, 0);
     tide_writer w = {.grows = true};
     tide_write_u32(&w, tick);
     tide_write_bytes(&w, world, world_size);

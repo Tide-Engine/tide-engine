@@ -842,7 +842,7 @@ TIDE_TEST(shards_a_sharded_match_goes_on_in_another_program)
 
     int worlds = 0;
     uint32_t carried_size = 0;
-    uint8_t *carried = tide_shard_checkpoint_rewrite(saved, size, copy_world, &worlds, &carried_size);
+    uint8_t *carried = tide_shard_checkpoint_rewrite(saved, size, copy_world, &worlds, NULL, 0, &carried_size);
     free(saved);
     TIDE_REQUIRE(carried != NULL);
     TIDE_CHECK(worlds == 3);
