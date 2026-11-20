@@ -259,6 +259,7 @@ settings
 
 Then, when the machine running a room's match leaves or stops answering, another player's machine takes the match over, and the others join it again as the same players:
 
+- A game that hides state from some players ([visibility](../game/visibility.md)) can't turn it on: no player's machine has the whole match to go on from, and the compiler says so. Such a match runs on a dedicated or hosted server when it has to outlast its players.
 - The match goes on from the last tick the new host had verified. Players' predictions after it are rolled back, as when any guess is wrong.
 - The last host's player leaves the match (`PlayerLeft`), and from then on entities without an owner read the new host's input.
 - Local code sees no `Connected` or `Disconnected` while the match changes hands: `Session.state` is `Connecting` meanwhile, and views keep showing the last world they had. On the new host, `Session.server` becomes true.

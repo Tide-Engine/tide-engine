@@ -5165,6 +5165,13 @@ No CI, other OS, Android or sanitizer run was requested/performed.
 
 ## Entity/component visibility and shared audiences (2026-10-15)
 
+Two checks came later (2026-11-20, `check_sends`; why and what else was offered: `notes/netcode.md`, top section):
+`hostMigration = true` in a program that uses visibility is an error at the setting, and a command handler's `Send`
+of a match event that has a local handler is a warning there. Both go by `program.visibility_state`, which naming
+`Visibility`, `VisibilityGroup` or `Audience` sets. `checker.send_code` keeps the system or handler each `Send` is
+in, beside `sends`; an event's `listeners` aren't gathered yet when `check_sends` runs, so it looks through
+`program.handlers`.
+
 The owner approved client simulation culling for world chunks, individual
 players and private card state. Visibility applies to entities and whole
 components; the field-level proposal was withdrawn. A visible component has

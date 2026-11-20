@@ -37,6 +37,7 @@ static void setup(void)
     full_world_game.hear_visibility = NULL;
     full_world_game.tick_client_events = NULL;
     full_world_game.check_client_events = NULL;
+    full_world_game.host_migration = true; // (A game that hides state can't set it: the source doesn't)
     now = 0.0;
     net = tide_loopback_create(5);
     tide_loopback_set_conditions(net, (tide_net_conditions){.latency = 0.02});

@@ -105,7 +105,16 @@ so no game was built. Other platforms are CI's.
 The server's side of repairs (what's read and packed an update, the backoff's numbers) was another task's the same
 day; nothing here changes it.
 
-### Open: the owner's (unchanged by this work; `docs/spec.md`, State visibility, already says both are open)
+### The two contracts, decided 2026-11-20 (the owner: "go with your gut"; the picks are Claude's, in `docs/spec.md`, State visibility)
+
+Built, in `compiler/src/check.c` (`check_sends`): the first option of each below. A command handler's `Send` of a
+match event that has a local handler warns in a program that uses visibility (`tidec_warning_visibility_command_event`;
+direct sends only, not through a function it calls, and not tasks' continuations or systems that read hidden state,
+which the compiler can't tell apart). `hostMigration = true` with visibility is an error at the setting
+(`tidec_error_visibility_host_migration`); `compiler/tests/e2e/players.tide` no longer sets it, and its test turns it
+on for the copy of the game it takes the projection out of. No repository game or prototype on `dev` had either
+(only `loam` uses visibility there: no host migration, no local handlers of its own events). The runtime's refusals
+stay as the second guard. What was offered:
 
 - **Server-only custom events have no recipients.** In a visibility game commands, tasks' continuations and whatever
   depends on hidden state run only on the server; only genuine `Spawned`/`Destroyed` are journaled to recipients

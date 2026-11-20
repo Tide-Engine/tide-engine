@@ -1,0 +1,10 @@
+// expect: a match that hides state from players can't change hands (hostMigration = true)
+settings { hostMigration = true; }
+component Card { int value; }
+singleton Table { VisibilityGroup hands; }
+scene Main { }
+event(Spawned) Setup(with Main, mut Table table)
+{
+    table.hands = Visibility.CreateGroup(Audience.None);
+    Spawn(Card { value = 3 }, Visibility { group = table.hands });
+}
