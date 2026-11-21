@@ -23,7 +23,6 @@ singleton Checks
 local singleton Images { LocalEntity made; bool done; int notices; int seen; int tags; }
 local event Notice { List<string> words; }
 event Shipment { List<string> words; Map<int, List<int>> tags; }
-command Choice { int number; }
 scene Play { }
 scene Main { }
 
@@ -82,10 +81,10 @@ event(Shipment payload) Received(mut Checks checks)
 {
     checks.eventTotal += Forward(payload);
 }
-command(Choice payload, PlayerID sender) Chosen(mut Checks checks)
+command(int number) Choice(mut Checks checks, PlayerID sender)
 {
     if (sender == default) return;
-    CountChoice(payload, checks);
+    CountChoice(Choice { number = number }, checks);
 }
 view Make(mut Images images)
 {

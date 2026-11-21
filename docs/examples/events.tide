@@ -10,7 +10,6 @@ component Ball
 
 event Hit { int damage; }    // Sent to a ball
 event Bounced { float2 at; } // Sent to the world, only for what's shown
-command Poke { }
 
 scene Main { }
 
@@ -39,7 +38,7 @@ system Fly(mut Ball ball, Time time)
 }
 
 // A tap pokes a ball, and the match answers with an event sent to it.
-command(Poke poke, PlayerID sender) PokeBall(with Ball)
+command() Poke(PlayerID sender, with Ball)
 {
     this.Send(Hit { damage = 1 });
 }
@@ -95,7 +94,7 @@ view Balls(mut Ball ball, Devices devices)
 {
     ball.flash = Math.Max(0, ball.flash - Frame.dt);
     var pointer = Draw.ScreenToWorld(Screen.Flip(devices.pointer.position));
-    if (devices.pointer.press.down && Math.Distance(pointer, ball.position) < 0.45) this.Send(Poke { });
+    if (devices.pointer.press.down && Math.Distance(pointer, ball.position) < 0.45) Poke();
     Draw.Circle(ball.position, 0.14 + ball.health * 0.07, ball.flash > 0 ? Color.white : Color(0.98, 0.75, 0.14));
 }
 

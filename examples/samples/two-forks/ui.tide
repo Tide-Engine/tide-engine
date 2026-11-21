@@ -98,13 +98,13 @@ view FieldGuide(Kitchen kitchen, Devices devices, Pad pad, mut Guide guide, Room
         {
             if (GUILayout.Button("Undo last move"))
             {
-                Send(Undo { level = kitchen.level });
+                Undo(kitchen.level);
                 guide.open = false;
             }
         }
         if (GUILayout.Button("Reset this place"))
         {
-            Send(Restart { level = kitchen.level });
+            Restart(kitchen.level);
             guide.open = false;
         }
         GUILayout.Toggle("Testing shortcuts", guide.testing);
@@ -112,7 +112,7 @@ view FieldGuide(Kitchen kitchen, Devices devices, Pad pad, mut Guide guide, Room
         {
             if (GUILayout.Button("Skip kitchen (N)"))
             {
-                Send(Goto { level = NextKitchen(kitchen.level) });
+                Goto(NextKitchen(kitchen.level));
                 guide.open = false;
             }
         }

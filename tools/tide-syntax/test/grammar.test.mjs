@@ -237,13 +237,28 @@ const cases = {
         ['foreach (var event in events)', [['event', '!storage'], ['event', '!keyword'], ['in', 'keyword.control'], ['in', '!entity.name.type']]],
         ['var scene = 1;', [['scene', '!storage']]],
     ],
-    'commands identify their payload, sender and receiver': [
-        ['command Rename', [['command', 'storage.type'], ['Rename', 'entity.name.type']]],
-        ['command(Rename rename, PlayerID sender) RenamePlayer(', [
-            ['command', 'storage.type'], ['Rename', 'entity.name.type'], ['rename', 'variable.parameter'],
-            ['PlayerID', 'storage.type.primitive'], ['sender', 'variable.parameter'], ['RenamePlayer', 'entity.name.function'],
-            ['RenamePlayer', '!entity.name.function.call'],
+    'commands identify what they are called with, their name and what their code takes': [
+        ['command(string name, [Clamp(1, 9)] int times = 1) Rename(', [
+            ['command', 'storage.type'], ['string', 'storage.type.primitive'], ['name', 'variable.parameter'],
+            ['Clamp', 'entity.name.function.attribute'], ['9', 'constant.numeric'], ['int', 'storage.type.primitive'],
+            ['times', 'variable.parameter'], ['=', 'keyword.operator.assignment'], ['Rename', 'entity.name.function'],
+            ['Rename', '!entity.name.function.call'], ['Owner', 'support.class'], ['mut', 'storage.modifier'],
+            ['Name', 'entity.name.type'], ['mine', '!variable.parameter'], ['PlayerID', 'storage.type.primitive'],
         ]],
+        // Its name on the line under what it's called with
+        ['command(List<int> slots, Combat.Stance? stance)', [
+            ['command', 'storage.type'], ['List', 'support.class'], ['int', 'storage.type.primitive'], ['slots', 'variable.parameter'],
+            ['Stance', 'entity.name.type'], ['?', 'keyword.operator.optional'], ['stance', 'variable.parameter'],
+        ]],
+        ['PickCards(mut Hand hand, query (', [
+            ['PickCards', 'entity.name.function'], ['PickCards', '!entity.name.function.call'], ['mut', 'storage.modifier'],
+            ['Hand', 'entity.name.type'], ['query', 'storage.modifier.query'], ['with', 'storage.modifier'],
+            ['Fighter', 'entity.name.type'], ['ownership', 'keyword.other.ownership'],
+        ]],
+        // Called as a function is, on an entity or not, its values by place or by name
+        ['this.Rename("x", times: 2);', [['Rename', 'entity.name.function.call'], ['times', 'variable.parameter']]],
+        ['PickCards(slots, stance: null);', [['PickCards', 'entity.name.function.call'], ['stance', 'variable.parameter']]],
+        ['view RenameMenu(', [['view', 'storage.type'], ['RenameMenu', 'entity.name.function']]],
     ],
     'local and async, in either order': [
         ['local event Displayed', [['local', 'storage.modifier'], ['event', 'storage.type'], ['Displayed', 'entity.name.type']]],
@@ -261,8 +276,10 @@ const cases = {
     ],
     'dev declarations': [
         ['dev view GunTools(Gun gun)', [['dev', 'storage.modifier'], ['view', 'storage.type'], ['GunTools', 'entity.name.function']]],
-        ['dev command GiveAmmo { int amount; }', [['dev', 'storage.modifier'], ['command', 'storage.type'], ['GiveAmmo', 'entity.name.type']]],
-        ['dev command(GiveAmmo give, PlayerID sender) Give(', [['dev', 'storage.modifier'], ['Give', 'entity.name.function']]],
+        ['dev command(int amount) GiveAmmo(', [
+            ['dev', 'storage.modifier'], ['command', 'storage.type'], ['amount', 'variable.parameter'], ['GiveAmmo', 'entity.name.function'],
+            ['GiveAmmo', '!entity.name.function.call'],
+        ]],
         ['dev scene GunRange { }', [['dev', 'storage.modifier'], ['scene', 'storage.type'], ['GunRange', 'entity.name.type']]],
         ['dev int Doubled()', [['dev', 'storage.modifier'], ['Doubled', 'entity.name.function']]],
         ['var dev = 1;', [['dev', '!storage']]],
@@ -287,11 +304,11 @@ const cases = {
             ['override', 'storage.modifier'], ['local', 'storage.modifier'], ['event', 'storage.type'], ['Combat', 'entity.name.namespace'],
             ['Flash', 'entity.name.function'], ['Flash', '!entity.name.function.call'],
         ]],
-        ['virtual command(Rename rename, PlayerID sender) Renamed(', [
-            ['virtual', 'storage.modifier'], ['command', 'storage.type'], ['Rename', 'entity.name.type'], ['rename', 'variable.parameter'],
-            ['PlayerID', 'storage.type.primitive'], ['sender', 'variable.parameter'], ['Renamed', 'entity.name.function'],
+        ['virtual command(string name) Renamed(', [
+            ['virtual', 'storage.modifier'], ['command', 'storage.type'], ['string', 'storage.type.primitive'], ['name', 'variable.parameter'],
+            ['PlayerID', 'storage.type.primitive'], ['Renamed', 'entity.name.function'], ['Renamed', '!entity.name.function.call'],
         ]],
-        ['override command(Rename rename, PlayerID sender) Combat.OnRename(', [
+        ['override command(string name) Combat.OnRename(', [
             ['override', 'storage.modifier'], ['command', 'storage.type'], ['Combat', 'entity.name.namespace'], ['OnRename', 'entity.name.function'],
             ['OnRename', '!entity.name.function.call'],
         ]],
@@ -750,7 +767,7 @@ const modifiers = String.raw`(?:(?:dev|local|async|worker|cached|virtual|overrid
 const type = String.raw`[\w.]+(?:\s*<[\w.<>\s]*>)?\??`;
 const keywords = new Set(['return', 'if', 'else', 'var', 'await', 'fail', 'try', 'case', 'switch', 'while', 'for', 'foreach', 'parallel']);
 const declarations = [
-    [new RegExp(String.raw`^${modifiers}(?:component|singleton|struct|input|event|command|enum|scene)\s+(\w+)`), 'entity.name.type'],
+    [new RegExp(String.raw`^${modifiers}(?:component|singleton|struct|input|event|enum|scene)\s+(\w+)`), 'entity.name.type'],
     [new RegExp(String.raw`^${modifiers}(?:system|view|frag|vert)\s+([\w.]+)`), 'entity.name.function'],
     [new RegExp(String.raw`^${modifiers}(?:event|command)\s*\([^)]*\)\s*([\w.]+)`), 'entity.name.function'],
     [new RegExp(String.raw`^const\s+${type}\s+(\w+)\s*=`), 'variable.other.constant'],

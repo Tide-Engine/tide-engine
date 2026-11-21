@@ -18,8 +18,6 @@ singleton Score { int points; }
 
 event Hit { int damage; }
 
-command Push { float2 force; }
-
 // How it feels
 enum Mode
 {
@@ -47,7 +45,7 @@ event(Hit hit) Ouch(mut Score score)
     score.points -= hit.damage;
 }
 
-command(Push push, PlayerID sender) Pushed(mut Score score)
+command(float2 force) Push(mut Score score, PlayerID sender)
 {
     score.points += 1;
 }

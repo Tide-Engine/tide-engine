@@ -14,11 +14,10 @@ asset Texture leaves = "assets/render3d/leaves.png";
 component Mapped { }
 component Foliage { }
 component Glass { }
-command SetHeight { float scale; }
 
-command(SetHeight change, PlayerID sender) ApplyHeight(mut Render3D.Material material, with Mapped)
+command(float scale) SetHeight(mut Render3D.Material material, PlayerID sender, with Mapped)
 {
-    material.heightScale = Math.Clamp(change.scale, 0, 0.08);
+    material.heightScale = Math.Clamp(scale, 0, 0.08);
 }
 
 local singleton Controls
@@ -307,10 +306,10 @@ view Overlay(mut Controls controls, with Mapped)
             GUILayout.Label("Drag / swipe to orbit; pinch to zoom");
         }
     }
-    // Height is match material data. Use the ordinary command path to edit it.
+    // Height is match material data. A command edits it.
     if (controls.height != controls.sentHeight)
     {
-        this.Send(SetHeight { scale = controls.height * 0.08 });
+        SetHeight(controls.height * 0.08);
         controls.sentHeight = controls.height;
     }
 }

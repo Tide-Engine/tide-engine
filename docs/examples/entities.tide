@@ -18,19 +18,15 @@ event(Spawned) Setup(with Main)
 }
 
 // What a tap asks of the match. Views can't change it themselves.
-command Drop { float2 at; }
-command Poison { }
-command Cure { }
-
-command(Drop drop, PlayerID sender) DropBall()
+command(float2 at) Drop(PlayerID sender)
 {
-    Spawn(Ball { position = drop.at }, Health { value = 40 });
+    Spawn(Ball { position = at }, Health { value = 40 });
 }
 
-// `this` is the entity the command was sent to. Add and Remove wait for the
+// `this` is the entity the command was called for. Add and Remove wait for the
 // end of the tick, and so does Destroy.
-command(Poison poison, PlayerID sender) PoisonBall(with Ball) { this.Add(Poisoned); }
-command(Cure cure, PlayerID sender) CureBall(with Ball) { this.Remove(Poisoned); }
+command() Poison(PlayerID sender, with Ball) { this.Add(Poisoned); }
+command() Cure(PlayerID sender, with Ball) { this.Remove(Poisoned); }
 
 system Sicken(mut Health health, with Poisoned)
 {
@@ -71,7 +67,7 @@ view Healthy(Ball ball, Health health, mut Pointing pointing, without Poisoned)
     pointing.balls += 1;
     if (Math.Distance(pointing.world, ball.position) > ball.radius) return;
     pointing.onBall = true;
-    if (pointing.down) this.Send(Poison { });
+    if (pointing.down) Poison();
 }
 
 view Sick(Ball ball, Health health, mut Pointing pointing, with Poisoned)
@@ -83,12 +79,12 @@ view Sick(Ball ball, Health health, mut Pointing pointing, with Poisoned)
     pointing.poisoned += 1;
     if (Math.Distance(pointing.world, ball.position) > ball.radius) return;
     pointing.onBall = true;
-    if (pointing.down) this.Send(Cure { });
+    if (pointing.down) Cure();
 }
 
 view Ground(Pointing pointing)
 {
-    if (pointing.down && !pointing.onBall) Send(Drop { at = pointing.world });
+    if (pointing.down && !pointing.onBall) Drop(pointing.world);
     Draw.SetScreen();
     Draw.Text($"{pointing.balls} entities, {pointing.poisoned} with Poisoned", float2(16, 14), 18, Color.white);
     Draw.Text("Tap a ball to poison or cure it. Tap the ground to spawn one.",

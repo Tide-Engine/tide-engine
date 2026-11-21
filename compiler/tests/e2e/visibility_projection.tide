@@ -13,7 +13,6 @@ component PublicState
 component Secret { int code = 1511518221; string text = "PRIVATE-CARD-DO-NOT-TRANSMIT"; }
 component Health { int value = 1000; }
 component HiddenSource { }
-command ChoosePrivate { int value; }
 singleton PrivateCache { Resident state; }
 singleton Placement
 {
@@ -73,9 +72,9 @@ event(Spawned) RestrictCard(PublicState state, mut Visibility visibility, Contro
     if (state.kind == 1) visibility.Set<Secret>(control.cards);
 }
 
-command(ChoosePrivate choice, PlayerID sender) Choose(Owner owner, mut Secret secret)
+command(int value) ChoosePrivate(Owner owner, mut Secret secret, PlayerID sender)
 {
-    if (sender == owner.player) secret.code = choice.value;
+    if (sender == owner.player) secret.code = value;
 }
 
 system RestrictPlacement(PublicState state, mut Visibility visibility, Placement placement, Control control)

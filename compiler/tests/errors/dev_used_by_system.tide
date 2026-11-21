@@ -4,9 +4,12 @@
 component Gun { int ammo; }
 scene Main { }
 
-dev command GiveAmmo { int amount; }
+dev command(int amount) GiveAmmo(mut Gun gun, PlayerID sender)
+{
+    gun.ammo += amount;
+}
 
 system Reload(Gun gun)
 {
-    if (gun.ammo == 0) this.Send(GiveAmmo { amount = 30 });
+    if (gun.ammo == 0) GiveAmmo(30);
 }

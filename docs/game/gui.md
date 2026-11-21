@@ -29,7 +29,7 @@ view Options(Devices devices, mut Settings settings)
 
 For a look of your own (gradients, shadows, animated controls), see [Good-looking UI](./ui-style.md).
 
-The GUI is local: widgets change this machine's state, never the match. To act on the match, put continuous controls in the [input](./input.md), or send a [command](./commands.md) for a button's action.
+The GUI is local: widgets change this machine's state, never the match. To act on the match, put continuous controls in the [input](./input.md), or call a [command](./commands.md) for a button's action.
 
 ## Widgets change what you pass them
 
@@ -293,7 +293,7 @@ view Paused(Pause pause)
     GUI.Navigate();
     GUILayout.Area(Anchor.MiddleCenter)
     {
-        if (GUILayout.Button("Resume")) Send(Resume { });
+        if (GUILayout.Button("Resume")) Resume();
         if (GUILayout.Button("Leave")) Session.Leave();
     }
 }

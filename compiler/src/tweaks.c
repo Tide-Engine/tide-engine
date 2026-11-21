@@ -235,9 +235,8 @@ bool tweaks_prelude(program *prog)
     sb_put(&text, "}\n"
                   "singleton TideTweaks { TideTweakValues values; }\n"
                   "local singleton TideTweaksHere { TideTweakValues values; }\n"
-                  "command TideSetTweaks { TideTweakValues values; }\n"
-                  "command(TideSetTweaks set, PlayerID sender) TideApplyTweaks(mut TideTweaks tweaks)\n"
-                  "{\n    tweaks.values = set.values;\n}\n");
+                  "command(TideTweakValues values) TideSetTweaks(mut TideTweaks tweaks, PlayerID sender)\n"
+                  "{\n    tweaks.values = values;\n}\n");
     source *src = NEW(source);
     src->path = TWEAKS_PRELUDE_PATH;
     src->text = text.data;
@@ -254,8 +253,8 @@ bool tweaks_prelude(program *prog)
 // which writes only a field tide_inspect_writable allows, of a component the target has or a singleton.
 bool inspect_prelude(program *prog)
 {
-    static const char text[] = "command TideSetField { int type; int offset; int size; long a; long b; long c; long d; }\n"
-                               "command(TideSetField set, PlayerID sender) TideApplyField()\n{\n}\n";
+    static const char text[] = "command(int type, int offset, int size, long a, long b, long c, long d) "
+                               "TideSetField(PlayerID sender)\n{\n}\n";
     source *src = NEW(source);
     src->path = INSPECT_PRELUDE_PATH;
     src->text = text;

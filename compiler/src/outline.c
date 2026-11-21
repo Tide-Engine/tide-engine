@@ -303,6 +303,9 @@ void print_outline(const program *prog, sb *out)
         const decl *d = prog->decls.items[i];
         const char *kind = kind_of(d);
         if (!kind || d->builtin || !d->unit || !d->unit->src || d->embed_tap || d->build_owner || d == prog->startup_create || d->preparation_owner) continue; // An asset's or a constant's code is its own declaration's
+        // A command is one declaration: what it's called with and what its code takes are both said of it. Another
+        // package's override of its code is a handler of its own
+        if (d->kind == DECL_SYSTEM && d->is_command && !d->override_name.len) continue;
         sb_put(out, count++ ? ",\n  {" : "\n  {");
         sb_printf(out, "\"kind\": \"%s\", \"name\": ", kind);
         put_name(out, d);
@@ -332,6 +335,11 @@ void print_outline(const program *prog, sb *out)
             break;
         case DECL_EVENT:
             put_fields(out, &lines, d);
+            if (d->is_command) { // Its code, which is the one handler it has
+                if (d->handlers.count && d->handlers.items[0]->per_entity) sb_put(out, ", \"perEntity\": true");
+                if (d->handlers.count) put_access(out, d->handlers.items[0]);
+                break;
+            }
             put_names(out, "handlers", (const decl *const *)d->handlers.items, d->handlers.count);
             put_names(out, "localHandlers", (const decl *const *)d->listeners.items, d->listeners.count);
             break;

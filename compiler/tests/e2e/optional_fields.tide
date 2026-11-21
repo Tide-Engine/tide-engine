@@ -186,14 +186,6 @@ local event Heard
     string? what;
 }
 
-command Rename
-{
-    string? name;
-    int? level;
-    Limits? limits;
-    int plain;
-}
-
 input Controls
 {
     float? aim;
@@ -562,12 +554,13 @@ system Advance(mut Game game)
     game.tick++;
 }
 
-command(Rename rename, PlayerID sender) Renamed(mut Game game)
+command(string? name = default, int? level = default, Limits? limits = default, int plain)
+    Rename(mut Game game, PlayerID sender)
 {
-    game.renamed += rename.plain;
-    game.renamedTo = rename.name;
-    game.renamedLevel = rename.level;
-    if (rename.limits is Limits limits) game.renamed += limits.max;
+    game.renamed += plain;
+    game.renamedTo = name;
+    game.renamedLevel = level;
+    if (limits is Limits limits) game.renamed += limits.max;
 }
 
 // Views read the match's, and keep their own in local fields and the local world
@@ -579,8 +572,8 @@ view Watch(Game game, mut Seen seen)
     if (seen.send)
     {
         seen.send = false;
-        Send(Rename { name = "Ada", limits = Limits { max = 20 }, plain = 1 });
-        Send(Rename { level = 5, plain = 100 });
+        Rename(name: "Ada", limits: Limits { max = 20 }, plain: 1);
+        Rename(level: 5, plain: 100);
         Send(Heard { what = "a sound" });
         Send(Heard { });
         local Spawn(Spark { life = 3 });

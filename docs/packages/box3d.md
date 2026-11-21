@@ -43,7 +43,7 @@ A floor, and a wall of twenty crates. Tap to throw a ball at it.
 - `Build` makes the world out of entities: each has a `Body`, and a `Box` for its shape. The floor is `Static`, and the crates are dynamic, as a body is unless it says otherwise.
 - Nothing in the game moves a crate. The package's systems step the world every tick, and write where each body is into its `Body`.
 - The views draw from the same components: `body.position` and `body.rotation`, with the size its `Box` or `Sphere` says.
-- A tap is a [command](../game/commands.md), with the ray through the pixel it was on. `ThrowBall` spawns a body at its start, with a `velocity` along it.
+- A tap is a [command](../game/commands.md), with the ray through the pixel it was on. `Throw` spawns a body at its start, with a `velocity` along it.
 - `Fall` destroys what fell off the floor, and its body goes with it.
 
 The [Sumo source](https://github.com/Tide-Engine/tide-engine/tree/dev/examples/sumo) shows how impulses drive the balls and blasts, how static floor tiles become falling bodies, and how sensors detect ring-outs and pickups. It also includes deterministic arena construction, the room lobby and instanced drawing.
@@ -463,7 +463,7 @@ The package's systems run before the game's, as every [package's](../packages/us
 4. Each body's `Body` gets where the step left it.
 5. `Touched`, `Parted` and `Hit` are sent.
 
-So a system of the game's reads this tick's positions, and what it writes goes into the next tick's step. The same goes for what an event's or a command's handler writes, at the end of the tick. An entity spawned in a tick has its body made at the start of the next, and is in that tick's step.
+So a system of the game's reads this tick's positions, and what it writes goes into the next tick's step. The same goes for what an event's handler or a command writes, at the end of the tick. An entity spawned in a tick has its body made at the start of the next, and is in that tick's step.
 
 ### Before the step
 
@@ -650,7 +650,7 @@ event(Burst burst) Blast(Physics physics, mut World world)
 }
 ```
 
-They can be asked from a system, an event's or a command's handler, a [view](../game/views.md) and the functions those call:
+They can be asked from a system, an event's handler, a command, a [view](../game/views.md) and the functions those call:
 
 ```csharp
 // A view asks too: where the player's aim meets the world, for a dot.

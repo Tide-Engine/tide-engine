@@ -45,12 +45,6 @@ input Keys
     char[2] pair;
 }
 
-command Type
-{
-    char key = '?';
-    string word;
-}
-
 local singleton UI
 {
     bool send;
@@ -286,7 +280,7 @@ view Submit(mut UI ui, Typed typed)
     ui.seen = typed.last; // A view sees one as the latest tick left it
     if (!ui.send) return;
     ui.send = false;
-    Send(Type { key = ui.pending, word = "wide" });
+    Type(ui.pending, "wide");
 }
 
 // A task keeps a text's loop, and a char, across its waits
@@ -318,10 +312,10 @@ system Mark(mut Field field)
     }
 }
 
-command(Type type, PlayerID sender) OnType(mut Typed typed)
+command(char key = '?', string word) Type(mut Typed typed, PlayerID sender)
 {
-    typed.last = type.key;
-    if (type.word[0] == type.key) Send(Marked { mark = type.key });
+    typed.last = key;
+    if (word[0] == key) Send(Marked { mark = key });
 }
 
 event(Marked marked) OnMarked(mut Typed typed)

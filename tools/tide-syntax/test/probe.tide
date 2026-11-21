@@ -9,11 +9,20 @@ scene Campaign
     prepare(mut Geography geography) { }
 }
 
-command Rename { string name; }
-command(Rename rename, PlayerID sender) RenamePlayer(Owner owner, mut Name name)
+command(string name, [Clamp(1, 9)] int times = 1) Rename(Owner owner, mut Name mine, PlayerID sender)
 {
     if (sender != owner.player) return;
-    name.value = rename.name;
+    mine.value = name;
+}
+// A command's name can go under what it's called with
+command(List<int> slots, Combat.Stance? stance)
+    PickCards(mut Hand hand, query (Hand other, with Fighter) hands, with ownership)
+{
+}
+view RenameMenu(with Name)
+{
+    this.Rename("x", times: 2);
+    PickCards(slots, stance: null);
 }
 
 // Text is one line: an unclosed string ends with its line.
@@ -96,8 +105,7 @@ cached float Width(Catalog catalog, int part) { return 0; }
 virtual cached Box Bounds(Catalog catalog, int part) { return Box { }; }
 var cached = 1;
 dev view GunTools(Gun gun) { }
-dev command GiveAmmo { int amount; }
-dev command(GiveAmmo give, PlayerID sender) Give(mut Gun gun) { }
+dev command(int amount) GiveAmmo(mut Gun gun, PlayerID sender) { }
 dev scene GunRange { }
 struct Magazine
 {
@@ -425,8 +433,8 @@ virtual local async event(Displayed) Blink(mut local Toast toast) { }
 override system Combat.Drive(mut Toast toast) { }
 override view Combat.Hud.Bar(Toast toast) { }
 override local event(Displayed) Combat.Flash(mut Toast toast) { }
-virtual command(Rename rename, PlayerID sender) Renamed(mut Name name) { }
-override command(Rename rename, PlayerID sender) Combat.OnRename(mut Name name) { }
+virtual command(string name) Renamed(mut Name mine, PlayerID sender) { }
+override command(string name) Combat.OnRename(mut Name mine, PlayerID sender) { }
 virtual float Hurt(float base) { return base; }
 override float Combat.Harm(float base) { return base; }
 override mut void Stats.Wound(float amount) { }

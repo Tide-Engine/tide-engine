@@ -2853,6 +2853,100 @@ static decl *parse_handler(parser *p, const bool command)
     return d;
 }
 
+// command(int round, int slot) PickCard(mut Fighter fighter, mut Duel duel, with ownership) { ... }
+// What the first parentheses hold is what a call of it passes, `fighter.PickCard(2, 0)`: the command's payload,
+// which crosses the network. The second hold what the match gives its code, as a handler's: components,
+// singletons, filters, and `PlayerID sender`, the player the connection says sent it.
+// It's two declarations: the payload's type (`*payload`, of the command's name, with a field for each of the
+// first parentheses' parameters) and the handler that runs for it, whose trigger is that type. An override has
+// no type of its own: what it's called with is the command's it replaces, kept in `written_payload` to compare.
+static decl *parse_command(parser *p, decl **payload)
+{
+    expect(p, T_LPAREN, "'(' and what the command is called with: 'command(int slot) PickCard(mut Hand hand, with ownership)'");
+    decl *type = NEW(decl);
+    type->kind = DECL_EVENT;
+    type->is_command = true;
+    if (!at(p, T_RPAREN)) {
+        do {
+            while (at(p, T_LBRACKET)) parse_field_attributes(p);
+            if (at(p, T_MUT) || (at(p, T_IDENT) && str_eq_c(peek(p)->text, "out") && peek_at(p, 1)->kind == T_IDENT
+                                 && peek_at(p, 2)->kind == T_IDENT)) {
+                diag_error(peek(p)->at, "what a command is called with is copied to the match, so it can't be '" STR_FMT "'",
+                           STR_ARG(peek(p)->text));
+                diag_note("what the command changes of the match goes in its second parentheses: "
+                          "'command(int slot) PickCard(mut Hand hand)'");
+                longjmp(p->fail, 1);
+            }
+            const type_ref *value_type = parse_decl_type(p, "the type of a value the command is called with, or ')'");
+            const token *value_name = expect_ident(p, "the value's name, like 'command(int slot)'");
+            field f = {0};
+            f.name = value_name->text;
+            f.at = value_name->at;
+            f.type_name = value_type->text;
+            f.type_at = value_type->name_at;
+            f.type_qual_at = value_type->at;
+            f.type_ref = value_type;
+            f.attributes.items = p->field_pending.items;
+            f.attributes.count = p->field_pending.count;
+            f.attributes.cap = p->field_pending.cap;
+            p->field_pending.items = NULL;
+            p->field_pending.count = p->field_pending.cap = 0;
+            if (accept(p, T_ASSIGN)) f.default_value = parse_expr(p);
+            for (int i = 0; i < type->fields.count; i++) {
+                if (!str_eq(type->fields.items[i].name, f.name)) continue;
+                diag_error(f.at, "the command is called with '" STR_FMT "' twice", STR_ARG(f.name));
+                longjmp(p->fail, 1);
+            }
+            vec_push(type->fields, f);
+        } while (accept(p, T_COMMA));
+    }
+    expect(p, T_RPAREN, "')' after what the command is called with");
+    if (at(p, T_LPAREN)) {
+        diag_error(peek(p)->at, "a command's name goes between its two parentheses: 'command(int slot) PickCard(mut Hand hand)'");
+        longjmp(p->fail, 1);
+    }
+    const bool overriding = p->overriding;
+    decl *d = new_named_decl(p, DECL_SYSTEM, "the command's name, like 'command(int slot) PickCard(mut Hand hand)'");
+    d->is_handler = true;
+    d->is_command = true;
+    type->name = d->name;
+    type->at = d->at;
+    param trigger = {0};
+    trigger.mode = PARAM_EVENT;
+    trigger.at = d->at;
+    trigger.type_name = overriding ? d->override_name : d->name;
+    trigger.type_qual_at = overriding ? d->override_qual_at : d->at;
+    trigger.type_at = d->at;
+    trigger.name = str_from("tide_payload");
+    trigger.name_at = d->at;
+    trigger.command_payload = true;
+    vec_push(d->params, trigger);
+    parse_query_rest(p, d);
+    type->end = d->end;
+    // `PlayerID sender` among what the match gives it: the player who sent it, after the payload as the checker has it
+    for (int i = 1; i < d->params.count; i++) {
+        param *prm = &d->params.items[i];
+        if (prm->mode != PARAM_READ || !str_eq_c(prm->type_name, "PlayerID")) continue;
+        param sender = *prm;
+        sender.mode = PARAM_SENDER;
+        for (int k = i; k > 1; k--) d->params.items[k] = d->params.items[k - 1];
+        d->params.items[1] = sender;
+        break;
+    }
+    for (int i = 1; i < d->params.count; i++) {
+        const param *prm = &d->params.items[i];
+        for (int k = 0; prm->name.len && k < type->fields.count; k++) {
+            if (!str_eq(type->fields.items[k].name, prm->name)) continue;
+            diag_error(prm->name_at.line ? prm->name_at : prm->at, "'" STR_FMT "' is what the command is called with, and a "
+                       "parameter of its code too", STR_ARG(prm->name));
+            diag_note("give one of them another name: the code reads both by name");
+        }
+    }
+    d->written_payload = type;
+    *payload = overriding ? NULL : type;
+    return d;
+}
+
 // After a syntax error outside any body: skips to the next declaration. A
 // failed declaration always consumed its first token, so this makes progress.
 // Inside a namespace block it stops at the block's '}' too, which is the one
@@ -3064,10 +3158,6 @@ static const char *replace_refusal(const parser *p)
     if (str_eq_c(t->text, "event")) {
         return "an event is data, and data isn't replaced: its handlers can be, like 'virtual event(Hit hit) TakeHit(...)'";
     }
-    if (str_eq_c(t->text, "command")) {
-        return "a command is data, and data isn't replaced: its handler can be, like 'virtual command(Buy buy, PlayerID sender) "
-               "OnBuy(...)'";
-    }
     if (str_eq_c(t->text, "enum")) return "an enum is data, and data isn't replaced: only code is";
     if (str_eq_c(t->text, "scene")) return "a scene is data, and data isn't replaced: only code is";
     if (str_eq_c(t->text, "input")) return "the input is data, and the game's own: only code is replaced";
@@ -3232,6 +3322,7 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
             virtual = override = NULL;
         }
         decl *d;
+        decl *command_payload = NULL; // A command's type, which is declared with it
         const bool function = !tweak && at_method_from(&p, 0, p.overriding);
         if (!function && !tweak) advance(&p);
         if (tweak) {
@@ -3253,14 +3344,16 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "struct")) d = parse_data_decl(&p, DECL_STRUCT, false);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "event")) d = parse_data_decl(&p, DECL_EVENT, false);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "command")) {
-            d = parse_data_decl(&p, DECL_EVENT, false);
-            d->is_command = true;
+            diag_error(t->at, "a command is declared with the code that runs for it, as a function is");
+            diag_note("write what it's called with, its name, then what its code takes of the match: "
+                      "'command(int slot) " STR_FMT "(mut Hand hand, with ownership) { ... }'", STR_ARG(peek(&p)->text));
+            longjmp(p.fail, 1);
         }
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "enum")) d = parse_enum(&p);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "prefab")) d = parse_prefab(&p);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "scene")) d = parse_data_decl(&p, DECL_COMPONENT, true);
         else if (t->kind == T_IDENT && at(&p, T_LPAREN) && str_eq_c(t->text, "event")) d = parse_handler(&p, false);
-        else if (t->kind == T_IDENT && at(&p, T_LPAREN) && str_eq_c(t->text, "command")) d = parse_handler(&p, true);
+        else if (t->kind == T_IDENT && at(&p, T_LPAREN) && str_eq_c(t->text, "command")) d = parse_command(&p, &command_payload);
         else if (t->kind == T_IDENT && at(&p, T_SYSTEM) && str_eq_c(t->text, "extern")) d = parse_extern_system(&p);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "extern")) d = parse_extern(&p);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "const")) d = parse_const(&p);
@@ -3327,6 +3420,21 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
             diag_error(async->at, "'async' goes before a function or an event handler, like 'async void Countdown() { ... }'");
             if (d->kind == DECL_SYSTEM) diag_note("%s runs again every %s, so it can't wait; it can start a task by calling an async function",
                                                   d->is_view ? "a view" : "a system", d->is_view ? "frame" : "tick");
+        }
+        if (command_payload) {
+            // Declared before its code, as a type is before what uses it. How it's delivered is the type's
+            // ([Channel], [Unordered]); the other attributes are its code's
+            command_payload->unit = d->unit;
+            command_payload->is_dev = d->is_dev;
+            command_payload->dev_at = d->dev_at;
+            int kept = 0;
+            for (int k = 0; k < p.pending.count; k++) {
+                const attribute a = p.pending.items[k];
+                if (str_eq_c(a.name, "Channel") || str_eq_c(a.name, "Unordered")) vec_push(command_payload->attributes, a);
+                else p.pending.items[kept++] = a;
+            }
+            p.pending.count = kept;
+            vec_push(prog->decls, command_payload);
         }
         d->attributes.items = p.pending.items;
         d->attributes.count = p.pending.count;

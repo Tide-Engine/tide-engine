@@ -8,21 +8,19 @@ A game makes its own tools: a panel to tune a gun, a command that gives ammo, a 
 
 ```csharp
 // Only a dev build has the command, so a player's server can't be sent it
-dev command GiveAmmo { int amount; }
-
-dev command(GiveAmmo give, PlayerID sender) Refill(mut Gun gun, with ownership)
+dev command(int amount) GiveAmmo(mut Gun gun, with ownership)
 {
-    gun.ammo += give.amount;
+    gun.ammo += amount;
 }
 
 // A panel only a dev build has, shown from the dev menu
-dev view GunTools(Gun gun, with ownership)
+dev view GunTools(with Gun, with ownership)
 {
-    if (GUI.Button(Rect(12, 12, 160, 32), "Full ammo")) this.Send(GiveAmmo { amount = 999 });
+    if (GUI.Button(Rect(12, 12, 160, 32), "Full ammo")) GiveAmmo(999);
 }
 ```
 
-`dev` goes before any declaration: a function, a system, a view, a handler, an event or a command, a component, a singleton, a struct, a scene, an enum or a constant. It goes before a type's method too, which then only dev builds have:
+`dev` goes before any declaration: a function, a system, a view, a handler, an event, a command, a component, a singleton, a struct, a scene, an enum or a constant. It goes before a type's method too, which then only dev builds have:
 
 ```csharp
 struct Magazine
@@ -43,14 +41,14 @@ A field can't be `dev`: a field is in every build. Keep what dev code needs in a
 
 ## What code can use them
 
-Code without `dev` can't use what's `dev`: not call a dev function or method (in a lambda too), send a dev command, handle a dev event, take a dev component or name a dev type. That holds in a dev build too, so a build without dev never fails where a dev build passed:
+Code without `dev` can't use what's `dev`: not call a dev function or method (in a lambda too), call a dev command, handle a dev event, take a dev component or name a dev type. That holds in a dev build too, so a build without dev never fails where a dev build passed:
 
 ```csharp
-dev command GiveAmmo { int amount; }
+dev command(int amount) GiveAmmo(mut Gun gun, with ownership) { gun.ammo += amount; }
 
 system Reload(Gun gun)
 {
-    if (gun.ammo == 0) this.Send(GiveAmmo { amount = 30 });
+    if (gun.ammo == 0) GiveAmmo(30);
     // error: 'GiveAmmo' is 'dev', which builds without dev leave out, so 'Reload' can't use it
 }
 ```

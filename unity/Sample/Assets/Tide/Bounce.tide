@@ -18,14 +18,6 @@ component Spinner
     char badge = 'S';
 }
 
-// Bonus.unity's entities, while a player has them: the match loads the scene, and Unity loads it with them. Twice:
-// the scene again beside it, which Unity loads another of
-command ShowBonus
-{
-    bool on;
-    bool twice;
-}
-
 singleton Extras
 {
     Entity bonus;
@@ -39,30 +31,20 @@ singleton Extras
 }
 
 // A line from Unity's UI, which the match keeps for everyone: TideRunner.Get<Extras>().said in C#
-command Say
+command(string text) Say(mut Extras extras, PlayerID sender)
 {
-    string text;
-}
-
-command(Say say, PlayerID sender) Saying(mut Extras extras)
-{
-    extras.said = say.text;
+    extras.said = text;
     extras.speakers.Add(sender);
     if (extras.board.size.x == 0) extras.board = Grid2(8, 8);
     extras.board[3, 4] += 1;
-    extras.lines.Add(say.text);
-    Debug.Log($"said {say.text}"); // In Unity's Console, as any Debug.Log of the game's
+    extras.lines.Add(text);
+    Debug.Log($"said {text}"); // In Unity's Console, as any Debug.Log of the game's
 }
 
 // Balls nobody rolls, as many as asked for: what a busy match costs Unity each frame (ScaleTests)
-command Crowd
+command(int count) Crowd(mut Extras extras, PlayerID sender)
 {
-    int count;
-}
-
-command(Crowd crowd, PlayerID sender) Crowding(mut Extras extras)
-{
-    var wanted = Math.Clamp(crowd.count, 0, 4096);
+    var wanted = Math.Clamp(count, 0, 4096);
     while (extras.crowd.count > wanted)
     {
         extras.crowd[extras.crowd.count - 1].Destroy();
@@ -78,34 +60,31 @@ command(Crowd crowd, PlayerID sender) Crowding(mut Extras extras)
 
 // A ball nobody rolls, in and out of the box: a GameObject made and let go of as its entity comes and goes, which
 // TideRunner's pool keeps for the next
-command Toss
+command(bool on) Toss(mut Extras extras, PlayerID sender)
 {
-    bool on;
-}
-
-command(Toss toss, PlayerID sender) Tossing(mut Extras extras)
-{
-    if (toss.on && extras.tossed == default)
+    if (on && extras.tossed == default)
     {
         extras.tossed = Spawn(Roller, Ball { color = Color(1, 1, 1), seat = -1 }, Transform { localPosition = float3(0, 3, 0) });
     }
-    if (!toss.on && extras.tossed != default)
+    if (!on && extras.tossed != default)
     {
         extras.tossed.Destroy();
         extras.tossed = default;
     }
 }
 
-command(ShowBonus show, PlayerID sender) Toggle(mut Extras extras)
+// Bonus.unity's entities, while a player has them: the match loads the scene, and Unity loads it with them. Twice:
+// the scene again beside it, which Unity loads another of
+command(bool on, bool twice) ShowBonus(mut Extras extras, PlayerID sender)
 {
-    if (show.on && extras.bonus == default) extras.bonus = Scene.Load(Bonus);
-    if (show.on && show.twice && extras.again == default) extras.again = Scene.Load(Bonus);
-    if (!show.on && extras.bonus != default)
+    if (on && extras.bonus == default) extras.bonus = Scene.Load(Bonus);
+    if (on && twice && extras.again == default) extras.again = Scene.Load(Bonus);
+    if (!on && extras.bonus != default)
     {
         Scene.Unload(extras.bonus);
         extras.bonus = default;
     }
-    if (!show.on && extras.again != default)
+    if (!on && extras.again != default)
     {
         Scene.Unload(extras.again);
         extras.again = default;
@@ -176,14 +155,9 @@ local event(Bounced bounced) Heard(mut Ball ball)
 }
 
 // Sent to a ball: TideRunner.Send(new Paint { ... }, ballGameObject) in C#
-command Paint
+command(Color color) Paint(mut Ball ball, PlayerID sender)
 {
-    Color color;
-}
-
-command(Paint paint, PlayerID sender) Painting(mut Ball ball)
-{
-    ball.color = paint.color;
+    ball.color = color;
 }
 
 singleton Room

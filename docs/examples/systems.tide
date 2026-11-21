@@ -4,7 +4,6 @@ component Body { float2 position; float speed = 1; }
 component Moving { }
 component Frozen { }
 singleton Demo { bool running = true; }
-command SetRunning { bool value; }
 scene Main { }
 
 event(Spawned) Setup(with Main)
@@ -29,10 +28,10 @@ system Move(mut Body body, Time time, Demo demo, with Moving, without Frozen)
     }
 }
 
-// The button sends a match command instead of changing state in a view.
-command(SetRunning change, PlayerID sender) Run(mut Demo demo)
+// The button calls a command instead of changing match state in a view.
+command(bool value) SetRunning(mut Demo demo, PlayerID sender)
 {
-    demo.running = change.value;
+    demo.running = value;
 }
 
 view Background()
@@ -70,5 +69,5 @@ view Labels(Demo demo)
     Draw.Text("No Moving: excluded", float2(16, third.y - 34), 14, Color(0.64, 0.64, 0.68));
     GUI.SetTheme(GUITheme { radius = 6 });
     if (GUI.Button(Rect(16, Screen.height - 48, Screen.width - 32, 32), demo.running ? "Pause the match" : "Resume the match"))
-        Send(SetRunning { value = !demo.running });
+        SetRunning(!demo.running);
 }

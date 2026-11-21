@@ -1,5 +1,30 @@
 # Netcode: sessions, prediction, commands
 
+## A command the match calls itself; no protocol change (2026-11-21)
+
+Commands became one declaration called like a function (notes/language.md, top section; docs/spec.md, Commands).
+For the session nothing moved: a player's call packs the same bytes into the same outbox (`tide_local_send_<C>`), and
+the server gives them a tick as before. The command's type has the command's name now, so a game's command IDs and
+hash change with its source, as with any rename.
+
+What's new is a call from match code. It never reaches the session: generated `tide_cmd_send_<C>_cause` pushes a
+`TIDE_CMD_EVENT` of the command's index on the world's queue, with a cause from the call's causal site and
+`c->sender` zero, and the tick's end dispatches it through the command's own dispatcher, among the tick's other
+events and commands in the order they were queued. So:
+
+- it has no sequence, channel, limit or resend, and `tide_command_state` doesn't change for it;
+- every machine that runs the tick queues it, predicted ticks too, as an event a system sends; replay and rollback
+  make it again from the tick, and no journal records it apart;
+- in a match that hides state it runs wherever the calling system runs, unlike a player's command, which is the
+  server's alone. The warning of `check_sends` (a command's code sending an event local handlers hear) still speaks
+  of the player's path;
+- its sender is no player, and the ownership filter passes for it (`tide_me.id != 0 &&` in the row filter; for an
+  entity with no `Owner`, `tide_sender->id != 0` skips a player's command where the archetype used to be left out).
+
+Tested by `command_ownership`'s `command_called_by_the_match_runs_with_no_player_and_no_network`: the three entities'
+counters, no player's sequence moved, the sender read as no player, and the same ticks again from a copy to the same
+hash.
+
 ## Whole projections wait their turn; a world sent unasked is no longer stopped before it goes; no protocol change (2026-11-20)
 
 A review of the repairs' allowance (`REPAIR_UPDATE_MOST`, 4 MiB of what repairs by what changed read an update):

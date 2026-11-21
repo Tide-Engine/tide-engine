@@ -29,8 +29,6 @@ input Move
     }
 }
 
-command Bump { int by; }
-
 event(PlayerJoined joined) Arrive()
 {
     Spawn(Walker { }, Owner { player = joined.player });
@@ -51,10 +49,10 @@ system Drift(mut Score score, Time time)
 // What a Bump did, for this machine's local handlers, which hear it again at the ticks time travel shows
 event Bumped { int by; }
 
-command(Bump bump, PlayerID sender) Apply(mut Score score)
+command(int by) Bump(mut Score score, PlayerID sender)
 {
-    score.total += bump.by;
-    Send(Bumped { by = bump.by });
+    score.total += by;
+    Send(Bumped { by = by });
 }
 
 local singleton Ears { int heard; }
@@ -84,5 +82,5 @@ view Count(Score score)
 // B sends a Bump of 5 from the views, as a game's UI would
 view Press(Devices devices)
 {
-    if (devices.keyboard.b.down) Send(Bump { by = 5 });
+    if (devices.keyboard.b.down) Bump(5);
 }

@@ -217,7 +217,7 @@ that GameObject reads the entity's components as Tide's views see them this
 frame: `entity.Get<Tide.Game.Health>()`. The same `TideEntity` holds its authored
 components and live binding; `Showing` says whether it is currently bound. Scripts
 can find it and subscribe to its events before the match starts. `TideRunner.Current.Send(command)`
-sends a command, as local code's `Send`.
+sends a command, as local code's call of it does.
 
 Tide's devices are what Unity's keyboard, mouse, gamepad and touches say. For
 input of the game's own on top (an on-screen stick, a bot, a replay, a test),

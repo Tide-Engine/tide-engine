@@ -1,9 +1,9 @@
 # A same-shaped event becoming a command changes the incoming registry even
 # while another command keeps the command storage in both builds.
 file(MAKE_DIRECTORY "${OUT}/event" "${OUT}/command")
-set(common "command Keep { int value; }\nscene Main { }\n")
+set(common "command(int value) Keep(PlayerID sender) { }\nscene Main { }\n")
 file(WRITE "${OUT}/event.tide" "${common}event Foo { int value; }\n")
-file(WRITE "${OUT}/command.tide" "${common}command Foo { int value; }\n")
+file(WRITE "${OUT}/command.tide" "${common}command(int value) Foo(PlayerID sender) { }\n")
 foreach(kind IN ITEMS event command)
     execute_process(COMMAND "${TIDEC}" "${OUT}/${kind}.tide" -o "${OUT}/${kind}" --name game
         RESULT_VARIABLE result ERROR_VARIABLE diagnostics)

@@ -1,5 +1,4 @@
 // expect: query component bindings are read-only and can't be 'mut'
 component Body { float x; }
-command Inspect { }
-command(Inspect inspect, PlayerID sender) Hits(query (mut Body body) bodies) { }
+command() Inspect(query (mut Body body) bodies, PlayerID sender) { }
 scene Main { }

@@ -1,4 +1,5 @@
-// expect: 'Rename' is a command; receive it with 'command(...)'
-command Rename { string name; }
+// expect: 'Rename' is a command, which has its own code: an event handler can't take it
+// expect: send an event from the command's code, and handle that
+command(string name) Rename(PlayerID sender) { }
 event(Rename rename) Handle() { }
 scene Main { }

@@ -1295,7 +1295,7 @@ local event(verified Died died) ShowDeath(Body body, mut Fx fx) { ... }
 - A trigger's name is optional for any event: a handler that doesn't read the event leaves it out.
 - `Spawned` handlers run as the spawn is applied, and `Destroyed` handlers just before the entity goes, both in the queue's order. A spawn's `Spawned` handlers run before the next change in the queue.
 - Structural changes and events share one queue per tick, which grows as it needs. What handlers record goes on its end. A chain of events that never ends (handlers that set each other off) stops the program once it's 100,000 deep in one tick, each event sent or entity spawned by a handler of the one before, with a message naming the event. `TIDE_MAX_CHAIN` sets the depth for a game that needs deeper chains.
-- Event/command payloads can be locals (`var h = hit;`), ordinary function/method parameters and return values. Events can be sent on (`other.Send(hit)`); constructing or forwarding one sends nothing by itself. Payloads cannot be fields or ordinary system parameters.
+- Event payloads can be locals (`var h = hit;`), ordinary function/method parameters and return values. Events can be sent on (`other.Send(hit)`); constructing or forwarding one sends nothing by itself. Payloads cannot be fields or ordinary system parameters. A command's code has no payload as a whole: it reads what it was called with by name (see Commands).
 - `[Before]` and `[After]` only order handlers of the same event. Handlers and systems are ordered separately.
 - Games can't send the built-in events. The host sends `PlayerJoined` and `PlayerLeft` with `tide_world_player_joined` and `tide_world_player_left`: they're handled at the end of the next tick, before anything that tick sends. `tide/run.h` has player 0 join before the first tick.
 - A handler of an event nothing sends is a warning, and so is declared access a handler doesn't use, as for systems.
@@ -1311,39 +1311,59 @@ local event(verified Died died) ShowDeath(Body body, mut Fx fx) { ... }
 
 ### Decided
 
-- `command Name { ... }` declares a typed player action entering the match. Commands hold plain scalar values, vectors, enums, entity and player IDs, strings, `List<byte>` (a file's bytes, for user content: see Assets), lists of other plain values (the owner asked for them 2026-11-04, from `command Enlist { List<int> attributes; }`), and structs of those. Maps, sets, grids, components and device records are not command payloads; which lists are is under Provisional.
-- Local views and handlers send commands with `entity.Send(value)` or `Send(value)`, while connected to a match. The compiler distinguishes commands from events by their declaration. An entity target is required when the command handler takes components, or filters by ownership (Provisional); a handler with neither runs once for the command.
-- Each command has one void handler: `command(Rename rename, PlayerID sender) RenamePlayer(Owner owner, mut Name name)`. The first parentheses contain the read-only payload and connection-derived sender. The second take the same match state as event handlers. Components and `this` come from the target. (A handler that takes `with ownership` may leave the sender unnamed: Provisional, below.)
-- Guard clauses return normally. Match writes take effect normally. There is no acceptance operation, boolean result or transaction. The handler checks permissions and game rules, and can send events after acting.
-- Sending copies the packed payload into a bounded local queue. Commands are independent of input ticks; repeated packets are identified by a per-player sequence. The server selects their tick and order, and handlers run in the existing deferred queue at tick end. Snapshots, hashes and migration include processed sequences, and replay executes recorded commands again in the same order.
-- Initial limits are 1024 packed bytes per command, 32 pending per player and 16 commands scheduled per authoritative tick. Wire structure, UTF-8, finite values, enum values and declared bounds are checked before the match reads the payload. The handler remains responsible for authorization and game-specific rules.
-- A command's ordering is its type's, per player (agreed 2026-10-06). Without an attribute a command is in the default channel: handled in the order sent, after every earlier command of that channel. `[Channel(Channels.Uploads)]`, with an enum of the game's, puts it in a channel of its own, ordered among that channel's commands and against nothing else, so a chat line never waits behind an upload. `[Unordered]` gives it no order at all: the server handles it in whichever tick it arrives, before or after commands sent earlier, still exactly once. Whatever the ordering, the server picks the tick and every handler runs in the tick's end queue in the server's order, so ordering only decides what the server holds back waiting for an earlier command.
-- A command holds `List<byte>` too, so a player's file goes to the match as it is. One that doesn't fit a datagram goes as a numbered transfer in chunks, the way worlds go, paced under the input traffic so a transfer never delays a tick. It lands in a later tick, as any command may; a command was never tied to the tick it was sent in. What goes through the match goes player to server to everyone, so a host sends it once per player: a few megabytes is fine, and big media is a URL in the match, fetched by each machine (see Assets).
+- **A command is one declaration, called like a function** (owner, 2026-11-20: "I like your option two there ... of making a command function call"; built 2026-11-21). `command(values) Name(parameters) { ... }` declares a typed player action entering the match, with the code that runs for it. It replaced a payload type (`command Rename { string name; }`), a separate handler (`command(Rename rename, PlayerID sender) RenamePlayer(...)`) and `entity.Send(Rename { ... })`, which are now errors that say what to write.
 
 ```csharp
 enum Channels { Uploads }
 
-command Rename { string name; }
-
-[Channel(Channels.Uploads)]
-command SetBackground { List<byte> png; }
-
-[Unordered]
-command Ping { int at; }
-
-
-command(Rename rename, PlayerID sender) RenamePlayer(
-    Owner owner, mut Name name)
+command(string name) Rename(Owner owner, mut Name mine, PlayerID sender)
 {
     if (sender != owner.player) return;
-    if (rename.name.length == 0 || rename.name.length > 32) return;
-    name.value = rename.name;
+    if (name.length == 0 || name.length > 32) return;
+    mine.value = name;
+}
+
+[Channel(Channels.Uploads)]
+command(List<byte> png) SetBackground(mut Wall wall, PlayerID sender) { ... }
+
+[Unordered]
+command(int at) Ping(mut Lag lag, PlayerID sender) { ... }
+
+view Menu(mut Draft draft, with ownership)
+{
+    if (GUILayout.Button("Rename")) Rename(draft.text); // For the entity this view runs for
 }
 ```
+
+- **The first parentheses are what a call passes:** the command's payload, which crosses the network. Each is a type and a name, with an optional default and the attributes a field takes (`[Clamp(0, 10)] float rating = 3`). They hold plain scalar values, vectors, enums, entity and player IDs, strings, `List<byte>` (a file's bytes, for user content: see Assets), lists of other plain values (the owner asked for them 2026-11-04, from a command holding `List<int> attributes`), and structs of those. Maps, sets, grids, components and device records are not command payloads; which lists are is under Provisional. None is `mut` or `out`: they're copied to the match.
+- **The second parentheses are what the match gives its code,** as an event handler's: components (of the entity the command is for), singletons, queries and filters. `PlayerID sender` among them is the player who sent it, whom the connection names: never something a call passes.
+- **Its code reads what it was called with by name,** read-only: `name` above. A value and a parameter of the second parentheses can't share a name. Components and `this` come from the entity the command is for.
+- **A call is written as a function's:** arguments by place, then by name (`Rename("Ada")`, `Buy(item: 3, count: 2)`), and its declared default for each value left out; leaving out one with no default is an error. A command in a namespace is called as a function there is, `Shop.Buy(3)`.
+- **Which entity.** `entity.Rename("Ada")` is for that entity. A call that names none, in code that runs for an entity of the match (a view, system or handler with component parameters or an entity filter), is for that one (owner, 2026-11-21: "why do we need to do this.PickCard? Can't we just call PickCard directly?"). An entity is required when the command's code takes components or filters by ownership: a call with none, in code that runs for no entity, is an error. Code with neither runs once for the command, whatever the call.
+- **Local code's call submits it,** while connected to a match: views, local handlers, local tasks, and the functions they call. This machine's player asks, and the server's tick runs it.
+- **Match code's call queues it** (owner, 2026-11-21: "we could even allow to call this from systems ... it doesn't need to be sent over the wire", and queued rather than run in place: "we can probably queue it"). A system's or a match handler's call sends nothing and has no limits of the wire: it's queued as an event's send is, and the command's code runs at the end of the tick with the tick's other commands and events, in the order they were queued. Claude's picks, on the owner's "just go with your recommendations": its `sender` is no player (`default`), and both ownership filters pass, for an entity with no `Owner` too, as the match is the authority and the filter is the check of what a player may do. So a bot's system picks its card with the command a player's button calls.
+- One command has one body of code. `virtual` and `override` replace it as they replace a handler's: `override command(int item) Shop.Buy(...)` writes the command's own values again, in order, and anything else is an error.
+- Guard clauses return normally. Match writes take effect normally. There is no acceptance operation, boolean result or transaction today (see Agreed, not built). The code checks permissions and game rules, and can send events after acting.
+- A call from local code copies the packed payload into a bounded local queue. Commands are independent of input ticks; repeated packets are identified by a per-player sequence. The server selects their tick and order, and handlers run in the existing deferred queue at tick end. Snapshots, hashes and migration include processed sequences, and replay executes recorded commands again in the same order. A match's own call is part of the tick that made it, as an event's send is: it has no sequence and nothing records it apart.
+- Initial limits are 1024 packed bytes per command, 32 pending per player and 16 commands scheduled per authoritative tick. Wire structure, UTF-8, finite values, enum values and declared bounds are checked before the match reads the payload. The command's code remains responsible for authorization and game-specific rules.
+- A command's ordering is its own, per player (agreed 2026-10-06). Without an attribute a command is in the default channel: handled in the order sent, after every earlier command of that channel. `[Channel(Channels.Uploads)]`, with an enum of the game's, puts it in a channel of its own, ordered among that channel's commands and against nothing else, so a chat line never waits behind an upload. `[Unordered]` gives it no order at all: the server handles it in whichever tick it arrives, before or after commands sent earlier, still exactly once. Whatever the ordering, the server picks the tick and every handler runs in the tick's end queue in the server's order, so ordering only decides what the server holds back waiting for an earlier command.
+- A command holds `List<byte>` too, so a player's file goes to the match as it is. One that doesn't fit a datagram goes as a numbered transfer in chunks, the way worlds go, paced under the input traffic so a transfer never delays a tick. It lands in a later tick, as any command may; a command was never tied to the tick it was sent in. What goes through the match goes player to server to everyone, so a host sends it once per player: a few megabytes is fine, and big media is a URL in the match, fetched by each machine (see Assets).
+
+
+#### Agreed, not built
+
+The owner's direction of 2026-11-21, with Claude's recommendations he took ("just go with your recommendations for the decisions from me"):
+
+- **A call gives a handle,** as an async call does: in local code a `LocalTask`, kept (`menu.pick = PickCard(slot)`, `menu.pick.isRunning`) or awaited in a local task (`await PickCard(slot)`). It completes when this machine has the confirmed tick in which the server ran the command, and is cancelled if the connection ends first. It replaces the fields games keep today to send a button's command once.
+- **A command can return a value** to the call that awaits it, which reverses "no boolean result" above: `command(int slot) bool PickCard(...)`.
+- **A function that calls a command, called from match code.** Today such a function is local code's: its call submits, so a system that calls it is an error that says to call the command itself.
+- **Server calls** (Tasks): a function whose body runs on the server's machine alone, outside the match, which match code awaits; its result enters a later tick as input, as the store's answers do.
 
 ### Provisional
 
 Built 2026-10-06; the picks below await the owner.
+
+- A command's name still names its payload's type in Tide code, as it did when the payload was declared apart: a value written `Rename { name = "Ada" }`, a function's `Rename` parameter. Nothing needs it now that a call makes the payload, and it may go (Claude's note, 2026-11-21). C, hosts and Unity's C# name the payload by it: `Rename` with a field for each value, `tide_local_send_Rename`, `TIDE_COMMAND_ID_Rename`.
 
 - Sequence state is per player per channel, in the world as today's is: a channel's sequence counts that channel's commands alone, from 1. An unordered command has an id of its own, from 1, in place of a sequence, and the world keeps a window of the last 64 ids applied per player (the highest, and a bit for each of the 63 below it) to drop resends: an id older than the window is taken as applied. The 32 pending per player is per channel, the unordered commands counting as a channel of their own; 16 scheduled per tick stays one limit for all.
 - A channel is an enum member of the game's, named by `[Channel(Enum.Member)]` on a `command` declaration; commands can share one, members of any enum can be channels, and a game has 63 channels of its own at most beside the default. `[Unordered]` takes nothing. Both on one command, either on anything but a command, and a name that isn't an enum member are errors. Whatever the ordering, each handler runs where it always did: in the tick's end queue, in the server's order.
@@ -1354,19 +1374,19 @@ Built 2026-10-06; the picks below await the owner.
 - **`with ownership` on a command's handler: only for the sender's own entity** (built 2026-11-14 on the owner's approval of the recommendations: "go with your recommendations"; every point is Claude's pick). It's for the guard that opened most entity handlers, `if (sender != owner.player) return;`:
 
 ```csharp
-command(Rename rename) RenamePlayer(mut Name name, with ownership)
+command(string name) Rename(mut Name mine, with ownership)
 {
-    if (rename.name.length == 0 || rename.name.length > 32) return;
-    name.value = rename.name;
+    if (name.length == 0 || name.length > 32) return;
+    mine.value = name;
 }
 
 // The other side, with the sender named: what the sender doesn't own, another player's or nobody's
-command(Steal steal, PlayerID sender) Take(mut Purse purse, without ownership) { ... }
+command(int amount) Steal(mut Purse purse, PlayerID sender, without ownership) { ... }
 ```
 
   - `with ownership` runs the handler only when the entity the command was sent to has an `Owner` whose `player` is the command's sender. A command for any other entity is dropped as that guard dropped it: it's handled, its sequence is used and a resend is refused, and nothing changes. `without ownership` is the other side: an entity with no `Owner`, or another player's.
   - **The word is the views'.** `ownership` says the entity is the player's that the code is for: a view's and a local handler's are this machine's player's, a command handler's the sender's, whom the connection names. The match has no machine of its own, but a command has its player, the same on every machine, so the one word has one meaning, and no other spelling is needed. In systems and the match's event handlers it's still an error, as nothing there is a player's. Beside it, `with Owner` is still "has any owner".
-  - **A handler that filters by ownership may leave its sender unnamed**, `command(Rename rename)`, as the filter is the check; one that names it can read it as before. A handler that does neither is an error, a requirement rather than a check of what the handler does with its sender: it names the player who sent the command, so it can check what that player may do, or it filters. The error offers the filter only to a handler that runs for an entity; one that runs once for the command has no entity to filter.
+  - **A command that filters by ownership may leave its sender out**, as the filter is the check; one that takes `PlayerID sender` can read it as before. A handler that does neither is an error, a requirement rather than a check of what the handler does with its sender: it names the player who sent the command, so it can check what that player may do, or it filters. The error offers the filter only to a handler that runs for an entity; one that runs once for the command has no entity to filter.
   - It's a filter like the views': it creates no data dependency, and the handler takes neither `Owner` nor the sender for it. A sender is always a player, so an entity whose `Owner` names no player is never the sender's.
 
 ## Enums and switch
@@ -2207,12 +2227,10 @@ view Hero(Body body)
     Draw.Sprite(hero, body.position, float2(1, 1));
 }
 
-command SetBackground { List<byte> png; }
-
-command(SetBackground value, PlayerID sender) Apply(mut Arena arena)
+command(List<byte> png) SetBackground(mut Arena arena, PlayerID sender)
 {
     if (sender != arena.host) return;
-    arena.background.Decode(value.png)!;
+    arena.background.Decode(png)!;
 }
 ```
 
@@ -6002,7 +6020,7 @@ Packages that come with tide: a package in tide's installation, which a game opt
 Agreed 2026-11-16, from the owner's question of how a team's members get tools of their own (isolating a piece, jumping to a situation, inspecting entities), checked on paper against two of the owner's games before anything was built. The game provides its tools; the engine makes them easy to make, and never assumes how a game draws.
 
 Decided:
-- **`dev` before a declaration** (the owner's pick over a `[Dev]` attribute or a build value a game checks): `dev command GiveAmmo { ... }`, `dev view GunTools(...)`, `dev scene GunRange { }`. A build without dev doesn't have them at all, so a release server can't be sent a dev command.
+- **`dev` before a declaration** (the owner's pick over a `[Dev]` attribute or a build value a game checks): `dev command(int amount) GiveAmmo(...)`, `dev view GunTools(...)`, `dev scene GunRange { }`. A build without dev doesn't have them at all, so a release server can't be sent a dev command.
 - **Code without `dev` can't use what's `dev`**, checked by the compiler in every build, so a build without dev fails nowhere a dev build passed.
 - **A dev build is a switch of its own**, apart from optimization and target: an optimized or a web build can be a dev one, for playtesters.
 - **A scenario is a dev scene**, which `--scene` starts in place of the start scene; one that wants the game's usual start loads it itself.

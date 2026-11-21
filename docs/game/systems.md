@@ -29,7 +29,7 @@ So `ClampPlayer` runs for every entity that has a `Transform` and a `Player`, an
 
 Keeping what a system touches (its access) apart from which entities it picks (its filters) is what lets the engine run systems side by side safely: two systems that only filter on the same component never wait for each other.
 
-Only the amber row has `Moving` without `Frozen`, so only those entities match `Move`. Their positions change by `time.dt` in the match, and views draw the result. The button sends a command to pause or resume the match's movement.
+Only the amber row has `Moving` without `Frozen`, so only those entities match `Move`. Their positions change by `time.dt` in the match, and views draw the result. The button calls a command to pause or resume the match's movement.
 
 ::: tide-example systems Component filters in motion
 
@@ -80,7 +80,7 @@ Query data reads the current world and participates in [the schedule](./schedule
 
 Queries have read-only component bindings and component filters. Queries are used directly in `foreach`, or [borrowed by synchronous helpers](../language/functions.md#borrowing-a-query) with the same `query (...)` parameter syntax. The caller's selection and data timing stay intact. Queries and whole rows cannot be stored or returned; whole rows cannot be passed to functions. Keep iteration and forwarding outside parallel loops (other than the query's own, below) and callback blocks. A component value such as `fighter.body` can be copied or passed to a function. It follows the usual component copy rules, so a method that uses `this` needs the entity's own component parameter.
 
-Systems, views and synchronous event and command handlers take queries. A match handler reads the current world at its turn in the tick-end queue: see [Events](./events.md#querying-other-entities). A view's rows are the match as it draws it, blended between ticks, or [`verified`](./views-and-the-match.md#confirmed-state): see [Views and the match](./views-and-the-match.md#other-entities). A local handler's are the match as the tick that sent its event left it: see [Events](./events.md#other-entities). Async handlers and tasks take none yet.
+Systems, views, synchronous event handlers and commands take queries. A match handler or a command reads the current world at its turn in the tick-end queue: see [Events](./events.md#querying-other-entities). A view's rows are the match as it draws it, blended between ticks, or [`verified`](./views-and-the-match.md#confirmed-state): see [Views and the match](./views-and-the-match.md#other-entities). A local handler's are the match as the tick that sent its event left it: see [Events](./events.md#other-entities). Async handlers and tasks take none yet.
 
 ### As the tick started
 

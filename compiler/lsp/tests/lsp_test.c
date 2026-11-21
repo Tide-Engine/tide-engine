@@ -2311,35 +2311,190 @@ TIDE_TEST(lsp_shared_component_placement_and_parenting)
     TIDE_CHECK(count(rename, "\"newText\":\"Shared\"") == 4);
 }
 
+// A command is one declaration, called as a function is: what it's called with, its name, what its code takes.
+#define COMMAND_GAME                                                                             \
+    GAME_TYPES                                                                                   \
+    "command(float amount, int times = 1) Bump(Owner owner, mut Body body, PlayerID sender)\n" \
+    "{\n"                                                                                        \
+    "    if (sender != owner.player) return;\n"                                                  \
+    "    body.radius += amount * times;\n"                                                       \
+    "}\n"                                                                                        \
+    "command(string text) Say(PlayerID sender) { Debug.Log(text); }\n"
+
+#define COMMAND_CALLS                \
+    "view Menu(with Body)\n"         \
+    "{\n"                            \
+    "    this.Bump(2);\n"            \
+    "    Bump(1, times: 3);\n"       \
+    "    Say(\"hi\");\n"             \
+    "}\n"                            \
+    "system Grow(with Body) { Bump(0.5); }\n"
+
+static void check_reference_lenses(const char *uri);
+
 TIDE_TEST(lsp_commands)
 {
     start();
-    static const char prefix[] = GAME_TYPES
-        "command Bump { float amount; }\n"
-        "command(Bump bump, PlayerID sender) Handle(Owner owner, mut Body body) { if (sender != owner.player) return; body.radius += bump.amount; }\n";
-    open_document(prefix);
+    static const char game[] = COMMAND_GAME COMMAND_CALLS;
+    open_document(game);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    // One symbol, with what it's called with
     const char *symbols = request("textDocument/documentSymbol");
     TIDE_CHECK(has(symbols, "\"name\":\"Bump\",\"detail\":\"command\""));
-    TIDE_CHECK(has(symbols, "\"name\":\"Handle\",\"detail\":\"command handler\""));
-    open_document(GAME_TYPES "command Bump { float amount; }\n"
-                  "command(Bump bump, PlayerID sender) Han$dle(Owner owner, mut Body body) { if (sender != owner.player) return; body.radius += bump.amount; }\n");
-    TIDE_CHECK(has(request("textDocument/hover"), "command(Bump bump, PlayerID sender) Handle(Owner owner, mut Body body)"));
-    open_document(GAME_TYPES "command Bump { float amount; }\n"
-                  "command(Bump bump, PlayerID sender) Handle(Owner owner, mut Body body) { if (sen$der != owner.player) return; body.radius += bump.amount; }\n");
-    TIDE_CHECK(has(request("textDocument/hover"), "authenticated by the connection"));
-    const char *trigger = complete(GAME_TYPES "command Bump { float amount; }\nevent Hit { }\ncommand($)\n");
-    TIDE_CHECK(offers(trigger, "Bump"));
-    TIDE_CHECK(!offers(trigger, "Hit"));
-    TIDE_CHECK(!offers(trigger, "Spawned"));
-    const char *sender = complete(GAME_TYPES "command Bump { }\ncommand(Bump bump, $)\n");
-    TIDE_CHECK(offers(sender, "PlayerID"));
-    const char *entity = complete(GAME_TYPES "command Bump { }\nview Menu(with Body) { this.$ }\n");
-    TIDE_CHECK(offers(entity, "Send"));
-    TIDE_CHECK(!offers(entity, "Destroy"));
+    TIDE_CHECK(count(symbols, "\"name\":\"Bump\"") == 1 && count(symbols, "\"name\":\"Say\"") == 1);
+    TIDE_CHECK(!has(symbols, "command handler") && !has(symbols, "tide_payload"));
+    TIDE_CHECK(has(symbols, "\"name\":\"amount\",\"detail\":\"float\"") && has(symbols, "\"name\":\"times\",\"detail\":\"int\""));
+    TIDE_CHECK(count(request_with("workspace/symbol", "\"query\":\"Bump\""), "\"name\":\"Bump\"") == 1);
+    // Its header, where it's declared and where it's called
+    static const char header[] = "command(float amount, int times = 1) Bump(Owner owner, mut Body body, PlayerID sender)";
+    TIDE_CHECK(has(hover_at(22, 39), header));
+    TIDE_CHECK(has(hover_at(22, 39), "entity.Bump(float amount, int times = 1)"));
+    TIDE_CHECK(has(hover_at(30, 10), header) && has(hover_at(31, 5), header) && has(hover_at(34, 26), header));
+    TIDE_CHECK(has(hover_at(27, 22), "command(string text) Say(PlayerID sender)"));
+    TIDE_CHECK(has(hover_at(22, 83), "authenticated by the connection"));
+    TIDE_CHECK(has(hover_at(24, 10), "authenticated by the connection"));
+    // What it's called with: where it's declared, in its code, and by name at a call
+    TIDE_CHECK(has(hover_at(22, 16), "float amount") && has(hover_at(22, 16), "What the command `Bump` is called with"));
+    TIDE_CHECK(has(hover_at(25, 21), "float amount") && has(hover_at(25, 21), "What the command `Bump` is called with"));
+    TIDE_CHECK(has(hover_at(31, 14), "int times = 1") && has(hover_at(31, 14), "or leaves it out for its default"));
+    TIDE_CHECK(has(hover_at(25, 29), "int times = 1"));
+    // Definitions
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/definition", 30, 10, ""), "\"start\":{\"line\":22,\"character\":37}"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/definition", 31, 14, ""), "\"start\":{\"line\":22,\"character\":26}"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/definition", 25, 21, ""), "\"start\":{\"line\":22,\"character\":14}"));
+    // Every use: its declaration and its three calls; a value's declaration, use and name
+    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 22, 39,
+                                "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 4);
+    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 31, 14,
+                                "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 3);
+    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/documentHighlight", 30, 10, ""), "\"range\"") == 4);
+    // Renames
+    request_at("file:///test.tide", "textDocument/rename", 31, 5, "\"newName\":\"Nudge\"");
+    const char *renamed = apply_reply(game, "file:///test.tide");
+    TIDE_CHECK(count(renamed, "Nudge") == 4 && !has(renamed, "Bump"));
+    TIDE_CHECK(has(renamed, "int times = 1) Nudge(Owner owner") && has(renamed, "this.Nudge(2)"));
+    request_at("file:///test.tide", "textDocument/rename", 25, 29, "\"newName\":\"count\"");
+    renamed = apply_reply(game, "file:///test.tide");
+    TIDE_CHECK(has(renamed, "int count = 1) Bump") && has(renamed, "amount * count;") && has(renamed, "Bump(1, count: 3)"));
+    TIDE_CHECK(!has(renamed, "times"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/rename", 22, 16, "\"newName\":\"body\""), "'body' is already declared"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/rename", 22, 16, "\"newName\":\"times\""), "'times' is already declared"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/rename", 22, 68, "\"newName\":\"amount\""), "'amount' is already declared"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/rename", 22, 39, "\"newName\":\"Say\""), "'Say' is already declared"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/rename", 22, 39, "\"newName\":\"Menu\""), "'Menu' is already declared"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/rename", 22, 39, "\"newName\":\"Body\""), "'Body' is already declared"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/rename", 28, 6, "\"newName\":\"Bump\""), "'Bump' is already declared"));
+    // Highlighting: a function's name, and values that read as read-only parameters
+    const char *tokens = request("textDocument/semanticTokens/full");
+    TIDE_CHECK(token_is(tokens, 22, 37, 9, 1) && token_is(tokens, 30, 9, 9, 0) && token_is(tokens, 31, 4, 9, 0));
+    TIDE_CHECK(token_is(tokens, 22, 14, 5, 3) && token_is(tokens, 25, 19, 5, 2) && token_is(tokens, 31, 12, 5, 2));
+    // A literal argument's value, by its name; one written with its name says it already
+    const char *hints = request_at("file:///test.tide", "textDocument/inlayHint", 0, 0,
+                                   "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":50,\"character\":0}}");
+    TIDE_CHECK(has(hints, "{\"position\":{\"line\":30,\"character\":14},\"label\":\"amount:\""));
+    TIDE_CHECK(has(hints, "{\"position\":{\"line\":31,\"character\":9},\"label\":\"amount:\""));
+    TIDE_CHECK(has(hints, "{\"position\":{\"line\":32,\"character\":8},\"label\":\"text:\""));
+    TIDE_CHECK(count(hints, "\"label\":\"times:\"") == 0);
+    // Its lenses: the references of the one name, and what its code reaches
+    const char *lenses = request("textDocument/codeLens");
+    TIDE_CHECK(has(lenses, "\"title\":\"3 references\"") && has(lenses, "\"title\":\"1 reference\""));
+    check_reference_lenses("file:///test.tide");
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/prepareCallHierarchy", 22, 39, ""), header));
+
+    // What it's called with: values' types, never a command or an event
+    const char *values = complete(GAME_TYPES "struct Order { int item; }\nevent Hit { }\n"
+                                             "command(string text) Say(PlayerID sender) { }\ncommand($)\n");
+    TIDE_CHECK(offers(values, "float") && offers(values, "string") && offers(values, "Order") && offers(values, "Entity"));
+    TIDE_CHECK(!offers(values, "Say") && !offers(values, "Hit") && !offers(values, "Spawned") && !offers(values, "mut"));
+    TIDE_CHECK(!offers(values, "PlayerID sender") && !offers(values, "verified") && !offers(values, "Body"));
+    TIDE_CHECK(offers(complete(GAME_TYPES "command(int slot, $)\n"), "float"));
+    TIDE_CHECK(offers(complete(GAME_TYPES "command(Entity $)\n"), "entity"));
+    const char *fallback = complete(GAME_TYPES "const int FIRST = 1;\ncommand(int slot = $)\n");
+    TIDE_CHECK(offers(fallback, "FIRST") && offers(fallback, "Math") && !offers(fallback, "string"));
+    const char *bounds = complete(GAME_TYPES "command([$] int slot) Pick(PlayerID sender) { }\n");
+    TIDE_CHECK(offers(bounds, "Clamp") && offers(bounds, "Min"));
+    TIDE_CHECK(offers(complete(GAME_TYPES "command([Clamp(0, $)] int slot) Pick(PlayerID sender) { }\n"), "Math"));
+    // What its code takes: a handler's parameters, and the sender once
+    const char *takes = complete(GAME_TYPES "command([Clamp(0, 3)] int slot = int(1)) Pick($)\n{\n}\n");
+    TIDE_CHECK(offers(takes, "PlayerID sender") && offers(takes, "Body") && offers(takes, "Arena") && offers(takes, "mut"));
+    TIDE_CHECK(offers(takes, "with") && offers(takes, "query") && offers(takes, "World") && !offers(takes, "int"));
+    const char *more = complete(GAME_TYPES "command(int slot) Pick(PlayerID sender, $)\n{\n}\n");
+    TIDE_CHECK(offers(more, "Body") && !offers(more, "PlayerID sender"));
+    TIDE_CHECK(offers(complete(GAME_TYPES "command(int slot)\n    Pick(mut Body body, $)\n{\n}\n"), "PlayerID sender"));
+    TIDE_CHECK(!offers(complete(GAME_TYPES "system Pick($)\n{\n}\n"), "PlayerID sender"));
+    TIDE_CHECK(!offers(complete(GAME_TYPES "event Hit { }\nevent(Hit hit) Pick($)\n{\n}\n"), "PlayerID sender"));
+    // In its code: its values by name, and no name for its payload
+    const char *inside = complete(COMMAND_GAME "command(float2 at) Drop(PlayerID sender)\n{\n    $\n}\n");
+    TIDE_CHECK(offers(inside, "at") && offers(inside, "sender") && offers(inside, "Say") && !offers(inside, "tide_payload"));
+    TIDE_CHECK(offers(complete(COMMAND_GAME "command(float2 at) Drop(PlayerID sender)\n{\n    var x = at.$\n}\n"), "x"));
+    // Calls: on an entity, those whose code runs for one; where a statement starts, every one
+    const char *entity = complete(COMMAND_GAME "view Menu(with Body) { this.$ }\n");
+    TIDE_CHECK(offers(entity, "Bump") && has(entity, "\"detail\":\"Bump(float amount, int times = 1)\""));
+    TIDE_CHECK(has(entity, "\"insertText\":\"Bump($1)\""));
+    TIDE_CHECK(!offers(entity, "Say") && !offers(entity, "Send") && !offers(entity, "Destroy"));
+    const char *match_entity = complete(COMMAND_GAME "system Tick(with Body) { this.$ }\n");
+    TIDE_CHECK(offers(match_entity, "Bump") && offers(match_entity, "Destroy") && !offers(match_entity, "Say"));
+    const char *local = complete(COMMAND_GAME "view Menu(with Body)\n{\n    $\n}\n");
+    TIDE_CHECK(offers(local, "Bump") && offers(local, "Say") && has(local, "\"detail\":\"Say(string text)\""));
+    TIDE_CHECK(has(local, "for this machine's player") && !offers(local, "tide_payload"));
+    const char *match = complete(COMMAND_GAME "system Tick()\n{\n    $\n}\n");
+    TIDE_CHECK(offers(match, "Say") && has(match, "with no player and no network"));
+    TIDE_CHECK(offers(complete(COMMAND_GAME "void Ask()\n{\n    $\n}\n"), "Say"));
+    const char *names = complete(COMMAND_GAME "view Menu(with Body) { Bump(1, $); }\n");
+    TIDE_CHECK(offers(names, "times:") && !offers(names, "amount:"));
+    TIDE_CHECK(offers(complete(COMMAND_GAME "view Menu(with Body) { this.Bump($); }\n"), "amount:"));
+    // No value is written as a literal of it
+    TIDE_CHECK(!offers(complete(COMMAND_GAME "view Menu(with Body) { Send(Bump { $ }); }\n"), "amount"));
+    // A call names its command alone: one in a namespace the file doesn't use isn't offered
+    const char *unnamed = complete("namespace Shop { command() Open(PlayerID sender) { } }\nscene Main { }\nview Menu()\n{\n    $\n}\n");
+    TIDE_CHECK(!offers(unnamed, "Open") && !offers(unnamed, "Shop.Open"));
+    TIDE_CHECK(offers(complete("using Shop;\nnamespace Shop { command() Open(PlayerID sender) { } }\nscene Main { }\n"
+                               "view Menu()\n{\n    $\n}\n"), "Open"));
+    // Its code is its one handler: no order names it
+    const char *order = complete(COMMAND_GAME "[After($)]\nsystem Late() { }\n");
+    TIDE_CHECK(offers(order, "Setup") && !offers(order, "Bump") && !offers(order, "Say"));
+    // The entity its code runs for
+    open_document(COMMAND_GAME "command() Shrink(mut Body body, with ownership) { body.radius = 0; th$is.Destroy(); }\n"
+                               "view Menu(with Body) { Shrink(); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "The entity the command `Shrink` runs for"));
+    // Signature help
+    open_document(COMMAND_GAME "view Menu(with Body) { Bump(1, $); }\n");
+    const char *help = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(help, "\"label\":\"Bump(float amount, int times = 1)\"") && has(help, "\"activeParameter\":1"));
+    open_document(COMMAND_GAME "view Menu(with Body) { this.Bump(times: $); }\n");
+    help = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(help, "\"label\":\"Bump(float amount, int times = 1)\"") && has(help, "\"activeParameter\":1"));
+    open_document(COMMAND_GAME "view Menu(with Body) { this.Bump($); }\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":0"));
+    // Declarations: one snippet
     const char *top = complete(GAME_TYPES "\n$");
-    TIDE_CHECK(offers(top, "command"));
-    TIDE_CHECK(offers(top, "command handler"));
+    TIDE_CHECK(offers(top, "command") && !offers(top, "command handler"));
+    TIDE_CHECK(has(top, "command(${1:int value}) ${2:Name}(${3:PlayerID sender})\\n{\\n    $0\\n}"));
+    const char *replaceable = complete(GAME_TYPES "\nvirtual $");
+    TIDE_CHECK(offers(replaceable, "command") && !offers(replaceable, "command handler"));
+
+    // Formatting: a name under what it's called with continues the header, and stays as it is formatted again
+    static const char messy[] = "component Body { float radius; }\nscene Main { }\n"
+                                "event(Spawned) Setup(with Main) { Spawn(Body, Owner); }\n"
+                                "command(float amount,int times=1)\nBump(Owner owner,mut Body body,PlayerID sender){\n"
+                                "if (sender != owner.player) return;\nbody.radius += amount*times;\n}\n"
+                                "command ( ) Reset(mut Body body,with ownership){body.radius = 0;}\n"
+                                "view Menu(with Body)\n{\nthis.Bump(2,times:3);\nReset( );\n}\n";
+    static const char expected[] = "component Body { float radius; }\nscene Main { }\n"
+                                   "event(Spawned) Setup(with Main) { Spawn(Body, Owner); }\n"
+                                   "command(float amount, int times = 1)\n    Bump(Owner owner, mut Body body, PlayerID sender)\n{\n"
+                                   "    if (sender != owner.player) return;\n    body.radius += amount * times;\n}\n"
+                                   "command() Reset(mut Body body, with ownership) { body.radius = 0; }\n"
+                                   "view Menu(with Body)\n{\n    this.Bump(2, times: 3);\n    Reset();\n}\n";
+    open_document(messy);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    format_reply(messy);
+    const char *formatted = apply_reply(messy, NULL);
+    TIDE_CHECK(strcmp(formatted, expected) == 0);
+    if (strcmp(formatted, expected) != 0) printf("--- got:\n%s---\n", formatted);
+    TIDE_CHECK(has(format_reply(expected), "\"result\":[]"));
+    TIDE_CHECK(has(request("textDocument/foldingRange"), "\"startLine\":3,\"endLine\":7"));
 }
 
 // `local` before a field of a match component or singleton: this machine's, outside the match.
@@ -4883,7 +5038,7 @@ TIDE_TEST(lsp_local_handlers_of_match_events)
     TIDE_CHECK(!offers(complete(GAME_TYPES "event Hit { }\nevent($)\n"), "verified"));
     TIDE_CHECK(!offers(complete(GAME_TYPES "event($)\n"), "Shown"));
     TIDE_CHECK(!offers(complete(GAME_TYPES "event($)\n"), "Hidden"));
-    TIDE_CHECK(!offers(complete(GAME_TYPES "command Bump { }\ncommand($)\n"), "verified"));
+    TIDE_CHECK(!offers(complete(GAME_TYPES "command($)\n"), "verified"));
 
     open_document(GAME_TYPES "local singleton Seen { int n; }\n"
                   "local event(Sho$wn) Available(Body body, mut Seen seen) { seen.n += int(body.radius); }\n");
@@ -5704,7 +5859,7 @@ TIDE_TEST(lsp_type_alias_enum_attributes)
         "[Stage(Phase.Early)]\nview First() { }\n"
         "[Before(Scheduling.Phase.Late), After(Phase.Early)]\nview Middle() { }\n"
         "[Stage(Phase.Late)]\nview Last() { }\n"
-        "[Channel(Phase.Early)]\ncommand Change { int value; }\n";
+        "[Channel(Phase.Early)]\ncommand(int value) Change(PlayerID sender) { }\n";
     open_document(code);
     TIDE_CHECK(!has(last_sent(), "\"severity\":1"));
     TIDE_CHECK(has(hover_at(7, 9), "using Phase = Stages;"));
@@ -7406,7 +7561,7 @@ TIDE_TEST(lsp_rename_reaches_unity_scripts)
                                "struct Trail { float length; }\n"
                                "singleton Extras { int score; }\n"
                                "event Hit { int damage; }\n"
-                               "command Say { string text; }\n"
+                               "command(string text) Say(PlayerID sender) { }\n"
                                "enum Mode { Calm, Angry }\n"
                                "namespace Combat { component Blade { float sharpness; } }\n";
     write_file("lsp_unity_cs/Assets/Tide/game.tide", game);
@@ -7602,7 +7757,7 @@ TIDE_TEST(lsp_rename_reaches_unity_scripts)
     TIDE_CHECK(has_edit(score, cs_edit(player, ".score", 0, 1, 5, "points")));
     const char *damage = request_at(uri, "textDocument/rename", 4, 17, "\"newName\":\"amount\"");
     TIDE_CHECK(has_edit(damage, cs_edit(player, "hit.damage", 0, 4, 6, "amount")));
-    const char *text = request_at(uri, "textDocument/rename", 5, 22, "\"newName\":\"line\"");
+    const char *text = request_at(uri, "textDocument/rename", 5, 16, "\"newName\":\"line\"");
     TIDE_CHECK(has_edit(text, cs_edit(player, "text = \"hi\"", 0, 0, 4, "line")));
     TIDE_CHECK(!has(text, cs_edit(player, "var text", 0, 4, 4, "line")) && !has(text, cs_edit(player, "{text}", 0, 1, 4, "line")));
     // An enum and its member
@@ -8357,16 +8512,16 @@ TIDE_TEST(lsp_entry_points_follow_helpers_and_stop_at_handlers)
                   "void Right() { Leaf(); }\n"
                   "void Unused() { Leaf(); }\n"
                   "event Ping { }\n"
-                  "command Move { }\n"
+                  "void Idle() { }\n"
                   "scene Main { }\n"
                   "system Tick() { Left(); Right(); Leaf(); }\n"
                   "view Show() { Left(); }\n"
                   "event(Ping) OnPing() { Right(); }\n"
-                  "command(Move move, PlayerID sender) OnMove() { Leaf(); }\n"
-                  "system Emit() { Send(Ping); }\n"
+                  "command() OnMove(PlayerID sender) { Leaf(); }\n"
+                  "system Emit() { Send(Ping); OnMove(); }\n"
                   "event(Spawned) Setup(with Main) { Leaf(); }\n");
     TIDE_CHECK(!has(last_sent(), "\"severity\":1"));
-    static const int lines[] = {8, 9, 10, 11, 13}, columns[] = {7, 5, 12, 36, 15}, lengths[] = {4, 4, 6, 6, 5};
+    static const int lines[] = {8, 9, 10, 11, 13}, columns[] = {7, 5, 12, 10, 15}, lengths[] = {4, 4, 6, 6, 5};
     check_entry_lens("file:///test.tide", 1, "file:///test.tide", lines, columns, lengths, 5);
     check_entry_lens("file:///test.tide", 0, "file:///test.tide", lines, columns, lengths, 5);
     check_entry_lens("file:///test.tide", 4, NULL, NULL, NULL, NULL, 0);
@@ -8952,7 +9107,7 @@ TIDE_TEST(lsp_entity_query_members_and_headers)
     TIDE_CHECK(offers(complete(QUERY_TYPES "view Show($) { }\n"), "query"));
     TIDE_CHECK(offers(complete(QUERY_TYPES "event Hit { int damage; }\nlocal event(Hit hit) Show($) { }\n"), "query"));
     TIDE_CHECK(offers(complete(QUERY_TYPES "event(Spawned) OnSpawn($) { }\n"), "query"));
-    TIDE_CHECK(offers(complete(QUERY_TYPES "command Inspect { }\ncommand(Inspect value, PlayerID sender) InspectAll($) { }\n"), "query"));
+    TIDE_CHECK(offers(complete(QUERY_TYPES "command() InspectAll($) { }\n"), "query"));
     TIDE_CHECK(!offers(complete(QUERY_TYPES "async event(Spawned) OnSpawn($) { }\n"), "query"));
 
     const char *bindings = complete(QUERY_TYPES "system Hits(Body shot, query ($) fighters) { }\n");
@@ -9008,8 +9163,8 @@ TIDE_TEST(lsp_entity_query_in_match_handlers)
     const char *bindings = complete(QUERY_TYPES "event(Spawned) Inspect(query ($) bodies) { }\n");
     TIDE_CHECK(offers(bindings, "Body") && offers(bindings, "with") && offers(bindings, "without"));
     TIDE_CHECK(!offers(bindings, "mut") && !offers(bindings, "verified") && !offers(bindings, "Score"));
-    const char *rows = complete(QUERY_TYPES "command Inspect { }\n"
-        "command(Inspect value, PlayerID sender) InspectAll(query (Body body) bodies)\n{\n"
+    const char *rows = complete(QUERY_TYPES
+        "command() InspectAll(query (Body body) bodies, PlayerID sender)\n{\n"
         "    foreach (var row in bodies) Debug.Log(row.$);\n}\n");
     TIDE_CHECK(offers(rows, "entity") && offers(rows, "body"));
     open_document(QUERY_TYPES
@@ -9017,13 +9172,12 @@ TIDE_TEST(lsp_entity_query_in_match_handlers)
         "system ScanNow() { Send(Scan); }\n"
         "event(Scan) Inspect(query (Body body) bodies)\n"
         "{ foreach (var row in bodies) Debug.Assert(row.body.position.x >= 0); }\n"
-        "command InspectCommand { }\n"
-        "command(InspectCommand value, PlayerID sender) InspectAll(query (Body body) bodies)\n"
+        "command() InspectAll(query (Body body) bodies, PlayerID sender)\n"
         "{ foreach (var row in bodies) Debug.Assert(row.body.position.x >= 0); }\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     const char *event_query = request_at("file:///test.tide", "textDocument/hover", 9, 40, "");
     TIDE_CHECK(has(event_query, "current match at this handler's turn in the tick-end queue"));
-    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 12, 78, ""),
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 11, 41, ""),
                    "current match at this handler's turn in the tick-end queue"));
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 9, 13, ""),
                    "Through its queries, it reads any entity's `Body`"));
@@ -10370,13 +10524,15 @@ TIDE_TEST(lsp_world_edit)
 TIDE_TEST(lsp_command_ownership)
 {
     start();
-    open_document("component Name { string value; }\ncommand SetName { string text; }\nscene Main { }\n"
-                  "command(SetName set) Rename(mut Name name, with ownership) { name.value = set.text; }\n"
+    open_document("component Name { string value; }\nscene Main { }\n"
+                  "command(string text) Rename(mut Name name, with ownership) { name.value = text; }\n"
                   "event(Spawned) Setup(with Main) { Spawn(Name, Owner { player = PlayerID(0) }); }\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
-    TIDE_CHECK(has(hover_at(3, 49), "the entities the player who sent the command owns"));
-    TIDE_CHECK(offers(complete("component Name { string value; }\ncommand SetName { string text; }\nscene Main { }\n"
-                               "command(SetName set) Rename(mut Name name, with $) { }\n"), "ownership"));
+    TIDE_CHECK(has(hover_at(2, 49), "the entities the player who sent the command owns"));
+    TIDE_CHECK(offers(complete("component Name { string value; }\nscene Main { }\n"
+                               "command(string text) Rename(mut Name name, with $) { }\n"), "ownership"));
+    TIDE_CHECK(offers(complete("namespace Mod;\nusing Game;\noverride command(string text) Game.Rename(mut Name name, without $) { }\n"),
+                      "ownership"));
 }
 
 TIDE_TEST(lsp_world_in_functions)
@@ -10612,6 +10768,108 @@ TIDE_TEST(lsp_virtual_and_override)
     remove_folder("lsp_ov/game");
     remove_folder("lsp_ov/fast");
     remove_folder("lsp_ov");
+    clear_sent();
+    lsp_free(&server);
+}
+
+// A command another package replaces the code of: the command and its override are one name, and what the
+// override says it's called with are the command's values.
+TIDE_TEST(lsp_command_override)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_cov");
+    make_folder("lsp_cov/game");
+    make_folder("lsp_cov/fast");
+    static const char main_file[] =
+        "namespace Shop;\n"                                                    // 0
+        "component Log { int bought; }\n"                                      // 1
+        "virtual command(int item) Buy(mut Log log, PlayerID sender)\n{\n"     // 2, 3
+        "    log.bought += item;\n}\n"                                         // 4, 5
+        "virtual command(int item) Sell(PlayerID sender, mut Log log)\n{\n"    // 6, 7
+        "    log.bought -= item;\n}\n"                                         // 8, 9
+        "scene Main { }\n"                                                     // 10
+        "event(Spawned) Setup(with Main) { Spawn(Log); }\n"                    // 11
+        "view Menu(with Log) { Buy(item: 1); this.Sell(1); }\n";               // 12
+    static const char fast_file[] =
+        "namespace Fast;\n"                                                    // 0
+        "using Shop;\n"                                                        // 1
+        "override command(int item) Shop.Buy(mut Log log, PlayerID sender)\n"  // 2
+        "{\n    log.bought += item * 2;\n}\n";                                 // 3, 4, 5
+    write_file("lsp_cov/game/tide.packages", "../fast\n");
+    write_file("lsp_cov/game/main.tide", main_file);
+    write_file("lsp_cov/fast/tide.packages", "package Fast\n");
+    write_file("lsp_cov/fast/fast.tide", fast_file);
+    char root[700], uri_main[700], uri_fast[700];
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    snprintf(root, sizeof root, "file:///%s/lsp_cov/game", dir);
+    snprintf(uri_main, sizeof uri_main, "file:///%s/lsp_cov/game/main.tide", dir);
+    snprintf(uri_fast, sizeof uri_fast, "file:///%s/lsp_cov/fast/fast.tide", dir);
+
+    start_in(root);
+    open_uri(uri_main, main_file);
+    TIDE_REQUIRE(sent_count == 2);
+    TIDE_CHECK(has(sent[0], uri_fast) && has(sent[0], "\"diagnostics\":[]"));
+    TIDE_CHECK(has(sent[1], uri_main) && has(sent[1], "\"diagnostics\":[]"));
+    open_uri(uri_fast, fast_file);
+
+    const char *over = request_at(uri_fast, "textDocument/hover", 2, 33, "");
+    TIDE_CHECK(has(over, "override command(int item) Shop.Buy(mut Log log, PlayerID sender)"));
+    TIDE_CHECK(has(over, "Overrides `Shop.Buy` of the game"));
+    const char *replaced = request_at(uri_main, "textDocument/hover", 2, 27, "");
+    TIDE_CHECK(has(replaced, "virtual command(int item) Buy(mut Log log, PlayerID sender)"));
+    TIDE_CHECK(has(replaced, "**Replaced** by package Fast's override: this code isn't in the build"));
+    // The sender where it was written, before what follows it
+    TIDE_CHECK(has(request_at(uri_main, "textDocument/hover", 12, 41, ""), "virtual command(int item) Sell(PlayerID sender, mut Log log)"));
+    TIDE_CHECK(has(request_at(uri_main, "textDocument/hover", 6, 27, ""), "`virtual`: another package can replace it. Nothing does."));
+    TIDE_CHECK(has(request_at(uri_fast, "textDocument/hover", 2, 23, ""), "What the command `Buy` is called with"));
+    TIDE_CHECK(has(request_at(uri_fast, "textDocument/hover", 4, 20, ""), "What the command `Buy` is called with"));
+    TIDE_CHECK(has(request_at(uri_fast, "textDocument/hover", 2, 28, ""), "namespace Shop"));
+
+    const char *to_command = request_at(uri_fast, "textDocument/definition", 2, 33, "");
+    TIDE_CHECK(has(to_command, uri_main) && has(to_command, "\"start\":{\"line\":2,\"character\":26}"));
+    const char *to_value = request_at(uri_fast, "textDocument/definition", 4, 20, "");
+    TIDE_CHECK(has(to_value, uri_main) && has(to_value, "\"start\":{\"line\":2,\"character\":20}"));
+    const char *built = request_at(uri_main, "textDocument/implementation", 12, 23, "");
+    TIDE_CHECK(has(built, uri_fast) && has(built, "\"start\":{\"line\":2,\"character\":32}"));
+
+    // Its declaration, its call and the override's name; a value's declaration, its uses and its name at the call
+    const char *usages = request_at(uri_main, "textDocument/references", 2, 27, "\"context\":{\"includeDeclaration\":true}");
+    TIDE_CHECK(count(usages, "\"uri\":") == 3 && count(usages, uri_fast) == 1);
+    const char *values = request_at(uri_fast, "textDocument/references", 4, 20, "\"context\":{\"includeDeclaration\":true}");
+    TIDE_CHECK(count(values, "\"uri\":") == 5 && count(values, uri_fast) == 2);
+    const char *renamed = request_at(uri_fast, "textDocument/rename", 2, 33, "\"newName\":\"Purchase\"");
+    TIDE_CHECK(count(renamed, "\"newText\":\"Purchase\"") == 3 && has(renamed, uri_main) && has(renamed, uri_fast));
+    const char *value_renamed = request_at(uri_main, "textDocument/rename", 4, 19, "\"newName\":\"thing\"");
+    TIDE_CHECK(count(value_renamed, "\"newText\":\"thing\"") == 5 && has(value_renamed, uri_fast));
+    TIDE_CHECK(has(request_at(uri_fast, "textDocument/rename", 2, 33, "\"newName\":\"Sell\""), "'Sell' is already declared"));
+    TIDE_CHECK(has(request_at(uri_fast, "textDocument/rename", 4, 20, "\"newName\":\"log\""), "'log' is already declared"));
+
+    const char *lenses = request_at(uri_main, "textDocument/codeLens", 0, 0, "");
+    TIDE_CHECK(count(lenses, "replaced by package Fast: not in the build") == 1);
+    TIDE_CHECK(has(request_at(uri_fast, "textDocument/codeLens", 0, 0, ""), "replaces Shop.Buy of the game"));
+    check_repeat_lenses(uri_main);
+    check_reference_lenses(uri_main);
+    check_reference_lenses(uri_fast);
+    const char *outline = request_at(uri_main, "textDocument/documentSymbol", 0, 0, "");
+    TIDE_CHECK(count(outline, "\"name\":\"Buy\"") == 1 && count(outline, "\"name\":\"Sell\"") == 1);
+    const char *fast_outline = request_at(uri_fast, "textDocument/documentSymbol", 0, 0, "");
+    TIDE_CHECK(count(fast_outline, "\"name\":\"Buy\"") == 1 && has(fast_outline, "\"name\":\"Buy\",\"detail\":\"command\""));
+
+    static char typing[1200];
+    snprintf(typing, sizeof typing, "%soverride ", fast_file);
+    open_uri(uri_fast, typing);
+    const char *offered = request_at(uri_fast, "textDocument/completion", 6, 9, "");
+    TIDE_CHECK(has(offered, "\"label\":\"command(int item) Sell(PlayerID sender, mut Log log)\""));
+    TIDE_CHECK(has(offered, "command(int item) Sell(PlayerID sender, mut Log log)\\n{\\n    $0\\n}"));
+    TIDE_CHECK(!has(offered, "\"label\":\"command(int item) Buy") && !has(offered, "tide_payload"));
+
+    remove_game_file("lsp_cov/game/tide.packages");
+    remove_game_file("lsp_cov/game/main.tide");
+    remove_game_file("lsp_cov/fast/tide.packages");
+    remove_game_file("lsp_cov/fast/fast.tide");
+    remove_folder("lsp_cov/game");
+    remove_folder("lsp_cov/fast");
+    remove_folder("lsp_cov");
     clear_sent();
     lsp_free(&server);
 }

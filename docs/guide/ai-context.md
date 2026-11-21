@@ -76,23 +76,22 @@ Use typed **commands** for submitted actions from local UI. A minimal entity-tar
 
 ```csharp
 component Ready { bool value; }
-command SetReady { bool value; }
+
+command(bool value) SetReady(mut Ready ready, with ownership)
+{
+    ready.value = value;
+}
 
 view ReadyButton(Ready ready, with ownership)
 {
     if (GUILayout.Button(ready.value ? "Unready" : "Ready"))
-        this.Send(SetReady { value = !ready.value });
-}
-
-command(SetReady action) ApplyReady(mut Ready ready, with ownership)
-{
-    ready.value = action.value;
+        SetReady(!ready.value);
 }
 ```
 
-Spawn `Ready` alongside each player's `Owner` to use this fragment. In a command handler, `with ownership` runs it only for an entity the command's sender owns (`without ownership`, only for others'); a handler without it names the sender, `command(SetReady action, PlayerID sender)`, and checks it, such as `if (sender != owner.player) return;`. The connection supplies the sender; never trust a sender ID in the payload. Validate ownership and game rules before writing state. Handlers return void, with ordinary guard clauses. They have no acceptance method or transaction. A global command uses `Send(...)`; an entity-targeted command uses `entity.Send(...)`. See [Commands](../game/commands.md) and [GUI](../game/gui.md).
+Spawn `Ready` alongside each player's `Owner` to use this fragment. A command is one declaration, called like a function: the first parentheses are the values a call passes, the second what the match gives its code, as an event handler's parameters. A value can't share a name with a parameter of the second parentheses. In a command, `with ownership` runs it only for an entity the command's sender owns (`without ownership`, only for others'); a command without it takes the sender, `command(bool value) SetReady(Owner owner, mut Ready ready, PlayerID sender)`, and checks it, such as `if (sender != owner.player) return;`. The connection supplies the sender; never pass or trust a sender ID among the values. Validate ownership and game rules before writing state. Commands return nothing, with ordinary guard clauses. They have no acceptance method or transaction. A call in code that runs for an entity is for that entity; `entity.SetReady(true)` names another. A command that takes no components and no ownership filter needs no entity. `Send` is for events only. Match code (a system, a match event handler) can call a command too: it's queued for the end of the tick, with no player as `sender`, and ownership filters pass. See [Commands](../game/commands.md) and [GUI](../game/gui.md).
 
-Initialize multiplayer entities in `PlayerJoined`, and clean up their entities/state in `PlayerLeft` when the game needs it. **Treat `PlayerID` as an opaque identity, not a display index:** retain `joined.player` or read an entity's `Owner.player`; do not assume the players are `PlayerID(1)` and `PlayerID(2)`. When the game needs ordered seats (left and right paddle, wallet slots), assign them in the `PlayerJoined` handler from a singleton, such as `mut Seats seats` holding each seat's `PlayerID`, and free them in `PlayerLeft`. Do not count the entities spawned for earlier players instead: spawns apply at the end of the tick, and two players can join in the same tick. `with ownership` selects this machine's entities in local code, and the command sender's in a command handler; match systems use `with Owner`. Write separate filters as `with Wallet, with ownership`.
+Initialize multiplayer entities in `PlayerJoined`, and clean up their entities/state in `PlayerLeft` when the game needs it. **Treat `PlayerID` as an opaque identity, not a display index:** retain `joined.player` or read an entity's `Owner.player`; do not assume the players are `PlayerID(1)` and `PlayerID(2)`. When the game needs ordered seats (left and right paddle, wallet slots), assign them in the `PlayerJoined` handler from a singleton, such as `mut Seats seats` holding each seat's `PlayerID`, and free them in `PlayerLeft`. Do not count the entities spawned for earlier players instead: spawns apply at the end of the tick, and two players can join in the same tick. `with ownership` selects this machine's entities in local code, and the command sender's in a command; match systems use `with Owner`. Write separate filters as `with Wallet, with ownership`.
 
 All machines in a match must execute identical simulation rules. Read [Matches](../multiplayer/matches.md) before implementing room setup, admission or migration. Optional [Rooms](../packages/rooms.md) supplies a Play/Host/Join menu; it is not automatically included in a new folder.
 

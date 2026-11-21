@@ -2374,18 +2374,17 @@ static char *unity_declarations(const unity_scene *scenes, const int count, cons
                      "        scenes.loaded[%d] = Scene.Load(UnityEngine.Scenes.%s);\n    }\n", scenes[i].number, scenes[i].name);
         }
         puts_(&t, "\n    // The editor's, as Play starts there: a scene it has open; `only` unloads the others the match loaded for it\n"
-                  "    command OpenScene\n    {\n        int asset;\n        bool only;\n    }\n"
-                  "\n    command(OpenScene open, PlayerID sender) Opening(mut LoadedScenes scenes)\n    {\n"
+                  "    command(int asset, bool only) OpenScene(mut LoadedScenes scenes, PlayerID sender)\n    {\n"
                   "        // The first player's, which may come in the first tick, before its PlayerJoined does\n"
                   "        if (!scenes.heard)\n        {\n            scenes.heard = true;\n            scenes.opener = sender;\n        }\n"
                   "        if (sender != scenes.opener) return;\n        scenes.opened = true;\n"
-                  "        if (open.only)\n        {\n            mut List<int> others = [];\n"
+                  "        if (only)\n        {\n            mut List<int> others = [];\n"
                   "            foreach (var entry in scenes.loaded)\n            {\n"
-                  "                if (entry.key != open.asset) others.Add(entry.key);\n            }\n"
-                  "            foreach (var asset in others)\n            {\n"
-                  "                Scene.Unload(scenes.loaded[asset]);\n                scenes.loaded.Remove(asset);\n            }\n        }\n"
-                  "        if (scenes.loaded.Has(open.asset)) return;\n"
-                  "        switch (open.asset)\n        {\n");
+                  "                if (entry.key != asset) others.Add(entry.key);\n            }\n"
+                  "            foreach (var other in others)\n            {\n"
+                  "                Scene.Unload(scenes.loaded[other]);\n                scenes.loaded.Remove(other);\n            }\n        }\n"
+                  "        if (scenes.loaded.Has(asset)) return;\n"
+                  "        switch (asset)\n        {\n");
         for (int i = 0; i < count; i++) {
             putf(&t, "            case %d: scenes.loaded[%d] = Scene.Load(UnityEngine.Scenes.%s); break;\n", scenes[i].number,
                  scenes[i].number, scenes[i].name);

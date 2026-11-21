@@ -1,9 +1,9 @@
-// expect: 'Ask' sends the command 'Rename', and commands are sent from views and local handlers to the match
-command Rename { int n; }
+// expect: 'Ask' calls the command 'Rename', and only local code calls a function that does: views and local handlers
+// expect: a system or a match handler calls the command itself, which then runs with no player and no network; in a function, the call is this machine's player's
 component Enemy { int hp; }
 scene Main { }
-void Ask(int n) { Send(Rename { n = n }); }
+void Ask(int n) { Rename(n); }
 event(Spawned) Setup(with Main) { Spawn(Enemy); }
-command(Rename rename, PlayerID sender) Take() { }
+command(int n) Rename(PlayerID sender) { }
 view Show(Enemy enemy) { Ask(enemy.hp); }
 system Fight(Enemy enemy) { Ask(enemy.hp); }

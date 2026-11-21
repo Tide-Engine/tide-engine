@@ -9,7 +9,6 @@ component Body
     float speed = 2.5;
 }
 singleton Roster { Map<PlayerID, Entity> bodies; int arrivals; }
-command Trade { }
 
 // Where this machine's pointer is in the arena, which its input sends.
 local singleton Aim { float2 world; bool moved; }
@@ -59,7 +58,7 @@ system Follow(Steer steer, mut Body body, Time time)
 }
 
 // Owner is a component like any other: writing it hands control over.
-command(Trade trade, PlayerID sender) TradeBodies(mut Roster roster)
+command() Trade(mut Roster roster, PlayerID sender)
 {
     mut PlayerID other = sender;
     foreach (var seat in roster.bodies)
@@ -82,7 +81,7 @@ view Point(Devices devices, mut Aim aim)
     aim.world = Draw.ScreenToWorld(Screen.Flip(devices.pointer.position));
     if (Math.LengthSq(devices.pointer.delta) > 0) aim.moved = true;
     GUI.SetTheme(GUITheme { radius = 6 });
-    if (GUI.Button(Rect(12, Screen.height - 44, Screen.width - 24, 32), "Trade bodies")) Send(Trade { });
+    if (GUI.Button(Rect(12, Screen.height - 44, Screen.width - 24, 32), "Trade bodies")) Trade();
 }
 
 // Every body this machine's player doesn't own: the other player's, and nobody's.

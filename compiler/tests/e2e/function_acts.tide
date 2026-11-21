@@ -201,12 +201,10 @@ event(Note note) Noted(mut Tally tally)
     tally.last = note.text;
 }
 
-command Cheer { int n; }
-
-command(Cheer cheer, PlayerID sender) Cheered(mut Tally tally)
+command(int n) Cheer(mut Tally tally, PlayerID sender)
 {
-    tally.cheers += cheer.n;
-    Notify(-cheer.n); // A command's handler calls it too
+    tally.cheers += n;
+    Notify(-n); // A command's handler calls it too
 }
 
 // On this machine: a view's functions send local events and commands, and
@@ -225,7 +223,7 @@ local singleton Seen
 void Flash(int n) { Send(Blink { n = n }); }
 LocalEntity Puffed() { return local Spawn(Puff); }
 void Pop(LocalEntity puff) { puff.Destroy(); }
-void Ask(int n) { Send(Cheer { n = n }); }
+void Ask(int n) { Cheer(n); }
 
 view Show(mut Seen seen)
 {

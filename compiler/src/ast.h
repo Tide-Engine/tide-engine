@@ -334,6 +334,9 @@ typedef struct device_leaf {
 #define DEVICE_WORDS 4 // Bits for up to 256 device leaves
 
 typedef struct param {
+    // A command's trigger: its payload, which its code reads by its fields' names, as it was written
+    // (`command(int slot) PickCard(...)` reads `slot`). It has no name of its own in the code
+    bool command_payload;
     str sample_role; // [Raw(T)]: the numeric type sampled or stored through this image parameter.
     // `[Raw] Texture masks`, `[Linear] Texture albedo` (and a borrowed asset collection's, `[Raw] List<Texture>
     // maps`): a read-only parameter that carries the role, which every call's argument has and which its own uses
@@ -761,7 +764,14 @@ typedef struct decl {
 
     // Events
     bool world_event;        // Built-in events the engine sends to the world, never to an entity
-    bool is_command;        // `command`: a local submission whose one match handler receives its sender
+    // `command(int slot) PickCard(mut Hand hand)`: a call of it submits its payload to the match, whose one
+    // handler receives its sender. On the payload's type, an event of the command's name with a field for each
+    // value it's called with, and on its handler, whose trigger is that type
+    bool is_command;
+    bool match_called; // On a command's type: match code calls it too, with no player and no network
+    // On a command's handler: what its first parentheses hold, as written there. The command's own type, or for
+    // an override, which has none, what it says the command it replaces is called with
+    struct decl *written_payload;
     const struct decl *needs_target; // A handler that takes data from the entity the event is sent to, or NULL
     VEC(struct decl *) handlers;     // Its handlers, in the order they run
     VEC(struct decl *) listeners;    // A match event's local handlers (decl.listens), in the order they run
@@ -1373,6 +1383,16 @@ struct expr {
     uint8_t read_image, read_kind;
     // ...of a part (its last two arguments: the first pixel, and how many along each axis), and of a Texture3D's cells
     bool read_part, read_volume;
+
+    // A call of a command, `PickCard(0)` or `fighter.PickCard(0)`: a CALL_SEND whose one argument is the payload
+    // the checker made of what was written (`written`), and whose event is the command
+    bool command_call;
+    // ...with no entity named, in code that runs for an entity of the match: that one, where the command's code
+    // takes an entity (decl.needs_target)
+    bool implicit_target;
+    struct decl *command_value; // E_LITERAL: the payload a command's call makes, of this command's type
+    struct expr *command_namespace; // `Shop` of `Shop.Buy(1)`, a command's call written with its namespace (an E_CALL)
+    bool payload_value;         // E_MEMBER: a value a command's code reads by name, `slot`, of its payload
 
     // E_CALL, E_METHOD
     VEC(expr *) args;

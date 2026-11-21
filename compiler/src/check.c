@@ -895,6 +895,15 @@ static property *find_property(const decl *d, const str name)
     return NULL;
 }
 
+// In a command's code, its payload: what it was called with, which the code reads by its fields' names.
+static const param *command_payload(const checker *c)
+{
+    const decl *sys = c->method ? NULL : c->system;
+    if (!sys || !sys->is_handler || !sys->is_command || !sys->params.count) return NULL;
+    const param *payload = &sys->params.items[0];
+    return payload->command_payload && payload->type.kind == TY_EVENT && payload->type.decl ? payload : NULL;
+}
+
 static param *find_param(const checker *c, const str name)
 {
     if (!c->system) return NULL; // Field defaults are checked outside any system.
@@ -3565,8 +3574,8 @@ static type check_literal(checker *c, expr *e)
         diag_error(e->at, "a lambda needs a Func signature from its field, parameter or declared local type");
         return T_ERR;
     }
-    e->type_alias = authored_alias(c, e->name, e->at);
-    decl *d = find_type(c, e->name, e->at);
+    e->type_alias = e->command_value ? NULL : authored_alias(c, e->name, e->at);
+    decl *d = e->command_value ? e->command_value : find_type(c, e->name, e->at); // A command's call made it: its payload
     if (!d) {
         decl *stage = find_named(c, e->name, e->at, NAME_SHADER);
         if (stage) {
@@ -4787,6 +4796,7 @@ static bool check_io_use(checker *c, const loc at, const char *what, const bool 
 // its name: NULL in a program that doesn't have it, or whose own declaration
 // has the name.
 static type check_function_call(checker *c, expr *e, decl *fn);
+static type check_command_call(checker *c, expr *e, decl *command);
 
 static decl *prelude_decl(const program *prog, const char *path, const char *name, const decl_kind kind)
 {
@@ -5282,23 +5292,28 @@ static type check_send(checker *c, expr *e)
     }
     decl *event = check_event_arg(c, e->args.items[0]);
     if (!event) return T_ERR;
-    if (event->is_command) {
-        if (!local_code(c) && !inherits(c)) {
-            diag_error(e->at, "commands are sent from views and local handlers to the match");
-            diag_note("match systems and handlers send events; a command carries a player's untrusted request");
-            return T_ERR;
-        }
+    if (event->is_command && !e->command_call) {
+        diag_error(e->at, "a command is called, as a function is: '" STR_FMT "(...)'", STR_ARG(event->name));
+        diag_note("Send is for events; a command's call sends what it's called with");
+        return T_ERR;
+    }
+    // Local code's call of a command submits it: this machine's player asks, and the server's tick runs it. A
+    // function's call is its callers' to make, and they are local code. The match's own call (a system's, a match
+    // handler's) has no player and no network: it goes on as an event's send does, queued for the end of the tick
+    if (event->is_command && (local_code(c) || inherits(c) || in_async_function(c))) {
         if (e->kind == E_METHOD && e->object->type.kind != TY_ENTITY) {
-            diag_error(e->object->at, "a command target must be an Entity of the match");
+            diag_error(e->object->at, "a command's entity is one of the match's: an Entity");
             return T_ERR;
         }
+        if (in_async_function(c) && !note_task_side(c, TASK_LOCAL, e->at)) return T_ERR; // A task that calls one is local
         e->type_decl = event;
         e->local_world = true;
-        if (inherits(c)) note_act(c, true, e->at, act_what("sends the command", event), false, false);
+        if (inherits(c)) note_act(c, true, e->at, act_what("calls the command", event), false, false);
         vec_push(c->sends, e);
         vec_push(c->send_code, NULL);
         return T_VOID_;
     }
+    if (event->is_command) event->match_called = true;
     if (e->kind == E_METHOD && !check_entity_side(c, e)) return T_ERR;
     if (event->builtin) {
         diag_error(e->args.items[0]->at, "the engine sends '" STR_FMT "'; games can't", STR_ARG(event->name));
@@ -7220,6 +7235,7 @@ static type check_call(checker *c, expr *e)
     if (fn) return check_function_call(c, e, fn);
 
     decl *const d = find_type(c, e->name, e->at);
+    if (d && d->kind == DECL_EVENT && d->is_command) return check_command_call(c, e, d);
     if (d && d == c->prog->random) return check_random_seeded(c, e);
     if (d && d->kind == DECL_ENUM) return check_enum_conversion(c, e, d); // Card(2)
 
@@ -7260,6 +7276,96 @@ static type check_call(checker *c, expr *e)
         suggest_note(&s);
     }
     return T_ERR;
+}
+
+// PickCard(2, 0), fighter.PickCard(slot: 0): a call of a command. What it's called with is its payload, a value
+// of the command's type made from the arguments: by place, then by name, and its declared default for each one
+// left out. The call is then a send of that value (check_send), to the entity it's called on, or to the entity
+// the code runs for where the command's code takes one and the call names none.
+static type check_command_call(checker *c, expr *e, decl *command)
+{
+    expr *value = NEW(expr);
+    value->kind = E_LITERAL;
+    value->at = e->at;
+    value->name = command->name;
+    value->command_value = command;
+    bool fine = true;
+    bool named = false;
+    for (int i = 0; i < e->args.count; i++) {
+        expr *arg = e->args.items[i];
+        const str name = arg_name(e, i);
+        field_init init = {0};
+        init.value = arg;
+        if (arg->is_out) {
+            diag_error(arg->at, "a command gives nothing back through its arguments: they're copied to the match");
+            fine = false;
+            continue;
+        }
+        if (name.len) {
+            named = true;
+            init.name = name;
+            init.at = e->arg_name_at.items[i];
+            if (!field_named(command, name)) {
+                diag_error(init.at, "'" STR_FMT "' isn't called with '" STR_FMT "'", STR_ARG(command->name), STR_ARG(name));
+                suggestion s = suggest_start(name);
+                for (int k = 0; k < command->fields.count; k++) suggest_consider(&s, command->fields.items[k].name);
+                suggest_note(&s);
+                fine = false;
+                continue;
+            }
+        } else if (named) {
+            diag_error(arg->at, "an argument without a name can't follow one with a name");
+            fine = false;
+            continue;
+        } else if (i >= command->fields.count) {
+            if (command->fields.count == 0) {
+                diag_error(arg->at, "'" STR_FMT "' is called with nothing: '" STR_FMT "()'", STR_ARG(command->name),
+                           STR_ARG(command->name));
+            } else {
+                diag_error(arg->at, "'" STR_FMT "' is called with %d value%s, and this is one more", STR_ARG(command->name),
+                           command->fields.count, command->fields.count == 1 ? "" : "s");
+            }
+            fine = false;
+            break;
+        } else {
+            init.name = command->fields.items[i].name;
+            init.at = arg->at;
+        }
+        bool twice = false;
+        for (int k = 0; k < value->inits.count; k++) twice |= str_eq(value->inits.items[k].name, init.name);
+        if (twice) {
+            diag_error(init.at, "'" STR_FMT "' is given twice", STR_ARG(init.name));
+            fine = false;
+            continue;
+        }
+        vec_push(value->inits, init);
+    }
+    for (int k = 0; fine && k < command->fields.count; k++) {
+        const field *f = &command->fields.items[k];
+        bool given = f->default_value != NULL;
+        for (int i = 0; i < value->inits.count; i++) given |= str_eq(value->inits.items[i].name, f->name);
+        if (given) continue;
+        diag_error(e->at, "'" STR_FMT "' is called with '" STR_FMT "', and this call leaves it out", STR_ARG(command->name),
+                   STR_ARG(f->name));
+        diag_note("a default where the command is declared lets calls leave it out: 'command(" STR_FMT " " STR_FMT " = ...)'",
+                  STR_ARG(f->type_name), STR_ARG(f->name));
+        fine = false;
+    }
+    if (!fine) {
+        for (int i = 0; i < e->args.count; i++) if (!e->args.items[i]->is_out) check_expr(c, e->args.items[i]);
+        return T_ERR;
+    }
+    e->written.items = e->args.items;
+    e->written.count = e->args.count;
+    e->written.cap = e->args.cap;
+    e->args.items = NULL;
+    e->args.count = e->args.cap = 0;
+    vec_push(e->args, value);
+    e->names_taken = true;
+    e->command_call = true;
+    // With no entity named, the one the code runs for, where the command's code turns out to take one (check_sends)
+    e->implicit_target = e->kind == E_CALL && !c->method && c->system && c->system->per_entity && !c->system->entity_local;
+    return check_send(c, e);
 }
 
 static type check_random_seeded(checker *c, expr *e)
@@ -10608,6 +10714,13 @@ static type check_method(checker *c, expr *e)
         }
         // Combat.Stance(2): an enum in a namespace, converting an int.
         decl *const named = find_type(c, qualified, e->at);
+        if (named && named->kind == DECL_EVENT && named->is_command) { // Shop.Buy(1): a command there, for no entity named
+            mark_namespaces(e->object);
+            e->command_namespace = e->object;
+            e->kind = E_CALL;
+            e->object = NULL;
+            return check_command_call(c, e, named);
+        }
         if (named && named->kind == DECL_ENUM) {
             mark_namespaces(e->object);
             return check_enum_conversion(c, e, named);
@@ -11149,6 +11262,11 @@ static type check_method(checker *c, expr *e)
         return T_ERR;
     }
     if (str_eq_c(e->name, "Send")) return check_send(c, e);
+    // fighter.PickCard(0): a command, for that entity
+    if (!str_eq_c(e->name, "Add") && !str_eq_c(e->name, "Remove") && !str_eq_c(e->name, "Destroy") && !str_eq_c(e->name, "Snap")) {
+        decl *const command = find_type(c, e->name, e->at);
+        if (command && command->kind == DECL_EVENT && command->is_command) return check_command_call(c, e, command);
+    }
     if (refuse_act(c, e->at, "change entities", "systems do")) return T_ERR;
     if (!check_entity_side(c, e)) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
@@ -12822,6 +12940,19 @@ static type check_name(checker *c, expr *e)
         e->object = self;
         e->member = e->name;
         return check_expr(c, e);
+    }
+    // What a command was called with, by name in its code: `slot` of `command(int slot) PickCard(...)`
+    const param *payload = command_payload(c);
+    if (payload && field_named(payload->type.decl, e->name)) {
+        expr *value = NEW(expr);
+        value->kind = E_NAME;
+        value->name = payload->name;
+        value->at = e->at;
+        e->kind = E_MEMBER;
+        e->object = value;
+        e->member = e->name;
+        e->payload_value = true;
+        return check_expr_any(c, e); // A T? among them is its reader's to unwrap
     }
     if (str_eq_c(e->name, "Devices")) {
         e->bind = BIND_DEVICES;
@@ -15422,6 +15553,13 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
         return false;
     }
 
+    if (root->bind == BIND_PARAM && root->param->command_payload) {
+        const expr *value = target; // `slot`, or `detail` of `detail.count`
+        while (value->object && value->object != root && (value->kind == E_MEMBER || value->kind == E_INDEX)) value = value->object;
+        diag_error(root->at, "'" STR_FMT "' is read-only", STR_ARG(value->kind == E_MEMBER ? value->member : root->name));
+        diag_note("it's what the command was called with; copy it into a 'mut var' to change it here");
+        return false;
+    }
     if (root->bind == BIND_PARAM && root->param->mode != PARAM_MUT) {
         diag_error(root->at, "'" STR_FMT "' is read-only", STR_ARG(root->name));
         if (arg_of) diag_note("'" STR_FMT "' %s its '" STR_FMT "'", STR_ARG(called->name), arg_of->is_out ? "makes" : "changes", STR_ARG(arg_of->name));
@@ -16936,7 +17074,7 @@ static void check_return(checker *c, const stmt *s)
     if (!m) {
         if (s->value) {
             if (c->in_input) diag_error(s->value->at, "%s doesn't return a value; use 'return;'", input_code(c));
-            else if (c->system && c->system->is_command) diag_error(s->value->at, "command handlers don't return values; use 'return;'");
+            else if (c->system && c->system->is_command) diag_error(s->value->at, "a command returns nothing; use 'return;'");
             else diag_error(s->value->at, "systems don't return values; use 'return;'");
         }
         return;
@@ -21320,14 +21458,35 @@ static void check_trigger(const checker *c, decl *handler, param *p, decl *d)
     }
     p->type = (type){TY_EVENT, d};
     handler->event = d;
-    if (handler->is_command != d->is_command) {
-        diag_error(at, "'" STR_FMT "' is %s; receive it with '%s(...)'", STR_ARG(d->name),
-                   d->is_command ? "a command" : "an event", d->is_command ? "command" : "event");
+    if (d->is_command && !handler->is_command) {
+        diag_error(at, "'" STR_FMT "' is a command, which has its own code: an event handler can't take it", STR_ARG(d->name));
+        diag_note("send an event from the command's code, and handle that");
+        return;
+    }
+    if (handler->is_command && !d->is_command) { // An override's: a command of its own declares its type
+        diag_error(at, "'" STR_FMT "' is an event, not a command; replace a handler of it with 'override event(...)'", STR_ARG(d->name));
         return;
     }
     if (handler->is_command) {
-        if (handler->is_local) diag_error(handler->local_at, "command handlers run in the match, so they can't be local");
-        if (handler->is_async) diag_error(handler->async_at, "a command handler can't be async; it validates and handles one submission immediately");
+        if (handler->is_local) diag_error(handler->local_at, "a command's code runs in the match, so it can't be local");
+        if (handler->is_async) diag_error(handler->async_at, "a command can't be async: its code checks and handles one call at once");
+        // An override replaces the code, not what calls pass: it writes the command's own values, in order
+        const decl *written = handler->written_payload;
+        bool same = !written || written == d || written->fields.count == d->fields.count;
+        for (int i = 0; same && written != d && written && i < d->fields.count; i++) {
+            same = str_eq(written->fields.items[i].name, d->fields.items[i].name)
+                && str_eq(written->fields.items[i].type_name, d->fields.items[i].type_name);
+        }
+        if (!same) {
+            sb values = {0};
+            for (int i = 0; i < d->fields.count; i++) {
+                sb_printf(&values, "%s" STR_FMT " " STR_FMT, i ? ", " : "", STR_ARG(d->fields.items[i].type_name),
+                          STR_ARG(d->fields.items[i].name));
+            }
+            diag_error(handler->at, "an override of '" STR_FMT "' takes what the command is called with: 'command(%s)'",
+                       STR_ARG(d->name), values.data ? values.data : "");
+            diag_note("it replaces the command's code; what its calls pass stays the command's");
+        }
         return;
     }
     if ((d == c->prog->shown || d == c->prog->hidden) && !handler->is_local) {
@@ -21576,7 +21735,9 @@ static void check_ownership(const checker *c, decl *sys, param *p)
         return;
     }
     sys->ownership = ownership;
-    if (with) sys->need_mask = mask_or(sys->need_mask, bit(c->prog->owner));
+    // A player's own entity has an Owner. A command's code runs for entities without one too, where the match
+    // called it itself: the filter is the check of what a player may do (gen_row_filter)
+    if (with && !command) sys->need_mask = mask_or(sys->need_mask, bit(c->prog->owner));
 }
 
 // A local handler of Forgotten: `local event(Forgotten) Free(Box box)`. It
@@ -22052,7 +22213,7 @@ static void check_params(const checker *c, decl *sys)
         const bool is_local_entity = names_type_as(c, p->type_name, "LocalEntity");
 
         if (p->name.len > 0) {
-            if (!(sys->preparation_owner && i == 1)) check_reserved(p->name, p->at);
+            if (!(sys->preparation_owner && i == 1) && !p->command_payload) check_reserved(p->name, p->at);
             for (int j = 0; j < i; j++) {
                 if (str_eq(sys->params.items[j].name, p->name)) {
                     diag_error(p->at, "parameter '" STR_FMT "' is declared twice", STR_ARG(p->name));
@@ -22352,11 +22513,8 @@ static void check_params(const checker *c, decl *sys)
     // for the sender's own entities (or `without ownership`, only for others')
     if (sys->is_handler && sys->is_command && !sys->ownership
         && (sys->params.count < 2 || sys->params.items[1].mode != PARAM_SENDER)) {
-        const param *trigger = &sys->params.items[0];
-        diag_error(sys->at, "command handler '" STR_FMT "' must name the player who sent its command, after the command",
-                   STR_ARG(sys->name));
-        diag_note("write 'command(" STR_FMT " " STR_FMT ", PlayerID sender)', and check what that player may do before acting",
-                  STR_ARG(trigger->type_name), STR_ARG(trigger->name.len ? trigger->name : str_from("value")));
+        diag_error(sys->at, "command '" STR_FMT "' must name the player who sent it, among what its code takes", STR_ARG(sys->name));
+        diag_note("write '" STR_FMT "(..., PlayerID sender)', and check what that player may do before acting", STR_ARG(sys->name));
         // A per-entity handler can leave that to its filter; a global one has no entity to filter
         if (sys->per_entity) {
             diag_note("or take 'with ownership', which runs it only for an entity the sender owns, and leave the sender out");
@@ -24126,7 +24284,7 @@ static void derive_archetypes(const checker *c)
 
 static const char *system_what(const decl *sys)
 {
-    return sys->is_view ? "view" : sys->is_handler ? "event handler" : "system";
+    return sys->is_view ? "view" : sys->is_handler ? sys->is_command ? "command" : "event handler" : "system";
 }
 
 // What fields say of shards, once every field's attributes are known: in a
@@ -24224,7 +24382,13 @@ static void check_sends(const checker *c)
     for (int i = 0; i < c->sends.count; i++) {
         const expr *e = c->sends.items[i];
         const decl *event = e->type_decl;
-        if (e->kind == E_METHOD || !event->needs_target) continue;
+        if (e->kind == E_METHOD || !event->needs_target || e->implicit_target) continue;
+        if (event->is_command) {
+            diag_error(e->at, "'" STR_FMT "' runs for an entity, and this call names none", STR_ARG(event->name));
+            diag_note("call it on the entity: 'entity." STR_FMT "(...)'; code that runs for an entity of the match calls "
+                      "it for that one without naming it", STR_ARG(event->name));
+            continue;
+        }
         diag_error(e->at, "'" STR_FMT "' needs the entity a " STR_FMT " is sent to, and this Send has none",
                    STR_ARG(event->needs_target->name), STR_ARG(event->name));
         diag_note("send it to an entity: 'entity.Send(" STR_FMT " { ... })'", STR_ARG(event->name));
@@ -24242,7 +24406,7 @@ static void check_sends(const checker *c)
             heard = handler->is_local && handler->event == event;
         }
         if (!heard) continue;
-        diag_warning(e->at, "only the server's machine hears this '" STR_FMT "': '" STR_FMT "' handles a command, which "
+        diag_warning(e->at, "only the server's machine hears this '" STR_FMT "': '" STR_FMT "' is a command, which "
                      "runs on the server alone in a match that hides state", STR_ARG(event->name), STR_ARG(code->name));
         diag_note("other machines' local handlers of '" STR_FMT "' never run for it; write what they should show into "
                   "a component or singleton they may see, which reaches them with the server's correction",
@@ -24605,7 +24769,7 @@ static void check_channel_attribute(checker *c, decl *d, attribute *attr)
     if (d->kind != DECL_EVENT || !d->is_command) {
         diag_error(attr->at, "%s orders a command's delivery, and '" STR_FMT "' isn't a command",
                    unordered ? "Unordered" : "Channel", STR_ARG(d->name));
-        diag_note("it goes before a 'command' declaration: '[%s] command Ping { int at; }'",
+        diag_note("it goes before a command: '[%s] command(int at) Ping(PlayerID sender) { ... }'",
                   unordered ? "Unordered" : "Channel(Channels.Chat)");
         return;
     }
@@ -26216,14 +26380,15 @@ static void check_acts(checker *c)
             continue;
         }
         if (to->acts[1] && !local) {
-            const bool command = strncmp(to->acts_what[1], "sends the command", 17) == 0;
+            const bool command = strncmp(to->acts_what[1], "calls the command", 17) == 0;
             const bool asks = strncmp(to->acts_what[1], "calls ", 6) == 0; // Session's calls, and the clipboard's
             diag_error(at, "'" STR_FMT "' %s, and %s", STR_ARG(to->name), to->acts_what[1],
-                       command ? "commands are sent from views and local handlers to the match"
+                       command ? "only local code calls a function that does: views and local handlers"
                        : asks  ? "the match runs the same on every machine"
                                : "the match can't use local state");
             diag_note_at(to->acts_at[1], "it does on line %d", to->acts_at[1].line);
-            if (command) diag_note("match systems and handlers send events; a command carries a player's untrusted request");
+            if (command) diag_note("a system or a match handler calls the command itself, which then runs with no player "
+                                   "and no network; in a function, the call is this machine's player's");
             else if (asks) diag_note("call it from a view or a local handler, like a menu's button");
             else diag_note("local state belongs to one machine, and the match runs the same on every one");
             continue;

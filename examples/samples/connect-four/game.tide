@@ -84,8 +84,6 @@ input Controls
     }
 }
 
-command Drop { int column; int move; }
-
 // Sent for what's shown: nothing in the match handles them.
 event Dropped { int column; int row; int team; }
 event GameOver { int winner; long line; }
@@ -241,14 +239,14 @@ event(PlayerLeft left) Depart(mut Board board, mut Roster roster)
     board.plan = -1;
 }
 
-// The handler looks at who sent it: only the player whose turn it is drops a disc.
-command(Drop drop, PlayerID sender) AskDrop(mut Board board, Roster roster)
+// The command looks at who sent it: only the player whose turn it is drops a disc.
+command(int column, int move) Drop(mut Board board, Roster roster, PlayerID sender)
 {
     if (board.winner != PLAYING || board.fresh || board.request >= 0) return;
-    if (Mover(board, roster) != sender || drop.move != board.moves) return;
-    if (drop.column < 0 || drop.column >= COLS) return;
-    if (Height(board.red | board.yellow, drop.column) >= ROWS) return;
-    board.request = drop.column;
+    if (Mover(board, roster) != sender || move != board.moves) return;
+    if (column < 0 || column >= COLS) return;
+    if (Height(board.red | board.yellow, column) >= ROWS) return;
+    board.request = column;
 }
 
 system Reach(Controls controls, mut Hand hand, with Owner)
@@ -593,7 +591,7 @@ view Point(Devices devices, verified Board board, verified Roster roster, Sessio
     if (board.winner != PLAYING || board.fresh) return;
     if (Mover(board, roster) != session.player) return;
     if (Height(board.red | board.yellow, aim.column) >= ROWS) return;
-    Send(Drop { column = aim.column, move = board.moves });
+    Drop(aim.column, board.moves);
     aim.wait = 0.35;
 }
 

@@ -402,12 +402,10 @@ using Model = Mesh<Vertex3>;
 
 singleton Arena { Model statue; PlayerID host; string message; }
 
-command SetStatue { List<byte> model; }
-
-command(SetStatue value, PlayerID sender) Apply(mut Arena arena)
+command(List<byte> model) SetStatue(mut Arena arena, PlayerID sender)
 {
     if (sender != arena.host) return;
-    if (Model.Decode(value.model) is Model statue) arena.statue = statue;
+    if (Model.Decode(model) is Model statue) arena.statue = statue;
     else arena.message = "That isn't a model";
 }
 ```
@@ -602,7 +600,7 @@ Bytes that every player should see go into the match through a [command](./comma
 
 Bytes can come from anywhere, so a small file can't ask for much. A picture of more than 4096 × 4096 pixels (16,777,216) is `InvalidData` before anything is made for it, whatever its shape; at that size its cells are 256 MiB of the match. So is a file whose compressed data goes on for more than 1 MiB past its last row. These limits are the engine's, the same for every game, so every machine in a match refuses the same files. A picture refused for one says so on each machine's log, naming the limit: `tide: grid.Decode refused a PNG: it's 5000 by 5000 pixels, 25,000,000 in all, more than the 16,777,216 grid.Decode takes (TIDE_GRID_DECODE_MAX_PIXELS)`. Build-time imports past a limit are errors that name it the same way.
 
-It's pure, so it runs in match code as well as local code: a handler that decodes gives every machine the same pixels, bit for bit, because the engine's own reader does the decoding, with no system library in the way. The grid then draws as a texture like any `Grid2<Color>` (see [Meshes and textures](./meshes-and-textures.md#textures)).
+It's pure, so it runs in match code as well as local code: a command or handler that decodes gives every machine the same pixels, bit for bit, because the engine's own reader does the decoding, with no system library in the way. The grid then draws as a texture like any `Grid2<Color>` (see [Meshes and textures](./meshes-and-textures.md#textures)).
 
 A player's own picture, decoded for this machine alone:
 
@@ -625,7 +623,7 @@ view Pick(mut Picker picker)
 }
 ```
 
-In the match, the handler of a command decodes, and every machine gets the same pixels:
+In the match, a command decodes, and every machine gets the same pixels:
 
 ```csharp
 singleton Arena
@@ -634,12 +632,10 @@ singleton Arena
     PlayerID host;
 }
 
-command SetBackground { List<byte> png; }
-
-command(SetBackground value, PlayerID sender) Apply(mut Arena arena)
+command(List<byte> png) SetBackground(mut Arena arena, PlayerID sender)
 {
     if (sender != arena.host) return;
-    arena.background.Decode(value.png)!;
+    arena.background.Decode(png)!;
 }
 ```
 

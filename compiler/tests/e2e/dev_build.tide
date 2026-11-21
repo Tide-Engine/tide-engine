@@ -49,11 +49,9 @@ dev int Topped(int ammo, Refill refill)
     return Either(true, ammo + refill.amount, 0) + Magazine { rounds = 0 }.Doubled();
 }
 
-dev command GiveAmmo { int amount; }
-
-dev command(GiveAmmo give, PlayerID sender) Give(mut Gun gun)
+dev command(int amount) GiveAmmo(mut Gun gun, PlayerID sender)
 {
-    gun.ammo = Topped(gun.ammo, Refill { amount = give.amount });
+    gun.ammo = Topped(gun.ammo, Refill { amount = amount });
 }
 
 local singleton Drawn

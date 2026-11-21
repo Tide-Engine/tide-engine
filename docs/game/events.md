@@ -192,7 +192,7 @@ view DrawFighter(Body body, mut Fighter fighter)
 
 A local handler changes [local state](./local-state.md) and never the match. Like every handler it can't draw: it leaves what happened where views find it, in a local singleton, in local entities, or in the [local fields](./local-state.md#local-fields) of the entity the event was sent to.
 
-Tap a ball below, three times. Each tap reaches the match as a command, whose handler sends the ball a `Hit`. The match's handler of `Hit` takes a health off, and a local one makes the ball flash, through a local field. A ball that meets a wall sends `Bounced` to the world: nothing in the match handles it, and a local handler makes sparks of it. The third hit destroys the ball, and `Destroyed` has two handlers too: the match's spawns another ball, and a local one bursts where the ball was.
+Tap a ball below, three times. Each tap calls a command, `Poke`, which sends the ball a `Hit`. The match's handler of `Hit` takes a health off, and a local one makes the ball flash, through a local field. A ball that meets a wall sends `Bounced` to the world: nothing in the match handles it, and a local handler makes sparks of it. The third hit destroys the ball, and `Destroyed` has two handlers too: the match's spawns another ball, and a local one bursts where the ball was.
 
 ::: tide-example events Events, and what a machine shows of them
 
@@ -256,7 +256,7 @@ local event(Blast blast) ShowBlast(mut Fx fx, query (Body body, with Fighter) fi
 
 ### At the start of a frame
 
-Local handlers run at the start of a frame, before the views, for each tick this machine simulated since the last frame, in order. What they spawn, change and send locally is handled at the end of the frame, like a view's, and they send [commands](./commands.md) as views do. [Local state](./local-state.md#a-frame-in-order) has a frame's whole order.
+Local handlers run at the start of a frame, before the views, for each tick this machine simulated since the last frame, in order. What they spawn, change and send locally is handled at the end of the frame, like a view's, and they call [commands](./commands.md) as views do. [Local state](./local-state.md#a-frame-in-order) has a frame's whole order.
 
 An event's local handlers run in the order they're declared, and `[Before]` and `[After]` order them among themselves, apart from the match's handlers of the event. An event has 64 of them at most. A local handler of an event nothing sends is a warning, like a match handler's, and `tide schedule` lists each event's local handlers after the match's (see [the schedule](./schedule.md#reading-it)).
 

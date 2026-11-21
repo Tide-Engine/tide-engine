@@ -6245,14 +6245,17 @@ static void gen_send(gen *g, const expr *e)
         g->indent++;
     }
     indent(g, o);
-    sb_printf(o, "%s_%s%s(%s, ", event->is_command ? "tide_local_send" : "tide_cmd_send", type_cname(event), event->is_command ? "" : "_cause",
+    // A command local code calls is submitted to the server; one the match calls is queued as its events are
+    const bool submitted = event->is_command && e->local_world;
+    sb_printf(o, "%s_%s%s(%s, ", submitted ? "tide_local_send" : "tide_cmd_send", type_cname(event), submitted ? "" : "_cause",
               e->local_world ? "tide_l" : "tide_w");
     if (e->kind == E_METHOD) gen_expr(g, o, e->object);
+    else if (e->implicit_target && event->needs_target) sb_put(o, "tide_this"); // The entity the code runs for
     else sb_put(o, "(tide_entity){0}");
     sb_put(o, ", ");
     if (arg->kind == E_NAME && arg->bind == BIND_TYPE) gen_value(g, o, event, NULL, 0); // Its defaults
     else gen_expr(g, o, arg);
-    if (!event->is_command) sb_printf(o, ", tide_causal_next(&tide_causal, %uu)", e->causal_site);
+    if (!submitted) sb_printf(o, ", tide_causal_next(&tide_causal, %uu)", e->causal_site);
     sb_put(o, ");\n");
     if (g->reserved_send) {
         g->indent--;
@@ -14496,6 +14499,14 @@ static void gen_command_recorders(gen *g)
         const char *name = type_cname(d);
         if (d->is_command) {
             sb_printf(o, "TIDE_HELPER void tide_local_send_%s(tide_local *local, tide_entity target, %s value);\n\n", name, name);
+            if (!d->match_called) continue;
+            // The match's own call of it: queued as an event is, with no player for its sender
+            sb_printf(o, "TIDE_HELPER void tide_cmd_send_%s_cause(tide_world *w, tide_entity target, %s value, uint64_t cause)\n{\n"
+                         "    tide_command *c = tide_cmd_push(w, TIDE_CMD_EVENT, %d, target, TIDE_COMMAND_SIZE(event_%s));\n"
+                         "    c->cause = cause;\n    c->sender = (tide_player_id){0};\n    c->data.event_%s = value;\n",
+                      name, name, d->index, name, name);
+            if (decl_has_text(d)) sb_printf(o, "    tide_own_%s(&c->data.event_%s, %s);\n", name, name, decl_where(d));
+            sb_put(o, "}\n\n");
             continue;
         }
         sb_printf(o, "// Send: " STR_FMT ", to `target` or, with the null entity, to the world\n", STR_ARG(d->qualified));
@@ -18611,10 +18622,18 @@ static void gen_row_filter(gen *g, const decl *sys, const int a, const char *pad
         scene_pass(g, sys, a, "tide_scn[tide_i]", &sb_pass);
         sb_printf(&g->c, "%sif (!(%s)) %s;\n", pad, sb_pass.data, skip);
     }
+    // A command `with ownership`, for an entity nobody owns: no player's own, so only the match's own call runs
+    if (sys->ownership == OWNERSHIP_WITH && sys->event && sys->event->is_command && a >= 0
+        && !arch_stores(g, a, prog->owner->index)) {
+        sb_printf(&g->c, "%sif (tide_sender->id != 0) %s;\n", pad, skip);
+    }
     if (!filters_owner(g, sys, a)) return;
     gen_row_owner(g, sys, pad);
-    sb_printf(&g->c, "%sif (%stide_player_equal(tide_owner.%s, tide_me)) %s;\n", pad, sys->ownership == OWNERSHIP_WITH ? "!" : "",
-              field_cname(&prog->owner->fields.items[0]), skip);
+    // A command the match called itself has no player for its sender, and runs whoever owns the entity: the
+    // filter is the check of what a player may do, and the match is the authority
+    const bool command = sys->event && sys->event->is_command;
+    sb_printf(&g->c, "%sif (%s%stide_player_equal(tide_owner.%s, tide_me)) %s;\n", pad, command ? "tide_me.id != 0 && " : "",
+              sys->ownership == OWNERSHIP_WITH ? "!" : "", field_cname(&prog->owner->fields.items[0]), skip);
 }
 
 // After a loop over a chunk's rows: the lanes it changed go back, in the

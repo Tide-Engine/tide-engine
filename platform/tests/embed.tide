@@ -35,10 +35,7 @@ singleton Tally
     local Texture logo;
 }
 
-command Bump { int by; }
-
 // Text and a list from the other program, after the command's value
-command Rename { string name; List<byte> marks; }
 
 // What the other program hears as this machine's local handlers would (the packet's EVENTS)
 event Ticked { int ticks; string label; List<string> words; }
@@ -96,16 +93,16 @@ system Rise(mut Tally tally, Time time)
     tally.level += time.dt;
 }
 
-command(Bump bump, PlayerID sender) Apply(mut Tally tally)
+command(int by) Bump(mut Tally tally, PlayerID sender)
 {
-    tally.bumps += bump.by;
-    Debug.Log($"bumped by {bump.by}"); // Which the other program shows (tide_embed_log)
+    tally.bumps += by;
+    Debug.Log($"bumped by {by}"); // Which the other program shows (tide_embed_log)
 }
 
-command(Rename rename, PlayerID sender) Renaming(mut Tally tally)
+command(string name, List<byte> marks) Rename(mut Tally tally, PlayerID sender)
 {
-    tally.name = rename.name;
-    tally.marks = rename.marks;
+    tally.name = name;
+    tally.marks = marks;
 }
 
 extern void Seen(int ticks, int presses, float width, float height);

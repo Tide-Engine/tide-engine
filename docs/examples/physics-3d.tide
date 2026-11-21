@@ -17,15 +17,9 @@ event(Spawned) Build(with Main)
 }
 
 // What a tap asks of the match.
-command Throw
+command(float3 from, float3 towards) Throw(PlayerID sender)
 {
-    float3 from;
-    float3 towards;
-}
-
-command(Throw ball, PlayerID sender) ThrowBall()
-{
-    Spawn(Body { position = ball.from, velocity = ball.towards * 30 }, Sphere { radius = 0.35, density = 2000 }, Ball);
+    Spawn(Body { position = from, velocity = towards * 30 }, Sphere { radius = 0.35, density = 2000 }, Ball);
 }
 
 // What falls off the floor goes, and its body with it.
@@ -42,7 +36,7 @@ view Look(Devices devices)
     if (!devices.pointer.press.down) return;
     // A tap throws a ball from the camera, through the pixel it's on.
     var screen = Screen.Flip(devices.pointer.position);
-    Send(Throw { from = Draw.ScreenRayOrigin(screen), towards = Draw.ScreenRayDirection(screen) });
+    Throw(Draw.ScreenRayOrigin(screen), Draw.ScreenRayDirection(screen));
 }
 
 // A view sees a body where the last step left it, blended between ticks. No

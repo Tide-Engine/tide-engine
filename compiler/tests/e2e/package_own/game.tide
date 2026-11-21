@@ -27,11 +27,6 @@ local singleton Art
     List<int> faces;
 }
 
-command Ping
-{
-    int amount;
-}
-
 int Side(int a, int b)
 {
     return a + b;
@@ -54,9 +49,9 @@ event(Spawned) Setup(with Main)
     Crate(2);
 }
 
-command(Ping ping, PlayerID sender) Shake(mut Seen seen)
+command(int amount) Ping(mut Seen seen, PlayerID sender)
 {
-    seen.shaken += ping.amount;
+    seen.shaken += amount;
 }
 
 system Look(Shapes.Box box, Shapes.Wheel wheel, mut Seen seen)

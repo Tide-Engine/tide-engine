@@ -43,7 +43,7 @@ view Hud(Lobby lobby)
 }
 ```
 
-A game can tell the room's page about its match, each frame, from a view that writes `Lobby`: `seats`, `manned` (a bit per seat a player has), `mine` and `bots` list who has each seat, and `offersNewGame` and `offersBots` put **New game** and **Bots: on/off** on the page, which set `newGame` and `toggleBots` for the frame they're pressed in, for the game to send its commands from. **Play** on the title sets `newGame` too. The title is the game's `title` setting (`Application.title`), and three functions are the game's to [override](../language/overrides.md): `Rooms.Title()`, `Rooms.Tagline()` (the line under it) and `Rooms.MenuButton(screen)` (where the button goes).
+A game can tell the room's page about its match, each frame, from a view that writes `Lobby`: `seats`, `manned` (a bit per seat a player has), `mine` and `bots` list who has each seat, and `offersNewGame` and `offersBots` put **New game** and **Bots: on/off** on the page, which set `newGame` and `toggleBots` for the frame they're pressed in, for the game to call its commands from. **Play** on the title sets `newGame` too. The title is the game's `title` setting (`Application.title`), and three functions are the game's to [override](../language/overrides.md): `Rooms.Title()`, `Rooms.Tagline()` (the line under it) and `Rooms.MenuButton(screen)` (where the button goes).
 
 ## Pages of your own
 

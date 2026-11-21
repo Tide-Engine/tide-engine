@@ -350,8 +350,50 @@ static type numeric_role(const str role)
                   : str_eq_c(role, "float4") ? TY_FLOAT4 : str_eq_c(role, "int") ? TY_INT : TY_COLOR, NULL};
 }
 
+// A command's code: the handler `command(int slot) PickCard(mut Hand hand) { ... }` declares with its type, or
+// an override of one.
+static bool command_code(const decl *d)
+{
+    return d && d->kind == DECL_SYSTEM && d->is_handler && d->is_command;
+}
+
+// The command a command's code runs for: the type declared with it, or for an override, the one it replaces
+// the code of. NULL for other code, and for an override that names no command.
+static const decl *command_type(const decl *code)
+{
+    if (!command_code(code)) return NULL;
+    if (!code->is_override) return code->written_payload;
+    return code->event && code->event->is_command ? code->event : NULL;
+}
+
+// The code a command is declared with, or NULL.
+static const decl *command_code_of(const decl *command)
+{
+    for (int i = 0; command && i < A.written.count; i++) {
+        const decl *d = A.written.items[i];
+        if (command_code(d) && !d->is_override && d->written_payload == command) return d;
+    }
+    return NULL;
+}
+
+// The command's code whose name is written at `at`: its own, or an override's.
+static const decl *command_code_at(const loc at)
+{
+    for (int i = 0; i < A.written.count; i++) {
+        const decl *d = A.written.items[i];
+        if (command_code(d) && loc_cmp(d->at, at) == 0) return d;
+    }
+    return NULL;
+}
+
 static void add_occ(occurrence o)
 {
+    // A command is one name: its code's, where an order or an override names it, is the command's
+    if (o.kind == OCC_SYSTEM && command_type(o.decl)) {
+        o.kind = OCC_TYPE;
+        o.decl = command_type(o.decl);
+        o.type = (type){TY_EVENT, (decl *)o.decl};
+    }
     if (o.decl && o.decl->placement_of) o.decl = o.decl->placement_of;
     if (o.decl && o.decl->accessor) {
         const property *prop = o.decl->accessor;
@@ -637,14 +679,22 @@ static void walk_expr(const expr *e);
 // A call's arguments as its code wrote them. Where a call names arguments or
 // leaves some out, the checker puts `args` in the parameters' order, with
 // their defaults, and keeps what was written apart.
+// A command's call keeps what was written apart too: its one argument is the
+// payload the checker made of them.
 static int written_count(const expr *call)
 {
-    return call->settled ? call->written.count : call->args.count;
+    return call->settled || call->command_call ? call->written.count : call->args.count;
 }
 
 static const expr *written_arg(const expr *call, const int i)
 {
-    return call->settled ? call->written.items[i] : call->args.items[i];
+    return call->settled || call->command_call ? call->written.items[i] : call->args.items[i];
+}
+
+// The command a call calls, `PickCard(0)` or `fighter.PickCard(0)`, or NULL for another call.
+static const decl *called_command(const expr *call)
+{
+    return call->command_call && call->args.count == 1 ? call->args.items[0]->command_value : NULL;
 }
 
 // The name a written argument has, `crit` in `crit: true`, or empty.
@@ -657,6 +707,14 @@ static str written_name(const expr *call, const int i)
 static int written_param(const expr *call, const int i)
 {
     if (call->skinned) return i; // The hidden geometry arguments replace mesh/pose; editor labels stay source ordered.
+    const decl *command = called_command(call);
+    if (command) { // A value the command is called with: by its name, or by its place
+        const str name = written_name(call, i);
+        for (int k = 0; name.len > 0 && k < command->fields.count; k++) {
+            if (str_eq(command->fields.items[k].name, name)) return k;
+        }
+        return i;
+    }
     if (!call->settled) return i;
     for (int k = 0; k < call->args.count; k++) {
         if (call->args.items[k] == call->written.items[i]) return k;
@@ -674,6 +732,7 @@ static const decl *walk_arg_of;
 static void walk_args(const expr *e)
 {
     const decl *m = e->call == CALL_METHOD || e->call == CALL_FUNCTION || e->call == CALL_EFFECT ? e->method : NULL;
+    const decl *command = called_command(e);
     for (int i = 0; i < written_count(e); i++) {
         const str name = written_name(e, i);
         const int k = written_param(e, i);
@@ -681,6 +740,12 @@ static void walk_args(const expr *e)
         if (name.len > 0 && p && str_eq(p->name, name)) {
             add_occ((occurrence){.at = e->arg_name_at.items[i], .len = name.len, .kind = OCC_PARAM, .param = p,
                                  .param_of = m, .name = name, .type = p->type});
+        }
+        // PickCard(slot: 0): a value the command is called with, by its name
+        const field *value = command && k < command->fields.count ? &command->fields.items[k] : NULL;
+        if (name.len > 0 && value && str_eq(value->name, name)) {
+            add_occ((occurrence){.at = e->arg_name_at.items[i], .len = name.len, .kind = OCC_FIELD, .field = value,
+                                 .decl = command, .name = name, .type = value->type});
         }
         walk_arg_param = p;
         walk_arg_of = m;
@@ -870,7 +935,8 @@ static void walk_value(const expr *e)
     }
 
     case E_MEMBER: {
-        if (!e->enum_shorthand && !e->object->binding_object) walk_expr(e->object);
+        // `slot` in a command's code is a value of its payload, which the code has no name for
+        if (!e->enum_shorthand && !e->object->binding_object && !e->payload_value) walk_expr(e->object);
         occurrence o = {.at = e->at, .len = e->member.len, .name = e->member, .type = e->type,
                         .object_type = e->object->type, .write = e == walk_written};
         const decl *stage = e->object->type.kind == TY_STRUCT ? e->object->type.decl->binding_of : NULL;
@@ -932,7 +998,12 @@ static void walk_value(const expr *e)
         const int name = token_at(e->at);
         const bool in_source = name >= 0 && str_eq(A.files[e->at.file].toks[name].text, o.name);
         if (e->call != CALL_NONE && in_source) vec_push(A.calls, e);
-        if (converts_enum(e) && in_source) { // Card(2): the enum, even where its argument is refused
+        if (called_command(e)) { // PickCard(0): the command
+            o.kind = OCC_TYPE;
+            o.decl = called_command(e);
+            o.type = type_of_decl(o.decl);
+            add_occ(o);
+        } else if (converts_enum(e) && in_source) { // Card(2): the enum, even where its argument is refused
             o.kind = OCC_TYPE;
             o.decl = e->type_alias ? e->type_alias : e->type_decl;
             add_occ(o);
@@ -981,7 +1052,13 @@ static void walk_value(const expr *e)
             const type read = e->call == CALL_JSON && e->type.kind == TY_OPTIONAL ? e->type.decl->fields.items[0].type : type_of_decl(e->type_decl);
             type_place(e->type_arg_ref, e->type_arg_qual_at, e->type_arg_at, e->type_arg, read);
         }
-        if (e->call == CALL_TASK) {
+        if (called_command(e)) { // fighter.PickCard(0): the command, for that entity
+            o.kind = OCC_TYPE;
+            o.decl = called_command(e);
+            o.type = type_of_decl(o.decl);
+            o.object_type = (type){TY_ERROR, NULL};
+            add_occ(o);
+        } else if (e->call == CALL_TASK) {
             o.kind = OCC_METHOD;
             add_occ(o);
         } else if (e->call == CALL_VISIBILITY) {
@@ -1072,6 +1149,7 @@ static void walk_value(const expr *e)
     }
 
     case E_LITERAL:
+        if (e->command_value) break; // What a command's call makes of its arguments, which the call walks as written
         if (e->type_decl) {
             qualifier_ref(e->qual_at, e->at, e->name);
             const str name = last_part(e->name);
@@ -1284,7 +1362,32 @@ static void walk_param(const param *p, const decl *d)
 
 static void walk_params(const decl *d)
 {
-    for (int i = d->preparation_owner ? 2 : 0; i < d->params.count; i++) walk_param(&d->params.items[i], d);
+    for (int i = d->preparation_owner ? 2 : 0; i < d->params.count; i++) {
+        if (d->params.items[i].command_payload) continue; // A command's payload has no name: its values do, the command's
+        walk_param(&d->params.items[i], d);
+    }
+}
+
+// What an override of a command's code says the command is called with, `override command(int slot)
+// Cards.PickCard(...)`: each value's type, and its name, which is the command's own value of that name.
+static void walk_override_payload(const decl *code)
+{
+    const decl *command = command_type(code);
+    const decl *written = code->written_payload;
+    if (!code->is_override || !command || !written || written == command) return;
+    for (int i = 0; i < written->fields.count; i++) {
+        const field *said = &written->fields.items[i];
+        const field *value = NULL;
+        for (int k = 0; k < command->fields.count && !value; k++) {
+            if (str_eq(command->fields.items[k].name, said->name)) value = &command->fields.items[k];
+        }
+        type_place(said->type_ref, said->type_qual_at.line ? said->type_qual_at : said->type_at, said->type_at, said->type_name,
+                   value ? value->type : (type){TY_ERROR, NULL});
+        if (value) {
+            add_occ((occurrence){.at = said->at, .len = said->name.len, .kind = OCC_FIELD, .field = value, .decl = command,
+                                 .name = said->name, .type = value->type});
+        }
+    }
 }
 
 static void walk_routine(const decl *m)
@@ -1462,6 +1565,7 @@ static void index_program(void)
             if (!d->preparation_owner)
                 add_occ((occurrence){.at = d->at, .len = d->name.len, .kind = OCC_SYSTEM, .declaration = true, .decl = d,
                                      .name = d->name});
+            walk_override_payload(d);
             walk_params(d);
             walk_code = d;
             walk_stmt(d->body);
@@ -1918,7 +2022,7 @@ static const char *decl_what(const decl *d)
 {
     if (d->kind == DECL_ALIAS) return "type alias";
     if (d->is_worker) return "local worker";
-    const char *what = d->kind == DECL_SYSTEM && d->is_handler ? d->is_command ? "command handler" : "event handler"
+    const char *what = d->kind == DECL_SYSTEM && d->is_handler ? d->is_command ? "command" : "event handler"
                      : d->extern_system                        ? "extern system" // Written in C
                                                                : decl_keyword(d);
     if (!d->is_local) return what;
@@ -1999,9 +2103,68 @@ static void format_param(const param *p, sb *out)
     if (p->default_value) sb_printf(out, " = " STR_FMT, STR_ARG(p->default_text)); // One a call can leave out
 }
 
+static void format_value_after(loc name_at, bool argument, sb *out);
+
+// What a command is called with, as its declaration writes it: `string name, int times = 1`.
+static void format_command_values(const decl *payload, sb *out)
+{
+    for (int i = 0; payload && i < payload->fields.count; i++) {
+        const field *f = &payload->fields.items[i];
+        if (f->hidden) continue;
+        if (i) sb_put(out, ", ");
+        sb_printf(out, STR_FMT " " STR_FMT, STR_ARG(f->type_name), STR_ARG(f->name));
+        format_value_after(f->at, true, out);
+    }
+}
+
+// A command as a call of it reads: `Rename(string name, int times = 1)`.
+static void format_command_call(const decl *command, sb *out)
+{
+    sb_printf(out, STR_FMT "(", STR_ARG(command->name));
+    format_command_values(command, out);
+    sb_put(out, ")");
+}
+
+// How many parameters a command's code takes of the match, its second parentheses: all but its payload.
+static int command_param_count(const decl *code)
+{
+    return code->params.count > 0 ? code->params.count - 1 : 0;
+}
+
+// The `i`th of them, in the order written. The checker keeps the sender after the payload, wherever it was
+// written among them.
+static const param *command_param(const decl *code, const int i)
+{
+    const param *sender = code->params.count > 1 && code->params.items[1].mode == PARAM_SENDER ? &code->params.items[1] : NULL;
+    if (!sender) return &code->params.items[i + 1];
+    int before = 0; // How many were written before the sender
+    for (int k = 2; k < code->params.count; k++) before += loc_cmp(code->params.items[k].at, sender->at) < 0;
+    return i < before ? &code->params.items[i + 2] : i == before ? sender : &code->params.items[i + 1];
+}
+
+// `command(string name) Rename(mut Name mine, PlayerID sender)`: what it's called with, then what its code takes
+// of the match.
+static void format_command(const decl *code, sb *out)
+{
+    if (code->is_virtual) sb_put(out, "virtual ");
+    if (code->is_override) sb_put(out, "override ");
+    sb_put(out, "command(");
+    format_command_values(code->written_payload, out);
+    sb_printf(out, ") " STR_FMT "(", STR_ARG(code->is_override && code->override_name.len ? code->override_name : code->name));
+    for (int i = 0; i < command_param_count(code); i++) {
+        if (i) sb_put(out, ", ");
+        format_param(command_param(code, i), out);
+    }
+    sb_put(out, ")");
+}
+
 // `system Move(mut Body body)`, or a handler's `event(Hit hit) TakeHit(mut Health health)`.
 static void format_header(const decl *d, sb *out)
 {
+    if (command_code(d)) {
+        format_command(d, out);
+        return;
+    }
     if (d->preparation_owner) {
         sb_put(out, "prepare(");
         for (int i = 2; i < d->params.count; i++) {
@@ -2017,15 +2180,10 @@ static void format_header(const decl *d, sb *out)
     if (d->is_local) sb_put(out, "local ");
     if (d->is_async) sb_put(out, "async ");
     if (d->is_handler && d->params.count > 0) {
-        sb_put(out, d->is_command ? "command(" : "event(");
+        sb_put(out, "event(");
         format_param(&d->params.items[0], out);
-        const bool sender = d->is_command && d->params.count > 1 && d->params.items[1].mode == PARAM_SENDER;
-        if (sender) {
-            sb_put(out, ", ");
-            format_param(&d->params.items[1], out);
-        }
         sb_printf(out, ") " STR_FMT "(", STR_ARG(d->name));
-        first = sender ? 2 : 1;
+        first = 1;
     } else {
         sb_printf(out, "%s%s " STR_FMT "(", d->extern_system ? "extern " : "", decl_keyword(d), STR_ARG(d->name));
     }
@@ -2096,8 +2254,10 @@ static void format_routine(const decl *m, sb *out)
 }
 
 // The source text of a value after a name, from the tokens between '=' and
-// ';': a field's default, or a constant's value.
-static void format_value_after(const loc name_at, sb *out)
+// ';': a field's default, or a constant's value. With `argument`, the default
+// of a value in parentheses, `command(int times = 1)`, which ends at its ','
+// or at the ')' that closes them.
+static void format_value_after(const loc name_at, const bool argument, sb *out)
 {
     const int name = token_at(name_at);
     if (name < 0) return;
@@ -2108,9 +2268,11 @@ static void format_value_after(const loc name_at, sb *out)
     // To the ';', or the '}' that closes the type the field is in: not one of a
     // value's own, like Stats { armor = 2 }.
     for (int depth = 0; toks[last].kind != T_EOF; last++) {
-        if (depth == 0 && (toks[last].kind == T_SEMI || toks[last].kind == T_RBRACE)) break;
-        if (toks[last].kind == T_LBRACE) depth++;
-        else if (toks[last].kind == T_RBRACE) depth--;
+        const tok_kind k = toks[last].kind;
+        if (depth == 0 && (k == T_SEMI || k == T_RBRACE)) break;
+        if (argument && depth == 0 && (k == T_COMMA || k == T_RPAREN || k == T_RBRACKET)) break;
+        if (k == T_LBRACE || (argument && (k == T_LPAREN || k == T_LBRACKET))) depth++;
+        else if (k == T_RBRACE || (argument && (k == T_RPAREN || k == T_RBRACKET))) depth--;
     }
     if (last == first) return;
     const char *start = toks[first].text.ptr - (toks[first].kind == T_STRING ? 1 : 0);
@@ -2122,7 +2284,7 @@ static void format_value_after(const loc name_at, sb *out)
 
 static void format_default(const field *f, sb *out)
 {
-    format_value_after(f->at, out);
+    format_value_after(f->at, false, out);
 }
 
 // How many lines of a prefab its hover shows: a big one's first ones, then its closing brace
@@ -3699,6 +3861,41 @@ static void describe_out_param(const param *p, const decl *of, sb *out)
 
 static void describe_replacing(const occurrence *o, sb *out);
 
+// A command, on its name where it's declared, where an override or an order names it, and where it's called:
+// its header, how it's called and when its code runs. Where it's declared, the code is that declaration's;
+// elsewhere, the command's own.
+static void describe_command(const occurrence *o, sb *out)
+{
+    const decl *command = o->decl;
+    const decl *code = o->declaration ? command_code_at(o->at) : NULL;
+    if (!code) code = command_code_of(command);
+    sb header = {0};
+    if (code) format_command(code, &header);
+    else {
+        sb_put(&header, "command(");
+        format_command_values(command, &header);
+        sb_printf(&header, ") " STR_FMT "(...)", STR_ARG(command->name));
+    }
+    code_block(out, header.data);
+    sb call = {0};
+    format_command_call(command, &call);
+    const bool entity = code && code->per_entity;
+    sb_printf(out, "\n\nA command, called as a function is: `%s%s`. From a view or a local handler the call asks the "
+                   "match: the server runs the command's code at the end of a tick, with what it was called with and "
+                   "the player the connection says sent it. Both are untrusted, so the code checks what that player "
+                   "may do before it changes the match. A system or a match handler can call it too, with no player "
+                   "and no network: it's queued for the end of the tick, and its `sender` is `default`.",
+              entity ? "entity." : "", call.data);
+    if (entity) {
+        sb_put(out, "\n\nIts code runs for an entity that matches its parameters: the one it's called on, or, with none "
+                    "named, the one the calling code runs for.");
+    }
+    if (!code) return;
+    describe_world(code, out);
+    describe_order(code, out);
+    describe_replacing(&(occurrence){.kind = OCC_SYSTEM, .decl = code}, out);
+}
+
 static void describe(const occurrence *o, sb *out)
 {
     sb code = {0};
@@ -3716,6 +3913,8 @@ static void describe(const occurrence *o, sb *out)
             sb_put(out, str_eq_c(o->name, "byte")     ? "one byte, so its members go from 0 to 255."
                       : str_eq_c(o->name, "ushort") ? "two bytes, so its members go from 0 to 65535."
                                                     : "four bytes, as it is without one.");
+        } else if (o->decl && o->decl->kind == DECL_EVENT && o->decl->is_command) {
+            describe_command(o, out);
         } else if (o->decl) {
             format_data_decl(o->decl, &code);
             code_block(out, code.data);
@@ -3752,8 +3951,6 @@ static void describe(const occurrence *o, sb *out)
                 sb_put(out, o->decl->is_local ? "\n\nA local scene: loaded with `Scene.Load` from views, on this machine only."
                                               : "\n\nA scene: its entities load and unload together. Load it with `Scene.Load`; "
                                                 "systems that take it run once per loaded one.");
-            } else if (o->decl->kind == DECL_EVENT && o->decl->is_command) {
-                sb_put(out, "\n\nSent with `Send` from views or local handlers to one match handler. Its payload is untrusted; the connection supplies the sender's PlayerID.");
             } else if (o->decl->kind == DECL_EVENT && o->decl->is_local) {
                 sb_put(out, "\n\nLocal: sent with `Send` from views, and handled by `local event(...)` handlers at the end of the frame.");
             } else if (o->decl->kind == DECL_EVENT) {
@@ -3801,7 +3998,7 @@ static void describe(const occurrence *o, sb *out)
             break;
         }
         if (o->decl->is_handler && o->decl->event) {
-            if (o->decl->is_command) sb_put(out, "\n\nHandles an untrusted player submission. The connection supplies its sender; check permissions and game rules before changing match state.");
+            if (o->decl->is_command) sb_put(out, "\n\nA command's code: what it's called with is a player's, untrusted. The connection supplies its sender; check permissions and game rules before changing match state.");
             const str event = o->decl->event->name;
             const char *when = o->decl->is_local ? "frame" : "tick";
             const char *to = o->decl->per_entity ? " to an entity that matches its parameters" : "";
@@ -3848,11 +4045,12 @@ static void describe(const occurrence *o, sb *out)
         const bool listener = o->param_of && o->param_of->listens;
         code_block(out, with ? "with ownership" : "without ownership");
         if (o->param_of && o->param_of->is_handler && !o->param_of->is_local && o->param_of->event && o->param_of->event->is_command) {
-            sb_put(out, with ? "\n\nFilter: the command handler runs for the entities the player who sent the command owns: "
-                               "those with an `Owner` whose `player` is the sender. A command sent for any other entity is "
+            sb_put(out, with ? "\n\nFilter: the command's code runs for the entities the player who sent the command owns: "
+                               "those with an `Owner` whose `player` is the sender. A player's call for any other entity is "
                                "dropped, as a guard would drop it. For entities any player owns, write `with Owner`."
-                             : "\n\nFilter: the command handler runs for the entities the player who sent the command doesn't "
-                               "own: another player's, and those with no `Owner`. A command sent for the sender's own is dropped.");
+                             : "\n\nFilter: the command's code runs for the entities the player who sent the command doesn't "
+                               "own: another player's, and those with no `Owner`. A player's call for the sender's own is dropped.");
+            sb_put(out, " A call the match's own code makes has no player, and runs whoever owns the entity.");
             break;
         }
         sb_printf(out, "\n\nFilter: the %s runs for ", listener ? "local handler" : "view");
@@ -3909,7 +4107,7 @@ static void describe(const occurrence *o, sb *out)
     case OCC_CONST:
         if (o->decl->kind == DECL_ASSET) {
             sb_printf(&code, "asset " STR_FMT " " STR_FMT, STR_ARG(o->decl->return_type_name), STR_ARG(o->decl->name));
-            format_value_after(o->decl->at, &code);
+            format_value_after(o->decl->at, false, &code);
             code_block(out, code.data);
             sb_put(out, "\n\nAsset: the file's contents, read as the game is built and packed with it, the same on every machine. "
                         "Any code can read it, and nothing can change it.");
@@ -4009,7 +4207,7 @@ static void describe(const occurrence *o, sb *out)
         }
         if (o->decl->is_tweak) {
             sb_printf(&code, "tweak " STR_FMT " " STR_FMT, STR_ARG(o->decl->return_type_name), STR_ARG(o->decl->name));
-            format_value_after(o->decl->at, &code);
+            format_value_after(o->decl->at, false, &code);
             code_block(out, code.data);
             if (o->decl->tweaked_text) sb_printf(out, "\n\nIts .tweaks file gives it `%s`, in place of the code's.", o->decl->tweaked_text);
             sb_put(out, "\n\nTweak: a value a .tweaks file can give in place of the code's, which a dev build changes while it "
@@ -4017,12 +4215,21 @@ static void describe(const occurrence *o, sb *out)
             break;
         }
         sb_printf(&code, "const " STR_FMT " " STR_FMT, STR_ARG(o->decl->return_type_name), STR_ARG(o->decl->name));
-        format_value_after(o->decl->at, &code);
+        format_value_after(o->decl->at, false, &code);
         code_block(out, code.data);
         sb_put(out, "\n\nConstant: the same on every machine. Any code can read it, and reading it makes no system wait.");
         break;
     case OCC_FIELD:
         sb_printf(&code, "%s%s " STR_FMT, o->field->is_local ? "local " : "", type_name(o->field->type), STR_ARG(o->field->name));
+        if (o->decl && o->decl->kind == DECL_EVENT && o->decl->is_command) { // `slot` of `command(int slot) PickCard(...)`
+            format_value_after(o->field->at, true, &code);
+            code_block(out, code.data);
+            sb_printf(out, "\n\nWhat the command `" STR_FMT "` is called with: a call passes it by its place or by its name, `"
+                           STR_FMT "(" STR_FMT ": ...)`%s. Its code reads it by name, read-only; it comes from a player, "
+                           "so check it before changing the match.", STR_ARG(o->decl->name), STR_ARG(o->decl->name),
+                      STR_ARG(o->field->name), o->field->default_value ? ", or leaves it out for its default" : "");
+            break;
+        }
         if (o->decl && !o->decl->builtin) format_default(o->field, &code);
         code_block(out, code.data);
         if (o->decl && o->field->is_local) {
@@ -4060,7 +4267,7 @@ static void describe(const occurrence *o, sb *out)
             sb_printf(out, "\n\nA second entity set, independent of the entity this %s runs for. "
                            "`foreach` yields rows with `entity` and the named component values. Traversal follows "
                            "the ECS; it does not sort by entity ID or distance.",
-                      of && of->is_view ? "view" : of && of->is_handler ? "handler" : "system");
+                      of && of->is_view ? "view" : command_code(of) ? "command" : of && of->is_handler ? "handler" : "system");
             // Local code reads the match as it sees it, or this machine's own entities as they are
             if (o->param->query_local && of && (of->is_view || of->is_local)) {
                 sb_put(out, " These are this machine's own entities, as they are.");
@@ -4130,7 +4337,7 @@ static void describe(const occurrence *o, sb *out)
                         "borrowed parameter; read its count, elements and entries without copying the collection. "
                         "The borrow can't be stored, returned or retained by a task.");
         else if (o->param->mode == PARAM_EVENT) sb_put(out, of && of->is_command ? "\n\nThe untrusted command payload being handled, read-only." : "\n\nThe event being handled, read-only.");
-        else if (o->param->mode == PARAM_SENDER) sb_put(out, "\n\nThe command sender's PlayerID, authenticated by the connection. Check its permissions before changing match state.");
+        else if (o->param->mode == PARAM_SENDER) sb_put(out, "\n\nThe command sender's PlayerID, authenticated by the connection. Check its permissions before changing match state. It's `default` for a call the match's own code made, which no player sent.");
         else if (o->param->mode == PARAM_IN) sb_put(out, "\n\nParameter, read-only: C gets a pointer to the value.");
         else if (o->param->is_out) describe_out_param(o->param, of, out);
         else if (o->param->mode == PARAM_MUT) sb_put(out, "\n\nParameter, writable.");
@@ -4176,6 +4383,9 @@ static void describe(const occurrence *o, sb *out)
             sb_printf(out, "\n\nThe vertex `" STR_FMT "` runs for. %s", STR_ARG(d->name), shader_record_doc(A.prog->placed));
         } else if (d->kind == DECL_METHOD) {
             sb_printf(out, "\n\nThe entity whose `" STR_FMT "` this is.", STR_ARG(d->owner->name));
+        } else if (command_code(d)) {
+            sb_printf(out, "\n\nThe entity the command `" STR_FMT "` runs for: the one it was called on, or with none "
+                           "named, the one the calling code ran for.", STR_ARG(d->name));
         } else if (d->is_handler && d->event) {
             sb_printf(out, "\n\nThe entity the `" STR_FMT "` was sent to.", STR_ARG(d->event->name));
         } else {
@@ -6006,6 +6216,7 @@ void analysis_symbols(jbuf *out)
     for (int i = 0; i < A.written.count; i++) {
         const decl *d = A.written.items[i];
         if (d->builtin || d->at.file != A.doc || d->preparation_owner) continue; // This document's declarations
+        if (command_code(d) && !d->is_override) continue; // A command is one declaration: its type's, with what it's called with
         const int kind = symbol_kind(d);
         const loc start = {d->at.line, 1, d->at.file};
         const loc end = d->end.line > 0 ? d->end : d->at;
@@ -6291,6 +6502,11 @@ static caller hierarchy_target(const int line, const int character)
         return (caller){o->decl, str_eq_c(o->name, "Sample") ? o->decl->body : str_eq_c(o->name, "Sanitize") ? o->decl->sanitize : o->decl->predict, o->name, o->at};
     }
     if (o && o->kind == OCC_SYSTEM && o->decl) return (caller){o->decl, o->decl->body, o->decl->name, o->decl->at};
+    if (o && o->kind == OCC_TYPE && o->decl && o->decl->kind == DECL_EVENT && o->decl->is_command) { // A command: its code
+        const decl *declared = o->declaration ? command_code_at(o->at) : NULL;
+        const decl *code = declared ? declared : command_code_of(o->decl);
+        if (code) return (caller){code, code->body, code->name, code->at};
+    }
     if (o && (o->kind == OCC_FUNCTION || o->kind == OCC_METHOD) && is_routine(o->decl)) { // An extern function: no body
         return (caller){o->decl, NULL, o->decl->name, o->decl->at};
     }
@@ -6384,7 +6600,8 @@ void analysis_outgoing_calls(const int line, const int character, jbuf *out)
 }
 
 // Entry points are engine-invoked bodies, not ordinary functions with no
-// callers. Event/command handlers are boundaries: Send is not a call edge.
+// callers. Event handlers and commands are boundaries: a Send and a command's
+// call queue their code, and are not call edges.
 static bool entry_point(const caller *c)
 {
     return c->decl->kind == DECL_SYSTEM || c->decl->kind == DECL_INPUT
@@ -6449,6 +6666,9 @@ static void write_entry_point_lenses(jbuf *out, int *written)
             vec_push(nodes, ((entry_node){.code = {d, body->body, d->name, d->at}}));
         } else if (o->kind == OCC_SYSTEM && (d->kind == DECL_SYSTEM || is_shader(d))) {
             vec_push(nodes, ((entry_node){.code = {d, d->body, d->name, d->at}}));
+        } else if (o->kind == OCC_TYPE && d->kind == DECL_EVENT && d->is_command) { // A command's code, its own or an override's
+            const decl *code = command_code_at(o->at);
+            if (code && !code->replaced_by) vec_push(nodes, ((entry_node){.code = {code, code->body, code->name, code->at}}));
         } else if (o->kind == OCC_TYPE && d->kind == DECL_INPUT) {
             if (d->body) vec_push(nodes, ((entry_node){.code = {d, d->body, str_from("Sample"), d->body_at}}));
             if (d->sanitize) vec_push(nodes, ((entry_node){.code = {d, d->sanitize, str_from("Sanitize"), d->sanitize_at}}));
@@ -6686,6 +6906,30 @@ static const char *past_inactive(const char *p, const char *limit)
     return p < limit ? p : limit;
 }
 
+// The '(' that the ')' at token `close` closes, or -1.
+static int opening(const int close)
+{
+    int parens = 0;
+    for (int k = close; k >= 0; k--) {
+        if (DOC->toks[k].kind == T_RPAREN) parens++;
+        else if (DOC->toks[k].kind == T_LPAREN && --parens == 0) return k;
+    }
+    return -1;
+}
+
+// The line a command starts on, for the '{' at token `brace` that opens its code: `command(int slot)`, whose
+// name and what its code takes can be on the next line. 0 for another brace.
+static int command_line(const int brace)
+{
+    if (brace < 1 || DOC->toks[brace - 1].kind != T_RPAREN) return 0;
+    int name = opening(brace - 1) - 1; // PickCard, or an override's Cards.PickCard
+    while (name >= 2 && DOC->toks[name - 1].kind == T_DOT && DOC->toks[name - 2].kind == T_IDENT) name -= 2;
+    if (name < 1 || DOC->toks[name].kind != T_IDENT || DOC->toks[name - 1].kind != T_RPAREN) return 0;
+    const int values = opening(name - 1);
+    if (values < 1 || DOC->toks[values - 1].kind != T_IDENT || !str_eq_c(DOC->toks[values - 1].text, "command")) return 0;
+    return DOC->toks[values - 1].at.line;
+}
+
 void analysis_folding_ranges(jbuf *out)
 {
     const arena_mark temporary = arena_checkpoint();
@@ -6713,6 +6957,8 @@ void analysis_folding_ranges(jbuf *out)
                 && DOC->toks[o - 1].kind != T_SEMI) {
                 first--; // component Body\n{
             }
+            const int command = command_line(o); // command(int slot)\n    PickCard(mut Hand hand)\n{
+            if (command > 0 && command < first) first = command;
             folding_range(out, &written, first, t->at.line - 1, NULL);
         }
     }
@@ -6951,8 +7197,10 @@ void analysis_inlay_hints(const int start_line, const int end_line, jbuf *out)
     for (int i = 0; i < A.calls.count; i++) { // Heal(unit.stats, amount: 2), Draw.Circle(p, radius: 3, color)
         const expr *call = A.calls.items[i];
         if (call->at.file != A.doc || call->at.line - 1 < start_line || call->at.line - 1 > end_line) continue;
-        str *names = arena_alloc(sizeof(str) * (size_t)call->args.count);
-        const int count = call_param_names(call, names, call->args.count);
+        const decl *command = called_command(call);
+        const int most = command ? command->fields.count : call->args.count; // A command's values, or the call's arguments
+        str *names = arena_alloc(sizeof(str) * (size_t)(most > 0 ? most : 1));
+        const int count = call_param_names(call, names, most);
         for (int n = 0; n < written_count(call); n++) {
             const int k = written_param(call, n);
             const expr *arg = written_arg(call, n);
@@ -7007,6 +7255,7 @@ void analysis_workspace_symbols(const char *query, const workspace_symbol_fn sym
     for (int i = 0; A.prog && i < A.written.count; i++) {
         const decl *d = A.written.items[i];
         if (d->builtin || d->preparation_owner) continue;
+        if (command_code(d) && !d->is_override) continue; // A command is found once, by its type
         const int kind = symbol_kind(d);
         const str ns = decl_home(d) ? decl_home(d)->ns : (str){"", 0};
         if (fuzzy_match(d->name, query)) workspace_symbol(symbol, user, d->name, kind, d->at, d->name.len, ns);
@@ -7077,6 +7326,10 @@ static void classify(const occurrence *o, int *type, int *mods)
             *mods = is_keyword_type(o->type) ? 0 : *mods | SM_DEFAULT_LIBRARY;
             break;
         }
+        if (o->decl->kind == DECL_EVENT && o->decl->is_command) { // Declared and called as a function is
+            *type = ST_FUNCTION;
+            break;
+        }
         // Components and structs are structs, singletons classes, inputs
         // interfaces, and the device records types: editors can color each kind.
         *type = o->decl->kind == DECL_COMPONENT || o->decl->kind == DECL_STRUCT || o->decl->kind == DECL_EVENT ? ST_STRUCT
@@ -7088,6 +7341,11 @@ static void classify(const occurrence *o, int *type, int *mods)
         break;
     case OCC_SYSTEM: *type = ST_FUNCTION; break;
     case OCC_FIELD:
+        if (o->decl && o->decl->kind == DECL_EVENT && o->decl->is_command) { // What a command is called with, read-only in its code
+            *type = ST_PARAMETER;
+            *mods |= SM_READONLY;
+            break;
+        }
         *type = ST_PROPERTY;
         if (o->decl && o->decl->builtin) *mods |= SM_DEFAULT_LIBRARY;
         if (o->decl == A.prog->pixel || o->decl == A.prog->placed || o->decl == A.prog->invocation) *mods |= SM_READONLY;
@@ -7502,10 +7760,14 @@ static type name_type(const scope *sc, const str name, const param **param_out)
     if (!sc->decl) return (type){TY_ERROR, NULL};
     for (int i = 0; i < sc->decl->params.count && !sc->in_sanitize; i++) {
         const param *p = &sc->decl->params.items[i];
-        if (p->name.len > 0 && str_eq(p->name, name)) {
+        if (p->name.len > 0 && !p->command_payload && str_eq(p->name, name)) {
             *param_out = p;
             return p->type;
         }
+    }
+    const decl *command = command_type(sc->decl); // What a command was called with, by name in its code
+    for (int i = 0; command && i < command->fields.count; i++) {
+        if (str_eq(command->fields.items[i].name, name)) return command->fields.items[i].type;
     }
     if (sc->fields_of) {
         for (int i = 0; i < sc->fields_of->fields.count; i++) {
@@ -7673,6 +7935,8 @@ static type loop_variable_type(const scope *sc, const int use)
     }
     return (type){TY_ERROR, NULL};
 }
+
+static void complete_commands(completion *c, bool entity, bool local);
 
 static void complete_routine(completion *c, const decl *m, const char *name)
 {
@@ -8168,9 +8432,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
                      && !sc->decl->is_interpolate && !sc->decl->is_audio && (t.kind == TY_ENTITY || t.kind == TY_LOCAL_ENTITY);
     const bool changes = (t.kind == TY_ENTITY && match) || (t.kind == TY_LOCAL_ENTITY && local)
                       || (t.kind == TY_SINGLETON && match && !t.decl->is_local) || passed;
-    if (t.kind == TY_ENTITY && local) {
-        item(c, "Send", CK_METHOD, "Send(command)", "Submits a command to this match entity; its handler checks the authenticated sender and untrusted payload.", "Send($1)");
-    }
+    if (t.kind == TY_ENTITY && (local || match || passed)) complete_commands(c, true, local || passed);
     const bool pixel = t.kind == TY_RECORD && (t.decl == A.prog->pixel || t.decl == A.prog->instance); // ...and an Instance's
     if (t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID || changes || pixel) {
         size_t count;
@@ -8190,6 +8452,29 @@ static void list_members(completion *c, const type t, const bool edges, const sc
     if (edges && t.kind == TY_BOOL) {
         item(c, "down", CK_PROPERTY, "bool", "True on the tick it became true.", NULL);
         item(c, "up", CK_PROPERTY, "bool", "True on the tick it became false.", NULL);
+    }
+}
+
+// The game's commands, each as the call of it: `Rename(string name, int times = 1)`. With `entity`, those whose
+// code runs for an entity, as they're called on one: `fighter.PickCard(0)`. `local` says whose the call is: a
+// view's or a local handler's asks the match for this machine's player, and the match's own has no player.
+static void complete_commands(completion *c, const bool entity, const bool local)
+{
+    for (int i = 0; i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        // A call names its command alone, so one this file can't name that way isn't offered
+        if (d->kind != DECL_EVENT || !d->is_command || d->builtin || !visible_by_name(d)) continue;
+        const decl *code = command_code_of(d);
+        if (entity && !(code && code->per_entity)) continue;
+        const char *name = str_to_cstr(d->name);
+        sb detail = {0};
+        format_command_call(d, &detail);
+        sb snippet = {0};
+        sb_printf(&snippet, "%s(%s)", name, d->fields.count > 0 ? "$1" : "");
+        item(c, name, entity ? CK_METHOD : CK_FUNCTION, detail.data,
+             local ? "Calls the command: the server runs its code in the match for this machine's player, at the end of a tick."
+                   : "Calls the command with no player and no network: its code runs at the end of the tick.",
+             snippet.data);
     }
 }
 
@@ -8709,11 +8994,11 @@ static void complete_components_of(completion *c, const bool local)
 }
 
 // Events: what handlers handle and Send sends. `builtin` includes the engine's own.
-static void complete_events(completion *c, const bool builtin, const bool command, const bool local)
+static void complete_events(completion *c, const bool builtin, const bool local)
 {
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
-        if (d->kind != DECL_EVENT || d->is_command != command || (d->builtin && !builtin)) continue;
+        if (d->kind != DECL_EVENT || d->is_command || (d->builtin && !builtin)) continue;
         if (!local && (d == A.prog->shown || d == A.prog->hidden)) continue;
         item(c, name_for(d), CK_EVENT, decl_what(d), d->builtin ? builtin_event_doc(A.prog, d) : NULL, NULL);
     }
@@ -8746,7 +9031,7 @@ static void complete_events_of(completion *c, const bool local)
 {
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
-        if (d->kind == DECL_EVENT && !d->builtin && (d->is_command ? local : d->is_local == local)) item(c, name_for(d), CK_EVENT, decl_what(d), NULL, NULL);
+        if (d->kind == DECL_EVENT && !d->builtin && !d->is_command && d->is_local == local) item(c, name_for(d), CK_EVENT, decl_what(d), NULL, NULL);
     }
 }
 
@@ -8828,7 +9113,8 @@ static void complete_systems(completion *c, const bool views)
 {
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
-        if (d->kind == DECL_SYSTEM && d->is_view == views && has_name(d)) {
+        // A command's code is its one handler: nothing runs before or after it by name
+        if (d->kind == DECL_SYSTEM && d->is_view == views && has_name(d) && !command_code(d)) {
             item(c, name_for(d), CK_FUNCTION, views ? "view" : "system", NULL, NULL);
         }
     }
@@ -9196,6 +9482,24 @@ static void complete_argument_names(completion *c, const int open, const int las
              "priority: WorkerPriority.");
         break;
     }
+    // Rename("x", times: 2), fighter.PickCard(slot: 0): the values a command is called with
+    for (int i = 0; i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        if (d->kind != DECL_EVENT || !d->is_command || !str_eq(d->name, name)) continue;
+        for (int p = unnamed; p < d->fields.count; p++) {
+            const field *f = &d->fields.items[p];
+            bool given = f->hidden;
+            for (int n = 0; n < named.count; n++) given |= str_eq(named.items[n], f->name);
+            if (given) continue;
+            sb label = {0};
+            sb detail = {0};
+            sb insert = {0};
+            sb_printf(&label, STR_FMT ":", STR_ARG(f->name));
+            sb_printf(&detail, "%s " STR_FMT, type_name(f->type), STR_ARG(f->name));
+            sb_printf(&insert, STR_FMT ": ", STR_ARG(f->name));
+            item(c, label.data, CK_VARIABLE, detail.data, "Passes this value by its name.", insert.data);
+        }
+    }
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
         for (int k = -1; k < d->methods.count; k++) {
@@ -9280,10 +9584,18 @@ static void complete_expression(completion *c, const loc at, const bool statemen
         for (int i = 0; i < sc.decl->params.count && !sc.in_sanitize; i++) {
             const param *p = &sc.decl->params.items[i];
             if (sc.decl->preparation_owner && i < 2) continue;
-            if (p->name.len == 0) continue;
+            if (p->name.len == 0 || p->command_payload) continue; // A command's payload has no name: its values do
             sb detail = {0};
             format_param(p, &detail);
             item(c, str_to_cstr(p->name), CK_VARIABLE, detail.data, NULL, NULL);
+        }
+        const decl *called_with = command_type(sc.decl);
+        for (int i = 0; called_with && i < called_with->fields.count; i++) {
+            const field *f = &called_with->fields.items[i];
+            if (f->hidden) continue;
+            sb detail = {0};
+            sb_printf(&detail, "%s " STR_FMT, type_name(f->type), STR_ARG(f->name));
+            item(c, str_to_cstr(f->name), CK_VARIABLE, detail.data, "What the command was called with, read-only.", NULL);
         }
         if (sc.fields_of) {
             if (sc.fields_of->kind == DECL_COMPONENT && sc.decl && !sc.decl->is_interpolate)
@@ -9313,10 +9625,11 @@ static void complete_expression(completion *c, const loc at, const bool statemen
                    : "Creates an entity with these components.",
              local ? "local Spawn($1)" : "Spawn($1)");
         item(c, "Send", CK_FUNCTION, "Send(event)",
-             local ? "Sends a local event, or submits a command to the match." : "Sends an event to the whole world, handled at the end of the tick.",
+             local ? "Sends a local event, handled at the end of the frame." : "Sends an event to the whole world, handled at the end of the tick.",
              "Send($1)");
         complete_components_of(c, local);
         complete_events_of(c, local);
+        complete_commands(c, false, local);
         item(c, "Scene", CK_MODULE, "Loads and unloads scenes", NULL, NULL);
     }
     // A function or a method sends and spawns as the code that calls it could, in either world
@@ -9328,6 +9641,7 @@ static void complete_expression(completion *c, const loc at, const bool statemen
              "Send($1)");
         complete_events_of(c, false);
         complete_events_of(c, true);
+        complete_commands(c, false, true); // A function's call of one is its callers', and they are local code
     }
     // Session.Start and the like are statements of their own.
     if (statement && decides_session(&sc)) {
@@ -9395,11 +9709,10 @@ static void complete_declarations(completion *c)
          "input ${1:Name}\n{\n    $0\n\n    Sample(Devices devices)\n    {\n    }\n}");
     item(c, "event", CK_SNIPPET, "event Name { fields }", "Something that happened, sent with Send.",
          "event ${1:Name}\n{\n    $0\n}");
-    item(c, "command", CK_SNIPPET, "command Name { fields }", "A player's untrusted submission, sent from local code to the match.",
-         "command ${1:Name}\n{\n    $0\n}");
-    item(c, "command handler", CK_SNIPPET, "command(Command payload, PlayerID sender) Name(parameters) { ... }",
-         "Checks the authenticated sender and untrusted payload before changing match state.",
-         "command(${1:Command} ${2:payload}, PlayerID sender) ${3:Name}($4)\n{\n    $0\n}");
+    item(c, "command", CK_SNIPPET, "command(values) Name(parameters, PlayerID sender) { ... }",
+         "What local code asks of the match, called as a function is: its code checks the authenticated sender and "
+         "the untrusted values it was called with before changing the match.",
+         "command(${1:int value}) ${2:Name}(${3:PlayerID sender})\n{\n    $0\n}");
     item(c, "scene", CK_SNIPPET, "scene Name { fields }", "Entities that load and unload together, like a level.",
          "scene ${1:Name}\n{\n    $0\n}");
     item(c, "local scene", CK_SNIPPET, "local scene Name { fields }", "A scene on this machine only, like a menu.",
@@ -9460,8 +9773,8 @@ static void complete_code_declarations(completion *c)
          "event(${1:Event} ${2:e}) ${3:Name}($4)\n{\n    $0\n}");
     item(c, "local event handler", CK_SNIPPET, "local event(Event e) Name(parameters) { ... }", NULL,
          "local event(${1:Event} ${2:e}) ${3:Name}($4)\n{\n    $0\n}");
-    item(c, "command handler", CK_SNIPPET, "command(Command payload, PlayerID sender) Name(parameters) { ... }", NULL,
-         "command(${1:Command} ${2:payload}, PlayerID sender) ${3:Name}($4)\n{\n    $0\n}");
+    item(c, "command", CK_SNIPPET, "command(values) Name(parameters, PlayerID sender) { ... }", NULL,
+         "command(${1:int value}) ${2:Name}(${3:PlayerID sender})\n{\n    $0\n}");
     item(c, "function", CK_SNIPPET, "Type Name(parameters) { ... }", NULL, "${1:void} ${2:Name}($3)\n{\n    $0\n}");
     item(c, "async function", CK_SNIPPET, "async Type Name(parameters) { ... }", NULL,
          "async ${1:void} ${2:Name}($3)\n{\n    $0\n}");
@@ -9543,18 +9856,21 @@ static void complete_overrides(completion *c)
             if (theirs == package || (theirs && package && strcmp(theirs, package) == 0)) continue; // Its own: it changes it there
             sb header = {0};
             int first = 0;
-            if (v->kind == DECL_SYSTEM && v->is_handler && v->params.count > 0) {
-                sb_printf(&header, "%s%s%s(", v->is_local ? "local " : "", v->is_async ? "async " : "",
-                          v->is_command ? "command" : "event");
-                put_param_here(&header, &v->params.items[0]);
-                // A command handler's sender, where it names one (one that filters by ownership may not)
-                const bool sender = v->is_command && v->params.count > 1 && v->params.items[1].mode == PARAM_SENDER;
-                if (sender) {
-                    sb_put(&header, ", ");
-                    put_param_here(&header, &v->params.items[1]);
+            if (command_code(v)) { // What the command is called with, as the command says it, then its name
+                sb_put(&header, "command(");
+                for (int j = 0; v->written_payload && j < v->written_payload->fields.count; j++) {
+                    const field *f = &v->written_payload->fields.items[j];
+                    if (j) sb_put(&header, ", ");
+                    put_type_here(&header, f->type, f->type_name);
+                    sb_printf(&header, " " STR_FMT, STR_ARG(f->name));
                 }
                 sb_put(&header, ") ");
-                first = sender ? 2 : 1;
+                first = v->params.count; // Its code's parameters go in the order written, below
+            } else if (v->kind == DECL_SYSTEM && v->is_handler && v->params.count > 0) {
+                sb_printf(&header, "%s%sevent(", v->is_local ? "local " : "", v->is_async ? "async " : "");
+                put_param_here(&header, &v->params.items[0]);
+                sb_put(&header, ") ");
+                first = 1;
             } else if (v->kind == DECL_SYSTEM) {
                 sb_put(&header, v->is_view ? "view " : "system ");
             } else if (v->kind == DECL_SHADER) {
@@ -9571,6 +9887,10 @@ static void complete_overrides(completion *c)
             for (int j = first; j < v->params.count; j++) {
                 if (j > first) sb_put(&header, ", ");
                 put_param_here(&header, &v->params.items[j]);
+            }
+            for (int j = 0; command_code(v) && j < command_param_count(v); j++) {
+                if (j) sb_put(&header, ", ");
+                put_param_here(&header, command_param(v, j));
             }
             sb_put(&header, ")");
             if (v->fails.kind != TY_VOID && v->fails.kind != TY_ERROR) {
@@ -9739,6 +10059,7 @@ typedef enum header_kind {
     HEADER_NONE,
     HEADER_SYSTEM,  // A system's or view's, or a handler's after its trigger: system Move(mut Body body)
     HEADER_TRIGGER, // A handler's trigger: event(Hit hit)
+    HEADER_COMMAND, // What a command is called with: command(int slot, string name = "")
     HEADER_ROUTINE, // A function's or method's: void Heal(mut Stats stats)
     HEADER_SAMPLE,  // The input's Sample: devices and local singletons; Sanitize takes nothing
     HEADER_SHADER,  // A frag's or vert's: frag Shade(BoxVertex vertex, out Color color, Sun sun)
@@ -9757,7 +10078,8 @@ static header_kind top_header(const int i)
 {
     if (i < 1) return HEADER_NONE;
     const token *name = &DOC->toks[i - 1];
-    if (name->kind == T_IDENT && (str_eq_c(name->text, "event") || str_eq_c(name->text, "command"))) return HEADER_TRIGGER;
+    if (name->kind == T_IDENT && str_eq_c(name->text, "event")) return HEADER_TRIGGER;
+    if (name->kind == T_IDENT && str_eq_c(name->text, "command")) return HEADER_COMMAND;
     if (i < 2) return HEADER_ROUTINE;
     int first = i - 1; // An override's name can be qualified: `override system Combat.Move(`
     while (first >= 2 && DOC->toks[first - 1].kind == T_DOT && DOC->toks[first - 2].kind == T_IDENT) first -= 2;
@@ -9800,9 +10122,11 @@ static bool local_match_handler(const int open)
     return !str_eq_c(DOC->toks[name].text, "Forgotten");
 }
 
-// A command handler's parameter header, `command(Rename rename) RenamePlayer(`: its filters are by the sender's ownership.
-static bool command_handler(const int open)
+// The header of a command's code, `command(string name) Rename(`, its name maybe qualified in an override: what it
+// takes of the match. Its filters are by the sender's ownership, and it names the sender.
+static bool command_handler(int open)
 {
+    while (open >= 3 && DOC->toks[open - 2].kind == T_DOT && DOC->toks[open - 3].kind == T_IDENT) open -= 2;
     if (open < 3 || DOC->toks[open - 2].kind != T_RPAREN) return false;
     int depth = 1, trigger = open - 3;
     for (; trigger >= 0; trigger--) {
@@ -10777,6 +11101,8 @@ void analysis_completion(const int line, const int character, jbuf *out)
         const context_kind top = stack[depth].kind;
         const tok_kind kind = DOC->toks[i].kind;
         const tok_kind before = i > 0 ? DOC->toks[i - 1].kind : T_EOF;
+        // In what a command is called with, a value's attributes and the parentheses of its default are a field's
+        const bool called_with = top == CTX_HEADER && stack[depth].header == HEADER_COMMAND;
         if (kind == T_LBRACKET && top == CTX_TOP) {
             stack[++depth] = (frame){CTX_ATTRIBUTE, i, HEADER_NONE};
         } else if (kind == T_RBRACKET && top == CTX_ATTRIBUTE) {
@@ -10786,11 +11112,11 @@ void analysis_completion(const int line, const int character, jbuf *out)
             stack[++depth] = (frame){CTX_ATTRIBUTE_ARGS, open, HEADER_NONE};
         } else if (kind == T_RPAREN && top == CTX_ATTRIBUTE_ARGS) {
             depth--;
-        } else if (kind == T_LBRACKET && top == CTX_DATA) {
+        } else if (kind == T_LBRACKET && (top == CTX_DATA || called_with)) { // command([Clamp(0, 3)] int slot) too
             stack[++depth] = (frame){CTX_FIELD_ATTRIBUTE, i, HEADER_NONE};
         } else if (kind == T_RBRACKET && top == CTX_FIELD_ATTRIBUTE) {
             depth--;
-        } else if (kind == T_LPAREN && (top == CTX_FIELD_ATTRIBUTE || top == CTX_FIELD_ATTRIBUTE_ARGS)) {
+        } else if (kind == T_LPAREN && (top == CTX_FIELD_ATTRIBUTE || top == CTX_FIELD_ATTRIBUTE_ARGS || called_with)) {
             stack[++depth] = (frame){CTX_FIELD_ATTRIBUTE_ARGS, i, HEADER_NONE}; // One frame per parenthesis: float2(0, 1)
         } else if (kind == T_RPAREN && top == CTX_FIELD_ATTRIBUTE_ARGS) {
             depth--;
@@ -11093,6 +11419,23 @@ void analysis_completion(const int line, const int character, jbuf *out)
             complete_shader_header(&c, f.open, last);
             break;
         }
+        if (f.header == HEADER_COMMAND) { // command(int slot, string name = ""): what a call passes, each a value
+            bool value = false; // After a value's '=': its default, a constant
+            for (int k = last; k > f.open && DOC->toks[k].kind != T_COMMA && !value; k--) value = DOC->toks[k].kind == T_ASSIGN;
+            if (value) {
+                complete_value_types(&c, VT_VALUES);
+                complete_structs(&c);
+                complete_constants(&c, TY_ERROR);
+                item(&c, "Math", CK_MODULE, "Math functions and constants", NULL, NULL);
+            } else if (pk == T_LPAREN || pk == T_COMMA || pk == T_RBRACKET) {
+                complete_value_types(&c, VT_LOCALS);
+                complete_structs(&c);
+                complete_namespaces(&c, false);
+            } else if (pk == T_IDENT) {
+                complete_param_name(&c, prev->text);
+            }
+            break;
+        }
         // event(Hit hit): the trigger; event(Hit hit) TakeHit(...): a handler's parameters.
         const bool trigger = f.header == HEADER_TRIGGER;
         const bool sample = f.header == HEADER_SAMPLE;
@@ -11170,20 +11513,17 @@ void analysis_completion(const int line, const int character, jbuf *out)
         const bool view = f.header == HEADER_SYSTEM && f.open >= 2 && DOC->toks[f.open - 2].kind == T_IDENT
                        && str_eq_c(DOC->toks[f.open - 2].text, "view");
         if (trigger) {
-            const bool command = str_eq_c(DOC->toks[f.open - 1].text, "command");
             // local event(verified Died died): a local handler hears the match's events, confirmed ones too
-            const bool hears = !command && local_trigger(f.open);
+            const bool hears = local_trigger(f.open);
             if (pk == T_LPAREN) {
                 if (hears) {
                     item(&c, "verified", CK_KEYWORD, "Once the server confirmed the tick that sent the event", NULL, NULL);
                 }
-                complete_events(&c, true, command, hears);
+                complete_events(&c, true, hears);
                 complete_namespaces(&c, false);
             } else if (hears && before_verified == T_LPAREN) {
                 complete_match_events(&c);
                 complete_namespaces(&c, false);
-            } else if (command && pk == T_COMMA) {
-                item(&c, "PlayerID", CK_STRUCT, "Authenticated command sender", builtin_type_doc(TY_PLAYER), NULL);
             } else if (pk == T_IDENT) {
                 complete_param_name(&c, prev->text);
             }
@@ -11198,7 +11538,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
                 complete_param_name(&c, prev->text);
             }
         } else if (pk == T_WITH || pk == T_WITHOUT) {
-            // Views and local match-event handlers can filter by this machine's player, and command handlers by the sender.
+            // Views and local match-event handlers can filter by this machine's player, and a command's code by the sender.
             if (view || (f.header == HEADER_SYSTEM && local_match_handler(f.open))) {
                 item(&c, "ownership", CK_KEYWORD,
                      pk == T_WITH ? "Entities this machine's player owns" : "Entities this machine's player doesn't own", NULL, NULL);
@@ -11221,6 +11561,14 @@ void analysis_completion(const int line, const int character, jbuf *out)
             complete_namespaces(&c, false);
         } else if (pk == T_LPAREN || pk == T_COMMA || pk == T_MUT) {
             if (pk != T_MUT) {
+                // command(string name) Rename(mut Name mine, PlayerID sender): the player who sent it, once
+                bool sender = f.header != HEADER_SYSTEM || !command_handler(f.open);
+                for (int k = f.open + 1; k <= last && !sender; k++) sender = str_eq_c(DOC->toks[k].text, "PlayerID");
+                if (!sender) {
+                    item(&c, "PlayerID sender", CK_VARIABLE, "The player who sent the command",
+                         "Authenticated by the connection: check what that player may do before changing the match. "
+                         "It's `default` for a call the match's own code made.", NULL);
+                }
                 item(&c, "mut", CK_KEYWORD, "Write access", NULL, NULL);
                 // view HealthBar(Health health, verified Health confirmed): where a view's parameter starts, like mut
                 if (view) item(&c, "verified", CK_KEYWORD, "As the server confirmed it, not as this machine predicts it", NULL, NULL);
@@ -11344,7 +11692,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
             const str name = DOC->toks[f.open - 1].text;
             for (int i = 0; i < A.prog->decls.count; i++) {
                 const decl *d = A.prog->decls.items[i];
-                if ((d->kind != DECL_COMPONENT && d->kind != DECL_STRUCT && d->kind != DECL_EVENT) || !str_eq(d->name, name)) continue;
+                if ((d->kind != DECL_COMPONENT && d->kind != DECL_STRUCT && d->kind != DECL_EVENT) || d->is_command || !str_eq(d->name, name)) continue;
                 for (int k = 0; k < d->fields.count; k++) {
                     const field *fl = &d->fields.items[k];
                     if (fl->hidden) continue;
@@ -11712,6 +12060,17 @@ static bool param_named(const decl *d, const str name)
     return false;
 }
 
+// Whether `code` is a command's and the command is called with a value named `name`, which its code reads by
+// that name.
+static bool command_value_named(const decl *code, const str name)
+{
+    const decl *command = command_type(code);
+    for (int i = 0; command && i < command->fields.count; i++) {
+        if (str_eq(command->fields.items[i].name, name)) return true;
+    }
+    return false;
+}
+
 static const char *check_new_name(const occurrence *target, const str name)
 {
     // Words the parser reads as keywords where a declaration or a part of one
@@ -11755,15 +12114,21 @@ static const char *check_new_name(const occurrence *target, const str name)
     }
 
     bool clash = false;
+    // A command, or a value it's called with: its name is its type's and its code's, and its values are names
+    // in its code, among that code's parameters and locals
+    const decl *command = (target->kind == OCC_TYPE || target->kind == OCC_FIELD) && target->decl
+                           && target->decl->kind == DECL_EVENT && target->decl->is_command ? target->decl : NULL;
     switch (target->kind) {
     case OCC_TYPE:
     case OCC_SYSTEM:
         // Types share one namespace, and systems and views another; a
-        // function, a frag or a vert shares its name with nothing.
+        // function, a frag or a vert shares its name with nothing, and a
+        // command is a type and code.
         for (int i = 0; i < A.prog->decls.count; i++) {
             const decl *d = A.prog->decls.items[i];
-            const bool same_namespace = d->kind == DECL_FUNCTION || is_shader(d) || is_shader(target->decl)
+            const bool same_namespace = command || d->kind == DECL_FUNCTION || is_shader(d) || is_shader(target->decl)
                                      || (d->kind == DECL_SYSTEM) == (target->kind == OCC_SYSTEM);
+            if (command && command_type(d) == command) continue; // Its own code, renamed with it
             if (d != target->decl && same_namespace && str_eq(d->name, name)) clash = true;
         }
         break;
@@ -11790,6 +12155,10 @@ static const char *check_new_name(const occurrence *target, const str name)
             const field *f = field_of(target->decl, i);
             if (f != target->field && str_eq(f->name, name)) clash = true;
         }
+        for (int i = 0; command && i < A.written.count; i++) {
+            const decl *code = A.written.items[i];
+            if (command_type(code) == command) clash |= param_named(code, name) || local_named(code->body, name);
+        }
         break;
     case OCC_ENUM_MEMBER:
         for (int i = 0; i < target->decl->members.count; i++) {
@@ -11800,12 +12169,12 @@ static const char *check_new_name(const occurrence *target, const str name)
         const decl *d = decl_of_param(target->param);
         const param *query = target->param->query_source;
         clash = query ? str_eq_c(name, "entity") || query_binding(query, name) != NULL
-                      : param_named(d, name) || (d && local_named(d->body, name));
+                      : param_named(d, name) || (d && local_named(d->body, name)) || command_value_named(d, name);
         break;
     }
     case OCC_LOCAL: {
         const decl *d = decl_of_local(target->local);
-        clash = param_named(d, name) || (d && local_named(d->body, name));
+        clash = param_named(d, name) || (d && local_named(d->body, name)) || command_value_named(d, name);
         break;
     }
     case OCC_NAMESPACE: {
@@ -12959,6 +13328,11 @@ static const struct {
 static int call_param_names(const expr *call, str *names, const int max)
 {
     int count = 0;
+    const decl *command = called_command(call);
+    if (command) { // Rename("x", 2): what the command is called with
+        for (; count < command->fields.count && count < max; count++) names[count] = command->fields.items[count].name;
+        return count;
+    }
     if (call->skinned) {
         for (; count < written_count(call) && count < max; count++) {
             const expr *arg = written_arg(call, count);
@@ -13541,6 +13915,19 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
         }
     }
     if (s.shown == 0) {
+        // A command's call, Rename( or fighter.PickCard(: the one the call resolved to, or while it's half
+        // written, the one of that name
+        const occurrence *o = occurrence_at(DOC->toks[callee].at);
+        const decl *meant = o && o->kind == OCC_TYPE && o->decl && o->decl->kind == DECL_EVENT && o->decl->is_command ? o->decl : NULL;
+        for (int i = 0; i < A.prog->decls.count; i++) {
+            const decl *d = A.prog->decls.items[i];
+            if (d->kind != DECL_EVENT || !d->is_command || (meant ? d != meant : !str_eq(d->name, name))) continue;
+            sb label = {0};
+            format_command_call(d, &label);
+            add_signature(&s, label.data, "Calls the command: the match runs its code at the end of a tick, with these values.");
+        }
+    }
+    if (s.shown == 0) {
         // The game's methods and functions: the one the call resolved to, or
         // while it's half written, every one with that name.
         // Where others share its name, as overloads do, every one of them,
@@ -13779,6 +14166,22 @@ static bool closes_header(const int i)
     return false;
 }
 
+// Whether the ')' at token `i` ends what a command is called with, `command(int slot)`: its name and what its
+// code takes can go on the next line, which continues the header.
+static bool closes_command_values(const int i)
+{
+    if (DOC->toks[i].kind != T_RPAREN) return false;
+    int parens = 0;
+    for (int k = i; k > 0; k--) {
+        if (DOC->toks[k].kind == T_RPAREN) {
+            parens++;
+        } else if (DOC->toks[k].kind == T_LPAREN && --parens == 0) {
+            return DOC->toks[k - 1].kind == T_IDENT && str_eq_c(DOC->toks[k - 1].text, "command");
+        }
+    }
+    return false;
+}
+
 // How many levels deeper than its braces each token goes for the switch
 // sections around it: statements under `case X:` go one level in, the labels
 // stay at the switch's level.
@@ -14000,6 +14403,7 @@ const char *analysis_format(int tab_size, const bool insert_spaces, const int fi
     bool statement_open = false;
     bool opened_pending = false;
     bool ended_comma = false; // ...or ended with a comma, which in an enum ends a member
+    bool command_open = false; // ...or ended with what a command is called with, whose name the next line has
     for (int l = 1; l <= line_count; l++) {
         const str original = line_text(l);
         const fmt_line *items = &lines[l];
@@ -14057,9 +14461,11 @@ const char *analysis_format(int tab_size, const bool insert_spaces, const int fi
                 // A line that continues an expression or an argument list goes one
                 // level deeper, or keeps its own indentation if that's deeper
                 // still: code aligned under an opening parenthesis stays aligned.
-                const bool continuation = first != T_LBRACE && first != T_RBRACE && (depth > top || parens > 0)
-                                       && ((parens > parens_at[depth] && first != T_RPAREN)
-                                           || (statement_open && !opened_pending && !(enum_at[depth] && ended_comma)));
+                // ...and so does a command's name under what it's called with, where a declaration starts
+                const bool continuation = (first != T_LBRACE && first != T_RBRACE && (depth > top || parens > 0)
+                                           && ((parens > parens_at[depth] && first != T_RPAREN)
+                                               || (statement_open && !opened_pending && !(enum_at[depth] && ended_comma))))
+                                       || (command_open && first == T_IDENT);
                 int own_width = 0;
                 if (piece == 0) {
                     for (const char *c = original.ptr; c < from->text; c++) own_width += *c == '\t' ? tab_size : 1;
@@ -14117,6 +14523,7 @@ const char *analysis_format(int tab_size, const bool insert_spaces, const int fi
                 const bool stacked = k == T_COMMA && (breaks[last_tok] & BREAK_STACKED);
                 statement_open = k != T_SEMI && k != T_LBRACE && k != T_RBRACE && !label && !stacked;
                 ended_comma = k == T_COMMA;
+                command_open = k == T_RPAREN && parens == 0 && depth == top && closes_command_values(last_tok);
             }
         }
         if (!verbatim[l] && (text.len != (size_t)original.len || memcmp(text.data, original.ptr, text.len) != 0)) {

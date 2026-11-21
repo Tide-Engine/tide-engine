@@ -121,15 +121,6 @@ input Pointing
     }
 }
 
-// What a tap asks of the match: build here, or upgrade what's here.
-command Act
-{
-    int x;
-    int y;
-    TowerKind kind;
-    bool upgrade;             // What the player saw there: a tower to upgrade, or a free tile
-}
-
 event Hit { float damage; float slow; int seat; }
 event Upgrade { int seat; }
 event Leaked { int cost; }
@@ -464,26 +455,28 @@ event(Leaked leak) LoseLives(mut Game game)
     game.timer = OVER_TIME;
 }
 
-// The player's connection says who sent it; the match checks the rest.
-command(Act act, PlayerID sender) OnAct(mut Team team, mut Board board, Game game)
+// What a tap asks of the match: build here, or upgrade what's here. `upgrade`
+// is what the player saw there: a tower to upgrade, or a free tile. The
+// player's connection says who sent it; the match checks the rest.
+command(int x, int y, TowerKind kind, bool upgrade) Act(mut Team team, mut Board board, Game game, PlayerID sender)
 {
     if (game.phase == Phase.Over || game.phase == Phase.Wipe) return;
     if (!team.seatOf.TryGet(sender, out var seat)) return;
-    if (act.x < 0 || act.x >= COLS || act.y < 0 || act.y >= ROWS) return;
-    if (OnPath(act.x, act.y)) return;
-    var there = board.towers[act.x, act.y];
-    if (act.upgrade)
+    if (x < 0 || x >= COLS || y < 0 || y >= ROWS) return;
+    if (OnPath(x, y)) return;
+    var there = board.towers[x, y];
+    if (upgrade)
     {
         if (there != default) there.Send(Upgrade { seat = seat });
         return;
     }
     // Someone else may have built here a moment before.
     if (there != default) return;
-    if (int(act.kind) < 0 || int(act.kind) >= KINDS) return;
-    var cost = Cost(act.kind);
+    if (int(kind) < 0 || int(kind) >= KINDS) return;
+    var cost = Cost(kind);
     if (team.gold[seat] < cost) return;
     team.gold[seat] -= cost;
-    board.towers[act.x, act.y] = Spawn(Tower { cell = int2(act.x, act.y), kind = act.kind, seat = seat });
+    board.towers[x, y] = Spawn(Tower { cell = int2(x, y), kind = kind, seat = seat });
 }
 
 event(Upgrade upgrade) UpgradeTower(mut Tower tower, mut Team team)
@@ -759,7 +752,7 @@ view Play(Devices devices, Session session, Game game, Team team, Board board, W
     }
     hand.wait = 0.12;
     if (!hand.tower) hand.rest = 0.5;
-    Send(Act { x = hand.cell.x, y = hand.cell.y, kind = hand.kind, upgrade = hand.tower });
+    Act(hand.cell.x, hand.cell.y, hand.kind, hand.tower);
 }
 
 view DrawBoard(Game game, Layout layout)

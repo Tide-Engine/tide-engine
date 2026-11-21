@@ -1,3 +1,74 @@
+## Commands are one declaration, called like a function (2026-11-21)
+
+The owner's decision (docs/spec.md, Commands, Decided): `command(string name) Rename(mut Name mine, PlayerID sender)
+{ ... }` replaces the payload type, the separate handler and `Send(Rename { ... })`. Calls are `Rename("Ada")` and
+`entity.Rename("Ada")`, from local code (submitted) and from match code (queued, no network, no player).
+
+**Still two declarations inside the compiler.** `parse_command` (parser.c) makes a `DECL_EVENT` with `is_command`,
+named as the command, with a field for each value of the first parentheses, and a `DECL_SYSTEM` handler of the same
+name whose trigger is that type. So everything behind the checker is what it was: the wire format, `TIDE_COMMAND_ID_*`,
+`tide_local_send_<C>`, the dispatcher, channels, limits, the embed schema, Unity's C# type. Nothing of the protocol or
+of a game's hash changes but through the names (a command's type has the command's name, where it had its own).
+
+- The type is pushed before the handler, with the handler's unit and `dev`. `[Channel]` and `[Unordered]` among the
+  pending attributes go to the type (`check_channel` wants the command), the others to the handler.
+- The trigger parameter is hidden: `command_payload` on it, named `tide_payload` (the reserved-name check skips it).
+  `PlayerID sender`, written anywhere in the second parentheses, is moved to `params[1]` as `PARAM_SENDER`, where the
+  checker and codegen always had it. A value and a parameter of one name is the parser's error: the code reads both
+  by name.
+- `decl.written_payload` on the handler is the first parentheses as written: the type itself, or for an override, which
+  declares no type, what it wrote, which `check_handler`'s trigger check compares with the command's fields (names
+  and written types, in order).
+- **Values by name.** `check_name`, after locals and parameters: a name that is a field of the payload
+  (`command_payload(c)`) becomes `tide_payload.name`, an `E_MEMBER` with `payload_value`, checked with
+  `check_expr_any` so a `T?` value is its reader's to unwrap. Assigning one is `check_writable`'s error, which names
+  the value, not the hidden parameter.
+- **Calls.** `check_command_call`: `check_call` after functions (a function of the name still wins: "a call tries a
+  function before a type"), `check_method` on an entity (before the entity's own methods are refused to local code;
+  `Add`, `Remove`, `Destroy` and `Snap` stay the entity's), and a namespace's `Shop.Buy(1)` (turned into an `E_CALL`,
+  its namespace kept in `command_namespace`). It makes an `E_LITERAL` of the command's type from the arguments (by
+  place, then by name, defaults left to the literal's own; `command_value` on it so `check_literal` takes the
+  declaration it was made for, whatever the calling file can name), leaves what was written in `written`, sets
+  `command_call`, and hands the call to `check_send`. Codegen sees a `CALL_SEND` as before.
+- **No entity named** (`implicit_target`): set on an `E_CALL` in code that runs for an entity of the match
+  (`per_entity && !entity_local`, outside methods). `check_sends` then lets it be, and `gen_send` writes `tide_this`
+  where the command `needs_target`, the null entity where it doesn't.
+- **Local or match.** In `check_send`: local code, a function (`inherits`, whose act is "calls the command", local)
+  and an async function (which it makes a local task) submit, `local_world` true. Anything else is match code:
+  `match_called` on the command, and the call goes on as an event's send does (its place among the system's sends,
+  the system's `sent_events`, a spawn-like cause from `causal_site`).
+- **Generated C for the match's call:** `tide_cmd_send_<C>_cause`, only for commands something of the match calls: a
+  `TIDE_CMD_EVENT` of the command's index with `c->sender` no player. The dispatcher is the one players' commands use.
+- **Ownership for the match's call.** `tide_me.id != 0 &&` before the owner comparison in `gen_row_filter`, so both
+  filters pass with no player. `with ownership` on a command no longer adds `Owner` to `need_mask` (a view's still
+  does): the handler is generated for archetypes without it, where `if (tide_sender->id != 0) skip;` keeps players'
+  commands out as the missing archetype did.
+- A send of a command (`Send(Rename { ... })`) and the old declaration (`command Rename { ... }`) are errors that say
+  the new form. `virtual command Name {` is no longer refused as data: it reaches that error.
+- The compiler's own commands are in the new form: `TideSetTweaks` and `TideSetField` (tweaks.c), Unity's `OpenScene`
+  (cli/unity_assets.c). Their handlers have the commands' names now (`TideApplyTweaks`, `TideApplyField` and `Opening`
+  are gone); nothing named them.
+- `--outline` prints a command once, `"kind": "command"`, with its fields and its code's `perEntity` and `access`;
+  an override in another package is still a `handler` of its own.
+
+**Tests.** e2e: `commands` (named arguments, defaults, a value array), `command_ownership` (a call with no entity
+named; the match's own calls, for owned and unowned entities, replayed to the same hash), `command_lists`,
+`commands_channels` and the fixtures that used commands, migrated. Errors: `command_declared_apart`, `command_sent`,
+`command_call_*` (unknown name, too many, left out, type, no entity), `command_value_twice`, `command_value_mut`,
+`command_override_values`, and the earlier fixtures in the new form. Gone, with what they tested:
+`command_from_system` (allowed now), `command_sender_type`, `event_command_receiver`, `dev_handler_trigger`,
+`virtual_command`, `command_local` (one declaration has one `local` to refuse: `command_local_receiver`).
+
+**Gaps.**
+
+- A function that calls a command is local code's, so a system can't call it (`function_acts_command_from_system`
+  says to call the command itself). Making it follow its caller needs the function generated for both worlds, as a
+  task that does neither is.
+- `entity.Shop.Buy(1)`, a namespace after an entity, isn't read: a `using`, or the command called from its namespace.
+- A command's name is still a type in Tide code (`Rename { name = "x" }`, a parameter's type). Nothing needs it.
+- A literal's messages say "field" of a call's argument: `Rename(3)` is "field 'name' is string, not int".
+- Not built, agreed (spec, Agreed, not built): a call's handle and `await`, a returned value, server calls.
+
 ## UnityEngine.Mesh, UnityEngine.Material, UnityEngine.AudioClip (2026-11-19)
 
 Three builtin types for a game made in Unity (the owner's direction; every rule mine, Provisional: docs/spec.md,

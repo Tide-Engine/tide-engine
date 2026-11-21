@@ -1,4 +1,0 @@
-// expect: commands are sent from views and local handlers to the match
-command Rename { string name; }
-system SendFromMatch() { Send(Rename { name = "x" }); }
-scene Main { }

@@ -319,7 +319,6 @@ system CheckField(Field field, Settings settings, mut Results results)
 
 event Poke { int amount; }
 event Resume { }
-command Pinch { int amount; }
 
 event(Poke poke) OnPoke(Roster roster, mut World world)
 {
@@ -335,17 +334,17 @@ async event(Resume) Continue(Roster roster, mut World world, mut Results results
     results.ended++;
 }
 
-command(Pinch pinch, PlayerID sender) OnPinch(Roster roster, mut World world)
+command(int amount) Pinch(Roster roster, mut World world, PlayerID sender)
 {
     if (sender != PlayerID(0)) return;
-    world.Edit<Party>(roster.parties[4], p) { p.gold -= pinch.amount; }
+    world.Edit<Party>(roster.parties[4], p) { p.gold -= amount; }
 }
 
 view Submit(mut Viewer viewer)
 {
     if (!viewer.submit) return;
     viewer.submit = false;
-    Send(Pinch { amount = 3 });
+    Pinch(3);
 }
 
 system Ask(Settings settings)

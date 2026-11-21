@@ -207,8 +207,8 @@
           ]
         },
         {
-          "comment": "component Transform, singleton Time, struct Stats, input PlayerInput, event Hit, command Rename, scene Arena, enum Voxel : byte",
-          "match": "(?:^|(?<=\\]))\\s*(?:(dev|local|async|worker|cached|virtual|override)\\s+)?(?:((?:dev|local|async|worker|cached|virtual|override)(?:\\s+(?:dev|local|async|worker|cached|virtual|override))?)\\s+)?(component|singleton|struct|input|event|command|enum|scene|prefab|entity)\\s+([A-Za-z_][A-Za-z0-9_]*)(?:\\s*(:)\\s*([A-Za-z_][A-Za-z0-9_]*))?",
+          "comment": "component Transform, singleton Time, struct Stats, input PlayerInput, event Hit, scene Arena, enum Voxel : byte",
+          "match": "(?:^|(?<=\\]))\\s*(?:(dev|local|async|worker|cached|virtual|override)\\s+)?(?:((?:dev|local|async|worker|cached|virtual|override)(?:\\s+(?:dev|local|async|worker|cached|virtual|override))?)\\s+)?(component|singleton|struct|input|event|enum|scene|prefab|entity)\\s+([A-Za-z_][A-Za-z0-9_]*)(?:\\s*(:)\\s*([A-Za-z_][A-Za-z0-9_]*))?",
           "captures": {
             "1": { "name": "storage.modifier.tide" },
             "2": { "name": "storage.modifier.tide" },
@@ -219,55 +219,65 @@
           }
         },
         {
-          "comment": "command(Rename rename, PlayerID sender) RenamePlayer, command(Poke poke) Bump: a command handler, its sender named or not",
-          "match": "(?:^|(?<=\\]))\\s*(?:(dev|local|async|worker|cached|virtual|override)\\s+)?(?:((?:dev|local|async|worker|cached|virtual|override)(?:\\s+(?:dev|local|async|worker|cached|virtual|override))?)\\s+)?(command)\\s*(\\()\\s*([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)(?:\\s+([A-Za-z_][A-Za-z0-9_]*))?(?:\\s*(,)\\s*(PlayerID)\\s+([A-Za-z_][A-Za-z0-9_]*))?\\s*(\\))\\s*((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)",
-          "captures": {
-            "1": {
-              "name": "storage.modifier.tide"
-            },
-            "2": {
-              "name": "storage.modifier.tide"
-            },
-            "3": {
-              "name": "storage.type.tide"
-            },
-            "4": {
-              "name": "punctuation.parenthesis.open.tide"
-            },
-            "5": {
+          "comment": "command(string name, int times = 1) Rename(Owner owner, mut Name mine, PlayerID sender): a command, declared and called as a function is. Its first parentheses hold what a call passes, each a value's type and name; then its name, on that line or the next, and what its code takes of the match, as a handler's parameters. It ends before its body",
+          "begin": "(?:^|(?<=\\]))\\s*(?:(dev|local|async|worker|cached|virtual|override)\\s+)?(?:((?:dev|local|async|worker|cached|virtual|override)(?:\\s+(?:dev|local|async|worker|cached|virtual|override))?)\\s+)?(command)(?=\\s*\\()",
+          "end": "(?=[{;}])|^(?=\\s*$)",
+          "beginCaptures": {
+            "1": { "name": "storage.modifier.tide" },
+            "2": { "name": "storage.modifier.tide" },
+            "3": { "name": "storage.type.tide" }
+          },
+          "patterns": [
+            { "include": "#comments" },
+            {
+              "comment": "Its name and what its code takes: Rename(Owner owner, query (Name other) all, PlayerID sender), or an override's Combat.Rename(",
+              "begin": "((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)\\s*(\\()",
+              "end": "\\)",
+              "beginCaptures": {
+                "1": {
+                  "patterns": [
+                    { "match": "[A-Za-z_][A-Za-z0-9_]*(?=\\.)", "name": "entity.name.namespace.tide" },
+                    { "match": "\\.", "name": "punctuation.accessor.tide" },
+                    { "match": "[A-Za-z_][A-Za-z0-9_]*", "name": "entity.name.function.tide" }
+                  ]
+                },
+                "2": { "name": "punctuation.parenthesis.open.tide" }
+              },
+              "endCaptures": {
+                "0": { "name": "punctuation.parenthesis.close.tide" }
+              },
               "patterns": [
-                {
-                  "include": "#type-name"
-                }
+                { "include": "#query-parameter" },
+                { "include": "#parens" },
+                { "include": "$self" }
               ]
             },
-            "6": {
-              "name": "variable.parameter.tide"
-            },
-            "7": {
-              "name": "punctuation.separator.comma.tide"
-            },
-            "8": {
+            {
+              "comment": "What it's called with: (string name, [Clamp(0, 3)] int slot = 0)",
+              "begin": "\\(",
+              "end": "\\)",
+              "beginCaptures": {
+                "0": { "name": "punctuation.parenthesis.open.tide" }
+              },
+              "endCaptures": {
+                "0": { "name": "punctuation.parenthesis.close.tide" }
+              },
               "patterns": [
+                { "include": "#comments" },
                 {
-                  "include": "#type-name"
-                }
-              ]
-            },
-            "9": {
-              "name": "variable.parameter.tide"
-            },
-            "10": {
-              "name": "punctuation.parenthesis.close.tide"
-            },
-            "11": {
-              "patterns": [
-                { "match": "[A-Za-z_][A-Za-z0-9_]*(?=\\.)", "name": "entity.name.namespace.tide" },
-                { "match": "\\.", "name": "punctuation.accessor.tide" },
-                { "match": "[A-Za-z_][A-Za-z0-9_]*", "name": "entity.name.function.tide" }
+                  "comment": "A value, where one starts: its type, then its name",
+                  "match": "(?:^|(?<=[(,\\]]))\\s*((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*(?:\\s*<[^()=]*>)?\\??(?:\\[[^\\]]*\\])*)\\s+([A-Za-z_][A-Za-z0-9_]*)(?=\\s*(?:[,)=]|$))",
+                  "captures": {
+                    "1": { "patterns": [{ "include": "#type-name" }] },
+                    "2": { "name": "variable.parameter.tide" }
+                  }
+                },
+                { "include": "#attribute" },
+                { "include": "#parens" },
+                { "include": "$self" }
               ]
             }
-          }
+          ]
         },
         {
           "comment": "local event(Hit hit) ShowHit(Body body, query (Body other, with Fighter) fighters): a handler's parameter list, where a local handler takes queries as a system does",

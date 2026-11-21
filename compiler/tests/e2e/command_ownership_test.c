@@ -97,3 +97,60 @@ TIDE_TEST(command_without_ownership_runs_for_everyone_elses_and_names_its_sender
     tide_world_free(&replay);
     tide_local_free(&local);
 }
+
+// `Poke(...)` in a view that runs for an entity, with no entity named: the command is for that one
+TIDE_TEST(command_called_with_no_entity_is_for_the_entity_the_code_runs_for)
+{
+    start();
+    local.UI.own = true;
+    tide_draw_reset(&draw);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
+    sent own = {0};
+    const uint8_t *bytes = tide_local_command(&local, 0, &own.size);
+    TIDE_REQUIRE(bytes && own.size > 0 && own.size <= TIDE_COMMAND_BYTES);
+    memcpy(own.bytes, bytes, own.size);
+    tide_local_command_sent(&local, 0);
+    TIDE_CHECK(tide_local_command(&local, 0, &(uint32_t){0}) == NULL); // One call, of the one entity player 0 owns
+    from(0, 1, &own);
+    tide_world_tick(&world);
+    TIDE_CHECK(tide_get_Counter(&world, mine).value == 9 && tide_get_Counter(&world, mine).pokes == 1);
+    TIDE_CHECK(tide_get_Counter(&world, theirs).value == 0 && tide_get_Counter(&world, nobodys).value == 0);
+    tide_world_free(&world);
+    tide_local_free(&local);
+}
+
+// A system calls a command as a view does. Nothing is sent: it's queued, and runs at the end of the tick for
+// every entity it was called for, whoever owns it, with no player for its sender
+TIDE_TEST(command_called_by_the_match_runs_with_no_player_and_no_network)
+{
+    start();
+    world.Log.tithe = true;
+    tide_world_copy(&kept, &world);
+    tide_world_tick(&world);
+    TIDE_CHECK(tide_get_Counter(&world, mine).value == 1 && tide_get_Counter(&world, mine).pokes == 1);
+    TIDE_CHECK(tide_get_Counter(&world, theirs).value == 1 && tide_get_Counter(&world, theirs).pokes == 1);
+    TIDE_CHECK(tide_get_Counter(&world, nobodys).value == 1 && tide_get_Counter(&world, nobodys).pokes == 1);
+    TIDE_CHECK(!world.Log.tithe);
+    // No player's sequence moved: no player sent anything
+    TIDE_CHECK(tide_game_api.command_sequence(&world, tide_player_from_index(0), 0) == 0);
+    tide_world_tick(&world); // Once: the tick after calls nothing
+    TIDE_CHECK(tide_get_Counter(&world, mine).pokes == 1);
+    world.Log.levy = true;
+    world.Log.last = tide_player_from_index(1);
+    tide_world_tick(&world);
+    TIDE_CHECK(tide_get_Counter(&world, mine).value == -2 && tide_get_Counter(&world, theirs).value == -2);
+    TIDE_CHECK(tide_get_Counter(&world, nobodys).value == -2);
+    TIDE_CHECK(world.Log.stolen == 9 && world.Log.seen == 3 && world.Log.last.id == 0);
+    // The same ticks again from a copy: the same world
+    tide_world_copy(&replay, &kept);
+    tide_world_tick(&replay);
+    tide_world_tick(&replay);
+    replay.Log.levy = true;
+    replay.Log.last = tide_player_from_index(1);
+    tide_world_tick(&replay);
+    TIDE_CHECK(tide_world_hash(&replay) == tide_world_hash(&world));
+    tide_world_free(&world);
+    tide_world_free(&kept);
+    tide_world_free(&replay);
+    tide_local_free(&local);
+}

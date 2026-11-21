@@ -37,8 +37,6 @@ input Move
     }
 }
 
-command Bump { int by; }
-
 event(PlayerJoined joined) Arrive()
 {
     Spawn(Walker { }, Owner { player = joined.player });
@@ -58,10 +56,10 @@ system Drift(mut Score score)
 
 event Bumped { int by; }
 
-command(Bump bump, PlayerID sender) Apply(mut Score score)
+command(int by) Bump(mut Score score, PlayerID sender)
 {
-    score.total += bump.by;
-    Send(Bumped { by = bump.by });
+    score.total += by;
+    Send(Bumped { by = by });
 }
 
 extern void Saw(int steps, float x, int jumps, int lives);

@@ -78,7 +78,7 @@ Both `MeshRenderer` and `Material` must be present for an entity to draw or cast
 | `Material.shader` | `Render3D.Lit { surface = Render3D.StandardSurface }` | Attached local shader binding |
 | `Material.vertex` | `null` | Optional attached local `Render3D.Deform` binding, shared by color and shadows |
 
-The base map, base color and vertex color each supply display-space RGB. The shader decodes each to linear light before multiplying them into albedo. Their alpha channels multiply without color conversion. Assign maps, callbacks or `shader` through a mutable `Material` parameter in a view before preparation. Numeric material fields are match state: change them in match code or send a [command](../game/commands.md) from a local control. A captured surface callback can make local shading comparisons without changing match data.
+The base map, base color and vertex color each supply display-space RGB. The shader decodes each to linear light before multiplying them into albedo. Their alpha channels multiply without color conversion. Assign maps, callbacks or `shader` through a mutable `Material` parameter in a view before preparation. Numeric material fields are match state: change them in match code or call a [command](../game/commands.md) from a local control. A captured surface callback can make local shading comparisons without changing match data.
 
 ## A complete example
 
@@ -138,7 +138,7 @@ Height mapping is a single-sample UV parallax offset. It changes the sampled pat
 
 :::
 
-Choose **PBR maps**, **Cutout** or **Blend** to move between the exhibits. In PBR maps, compare zero/positive normal and height strengths, turn ORM off, then vary roughness, metallic, AO and emission. AO is visible because this demo explicitly supplies ambient irradiance. The height slider changes the material through an ordinary targeted command. In Cutout, adjust the cutoff and watch the leaf shadow change with it. Orbit behind the leaves to see both sides. In Blend, adjust opacity and orbit around the overlapping cards and opaque sphere. The demo's original PNGs and quad are reproducible with `python docs/examples/assets/render3d/make_materials.py` in a checkout.
+Choose **PBR maps**, **Cutout** or **Blend** to move between the exhibits. In PBR maps, compare zero/positive normal and height strengths, turn ORM off, then vary roughness, metallic, AO and emission. AO is visible because this demo explicitly supplies ambient irradiance. The height slider changes the material through an ordinary command, called for the material's entity. In Cutout, adjust the cutoff and watch the leaf shadow change with it. Orbit behind the leaves to see both sides. In Blend, adjust opacity and orbit around the overlapping cards and opaque sphere. The demo's original PNGs and quad are reproducible with `python docs/examples/assets/render3d/make_materials.py` in a checkout.
 
 ## Cutout, transparency and sidedness
 

@@ -1,3 +1,34 @@
+## Commands as one declaration (2026-11-21)
+
+The language's change is in notes/language.md (top section). The language server and the grammars follow it.
+
+- **One symbol.** A command is its type's occurrence (`OCC_TYPE` on the `DECL_EVENT`); its code's name, an override's
+  name and its calls map onto it. Document and workspace symbols list it once, detail "command", kind Event, with its
+  values as children.
+- **Navigation and rename** cover the name at its declaration, at calls (`Rename(...)`, `entity.Rename(...)`) and in
+  an override, and the values at the declaration, in the code, as named arguments and in an override's first
+  parentheses. A command's new name is checked against types and systems; a value's against the code's parameters
+  and locals, and theirs against the values. Unity's C# rename is unchanged: the generated type has the command's name.
+- **Hover** on the name shows the header as written, `command(float amount, int times = 1) Bump(Owner owner, mut
+  Body body, PlayerID sender)`, then how it's called; on a value, that it's what the command is called with.
+- **Completion:** value types in the first parentheses (constants after `=`, field attributes in `[ ]`); a handler's
+  parameters in the second, with `PlayerID sender` until one is there; after `entity.`, the commands whose code runs
+  for an entity, in place of `Send(command)`; commands as callables in expressions; named arguments; one `command`
+  snippet and overrides' in the new form. `tide_payload` is never offered. Commands the file can't name unqualified
+  aren't offered as calls, and none inside `[Before]`/`[After]`, as only handlers of one event are ordered.
+- **Signature help and inlay hints** work at command calls. **Semantic tokens:** the name a function, its values
+  read-only parameters. **Entry points:** a command's code is a root, and a call of it is not a call edge.
+- **Formatter:** a name on the line under `command(...)` stays indented one level, stable when formatted twice; the
+  fold starts at the `command` line.
+- **Grammar** (`tools/tide-syntax`, and its JetBrains copy, byte-identical again: it had lacked the `prepare` rule):
+  one begin/end rule for a command, scope names unchanged; `probe.tide` and `grammar.test.mjs` cover the one-line and
+  two-line forms, attributes on values, overrides, `dev` and calls.
+- Tests: `tidels_tests` 289 (`lsp_commands` rewritten, `lsp_command_override` new), grammar tests 428.
+- **Gap:** a call written with its namespace, `Shop.Buy(1)`, compiles (the compiler keeps the namespace in
+  `command_namespace`), and the server doesn't follow it there yet: hover, definition and rename see the unqualified
+  calls. Earlier sections that say "event/command handlers" and "command submissions" (Entry-point navigation,
+  2026-10-14; Shared language-server updates, 2026-10-18) mean commands and their calls now.
+
 ## .tweaks files in editors (2026-11-16, later)
 
 Replaces the tweaks.json handling below. The owner: "ide support is important".

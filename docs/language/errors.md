@@ -120,7 +120,7 @@ It unwraps the same way, with `??`, `is` and `!`, but not `try`: there's no erro
 
 ### Fields that may be missing
 
-A field can be a `T?` too, in a struct, a component, a singleton, a scene, an event, a command or the input:
+A field can be a `T?` too, in a struct, a component, a singleton, a scene, an event or the input, and so can a value a [command](../game/commands.md) is called with:
 
 ```csharp
 struct Slot

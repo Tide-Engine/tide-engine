@@ -1,4 +1,4 @@
-// expect: 'rename' is read-only
-command Rename { string name; }
-command(Rename rename, PlayerID sender) Handle() { rename.name = "changed"; }
+// expect: 'name' is read-only
+// expect: it's what the command was called with; copy it into a 'mut var' to change it here
+command(string name) Rename(PlayerID sender) { name = "changed"; }
 scene Main { }

@@ -58,8 +58,6 @@ singleton Log
 
 event Hit { int damage; }
 
-command Buy { int item; }
-
 struct Corner
 {
     float2 position;
@@ -154,9 +152,9 @@ virtual event(Hit hit) TakeHit(mut Unit unit, mut Log log)
     log.replaced += 1;
 }
 
-virtual command(Buy buy, PlayerID sender) OnBuy(mut Log log)
+virtual command(int item) Buy(mut Log log, PlayerID sender)
 {
-    log.bought = buy.item;
+    log.bought = item;
     log.replaced += 1;
 }
 
@@ -201,7 +199,7 @@ view Shop(mut Hud hud)
 {
     if (!hud.buy) return;
     hud.buy = false;
-    Send(Buy { item = 3 });
+    Buy(3);
 }
 
 event(Spawned) Setup(with Main, mut Log log)

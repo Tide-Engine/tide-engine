@@ -45,7 +45,7 @@ view Hud(Lobby lobby)
 What a game may tell the room's page, each frame, from a view that takes `mut Lobby`:
 
 - `seats`, `manned`, `mine`, `bots`: how many seats to list, which have a player (a bit each), this machine's player's, and whether bots have the rest.
-- `offersNewGame` and `offersBots` put **New game** and **Bots: on/off** on the page. Pressed, they set `newGame` and `toggleBots` for one frame, for the game to send its commands from. **Play** on the title sets `newGame` too: a game of this machine's own, from its start.
+- `offersNewGame` and `offersBots` put **New game** and **Bots: on/off** on the page. Pressed, they set `newGame` and `toggleBots` for one frame, for the game to call its commands from. **Play** on the title sets `newGame` too: a game of this machine's own, from its start.
 
 Three functions are the game's to replace with an `override`: `Rooms.Title()` (the game's `title` setting, `Application.title`), `Rooms.Tagline()` (the line under it) and `Rooms.MenuButton(screen)` (where the Menu button goes; the bottom left corner).
 

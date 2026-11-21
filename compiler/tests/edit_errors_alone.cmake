@@ -1,6 +1,6 @@
 # A wrong world.Edit says what's wrong with it, first, and nothing more: the
 # block's uses of its name aren't unknown names, nor refused again for what
-# the call was refused for. And a command handler that leaves its sender out is
+# the call was refused for. And a command that leaves its sender out is
 # told to name it, offered `with ownership` only where it runs for an entity.
 # Each case is a program, the error it says first, and text it mustn't say.
 # Run with TIDEC and OUT.
@@ -55,5 +55,5 @@ expect(in_parallel "system Hurt(mut Roster roster, mut World world) { parallel (
        "a parallel loop's steps run at once" "unknown name")
 expect(async_world "async void Later(Entity target, mut World world) { await Wait.Ticks(1); world.Edit<Health>(target, other) { other.value -= 1; } }"
        "an async function can't take the World yet" "unknown name;takes no type")
-expect(global_command"command Pause { bool on; }\nsingleton State { bool paused; }\ncommand(Pause pause) DoPause(mut State state) { state.paused = pause.on; }"
-       "command handler 'DoPause' must name the player who sent its command" "with ownership")
+expect(global_command "singleton State { bool paused; }\ncommand(bool on) DoPause(mut State state) { state.paused = on; }"
+       "command 'DoPause' must name the player who sent it" "with ownership")

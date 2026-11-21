@@ -445,10 +445,6 @@ event Served { int level; }
 event Rewound { }
 event Laid { }
 
-command Undo { int level; }
-command Restart { int level; }
-command Goto { int level; }
-
 // This machine's pointer, for a screen with no keys: the arrow it holds, and
 // a tap on the button that changes chefs.
 local singleton Pad
@@ -621,9 +617,9 @@ system Serve(mut Kitchen kitchen, Time time)
 }
 
 // The last move is taken back, whoever made it.
-command(Undo undo, PlayerID sender) TakeBack(mut Kitchen kitchen)
+command(int level) Undo(mut Kitchen kitchen, PlayerID sender)
 {
-    if (!kitchen.hands.Has(sender) || undo.level != kitchen.level) return;
+    if (!kitchen.hands.Has(sender) || level != kitchen.level) return;
     if (kitchen.cleared != 0 || kitchen.past.count == 0) return;
     var last = kitchen.past[kitchen.past.count - 1];
     kitchen.past.RemoveAt(kitchen.past.count - 1);
@@ -634,9 +630,9 @@ command(Undo undo, PlayerID sender) TakeBack(mut Kitchen kitchen)
 }
 
 // The level starts over. That's a move too, so it can be taken back.
-command(Restart restart, PlayerID sender) StartOver(mut Kitchen kitchen)
+command(int level) Restart(mut Kitchen kitchen, PlayerID sender)
 {
-    if (!kitchen.hands.Has(sender) || restart.level != kitchen.level) return;
+    if (!kitchen.hands.Has(sender) || level != kitchen.level) return;
     if (kitchen.cleared != 0 || kitchen.moves == 0) return;
     var before = Past { chefs = kitchen.board.chefs, sausages = kitchen.board.sausages };
     var moves = kitchen.moves;
@@ -646,9 +642,9 @@ command(Restart restart, PlayerID sender) StartOver(mut Kitchen kitchen)
     Send(Rewound { });
 }
 
-command(Goto go, PlayerID sender) GoTo(mut Kitchen kitchen)
+command(int level) Goto(mut Kitchen kitchen, PlayerID sender)
 {
-    if (!kitchen.hands.Has(sender) || go.level < 0 || go.level >= LEVELS) return;
-    Open(kitchen, go.level);
+    if (!kitchen.hands.Has(sender) || level < 0 || level >= LEVELS) return;
+    Open(kitchen, level);
     Send(Laid { });
 }

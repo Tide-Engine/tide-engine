@@ -1,0 +1,5 @@
+// expect: 'Rename' isn't called with 'nam'
+// expect: did you mean 'name'?
+command(string name) Rename(PlayerID sender) { }
+view Ask() { Rename(nam: "x"); }
+scene Main { }

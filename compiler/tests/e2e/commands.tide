@@ -1,17 +1,5 @@
 enum Choice { First = 1, Second = 2 }
 struct Detail { string note; [Clamp(-2, 2)] int count; }
-command Rename
-{
-    string name;
-    [Clamp(0, 10)] float rating = 3;
-    Choice choice = Choice.First;
-    float2 aim;
-    Detail detail;
-    PlayerID claimed;
-    Entity other;
-}
-command Announce { string message; }
-command Tag { string[2] words; }
 component Name { string value = "before"; }
 singleton Seen
 {
@@ -43,51 +31,53 @@ event(Spawned) Setup(with Main)
     Spawn(Name, Owner { player = PlayerID(0) });
     Spawn(Name, Owner { player = PlayerID(1) });
 }
-command(Rename rename, PlayerID sender) RenamePlayer(Owner owner, mut Name name, mut Seen seen)
+command(string name, [Clamp(0, 10)] float rating = 3, Choice choice = Choice.First, float2 aim = default,
+    Detail detail = default, PlayerID claimed = default, Entity other = default)
+    Rename(Owner owner, mut Name mine, mut Seen seen, PlayerID sender)
 {
     if (sender != owner.player) return;
-    if (rename.name.length == 0) return;
-    name.value = rename.name;
+    if (name.length == 0) return;
+    mine.value = name;
     seen.calls++;
     seen.sender = sender;
-    seen.rating = rename.rating;
-    seen.choice = rename.choice;
-    seen.aim = rename.aim;
-    seen.note = rename.detail.note;
-    seen.count = rename.detail.count;
-    seen.claimed = rename.claimed;
-    seen.other = rename.other;
+    seen.rating = rating;
+    seen.choice = choice;
+    seen.aim = aim;
+    seen.note = detail.note;
+    seen.count = detail.count;
+    seen.claimed = claimed;
+    seen.other = other;
 }
-command(Announce announce, PlayerID sender) AnnounceWorld(mut Seen seen)
+command(string message) Announce(mut Seen seen, PlayerID sender)
 {
-    KeepAnnouncement(announce, seen);
+    KeepAnnouncement(message, seen);
     seen.sender = sender;
 }
-command(Tag tag, PlayerID sender) TagWorld(mut Seen seen)
+command(string[2] words) Tag(PlayerID sender, mut Seen seen)
 {
     _ = sender;
-    seen.tagged = tag.words;
+    seen.tagged = words;
 }
-void KeepAnnouncement(Announce payload, mut Seen seen) { seen.announcement = payload.message; }
+void KeepAnnouncement(string message, mut Seen seen) { seen.announcement = message; }
 local event(Submit) SubmitFromHandler(UI ui)
 {
-    ui.target.Send(Rename { name = ui.text, detail = Detail { note = "handler", count = 7 } });
+    ui.target.Rename(ui.text, detail: Detail { note = "handler", count = 7 });
 }
 view SubmitFromView(mut UI ui)
 {
     if (ui.send)
     {
-        ui.target.Send(Rename { name = ui.text, detail = Detail { note = "view", count = -7 }, claimed = PlayerID(7), other = ui.target });
+        ui.target.Rename(ui.text, detail: Detail { note = "view", count = -7 }, claimed: PlayerID(7), other: ui.target);
         ui.send = false;
     }
     if (ui.announce)
     {
-        Send(Announce { message = ui.text });
+        Announce(ui.text);
         ui.announce = false;
     }
     if (ui.tag)
     {
-        Send(Tag { words = [ui.text, "tag"] });
+        Tag([ui.text, "tag"]);
         ui.tag = false;
     }
     if (ui.handler)
