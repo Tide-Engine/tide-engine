@@ -82,6 +82,12 @@ body { background: var(--tg-bg); color: var(--tg-fg); font: var(--tg-font-size) 
   grid-template-rows: auto auto 1fr auto var(--tg-bottom, 200px);
   height: 100vh;
 }
+/* Each in its own row, so the banner gone (display: none) leaves its row empty rather than moving the rest up */
+.tg-toolbar { grid-row: 1; }
+.tg-banner { grid-row: 2; }
+.tg-main { grid-row: 3; }
+.tg-root > .tg-split-h { grid-row: 4; }
+.tg-panel { grid-row: 5; }
 button, input, select, textarea { font: inherit; color: inherit; }
 
 /* The toolbar */

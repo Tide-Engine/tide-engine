@@ -18,10 +18,7 @@ import com.intellij.openapi.fileEditor.FileDocumentManager;
 import com.intellij.openapi.ide.CopyPasteManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.vfs.VirtualFile;
-import com.intellij.psi.PsiFile;
-import com.intellij.psi.PsiManager;
-import com.redhat.devtools.lsp4ij.LanguageServerItem;
-import com.redhat.devtools.lsp4ij.LanguageServiceAccessor;
+import com.redhat.devtools.lsp4ij.LanguageServerManager;
 import com.redhat.devtools.lsp4ij.client.features.FileUriSupport;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -83,20 +80,14 @@ final class TideGraphBridge implements Disposable {
         }, this);
     }
 
-    // tidels through LSP4IJ: asking for the file's servers connects it (didOpen), so tidels has the document as the
-    // IDE has it, unsaved edits included
+    // tidels through LSP4IJ's public API: the server by its id, started if it isn't. LSP4IJ connects the file
+    // (didOpen) as the IDE opens it, the Text tab beside this one being a text editor, so tidels has the document as
+    // the IDE has it, unsaved edits included
     private CompletableFuture<Connection> lsp4ij() {
-        final PsiFile psi = ApplicationManager.getApplication().runReadAction(
-            (com.intellij.openapi.util.Computable<PsiFile>) () -> PsiManager.getInstance(project).findFile(file));
-        if (psi == null) return CompletableFuture.completedFuture(null);
-        return LanguageServiceAccessor.getInstance(project).getLanguageServers(psi, null, null).thenApply(items -> {
-            for (final LanguageServerItem item : items) {
-                if (!TidelsFactory.SERVER.equals(item.getServerDefinition().getId())) continue;
-                if (!(item.getServer() instanceof TidelsServer tidels)) continue;
-                final String u = FileUriSupport.toString(file, item.getClientFeatures());
-                return new Connection(u, (method, params) -> TidelsServer.request(tidels, method, params));
-            }
-            return null;
+        return LanguageServerManager.getInstance(project).getLanguageServer(TidelsFactory.SERVER).thenApply(item -> {
+            if (item == null || !(item.getServer() instanceof TidelsServer tidels)) return null;
+            final String u = FileUriSupport.toString(file, item.getClientFeatures());
+            return new Connection(u, (method, params) -> TidelsServer.request(tidels, method, params));
         });
     }
 

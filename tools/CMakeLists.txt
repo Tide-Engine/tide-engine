@@ -46,19 +46,3 @@ if(TIDE_EDITOR_EXTENSIONS)
     # The licenses of what its bundle has in it, which vsix.cmake collects
     install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tide-vscode/licenses/" DESTINATION licenses COMPONENT tide)
 endif()
-
-# The graph editor's tests, on Node's test runner: its model (tidec makes the
-# graphs it reads), the page in a headless muted browser (skipped without
-# Chrome or Edge), and VS Code's side of it with VS Code replaced. Needs tidec
-# and tidels, which the compiler's folder (after this one) adds.
-find_program(TIDE_GRAPH_NODE NAMES node)
-if(TIDE_GRAPH_NODE)
-    enable_testing() # The top folder's comes after this folder
-    add_test(NAME tide_graph_editor COMMAND "${TIDE_GRAPH_NODE}" --test
-        "${CMAKE_CURRENT_SOURCE_DIR}/tide-graph/test/model.test.mjs"
-        "${CMAKE_CURRENT_SOURCE_DIR}/tide-graph/test/browser.test.mjs"
-        "${CMAKE_CURRENT_SOURCE_DIR}/tide-vscode/test/graph.test.mjs")
-    set_tests_properties(tide_graph_editor PROPERTIES
-        ENVIRONMENT "TIDE_TIDEC=$<TARGET_FILE:tidec>;$<$<TARGET_EXISTS:tidels>:TIDE_TIDELS=$<TARGET_FILE:tidels>;>TIDE_HIDDEN=1"
-        TIMEOUT 600)
-endif()

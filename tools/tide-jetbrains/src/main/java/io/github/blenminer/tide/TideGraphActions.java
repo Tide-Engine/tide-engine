@@ -20,11 +20,8 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
-import com.intellij.psi.PsiFile;
-import com.intellij.psi.PsiManager;
 import com.intellij.testFramework.LightVirtualFile;
-import com.redhat.devtools.lsp4ij.LanguageServerItem;
-import com.redhat.devtools.lsp4ij.LanguageServiceAccessor;
+import com.redhat.devtools.lsp4ij.LanguageServerManager;
 import com.redhat.devtools.lsp4ij.client.features.FileUriSupport;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -63,22 +60,16 @@ public final class TideGraphActions {
     }
 
     private static CompletableFuture<String> fromTidels(@NotNull Project project, @NotNull VirtualFile graph) {
-        final PsiFile psi = ApplicationManager.getApplication().runReadAction(
-            (com.intellij.openapi.util.Computable<PsiFile>) () -> PsiManager.getInstance(project).findFile(graph));
-        if (psi == null) return CompletableFuture.completedFuture(null);
-        return LanguageServiceAccessor.getInstance(project).getLanguageServers(psi, null, null).thenCompose(items -> {
-            for (final LanguageServerItem item : items) {
-                if (!(item.getServer() instanceof TidelsServer tidels)) continue;
-                final JsonObject params = new JsonObject();
-                final JsonObject document = new JsonObject();
-                document.addProperty("uri", FileUriSupport.toString(graph, item.getClientFeatures()));
-                params.add("textDocument", document);
-                return tidels.graphText(params).thenApply(r -> {
-                    final JsonElement text = r != null && r.isJsonObject() ? r.getAsJsonObject().get("text") : null;
-                    return text != null && text.isJsonPrimitive() ? text.getAsString() : null;
-                });
-            }
-            return CompletableFuture.completedFuture(null);
+        return LanguageServerManager.getInstance(project).getLanguageServer(TidelsFactory.SERVER).thenCompose(item -> {
+            if (item == null || !(item.getServer() instanceof TidelsServer tidels)) return CompletableFuture.completedFuture(null);
+            final JsonObject params = new JsonObject();
+            final JsonObject document = new JsonObject();
+            document.addProperty("uri", FileUriSupport.toString(graph, item.getClientFeatures()));
+            params.add("textDocument", document);
+            return tidels.graphText(params).thenApply(r -> {
+                final JsonElement text = r != null && r.isJsonObject() ? r.getAsJsonObject().get("text") : null;
+                return text != null && text.isJsonPrimitive() ? text.getAsString() : null;
+            });
         });
     }
 

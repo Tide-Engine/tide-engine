@@ -395,7 +395,8 @@ and its requests, handled in order so an edit is in the document before the next
   and a notice. Gradle puts the page and schema in the jar under `tide-graph/`. A standalone clone of the plugin
   builds from the snapshot in `tools/tide-jetbrains/graph/` (the page's files and `graph_schema.json`), refreshed
   before each public export as `textmate/` is (notes/editors.md).
-- Tests: `tide_graph_editor` (ctest; registered in `tools/CMakeLists.txt` with its own `enable_testing()`):
+- Tests: `tide_graph_editor` (ctest; in the root CMakeLists beside `tide_vscode_adapter`, as `tools/` is
+  configured alone by `tide_cli_ide`, with no tidec):
   model tests (byte-for-byte round trip of 364 converted graphs; every wire tidec writes is a port the schema
   gives; ports and key orders of every kind; wiring rules; paste remapping; undo with host changes; a graph built
   from nodes checked with tidec and compiled; real tidels' text, types, members, hover, diagnostics, layout), a
@@ -406,6 +407,11 @@ and its requests, handled in order so an edit is in the document before the next
   clipboard, save, Show as Tide, Convert) twice on a hidden desktop; the suite's old terminal step doesn't start
   there, so the whole suite hasn't run to completion here (CI runs it). A sanitize tidels copied for the pinned-version step has
   no ASan DLL beside it: that step needs a debug or release tidels.
+
+- The docs' graph playground (`/guide/graph-playground`, notes/docs-site.md, "Graph playground") is a third host
+  of the page: `docs/playground/graph-host.mjs` over the browser tidels and tidec, with a starter game of graphs
+  alone (`docs/playground/stars.tidegraph`). The page's rows are placed by name (`style.css`), so its hidden banner
+  leaves its row empty in every host.
 
 ## Gaps of the shared schema
 

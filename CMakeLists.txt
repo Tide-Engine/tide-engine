@@ -159,6 +159,17 @@ if(TIDE_NODE)
     add_test(NAME tide_vscode_adapter COMMAND "${TIDE_NODE}" --test
         "${CMAKE_CURRENT_SOURCE_DIR}/tools/tide-vscode/test/extension.test.mjs"
         "${CMAKE_CURRENT_SOURCE_DIR}/tools/tide-vscode/test/debug.test.mjs")
+    # The graph editor's (tools/tide-graph): its model (tidec makes the graphs it reads), the page in a headless muted
+    # browser (skipped without Chrome or Edge), and VS Code's side of it with VS Code replaced
+    if(TARGET tidec)
+        add_test(NAME tide_graph_editor COMMAND "${TIDE_NODE}" --test
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/tide-graph/test/model.test.mjs"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/tide-graph/test/browser.test.mjs"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/tide-vscode/test/graph.test.mjs")
+        set_tests_properties(tide_graph_editor PROPERTIES
+            ENVIRONMENT "TIDE_TIDEC=$<TARGET_FILE:tidec>;$<$<TARGET_EXISTS:tidels>:TIDE_TIDELS=$<TARGET_FILE:tidels>;>TIDE_HIDDEN=1"
+            TIMEOUT 600)
+    endif()
     add_test(NAME relay COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/relay/relay.test.mjs"
         "${CMAKE_CURRENT_SOURCE_DIR}/relay/lobbies.test.mjs")
     # The Android wrapper's file transfers, with adb mocked and no device.

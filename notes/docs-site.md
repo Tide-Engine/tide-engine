@@ -1,5 +1,62 @@
 # The docs site
 
+## Graph playground (2026-11-24)
+
+The owner asked for visual scripting on the docs as a playground. `/guide/graph-playground` (Get started, after
+Playground; linked from Visual scripting and the text playground) edits and plays a game made with graphs only.
+
+- **The game**: `docs/playground/stars.tidegraph`, "Star catch" (a basket the pointer or A/D moves, stars that fall
+  faster with each catch, a score). Written as Tide, made a graph with `tidec --to-graph`; only the graph is kept.
+  `tide_playground_stars` (docs/playground/CMakeLists.txt) builds it natively with tide_add_game like the text
+  demo, and staging copies it as `generated/stars.wasm`; `runtime.html?demo=stars` starts with it (any other value,
+  or none, is the text demo).
+- **The editor** is tools/tide-graph's page, its own files: `GraphPlayground.svelte` imports `files.json`, the
+  scripts and style.css as `?raw` (lazily, their own chunks), and makes a `srcdoc` frame of them plus a few lines of
+  the frame's side of the host (postMessage to and from this origin; pane sizes for the frame's size, since the page's
+  are a window's; on phones, under 640 px, CSS that stacks the outline, canvas and inspector). The site's colours go
+  as the editor's `theme` message (as JetBrains sends), again when the site's theme changes. Nothing in
+  tools/tide-graph changed.
+- **The host**, `docs/playground/graph-host.mjs` (`GraphHost`, shared with its Node test): the document in memory and
+  as the visitor's draft in localStorage (`tide-graph-playground-draft`, removed when it's the starter again), the
+  schema from `compiler/src/graph_schema.json` (tidels's replaces it if it differs), page requests `tide/*` to tidels,
+  `host/clipboardRead` and `clipboardWrite` to the browser's clipboard, published diagnostics to the page, a server
+  that stops as `{type: 'server', available: false}`. On load the host reveals system `Fall`.
+- **tidels**: the same `tidels_browser` worker; `open` takes a `uri`, and the graph's is `file:///game.tidegraph`, so
+  analysis lowers it by its extension (`LanguageServer(module, files, uri)`, `diagnosticsOf(replies, uri)`).
+  tidels.c needed nothing: server.c routes `tide/graph*` and the document-less graphSchema/graphLayout itself.
+- **Play**: the compiler worker takes `name` (`BrowserCompiler.compile(source, progress, name)`), `game.tidegraph`
+  here, so tidec reads the graph as it reads any file and says a node's errors as `game.tidegraph:@id:`. Builds,
+  Auto reload, Restart, Reset graph, Expand, the divider (35-80%, its own localStorage key) and errors leaving the last
+  good game running are the text playground's. A draft from an earlier visit is built once the preview is up.
+- **Show as Tide**: the editor's `showTide` opens a dialog with the Tide; **Open in the text playground** hands it
+  over in sessionStorage (`tide-playground-from-graph`), and the text playground starts with it and builds it.
+  Both playgrounds have a Text/Graph switch (`PlaygroundModes.svelte`). Markdown exports drop the page's marker.
+
+- **Layout**: graph | divider | preview (graph 35-80%, default 70%), the preview as tall as the graph; stacked
+  under 1050 px. The frame's host CSS also names the editor's grid rows (`grid-row` 1-5): tools/tide-graph's
+  `.tg-root` rows are positional, and its banner, hidden with `display: none`, leaves the grid, so the panes move
+  up a row (the main pane in an `auto` row, the Tide panel in `1fr`, the last row empty). That is the editor's own
+  bug in every host; the fix belongs in tools/tide-graph/style.css (the same rule), not made here. Under 640 px the
+  Tide panel starts hidden (its toolbar button shows it). The first view is `Fall`'s start at zoom 0.75 (a host
+  message the frame's glue handles), not the editor's whole-graph frame, which is unreadable for a long system.
+
+Validation (Windows, Node 24.22.1, web-debug `docs_playground` with `-DTIDE_DOC_PLAYGROUND=ON`; stars.tidegraph
+compiles natively from the graph): `npm run check` 0 errors/warnings; `npm run build` passes (no 404s in this
+checkout's build log); `test:exports` 2/2 and `test:seo` 3/3. `test:playground` 17/17: the two new compile tests (a
+graph through the browser pipeline; `game.tidegraph:@<id>: error` for a renamed method node) and
+`graph-playground.test.mjs`, six tests of GraphHost with the staged tidels on the starter (load, no diagnostics,
+graphText with spans, the Spawn call's span and type, the schema; a broken node's diagnostic on its `data.node` and
+its clearing; graphMembers of `star` (type Star, position, speed), hover and completion; graphLayout of Fall; the
+draft kept, reopened and removed by Reset; Show as Tide and an unknown request). `TIDE_EXAMPLES=playground,graph-playground
+node tests/examples.mjs` (headless muted Chrome, SwiftShader WebGPU) passes: the text playground's run as before,
+and the graph playground's: Fall's nodes all drawn with wires (no NaN paths), outline and theme, "Checked by
+tidels" with the Tide panel, the starter drawing in the preview (`demo=stars`, stats once), an edit through the
+editor (FALL 200) built and live and kept as the draft, a broken node marked by tidels and named by the build while
+the last game draws, undo recovering, Reset, the phone layout (no page overflow, the editor's panes stacked), and
+Show as Tide opening its Tide in the text playground, which builds and runs it. Screenshots were inspected: desktop
+dark and light, phone, the Show as Tide dialog. Not run: other browsers, real phones, Linux/macOS (CI's Docs job runs
+`test:examples`, which now includes the graph playground and its Node tests).
+
 ## Shader progress for embedded examples (2026-11-07)
 
 While `Tide.start()` waits for required pipelines, `examples.ts` subscribes to
