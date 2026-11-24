@@ -99,7 +99,8 @@ static const command_help commands[] = {
      "a game builds its .tidegraph files with its .tide files, and each uses\n"
      "what the other declares. --replace removes the .tide file once its graph\n"
      "is written; without it the game has both, so remove one. -o <path>\n"
-     "writes one file's graph there. --text prints the Tide a graph stands for.\n\n"
+     "writes one file's graph there. --text prints the Tide a graph stands for,\n"
+     "and --schema what graph editors read of every kind of node.\n\n"
      "Examples: tide graph enemy.tide --replace\n"
      "          tide graph --text enemy.tidegraph", GRAPH},
     {"fetch", "fetch [folder]", "Download missing git packages",

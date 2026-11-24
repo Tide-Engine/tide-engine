@@ -42,6 +42,12 @@ static char *install_root(void)
 // `tide graph --text <file.tidegraph>...`: .tide files made graphs, and graphs' Tide (notes/visual-scripting.md)
 static int graph_command(const int argc, char **argv)
 {
+    if (argc == 3 && strcmp(argv[2], "--schema") == 0) { // What graph editors read of every kind of node (graph_schema.json)
+        size_t len;
+        const char *schema = graph_schema_text(&len);
+        fwrite(schema, 1, len, stdout);
+        return 0;
+    }
     bool text = false, replace = false;
     const char *out = NULL;
     int files = 0;
