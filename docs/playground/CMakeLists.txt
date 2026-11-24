@@ -24,6 +24,13 @@ add_custom_command(OUTPUT "${debug_views}"
         -P "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
     DEPENDS "${PROJECT_SOURCE_DIR}/compiler/src/debug_views.py" "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
     VERBATIM)
+set(graph_schema "${CMAKE_CURRENT_BINARY_DIR}/graph_schema_json.c")
+add_custom_command(OUTPUT "${graph_schema}"
+    COMMAND "${CMAKE_COMMAND}" "-DINPUT=${PROJECT_SOURCE_DIR}/compiler/src/graph_schema.json"
+        "-DOUTPUT=${graph_schema}" -DNAME=tide_graph_schema
+        -P "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+    DEPENDS "${PROJECT_SOURCE_DIR}/compiler/src/graph_schema.json" "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+    VERBATIM)
 add_library(tide_playground_importers STATIC
     "${PROJECT_SOURCE_DIR}/compiler/third_party/ufbx/ufbx.c"
     "${PROJECT_SOURCE_DIR}/compiler/third_party/ufbx/ufbx_math.c"
@@ -35,7 +42,7 @@ target_link_libraries(tide_playground_importers PRIVATE tide_flags)
 # The transpiler's sources, shared by the browser compiler and the browser
 # language server (main.c is the compiler's command line).
 list(REMOVE_ITEM browser_sources "${PROJECT_SOURCE_DIR}/compiler/src/main.c")
-add_library(tide_browser_compiler STATIC ${browser_sources} "${fingerprint}" "${debug_views}" host.c)
+add_library(tide_browser_compiler STATIC ${browser_sources} "${fingerprint}" "${debug_views}" "${graph_schema}" host.c)
 target_include_directories(tide_browser_compiler PUBLIC "${PROJECT_SOURCE_DIR}/compiler/src")
 target_include_directories(tide_browser_compiler SYSTEM PRIVATE
     "${PROJECT_SOURCE_DIR}/compiler/third_party/ufbx"
