@@ -47,6 +47,8 @@ public class GraphTests
     {
         tidec = FindTidec();
         TideGraphCommand.TidecOverride = tidec;
+        // The graph schema of that tidec
+        GraphSchema.Reload();
         // What tidec lowers a graph to: these graphs are the format's, not games tidels would check (GraphLanguageTests)
         checker = TideGraphServices.Checker;
         TideGraphServices.Checker = new TidecGraphChecker();
@@ -555,7 +557,12 @@ public class GraphTests
         b.Node(loop).Set("body", JValue.Of(b.N("eval", "value", b.N("call", "name", "Use", "args", new[] { b.N("local", "ref", loop), b.N("name", "name", "a") }))));
         b.Run(b.N("var", "type", "int", "name", "n", "value", b.N("int", "text", "2")), loop);
         var before = b.Text();
-        GraphDocument.Layout(b.Graph);
+        // A layout as tidels gives one (tide/graphLayout): it moves the nodes, and nothing else
+        var layout = JValue.NewObject();
+        var place = 0;
+        foreach (var n in GraphDocument.Nodes(b.Graph).Items) layout.Set(n.Wire("id").ToString(), JValue.ArrayOf(new[] { JValue.Of(100 * place), JValue.Of(40 * place++) }));
+        Assert.AreEqual(GraphDocument.Nodes(b.Graph).Items.Count, TideGraphLanguage.Place(b.Graph, layout));
+        Assert.AreEqual(100.0, GraphDocument.Nodes(b.Graph).Items[1].Get("x").Number);
         Assert.AreEqual(before, b.Text(), "laying out moves nodes, nothing else");
         var copy = b.Doc.Duplicate(b.Function);
         copy.Set("name", JValue.Of("G"));
@@ -856,6 +863,8 @@ public class GraphTests
         canvas.AddNote(new Vector2(10, 10));
         Assert.AreEqual(1, canvas.Notes.Count);
         canvas.AutoLayout();
+        for (var clock = System.Diagnostics.Stopwatch.StartNew(); canvas.LayoutPending && clock.Elapsed.TotalSeconds < 60;) yield return null;
+        Assert.IsFalse(canvas.LayoutPending, "tidels lays it out");
 
         // What it lowers to
         window.CheckSoon(0);

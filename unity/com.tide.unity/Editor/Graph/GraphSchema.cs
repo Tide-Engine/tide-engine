@@ -1,268 +1,350 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Text;
 using UnityEngine;
 
 namespace Tide.Editor
 {
-    // What a .tidegraph holds (notes/visual-scripting.md): its kinds of declaration, member and node, the keys of
-    // each in the order tidec writes them, and which of a node's keys are wires.
+    // What a .tidegraph holds (notes/visual-scripting.md): tidec's schema (compiler/src/graph_schema.json), its kinds
+    // of declaration, member and node, the keys of each in the order tidec writes them, and a node's ports. Every
+    // editor of graphs reads the same schema, so none has tables of its own to drift from tidec's.
+    //
+    // Where it comes from: tidels (tide/graphSchema) when it's running; else `tide graph --schema` (or a test's
+    // tidec's `--graph-schema`), kept in the project's Library for the next domain reload with the program it came
+    // from and that program's size and time, so it's asked again when the program changes. With none of them, the
+    // editor says why instead of editing graphs with a schema it hasn't.
     static class GraphSchema
     {
-        public static readonly string[] RootOrder = { "tidegraph", "nextId", "namespace", "using", "decls" };
-
-        // Declarations, as the add menu lists them
-        public static readonly string[] DeclKinds =
+        public sealed class NodeList
         {
-            "component", "singleton", "struct", "event", "input", "scene", "enum", "const", "asset", "alias", "settings",
-            "function", "system", "view", "handler", "command", "audio", "frag", "vert", "compute", "prefab", "namespace", "text",
-        };
-
-        public static readonly string[] DataKinds = { "component", "singleton", "struct", "event", "input", "scene" };
-        public static readonly string[] RoutineKinds = { "function", "audio", "system", "view", "frag", "vert", "compute" };
-
-        public static readonly string[] MemberKinds = { "field", "property", "method", "operator", "tweak", "sample", "sanitize", "predict", "prepare", "text" };
-
-        static readonly string[] Routine =
-            { "kind", "id", "comment", "name", "overrides", "modifiers", "attributes", "mut", "returnType", "typeParams", "where", "params", "fails", "extern", "body" };
-
-        static readonly Dictionary<string, string[]> declOrder = new Dictionary<string, string[]>
-        {
-            ["text"] = new[] { "kind", "id", "comment", "text" },
-            ["namespace"] = new[] { "kind", "id", "comment", "name", "decls" },
-            ["data"] = new[] { "kind", "id", "comment", "name", "modifiers", "attributes", "typeParams", "where", "members" },
-            ["enum"] = new[] { "kind", "id", "comment", "name", "modifiers", "attributes", "backing", "members" },
-            ["const"] = new[] { "kind", "id", "comment", "name", "modifiers", "attributes", "type", "value" },
-            ["alias"] = new[] { "kind", "id", "comment", "name", "attributes", "type" },
-            ["settings"] = new[] { "kind", "id", "comment", "entries" },
-            ["routine"] = Routine,
-            ["handler"] = new[] { "kind", "id", "comment", "name", "overrides", "modifiers", "attributes", "trigger", "params", "body" },
-            ["command"] = new[] { "kind", "id", "comment", "name", "overrides", "modifiers", "attributes", "payload", "params", "body" },
-            ["prefab"] = new[] { "kind", "id", "comment", "name", "overrides", "modifiers", "attributes", "root" },
-        };
-
-        static readonly Dictionary<string, string[]> memberOrder = new Dictionary<string, string[]>
-        {
-            ["field"] = new[] { "kind", "id", "comment", "local", "type", "name", "attributes", "default" },
-            ["property"] = new[] { "kind", "id", "comment", "type", "name", "accessors" },
-            ["method"] = Routine,
-            ["operator"] = new[] { "kind", "id", "comment", "returnType", "op", "params", "fails", "body" },
-            ["tweak"] = new[] { "kind", "id", "comment", "type", "name", "value" },
-            ["sample"] = new[] { "kind", "id", "comment", "name", "params", "body" },
-            ["sanitize"] = new[] { "kind", "id", "comment", "body" },
-            ["predict"] = new[] { "kind", "id", "comment", "body" },
-            ["prepare"] = new[] { "kind", "id", "comment", "params", "body" },
-            ["text"] = new[] { "kind", "id", "comment", "text" },
-        };
-
-        public static readonly string[] ParamOrder = { "id", "comment", "mode", "query", "ownership", "local", "verified", "previous", "scene", "role", "type", "name", "default" };
-        public static readonly string[] SampleParamOrder = { "id", "comment", "type", "name" };
-        public static readonly string[] PayloadOrder = { "id", "comment", "attributes", "type", "name", "default" };
-        public static readonly string[] TriggerOrder = { "verified", "changed", "type", "name" };
-        public static readonly string[] AttributeOrder = { "id", "name", "args" };
-        public static readonly string[] EnumMemberOrder = { "id", "comment", "name", "value" };
-        public static readonly string[] EntryOrder = { "id", "comment", "name", "value" };
-        public static readonly string[] AccessorOrder = { "id", "comment", "word", "body" };
-        public static readonly string[] PrefabNodeOrder = { "id", "comment", "name", "base", "components", "children" };
-        public static readonly string[] WhereOrder = { "param", "rules" };
-        public static readonly string[] NoteOrder = { "id", "x", "y", "w", "h", "text" };
-        public static readonly string[] BodyOrder = { "entry", "nodes", "notes" };
-        public static readonly string[] ValueOrder = { "root", "nodes", "notes" };
-        public static readonly string[] ArmOrder = { "pattern", "value" };
-        public static readonly string[] InitOrder = { "name", "value" };
-        public static readonly string[] CaseOrder = { "labels", "body" };
-        public static readonly string[] LambdaParamOrder = { "mut", "type", "name" };
-
-        public static string[] DeclOrder(string kind)
-        {
-            if (Array.IndexOf(DataKinds, kind) >= 0) return declOrder["data"];
-            if (Array.IndexOf(RoutineKinds, kind) >= 0) return declOrder["routine"];
-            if (kind == "asset") return declOrder["const"];
-            return declOrder.TryGetValue(kind ?? "", out var o) ? o : declOrder["routine"];
+            public string Key, Label, Names; // Its key, what an input of it is called, and the key of its names (a call's argNames)
         }
 
-        public static string[] MemberOrder(string kind) => memberOrder.TryGetValue(kind ?? "", out var o) ? o : memberOrder["field"];
-
-        // The words that go before a declaration, in the order tidec writes them
-        public static readonly string[] AllModifiers = { "dev", "local", "async", "worker", "build", "cached", "virtual", "override", "tweak" };
-
-        // The words that apply to a kind of declaration or member
-        public static string[] Modifiers(string kind, bool member)
+        public sealed class NodeItems
         {
-            if (member) return kind == "method" ? new[] { "dev", "virtual", "override" } : Array.Empty<string>();
-            switch (kind)
-            {
-                case "function": return new[] { "dev", "local", "async", "worker", "build", "cached", "virtual", "override" };
-                case "system": return new[] { "dev", "virtual", "override" };
-                case "view": return new[] { "dev", "local", "virtual", "override" };
-                case "handler": return new[] { "dev", "local", "async", "virtual", "override" };
-                case "frag":
-                case "vert": return new[] { "dev", "virtual", "override" };
-                case "command": return new[] { "dev", "local" };
-                case "component": return new[] { "dev" };
-                case "const": return new[] { "dev", "local", "tweak" };
-                case "singleton":
-                case "struct":
-                case "event":
-                case "input":
-                case "scene":
-                case "enum":
-                case "asset":
-                case "prefab":
-                case "audio":
-                case "compute": return new[] { "dev", "local" };
-                default: return Array.Empty<string>();
-            }
-        }
-
-        public static bool HasBody(string kind, bool member)
-        {
-            if (member) return kind == "method" || kind == "operator" || kind == "sample" || kind == "sanitize" || kind == "predict" || kind == "prepare";
-            return Array.IndexOf(RoutineKinds, kind) >= 0 || kind == "handler" || kind == "command";
-        }
-
-        public static bool HasParams(string kind, bool member)
-        {
-            if (member) return kind == "method" || kind == "operator" || kind == "prepare";
-            return Array.IndexOf(RoutineKinds, kind) >= 0 || kind == "handler" || kind == "command";
-        }
-
-        public static readonly string[] ParamModes = { "read", "mut", "in", "out", "with", "without", "query" };
-        public static readonly string[] AssignOps = { "=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=", "??=", "++", "--" };
-        public static readonly string[] UnaryOps = { "!", "-", "~" };
-        public static readonly string[] StepOps = { "++", "--" };
-        public static readonly string[] OperatorOps = { "+", "-", "*", "/", "%", "==", "!=", "<", "<=", ">", ">=", "&", "|", "^", "<<", ">>", "!", "~" };
-
-        public static readonly (string op, string title)[] BinaryOps =
-        {
-            ("+", "Add"), ("-", "Subtract"), ("*", "Multiply"), ("/", "Divide"), ("%", "Remainder"),
-            ("==", "Equal"), ("!=", "Not equal"), ("<", "Less than"), ("<=", "Less or equal"), (">", "Greater than"), (">=", "Greater or equal"),
-            ("&&", "And"), ("||", "Or"), ("&", "Bitwise and"), ("|", "Bitwise or"), ("^", "Exclusive or"), ("<<", "Shift left"), (">>", "Shift right"),
-        };
-
-        public static readonly string[] BuiltinTypes =
-        {
-            "int", "uint", "long", "ulong", "short", "ushort", "byte", "sbyte", "float", "double", "bool", "string", "char", "void",
-            "float2", "float3", "float4", "int2", "int3", "int4", "uint2", "uint3", "uint4", "bool2", "bool3", "bool4",
-            "float2x2", "float3x3", "float4x4", "quaternion", "Color", "Entity", "PlayerID", "Devices", "World",
-            "List<T>", "Map<K, V>", "Set<T>", "Grid2<T>", "Grid3<T>", "Texture", "Mesh", "Sound",
-        };
-
-        // Node kinds, as the canvas and its search show them
-        public enum Category { Flow, Calls, Values, Math, Locals, Text }
-
-        public static Color ColorOf(Category c)
-        {
-            switch (c)
-            {
-                case Category.Flow: return new Color(0.36f, 0.38f, 0.44f);
-                case Category.Calls: return new Color(0.20f, 0.42f, 0.70f);
-                case Category.Values: return new Color(0.24f, 0.55f, 0.32f);
-                case Category.Math: return new Color(0.62f, 0.45f, 0.18f);
-                case Category.Locals: return new Color(0.50f, 0.32f, 0.62f);
-                default: return new Color(0.48f, 0.36f, 0.30f);
-            }
+            public string Key, Label, Exec, Element; // Its key, what an item is called, its exec output, the element order of an item
+            public string[] Wires = Array.Empty<string>(); // Its data inputs: a key, or "key[]" for an array of them
         }
 
         public sealed class NodeSpec
         {
-            public string K, Title;
-            public Category Category;
-            public bool Exec;
-            public string[] Keys = Array.Empty<string>(); // Its own keys, in tidec's order
+            public string K, Title, Category;
+            public bool Exec, Value, Ends;
+            public string Map, Declares;
+            public string[] Keys = Array.Empty<string>();    // Its own keys, in tidec's order
+            public string[] Inputs = Array.Empty<string>();  // Its single data inputs
+            public string[] Outputs = Array.Empty<string>(); // Its exec outputs besides next
+            public NodeList[] Lists = Array.Empty<NodeList>();
+            public NodeItems[] Items = Array.Empty<NodeItems>();
         }
 
-        static NodeSpec S(string k, string title, Category c, bool exec, params string[] keys)
-            => new NodeSpec { K = k, Title = title, Category = c, Exec = exec, Keys = keys };
-
-        public static readonly NodeSpec[] Nodes =
+        sealed class KindSpec
         {
-            // Statements
-            S("var", "Local", Category.Locals, true, "mut", "type", "name", "value", "shared"),
-            S("assign", "Assign", Category.Flow, true, "op", "target", "value"),
-            S("eval", "Do", Category.Flow, true, "value", "stacked", "block", "withBlock"),
-            S("if", "If", Category.Flow, true, "cond", "then", "else"),
-            S("while", "While", Category.Flow, true, "cond", "body"),
-            S("for", "For", Category.Flow, true, "init", "cond", "step", "body"),
-            S("foreach", "For each", Category.Flow, true, "indexed", "type", "name", "collection", "body"),
-            S("parallel", "Parallel", Category.Flow, true, "indexed", "type", "name", "grid", "by", "offset", "body"),
-            S("switch", "Switch", Category.Flow, true, "value", "cases"),
-            S("return", "Return", Category.Flow, true, "value"),
-            S("fail", "Fail", Category.Flow, true, "value"),
-            S("break", "Break", Category.Flow, true),
-            S("continue", "Continue", Category.Flow, true),
-            S("block", "Block", Category.Flow, true, "body"),
-            S("discard", "Discard", Category.Flow, true, "value"),
-            S("code", "Code", Category.Text, true, "text", "inputs"),
-            // Values
-            S("int", "Int", Category.Values, false, "text"),
-            S("float", "Float", Category.Values, false, "text"),
-            S("bool", "Bool", Category.Values, false, "value"),
-            S("string", "String", Category.Values, false, "text"),
-            S("char", "Char", Category.Values, false, "text"),
-            S("this", "this", Category.Values, false),
-            S("default", "default", Category.Values, false),
-            S("null", "null", Category.Values, false),
-            S("name", "Name", Category.Values, false, "name", "local"),
-            S("local", "Local", Category.Locals, false, "ref"),
-            S("member", "Member", Category.Values, false, "shorthand", "object", "member"),
-            S("list", "List", Category.Values, false, "items"),
-            S("literal", "Value of a type", Category.Values, false, "type", "inits"),
-            S("interp", "Text with values", Category.Values, false, "parts", "formats", "values"),
-            S("lambda", "Lambda", Category.Values, false, "params", "body"),
-            // Calls
-            S("call", "Call", Category.Calls, false, "name", "typeArgs", "local", "args", "argNames"),
-            S("method", "Method", Category.Calls, false, "object", "name", "typeArgs", "args", "argNames"),
-            S("out", "out", Category.Calls, false, "target"),
-            S("outVar", "out var", Category.Locals, false, "mut", "type", "name"),
-            // Math and logic
-            S("binary", "Binary", Category.Math, false, "op", "lhs", "rhs"),
-            S("unary", "Unary", Category.Math, false, "op", "value"),
-            S("step", "Step", Category.Math, false, "op", "postfix", "target"),
-            S("conditional", "Conditional", Category.Math, false, "cond", "then", "else"),
-            S("coalesce", "Coalesce ??", Category.Math, false, "lhs", "rhs"),
-            S("switchExpr", "Switch value", Category.Math, false, "value", "arms"),
-            S("is", "is", Category.Math, false, "value", "type", "binding"),
-            S("has", "has", Category.Math, false, "subject", "type", "field"),
-            S("try", "try", Category.Math, false, "value"),
-            S("await", "await", Category.Math, false, "value"),
-            S("defaulted", "Value or default !", Category.Math, false, "value"),
-            S("index", "Index", Category.Math, false, "object", "index"),
-            // Text
-            S("text", "Text", Category.Text, false, "text", "inputs"),
-        };
-
-        static Dictionary<string, NodeSpec> byKind;
-
-        public static NodeSpec Spec(string k)
-        {
-            if (byKind == null) byKind = Nodes.ToDictionary(n => n.K);
-            return k != null && byKind.TryGetValue(k, out var s) ? s : null;
+            public string Kind, Title, Group;
+            public string[] Keys, Modifiers;
+            public bool Members, Params, Body;
         }
+
+        sealed class Schema
+        {
+            public JValue Json;
+            public string[] Root;
+            public KindSpec[] Decls, Members;
+            public Dictionary<string, string[]> Elements = new Dictionary<string, string[]>();
+            public string[] AllModifiers, ParamModes, AssignOps, UnaryOps, StepOps, OperatorOps, Types;
+            public (string op, string title)[] BinaryOps;
+            public Dictionary<string, (string title, Color color)> Categories = new Dictionary<string, (string, Color)>();
+            public NodeSpec[] Nodes;
+            public Dictionary<string, NodeSpec> ByKind;
+            public readonly Dictionary<string, string[]> NodeOrders = new Dictionary<string, string[]>();
+        }
+
+        static Schema current;
+        static string cacheProgram, cacheStamp; // What the Library's copy is of
+
+        // Why there's no schema, when there isn't: the editor shows it instead of a graph
+        public static string Failure { get; private set; }
+        // Where the schema in use came from
+        public static string Source { get; private set; }
+        // The schema changed (tidels gave one other than the one in use): windows build again
+        public static event Action Changed;
+
+        public static bool Available => Current != null;
+
+        static Schema Current
+        {
+            get
+            {
+                if (current == null && Failure == null) Load();
+                return current;
+            }
+        }
+
+        static Schema S => Current ?? throw new InvalidOperationException("No graph schema: " + Failure);
+
+        // The schema's JSON, as tidec has it
+        public static JValue Json => S.Json;
+
+        internal static string CachePath => Path.Combine(TideSettings.ProjectFolder, "Library", "Tide", "graph-schema.json");
+
+        // Reads it again from the program (or the Library's copy): a test that sets a tidec, or a window's "Try again"
+        public static void Reload()
+        {
+            current = null;
+            Failure = null;
+            Load();
+            Changed?.Invoke();
+        }
+
+        static string Stamp(string program)
+        {
+            try
+            {
+                var info = new FileInfo(program);
+                return $"{info.Length}-{info.LastWriteTimeUtc.Ticks}";
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        static void Load()
+        {
+            var have = TideGraphCommand.SchemaCommand(out var program, out var arguments, out var why);
+            var stamp = have ? Stamp(program) : null;
+            JValue cached = null;
+            try
+            {
+                if (File.Exists(CachePath)) cached = GraphJson.Parse(File.ReadAllText(CachePath, Encoding.UTF8));
+            }
+            catch (Exception)
+            {
+                cached = null; // A copy that doesn't read is asked for again
+            }
+            var cachedSchema = cached?.Get("schema");
+            if (have && cachedSchema != null && cached.Str("program") == program && cached.Str("stamp") == stamp && Use(cachedSchema, "the Library's copy of " + Path.GetFileName(program) + "'s"))
+            {
+                cacheProgram = program;
+                cacheStamp = stamp;
+                return;
+            }
+            if (have)
+            {
+                var code = TideGraphCommand.Run(program, arguments, null, out var output, out var errors, 30000);
+                if (code == 0)
+                {
+                    try
+                    {
+                        if (Use(GraphJson.Parse(output), $"{Path.GetFileName(program)} {arguments}"))
+                        {
+                            cacheProgram = program;
+                            cacheStamp = stamp;
+                            Keep();
+                            return;
+                        }
+                        why = $"{Path.GetFileName(program)} {arguments} gave no graph schema";
+                    }
+                    catch (GraphJson.ParseError e)
+                    {
+                        why = $"{Path.GetFileName(program)} {arguments} gave a schema that doesn't read: {e.Message}";
+                    }
+                }
+                else
+                {
+                    var said = (errors + output).Trim();
+                    why = $"{Path.GetFileName(program)} {arguments} failed" + (said.Length > 0 ? ": " + said.Split('\n')[0] : $" (exit code {code})");
+                }
+            }
+            // The program isn't there or failed: the copy of the last one's, if there is one
+            if (cachedSchema != null && Use(cachedSchema, "the Library's copy (" + why + ")")) return;
+            Failure = "Graphs need Tide's graph schema, which comes from tide (`tide graph --schema`) or tidels, and there's none: " + why;
+        }
+
+        // Writes the schema in use to the Library, for the next domain reload
+        static void Keep()
+        {
+            if (current == null || cacheProgram == null) return;
+            try
+            {
+                var o = JValue.NewObject();
+                o.Set("program", JValue.Of(cacheProgram));
+                o.Set("stamp", JValue.Of(cacheStamp));
+                o.Set("schema", current.Json);
+                Directory.CreateDirectory(Path.GetDirectoryName(CachePath) ?? ".");
+                File.WriteAllText(CachePath, GraphJson.WriteFile(o), new UTF8Encoding(false));
+            }
+            catch (IOException)
+            {
+                // Read from the program again next time
+            }
+        }
+
+        // The schema tidels has: used, and kept, when it isn't the one in use
+        public static void Adopt(JValue json, string from)
+        {
+            if (json == null || !json.IsObject) return;
+            if (current != null && TideLanguageClient.Compact(current.Json) == TideLanguageClient.Compact(json)) return;
+            if (!Use(json, from)) return;
+            Failure = null;
+            Keep();
+            Changed?.Invoke();
+        }
+
+        static bool Use(JValue json, string from)
+        {
+            var s = Read(json);
+            if (s == null) return false;
+            current = s;
+            Source = from;
+            return true;
+        }
+
+        static string[] Strings(JValue a) => a != null && a.IsArray ? a.Items.Where(i => i.Kind == JKind.String).Select(i => i.String).ToArray() : Array.Empty<string>();
+
+        static Schema Read(JValue j)
+        {
+            if (j == null || !j.IsObject || j.Arr("nodes") == null || j.Arr("declarations") == null || j.Get("elements") == null) return null;
+            var s = new Schema { Json = j, Root = Strings(j.Arr("root")) };
+            KindSpec Kind(JValue d) => new KindSpec
+            {
+                Kind = d.Str("kind"), Title = d.Str("title"), Group = d.Str("group"), Keys = Strings(d.Arr("keys")), Modifiers = Strings(d.Arr("modifiers")),
+                Members = d.Flag("members"), Params = d.Flag("params"), Body = d.Flag("body"),
+            };
+            s.Decls = j.Arr("declarations").Items.Select(Kind).ToArray();
+            s.Members = (j.Arr("members")?.Items ?? new List<JValue>()).Select(Kind).ToArray();
+            var elements = j.Get("elements");
+            for (var i = 0; elements.IsObject && i < elements.Keys.Count; i++) s.Elements[elements.Keys[i]] = Strings(elements.Values[i]);
+            s.AllModifiers = Strings(j.Arr("allModifiers"));
+            s.ParamModes = Strings(j.Arr("paramModes"));
+            var ops = j.Get("operators");
+            s.BinaryOps = (ops?.Arr("binary")?.Items ?? new List<JValue>()).Select(o => (o.Str("op"), o.Str("title") ?? o.Str("op"))).ToArray();
+            s.UnaryOps = (ops?.Arr("unary")?.Items ?? new List<JValue>()).Select(o => o.Str("op")).ToArray();
+            s.AssignOps = Strings(ops?.Arr("assign"));
+            s.StepOps = Strings(ops?.Arr("step"));
+            s.OperatorOps = Strings(ops?.Arr("overloadable"));
+            s.Types = Strings(j.Arr("types"));
+            foreach (var c in j.Arr("categories")?.Items ?? new List<JValue>())
+            {
+                if (!ColorUtility.TryParseHtmlString(c.Str("color") ?? "", out var color)) color = Color.gray;
+                s.Categories[c.Str("name") ?? ""] = (c.Str("title"), color);
+            }
+            s.Nodes = j.Arr("nodes").Items.Select(n => new NodeSpec
+            {
+                K = n.Str("k"), Title = n.Str("title"), Category = n.Str("category"), Exec = n.Flag("exec"), Value = n.Flag("value"), Ends = n.Flag("ends"),
+                Map = n.Str("map"), Declares = n.Str("declares"), Keys = Strings(n.Arr("keys")), Inputs = Strings(n.Arr("inputs")), Outputs = Strings(n.Arr("outputs")),
+                Lists = (n.Arr("lists")?.Items ?? new List<JValue>()).Select(l => new NodeList { Key = l.Str("key"), Label = l.Str("label"), Names = l.Str("names") }).ToArray(),
+                Items = (n.Arr("items")?.Items ?? new List<JValue>()).Select(it => new NodeItems
+                {
+                    Key = it.Str("key"), Label = it.Str("label"), Exec = it.Str("exec"), Wires = Strings(it.Arr("wires")),
+                    Element = ElementOf(s, it),
+                }).ToArray(),
+            }).Where(n => n.K != null).ToArray();
+            s.ByKind = new Dictionary<string, NodeSpec>();
+            foreach (var n in s.Nodes) s.ByKind[n.K] = n;
+            return s;
+        }
+
+        // The element order of an item of a node (a case, an arm, an init): the one it names, else the one its key
+        // is the plural of
+        static string ElementOf(Schema s, JValue item)
+        {
+            var named = item.Str("element");
+            if (named != null) return named;
+            var key = item.Str("key") ?? "";
+            return key.EndsWith("s") && s.Elements.ContainsKey(key.Substring(0, key.Length - 1)) ? key.Substring(0, key.Length - 1) : null;
+        }
+
+        public static string[] Element(string name) => S.Elements.TryGetValue(name, out var o) ? o : Array.Empty<string>();
+
+        public static string[] RootOrder => S.Root;
+
+        // Declarations, as the add menu lists them
+        public static string[] DeclKinds => S.Decls.Select(d => d.Kind).ToArray();
+        // Those with members
+        public static string[] DataKinds => S.Decls.Where(d => d.Members).Select(d => d.Kind).ToArray();
+        public static string[] MemberKinds => S.Members.Select(d => d.Kind).ToArray();
+
+        public static string DeclTitle(string kind) => S.Decls.FirstOrDefault(d => d.Kind == kind)?.Title ?? kind;
+        public static string DeclGroup(string kind) => S.Decls.FirstOrDefault(d => d.Kind == kind)?.Group;
+        public static string MemberTitle(string kind) => S.Members.FirstOrDefault(d => d.Kind == kind)?.Title ?? kind;
+
+        static KindSpec KindOf(string kind, bool member) => (member ? S.Members : S.Decls).FirstOrDefault(d => d.Kind == kind);
+
+        // A kind's keys in order; one the schema hasn't (a newer file's) keeps its keys where they are
+        public static string[] DeclOrder(string kind) => KindOf(kind, false)?.Keys ?? Array.Empty<string>();
+        public static string[] MemberOrder(string kind) => KindOf(kind, true)?.Keys ?? Array.Empty<string>();
+
+        public static string[] ParamOrder => Element("param");
+        public static string[] SampleParamOrder => Element("sampleParam");
+        public static string[] PayloadOrder => Element("payload");
+        public static string[] TriggerOrder => Element("trigger");
+        public static string[] AttributeOrder => Element("attribute");
+        public static string[] EnumMemberOrder => Element("enumMember");
+        public static string[] EntryOrder => Element("entry");
+        public static string[] AccessorOrder => Element("accessor");
+        public static string[] PrefabNodeOrder => Element("prefabNode");
+        public static string[] WhereOrder => Element("where");
+        public static string[] NoteOrder => Element("note");
+        public static string[] BodyOrder => Element("body");
+        public static string[] ValueOrder => Element("value");
+        public static string[] ArmOrder => Element("arm");
+        public static string[] InitOrder => Element("init");
+        public static string[] CaseOrder => Element("case");
+        public static string[] LambdaParamOrder => Element("lambdaParam");
+
+        // The words that go before a declaration, in the order tidec writes them
+        public static string[] AllModifiers => S.AllModifiers;
+
+        // The words that apply to a kind of declaration or member
+        public static string[] Modifiers(string kind, bool member) => KindOf(kind, member)?.Modifiers ?? Array.Empty<string>();
+        public static bool HasBody(string kind, bool member) => KindOf(kind, member)?.Body ?? false;
+        public static bool HasParams(string kind, bool member) => KindOf(kind, member)?.Params ?? false;
+
+        public static string[] ParamModes => S.ParamModes;
+        public static string[] AssignOps => S.AssignOps;
+        public static string[] UnaryOps => S.UnaryOps;
+        public static string[] StepOps => S.StepOps;
+        public static string[] OperatorOps => S.OperatorOps;
+        public static (string op, string title)[] BinaryOps => S.BinaryOps;
+        public static string[] BuiltinTypes => S.Types;
+
+        // A node category's colour, as the canvas draws its nodes' heads
+        public static Color ColorOf(string category) => category != null && S.Categories.TryGetValue(category, out var c) ? c.color : new Color(0.4f, 0.4f, 0.4f);
+        public static string CategoryTitle(string category) => category != null && S.Categories.TryGetValue(category, out var c) ? c.title : category;
+
+        public static NodeSpec[] Nodes => S.Nodes;
+
+        public static NodeSpec Spec(string k) => k != null && S.ByKind.TryGetValue(k, out var s) ? s : null;
 
         public static bool IsExec(string k) => Spec(k)?.Exec ?? false;
-
-        static readonly Dictionary<string, string[]> nodeOrders = new Dictionary<string, string[]>();
 
         // A node's keys in order: id, kind and place, its own, then its comment and the statement after it
         public static string[] NodeOrder(string k)
         {
+            var s = S;
             if (k == null) k = "";
-            if (nodeOrders.TryGetValue(k, out var o)) return o;
+            if (s.NodeOrders.TryGetValue(k, out var o)) return o;
             var own = Spec(k)?.Keys ?? Array.Empty<string>();
-            o = new[] { "id", "k", "x", "y" }.Concat(own).Concat(new[] { "comment", "next" }).ToArray();
-            nodeOrders[k] = o;
+            o = Element("node").Concat(own).Concat(Element("nodeEnd")).ToArray();
+            s.NodeOrders[k] = o;
             return o;
         }
 
-        // The node kinds that declare a local
+        // The node kinds that declare a local, with a name for it
         public static bool DeclaresLocal(JValue node)
         {
-            var k = node.Str("k");
-            return k == "var" || k == "foreach" || k == "parallel" || k == "outVar" || (k == "is" && !string.IsNullOrEmpty(node.Str("binding")));
+            var key = Spec(node.Str("k"))?.Declares;
+            return key != null && !string.IsNullOrEmpty(node.Str(key));
         }
 
-        public static string LocalName(JValue node) => node.Str("k") == "is" ? node.Str("binding") : node.Str("name");
+        public static string LocalName(JValue node)
+        {
+            var key = Spec(node.Str("k"))?.Declares;
+            return key != null ? node.Str(key) : node.Str("name");
+        }
     }
 
     // Where a node holds a wire: a path of keys and indexes from the node, ["args", 2], ["cases", 0, "labels", 1]
@@ -298,8 +380,9 @@ namespace Tide.Editor
             return v;
         }
 
-        // Sets the wire, 0 for none: a key of the node's or of an arm's, case's or field's goes when it's 0, as tidec
-        // writes them; an item of a list and a text's named input stays, as null
+        // Sets the wire, 0 for none, as tidec writes them: a key of the node's, and an item's exec output, goes when
+        // it's 0; an item's data input (an arm's pattern, a field's value), an item of a list and a named input
+        // stay, as null
         public void Set(JValue node, int id)
         {
             var parent = node;
@@ -315,22 +398,25 @@ namespace Tide.Editor
             }
             if (parent == null) return;
             var last = Parts[Parts.Length - 1];
+            var wire = id == 0 ? JValue.Null() : JValue.Of(id);
             if (last is int at)
             {
-                if (parent.IsArray && at < parent.Items.Count) parent.Items[at] = id == 0 ? JValue.Null() : JValue.Of(id);
+                if (parent.IsArray && at < parent.Items.Count) parent.Items[at] = wire;
                 return;
             }
             var name = (string)last;
-            if (Parts.Length == 2 && Parts[0] as string == "inputs")
+            var spec = GraphSchema.Spec(node.Str("k"));
+            if (Parts.Length == 2 && spec?.Map == Key)
             {
-                parent.Set(name, id == 0 ? JValue.Null() : JValue.Of(id));
+                parent.Set(name, wire);
                 return;
             }
             if (Parts.Length > 1)
             {
-                // An arm's pattern and a field's value are written as null; a case's body goes
-                if (name == "body") parent.SetWire(name, id, GraphSchema.CaseOrder);
-                else parent.Set(name, id == 0 ? JValue.Null() : JValue.Of(id), name == "pattern" ? GraphSchema.ArmOrder : GraphSchema.InitOrder);
+                var items = spec?.Items.FirstOrDefault(it => it.Key == Key);
+                var order = items?.Element != null ? GraphSchema.Element(items.Element) : null;
+                if (items != null && items.Exec == name) parent.SetWire(name, id, order);
+                else parent.Set(name, wire, order);
                 return;
             }
             parent.SetWire(name, id, GraphSchema.NodeOrder(node.Str("k")));
@@ -354,149 +440,97 @@ namespace Tide.Editor
         public int Index = -1;    // Its place in that list
     }
 
+    // A node's ports, from the schema's: its single inputs, its lists and items of inputs, its named inputs, its exec
+    // outputs and its items', and next
     static class GraphPorts
     {
-        static readonly string[] noKeys = Array.Empty<string>();
+        // The exec outputs of a kind other than next and its items'
+        public static string[] ExecKeys(string k) => GraphSchema.Spec(k)?.Outputs ?? Array.Empty<string>();
 
-        // The single data inputs of a kind, in the order its text reads them
-        public static string[] DataKeys(string k)
+        // Whether a path is a statement's flow out: next, the code it holds, an item's code (a case's body)
+        public static bool IsExecPath(JValue n, WirePath path)
         {
-            switch (k)
-            {
-                case "member": return new[] { "object" };
-                case "method": return new[] { "object" };
-                case "out": return new[] { "target" };
-                case "binary":
-                case "coalesce": return new[] { "lhs", "rhs" };
-                case "unary":
-                case "try":
-                case "defaulted":
-                case "await":
-                case "is":
-                case "switchExpr":
-                case "var":
-                case "discard":
-                case "eval":
-                case "return":
-                case "fail":
-                case "switch": return new[] { "value" };
-                case "step": return new[] { "target" };
-                case "conditional": return new[] { "cond", "then", "else" };
-                case "index": return new[] { "object" };
-                case "lambda": return new[] { "body" };
-                case "assign": return new[] { "target", "value" };
-                case "if":
-                case "while":
-                case "for": return new[] { "cond" };
-                case "foreach": return new[] { "collection" };
-                case "parallel": return new[] { "grid", "by", "offset" };
-                default: return noKeys;
-            }
-        }
-
-        // The exec outputs of a kind other than next
-        public static string[] ExecKeys(string k)
-        {
-            switch (k)
-            {
-                case "if": return new[] { "then", "else" };
-                case "while":
-                case "foreach":
-                case "parallel":
-                case "block": return new[] { "body" };
-                case "for": return new[] { "init", "step", "body" };
-                case "eval": return new[] { "block" };
-                default: return noKeys;
-            }
+            var spec = GraphSchema.Spec(n.Str("k"));
+            if (spec == null || !spec.Exec) return false;
+            if (path.Parts.Length == 1) return path.Key == "next" || Array.IndexOf(spec.Outputs, path.Key) >= 0;
+            return path.Parts.Length == 3 && spec.Items.Any(it => it.Key == path.Key && it.Exec != null && it.Exec == path.Parts[2] as string);
         }
 
         // Every port of a node, in the order the canvas shows them
         public static List<GraphPort> Of(JValue n)
         {
             var id = n.Wire("id");
-            var k = n.Str("k");
-            var exec = GraphSchema.IsExec(k);
+            var spec = GraphSchema.Spec(n.Str("k"));
             var ports = new List<GraphPort>();
+            var exec = spec != null && spec.Exec;
             if (exec) ports.Add(new GraphPort { Node = id, Input = true, Exec = true, Label = "" });
-            if (!exec || k == "eval") ports.Add(new GraphPort { Node = id, Input = false, Exec = false, Label = "" });
-            foreach (var key in DataKeys(k))
+            // A kind this editor doesn't know is drawn as a value
+            if (spec == null || spec.Value) ports.Add(new GraphPort { Node = id, Input = false, Exec = false, Label = "" });
+            if (spec == null) return ports;
+            foreach (var key in spec.Inputs)
             {
-                if (k == "member" && n.Flag("shorthand")) continue;
+                // A shorthand member (`.Name`) has no object
+                if (key == "object" && n.Flag("shorthand")) continue;
                 ports.Add(new GraphPort { Node = id, Input = true, Path = new WirePath(key), Label = key });
             }
-            switch (k)
+            foreach (var list in spec.Lists)
             {
-                case "call":
-                case "method":
-                    List(ports, n, id, "args", i =>
-                    {
-                        var names = n.Arr("argNames");
-                        var name = names != null && i < names.Items.Count ? names.Items[i].String : null;
-                        return string.IsNullOrEmpty(name) ? $"arg {i + 1}" : name + ":";
-                    });
-                    break;
-                case "list": List(ports, n, id, "items", i => $"item {i + 1}"); break;
-                case "interp": List(ports, n, id, "values", i => $"value {i + 1}"); break;
-                case "index": List(ports, n, id, "index", i => i == 0 ? "index" : $"index {i + 1}"); break;
-                case "literal":
+                var a = n.Arr(list.Key);
+                var names = list.Names != null ? n.Arr(list.Names) : null;
+                for (var i = 0; a != null && i < a.Items.Count; i++)
                 {
-                    var inits = n.Arr("inits");
-                    for (var i = 0; inits != null && i < inits.Items.Count; i++)
-                        ports.Add(new GraphPort { Node = id, Input = true, Path = new WirePath("inits", i, "value"), Label = inits.Items[i].Str("name") ?? "", Group = "inits", Index = i });
-                    break;
+                    var name = names != null && i < names.Items.Count ? names.Items[i].String : null;
+                    var label = string.IsNullOrEmpty(name) ? $"{list.Label} {i + 1}" : name + ":";
+                    ports.Add(new GraphPort { Node = id, Input = true, Path = new WirePath(list.Key, i), Label = label, Group = list.Key, Index = i });
                 }
-                case "switchExpr":
+            }
+            foreach (var items in spec.Items)
+            {
+                var a = n.Arr(items.Key);
+                for (var i = 0; a != null && i < a.Items.Count; i++)
                 {
-                    var arms = n.Arr("arms");
-                    for (var i = 0; arms != null && i < arms.Items.Count; i++)
+                    var item = a.Items[i];
+                    // Named by the item's own key where the label is one (a field's name), else counted
+                    var named = item.IsObject && item.Get(items.Label)?.Kind == JKind.String ? item.Str(items.Label) : null;
+                    var label = named ?? $"{items.Label} {i + 1}";
+                    foreach (var wire in items.Wires)
                     {
-                        ports.Add(new GraphPort { Node = id, Input = true, Path = new WirePath("arms", i, "pattern"), Label = $"arm {i + 1} pattern", Group = "arms", Index = i });
-                        ports.Add(new GraphPort { Node = id, Input = true, Path = new WirePath("arms", i, "value"), Label = $"arm {i + 1} value", Group = "arms", Index = i });
+                        if (wire.EndsWith("[]"))
+                        {
+                            var key = wire.Substring(0, wire.Length - 2);
+                            var wires = item.Arr(key);
+                            for (var l = 0; wires != null && l < wires.Items.Count; l++)
+                                ports.Add(new GraphPort { Node = id, Input = true, Path = new WirePath(items.Key, i, key, l), Label = label, Group = key, Index = i });
+                        }
+                        else
+                        {
+                            var text = named != null || items.Wires.Length == 1 ? label : $"{label} {wire}";
+                            ports.Add(new GraphPort { Node = id, Input = true, Path = new WirePath(items.Key, i, wire), Label = text, Group = items.Key, Index = i });
+                        }
                     }
-                    break;
                 }
-                case "text":
-                case "code":
-                {
-                    var inputs = n.Get("inputs");
-                    for (var i = 0; inputs != null && inputs.IsObject && i < inputs.Keys.Count; i++)
-                        ports.Add(new GraphPort { Node = id, Input = true, Path = new WirePath("inputs", inputs.Keys[i]), Label = inputs.Keys[i], Group = "inputs", Index = i });
-                    break;
-                }
-                case "switch":
-                {
-                    var cases = n.Arr("cases");
-                    for (var i = 0; cases != null && i < cases.Items.Count; i++)
-                    {
-                        var labels = cases.Items[i].Arr("labels");
-                        for (var l = 0; labels != null && l < labels.Items.Count; l++)
-                            ports.Add(new GraphPort { Node = id, Input = true, Path = new WirePath("cases", i, "labels", l), Label = $"case {i + 1}", Group = "labels", Index = i });
-                    }
-                    break;
-                }
+            }
+            if (spec.Map != null)
+            {
+                var inputs = n.Get(spec.Map);
+                for (var i = 0; inputs != null && inputs.IsObject && i < inputs.Keys.Count; i++)
+                    ports.Add(new GraphPort { Node = id, Input = true, Path = new WirePath(spec.Map, inputs.Keys[i]), Label = inputs.Keys[i], Group = spec.Map, Index = i });
             }
             if (exec)
             {
-                foreach (var key in ExecKeys(k)) ports.Add(new GraphPort { Node = id, Input = false, Exec = true, Path = new WirePath(key), Label = key });
-                if (k == "switch")
+                foreach (var key in spec.Outputs) ports.Add(new GraphPort { Node = id, Input = false, Exec = true, Path = new WirePath(key), Label = key });
+                foreach (var items in spec.Items)
                 {
-                    var cases = n.Arr("cases");
-                    for (var i = 0; cases != null && i < cases.Items.Count; i++)
-                        ports.Add(new GraphPort { Node = id, Input = false, Exec = true, Path = new WirePath("cases", i, "body"), Label = $"case {i + 1}", Group = "cases", Index = i });
+                    if (items.Exec == null) continue;
+                    var a = n.Arr(items.Key);
+                    for (var i = 0; a != null && i < a.Items.Count; i++)
+                        ports.Add(new GraphPort { Node = id, Input = false, Exec = true, Path = new WirePath(items.Key, i, items.Exec), Label = $"{items.Label} {i + 1}", Group = items.Key, Index = i });
                 }
-                if (k != "return" && k != "fail" && k != "break" && k != "continue")
-                    ports.Add(new GraphPort { Node = id, Input = false, Exec = true, Path = new WirePath("next"), Label = "next" });
-                else if (n.Wire("next") != 0)
+                // A statement that ends its flow (return, break ...) has a next only when one is wired
+                if (!spec.Ends || n.Wire("next") != 0)
                     ports.Add(new GraphPort { Node = id, Input = false, Exec = true, Path = new WirePath("next"), Label = "next" });
             }
             return ports;
-        }
-
-        static void List(List<GraphPort> ports, JValue n, int id, string key, Func<int, string> label)
-        {
-            var a = n.Arr(key);
-            for (var i = 0; a != null && i < a.Items.Count; i++)
-                ports.Add(new GraphPort { Node = id, Input = true, Path = new WirePath(key, i), Label = label(i), Group = key, Index = i });
         }
 
         // The ids a node's data inputs are wired from (tidec's graph_data_wires)

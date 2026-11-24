@@ -193,8 +193,7 @@ namespace Tide.Editor
 
             var k = Node.Str("k");
             var spec = GraphSchema.Spec(Call != null ? Call.Str("k") : k);
-            var category = spec?.Category ?? GraphSchema.Category.Text;
-            head.style.backgroundColor = GraphSchema.ColorOf(category);
+            head.style.backgroundColor = GraphSchema.ColorOf(spec?.Category ?? "text");
             var ports = GraphPorts.Of(Node);
             var callPorts = Call != null ? GraphPorts.Of(Call) : new List<GraphPort>();
             var execIn = ports.FirstOrDefault(p => p.Input && p.Exec);

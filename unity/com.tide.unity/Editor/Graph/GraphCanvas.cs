@@ -404,12 +404,30 @@ namespace Tide.Editor
             else FrameAll();
         }
 
+        // A layout asked of tidels that hasn't come back
+        internal bool LayoutPending { get; private set; }
+
+        // Lays out the graph shown as tidec does, with tidels's layout; without tidels the nodes stay where they are
         public void AutoLayout()
         {
             var graph = Graph;
             if (graph == null) return;
-            Window.Edit("Auto layout", () => GraphDocument.Layout(graph), GraphRedraw.Canvas);
-            FrameAll();
+            var slot = Window.Slot;
+            LayoutPending = true;
+            TideGraphLanguage.Layout(graph, (layout, why) =>
+            {
+                LayoutPending = false;
+                if (Window == null || Window.Canvas != this) return;
+                if (layout == null)
+                {
+                    Window.ShowNotification(new GUIContent($"Auto layout is tidels's, which can't now ({why}): the nodes stay where they are"));
+                    return;
+                }
+                var now = Graph;
+                if (now == null || !Window.Slot.Equals(slot)) return;
+                Window.Edit("Auto layout", () => TideGraphLanguage.Place(now, layout), GraphRedraw.Canvas);
+                FrameAll();
+            });
         }
 
         // ---------------------------------------------------------------------------------------------------------

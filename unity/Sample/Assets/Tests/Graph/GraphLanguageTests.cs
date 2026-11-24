@@ -51,6 +51,8 @@ public class GraphLanguageTests
         tidec = Find("TIDE_TIDEC", "tidec");
         TideGraphCommand.TidelsOverride = tidels;
         TideGraphCommand.TidecOverride = tidec;
+        // The graph schema of that tidec
+        GraphSchema.Reload();
         checker = TideGraphServices.Checker;
         TideGraphServices.Checker = new TideGraphChecker();
     }
@@ -69,6 +71,18 @@ public class GraphLanguageTests
     {
         if (SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null) LogAssert.ignoreFailingMessages = true;
         foreach (var w in Resources.FindObjectsOfTypeAll<TideGraphWindow>()) w.Close();
+        // Graphs of the game in Temp that only one test reads: another's would declare their Ball again
+        foreach (var name in new[] { "Schema.tidegraph", "Layout.tidegraph", "Members.tidegraph" })
+        {
+            try
+            {
+                File.Delete(Path.Combine(Game, name));
+            }
+            catch (IOException)
+            {
+                // Read again by the next test's server, which says so
+            }
+        }
     }
 
     static void NeedTidels()
@@ -324,6 +338,141 @@ public class GraphLanguageTests
             if (!gone) yield return null;
         }
         Assert.IsTrue(gone, "tidels is shut down");
+    }
+
+    static IEnumerator Until(Func<bool> done, string what)
+    {
+        for (var clock = Stopwatch.StartNew(); !done() && clock.Elapsed.TotalSeconds < 60;) yield return null;
+        Assert.IsTrue(done(), what);
+    }
+
+    // The schema tidels serves (tide/graphSchema) is the one the editor reads
+    [UnityTest]
+    public IEnumerator TidelsServesTheSchemaTheEditorReads()
+    {
+        NeedTidels();
+        var path = WriteGame("Schema.tidegraph", BallGraph);
+        using var logged = new Logged();
+        var window = TideGraphWindow.Open(path);
+        yield return Checked(window);
+        JValue served = null;
+        string why = null;
+        var done = false;
+        TideLanguageClient.Shared.Request("tide/graphSchema", JValue.Null(), (r, w) =>
+        {
+            served = r;
+            why = w;
+            done = true;
+        });
+        yield return Until(() => done, "tidels answers");
+        Assert.IsNull(why);
+        Assert.AreEqual(TideLanguageClient.Compact(served), TideLanguageClient.Compact(GraphSchema.Json));
+        window.Close();
+    }
+
+    // Auto layout is tidels's (tide/graphLayout), tidec's own: statements along next, a statement's values to its
+    // left; without tidels the nodes stay where they are
+    [UnityTest]
+    public IEnumerator AutoLayoutIsTidecsFromTidels()
+    {
+        NeedTidels();
+        var path = WriteGame("Layout.tidegraph", BallGraph);
+        using var logged = new Logged();
+        var window = TideGraphWindow.Open(path);
+        ShowHit(window);
+        yield return Checked(window);
+        double X(int id) => GraphDocument.NodeIn(window.Doc.GetGraph(window.Slot), id).Get("x").Number;
+        double Y(int id) => GraphDocument.NodeIn(window.Doc.GetGraph(window.Slot), id).Get("y").Number;
+        var text = window.Checked.Text;
+
+        window.Canvas.AutoLayout();
+        yield return Until(() => !window.Canvas.LayoutPending, "tidels lays it out");
+        Assert.Less(X(12), X(15), "statements left to right along next");
+        Assert.Less(X(13), X(12), "a statement's value to its left");
+        Assert.Less(X(16), X(15), "the return's value to its left");
+        Assert.Less(X(17), X(16), "...and that value's to its left");
+        Assert.Greater(Y(18), Y(16), "what nothing reads on a row below");
+        // tidels's layout of the body, as it gives it
+        JValue layout = null;
+        TideGraphLanguage.Layout(window.Doc.GetGraph(window.Slot), (l, _) => layout = l);
+        yield return Until(() => layout != null, "tidels gives the layout");
+        foreach (var id in new[] { 12, 13, 15, 16, 17, 18 })
+        {
+            Assert.AreEqual(layout.Arr(id.ToString()).Items[0].Number, X(id), $"@{id}'s x");
+            Assert.AreEqual(layout.Arr(id.ToString()).Items[1].Number, Y(id), $"@{id}'s y");
+        }
+        window.CheckSoon(0);
+        yield return null;
+        yield return Checked(window);
+        Assert.AreEqual(text, window.Checked.Text, "the layout moves nodes, nothing else");
+        Undo.PerformUndo();
+        Assert.AreEqual(300, X(15), "undone");
+
+        // Without tidels: nothing moves
+        TideGraphCommand.TidelsOverride = Path.Combine(Game, "not-tidels.exe");
+        try
+        {
+            window.Canvas.AutoLayout();
+            Assert.IsFalse(window.Canvas.LayoutPending);
+            Assert.AreEqual(300, X(15));
+        }
+        finally
+        {
+            TideGraphCommand.TidelsOverride = tidels;
+        }
+        window.Close();
+    }
+
+    // What a value has is tidels's (tide/graphMembers), a value something reads or one nothing reads: a struct's
+    // field, and its method, which the search makes a method node with an input for its parameter
+    [UnityTest]
+    public IEnumerator MembersOfAValueAreTidelss()
+    {
+        NeedTidels();
+        var path = WriteGame("Members.tidegraph", BallGraph);
+        using var logged = new Logged();
+        var window = TideGraphWindow.Open(path);
+        ShowHit(window);
+        yield return Checked(window);
+        var client = TideLanguageClient.Shared;
+        var uri = TideLanguageClient.UriOf(path);
+        foreach (var node in new[] { 17, 18 })
+        {
+            JValue items = null;
+            var done = false;
+            var p = JValue.NewObject();
+            p.Set("node", JValue.Of(node));
+            client.Ask("tide/graphMembers", uri, p, (r, _) =>
+            {
+                items = r;
+                done = true;
+            });
+            yield return Until(() => done, "tidels answers");
+            var labels = items?.Arr("items")?.Items.Select(i => i.Str("label")).ToList() ?? new List<string>();
+            CollectionAssert.Contains(labels, "hits", $"@{node}: " + string.Join(", ", labels));
+            CollectionAssert.Contains(labels, "Bounce", $"@{node}: " + string.Join(", ", labels));
+        }
+
+        // As the search has them
+        List<GraphSearchEntry> found = null;
+        var context = new GraphSearchContext { Doc = window.Doc, Graph = window.Doc.GetGraph(window.Slot), Slot = window.Slot, Window = window, Pending = window.Canvas.Views[17].DataOut.Port };
+        TideGraphLanguage.Complete(context, (e, _) => found = e ?? new List<GraphSearchEntry>());
+        yield return Until(() => found != null, "the search is answered");
+        var hits = found.FirstOrDefault(e => e.Title == "hits");
+        Assert.IsNotNull(hits, string.Join(", ", found.Select(e => e.Title)));
+        Assert.AreEqual("Members of Ball", hits.Group);
+        var bounce = found.FirstOrDefault(e => e.Title == "Bounce(height)");
+        Assert.IsNotNull(bounce, string.Join(", ", found.Select(e => e.Title)));
+        Assert.AreEqual(window.Doc.Text, window.Checked.Json, "asking leaves the graph as it was");
+        var scratch = GraphDocument.Parse(window.Doc.Text);
+        var made = bounce.Make(scratch, scratch.GetGraph(window.Slot), Vector2.zero);
+        Assert.AreEqual("method", made.Str("k"));
+        Assert.AreEqual("Bounce", made.Str("name"));
+        Assert.AreEqual(1, made.Arr("args").Items.Count);
+        var field = hits.Make(scratch, scratch.GetGraph(window.Slot), Vector2.zero);
+        Assert.AreEqual("member", field.Str("k"));
+        Assert.AreEqual("hits", field.Str("member"));
+        window.Close();
     }
 
     // A graph in the project's Assets is read with the game Unity's Tide builds, and a build's error on a graph

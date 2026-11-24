@@ -183,11 +183,47 @@ namespace Tide.Editor
         }
 
         // ---------------------------------------------------------------------------------------------------------
+        // Layout
+
+        // Where tidec's layout puts a graph's nodes (tide/graphLayout, the one tidec's converter uses): `done` gets
+        // {"<id>": [x, y]}, or null and why, on the editor's thread
+        public static void Layout(JValue graph, Action<JValue, string> done)
+        {
+            var client = TideLanguageClient.Get(out var why);
+            if (client == null || !client.Usable)
+            {
+                done(null, why ?? client?.Failure ?? "tidels isn't running");
+                return;
+            }
+            var p = JValue.NewObject();
+            p.Set("graph", graph.Clone());
+            client.Request("tide/graphLayout", p, (r, why2) =>
+            {
+                if (r != null && r.IsObject) done(r, null);
+                else done(null, why2 ?? "tidels couldn't lay the graph out");
+            });
+        }
+
+        // Moves a graph's nodes where a layout puts them, and nothing else: how many it moved
+        public static int Place(JValue graph, JValue layout)
+        {
+            var moved = 0;
+            foreach (var n in GraphDocument.Nodes(graph).Items)
+            {
+                var at = layout?.Arr(n.Wire("id").ToString(System.Globalization.CultureInfo.InvariantCulture));
+                if (at == null || at.Items.Count < 2 || at.Items[0].Kind != JKind.Number || at.Items[1].Kind != JKind.Number) continue;
+                n.Set("x", JValue.Of(at.Items[0].Number));
+                n.Set("y", JValue.Of(at.Items[1].Number));
+                moved++;
+            }
+            return moved;
+        }
+
+        // ---------------------------------------------------------------------------------------------------------
         // Completion
 
-        const string Probe = "tideGraphProbe";
-
-        // What completion offers where a search is made: the members of a wired value, or what's at its place
+        // What completion offers where a search is made: the members of a value (tide/graphMembers), or what's at
+        // its place
         public static void Complete(GraphSearchContext c, Action<List<GraphSearchEntry>, string> found)
         {
             var window = c.Window;
@@ -209,7 +245,6 @@ namespace Tide.Editor
             {
                 void Fail(string why)
                 {
-                    client.EndProbe(uri);
                     finish();
                     found(null, why);
                 }
@@ -220,33 +255,13 @@ namespace Tide.Editor
                 }
                 if (objectNode != 0)
                 {
-                    // A copy of the graph with `object.tideGraphProbe` in it: completion after its '.'
-                    var probe = MemberProbe(text, c.Slot, objectNode, out var probeId);
-                    if (probe == null || !client.SetText(uri, probe, true))
+                    // What the value has: tidels reads the graph with a '.' after it, as after `value.` in a .tide file
+                    var parameters = JValue.NewObject();
+                    parameters.Set("node", JValue.Of(objectNode));
+                    client.Ask("tide/graphMembers", uri, parameters, (items, why) =>
                     {
-                        Fail("The value can't be asked about");
-                        return;
-                    }
-                    client.Ask("tide/graphText", uri, -1, (r, why) =>
-                    {
-                        var t = GraphText.Of(r);
-                        if (t == null || !t.Spans.TryGetValue(probeId, out var span))
-                        {
-                            Fail(why ?? "tidels can't read the graph");
-                            return;
-                        }
-                        var offset = span.end - Encoding.UTF8.GetByteCount(Probe);
-                        // The value's type, read in the probe (where nothing read it, the check gave it none)
-                        client.Ask("tide/graphTypes", uri, -1, (types, _) =>
-                        {
-                            var type = types?.Str(objectNode.ToString());
-                            client.Ask("tide/graphCompletion", uri, offset, (items, why2) =>
-                            {
-                                client.EndProbe(uri);
-                                finish();
-                                found(Members(c, items, objectNode, type), why2);
-                            });
-                        });
+                        finish();
+                        found(Members(c, items, objectNode, items?.Str("type")), why);
                     });
                     return;
                 }
@@ -276,53 +291,6 @@ namespace Tide.Editor
             var p = c.Pending;
             if (p == null || p.Input || p.Exec || p.Node <= 0) return 0;
             return p.Node;
-        }
-
-        // A copy of the file with a member node on the object, where the object's value is read (or as a
-        // statement of its own, or the expression's value): its text, and the member node's id
-        internal static string MemberProbe(string text, GraphSlot slot, int objectNode, out int probeId)
-        {
-            probeId = 0;
-            GraphDocument doc;
-            try
-            {
-                doc = GraphDocument.Parse(text);
-            }
-            catch (GraphJson.ParseError)
-            {
-                return null;
-            }
-            var graph = doc.GetGraph(slot);
-            if (graph == null || GraphDocument.NodeIn(graph, objectNode) == null) return null;
-            var m = doc.AddNode(graph, "member", 0, 0);
-            var order = GraphSchema.NodeOrder("member");
-            m.Set("object", JValue.Of(objectNode), order);
-            m.Set("member", JValue.Of(Probe), order);
-            probeId = m.Wire("id");
-            var reached = GraphDocument.Reached(graph);
-            // Where something reached reads it: read through the member instead
-            foreach (var n in GraphDocument.Nodes(graph).Items)
-            {
-                if (n == m || !reached.Contains(n.Wire("id"))) continue;
-                foreach (var p in GraphPorts.Of(n))
-                {
-                    if (!p.Input || p.Exec || p.Path == null || p.Path.Get(n) != objectNode) continue;
-                    p.Path.Set(n, probeId);
-                    return doc.Text;
-                }
-            }
-            if (graph.Wire("root") == objectNode || !slot.IsBody)
-            {
-                graph.Set("root", JValue.Of(probeId), GraphSchema.ValueOrder);
-                return doc.Text;
-            }
-            // A statement of its own, after the body's last
-            var eval = doc.AddNode(graph, "eval", 0, 0);
-            eval.Set("value", JValue.Of(probeId), GraphSchema.NodeOrder("eval"));
-            var last = LastStatement(graph);
-            if (last == null) graph.Set("entry", JValue.Of(eval.Wire("id")), GraphSchema.BodyOrder);
-            else last.Set("next", JValue.Of(eval.Wire("id")), GraphSchema.NodeOrder(last.Str("k")));
-            return doc.Text;
         }
 
         // The body's last statement along next from its start
@@ -425,7 +393,7 @@ namespace Tide.Editor
             foreach (var item in Items(completion))
             {
                 var label = item.Str("label");
-                if (string.IsNullOrEmpty(label) || label == Probe) continue;
+                if (string.IsNullOrEmpty(label)) continue;
                 var kind = (int)(item.Get("kind")?.Number ?? 0);
                 if (kind == KindKeyword || kind == KindSnippet) continue;
                 var detail = item.Str("detail") ?? "";

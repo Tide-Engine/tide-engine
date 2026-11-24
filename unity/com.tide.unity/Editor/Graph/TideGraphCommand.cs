@@ -51,6 +51,14 @@ namespace Tide.Editor
             return program != null;
         }
 
+        // What prints the graph schema (GraphSchema): `tide graph --schema`, or a tidec's `--graph-schema`
+        internal static bool SchemaCommand(out string program, out string arguments, out string why)
+        {
+            program = Program(out var tidec, out why);
+            arguments = tidec ? "--graph-schema" : "graph --schema";
+            return program != null;
+        }
+
         static string Quote(string s) => "\"" + s.Replace("\"", "\\\"") + "\"";
 
         // Runs a program to its end: its exit code and what it wrote, or -1 when it can't start or doesn't end in time

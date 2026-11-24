@@ -50,6 +50,8 @@ namespace Tide.Editor
         bool checking, checkAgain;
         DateTime fileTime;
         double nextFileLook;
+        string waiting;            // The text read while there's no graph schema to edit it with
+        bool waitingFromFile;      // ...read from the file, not Undo's state
 
         internal GraphSlot Slot
         {
@@ -93,6 +95,7 @@ namespace Tide.Editor
             }
             Undo.undoRedoPerformed += UndoRedo;
             EditorApplication.update += Tick;
+            GraphSchema.Changed += SchemaChanged;
             saveChangesMessage = "This graph has changes that aren't saved. Save them?";
             if (!string.IsNullOrEmpty(path) && Doc == null)
             {
@@ -106,6 +109,31 @@ namespace Tide.Editor
         {
             Undo.undoRedoPerformed -= UndoRedo;
             EditorApplication.update -= Tick;
+            GraphSchema.Changed -= SchemaChanged;
+        }
+
+        // The graph schema came, or changed (tidels's isn't the one read before): the window builds again with it
+        void SchemaChanged()
+        {
+            if (this == null) return;
+            if (!GraphSchema.Available)
+            {
+                if (Doc != null) waiting = Doc.Text;
+                Doc = null;
+                BuildNoSchema();
+                return;
+            }
+            if (Doc == null && waiting != null)
+            {
+                var text = waiting;
+                var fromFile = waitingFromFile;
+                waiting = null;
+                ReadText(text);
+                if (fromFile) saved = state.json;
+                UpdateTitle();
+                return;
+            }
+            if (Doc != null) Build();
         }
 
         void OnDestroy()
@@ -135,12 +163,21 @@ namespace Tide.Editor
                 return;
             }
             ReadText(text);
-            saved = state.json;
+            if (Doc == null) waitingFromFile = true;
+            else saved = state.json;
             UpdateTitle();
         }
 
         void ReadText(string text)
         {
+            if (!GraphSchema.Available)
+            {
+                // Nothing says what the file's kinds are: it waits for a schema, and the window says why
+                waiting = text;
+                Doc = null;
+                BuildNoSchema();
+                return;
+            }
             try
             {
                 Doc = GraphDocument.Parse(text);
@@ -280,10 +317,28 @@ namespace Tide.Editor
         void CreateGUI()
         {
             if (Doc != null) Build();
+            else if (waiting != null) BuildNoSchema();
+        }
+
+        // The window without a schema: why, and a button that asks for it again
+        void BuildNoSchema()
+        {
+            var root = rootVisualElement;
+            root.Clear();
+            Outline = null;
+            Canvas = null;
+            Inspector = null;
+            root.Add(new HelpBox(GraphSchema.Failure ?? "There's no graph schema.", HelpBoxMessageType.Error));
+            root.Add(new Button(GraphSchema.Reload) { text = "Try again" });
         }
 
         void Build()
         {
+            if (!GraphSchema.Available)
+            {
+                BuildNoSchema();
+                return;
+            }
             var root = rootVisualElement;
             root.Clear();
             root.style.flexDirection = FlexDirection.Column;
@@ -478,7 +533,8 @@ namespace Tide.Editor
                 if (text == saved) return;
                 Undo.RecordObject(state, "Read the graph again");
                 ReadText(text);
-                saved = state.json;
+                if (Doc != null) saved = state.json;
+                else waitingFromFile = true;
                 UpdateTitle();
             }
             catch (IOException)

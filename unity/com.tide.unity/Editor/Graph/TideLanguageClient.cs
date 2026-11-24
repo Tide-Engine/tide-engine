@@ -17,12 +17,11 @@ namespace Tide.Editor
     // with the game Unity's Tide builds (tidels finds a Unity project's game from its Assets folder), and a graph in a
     // folder with a tide.packages of its own with that folder's game.
     //
-    // Work that changes what the server holds and then asks about it (a check, a completion made in a copy of the
-    // graph) is an operation: operations run one at a time, in the order they're queued. A document's text can be
-    // sent as a probe, a copy of the graph with something added to ask about, which the next real text replaces; the
-    // diagnostics the server publishes for a probe are dropped. The server publishes a change's diagnostics before
+    // Work that changes what the server holds and then asks about it (a check, a completion) is an operation:
+    // operations run one at a time, in the order they're queued. The server publishes a change's diagnostics before
     // it answers any request sent after that change, so a publication belongs to the change before the request whose
-    // answer comes next.
+    // answer comes next. What graph editors share comes from it too: the graph schema, asked for when it starts
+    // (GraphSchema.Adopt), and layouts, asked without a document.
     sealed class TideLanguageClient
     {
         // The one client of this editor, made when a graph first asks; null after it's given up or shut down
@@ -91,16 +90,14 @@ namespace Tide.Editor
         sealed class Pending
         {
             public string Method;
-            public bool Probe;          // Sent while a document held a probe
             public double Deadline;
             public Action<JValue, string> Done;
         }
 
         sealed class Document
         {
-            public string Text;         // The real text: the file as the window has it
+            public string Text;         // The file as the window has it
             public int Version;
-            public bool Probing;        // A probe was sent since
         }
 
         readonly string program;
@@ -274,14 +271,15 @@ namespace Tide.Editor
             init.Set("workspaceFolders", folders);
             init.Set("capabilities", JValue.NewObject());
             init.Set("clientInfo", Obj("name", JValue.Of("Tide's graph editor")));
-            SendRequest("initialize", init, (_, __) => { }, false);
+            SendRequest("initialize", init, (_, __) => { });
             Notify("initialized", JValue.NewObject());
-            // The documents it had before it stopped
-            foreach (var pair in docs)
+            // The schema of graphs this tidels has, which is the one every graph editor reads
+            SendRequest("tide/graphSchema", JValue.Null(), (schema, why) =>
             {
-                pair.Value.Probing = false;
-                Notify("textDocument/didOpen", Obj("textDocument", OpenItem(pair.Key, pair.Value)));
-            }
+                if (why == null) GraphSchema.Adopt(schema, "tidels");
+            });
+            // The documents it had before it stopped
+            foreach (var pair in docs) Notify("textDocument/didOpen", Obj("textDocument", OpenItem(pair.Key, pair.Value)));
             return true;
         }
 
@@ -549,7 +547,7 @@ namespace Tide.Editor
                 pending.TryGetValue(number, out var p);
                 if (p != null) pending.Remove(number);
                 // What it published before this answer was about the change before this request
-                if (p == null || !p.Probe) foreach (var d in publications) Publish(d);
+                foreach (var d in publications) Publish(d);
                 p?.Done(error != null ? null : result ?? JValue.Null(), error != null ? error.Str("message") ?? "the request failed" : null);
             });
         }
@@ -594,7 +592,7 @@ namespace Tide.Editor
                     }
             }
             // Publications no request will claim: a change's with nothing asked after it
-            if (pending.Count == 0 && !AnyProbe())
+            if (pending.Count == 0)
             {
                 List<JValue> publications = null;
                 lock (held)
@@ -632,12 +630,6 @@ namespace Tide.Editor
             }
         }
 
-        bool AnyProbe()
-        {
-            foreach (var d in docs.Values) if (d.Probing) return true;
-            return false;
-        }
-
         void FailAll(string why)
         {
             if (pending.Count == 0) return;
@@ -646,10 +638,10 @@ namespace Tide.Editor
             foreach (var p in all) p.Done(null, why);
         }
 
-        void SendRequest(string method, JValue parameters, Action<JValue, string> done, bool probe)
+        void SendRequest(string method, JValue parameters, Action<JValue, string> done)
         {
             var id = nextId++;
-            pending[id] = new Pending { Method = method, Probe = probe, Deadline = EditorApplication.timeSinceStartup + RequestTimeout, Done = done };
+            pending[id] = new Pending { Method = method, Deadline = EditorApplication.timeSinceStartup + RequestTimeout, Done = done };
             Send(Message(method, parameters, id));
         }
 
@@ -715,22 +707,20 @@ namespace Tide.Editor
             }
         }
 
-        // Sends a document's text, the file's (or a probe's): opens it if the server hasn't it. False when the
+        // Sends a document's text, the file's as the window has it: opens it if the server hasn't it. False when the
         // server can't be started.
-        public bool SetText(string uri, string text, bool probe = false)
+        public bool SetText(string uri, string text)
         {
             if (!Start()) return false;
             if (!docs.TryGetValue(uri, out var d))
             {
-                if (probe) return false;
                 d = docs[uri] = new Document { Text = text, Version = 1 };
                 Notify("textDocument/didOpen", Obj("textDocument", OpenItem(uri, d)));
                 return true;
             }
-            if (!probe && !d.Probing && d.Text == text) return true;
+            if (d.Text == text) return true;
             d.Version++;
-            if (!probe) d.Text = text;
-            d.Probing = probe;
+            d.Text = text;
             var p = JValue.NewObject();
             var item = JValue.NewObject();
             item.Set("uri", JValue.Of(uri));
@@ -743,18 +733,20 @@ namespace Tide.Editor
             return true;
         }
 
-        // Puts back a document's real text after a probe
-        public void EndProbe(string uri)
-        {
-            if (docs.TryGetValue(uri, out var d) && d.Probing) SetText(uri, d.Text);
-        }
-
         public bool IsOpen(string uri) => docs.ContainsKey(uri);
 
         public string TextOf(string uri) => docs.TryGetValue(uri, out var d) ? d.Text : null;
 
-        // A request about a document: `done` gets its result, or null and why
+        // A request about a document, at an offset into its Tide (or none, -1): `done` gets its result, or null and why
         public void Ask(string method, string uri, int offset, Action<JValue, string> done)
+        {
+            var p = JValue.NewObject();
+            if (offset >= 0) p.Set("offset", JValue.Of(offset));
+            Ask(method, uri, p, done);
+        }
+
+        // A request about a document with parameters of its own (tide/graphMembers' node)
+        public void Ask(string method, string uri, JValue parameters, Action<JValue, string> done)
         {
             if (!Start())
             {
@@ -762,9 +754,23 @@ namespace Tide.Editor
                 return;
             }
             var p = Obj("textDocument", Obj("uri", JValue.Of(uri)));
-            if (offset >= 0) p.Set("offset", JValue.Of(offset));
-            docs.TryGetValue(uri, out var d);
-            SendRequest(method, p, done, d != null && d.Probing);
+            for (var i = 0; parameters != null && parameters.IsObject && i < parameters.Keys.Count; i++) p.Set(parameters.Keys[i], parameters.Values[i]);
+            SendRequest(method, p, done);
+        }
+
+        // A request about no document (tide/graphLayout): when no graph is open, the server stops again after it
+        public void Request(string method, JValue parameters, Action<JValue, string> done)
+        {
+            if (!Start())
+            {
+                done(null, Failure ?? "tidels isn't running");
+                return;
+            }
+            SendRequest(method, parameters, (result, why) =>
+            {
+                if (docs.Count == 0 && pending.Count == 0) Shutdown();
+                done(result, why);
+            });
         }
 
         // The diagnostics it last published for a document's real text

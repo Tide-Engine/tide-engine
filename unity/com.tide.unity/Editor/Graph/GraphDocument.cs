@@ -410,7 +410,7 @@ namespace Tide.Editor
                 why = "a wire joins two nodes of one graph";
                 return false;
             }
-            var exec = IsExecPath(n, path);
+            var exec = GraphPorts.IsExecPath(n, path);
             if (exec)
             {
                 if (!GraphSchema.IsExec(source.Str("k")))
@@ -451,15 +451,6 @@ namespace Tide.Editor
             }
             path.Set(n, from);
             return true;
-        }
-
-        // Whether a node's key is a statement's flow out: next, the code it holds, a case's body
-        static bool IsExecPath(JValue n, WirePath path)
-        {
-            var k = n.Str("k");
-            if (!GraphSchema.IsExec(k)) return false;
-            if (path.Parts.Length == 1) return path.Key == "next" || Array.IndexOf(GraphPorts.ExecKeys(k), path.Key) >= 0;
-            return k == "switch" && path.Parts.Length == 3 && path.Key == "cases" && path.Parts[2] as string == "body";
         }
 
         // Whether node `a` reads node `b`, through any of its inputs
@@ -649,132 +640,6 @@ namespace Tide.Editor
         {
             foreach (var n in Nodes(graph).Items)
                 if (GraphSchema.DeclaresLocal(n) && !string.IsNullOrEmpty(GraphSchema.LocalName(n))) yield return n;
-        }
-
-        // ---------------------------------------------------------------------------------------------------------
-        // Layout: tidec's, statements left to right along next, a statement's values to the left of it and below,
-        // and the code it holds below it
-
-        const int NodeGap = 40, RowGap = 60, MaxRow = 3200;
-
-        sealed class Place
-        {
-            public JValue Node;
-            public List<int> Inputs = new List<int>();
-            public List<int> Bodies = new List<int>();
-            public int Next, W, H, X, Y;
-            public bool Placed;
-        }
-
-        public static void Layout(JValue graph)
-        {
-            var places = new Dictionary<int, Place>();
-            var order = new List<Place>();
-            foreach (var n in Nodes(graph).Items)
-            {
-                var p = new Place { Node = n, Next = n.Wire("next") };
-                foreach (var port in GraphPorts.Of(n))
-                {
-                    if (port.Path == null) continue;
-                    var w = port.Path.Get(n);
-                    if (w == 0) continue;
-                    if (port.Exec && port.Path.Key != "next") p.Bodies.Add(w);
-                    else if (!port.Exec) p.Inputs.Add(w);
-                }
-                var widest = 0;
-                for (var i = 0; i < n.Keys.Count; i++)
-                    if (n.Values[i].Kind == JKind.String) widest = Math.Max(widest, n.Values[i].String.Length * 8);
-                p.W = 140 + Math.Min(widest, 260);
-                p.H = 48 + 24 * (p.Inputs.Count + p.Bodies.Count + 1);
-                places[n.Wire("id")] = p;
-                order.Add(p);
-            }
-
-            int PlaceValue(int id, int right, int top)
-            {
-                if (!places.TryGetValue(id, out var n) || n.Placed) return 0;
-                n.Placed = true;
-                n.X = right - n.W;
-                n.Y = top;
-                var height = 0;
-                foreach (var input in n.Inputs)
-                {
-                    var h = PlaceValue(input, n.X - NodeGap, top + height);
-                    height += h != 0 ? h + 16 : 0;
-                }
-                if (height != 0) height -= 16;
-                return Math.Max(height, n.H);
-            }
-
-            int ValueWidth(int id, HashSet<int> seen)
-            {
-                if (!places.TryGetValue(id, out var n) || !seen.Add(id)) return 0;
-                var widest = 0;
-                foreach (var input in n.Inputs) widest = Math.Max(widest, ValueWidth(input, seen));
-                return n.W + (widest != 0 ? NodeGap + widest : 0);
-            }
-
-            (int right, int bottom) PlaceChain(int id, int x, int y)
-            {
-                int right = x, bottom = y;
-                var rowX = x;
-                var rowTop = y;
-                var rowBottom = y;
-                while (id != 0)
-                {
-                    if (!places.TryGetValue(id, out var n) || n.Placed) break;
-                    var inputsW = 0;
-                    foreach (var input in n.Inputs) inputsW = Math.Max(inputsW, ValueWidth(input, new HashSet<int>()));
-                    if (x > rowX && x + inputsW + n.W > rowX + MaxRow)
-                    {
-                        x = rowX;
-                        rowTop = Math.Max(rowBottom, bottom) + RowGap;
-                        rowBottom = rowTop;
-                    }
-                    var nodeX = x + (inputsW != 0 ? inputsW + NodeGap : 0);
-                    n.Placed = true;
-                    n.X = nodeX;
-                    n.Y = rowTop;
-                    var valuesH = 0;
-                    foreach (var input in n.Inputs)
-                    {
-                        var h = PlaceValue(input, nodeX - NodeGap, rowTop + n.H + 16 + valuesH);
-                        valuesH += h != 0 ? h + 16 : 0;
-                    }
-                    var b = rowTop + n.H + 16 + valuesH;
-                    var r = nodeX + n.W;
-                    foreach (var body in n.Bodies)
-                    {
-                        var e = PlaceChain(body, nodeX + 60, b + RowGap / 2);
-                        b = Math.Max(b, e.bottom);
-                        r = Math.Max(r, e.right);
-                    }
-                    rowBottom = Math.Max(rowBottom, b);
-                    right = Math.Max(right, r);
-                    bottom = Math.Max(bottom, rowBottom);
-                    x = nodeX + n.W + NodeGap * 2;
-                    id = n.Next;
-                }
-                return (right, bottom);
-            }
-
-            if (graph.Has("entry")) PlaceChain(graph.Wire("entry"), 0, 0);
-            else if (graph.Wire("root") != 0) PlaceValue(graph.Wire("root"), 0, 0);
-            // What nothing reached, on a row of its own below
-            int strayX = 0, strayY = 0;
-            foreach (var p in order) if (p.Placed) strayY = Math.Max(strayY, p.Y + p.H);
-            strayY += RowGap;
-            foreach (var p in order)
-            {
-                if (!p.Placed)
-                {
-                    p.X = strayX;
-                    p.Y = strayY;
-                    strayX += p.W + NodeGap;
-                }
-                p.Node.Set("x", JValue.Of(p.X));
-                p.Node.Set("y", JValue.Of(p.Y));
-            }
         }
 
         // ---------------------------------------------------------------------------------------------------------
