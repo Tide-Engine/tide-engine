@@ -14303,8 +14303,25 @@ TIDE_TEST(lsp_graphs)
         TIDE_CHECK(offers(completion, "points"));
         TIDE_CHECK(has(request_at(uri, "tide/graphHover", 0, 0, extra), "points"));
     }
+    // What node 14's value has (score, a Score): its fields, found with the graph read again with a '.' after it
+    TIDE_CHECK(offers(request_at(uri, "tide/graphMembers", 0, 0, "\"node\":14"), "points"));
+    // ...and the graph as it is again after
+    TIDE_CHECK(has(request_at(uri, "tide/graphText", 0, 0, ""), "score.points += Bonus(3);"));
     // The file's JSON is no Tide to ask about by its places
     TIDE_CHECK(has(request_at(uri, "textDocument/hover", 7, 40, ""), "\"result\":null"));
+
+    // The schema both editors read, and a layout: the statement at 0, its values to its left
+    clear_sent();
+    handle("{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"tide/graphSchema\",\"params\":{}}");
+    TIDE_CHECK(has(last_sent(), "\"k\": \"switchExpr\"") && has(last_sent(), "\"declarations\""));
+    clear_sent();
+    handle("{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"tide/graphLayout\",\"params\":{\"graph\":{\"entry\":1,\"nodes\":["
+           "{\"id\":1,\"k\":\"return\",\"value\":2},{\"id\":2,\"k\":\"int\",\"text\":\"3\"}]}}}");
+    const json *layout = json_path(json_parse(last_sent(), strlen(last_sent())), "result", NULL);
+    TIDE_CHECK(layout && json_get(layout, "1") && json_get(layout, "2"));
+    if (layout && json_get(layout, "1") && json_get(layout, "2")) {
+        TIDE_CHECK(json_int(json_get(layout, "2")->items[0], 0) < json_int(json_get(layout, "1")->items[0], 0));
+    }
     clear_sent();
     lsp_free(&server);
 }

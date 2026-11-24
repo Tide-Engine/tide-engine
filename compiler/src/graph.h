@@ -26,6 +26,25 @@ const graph_json *graph_json_get(const graph_json *object, const char *key);
 typedef VEC(int) graph_ids;
 // The ids a node's data inputs are wired from, in the order its text reads them, by its kind.
 void graph_data_wires(const graph_json *node, graph_ids *out);
+// ...and the statements its exec outputs other than `next` go to (an if's then and else, a loop's body...).
+void graph_exec_wires(const graph_json *node, graph_ids *out);
+
+// Laying out a graph (graph_layout.c): a node, its size, what's wired into it and the code it holds
+typedef struct graph_layout_node {
+    int id;
+    int w, h, x, y;
+    bool placed;
+    graph_ids inputs; // Its data inputs' nodes
+    graph_ids bodies; // The first statements of the code it holds
+    int next;
+} graph_layout_node;
+
+// A node's size, from how many ports it has and its longest text
+void graph_layout_measure(graph_layout_node *n, int widest_text);
+// Where each node goes, from `root`: a body's first statement, or a value's node
+void graph_layout_place(graph_layout_node *nodes, int count, int root, bool body);
+// A graph's JSON ({"entry"|"root", "nodes"}) laid out: {"<id>": [x, y], ...}; false for what isn't a graph
+bool graph_layout_json(const graph_json *graph, sb *out);
 
 // A stretch of the text graph_lower wrote, and the element (node, declaration, member, parameter...) it came from.
 typedef struct graph_span {
@@ -72,3 +91,7 @@ bool graph_from_tide(const char *path, sb *out, const char **why);
 // The test of a .tide file's graph (graph_roundtrip.c): it's made a graph, and the graph's Tide parses to the same
 // syntax tree as the file. Says each difference on stderr; returns how many files differed (0 or 1).
 int graph_roundtrip(const char *path, bool verbose);
+
+// The schema graph editors read (graph_schema.json): every kind of declaration, member and node, their keys in the
+// order they're written, and each node's ports, as JSON.
+const char *graph_schema_text(size_t *len);

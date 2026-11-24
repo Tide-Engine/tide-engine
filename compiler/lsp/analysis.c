@@ -1779,6 +1779,43 @@ static void index_program(void)
     A.occs.count = n;
 }
 
+// A member probe of a graph (analysis_set_graph_probe): the document, the node, and where its '.' went
+static const char *probe_uri;
+static int probe_node;
+static int probe_offset = -1;
+
+// Its Tide with a '.' just after the node's text, which completion goes on from as after `value.` in a .tide file
+static void probe_graph(afile *f)
+{
+    probe_offset = -1;
+    const graph_map *map = f->src.graph;
+    for (int i = 0; map && i < map->spans.count; i++) {
+        const graph_span *s = &map->spans.items[i];
+        if (s->id != probe_node) continue;
+        char *text = arena_alloc(f->src.len + 2);
+        memcpy(text, f->src.text, (size_t)s->end);
+        text[s->end] = '.';
+        memcpy(text + s->end + 1, f->src.text + s->end, f->src.len - (size_t)s->end);
+        text[f->src.len + 1] = '\0';
+        f->src.text = text;
+        f->src.len++;
+        probe_offset = s->end + 1;
+        return;
+    }
+}
+
+void analysis_set_graph_probe(const char *uri, const int node)
+{
+    probe_uri = uri;
+    probe_node = node;
+    probe_offset = -1;
+}
+
+int analysis_graph_probe_offset(void)
+{
+    return probe_offset;
+}
+
 void analysis_run(const analysis_file *given, const int given_count)
 {
     arena_reset();
@@ -1862,6 +1899,8 @@ void analysis_run(const analysis_file *given, const int given_count)
             if (!graph_lower(&f->src)) {
                 f->src.text = "";
                 f->src.len = 0;
+            } else if (probe_uri && strcmp(probe_uri, f->uri) == 0) {
+                probe_graph(f);
             }
             copy = (char *)f->src.text;
         }

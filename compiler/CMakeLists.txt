@@ -10,6 +10,7 @@ file(GLOB_RECURSE TIDE_IDENTITY_SOURCES CONFIGURE_DEPENDS LIST_DIRECTORIES false
     "${PROJECT_SOURCE_DIR}/compiler/src/*.c" "${PROJECT_SOURCE_DIR}/compiler/src/*.h" "${PROJECT_SOURCE_DIR}/compiler/src/*.inc"
     "${PROJECT_SOURCE_DIR}/engine/src/*.c" "${PROJECT_SOURCE_DIR}/engine/src/*.h" "${PROJECT_SOURCE_DIR}/engine/include/*.h")
 list(APPEND TIDE_IDENTITY_SOURCES compiler/CMakeLists.txt engine/CMakeLists.txt cmake/TideFlags.cmake)
+list(APPEND TIDE_IDENTITY_SOURCES compiler/src/graph_schema.json) # Which keys of a graph's nodes are wires
 list(APPEND TIDE_IDENTITY_SOURCES compiler/cli/build.c platform/include/tide/managed_run.h platform/include/tide/host.h)
 list(SORT TIDE_IDENTITY_SOURCES)
 set(tide_identity_text "Tide compiler/runtime sources 1\n")
@@ -119,6 +120,14 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID AND NOT TIDE_IOS)
             -P "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
         DEPENDS src/debug_views.py "${PROJECT_SOURCE_DIR}/cmake/embed.cmake" VERBATIM)
     target_sources(tidec_core PRIVATE "${TIDEC_DEBUG_VIEWS_C}")
+    # What a .tidegraph holds, which tidec reads its nodes' ports from and tidels serves to graph editors
+    set(TIDEC_GRAPH_SCHEMA_C "${CMAKE_CURRENT_BINARY_DIR}/graph_schema_json.c")
+    add_custom_command(OUTPUT "${TIDEC_GRAPH_SCHEMA_C}"
+        COMMAND "${CMAKE_COMMAND}" "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/src/graph_schema.json"
+            "-DOUTPUT=${TIDEC_GRAPH_SCHEMA_C}" "-DNAME=tide_graph_schema"
+            -P "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+        DEPENDS src/graph_schema.json "${PROJECT_SOURCE_DIR}/cmake/embed.cmake" VERBATIM)
+    target_sources(tidec_core PRIVATE "${TIDEC_GRAPH_SCHEMA_C}")
     # `#if TIDE_0_3_OR_NEWER` and packages' `tide 0.3` compare with it (version.h).
     target_link_libraries(tidec_core PUBLIC tide_flags)
     # tidec reads the device member lists from tide/devices.h so Tide and C agree.

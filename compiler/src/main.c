@@ -244,6 +244,14 @@ int main(const int argc, char **argv)
         return 0;
     }
 
+    // `tidec --graph-schema`: what graph editors read of every kind of node and declaration (graph_schema.json)
+    if (argc == 2 && strcmp(argv[1], "--graph-schema") == 0) {
+        size_t len;
+        const char *schema = graph_schema_text(&len);
+        fwrite(schema, 1, len, stdout);
+        return 0;
+    }
+
     // `tidec --graph-roundtrip [-v] <file.tide>... | @<list>`: the test of graphs, each file made a graph and read back
     if (argc >= 2 && strcmp(argv[1], "--graph-roundtrip") == 0) {
         bool verbose = false;

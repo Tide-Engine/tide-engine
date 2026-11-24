@@ -8,6 +8,7 @@
 #include "analysis.h"
 #include "common.h"
 #include "folders.h"
+#include "graph.h"
 #include "json.h"
 #include "model_metadata.h"
 #include "packages.h"
@@ -1692,6 +1693,21 @@ static void document_request(lsp_server *s, const char *method, const json *id, 
             analysis_graph_text(&g);
         } else if (strcmp(method, "tide/graphTypes") == 0) {
             analysis_graph_types(&g);
+        } else if (strcmp(method, "tide/graphMembers") == 0) {
+            // What a node's value has: the game read again with a '.' after the node, and completion there. The
+            // next request reads it as it is
+            analysis_set_graph_probe(d->uri, json_int(json_path(params, "node", NULL), 0));
+            s->analyzed = false;
+            analyze(s, d->uri);
+            const int offset = analysis_graph_probe_offset();
+            int graph_line, graph_character;
+            if (offset >= 0 && analysis_graph_position(offset, &graph_line, &graph_character)) {
+                analysis_completion(graph_line, graph_character, &g);
+            } else {
+                jb_put(&g, "{\"isIncomplete\":false,\"items\":[]}");
+            }
+            analysis_set_graph_probe(NULL, 0);
+            s->analyzed = false;
         } else {
             int graph_line, graph_character;
             const int offset = json_int(json_path(params, "offset", NULL), -1);
@@ -1871,6 +1887,7 @@ static bool is_document_request(const char *method)
         "textDocument/semanticTokens/full", "textDocument/typeDefinition", "textDocument/implementation",
         "textDocument/prepareCallHierarchy", "textDocument/rangeFormatting", "textDocument/selectionRange",
         "tide/graphText", "tide/graphTypes", "tide/graphCompletion", "tide/graphHover", "tide/graphSignatureHelp",
+        "tide/graphMembers",
     };
     for (size_t i = 0; i < sizeof methods / sizeof methods[0]; i++) {
         if (strcmp(method, methods[i]) == 0) return true;
@@ -1999,6 +2016,31 @@ void lsp_handle(lsp_server *s, const char *message, const size_t len)
             if (uri) add_root(s, uri);
         }
         refresh(s); // Which files make up a game depends on the open folders
+    } else if (strcmp(method, "tide/graphSchema") == 0 || strcmp(method, "tide/graphLayout") == 0) {
+        // What graph editors share (notes/visual-scripting.md): the schema of every kind of node and declaration,
+        // and where a graph's nodes go, given its JSON as `graph`
+        jbuf b = {0};
+        reply_start(&b, id);
+        if (method[10] == 'S') {
+            size_t len;
+            const char *schema = graph_schema_text(&len);
+            jb_putn(&b, schema, len);
+        } else {
+            jbuf graph = {0};
+            const json *given = json_get(params, "graph");
+            if (given) jb_json(&graph, given);
+            source src = {.path = "<graph>", .text = graph.data ? graph.data : "", .len = graph.len};
+            const arena_mark mark = arena_checkpoint();
+            sb out = {0};
+            const graph_json *parsed = given ? graph_json_parse(&src) : NULL;
+            if (parsed && graph_layout_json(parsed, &out)) jb_putn(&b, out.data, out.len);
+            else jb_put(&b, "null");
+            arena_rewind(mark);
+            jb_free(&graph);
+        }
+        jb_put(&b, "}");
+        send_buf(s, &b);
+        jb_free(&b);
     } else if (is_document_request(method)) {
         document_request(s, method, id, params);
     } else if (strcmp(method, "workspace/willRenameFiles") == 0) {

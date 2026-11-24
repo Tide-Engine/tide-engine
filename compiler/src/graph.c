@@ -560,14 +560,43 @@ static bool kind_is(const graph_json *n, const char *k)
     return str_eq_c(jstr(n, "k"), k);
 }
 
+// The schema (graph_schema.json, which the build embeds): every kind of node and its ports. Read from the arena
+// each time it's asked for after one, as the language server's arena goes between analyses
+extern const unsigned char tide_graph_schema[];
+extern const unsigned int tide_graph_schema_size;
+
+const char *graph_schema_text(size_t *len)
+{
+    *len = tide_graph_schema_size;
+    return (const char *)tide_graph_schema;
+}
+
+static const graph_json *schema_nodes; // Its "nodes", while a graph is read (graph_lower), else NULL
+
+static const graph_json *read_schema(void)
+{
+    source src = {.path = "<graph schema>"};
+    src.text = graph_schema_text(&src.len);
+    const graph_json *root = graph_json_parse(&src);
+    return graph_json_get(root, "nodes");
+}
+
+static const graph_json *node_spec(const str k)
+{
+    const graph_json *nodes = schema_nodes ? schema_nodes : read_schema();
+    for (int i = 0; nodes && i < nodes->count; i++) {
+        const graph_json *spec = nodes->items[i];
+        const graph_json *kind = graph_json_get(spec, "k");
+        if (kind && str_eq(kind->text, k)) return spec;
+    }
+    return NULL;
+}
+
 static bool exec_kind(const str k)
 {
-    static const char *const kinds[] = {"var", "discard", "assign", "eval", "if", "while", "for", "foreach", "parallel",
-                                        "switch", "return", "fail", "break", "continue", "block", "code"};
-    for (size_t i = 0; i < sizeof kinds / sizeof kinds[0]; i++) {
-        if (str_eq_c(k, kinds[i])) return true;
-    }
-    return false;
+    const graph_json *spec = node_spec(k);
+    const graph_json *exec = spec ? graph_json_get(spec, "exec") : NULL;
+    return exec && exec->kind == GJ_BOOL && exec->boolean;
 }
 
 // What a data node's text is, for parentheses
@@ -1282,48 +1311,50 @@ static void wire_array(const graph_json *n, const char *key, graph_ids *out)
     }
 }
 
+void graph_exec_wires(const graph_json *n, graph_ids *out)
+{
+    const graph_json *spec = node_spec(jstr(n, "k"));
+    if (!spec) return;
+    const graph_json *outputs = graph_json_get(spec, "outputs");
+    for (int i = 0; outputs && i < outputs->count; i++) wire_key(n, str_to_cstr(outputs->items[i]->text), out);
+    const graph_json *items = graph_json_get(spec, "items");
+    for (int i = 0; items && i < items->count; i++) {
+        const str exec = jstr(items->items[i], "exec");
+        if (!exec.len) continue;
+        const graph_json *list = jarr(n, str_to_cstr(jstr(items->items[i], "key")));
+        for (int k = 0; list && k < list->count; k++) wire_key(list->items[k], str_to_cstr(exec), out);
+    }
+}
+
 void graph_data_wires(const graph_json *n, graph_ids *out)
 {
-    const str k = jstr(n, "k");
-    static const struct {
-        const char *kind;
-        const char *keys[3];
-    } simple[] = {
-        {"member", {"object"}}, {"method", {"object"}}, {"out", {"target"}}, {"binary", {"lhs", "rhs"}},
-        {"coalesce", {"lhs", "rhs"}}, {"unary", {"value"}}, {"try", {"value"}}, {"defaulted", {"value"}},
-        {"await", {"value"}}, {"is", {"value"}}, {"step", {"target"}}, {"conditional", {"cond", "then", "else"}},
-        {"switchExpr", {"value"}}, {"index", {"object"}}, {"lambda", {"body"}}, {"var", {"value"}},
-        {"discard", {"value"}}, {"eval", {"value"}}, {"return", {"value"}}, {"fail", {"value"}},
-        {"assign", {"target", "value"}}, {"if", {"cond"}}, {"while", {"cond"}}, {"for", {"cond"}},
-        {"foreach", {"collection"}}, {"parallel", {"grid", "by", "offset"}}, {"switch", {"value"}},
-    };
-    for (size_t i = 0; i < sizeof simple / sizeof simple[0]; i++) {
-        if (!str_eq_c(k, simple[i].kind)) continue;
-        for (int j = 0; j < 3 && simple[i].keys[j]; j++) wire_key(n, simple[i].keys[j], out);
-    }
-    if (str_eq_c(k, "call") || str_eq_c(k, "method")) wire_array(n, "args", out);
-    if (str_eq_c(k, "interp")) wire_array(n, "values", out);
-    if (str_eq_c(k, "index")) wire_array(n, "index", out);
-    if (str_eq_c(k, "list")) wire_array(n, "items", out);
-    if (str_eq_c(k, "switchExpr")) {
-        const graph_json *arms = jarr(n, "arms");
-        for (int i = 0; arms && i < arms->count; i++) {
-            wire_key(arms->items[i], "pattern", out);
-            wire_key(arms->items[i], "value", out);
+    // As the schema says each kind's data inputs are: single ones, lists of them, items with them, a map
+    const graph_json *spec = node_spec(jstr(n, "k"));
+    if (!spec) return;
+    const graph_json *inputs = graph_json_get(spec, "inputs");
+    for (int i = 0; inputs && i < inputs->count; i++) wire_key(n, str_to_cstr(inputs->items[i]->text), out);
+    const graph_json *lists = graph_json_get(spec, "lists");
+    for (int i = 0; lists && i < lists->count; i++) wire_array(n, str_to_cstr(jstr(lists->items[i], "key")), out);
+    const graph_json *items = graph_json_get(spec, "items");
+    for (int i = 0; items && i < items->count; i++) {
+        const graph_json *list = jarr(n, str_to_cstr(jstr(items->items[i], "key")));
+        const graph_json *wires = graph_json_get(items->items[i], "wires");
+        for (int k = 0; list && k < list->count; k++) {
+            for (int w = 0; wires && w < wires->count; w++) {
+                const str key = wires->items[w]->text;
+                if (key.len > 2 && key.ptr[key.len - 2] == '[') { // "labels[]": an array of them
+                    wire_array(list->items[k], str_to_cstr((str){key.ptr, key.len - 2}), out);
+                } else {
+                    wire_key(list->items[k], str_to_cstr(key), out);
+                }
+            }
         }
     }
-    if (str_eq_c(k, "literal")) {
-        const graph_json *inits = jarr(n, "inits");
-        for (int i = 0; inits && i < inits->count; i++) wire_key(inits->items[i], "value", out);
-    }
-    if (str_eq_c(k, "switch")) {
-        const graph_json *cases = jarr(n, "cases");
-        for (int i = 0; cases && i < cases->count; i++) wire_array(cases->items[i], "labels", out);
-    }
-    if (str_eq_c(k, "text") || str_eq_c(k, "code")) {
-        const graph_json *inputs = graph_json_get(n, "inputs");
-        for (int i = 0; inputs && inputs->kind == GJ_OBJECT && i < inputs->count; i++) {
-            const int id = item_wire(inputs->items[i]);
+    const str map = jstr(spec, "map");
+    if (map.len) {
+        const graph_json *named = graph_json_get(n, str_to_cstr(map));
+        for (int i = 0; named && named->kind == GJ_OBJECT && i < named->count; i++) {
+            const int id = item_wire(named->items[i]);
             if (id) vec_push(*out, id);
         }
     }
@@ -1941,7 +1972,17 @@ static void collect_places(graph_map *map, const graph_json *v)
     }
 }
 
+static bool lower(source *src);
+
 bool graph_lower(source *src)
+{
+    schema_nodes = read_schema();
+    const bool ok = lower(src);
+    schema_nodes = NULL;
+    return ok;
+}
+
+static bool lower(source *src)
 {
     graph_map *map = NEW(graph_map);
     src->graph = map;

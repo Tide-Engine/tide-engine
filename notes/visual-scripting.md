@@ -256,6 +256,29 @@ which is the same Tide a `.tide` file would hold. The Unity package and the lang
   - `tide/graphCompletion`, `tide/graphHover`, `tide/graphSignatureHelp` with `offset`: completion, hover
     and signature help there, as at that place of a `.tide` file.
   A document opened with unsaved JSON is analysed as it stands.
+  - `tide/graphMembers` {textDocument, node}: what the node's value has, as completion items (fields,
+    methods, a namespace's or a type's members). The game is analysed again with the graph's Tide a `.` after the
+    node's first span (`analysis_set_graph_probe`), completion asked just past it, and the next request analyses
+    the graph as it is (`s->analyzed = false` both times; nothing is published for the probe).
+  - Without a document: `tide/graphSchema` → `compiler/src/graph_schema.json`; `tide/graphLayout` {graph: a
+    body's or a value's graph JSON} → {"<id>": [x, y]}.
+
+## What both editors share (owner, 2026-11-24: "ide and unity, both"; shared logic "in tidels")
+
+Graphs are edited in Unity's own window (C#, `unity/com.tide.unity/Editor/Graph/`) and in the IDEs (VS Code and
+JetBrains, one web editor). What they'd otherwise each implement is tidec's, served by tidels:
+
+- **The schema**, `compiler/src/graph_schema.json`, embedded in tidec (`graph_schema_text`, `tidec --graph-schema`):
+  every declaration and member kind (title, group, keys in order, modifiers that apply, whether it has members,
+  parameters, a body), the elements' key orders, parameter modes, operators with titles, built-in type names,
+  node categories with colours, and each node kind (title, category, exec, whether it has a value, its own keys in
+  order, its single data `inputs`, `lists` of data wires, `items` with wires of their own (`labels[]` an array of
+  them) and an `exec` output each, a `map` of named inputs, its exec `outputs` besides next, `ends` for a statement
+  whose next is optional, and what local it `declares`). tidec's own lowering reads its nodes' wires from it
+  (`graph_data_wires`, `graph_exec_wires`, `exec_kind`), so the schema and what tidec reads can't differ. It's in the
+  compiler's identity sources.
+- **Layout** (`graph_layout.c`): the converter's and `tide/graphLayout`'s, one algorithm.
+- **Members** of a value (`tide/graphMembers`), completion, hover, types and diagnostics, as above.
 - **Unity's graph editor with tidels** (`unity/com.tide.unity/Editor/Graph/TideLanguageClient.cs`,
   `TideGraphLanguage.cs`; my picks, Provisional):
   - The client: one tidels for the editor, beside the tide `TideToolchain.Find` gives (or `TidelsOverride`, or

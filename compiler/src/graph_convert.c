@@ -1026,137 +1026,36 @@ static int one_stmt(cv *c, const stmt *s)
     return id;
 }
 
-// ---------------------------------------------------------------------------
-// Layout: statements left to right along `next`, a statement's values to the left of it, and the code a
-// statement holds below it. A row that grows too wide goes on below the rest.
-
-enum { NODE_GAP = 40, ROW_GAP = 60, MAX_ROW = 3200 };
-
-static int text_width(const str s)
-{
-    return s.len * 8;
-}
-
-static void measure(cv *c, lnode *n)
-{
-    (void)c;
-    const jv *o = n->obj;
-    int widest = 0;
-    for (int i = 0; i < o->keys.count; i++) {
-        const jv *v = o->items.items[i];
-        if (v->kind == GJ_STRING && text_width(v->text) > widest) widest = text_width(v->text);
-    }
-    n->w = 140 + (widest > 260 ? 260 : widest);
-    const int ports = n->inputs.count + n->bodies.count + 1;
-    n->h = 48 + 24 * ports;
-}
-
-// A value's tree, its right edge at `right` and its top at `top`: the height it takes
-static int place_value(cv *c, const int id, const int right, const int top)
-{
-    lnode *n = node_by_id(c, id);
-    if (!n || n->placed) return 0;
-    n->placed = true;
-    n->x = right - n->w;
-    n->y = top;
-    int height = 0;
-    for (int i = 0; i < n->inputs.count; i++) {
-        const int h = place_value(c, n->inputs.items[i], n->x - NODE_GAP, top + height);
-        height += h ? h + 16 : 0;
-    }
-    if (height) height -= 16;
-    return height > n->h ? height : n->h;
-}
-
-// How wide a value's tree is, from its node leftwards
-static int value_width(cv *c, const int id)
-{
-    lnode *n = node_by_id(c, id);
-    if (!n) return 0;
-    int widest = 0;
-    for (int i = 0; i < n->inputs.count; i++) {
-        const int w = value_width(c, n->inputs.items[i]);
-        if (w > widest) widest = w;
-    }
-    return n->w + (widest ? NODE_GAP + widest : 0);
-}
-
-typedef struct extent {
-    int right, bottom;
-} extent;
-
-// Statements from `id` on, starting at (x, y): how far right and down they go
-static extent place_chain(cv *c, int id, int x, int y)
-{
-    extent e = {x, y};
-    const int row_x = x;
-    int row_top = y;
-    int row_bottom = y;
-    while (id) {
-        lnode *n = node_by_id(c, id);
-        if (!n || n->placed) break;
-        int inputs_w = 0;
-        for (int i = 0; i < n->inputs.count; i++) {
-            const int w = value_width(c, n->inputs.items[i]);
-            if (w > inputs_w) inputs_w = w;
-        }
-        if (x > row_x && x + inputs_w + n->w > row_x + MAX_ROW) { // A new row, below everything so far
-            x = row_x;
-            row_top = (row_bottom > e.bottom ? row_bottom : e.bottom) + ROW_GAP;
-            row_bottom = row_top;
-        }
-        const int node_x = x + (inputs_w ? inputs_w + NODE_GAP : 0);
-        n->placed = true;
-        n->x = node_x;
-        n->y = row_top;
-        // Its values below it, to its left
-        int values_h = 0;
-        for (int i = 0; i < n->inputs.count; i++) {
-            const int h = place_value(c, n->inputs.items[i], node_x - NODE_GAP, row_top + n->h + 16 + values_h);
-            values_h += h ? h + 16 : 0;
-        }
-        int bottom = row_top + n->h + 16 + values_h;
-        int right = node_x + n->w;
-        // The code it holds, below
-        for (int i = 0; i < n->bodies.count; i++) {
-            const extent b = place_chain(c, n->bodies.items[i], node_x + 60, bottom + ROW_GAP / 2);
-            if (b.bottom > bottom) bottom = b.bottom;
-            if (b.right > right) right = b.right;
-        }
-        if (bottom > row_bottom) row_bottom = bottom;
-        if (right > e.right) e.right = right;
-        if (row_bottom > e.bottom) e.bottom = row_bottom;
-        x = node_x + n->w + NODE_GAP * 2;
-        id = n->next;
-    }
-    return e;
-}
-
 static jv *finish_pool(cv *c, const int first_pool, const int root, const bool body)
 {
-    for (int i = first_pool; i < c->pool.count; i++) measure(c, c->pool.items[i]);
-    if (body) {
-        place_chain(c, root, 0, 0);
-    } else if (root) {
-        place_value(c, root, 0, 0);
+    // Laid out as an editor's would be (graph_layout.c)
+    const int count = c->pool.count - first_pool;
+    graph_layout_node *placed = arena_alloc(sizeof(graph_layout_node) * (size_t)(count ? count : 1));
+    for (int i = 0; i < count; i++) {
+        const lnode *n = c->pool.items[first_pool + i];
+        graph_layout_node *p = &placed[i];
+        p->id = n->id;
+        p->next = n->next;
+        for (int k = 0; k < n->inputs.count; k++) vec_push(p->inputs, n->inputs.items[k]);
+        for (int k = 0; k < n->bodies.count; k++) vec_push(p->bodies, n->bodies.items[k]);
+        int widest = 0;
+        for (int k = 0; k < n->obj->keys.count; k++) {
+            const jv *v = n->obj->items.items[k];
+            if (v->kind == GJ_STRING && v->text.len > widest) widest = v->text.len;
+        }
+        graph_layout_measure(p, widest);
     }
-    // What nothing reached (a for's start and step are its bodies): on a row of their own below
-    int stray_x = 0, stray_y = 0;
-    for (int i = first_pool; i < c->pool.count; i++) {
-        const lnode *n = c->pool.items[i];
-        if (n->placed && n->y + n->h > stray_y) stray_y = n->y + n->h;
+    graph_layout_place(placed, count, root, body);
+    for (int i = 0; i < count; i++) {
+        lnode *n = c->pool.items[first_pool + i];
+        n->x = placed[i].x;
+        n->y = placed[i].y;
     }
-    stray_y += ROW_GAP;
     jv *g = jv_obj();
     set(g, body ? "entry" : "root", root ? jv_n(root) : jv_new(GJ_NULL));
     jv *nodes = jv_arr();
     for (int i = first_pool; i < c->pool.count; i++) {
         lnode *n = c->pool.items[i];
-        if (!n->placed) {
-            n->x = stray_x;
-            n->y = stray_y;
-            stray_x += n->w + NODE_GAP;
-        }
         // id, k, x, y first
         jv *o = jv_obj();
         o->one_line = true;
