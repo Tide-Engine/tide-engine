@@ -1,0 +1,7 @@
+// expect: this holds the result of a call that can fail, so its value needs unwrapping first
+singleton Field { Grid2<int> cells; List<byte> saved; }
+system Load(mut Field field)
+{
+    field.cells = Grid2<int>.FromBytes(field.saved);
+}
+scene Main { }

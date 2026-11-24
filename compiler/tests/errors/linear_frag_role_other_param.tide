@@ -1,0 +1,4 @@
+// expect: a frag's [Raw] or [Linear] marks its Texture source, which the draw gives it an image of that role
+local singleton Art { float x; }
+frag Copy(Vertex vertex, out Color color, [Linear] Art art) { color = Color(art.x, 0, 0); }
+scene Main { }

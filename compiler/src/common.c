@@ -5,6 +5,7 @@
 #include "common.h"
 #include "build_report.h"
 
+#include <stdatomic.h>
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,9 +31,46 @@ typedef struct arena_block {
 
 static arena_block *arena_head;
 
+// Other threads' blocks (arena_thread): each thread fills its own, with no lock but to list a new one, and all of
+// them are let go of with the arena, by whoever resets it. A thread's last block is its own to forget.
+static _Thread_local bool arena_other;
+static _Thread_local arena_block *arena_mine;
+static arena_block *arena_others;
+static atomic_flag arena_listing = ATOMIC_FLAG_INIT;
+
+void arena_thread(void)
+{
+    arena_other = true;
+    arena_mine = NULL;
+}
+
+static void *arena_alloc_other(const size_t size)
+{
+    if (!arena_mine || arena_mine->used + size > arena_mine->cap) {
+        const size_t cap = size > 1u << 20 ? size : 1u << 20;
+        arena_block *block = malloc(sizeof(arena_block) + cap);
+        if (!block) {
+            fprintf(stderr, "tidec: out of memory\n");
+            exit(1);
+        }
+        block->used = 0;
+        block->cap = cap;
+        while (atomic_flag_test_and_set(&arena_listing)) {}
+        block->next = arena_others;
+        arena_others = block;
+        atomic_flag_clear(&arena_listing);
+        arena_mine = block;
+    }
+    void *p = arena_mine->data + arena_mine->used;
+    arena_mine->used += size;
+    memset(p, 0, size);
+    return p;
+}
+
 void *arena_alloc(size_t size)
 {
     size = (size + 15) & ~(size_t)15;
+    if (arena_other) return arena_alloc_other(size);
     if (!arena_head || arena_head->used + size > arena_head->cap) {
         const size_t cap = size > 1u << 20 ? size : 1u << 20;
         arena_block *block = malloc(sizeof(arena_block) + cap);
@@ -57,6 +95,11 @@ void arena_reset(void)
         arena_block *next = arena_head->next;
         free(arena_head);
         arena_head = next;
+    }
+    while (arena_others) { // No other thread is at work when the arena is let go of
+        arena_block *next = arena_others->next;
+        free(arena_others);
+        arena_others = next;
     }
 }
 
@@ -189,6 +232,18 @@ void compile_set_progress(compile_progress_sink receiver)
     progress_sink = receiver;
 }
 
+static compile_written_sink written_sink;
+
+void compile_set_written(const compile_written_sink receiver)
+{
+    written_sink = receiver;
+}
+
+void compile_written(const char *path)
+{
+    if (written_sink) written_sink(path);
+}
+
 static int progress_total, progress_done; // compile_progress_whole's
 
 void compile_progress(const char *stage, const char *detail, const int completed, const int total)
@@ -233,6 +288,22 @@ void diag_phase(const char *what)
     const double ms = (double)(now.tv_sec - last.tv_sec) * 1e3 + (double)(now.tv_nsec - last.tv_nsec) * 1e-6;
     if (what) build_report_phase(what, ms);
     if (what && enabled) fprintf(stderr,"tidec: %-22s %9.1f ms\n", what, ms);
+    last = now;
+}
+
+void diag_step(const char *what)
+{
+    static int enabled = -1;
+    static struct timespec last;
+    if (enabled < 0) {
+        const char *set = getenv("TIDEC_TIMES");
+        enabled = set && set[0] && set[0] != '0';
+    }
+    if (!enabled) return;
+    struct timespec now;
+    timespec_get(&now, TIME_UTC);
+    const double ms = (double)(now.tv_sec - last.tv_sec) * 1e3 + (double)(now.tv_nsec - last.tv_nsec) * 1e-6;
+    if (what && (last.tv_sec || last.tv_nsec)) fprintf(stderr, "tidec:   %-20s %9.1f ms\n", what, ms); // (The first only starts it)
     last = now;
 }
 

@@ -53,7 +53,7 @@ TIDE_TEST(linear_fields_capture_grids_and_keep_their_role_across_asset_replaceme
     const uint8_t rgba[] = {0, 255, 0, 255, 0, 0, 255, 255};
     const uint8_t content[32] = {7};
     const uint64_t at = tide_pack_texture(&builder, content, 2, 1, rgba);
-    tide_pack_name(&builder, "image", TIDE_PACK_TEXTURE, at, 0, 0);
+    tide_pack_name(&builder, "image", TIDE_PACK_TEXTURE, at, 0, TIDE_PACK_LINEAR); // Packed for the mark, as its code reads it
     size_t pack_size;
     uint8_t *pack = tide_pack_end(&builder, &pack_size);
     TIDE_REQUIRE(pack != NULL);
@@ -69,6 +69,29 @@ TIDE_TEST(linear_fields_capture_grids_and_keep_their_role_across_asset_replaceme
     TIDE_CHECK(changed->linear && changed->width == 2 && changed->height == 1);
     TIDE_REQUIRE(changed->pixels != NULL);
     TIDE_CHECK(changed->pixels[1] == 255u && changed->pixels[6] == 255u);
+    // The pack says which reading its image is stored for, and the code that isn't built for it draws none of it
+    bool packed = false;
+    TIDE_CHECK(tide_pack_image_linear(local.Art.kept.image.version & TIDE_TEXTURE_NAME, &packed) && packed);
+    TIDE_CHECK(tide_draw_texture_source(&draw, local.Art.kept) == 0);
+    TIDE_CHECK(!tide_pack_image_linear(12345u, &packed) && !packed);
+    // ...as a pack whose image was packed without the mark isn't drawn by code that reads it with it: its soft
+    // pixels are the other encoding's. Without the mark it's the image it is
+    tide_pack_builder plain_builder = {0};
+    const uint64_t plain_at = tide_pack_texture(&plain_builder, content, 2, 1, rgba);
+    tide_pack_name(&plain_builder, "image", TIDE_PACK_TEXTURE, plain_at, 0, 0);
+    size_t plain_size;
+    uint8_t *plain = tide_pack_end(&plain_builder, &plain_size);
+    TIDE_REQUIRE(plain != NULL);
+    tide_draw_forget(&draw);
+    tide_pack_unload();
+    TIDE_REQUIRE(tide_assets_load(plain, plain_size));
+    free(plain);
+    tide_draw_reset(&draw);
+    TIDE_CHECK(tide_pack_image_linear(local.Art.kept.image.version & TIDE_TEXTURE_NAME, &packed) && !packed);
+    TIDE_CHECK(tide_draw_texture_source_linear(&draw, local.Art.kept) == 0);
+    const uint32_t unmarked = tide_draw_texture_source(&draw, local.Art.kept);
+    TIDE_REQUIRE(unmarked && !draw.textures[unmarked - 1u].linear && draw.textures[unmarked - 1u].pixels[1] == 255u);
+    frame(); // The game's own frame over that pack: its marked reads draw nothing, and nothing is read out of place
     uint32_t roles = 0;
     for (uint32_t i = 0; i < tide_game_layout.type_count; i++) {
         const tide_layout_type *t = &tide_game_layout.types[i];

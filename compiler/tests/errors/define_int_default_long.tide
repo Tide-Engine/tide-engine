@@ -1,0 +1,6 @@
+// expect: the build gives 'MANY' the value '5000000000', and 'define(MANY, ...)' reads an int here
+// expect: its default is an int, so its value reads as one: for a bigger number, write the default as a long, 'define(MANY, 5L)'
+// define: MANY=5000000000
+const long MANY = define(MANY, 5) + 1;
+singleton Count { long many = MANY; }
+scene Main { }

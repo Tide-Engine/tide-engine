@@ -65,6 +65,14 @@ tide_e2e_test(row_lanes) # Rows copy the lanes their system reads or writes, aft
 add_test(NAME tidec_row_lanes_codegen
     COMMAND "${CMAKE_COMMAND}" "-DGAME_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_row_lanes/game.c"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/row_lanes_codegen.cmake")
+# ...and as a debugger's build has them (tide's debug builds, SPLIT_PLUMBING): rows copied whole, a wide component's
+# columns from a loop, and its lanes handed to the rows functions as arrays
+foreach(wide kept_lanes wide_lanes row_lanes)
+    tide_add_game(tidec_e2e_${wide}_debug SPLIT_PLUMBING SOURCES e2e/${wide}.tide NAME game
+        HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" e2e/${wide}_test.c)
+    target_include_directories(tidec_e2e_${wide}_debug PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    add_test(NAME tidec_e2e_${wide}_debug COMMAND tidec_e2e_${wide}_debug)
+endforeach()
 tide_e2e_test(view_reads) # Views copy and blend only the lanes they read; helpers read other singletons' lists uncopied
 tide_e2e_test(shared_bindings)
 tide_e2e_test(shared_bindings_fallback)
@@ -107,11 +115,26 @@ if(TIDE_PLATFORM)
     target_link_libraries(tidec_e2e_world_set_mut PRIVATE tide_platform)
     target_compile_definitions(tidec_e2e_world_set_mut PRIVATE TIDE_SET_MUT_THREADS=1)
 endif()
+tide_e2e_test(world_edit) # world.Edit<T>(e, name) { ... }: in place, put back however the block is left; Get/Set's results
+if(TIDE_PLATFORM)
+    target_link_libraries(tidec_e2e_world_edit PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_world_edit PRIVATE TIDE_EDIT_THREADS=1)
+endif()
 tide_e2e_test(world_functions) # ...and through functions and methods the World is passed on to
 tide_e2e_test(properties)
 tide_e2e_test(transforms) # Shared component placement, checked parenting and hierarchy state
 tide_e2e_test(visibility_groups) # Shared audiences, whole-component restrictions and scene inheritance
 tide_e2e_test(visibility_projection SOURCES e2e/visibility_projection.tide e2e/visibility_projection_c.c)
+# A game with transform hierarchies hashes its rows as any does, and its links and anchors as one section: the same
+# hashes with every one worked out twice (from what's kept and from the rows), and with nothing kept between them
+foreach(variant checked memo_off)
+    tide_add_game(tidec_e2e_visibility_projection_${variant} SOURCES e2e/visibility_projection.tide e2e/visibility_projection_c.c
+        NAME game HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/visibility_projection_test.c")
+    target_include_directories(tidec_e2e_visibility_projection_${variant} PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    add_test(NAME tidec_e2e_visibility_projection_${variant} COMMAND tidec_e2e_visibility_projection_${variant})
+endforeach()
+target_compile_definitions(tidec_e2e_visibility_projection_checked PRIVATE TIDE_CLIENT_SPANS_CHECK)
+target_compile_definitions(tidec_e2e_visibility_projection_memo_off PRIVATE TIDE_CLIENT_MEMO_OFF)
 tide_e2e_test(visibility_lists) # A projection's lists read back in runs, the heap as element by element left it
 tide_e2e_test(stable_main)
 
@@ -129,8 +152,104 @@ tide_add_game(tidec_e2e_visibility_hash_memo_off SOURCES e2e/visibility_hash_mem
 target_include_directories(tidec_e2e_visibility_hash_memo_off PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 target_compile_definitions(tidec_e2e_visibility_hash_memo_off PRIVATE TIDE_CLIENT_MEMO_OFF)
 add_test(NAME tidec_e2e_visibility_hash_memo_off COMMAND tidec_e2e_visibility_hash_memo_off)
+# Heaps of their own and runs on threads in a game that hides state: one thread's world, projections the same
+# wherever values are; again with every projection hash worked out twice, and with nothing kept between hashes
+tide_e2e_test(visibility_runs)
+if(TIDE_PLATFORM)
+    target_link_libraries(tidec_e2e_visibility_runs PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_visibility_runs PRIVATE TIDE_VISIBILITY_RUNS_THREADS=1)
+endif()
+foreach(variant checked memo_off)
+    tide_add_game(tidec_e2e_visibility_runs_${variant} SOURCES e2e/visibility_runs.tide NAME game
+        HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/visibility_runs_test.c")
+    target_include_directories(tidec_e2e_visibility_runs_${variant} PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    add_test(NAME tidec_e2e_visibility_runs_${variant} COMMAND tidec_e2e_visibility_runs_${variant})
+endforeach()
+target_compile_definitions(tidec_e2e_visibility_runs_checked PRIVATE TIDE_CLIENT_SPANS_CHECK)
+target_compile_definitions(tidec_e2e_visibility_runs_memo_off PRIVATE TIDE_CLIENT_MEMO_OFF)
+# Projection hashes kept 64 rows at a time: what could change a piece's rows while it's passed over, one change at a
+# time, each tick's hashes against a copy's with nothing kept, and repairs from what's kept against the rows'
+tide_e2e_test(visibility_pieces)
+foreach(variant checked memo_off)
+    tide_add_game(tidec_e2e_visibility_pieces_${variant} SOURCES e2e/visibility_pieces.tide NAME game
+        HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/visibility_pieces_test.c")
+    target_include_directories(tidec_e2e_visibility_pieces_${variant} PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    add_test(NAME tidec_e2e_visibility_pieces_${variant} COMMAND tidec_e2e_visibility_pieces_${variant})
+endforeach()
+# (and every piece's pages made once each by a sort, as a piece's past 512 of them are)
+target_compile_definitions(tidec_e2e_visibility_pieces_checked PRIVATE TIDE_CLIENT_SPANS_CHECK TIDE_CLIENT_ONCE_MOST=4u)
+target_compile_definitions(tidec_e2e_visibility_pieces_memo_off PRIVATE TIDE_CLIENT_MEMO_OFF)
+# ...and by blocks smaller than a page: a block changed where it is beside a neighbour's in its page, a block let go
+# and another made where it was, the directory of groups packed, an entity's slot made again and its snaps
+tide_e2e_test(visibility_blocks)
+foreach(variant checked memo_off)
+    tide_add_game(tidec_e2e_visibility_blocks_${variant} SOURCES e2e/visibility_blocks.tide NAME game
+        HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/visibility_blocks_test.c")
+    target_include_directories(tidec_e2e_visibility_blocks_${variant} PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    add_test(NAME tidec_e2e_visibility_blocks_${variant} COMMAND tidec_e2e_visibility_blocks_${variant})
+endforeach()
+target_compile_definitions(tidec_e2e_visibility_blocks_checked PRIVATE TIDE_CLIENT_SPANS_CHECK TIDE_CLIENT_ONCE_MOST=4u)
+target_compile_definitions(tidec_e2e_visibility_blocks_memo_off PRIVATE TIDE_CLIENT_MEMO_OFF)
+# ...and by the pages written since the check before: blocks and slots beside others in their pages, changed in one
+# tick and the next, ticks not checked between, a world taken back
+tide_e2e_test(visibility_walks)
+foreach(variant checked memo_off)
+    tide_add_game(tidec_e2e_visibility_walks_${variant} SOURCES e2e/visibility_walks.tide NAME game
+        HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/visibility_walks_test.c")
+    target_include_directories(tidec_e2e_visibility_walks_${variant} PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    add_test(NAME tidec_e2e_visibility_walks_${variant} COMMAND tidec_e2e_visibility_walks_${variant})
+endforeach()
+target_compile_definitions(tidec_e2e_visibility_walks_checked PRIVATE TIDE_CLIENT_SPANS_CHECK)
+target_compile_definitions(tidec_e2e_visibility_walks_memo_off PRIVATE TIDE_CLIENT_MEMO_OFF)
+# ...and containers too big for one chunk of their list, hashed as trees of their chunks, and the rows of a piece read
+# again looked at one by one: each tick's hashes also against the player's own world's, loaded from what it's sent
+tide_e2e_test(visibility_trees)
+foreach(variant checked memo_off)
+    tide_add_game(tidec_e2e_visibility_trees_${variant} SOURCES e2e/visibility_trees.tide NAME game
+        HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/visibility_trees_test.c")
+    target_include_directories(tidec_e2e_visibility_trees_${variant} PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    add_test(NAME tidec_e2e_visibility_trees_${variant} COMMAND tidec_e2e_visibility_trees_${variant})
+endforeach()
+target_compile_definitions(tidec_e2e_visibility_trees_checked PRIVATE TIDE_CLIENT_SPANS_CHECK TIDE_CLIENT_ONCE_MOST=4u)
+target_compile_definitions(tidec_e2e_visibility_trees_memo_off PRIVATE TIDE_CLIENT_MEMO_OFF)
+# Repairs from the rows the ticks' checks wrote down: a change a tick at random, every player's repair from worlds 1
+# to 36 ticks old against the one from every row of both, and which way each went (a journal of 32 checks here, so
+# worlds older than it are reached); with 4 players, and with 160
+tide_e2e_test(visibility_repairs SOURCES e2e/visibility_repairs.tide e2e/visibility_repairs_few.tide)
+foreach(variant checked memo_off wide)
+    set(players few)
+    if(variant STREQUAL "wide") # 160 players: an Audience too big to keep with each row written down
+        set(players wide)
+    endif()
+    tide_add_game(tidec_e2e_visibility_repairs_${variant} SOURCES e2e/visibility_repairs.tide e2e/visibility_repairs_${players}.tide
+        NAME game HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/visibility_repairs_test.c")
+    target_include_directories(tidec_e2e_visibility_repairs_${variant} PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    add_test(NAME tidec_e2e_visibility_repairs_${variant} COMMAND tidec_e2e_visibility_repairs_${variant})
+endforeach()
+foreach(variant "" _checked _memo_off _wide)
+    target_compile_definitions(tidec_e2e_visibility_repairs${variant} PRIVATE TIDE_CLIENT_CHANGES_STATS TIDE_CLIENT_NODES=32u)
+endforeach()
+target_compile_definitions(tidec_e2e_visibility_repairs_checked PRIVATE TIDE_CLIENT_SPANS_CHECK)
+target_compile_definitions(tidec_e2e_visibility_repairs_memo_off PRIVATE TIDE_CLIENT_MEMO_OFF)
+target_compile_definitions(tidec_e2e_visibility_repairs_wide PRIVATE TIDE_CLIENT_SPANS_CHECK VISIBILITY_REPAIRS_WIDE)
+# The _checked variants read every check's rows in parts, a piece a part, here in order (client_spans_codegen.inc,
+# tide_client_part): what the parts keep and merge is worked out again from the rows each check, with the same pins
+foreach(fixture runs pieces blocks walks trees repairs)
+    target_compile_definitions(tidec_e2e_visibility_${fixture}_checked PRIVATE TIDE_CLIENT_SPLIT_ROWS=1u TIDE_CLIENT_PART_PIECES=1u
+        TIDE_CLIENT_PARTS_ALWAYS)
+endforeach()
+# ...and on the platform's pool, against one thread's: the hashes, repairs and all the checks keep the same
+if(TIDE_PLATFORM)
+    tide_add_game(tidec_e2e_visibility_walks_pool SOURCES e2e/visibility_walks.tide NAME game
+        HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/visibility_walks_test.c")
+    target_include_directories(tidec_e2e_visibility_walks_pool PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_link_libraries(tidec_e2e_visibility_walks_pool PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_visibility_walks_pool PRIVATE TIDE_CLIENT_SPANS_CHECK TIDE_CLIENT_SPLIT_ROWS=1u
+        TIDE_CLIENT_PART_PIECES=1u TIDE_CLIENT_CHECK_DIGEST TIDE_VISIBILITY_WALKS_POOL)
+    add_test(NAME tidec_e2e_visibility_walks_pool COMMAND tidec_e2e_visibility_walks_pool)
+endif()
 tide_e2e_test(shards) # One world split across shards: moving, ghosts, waiting on borders, checkpoints and splits
-tide_e2e_test(shards_players) # A player's machine following their avatar from shard to shard
+tide_e2e_test(shards_players SOURCES e2e/shards_players.tide e2e/shards_players_walk.tide) # A player's machine following their avatar from shard to shard
 tide_e2e_test(shards_visibility) # A visibility group the root keeps, read on every shard and changed from a region
 tide_e2e_test(prefabs SOURCES e2e/prefabs.tide e2e/prefabs.tprefab)
 tide_e2e_test(scene_startup SOURCES e2e/scene_startup.tide e2e/scene_startup.tprefab)
@@ -152,6 +271,12 @@ tide_e2e_test(queries) # Read-only iteration over a separate entity set
 tide_e2e_test(query_narrow WARNINGS "'value' is never used") # Zero-demand binding intentionally exercises an entity-only row
 tide_e2e_test(query_read_paths) # Properties and composed swizzles do not masquerade as direct storage paths
 tide_e2e_test(handler_queries) # Current-world queries at match event/command turns, with ordinary deferred changes
+# A handler takes for writing only the lanes it changed: each page another exactly when its bytes are, beside a snapshot
+tide_e2e_test(handler_lanes SOURCES e2e/handler_lanes.tide e2e/handler_lanes_c.c)
+add_test(NAME tidec_handler_lanes_codegen
+    COMMAND "${CMAKE_COMMAND}" "-DGAME_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_handler_lanes/game.c"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/handler_lanes_codegen.cmake")
+tide_e2e_test(handler_lanes_net) # ...and a client that predicts them, guesses wrong and runs them again has the server's world
 tide_e2e_test(query_borrows) # Borrowed helper queries retain selection, row projection, order and caller capabilities
 tide_e2e_test(query_local_fields) # Current attached local fields through read-only and mutable query bindings
 tide_e2e_test(event_containers) # Selectively retained container values in local event journals
@@ -175,6 +300,14 @@ foreach(target tidec_e2e_indexed_loops tidec_e2e_indexed_loops_plain)
         target_compile_definitions(${target} PRIVATE TIDE_IX_THREADS=1)
     endif()
 endforeach()
+# Copies of a world that keep its loops' indexes, and how they came to be right, which the game counts for the test
+tide_e2e_test(index_follow)
+target_compile_definitions(tidec_e2e_index_follow PRIVATE TIDE_INDEX_STATS)
+set_tests_properties(tidec_e2e_index_follow PROPERTIES TIMEOUT 300)
+if(TIDE_PLATFORM)
+    target_link_libraries(tidec_e2e_index_follow PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_index_follow PRIVATE TIDE_IX_THREADS=1)
+endif()
 string(REPLACE ";" "|" TIDE_IX_EMULATOR "${CMAKE_CROSSCOMPILING_EMULATOR}")
 add_test(NAME tidec_indexed_loops_same
     COMMAND "${CMAKE_COMMAND}" "-DINDEXED=$<TARGET_FILE:tidec_e2e_indexed_loops>"
@@ -211,10 +344,10 @@ tide_e2e_test(io)
 tide_e2e_test(byte)
 tide_e2e_test(maps)
 tide_e2e_test(nested) # Lists of lists, maps of lists, lists of maps and sets, structs with lists as elements
-target_compile_definitions(tidec_e2e_nested PRIVATE NESTED_HASH=9866033360494732044ull)
+target_compile_definitions(tidec_e2e_nested PRIVATE NESTED_HASH=9570809068599555149ull)
 tide_e2e_test(foreach_borrow) # A read-only foreach borrows elements that hold lists; one whose body could change them copies
 tide_e2e_test(arrays) # T[N]: fixed-length arrays in components, structs, lists, maps, events, inputs and locals
-target_compile_definitions(tidec_e2e_arrays PRIVATE ARRAYS_HASH=6461591354174354994ull)
+target_compile_definitions(tidec_e2e_arrays PRIVATE ARRAYS_HASH=6542313589199366106ull)
 tide_e2e_test(arrays_plain_input) # Bounds and padding inside integer-only array input
 tide_e2e_test(arrays_forward) # Arrays of structs whose fields and types are declared later
 tide_e2e_test(sort)
@@ -225,6 +358,7 @@ tide_e2e_test(unused_locals WARNINGS "local 'fwd' is never used" "local 'spark' 
 tide_e2e_test(defaults)
 tide_e2e_test(default_value)
 tide_e2e_test(math)
+tide_e2e_test(vector_equality) # == and != on vectors and colors, as one bool; lists finding them; an indexed vector guard
 tide_e2e_test(float_bits)
 tide_e2e_test(readonly_aggregates)
 add_test(NAME tidec_readonly_aggregates_codegen
@@ -244,7 +378,7 @@ foreach(fixture crossplatform nested tasks compute)
         HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" e2e/${fixture}_test.c)
     target_include_directories(tidec_e2e_${fixture}_split PRIVATE "${PROJECT_SOURCE_DIR}/tests")
     if(fixture STREQUAL "nested")
-        target_compile_definitions(tidec_e2e_${fixture}_split PRIVATE NESTED_HASH=9866033360494732044ull)
+        target_compile_definitions(tidec_e2e_${fixture}_split PRIVATE NESTED_HASH=9570809068599555149ull)
     endif()
     add_test(NAME tidec_e2e_${fixture}_split COMMAND tidec_e2e_${fixture}_split)
 endforeach()
@@ -261,33 +395,6 @@ add_test(NAME tidec_e2e_random_local_first COMMAND tidec_e2e_random_local_first)
 tide_e2e_test(rolls) # Random.NextInt and the like on the type, and Random.seed: a system's rolls for its entity, with no state
 tide_e2e_test(gpu_rolls) # ...and in frags and verts: the frame's number and the seed their draws send, alike for a frame's draws
 tide_e2e_test(views)
-tide_e2e_test(editor_views)
-# Compile the private native-preview entry point as C on both native and web
-# test hosts. The editor itself dynamically loads this ABI only on desktop.
-file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/preview-include/tide")
-configure_file("${PROJECT_SOURCE_DIR}/tools/tide-editor/preview_api.h"
-    "${CMAKE_CURRENT_BINARY_DIR}/preview-include/tide/editor_preview.h" COPYONLY)
-foreach(placement match local)
-    set(preview_dir "${CMAKE_CURRENT_BINARY_DIR}/preview-${placement}")
-    set(preview_flags "")
-    set(preview_local 0)
-    if(placement STREQUAL "local")
-        set(preview_flags --editor-local)
-        set(preview_local 1)
-    endif()
-    add_custom_command(OUTPUT "${preview_dir}/game.c" "${preview_dir}/game.h"
-        COMMAND "${CMAKE_COMMAND}" -E make_directory "${preview_dir}"
-        COMMAND "${TIDEC_PATH}" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/editor_views.tide"
-            --editor-prefab Preview ${preview_flags} --no-line --name game -o "${preview_dir}"
-        DEPENDS ${TIDEC_DEPENDS} "e2e/editor_views.tide" VERBATIM)
-    add_executable(tidec_editor_preview_${placement} "${preview_dir}/game.c"
-        editor_preview_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
-    target_compile_definitions(tidec_editor_preview_${placement} PRIVATE EDITOR_LOCAL=${preview_local})
-    target_include_directories(tidec_editor_preview_${placement} PRIVATE "${preview_dir}"
-        "${CMAKE_CURRENT_BINARY_DIR}/preview-include" "${PROJECT_SOURCE_DIR}/platform/include" "${PROJECT_SOURCE_DIR}/tests")
-    target_link_libraries(tidec_editor_preview_${placement} PRIVATE tide)
-    add_test(NAME tidec_editor_preview_${placement} COMMAND tidec_editor_preview_${placement})
-endforeach()
 tide_e2e_test(shapes) # The shapes with smooth edges: each Draw call, the general Shape, and target receivers
 tide_e2e_test(gpu_functions) # Owned callable captures, named stage bindings and heterogeneous SDF instances.
 tide_e2e_test(mut_callables) # Mutable callable arguments forward storage through dispatch and captured helpers.
@@ -363,7 +470,7 @@ tide_e2e_test(skinned_draw_borrow) # Draw-only borrows avoid owned copies, prese
 tide_e2e_test(skinned_attribute_limit SOURCES shaders/skinned_attribute_limit.tide) # Atlas bases reuse a spare int lane; full layouts keep individual palettes
 tide_e2e_test(fbx_assets) # ASCII/binary FBX assets, checked catalogs, CPU poses and match snapshots
 tide_e2e_test(blend_shapes) # FBX blend channels and GLB morph targets: lookup, Shaped in the match and views, snapshots
-target_compile_definitions(tidec_e2e_fbx_assets PRIVATE FBX_HASH=5753801846222254197ull)
+target_compile_definitions(tidec_e2e_fbx_assets PRIVATE FBX_HASH=6391972349523428612ull)
 tide_e2e_test(skinned_defaults) # Model defaults retain dependency identity while unrelated visual assets reload
 tide_e2e_test(animations) # Animation-only assets, inferred members, dynamic catalogs and persistent ownership
 if(TIDE_NODE)
@@ -379,7 +486,7 @@ endif()
 # Stored decoded Animation bytes now use immutable model descriptors. Native
 # ASan and WASM agree on this intentional ownership/hash change; pose bits stay
 # unchanged and the fixture checks snapshot and serialized-value equivalence.
-target_compile_definitions(tidec_e2e_skinned PRIVATE SKINNED_HASH=12520775766064683273ull)
+target_compile_definitions(tidec_e2e_skinned PRIVATE SKINNED_HASH=4300293782162255305ull)
 tide_e2e_test(audio) # Clip assets, and Audio.Play from views, local handlers and the functions they call
 tide_e2e_test(sound) # Sound fields the frame names to the mixer while they play, and the listener
 tide_e2e_test(buses) # A game's [Bus] enum, a Sound's bus and Audio.SetVolume
@@ -387,14 +494,25 @@ tide_e2e_test(effects) # Audio declarations: code the audio thread runs, with st
 # Its echo keeps a delay line of 384 KB, which nothing may copy: a function of the generated C that had one on
 # its stack, on the audio thread's, doesn't build
 target_compile_options(tidec_e2e_effects PRIVATE -Wframe-larger-than=65536)
+tide_e2e_test(number_grids) # Grids of float2s, float4s, ints and bytes as textures through typed [Raw(T)] roles, and what changed of them
 tide_e2e_test(textures) # Texture as the one type a draw and a Sample take: grids of colors and of floats as textures, and the sampling a Texture carries
 tide_e2e_test(texture_compression)
 tide_e2e_test(linear_textures LAYOUT)
+tide_e2e_test(marked_globs) # [Raw] and [Linear] on globs, elements, locals, choices, parameters and frag sources
 tide_e2e_test(stages) # Enum phases, local offsets and whole-phase ordering in every schedule
 tide_e2e_test(render_targets) # Target receivers, explicit Texture sources and distributed rendering phases
 tide_e2e_test(render_lifecycle) # Shared target copies, resizing and explicit disposal from local code
 tide_e2e_test(render_depth) # What a target holds, said when it's made, and a target's depth as frags and verts read it
 tide_e2e_test(image_clears) # Typed image clear values and argument ordering
+tide_e2e_test(target_reads) # await target.Read<T>(image) and ReadDepth(): what each asks for, and the typed grid it owns
+tide_e2e_test(task_grids) # Grids a task keeps across its waits, local and match tasks', a read's and the pack's among them
+# Grids an async function takes: copies of its own made at the call, kept across waits, packed, migrated; and a view
+# that hands its chunk to a local task as mut, indexing its chunks by place
+tide_e2e_test(task_grid_params LAYOUT)
+if(TIDE_PLATFORM)
+    target_link_libraries(tidec_e2e_task_grid_params PRIVATE tide_platform) # tide_migrate_world, as a hot reload does
+    target_compile_definitions(tidec_e2e_task_grid_params PRIVATE TASK_GRID_MIGRATION=1)
+endif()
 tide_e2e_test(number_images SOURCES shaders/number_images.tide) # Numeric shader metadata and generated-C paths
 tide_e2e_test(render_colors) # Targets of several color images, a format each, and frags that write them all
 tide_e2e_test(render_samples) # A target's samples, said by name where it's made and kept in its id through a reload
@@ -421,6 +539,8 @@ tide_e2e_test(events_lookup) # Verified event target rows and fallback after str
 tide_e2e_test(events_batch) # Queue-page runs preserve recording order, filters, defaults and C observers
 tide_e2e_test(events_runs) # Runs of events taken in their own loop: found, moved, other and gone targets, against C
 tide_e2e_test(commands)
+# `with ownership` and `without ownership` on command handlers: by the sender, from two players, with and without its name
+tide_e2e_test(command_ownership)
 # Commands in channels, unordered ones, and a command of a file's bytes, in chunks: on a slow network too
 tide_e2e_test(commands_channels)
 set_tests_properties(tidec_e2e_commands_channels PROPERTIES TIMEOUT 300)
@@ -449,7 +569,44 @@ tide_e2e_test(local_fields_plain) # ...whose match is the same without them
 tide_e2e_test(local_fields_net) # ...and what a client's wrong predictions do to them, on a network
 tide_e2e_test(local_events) # Local handlers of the match's events: heard once, whatever a client predicted
 tide_e2e_test(changed_events) # Changed<Health.value>: a field that changed over a tick, heard by local handlers
+tide_e2e_test(dev_build) # `dev` declarations left out of a build without dev...
+tide_add_game(tidec_e2e_dev_build_dev DEV SOURCES e2e/dev_build.tide NAME game # ...and in one with them
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/dev_build_test.c")
+target_include_directories(tidec_e2e_dev_build_dev PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_compile_definitions(tidec_e2e_dev_build_dev PRIVATE DEV_BUILD)
+add_test(NAME tidec_e2e_dev_build_dev COMMAND tidec_e2e_dev_build_dev)
+# A dev scene as a scenario, which --scene starts in with its fields or by its name alone
+tide_add_game(tidec_e2e_dev_scene DEV SCENE "Battle { side = 100, alone = true }" SOURCES e2e/dev_scene.tide NAME game
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/dev_scene_test.c")
+target_include_directories(tidec_e2e_dev_scene PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tidec_e2e_dev_scene COMMAND tidec_e2e_dev_scene)
+tide_add_game(tidec_e2e_dev_scene_named DEV SCENE Battle SOURCES e2e/dev_scene.tide NAME game
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/dev_scene_test.c")
+target_include_directories(tidec_e2e_dev_scene_named PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_compile_definitions(tidec_e2e_dev_scene_named PRIVATE NAMED_ONLY)
+add_test(NAME tidec_e2e_dev_scene_named COMMAND tidec_e2e_dev_scene_named)
+# Tweaks with their tweaks.json, read as constants without dev and from the match with it
+tide_e2e_test(tweaks SOURCES e2e/tweaks/game.tide WARNINGS "'Gone' isn't a tweak of the game's")
+tide_add_game(tidec_e2e_tweaks_dev DEV SOURCES e2e/tweaks/game.tide NAME game WARNINGS "'Gone' isn't a tweak of the game's"
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/tweaks_test.c")
+target_include_directories(tidec_e2e_tweaks_dev PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_compile_definitions(tidec_e2e_tweaks_dev PRIVATE TWEAKS_LIVE)
+add_test(NAME tidec_e2e_tweaks_dev COMMAND tidec_e2e_tweaks_dev)
+# A dev build's inspector: its packets, and changes to the match through the server and to the local world here
+tide_add_game(tidec_e2e_inspect DEV SOURCES e2e/inspect.tide NAME game
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/inspect_test.c")
+target_include_directories(tidec_e2e_inspect PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tidec_e2e_inspect COMMAND tidec_e2e_inspect)
+tide_e2e_test(changed_match) # ...and taken by match handlers, in rounds while their own changes go on
+# ...whose handlers changing what they watch without end stop the program
+tide_add_game(tidec_e2e_changed_endless SOURCES e2e/changed_match.tide NAME game DEFINES ENDLESS
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/changed_match_test.c")
+target_include_directories(tidec_e2e_changed_endless PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_compile_definitions(tidec_e2e_changed_endless PRIVATE ENDLESS) # (DEFINES is the Tide code's: the host stops by an exit code)
+add_test(NAME tidec_e2e_changed_endless COMMAND tidec_e2e_changed_endless changed_match_plain_host)
+set_tests_properties(tidec_e2e_changed_endless PROPERTIES PASS_REGULAR_EXPRESSION "an endless chain of events: .*Changed<Unit.hp>")
 tide_e2e_test(visibility_lifecycle) # Local availability differs from genuine match lifecycle
+tide_e2e_test(visibility_host_lifecycle) # ...and what a host and a guest each hear of pieces destroyed and hidden
 tide_e2e_test(local_events_same) # Events only local code handles: the match they cost nothing,
 tide_e2e_test(local_events_plain) # ...which is the same without them
 tide_e2e_test(verified_views) # `verified` parameters: what views read of the world the server confirmed
@@ -462,6 +619,8 @@ tide_e2e_test(enums)
 tide_e2e_test(scenes)
 tide_e2e_test(scenes_local)
 tide_e2e_test(scenes_fallback)
+tide_e2e_test(scenes_switch) # Scene.Switch, and functions that load, switch and unload
+tide_e2e_test(scenes_switch_local) # ...in local code, where the startup scene only comes back offline
 tide_e2e_test(scene_filters) # with scene, without scene: systems, views and handlers by an entity's scene
 tide_e2e_test(gui)
 tide_e2e_test(gui_custom)
@@ -472,16 +631,19 @@ tide_e2e_test(gui_entered) # TextField, IntField and FloatField with `out entere
 tide_e2e_test(actions)
 tide_e2e_test(tasks)
 tide_e2e_test(tasks_local)
+tide_e2e_test(tasks_local_fields) # Local tasks that read and write their entity's local fields, after a worker
 tide_e2e_test(local_workers)
 tide_e2e_test(task_handles LAYOUT)
 tide_e2e_test(task_visibility)
 tide_e2e_test(worker_handles)
+tide_e2e_test(worker_priorities) # `priority:` on a local worker's call: order by priority, each level in turn, aging, cancelling, room
+tide_e2e_test(comparisons_settled) # Comparisons that are always true or false: valid Tide, which builds under -Werror and gives its answer
 if(TIDE_PLATFORM)
     target_link_libraries(tidec_e2e_task_handles PRIVATE tide_platform)
     target_compile_definitions(tidec_e2e_task_handles PRIVATE TIDE_TASK_MIGRATION=1)
 endif()
 tide_e2e_test(worker_values)
-if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID AND NOT TIDE_IOS)
     # Worker snapshots must preserve the debugger's typed local-list wrappers.
     tide_add_game(tidec_e2e_worker_values_visualizers VISUALIZERS
         SOURCES e2e/worker_values.tide NAME game
@@ -514,7 +676,7 @@ tide_e2e_test(constant_flow) # Known bool conditions agree for returns, switch e
 tide_e2e_test(strings)
 # char: literals, a text's characters by index and by foreach, switch, keys, where they're kept, inputs and commands
 tide_e2e_test(chars)
-target_compile_definitions(tidec_e2e_chars PRIVATE CHARS_HASH=6535361674441007572ull)
+target_compile_definitions(tidec_e2e_chars PRIVATE CHARS_HASH=1185612214163706362ull)
 tide_e2e_test(show_values)
 tide_e2e_test(text_fields)
 tide_e2e_test(lists)
@@ -527,11 +689,15 @@ tide_e2e_test(out_params SOURCES e2e/out_params.tide e2e/out_params_c.c) # `out`
 tide_e2e_test(generics) # Generic functions: inference, <> at calls, `has`, instantiations, a plain overload winning
 tide_e2e_test(loop_views) # Loops that keep a list's shape index it through a view: chunks, side by side, scratch, assets, snapshots
 tide_e2e_test(json) # Json.Read<T> and Json.Write, and text as bytes, pieces and numbers
-target_compile_definitions(tidec_e2e_json PRIVATE JSON_HASH=11445927822352450642ull)
+target_compile_definitions(tidec_e2e_json PRIVATE JSON_HASH=9747776051619718582ull)
+tide_e2e_test(json_vectors) # ...vectors, quaternions and colors as arrays, sets as arrays, and maps by a number or an enum
+target_compile_definitions(tidec_e2e_json_vectors PRIVATE JSON_VECTORS_CHECKS=46 JSON_VECTORS_HASH=3213805059950208566ull)
 tide_e2e_test(optional_fields) # T? fields: in structs, components, singletons, scenes, events, commands and the input
-target_compile_definitions(tidec_e2e_optional_fields PRIVATE OPTIONAL_FIELDS_HASH=17632594201705351794ull)
+target_compile_definitions(tidec_e2e_optional_fields PRIVATE OPTIONAL_FIELDS_HASH=3188615634171522954ull)
 tide_e2e_test(grids SOURCES e2e/grids.tide e2e/grids_c.c) # Grids
 tide_e2e_test(grid_values) # Grids code owns: locals, mut parameters, returns and Copy
+tide_e2e_test(grid_bytes) # cells.ToBytes() and Grid3<T>.FromBytes(bytes): round trips, repairs, refusals, the bytes pinned
+target_compile_definitions(tidec_e2e_grid_bytes PRIVATE GRID_BYTES_HASH=0xF9EAD962E215CDB8ull GRID_BYTES_SPOILED=3361)
 tide_e2e_test(parallel) # Parallel loops over grids and lists
 tide_e2e_test(parallel_list_batch) # Independent output lanes preserve exact reductions, calls and snapshots
 tide_e2e_test(window_indices) # Task-local windows with global positions, offsets and partial writes
@@ -571,6 +737,16 @@ tide_e2e_test(row_heaps) # A per-entity system that changes its rows' text and l
 if(TIDE_PLATFORM)
     target_link_libraries(tidec_e2e_row_heaps PRIVATE tide_platform)
     target_compile_definitions(tidec_e2e_row_heaps PRIVATE TIDE_ROW_HEAPS_THREADS=1)
+endif()
+tide_e2e_test(row_grids) # ...and its rows' grids: new chunks, cells set and zeroed, grids replaced and copied, a parallel loop, one thread's world
+if(TIDE_PLATFORM)
+    target_link_libraries(tidec_e2e_row_grids PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_row_grids PRIVATE TIDE_ROW_GRIDS_THREADS=1)
+endif()
+tide_e2e_test(guarded_rows) # ...and one whose guard lets few rows through shares those out, not its entities: every run and task has some, one thread's world
+if(TIDE_PLATFORM)
+    target_link_libraries(tidec_e2e_guarded_rows PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_guarded_rows PRIVATE TIDE_GUARDED_ROWS_THREADS=1)
 endif()
 tide_e2e_test(previous) # `previous` query bindings: the tick's start whatever ran since, on threads one thread's world, no part of the world
 # ...and the same game with every loop gone through plainly (NO_LOOP_INDEXES), which prints the same tick by tick
@@ -616,12 +792,13 @@ tide_e2e_test(shaders) # frag and vert: what a mesh draw through them records
 tide_e2e_test(compute) # GPU.Run, GPU lists' operations and indirect draws: what they record, in frame order
 tide_e2e_test(instancing) # Instanced: lists of transforms and ordinary instance structs
 tide_e2e_test(draw_values) # A draw's values: a struct after its vert and frag, sent once for the draw
+tide_e2e_test(given_textures) # Several textures a draw gives, in order with their filters; a singleton's a function samples
 tide_e2e_test(draw_helpers) # Shaded helpers bind only explicit parameters, forwarding attached local fields
 tide_add_game(tidec_e2e_nested_split_debug SPLIT_CODE SPLIT_PLUMBING SOURCES e2e/nested.tide NAME game
     HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" e2e/nested_test.c)
 set_property(SOURCE "${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_nested_split_debug/game.c" APPEND PROPERTY COMPILE_OPTIONS -O0)
 target_include_directories(tidec_e2e_nested_split_debug PRIVATE "${PROJECT_SOURCE_DIR}/tests")
-target_compile_definitions(tidec_e2e_nested_split_debug PRIVATE NESTED_HASH=9866033360494732044ull)
+target_compile_definitions(tidec_e2e_nested_split_debug PRIVATE NESTED_HASH=9570809068599555149ull)
 add_test(NAME tidec_e2e_nested_split_debug COMMAND tidec_e2e_nested_split_debug)
 
 tide_e2e_test(crossplatform_text)
@@ -686,7 +863,9 @@ tide_e2e_test(big_world)
 tide_e2e_test(crlf) # Windows line endings, kept by .gitattributes
 tide_e2e_test(directives) # #if and the rest: what other versions of tide read is left out
 # #define and #undef, and the build's symbols: --define's, DEBUG, and PACKAGE_<NAME> for each of its packages
-tide_e2e_test(defines SOURCES e2e/defines/game.tide PACKAGES Extra e2e/defines/Extra/extra.tide DEFINES FAST WIDE)
+tide_e2e_test(defines SOURCES e2e/defines/game.tide PACKAGES Extra e2e/defines/Extra/extra.tide DEFINES FAST WIDE SIDE=50
+    BIG=-9223372036854775808 SMALL=255 SCALE=-2.5 FAR=0.1 "TITLE=Two \"words\", a \\ and a tab:\t." EMPTY= SLOW=false ARMY=Huge
+    MANY=5000000000 SPOT_X=0.5 RED=0.25)
 target_compile_definitions(tidec_e2e_defines PRIVATE DEFINES_DEBUG=$<IF:$<CONFIG:Debug>,1,0>)
 tide_e2e_test(multi_file SOURCES e2e/multi_file/a_physics.tide e2e/multi_file/b_main.tide
     e2e/multi_file/c_combat.tide e2e/multi_file/d_items.tide)
@@ -714,7 +893,7 @@ if(TIDE_PLATFORM) # ...on the platform layer's threads, where there are some
 endif()
 tide_e2e_test(cpp SOURCES e2e/cpp.tide e2e/cpp_code.cpp) # ...and from its C++ file, with no C++ runtime
 tide_e2e_test(fails SOURCES e2e/fails.tide e2e/fails_c.c) # Errors as values, and T?
-if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID AND NOT TIDE_IOS)
     # The names `is` gives must be the debugger's typed list wrappers, as other list locals are.
     tide_add_game(tidec_e2e_fails_visualizers VISUALIZERS
         SOURCES e2e/fails.tide e2e/fails_c.c NAME game
@@ -724,6 +903,7 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     add_test(NAME tidec_e2e_fails_visualizers COMMAND tidec_e2e_fails_visualizers)
 endif()
 tide_e2e_test(constants SOURCES e2e/constants/a_tuning.tide e2e/constants/b_main.tide)
+tide_e2e_test(constant_tables) # Array and list constants written out, read by index, count and foreach in match code, views and workers
 tide_e2e_test(settings SOURCES e2e/settings.tide e2e/settings_more.tide) # Several blocks, in two files, are one list
 tide_e2e_test(profile SOURCES e2e/profile.tide e2e/profile_combat.tide) # What ticks and frames say to a host's profiler
 tide_e2e_test(handover)
@@ -749,7 +929,7 @@ if(TIDE_PLATFORM)
                 --routes "${PROJECT_SOURCE_DIR}/platform/tests/fetch_routes.mjs")
         # The guard around the runner's own 100 seconds and what it asks the page after them (cmake/WebTest.cmake)
         set_tests_properties(tidec_e2e_fetch_web PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 150)
-    elseif(NOT TIDE_ANDROID AND TIDE_NODE)
+    elseif(NOT TIDE_ANDROID AND NOT TIDE_IOS AND TIDE_NODE)
         tide_add_game(tidec_e2e_fetch SOURCES e2e/fetch.tide NAME game
             HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/fetch_test.c")
         target_include_directories(tidec_e2e_fetch PRIVATE "${PROJECT_SOURCE_DIR}/tests")
@@ -791,7 +971,7 @@ foreach(source IN LISTS TIDE_SAFETY_TESTS)
     if(TIDE_PLATFORM)
         target_link_libraries(${target} PRIVATE tide_platform)
         target_compile_definitions(${target} PRIVATE TIDE_SAFETY_THREADS=1)
-        if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+        if(NOT TIDE_WEB AND NOT TIDE_ANDROID AND NOT TIDE_IOS)
             target_compile_definitions(${target} PRIVATE TIDE_SAFETY_RENDERER=1)
         endif()
     endif()
@@ -805,7 +985,7 @@ foreach(source IN LISTS TIDE_SAFETY_TESTS)
     # One that draws (`// draws` among its first lines) goes through the
     # renderer too, where tests have a window and a GPU for it (label `gpu`)
     file(STRINGS "${source}" draws LIMIT_COUNT 1 REGEX "^// draws")
-    if(draws AND TIDE_PLATFORM AND NOT TIDE_WEB AND NOT TIDE_ANDROID)
+    if(draws AND TIDE_PLATFORM AND NOT TIDE_WEB AND NOT TIDE_ANDROID AND NOT TIDE_IOS)
         add_test(NAME ${target}_gpu
             COMMAND "${CMAKE_COMMAND}"
                 "-DRUN=$<TARGET_FILE:${target}>"
@@ -839,6 +1019,8 @@ foreach(source IN LISTS TIDE_ERROR_TESTS)
             "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/errors"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_error.cmake")
 endforeach()
+# A recursive helper's image parameter, followed once a place: following every path through it never ended
+set_tests_properties(tidec_error_image_recursive_helper_paths PROPERTIES TIMEOUT 60)
 
 # Build code's errors that only running it finds (docs/spec.md, Build code): as the error tests, with the compiler and
 # the engine's sources it's built with. Each has a folder of its own, where its program is kept.
@@ -882,7 +1064,7 @@ set_tests_properties(tidec_scale PROPERTIES TIMEOUT 600)
 
 # tide_add_game packs again when a file an asset glob matched is deleted or
 # added (asset_deletion.cmake): a project of its own, built with Ninja.
-if(NOT TIDE_WEB AND NOT TIDE_ANDROID AND CMAKE_GENERATOR MATCHES "Ninja")
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID AND NOT TIDE_IOS AND CMAKE_GENERATOR MATCHES "Ninja")
     add_test(NAME tide_add_game_asset_deletion
         COMMAND "${CMAKE_COMMAND}"
             "-DTIDEC=${TIDEC_PATH}"
@@ -950,6 +1132,9 @@ add_test(NAME tidec_prefab_error_once
 add_test(NAME tidec_scene_startup
     COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/scene_startup"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/scene_startup.cmake")
+add_test(NAME tidec_edit_errors_alone
+    COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/edit_errors_alone"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/edit_errors_alone.cmake")
 
 # Outline tests: `tidec --outline` on outline/<name>.tide, run in its folder so the paths it prints are the
 # file's name, must print outline/<name>.json exactly.
@@ -1159,7 +1344,7 @@ endif()
 # .pdb, under Windows' own debugger engine on Windows, and LLDB with the game's LLDB views where there's an LLDB.
 # The game's code unoptimized whatever the build type, and its generated plumbing optimized, as tide builds a game
 # to debug it.
-if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID AND NOT TIDE_IOS)
     tide_add_game(tidec_debugger_fixture VISUALIZERS SPLIT_PLUMBING SOURCES debugger/fixture.tide NAME game
         HOST "${CMAKE_CURRENT_SOURCE_DIR}/debugger/fixture_main.c")
     target_compile_options(tidec_debugger_fixture PRIVATE -O0 -g)
@@ -1189,3 +1374,23 @@ endif()
 if(TIDE_NODE)
     add_test(NAME tidec_read_target_builtin COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/read_target_builtin.mjs" "${TIDEC_PATH}" "${PROJECT_SOURCE_DIR}")
 endif()
+tide_e2e_test(storage) # The server's store from match code: saves, loads, deletes and listings, the same on every machine
+if(TIDE_PLATFORM AND NOT TIDE_WEB AND NOT TIDE_ANDROID AND NOT TIDE_IOS)
+    # ...and a desktop's own files, in a folder of the test's, with requests on the provider's own thread. (A page's
+    # files have no thread, and are the browser's to keep: none in the page tests' runner)
+    target_link_libraries(tidec_e2e_storage PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_storage PRIVATE STORAGE_PLATFORM=1)
+endif()
+tide_e2e_test(storage_await LAYOUT) # Match tasks that await the store's loads and listings: in the same tick on every machine
+if(TIDE_PLATFORM)
+    # A hot reload's migration carries the waiting tasks over (tide_migrate_world)
+    target_link_libraries(tidec_e2e_storage_await PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_storage_await PRIVATE STORAGE_MIGRATION=1)
+endif()
+tide_e2e_test(storage_await_shards) # ...and ask again on the shard their entity crosses to while they wait
+tide_e2e_test(storage_await_hidden) # ...in a game that hides state, where the server's run of a task alone has its answer
+tide_e2e_test(managed_store) # A hosted match's store (tide/managed_run.h, built natively) against a fake service
+tide_e2e_test(managed_store_shards) # ...and a sharded world's shard: its start, and going on from its journal
+# The header alone: none of the platform layer it's beside, as a managed reactor has none
+target_include_directories(tidec_e2e_managed_store PRIVATE "${PROJECT_SOURCE_DIR}/platform/include")
+target_include_directories(tidec_e2e_managed_store_shards PRIVATE "${PROJECT_SOURCE_DIR}/platform/include")

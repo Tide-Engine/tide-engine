@@ -83,8 +83,10 @@ Systems and views can't wait, as they run again every tick or frame: they start 
 | `await Wait.Ticks(n)` | `n` of the match's ticks. Match code only. |
 | `await Wait.Frames(n)` | `n` of this machine's frames. Local code only. |
 | `await Wait.Seconds(s)` | `s` seconds: in the match, the nearest whole number of ticks (at least one), the same on every machine; in local code, this machine's time. |
+| `await Storage.Load(key)` | What the [server's store](./files.md#waiting-for-the-answer-in-a-task) keeps under the key, as a `List<byte>`, failing with `IOError`. Match code only: the task goes on in the tick the answer is given to, on every machine. |
+| `await Storage.List(prefix)`, `(prefix, after)` | The store's keys that start with the prefix, a page of them, as a `StorageKeys`, failing with `IOError`. Match code only. |
 
-A wait of 0, or less, doesn't wait at all.
+A wait of 0, or less, doesn't wait at all. The store's two have no handle to keep: without `await`, they're answered by a `Loaded` or `Listed` event.
 
 For now:
 
@@ -100,11 +102,11 @@ For now:
 
 A task belongs to a world, like the code that starts it. A system's or a match handler's tasks are the match's: they're part of it, in snapshots, state hashes and rollback, they go to players who join, and they carry on when the match changes hands. A view's or a local handler's tasks are this machine's, in its local state.
 
-An async function's world comes from what it does: changing the match (spawning its entities, changing its components through `mut`, sending its events) makes it match code, and using local state, or reading [`Frame.dt`](./local-state.md#time), makes it local. A [function it calls](../language/functions.md#sending-and-spawning) that sends or spawns counts as its own doing. One that does neither runs in whichever world starts it. Doing both is an error, as a task runs in one world.
+An async function's world comes from what it does: changing the match (spawning its entities, changing its components through `mut`, sending its events) makes it match code, and using local state, the [local fields](#local-fields) of the match's components among it, or reading [`Frame.dt`](./local-state.md#time), makes it local. A [function it calls](../language/functions.md#sending-and-spawning) that sends or spawns counts as its own doing. One that does neither runs in whichever world starts it. Doing both is an error, as a task runs in one world.
 
 ## What a task keeps
 
-While a task waits, it keeps its locals and its parameters, copied. Its **components and singletons** it gets again each time it goes on, as they are then, so it sees what changed while it waited. They have to be the caller's own, its parameters:
+While a task waits, it keeps its locals and its parameters, copied: text, lists and grids too, a grid a `target.Read()` gave and one of an asset's among them. A `foreach` over an asset reads the asset as it is each time round, so a loop that waits a frame per element of `asset List<Grid2<Color>> run` goes on through the files [tide run](../tools/cli.md) loaded again while it waited; the element it held as it waited is its own copy. Its **components and singletons** it gets again each time it goes on, as they are then, so it sees what changed while it waited. They have to be the caller's own, its parameters:
 
 ```csharp
 async void Dash(mut Body body)
@@ -122,18 +124,86 @@ system StartDash(mut Body body, Controls controls)
 
 An async function's `mut` parameters are its components and singletons; it can't keep the caller's other variables while it waits, so it returns what it works out instead. For the same reason it has no `out` parameters: a struct returns several values.
 
+**A grid parameter** is a copy of the task's own, made where it's called, as a list parameter is: a system or a view that changes its grid after starting the task doesn't change the task's, and the task reads its copy where it is after every wait, however many, with no copy made again. The pack's grid is copied whole, so a pack [tide run](../tools/cli.md) loads again while the task waits leaves the task's copy as it was. An async function the task awaits with the grid gets a copy of its own too. A match task's copy is part of the match, in snapshots, hashes and what a joining player gets, like its other grids; a local task's is this machine's. A grid parameter can't be `mut`: to change a field's grid, take the component or singleton it's in.
+
+```csharp
+singleton Field
+{
+    Grid2<int> cells = Grid2(64, 64);
+    bool watching;
+    int changed;
+}
+
+int Differences(Grid2<int> now, Grid2<int> before)
+{
+    mut var count = 0;
+    foreach (var at in now) count += now[at] != before[at] ? 1 : 0;
+    return count;
+}
+
+async void Settle(mut Field field, Grid2<int> before)
+{
+    await Wait.Ticks(30);
+    field.changed = Differences(field.cells, before); // The cells now, against the copy as they were 30 ticks ago
+}
+
+system Watch(mut Field field)
+{
+    if (field.watching) return;
+    field.watching = true;
+    Settle(field, field.cells);
+}
+```
+
+### Local fields
+
+A local task reads and writes the [local fields](./local-state.md#local-fields) of the match components and singletons it takes, as a view does. They come with the component each time the task goes on, from where this machine keeps the entity's, so the task sees what views wrote while it waited, and what it writes is there for the next frame's views:
+
+```csharp
+component Chunk
+{
+    float3 corner;
+    Grid3<Block> blocks = Grid3(16, 16, 16);
+    int edits;
+    local Mesh<Vertex3> mesh;
+    local int drawn;        // The edits its mesh was made at, plus one
+    local LocalTask job;    // The task making it, while it does
+}
+
+async void Remesh(mut Chunk chunk, int version)
+{
+    var built = await Faces(chunk.blocks); // A local worker
+    chunk.mesh = Mesh(built.vertices, built.indices);
+    chunk.drawn = version;
+}
+
+view Chunks(mut Chunk chunk)
+{
+    if (!chunk.job.isRunning && chunk.drawn != chunk.edits + 1) chunk.job = Remesh(chunk, chunk.edits + 1);
+    if (chunk.drawn > 0) Draw.Mesh(chunk.mesh, float4x4.Translate(chunk.corner));
+}
+```
+
+- **It's this machine's task.** Using local fields makes an async function local, so a view or a local handler starts it, never a system. `mut` on a match component lets it write the local fields alone: a task that also changes the component's match fields is an error, as it would run in both worlds.
+- **The view and the task share them.** What the view wrote before it started the task, the task reads, and the other way round. They're the entity's own from then on.
+- **Handing it the component changes nothing of the match.** A view that starts the task with its `mut Chunk chunk` changes the chunk's local fields, never its match fields, so a loop in that view over the other chunks that skips them by a match field of its own chunk, like `if (row.other.at.x != chunk.at.x + 1) continue;`, is still an [indexed loop](./systems.md#only-the-rows-that-can-pass), and it can hand the task the neighbour's grid, `Remesh(chunk, row.other.blocks)`, which is the task's own copy. The same goes for a function the view hands it to that writes its local fields alone. A function written in C, or one that hands the component on to C, counts as changing all of it: what C writes isn't the compiler's to know.
+- **It ends with the entity**, once the world this machine draws no longer has it, and the entity's local fields go once neither that world nor the one the server confirmed has it. So a task never writes for an entity that's gone. If the server undoes a destroy this machine predicted, the local fields come back as the task left them, but the task doesn't. That's why the example keeps the task's handle rather than a flag the task clears: `job.isRunning` is false once the task has ended, however it ended, so the view starts another.
+- **Hidden or without the component**, the same: an entity this machine's player can no longer see is gone, with its local fields and its task, and comes back with its defaults; a task that takes a component the entity loses ends at the next frame, whether it was waiting or due to go on, and that component's local fields go. If the component comes back, it comes with new local fields and no task.
+- **Rollback and reloads** leave them as they are: a task that goes on after a correction reads its component as corrected, and its local fields as this machine left them. A task that carries over a hot reload finds them where the new build keeps them.
+
 ## When tasks go on, and when they end
 
 Tasks whose time has come go on at the end of the tick (or frame), after its changes and events, in the order they started; what they change, spawn and send then applies too. A task ends when its code does, and:
 
 - **with what started it**: a task started by code that runs for an entity belongs to that entity, and ends when the entity is destroyed. A task started by a task belongs to the same entity, and one a function starts belongs to what the code that called the function runs for. Code that runs for no entity starts tasks that belong to the world, which last as long as it does.
 - **without its components**: a task whose entity no longer has the components it takes ends.
+- **with its match**, for a local task of one of the match's entities, or one that takes the match's components or singletons: once this machine leaves the match, it ends at the next frame, even if the next match has an entity with the same handle.
 
 Immediate nested awaits can share a private frame. A kept handle identifies a separate started operation; its existing entity/world ownership still applies. An async function can't immediately await itself, as its private frame would hold itself; it can start another operation and keep its handle.
 
 ## Cancellation and lifetime
 
-`build.Cancel()` cancels that operation and ends every task awaiting it. Cancellation ends an awaiting continuation without inventing a success value or a declared error. Cancelling one awaiting task preserves a shared build for its other consumers.
+`build.Cancel()` cancels that operation and ends every task awaiting it. Cancellation ends an awaiting continuation without inventing a success value or a declared error. Cancelling one awaiting task preserves a shared build for its other consumers. A task that ends while it waits, cancelled or with its owner, lets go of what it waited for at once: a file's or a fetch's, and a GPU read's, whose slot and pixels go free for the next read.
 
 `isRunning` is true while an operation is queued, running or waiting. `isCompleted` includes cancellation; `isCancelled` also describes default or stale handles. Cancelling a completed or stale handle has no effect. Old handles never refer to a newer operation that reused its storage. Equality compares operation identity.
 
@@ -193,8 +263,9 @@ Start `Rebuild(visual)` from a view or local handler when the input changes and
 `building` is false. Advance the local generation whenever that meshing input
 changes, including neighboring boundaries and rollback corrections; discard an
 outdated result and request the latest input. For many chunks, keep a local queue
-and schedule the visible chunks first. This example uses a local singleton;
-local tasks retain their existing component and local-field access rules.
+and schedule the visible chunks first. This example uses a local singleton; for
+one of the match's entities, the task can keep the result in the entity's
+[local fields](#local-fields) instead.
 
 Workers receive independent copies of their inputs and return independent
 values. Numbers, text, lists, maps, sets, ordinary structs, fixed arrays and
@@ -262,6 +333,36 @@ their code; trusted C must return before that drain can finish.
 Saved or retained waiting tasks restart their pending worker after restoration
 or reload. No worker state enters match snapshots, hashes or networking.
 
+### Which call starts first
+
+More worker calls can wait than there are threads free. A call says when it
+starts among them with `priority:`, written last, by name:
+
+```csharp
+// The chunk the player stands in, before the ones far off
+var built = await BuildMesh(voxels, priority: near ? WorkerPriority.Urgent : WorkerPriority.Normal);
+
+// A handle's call takes it too
+LocalTask<MeshData> far = BuildMesh(horizon, priority: WorkerPriority.Background);
+```
+
+`WorkerPriority` has three members. `Urgent` calls start first, then `Normal`
+ones, which is what a call that says nothing is, then `Background` ones, each
+in the order they came. Nothing waits for ever: a waiting normal call starts
+after four urgent starts, and a waiting background call after sixteen starts
+of the others. The worker is the same function for all of them, so one mesher
+serves the chunk underfoot and the horizon.
+
+A priority says which waiting call a free thread takes. It never interrupts a
+call that has started, and it doesn't make the copy of a call's inputs cheaper.
+The match's ticks keep their threads first, as before. Each priority has its
+own room for waiting calls, so a flood of background calls keeps no urgent one
+out.
+
+The value is read once, as the call begins: before the call waits for room and
+before its arguments. It can be any `WorkerPriority` value, but not one that
+has to be awaited. A worker can't name a parameter `priority`.
+
 ## In C
 
 Hosts tell local code how long each frame is, before `tide_frame`: `tide_local_frame_time(local, seconds)`, which local tasks' waits count down and `Frame.dt` reads. `tide/run.h` does. Under `tide run`, a waiting task carries over to a new build when its code is the same; when it changed, the task is dropped, and tide says so.
@@ -276,7 +377,13 @@ and completion. A zeroed GUI retains the synchronous fallback.
 the current defaults: 64 pending private jobs, 64 MiB of retained input
 captures, and 4 MiB of capture/result transfers per frame. Direct worker awaits
 wait for admission before evaluating their arguments. Nested awaited arguments
-don't hold a reservation while waiting for another worker.
+don't hold a reservation while waiting for another worker. The first two
+limits count each priority apart: normal calls have them, urgent calls as much
+again, and background calls half as much.
+
+Local state hands a provider as many calculations as it has threads beside the
+caller's, and keeps the rest in its own queues by priority, so a provider's
+`background` needs no ordering of its own.
 
 Transfer limits are soft: one transfer that crosses the budget finishes, then
 later transfers wait for another frame. This lets an oversized job make

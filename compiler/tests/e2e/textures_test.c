@@ -269,13 +269,13 @@ TIDE_TEST(textures_kept_past_their_grid_read_nothing_outside_the_heap)
     TIDE_REQUIRE(tide_texture_grid(kept, &kept_grid, &kept_shape));
     const uint32_t where = tide_handle_where(kept_grid.at);
     const tide_heap *heap = (const tide_heap *)(uintptr_t)tide_heap_read(where);
-    TIDE_REQUIRE(heap && heap->used > 0);
+    TIDE_REQUIRE(heap && heap->pages > 0);
     static tide_draw_list other;
-    // Every place in the heap, and past it, as a grid of colors and as one of floats: the handle's low 32 bits
-    // in the version, its high 32 in the width
+    // Every place in the heap, and past it, as a grid of colors, of floats and of each kind of number (float2s,
+    // float4s, ints, bytes): the handle's low 32 bits in the version, its high 32 in the width
     uint32_t drawn_with = 0;
-    for (uint64_t at = 0; at < heap->used + (4u << TIDE_HEAP_PAGE_SHIFT); at += 4u) {
-        for (uint32_t cells = 1; cells <= 2; cells++) {
+    for (uint64_t at = 0; at < ((uint64_t)heap->pages << TIDE_HEAP_PAGE_SHIFT) + (4u << TIDE_HEAP_PAGE_SHIFT); at += 4u) {
+        for (uint32_t cells = 1; cells <= 6; cells++) {
             tide_texture_ref made = kept;
             const tide_handle forged = tide_handle_of(where, at);
             made.image.version = (made.image.version & ~UINT64_C(0xFFFFFFFFFF)) | (uint32_t)forged | (uint64_t)cells << 32;

@@ -26,7 +26,7 @@ event(PlayerJoined joined) Join()
 
 system Walk(mut Avatar a, Controls input, Time time)
 {
-    a.position += input.move * (8.0 * time.dt);
+    a.position += input.move * (WalkSpeed() * time.dt); // shards_players_walk.tide
     a.steps += 1;
     if (input.move.x != 0) a.moved += 1;
 }

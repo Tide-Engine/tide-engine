@@ -1,0 +1,71 @@
+// `dev` declarations: in a dev build (tidec --dev) and nowhere else. Dev views
+// run only while the host's dev menu shows them.
+
+component Gun
+{
+    int ammo = 3;
+}
+
+singleton Shots { int fired; int guns; }
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Gun { });
+}
+
+system Fire(mut Gun gun, mut Shots shots)
+{
+    if (gun.ammo <= 0) return;
+    gun.ammo -= 1;
+    shots.fired += 1;
+}
+
+// A query beside dev declarations: a query's parameter has the compiler look up a name of its own, empty, which a
+// build without dev once took for a left-out dev declaration (which has no qualified name outside a namespace)
+system Count(mut Shots shots, query (Gun gun) guns)
+{
+    shots.guns = 0;
+    foreach (var row in guns) shots.guns += row.gun.ammo >= 0 ? 1 : 0;
+}
+
+// What a dev build has besides
+dev struct Refill { int amount; }
+
+// A type every build has, with a method only dev builds have
+struct Magazine
+{
+    int rounds;
+
+    int Rounds() { return rounds; }
+    dev int Doubled() { return Rounds() * 2; }
+}
+
+dev T Either<T>(bool first, T a, T b) { return first ? a : b; }
+
+dev int Topped(int ammo, Refill refill)
+{
+    return Either(true, ammo + refill.amount, 0) + Magazine { rounds = 0 }.Doubled();
+}
+
+dev command(int amount) GiveAmmo(mut Gun gun, PlayerID sender)
+{
+    gun.ammo = Topped(gun.ammo, Refill { amount = amount });
+}
+
+local singleton Drawn
+{
+    int game;
+    int tools;
+}
+
+view Show(mut Drawn drawn, with Gun)
+{
+    drawn.game += 1;
+}
+
+dev view GunTools(mut Drawn drawn, with Gun)
+{
+    drawn.tools += 1;
+}

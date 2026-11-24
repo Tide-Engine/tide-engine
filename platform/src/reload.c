@@ -190,14 +190,15 @@ static bool resume(void)
     // A sharded match: every shard's world, carried over in its checkpoint
     uint8_t *shards = NULL;
     uint32_t shards_size = 0;
+    // (the checkpoint becomes this build's either way: one is only loaded by the build it says made it)
     if (ok && h.shards_size && h.hash == game->game->hash) {
-        shards = malloc(h.shards_size);
+        shards = tide_shard_checkpoint_rewrite(block + h.shards, h.shards_size, NULL, NULL, game->game->simulation,
+                                               game->game->hash, &shards_size);
         ok = shards != NULL;
-        if (ok) memcpy(shards, block + h.shards, h.shards_size);
-        shards_size = h.shards_size;
     } else if (ok && h.shards_size) {
         shard_carry carry = {old, {0}, {0}, 0};
-        shards = tide_shard_checkpoint_rewrite(block + h.shards, h.shards_size, carry_shard, &carry, &shards_size);
+        shards = tide_shard_checkpoint_rewrite(block + h.shards, h.shards_size, carry_shard, &carry, game->game->simulation,
+                                               game->game->hash, &shards_size);
         ok = shards != NULL;
         match_done = ok ? carry.first : carry.failed;
     }
@@ -291,10 +292,12 @@ _Noreturn void tide_host_run_library(const tide_run_desc *desc, const char *dir)
     reload.dir = dir;
     reload.running = 1;
     reload.loaded = 1;
+    library_made_by = desc ? desc->made_by : NULL;
     const tide_host_game *game = load(1, &reload.library, true);
     if (!game) exit(1);
     tide_run_game = game;
     tide_run_input = restart_input;
+    reload_before = tide_run_travel_reload; // A paused match's recording, kept or let go with the build that made it
     tide_run_open(desc);
     check_pack(true); // The pack tide wrote with the first build, where the game has assets
     tide_run_begin_loaded();

@@ -1,0 +1,192 @@
+// A per-entity system that changes its own rows' grids goes through its
+// entities in runs that threads take, as one that changes their text and lists
+// does (row_heaps.tide): each run's blocks in a heap of its own, and a grid made
+// in another run's heap moves whole into the heap of the run that first adds a
+// chunk to it (tide/grid.h). Whatever threads run them, the world is one
+// thread's: the same handles, the same bytes in every heap, tick by tick, and as
+// bytes and deltas.
+//
+// Chunks of terrain are made from a seed (Generate, as bench/voxels makes its
+// chunks) and changed every tick: new chunks of a grid, cells of chunks it has,
+// cells set to zero, a grid replaced by a new one, a grid copied from another
+// field, one a function made, and a parallel loop over a row's grid that makes
+// chunks too. Chunks are destroyed and spawned every tick, so the ones after
+// them change runs, and a system on one thread changes the same grids between
+// the ones in runs.
+
+enum Block : byte
+{
+    Air,
+    Stone,
+    Dirt,
+    Grass,
+    Sand,
+    Water,
+    Plank
+}
+
+const int SIZE = 16;
+
+component Chunk
+{
+    int id;
+    int3 at;                                // In chunks
+    int seed;
+    Grid3<Block> blocks = Grid3(16, 16, 16); // Sized: a chunk of 16 cubed, made when a block isn't air
+    Grid2<byte> marks;                       // Open both ways: chunks anywhere
+    Grid2<byte> kept = Grid2(130, 70);       // Sized past a chunk each way
+    int stage;                               // 0 until Generate made its blocks
+    List<int> heard;                         // A list beside the grids, in runs too
+}
+
+component Deep { }      // Its chunks are an archetype of their own
+component Idle { }      // ...and these are left out
+
+singleton Tally
+{
+    int ticks;
+    int next;
+    long sum;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main, mut Tally tally)
+{
+    for (var i = 0; i < 300; i++)
+    {
+        var e = Spawn(Chunk { id = i, at = int3(i % 10 - 5, i / 100 - 1, i / 10 % 10 - 5), seed = 1000 + i % 3 * 77 });
+        if (i % 5 == 1) e.Add(Deep { });
+        if (i % 13 == 7) e.Add(Idle { });
+    }
+    tally.next = 300;
+}
+
+// The ground's height at a column, and what a cell is made of there (bench/voxels)
+int Ground(int seed, int x, int z)
+{
+    var wide = Math.Perlin(float2(x * 0.004, z * 0.004), seed) * 48;
+    var fine = Math.Perlin(float2(x * 0.03, z * 0.03), seed + 1) * 8;
+    return int(Math.Floor(wide + fine));
+}
+
+Block Natural(int seed, int3 cell, int ground)
+{
+    if (cell.y > ground) return cell.y <= 0 ? Block.Water : Block.Air;
+    if (cell.y < ground - 3)
+    {
+        if (Math.Perlin(float3(cell.x * 0.06, cell.y * 0.09, cell.z * 0.06), seed + 2) > 0.55) return Block.Air;
+        return Block.Stone;
+    }
+    if (ground <= 1) return Block.Sand;
+    return cell.y == ground ? Block.Grass : Block.Dirt;
+}
+
+// A grid a function made, given to a field and to a spawn
+Grid2<byte> Dots(int n)
+{
+    mut Grid2<byte> made = Grid2();
+    for (var i = 0; i < 4; i++) made[int2(n % 90 + i * 70, i * 40 - n % 60)] = byte(n + i + 1);
+    return made;
+}
+
+Grid2<byte> Stripes(int n)
+{
+    mut Grid2<byte> made = Grid2(130, 70);
+    for (var x = 0; x < 130; x += 9) made[x, n % 70] = byte(x + n + 1);
+    return made;
+}
+
+// In runs: a chunk's blocks from its seed, the first time and again after they're replaced (new chunks of a grid)
+system Generate(mut Chunk chunk, without Idle)
+{
+    if (chunk.stage != 0) return;
+    chunk.stage = 1;
+    var origin = chunk.at * SIZE;
+    for (var z = 0; z < SIZE; z++)
+    {
+        for (var x = 0; x < SIZE; x++)
+        {
+            var ground = Ground(chunk.seed, origin.x + x, origin.z + z);
+            if (origin.y > ground && origin.y > 0) continue;
+            for (var y = 0; y < SIZE; y++)
+            {
+                var block = Natural(chunk.seed, origin + int3(x, y, z), ground);
+                if (block != Block.Air) chunk.blocks[x, y, z] = block;
+            }
+        }
+    }
+}
+
+// In runs: every other kind of change a row makes to its own grids
+system Change(mut Chunk chunk, without Idle, Time time)
+{
+    var n = chunk.id * 7 + time.tick;
+    // Cells of the chunk it has, dug and built: set to zero and to blocks, and a chunk of air made by a block
+    for (var i = 0; i < 24; i++)
+    {
+        var cell = int3((n + i * 5) % 16, (n * 3 + i) % 16, (n + i * 11) % 16);
+        chunk.blocks[cell] = (n + i) % 4 == 0 ? Block.Air : Block.Plank;
+    }
+    // An open grid's cells: now and then in a chunk it hasn't got, and zero where it may have none
+    chunk.marks[int2(n * 37 % 160 - 80, n * 11 % 100 - 50)] = byte(n % 250 + 1);
+    chunk.marks[int2(n % 64, chunk.id % 64)] = 0;
+    if (chunk.marks[int2(1, 1)] == 0) chunk.marks[int2(1, 1)] = 9;
+    chunk.kept[n % 130, n % 70] = byte(n % 200 + 1);
+    chunk.heard.Add(n);
+    if (chunk.heard.count > 6) chunk.heard.RemoveAt(0);
+    // Copied from another field, made by a function, and replaced by new ones
+    if (n % 7 == 2) chunk.kept = chunk.marks.Copy();
+    if (n % 13 == 6) chunk.kept = Stripes(n);
+    if (n % 31 == 8) chunk.marks = Dots(n);
+    if (n % 29 == 3) chunk.marks = Grid2();
+    if (n % 17 == 5)
+    {
+        chunk.blocks = Grid3(16, 16, 16);
+        chunk.stage = 0; // Generate makes it again next tick
+    }
+    if (n % 19 == 9) chunk.kept.Clear();
+}
+
+// In runs: a parallel loop over a row's own grid, whose steps write in chunks it hasn't got too
+system Spread(mut Chunk chunk, with Deep, Time time)
+{
+    if (chunk.id % 3 != 0) return;
+    var n = chunk.id + time.tick;
+    parallel (var at in chunk.kept)
+    {
+        if ((at.x * 3 + at.y + n) % 41 == 0) chunk.kept[at] = byte(at.x + at.y + 1);
+    }
+}
+
+// In runs, and spawning: what it spawns holds a grid a function made, the component's own on the run's thread
+system Bud(mut Chunk chunk, with Deep, Time time)
+{
+    var n = chunk.id * 3 + time.tick;
+    chunk.marks[int2(n % 128, -(n % 100))] = byte(n % 7 + 1);
+    if (n % 53 == 7) Spawn(Chunk { id = -chunk.id - 1, at = chunk.at + int3(0, 2, 0), seed = chunk.seed + 1, kept = Dots(n) });
+}
+
+// On one thread (it changes a singleton it reads): the same grids, between the runs, new chunks too
+system Audit(mut Chunk chunk, mut Tally tally, Time time)
+{
+    var n = chunk.id + time.tick;
+    tally.sum += int(chunk.blocks[n % 16, n / 16 % 16, n / 256 % 16]) + chunk.marks[int2(n % 64, 0)] + chunk.kept[3, 4];
+    if (tally.sum % 9 == 4) chunk.marks[int2(-(n % 100) - 90, n % 60)] = 3;
+    if (n % 6 == 1) chunk.blocks[1, 2, 3] = Block.Stone;
+}
+
+// Chunks come and go: the ones after them change runs
+system Churn(Chunk chunk, mut Tally tally, Time time)
+{
+    if ((chunk.id * 7 + time.tick) % 37 != 0) return;
+    this.Destroy();
+    var e = Spawn(Chunk { id = tally.next, at = chunk.at, seed = chunk.seed, marks = Dots(tally.next) });
+    if (tally.next % 4 == 0) e.Add(Deep { });
+    tally.next++;
+}
+
+system Count(mut Tally tally)
+{
+    tally.ticks++;
+}

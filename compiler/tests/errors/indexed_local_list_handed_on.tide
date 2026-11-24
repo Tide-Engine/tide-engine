@@ -1,0 +1,18 @@
+// expect: this loop can't be indexed: the loop changes the list it goes through
+// A view that hands its component to a function writing its local fields alone changes nothing a loop over the
+// components finds rows by, but it does change a list that is one of those local fields
+component Patch
+{
+    int3 at;
+    local List<float3> points;
+}
+void Grow(mut Patch patch) { patch.points.Add(float3(1, 2, 3)); }
+view Patches(mut Patch patch)
+{
+    indexed foreach (var p in patch.points)
+    {
+        if (p.x > 2) continue;
+        Grow(patch);
+    }
+}
+scene Main { }

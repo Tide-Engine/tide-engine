@@ -8,10 +8,12 @@ typedef struct build_options {
     const char *folder; // The game: every .tide file in it and its subfolders
     bool release;       // Optimized game code with symbols and readable diagnostics
     bool distribution;  // Shipping cuts; implies release. No console window on Windows
+    bool dev;           // The game's `dev` declarations are in it (tidec --dev): tide run's default, tide build --dev
     const char *optimization; // -O0 through -O3, or NULL for the mode defaults; borrowed for watched rebuilds
     bool web;           // A web page, with clang's WebAssembly target: index.html, and the program and pack it downloads
     bool single_file;   // ...or one self-contained .html with them inside, which opens straight from disk
     bool android;       // An Android app (.apk), for arm64 phones and the x86-64 emulator
+    bool ios;           // tide unity alone: a Unity iOS player's game, as sources for its Xcode project
     bool server;        // Headless native process hosting independent matches.
     bool managed;       // Internal deploy target: single-match sandboxed WASM reactor.
     bool server_strip_assets; // Explicit promise that custom C has no hidden asset dependencies.
@@ -25,6 +27,9 @@ typedef struct build_options {
     // Internal (tide run with no window): `output` is in a folder that keeps what this build last made there, so
     // the program is linked again only when what it's made of changed
     bool keep_output;
+    // Internal (tide run with no window): the pack beside the program is tidec's file as it is, where a release
+    // build's is compressed for whoever it's handed to (tide/pack.h)
+    bool run_pack;
     const char *report; // tide build --report: where the build's report goes (build_report.h), or NULL for none
     const char *title;  // The window's title, over the game's title setting; NULL for that, or else the folder's name
     bool stats;         // Show the stats, whether or not the game's stats setting does: a drawer of one line, in a corner
@@ -33,10 +38,7 @@ typedef struct build_options {
     // The symbols every file's #if conditions read as defined: --define's, and DEBUG without --release
     const char *const *defines; // Kept by the caller for the build and every watched rebuild
     int define_count;
-    const char *editor_prefab, *editor_source, *editor_draft;
     const char *scene; // Explicit startup override.
-    const char *work; // Private isolated build-cache root, or NULL for .tide/.
-    bool editor_local;
     bool unity; // For Unity's Tide package (tide unity): the game built for another program to run (tidec --embed)
     const char *measured; // tide schedule --measured: a run's profiling report to set the schedule against
     const char *unity_assets; // ...and the Unity project's Assets folder, whose prefabs and scenes it has (unity_assets.h)
@@ -53,7 +55,6 @@ typedef struct build_options {
 // what went wrong.
 char *tide_build(const char *root, const build_options *opts);
 // Internal authoring module build; output is a private directory owned by the editor.
-char *tide_build_editor(const char *root, const build_options *opts);
 
 // Builds a standalone program and runs it once (a run with no window). `args` go to the
 // game (--host, --join, --connect, --size, and a run with no window's), ending

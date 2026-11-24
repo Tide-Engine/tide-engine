@@ -1,0 +1,4 @@
+// expect: a Grid2<int> is a Texture only where a [Raw(int)] Texture is wanted
+scene Main { }
+local singleton Art { Grid2<int> ids = Grid2(4, 4); Texture tex; int which; }
+view Show(Art art) { var t = art.which switch { 0 => art.tex, _ => art.ids }; var s = t.size; }

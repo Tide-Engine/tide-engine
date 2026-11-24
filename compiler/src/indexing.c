@@ -40,6 +40,7 @@ typedef struct ictx {
     const stmt *loop;
     bool list_steps;   // A parallel loop over a list: its variable is an index, and its rows are list[i]
     VEC(const expr *) written;  // What the loop changes: places rooted at locals and parameters
+    VEC(const expr *) written_local; // ...and places of which it changes the local fields alone (changes_local_fields_alone)
     VEC(const decl *) world_sets; // Components the loop sets through a World
     bool world_sets_any;          // ...or a call that may set any
     VEC(const stmt *) inner;      // Locals the loop's body declares
@@ -48,6 +49,10 @@ typedef struct ictx {
     int env_count;
     const decl *inlining[MOST_INLINE];
     int inline_depth;
+    // Conversions seen past (a name or an inlined call standing for a value of another type): a count, its value
+    // as the comparison being read began, and how many conditions being read went through one
+    uint32_t converted, converted_mark;
+    int converting;
     const char *why;
     loc why_at;
 } ictx;
@@ -73,8 +78,16 @@ static bool same_kind(const type a, const type b)
 
 static bool is_scalar_key(const type t)
 {
-    if (t.kind == TY_ENUM || t.kind == TY_BOOL || t.kind == TY_CHAR) return true;
+    if (t.kind == TY_ENUM || t.kind == TY_BOOL || t.kind == TY_CHAR || t.kind == TY_LONG) return true;
     return type_dim(t) == 1 && (type_is_float_based(t) || type_is_double_based(t) || type_is_integer(t));
+}
+
+// Whether values of the type are whole numbers a 64-bit integer holds as they are, compared as integers: an
+// equality of two of them is one of int64_ts (Tide has no unsigned integer but byte, which promotes exactly)
+static bool is_exact_type(const type t)
+{
+    return t.kind == TY_BYTE || t.kind == TY_INT || t.kind == TY_LONG || t.kind == TY_CHAR || t.kind == TY_ENUM
+        || t.kind == TY_BOOL;
 }
 
 static bool is_real(const type t) // float or double, scalar or vector: arithmetic on it rounds, never wraps
@@ -128,12 +141,15 @@ static const void *name_target(const expr *e)
     return NULL;
 }
 
-static const expr *env_find(const ictx *c, const expr *e)
+static const expr *env_find(ictx *c, const expr *e)
 {
     const void *target = name_target(e);
     if (!target) return NULL;
     for (int i = c->env_count - 1; i >= 0; i--) {
-        if (c->env_from[i] == target) return c->env_to[i];
+        if (c->env_from[i] != target) continue;
+        // `float f = row.n;`: the name's a float, what it stands for an int, and C compares f as a float
+        if (!same_kind(e->type, c->env_to[i]->type)) c->converted++;
+        return c->env_to[i];
     }
     return NULL;
 }
@@ -203,6 +219,7 @@ static const expr *inline_call(ictx *c, const expr *call)
     const expr *out = ok && pure(c, value) ? subst(c, value) : NULL;
     c->inline_depth--;
     c->env_count = mark;
+    if (out && !same_kind(call->type, out->type)) c->converted++; // `float AsF(int x) { return x; }`
     return out;
 }
 
@@ -407,6 +424,15 @@ static bool places_overlap(const expr *a, const expr *b)
     return true;
 }
 
+// Whether a place is read through a local field of a match component or singleton: `chunk.faces[i]`.
+static bool through_local_field(const expr *read)
+{
+    for (const expr *e = read; e && (e->kind == E_MEMBER || e->kind == E_INDEX); e = e->object) {
+        if (e->kind == E_MEMBER && e->local_field) return true;
+    }
+    return false;
+}
+
 // Whether the loop changes anything of the variable (a local or a parameter) that `read` reads; `read` NULL: anything of it.
 static bool loop_changes(const ictx *c, const void *variable, const expr *read)
 {
@@ -415,7 +441,28 @@ static bool loop_changes(const ictx *c, const void *variable, const expr *read)
         if (name_target(place_root(target)) != variable) continue;
         if (!read || places_overlap(target, read)) return true;
     }
+    // A component handed on to change its local fields alone changes what's read through them (a loop over a local
+    // field's list), never its match fields
+    for (int i = 0; i < c->written_local.count; i++) {
+        if (name_target(place_root(c->written_local.items[i])) != variable) continue;
+        if (!read || through_local_field(read)) return true;
+    }
     return false;
+}
+
+// Whether a call's `mut` parameter changes the local fields alone of the match component or singleton it's given:
+// one with local fields whose function (a task's among them) writes none of its match fields, itself or through
+// what it hands it to (param.match_write, spread_local_field_use). Local code hands its own to no other (a view
+// can't change the match: check_local_field_calls), and a local task writes those alone. No key or bound is a local
+// field (row_path, invariant_read), so such a call changes nothing a query's loop finds rows by; a loop over a list
+// that's a local field of it is another matter (loop_changes, written_local). C writes what it's handed, and what it
+// writes isn't the compiler's to know: an extern's parameter, and one its function hands on to C itself or through
+// others (param.c_passed, settle_c_lends), changes the whole of it.
+static bool changes_local_fields_alone(const decl *d, const param *q)
+{
+    return q->mode == PARAM_MUT && !q->is_out && (q->type.kind == TY_COMPONENT || q->type.kind == TY_SINGLETON)
+        && q->type.decl && !q->type.decl->is_local && q->type.decl->local_part && !q->match_write
+        && !d->is_extern && !q->c_passed;
 }
 
 static void note_world_sets(ictx *c, const decl *d)
@@ -433,13 +480,20 @@ static void walk_writes_expr(ictx *c, const expr *e)
     if ((e->call == CALL_FUNCTION || e->call == CALL_METHOD) && e->method) {
         const decl *d = e->method;
         for (int i = 0; i < d->params.count && i < e->args.count; i++) {
-            if (d->params.items[i].mode == PARAM_MUT || d->params.items[i].is_out) note_written(c, e->args.items[i]);
-            if (e->args.items[i]->type.kind == TY_WORLD) note_world_sets(c, d);
+            const param *q = &d->params.items[i];
+            const expr *arg = e->args.items[i];
+            if (changes_local_fields_alone(d, q)) {
+                const expr *root = place_root(arg);
+                if (root && name_target(root)) vec_push(c->written_local, arg);
+            } else if (q->mode == PARAM_MUT || q->is_out) {
+                note_written(c, arg);
+            }
+            if (arg->type.kind == TY_WORLD) note_world_sets(c, d);
         }
         if (e->call == CALL_METHOD && d->is_mut_method) note_written(c, e->object);
     }
     if (e->call == CALL_LIST || e->call == CALL_GUI) note_written(c, e->object);
-    if (e->call == CALL_WORLD && str_eq_c(e->name, "Set")) {
+    if (e->call == CALL_WORLD && (str_eq_c(e->name, "Set") || str_eq_c(e->name, "Edit"))) {
         if (e->type_decl) vec_push(c->world_sets, e->type_decl);
         else c->world_sets_any = true;
     }
@@ -661,6 +715,7 @@ static const bound *leaf(ictx *c, const expr *e, const int comp)
     b->op = BOUND_LEAF;
     b->leaf = value;
     b->comp = comp;
+    b->inexact = c->converting > 0 || c->converted != c->converted_mark;
     return b;
 }
 
@@ -675,12 +730,28 @@ static const bound *op2(const bound_op op, const bound *a, const bound *b)
     return out;
 }
 
+// Whether bounds say a key of the type is one value, which is a whole number compared as one: the key and the
+// value are both of exact types (a byte against a float isn't: C compares those as floats). An exact key finds it.
+static bool exact_bound(const type t, const bound *lo, const bound *hi)
+{
+    if (!lo || lo != hi || lo->op != BOUND_LEAF || !lo->leaf || lo->inexact || !is_exact_type(t)) return false;
+    // A component of a vector value (an int3's), or the value itself
+    return lo->comp >= 0 ? type_is_int_based(lo->leaf->type) : is_exact_type(lo->leaf->type);
+}
+
 static void add_constraint(constraints *set, const expr *path, const int comp, const type t, const bound *lo,
                            const bound *hi)
 {
     for (int i = 0; i < set->count; i++) {
         constraint *k = &set->items[i];
         if (k->comp != comp || !same_place(k->path, path)) continue;
+        // A whole number that's one value stays one: other bounds on it would narrow nothing an exact key finds,
+        // and leaving out a bound only ever takes in more rows
+        if (exact_bound(k->type, k->lo, k->hi)) return;
+        if (exact_bound(t, lo, hi)) {
+            k->lo = k->hi = lo;
+            return;
+        }
         if (lo) k->lo = k->lo ? op2(BOUND_MAX, k->lo, lo) : lo;
         if (hi) k->hi = k->hi ? op2(BOUND_MIN, k->hi, hi) : hi;
         return;
@@ -911,16 +982,36 @@ static constraints compare(ictx *c, const expr *a, tok_kind op, const expr *b, c
     constraints out = {0};
     if (!want) op = negated(op); // NaN makes a negated comparison true: rows of NaN keys are candidates always
     if (op == T_NE) return out;
-    if (!relation(c, a, op, b, &out)) relation(c, b, flipped(op), a, &out);
+    // A conversion either side, seen past from here on, makes its bounds inexact (leaf)
+    const uint32_t mark = c->converted_mark;
+    c->converted_mark = c->converted;
+    if (!relation(c, a, op, b, &out)) {
+        c->converted_mark = c->converted; // The other way round reads both sides again, and counts its own
+        relation(c, b, flipped(op), a, &out);
+    }
+    c->converted_mark = mark;
     return out;
 }
 
-// Bounds that hold whenever the condition is `want`.
+static constraints derive_seen(ictx *c, const expr *e, bool want);
+
+// Bounds that hold whenever the condition is `want`. A condition seen through a conversion (an inlined helper
+// whose float local holds an int) makes every bound of it inexact.
 static constraints derive(ictx *c, const expr *e, const bool want)
 {
-    constraints none = {0};
+    const uint32_t before = c->converted;
     e = look(c, e);
-    if (!e) return none;
+    if (!e) return (constraints){0};
+    const bool converted = c->converted != before;
+    c->converting += converted;
+    const constraints out = derive_seen(c, e, want);
+    c->converting -= converted;
+    return out;
+}
+
+static constraints derive_seen(ictx *c, const expr *e, const bool want)
+{
+    constraints none = {0};
     if (e->kind == E_UNARY && e->op == T_NOT) return derive(c, e->lhs, !want);
     if (e->kind == E_BINARY && (e->op == T_AND || e->op == T_OR)) {
         const constraints a = derive(c, e->lhs, want), b = derive(c, e->rhs, want);
@@ -941,6 +1032,7 @@ static constraints derive(ictx *c, const expr *e, const bool want)
         b->op = BOUND_LEAF;
         b->leaf = literal;
         b->comp = -1;
+        b->inexact = c->converting > 0;
         constraints out = {0};
         add_constraint(&out, path, comp, t, b, b);
         return out;
@@ -1087,7 +1179,8 @@ static bool expr_changes_param(const expr *e, const param *p, const field *f, lo
     if ((e->call == CALL_FUNCTION || e->call == CALL_METHOD) && e->method) {
         const decl *d = e->method;
         for (int i = 0; i < d->params.count && i < e->args.count; i++) {
-            if ((d->params.items[i].mode == PARAM_MUT || d->params.items[i].is_out) && names_param(e->args.items[i], p)) {
+            const param *q = &d->params.items[i];
+            if ((q->mode == PARAM_MUT || q->is_out) && !changes_local_fields_alone(d, q) && names_param(e->args.items[i], p)) {
                 *at = e->at;
                 return true;
             }
@@ -1124,61 +1217,243 @@ static bool changes_own_field(const decl *code, const decl *component, const fie
     return false;
 }
 
-// Whether `from` calls `target`, directly or through other functions.
-typedef VEC(const decl *) decl_list;
-static bool calls_expr(const expr *e, const decl *target, decl_list *seen);
-static bool calls_stmt(const stmt *s, const decl *target, decl_list *seen)
+// ---------------------------------------------------------------------------
+// Which code calls which: every function and method the game's code calls, found once a program. A big game's
+// loops asked, for each system, whether it reaches their code, and each answer walked everything the system
+// calls: thousands of walks of the same bodies.
+
+typedef struct call_graph {
+    const program *prog;
+    const decl **nodes;     // The game's declarations, their methods, and whatever those call
+    int count, room;
+    int listed;             // The first `listed` are the program's own (decls and their methods), in their order
+    int *first, *callees;   // Node n calls callees[first[n] .. first[n + 1])
+    const decl **keys;      // A declaration's node, by its address: 1 + the node, or 0
+    int *slots;
+    uint32_t mask;
+    VEC(int) edges;         // While it's built: caller, callee, caller, callee...
+    // Who reaches a target, asked before: a byte a node
+    VEC(const decl *) asked;
+    VEC(uint8_t *) reaching;
+} call_graph;
+
+static call_graph calls_of;
+
+static uint32_t call_place(const decl *d, const uint32_t mask)
 {
-    if (!s) return false;
-    if (calls_expr(s->cond, target, seen) || calls_expr(s->value, target, seen) || calls_expr(s->target, target, seen)) return true;
-    if (calls_stmt(s->init, target, seen) || calls_stmt(s->step, target, seen)) return true;
-    if (calls_stmt(s->then_stmt, target, seen) || calls_stmt(s->else_stmt, target, seen)) return true;
-    for (int i = 0; i < s->stmts.count; i++) {
-        if (calls_stmt(s->stmts.items[i], target, seen)) return true;
-    }
-    for (int i = 0; i < s->cases.count; i++) {
-        for (int k = 0; k < s->cases.items[i].body.count; k++) {
-            if (calls_stmt(s->cases.items[i].body.items[k], target, seen)) return true;
-        }
-    }
-    return false;
+    uint64_t n = (uint64_t)(uintptr_t)d;
+    n ^= n >> 33;
+    n *= UINT64_C(0xff51afd7ed558ccd);
+    n ^= n >> 33;
+    return (uint32_t)n & mask;
 }
 
-static bool calls_expr(const expr *e, const decl *target, decl_list *seen)
+static int call_node(call_graph *g, const decl *d, const bool add)
 {
-    if (!e) return false;
+    if (g->keys) {
+        uint32_t at = call_place(d, g->mask);
+        while (g->keys[at] && g->keys[at] != d) at = (at + 1u) & g->mask;
+        if (g->keys[at]) return g->slots[at] - 1;
+    }
+    if (!add) return -1;
+    if (!g->keys || (uint64_t)(g->count + 1) * 2u > g->mask) {
+        const uint32_t mask = g->keys ? g->mask * 2u + 1u : 4095u;
+        const decl **keys = arena_alloc(((size_t)mask + 1u) * sizeof *keys);
+        int *slots = arena_alloc(((size_t)mask + 1u) * sizeof *slots);
+        memset(keys, 0, ((size_t)mask + 1u) * sizeof *keys);
+        for (int i = 0; i < g->count; i++) {
+            uint32_t at = call_place(g->nodes[i], mask);
+            while (keys[at]) at = (at + 1u) & mask;
+            keys[at] = g->nodes[i];
+            slots[at] = i + 1;
+        }
+        g->keys = keys;
+        g->slots = slots;
+        g->mask = mask;
+    }
+    if (g->count == g->room) {
+        const int room = g->room ? g->room * 2 : 1024;
+        const decl **nodes = arena_alloc((size_t)room * sizeof *nodes);
+        if (g->count) memcpy(nodes, g->nodes, (size_t)g->count * sizeof *nodes);
+        g->nodes = nodes;
+        g->room = room;
+    }
+    uint32_t at = call_place(d, g->mask);
+    while (g->keys[at]) at = (at + 1u) & g->mask;
+    g->keys[at] = d;
+    g->slots[at] = g->count + 1;
+    g->nodes[g->count] = d;
+    return g->count++;
+}
+
+// The calls in code, as an edge each from node `from`
+static void calls_expr(call_graph *g, int from, const expr *e);
+static void calls_stmt(call_graph *g, const int from, const stmt *s)
+{
+    if (!s) return;
+    calls_expr(g, from, s->cond);
+    calls_expr(g, from, s->value);
+    calls_expr(g, from, s->target);
+    calls_stmt(g, from, s->init);
+    calls_stmt(g, from, s->step);
+    calls_stmt(g, from, s->then_stmt);
+    calls_stmt(g, from, s->else_stmt);
+    for (int i = 0; i < s->stmts.count; i++) calls_stmt(g, from, s->stmts.items[i]);
+    for (int i = 0; i < s->cases.count; i++) {
+        for (int k = 0; k < s->cases.items[i].body.count; k++) calls_stmt(g, from, s->cases.items[i].body.items[k]);
+    }
+}
+
+static void calls_expr(call_graph *g, const int from, const expr *e)
+{
+    if (!e) return;
     if ((e->call == CALL_FUNCTION || e->call == CALL_METHOD) && e->method) {
-        if (e->method == target) return true;
-        bool visited = false;
-        for (int i = 0; i < seen->count; i++) visited |= seen->items[i] == e->method;
-        if (!visited) {
-            vec_push(*seen, e->method);
-            if (calls_stmt(e->method->body, target, seen)) return true;
+        vec_push(g->edges, from);
+        vec_push(g->edges, call_node(g, e->method, true));
+    }
+    calls_expr(g, from, e->object);
+    calls_expr(g, from, e->lhs);
+    calls_expr(g, from, e->rhs);
+    calls_expr(g, from, e->cond);
+    for (int i = 0; i < e->args.count; i++) calls_expr(g, from, e->args.items[i]);
+    calls_stmt(g, from, e->block);
+    calls_stmt(g, from, e->step);
+}
+
+static void call_list(call_graph *g, const decl *d)
+{
+    call_node(g, d, true);
+    for (int k = 0; k < d->methods.count; k++) call_list(g, d->methods.items[k]);
+}
+
+// The program's graph, made at the first ask: the arena's, which a compilation doesn't outlive (call_graph_reset)
+static call_graph *calls_graph(const program *prog)
+{
+    call_graph *g = &calls_of;
+    if (g->prog == prog) return g;
+    memset(g, 0, sizeof *g);
+    g->prog = prog;
+    for (int i = 0; i < prog->decls.count; i++) call_list(g, prog->decls.items[i]);
+    g->listed = g->count;
+    for (int n = 0; n < g->count; n++) calls_stmt(g, n, g->nodes[n]->body); // What a body calls joins the nodes, and is walked too
+    // By caller: a count each, then each one's place
+    g->first = arena_alloc(((size_t)g->count + 1u) * sizeof *g->first);
+    memset(g->first, 0, ((size_t)g->count + 1u) * sizeof *g->first);
+    for (int i = 0; i < g->edges.count; i += 2) g->first[g->edges.items[i] + 1]++;
+    for (int n = 0; n < g->count; n++) g->first[n + 1] += g->first[n];
+    g->callees = arena_alloc(((size_t)(g->edges.count / 2) + 1u) * sizeof *g->callees);
+    int *next = arena_alloc(((size_t)g->count + 1u) * sizeof *next);
+    memcpy(next, g->first, ((size_t)g->count + 1u) * sizeof *next);
+    for (int i = 0; i < g->edges.count; i += 2) g->callees[next[g->edges.items[i]]++] = g->edges.items[i + 1];
+    return g;
+}
+
+void call_graph_reset(void)
+{
+    memset(&calls_of, 0, sizeof calls_of);
+}
+
+// Whether `from` calls `target`, directly or through other functions.
+static bool calls_code(const program *prog, const decl *from, const decl *target)
+{
+    call_graph *g = calls_graph(prog);
+    const int t = call_node(g, target, false), f = call_node(g, from, false);
+    if (t < 0 || f < 0) return false; // Code nothing lists or calls
+    uint8_t *reaching = NULL;
+    for (int i = 0; i < g->asked.count && !reaching; i++) {
+        if (g->asked.items[i] == target) reaching = g->reaching.items[i];
+    }
+    if (!reaching) {
+        // Every node that calls the target, then every node that calls one of those, until none is new
+        reaching = arena_alloc((size_t)g->count + 1u);
+        memset(reaching, 0, (size_t)g->count + 1u);
+        uint8_t *is = arena_alloc((size_t)g->count + 1u);
+        memset(is, 0, (size_t)g->count + 1u);
+        is[t] = 1;
+        for (bool more = true; more;) {
+            more = false;
+            for (int n = 0; n < g->count; n++) {
+                if (reaching[n]) continue;
+                for (int k = g->first[n]; k < g->first[n + 1]; k++) {
+                    if (!is[g->callees[k]] && !reaching[g->callees[k]]) continue;
+                    reaching[n] = 1;
+                    more = true;
+                    break;
+                }
+            }
+        }
+        vec_push(g->asked, target);
+        vec_push(g->reaching, reaching);
+    }
+    return reaching[f] != 0;
+}
+
+const decl **call_graph_bottom_up(const program *prog, int *count)
+{
+    call_graph *g = calls_graph(prog);
+    // Each listed node after everything it calls that's listed, where the calls don't go round: a walk from each in
+    // the program's order, a node given its place once what it calls has theirs
+    const decl **order = arena_alloc(((size_t)g->listed + 1u) * sizeof *order);
+    uint8_t *state = arena_alloc((size_t)g->count + 1u); // 0 not met, 1 being walked, 2 placed
+    memset(state, 0, (size_t)g->count + 1u);
+    int *stack = arena_alloc(((size_t)g->count + 1u) * sizeof *stack), *at = arena_alloc(((size_t)g->count + 1u) * sizeof *at);
+    int placed = 0;
+    for (int root = 0; root < g->listed; root++) {
+        if (state[root]) continue;
+        int depth = 0;
+        stack[0] = root;
+        at[0] = g->first[root];
+        state[root] = 1;
+        while (depth >= 0) {
+            const int n = stack[depth];
+            if (at[depth] < g->first[n + 1]) {
+                const int to = g->callees[at[depth]++];
+                if (state[to]) continue;
+                state[to] = 1;
+                stack[++depth] = to;
+                at[depth] = g->first[to];
+            } else {
+                state[n] = 2;
+                if (n < g->listed) order[placed++] = g->nodes[n];
+                depth--;
+            }
         }
     }
-    if (calls_expr(e->object, target, seen) || calls_expr(e->lhs, target, seen) || calls_expr(e->rhs, target, seen)
-        || calls_expr(e->cond, target, seen)) {
-        return true;
-    }
-    for (int i = 0; i < e->args.count; i++) {
-        if (calls_expr(e->args.items[i], target, seen)) return true;
-    }
-    return calls_stmt(e->block, target, seen) || calls_stmt(e->step, target, seen);
+    *count = placed;
+    return order;
 }
 
 // A query's key must keep its value while the code it's in runs, between one
 // time the loop starts and the next: the index made at one is used at the
 // next while nothing changes the pages it was made from.
+static bool key_still(ictx *c, const decl *component, const field *f);
+
 static bool query_source_still(ictx *c, const loop_index *plan)
 {
-    const decl *component = plan->component;
-    const field *f = path_field(c, plan->keys[0].path);
-    if (!component) {
-        because(c, c->loop->at, "its key isn't a component's field");
-        return false;
+    for (int k = 0; k < plan->count; k++) {
+        if (!path_component(c, plan->keys[k].path)) {
+            because(c, c->loop->at, "its key isn't a component's field");
+            return false;
+        }
     }
     // As the tick started: nothing the code or any other system does changes it
     if (plan->previous) return true;
+    // Each field a key is in, once (an exact key's may be in several fields, of several components)
+    for (int k = 0; k < plan->count; k++) {
+        const decl *component = path_component(c, plan->keys[k].path);
+        const field *f = path_field(c, plan->keys[k].path);
+        bool seen = false;
+        for (int j = 0; j < k; j++) {
+            seen |= path_component(c, plan->keys[j].path) == component && path_field(c, plan->keys[j].path) == f;
+        }
+        if (!seen && !key_still(c, component, f)) return false;
+    }
+    return true;
+}
+
+// ...for the key in `f` of `component` (NULL: the component whole)
+static bool key_still(ictx *c, const decl *component, const field *f)
+{
     if (world_sets(c, component)) {
         because(c, c->loop->at, "the loop sets " STR_FMT " through its World, which changes rows as it goes",
                 STR_ARG(component->name));
@@ -1200,14 +1475,13 @@ static bool query_source_still(ictx *c, const loop_index *plan)
     for (int i = 0; i < c->prog->decls.count; i++) {
         const decl *d = c->prog->decls.items[i];
         if (d->kind != DECL_SYSTEM || !d->body) continue;
-        decl_list seen = {0};
         // One whose queries take the component `previous` alone hands this code the tick's start, which its own
         // writes don't change
         bool before = false, now = false;
         for (int k = 0; k < d->previous_reads.count; k++) before |= d->previous_reads.items[k] == component;
         for (int k = 0; k < d->world_uses.count; k++) now |= d->world_uses.items[k].component == component && d->world_uses.items[k].query_read;
         now |= !before;
-        const bool reaches = now && calls_stmt(d->body, c->code, &seen);
+        const bool reaches = now && calls_code(c->prog, d, c->code);
         if (reaches && changes_own_field(d, component, f, &at)) {
             because(c, at, "'" STR_FMT "' changes " STR_FMT "%s" STR_FMT " of its own entity as it goes, and calls this "
                            "code, whose loop finds rows by it: change it in a system of its own", STR_ARG(d->name),
@@ -1216,6 +1490,22 @@ static bool query_source_still(ictx *c, const loop_index *plan)
         }
     }
     return true;
+}
+
+// A query's keys are read from one kind of table: the tick's start's (`previous` bindings) or the world's as it
+// is. An exact key's whole numbers and doubles can be in several bindings; those of another kind than the first
+// key's are left to the guard.
+static void keep_alike(const ictx *c, loop_index *plan)
+{
+    const bool first = path_previous(c, plan->keys[0].path);
+    int n = 1, exact = plan->exact ? 1 : 0;
+    for (int k = 1; k < plan->count; k++) {
+        if (path_previous(c, plan->keys[k].path) != first) continue;
+        plan->keys[n++] = plan->keys[k];
+        exact += k < plan->exact;
+    }
+    plan->count = n;
+    plan->exact = exact;
 }
 
 // The loop's list must keep its elements while the loop runs.
@@ -1232,8 +1522,10 @@ static bool list_source_still(ictx *c)
     return true;
 }
 
-// Picks the keys: two or three bounded both ways (a grid), else an equality,
-// else one bounded both ways, else one bounded one way.
+// Picks the keys: two or three bounded both ways (a grid), else every whole
+// number that's one value as one exact key, with up to three other bounds
+// beside it, else an equality, else one bounded both ways, else one bounded
+// one way.
 static bool choose(const constraints *set, loop_index *plan)
 {
     int best = -1;
@@ -1256,6 +1548,25 @@ static bool choose(const constraints *set, loop_index *plan)
         }
     }
     if (plan->count >= 2) return true;
+    // An exact key: the whole numbers that are each one value (a chunk's place's three components and its
+    // dimension, a team), in the order the guard says them, then other bounds beside them, both ways first
+    int n = 0;
+    for (int i = 0; i < set->count && n < INDEX_EXACT_MOST; i++) {
+        const constraint *k = &set->items[i];
+        if (exact_bound(k->type, k->lo, k->hi)) plan->keys[n++] = (index_key){k->path, k->comp, k->type, k->lo, k->hi};
+    }
+    if (n > 0) {
+        plan->exact = n;
+        for (int pass = 0; pass < 2; pass++) {
+            for (int i = 0; i < set->count && n < plan->exact + 3; i++) {
+                const constraint *k = &set->items[i];
+                if (exact_bound(k->type, k->lo, k->hi) || (pass == 0) != (k->lo && k->hi)) continue;
+                plan->keys[n++] = (index_key){k->path, k->comp, k->type, k->lo, k->hi};
+            }
+        }
+        plan->count = n;
+        return true;
+    }
     for (int pass = 0; pass < 3 && best < 0; pass++) {
         for (int i = 0; i < set->count && best < 0; i++) {
             const constraint *k = &set->items[i];
@@ -1364,6 +1675,7 @@ static void plan_loop(const program *prog, const decl *code, stmt *loop)
         because(&c, loop->at, "its guard puts no bound on a number of the row: compare one of the row's numbers, or its "
                               "distance to a place, with a value the loop doesn't change");
     } else if (choose(&found, plan)) {
+        if (query) keep_alike(&c, plan);
         plan->component = query ? path_component(&c, plan->keys[0].path) : NULL;
         plan->previous = query && path_previous(&c, plan->keys[0].path);
         const bool still = query ? query_source_still(&c, plan) : list_source_still(&c);
@@ -1433,6 +1745,7 @@ static void plan_stmt(const program *prog, const decl *code, stmt *s)
 
 void plan_loop_indexes(program *prog)
 {
+    call_graph_reset(); // Another program's, or this one's before its code was checked
     for (int i = 0; i < prog->decls.count; i++) {
         const decl *d = prog->decls.items[i];
         if ((d->kind == DECL_SYSTEM || d->kind == DECL_FUNCTION) && d->body) plan_stmt(prog, d, d->body);
@@ -1470,13 +1783,28 @@ const char *loop_index_summary(const stmt *loop)
     }
     const loop_index *plan = loop->index;
     sb_put(&out, "indexed by ");
-    for (int i = 0; i < plan->count; i++) {
+    if (plan->exact) { // "a, b and c as one exact key, and by d and e"
+        for (int part = 0; part < 2; part++) {
+            const int from = part ? plan->exact : 0, to = part ? plan->count : plan->exact;
+            if (from == to) continue;
+            if (part) sb_put(&out, ", and by ");
+            for (int i = from; i < to; i++) {
+                const index_key *k = &plan->keys[i];
+                if (i > from) sb_put(&out, i + 1 == to ? " and " : ", ");
+                describe_path(&out, k->path);
+                if (k->comp >= 0) sb_printf(&out, ".%c", "xyzw"[k->comp & 3]);
+            }
+            if (!part) sb_put(&out, " as one exact key");
+        }
+    }
+    for (int i = 0; i < plan->count && !plan->exact; i++) {
         const index_key *k = &plan->keys[i];
         if (i) sb_put(&out, ", ");
         describe_path(&out, k->path);
         if (k->comp >= 0) sb_printf(&out, ".%c", "xyzw"[k->comp & 3]);
     }
-    if (plan->previous) sb_put(&out, " as the tick started: its index is made once a tick");
+    if (plan->previous) sb_put(&out, plan->exact ? ", as the tick started: its index is made once a tick"
+                                                 : " as the tick started: its index is made once a tick");
     return out.data;
 }
 

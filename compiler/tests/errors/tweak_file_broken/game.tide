@@ -1,0 +1,3 @@
+// expect: '=' after the tweak's name
+tweak float KickUp = 0.5;
+scene Main { }

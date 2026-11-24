@@ -7,7 +7,7 @@ Working rules and agreed decisions for humans and AI agents. Implementation deta
 - The project owner is the lead programmer and writes most of the code. Agents do specific, scoped tasks: do not scaffold systems, widen scope or refactor nearby code without being asked. If code versus discussion is unclear, ask.
 - Within an assigned task, small API completions that follow existing conventions and simplify game code are clear wins: implement and validate them without asking about routine edge cases. Bring substantive language, behavior or ownership decisions to the owner.
 - The owner decides language design. The agent working on a transpiler task implements and maintains its compiler changes, tests and build integration, and proposes language changes for approval. The compiler, CLI and editor integrations are agent-maintained; references to Claude record authorship, not exclusive ownership.
-- The owner writes the runtime, with an existing exception: agents maintain the temporary implementations listed in `notes/runtime-ownership.md` until the owner takes them over. Read that note before changing the generated-C/runtime boundary. Any new runtime function generated code needs is agreed on before either side depends on it.
+- The owner writes the runtime, with an existing exception: agents maintain the temporary implementations listed in `notes/runtime-ownership.md` until the owner takes them over. Read that note before changing the generated-C/runtime boundary. A new runtime function or hook generated code needs, or a changed contract between them, that is a clear win (measured, results unchanged, tested) needs no sign-off: build it and record it in that note (owner, 2026-11-17). One with a real trade-off is brought to the owner first.
 - Validate changes locally, commit the relevant notes with the work, then merge directly into `dev` using the procedure below. Do not create pull requests, push feature branches or dispatch CI unless the owner asks.
 - Before changing a subsystem, read its notes file **whole**, plus related notes for boundaries the change touches. Record what was built, its contracts, tests, remaining gaps and corrections in the same commit. Put only rules and agreed decisions needed across sessions in this file.
 - Changes to the language, CLI or editors update the corresponding user documentation as well as the spec when semantics change. Keep decided behavior separate from provisional behavior and open questions.
@@ -24,7 +24,7 @@ Before running commands, set `TIDE_HIDDEN=1` in the agent's shell: PowerShell `$
 
 Tide is a networking-first game engine written in strict C17 and compiled with clang. Simulation uses deterministic floats, not fixed point. Its language transpiles to C; game and engine code are optimized together, allowing calls to be inlined. The ECS derives data dependencies from the language and schedules work automatically. Rendering is secondary to simulation and networking.
 
-Desktop and consoles are the main targets. Android, then iOS, are mobile targets. WebAssembly is actively supported and tested, with WebGPU rendering. Desktop and web players share a deterministic simulation. Touch is input wherever available. A phone that backgrounds or closes leaves the match; enabled host migration transfers its hosted match, rather than continuing simulation in the background.
+Desktop and consoles are the main targets. Android, then iOS, are mobile targets; iOS is a game inside Unity's player only, built on CI's Macs (`notes/ios.md`). WebAssembly is actively supported and tested, with WebGPU rendering. Desktop and web players share a deterministic simulation. Touch is input wherever available. A phone that backgrounds or closes leaves the match; enabled host migration transfers its hosted match, rather than continuing simulation in the background.
 
 ## Building
 
@@ -43,7 +43,7 @@ Requires CMake 3.25+, Ninja and clang. The toolchain finds clang through `$LLVM_
 | Run web tests | `ctest --preset web-debug` |
 | Run web pixel tests on this machine's GPU (optional: local validation focuses on native tests, owner 2026-11-05) | `ctest --preset web-hardware`, `web-hardware-d3d11` |
 
-Use `sanitize` for routine native correctness validation, including local GPU tests: ASan on Windows, ASan and UBSan on Linux/macOS. Keep ordinary release and web coverage, and measure performance without sanitizers. `debug` has no optimization; `release` and `sanitize` are optimized with debug information. Web, MinGW, Android and packaging presets are in `CMakePresets.json`; read their notes before using them. Use Node 24.22.1 or a newer 24.x patch for Node-based tooling and services (`notes/testing.md`); this includes the October 2026 security fixes and the Windows crash fix from 24.16.
+Use `sanitize` for routine native correctness validation, including local GPU tests: ASan on Windows, ASan and UBSan on Linux/macOS. Keep ordinary release and web coverage, and measure performance without sanitizers. `debug` has no optimization; `release` and `sanitize` are optimized with debug information. Web, MinGW, Android, iOS and packaging presets are in `CMakePresets.json`; read their notes before using them. Use Node 24.22.1 or a newer 24.x patch for Node-based tooling and services (`notes/testing.md`); this includes the October 2026 security fixes and the Windows crash fix from 24.16.
 
 Desktop configuration downloads pinned GLFW. Linux desktop builds need X11 development headers. `-DTIDE_PLATFORM=OFF` omits the platform layer and targets requiring it, useful offline. Ordinary native builds copy `tidels` to `build/tools/tidels` for the editors; sanitizer builds keep their test server separate. Build integration and layout details are in `notes/repository.md` and `notes/tide-programs.md`.
 
@@ -66,7 +66,7 @@ Test only what the change needs, once, before merging. Keep local validation foc
 | `tools/` only | That tool's tests |
 | Unbuilt text, including this guide and notes | No build or test suite; check references and the diff |
 
-Android emulator tests are CI's job unless the owner asks for Android work. Linux, macOS and MinGW are also CI validation for this Windows machine; native Windows ASan tests run locally. Tests needing a window, GPU or browser follow `notes/testing.md`; report unavailable coverage.
+Android emulator tests are CI's job unless the owner asks for Android work. Linux, macOS, the iOS simulator and MinGW are also CI validation for this Windows machine; native Windows ASan tests run locally. Tests needing a window, GPU or browser follow `notes/testing.md`; report unavailable coverage.
 
 Merge procedure: fetch, merge `origin/dev` into the task branch, then push `HEAD:dev`. Inspect `git diff --stat ORIG_HEAD HEAD` after a merge:
 
@@ -121,7 +121,7 @@ Simulation never includes platform headers. Views read the world and draw withou
 
 - Server authority, prediction and rollback apply to every match. Single-player uses the same server/client path through loopback; there is no separate offline simulation or engine-imposed pause. Matches start closed; `Session.Open`/`Close` control admission.
 - `Devices` uses explicit read-only parameters. Local code reads this machine's devices; match code reads the entity owner's tick input, or the server's for unowned entities/once-only code. Send only the fields match code reads; preserve text/window-position restrictions.
-- UI actions use typed commands sent by local code. The connection supplies the sender. Handlers return void and validate with ordinary guards, with no acceptance method, transaction or return status. Commands are copied, bounded payloads, resent until verified sequence acknowledgement. The server assigns tick/order; sequence state survives snapshots and migration. Current limits and channel semantics are in `notes/netcode.md` and the spec's Commands section.
+- UI actions use typed commands: one declaration with its code, called like a function (owner, 2026-11-21). Local code's call submits it and the connection supplies the sender; match code's call is queued for the end of the tick with no player and no network. The code validates with ordinary guards, with no acceptance method or transaction; an awaitable call and a returned value are agreed and not built (spec, Commands). Commands are copied, bounded payloads, resent until verified sequence acknowledgement. The server assigns tick/order; sequence state survives snapshots and migration. Current limits and channel semantics are in `notes/netcode.md` and the spec's Commands section.
 - Clients run ahead to deliver their own input without input delay; only other players' input is guessed. The server reports input arrival lead. Clients sending no input keep their join lead.
 - Desktop and web share unordered, unreliable WebRTC channels and rooms. Desktop also supports direct UDP. The relay introduces peers; match traffic uses direct connections first and TURN where necessary. Dedicated servers remain supported. Read `notes/webrtc-and-rooms.md` before changing transport or room behavior.
 - Repair NaN/infinite input fields to their defaults before `Sanitize`. Math should avoid propagating invalid values: preserve forgiving clamp/min/max/normalize behavior in `tide/math.h`.
@@ -175,6 +175,7 @@ Read the notes for every subsystem the task touches. Paths and former section re
 | Native sanitizers, GPU/browser test runners, Node requirements, test labels | `notes/testing.md` |
 | `platform/web/`, WASI, `tide.js`, web threads and tests | `notes/web.md` |
 | MinGW/Android toolchains, APKs, signing, Android runner | `notes/android-and-mingw.md` |
+| iOS: the simulator build and its tests, the platform layer with no window (`platform/embedded/`), a game inside Unity's player only | `notes/ios.md` |
 | `bench/`, harness and saved measurements | `notes/benchmarks.md` |
 | `cmake/Tide.cmake`, `run_tidec.cmake`, generated host API/header | `notes/tide-programs.md` |
 | Docs site, pages/examples, SEO, hosting and docs workflow, `examples/earth/` (the home page's planet) | `notes/docs-site.md` |
@@ -213,4 +214,4 @@ Read the notes for every subsystem the task touches. Paths and former section re
 | RTC, rooms, UDP/relay transport and peer tests | `notes/webrtc-and-rooms.md` |
 | Modding requirements, implementation status and withdrawn decisions | `notes/modding.md` |
 | `tide publish`, inactive build service | `notes/build-service.md` in `Tide-Engine/tide-services` |
-| `unity/`, `tide unity`, `tide/embed.h`, `tide/timeline.h`: Unity as an authoring/rendering front end, its time travel | `notes/unity.md` |
+| `unity/`, `tide unity`, `tide/embed.h`, `tide/timeline.h`: Unity as an authoring/rendering front end, its time travel, its Android and iOS players | `notes/unity.md` |

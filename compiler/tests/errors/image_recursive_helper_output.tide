@@ -1,0 +1,13 @@
+// expect: frag output 1 is Color, but Format.R32i takes int: change the output type or this image's format
+scene Main { }
+local singleton Images { RenderTarget target; }
+// Hands its parameter back to itself: a cycle, which adds no image, followed once however many calls lead there
+void Touch(mut RenderTarget t, int n) { if (n > 0) { Touch(t, n - 1); Touch(t, n - 2); Touch(t, n - 3); } }
+frag Paint(Vertex vertex, out Color color) { color = Color.red; }
+view V(mut Images images)
+{
+    images.target = RenderTarget(8, 8, 1, Format.R32i);
+    Touch(images.target, 3);
+    List<Vertex> quad = [Vertex { position = float2(0) }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }];
+    images.target.Mesh(quad, [0, 1, 2], Paint);
+}

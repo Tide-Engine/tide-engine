@@ -17,7 +17,9 @@
 #define BUSY_SETTLING 120u       // Reports before a shard's busy share is anything to go by
 #define PLAYER_AWAY_SECONDS 20.0 // How long a player of the world on no shard has to come back before PlayerLeft
 #define SAVE_MAGIC 0x53444854u   // "THDS"
-#define SAVE_VERSION 6u
+#define SAVE_VERSION 7u
+#define SAVE_IDENTITY 61u // After the magic and the version: simulation, layout, world, sequence, flags
+#define SAVE_SEALED 1u
 
 typedef struct sighting {
     uint32_t player, shard, count;
@@ -108,6 +110,8 @@ struct tide_shard_coordinator {
     checkpoint_state checkpoint;
     tide_writer head; // Its own part of the checkpoint being gathered, as it was when it began
     double checkpointed;
+    uint64_t world_id[2]; // The world's name, in every checkpoint of it
+    uint32_t sequence;    // The last checkpoint's number
     bool changed;
     bool tell_after;
     tide_writer told_after;
@@ -377,6 +381,8 @@ static bool setup(tide_shard_coordinator *c, const tide_shard_coordinator_desc *
     c->now = now;
     c->checkpointed = now;
     c->player_count = desc->players;
+    c->world_id[0] = desc->world_id[0];
+    c->world_id[1] = desc->world_id[1];
     c->players = tide_alloc_zeroed(c->player_count ? c->player_count : 1u, sizeof *c->players);
     return true;
 }
@@ -1237,6 +1243,12 @@ static void save_head(const tide_shard_coordinator *c, tide_writer *w)
 {
     tide_write_u32(w, SAVE_MAGIC);
     tide_write_u32(w, SAVE_VERSION);
+    tide_write_bytes(w, c->desc.simulation, 32u);
+    tide_write_u64(w, c->desc.layout);
+    tide_write_u64(w, c->world_id[0]);
+    tide_write_u64(w, c->world_id[1]);
+    tide_write_u32(w, c->sequence);
+    tide_write_u8(w, 0u); // Flags: sealed is its maker's to set (tide_shard_checkpoint_seal)
     tide_write_u32(w, c->directory.count);
     for (uint32_t i = 0; i < c->directory.room; i++) {
         if (tide_entity_is_null(c->directory.keys[i])) continue;
@@ -1270,9 +1282,69 @@ static void save_shard(const tide_shard_coordinator *c, const uint32_t i, tide_w
     tide_write_bytes(w, world, world_size);
 }
 
-uint8_t *tide_shard_coordinator_save(const tide_shard_coordinator *c, const tide_shard_world_fn world, void *user,
+// The magic, the version and the identity: false for bytes that aren't a checkpoint's head
+static bool read_identity(tide_reader *r, tide_shard_checkpoint_id *out)
+{
+    if (tide_read_u32(r) != SAVE_MAGIC || tide_read_u32(r) != SAVE_VERSION) return false;
+    const uint8_t *simulation = tide_read_bytes(r, 32u);
+    tide_shard_checkpoint_id id = {0};
+    id.layout = tide_read_u64(r);
+    id.world_id[0] = tide_read_u64(r);
+    id.world_id[1] = tide_read_u64(r);
+    id.sequence = tide_read_u32(r);
+    const uint8_t flags = tide_read_u8(r);
+    if (r->failed || !simulation || flags > SAVE_SEALED) return false;
+    memcpy(id.simulation, simulation, 32u);
+    id.sealed = (flags & SAVE_SEALED) != 0;
+    if (out) *out = id;
+    return true;
+}
+
+bool tide_shard_checkpoint_identity(const uint8_t *data, const uint32_t size, tide_shard_checkpoint_id *out)
+{
+    tide_reader r = {data, size, 0, false};
+    return read_identity(&r, out);
+}
+
+static bool same_build(const tide_shard_checkpoint_id *id, const uint8_t simulation[32], const uint64_t layout)
+{
+    static const uint8_t none[32] = {0};
+    if (memcmp(id->simulation, simulation, 32u) != 0) return false;
+    return memcmp(simulation, none, 32u) != 0 || id->layout == layout;
+}
+
+tide_shard_checkpoint_fit tide_shard_checkpoint_fits(const uint8_t *data, const uint32_t size, const uint8_t simulation[32],
+                                                     const uint64_t layout)
+{
+    tide_shard_checkpoint_id id;
+    if (!tide_shard_checkpoint_identity(data, size, &id)) return TIDE_SHARD_CHECKPOINT_UNREADABLE;
+    return same_build(&id, simulation, layout) ? TIDE_SHARD_CHECKPOINT_FITS : TIDE_SHARD_CHECKPOINT_OTHER_BUILD;
+}
+
+bool tide_shard_checkpoint_seal(uint8_t *data, const uint32_t size)
+{
+    if (!tide_shard_checkpoint_identity(data, size, NULL)) return false;
+    data[8u + SAVE_IDENTITY - 1u] |= SAVE_SEALED;
+    return true;
+}
+
+void tide_shard_coordinator_identity(tide_shard_coordinator *c, const uint8_t simulation[32], const uint64_t layout)
+{
+    memcpy(c->desc.simulation, simulation, 32u);
+    c->desc.layout = layout;
+}
+
+void tide_shard_coordinator_world(const tide_shard_coordinator *c, uint64_t world_id[2], uint32_t *sequence)
+{
+    world_id[0] = c->world_id[0];
+    world_id[1] = c->world_id[1];
+    *sequence = c->sequence;
+}
+
+uint8_t *tide_shard_coordinator_save(tide_shard_coordinator *c, const tide_shard_world_fn world, void *user,
                                      uint32_t *size)
 {
+    c->sequence++;
     tide_writer w = {.grows = true};
     save_head(c, &w);
     for (uint32_t i = 0; i < c->count; i++) {
@@ -1290,7 +1362,7 @@ bool tide_shard_checkpoint_world(const uint8_t *data, const uint32_t size, const
                                  uint32_t *world_size, uint32_t *tick)
 {
     tide_reader r = {data, size, 0, false};
-    if (tide_read_u32(&r) != SAVE_MAGIC || tide_read_u32(&r) != SAVE_VERSION) return false;
+    if (!read_identity(&r, NULL)) return false;
     const uint32_t moved = tide_read_u32(&r);
     if (r.failed || moved > (r.size - r.at) / 20u) return false;
     tide_read_bytes(&r, moved * 20u);
@@ -1321,10 +1393,10 @@ bool tide_shard_checkpoint_world(const uint8_t *data, const uint32_t size, const
 }
 
 uint8_t *tide_shard_checkpoint_rewrite(const uint8_t *data, const uint32_t size, const tide_shard_rewrite_fn world,
-                                       void *user, uint32_t *out_size)
+                                       void *user, const uint8_t *simulation, const uint64_t layout, uint32_t *out_size)
 {
     tide_reader r = {data, size, 0, false};
-    if (tide_read_u32(&r) != SAVE_MAGIC || tide_read_u32(&r) != SAVE_VERSION) return NULL;
+    if (!read_identity(&r, NULL)) return NULL;
     const uint32_t moved = tide_read_u32(&r);
     if (r.failed || moved > (r.size - r.at) / 20u) return NULL;
     tide_read_bytes(&r, moved * 20u);
@@ -1339,6 +1411,11 @@ uint8_t *tide_shard_checkpoint_rewrite(const uint8_t *data, const uint32_t size,
     // The head as it was, then each shard with its world as `world` makes it
     tide_writer w = {.grows = true};
     tide_write_bytes(&w, data, r.at);
+    if (simulation && !w.overflow) { // Another build's from here on, and no longer what its maker sealed
+        memcpy(w.data + 8u, simulation, 32u);
+        for (uint32_t k = 0; k < 8u; k++) w.data[40u + k] = (uint8_t)(layout >> (8u * k));
+        w.data[8u + SAVE_IDENTITY - 1u] = 0u;
+    }
     for (uint32_t i = 0; i < count; i++) {
         const uint32_t from = r.at;
         const bool used = tide_read_u8(&r) != 0;
@@ -1354,6 +1431,10 @@ uint8_t *tide_shard_checkpoint_rewrite(const uint8_t *data, const uint32_t size,
         const uint32_t n = tide_read_u32(&r);
         const uint8_t *bytes = tide_read_bytes(&r, n);
         uint32_t made = 0;
+        if (bytes && !world) { // As it is
+            tide_write_bytes(&w, data + from, r.at - from);
+            continue;
+        }
         uint8_t *remade = bytes ? world(user, i, bytes, n, &made) : NULL;
         if (!remade) {
             free(w.data);
@@ -1376,6 +1457,7 @@ uint8_t *tide_shard_checkpoint_rewrite(const uint8_t *data, const uint32_t size,
 static void begin_checkpoint(tide_shard_coordinator *c)
 {
     c->checkpoint = CHECKPOINT_GATHERING;
+    c->sequence++;
     c->head = (tide_writer){.data = c->head.data, .capacity = c->head.capacity, .grows = true};
     save_head(c, &c->head);
     if (c->head.overflow) tide_out_of_memory();
@@ -1505,7 +1587,11 @@ tide_shard_coordinator *tide_shard_coordinator_load(const tide_shard_coordinator
         return NULL;
     }
     tide_reader r = {data, size, 0, false};
-    if (tide_read_u32(&r) != SAVE_MAGIC || tide_read_u32(&r) != SAVE_VERSION) goto fail;
+    tide_shard_checkpoint_id id;
+    if (!read_identity(&r, &id) || !same_build(&id, desc->simulation, desc->layout)) goto fail;
+    c->world_id[0] = id.world_id[0];
+    c->world_id[1] = id.world_id[1];
+    c->sequence = id.sequence;
     const uint32_t moved = tide_read_u32(&r);
     if (r.failed || moved > (r.size - r.at) / 20u) goto fail;
     for (uint32_t i = 0; i < moved; i++) {

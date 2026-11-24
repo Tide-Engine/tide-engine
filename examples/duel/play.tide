@@ -20,7 +20,7 @@ local singleton DuelMenu
     int pickRound = -1;
     int picked = -1;
     int rematch = -1;
-    int asked = -1; // The match a button last sent a command for, so it's sent once
+    int asked = -1; // The match a button last called a command for, so it's called once
     float turn;     // How far round the spinner is, in turns
 }
 
@@ -337,7 +337,7 @@ view PaintMenu(Duel duel, Session session, Devices devices, Fx fx, mut DuelMenu 
     var start = devices.keyboard.enter.down || devices.gamepad.buttonSouth.down || devices.gamepad.start.down;
     if ((playNow || start) && !busy && menu.asked != duel.match)
     {
-        Send(Practice { match = duel.match });
+        Practice(duel.match);
         menu.asked = duel.match;
     }
     if (inviteNow)
@@ -379,7 +379,7 @@ view PaintCorner(Duel duel, Session session, Devices devices, mut DuelMenu menu)
     }
     else if ((pressed || devices.keyboard.escape.down) && menu.asked != duel.match)
     {
-        Send(ToMenu { match = duel.match });
+        ToMenu(duel.match);
         menu.asked = duel.match;
     }
 }
@@ -505,7 +505,7 @@ view PaintDraft(Fighter fighter, Duel duel, Session session, Devices devices, Fl
     }
     if (chosen >= 0 && online && !pending && age > 0.25)
     {
-        this.Send(ChooseCard { round = duel.round, slot = chosen });
+        ChooseCard(duel.round, chosen);
         menu.pickMatch = duel.match;
         menu.pickRound = duel.round;
         menu.picked = chosen;
@@ -616,13 +616,13 @@ view PaintResult(Duel duel, Session session, Devices devices, Flow flow, mut Due
     var start = devices.keyboard.enter.down || devices.keyboard.space.down || devices.gamepad.buttonSouth.down;
     if ((againNow || start) && online && !waiting && age > 0.3)
     {
-        Send(Rematch { match = duel.match });
+        Rematch(duel.match);
         menu.rematch = duel.match;
     }
     if (leaveNow && two) Session.Start(Main);
     else if (leaveNow && menu.asked != duel.match)
     {
-        Send(ToMenu { match = duel.match });
+        ToMenu(duel.match);
         menu.asked = duel.match;
     }
 }

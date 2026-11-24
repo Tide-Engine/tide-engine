@@ -1,0 +1,6 @@
+// expect: 'Keep' takes a [Raw] Texture for 't', and this one is [Raw(float)]
+// expect: a role never changes along the way: take it as a '[Raw(float)] Texture' parameter
+scene Main { }
+local singleton Art { [Raw(float)] Texture heights; [Raw] Texture kept; }
+void Keep(mut Art art, [Raw] Texture t) { art.kept = t; }
+view Show(mut Art art) { Keep(art, art.heights); }

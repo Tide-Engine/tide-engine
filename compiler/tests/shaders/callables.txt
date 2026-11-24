@@ -29,14 +29,8 @@ struct tt_TideGenerated_1Callable23425479 {
     m_kind: i32,
     m_capture40c48efb_0radius: f32,
 }
-fn tide_nan(x: f32) -> bool {
-    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
-}
 fn tide_max1(a: f32, b: f32) -> f32 {
-    if (tide_nan(b)) { return a; }
-    if (tide_nan(a)) { return b; }
-    if (a > b) { return a; }
-    return b;
+    return select(select(select(b, a, a > b), b, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000), a, (bitcast<i32>(b) & 0x7fffffff) > 0x7f800000);
 }
 fn ts_Place(t_vertex: ptr<function, tt_Vertex>) {
     (*t_vertex).m_position = ((*t_vertex).m_position + tide_n0.xy);
@@ -139,14 +133,8 @@ struct tt_TideGenerated_1Callable23425479 {
     m_kind: i32,
     m_capture40c48efb_0radius: f32,
 }
-fn tide_nan(x: f32) -> bool {
-    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
-}
 fn tide_max1(a: f32, b: f32) -> f32 {
-    if (tide_nan(b)) { return a; }
-    if (tide_nan(a)) { return b; }
-    if (a > b) { return a; }
-    return b;
+    return select(select(select(b, a, a > b), b, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000), a, (bitcast<i32>(b) & 0x7fffffff) > 0x7f800000);
 }
 fn tf_TideGenerated_1Lambda207ae003(t_p: vec2f, t_radius: f32) -> f32 {
     return (length(t_p) - t_radius);

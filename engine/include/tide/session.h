@@ -144,8 +144,58 @@ typedef struct tide_game {
     bool (*reload_client_state)(void *world, const uint8_t *data, uint32_t size, const uint8_t *had, uint32_t had_size);
     // Optional: client_hash for `count` recipients at once, into `out`, the
     // same values; what's alike for them all is worked out once. The server
-    // asks for every player's after each tick.
-    void (*client_hashes)(const void *world, const tide_player_id *recipients, uint32_t count, uint64_t *out);
+    // asks for every player's after each tick, with its threads handed to the
+    // caller's (tide_loops_enter, tide/jobs.h), which the call may share its
+    // work out on (its parallel loops): the same values either way.
+    // `world_hash`, when supplied, is the whole-world hash of this exact
+    // state. Only the repair journal uses it. Other callers may pass NULL.
+    void (*client_hashes)(const void *world, const tide_player_id *recipients, uint32_t count, uint64_t *out,
+                          const uint64_t *world_hash);
+    // Optional: whether entities came into each recipient's sight (a
+    // visibility group's audience gained them) in the checks of `world`
+    // (client_hashes) since this was last asked: what a recipient's own run
+    // of a tick can never have, so a repair it then asks for is of a view
+    // arriving, not of a tick it got wrong. Said of more recipients than it's
+    // true of at times, never of fewer. NULL: never said.
+    void (*client_came)(const void *world, const tide_player_id *recipients, uint32_t count, bool *out);
+    // Optional, together: a repair that costs what changed for a recipient,
+    // not what it has. `client_changes` compares two worlds of one match
+    // (`lineage`: the world the match ticks, whose kept hashes both share) as
+    // `recipient` may have them: a plan naming the entities whose permitted
+    // values differ or that came into its sight and those that left it;
+    // `now`, what a projection starts with and those entities' records; and
+    // `was`, the same of `base`. Each is written into the caller's writer
+    // from its start, growing it, so room it already has is used again (the
+    // bytes stay the caller's); false where it can't be made. `changed_size`
+    // is how much of `now` is entities the recipient already had. The
+    // recipient makes `was` again from the world it confirmed
+    // (`client_changes_base`), so `now` goes as what differs from it, and a
+    // copy of that world takes the plan and `now` (`apply_client_changes`):
+    // false, with the world in no state to keep, for bytes that aren't one.
+    // `client_changes` is called on several threads at once, for several
+    // recipients of one match, outside its ticks and checks: no call writes
+    // what another reads. NULL: repairs go as whole projections (client_state).
+    bool (*client_changes)(const void *world, const void *base, const void *lineage, tide_player_id recipient,
+                           tide_writer *plan, tide_writer *now, tide_writer *was, uint32_t *changed_size);    uint8_t *(*client_changes_base)(const void *world, tide_player_id recipient, const uint8_t *plan, uint32_t plan_size,
+                                    uint32_t *size);
+    bool (*apply_client_changes)(void *world, const uint8_t *plan, uint32_t plan_size, const uint8_t *now, uint32_t now_size,
+                                 const uint8_t *was, uint32_t was_size);
+    // A game whose match code uses the server's store (Storage.Load, List): what
+    // a load or a listing found, a TIDE_STORED_MESSAGE (tide/storage.h), for the
+    // coming tick, which sends its Loaded or Listed event (or, for an answer a
+    // match task waits for, hands it to the task). The server calls it as it runs the tick,
+    // clients as they apply its frame, and a replay as it makes the tick
+    // again. False when the bytes aren't one, or what they answer is nobody's
+    // (a task that has ended), which changes nothing. NULL: the game loads
+    // nothing.
+    bool (*stored)(void *world, const uint8_t *data, uint32_t size);
+    // A game whose match tasks await a load or a listing (`await
+    // Storage.Load(key)`): asks again, of the store bound to `world`
+    // (tide_storage_bind), what its waiting tasks wait for, in the order they
+    // started. The server calls it once it has taken a world whose answers on
+    // their way aren't coming (a rewind's, a match it goes on with), so those
+    // tasks are answered in a later tick rather than never. NULL: no task waits.
+    void (*stored_again)(void *world);
     // Restrict a copied slot input before sending it to this recipient.
     void (*filter_client_input)(const void *world, tide_player_id recipient, uint32_t slot, void *input);
     // The same for all max_players + 1 contiguous input_size slots at once;
@@ -187,6 +237,11 @@ typedef struct tide_game {
     // Lets go of what a world has, before its memory goes; NULL for worlds of
     // plain data.
     void (*free_world)(void *world);
+    // Says that nothing changes `world` until it's let go of (free_world) or
+    // another is copied over it (copy_world): a server's kept ticks. Its hash
+    // is then worked out once, however many players' repairs it's the base of.
+    // NULL where the game's hash keeps nothing.
+    void (*freeze_world)(const void *world);
     // The world as bytes, to carry it over to another build: written into
     // `out` when they fit in `capacity` (NULL to ask), and how many there are.
     // Unpacking makes a world from them, false if they aren't one.
@@ -317,6 +372,11 @@ typedef struct tide_game {
 // most bytes one carries in the tick's frame: a bigger one goes to every
 // player first, as a big command does, and into a tick once they all have it.
 #define TIDE_SHARD_MESSAGES_PER_TICK 64u
+// What loads and listings of the store found (tide/storage.h) that a server takes into one tick, in a game whose
+// players are sent projections: their frames carry none of it (what an answer changes reaches them as state), so
+// nothing but the tick's own work bounds it, and a game that does a lot for each answer paces that itself. In any
+// other game an answer is in the tick's frame, and they're shard messages' 64.
+#define TIDE_STORED_PER_TICK 256u
 #define TIDE_SHARD_MESSAGE_LIMIT (64u << 20)
 
 // A command of up to TIDE_COMMAND_BYTES goes in one datagram, as commands
@@ -425,6 +485,30 @@ typedef struct tide_server_desc {
     const char (*ban_messages)[TIDE_MESSAGE_BYTES];
     bool closed;                 // Takes no one new from the start, only players coming back
     const tide_jobs *jobs;       // Threads to run ticks on (tide/jobs.h), or NULL: this one
+    // Where the match's store is kept (Storage.Save, Load, Delete and List in
+    // match code): files under this provider's persistent root, in `Tide/store/`
+    // (tide/storage.h). A tick's requests are carried out on the provider's own
+    // thread where it has one (tide_io.post), after the tick, and else as the
+    // tick ends; the server waits for them as it's destroyed. It outlives the
+    // server. NULL: nothing is kept, so saves go nowhere and every load finds
+    // nothing.
+    const struct tide_io *io;
+    // A host that keeps the match's store itself, in place of `io`'s files (a
+    // managed match's service: tide/managed_run.h): each tick's requests go to
+    // it as the tick ends, in order, and it answers loads and listings later
+    // with tide_server_store_answer, which the server gives to ticks in the
+    // order they were asked. It outlives the server. NULL: `io` keeps it.
+    const struct tide_storage_host *store;
+    // With `world`: what the match's start asked of the store where the host
+    // ran the start itself, on the world it gives (a sharded world's root,
+    // tide_shards; bound to it with tide_storage_bind as it ran), carried out
+    // with the first tick's requests, before them. The server takes them,
+    // leaving it empty. NULL: none.
+    struct tide_storage *asked;
+    // The host keeps a journal that must be on the disk before the store hears of a tick: what each tick asks of
+    // the store waits beside the server until tide_server_store_release, which the host calls once the ticks'
+    // records are kept. So the store never holds a save of a tick a recovery doesn't have.
+    bool hold_store;
     // 64 bits nobody could guess, from the system, for the seed of the match
     // it starts (tide_game.seeded): no two matches go the same. NULL: the seed
     // is `seed`, and a run repeats exactly (tests and benchmarks). A match
@@ -471,6 +555,12 @@ typedef enum tide_replay_result {
 // differs, to show where it goes from there.
 tide_replay_result tide_replay_check(const tide_game *game, void *world, const uint8_t *record, uint32_t size,
                                      const tide_jobs *jobs, uint64_t *expected, uint64_t *got);
+// tide_replay_check, recording into `heard` (or NULL) what the tick sent that
+// the game's local handlers hear, as the machine that ran the match heard it
+// of its own tick (tide_game.tick_events): a debugger's local handlers hear a
+// tick made again. The world comes out the same with or without it.
+tide_replay_result tide_replay_heard(const tide_game *game, void *world, const uint8_t *record, uint32_t size,
+                                     const tide_jobs *jobs, tide_event_log *heard, uint64_t *expected, uint64_t *got);
 
 tide_server *tide_server_create(const tide_server_desc *desc, double now);
 // Tells every player the match is over, and closes the transports.
@@ -478,6 +568,20 @@ void tide_server_destroy(tide_server *s);
 // Reads what arrived, runs the ticks that are due, and sends each player what's new.
 void tide_server_update(tide_server *s, double now);
 const void *tide_server_world(const tide_server *s);
+// The answer of the host that keeps the store (tide_server_desc.store) to the
+// load or listing its requests numbered `number` (tide_storage_host): it goes
+// to the first tick after it and every answer asked before it are in.
+// tide_storage_answer says what's checked: false, and nothing changed, for one
+// that answers nothing waiting, or isn't the request's answer. Between
+// updates, on the thread that updates the server.
+bool tide_server_store_answer(tide_server *s, uint64_t number, uint32_t outcome, const uint8_t *data, uint32_t size,
+                              bool more);
+// With tide_server_desc.hold_store: the ticks so far are kept, and what they asked of the store goes to it, in
+// order. Before its first tick, what the match's start asked goes too.
+void tide_server_store_release(tide_server *s);
+// Returns once everything the store was handed is carried out and on the disk (tide_storage_settle): before a
+// checkpoint is kept. False where it couldn't be written.
+bool tide_server_store_settle(tide_server *s);
 uint32_t tide_server_tick(const tide_server *s); // Ticks run so far
 uint32_t tide_server_player_count(const tide_server *s);
 // Host recovery metadata, separate from deterministic world bytes. Save together
@@ -528,10 +632,11 @@ bool tide_server_banned(const tide_server *s, tide_player_id player);
 // sharded, the message is bigger than TIDE_SHARD_MESSAGE_LIMIT, or there's no
 // memory for it.
 bool tide_server_inject(tide_server *s, const uint8_t *data, uint32_t size);
-// How many handed messages are still waiting for a tick.
+// How many handed shard messages are still waiting for a tick: not the
+// answers of the match's store (tide/storage.h) waiting with them.
 uint32_t tide_server_injected(const tide_server *s);
-// The `i`th of them, from the first to be applied: its bytes and size, NULL
-// past the last.
+// The `i`th message waiting, shard message or store answer, from the first to
+// be applied: its bytes and size, NULL past the last.
 const uint8_t *tide_server_injected_message(const tide_server *s, uint32_t i, uint32_t *size);
 // Drops those of a kind (their first byte, tide_shard_kind) still
 // waiting, and says how many: a reloaded sharded world drops its ghosts on
@@ -711,6 +816,7 @@ typedef struct tide_session_desc {
     tide_sample_fn sample;
     void *user;
     const tide_jobs *jobs;    // Threads to run ticks on (tide/jobs.h), or NULL: this one
+    const struct tide_io *io; // Where the matches it hosts keep their store (tide_server_desc.io), or NULL: nowhere
     uint64_t (*now_ns)(void); // The real time, for its clients to keep within their budget (tide_client_desc), or NULL
     double resim_budget;      // Seconds a frame a client may spend running predicted ticks again; 0 for 0.004
     double guess_seconds;     // How long its clients guess that others' inputs stay as they were; 0 for 0.15 (tide_client_desc)
@@ -914,18 +1020,45 @@ void tide_session_set_view_corrector(tide_session *s, tide_view_correct_fn corre
 // match over. Then `tick` after each tick the server runs: its journal record
 // (tide_server_desc.journal) and the world after it. Both are called on the
 // thread updating the session, the world and bytes theirs only for the call.
-// Matches on other machines and sharded ones aren't recorded.
+// Sharded matches aren't recorded.
+//
+// A match another machine runs is recorded here too where the game hides
+// nothing from its players (no visibility): this machine is sent all that
+// goes into a tick, so `begin` and `tick` are told as on the server's machine,
+// each tick it confirms with a journal record made of the frame it was sent
+// (tide_replay runs it again), beginning again where a world came whole.
+//
+// Where the game hides state, or the recorder has no `tick`, such a match has
+// no journal here, so it's followed rather
+// than recorded: `verified` (optional) says each tick this machine has had
+// confirmed, once, with the world after `tick` ticks as this machine has it
+// (what its player may have of it, in a game that hides state) and, in
+// `heard`, what the tick that made it sent for the game's local handlers
+// (tide/events.h), where the session's host takes those (tide_session_events);
+// NULL or empty otherwise. Ticks come in order while they follow one another;
+// one that isn't the tick after the last told (the first, a world that came
+// whole, ticks confirmed faster than they're kept) starts over.
+//
+// A sharded match, on this machine or another, is followed the same way, as
+// this machine's player has it: `verified` says its home shard's world at each
+// tick (whichever shard its home is then), and `beside` (optional), right
+// after it, the worlds of the other shards it follows, as each was confirmed
+// at that tick, or at its latest before it: what a frame draws beside the
+// home's (tide_session_views), with which shard each is.
 typedef struct tide_session_recorder {
     void *user;
     void (*begin)(void *user, const void *world, uint32_t tick);
     void (*tick)(void *user, uint32_t tick, const uint8_t *record, uint32_t size, const void *world);
+    void (*verified)(void *user, uint32_t tick, const void *world, const tide_event_log *heard);
+    void (*beside)(void *user, uint32_t tick, uint32_t count, const void *const *worlds, const uint32_t *shards);
 } tide_session_recorder;
 
 // Copied; NULL stops recording.
 void tide_session_record(tide_session *s, const tide_session_recorder *recorder);
 
 // Players on other machines in the match this machine runs (connected, or
-// joining); 0 for none, and on a client.
+// joining); 0 for none, and on a client. In a sharded match here, the players
+// its root has but this machine's.
 uint32_t tide_session_remote_players(const tide_session *s);
 
 // The match this machine runs goes on from `world` (a world of it, such as

@@ -7,6 +7,7 @@
 #include "tide/math.h"
 #include "tide/net.h"
 #include "tide/pack.h"
+#include "tide/transfer_bytes.h"
 #include "list_data_cache.h"
 #include "mesh_levels.h"
 
@@ -59,12 +60,9 @@ uint16_t tide_half_from_float(const float value)
 static const uint8_t *span(const tide_heap *heap, const uint64_t offset, const uint64_t bytes)
 {
     if (!heap) return tide_pack_span(offset, bytes);
-    if (!offset || offset > heap->used || bytes > heap->used - offset || offset >> TIDE_HEAP_PAGE_SHIFT >= heap->pages) return NULL;
+    if (!tide_heap_has(heap, offset, bytes)) return NULL;
     const tide_page *p = heap->page[offset >> TIDE_HEAP_PAGE_SHIFT];
-    if (!p) return NULL;
-    const uint64_t first = (uint64_t)p->first << TIDE_HEAP_PAGE_SHIFT;
-    if (offset < first || offset + bytes > first + p->size) return NULL;
-    return (const uint8_t *)tide_page_data(p) + (size_t)(offset - first);
+    return (const uint8_t *)tide_page_data(p) + (size_t)(offset - ((uint64_t)p->first << TIDE_HEAP_PAGE_SHIFT));
 }
 
 // ---------------------------------------------------------------------------
@@ -181,6 +179,7 @@ tide_int2 tide_texture_size(const tide_texture_ref texture)
         return target_pixels ? target_pixels(target.size) : tide_i2(0, 0);
     }
     if (texture.image.height == TIDE_TEXTURE_DEPTH) return tide_i2(0, 0);
+    if (tide_texture_is_external(texture)) return tide_texture_external_size(texture.image.version & TIDE_TEXTURE_NAME);
     if (texture.image.height == TIDE_TEXTURE_GRID) {
         tide_grid grid;
         tide_grid_shape shape;
@@ -227,14 +226,23 @@ static uint64_t chunk_hash(const grid_seen *v, const tide_grid_shape *s, const t
     return hash ? hash : 1u;
 }
 
-// What a heap's grid holds, as a number to go on hashing: its size, and each chunk's place and hash.
+// What a heap's grid holds, as a number to go on hashing: its size, and each chunk's place and hash. A draw that
+// samples a grid asks it each time, so the chunks' places and hashes are put side by side, 64 at a time, and hashed
+// at once by tide_hash_wide: a word at a time, a texture of 32 chunks cost a third of a draw.
 static uint64_t grid_hash(const grid_seen *v, const tide_grid_shape *s)
 {
     uint64_t hash = tide_hash_more(TIDE_HASH_START, v->dir.size, sizeof v->dir.size);
-    for (uint32_t r = 0; r < v->dir.records; r++) {
-        const uint64_t cells = chunk_hash(v, s, &v->records[r]);
-        hash = tide_hash_more(hash, v->records[r].chunk, sizeof v->records[r].chunk);
-        hash = tide_hash_more(hash, &cells, sizeof cells);
+    uint64_t run[64 * 3];
+    for (uint32_t r = 0; r < v->dir.records;) {
+        uint32_t n = 0;
+        for (; n < 64u && r < v->dir.records; n++, r++) {
+            const tide_grid_record *record = &v->records[r];
+            run[3u * n] = (uint64_t)(uint32_t)record->chunk[0] | (uint64_t)(uint32_t)record->chunk[1] << 32;
+            run[3u * n + 1u] = (uint32_t)record->chunk[2];
+            run[3u * n + 2u] = chunk_hash(v, s, record);
+        }
+        const uint64_t wide = tide_hash_wide(run, (size_t)n * 3u * sizeof run[0]);
+        hash = tide_hash_more(hash, &wide, sizeof wide);
     }
     return hash;
 }
@@ -256,11 +264,12 @@ static void color_cells(const cells_writer *w, const uint8_t *cells, const int32
         const float alpha = unit(row[x].a), worked = w->raw ? 1.0f : alpha;
         out[3] = channel(1.0f, alpha);
         // Coverage is stored in a byte too. Premultiplying by that exact value prevents encoded RGB
-        // surviving where a tiny positive alpha rounded to zero.
-        const float linear_alpha = w->linear ? (float)out[3] / 255.0f : 0.0f;
-        out[0] = w->linear ? channel(tide_todisplay_f(tide_tolinear_f(row[x].r) * linear_alpha), 1.0f) : channel(row[x].r, worked);
-        out[1] = w->linear ? channel(tide_todisplay_f(tide_tolinear_f(row[x].g) * linear_alpha), 1.0f) : channel(row[x].g, worked);
-        out[2] = w->linear ? channel(tide_todisplay_f(tide_tolinear_f(row[x].b) * linear_alpha), 1.0f) : channel(row[x].b, worked);
+        // surviving where a tiny positive alpha rounded to zero. [Linear]'s bytes are
+        // byte(ToDisplay(ToLinear(c) * alpha / 255)), found with no pow for a clear cell or an opaque one and with
+        // one for the rest (tide/transfer_bytes.h), where each channel had two
+        out[0] = w->linear ? tide_transfer_premultiplied_byte(row[x].r, out[3]) : channel(row[x].r, worked);
+        out[1] = w->linear ? tide_transfer_premultiplied_byte(row[x].g, out[3]) : channel(row[x].g, worked);
+        out[2] = w->linear ? tide_transfer_premultiplied_byte(row[x].b, out[3]) : channel(row[x].b, worked);
     }
 }
 
@@ -277,6 +286,32 @@ static void float_cells(const cells_writer *w, const uint8_t *cells, const int32
 static void number_cells(const cells_writer *w, const uint8_t *cells, const int32_t count, uint8_t *out)
 {
     for (int32_t x = 0; x < count; x++) w->write(cells + (size_t)x * w->cell, (int32_t *)(void *)(out + (size_t)x * w->bytes));
+}
+
+// A Grid2<float2>'s or a Grid2<float4>'s cells as halves, each float to the nearest (tide_half_from_float), as a
+// Grid2<float>'s are: `bytes` / 2 of them a cell.
+static void halves_cells(const cells_writer *w, const uint8_t *cells, const int32_t count, uint8_t *out)
+{
+    const uint32_t halves = w->bytes / 2u;
+    for (int32_t x = 0; x < count; x++) {
+        for (uint32_t k = 0; k < halves; k++, out += 2) {
+            float value;
+            memcpy(&value, cells + (size_t)x * w->cell + (size_t)k * sizeof value, sizeof value);
+            const uint16_t half = tide_half_from_float(value);
+            memcpy(out, &half, sizeof half);
+        }
+    }
+}
+
+// A Grid2<int>'s cells as they are, and a Grid2<byte>'s each its 0 to 255, an int of 32 bits a cell.
+static void ints_cells(const cells_writer *w, const uint8_t *cells, const int32_t count, uint8_t *out)
+{
+    for (int32_t x = 0; x < count; x++, out += 4) {
+        int32_t value;
+        if (w->cell == 1u) value = cells[x];
+        else memcpy(&value, cells + (size_t)x * sizeof value, sizeof value);
+        memcpy(out, &value, sizeof value);
+    }
 }
 
 // The cells of a grid that its texture holds, and where: a box of them, from
@@ -412,20 +447,26 @@ static void grid_cells(tide_draw_list *d, const uint32_t slot, uint8_t *pixels, 
 #define KIND_FLOATS UINT64_C(0x47464C54)
 #define KIND_RAW UINT64_C(0x47524157)
 
+// A Grid2 that's a texture, seen (see_grid): false for one with no size on an axis, which is no texture, one bigger
+// than any GPU's (bytes that aren't a grid's could say any size), and one whose chunks couldn't be a grid of its size's.
+static bool see_grid_texture(const tide_grid g, const tide_grid_shape *s, grid_seen *v)
+{
+    if (s->dims != 2u || !see_grid(g, s, v)) return false;
+    const int32_t width = v->dir.size[0], height = v->dir.size[1];
+    if (width <= 0 || height <= 0 || width > TIDE_GRID_TEXTURE_MOST || height > TIDE_GRID_TEXTURE_MOST) return false;
+    // A grid with a size on both axes has as many chunks as cover it, and no more of them than that
+    const uint64_t across = ((uint64_t)width + (1u << s->shift[0]) - 1u) >> s->shift[0];
+    const uint64_t down = ((uint64_t)height + (1u << s->shift[1]) - 1u) >> s->shift[1];
+    if (v->dir.records > across * down) return false;
+    return !v->dir.flat || ((uint64_t)v->dir.chunks[0] == across && (uint64_t)v->dir.chunks[1] == down);
+}
+
 static uint32_t grid_texture(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s, const bool raw, const bool linear)
 {
     const bool colors = s->cell == sizeof(tide_color);
     grid_seen v;
-    if (s->dims != 2u || (!colors && s->cell != sizeof(float)) || !see_grid(g, s, &v)) return 0;
+    if ((!colors && s->cell != sizeof(float)) || !see_grid_texture(g, s, &v)) return 0;
     const int32_t width = v.dir.size[0], height = v.dir.size[1];
-    // A grid with no size on an axis is no texture. No GPU has a texture bigger, and bytes that aren't a grid's
-    // could say any size
-    if (width <= 0 || height <= 0 || width > TIDE_GRID_TEXTURE_MOST || height > TIDE_GRID_TEXTURE_MOST) return 0;
-    // A grid with a size on both axes has as many chunks as cover it, and no more of them than that
-    const uint64_t across = ((uint64_t)width + (1u << s->shift[0]) - 1u) >> s->shift[0];
-    const uint64_t down = ((uint64_t)height + (1u << s->shift[1]) - 1u) >> s->shift[1];
-    if (v.dir.records > across * down) return 0;
-    if (v.dir.flat && ((uint64_t)v.dir.chunks[0] != across || (uint64_t)v.dir.chunks[1] != down)) return 0;
     // A grid of the pack's has its file's version, in its directory's header, as the builder put it
     uint64_t version = v.heap ? tide_hash_end(grid_hash(&v, s)) : tide_pack_grid_version(g);
     if (linear) version ^= UINT64_C(0x4c494e454152);
@@ -529,6 +570,29 @@ uint32_t tide_draw_grid_texture(tide_draw_list *d, const tide_grid g, const tide
 uint32_t tide_draw_grid_texture_raw(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s)
 {
     return grid_texture(d, g, s, true, false);
+}
+
+#define KIND_NUMBERS UINT64_C(0x474E554D00) // ...plus the cells' kind, a writer of its own for each
+
+uint32_t tide_draw_grid_number_texture(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s, const uint32_t cells)
+{
+    const uint32_t bytes = tide_texture_cells_bytes(cells);
+    grid_seen v;
+    if (cells < TIDE_TEXTURE_CELLS_FLOAT2S || !bytes || s->cell != bytes || !see_grid_texture(g, s, &v)) return 0;
+    const int32_t width = v.dir.size[0], height = v.dir.size[1];
+    // Other bytes than the same grid's as colors or floats, were a handle to name both
+    const uint64_t version = (v.heap ? tide_hash_end(grid_hash(&v, s)) : tide_pack_grid_version(g)) ^ (UINT64_C(0x4E554D4245520000) | cells);
+    const uint32_t format = cells == TIDE_TEXTURE_CELLS_FLOAT2S ? TIDE_TEXELS_HALF2 : cells == TIDE_TEXTURE_CELLS_FLOAT4S
+                          ? TIDE_TEXELS_HALF4 : TIDE_TEXELS_INT;
+    const cells_writer w = {.row = format == TIDE_TEXELS_INT ? ints_cells : halves_cells, .bytes = tide_texels_bytes(format),
+                            .cell = bytes};
+    const cells_box box = {.dims = 2u, .extent = {width, height, 1}, .across = 1, .wide = (size_t)width * w.bytes};
+    uint8_t *pixels;
+    bool kept;
+    const uint32_t slot = tide_draw_texture_edit(d, TIDE_PIXELS_GRID, g.at, version, width, height, format, KIND_NUMBERS | cells,
+                                                 &pixels, &kept);
+    if (pixels) grid_cells(d, slot, pixels, kept, &v, s, &w, &box);
+    return slot;
 }
 
 static uint64_t take_mesh_key(tide_draw_list *d, tide_list vertices, tide_list indices);
@@ -692,18 +756,16 @@ static bool list_data_page(const tide_list list, tide_list_data_entry *seen)
     if (!list.at || tide_handle_where(list.at) == TIDE_IN_SCRATCH) return false;
     const tide_heap *heap = tide_heap_read(tide_handle_where(list.at));
     const uint64_t offset = tide_handle_offset(list.at);
-    if (!heap || (offset >> TIDE_HEAP_PAGE_SHIFT) >= heap->pages
-        || offset > heap->used || sizeof(tide_block) > heap->used - offset) return false;
+    if (!heap || !tide_heap_has(heap, offset, sizeof(tide_block))) return false;
     tide_page *const *pages = __atomic_load_n(&heap->page, __ATOMIC_ACQUIRE);
     const tide_page *page = __atomic_load_n(&pages[offset >> TIDE_HEAP_PAGE_SHIFT], __ATOMIC_ACQUIRE);
-    if (!page || page->hashed == UINT32_MAX) return false;
+    if (page->hashed == UINT32_MAX) return false;
     const uint64_t first = (uint64_t)page->first << TIDE_HEAP_PAGE_SHIFT;
-    if (offset < first || offset - first > page->size || sizeof(tide_block) > page->size - (offset - first)) return false;
     const tide_block *block = (const tide_block *)(const void *)((const uint8_t *)tide_page_data(page)
         + (size_t)(offset - first));
     if (block->b & (TIDE_LIST_CHUNKED | TIDE_LIST_ASSET)) return false;
     seen->heap = (uintptr_t)heap;
-    seen->heap_used = heap->used;
+    seen->heap_used = tide_heap_page_used(heap, page);
     seen->page_hash = page->hash;
     seen->hashed = page->hashed;
     return true;
@@ -1074,14 +1136,14 @@ static bool list_readable(const tide_list l)
     const tide_heap *heap = tide_heap_read(tide_handle_where(l.at));
     if (!heap) return false;
     const uint64_t block = tide_handle_offset(l.at);
-    if (block > heap->used || heap->used - block < sizeof(tide_block)) return false;
+    if (!tide_heap_has(heap, block, sizeof(tide_block))) return false;
     const tide_block *b = tide_heap_block(heap, block);
     if (!(b->b & TIDE_LIST_CHUNKED)) return true;
     const uint64_t chunks = b->b & ~TIDE_LIST_CHUNKED;
-    if ((heap->used - block - sizeof *b) / sizeof(uint64_t) < chunks) return false;
+    if (!tide_heap_has(heap, block, sizeof *b + chunks * sizeof(uint64_t))) return false;
     const uint64_t *at = (const uint64_t *)(const void *)(b + 1);
     for (uint64_t i = 0; i < chunks; i++) {
-        if (at[i] > heap->used || heap->used - at[i] < sizeof(tide_block)) return false;
+        if (!tide_heap_has(heap, at[i], sizeof(tide_block))) return false;
     }
     return true;
 }

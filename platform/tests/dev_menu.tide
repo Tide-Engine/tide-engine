@@ -1,0 +1,83 @@
+// A dev build's menu (platform/tests/dev_menu.mjs): the key under Escape shows
+// it, and it lists the game's dev views, each off until it's switched on there,
+// and its tweaks. The match paints the screen blue, or green once the tweak
+// Green is true, which it reads as the server applied it; the dev view paints
+// it red. The test builds a copy beside its run, whose dev_menu.tweaks the menu writes. Its inspector changes the
+// match: Shade.dark paints the screen black, and a Lamp's level of 5 a white square. A square of the clock's, magenta
+// on even ticks and cyan on odd ones, shows the match paused, stepped and gone back.
+
+tweak bool Green = false;
+// More than the menu shows at once in the test's 200 pixels: it scrolls to Far
+tweak float Near1 = 1;
+tweak float Near2 = 2;
+tweak float Near3 = 3;
+tweak float Near4 = 4;
+tweak float Near5 = 5;
+tweak float Far = 6;
+
+scene Main { }
+
+singleton Paint { bool green; }
+
+singleton Shade { bool dark; }
+
+local singleton Glow { bool on; } // A yellow square, changed in the local world
+
+component Lamp { int level = 1; }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Lamp { });
+}
+
+system Read(mut Paint paint)
+{
+    paint.green = Green;
+}
+
+view Backdrop(Paint paint, Shade shade)
+{
+    Draw.Clear(shade.dark ? Color(0, 0, 0) : paint.green ? Color(0, 1, 0) : Color(0, 0, 1));
+}
+
+[After(Backdrop)]
+view Glowing(Glow glow)
+{
+    if (!glow.on) return;
+    Draw.SetScreen();
+    Draw.Rect(float2(470, 120), float2(6, 10), Color(1, 1, 0));
+}
+
+[After(Backdrop)]
+view Lit(Lamp lamp)
+{
+    if (lamp.level != 5) return;
+    Draw.SetScreen();
+    Draw.Rect(float2(470, 145), float2(6, 10), Color(1, 1, 1)); // Centered on the pixel the test reads
+}
+
+// A first-person game's grip on the pointer: the menu frees it while it's open, or its switches couldn't be clicked
+view Grip()
+{
+    Cursor.Lock();
+}
+
+dev view Marker()
+{
+    Draw.SetScreen();
+    Draw.Rect(float2(0, 0), float2(1000, 1000), Color(1, 0, 0)); // The whole screen
+}
+
+singleton Clock { int ticks; } // After the others, so the inspector's rows the test reads stay where they were
+
+system Count(mut Clock clock)
+{
+    clock.ticks += 1;
+}
+
+[After(Backdrop)]
+view Ticking(Clock clock)
+{
+    Draw.SetScreen();
+    Draw.Rect(float2(470, 170), float2(6, 10), clock.ticks % 2 == 0 ? Color(1, 0, 1) : Color(0, 1, 1));
+}

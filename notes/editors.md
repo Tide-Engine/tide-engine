@@ -1,3 +1,184 @@
+## Commands as one declaration (2026-11-21)
+
+The language's change is in notes/language.md (top section). The language server and the grammars follow it.
+
+- **One symbol.** A command is its type's occurrence (`OCC_TYPE` on the `DECL_EVENT`); its code's name, an override's
+  name and its calls map onto it. Document and workspace symbols list it once, detail "command", kind Event, with its
+  values as children.
+- **Navigation and rename** cover the name at its declaration, at calls (`Rename(...)`, `entity.Rename(...)`) and in
+  an override, and the values at the declaration, in the code, as named arguments and in an override's first
+  parentheses. A command's new name is checked against types and systems; a value's against the code's parameters
+  and locals, and theirs against the values. Unity's C# rename is unchanged: the generated type has the command's name.
+- **Hover** on the name shows the header as written, `command(float amount, int times = 1) Bump(Owner owner, mut
+  Body body, PlayerID sender)`, then how it's called; on a value, that it's what the command is called with.
+- **Completion:** value types in the first parentheses (constants after `=`, field attributes in `[ ]`); a handler's
+  parameters in the second, with `PlayerID sender` until one is there; after `entity.`, the commands whose code runs
+  for an entity, in place of `Send(command)`; commands as callables in expressions; named arguments; one `command`
+  snippet and overrides' in the new form. `tide_payload` is never offered. Commands the file can't name unqualified
+  aren't offered as calls, and none inside `[Before]`/`[After]`, as only handlers of one event are ordered.
+- **Signature help and inlay hints** work at command calls. **Semantic tokens:** the name a function, its values
+  read-only parameters. **Entry points:** a command's code is a root, and a call of it is not a call edge.
+- **Formatter:** a name on the line under `command(...)` stays indented one level, stable when formatted twice; the
+  fold starts at the `command` line.
+- **Grammar** (`tools/tide-syntax`, and its JetBrains copy, byte-identical again: it had lacked the `prepare` rule):
+  one begin/end rule for a command, scope names unchanged; `probe.tide` and `grammar.test.mjs` cover the one-line and
+  two-line forms, attributes on values, overrides, `dev` and calls.
+- Tests: `tidels_tests` 289 (`lsp_commands` rewritten, `lsp_command_override` new), grammar tests 428.
+- **Gap:** a call written with its namespace, `Shop.Buy(1)`, compiles (the compiler keeps the namespace in
+  `command_namespace`), and the server doesn't follow it there yet: hover, definition and rename see the unqualified
+  calls. Earlier sections that say "event/command handlers" and "command submissions" (Entry-point navigation,
+  2026-10-14; Shared language-server updates, 2026-10-18) mean commands and their calls now.
+
+## .tweaks files in editors (2026-11-16, later)
+
+Replaces the tweaks.json handling below. The owner: "ide support is important".
+- **A `.tweaks` file is a file of the game's analysis, though not its code.** `game_tweaks` (server.c) finds them as
+  tidec does (deep with a game folder, else the first file's folder alone) and `run_game` adds them to the analysed
+  files; analysis.c lexes them (no parse) and hands their text to `prog->given_tweaks`, which `tweaks_read` takes
+  instead of reading the disk. So locations, references and diagnostics are ordinary ones: each entry's name is an
+  `OCC_CONST` occurrence of its tweak (offset past a namespace prefix), and its value's names are walked
+  (`walk_expr(d->code_value)`).
+- **Server**: `tweaks_document` (a URI ending `.tweaks`); `select_tweaks` picks the analysis that has the file (the
+  current one, a `.tide` of its folder open in the editor, else the last game). Opening or changing one bumps
+  `changes` and publishes, exempt from the open-context check, so a wrong value is said as it's typed. Formatting
+  answers null (no formatter for the file).
+- **Features**: lens over an overridden tweak (`combat.tweaks: <value>`, to its name in the file); hovers both ways;
+  definition from the file to the declaration; rename of a tweak edits its `.tweaks` entries; completion in the file:
+  tweak names at a line's start (snippet `Name = $0;`), expressions after `=`.
+- **Editors**: VS Code's tide language and both TextMate packages take `.tweaks`; JetBrains maps `*.tweaks` to tidels
+  as Tide (`fileNamePatternMapping`). `analysis_tweak` went.
+- Tests: `tidels_tests lsp_tweaks_file` (lens and place, hover, diagnostics on open, definition, hover in the file,
+  null formatting, completion at a line's start and after `=`, rename reaching the file, an error as typed);
+  VS Code `npm test` (36) and JetBrains `gradlew test buildPlugin` pass (JDK: CLion's `jbr`).
+
+## Tweaks in editors (2026-11-16)
+
+The owner asked for the editor to show that tweaks.json overrides a tweak and to go between them.
+- **Analysis** (`analysis_run`): `tweaks_read` after parsing, from the game's folder or the first file's, so the
+  program has each tweak's file value (`decl.tweaked_text`, the value as the file writes it; `tweaked_at`, its name).
+  The file isn't one of the analysis's files: its diagnostics aren't published, and places in it are written with
+  `write_tweaks_location` (a `file://` URI from `prog->tweaks_path`, byte columns).
+- **Lens** (`analysis_code_lenses`): `tweaks.json: <value>` over an overridden tweak, `editor.action.goToLocations` to
+  its name in the file. **Hover**: a tweak's says `tweak T Name = <code's value>` and what the file gives.
+- **tweaks.json in the server** (`tweaks_document`, `tweaks_request` in server.c): opening or changing it stores the
+  text and analyses nothing (it isn't Tide; the game reads it from disk as it's saved). A hover or a definition reads
+  the quoted name under the cursor and answers from the game's analysis (`analysis_tweak`), running one for a `.tide`
+  file of its folder open in the editor when there's none; semantic tokens are empty and the rest null.
+- **Editors**: VS Code's document selector adds `**/tweaks.json` (language json); JetBrains' plugin maps `tweaks.json`
+  to tidels with languageId json, so the IDE's own JSON support stays. The JetBrains plugin wasn't built here.
+- Tests: `tidels_tests lsp_tweaks_file` (the lens and its place, one lens for one override, the hover, nothing sent
+  for opening tweaks.json, its definition and hover, null off a name, empty semantic tokens); the extension's tests.
+
+## `dev` in the grammar and the language server (2026-11-16)
+
+Both TextMate grammars take `dev` among the declaration modifiers (`storage.modifier`), the grammar test has
+`dev declarations` (probe.tide's lines), and the language server reads `dev` as a declaration's start
+(`starts_declaration`) and a contextual keyword. The grammar test also lets an e2e file that's settings alone pass
+(`visibility_repairs_few.tide`, `_wide.tide` failed it since 9f21e4d3d).
+
+## The native scene editor removed (2026-11-16)
+
+The owner removed the native scene editor: "we have been trying to fight the fact that each game deals with its own rendering so there isnt a 'universal' way to draw a scene", and "the game itself should be the one providing tools an our job should mostly focus on making that process easy". Its decision is in `docs/spec.md`, Prefabs and authored scenes. The last commit with the editor is `ab0bc7d4d`; its sections in this file, `notes/cli-and-packages.md` and `notes/language.md` described it and went with it.
+
+What went: `tools/tide-editor` (the `tide-editor` program, its document/play/preview layers and its tests), `tide open`, the private `tide _editor-preview` command and `tide run`/`tide build`'s `--source-overlay` and `--editor-cache`, tidec's `--editor-prefab`, `--editor-local` and `--source-overlay`, the generated preview module (`editor_codegen.inc`, `tide/editor_preview.h`) and every `editor_prefab` branch in codegen, the `[RunInEditor]`/`[EditorOnly]` view attributes (now unknown attributes, like any other name) with their fixtures, completion and hover, the language server's `editor_authoring` (an unused prefab no longer counts as reaching a view's filter or as an entry point, as in a build), VS Code's Open Prefab Editor and Edit Prefab in IDE (`prefab-client.js`, the prefab keybindings and menus), JetBrains' Open/Edit Tide Prefab actions and Tide Prefab tool window, `install.ps1`'s optional Open With registration (`TIDE_ASSOCIATE_PREFABS`), the Package job's `tide_editor` targets, the CLI's `sys_start_tree_logged` (a process tree owned by a Windows job or a POSIX process group, which only the editor's builds and Play used), and `open` from the CLI's usage-data commands (the site's validator still accepts it, for versions before this one).
+
+What stays: `.tprefab` files and prefabs as a language feature (both editors still treat `.tprefab` as Tide, with the language server's prefab analysis and renames), `settings { startScene = ...; }` and `--scene`, and the Unity front end's prefabs and scenes. `scene_startup.cmake` keeps its startup-asset closure checks, now on a file on disk rather than an overlay. An install that used `TIDE_ASSOCIATE_PREFABS` keeps a stale `Tide.Prefab` Open With entry in its user registry until removed by hand: nothing deletes it.
+
+Validation (Windows, sanitize preset): tidec, tide and tidels build without warnings; `tidels_tests`, `tidels_stdio`, `tidels_pipe`, `tide_cli_run_exit`, `tide_cli_help`, `tide_cli_installers`, `tide_cli_telemetry`, `tidec_e2e_prefabs`, `tidec_e2e_scene_startup`, `tidec_e2e_views`, `tidec_e2e_scenes*`, `tidec_diagnostics_frontend_cli` and every `tidec_error_*` fixture pass (2,770 tests), and all 23 `tide_cli_*` tests after the process-tree removal. The VS Code extension's `npm test` (36) and JetBrains' `gradlew test buildPlugin` (15 tests) pass; the real-IDE host suites weren't run. The packaged VSIX target and other platforms are CI's.
+
+## A local worker call's `priority:` (2026-11-15)
+
+`complete_argument_names` offers `priority:` where an argument starts in a call of a `local worker` (not a method's,
+and once), inserting `priority: WorkerPriority.`; `WorkerPriority`'s members have what each says in completion and
+hover (`priority_member_doc`, through `enum_member_doc`, which Format's go through too); the name is in rename's
+reserved list; `walk_expr` goes through a worker call's priority, which the checker keeps off its arguments
+(`expr.mesh_lod`), so names in it hover, complete and rename. Both TextMate grammars list `WorkerPriority` with the
+built-in types (`tools/tide-syntax`'s grammar test and `probe.tide` have a line of it). Tested by `lsp_worker_priorities`.
+Not there: signature help doesn't show `priority:` after a worker's parameters.
+
+## Typed image reads in editor help, and the rendering docs (2026-11-15)
+
+An audit of editor help and docs after the rendering work of 2026-11-14/15 found typed reads shown as Color.
+`format_numeric_read` and `numeric_read_doc` (`compiler/lsp/analysis.c`) now give every `[Raw(T)]` read of a
+Texture, Texture3D, TextureArray or Cubemap, for `Sample`, `SampleLevel` and `SampleGrad`, the checker's
+result type and typed defaults: Point for Sample, Trilinear for the other two, and Clamp (a cube has no wrap).
+Hover, signature help and member completion all use them, so they agree. `numeric_read_named` keeps a
+volume's SampleLevel and SampleGrad, and a cube's SampleGrad, on the plain forms, which these images
+don't have. The text depends on the kind of image. On 2D images and array layers, R8 to Rgba16f blend and
+have mipmaps, and R32f and Rgba32f blend with Bilinear from four loads. Cube faces in 32-bit formats are
+read at the nearest pixel. Volumes blend with Bilinear and have no mipmaps. Ints are read at the nearest
+pixel. This replaces the hover that said "other filters and mipmaps are unsupported". The [Raw] help,
+helper-parameter hover, Rgba16f doc and Texture3D constructor doc now say that a volume has no mipmaps. In
+GPU code, completion offers `size` and `count` on TextureArray, typed TextureArray and DepthTextureArray,
+since frags read them. The frag `this` doc lists `front` and says that `world`, and `front` in 3D, each use
+one of the 15 carried values. The handed-struct reads and their int fields were already fixed before this.
+Tests: `lsp_numeric_images_and_outputs` checks hover on a typed array Sample and a typed cube SampleLevel
+(no `-> Color`), hover and signature help on a typed Texture SampleLevel, hover on a blended typed Sample,
+completion on typed arrays (size, count, the four-argument SampleGrad snippet) and typed cubes (no
+SampleGrad), signature help on a cube Sample, hover on a helper's typed array parameter, and plain array
+completion in a frag. `lsp_texture_arrays` now expects a depth array's `size` and `count` in a frag.
+`lsp_shaders_hover` checks the `this` text.
+
+Correction after review (2026-11-15): `numeric_read_doc` first gave every kind one SampleLevel text, which
+told a cube that `SampleLevel(direction, 0)` and Filter.Bilinear read its R32f/Rgba32f faces, both refused
+at the draw; a cube's SampleLevel now has its own text (name Filter.Point, even at level 0), and its Sample
+text says a filter other than Point is the error. The typed volume Sample text named R8, Rg8, R16f and Rg16f,
+which a Texture3D can't be made with; it now names Rgba16f and Grid3<float> for the sampler and R32f and
+Rgba32f for the eight loads. Every claim was probed with tidec. `lsp_numeric_images_and_outputs` now pins
+the 2D level-0 sentence, a 32-bit cube's SampleLevel hover and signature help and its Sample hover, and a
+typed volume's Sample hover (no R8/R16f/Rg16f).
+
+Grammars: Vim and Emacs now treat `compute` and `cached` as keywords (Emacs gets `worker` too), as the
+TextMate grammars already did. `tools/tide-vim/test/editor.vim` and the Emacs ERT test check `compute`.
+DepthCubemap needs no grammar change: like DepthTexture, it's a capitalized type name.
+
+Docs and spec, in the same commit: docs/spec.md has reversed float depth (not 24 bits), 16 textures
+and samplers (not 12), four Filter members, `out Color` (not a white start), Draw.Occlusion built in
+place of the last-frame Hi-Z item, the numeric-samples diagnostic built, SampleLevel and anisotropy taken
+off the mipmap "Not there" list, Grid3 of colors and floats as arrays and volumes, and a frag's `[Linear]
+Texture` parameter built: removed from Open, with its rules, which the compiler checks. docs/game: the
+typed-cube level and Blit's blend lines are fixed, and so is the claim that a frag can't read `.size`.
+In shaders.md and meshes-and-textures.md, the basic texture text now comes first under Textures, and
+Volumes moved next to the cube section. DepthBias is in draw-settings.md's table, and 3d.md's decal and
+occlusion text covers it, including that biased draws and frags writing their own depth aren't
+occlusion tested. Every code block that changed on the rendering pages since 2026-11-14 compiles with
+tidec, given the declarations around it.
+
+## Grids as bytes (2026-11-14)
+
+`grid_calls` (`compiler/lsp/analysis.c`) has `ToBytes` and `FromBytes`; `format_method` writes `GridN<T>` as the grid
+type it's on. A grid value's completion lists `ToBytes` and leaves out `FromBytes` (the type's), and completion after
+`Grid2<...>.` or `Grid3<...>.` offers `FromBytes` alone, outside shaders (`complete_members`, as after `Mesh<...>.`).
+`CALL_GRID_BYTES` is an `OCC_METHOD` occurrence, so hover finds its form through the receiver's type (the grid type the
+checker gave the type name), and signature help is `CALL_MESH_DECODE`'s case. `lsp_grid_bytes_completes_hovers_and_checks`:
+both completions, hover of both calls with no diagnostics, and signature help inside FromBytes' parentheses. No grammar
+change: `Grid3<Block>.FromBytes` is names and punctuation the TextMate grammar already colors.
+
+## Enum.Values() (2026-11-14)
+
+Completion after `EnumType.` offers `Values()` beside `Count()` (not after `case`); hover and signature help show
+`E.Values() -> E[N]` through `CALL_ENUM_VALUES`, which also makes the call an OCC_METHOD occurrence. The grammar
+needs nothing: `Values` is an ordinary method name. `lsp_enum_values_and_order` checks completion, hover,
+signature help and a clean foreach that orders with `>` and `<= .South`. Language rules: language.md, same date.
+
+## defined(NAME) and define(NAME, default) in editors (2026-11-14)
+
+The language server checks them as tidec does (`check_symbol_call`, `notes/language.md`): `analysis_run` still
+defines only `DEBUG` and the game's packages, so `define(NAME, default)` is its default and `defined(NAME)` what
+`#if NAME` is there, a file's own `#define` included (the lexer keeps a file's symbols by `loc.file`, forgotten
+when the file is lexed again). Greying out is unchanged: only `#if` leaves lines out, and these calls are code.
+The formatter sees ordinary call tokens and leaves them as written. `lsp_directives` checks a document of
+`defined`/`define` constants has no diagnostic and formats as it is, and that `define(SIDE)` says what it takes.
+`Json.Read`/`Json.Write` hover text names vectors, sets and numbered maps (the JSON note in `notes/language.md`).
+No grammar change: both are plain identifiers before `(`.
+
+Review fixes (2026-11-15): both names are in `check_new_name`'s `reserved[]` (rename) (tidec refuses them for types,
+functions and constants), completion offers `defined` and `define` where a value goes (`DEFINED_DOC`,
+`DEFINE_DOC`, beside `Math`), and `call_forms` gives their signature help. A method of the name hides the
+built-in as in tidec (`check_call`), so it has no diagnostic. `lsp_directives` checks all three. `tide.packages`
+conditions (`packages.c`) refuse a value compared (`#if STEAM == 480`, `> 400`), `==` beside a symbol the
+build gave a value, and `defined(STEAM)`, as the lexer's do; `tide_cli_packages` checks them.
+
 ## Linear image annotation (2026-11-14)
 
 Attribute completion offers Linear before asset and field declarations; attribute hover describes sRGB
@@ -9,6 +190,13 @@ Linear is an ordinary attribute identifier, highlighted by the existing brackets
 
 # The language server and the editors
 
+## Reads of any target image (2026-11-14)
+
+A RenderTarget's completion offers `Read` as `Read<T>([int image]) -> Grid2<T> fails IOError` and `ReadDepth() ->
+Grid2<float> fails IOError`, each with what it reads, its exactness and its limits; signature help has both, and
+`colors`' doc names `colors.count`. Diagnostics are the compiler's. No grammar change: `Read<float>(1)` tokenizes as other generic calls. Test: lsp_render_target_formats_and_depth
+(tidels_tests 279/279).
+
 ## Numeric images and frag outputs (2026-11-14)
 
 Format completion and hover describe all seven numeric members, accepted output/clear types, storage bytes,
@@ -19,7 +207,7 @@ Ordinary enum-member typo fixes cover the new format names.
 
 Raw attribute completion/signature help describes the four numeric role arguments. Fields and read-only
 Texture/Texture3D helper parameters carry their role into Sample hover, member completion and signature help;
-they return the numeric type and show Point as the default. Numeric members omit SampleGrad/SampleLevel.
+they return the numeric type and show Point as the default. Numeric float members offer SampleLevel/SampleGrad, on TextureArray and Cubemap roles too, with snippets that name the level (2026-11-14, render-targets.md), except a field whose constructor assignments fix it to R32f or Rgba32f (field_has_levels, image_target_format of the field: those have no levels; 2026-11-15, corrected: this said only the blendable formats were offered, and every float role was). A helper's parameter or a field with no fixed format may be given either and offers them; the draw's error names the fix. [Raw(type)]'s signature help says arrays and cubes take every role and R32f/Rgba32f blend with Bilinear (it still said float roles and nearest only).
 Volume sampling signatures identify Texture3D and float3 coordinates. Clear completion, hover and signature
 help describe one to four positional image values and float clears past one, alongside the legacy broadcast.
 
@@ -288,7 +476,7 @@ that cache to the project, including local packages; a cache from another branch
 is ignored. These files are local caches, never committed project configuration.
 Explicit IDE settings and trusted engine build/tools servers retain precedence.
 VS Code's tide.path selects a sibling tidels unless server.path is explicit;
-run/debug and both prefab actions use the project-selected compiler. JetBrains'
+run/debug use the project-selected compiler. JetBrains'
 run-configuration command and application-level server overrides remain explicit.
 
 VS Code runs one client per workspace folder with a protocol RelativePattern
@@ -551,175 +739,6 @@ diagnostics, function and shader definitions, capture definitions and completion
 The grammar suite includes a Func signature case. Full validation is recorded
 with the compiler work in language.md. Material-specific authoring and visual
 shader tooling remain outside this foundation.
-
-## Native editor workspace layout (2026-10-24)
-
-main.c, hierarchy_ui.inc, workspace_ui.inc and inspector_ui.inc arrange the
-native app as a neutral dark workspace: compact Q/W/E/R toolbar with centered
-Play/Stop, searchable compact Hierarchy rows on the left, Scene/Source/Models
-tabs in the center, full-height Inspector on the right, and Project/Console
-below the hierarchy and scene area. File offers New Scene, New Prefab, Open,
-Save and Reload; Edit offers Undo and Redo. Toolbar New/Open/Save/Undo/Redo and
-Set startup remain available. Scene projection is labelled 2D / XY or Iso.
-
-Hierarchy + Create offers Empty Object and Prefab Instance. Actions offers
-Rename, Duplicate, Save as Prefab, Delete and Open Source Prefab, also exposed
-in GameObject. These menus replace the direct + Entity/+ Prefab buttons.
-The Inspector uses gray component foldouts, human-readable labels, colored
-vector axes and blue override indicators alongside the existing * and Reset.
-Add Component is the plain button label. Transform displays Position, Rotation
-and Scale with X/Y/Z fields; edits still identify localPosition/localRotation/
-localScale in source, and quaternion values use the existing degree Euler UI.
-
-Project browses the current checked program's prefab declarations and static
-Mesh assets, including resolved collection items. All Assets/Prefabs/Models
-and qualified-name search filter this existing metadata. A prefab click selects
-that exact declaration, including another root in the same source file; a mesh
-click selects its Models preview. Console displays compiler diagnostics and the
-existing empty-root guidance. This introduces no new asset discovery contract.
-Failed view-preview attempts open Console once and retain a red status message,
-including at minimum window size; long preview/Play messages scroll by line.
-Views belongs to the Scene tab so it cannot overlap Models lighting controls.
-Repeated top-menu clicks close the active menu without reopening on release.
-After appended view commands, the viewport restores the authoring content clip
-so its marker labels and wires cannot spill into the Inspector.
-
-Source-preserving authoring, inheritance and extraction rules, local-TRS
-reparenting, applied-unsaved Play snapshots and Stop cleanup, separate startup
-settings, empty-file root creation, undo and recovery retain the contracts below.
-Implementation gaps: panel layout is fixed, with no panel resizing or full
-docking; generalized filesystem browsing is not implemented.
-
-Validation: the warning-free Windows native tool build and all seven editor
-CTests pass, including 54 document/startup/geometry cases, all 12 Inspector
-focus regressions, native embedding/picking/gizmos and the creation/extraction/
-placement loop. Updated UI scripts exercise Create/Actions and Project mesh
-selection, assert rendered orbit/zoom changes and exact saved prefab bytes.
-The staged installed-CLI preview integration passes with real shaders, unsaved
-overrides, undo/redo, exact prefab switching and Views toggles. Native captures
-were inspected at 1440x900 and 1100x650; the production docs build passes.
-Review regressions also cover repeated File-menu toggling and minimum-size
-model lighting, asserting real shading changes without starting a Views build.
-A missing-extern preview regression checks automatic Console/error status and
-retained geometry while Project remains browsable. The compiled and retained
-preview Inspector matches the complete Views-off pixel region exactly, guarding
-the restored scene-content clip.
-Engine/web behavior is unchanged by this tools/docs-only presentation change;
-other operating-system UI coverage remains with CI.
-
-## Opening blank authored files (2026-10-24)
-
-A zero-byte or comment/directive-only .tprefab previously opened with no root,
-disabled hierarchy controls and a blocked Save. The native editor now presents
-a named Create root action instead. editor_initialize_prefab appends a normal
-root with Transform through the existing source-preserving draft transaction;
-it changes no disk bytes until Save and supports one-step undo, redo and recovery.
-Existing comments, BOM, line endings and namespace/using directives are retained.
-Existing empty-body prefab declarations remain ordinary editable roots, with no
-automatic component additions. Play/startup controls stay disabled until a
-root exists. Save is disabled for an unchanged blank file; undoing a saved root
-can still be saved back to the original blank contents. The blank-document UI
-explains root creation instead of suggesting
-a handwritten Main when the metadata check has only a missing-entry diagnostic.
-
-Initialization rejects existing authored declarations, own syntax errors,
-invalid/conflicting names, pending recovery and changed/out-of-project sources.
-Other project errors remain visible and can be corrected alongside authoring.
-No compiler, runtime or file format changed.
-
-Validation: the warning-free native editor/tool build and all seven editor
-CTests pass, including 54 document/startup/geometry cases. Seven new document
-test groups cover exact blank/comment/BOM/CRLF prefixes, namespace collision
-scope, recovery, existing empty-body roots, syntax/conflicts, project errors
-and own-package boundaries. The actual native UI test opens a zero-byte file,
-creates its root, undoes/redoes it, saves and reopens; a separate empty-body
-prefab remains editable and gains a child normally. The production docs build
-passes. Engine/web suites are unchanged and outside this tools/docs-only fix.
-
-## Scene authoring, extraction and direct Play (2026-10-24)
-
-The approved workflow keeps the rooted .tprefab format: New Scene/New Prefab,
-named objects and models, arrange, Save as Prefab, place instances and Play
-without handwritten Main. main.c and hierarchy_ui.inc/inspector_ui.inc/
-workspace_ui.inc provide file controls, folded hierarchy, rename/duplicate/drag
-parenting, source-prefab navigation, direct bool/int/float/vector/Euler fields,
-entity/enum choices, asset browsing and optional inline expressions.
-
-document.c creates files exclusively inside existing discoverable project source
-folders and preserves source spans/comments, recovery and 64 current-document
-undo entries. Rename/duplicate/reparent use checked same-file reference edits;
-required cross-file rewrites are refused. Reparent retains local TRS, not world
-placement. Inherited descendants support field overrides/reset only; nested
-instance roots retain authored additions. Structural path refactors require a
-clean project check. Semantic/project errors may save; own syntax errors and
-disk conflicts block Save. This supersedes older save/read-only/future-work
-claims below, which record earlier builds.
-
-Save as Prefab extracts an ordinary authored child subtree, preserving incoming
-paths and rebasing internal references, then replaces it with an instance. It
-rejects outgoing references, child-to-selected-root references the language cannot
-express, already-instance roots and consumer-sensitive cross-file changes. The
-source replacement is one undo; undo keeps the newly created asset.
-
-play.c builds an owned snapshot of applied unsaved text with the selected startup
-and launches the normal game host, including initialization, systems, game views,
-camera/input and services. Compiler errors/conflicts/unresolved recovery block
-Play. Stop terminates build/game descendants, discards runtime state and removes
-only owned play artifacts. Private source-overlay/cache switches are unlisted
-implementation transport, not a public authoring workflow. Views-only preview
-remains separate. startup.c writes settings.startScene with source conflict
-checks, preserving other settings/Main; New Scene chooses itself only when no
-Main or startup is present. Switching documents saves the previous draft first.
-
-Validation on Windows, Clang 23.1.2 and Node 24.22.1: the final seven
-editor CTests pass, including native embedding, all 12 inspector focus/undo
-regressions and the complete UI create/arrange/rename/extract/place/save loop.
-The document executable passes 47 cases (25 document, 18 startup and four
-geometry/interaction cases). A draft records its source, prefab, entity path,
-field and revision; valid blur edits commit to that original field before
-selection changes, while Escape and outside source changes cancel them. Source
-navigation retains the selected prefab declaration even within a shared file.
-Nested instances omit a Transform reset so authored TRS defaults survive.
-
-Startup checks cover BOM/CRLF/trailing comments, invalid string RHS replacement,
-settings namespaces and name shadowing, exact disk bytes including appended
-NULs, exclusive file creation, source ownership, pending recovery and active
-.tide source baselines. A bare global prefab shadowed by a declaration in
-the settings namespace is refused before writing (a prefab, scene, type or
-alias, what takes a type's place, as the compiler's nearest namespace decides
-since 2026-10-30: a scene or struct there used to let the global prefab
-through; a system, function, constant, asset or frag/vert doesn't hide it);
-the user can move that setting to global scope. Repeated startup selection preserves the active declaration.
-The installed Play test builds/runs a no-Main unsaved scene twice with real
-Spawned/systems/unmarked views, input, camera pixels and fresh state after Stop.
-
-Full native/web debug builds pass. All engine/compiler/platform checks pass,
-including native Vulkan validation/OpenGL and WebGL/D3D11/WebGPU; the existing
-MicroDuck right-turn case stays disabled. The configured external prototype
-suite also runs automatically: Cracked's unchanged match-hash pin fails on
-native and web, identically with a separately built HEAD compiler
-(2a37a61034c7a00750a5948637c8489febcbab6f). Its generated simulation and asset
-pack match; actual 0xbf53c0610c47764e versus pin 0x0a216d532fa6445c. No expected
-hash changed. Optional long private-prototype browser playthroughs were stopped;
-they are outside this engine/editor task. Logs and the baseline comparison are
-under build/scene-startup-baseline. The production docs build passes.
-
-Integration: origin/dev merged cleanly, adding only session packet validation
-and its tests/notes. Rebuilt the affected runtime and startup/session targets;
-all six native and five web checks pass, including the complete runtime suite.
-The staged CLI with the merged engine passes the real unsaved Play/pixel test
-again; its native editor --check reports zero errors/warnings. The two remaining
-Foldline web rendering checks also pass. No engine test remains unvalidated;
-optional external browser playthroughs remain outside scope as recorded above.
-
-Limits: no cross-document refactor/undo transaction, inherited structural edits,
-world-preserving authored reparent, child-to-prefab-root path syntax, automatic
-runtime-to-authoring apply, or live defaults/override reconciliation. Conditional
-path edits/extraction and cross-file consumer rewrites are refused. Extraction
-requires a self-contained ordinary authored subtree; its new asset survives
-undo. Existing preview picking/geometry, CMake consumer selection and IDE frame
-transport limits remain. Other operating systems, Android and sanitizers were
-not run here; no CI was manually dispatched.
 
 ## Offline installer configuration cache (2026-10-22)
 
@@ -1310,31 +1329,6 @@ passes LSP 234/234, shared grammar 244/244 and VS Code Node adapter tests 28/28
 with no IDE-host launch. Docs production build and all three SEO checks pass
 under that Node too; final merged-doc rebuild is tracked separately.
 
-## JetBrains prefab tool-window API correction (2026-10-14)
-
-Build run 38471050893 reached plugin verification after successful adapter tests
-and packaging, then rejected the prefab action's direct RegisterToolWindowTask
-registration. IntelliJ 2024.2.6 marks the task/class and registration method
-internal; CLion 263.6800.10 marks the method override-only. Repeated CI attempts
-cannot repair this API usage.
-
-The action now calls ToolWindowManager's public String/builder overload from
-Java, returning Kotlin Unit from its builder callback. The window retains its
-right anchor, closable contents, visibility with no tabs, per-file reuse and
-existing panel disposal.
-No IDE version pin, verifier failure policy or workflow gate changed. The
-plugin README records that verification rejects these API violations.
-
-Validation: JDK 21 and Gradle 9.8.0 `--no-configuration-cache buildPlugin
-verifyPlugin` pass on Windows, including all eight ordinary adapter/platform
-tests. Plugin Verifier 1.410 reports Compatible with no API violations against
-IC-242.26775.15 and CL-263.6800.10, the exact IDE builds used by the failed CI
-run. The existing 2024.2 TextMate extension still requires an IDE restart for
-plugin enable/disable. Upstream IDE layout diagnostics remain; they do not
-report Tide API usages. Optional native-process/LSP/JCEF host tests and other
-operating systems were not rerun for this registration-only fix; no CI was
-dispatched. `git diff --check` passes.
-
 ## Entry-point navigation (2026-10-14)
 
 Functions and methods now have an `N entry points` lens beside their ordinary
@@ -1389,152 +1383,6 @@ Node 24.21.0 were used. Other operating systems, Android and sanitizers were
 not run; no CI was dispatched. Integration with origin/dev has no incoming
 changes or conflicts.
 
-## Mesh picking, transform tools and IDE canvases (2026-10-13)
-
-The native viewport picks named static Asset<Mesh<...>> fields and constant
-aliases using their owned source triangles and composed authored Transform.
-Projected sphere bounds reject off-pointer models; triangle work happens only
-on a press. Nearest editor-camera depth wins, including mirrored/nested trees.
-Picking and fixed scene meshes are double-sided. The fixed matrix projection
-now compensates the renderer's z turn as compiled views do, aligning surfaces
-with markers/picking in isometric as well as XY. It does not derive proxies from arbitrary view draws,
-deformed/skinned vertices, transparency, custom cameras or local visual state.
-Hierarchy/markers remain available for those cases; inherited children are
-selectable but read-only. These entries supersede the picking/gizmo/embedding
-gaps recorded in the historical sections below.
-
-Q/W/E/R choose Select/Move/Rotate/Scale outside text fields. Move axes edit
-parent coordinates, with a world-XY center handle; rotation/scale use local
-axes, with uniform scale at the center. Shift snaps to .5 units, 15 degrees,
-or .1 scale-factor increments. Edge-on/singular handles are omitted. An
-editable Transform with supported constant TRS is required. Drag state owns
-values and a document revision, never AST pointers. Release patches one field
-through the existing source-preserving transaction, with one undo record;
-Escape, tool/selection/source changes cancel. Fixed meshes and descendant
-markers follow the draft drag; compiled views rebuild after release. No-op
-clicks retain the original expression. Save now publishes its replacement's
-file stamp immediately, avoiding a later poll cancelling an unrelated drag.
-
-The private --embed <port> <token> backend uses the same app/frame/document
-code and existing headless input/readback/PNG APIs. The IDE binds 127.0.0.1 on
-an ephemeral port and accepts a 32-hex-token TIDEHELLO 1 handshake; it then
-closes the listener. TIDEFRAME 1 has the PNG byte count, dirty flag, revision,
-error count and warning count, followed by PNG bytes. Frame input stays on
-stdin (bounded INPUT events, FRAME 1, QUIT); EOF ends the backend. Only device
-events are accepted, never captures or script control. TCP descriptors are not
-inherited by compiler children. Project stdout/stderr remain ordinary logs,
-avoiding separate Windows CRT ownership/rebinding of standard handles. No HTTP
-or browser server is hosted. No engine/runtime functions, generated game
-callbacks or preview-module ABI changed.
-
-VS Code's Tide: Edit Prefab in IDE opens an editor tab; its nonced, restricted
-webview only sends input and displays native PNGs. Save/undo/redo shortcuts
-forward to the native document, dirty titles track its header, and one panel
-is reused per path. The sibling editor follows tide.path and trusted game
-discovery; a dirty active source saves before launch. Native Open Prefab Editor
-still launches an independent app. Frame validation caps a PNG at 32 MiB and
-admits one request at a time. Pending startup is included in deactivation.
-
-JetBrains' Edit Tide Prefab in IDE adds file tabs to the Tide Prefab tool window.
-The Swing panel forwards input and paints decoded PNGs without JCEF. Both
-adapters scale a fixed 1440x900 native canvas, request at most one frame at a
-time and pause hidden surfaces. Button/key transitions are separated across
-frames so short clicks and drag origins survive batching. Focus loss releases
-held input. Closing sends EOF; after a two-second grace, a stuck backend and
-its descendants are terminated. Applied unsaved edits keep existing recovery.
-The image transport adds latency; resizable/GPU transport, broader text input,
-dynamic picking proxies and live compiled-view transform updates remain gaps.
-
-Coverage: geometry tests pin actual triangle bounds/depth, nested nonuniform
-and mirrored transforms, invalid indices/NaNs, parent-axis drag and edge-on
-rotation. Real native embedding tests exercise PNGs, overlap selection, move,
-rotate/scale, cancel/no-op, one-step undo/redo/save, source polling across a
-post-save drag, EOF and malformed input. Client tests pin event batching and
-shortcuts; VS Code doubles cover binary chunking, trust, save refusal, panel
-reuse and injected lines. Installed preview.mjs also executes actual game
-fragment shaders and project printf from a MinGW DLL in an embedded MSVC app,
-with clean PNG frames and preserved output. Real VS Code 1.141.0 checks display,
-reuse/command dispatch and shutdown in an isolated profile. The IntelliJ
-2024.2.6 sandbox paints a native frame in Swing and verifies EOF exit, alongside
-registered actions and existing adapter regressions.
-
-Validation: the complete native suite covered 2,286 tests; its sole initial
-failure exposed the post-Save stamp refresh, now fixed and pinned. All five
-editor CTests pass after the correction (14 document/model/interaction cases,
-client, real native UI/embedding and CLI). All 2,249 web CTests pass, including
-WebGL/WebGPU. Final scoped validation passes all six editor/adapter CTests,
-all 30 Node adapter/client checks, installed compiled-preview integration,
-MSVC debug and MinGW release native transport/UI tests. The VSIX and JetBrains
-plugin build; actual VS Code 1.141.0 and IntelliJ 2024.2.6 frame/shutdown tests
-pass with the final transport. Production docs and all ten admin/HTTP checks
-pass. Isometric alignment is pinned with a single flat model so identical
-overlapping models cannot hide a mirrored camera. No CI was dispatched;
-other host operating systems, Rider itself and Android were not run here.
-Integration through origin/dev 10643bcf is clean. Incoming changes touch only
-prototype-removal notes and its docs HTTP check; no editor/compiler/runtime
-dependency changed. The merged production docs build and ten admin/HTTP checks
-pass, including the new removed-route assertions.
-
-## Compiled authored-view preview (2026-10-13)
-
-The native editor has an explicit Views toggle (off by default), plus --preview
-and --local-preview. It compiles selected [RunInEditor]/[EditorOnly] views through
-the ordinary project/package/native C pipeline, using the applied unsaved prefab
-as a source overlay at its original path. The selected prefab's complete tree is
-constructed in match or local placement before any view runs. Main, Spawned,
-ordinary/verified/local/Forgotten event handlers and systems do not initialize it.
-Singleton/component defaults still evaluate normally, including trusted helpers.
-Views retain normal capabilities and own local visual state/tasks; match time is
-frozen, input neutral, and no session/audio/IO services are hosted. This is not a
-sandbox for extern C. Authoring analysis counts composed prefab component sets
-when checking opted-in views for unreachable filters, in both native UI and tidels.
-Normal game compilation still checks its own reachable archetypes.
-
-preview.c schedules one background CLI helper at a time and accepts only the
-current document revision. Applied edits, undo/redo, switching prefab roots,
-source changes and detected asset changes trigger fresh worlds. Failed C/link
-builds preserve the old module with a stale banner and visible diagnostics.
-Bounded captures/scripts wait for the current build and fail on build errors.
-Disabling views waits asynchronously for a worker already running, then releases
-its module; close waits for the worker, avoiding abandoned compiler children.
-Build outputs/logs persist beneath .tide/editor-preview/<pid>-<revision>-<side>.
-
-The private version-1 preview ABI is installed as tide/editor_preview.h, from
-tools/tide-editor/preview_api.h. Module allocations, world/local state, GUI and
-draw lists never cross CRT ownership boundaries (MSVC editor vs MinGW game).
-The module renders Draw/Draw.window and GUI into its viewport-sized target, then
-composites it into the host window. The editor copies its prepared commands and
-forgets target/mesh/shader caches before unloading; metadata pointers remain valid
-through synchronous submission. Initial 2D/3D cameras follow editor pan/zoom and
-XY/isometric projection, with renderer z conversion compensated to align markers.
-Views can override the camera; markers still follow the editor camera. Mesh
-picking, gizmos, host services, systems in preview and IDE embedding remain gaps.
-No engine/runtime functions or public game callback signatures were changed.
-The private ABI version must change if shared draw/shader layouts or command
-contracts become incompatible. The preview's frozen Time uses the game's tickRate.
-
-VS Code exposes Tide: Open Prefab Editor in Explorer/title and respects configured
-tide.path, workspace trust and game/package folder discovery. A dirty active
-prefab saves first; the app's process is independent of extension deactivation.
-JetBrains exposes Open Tide Prefab Editor in project/editor menus, using installed
-Tide and existing trusted-project detection. It saves the selected prefab and
-reports process failures. Neither integration embeds the viewport. Windows builds
-give tide-editor the GUI subsystem with the ordinary main CRT entry: Explorer
-does not create an extra console, and inherited CLI pipes retain --check output.
-
-Coverage: compiler E2E game-mode selection and private preview ABI tests on
-native/WASI pin shared vs editor-only views, root/child defaults, no startup/events
-or systems, both placements, resize and cleanup/recreation. Error fixtures reject
-wrong targets, arguments and conflicting inclusion. LSP tests cover completion,
-hover, diagnostics and authored matches without ordinary Spawn; the native
-document test covers the same warning correction. Installed preview.mjs checks
-actual custom fragment-shader pixels and editor-only shapes, nested models,
-invalid cross-placement references, local placement at another viewport size,
-unsaved overrides/undo/redo, root selection, disable/re-enable and link errors.
-The VS Code adapter tests cover launch arguments/paths, trust, save refusal and
-spawn errors; the isolated IntelliJ test checks registered action visibility.
-Final validation is recorded with this feature in notes/language.md.
-
 ## Input Predict and DontPredict (2026-10-13)
 
 Predict's separate body participates in field/local scope, source occurrences,
@@ -1552,118 +1400,6 @@ and grammar coverage; no adapter changes or interactive IDE-host run is needed.
 
 Validation: full native/web suites, grammar and production docs build pass;
 counts and remaining platform coverage are in notes/language.md.
-
-## Static model preview and assignment (2026-10-12)
-
-The native editor now browses static Mesh assets, including each resolved list/map
-item. Its orbit preview owns copied Vertex3 positions/uvs/imported colors/indices
-outside compiler arenas; refreshing analysis or freeing an importer cannot leave
-draw pointers dangling. Bounds frame the model. Lit/Unlit selects fixed editor
-vertex lighting; game defaults, textures, material shaders and views do not run.
-
-Direct Asset<Mesh<V>> component fields expose Browse and a type-matched singular
-asset assignment. Edits write the qualified asset name through the existing exact
-override/undo/save path. Scene preview draws named references and constant aliases
-using the composed Transform, including inherited nested roots and children. A
-per-analysis owned geometry cache shares each model across scene instances. Wire
-markers remain selectable; mesh-surface picking, orbiting the scene, gizmos,
-skinned preview, collection reference assignment and previewing arbitrary authored
-reference expressions are not built. Unsupported reference expressions or
-unavailable geometry contribute to an explicit omitted-model count in the viewport
-footer. The asset browser previews collections but cannot assign their items as
-references.
-
-Half-second polling includes declared model paths/glob directories, resolved
-models and glTF side buffers. Metadata changes trigger shared import-cache
-revalidation and copied preview replacement; preserving both timestamps and sizes
-is not detected by this native polling path. Source edits already refreshed in
-that poll avoid a second analysis. Language-server member completion offers Value
-and follows its Mesh members; the internal identity field stays hidden.
-
-Corrections to the historical first-editor entry below: static mesh import already
-ran through ordinary front-end asset checking; it was not yet drawn in that UI.
-Static model rendering is now implemented. Game rendering and IDE embedding remain
-future work. User documentation describes current behavior.
-
-Coverage adds owned-geometry lifetime/replacement checks and native scripted PNG
-comparisons for orbit and zoom, collection browsing, assignment to an inherited
-nested-root field, save and subsequent --check. Existing native inspector edits,
-undo/redo, structural composition and two viewport sizes remain covered.
-Final validation is recorded in notes/language.md with the compiler feature.
-
-## First native scene editor (2026-10-12)
-
-tools/tide-editor builds tide-editor, a desktop C17 app using existing Tide
-window/draw/GUI APIs. It installs beside tide and launches through tide open;
-no browser, generated game or match is involved. First scope: composed rooted
-.tprefab hierarchy, component/default/override inspector, Tide-expression edits,
-authored children/nested prefabs, component-entry removal and subtree deletion.
-Inherited descendants are read-only; nested roots can override values.
-Direct entity-reference fields display composed paths (or this), rather than
-copying a base prefab's relative name into the caller's scope; constants display
-qualified names. Other complex inherited expressions retain their source spelling
-and require names written in the caller's context when overriding.
-Source view is read-only. Child rename/reparenting, new-file creation, drag gizmos,
-model/game-view rendering and IDE embedding remain future work.
-
-The viewport interprets literal/constant TRS, basic float arithmetic and Euler
-quaternions with Tide math. Parent matrices compose unit wire markers/axes;
-XY/isometric, zoom and middle-drag pan are supported. Unsupported transforms
-omit their subtree with an explicit count. No user function/extern/view/system
-or asset geometry importer runs. Metadata-only front-end checking uses DEBUG
-and package symbols; normal builds validate complete assets/generated C. No
-engine/platform API or runtime boundary changed.
-
-The document layer uses recovering lex/parse/check with cached source tokens.
-Nearest tide.packages or explicit --project selects folder/package inputs;
-without a manifest, only the prefab's folder is inferred. Root is displayed.
-Already-fetched packages use the shared resolver, including built-ins. CMake
-manifests, package fetching and custom build-symbol selection are not implemented.
-Half-second rescans include source/package changes, additions and deletions.
-Clean outside edits reload; dirty edits retain the draft and flag conflicts.
-Named prefab/entity selection survives refresh; old field edit buffers clear
-after outside changes so stale indices cannot edit a different entity.
-
-Edits patch precise source spans, retaining surrounding comments, UTF-8, line
-endings and untouched values. Syntax-invalid patches roll back; semantic errors
-remain visible and block Save. Project diagnostics include required references
-and code errors. Source syntax/package errors are fixed in the normal code editor.
-Save rechecks the front end, compares disk bytes against the baseline, writes a
-neighboring temporary file and replaces after another comparison. This is a
-single-file replacement, not a merge service; the final compare-to-rename interval
-is not an OS compare-and-swap lock.
-
-Undo/redo retain 64 applied edits. Atomic .tide/editor/<path hash>.draft recovery
-stores both baseline and current text, detecting newer source across sessions.
-Opening offers recovery/discard; Save/discard/undo to baseline removes the cache.
-Applied edits survive window close; text not yet Applied/Entered is not authored.
-These files are local ignored cache content. Expression fields support whole-value
-Ctrl+A replacement; large values are read-only rather than GUI-buffer truncated.
-The app requires at least 1100x650 to show its panels. Bounded runs use existing
---frames/--capture/--script APIs; quiet runs inherit TIDE_HIDDEN.
-
-Nine Windows document tests (eight on other hosts) cover comments/CRLF/UTF-8,
-case-insensitive path/recovery spelling, exact expression spans, undo,
-syntax rollback, invalid-type save refusal, composition/default overrides,
-inherited read-only nodes, required paths, structural edits/comma removal,
-source refactors/added files, package context and recovery/outside conflicts.
-Real CLI checks exercise --check and hidden/size refusals. The GPU-labelled UI
-script edits a root setting using Ctrl+A/Enter, saves/undoes/redoes/saves, checks
-the exact file diff and recovery cleanup, and reads native PNG pixels at two
-sizes. All test files stay in private build folders.
-
-Validation: warning-free native/web debug builds and all 2253 native and 2218
-web CTests pass on Windows (Clang 23.1.2, Node 24.16), including OpenGL,
-WebGL/WebGPU and the full compiler/LSP regression coverage. Final editor-only
-path-spelling and inherited-reference display corrections pass the three editor
-CTests, including all nine document cases and the actual native UI script.
-The production docs build passes. A private native install includes tide-editor;
-its installed tide open --check and bounded PNG capture both succeed. Other
-operating systems, Android, sanitizers and CI were not run; no workflow was
-dispatched. The screenshot is a real hidden native capture, not a mockup.
-Integration through origin/dev 61be0f74 is clean. Incoming prototype/workflow
-changes do not touch editor/compiler/runtime dependencies; documentation overlap
-keeps the relocated package links. The merged production docs build passes.
 
 ## Tasks from functions, and a request's time limit, 2026-10-11
 

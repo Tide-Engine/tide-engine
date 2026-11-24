@@ -26,11 +26,32 @@ struct Obstacle
     float radius;
 }
 
+// Chunks of a world of blocks, found by their place: an equality on each of an int3's components and on the
+// dimension, and one on a long packed from them. Half the chunks are in each of two dimensions, in a box 5 tall,
+// so a row of the box (one x) holds many of them.
+component Chunk
+{
+    int3 at;
+    int dimension;
+    long key;
+}
+
+component Looker
+{
+    int number;
+    int found;
+    int keyed;
+}
+
 singleton Config
 {
     int boids;
     int agents;
     int obstacles;
+    int chunks;
+    int lookers;
+    int ways;
+    int wide;
     bool made;
 }
 
@@ -65,6 +86,72 @@ system Make(mut Config config, mut Course course)
     for (var i = 0; i < config.obstacles; i++)
     {
         course.obstacles.Add(Obstacle { at = float2(Spread(i, 11), Spread(i, 12)) * room, radius = 0.5f + Spread(i, 13) });
+    }
+    config.wide = int(Math.Sqrt(float(config.chunks) / 10.0f)) + 1;
+    for (var i = 0; i < config.chunks; i++)
+    {
+        var at = Place(i / 2, config.wide);
+        Spawn(Chunk { at = at, dimension = i % 2, key = Key(at, i % 2) });
+    }
+    for (var i = 0; i < config.lookers; i++) Spawn(Looker { number = i });
+}
+
+// The place of the box's chunk number `p`
+int3 Place(int p, int wide)
+{
+    return int3(p % wide - wide / 2, p / (wide * wide) - 2, p / wide % wide - wide / 2);
+}
+
+long Key(int3 at, int dimension)
+{
+    return (long(at.x) & 0xFFFFFL) << 40 | (long(at.y) & 0xFFFL) << 28 | (long(at.z) & 0xFFFFFL) << 8 | long(dimension & 0xFF);
+}
+
+// Each looker finds one chunk a tick, by its place (ways 1), by its key (ways 2) or both (3)
+system Look(mut Looker looker, Config config, Time time, query (Chunk chunk) chunks)
+{
+    var i = Math.Abs(Math.Hash(looker.number * 7919 + time.tick) % Math.Max(config.chunks, 1));
+    var at = Place(i / 2, config.wide);
+    var dimension = i % 2;
+    if ((config.ways & 1) != 0)
+    {
+        mut var found = 0;
+        foreach (var row in chunks)
+        {
+            if (row.chunk.at.x != at.x || row.chunk.at.y != at.y || row.chunk.at.z != at.z) continue;
+            if (row.chunk.dimension != dimension) continue;
+            found += 1;
+        }
+        looker.found += found;
+    }
+    if ((config.ways & 2) != 0)
+    {
+        var key = Key(at, dimension);
+        mut var keyed = 0;
+        foreach (var row in chunks)
+        {
+            if (row.chunk.key != key) continue;
+            keyed += 1;
+        }
+        looker.keyed += keyed;
+    }
+}
+
+// What the lookers found, for the host to check: one chunk each lookup, both ways
+singleton Lookups
+{
+    long found;
+    long keyed;
+}
+
+system Tally(mut Lookups lookups, query (Looker looker) lookers)
+{
+    lookups.found = 0;
+    lookups.keyed = 0;
+    foreach (var l in lookers)
+    {
+        lookups.found += l.looker.found;
+        lookups.keyed += l.looker.keyed;
     }
 }
 

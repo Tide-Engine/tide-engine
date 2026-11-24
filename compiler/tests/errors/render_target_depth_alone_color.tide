@@ -1,0 +1,10 @@
+// expect: image 'image' holds the color of a target of depth alone (Format.Depth), which has none: read the target's depth through a DepthTexture field holding 'target.depth', or make the target with a color Format
+scene Main { }
+local singleton Lamp { RenderTarget map; Texture image; List<Vertex> quad; }
+frag Lit(Vertex vertex, out Color color, Lamp lamp) { color = lamp.image.Sample(vertex.uv); }
+view Show(mut Lamp lamp)
+{
+    lamp.map = RenderTarget(64, 64, 1, Format.Depth);
+    lamp.image = lamp.map.color;
+    Draw.Mesh(lamp.quad, [0, 1, 2], Lit);
+}

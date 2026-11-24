@@ -1,0 +1,15 @@
+// Source of 00000000c0de0016.shader, through tide_wgsl_translate --hlsl: red where the triangle is front facing (a
+// frag's this.front), blue where its back is seen. Its corners go round clockwise as the image is seen, rows from the
+// top, which is a front in Tide, where u.at.x is 1, and the other way where it's 0.
+struct Values { at: vec4<f32>, color: vec4<f32> }
+@group(0) @binding(0) var<uniform> u: Values;
+@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
+    var points = array<vec2<f32>, 3>(vec2<f32>(-1.0, -1.0), vec2<f32>(3.0, -1.0), vec2<f32>(-1.0, 3.0));
+    var k = i;
+    if (u.at.x > 0.5 && i > 0u) { k = 3u - i; }
+    return vec4<f32>(points[k], 0.5, 1.0);
+}
+@fragment fn fragment(@builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    if (front) { return vec4<f32>(1.0, 0.0, 0.0, 1.0); }
+    return vec4<f32>(0.0, 0.0, 1.0, 1.0);
+}

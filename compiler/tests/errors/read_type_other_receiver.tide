@@ -1,0 +1,4 @@
+// expect: 'Read' takes no type in '<>'
+scene Main {}
+local singleton State { GPUList<int> numbers; }
+async void Read(State state) { var numbers = await state.numbers.Read<int>(); }

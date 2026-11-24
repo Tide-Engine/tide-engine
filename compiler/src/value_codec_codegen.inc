@@ -144,10 +144,17 @@ static void gen_client_codec_value(gen *g, const client_codec *codec, const int 
                   "        if (dir->records > 1u) qsort(records, dir->records, sizeof *records, tide_client_grid_compare);\n"
                   "        for (uint32_t i = 0; i < dir->records; i++) {\n"
                   "            tide_write_bytes(out, records[i].chunk, sizeof records[i].chunk);\n");
-        sb_printf(o, "            const uint8_t *cells = tide_grid_chunk_at(tide_heap_read(tide_handle_where(v->at)), records[i].block);\n"
-                     "            for (uint32_t k = 0; k < tide_grid_chunk_bytes(&%s) / sizeof(%s); k++)\n"
-                     "                tide_client_put%d(out, (const %s *)(const void *)(cells + (size_t)k * sizeof(%s)), depth + 1u);\n",
-                  grid_shape_name(t.decl), elem_ctype(cell), client_codec_id(codec, cell), elem_ctype(cell), elem_ctype(cell));
+        sb_put(o, "            const uint8_t *cells = tide_grid_chunk_at(tide_heap_read(tide_handle_where(v->at)), records[i].block);\n");
+        if (client_codec_raw(g->prog, cell)) {
+            // Cells whose bytes are their codec's go as they are, a chunk at once: the bytes a cell at a time made
+            // (a view's worth of chunks arriving was a call a block)
+            sb_printf(o, "            tide_client_write(out, cells, (uint32_t)(tide_grid_chunk_bytes(&%s) / sizeof(%s) * sizeof(%s)));\n",
+                      grid_shape_name(t.decl), elem_ctype(cell), elem_ctype(cell));
+        } else {
+            sb_printf(o, "            for (uint32_t k = 0; k < tide_grid_chunk_bytes(&%s) / sizeof(%s); k++)\n"
+                         "                tide_client_put%d(out, (const %s *)(const void *)(cells + (size_t)k * sizeof(%s)), depth + 1u);\n",
+                      grid_shape_name(t.decl), elem_ctype(cell), client_codec_id(codec, cell), elem_ctype(cell), elem_ctype(cell));
+        }
         sb_put(o, "        }\n        free(records);\n    }\n");
     } else if (t.kind == TY_RESIDENT) {
         // Opaque C state may cache hidden entities; only its visible ordinary
@@ -247,8 +254,13 @@ static void gen_client_codec_value(gen *g, const client_codec *codec, const int 
                   "    int32_t size[3];\n    memcpy(size, sizes, sizeof size);\n"
                   "    if (size[0] < 0 || size[1] < 0 || size[2] < 0) return false;\n");
         if (t.decl->dims == 2) sb_put(o, "    if (size[2]) return false;\n");
-        sb_printf(o, "    *v = tide_grid_new(%du, size[0], size[1], size[2]);\n", t.decl->dims);
-        sb_printf(o, "    tide_grid_own(v, &%s, where);\n", grid_shape_name(t.decl));
+        // The grid is made in the scratch area and taken into the heap: what it was made in goes back at once, as
+        // nothing after a load, a repair or a message does (64 bytes a grid read, on that thread for good:
+        // notes/netcode.md, top section). One read where there's no heap is the scratch area's own, and stays
+        sb_printf(o, "    const uint64_t made = tide_scratch_mark();\n"
+                     "    *v = tide_grid_new(%du, size[0], size[1], size[2]);\n", t.decl->dims);
+        sb_printf(o, "    tide_grid_own(v, &%s, where);\n"
+                     "    if (tide_handle_where(v->at) != TIDE_IN_SCRATCH) tide_scratch_reset(made);\n", grid_shape_name(t.decl));
         sb_put(o, "    const uint32_t count = tide_read_varint(in);\n");
         sb_printf(o, "    const tide_grid_shape *shape = &%s;\n", grid_shape_name(t.decl));
         sb_put(o, "    const uint32_t bytes = tide_grid_chunk_bytes(shape);\n");
@@ -270,9 +282,19 @@ static void gen_client_codec_value(gen *g, const client_codec *codec, const int 
                   "        }\n"
                   "        uint8_t *target = tide_grid_poke(v, (int32_t)first[0], (int32_t)first[1], (int32_t)first[2], shape, true, where);\n"
                   "        if (!target) return false;\n");
-        sb_printf(o, "        for (uint32_t k = 0; k < bytes / sizeof(%s); k++)\n"
-                     "            if (!tide_client_get%d(in, (%s *)(void *)(target + (size_t)k * sizeof(%s)), where, depth + 1u, budget)) return false;\n    }\n",
-                  elem_ctype(cell), client_codec_id(codec, cell), elem_ctype(cell), elem_ctype(cell));
+        if (client_codec_raw(g->prog, cell)) {
+            // As a list's elements: a chunk's cells at once where their bytes are their codec's. (A cell's own
+            // reader refuses one nested too deep, so this does.)
+            sb_printf(o, "        _Static_assert(sizeof(%s) == %d, \"a grid cell's codec bytes are its memory\");\n"
+                         "        const uint8_t *cells = depth < 256u ? tide_client_read(in, (uint32_t)(bytes / sizeof(%s) * sizeof(%s))) : NULL;\n"
+                         "        if (!cells) return false;\n"
+                         "        memcpy(target, cells, bytes / sizeof(%s) * sizeof(%s));\n    }\n",
+                      elem_ctype(cell), type_layout(cell).size, elem_ctype(cell), elem_ctype(cell), elem_ctype(cell), elem_ctype(cell));
+        } else {
+            sb_printf(o, "        for (uint32_t k = 0; k < bytes / sizeof(%s); k++)\n"
+                         "            if (!tide_client_get%d(in, (%s *)(void *)(target + (size_t)k * sizeof(%s)), where, depth + 1u, budget)) return false;\n    }\n",
+                      elem_ctype(cell), client_codec_id(codec, cell), elem_ctype(cell), elem_ctype(cell));
+        }
     } else if (t.kind == TY_RESIDENT) {
         sb_put(o, "    *v = (tide_resident){0};\n");
     } else if (t.kind == TY_BOOL) {
@@ -336,9 +358,15 @@ static void gen_client_codec_skip(gen *g, const client_codec *codec, const int i
                      "    const uint32_t cells = tide_grid_chunk_bytes(&%s) / sizeof(%s);\n"
                      "    if (count > (in->size - in->at) / (12u + (uint64_t)cells * %lluULL)) return false;\n"
                      "    for (uint32_t i = 0; i < count; i++) {\n"
-                     "        if (!tide_client_read(in, 12u)) return false;\n"
-                     "        for (uint32_t k = 0; k < cells; k++) if (!tide_client_skip%d(in, depth + 1u)) return false;\n    }\n",
-                  grid_shape_name(t.decl), elem_ctype(cell), (unsigned long long)cell_min, client_codec_id(codec, cell));
+                     "        if (!tide_client_read(in, 12u)) return false;\n",
+                  grid_shape_name(t.decl), elem_ctype(cell), (unsigned long long)cell_min);
+        if (client_codec_raw(g->prog, cell)) {
+            sb_printf(o, "        if (depth >= 256u || !tide_client_read(in, (uint32_t)((uint64_t)cells * %dull))) return false;\n    }\n",
+                      type_layout(cell).size);
+        } else {
+            sb_printf(o, "        for (uint32_t k = 0; k < cells; k++) if (!tide_client_skip%d(in, depth + 1u)) return false;\n    }\n",
+                      client_codec_id(codec, cell));
+        }
     } else if (t.kind == TY_RESIDENT) {
         sb_put(o, "    (void)in;\n");
     } else if (t.kind == TY_BOOL) {

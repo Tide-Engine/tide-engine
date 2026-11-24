@@ -1,4 +1,266 @@
+## The view packet by what the other program reads (2026-11-19)
+
+`tide_embed_view_want(e, bits, types)` says which of the schema's types the other program reads: a bit each for its
+first `types` types (64 to a word), set for a component, a singleton or an event. From the next frame on the packet
+carries the entities and those alone; a component's local fields and a singleton's come with it, and an event that
+isn't read isn't kept by its tap. NULL or 0 types is everything, which is also what an embed that's never told
+gets, so nothing changes for a host that doesn't call it. The bits are copied into the embed's own room (65,536
+types; any past them are read) and are of the build running: they're kept with its layout hash, and a build laid out
+otherwise coming in gets everything until the other program says again (its types are numbered anew).
+
+`tide_embed_view_again(e)` writes the last frame's packet again with what's read now, so a type something reads for
+the first time is there in the same frame: the same worlds (the session's view, unblended where the frame's was; a
+shown or replayed tick's world from its timeline, with time travel's own local state), entities in the same places,
+and the same events, which the game keeps until the next frame's packet or the next event heard. False, leaving the
+packet as it was, where that frame's worlds may not be there: after a request (a match may end with it), after
+`tide_embed_continue`, and once time travel's worlds or local state went (`drop_live`, `drop_replay`,
+`drop_travel_local`). Embed ABI 27; both are in `embed_exports`, and the web program has `tide_unity_view_want`
+(bits in `tide_unity_buffer`) and `tide_unity_view_again`.
+
+Test: `embed_view_carries_what_is_read` (`platform/tests/embed.c`): a counter alone (no singleton, a smaller
+packet, the counter's text still its STRINGS entry); a singleton asked for after the frame there in the same frame's
+packet with the counter as it was; an event nothing reads never in 30 frames' packets, then read, in its frame's
+packet, in that packet written again, and not in the next frame's; no packet again after a request; everything for
+the next embed, and for types past those said. notes/unity.md has Unity's side and the measurements.
+
 # The standard host: runs with no window, the stats, debug views
+
+## An embed's host says which tide built it (2026-11-19)
+
+`tide_embed_made_by(text)` (`tide/embed.h`; the process's, before `tide_embed_create`): the libraries the embed loads
+from `library_dir` have to say the same text (`tide_host_library_made_by`), and one that doesn't isn't loaded, with a
+`TIDE_EMBED_LOG_PROBLEM` record saying which tide built what and what to do. Said by the host library `tide unity`
+builds as it's loaded (a constructor in its generated `embed_host.c`), so the other program's side and the embed ABI
+are as they were. A linked game (`desc.game`) isn't checked, and a web program does nothing with it. `tide run`'s
+host has the same check through `tide_run_desc.made_by`, which tide doesn't set. notes/hot-reload.md, A library says
+which tide built it.
+
+## Pausing, stepping and going back (2026-11-17)
+
+The owner: part of the dev menu. Built on `tide/timeline.h` (Unity's time travel, notes/unity.md), mirroring
+`embed.c`'s travel for the standard host (`tide_run_travel`, host.h; the embedded host keeps its own).
+
+- **Recording**: while a dev build's (`game->inspect`) session runs the match's server here, not sharded and not
+  embedded, `tide_run_travel_follow` makes a timeline (600 ticks kept: page-sharing `copy_world` snapshots, so a
+  tick costs its changed pages) and records into it (`tide_session_record`); dropped with the session
+  (`tide_run_end`), a client, or a build of another layout (`tide_run_travel_reload` as `reload_before` in
+  `reload.c`; the same layout keeps it with `tide_timeline_set_game`).
+- **The frame**: `tide_run_travel_seconds` gives the match the frame's length, or paused none but a step's (to just
+  past the next tick), which goes into `tide_run_frame_now` and `frame_time`; paused, views are unblended. Shown an
+  earlier tick (`tide_run_travel_world`), the views and the menu get its world in place of the session's, on this
+  machine's own local state (a copy would share its render targets), and `tide_run_travel_discard` drops the
+  commands and requests they made. Go on from here: `tide_session_rewind` with the shown world and
+  `tide_timeline_cut`, as `tide_embed_continue` does.
+- **Menu** (`tide_run_dev_time`, in the tabs' box): Pause/Play, then paused Back, Step and "tick N of M", and Go on
+  from here at an earlier tick; where it can't pause, "Can't pause: <why>" (another machine's match, other
+  machines' players, a sharded match, not started). Inspector fields are in a Disabled block at an earlier tick.
+- Tests: `tide_platform_dev_menu`'s clock square (magenta even ticks, cyan odd): paused it holds over 10 frames,
+  Step flips it once, Back shows the tick before, Go on from here goes back to Pause and ticks again.
+- **Closed the same day** (the owner: "close the gaps", no shortcuts): a scrub bar (`tide_run_dev_scrub`, an int
+  slider over first..last, `tide_run_travel_show`); with other machines' players (`tide_run_travel_background`) the
+  match isn't held (`tide_run_travel_seconds` gives it the frame's length), the frames hold the tick shown, and
+  `tide_run_sample` gives the match a zeroed `tide_devices` while another tick shows; Go on from here rewinds for
+  everyone. Recordings: Dev tab RECORDINGS, Save recording (`tide_timeline_save` at the match's rate and this
+  player's id) to `<checkpoints>/recording-<n>.recording` (`tide_checkpoint_write`/`_read`/`_list_of`, the file
+  functions generalized by extension), a row click replays (`tide_timeline_load`: same layout only, its about's
+  other_build said) in the match's place, playing at its rate, with Play/Pause, Back, Step, the bar,
+  `tide_timeline_check_of` said ("As recorded, to tick N", "Tick N differs", "can't replay"), Stop replay; the live
+  match pauses at the latest meanwhile unless others play; the replay's views get `set_session` with its player.
+  Web: the page's checkpoint imports take a kind (0 checkpoint, 1 recording) and tide's server `kind=recording`.
+- Tests: the dev menu test also drags the bar to its start (Back does nothing there, Step one tick), saves and
+  replays a recording (pauses, holds, steps, Stop replay leaves the match paused, Play), and runs `--players 2`:
+  the host pauses, its square holds while the second's goes on, Go on from here and it ticks again.
+  `reload_web.mjs` lists and fetches the recording kind; `cache_test.mjs` saves/lists one through the server (CI).
+- Gaps: no keyboard shortcuts (the owner: not for now).
+
+## Checkpoints (2026-11-17)
+
+The owner's asks: save/load (and start over from one) quickly for testing, agents able to make them and launch from
+them, a project `checkpoints` folder, the loader takes the saver's player, carried over to later builds, and loadable
+"anyway" so a minor change doesn't lose one. The rest are my picks (spec, Dev tools, Provisional).
+
+- **Format** (`platform/include/tide/checkpoint.h`, `platform/src/checkpoint.c`): a 40-byte header (magic `TIDK`,
+  version 1, the game's hash, the saver's player index, the server tick), the layout (`tide_layout_pack`) and the
+  server world (`tide_game.pack_world`), 8-aligned. Same hash: `unpack_world` as is; another: `tide_layout_unpack` in
+  place, `tide_migrate_world` (or `_forced`), then `unpack_world`; `fields_reset` from `tide_layout_fields_reset`.
+  `tide_checkpoint_pack`/`_unpack` work on bytes (the page's path); `_save` writes `<name>.checkpoint.part` and
+  renames it into place; `_list` is newest first (mtime; a WASI runtime without one sorts by name). Names: letters,
+  digits, `-`, `_`, `.` (not first), under 64 bytes, so no path gets through.
+- **Forced migration** (`tide_migrate_world_forced`, migrate.c): a gone scene's archetype is dropped instead of
+  failing, and every row of another archetype whose scene column is one of that archetype's entities (per-row
+  `dropped`, skipped where holes are); `tide_migration.scene_dropped` names it. The other refusals (identity clock,
+  queued changes, bad bytes, memory) still refuse.
+- **Host** (host.h): `tide_run_layout()` is the inspector's layout (every dev build) or the library's.
+  `--checkpoints <dir>` (tide run passes `<project>/checkpoints`; default `checkpoints` in the working folder),
+  `--from <name>`, `--force`. Requests (menu, script queue) are carried out as the next frame begins
+  (`tide_run_checkpoints_poll`), before anything reads the match. Save reads the world through
+  `tide_session_server` (which settles a tick running alongside); a client of another machine's match is told it
+  can't. Load = `tide_run_end` + `tide_run_begin`, which starts `tide_session_start_from` the loaded world with the
+  saver's player (`tide_run_from_world`, handed over so it's read once); `tide_run_from` stays, so Ctrl+R's restart
+  goes from it again until Start fresh. `--from` that fails exits 2 the first time; later begins start fresh.
+  `--from` with `--join`/`--connect` is refused; with `--host` the loaded match is opened.
+- **Menu**: the Dev tab shows for any dev build (inspector present). CHECKPOINTS: Save (next `checkpoint-<n>`),
+  Start fresh (when starting over from one), what the last did, Load anyway (after a scene refusal), and the
+  list (rows as the tree's, "starts over here" on the current one), listed again a second apart and after a save.
+- **Scripts** (`script.c`): `checkpoint save|load|force-load <name>`, at its frame once drawn
+  (`tide_script_drawn`), the first player's only, queued for the host (`tide_platform_checkpoint_asked`, 8 at
+  once); in an interactive run also unnumbered, before the next frame, recorded in the replay with the frame.
+- **Web**: imports `checkpoint_save/saved/fetch/copy/list` (tide.js). Every page has stubs (nothing kept); under
+  `tide run --web` they POST/GET `checkpoint?name=` and GET `checkpoints` with the X-Tide header. A load fetches,
+  shows "Loading", and the poll goes on from it as it comes; a page's `--from` is fetched before the first build
+  starts, and if it isn't there the game starts fresh (no exit on a page).
+- Tests: `tide_platform_dev_menu` (script save, change, load back to black, a missing one said, the menu's Save
+  and list, then `--from dark` from the first frames and `--from nowhere` exiting 2); `tide_platform_migrate`
+  (`migrate_forced_drops_the_entities_of_a_scene_thats_gone`; `a_checkpoint_loads_into_a_build_of_another_layout`:
+  names, list, same build byte-identical, another layout equal to `tide_migrate_world`'s, scene refused then
+  forced, missing and broken files; native and WASI, the list native-only as Node's WASI opens no folders on
+  Windows); `reload_web.mjs` (the page's functions: --from fetched before the first build, copy once, missing,
+  save with the header and its result, listing throttled, a page without tide); `cache_test.mjs` web run (the
+  server: save, refused without the header, a path name refused, read back, missing, list), which needs an
+  installation: CI's `--web` run, not run locally.
+- Gaps: no rename/delete in the menu (the files are the project's); loading closes a room as a full reload does,
+  so other players rejoin; checkpoints of a sharded match aren't made (one server world).
+
+
+## The inspector (2026-11-16)
+
+The owner's picks list (agreed "go with your picks for now"): numbers/vectors/bools/Colors/enums edited; text, lists,
+maps, entities shown (an entity a button); no game labels; a Local tab; any player of a dev build edits.
+
+- **Runtime** (`engine/include/tide/inspect.h`, `engine/src/inspect.c`, the agent's): `tide_inspect_api` {layout,
+  view (the match's and the local world's packets), set (to the server), set_local}; `tide_inspect_field` (the leaf
+  field at an offset, through STRUCT fields: INT/FLOAT/LONG/BYTE/DOUBLE/ENUM, PLAIN `bool` (1 byte) and `Color` (16);
+  never Entity/text/lists/PlayerID, all PLAIN); `tide_inspect_writable` (that, and a finite float/double, a bool 0/1,
+  an enum member, zero-extended for byte/ushort enums); a bounds-checked packet reader (`tide_packet_entities`,
+  `_entity`, `_next`, `_text_of`).
+- **Compiler**: a dev build parses `inspect_prelude` (`<tide>/inspect.tide`, tweaks.c): `command TideSetField { int type;
+  int offset; int size; long a, b, c, d; }` and an empty handler (it must name its sender), `decl.inspect_set`. The
+  dispatcher calls `tide_inspect_apply` (inspect_codegen.inc, before the dispatchers) in the handler's place: the
+  value's bytes, `tide_inspect_writable` against `tide_game_layout`, then `tide_load_<C>`/`tide_store_<C>` for a match
+  component or a memcpy into a match singleton (target null). Dev builds always generate the layout. The match packet
+  is the embed one (`gen_packet_view`, moved out of `gen_embed` with `heard_wanted`), no births needed
+  (`tide_entity_born` gives 0); the local packet (`tide_inspect_local`) has local archetypes' entities, their
+  components (a locally spawned component's twin, `tide_local_component_X`, named as X in the layout) and local
+  singletons. `set_local` covers local components, local parts of match components (`tide_get/set_X_local`) and
+  local singletons (a match singleton's local fields are one). `gen_embed_packers` when not `--embed`.
+- **Host** (`tide_run_dev_inspect`, host.h): the menu's tabs `Dev`/`Match`/`Local` (`tide_run_dev_tab`; Dev only for a
+  game with dev views or tweaks), held above the list in a scroll container of the row's height a frame before, each
+  tab with its own scroll offset, all in a GUI area (the theme's panel, its shadow) as tall as the tabs and list were a
+  frame before; `dev_menu.mjs` samples the game's pixels right of it (a 480-wide window); accent headings (`tide_run_inspect_heading`) for Tweaks, Singletons, Entities, an
+  the components of an open entity. A tree (`tide_run_inspect_tree`, 2026-11-17, the owner's ask: "show all", sideways
+  scrolling for depth): singletons, then entities from the roots down through the packet's `parent` (a parent not
+  among them, or itself, is a root; a cycle with no root isn't shown), depth-first by an explicit stack, children in
+  packet order. A frame's index (`tide_run_inspect_index`): each entity's listed component sections side by side
+  (counts, starts, fill) and first-child/next-sibling, in buffers kept between frames. Open rows are a list of 256
+  (entity handle, or singleton kind+type, and the tab's world), the oldest closing past it; open content sits in a
+  horizontal row (14 px a level of room) with a vertical in it, so the GUI's container depth stays constant however
+  deep the tree. Every row is laid out, but only those in the list's viewport are widgets: `tide_gui_layout_next`
+  says where the next goes, and one outside is only its room (indent wide, a line tall), so no label is made or
+  measured for it and `TIDE_GUI_MAX_RECTS`/IDs aren't spent. A row's id is a hash of its entity, so it's the same
+  widget wherever it is. An Entity field's button opens the entity and its ancestors and scrolls to it as its row is
+  laid out (two frames to find it). Numbers: `#birth`, with `/` and the lineage's low 16 bits in hex where the packet
+  has another of that birth (spawned in the same tick); shown only inside an open entity (the owner: "magic
+  characters"), and in rows' labels for scripts. A row says its components and a preview
+  (`tide_run_inspect_summary`: the first non-hidden string field of its components, else the first that
+  `tide_run_inspect_brief` can say: numbers and vectors, bool, enum member); an Entity field is a link saying the
+  same. Look (2026-11-17, the owner's ask for readable): the menu's own theme (`tide_run_dev_theme`: 14 px text,
+  washes of white for controls, sunk fields, a soft blue accent, a bordered panel), text tabs with the current one
+  underlined, small dim section headings, rows drawn by the host over a `tide_gui_control` (chevron, name, dim
+  preview, "· N under it", hover wash, focus ring) labelled through `tide_gui_describe`, faint guides down from
+  open rows' chevrons, fields under the row's name with each component's 12 px further in, read-only values in the
+  editors' value column (130 px). Fields go through `tide_run_dev_value` (the tweaks' editors).
+  Sent changes are kept (16) and shown over the packet's value until it matches, a second at most. Packets are made
+  only while the inspector is open. `TideTweaks`/`TideTweaksHere` are left out of the lists, as are fields the layout marks `hidden`
+  (`tide_layout_field.hidden`, from the compiler's `field.hidden`: the engine's own) and types all of whose fields are
+  (`tide_command_state`, `tide_ghost`, the hierarchy, the visibility policy); `tide_inspect_field` refuses a hidden
+  field, so the server never writes one. `tide_run_dev_menu`
+  takes the frame's match world; the menu shows in every dev build now.
+- Tests: `tidec_e2e_inspect` (native and web: packets' entities, components, text, local fields, local entities and
+  singletons; set through `tide_game_api.command` for a float heard by a `Changed` handler, an enum, a bool, a nested
+  struct's int and float3, a Color, a singleton's double; refused: a non-member, bool 2, NaN, part of a vector, a text
+  handle, `tide_command_state`'s hidden sequence, a wrong size, a singleton with a target, an entity without the component; set_local for each kind and never
+  the match's). `tide_platform_dev_menu`: the Match tab (no `tide_` singleton, no Dev tab's tweak), then Dev again, a singleton's bool (black screen), a
+  group, an entity, an int typed and entered (white square), the Local tab's singleton (yellow square). The test now
+  resets its .tweaks file in `finally`, so a failed run doesn't leave Green worked out for the next. With the tree:
+  `Shade` opened in place (scrolled two lines to its field) and closed, the Lamp's row opened, `Glow`.
+  Nesting was checked by screenshots with a scratch hierarchy (rooms under rooms), not by a test.
+- Gaps: no game-chosen entity label; keyboard/gamepad focus can't reach a row outside the viewport (it isn't a
+  widget); scenes aren't roots (the packet doesn't say an entity's scene; a scene's tag shows as a component); text/lists/maps/entities read-only; very large worlds pay a whole packet per
+  frame while the inspector is open; sharded games get the edit on the shard that dispatches it, untested.
+
+## Tweaks in the dev menu, and tweaks.json read again (2026-11-16)
+
+`tide_run_tweaks_poll` and `tide_run_dev_tweaks` (notes/language.md, Tweaks, step 2, has what they do and their tests).
+
+**On the web (later the same day)**, under `tide run --web`: the page has no files of this machine, so tide's server
+carries both ways. `/build` gains a 4th number, a hash of `<gen>/game_tweaks.bin` (0 for none); tide.js fetches
+`/tweaks` when it changes and keeps the bytes, which `tide_run_tweaks_poll` copies with the `tide.tweaks_copy` import.
+The menu's change goes through `tide.tweak_write(file, name, value)` (the value as `tide_tweaks_format` writes it) to
+`/tweak?file=&name=&value=`, which tide writes with `tide_tweaks_write` (engine/src/tweaks.c, linked into the CLI).
+The server keeps a query only on requests with an `X-Tide` header (a cross-site page can't send one without a CORS
+preflight, never allowed), and writes only a `.tweaks` file under the game's folder, a dotted name, and a value with
+no `;`, newline or `/`. Writes go one after another (a promise chain), their strings read at once. Then the watch
+loop's `asset_stamp` sees the file, repacks, and the new bin reaches the page as a native run's file does. A built
+page (no `tide run`) has no-op imports. Tests: `reload_web.mjs` (fetched once per stamp, copied, writes in order with
+the header); end to end checked by hand with a scratch installation.
+
+**New `.tweaks` files**: `asset_stamp` also hashes every `.tweaks` under the game's folder (`folder_find_own`), so one
+made or removed starts a repack, as an edit does.
+
+## The dev menu (2026-11-16)
+
+`tide/host.h`: `tide_run_dev_views(game)` before `game->frame` hands the game which of its dev views run
+(`tide_host_game.show_dev_views`), and `tide_run_dev_menu(game)` after the frame's views, in the frame's GUI, shows
+the menu while the key under Escape (`keyboard.backquote`, the owner's pick) has it open: a label and a `tide_gui_toggle` per name in `tide_host_game.dev_views` (IDs
+`0xDE700000 + i`, its own `tide_gui_view(UINT32_MAX)`, the pointer claimed over its rows). What's on is kept by name
+(`tide_run_dev_on`, up to 64), so a reload keeps it. Only a game with dev views has the menu; the game sees the key.
+`--interactive` lists its switches (`controls`), so `click Marker` works. Test: `tide_platform_dev_menu`
+(`dev_menu.tide`/`.mjs`, label `gpu`): the view off, the key, the switch listed, clicked, the view drawing, the key hiding the
+menu with the view kept on. It's `tide_run_frame`'s, so the web has it too (untested there: no web test presses
+the key). Frames the embed draws itself (time travel's `show_frame`, tide/embed.h) don't call it, so dev views stay off
+there. Decisions are in docs/spec.md, Dev tools.
+- **The menu frees the cursor** (fixed 2026-11-18, found in LOAM): `tide_run_frame` locked the cursor whenever the
+  game asked (`Cursor.Lock`) with the menu open, so in a first-person game the mouse turned the camera and no switch
+  could be clicked. It's locked now only while the menu is shut (`!tide_run_dev_open`), as a modal frees it. The
+  test's game locks it every frame (`Grip` in dev_menu.tide), which failed at the first click without the fix.
+
+## The game named before its window opens (2026-11-16)
+
+`tide_run_open` calls `tide_run_name_game` before `tide_platform_open` (and before a run with no window opens its
+hidden one), so the window's Vulkan can tell NVIDIA's driver to keep its cache in the game's folder
+(`tide_platform_driver_cache`; why and how measured: rendering.md, The driver's cache in a folder of the game's).
+Naming again later (`tide_run_bind_io`, the loader's first frame) changes nothing, as before.
+
+## A managed match's store (2026-11-15)
+
+- `managed_run.h` gives every server it makes (`init`, `restore`, a shard's) the hosting service's store when the
+  service offered one (`tide_managed_store(1)` before the server is made): each tick's requests go to the service as
+  bytes it takes after each call (`tide_managed_store_requests`, in `tide_managed_bytes()`, now outside the sharded
+  part), and its answers come back by id before an update (`tide_managed_stored`), checked by `tide_storage_answer`.
+  ABI stays 1, as the calls are new exports and no new import: a service older than them runs the module as before,
+  keeping nothing. A restore drops what the server it replaces never handed over (the start of the instance it
+  recovers in). A shard's start is bound to a store of its own and handed over as `tide_server_desc.asked`.
+- `TIDE_MANAGED_TEST` builds the header natively for a test's fake host (`TIDE_MANAGED_IMPORT`/`TIDE_MANAGED_EXPORT`
+  empty, the game's weak hooks static pointers): `tidec_e2e_managed_store`, and since the review the sharded half too
+  (`tidec_e2e_managed_store_shards`; its `journal` import is `TIDE_MANAGED_IMPORT(journal)` now, which a native build
+  took as an unknown attribute). The host answers every id it's given (`tide_managed_stored`'s comment). The rest, with
+  its tests and a wasm build of the fixture run under the services' worker, is in notes/voxels.md, section 3e.
+
+## A run with no window keeps the server's store without the files' thread (2026-11-15)
+
+- A run with no window promises that nothing about it is timed (Rendering and platform, below), but since the server's
+  store moved off the tick's thread (notes/voxels.md, section 3a) a game that loads or lists had its answers reach
+  whichever tick was running as the provider's thread finished: world hashes, captures and `--players` runs could
+  differ from run to run. Found in review; no test ran such a game with no window.
+- `tide_run_bind_io` hands a run with no window's sessions `tide_run_store_here`, a copy of the platform's provider
+  with `post` and `settle` NULL, so the server carries each tick's requests out as the tick ends and every answer
+  reaches the next tick, as before 2026-11-15. The copy is written again only where the provider changed, as a reload
+  binds again while a server may read it. The game's local files (`set_io`) keep the provider as it is. A window's run
+  and `tide_serve` keep the thread: they have clocks.
+- `tide_platform_store_headless` (`platform/tests/store_headless.c`, `store_headless.tide`, desktop, no GPU): the real
+  host with the embedded platform, `tide_run_headless` set as the flags set it and `--data-dir`'s folder given, 400
+  values of 2,000 bytes saved in tick 1 and loaded in tick 3: no `post` on the store, the first answer in tick 4 and
+  all 400 found. With the thread the first came in tick 5 or later.
 
 ## Ticks beside the frame, and a hidden run's frame rate (2026-11-12)
 
@@ -19,6 +281,21 @@
   cost, with and without one, never showed in a profile. The headless mixer renders 48000 / rate samples a
   frame, the remainder carried, so `--capture-audio` stays in step; a recorded GIF still plays 30 pictures a
   second. `tide run` passes both flags through (`compiler/cli/main.c`, help in `help.c`).
+- `--paced` (2026-11-16; `tide_headless_desc.paced`, `step` in `platform/src/platform.c`; Claude's pick,
+  Provisional in `docs/tools/cli.md`): a run with no window holds each frame as long as a display would, waiting
+  out what's left of the frame's made-up length on the wall clock once its work is done
+  (`tide_window_wait`, the hidden window's own wait). A run with no window made a frame as fast as it went (about a
+  millisecond), so local workers had a sixteenth of a frame's time and nothing said what a player at 60 Hz would
+  see (notes/voxels.md, At scale, section 4). The run's own time is made up as ever: the session takes no clock,
+  the match, the pictures and the recordings are the bytes they are without it, and only the run's length and the
+  workers' time differ. As it ends it says on stderr how many frames there were, how many took longer than one
+  frame's length, and the longest (`tide: paced: 600 frames of 16.7 ms, 0 took longer than that, the longest 9.8
+  ms`): the frame's work as `step` sees it, from its start to before the wait, the present included. Not what
+  `--realtime` was (turned down 2026-10-08, below): that paced a run to the wall clock so two processes would
+  meet, and nothing of it repeated. With `--frame-rate`, the length held is that rate's. Desktop only; with a
+  window it does nothing. `tide run` passes it through; `tide_cli_help` and `tide_cli_run_exit` have it. No test
+  of its timing (it would rest on a clock): the same pictures with and without it were checked by hand
+  (notes/voxels.md).
 ## A frame's views get the pool (2026-11-12)
 
 `tide_run_frame` calls `tide_loops_enter(tide_run_gui.jobs)` before `frame_shards` and `frame` and
@@ -342,11 +619,13 @@ builds, runs and fails the exact accounting assertions; restoring the host
 byte-for-byte makes the browser test pass again. There is no runtime diff.
 Hosted coverage on other platforms remains the ordinary push-triggered run.
 
-## Match updates during desktop Vulkan presentation waits (2026-11-03)
+## Match updates during Vulkan presentation waits (2026-11-03; Android 2026-11-14)
 
 The standard and native reload hosts register `tide_run_wait_update` through
 `tide_platform_update_while_waiting`. Only the next-frame Vulkan fence wait
-after a complete frame calls it. It advances the custom network and session
+after a complete frame calls it: GLFW's window's, and since 2026-11-14
+Android's activity's, which until then presented without it
+(`notes/rendering.md`, Match updates during Vulkan frame waits). It advances the custom network and session
 on the same thread, returning the next tick deadline. No view, event handler,
 audio submission, reload, migration request or GPU work runs from this hook.
 Queued local events and session connection events remain for the next frame;
@@ -651,7 +930,12 @@ changes, and no other host sets it. The loop handing local code's commands to th
 `restart` while the old build's code is still loaded; only the embed sets it (time travel's worlds and local state
 are the old build's), so `tide run`'s host is unchanged. Frames that show another tick than the latest don't go
 through `tide_run_frame`: the embed's `show_frame` runs the views over that world with a local state of its own and
-the host's draw list, GUI and devices (consumed after it), and writes the view packet from it.
+the host's draw list, GUI and devices (consumed after it), and writes the view packet from it. Since 2026-11-19 that
+local state's handlers hear the ticks shown (`travel_gather`, `tide_timeline_heard`: notes/unity.md, Time travel's
+gaps), and a background frame's own packet is written and dropped so what the match's taps heard isn't in the shown
+tick's. A sharded match's kept ticks hand their other worlds to `frame_shards` before the views and the packet
+(`hand_beside`). The dev menu's timelines carry the game's layout since then too (`tide_timeline_desc.layout`), so
+its recordings replay across a layout change.
 
 ## Runtime stats argument and documentation pages (2026-10-25)
 

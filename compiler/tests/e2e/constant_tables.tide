@@ -1,0 +1,201 @@
+// Constants that are arrays and lists, written out: tables every machine has the same, read by index in match
+// code, views, functions and workers. Never world state: the world holds what code copies out of them.
+
+enum Kind { Ash, Birch, Cedar }
+
+struct Seed
+{
+    float2 at;
+    Kind kind = Kind.Birch;
+    int count = 1;
+}
+
+const float[4] SIZES = [1.5, 2, 2.5, 4];
+const List<int> QUAD = [0, 1, 2, 0, 2, 3];
+const int2[3] STEPS = [int2(1, 0), int2(0, 1), int2(-1, -1)];
+const List<float3> CORNERS = [float3(0, 0, 0), float3(1, 0, 0), float3(1, 1, 0)];
+const Seed[2] SPAWNS = [Seed { at = float2(1, 2) }, Seed { at = float2(-3, 4), kind = .Cedar, count = 3 }];
+const List<Seed> MORE = [Seed { }, Seed { kind = Kind.Ash, count = 5 }];
+const Kind[3] ORDER = [.Cedar, .Ash, .Birch];
+const List<Kind> KINDS = [Kind.Birch, Kind.Ash];
+const Kind[3] ALL = Kind.Values();
+const float[3] PER_KIND = [0.5, 1, 2];   // Indexed by int(kind)
+const List<int> NONE = [];
+const List<int> SAME_QUAD = QUAD;        // Another list constant
+const int[2][3] GRID = [[1, 2, 3], [4, 5, 6]];
+const List<byte> MASKS = [1, 2, 4, 128];
+using Primes = int[3];
+using Indices = List<int>;
+const Primes PRIMES = [2, 3, 5];    // Through type aliases
+const Indices TRIANGLE = [0, 1, 2];
+const List<Vertex3> FAN = [Vertex3 { position = float3(0, 0, 0) }, Vertex3 { position = float3(1, 0, 0) },
+                           Vertex3 { position = float3(0, 1, 0), color = Color.red }];
+
+// What constants are worked out from them while compiling: an element, a count
+const int THIRD = QUAD[2];
+const int CORNER_COUNT = CORNERS.count;
+const float BIGGEST = SIZES[3];
+const int LAST_KIND = int(ALL[2]);
+const int PAST = QUAD[10]; // Past the end: the element type's zero, as a list's
+const int CELL = GRID[1][2];              // An element of an element
+const Tier[3] TIERS = Tier.Values();      // Of an enum declared below, numbered first
+const int[2] ZEROS = default;
+const float[2] REWINDS = [0.25, 0.5];
+const float REWIND = REWINDS[1];          // A setting's value
+
+settings { maxRewind = REWIND; }
+
+// A list of as many values as an array holds, all of its elements' lengths together (8 * 512); one more is an error
+// that names build code
+const int[8] UP = [1, 2, 3, 4, 5, 6, 7, 8];
+const int[8] DOWN = [8, 7, 6, 5, 4, 3, 2, 1];
+const int[8][8] SQUARE = [UP, DOWN, UP, DOWN, UP, DOWN, UP, DOWN];
+const int[8][8][8] CUBE = [SQUARE, SQUARE, SQUARE, SQUARE, SQUARE, SQUARE, SQUARE, default];
+const List<int[8][8][8]> CUBES = [CUBE, default, CUBE, CUBE, CUBE, CUBE, CUBE, CUBE];
+
+singleton Tables
+{
+    float size;
+    int corner;
+    int quadSum;
+    int2 stepped;
+    float3 cornerSum;
+    float spawnSum;
+    int spawnCount;
+    int moreCount;
+    int kinds;
+    int order;
+    float perKind;
+    int counts;
+    int outside;
+    int none;
+    int same;
+    int grid;
+    int masks;
+    bool found;
+    int index;
+    int fromConstants;
+    int[QUAD.count] sized; // A count is a constant, so it's an array's length
+    int cased;
+    List<int> copied; // A list constant copied into the world: its own
+    int copiedCount;
+    int copiedLast;
+    Seed kept;
+    float helper;
+    int firstSize = int(SIZES[1]) + QUAD[5]; // A field's default reads them too
+    int[int(TIERS[1])] tiered;               // Mid's 5, through a constant that's Values()
+    int[CELL] six;
+    int[ZEROS[1] + 2] two;
+    int tierCase;
+    int zeros;
+    float rewind;
+    int cubes;
+    int cubesLoop;
+    int cubesEach;
+}
+
+local singleton Display
+{
+    float size;
+    int quad;
+    int worker;
+    bool started;
+    bool done;
+}
+
+float SizeOf(Kind kind)
+{
+    return PER_KIND[int(kind)] * SIZES[int(kind) + 1];
+}
+
+int SumOf(List<int> values)
+{
+    mut int sum = 0;
+    foreach (var v in values) sum += v;
+    return sum;
+}
+
+system Read(mut Tables tables, Time time)
+{
+    int i = time.tick % 4;
+    tables.size = SIZES[i];
+    tables.corner = QUAD[i + 2];
+    tables.quadSum = 0;
+    for (int k = 0; k < QUAD.count; k++) tables.quadSum += QUAD[k];
+    tables.stepped = int2(0, 0);
+    foreach (var step in STEPS) tables.stepped += step;
+    tables.cornerSum = float3(0);
+    foreach (var corner in CORNERS) tables.cornerSum += corner;
+    tables.spawnSum = SPAWNS[1].at.x + SPAWNS[0].at.y;
+    tables.spawnCount = SPAWNS[0].count + SPAWNS[1].count + int(SPAWNS[1].kind);
+    tables.moreCount = MORE[0].count + MORE[1].count + int(MORE[0].kind) + int(MORE[1].kind) * 10;
+    tables.kinds = int(KINDS[0]) * 10 + int(KINDS[1]) + KINDS.count * 100;
+    tables.order = int(ORDER[0]) * 100 + int(ORDER[1]) * 10 + int(ORDER[2]);
+    tables.perKind = SizeOf(Kind.Cedar) + SizeOf(ALL[0]);
+    tables.counts = SIZES.count + QUAD.count * 10 + NONE.count * 1000;
+    tables.outside = QUAD[-1] + QUAD[6] + int(SIZES[4]) + int(KINDS[2]); // Past either end: zeros
+    tables.none = NONE[0] + NONE[i];
+    tables.same = SAME_QUAD[5] + SAME_QUAD.count;
+    tables.grid = GRID[1][2] * 10 + GRID[0][1] + GRID.count * 100;
+    tables.masks = int(MASKS[3]) + int(MASKS[0]) + MASKS.count * 1000 + PRIMES[2] * 10000 + TRIANGLE[2] * 100000;
+    tables.found = QUAD.Contains(3) && !QUAD.Contains(7) && KINDS.Contains(Kind.Ash);
+    tables.index = QUAD.IndexOf(3) + CORNERS.IndexOf(float3(1, 0, 0)) * 10;
+    tables.fromConstants = THIRD + CORNER_COUNT * 10 + int(BIGGEST) * 100 + LAST_KIND * 1000 + tables.sized.count * 10000 + PAST;
+    switch (i)
+    {
+        case QUAD[5]: tables.cased = 3; break; // An element of a constant is a case's constant
+        default: tables.cased = 1; break;
+    }
+    tables.copied = QUAD;
+    tables.copied.Add(9); // The world's copy, not the constant
+    tables.copiedCount = tables.copied.count + QUAD.count * 10;
+    tables.copiedLast = tables.copied[6] + QUAD[6];
+    tables.kept = SPAWNS[1];
+    tables.helper = SumOf(QUAD) + SumOf(SAME_QUAD) * 100;
+    tables.tierCase = 0;
+    switch (i + 4)
+    {
+        case int(TIERS[1]): tables.tierCase = 5; break; // Values()'s element, through a constant
+        default: break;
+    }
+    switch (i == 1 ? Tier.High : Tier.Low)
+    {
+        case TIERS[2]: tables.tierCase += 10; break;
+        default: break;
+    }
+    tables.zeros = ZEROS[1] + ZEROS[i];
+    tables.rewind = time.maxRewind;
+    tables.cubes = CUBES[i * 2][1][2][7] + CUBES[1][0][0][0] * 10 + CUBES.count * 100 + CUBES[3][6][1][0] * 1000;
+    tables.cubesLoop = 0;
+    for (int k = 0; k < CUBES.count; k++) tables.cubesLoop += CUBES[k][0][1][0];
+    tables.cubesEach = 0;
+    foreach (var cube in CUBES) tables.cubesEach += cube[6][0][0];
+}
+
+local worker int Corners(int n)
+{
+    mut int total = 0;
+    for (int i = 0; i < n; i++) total += QUAD[i % QUAD.count] + int(SIZES[i % 4]);
+    return total;
+}
+
+async void Count(mut Display shown)
+{
+    shown.worker = await Corners(8);
+    shown.done = true;
+}
+
+// A view reads them too, into this machine's local state, and starts a worker that does
+view Show(mut Display shown, Tables tables)
+{
+    shown.size = SIZES[int(ALL[1])] + tables.size;
+    shown.quad = QUAD[5] + QUAD.count;
+    Draw.Mesh(FAN, TRIANGLE, float4x4.Translate(float3(FAN[2].position.y, 0, 0))); // A mesh's lists, as any lists
+    if (shown.started) return;
+    shown.started = true;
+    Count(shown);
+}
+
+scene Main { }
+
+enum Tier { Low, Mid = 5, High }

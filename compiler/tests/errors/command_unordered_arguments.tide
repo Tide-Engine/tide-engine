@@ -1,4 +1,4 @@
 // expect: Unordered takes nothing: '[Unordered]'
 [Unordered(1)]
-command Ping { int at; }
+command(int at) Ping(PlayerID sender) { }
 scene Main { }

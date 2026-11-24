@@ -1,5 +1,25 @@
 # Dedicated servers
 
+## Standalone match isolation
+
+`tide_hosting_update` drains bounded ingress, then updates each match in slot
+order on the caller's thread before processing admission expiry. The session's
+eight-tick catch-up cap bounds tick counts. A single slow tick still holds later
+matches and the next transport update, and a fatal native fault ends the whole
+host. The shared jobs pool runs work within ticks. Moving matches to threads
+would need callback, shared C state, transport and jobs-pool ownership contracts
+and would leave native crashes process-wide.
+
+For fault isolation, the smallest candidate is an opt-in supervisor running
+one unsharded match per child, using the existing `--max-matches 1` and a
+distinct `--port` for each. The owner decision is whether isolated matches may
+advertise distinct endpoints. Keeping one public endpoint would also require a
+front end to own admission and transport, map routes to children, and report
+child loss. A local acceptance test should hold one child's tick, then terminate
+it, while a separate client keeps verifying ticks on another child. The hosting
+loop was inspected for this review. Runtime fault injection and process isolation
+remain future work.
+
 ## Bans (2026-11-04)
 
 A dedicated server has no local code, so `Session.Ban` doesn't reach it; its
@@ -22,7 +42,9 @@ regions' matches take join requests without credentials (`tide_hosting_open`):
 their servers admit by the root's cookie. Tested by `tide_server_shards` and
 `tide_server_shards_room`, a server and a client process. `--shard-journal <folder>` keeps
 the world in a folder and goes on from it (`tide_server_shards_journal` kills one
-outright and starts it again). Details and gaps:
+outright and starts it again), with its store, for the build that kept it;
+`--shard-verify`, `--shard-seal` and `--shard-upgrade` look at, seal and take up
+such a world. Details and gaps:
 notes/sharding.md.
 
 ## Shared player/connection ceiling (2026-10-20)

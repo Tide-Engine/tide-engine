@@ -1,0 +1,221 @@
+// Projection hashes of containers too big for one chunk of their list (client_state_codegen.inc, tide_client_sum):
+// a map or a set is the sum of its entries' hashes and a list the hashes of its elements a chunk's worth at a time,
+// each chunk's part kept while its page hashes as it did. And rows looked at one by one where a piece of 64 is read
+// again (client_spans_codegen.inc): only those whose own bytes changed, the piece's arrays standing while none of
+// them reads the heap again. What could make either wrong, one change at a time: an entry changed where it is, one
+// gone and another added with the count the same, the same key and value put again (another order), a map growing
+// and shrinking across chunks and across the size it's a tree from, elements swapped between chunks, a list whose
+// elements all move along, values that hold lists and texts of their own; a row's small value and another row's
+// list changed in one piece in one tick, either first, a row made, gone or snapped beside one that changed. The test
+// (visibility_trees_test.c) checks each tick that every player's projection hash is the one a copy of the world
+// hashes to with nothing kept, and the one that player's own world hashes to, loaded from what it's sent (its
+// maps without the server's dead entries), and that a repair by what changed is the same from what the tick's
+// check kept as from the rows themselves.
+
+settings { maxPlayers = 4; }
+
+struct Pair { byte kind; int value; } // (With padding: its codec's bytes aren't its own)
+
+const int VAULTS = 3;
+const int TILES = 300;
+
+component Vault
+{
+    int id;
+    VisibilityGroup group;
+    Map<int, long> index;       // 2,000 entries of 24 bytes: 682 to a chunk
+    Set<int> seen;              // 2,500 of 16: 1,023 to a chunk
+    List<int> numbers;          // 9,000: 4,092 to a chunk
+    List<Pair> pairs;           // 5,000 of 8 bytes
+    Map<int, List<int>> lists;  // 800 entries, each a list of its own
+    List<string> names;         // 2,200 texts
+    Map<int, int> edge;         // 1,023 entries of 16 bytes: one more and they're more than a chunk holds
+}
+
+singleton Ledger
+{
+    Map<int, int> counts;       // 3,000
+    List<long> log;             // 5,000
+}
+
+component Tile
+{
+    int id;
+    int mark;
+    List<int> bits;
+}
+
+component Tag { int value; }
+
+// On a tile or not, where its row is (a byte of the row says): one player's alone, of the tiles' all
+[Sparse] component Badge { int rank; }
+
+event(Spawned) Badges(with Tile, mut Visibility visibility)
+{
+    visibility.Set<Badge>(Audience.Only(PlayerID(3)));
+}
+
+// What the test asks of a tick (visibility_trees_test.c, STEPS)
+singleton Control
+{
+    int step;
+    int target;     // The vault the step changes
+    int tile;       // ...and what's added to the tiles' ids it names
+    bool noise;     // Lists grow all over, so pages change under every piece
+    VisibilityGroup tiles;
+}
+
+event(Spawned) Fill(mut Vault vault)
+{
+    for (var k = 0; k < 2000; k++) vault.index[k] = long(k) * 3 + vault.id;
+    for (var k = 0; k < 2500; k++) vault.seen.Add(k * 3);
+    for (var k = 0; k < 9000; k++) vault.numbers.Add(k + vault.id);
+    for (var k = 0; k < 5000; k++) vault.pairs.Add(Pair { kind = byte(k), value = k * 7 + vault.id });
+    for (var k = 0; k < 800; k++) vault.lists[k] = [k, vault.id];
+    for (var k = 0; k < 2200; k++) vault.names.Add("name " + k);
+    for (var k = 0; k < 1023; k++) vault.edge[k] = k + vault.id;
+}
+
+event(Spawned) Setup(with Main, mut Ledger ledger, mut Control control)
+{
+    for (var id = 0; id < VAULTS; id++)
+    {
+        var group = Visibility.CreateGroup(Audience.Only(PlayerID(id % 4)));
+        Spawn(Vault { id = id, group = group }, Visibility { group = group });
+    }
+    for (var k = 0; k < 3000; k++) ledger.counts[k] = k;
+    for (var k = 0; k < 5000; k++) ledger.log.Add(long(k) * 11);
+    Spawn(Book, Visibility { group = Visibility.CreateGroup(Audience.Only(PlayerID(0))) });
+    control.tiles = Visibility.CreateGroup(Audience.All);
+    for (var id = 0; id < TILES; id++) Spawn(Tile { id = id, bits = [id] }, Tag { value = id }, Visibility { group = control.tiles });
+}
+
+scene Main { }
+
+// The step's change to its vault
+system Change(mut Vault vault, Control control)
+{
+    if (vault.id != control.target) return;
+    var step = control.step;
+    if (step == 1) vault.index[5] = vault.index[5] + 1;
+    if (step == 2) vault.index[1900] = vault.index[1900] + 1;
+    if (step == 3 && vault.index.Remove(700)) vault.index[5000] = 7;
+    if (step == 4 && vault.index.Remove(5000)) vault.index[5000] = 7;
+    if (step == 5) for (var k = 6000; k < 6800; k++) vault.index[k] = k;
+    if (step == 6) for (var k = 0; k < 1500; k++) vault.index.Remove(k);
+    if (step == 7)
+    {
+        for (var k = 1500; k < 2000; k++) vault.index.Remove(k);
+        for (var k = 6000; k < 6400; k++) vault.index.Remove(k);
+    }
+    if (step == 8) for (var k = 7000; k < 7400; k++) vault.index[k] = k;
+    if (step == 9) vault.seen.Add(999999);
+    if (step == 10 && vault.seen.Remove(30)) vault.seen.Add(31);
+    if (step == 11) vault.numbers[10] = vault.numbers[10] + 1;
+    if (step == 12) vault.numbers[8999] = vault.numbers[8999] + 1;
+    if (step == 13)
+    {
+        var early = vault.numbers[100];
+        vault.numbers[100] = vault.numbers[8000];
+        vault.numbers[8000] = early;
+    }
+    if (step == 14) for (var k = 0; k < 5000; k++) vault.numbers.Add(-k);
+    if (step == 15) vault.numbers.RemoveAt(0);
+    if (step == 16)
+    {
+        vault.numbers.Clear();
+        vault.numbers.Add(3);
+    }
+    if (step == 17) for (var k = 0; k < 9000; k++) vault.numbers.Add((8999 - k) * 5); // (Its last a 0)
+    if (step == 18)
+    {
+        mut var pair = vault.pairs[4000];
+        pair.value += 1;
+        vault.pairs[4000] = pair;
+    }
+    if (step == 19)
+    {
+        mut var list = vault.lists[400];
+        list.Add(9);
+        vault.lists[400] = list;
+    }
+    if (step == 20) vault.names[2100] = "renamed";
+    if (step == 21) vault.edge[1023] = 1;
+    if (step == 22) vault.edge[7] = vault.edge[7] + 1;
+    if (step == 23) vault.edge.Remove(1023);
+    // Two keys taken out and put again, one way round or the other (the test's twin): the same keys, values and last
+    // order, the two entries' orders the other's
+    if (step == 36 && vault.index.Remove(1990) && vault.index.Remove(1991))
+    {
+        vault.index[1990] = 1;
+        vault.index[1991] = 2;
+    }
+    if (step == 37 && vault.index.Remove(1990) && vault.index.Remove(1991))
+    {
+        vault.index[1991] = 2;
+        vault.index[1990] = 1;
+    }
+    if (step == 35) vault.numbers.RemoveAt(vault.numbers.count - 1); // Its last element gone, a 0: its chunk's bytes stay
+}
+
+system Count(mut Ledger ledger, Control control)
+{
+    if (control.step == 24) ledger.counts[2500 + control.target] = ledger.counts[2500 + control.target] + 1;
+    if (control.step == 25) ledger.log[4999 - control.target] = ledger.log[4999 - control.target] + 1;
+    if (control.step == 26 && ledger.counts.Remove(10 + control.target)) ledger.counts[9000 + control.target] = 1;
+}
+
+// Rows of one piece of 64 (tiles 0 to 63, and 64 to 127 the second time), and of the last
+system Tiles(mut Tile tile, mut Tag tag, Control control, Time time)
+{
+    var id = tile.id - control.tile;
+    var step = control.step;
+    if (step == 27 && id >= 10 && id <= 12) tag.value += 1; // Small values, where their rows are...
+    if (step == 27 && id == 40) tile.bits.Add(1);   // ...then a row read from the heap again, after them
+    if (step == 33 && id == 12) tag.value -= 1;     // One of those values, as it was two ticks before
+    if (step == 34 && id == 40) tile.bits[0] = tile.bits[0] + 1; // That list's element, where the list is now
+    if (step == 38 && id == 30) this.Add(Badge { rank = 5 }); // A component one player may have, in its row
+    if (step == 39 && id == 30) this.Remove(Badge);           // ...and gone
+    if (step == 28 && id == 40) tag.value += 1;     // A row's list and a later row's small value
+    if (step == 28 && id == 10) tile.bits.Add(2);
+    if (step == 29 && tile.id == TILES - 1) tag.value += 1; // The last piece's, while it gets a row
+    if (step == 30 && id == 20) this.Destroy();     // A row gone beside one that changes
+    if (step == 30 && id == 21) tag.value += 1;
+    if (step == 31 && id == 22) tile.mark += 1;     // ...and one made
+    if (step == 32 && id == 23) this.Snap();        // A row snapped beside one that changes
+    if (step == 32 && id == 24) tag.value += 1;
+    if (control.noise && (tile.id + time.tick) % 61 == 0) tile.bits.Add(int(time.tick));
+}
+
+system Grow(Control control)
+{
+    if (control.step == 29 || control.step == 31)
+        Spawn(Tile { id = 1000 + control.step + control.tile, bits = [1] }, Tag { value = 1 }, Visibility { group = control.tiles });
+}
+
+// What the measurement asks for (visibility_trees_measure) of a book, a vault of two big containers nothing else
+// touches: one entry of its index, one of its numbers, or an entry gone and another added
+singleton Measure
+{
+    int kind;
+}
+
+component Book
+{
+    Map<int, long> index;   // 8,000 entries: 12 chunks
+    List<int> numbers;      // 40,000: 10 chunks
+}
+
+event(Spawned) Write(mut Book book)
+{
+    for (var k = 0; k < 8000; k++) book.index[k] = long(k);
+    for (var k = 0; k < 40000; k++) book.numbers.Add(k);
+}
+
+system Churn(mut Book book, Measure measure, Time time)
+{
+    var t = int(time.tick);
+    if (measure.kind == 1) book.index[(t * 37) % 8000] = long(t);
+    if (measure.kind == 2) book.numbers[(t * 131) % 40000] = t;
+    if (measure.kind == 3 && book.index.Remove(t % 8000)) book.index[100000 + t] = 1;
+}

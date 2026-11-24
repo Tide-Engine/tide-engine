@@ -1,0 +1,7 @@
+// expect: a view reads the match, and 'Edit<Health>' would change it
+component Health { int value; Entity target; }
+scene Main { }
+view Show(Health health, mut World world)
+{
+    world.Edit<Health>(health.target, other) { other.value -= 1; }
+}

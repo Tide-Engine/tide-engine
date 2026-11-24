@@ -1,0 +1,5 @@
+// expect: a constant value can't read a character of text: it can read an element of a constant array or list
+// expect: write the character itself, like 'a', or read it from the text in code
+const string NAME = "abc";
+const char FIRST = NAME[0];
+scene Main { }

@@ -75,6 +75,27 @@ static uint64_t block(tide_pack_builder *b, const uint64_t bytes)
     return at;
 }
 
+// The same block with only its first `head` bytes after the header zeroed, and what pads it: the `bytes - head`
+// between are a hole's, left as they are until they're filled, so a gigabyte of them isn't touched to be laid out.
+static uint64_t block_with_hole(tide_pack_builder *b, const uint64_t bytes, const uint64_t head)
+{
+    const uint64_t size = (uint64_t)sizeof(tide_block) + bytes;
+    uint32_t c = 0;
+    while (c + 1 < TIDE_HEAP_CLASSES && ((uint64_t)16 << c) < size) c++;
+    const uint64_t padded = (size + 15u) & ~15ull;
+    if (!b->base || b->size + padded > b->room) {
+        uint64_t room = b->room ? b->room : 1u << 16;
+        while (room < b->size + padded) room *= 2u;
+        make_room(b, room);
+    }
+    const uint64_t at = b->size;
+    memset(b->region + at, 0, (size_t)(sizeof(tide_block) + head));
+    memset(b->region + at + size, 0, (size_t)(padded - size));
+    ((tide_block *)(void *)(b->region + at))->link = tide_block_link(c, 0);
+    b->size += padded;
+    return at;
+}
+
 static tide_block *header(tide_pack_builder *b, const uint64_t offset)
 {
     return (tide_block *)(void *)(b->region + offset);
@@ -270,6 +291,45 @@ uint64_t tide_pack_texture_blocks(tide_pack_builder *b, const uint8_t content[32
         h->link = tide_block_link(tide_block_class(h), payload);
     }
     add_shared(b, content, TIDE_PACK_TEXTURE, at, bytes, 0);
+    return at;
+}
+
+uint64_t tide_pack_texture_room(tide_pack_builder *b, const uint8_t content[32], const int32_t width, const int32_t height,
+                                const uint32_t format, const uint32_t levels, const uint32_t bytes, uint32_t *hole)
+{
+    *hole = UINT32_MAX;
+    const tide_pack_shared *had = find_shared(b, content, TIDE_PACK_TEXTURE);
+    if (had) return had->offset;
+    // As tide_pack_texture_blocks lays it out: the size, then the RGBA, or the blocks' words and the blocks
+    const uint64_t rgba = format ? 0u : (uint64_t)(width > 0 ? width : 0) * (uint64_t)(height > 0 ? height : 0) * 4u;
+    const uint64_t head = 2u * sizeof(int32_t) + (format ? 16u : 0u);
+    const uint64_t filled = format ? bytes : rgba;
+    const uint64_t payload = head + filled;
+    const uint64_t at = block_with_hole(b, payload, head);
+    tide_block *h = header(b, at);
+    uint64_t version = 0;
+    memcpy(&version, content, sizeof version);
+    if (!version) version = 1u;
+    h->a = (uint32_t)version;
+    h->b = (uint32_t)(version >> 32);
+    const int32_t size[2] = {width, height};
+    memcpy(h + 1, size, sizeof size);
+    if (format) {
+        const uint32_t metadata[4] = {TIDE_TEXTURE_BLOCK_MAGIC, format, levels, bytes};
+        memcpy((uint8_t *)(h + 1) + sizeof size, metadata, sizeof metadata);
+        h->link = tide_block_link(tide_block_class(h), payload);
+    }
+    add_shared(b, content, TIDE_PACK_TEXTURE, at, rgba, 0);
+    if (b->hole_count == b->hole_room) {
+        const uint32_t room = b->hole_room ? b->hole_room * 2u : 64u;
+        b->holes = tide_realloc(b->holes, b->hole_room * sizeof *b->holes, room * sizeof *b->holes);
+        b->hole_room = room;
+    }
+    *hole = b->hole_count;
+    tide_pack_hole *made = &b->holes[b->hole_count++];
+    made->at = at + sizeof(tide_block) + head;
+    made->size = filled;
+    memcpy(made->content, content, 32);
     return at;
 }
 
@@ -544,7 +604,7 @@ void tide_pack_digest_of(const uint8_t *bytes, const uint64_t size, const tide_p
 // one is moved next to its entries: a small game's pack has no bytes it doesn't need.
 #define GAP_FROM (16u << 20)
 
-uint8_t *tide_pack_end(tide_pack_builder *b, size_t *size)
+uint8_t *tide_pack_lay(tide_pack_builder *b, size_t *size, tide_pack_hole **holes, uint32_t *hole_count)
 {
     const uint64_t table = sizeof(tide_pack_header);
     const uint64_t least = (table + (uint64_t)b->entry_count * sizeof(tide_pack_entry) + 15u) & ~(uint64_t)15u;
@@ -566,11 +626,269 @@ uint8_t *tide_pack_end(tide_pack_builder *b, size_t *size)
     memcpy(h.magic, TIDE_PACK_MAGIC, 8);
     memcpy(out, &h, sizeof h);
     if (b->entry_count) memcpy(out + table, b->entries, (size_t)b->entry_count * sizeof(tide_pack_entry));
-    // Its identity, of the file as it is with the digest's bytes zero, so loading needn't hash it
-    tide_pack_digest_of(out, *size, b->each, h.digest);
-    memcpy(out + offsetof(tide_pack_header, digest), h.digest, sizeof h.digest);
+    for (uint32_t i = 0; i < b->hole_count; i++) b->holes[i].at += region_at; // Of the file from here
+    if (holes) {
+        *holes = b->holes;
+        *hole_count = b->hole_count;
+    } else free(b->holes);
     free(b->shared);
     free(b->entries);
     *b = (tide_pack_builder){0};
+    return out;
+}
+
+void tide_pack_seal(uint8_t *bytes, const uint64_t size, const tide_pack_each each)
+{
+    // Its identity, of the file as it is with the digest's bytes zero, so loading needn't hash it
+    uint8_t digest[32];
+    memset(bytes + offsetof(tide_pack_header, digest), 0, sizeof digest);
+    tide_pack_digest_of(bytes, size, each, digest);
+    memcpy(bytes + offsetof(tide_pack_header, digest), digest, sizeof digest);
+}
+
+uint8_t *tide_pack_end(tide_pack_builder *b, size_t *size)
+{
+    const tide_pack_each each = b->each;
+    uint8_t *out = tide_pack_lay(b, size, NULL, NULL);
+    tide_pack_seal(out, *size, each);
+    return out;
+}
+
+// A laid pack's bytes outside its holes, hashed a piece at a time as the digest's are. The holes are in the
+// order of their places, as they were made.
+typedef struct outside {
+    const uint8_t *bytes;
+    uint64_t size;
+    const tide_pack_hole *holes;
+    uint32_t hole_count;
+    uint8_t (*digests)[32];
+} outside;
+
+static void hash_outside(void *context, const uint32_t i)
+{
+    const outside *p = context;
+    uint64_t at = (uint64_t)i * TIDE_PACK_DIGEST_PIECE;
+    const uint64_t end = p->size - at < TIDE_PACK_DIGEST_PIECE ? p->size : at + TIDE_PACK_DIGEST_PIECE;
+    // The first hole that ends after the piece starts
+    uint32_t lo = 0, hi = p->hole_count;
+    while (lo < hi) {
+        const uint32_t mid = lo + (hi - lo) / 2u;
+        if (p->holes[mid].at + p->holes[mid].size <= at) lo = mid + 1u;
+        else hi = mid;
+    }
+    tide_sha256 h;
+    tide_sha256_init(&h);
+    for (uint32_t k = lo; at < end; k++) {
+        const uint64_t hole_at = k < p->hole_count && p->holes[k].at < end ? p->holes[k].at : end;
+        if (hole_at > at) tide_sha256_add(&h, p->bytes + at, (size_t)(hole_at - at));
+        if (hole_at == end) break;
+        at = p->holes[k].at + p->holes[k].size;
+    }
+    tide_sha256_end(&h, p->digests[i]);
+}
+
+void tide_pack_recipe(const uint8_t *bytes, const uint64_t size, const tide_pack_hole *holes, const uint32_t hole_count,
+                      const tide_pack_each each, uint8_t recipe[32])
+{
+    static const char version[] = "tide pack recipe 1";
+    const uint64_t count = (size + TIDE_PACK_DIGEST_PIECE - 1u) / TIDE_PACK_DIGEST_PIECE;
+    if (count > UINT32_MAX) tide_out_of_memory();
+    outside p = {bytes, size, holes, hole_count, tide_alloc(count ? (size_t)count * 32u : 32u)};
+    if (each) each((uint32_t)count, hash_outside, &p);
+    else for (uint32_t i = 0; i < count; i++) hash_outside(&p, i);
+    tide_sha256 h;
+    tide_sha256_init(&h);
+    tide_sha256_add(&h, version, sizeof version);
+    tide_sha256_add(&h, &size, sizeof size);
+    tide_sha256_add(&h, p.digests, (size_t)count * 32u);
+    for (uint32_t i = 0; i < hole_count; i++) { // A field at a time: the struct may be padded
+        tide_sha256_add(&h, &holes[i].at, sizeof holes[i].at);
+        tide_sha256_add(&h, &holes[i].size, sizeof holes[i].size);
+        tide_sha256_add(&h, holes[i].content, sizeof holes[i].content);
+    }
+    tide_sha256_end(&h, recipe);
+    free(p.digests);
+}
+
+// ---------------------------------------------------------------------------
+// A pack compressed (tide/pack.h): its pieces as LZ4 blocks.
+//
+// A block is sequences: a token (a count of literal bytes above, a match's length less 4 below, each going on in
+// bytes of 255 where it's 15), the literals, then how far back the match starts (two bytes, the low one first)
+// and the rest of its length. The last sequence is literals alone, at least the block's last 5 bytes, and no match
+// starts in its last 12: what lz4's own readers ask of a block.
+
+#define LZ_LEAST 4u        // A match's fewest bytes
+#define LZ_FAR 65535u      // The furthest back one starts
+#define LZ_HASH_BITS 16u
+#define LZ_TRIES 64u       // Earlier places looked at for each match
+#define LZ_LAZY_UNDER 128u // A match this long is taken without looking for a longer one a byte on
+
+typedef struct lz_finder {
+    const uint8_t *in;
+    uint32_t next;   // The first place not in the tables yet
+    uint32_t *head;  // By the hash of four bytes: 1 + the last place they were
+    uint16_t *chain; // By a place's low 16 bits: how far back the place before it with that hash is, or 0
+} lz_finder;
+
+static inline uint32_t lz_hash(const uint8_t *p)
+{
+    uint32_t v;
+    memcpy(&v, p, sizeof v);
+    return (v * 2654435761u) >> (32u - LZ_HASH_BITS);
+}
+
+// How many bytes at `a` and at `b` are the same, of at most `most`.
+static inline uint32_t lz_same(const uint8_t *a, const uint8_t *b, const uint32_t most)
+{
+    uint32_t n = 0;
+    while (n + 8u <= most) {
+        uint64_t x, y;
+        memcpy(&x, a + n, sizeof x);
+        memcpy(&y, b + n, sizeof y);
+        if (x != y) break;
+        n += 8u;
+    }
+    while (n < most && a[n] == b[n]) n++;
+    return n;
+}
+
+// The longest match for the bytes at `at`, among the places before it: its length (under LZ_LEAST for none), and
+// how far back it starts. Every place before `at` goes into the tables first.
+static uint32_t lz_find(lz_finder *f, const uint32_t at, const uint32_t most, uint32_t *back)
+{
+    for (; f->next < at; f->next++) {
+        const uint32_t h = lz_hash(f->in + f->next);
+        const uint32_t before = f->head[h];
+        const uint32_t far = before ? f->next - (before - 1u) : 0u;
+        f->chain[f->next & LZ_FAR] = far <= LZ_FAR ? (uint16_t)far : 0u;
+        f->head[h] = f->next + 1u;
+    }
+    uint32_t best = 0;
+    uint32_t place = f->head[lz_hash(f->in + at)];
+    for (uint32_t tries = 0; place && tries < LZ_TRIES && best < most; tries++) {
+        const uint32_t from = place - 1u;
+        if (at - from > LZ_FAR) break;
+        if (f->in[from + best] == f->in[at + best]) {
+            const uint32_t n = lz_same(f->in + from, f->in + at, most);
+            if (n > best) {
+                best = n;
+                *back = at - from;
+            }
+        }
+        const uint32_t far = f->chain[from & LZ_FAR];
+        if (!far || far > from) break;
+        place = from - far + 1u;
+    }
+    return best;
+}
+
+// A count that's 15 or more in its token, in bytes of 255: false when they don't fit.
+static inline bool lz_put_count(uint8_t *out, uint32_t *o, const uint32_t room, uint32_t rest)
+{
+    for (; rest >= 255u; rest -= 255u) {
+        if (*o >= room) return false;
+        out[(*o)++] = 255u;
+    }
+    if (*o >= room) return false;
+    out[(*o)++] = (uint8_t)rest;
+    return true;
+}
+
+// `size` bytes as an LZ4 block in `out`: its bytes, or 0 when they aren't fewer than `room`.
+static uint32_t lz_block(const uint8_t *in, const uint32_t size, uint8_t *out, const uint32_t room, uint32_t *head, uint16_t *chain)
+{
+    lz_finder f = {in, 0, head, chain};
+    uint32_t o = 0, anchor = 0, at = 0;
+    while (size >= 13u && at + 12u <= size) {
+        const uint32_t most = size - 5u - at;
+        uint32_t back = 0, length = lz_find(&f, at, most, &back);
+        if (length < LZ_LEAST) {
+            at++;
+            continue;
+        }
+        // A longer match a byte on is worth the literal it costs
+        while (length < LZ_LAZY_UNDER && at + 13u <= size) {
+            uint32_t next_back = 0;
+            const uint32_t next = lz_find(&f, at + 1u, size - 5u - (at + 1u), &next_back);
+            if (next <= length) break;
+            at++;
+            length = next;
+            back = next_back;
+        }
+        const uint32_t literals = at - anchor, more = length - LZ_LEAST;
+        if (o >= room) return 0;
+        out[o++] = (uint8_t)((literals < 15u ? literals : 15u) << 4 | (more < 15u ? more : 15u));
+        if (literals >= 15u && !lz_put_count(out, &o, room, literals - 15u)) return 0;
+        if (literals > room - o || room - o - literals < 2u) return 0;
+        memcpy(out + o, in + anchor, literals);
+        o += literals;
+        out[o++] = (uint8_t)back;
+        out[o++] = (uint8_t)(back >> 8);
+        if (more >= 15u && !lz_put_count(out, &o, room, more - 15u)) return 0;
+        at += length;
+        anchor = at;
+    }
+    const uint32_t literals = size - anchor;
+    if (o >= room) return 0;
+    out[o++] = (uint8_t)((literals < 15u ? literals : 15u) << 4);
+    if (literals >= 15u && !lz_put_count(out, &o, room, literals - 15u)) return 0;
+    if (literals > room - o) return 0;
+    memcpy(out + o, in + anchor, literals);
+    o += literals;
+    return o < room ? o : 0u;
+}
+
+typedef struct compressing {
+    const uint8_t *bytes;
+    uint64_t size;
+    uint8_t **pieces; // Each piece's bytes as the file has them
+    uint32_t *sizes;
+} compressing;
+
+static void compress_piece(void *context, const uint32_t i)
+{
+    const compressing *c = context;
+    const uint64_t at = (uint64_t)i * TIDE_PACK_PIECE;
+    const uint32_t n = (uint32_t)(c->size - at < TIDE_PACK_PIECE ? c->size - at : TIDE_PACK_PIECE);
+    uint32_t *head = tide_alloc_zeroed((size_t)1u << LZ_HASH_BITS, sizeof *head);
+    uint16_t *chain = tide_alloc_zeroed(LZ_FAR + 1u, sizeof *chain);
+    uint8_t *out = tide_alloc(n);
+    uint32_t made = lz_block(c->bytes + at, n, out, n, head, chain);
+    if (!made) { // No smaller: as it is
+        memcpy(out, c->bytes + at, n);
+        made = n;
+    }
+    free(head);
+    free(chain);
+    c->pieces[i] = tide_realloc(out, n, made);
+    c->sizes[i] = made;
+}
+
+uint8_t *tide_pack_compress(const uint8_t *bytes, const size_t size, const tide_pack_each each, size_t *compressed)
+{
+    const uint64_t count = ((uint64_t)size + TIDE_PACK_PIECE - 1u) / TIDE_PACK_PIECE;
+    if (count > UINT32_MAX) tide_out_of_memory(); // More than memory holds
+    compressing c = {bytes, size, tide_alloc_zeroed(count ? (size_t)count : 1u, sizeof(uint8_t *)),
+                     tide_alloc_zeroed(count ? (size_t)count : 1u, sizeof(uint32_t))};
+    if (each) each((uint32_t)count, compress_piece, &c);
+    else for (uint32_t i = 0; i < count; i++) compress_piece(&c, i);
+    tide_pack_compressed_header h = {.version = TIDE_PACK_COMPRESSED_VERSION, .pieces = (uint32_t)count, .size = size};
+    memcpy(h.magic, TIDE_PACK_COMPRESSED_MAGIC, 8);
+    const uint64_t table = sizeof h + count * sizeof(uint32_t);
+    uint64_t total = table;
+    for (uint32_t i = 0; i < count; i++) total += c.sizes[i];
+    uint8_t *out = tide_alloc((size_t)total);
+    memcpy(out, &h, sizeof h);
+    if (count) memcpy(out + sizeof h, c.sizes, (size_t)count * sizeof(uint32_t));
+    uint64_t at = table;
+    for (uint32_t i = 0; i < count; i++) {
+        memcpy(out + at, c.pieces[i], c.sizes[i]);
+        at += c.sizes[i];
+        free(c.pieces[i]);
+    }
+    free(c.pieces);
+    free(c.sizes);
+    *compressed = (size_t)total;
     return out;
 }

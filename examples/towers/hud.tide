@@ -44,7 +44,7 @@ bool Pill(Rect rect, string label, Color tint, bool solid, bool enabled)
 }
 
 // What the menu's room page shows of the match: who has each seat, and the
-// bots' switch; and the commands its buttons send, a new game and the switch.
+// bots' switch; and the commands its buttons call, a new game and the switch.
 view Roster(Towers towers, Session session, mut Lobby lobby)
 {
     lobby.seats = SEATS;
@@ -59,8 +59,8 @@ view Roster(Towers towers, Session session, mut Lobby lobby)
     lobby.offersNewGame = true;
     lobby.offersBots = true;
     // A game of its own, from its start: the bots had every tower meanwhile
-    if (lobby.newGame) Send(Rebuild { });
-    if (lobby.toggleBots) Send(Bots { });
+    if (lobby.newGame) Rebuild();
+    if (lobby.toggleBots) Bots();
 }
 
 const float HEADROOM = 48; // The height of the row along the top, which the camera keeps the brick under
@@ -231,7 +231,7 @@ view Race(Towers towers, Fx fx, Lobby lobby, query (Seat seat) seats)
 }
 
 // What this machine's player's seat is dealt next, and what its tower has
-// earned: a button, which sends a command when it's pressed. `with ownership`
+// earned: a button, which calls a command when it's pressed. `with ownership`
 // picks the plinth this machine's player owns.
 [Stage(Layers.Hud, 14)]
 view Tray(Seat seat, Session session, Devices devices, Towers towers, Fx fx, Lobby lobby, with ownership)
@@ -262,7 +262,7 @@ view Tray(Seat seat, Session session, Devices devices, Towers towers, Fx fx, Lob
         Draw.Shape(Shape { center = Middle(rect), size = float2(rect.width, rect.height), radius = 12, color = Fade(color, 0.2 + pulse * 0.2),
                              soft = 10 });
     }
-    if (Pill(rect, PowerName(seat.power), color, true, true) || devices.keyboard.e.down) Send(Use { });
+    if (Pill(rect, PowerName(seat.power), color, true, true) || devices.keyboard.e.down) Use();
 }
 
 // A band across the screen, in a color, with a line of words and a smaller

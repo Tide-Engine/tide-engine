@@ -1,4 +1,4 @@
-indexed_loops: 13 systems each tick, 3 stages deep; 13 can run alongside others.
+indexed_loops: 14 systems each tick, 3 stages deep; 14 can run alongside others.
 A system starts once everything it runs after is done.
 
 stage 1  Separate  (per entity)
@@ -6,41 +6,46 @@ stage 1  Separate  (per entity)
          writes Body
          reads any entity's Body, through queries
          on one thread: it changes Body and reads other entities' through its World or a query (indexed_loops.tide:47)
-         alongside SquaredLocal, Helper, Wrapped, Boxy, NoGuard, ListLoop, Spots2, OneSided, OwnList
+         alongside SquaredLocal, Helper, Wrapped, Boxy, NoGuard, ListLoop, Spots2, OneSided, OwnList, Chunks
 stage 1  SquaredLocal  (per entity)
          reads Body
          reads any entity's Body, through queries
-         alongside Separate, Helper, Wrapped, Boxy, NoGuard, ListLoop, Spots2, OneSided, OwnList
+         alongside Separate, Helper, Wrapped, Boxy, NoGuard, ListLoop, Spots2, OneSided, OwnList, Chunks
 stage 1  Helper  (per entity)
          reads Body, Sight
          reads any entity's Body, through queries
-         alongside Separate, SquaredLocal, Wrapped, Boxy, NoGuard, ListLoop, Spots2, OneSided, OwnList
+         alongside Separate, SquaredLocal, Wrapped, Boxy, NoGuard, ListLoop, Spots2, OneSided, OwnList, Chunks
 stage 1  Wrapped  (per entity)
          reads Body
          reads any entity's Body and Unit, through queries
-         alongside Separate, SquaredLocal, Helper, Boxy, Changes, Varying, NoGuard, ListLoop, Spots2, Either, OneSided, OwnList
+         alongside Separate, SquaredLocal, Helper, Boxy, Changes, Varying, NoGuard, ListLoop, Spots2, Either, OneSided, OwnList, Chunks
 stage 1  Boxy  (per entity)
          reads Body
          reads any entity's Body, through queries
-         alongside Separate, SquaredLocal, Helper, Wrapped, NoGuard, ListLoop, Spots2, OneSided, OwnList
+         alongside Separate, SquaredLocal, Helper, Wrapped, NoGuard, ListLoop, Spots2, OneSided, OwnList, Chunks
 stage 1  NoGuard  (per entity)
          reads Body
          reads any entity's Body, through queries
-         alongside Separate, SquaredLocal, Helper, Wrapped, Boxy, Changes, Varying, ListLoop, Spots2, Either, OneSided, OwnList
+         alongside Separate, SquaredLocal, Helper, Wrapped, Boxy, Changes, Varying, ListLoop, Spots2, Either, OneSided, OwnList, Chunks
 stage 1  ListLoop  (per entity)
          reads Body, Field
-         alongside Separate, SquaredLocal, Helper, Wrapped, Boxy, Changes, Varying, NoGuard, Spots2, Either, OneSided, OwnList
+         alongside Separate, SquaredLocal, Helper, Wrapped, Boxy, Changes, Varying, NoGuard, Spots2, Either, OneSided, OwnList, Chunks
 stage 1  Spots2  (per entity)
          reads Body, Spots
-         alongside Separate, SquaredLocal, Helper, Wrapped, Boxy, Changes, Varying, NoGuard, ListLoop, Either, OneSided, OwnList
+         alongside Separate, SquaredLocal, Helper, Wrapped, Boxy, Changes, Varying, NoGuard, ListLoop, Either, OneSided, OwnList, Chunks
 stage 1  OneSided  (per entity)
          reads Body
          reads any entity's Unit, through queries
-         alongside Separate, SquaredLocal, Helper, Wrapped, Boxy, Changes, Varying, NoGuard, ListLoop, Spots2, Either, OwnList
+         alongside Separate, SquaredLocal, Helper, Wrapped, Boxy, Changes, Varying, NoGuard, ListLoop, Spots2, Either, OwnList, Chunks
 stage 1  OwnList  (per entity)
          writes Field
          on one thread: it changes the singleton Field (indexed_loops.tide:167)
-         alongside Separate, SquaredLocal, Helper, Wrapped, Boxy, Changes, Varying, NoGuard, ListLoop, Spots2, Either, OneSided
+         alongside Separate, SquaredLocal, Helper, Wrapped, Boxy, Changes, Varying, NoGuard, ListLoop, Spots2, Either, OneSided, Chunks
+stage 1  Chunks  (per entity)
+         reads Sight
+         reads any entity's Chunk and Unit, through queries
+         reads any entity's Chunk as the tick started: no wait over it
+         alongside Separate, SquaredLocal, Helper, Wrapped, Boxy, Changes, Varying, NoGuard, ListLoop, Spots2, Either, OneSided, OwnList
 
 stage 2  Changes  (per entity)
          writes Body
@@ -50,24 +55,27 @@ stage 2  Changes  (per entity)
          after SquaredLocal: it reads Body.position, which this writes
          after Helper: it reads Body.position, which this writes
          after Boxy: it reads Body.position, which this writes
-         alongside Wrapped, NoGuard, ListLoop, Spots2, OneSided, OwnList
+         alongside Wrapped, NoGuard, ListLoop, Spots2, OneSided, OwnList, Chunks
 
 stage 3  Varying  (per entity)
          reads Body
          reads any entity's Body, through queries
          after Changes: it writes Body.position, which this reads
-         alongside Wrapped, NoGuard, ListLoop, Spots2, Either, OneSided, OwnList
+         alongside Wrapped, NoGuard, ListLoop, Spots2, Either, OneSided, OwnList, Chunks
 stage 3  Either  (per entity)
          reads Body
          reads any entity's Body, through queries
          after Changes: it writes Body.position, which this reads
-         alongside Wrapped, Varying, NoGuard, ListLoop, Spots2, OneSided, OwnList
+         alongside Wrapped, Varying, NoGuard, ListLoop, Spots2, OneSided, OwnList, Chunks
+
+Views, every frame in this order (they only read, so nothing waits):
+         Patches
 
 Loops that skip rows, and whether an index finds the rest:
          Separate, line 49: indexed by o.other.position.x, o.other.position.y, o.other.position.z
          SquaredLocal, line 59: indexed by o.other.position.x, o.other.position.y, o.other.position.z
          Helper, line 70: indexed by o.other.position.x, o.other.position.y, o.other.position.z
-         Wrapped, line 79: indexed by o.unit.team
+         Wrapped, line 79: indexed by o.unit.team and o.unit.alive as one exact key
          Boxy, line 90: indexed by o.other.position.x, o.other.position.y, o.other.position.z
          Changes, line 102: not indexed: this system changes Body.position of its own entity as it goes, which the loop finds rows by: change it in a system of its own
          Varying, line 113: not indexed: its bound reads 'r', which the loop changes
@@ -77,3 +85,9 @@ Loops that skip rows, and whether an index finds the rest:
          OneSided, line 158: indexed by u.unit.health
          OwnList, line 169: not indexed: its list could change between one run of the loop and the next, so its index would be made again each run, which costs more than going through every element: an index is kept for a list of a singleton the code only reads, or one in a local nothing writes
          OwnList, line 174: indexed by p.x
+         Chunks, line 196: indexed by row.chunk.at.x, row.chunk.at.y, row.chunk.at.z and row.chunk.dimension as one exact key
+         Chunks, line 201: indexed by row.chunk.key as one exact key
+         Chunks, line 206: indexed by row.chunk.dimension as one exact key, and by row.chunk.heat and row.chunk.at.y
+         Chunks, line 211: indexed by row.chunk.kind
+         Chunks, line 216: indexed by p.was.dimension as one exact key, as the tick started: its index is made once a tick
+         Patches, line 243: indexed by row.other.at.x, row.other.at.y and row.other.at.z as one exact key

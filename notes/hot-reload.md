@@ -1,3 +1,10 @@
+## Forced migration, for checkpoints (2026-11-17)
+
+`tide_migrate_world_forced` carries a world whose scene is gone: that scene's own entities and every entity whose
+scene column names one of them are dropped (counted, the scene in `tide_migration.scene_dropped`), the rest carried
+as ever. Reloads still use `tide_migrate_world`, which refuses. For loading a checkpoint anyway
+(notes/standard-host.md, Checkpoints).
+
 ## Linear image role and replaced assets (2026-11-14)
 
 [Linear] resource fields retain ordinary reference layouts. Generated header comments select migration when
@@ -6,8 +13,22 @@ silently reinterpreting old storage. Compatible fields retain their references; 
 the new image through the existing declaration identity. linear_textures E2E serializes marked local references,
 loads a different pack under the same asset name, and checks the retained field captures the replacement with
 its Linear role. Runtime sampled-copy/device invalidation details are in rendering.md; no migration ABI changes.
+Since the same day the pack's entry says whether its image was packed for the mark (TIDE_PACK_LINEAR,
+notes/assets-and-files.md, top section): a replacement pack whose image was packed for the other reading isn't
+drawn through the field, and says so once, where it was read as the wrong encoding before. The e2e's replacement
+pack sets the bit, and loads one without it to see the refusal.
 
 # Hot reloading
+
+## A same-layout reload under a stream of repairs (2026-11-16)
+
+`tide_session_set_game` on a server that is comparing a repair with a player's world lets go of the worlds it
+compares (the old build made them) and sends that player the whole projection; on a client that is comparing, it
+drops the comparison and asks for the world. Each side does so on its own: the other machine's build may not have
+changed, or not in the same update. A client used to refuse a whole projection it hadn't asked for and stopped
+for good (3 seeds of 64 with both builds swapped at once, 45 of 64 with the server's alone); it takes one now, and
+a late WELCOME of the repair the reload ended no longer costs it the projection's chunks. Cause, fix, seeds and
+tests: notes/netcode.md, top section.
 
 ## What cached functions remember (2026-11-13)
 
@@ -25,6 +46,31 @@ the owners' names, so they're the same after a reload and handles stay good. Whe
 handed to C now, or isn't any more), `tide_layout_field.heap` differs and the field starts again with its default
 (`carries`); a heap whose owner is gone is left out by `tide_heaps_unpack`. `TIDE_HOST_SHAPE` counts the layout's
 type and field sizes. schedule-and-threads.md, top section.
+
+## A library says which tide built it (2026-11-19)
+
+The shape check below sees tables of another size, not two tides that lay the same tables out alike and mean other
+things by them, nor an engine copy in the library that differs from the host's. So a library also exports
+`tide_host_library_made_by` (`tide/host.h`'s `TIDE_HOST_LIBRARY_MADE_BY`): text naming the tide that built it. A host
+that says which tide built it (`tide_run_desc.made_by` for `tide_host_run_library`, `tide_embed_made_by` for
+`tide/embed.h`'s; `library_made_by` in `reload_library.inc`) loads only libraries that say the same text, after the
+shape check: another, or a library with no such function, isn't loaded, and `library_say` names both tides and says
+to stop the game and start it again once tide has built it (for Unity: leave Play, wait for the build, enter Play
+again). The game goes on with the build it has; where it's the first build, nothing runs (`tide_host_run_library`
+exits, `tide_embed_create` gives none). A host that says nothing takes any library of its shape, as before.
+
+Who says it: the host `tide unity` builds for Unity and that command's libraries (notes/unity.md, top;
+`compiler/cli/build.c`'s `made_by`, per build, from the installation's files as they are), and `tide run`'s
+watching host and its libraries (`host.c`'s `tide_run_desc.made_by`, `write_library`). `tide run`'s host can't be
+built again while it runs, and its headers are stamped once a run, so tide doesn't build at all once the
+installation is another tide than built the host (`run_build`): it says which it was and is, and to stop the run
+and start `tide run` again; the game goes on with the build it has. **Provisional (mine).** A full fix would
+restart the host with the match carried over, which a checkpoint could do; not built.
+
+Test: `tide_platform_reload`'s last stages (`reload_game.c` exports the text, `tide_platform_reload_game_foreign`
+another one's; `reload_host.c` takes the host's from `TIDE_RELOAD_MADE_BY`): a foreign build published while the
+game runs is refused with both tides named and the build running goes on to the script's end; a host that says
+nothing loads it; a host of a third tide loads neither and nothing runs. Windows ASan.
 
 ## A library another tide built isn't loaded (2026-11-10)
 
@@ -207,6 +253,18 @@ replayed after it run the new code: a change that matters shows as the first tic
 `TravelTests.AHotReloadWhilePausedKeepsThePause` covers a same-layout reload.
 
 ## Raw Texture field roles (2026-10-25)
+
+**Typed roles (audit, 2026-11-14).** The marker and the layout name were written from `field_is_raw` alone, so
+`[Raw(float)]` and `[Raw(int)]` (and `[Raw]`) were all `[Raw] Texture`: an edit between them kept the field, and a
+Grid2<float>'s R16F image then went to an `i32` binding (a WebGPU validation error; on Vulkan an image view of the
+wrong numeric type). `field_role_spelling` (codegen.c) spells each role, `[Raw(int)] Texture`, `[Raw(float4)]
+Texture3D` and so on, for the header comment and `tide_layout_field.type` both; plain `[Raw]` and `[Linear]` are
+spelled as they were, so existing games' headers don't move. `raw_texture_layout` now compiles plain, `[Raw]`,
+`[Raw(float)]`, `[Raw(float4)]` and `[Raw(int)]` and needs five different hashes, five layout names and one
+simulation ID. As defence in depth the renderer gives an integer read none of the uploaded images but a grid of
+ints' (`TIDE_TEXELS_INT`, since the same day: textures.md, top), and no other read those (`texture_to_read_as`),
+which `tide_platform_images` checks by handing a `[Raw(int)]` field a float grid's image from C (it failed Vulkan's
+validation layer without the guard).
 
 Owner-approved Raw Texture fields retain their ordinary C reference layout.
 Annotated fields receive a generated header comment so a role flip changes the

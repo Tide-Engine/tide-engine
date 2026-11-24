@@ -5,7 +5,12 @@
 file(GLOB TIDE_PLATFORM_SOURCES CONFIGURE_DEPENDS src/*.c)
 if(TIDE_WEB)
     list(REMOVE_ITEM TIDE_PLATFORM_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu_vk.c") # The web has WebGPU
-else()
+endif()
+if(TIDE_IOS)
+    # Inside another program, which draws what the recorder wrote down (src/gpu_record.c): no Vulkan of Tide's own
+    list(REMOVE_ITEM TIDE_PLATFORM_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu_vk.c")
+endif()
+if(NOT TIDE_WEB)
     # Vulkan's SPIR-V of the renderer's own shaders, from their WGSL (tools/spirv_shaders.c)
     set(TIDE_SPIRV_C "${CMAKE_CURRENT_BINARY_DIR}/shaders_spirv.c")
     add_custom_command(OUTPUT "${TIDE_SPIRV_C}"
@@ -43,6 +48,9 @@ if(TIDE_WEB)
     list(APPEND TIDE_PLATFORM_SOURCES web/canvas.c web/gpu_web.c web/audio.c src/gpu_none.c)
 elseif(TIDE_ANDROID)
     list(APPEND TIDE_PLATFORM_SOURCES android/activity.c android/audio.c)
+elseif(TIDE_IOS)
+    # None of its own: the other program's (embedded/, tide/embed.h)
+    list(APPEND TIDE_PLATFORM_SOURCES embedded/window.c embedded/audio.c)
 else()
     include("${PROJECT_SOURCE_DIR}/cmake/GLFW.cmake")
     if(APPLE)
@@ -96,11 +104,13 @@ target_include_directories(tide_platform PUBLIC include PRIVATE src third_party 
 target_link_libraries(tide_platform PUBLIC tide)
 if(TIDE_ANDROID)
     target_link_libraries(tide_platform PUBLIC android log aaudio) # ...and the audio device
-elseif(NOT TIDE_WEB)
+elseif(NOT TIDE_WEB AND NOT TIDE_IOS)
     target_link_libraries(tide_platform PRIVATE glfw)
 endif()
 if(WIN32)
     target_link_libraries(tide_platform PUBLIC ws2_32 secur32 ole32) # UDP, for sessions; TLS, for the relay; COM, for WASAPI
+elseif(TIDE_IOS)
+    target_link_libraries(tide_platform PUBLIC "-framework Security" "-framework CoreFoundation") # TLS, for the relay
 elseif(APPLE)
     target_link_libraries(tide_platform PUBLIC "-framework Security" "-framework AudioToolbox" "-framework CoreAudio") # TLS, for the relay; the audio device, and whether there's one
 endif()
@@ -163,20 +173,37 @@ function(tide_android_app target)
     add_dependencies(${target} tide_android_key)
 endfunction()
 
-# tide_android_app_test(<target> [BACK] [GPU])
+# tide_android_app_test(<target> [BACK] [GPU] [STEPS] [NAME <test>] [ARGS <argument>...]
+#                       [ENVIRONMENT <TIDE_NAME=value>...] [RUNS <arguments>...])
 #
 # Android builds: a test of the app <target> (tide_android_app) on the device
 # (cmake/run_android.mjs --app), which passes when the app ends with 0 and
 # nothing in its process crashed, Android's own threads too. BACK presses the
 # back button once it drew. GPU: it draws, so it needs Vulkan 1.3 (the
 # emulator booted with -gpu lavapipe or -gpu host, or a phone), and is
-# labelled gpu. Apps take the screen, so they run one at a time.
+# labelled gpu. STEPS: the runner does what the app asks with a line of its
+# output, `step: <what>` (turn the screen and back, send it home and to the
+# front: run_android.mjs --steps). NAME: the test's, for another test of the
+# same app (the target's by default). ARGS: what the app starts with, as main's arguments.
+# ENVIRONMENT: Tide's settings, in the app's environment as in a desktop
+# test's (the intent's tide.env, which a debuggable app sets, saying each it
+# set: the test fails where the app didn't say each of them). RUNS: the app
+# started once for each, in order, with its arguments (words apart, in one
+# string), keeping its cache folder between them, as a script runs a desktop
+# test's program again. Apps take the screen, so they run one at a time.
 function(tide_android_app_test target)
     if(NOT TIDE_ANDROID OR NOT TIDE_NODE)
         return()
     endif()
-    cmake_parse_arguments(ARG "BACK;GPU" "" "" ${ARGN})
+    cmake_parse_arguments(ARG "BACK;GPU;STEPS" "NAME" "ARGS;ENVIRONMENT;RUNS" ${ARGN})
+    if(ARG_UNPARSED_ARGUMENTS)
+        message(FATAL_ERROR "tide_android_app_test(${target}): unknown arguments ${ARG_UNPARSED_ARGUMENTS}")
+    endif()
     string(REPLACE "-" "_" id "${target}")
+    set(name "${target}")
+    if(ARG_NAME)
+        set(name "${ARG_NAME}")
+    endif()
     set(options "")
     if(ARG_BACK)
         list(APPEND options --back)
@@ -184,11 +211,20 @@ function(tide_android_app_test target)
     if(ARG_GPU)
         list(APPEND options --vulkan)
     endif()
-    add_test(NAME ${target} COMMAND "${TIDE_NODE}" --no-warnings "${PROJECT_SOURCE_DIR}/cmake/run_android.mjs"
-        --app "dev.tide.${id}" ${options} "$<TARGET_FILE_DIR:${target}>/${target}.apk")
-    set_tests_properties(${target} PROPERTIES RUN_SERIAL TRUE TIMEOUT 600)
+    if(ARG_STEPS)
+        list(APPEND options --steps)
+    endif()
+    foreach(setting IN LISTS ARG_ENVIRONMENT)
+        list(APPEND options --env "${setting}")
+    endforeach()
+    foreach(words IN LISTS ARG_RUNS)
+        list(APPEND options --run "${words}")
+    endforeach()
+    add_test(NAME ${name} COMMAND "${TIDE_NODE}" --no-warnings "${PROJECT_SOURCE_DIR}/cmake/run_android.mjs"
+        --app "dev.tide.${id}" ${options} "$<TARGET_FILE_DIR:${target}>/${target}.apk" ${ARG_ARGS})
+    set_tests_properties(${name} PROPERTIES RUN_SERIAL TRUE TIMEOUT 600)
     if(ARG_GPU)
-        set_property(TEST ${target} APPEND PROPERTY LABELS gpu)
+        set_property(TEST ${name} APPEND PROPERTY LABELS gpu)
     endif()
 endfunction()
 
@@ -248,7 +284,7 @@ elseif(TIDE_ANDROID)
     set(TIDE_PACKAGE_LIBS lib/android/${TIDE_ANDROID_ABI})
     install(FILES "${PROJECT_SOURCE_DIR}/tools/tide-vscode/icon.png" DESTINATION lib/android COMPONENT tide)
     install(FILES android/game.exports DESTINATION lib/android COMPONENT tide)
-elseif(NOT WIN32)
+elseif(NOT WIN32 AND NOT TIDE_IOS)
     set(TIDE_PACKAGE_LIBS lib/native)
 endif()
 # On Windows, only the MinGW build's platform layer goes in the package.
@@ -283,6 +319,24 @@ endif()
 # its own beside the game's, which src/log.c starts. tide build copies it from
 # the package (lib/native) beside every desktop game; repository games find
 # it in bin/, beside them.
+# ...and its sources, for a player that's compiled where tide isn't: a Unity iOS player's Xcode project takes the
+# platform layer with no window of its own as files (tide unity --ios, compiler/cli/build.c), with what this build
+# generates for it (the font, the renderer's SPIR-V and kernels). From the desktop tree whose platform layer the package has (on Windows, MinGW's), which is the one built whole.
+if(TIDE_PACKAGE_LIBS AND NOT TIDE_WEB AND NOT TIDE_ANDROID)
+    install(DIRECTORY src/ DESTINATION src/platform/src COMPONENT tide
+        FILES_MATCHING PATTERN "*.c" PATTERN "*.h" PATTERN "*.inc")
+    install(DIRECTORY embedded/ DESTINATION src/platform/embedded COMPONENT tide FILES_MATCHING PATTERN "*.c")
+    install(FILES third_party/stb_truetype.h DESTINATION src/platform/third_party COMPONENT tide)
+    install(FILES "${TIDE_FONT_C}" "${TIDE_FONT_BOLD_C}" "${TIDE_SPIRV_C}" DESTINATION src/platform/gen COMPONENT tide)
+    install(FILES "${TIDE_KERNELS_H}" DESTINATION src/platform/gen/kernels COMPONENT tide)
+endif()
+
+if(TIDE_IOS)
+    # The tests of a build with no window of its own, and nothing else of this file: the rest open windows, or are
+    # desktop hosts'
+    include(tests/ios.cmake)
+    return()
+endif()
 if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     # It sends a report with the engine's HTTP (src/fetch.c) over the system's TLS (src/rtc/tls.c)
     set(TIDE_CRASH_SOURCES crash/crash.c crash/scrub.c src/fetch.c src/rtc/net.c src/rtc/tls.c)
@@ -332,6 +386,13 @@ if(NOT TIDE_ANDROID)
         add_test(NAME tide_platform_gpu_time COMMAND tide_platform_gpu_time)
         tide_gpu_test(tide_platform_gpu_time)
     endif()
+else()
+    # On Android a window is an app's (tide_android_app), as the draw checks' is
+    add_library(tide_platform_gpu_time_app SHARED tests/gpu_time.c)
+    target_link_libraries(tide_platform_gpu_time_app PRIVATE tide_platform)
+    target_include_directories(tide_platform_gpu_time_app PRIVATE third_party)
+    tide_android_app(tide_platform_gpu_time_app LABEL "Tide GPU timing")
+    tide_android_app_test(tide_platform_gpu_time_app GPU)
 endif()
 
 # Ticks on every core, against ticks on one thread
@@ -366,6 +427,17 @@ else()
     set_tests_properties(tide_platform_host_wait PROPERTIES TIMEOUT 60)
 endif()
 
+# A run with no window carries the server's store out as each tick ends, so it repeats. Desktop only, as runs with no
+# window are: a page's files have no thread of their own anyway
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+    tide_add_game(tide_platform_store_headless SOURCES tests/store_headless.tide NAME game
+        HOST tests/store_headless.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tide_platform_store_headless PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)
+    target_link_libraries(tide_platform_store_headless PRIVATE tide_platform)
+    add_test(NAME tide_platform_store_headless COMMAND tide_platform_store_headless)
+    set_tests_properties(tide_platform_store_headless PROPERTIES TIMEOUT 60)
+endif()
+
 # Ticks beside the frame (tide_session_desc.alongside) through the standard host, on the pool's own leading
 # thread: what frames show and hear against ticks in the update. Desktop: the web's pool has no leading thread yet.
 if(NOT TIDE_WEB)
@@ -384,9 +456,30 @@ tide_add_game(tide_platform_travel SOURCES tests/travel.tide NAME game EMBED
     HOST tests/travel.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
 target_include_directories(tide_platform_travel PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)
 target_link_libraries(tide_platform_travel PRIVATE tide_platform)
-if(NOT TIDE_WEB)
+# ...and a recording replayed by a build laid out otherwise (tests/travel_layout.tide: the same game, its fields in
+# another order with new ones among them): the first test's build leaves its recordings where the second's reads them
+tide_add_game(tide_platform_travel_layout SOURCES tests/travel_layout.tide NAME game EMBED
+    HOST tests/travel_layout.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+target_include_directories(tide_platform_travel_layout PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)
+target_link_libraries(tide_platform_travel_layout PRIVATE tide_platform)
+if(TIDE_ANDROID)
+    # Each program runs in a device folder of its own: the recordings go through this folder (run_android.mjs)
+    foreach(test tide_platform_travel tide_platform_travel_layout)
+        add_test(NAME ${test} COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR} --fixture travel-layout.tiderec
+            --fixture travel-layout.tiderec.txt --fixture travel-layout.tiderec.plain "$<TARGET_FILE:${test}>"
+            WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    endforeach()
+    set_tests_properties(tide_platform_travel tide_platform_travel_layout PROPERTIES TIMEOUT 120
+        ENVIRONMENT "TIDE_TRAVEL_RECORDING=travel-layout.tiderec")
+elseif(NOT TIDE_WEB)
     add_test(NAME tide_platform_travel COMMAND tide_platform_travel)
-    set_tests_properties(tide_platform_travel PROPERTIES TIMEOUT 120)
+    add_test(NAME tide_platform_travel_layout COMMAND tide_platform_travel_layout)
+    set_tests_properties(tide_platform_travel tide_platform_travel_layout PROPERTIES TIMEOUT 120
+        ENVIRONMENT "TIDE_TRAVEL_RECORDING=${CMAKE_CURRENT_BINARY_DIR}/travel-layout.tiderec")
+endif()
+if(NOT TIDE_WEB)
+    set_tests_properties(tide_platform_travel PROPERTIES FIXTURES_SETUP tide_travel_recording)
+    set_tests_properties(tide_platform_travel_layout PROPERTIES FIXTURES_REQUIRED tide_travel_recording)
 endif()
 
 # A sharded game inside another program: its view packet has every shard it watches
@@ -594,6 +687,10 @@ else()
     target_compile_definitions(tide_platform_draw_app PRIVATE TIDE_BENCH_RESULTS="${PROJECT_SOURCE_DIR}/bench/results")
     tide_android_app(tide_platform_draw_app LABEL "Tide draw")
     tide_android_app_test(tide_platform_draw_app GPU)
+    # ...and as a device with no anisotropic filtering draws. Descriptor sets need no test of their own here: the
+    # emulator's Vulkan has no push descriptors, so every app writes sets
+    tide_android_app_test(tide_platform_draw_app GPU NAME tide_platform_draw_app_no_anisotropy
+        ENVIRONMENT TIDE_VULKAN_ANISOTROPY=1)
 
     # An app's end, on any device: with Vulkan 1.3 at once, and without it
     # after the screen saying so, which the back button leaves.
@@ -615,13 +712,14 @@ if(NOT TIDE_ANDROID)
         tide_web_page(tide_platform_targets SHELL web/test_shell.html)
         tide_add_web_test(tide_platform_targets TARGET tide_platform_targets PIXELS EXPECT "renderer: WebGPU")
     else()
+        target_include_directories(tide_platform_targets PRIVATE third_party) # Vulkan's headers, for src/gpu_vk.h
         add_test(NAME tide_platform_targets COMMAND tide_platform_targets)
         tide_gpu_test(tide_platform_targets)
     endif()
 else()
     # As the draw checks, an app.
     add_library(tide_platform_targets_app SHARED tests/targets.c)
-    target_include_directories(tide_platform_targets_app PRIVATE src)
+    target_include_directories(tide_platform_targets_app PRIVATE src third_party)
     target_link_libraries(tide_platform_targets_app PRIVATE tide_platform)
     tide_platform_spirv_of(tide_platform_targets_app)
     tide_android_app(tide_platform_targets_app LABEL "Tide targets")
@@ -647,6 +745,14 @@ if(NOT TIDE_ANDROID)
         tide_gpu_test(tide_platform_compute_vulkan_sets)
         set_property(TEST tide_platform_compute_vulkan_sets APPEND PROPERTY ENVIRONMENT TIDE_VULKAN_DESCRIPTOR_SETS=1)
     endif()
+else()
+    # As the draw checks, an app, on the device's descriptor sets
+    add_library(tide_platform_compute_app SHARED tests/compute.c)
+    target_include_directories(tide_platform_compute_app PRIVATE src third_party)
+    target_link_libraries(tide_platform_compute_app PRIVATE tide_platform)
+    tide_platform_spirv_of(tide_platform_compute_app)
+    tide_android_app(tide_platform_compute_app LABEL "Tide compute")
+    tide_android_app_test(tide_platform_compute_app GPU)
 endif()
 
 # Kernels written in Tide (tests/kernels.tide): what they work out against the
@@ -673,6 +779,29 @@ if(NOT TIDE_ANDROID)
         add_test(NAME tide_platform_kernels COMMAND tide_platform_kernels)
         tide_gpu_test(tide_platform_kernels)
     endif()
+    # Kernels reading every kind of image a frag reads, with no frag reading a depth, a cube or an array: what each
+    # reads where it's given none or a disposed one, an array of depth alone as colors, and smaller images for
+    # SampleLevel; and with no GPU at all on the web (gpu=none), where every fallback is still taken
+    tide_add_game(tide_platform_kernel_reads SOURCES tests/kernel_reads.tide NAME game HOST tests/kernel_reads.c)
+    target_link_libraries(tide_platform_kernel_reads PRIVATE tide_platform)
+    if(TIDE_WEB)
+        tide_web_page(tide_platform_kernel_reads SHELL web/test_shell.html)
+        tide_add_web_test(tide_platform_kernel_reads TARGET tide_platform_kernel_reads PIXELS EXPECT "renderer: WebGPU")
+        tide_add_web_test(tide_platform_kernel_reads_none TARGET tide_platform_kernel_reads QUERY "gpu=none"
+            EXPECT "ok: with no GPU")
+    else()
+        add_test(NAME tide_platform_kernel_reads COMMAND tide_platform_kernel_reads)
+        tide_gpu_test(tide_platform_kernel_reads)
+    endif()
+else()
+    # Apps there, as the shaders' checks are: the device's Vulkan, on descriptor sets
+    tide_add_game(tide_platform_kernels_app SOURCES tests/kernels.tide NAME game HOST tests/kernels.c WINDOW)
+    target_include_directories(tide_platform_kernels_app PRIVATE src)
+    tide_android_app_test(tide_platform_kernels_app GPU)
+    tide_add_game(tide_platform_images_app SOURCES tests/images.tide NAME game HOST tests/images.c WINDOW)
+    tide_android_app_test(tide_platform_images_app GPU)
+    tide_add_game(tide_platform_kernel_reads_app SOURCES tests/kernel_reads.tide NAME game HOST tests/kernel_reads.c WINDOW)
+    tide_android_app_test(tide_platform_kernel_reads_app GPU)
 endif()
 
 # Occlusion culling (tests/occlusion.tide, src/occlusion.tide): HiZFind on the CPU and the GPU against the host's
@@ -690,6 +819,11 @@ if(NOT TIDE_ANDROID)
         add_test(NAME tide_platform_occlusion COMMAND tide_platform_occlusion)
         tide_gpu_test(tide_platform_occlusion)
     endif()
+else()
+    tide_add_game(tide_platform_occlusion_app SOURCES tests/occlusion.tide src/occlusion.tide NAME game
+        HOST tests/occlusion.c WINDOW)
+    target_include_directories(tide_platform_occlusion_app PRIVATE src third_party)
+    tide_android_app_test(tide_platform_occlusion_app GPU)
 endif()
 
 # Listed runs culled on the GPU (tests/cull.tide, src/cull.tide): the same pixels as the CPU's culling, and on
@@ -713,6 +847,12 @@ if(NOT TIDE_ANDROID)
         tide_gpu_test(tide_platform_cull tide_platform_cull_decided)
         set_property(TEST tide_platform_cull_decided APPEND PROPERTY ENVIRONMENT TIDE_GPU_CULLING=decide)
     endif()
+else()
+    tide_add_game(tide_platform_cull_app SOURCES tests/cull.tide NAME game HOST tests/cull.c WINDOW)
+    target_include_directories(tide_platform_cull_app PRIVATE src third_party)
+    tide_android_app_test(tide_platform_cull_app GPU)
+    tide_android_app_test(tide_platform_cull_app GPU NAME tide_platform_cull_app_decided
+        ENVIRONMENT TIDE_GPU_CULLING=decide)
 endif()
 
 # frag and vert, written in Tide: every shader tidec writes for
@@ -759,6 +899,11 @@ else()
                   WARNINGS "'source' may say Filter.Trilinear or Filter.Anisotropic, which this Sample can't read")
     target_include_directories(tide_platform_shaders_app PRIVATE src)
     tide_android_app_test(tide_platform_shaders_app GPU)
+    # ...and the prewarmed pipelines, run in prewarm.cmake's order, the app's cache folder kept between its runs
+    tide_add_game(tide_platform_prewarm_app SOURCES tests/prewarm.tide NAME game HOST tests/prewarm.c WINDOW)
+    target_include_directories(tide_platform_prewarm_app PRIVATE src)
+    tide_android_app_test(tide_platform_prewarm_app GPU
+        RUNS first again corrupt again cut again rested again idle again)
 endif()
 
 if(NOT TIDE_ANDROID)
@@ -831,6 +976,26 @@ if(NOT TIDE_ANDROID)
         add_test(NAME tide_platform_baked COMMAND tide_platform_baked)
         tide_gpu_test(tide_platform_baked)
     endif()
+else()
+    # Each an app on Android, as the shaders' checks are
+    tide_add_game(tide_platform_texture_capacity_app SOURCES ../compiler/tests/shaders/texture_capacity.tide NAME game
+        HOST tests/texture_capacity.c WINDOW)
+    tide_android_app_test(tide_platform_texture_capacity_app GPU)
+    tide_add_game(tide_platform_gpu_functions_app STRIP_NAMES SOURCES ../compiler/tests/e2e/gpu_functions.tide NAME game
+        HOST tests/gpu_functions.c WINDOW)
+    tide_android_app_test(tide_platform_gpu_functions_app GPU)
+    tide_add_game(tide_platform_fills_app STRIP_NAMES SOURCES tests/fills.tide NAME game HOST tests/fills.c WINDOW)
+    tide_android_app_test(tide_platform_fills_app GPU)
+    tide_add_game(tide_platform_float_bits_app SOURCES ../compiler/tests/shaders/float_bits.tide NAME game
+        HOST tests/float_bits.c WINDOW)
+    tide_android_app_test(tide_platform_float_bits_app GPU)
+    tide_add_game(tide_platform_camera_precision_app SOURCES tests/camera_precision.tide NAME game
+        HOST tests/camera_precision.c WINDOW)
+    tide_android_app_test(tide_platform_camera_precision_app GPU)
+    tide_add_game(tide_platform_skinned_app SOURCES tests/skinned.tide NAME game HOST tests/skinned.c WINDOW)
+    tide_android_app_test(tide_platform_skinned_app GPU)
+    tide_add_game(tide_platform_baked_app SOURCES tests/baked.tide NAME game HOST tests/baked.c WINDOW)
+    tide_android_app_test(tide_platform_baked_app GPU)
 endif()
 
 if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
@@ -849,6 +1014,12 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     target_compile_definitions(tide_platform_reload_game_other PRIVATE RELOAD_GAME_HASH=4343 RELOAD_OTHER_SHAPE)
     target_include_directories(tide_platform_reload_game_other PRIVATE include "${PROJECT_SOURCE_DIR}/engine/include")
     target_link_libraries(tide_platform_reload_game_other PRIVATE tide_flags)
+    # ...and one of the same tables that another tide built (its made-by text), which a host that says its own doesn't load
+    add_library(tide_platform_reload_game_foreign SHARED tests/reload_game.c)
+    target_compile_definitions(tide_platform_reload_game_foreign PRIVATE RELOAD_GAME_HASH=4343
+        "RELOAD_MADE_BY=\"9.9.9-test (0000000000000002)\"")
+    target_include_directories(tide_platform_reload_game_foreign PRIVATE include "${PROJECT_SOURCE_DIR}/engine/include")
+    target_link_libraries(tide_platform_reload_game_foreign PRIVATE tide_flags)
     add_executable(tide_platform_reload tests/reload_host.c)
     target_link_libraries(tide_platform_reload PRIVATE tide_platform)
     add_executable(tide_platform_reload_plain tests/reload_host.c tests/reload_game.c)
@@ -859,7 +1030,7 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
             COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/reload.mjs" $<TARGET_FILE:tide_platform_reload>
                 $<TARGET_FILE:tide_platform_reload_plain> $<TARGET_FILE:tide_platform_reload_game>
                 "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_reload-run" $<TARGET_FILE:tide_platform_reload_game_next>
-                $<TARGET_FILE:tide_platform_reload_game_other>)
+                $<TARGET_FILE:tide_platform_reload_game_other> $<TARGET_FILE:tide_platform_reload_game_foreign>)
         set_tests_properties(tide_platform_reload PROPERTIES TIMEOUT 120)
         tide_gpu_test(tide_platform_reload)
     endif()
@@ -990,7 +1161,18 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     tide_add_game(tide_platform_players SOURCES tests/players.tide)
     tide_add_game(tide_platform_players_menu SOURCES tests/players_menu.tide)
     tide_add_game(tide_platform_players_leave SOURCES tests/players_leave.tide)
+    # A dev build: the menu under Escape shows its dev views and its tweaks. A copy of its code in a folder of the
+    # build's, whose tweaks.json the menu writes and the test changes
+    configure_file(tests/dev_menu.tide "${CMAKE_CURRENT_BINARY_DIR}/dev_menu_game/dev_menu.tide" COPYONLY)
+    tide_add_game(tide_platform_dev_menu DEV SOURCES "${CMAKE_CURRENT_BINARY_DIR}/dev_menu_game/dev_menu.tide")
     if(TIDE_NODE)
+        add_test(NAME tide_platform_dev_menu
+            COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/dev_menu.mjs" $<TARGET_FILE:tide_platform_dev_menu>
+                "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_dev_menu-run" "${CMAKE_CURRENT_BINARY_DIR}/dev_menu_game"
+                # What tide run does as a .tweaks file changes: tidec works the values out again, beside the game's C
+                "${TIDEC_PATH}" "${CMAKE_CURRENT_BINARY_DIR}/tide/tide_platform_dev_menu" tide_platform_dev_menu)
+        set_tests_properties(tide_platform_dev_menu PROPERTIES TIMEOUT 120)
+        tide_gpu_test(tide_platform_dev_menu)
         add_test(NAME tide_platform_interactive
             COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/interactive.mjs" $<TARGET_FILE:tide_platform_capture>
                 $<TARGET_FILE:tide_platform_players> "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_interactive-run")
@@ -1101,6 +1283,44 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     target_include_directories(tide_platform_cursor_rules PRIVATE "${PROJECT_SOURCE_DIR}/tests" desktop)
     target_link_libraries(tide_platform_cursor_rules PRIVATE tide)
     add_test(NAME tide_platform_cursor_rules COMMAND tide_platform_cursor_rules)
+    # The web's GPU that draws nothing (src/gpu_none.c), built natively too, where the sanitizers see its read backs.
+    # No window or GPU.
+    add_executable(tide_platform_gpu_none tests/gpu_none.c src/gpu_none.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tide_platform_gpu_none PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)
+    target_link_libraries(tide_platform_gpu_none PRIVATE tide)
+    add_test(NAME tide_platform_gpu_none COMMAND tide_platform_gpu_none)
+endif()
+
+# On Android, those of them a window's program runs as an app: the loading screen, the waits for a frame's fence,
+# Vulkan's pipelines kept across runs, in pipeline_cache.cmake's order with the app's cache folder kept between them,
+# and the window's images as the window changes, where the runner turns the screen and sends the app home and back
+# (STEPS) for GLFW's resizing. The others are the desktop's: the watching host's reload, runs with no window
+# (tide_platform_open_headless and tide/run.h's --capture, --script and --players) and GLFW's cursor.
+if(TIDE_ANDROID)
+    add_library(tide_platform_swapchain_app SHARED tests/swapchain.c)
+    target_include_directories(tide_platform_swapchain_app PRIVATE src third_party)
+    target_link_libraries(tide_platform_swapchain_app PRIVATE tide_platform)
+    tide_android_app(tide_platform_swapchain_app LABEL "Tide swapchain")
+    tide_android_app_test(tide_platform_swapchain_app GPU STEPS)
+
+    add_library(tide_platform_loading_app SHARED tests/loading.c)
+    target_include_directories(tide_platform_loading_app PRIVATE src)
+    target_link_libraries(tide_platform_loading_app PRIVATE tide_platform)
+    tide_android_app(tide_platform_loading_app LABEL "Tide loading")
+    tide_android_app_test(tide_platform_loading_app GPU)
+
+    add_library(tide_platform_gpu_wait_app SHARED tests/gpu_wait.c)
+    target_include_directories(tide_platform_gpu_wait_app PRIVATE src third_party)
+    target_link_libraries(tide_platform_gpu_wait_app PRIVATE tide_platform)
+    tide_android_app(tide_platform_gpu_wait_app LABEL "Tide GPU waiting")
+    tide_android_app_test(tide_platform_gpu_wait_app GPU)
+
+    add_library(tide_platform_pipeline_cache_app SHARED tests/pipeline_cache.c)
+    target_include_directories(tide_platform_pipeline_cache_app PRIVATE src third_party)
+    target_link_libraries(tide_platform_pipeline_cache_app PRIVATE tide_platform)
+    tide_android_app(tide_platform_pipeline_cache_app LABEL "Tide pipeline cache")
+    tide_android_app_test(tide_platform_pipeline_cache_app GPU
+        RUNS fresh warm corrupt warm foreign warm cut warm outgrown warm)
 endif()
 
 if(TIDE_WEB)
@@ -1264,11 +1484,24 @@ if(NOT TIDE_ANDROID)
             endif()
         endif()
     endforeach()
+else()
+    # Apps on Android, given the bounded run as the intent's arguments
+    foreach(case camera reads)
+        set(target tide_platform_depth_${case}_app)
+        tide_add_game(${target} SOURCES tests/depth_${case}.tide NAME game HOST tests/depth_${case}.c WINDOW)
+        target_include_directories(${target} PRIVATE src)
+        tide_android_app_test(${target} GPU ARGS --frames=1)
+        if(case STREQUAL "reads")
+            tide_android_app_test(${target} GPU NAME ${target}_fallback ARGS --frames=1
+                ENVIRONMENT TIDE_TEST_DEPTH_FALLBACK=1)
+        endif()
+    endforeach()
 endif()
 
-# Exercise depth arrays, stencil, sample-zero resolves, shadows and conservative occlusion on legacy storage too.
+# Exercise depth arrays, stencil, sample-zero resolves, shadows, conservative occlusion and depth cubes on legacy
+# storage too.
 if(NOT TIDE_ANDROID)
-    foreach(case targets shaders occlusion)
+    foreach(case targets shaders occlusion images)
         set(target tide_platform_${case})
         if(TIDE_WEB)
             tide_add_web_test(${target}_depth_fallback TARGET ${target} PIXELS QUERY "depth-fallback=1"
@@ -1279,6 +1512,12 @@ if(NOT TIDE_ANDROID)
             set_property(TEST ${target}_depth_fallback APPEND PROPERTY ENVIRONMENT "TIDE_TEST_DEPTH_FALLBACK=1")
         endif()
     endforeach()
+else()
+    # ...on Android too, where many phones' depth is 24 bits
+    foreach(case targets shaders occlusion)
+        tide_android_app_test(tide_platform_${case}_app GPU NAME tide_platform_${case}_app_depth_fallback
+            ENVIRONMENT TIDE_TEST_DEPTH_FALLBACK=1)
+    endforeach()
 endif()
 
 # On Android a window is an app's (tide_android_app): the same program
@@ -1286,17 +1525,28 @@ endif()
 # shaders' checks are.
 if(TIDE_PLATFORM AND TIDE_ANDROID)
     tide_add_game(tide_platform_readback_app SOURCES tests/readback.tide NAME game HOST tests/readback.c WINDOW)
-    target_include_directories(tide_platform_readback_app PRIVATE src)
+    target_include_directories(tide_platform_readback_app PRIVATE src third_party) # Vulkan's headers, for src/gpu_vk.h
     tide_android_app_test(tide_platform_readback_app GPU)
+    tide_android_app_test(tide_platform_readback_app GPU NAME tide_platform_readback_app_depth_fallback
+        ENVIRONMENT TIDE_TEST_DEPTH_FALLBACK=1)
 elseif(TIDE_PLATFORM)
     tide_add_game(tide_platform_readback SOURCES tests/readback.tide NAME game HOST tests/readback.c)
     target_include_directories(tide_platform_readback PRIVATE src)
+    if(NOT TIDE_WEB)
+        target_include_directories(tide_platform_readback PRIVATE third_party) # Vulkan's headers, for src/gpu_vk.h
+    endif()
     target_link_libraries(tide_platform_readback PRIVATE tide_platform)
     if(TIDE_WEB)
         tide_web_page(tide_platform_readback SHELL web/test_shell.html)
         tide_add_web_test(tide_platform_readback TARGET tide_platform_readback PIXELS EXPECT "renderer: WebGPU")
+        # ...and where depth is stored forward, in 24 bits: ReadDepth gives the same forward depths
+        tide_add_web_test(tide_platform_readback_depth_fallback TARGET tide_platform_readback PIXELS QUERY "depth-fallback=1"
+            EXPECT "renderer: WebGPU")
     else()
         add_test(NAME tide_platform_readback COMMAND tide_platform_readback)
         tide_gpu_test(tide_platform_readback)
+        add_test(NAME tide_platform_readback_depth_fallback COMMAND tide_platform_readback)
+        tide_gpu_test(tide_platform_readback_depth_fallback)
+        set_property(TEST tide_platform_readback_depth_fallback APPEND PROPERTY ENVIRONMENT "TIDE_TEST_DEPTH_FALLBACK=1")
     endif()
 endif()

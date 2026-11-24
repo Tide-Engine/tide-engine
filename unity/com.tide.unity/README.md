@@ -7,9 +7,11 @@ audio and is where you author.
 Early: the owner is testing it. What's built and what isn't is in the Tide
 repository's `notes/unity.md`.
 
-Tide `[Linear]` textures need Unity's **Project Settings > Player > Other Settings > Color Space** set to **Linear**.
-Unity's Gamma mode disables sRGB image formats; Tide reports the required setting and refuses marked resources.
-Unmarked images keep their existing behavior in either color space. Tide never changes this project setting.
+Tide `[Linear]` textures work in either **Project Settings > Player > Other Settings > Color Space**. In Linear they
+use Unity's sRGB image formats. Unity's Gamma mode has none, so there a marked image keeps its bytes as stored and is
+read through a copy decoded to linear light in half floats, which costs twice an RGBA8 image's memory (more for
+compressed images). Unmarked images keep their existing behavior in either color space. Tide never changes this
+project setting.
 
 ## Install
 
@@ -59,7 +61,7 @@ Unmarked images keep their existing behavior in either color space. Tide never c
    must match the package, or Play explains how to return to the pin.
 
    Updated VS Code and JetBrains Tide plugins use the same selected installation
-   for their language server, runs and prefab editor. Unity writes its selection
+   for their language server and runs. Unity writes its selection
    to `Library/Tide/toolchain.json`, tied to the package lock; keep it out of
    source control. A development selection identifies the running editor process:
    closing it (or a crash) returns the IDE to the pin. Changing the package lock
@@ -215,7 +217,7 @@ that GameObject reads the entity's components as Tide's views see them this
 frame: `entity.Get<Tide.Game.Health>()`. The same `TideEntity` holds its authored
 components and live binding; `Showing` says whether it is currently bound. Scripts
 can find it and subscribe to its events before the match starts. `TideRunner.Current.Send(command)`
-sends a command, as local code's `Send`.
+sends a command, as local code's call of it does.
 
 Tide's devices are what Unity's keyboard, mouse, gamepad and touches say. For
 input of the game's own on top (an on-screen stick, a bot, a replay, a test),
@@ -248,10 +250,30 @@ when something hears its kind. In Unity's Profiler the runner's frame is
 drawing read for Unity's cameras) and `Tide.Show` (the entities shown through
 their GameObjects, their components and the singletons read, events told).
 
+The game's frame hands Unity what Unity reads of the match, and nothing else:
+
+- **A component** is read once one of it is enabled on a GameObject: a
+  prefab's or a scene's, or one a script added. Every shown entity that has
+  it then has its component, with its values. One the game gives entities as
+  it runs, which no GameObject has, isn't read until a script asks:
+  `runner.Read<Tide.Game.Stunned>()` once, or an entity's `Has`, `TryGet` or
+  `Get` of its value.
+- **A singleton** is read once `runner.Get<T>()` asks for it, and **an event**
+  while something hears it.
+- What's asked for the first time is there in the same frame.
+- Disabling a Tide component doesn't take it from its entity: it says that
+  GameObject doesn't read it. While the only ones of a component there are
+  disabled ones, it costs the frame nothing, and they stay as they were.
+- The runner's **Read Everything** reads every component of every shown
+  entity, every singleton and every event each frame, as the package did before
+  it read by need.
+
 The game's views draw with Unity's camera: the runner's View Camera, or the
 main camera, is the 3D camera Tide's views start with, so
 `Draw.WorldToScreen(position)` is where Unity shows that point, in screen
-pixels from the top left. Draw at it inside `Draw.Screen() { ... }`, whose
+pixels from the top left. The camera can be perspective or orthographic: Tide
+takes its placement and projection as they are, its near and far planes too,
+and `Draw.CameraTransform()` and `Draw.CameraProjection()` give them. Draw at it inside `Draw.Screen() { ... }`, whose
 calls are in screen pixels; outside it, 2D draws go through Tide's 2D camera,
 centered on the screen at a pixel a unit unless the view sets one.
 
@@ -277,10 +299,79 @@ takes a GPU that runs compute shaders, as every renderer of Tide's does:
 Direct3D 11 and 12, Vulkan, Metal, desktop OpenGL or WebGPU. On one without
 them (OpenGL ES 3, WebGL 2), the views' 2D is drawn with Unity's GL alone.
 
+A Tide view can draw a texture Unity imported. Give a component a local
+`Texture` field, and it's a Texture field of its Unity component, set in the
+inspector like any other (a Texture2D or a RenderTexture):
+
+```tide
+component Card
+{
+    float2 at;
+    local Texture face; // Set on the prefab or in the scene, in Unity's inspector
+}
+
+view Cards(Card card)
+{
+    if (card.face.size.x == 0) return; // Until Unity has shown the card's GameObject
+    Draw.Sprite(card.face, card.at, float2(1, 1));
+}
+```
+
+The view draws with Unity's own image, as Unity imported it (its Max Size,
+compression, mipmaps and color space), with nothing imported twice and no
+pixels copied; `face.size` is its size, and its Filter Mode and Wrap Mode are
+how it's sampled where the draw says nothing. Only local fields take one: a
+texture is this machine's, so nothing of it is in the match. Unity hands it
+over as it shows the entity's GameObject, a frame after the entity appears, so
+the field has no texture in the views' first frame of it: skip the draw until
+it has a size, as above. A script can set the field in Play
+(`GetComponent<Tide.Game.Card>().face = other;`), which Tide's views draw from
+the next frame; a field left empty keeps the default its Tide declaration
+gives it. A singleton's local `Texture` field is set the same way from a
+script, `runner.Get<Tide.Game.Hud>().logo = texture;`, as a singleton has no
+inspector. A player build keeps the textures as it keeps anything a prefab or
+a scene references. An image the game declares itself, `asset Texture logo =
+"logo.png";` in a `.tide` file, is Tide's own import of that file and draws in
+every host, Unity included; one set in Unity's inspector exists in the Unity
+project alone.
+
+Unity's meshes, materials and sounds have types of their own in Tide, which
+name Unity's objects and read nothing of them: `UnityEngine.Mesh`,
+`UnityEngine.Material` and `UnityEngine.AudioClip`, as local fields set the
+same way.
+
+```tide
+component Statue
+{
+    local UnityEngine.Mesh shape;
+    local UnityEngine.Material look;
+    local UnityEngine.AudioClip hum;
+}
+
+view Statues(Statue statue, Transform transform)
+{
+    Draw.UnityMesh(statue.shape, statue.look, float4x4.Translate(transform.localPosition));
+}
+```
+
+`Draw.UnityMesh` has Unity draw the mesh with the material, every submesh,
+where the call is among Tide's own draws: through Unity's camera, into the
+screen (not into a Tide render target), lit as Unity lights a mesh drawn from
+a command buffer in your pipeline. `Audio.Play(statue.hum, 0.5)` plays the clip
+once through Unity's audio, an AudioSource under the runner ("Tide Sounds"),
+apart from Tide's mixer: its buses and effects don't touch it. Unset, each
+does nothing. A Tide `frag` can't draw a Unity mesh, and a Unity material
+can't draw a Tide mesh: for those, the mesh or the shader is Tide's
+(`asset Mesh<V>`, `frag`).
+
 A physics package's components are on GameObjects like the game's own: with
 `box3d`, a `Body` and a `Box`, `Sphere` or `Capsule` (Add Component, Tide/Box3D).
-A shape's size is by the GameObject's scale, as a collider's is, a selected one
-is drawn in the Scene view, and Edit Shape gives it handles. The body starts
+A shape's size is by the GameObject's scale, as a collider's is. It's drawn in
+the Scene view while its GameObject or one above it is selected, as Unity's
+colliders are (select a body to see its parts' shapes), and Edit Shape gives it
+handles. With Always Show Tide Shapes on (Project Settings > Tide, this
+machine's choice), every shape is drawn, the unselected ones fainter. In Play
+the shapes are the match's: each is drawn from its component's live values. The body starts
 where the GameObject is, and the GameObject follows it. A shape on a child
 GameObject with a `Part` is on the body above it, where the child puts it. A
 mesh collider fills from the GameObject's MeshFilter, a height field from its
@@ -333,6 +424,14 @@ default).
   before those kept are made again from the start as they're shown. What's
   clicked or sent on an older tick's picture never reaches the match, and the
   match's own local state is left as it was.
+- A tick shown is heard: the game's local handlers, and `runner.On<E>` and
+  `OnVerified<E>` in C#, hear what the tick sent, as the match's own machine
+  heard it. Going on from the tick shown (a step, a recording playing, the
+  slider moved on by up to 64 ticks) every tick come past is heard in order;
+  a tick gone back to, or jumped far on to, says what it sent alone; a tick
+  that stays shown says nothing again. Those handlers run on a local state of
+  the shown ticks' own, which starts empty, so what they count or keep is
+  apart from the match's.
 - **Continue From Here** takes the match back to the tick shown and on from
   there: the ticks after it are gone. Which commands are in the match stays as
   it was, so one already applied after that tick doesn't come again.
@@ -341,6 +440,23 @@ default).
   player as if it let go of everything), and Resume shows its latest tick
   again. Continue From Here takes them back too: they're sent the match's world
   again, as when a client goes wrong.
+- A match **another machine runs** is recorded here too, from what this
+  machine is sent, where the game hides nothing from its players: every tick
+  since this machine came in shows again, and Save Recording works, so a
+  tester in someone else's match can save what they saw. It never stops for
+  this machine (Pause shows a tick while it goes on), and it isn't this
+  machine's to take back: Continue From Here is the machine's that runs it.
+- In a game that **hides state** from players (visibility), another machine's
+  match is followed instead: the last Keep Seconds of ticks this machine had
+  confirmed are kept, as its player may have them. Pause holds those to show
+  while the match goes on, the Tick slider and Step go through them with what
+  each sent, and Resume follows it again from its latest. Nothing before them
+  can be made again here, and there's no recording.
+- A **sharded match** is followed the same way, on this machine or another,
+  as its player has it: each tick is the player's home shard's world with the
+  other shards it follows beside it, so a tick shown has what the game drew
+  then. One this machine runs with nobody else in it really pauses, and Step
+  runs every shard a tick. It isn't recorded or taken back yet.
 - **Save Recording** writes the match's recording (a `.tiderec`) and **Open
   Recording** replays one, a tester's from a bug report say, on any machine with
   a build of the same data layout (the game's components, input and commands as
@@ -349,6 +465,16 @@ default).
   the first tick whose world went otherwise, which after a change to the game's
   code is where that change first matters. **Replay This Match** replays the
   current one.
+- A recording also replays in a build whose **data is laid out otherwise** (a
+  component gained a field, fields moved, a singleton is new): it says the
+  layout it was recorded with, and its worlds are carried over by name as a hot
+  reload carries a match (a field of the same name keeps its value, a new one
+  has its default). Its ticks then run with this build's code from what went
+  into them. Nothing checks them, as the recording's hashes are of worlds laid
+  out the old way, and the window says so. A tick whose input or commands
+  changed shape can't be run: the window says which tick it stops at.
+  Recordings saved before this (and a game's that tide describes no layout
+  for) only replay in a build of their own layout.
 
 In C#: `runner.Pause()`, `Step()`, `Resume()`, `ShowTick(n)`,
 `ContinueFromHere()`, `Recording()` and `SaveRecording(path)`,
@@ -358,13 +484,12 @@ editor (the default), nowhere, or in player builds too, so a game can save a
 tester's recording for a bug report. A hot reload while paused comes in as
 any: the match stays paused, its kept ticks with it if the data layout is the
 same (another starts the recording over), and the next step runs the new code.
-Only a match this machine runs is kept; one joined on another machine, and a
-sharded one, aren't.
+A sharded match's ticks are kept as its player's shards confirmed them (above).
 
 ## Build
 
 A player build (File > Build Profiles) builds the game with it, optimized, for
-the editor's own desktop platform (Mono or IL2CPP), WebGL or Android. The player runs the match as the
+the editor's own desktop platform (Mono or IL2CPP), WebGL, Android or iOS. The player runs the match as the
 editor does. A WebGL player runs Tide's own WebAssembly beside Unity's, with
 its threads: serve it cross-origin isolated (`Cross-Origin-Opener-Policy:
 same-origin` and `Cross-Origin-Embedder-Policy: require-corp`), as any Tide
@@ -380,6 +505,45 @@ app's own files (`Application.persistentDataPath`). It needs a device with
 Vulkan and compute shaders for Tide's drawing, as every renderer of Tide's
 does. An Android player has been built and packaged, not yet run on a phone.
 
+### iOS
+
+An iOS app links its game in, and only Xcode on a Mac compiles for iOS. So for an iOS player tide compiles nothing:
+it writes the game, Tide's engine and its networking as C sources, and the package adds them to the Xcode project
+Unity exports (`Libraries/Tide`), each file with its own compiler flags, the game's assets as a file of the app
+(`Data/Raw/Tide/pack`). The export works on Windows, Linux and a Mac alike, and the project then builds on any Mac
+with Xcode: it needs neither tide nor Unity there. Don't change those files' Compiler Flags in Xcode: they keep the
+game's arithmetic the same as on every other machine, and a match would drift apart without them.
+
+- Graphics API: Metal (Unity's default). Tide draws with compute shaders, which iOS has on Metal alone.
+- The app's Info.plist says why it looks at the local network (players on one Wi-Fi reach each other directly, and
+  iOS asks the player first) and why it may record (Unity asks for Microphone Usage Description, which the package
+  fills where it's empty; iOS only asks the player if the game listens to the microphone). Put your own words in
+  Player Settings > Microphone Usage Description, and in the project's Info.plist for the local network.
+- The game's saves are in the app's own files (`Application.persistentDataPath`). An app that goes to the
+  background leaves its match, as every phone's does.
+- A library the game's own C links (a `.a` in a package's folder) isn't added: tide says so as it builds. Add one
+  built for iOS to the Xcode project yourself.
+
+**Without a Mac.** Tide's repository has a workflow that builds an exported project on GitHub's Macs, and a command
+that sends it there and brings back what it made. You need `gh` (GitHub's command, signed in: `gh auth login`),
+Node 24, a fork or clone of the repository whose Actions you can run, and Unity's iOS Build Support module.
+
+1. Build the iOS player in Unity (File > Build Profiles > iOS > Build) into a folder, say `Builds/iOS`.
+2. `node <tide's repository>/unity/ios-app.mjs Builds/iOS`. It packs the folder (about 250 MB for a small game),
+   uploads it as a draft release only the repository's people can read, builds it on a Mac (about 20 minutes),
+   downloads `ios-app/app-unsigned.ipa` beside the folder and deletes the draft.
+3. The app isn't signed, and an iPhone runs only signed apps. Install it with a tool that signs it with your own
+   Apple ID as it installs: [Sideloadly](https://sideloadly.io) or [AltStore](https://altstore.io) on Windows. With
+   a free Apple ID the app runs for seven days, then needs installing again; a paid developer account signs for a
+   year and can use TestFlight. On the phone, trust your Apple ID once (Settings > General > VPN & Device
+   Management), and from iOS 16 turn on Developer Mode (Settings > Privacy & Security).
+4. To try a build with no phone at all: in Player Settings set Target SDK to Simulator SDK (and its architecture to
+   ARM64), build, and add `--simulator` to the command. The workflow then runs the app in an iPhone simulator and
+   brings back what it logged (`ios-app/app.log`).
+
+If the build fails, the command says so and downloads `xcodebuild.log`: the lines with `error:` say which file.
+Send that file with a report.
+
 The editor's game is a debug build (`DEBUG` is defined) and a player's isn't.
 Where the game's data differs between the two, a field inside `#if DEBUG`
 say, `Packages/com.tide.game` holds the game's C# for both, the editor's inside
@@ -389,15 +553,18 @@ your own inside `#if UNITY_EDITOR`. A player build checks that the C# in the
 project is of the game it builds, and says to let the editor's build finish
 where it isn't.
 
-Not built yet: players for another desktop system than the editor's, for iOS
-and for consoles. A
+Not built yet: players for another desktop system than the editor's and for
+consoles. A
 dedicated server needs none of them: it's a Tide build of the same game
 (`tide build --server --assets Assets`), which Unity's players join.
 
-The editor's host and each build of the game it loads are made by one `tide`.
-If a build comes from another (a development `tide` rebuilt while Play runs),
-the host says it "was built by another tide than the one running it" and goes
-on with the build it has: start Play again.
+The editor's host and each build of the game it loads are made by one `tide`,
+and each says which: its version and a number of the files it builds with. If
+a build comes from another (`tide` installed again or upgraded while the editor
+is open, or a development `tide` rebuilt), the Console says which tide built
+the game and which the host, and Play goes on with the build it has. Leave
+Play, let `tide` finish its build, and enter Play again: `tide` builds the host
+again with the next game, so nothing has to be restarted.
 
 ## Requirements
 

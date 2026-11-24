@@ -11,14 +11,100 @@ target_compile_definitions(tide_bench PRIVATE TIDE_BENCH_RESULTS="${CMAKE_CURREN
 
 tide_add_game(bench_sand SOURCES sand/sand.tide NAME sand HOST sand/main.c)
 target_link_libraries(bench_sand PRIVATE tide_bench)
-add_test(NAME bench_sand COMMAND bench_sand --quick --expect 0xdd941e999e8fd01d)
+add_test(NAME bench_sand COMMAND bench_sand --quick --expect 0x8ea2658e690fbdc9)
 # Sand to play, with its views and the mouse: `sand` in a window, sand.html on
 # the web, which the docs site shows (docs/guide/sand.md).
 tide_add_game(sand SOURCES sand/sand.tide sand/play.tide TITLE "Tide sand" STATS)
 
 tide_add_game(bench_gallery SOURCES gallery/gallery.tide NAME gallery HOST gallery/main.c)
 target_link_libraries(bench_gallery PRIVATE tide_bench)
-add_test(NAME bench_gallery COMMAND bench_gallery --quick --expect 0x15fd48b33afb54c3)
+add_test(NAME bench_gallery COMMAND bench_gallery --quick --expect 0xd0304007a99fed1b)
+
+# An endless world of blocks in dimensions: chunks made around players, each
+# machine sent its own, and gone once nobody's near, and far regions of what
+# players built farther off (notes/voxels.md). A quick run checks the far
+# regions against the chunks, and each chunk's audience against the players'
+# boxes, every second (--audit) and fails on what's wrong. It spawns 8 chunks
+# a dimension a tick, and has 64 that are there take or lose a player, so its
+# boxes are asked for, joined and left over several ticks.
+tide_add_game(bench_voxels SOURCES voxels/voxels.tide NAME voxels HOST voxels/main.c)
+target_link_libraries(bench_voxels PRIVATE tide_bench)
+add_test(NAME bench_voxels COMMAND bench_voxels --quick --expect 0x91b6ad70bc0e38a8)
+# The store keeping the far regions' saves and none of the chunks', as a server that stopped before it saved them:
+# a region that comes back with columns its chunks no longer have puts them right as those chunks are made
+add_test(NAME bench_voxels_forgets COMMAND bench_voxels --quick --forget 1 --expect 0x9e4be6e5d1ba4b79)
+# Chunks a player has 9 each way, more than their one far region each way holds: they have the regions that do.
+# Its boxes (1,083 chunks) are asked for at the full run's 1,024 a tick, so each is whole between hops
+add_test(NAME bench_voxels_wide COMMAND bench_voxels --quick --near 9 --far 1 --ask 1024 --expect 0xe5a6263d6f3f5834)
+# A whole view arriving: one player who stands and hops every three seconds into a dimension whose chunks have gone,
+# for a minute, with a datagram in a hundred lost. The box of 845 chunks is on the player's machine 21 ticks after
+# its input at the median (--fill fails past 23): it was 36 with the store answering 64 chunks a tick, the first
+# repair of a tick alone and a lost chunk asked for again (notes/voxels.md, A whole view arriving)
+add_test(NAME bench_voxels_arrives COMMAND bench_voxels --players 1 --still 100 --hop 3 --builders 0 --seconds 60
+                                           --fill 23 --expect 0x8568de5396f1829e)
+# Whole views at three times the radius (6,845 chunks): four players joining where the first has made them, each
+# view a repair of megabytes, read in one update and packed and sent in the next (the session's REPAIR_HEAVY), on the
+# pool's own threads where it has them. One world whichever packs it (the same with --threads 1 and 12)
+add_test(NAME bench_voxels_views COMMAND bench_voxels --near 18 --lag 1200 --players 4 --seconds 4
+                                         --expect 0x8efe0e110d3ee6d1 --expect-taken 0x2ca98e5b0c0035b5)
+# Sixteen players joining together and hopping together every second at twice the view: an update's repairs are read
+# on the pool's threads at once, then started in the connections' order until the update has read its allowance
+# (the session's REPAIR_UPDATE_MOST, met several times here), the rest read for nothing and read again later. What
+# the bots' machines took of what they were sent, and when, is the same on 1, 4 and 12 threads (--expect-taken), as
+# is the world (notes/netcode.md, Repairs read on every thread)
+foreach(threads 1 4 12)
+    add_test(NAME bench_voxels_reads_${threads} COMMAND bench_voxels --players 16 --join-every 0 --hop 1 --near 12
+                                                        --far 1 --seconds 5 --lag 1200 --threads ${threads}
+                                                        --expect 0xec783e57193243bb --expect-taken 0x0d86b57d28825956)
+endforeach()
+# An outage longer than the server keeps ticks: sixteen players cut off for 4.5 s are each sent their world again as
+# they come back, a megabyte of projection each, more than an update prepares before the rest wait their turn (the
+# session's WHOLE_UPDATE_MOST). Every one of them is back (a run where one never is fails), and what they took, and
+# when, is the same on 1 and 12 threads (notes/netcode.md, top section)
+foreach(threads 1 12)
+    add_test(NAME bench_voxels_outage_${threads} COMMAND bench_voxels --players 16 --join-every 0 --seconds 9
+                                                         --outage 4.5 --threads ${threads}
+                                                         --expect 0xc6c1fce51bbb56b6 --expect-taken 0x209fdc0618c73f95)
+endforeach()
+# The same with every projection hash worked out twice, from what's kept of the rows that didn't change and from
+# the rows themselves: the run stops where the two differ (TIDE_CLIENT_SPANS_CHECK)
+tide_add_game(bench_voxels_checked SOURCES voxels/voxels.tide NAME voxels HOST voxels/main.c)
+target_link_libraries(bench_voxels_checked PRIVATE tide_bench)
+target_compile_definitions(bench_voxels_checked PRIVATE TIDE_CLIENT_SPANS_CHECK)
+add_test(NAME bench_voxels_checked COMMAND bench_voxels_checked --quick --expect 0x91b6ad70bc0e38a8)
+tide_add_game(bench_voxels_counts SOURCES voxels/voxels.tide NAME voxels HOST voxels/main.c)
+target_link_libraries(bench_voxels_counts PRIVATE tide_bench)
+target_compile_definitions(bench_voxels_counts PRIVATE TIDE_CLIENT_COUNTS)
+# ...and with what the server's checks read again counted and printed at the end (notes/benchmarks.md): the counting
+# changes no hash
+add_test(NAME bench_voxels_counts COMMAND bench_voxels_counts --quick --expect 0x91b6ad70bc0e38a8)
+# Voxels to play: `voxels` in a window, with its views, the mouse and the keys
+if(TIDE_PLATFORM)
+    tide_add_game(voxels SOURCES voxels/voxels.tide voxels/play.tide TITLE "Tide voxels" STATS)
+    # The same with a wider view, and logging each frame what chunks it has and how many still have no faces
+    # (play.tide's Measure): -DTIDE_VOXELS_VIEWS="4;8;12" makes voxels_near4, voxels_near8 and voxels_near12.
+    # None by default (notes/voxels.md, At scale)
+    set(TIDE_VOXELS_VIEWS "" CACHE STRING "Chunks each way of the voxels_near<n> builds that measure a wider view")
+    foreach(near IN LISTS TIDE_VOXELS_VIEWS)
+        tide_add_game(voxels_near${near} SOURCES voxels/voxels.tide voxels/play.tide NAME voxels TITLE "Tide voxels" STATS
+                      DEFINES VOXELS_NEAR=${near} VOXELS_MEASURE=1)
+    endforeach()
+    # Two players walking apart for 45 s, in a run with no window: chunks go from both machines as they walk, and
+    # the faces beside them are made again (play.tide's Leaving), and the second digs through chunks' sides. No
+    # chunk's faces stay made from a neighbour's side that has changed since (play.tide's own check logs it). Its
+    # saves go in the build's folder, emptied first. A desktop's run: it takes the host's options and files, which a
+    # page's and a phone's runners give another way
+    if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+    set(voxels_walk_data "${CMAKE_CURRENT_BINARY_DIR}/voxels_walk")
+    add_test(NAME voxels_walk_clean COMMAND "${CMAKE_COMMAND}" -E rm -rf "${voxels_walk_data}")
+    set_tests_properties(voxels_walk_clean PROPERTIES FIXTURES_SETUP voxels_walk)
+    add_test(NAME voxels_walk COMMAND voxels --players 2 --script "${CMAKE_CURRENT_SOURCE_DIR}/voxels/walk.txt"
+             --size 320 180 --data-dir "${voxels_walk_data}")
+    set_tests_properties(voxels_walk PROPERTIES FIXTURES_REQUIRED voxels_walk TIMEOUT 300
+        FAIL_REGULAR_EXPRESSION "changed since")
+    tide_gpu_test(voxels_walk)
+    endif()
+endif()
 
 # The home page's planet (examples/earth), its match as it is but for taking
 # up to 256 players rather than the page's 64, to see how far it goes. Its
@@ -36,12 +122,12 @@ tide_add_game(bench_earth NAME game HOST earth/main.c
     SOURCES "${CMAKE_CURRENT_BINARY_DIR}/earth/game.tide" "${earth_dir}/city.tide" "${earth_dir}/layout.tide"
             "${earth_dir}/globe.tide" "${earth_dir}/shapes.tide" "${earth_dir}/show.tide" "${earth_dir}/terrain.tide" "${earth_dir}/plants.tide")
 target_link_libraries(bench_earth PRIVATE tide_bench)
-add_test(NAME bench_earth COMMAND bench_earth --quick --expect 0x80ad260345c4efad)
+add_test(NAME bench_earth COMMAND bench_earth --quick --expect 0x8b1ac38f4c2e65c8)
 # A town hop changes shard and what the machine sees at once: corrections put it up to two seconds behind, as
 # the engine's visibility tests allow
-add_test(NAME bench_earth_split COMMAND bench_earth --quick --split 2 --lag 120 --expect 0xcef083e5c74ba687)
+add_test(NAME bench_earth_split COMMAND bench_earth --quick --split 2 --lag 120 --expect 0x1347c3f374fda50b)
 # Comparing one bot's world with what the server says it is, tick by tick
-add_test(NAME bench_earth_diverge COMMAND bench_earth --quick --diverge 1 --expect 0x80ad260345c4efad)
+add_test(NAME bench_earth_diverge COMMAND bench_earth --quick --diverge 1 --expect 0x8b1ac38f4c2e65c8)
 
 # Page hashes: the engine's beside candidates for its place, timed on the
 # shapes a world's hash reads (`bench_hash`, natively and under Node); the test
@@ -51,15 +137,17 @@ target_link_libraries(bench_hash PRIVATE tide)
 add_test(NAME bench_hash COMMAND bench_hash --quick)
 
 # Indexes for indexed loops (tide/index.h): building one, and searching it for
-# about 10 entries near a point, against the plain loop over every entry; the
-# test checks both loops find the same entries.
+# about 10 entries near a point, or for a chunk by its place (an exact key),
+# against the plain loop over every entry; the test checks both loops find the
+# same entries.
 add_executable(bench_index index/index.c)
 target_link_libraries(bench_index PRIVATE tide)
 add_test(NAME bench_index COMMAND bench_index --quick)
 
 # Indexed loops: boids looking at their neighbours through a query, agents at
-# obstacles in a list, with the loops' indexes and without (NO_LOOP_INDEXES):
-# `bench_loops --n 10000` against `bench_loops_plain --n 10000`.
+# obstacles in a list, lookers finding chunks by their place (--chunks), with
+# the loops' indexes and without (NO_LOOP_INDEXES): `bench_loops --n 10000`
+# against `bench_loops_plain --n 10000`.
 if(TIDE_PLATFORM)
     foreach(variant "" _plain)
         set(no_indexes "")

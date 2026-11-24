@@ -1,0 +1,188 @@
+// The server's store from match code: saves, loads that find what was saved and
+// loads that find nothing, a delete, listings of keys page by page, and answers
+// whose handlers spawn. Played on a host with a guest: the guest's world goes
+// as the host's does, though only the host's machine has the store.
+
+settings { maxPlayers = 2; }
+
+scene Main { }
+
+singleton Vault
+{
+    int found;      // Loads that found their key
+    int missing;    // ...and that found nothing
+    int failed;     // ...and whose files couldn't be read
+    int sum;        // Every byte loaded, added up
+    int crates;     // Crates the answers' handlers spawned
+    string last;    // The last key answered
+    int same;       // What a load found of a key saved in its own tick, before it
+    Entity shelf;   // Where listings' answers go
+}
+
+// What listings found, on the one entity every listing names
+component Shelf
+{
+    int listings;   // Answers
+    int folder;     // Keys of "list/"...
+    int folderHash; // ...and their bytes, in order
+    int partial;    // Keys of "lis"
+    int partialHash;
+    int pages;      // Answers of "page/", one after another
+    int paged;
+    int pagedHash;
+    int failures;   // Listings that couldn't be made
+}
+
+component Crate
+{
+    int size;
+}
+
+input Controls { float2 move; }
+
+// A value of `count` bytes: start, start + 1, ...
+List<byte> Bytes(int start, int count)
+{
+    mut List<byte> made = [];
+    for (var i = 0; i < count; i++) made.Add(byte(start + i));
+    return made;
+}
+
+// A key with a part too long for a file's name: kept by its hash
+string Long(string letter)
+{
+    mut var made = "list/";
+    for (var i = 0; i < 70; i++) made = $"{made}{letter}";
+    return made;
+}
+
+// Nothing starts it: an awaited load where no task of the match awaits the store still builds
+async int Size(string key) fails IOError
+{
+    var bytes = try await Storage.Load(key);
+    return bytes.count;
+}
+
+// Keys' bytes into a hash, in order: what C checks the keys were
+int Mix(int hash, string key)
+{
+    mut var h = hash;
+    foreach (var b in key.ToBytes()) h = (h ^ int(b)) * 16777619;
+    return (h ^ 47) * 16777619;
+}
+
+system Work(mut Vault vault, Time time)
+{
+    if (time.tick == 2) vault.shelf = Spawn(Shelf { });
+    if (time.tick == 5)
+    {
+        Storage.Save("boxes/7", Bytes(1, 3));
+        Storage.Save("a b/../c", Bytes(10, 2));     // Any key is one: its bytes are written out where a file's name can't have them
+        Storage.Save("big", Bytes(0, 5000));        // Past what a frame carries inline: by download
+        Storage.Save("gone", Bytes(9, 1));
+        Storage.Save("con", Bytes(20, 1));          // A Windows device's name: its file is another
+        Storage.Save("a", Bytes(30, 1));            // ...and a file "a.bin" and a folder "a.bin" are two keys' places
+        Storage.Save("a.bin/x", Bytes(40, 1));
+        // Keys to list: in a folder and deeper, one past the folder, two kept by their hash
+        Storage.Save("list/b", Bytes(1, 1));
+        Storage.Save("list/a", Bytes(1, 1));
+        Storage.Save("list/c/e", Bytes(1, 1));
+        Storage.Save("list/c/d", Bytes(1, 1));
+        Storage.Save("lista", Bytes(1, 1));
+        Storage.Save(Long("Q"), Bytes(1, 1));
+        Storage.Save(Long("R"), Bytes(1, 1));
+        // More than an answer has
+        for (var i = 0; i < 1100; i++) Storage.Save($"page/{i}", Bytes(i, 1));
+    }
+    if (time.tick == 8)
+    {
+        Storage.Load("boxes/7");
+        Storage.Load("boxes/7");                    // Asked twice in a tick, answered once
+        Storage.Load("a b/../c");
+        Storage.Load("boxes/none");
+        Storage.Load("con");
+        Storage.Load("a");
+        Storage.Load("a.bin/x");
+        Storage.Load("locked");                     // The host's files say it can't be read
+        Storage.Delete("gone");
+        Storage.Delete(Long("R"));                  // A hashed key's value and the key beside it
+    }
+    if (time.tick == 9)
+    {
+        Storage.List("list/", vault.shelf);
+        Storage.List("list/", vault.shelf);         // Asked twice in a tick, answered once
+        Storage.List("lis", vault.shelf);           // A part's start: "lista" too
+        Storage.List("page/", vault.shelf);         // ...and on from each answer's last key (Count)
+        Storage.List("locked/", vault.shelf);       // The host's files say it can't be listed
+    }
+    if (time.tick == 12)
+    {
+        Storage.Load("gone");
+        Storage.Load("big");
+        Storage.Save("boxes/7", Bytes(4, 1));       // A save takes the place of the one before
+    }
+    if (time.tick == 16) Storage.Load("boxes/7");
+    if (time.tick == 20)
+    {
+        Storage.Save("same", Bytes(50, 2));         // A save then a load of its key in one tick: the load finds it
+        Storage.Load("same");
+    }
+}
+
+// Each answer's handler spawns: two answers in one tick are two crates
+event(Loaded loaded) Take(mut Vault vault)
+{
+    vault.last = loaded.key;
+    if (loaded.failed)
+    {
+        vault.failed += 1;
+        return;
+    }
+    if (!loaded.found)
+    {
+        vault.missing += 1;
+        return;
+    }
+    vault.found += 1;
+    foreach (var b in loaded.bytes) vault.sum += b;
+    if (loaded.key == "same") foreach (var b in loaded.bytes) vault.same += b;
+    vault.crates += 1;
+    Spawn(Crate { size = loaded.bytes.count });
+}
+
+// A listing's keys, and the next page's asked for from its last
+event(Listed listed) Count(mut Shelf shelf)
+{
+    shelf.listings += 1;
+    if (listed.failed)
+    {
+        shelf.failures += 1;
+        return;
+    }
+    if (listed.prefix == "list/")
+    {
+        foreach (var key in listed.keys)
+        {
+            shelf.folder += 1;
+            shelf.folderHash = Mix(shelf.folderHash, key);
+        }
+    }
+    if (listed.prefix == "lis")
+    {
+        foreach (var key in listed.keys)
+        {
+            shelf.partial += 1;
+            shelf.partialHash = Mix(shelf.partialHash, key);
+        }
+    }
+    if (listed.prefix == "page/")
+    {
+        shelf.pages += 1;
+        foreach (var key in listed.keys)
+        {
+            shelf.paged += 1;
+            shelf.pagedHash = Mix(shelf.pagedHash, key);
+        }
+        if (listed.more) Storage.List(listed.prefix, listed.keys[listed.keys.count - 1], this);
+    }
+}

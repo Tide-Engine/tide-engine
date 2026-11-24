@@ -1,5 +1,26 @@
 # Releases, installing and CI
 
+## The iOS app workflow, and the package jobs' Unity iOS step (2026-11-19)
+
+- `.github/workflows/ios-app.yml` is a workflow of its own, started by hand or by `unity/ios-app.mjs`: it builds a
+  Unity iOS player's Xcode project, uploaded as a draft release's files, on `macos-latest`, into an unsigned
+  `.ipa` or a run in the simulator. It publishes nothing and no other workflow depends on it. `notes/unity.md`,
+  iOS players. It was tried before it was on `dev` by pushing copies of it with a `push` trigger to scratch
+  branches (a `workflow_dispatch` only starts a workflow the default branch has).
+- Package jobs gained Try the package (Unity iOS): `compiler/cli/tests/unity_ios_test.mjs` on the Unity sample
+  with the packaged tide, on the Mac for the iOS simulator and again natively, elsewhere natively
+  (`notes/cli-and-packages.md`). About a minute and a half.
+- Runs of one scratch ref wait for each other (`concurrency`'s `serial` group): a run dispatched after a push
+  waits for the last, so cancel the one it replaces.
+
+## The iOS simulator job (2026-11-19)
+
+Build's test matrix has `macos-arm64` / `ios-simulator` (`check.yml`, Test (iOS simulator)): the engine and the
+platform layer with no window of its own, compiled by Xcode's clang, their tests in a simulator
+(`.github/ios-simulator.sh` boots the newest iPhone the image has), then the two libraries for a device's SDK. About
+10 minutes, a sixth macOS job in a run (the account runs five at once). It has no ctest-cost cache and its own
+ccache family. `notes/ios.md`.
+
 ## No real GPU in CI (2026-11-05)
 
 CI tests WebGPU only on software adapters (SwiftShader on Windows and macOS, `gpu=none` on Linux), by the owner's decision: "im not always going to have my computer on and i dont want it stressing it out either so for now i guess CI wont test real GPUs". No self-hosted or GPU job exists, and none gates a release. Real-GPU WebGPU coverage is the local hardware lane (`ctest --preset web-hardware`, `notes/testing.md`, The hardware web lane), which agents run for rendering changes, as they run the native `gpu` tests on Vulkan.
@@ -887,6 +908,9 @@ including playground staging/browser checks, and deployed successfully to Fly.
 
 ## Optional Windows prefab registration (2026-10-13)
 
+Removed 2026-11-16 with the native scene editor (`notes/editors.md`): install.ps1
+registers nothing now. What follows is what it was.
+
 With TIDE_ASSOCIATE_PREFABS=1, install.ps1 registers this user's Tide.Prefab
 ProgID, quoted tide-editor.exe open command and .tprefab/OpenWithProgids entry,
 after a fresh install or successful installer-driven upgrade. It checks that
@@ -1058,3 +1082,14 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
     Local Windows and WSL tests, a preview of the `.116` to `.117` history,
     actionlint (with the existing `queue` exception) and whitespace checks
     validate this change; no Actions run was started for it.
+
+## Packages on other branches (2026-11-15)
+
+A run on a branch other than dev and release claims no version, and its
+JetBrains job built the plugin as `0.0.0-dev` while the packages were
+`<VERSION>-dev`, so every Package job there failed at `cmake/package.cmake`'s
+version check and a dispatched branch run gave no packages. The JetBrains job
+now builds the plugin as `<VERSION>-dev` when no version was claimed (owner,
+2026-11-15), the same as CMakeLists.txt works out in a checkout without tags.
+dev and release are unchanged. To check: a dispatched run on a scratch branch
+has green Package jobs and `tide-<platform>` artifacts.

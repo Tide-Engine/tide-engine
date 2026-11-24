@@ -1,0 +1,4 @@
+// expect: field 'name' is string, not int
+command(string name) Rename(PlayerID sender) { }
+view Ask() { Rename(3); }
+scene Main { }

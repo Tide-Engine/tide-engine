@@ -1,0 +1,7 @@
+// expect: 'Grid3.FromBytes' needs the grid's cell type, as the bytes are cells of one: 'Grid3<Block>.FromBytes(bytes)'
+singleton Field { Grid3<int> cells; List<byte> saved; }
+system Load(mut Field field)
+{
+    field.cells = Grid3.FromBytes(field.saved)!;
+}
+scene Main { }

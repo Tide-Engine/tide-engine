@@ -1,0 +1,23 @@
+// expect: a view can't change the match, and 'Dig' changes its 'chunk''s match fields
+// A task that takes the chunk as mut and writes its grid changes the match: a view can't hand it its chunk, as it
+// can a local task that writes the chunk's local fields alone
+component Chunk
+{
+    int3 at;
+    Grid3<int> blocks = Grid3(16, 16, 16);
+    local int seen;
+}
+async void Dig(mut Chunk chunk, Grid3<int> east)
+{
+    chunk.blocks[int3(1, 1, 1)] = east[int3(0, 0, 0)];
+    await Wait.Ticks(1);
+}
+view Chunks(mut Chunk chunk, query (Chunk other) chunks)
+{
+    foreach (var row in chunks)
+    {
+        if (row.other.at.x != chunk.at.x + 1) continue;
+        Dig(chunk, row.other.blocks);
+    }
+}
+scene Main { }

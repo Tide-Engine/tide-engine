@@ -587,6 +587,9 @@ void tide_gui_set_theme(tide_gui *g, tide_gui_theme theme);
 // Space and Escape, and the d-pad, the left stick and the south and east
 // buttons.
 tide_control tide_gui_control(tide_gui *g, uint32_t id, tide_rect rect);
+// What the GUI's listing (tide_gui_controls) says widget `id` is, and its label, which scripts click it by: said just
+// before the call that makes it, for a GUI.Control that stands for a button or a tab, which has none of its own
+void tide_gui_describe(tide_gui *g, uint32_t id, tide_gui_kind kind, const char *label);
 
 // GUI.Animate: `target`, eased toward from where it was last frame, so a
 // value that jumps (a menu's open state, a bar's fill, a color) moves there
@@ -631,6 +634,8 @@ int tide_gui_begin_key_text(tide_gui *g, uint32_t site, const char *key);
 // Reserve layout space without drawing or registering an interactive widget.
 tide_rect tide_gui_layout_reserve(tide_gui *g, tide_float2 size);
 tide_rect tide_gui_layout_reserve_flexible(tide_gui *g, tide_float2 size, float min_width, bool expand_width);
+// Where the next widget laid out goes (its top left), taking nothing: so a long list lays out only what shows
+tide_float2 tide_gui_layout_next(const tide_gui *g);
 
 // Widgets at a rect (GUI). The ones with a value change it, and return whether
 // they did; a button returns whether it was pressed.

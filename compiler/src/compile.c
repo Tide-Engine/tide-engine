@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "builtins.h"
+#include "tweaks.h"
 #include "asset_cache.h"
 #include "asset_files.h"
 #include "build_code.h"
@@ -60,6 +61,31 @@ static void keep_declarations(program *prog)
     prog->decls.count = kept;
 }
 
+// A build that isn't a dev one (codegen_options.dev) leaves `dev` declarations out before checking, as if they weren't
+// written. The checker holds code without `dev` to not using them in every build (find_named), so leaving them out
+// changes nothing else; what names one anyway is told why (prog->left_out).
+static void leave_out_dev(program *prog)
+{
+    int kept = 0;
+    for (int i = 0; i < prog->decls.count; i++) {
+        decl *const d = prog->decls.items[i];
+        if (d->is_dev) {
+            vec_push(prog->left_out, d);
+            continue;
+        }
+        prog->decls.items[kept++] = d;
+        // ...and a type's dev methods
+        int methods = 0;
+        for (int m = 0; m < d->methods.count; m++) {
+            decl *const method = d->methods.items[m];
+            if (method->is_dev) vec_push(prog->left_out, method);
+            else d->methods.items[methods++] = method;
+        }
+        d->methods.count = methods;
+    }
+    prog->decls.count = kept;
+}
+
 // For another program (tidec --embed): a local handler of each of the match's own events, as it's heard and once it's
 // verified, so the program hears what the game's local handlers would, once each under rollback. Their bodies are
 // generated (gen_heard: tide_embed_heard_<Event>); nothing of them is in the match, as for any local handler.
@@ -102,7 +128,8 @@ static bool compile_inputs_impl(const compile_input *inputs, const int count, co
     for (int i = 0; i < count; i++) {
         if (inputs[i].package) lex_define_package(inputs[i].package);
     }
-    bool web = false, overlay_found = false; // A file names Web.Request's types, which are Tide's own code
+    unsigned stored = 0; // A file loads or lists from the server's store, whose answers' events are Tide's own code too
+    bool web = false; // A file names Web.Request's types, which are Tide's own code
     const char **texts = arena_alloc(sizeof(char *) * (size_t)(count ? count : 1)); // ...or a fill's, which are too
     size_t *lens = arena_alloc(sizeof(size_t) * (size_t)(count ? count : 1));
     for (int i = 0; i < count; i++) {
@@ -111,14 +138,7 @@ static bool compile_inputs_impl(const compile_input *inputs, const int count, co
         src->path = inputs[i].path;
         src->package = inputs[i].package;
         char *text;
-        const bool overlay = opts->editor_source && opts->editor_text &&
-#ifdef _WIN32
-            _stricmp(inputs[i].path, opts->editor_source) == 0;
-#else
-            strcmp(inputs[i].path, opts->editor_source) == 0;
-#endif
-        const char *given = overlay ? opts->editor_text : inputs[i].text;
-        overlay_found |= overlay;
+        const char *given = inputs[i].text;
         if (given) {
             src->len = strlen(given);
             text = arena_alloc(src->len + 1);
@@ -131,6 +151,7 @@ static bool compile_inputs_impl(const compile_input *inputs, const int count, co
         src->text = text;
         diag_add_source(src);
         web |= web_prelude_wanted(text, src->len);
+        stored |= storage_prelude_wanted(text, src->len);
         texts[i] = text;
         lens[i] = src->len;
 
@@ -139,14 +160,18 @@ static bool compile_inputs_impl(const compile_input *inputs, const int count, co
         if (!parse_file(prog, src, toks, false)) return false;
         compile_progress("Parsing Tide", inputs[i].path, i + 1, count);
     }
-    if (opts->editor_source && !overlay_found) {
-        fprintf(stderr, "tide: source overlay is not in the selected project: %s; select the project containing this file or add it to the compiler inputs\n", opts->editor_source);
-        return false;
-    }
     if (web) {
         source *src = NEW(source);
         src->path = WEB_PRELUDE_PATH;
         src->text = web_prelude(&src->len);
+        diag_add_source(src);
+        token *toks = lex(src);
+        if (!toks || !parse_file(prog, src, toks, false)) return false;
+    }
+    if (stored) {
+        source *src = NEW(source);
+        src->path = STORAGE_PRELUDE_PATH;
+        src->text = storage_prelude(stored, &src->len);
         diag_add_source(src);
         token *toks = lex(src);
         if (!toks || !parse_file(prog, src, toks, false)) return false;
@@ -169,17 +194,31 @@ static bool compile_inputs_impl(const compile_input *inputs, const int count, co
     }
 
     diag_phase("lexing and parsing");
-    if (opts->editor_prefab) {
-        source *src = NEW(source);
-        src->path = "<tide-editor-preview>";
-        sb factory = {0};
-        sb_printf(&factory, "%s TideEditorPreviewCreate() { return %sSpawn(%s); }", opts->editor_local ? "LocalEntity" : "Entity", opts->editor_local ? "local " : "", opts->editor_prefab);
-        src->text = factory.data; src->len = factory.len;
-        diag_add_source(src);
-        const int before = prog->decls.count;
-        token *toks = lex(src);
-        if (!toks || !parse_file(prog, src, toks, false)) return false;
-        prog->editor_create = prog->decls.items[before];
+    if (!opts->dev) leave_out_dev(prog);
+    // The game's .tweaks files: in its folder and the folders in it, or beside the files of its own named one by one;
+    // and a dev build's TideTweaks
+    if (!opts->declarations_only) {
+        const char **folders = arena_alloc(sizeof(char *) * (size_t)(count ? count : 1));
+        int folder_count = 0;
+        if (opts->game_folder) folders[folder_count++] = opts->game_folder;
+        for (int i = 0; !opts->game_folder && i < count; i++) {
+            if (inputs[i].package) continue; // A package's files are its own
+            const char *path = inputs[i].path;
+            const char *slash = NULL;
+            for (const char *ch = path; *ch; ch++) {
+                if (*ch == '/' || *ch == '\\') slash = ch;
+            }
+            char *dir = arena_alloc(slash ? (size_t)(slash - path) + 1 : 2);
+            if (slash) {
+                memcpy(dir, path, (size_t)(slash - path));
+                dir[slash - path] = '\0';
+            } else strcpy(dir, ".");
+            bool seen = false;
+            for (int k = 0; k < folder_count && !seen; k++) seen = strcmp(folders[k], dir) == 0;
+            if (!seen) folders[folder_count++] = dir;
+        }
+        if (!tweaks_read(prog, folders, folder_count, opts->game_folder != NULL)) return false;
+        if (opts->dev && (!tweaks_prelude(prog) || !inspect_prelude(prog))) return false;
     }
     if (opts->declarations_only) keep_declarations(prog);
     if (opts->embed && !add_embed_taps(prog)) return false;
@@ -245,10 +284,12 @@ static bool compile_inputs_impl(const compile_input *inputs, const int count, co
 bool compile_inputs(const compile_input *inputs, const int count, const codegen_options *opts, sb *schedule)
 {
     asset_files_use_build_cache(schedule == NULL);
+    asset_files_trust(schedule ? NULL : opts->game_folder); // Its files as its last build recorded them
     if (!schedule && !opts->build_program) asset_cache_tidy(opts->game_folder);
     compile_progress_whole(0); // Parsing counts its files; checking starts the whole compilation's count
     const bool ok = compile_inputs_impl(inputs, count, opts, schedule);
     compile_progress_whole(0);
     asset_files_use_build_cache(false);
+    asset_files_trust(NULL);
     return ok;
 }

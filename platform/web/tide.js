@@ -1556,8 +1556,12 @@
     const STORAGE_BINDING = 1 + 2 * MAX_TEXTURES; // TIDE_GPU_STORAGE_BINDING: storage buffer i is at this + i
     const READ_ARRAY = 6, READ_DEPTH_ARRAY = 7; // TIDE_GPU_READ_ARRAY, _DEPTH_ARRAY: an array's colors, or its depth
     const READ_NUMBER = 9, READ_INT = 10, READ_NUMBER_VOLUME = 11, READ_INT_VOLUME = 12;
+    // TIDE_GPU_READ_NUMBER_ARRAY, _INT_ARRAY: an array's layers loaded, unfilterable floats or ints (a cube of 32-bit
+    // numbers is six of them)
+    const READ_NUMBER_ARRAY = 13, READ_INT_ARRAY = 14;
     const numericVolume = read => read === READ_NUMBER_VOLUME || read === READ_INT_VOLUME;
-    const integerImage = read => read === READ_INT || read === READ_INT_VOLUME;
+    const numericArray = read => read === READ_NUMBER_ARRAY || read === READ_INT_ARRAY;
+    const integerImage = read => read === READ_INT || read === READ_INT_VOLUME || read === READ_INT_ARRAY;
     const readsDepth = read => read === 1 || read === READ_COMPARE || read === READ_SAMPLES || read === READ_DEPTH_ARRAY;
     // A pipeline's samplers where it says none apart (gpu.h's tide_gpu_samplers): texture i that's sampled has sampler i,
     // read as it is, and one that's loaded none (READ_DATA, a binding it hasn't)
@@ -1618,8 +1622,9 @@
                     ? { sampleType: 'float', viewDimension: 'cube' }
                     : read === 8 || numericVolume(read)
                     ? { sampleType: integerImage(read) ? 'sint' : read === 8 ? 'float' : 'unfilterable-float', viewDimension: '3d' }
-                    : read === READ_ARRAY || read === READ_DEPTH_ARRAY
-                    ? { sampleType: read === READ_ARRAY ? 'float' : 'depth', viewDimension: '2d-array' }
+                    : read === READ_ARRAY || read === READ_DEPTH_ARRAY || numericArray(read)
+                    ? { sampleType: read === READ_ARRAY ? 'float' : read === READ_NUMBER_ARRAY ? 'unfilterable-float'
+                        : read === READ_INT_ARRAY ? 'sint' : 'depth', viewDimension: '2d-array' }
                     : { sampleType: read === READ_DATA || integerImage(read) ? 'sint'
                         : read === READ_NUMBER ? 'unfilterable-float' : readsDepth(read) ? 'depth' : 'float',
                         multisampled: read === READ_SAMPLES } });
@@ -1685,6 +1690,12 @@
             bindGroups.set(key, group);
         }
         return group;
+    }
+
+    // Whether a sampler that blends reads a format on every device, as making smaller images does: 32-bit floats
+    // only with 'float32-filterable', which isn't asked for, and integers never
+    function blendedFormat(format) {
+        return !format.endsWith('32float') && !format.endsWith('sint') && !format.endsWith('uint');
     }
 
     // A texture's smaller images, which WebGPU makes none of: each is drawn
@@ -2043,8 +2054,9 @@
         gpu_texture(format, width, height, ptr) {
             // By tide_gpu_format's numbers: a change to the enum goes here
             const usage = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC;
-            const row = width * [4, 1, 2, 16, 8, 4, 16, 4, 4][format];
-            format = ['rgba8unorm', 'r8unorm', 'r16float', 'rgba32sint', 'rgba16float', 'r32float', 'rgba32float', 'r32sint', 'rgba8unorm-srgb'][format];
+            const row = width * [4, 1, 2, 16, 8, 4, 16, 4, 4, 4][format];
+            format = ['rgba8unorm', 'r8unorm', 'r16float', 'rgba32sint', 'rgba16float', 'r32float', 'rgba32float', 'r32sint', 'rgba8unorm-srgb',
+                'rg16float'][format];
             const texture = device.createTexture({ size: [width, height], format, usage });
             const id = gpuAdd('texture', { texture, view: texture.createView(), width, height, row, format, usage,
                 groups: new Set() }); // The bind groups it's in, by their keys
@@ -2094,7 +2106,8 @@
             // those from the start: the samplers that read none of them keep to its own pixels. A change to
             // tide_gpu_color goes here
             // One that's drawn into has the canvas's own bytes, as a target's image has: the pipelines into it are made for those
-            const format = color === 10 ? 'rgba8unorm-srgb' : color === 2 ? 'rgba16float' : 'rgba8unorm';
+            // ...or one of the number formats every device blends (attachmentFormats: 3 to 6)
+            const format = color === 10 ? 'rgba8unorm-srgb' : color >= 2 && color <= 6 ? attachmentFormats[color] : 'rgba8unorm';
             const levels = 1 + Math.floor(Math.log2(size));
             const texture = device.createTexture({ size: [size, size, 6], format, mipLevelCount: levels,
                 usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT });
@@ -2107,7 +2120,7 @@
                 }
                 faces.push(images);
             }
-            if (facesPtr && color !== 2) {
+            if (facesPtr && (color === 1 || color === 10)) {
                 const at = new Uint32Array(memory.buffer, facesPtr, 6);
                 for (let face = 0; face < 6; face++) {
                     const [data, offset] = memoryBytes(at[face], size * size * 4);
@@ -2117,7 +2130,7 @@
             }
             return gpuAdd('texture', { texture, view: texture.createView({ dimension: 'cube' }),
                 base: texture.createView({ dimension: 'cube', mipLevelCount: 1 }), width: size, height: size,
-                row: size * 4, format, layered: faces, bytes: color !== 2, groups: new Set() });
+                row: size * 4, format, layered: faces, bytes: color === 1 || color === 10, groups: new Set() });
         },
         gpu_array(into, width, height, layers, pixelsPtr) {
             // Layers of one size, with a view of them as an array, which is what's sampled, and of each layer's every
@@ -2133,8 +2146,11 @@
                 return gpuAdd('texture', { texture, view: texture.createView({ dimension: '2d-array', aspect: 'depth-only' }),
                     depthLayers: whole, width, height, row: 0, groups: new Set() });
             }
-            const format = (into & 15) === 10 ? 'rgba8unorm-srgb' : (into & 15) === 2 ? 'rgba16float' : 'rgba8unorm';
-            const levels = 1 + Math.floor(Math.log2(Math.max(width, height)));
+            // tide_gpu_color: 3 to 6 are the number formats every device blends, 7 to 9 the 32-bit ones, which have no
+            // smaller images: they're loaded, never blended
+            const kind = into & 15;
+            const format = kind === 10 ? 'rgba8unorm-srgb' : kind >= 2 && kind <= 9 ? attachmentFormats[kind] : 'rgba8unorm';
+            const levels = kind >= 7 && kind <= 9 ? 1 : 1 + Math.floor(Math.log2(Math.max(width, height)));
             const texture = device.createTexture({ size: [width, height, layers], format, mipLevelCount: levels,
                 usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT });
             const each = [];
@@ -2156,9 +2172,10 @@
             }
             const made = { texture, view: texture.createView({ dimension: '2d-array' }),
                 base: texture.createView({ dimension: '2d-array', mipLevelCount: 1 }), width, height, row: width * 4, format,
-                layered: each, bytes: format !== 'rgba16float', groups: new Set(), depthArray: 0 };
+                layered: each, bytes: format === 'rgba8unorm' || format === 'rgba8unorm-srgb', groups: new Set(), depthArray: 0 };
             const id = gpuAdd('texture', made);
-            if (!pixelsPtr) made.depthArray = platform.gpu_array(0, width, height, layers, 0);
+            // ...but a [Linear] read's copy, whose layers are drawn with neither depth nor stencil (gpu.h)
+            if (!pixelsPtr && format !== 'rgba8unorm-srgb') made.depthArray = platform.gpu_array(0, width, height, layers, 0);
             return id;
         },
         // An array of blocks: each layer's whole chain, `bytes` each, one after another (gpu_texture_blocks's, in layers)
@@ -2300,7 +2317,7 @@
                 colors.push(gpuAdd('texture', { texture: of.texture, view, first: view, layer, width: of.width,
                     height: of.height, row: of.width * 4, groups: new Set() }));
             }
-            const depth = gpuAdd('texture', { texture: depthArray.texture, view: depthArray.depthLayers[layer],
+            const depth = !depthArray ? 0 : gpuAdd('texture', { texture: depthArray.texture, view: depthArray.depthLayers[layer],
                 whole: depthArray.depthLayers[layer], width: of.width, height: of.height, row: 0, groups: new Set() });
             return gpuAdd('target', { colors, bytes: !!of.layered && of.bytes, depth, width: of.width, height: of.height,
                 canvas: null, context: null, face: true, layerOf: true });
@@ -2311,15 +2328,19 @@
             const view = of.layered[face < 6 ? face : 0][0];
             const color = gpuAdd('texture', { texture: of.texture, view, first: view, layer: face, width: of.width,
                 height: of.height, row: of.width * 4, groups: new Set() });
-            const texture = depthFor(of.width, of.height, true);
-            const depth = gpuAdd('texture', { texture, view: texture.createView({ aspect: 'depth-only' }),
+            // A depth of its own, but for a [Linear] read's copy, which is drawn with none (gpu.h)
+            const texture = of.format === 'rgba8unorm-srgb' ? null : depthFor(of.width, of.height, true);
+            const depth = !texture ? 0 : gpuAdd('texture', { texture, view: texture.createView({ aspect: 'depth-only' }),
                 whole: texture.createView(), width: of.width, height: of.height, row: 0, groups: new Set() });
             return gpuAdd('target', { colors: [color], bytes: of.bytes, depth, width: of.width, height: of.height, canvas: null,
                 context: null, face: true });
         },
         gpu_mipmaps(id) {
             const t = gpuTables.texture[id];
-            if (t.depthLayers || t.depth) return; // An array of depth alone has none
+            if (!t || t.depthLayers || t.depth) return; // An array of depth alone has none
+            // ...nor an image no sampler blends: 32-bit floats without a feature WebGPU's core hasn't, and integers.
+            // The renderer asks for none of those (blends_target_format in platform.c)
+            if (t.format && !blendedFormat(t.format)) return;
             if (t.layered) { // Each face's or layer's, one from the other, as a texture's are
                 if (t.layered[0].length < 2) return;
                 const pipeline = mipPipeline(t.format);
@@ -2347,7 +2368,7 @@
                 return;
             }
             const levels = 1 + Math.floor(Math.log2(Math.max(t.width, t.height)));
-            if (!t.format || levels < 2) return;
+            if (!t.format || levels < 2 || t.format === 'r32sint' || t.format === 'rgba32sint') return; // No GPU blends ints
             const pipeline = mipPipeline(t.format);
             if (!t.levels) {
                 // A texture has as many images as it was made with, so the first time, one with room for them
@@ -2459,7 +2480,8 @@
                 // A cut-out's alpha is the share of a pixel's samples it draws into, where there are several
                 multisample: { count: b.samples, alphaToCoverageEnabled: b.coverage && b.samples > 1 },
                 // Either side of a triangle tests stencil the same way, against all 8 bits
-                depthStencil: { format: depthFormat(), ...depths[b.depth], depthCompare: depths[b.depth].depthCompare === 'less-equal' && reversedDepth() ? 'greater-equal' : depths[b.depth].depthCompare, stencilFront: b.stencil, stencilBack: b.stencil,
+                // ...and none of either into a [Linear] read's copy, a target with neither (gpu.h)
+                depthStencil: b.into[0] === 'rgba8unorm-srgb' ? undefined : { format: depthFormat(), ...depths[b.depth], depthCompare: depths[b.depth].depthCompare === 'less-equal' && reversedDepth() ? 'greater-equal' : depths[b.depth].depthCompare, stencilFront: b.stencil, stencilBack: b.stencil,
                     stencilReadMask: 0xFF, stencilWriteMask: 0xFF },
             };
             return addPipeline(b, layout, described, false);
@@ -2476,16 +2498,18 @@
                 // depth's, kept from pass to pass, and each color image is what a pass's end resolves its samples
                 // into, a texture as any target's. Its depth is a texture of the program's once it's resolved
                 // (gpu_resolve_depth)
+                // Its format and use are said as a target's of one sample are, so it has smaller images made of what
+                // was resolved (gpu_mipmaps), into whose first a pass resolves (`first`, gpu_begin)
                 const colors = [], sampled = [];
                 for (const format of formats) {
                     const many = device.createTexture({ size: [width, height], format, sampleCount: samples,
                         usage: GPUTextureUsage.RENDER_ATTACHMENT });
-                    const texture = device.createTexture({ size: [width, height], format,
-                        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC
-                            | (['rgba8unorm', 'rgba16float', 'r32float', 'rgba32float', 'r32sint'].includes(format) ? GPUTextureUsage.STORAGE_BINDING : 0) });
+                    const usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC
+                        | (['rgba8unorm', 'rgba16float', 'r32float', 'rgba32float', 'r32sint'].includes(format) ? GPUTextureUsage.STORAGE_BINDING : 0);
+                    const texture = device.createTexture({ size: [width, height], format, usage });
                     sampled.push({ texture: many, view: many.createView() });
                     colors.push(gpuAdd('texture', { texture, view: texture.createView(), width, height, row: width * 4, first: texture.createView({ mipLevelCount: 1 }),
-                        groups: new Set() }));
+                        format, usage, groups: new Set() }));
                 }
                 const many = device.createTexture({ size: [width, height], format: depthFormat(), sampleCount: samples,
                     usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
@@ -2500,9 +2524,10 @@
                 return gpuAdd('texture', { texture, view: texture.createView(), width, height, row: width * 4, format, usage,
                     groups: new Set() });
             });
-            // Its depth is a texture of the program's too: sampled as depth alone, and drawn into whole
-            const texture = depthFor(width, height, true);
-            const depth = gpuAdd('texture', { texture, view: texture.createView({ aspect: 'depth-only' }),
+            // Its depth is a texture of the program's too: sampled as depth alone, and drawn into whole. A [Linear]
+            // read's copy has none (gpu.h)
+            const texture = formats[0] === 'rgba8unorm-srgb' ? null : depthFor(width, height, true);
+            const depth = !texture ? 0 : gpuAdd('texture', { texture, view: texture.createView({ aspect: 'depth-only' }),
                 whole: texture.createView(), width, height, row: 0, groups: new Set() });
             // Only bytes are read back: the first color image, where it's that
             return gpuAdd('target', { colors, bytes: formats[0] === 'rgba8unorm' || formats[0] === 'bgra8unorm', depth, width, height, canvas: null, context: null });
@@ -2510,8 +2535,9 @@
         gpu_target_limit: () => device.limits.maxTextureDimension2D,
         // What the renderer's pools of GPU lists grow to at most (gpu.h, storage_most): a buffer bound whole
         gpu_storage_most: () => Math.min(device.limits.maxStorageBufferBindingSize, device.limits.maxBufferSize),
-        gpu_target_texture: (id, color) => gpuTables.target[id].face ? 0 : gpuTables.target[id].colors[color] || 0,
-        gpu_target_depth: id => gpuTables.target[id].depth,
+        // ...and none for an id that's no target's
+        gpu_target_texture: (id, color) => !gpuTables.target[id] || gpuTables.target[id].face ? 0 : gpuTables.target[id].colors[color] || 0,
+        gpu_target_depth: id => gpuTables.target[id]?.depth || 0,
         // A multisampled target's depth as a texture: WebGPU resolves none, so a pass over a texture of one
         // depth a pixel writes each pixel's first sample there
         gpu_depth_bytes() { return reversedDepth() ? 8 : 4; },
@@ -2581,6 +2607,8 @@
                     for (const key of gpuTables.texture[t.samples].groups) bindGroups.delete(key);
                     gpuRemove('texture', t.samples);
                 }
+            } else if (!t.depth) {
+                // A [Linear] read's copy: no depth to free
             } else if (t.layerOf) { // An array's layer's depth is that layer of the array's, which stays
                 for (const key of gpuTables.texture[t.depth].groups) bindGroups.delete(key);
                 gpuRemove('texture', t.depth);
@@ -2630,7 +2658,8 @@
                 colorAttachments: views.map((view, i) => ({ view: many ? many[i].view : view,
                     resolveTarget: many ? view : undefined, loadOp: load, storeOp: 'store',
                     clearValue: { r: 0, g: 0, b: 0, a: 1 } })),
-                depthStencilAttachment: { view: many ? t.sampledDepth.view : id ? gpuTables.texture[t.depth].whole : t.depth.createView(),
+                // None for a [Linear] read's copy, the one target with no depth (gpu.h)
+                depthStencilAttachment: id && !many && !t.depth ? undefined : { view: many ? t.sampledDepth.view : id ? gpuTables.texture[t.depth].whole : t.depth.createView(),
                     depthLoadOp: load, depthStoreOp: 'store', depthClearValue: reversedDepth() ? 0 : 1,
                     stencilLoadOp: load, stencilStoreOp: 'store', stencilClearValue: 0 },
             };
@@ -2671,7 +2700,7 @@
             const entry = drawing.pipeline;
             const [constant, slope] = drawing.bias || [0, 0];
             let pipeline = entry.pipeline;
-            if (constant || slope) {
+            if ((constant || slope) && entry.described.depthStencil) {
                 const key = `${constant},${slope}`;
                 entry.biases ||= new Map();
                 pipeline = entry.biases.get(key);
@@ -3460,6 +3489,46 @@
     platform.pack_size = () => packBytes ? packBytes.length : 0;
     platform.pack_copy = ptr => { if (packBytes) u8().set(packBytes, ptr); };
 
+    // A dev build's tweaks (tide/tweaks.h) as tide run works them out from the game's .tweaks files, which it
+    // serves, and a value the dev menu changed, which tide writes into its file. A page without tide has neither.
+    let tweakBytes = null;
+    platform.tweaks_copy = (ptr, capacity) => {
+        if (!tweakBytes) return 0;
+        if (tweakBytes.length <= capacity) u8().set(tweakBytes, ptr);
+        return tweakBytes.length;
+    };
+    platform.tweak_write = () => {};
+
+    // A dev build's checkpoints and recordings (tide/checkpoint.h, `kind` 0 and 1), which tide run --web keeps in the
+    // game's folder: one the program saved, on its way there (`saved`: 0 not yet, 1 kept, 2 not), one it asked for,
+    // once it's come (null while it hasn't, or `false` for one that isn't there), and each kind's names, newest first,
+    // a line each. A page without tide keeps none.
+    const checkpoints = { saved: 0, asked: '', bytes: null, names: [new Uint8Array(0), new Uint8Array(0)],
+                          listing: [false, false], listedAt: [-Infinity, -Infinity] };
+    const checkpointKinds = ['checkpoint', 'recording'];
+    platform.checkpoint_save = () => { checkpoints.saved = 2; };
+    platform.checkpoint_saved = () => { const saved = checkpoints.saved; if (saved !== 0) checkpoints.saved = 0; return saved; };
+    platform.checkpoint_fetch = (kind, name) => { checkpoints.asked = `${kind}:${string(name)}`; checkpoints.bytes = false; };
+    platform.checkpoint_copy = (kind, name, ptr, capacity) => {
+        if (`${kind}:${string(name)}` !== checkpoints.asked || checkpoints.bytes === null) return 0;
+        if (checkpoints.bytes === false) {
+            if (ptr) checkpoints.asked = '';
+            return 0xFFFFFFFF;
+        }
+        const size = checkpoints.bytes.length;
+        if (ptr && size <= capacity) {
+            u8().set(checkpoints.bytes, ptr);
+            checkpoints.bytes = null;
+            checkpoints.asked = '';
+        }
+        return size;
+    };
+    platform.checkpoint_list = (kind, ptr, capacity) => {
+        const names = checkpoints.names[kind ? 1 : 0];
+        if (names.length <= capacity) u8().set(names, ptr);
+        return names.length;
+    };
+
     // The files TIDE_FILES names ({ url, size } each, the url with the file's hash in its query, so a
     // browser's cache keeps a build's files until another build's page names others), all at once, counting
     // what's come of them all together.
@@ -3600,8 +3669,56 @@
     // Asks tide for the newest build, and whether to start over, 4 times a
     // second. When tide has stopped, the page stays as it is.
     if (config.reload) {
-        let build = 0, restarts = 0, bytes = null, pack = 0;
+        let build = 0, restarts = 0, bytes = null, pack = 0, tweaks = 0;
         let busy = false, freshRequested = false;
+        // The menu's changes, one after another so the file ends with the last
+        let writes = Promise.resolve();
+        platform.tweak_write = (file, name, value) => {
+            const tweak = string(name); // Read now: the program's strings are gone by the time the fetch goes
+            const query = new URLSearchParams({ file: string(file), name: tweak, value: string(value) });
+            writes = writes.then(() => fetch(`tweak?${query}`, { cache: 'no-store', headers: { 'X-Tide': '1' } }))
+                .then(response => { if (!response.ok) printErr(`tide: couldn't write ${tweak} to its file`); },
+                      () => {});
+        };
+        // Checkpoints and recordings, in the game's folder: saved and read through tide, each kind listed a second at
+        // the most apart
+        const checkpointQuery = (kind, name) => new URLSearchParams({ name, kind: checkpointKinds[kind ? 1 : 0] });
+        platform.checkpoint_save = (kind, name, ptr, size) => {
+            const query = checkpointQuery(kind, string(name));
+            const body = u8().slice(ptr, ptr + size); // Copied now: the program frees them
+            checkpoints.saved = 0;
+            fetch(`checkpoint?${query}`, { method: 'POST', body, cache: 'no-store', headers: { 'X-Tide': '1' } })
+                .then(response => { checkpoints.saved = response.ok ? 1 : 2; checkpoints.listedAt[kind ? 1 : 0] = -Infinity; },
+                      () => { checkpoints.saved = 2; });
+        };
+        const fetchCheckpoint = async (kind, which) => {
+            const asked = `${kind}:${which}`;
+            checkpoints.asked = asked;
+            checkpoints.bytes = null;
+            try {
+                const response = await fetch(`checkpoint?${checkpointQuery(kind, which)}`,
+                                             { cache: 'no-store', headers: { 'X-Tide': '1' } });
+                if (checkpoints.asked === asked) checkpoints.bytes = response.ok ? new Uint8Array(await response.arrayBuffer()) : false;
+            } catch {
+                if (checkpoints.asked === asked) checkpoints.bytes = false;
+            }
+        };
+        platform.checkpoint_fetch = (kind, name) => { fetchCheckpoint(kind ? 1 : 0, string(name)); };
+        const listed = platform.checkpoint_list;
+        platform.checkpoint_list = (kind, ptr, capacity) => {
+            const k = kind ? 1 : 0;
+            if (!checkpoints.listing[k] && performance.now() - checkpoints.listedAt[k] > 1000) {
+                checkpoints.listing[k] = true;
+                fetch(`checkpoints?kind=${checkpointKinds[k]}`, { cache: 'no-store', headers: { 'X-Tide': '1' } })
+                    .then(response => response.ok ? response.arrayBuffer() : null)
+                    .then(names => { if (names) checkpoints.names[k] = new Uint8Array(names); }, () => {})
+                    .finally(() => { checkpoints.listing[k] = false; checkpoints.listedAt[k] = performance.now(); });
+            }
+            return listed(k, ptr, capacity);
+        };
+        // --from: the checkpoint is here before the first build starts, which goes on from it
+        const from = words.indexOf('--from');
+        let fromFetched = from < 0 || from + 1 >= words.length;
         const startFresh = async () => {
             freshRequested = false;
             await replace(bytes, true);
@@ -3611,8 +3728,16 @@
             if (busy) return;
             busy = true;
             try {
-                const [newest, restart, packs] = (await (await fetch('build', { cache: 'no-store' })).text())
+                const [newest, restart, packs, tweaked] = (await (await fetch('build', { cache: 'no-store' })).text())
                     .trim().split(' ').map(Number);
+                // The tweaks' new values, which the running program takes when it next looks (tide/host.h)
+                if (tweaked && tweaked !== tweaks) {
+                    const response = await fetch('tweaks', { cache: 'no-store' });
+                    if (response.ok) {
+                        tweakBytes = new Uint8Array(await response.arrayBuffer());
+                        tweaks = tweaked;
+                    }
+                }
                 // A new pack first (a named file changed, or a build has one), so a new build starts with it
                 if (packs && packs !== pack) {
                     const response = await fetch(`pack-${packs}`, { cache: 'no-store' });
@@ -3621,6 +3746,10 @@
                         pack = packs;
                         if (bytes && exports && exports.tide_pack_changed && !stopped) exports.tide_pack_changed();
                     }
+                }
+                if (!fromFetched) {
+                    fromFetched = true;
+                    await fetchCheckpoint(0, words[from + 1]);
                 }
                 if (newest && newest !== build) {
                     const response = await fetch(`game-${newest}.wasm`, { cache: 'no-store' });

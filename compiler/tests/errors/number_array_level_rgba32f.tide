@@ -1,0 +1,5 @@
+// expect: image 'layers' is read between its smaller images, and Format.Rgba32f has none: read it with Sample(uv, layer) or Filter.Bilinear, or draw the numbers into Format.Rgba16f
+scene Main { }
+local singleton Images { [Raw(float4)] TextureArray layers; }
+frag Read(Vertex vertex,out Color color,Images images) { color=Color(images.layers.SampleLevel(vertex.uv,1,2.0).x,0,0); }
+view Show(mut Images images) { images.layers=TextureArray(8,8,2,Format.Rgba32f); List<Vertex> quad=[Vertex {position=float2(0)},Vertex {position=float2(1,0)},Vertex {position=float2(0,1)}]; Draw.Mesh(quad,[0,1,2],Read); }

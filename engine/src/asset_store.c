@@ -358,12 +358,12 @@ bool tide_asset_unpack_heap(tide_heap *heap, tide_reader *reader, const tide_hea
 
 void tide_asset_origins_retain(tide_asset_origins *origins)
 {
-    if (origins) origins->refs++;
+    if (origins) __atomic_add_fetch(&origins->refs, 1u, __ATOMIC_RELAXED);
 }
 
 void tide_asset_origins_release(tide_asset_origins *origins)
 {
-    if (!origins || --origins->refs) return;
+    if (!origins || __atomic_sub_fetch(&origins->refs, 1u, __ATOMIC_ACQ_REL)) return; // (A world may be let go of on another thread)
     for (uint32_t i = 0; i < origins->room; i++) tide_asset_release(origins->pages[i].data);
     free(origins);
 }
@@ -371,7 +371,7 @@ void tide_asset_origins_release(tide_asset_origins *origins)
 static tide_asset_origins *own_origins(tide_heap *heap, const uint32_t page)
 {
     tide_asset_origins *was = heap->origins;
-    if (was && was->refs == 1u && page < was->room) return was;
+    if (was && __atomic_load_n(&was->refs, __ATOMIC_ACQUIRE) == 1u && page < was->room) return was;
     uint32_t room = was ? was->room : 4u;
     while (room <= page) room *= 2u;
     tide_asset_origins *made = tide_alloc_zeroed(1, sizeof *made + (size_t)room * sizeof *made->pages);
@@ -452,33 +452,30 @@ bool tide_asset_validate_heap(const tide_heap *heap)
 {
     const tide_asset_pool *pool = heap->assets;
     if (!pool || !pool->count) return true; // Ordinary heaps retain their existing unpack path.
-    if (pool && pool->count > heap->used / 64u) return false;
-    const uint64_t cells = (heap->used + 15u) / 16u;
+    const uint64_t extent = (uint64_t)heap->pages << TIDE_HEAP_PAGE_SHIFT;
+    if (pool && pool->count > extent / 64u) return false;
+    const uint64_t cells = (extent + 15u) / 16u;
     if ((cells + 7u) / 8u + 1u > SIZE_MAX) return false;
     uint8_t *released = tide_alloc_zeroed((size_t)((cells + 7u) / 8u + 1u), 1u);
     bool ok = true;
-    for (uint32_t chain = 0; ok && chain <= TIDE_HEAP_CLASSES; chain++) {
-        uint64_t at = chain == TIDE_HEAP_CLASSES ? heap->pending : heap->free[chain];
-        while (at) {
-            if (at < 16u || at % 16u || at > heap->used || heap->used - at < sizeof(tide_block)) { ok = false; break; }
-            const uint64_t cell = at / 16u;
-            const uint8_t bit = (uint8_t)(1u << (cell % 8u));
-            if (released[cell / 8u] & bit) { ok = false; break; }
-            released[cell / 8u] |= bit;
-            at = tide_block_next(tide_heap_block(heap, at));
-        }
+    // The blocks waiting to be freed (each page's free ones are its own, tide_heap_handed_out)
+    for (uint64_t at = heap->pending; ok && at;) {
+        if (at % 16u || !tide_heap_has(heap, at, sizeof(tide_block))) { ok = false; break; }
+        const uint64_t cell = at / 16u;
+        const uint8_t bit = (uint8_t)(1u << (cell % 8u));
+        if (released[cell / 8u] & bit) { ok = false; break; }
+        released[cell / 8u] |= bit;
+        at = tide_block_next(tide_heap_block(heap, at));
     }
     for (uint32_t i = 0; ok && pool && i < pool->slots; i++) {
         const tide_asset_entry entry = pool->entries[i];
         for (uint32_t j = 0; ok && entry.data && j < entry.users; j++) {
             const uint64_t at = entry.blocks[j];
-            if (at < 16u || at % 16u || at > heap->used || heap->used - at < 64u) { ok = false; break; }
+            if (at % 16u || !tide_heap_has(heap, at, 64u) || !tide_heap_handed_out(heap, at, 2u)) { ok = false; break; }
             const uint64_t cell = at / 16u;
             const uint8_t bit = (uint8_t)(1u << (cell % 8u));
             if (released[cell / 8u] & bit) { ok = false; break; }
             released[cell / 8u] |= bit;
-            const tide_page *page = heap->page[at >> TIDE_HEAP_PAGE_SHIFT];
-            if (64u > page->size - (at - ((uint64_t)page->first << TIDE_HEAP_PAGE_SHIFT))) { ok = false; break; }
             const tide_block *block = tide_heap_block(heap, at);
             if (tide_block_class(block) != 2u || block->b != TIDE_LIST_ASSET || block->a != entry.data->count
                 || memcmp(block + 1, entry.data->id, 32) != 0) ok = false;

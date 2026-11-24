@@ -15,8 +15,6 @@ singleton Round
 
 event RoundStarted { }
 event Boost { }
-command StartRound { }
-command Dash { }
 
 scene Main { }
 
@@ -25,7 +23,7 @@ event(Spawned) Setup(with Main)
     for (var i = 0; i < 3; i++) Spawn(Runner { angle = i * 2.1 });
 }
 
-command(StartRound start, PlayerID sender) Begin(mut Round round)
+command() StartRound(mut Round round, PlayerID sender)
 {
     if (round.busy) return;
     round.busy = true;
@@ -47,7 +45,7 @@ async event(RoundStarted) Countdown(mut Round round)
     round.busy = false;
 }
 
-command(Dash dash, PlayerID sender) DashRunner(with Runner)
+command() Dash(PlayerID sender, with Runner)
 {
     this.Send(Boost { });
 }
@@ -80,7 +78,7 @@ view Runners(Runner runner, Round round, Devices devices)
     var at = float2(Math.Cos(runner.angle), Math.Sin(runner.angle)) * 1.5;
     Draw.Circle(at, 0.16, runner.speed > 1 ? Color.white : Color(0.98, 0.75, 0.14));
     var pointer = Draw.ScreenToWorld(Screen.Flip(devices.pointer.position));
-    if (round.running && devices.pointer.press.down && Math.Distance(pointer, at) < 0.4) this.Send(Dash { });
+    if (round.running && devices.pointer.press.down && Math.Distance(pointer, at) < 0.4) Dash();
 }
 
 view Controls(Round round)
@@ -91,6 +89,6 @@ view Controls(Round round)
     GUI.SetTheme(GUITheme { radius = 6 });
     GUI.Disabled(round.busy)
     {
-        if (GUI.Button(Rect(16, Screen.height - 48, Screen.width - 32, 32), "Start the round")) Send(StartRound { });
+        if (GUI.Button(Rect(16, Screen.height - 48, Screen.width - 32, 32), "Start the round")) StartRound();
     }
 }

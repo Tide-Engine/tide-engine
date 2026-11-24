@@ -11,6 +11,12 @@ typedef struct tide_color {
     float r, g, b, a;
 } tide_color;
 
+// `a == b` in Tide: every channel, alpha too.
+static inline bool tide_equal_color(const tide_color a, const tide_color b)
+{
+    return (a.r == b.r) & (a.g == b.g) & (a.b == b.b) & (a.a == b.a);
+}
+
 // Color.white and friends, with Unity's values.
 #define TIDE_COLOR_WHITE ((tide_color){1.0f, 1.0f, 1.0f, 1.0f})
 #define TIDE_COLOR_BLACK ((tide_color){0.0f, 0.0f, 0.0f, 1.0f})
@@ -39,6 +45,9 @@ static inline tide_color tide_color_with_alpha(const tide_color c, const float a
 {
     return (tide_color){c.r, c.g, c.b, alpha};
 }
+
+// color.rgb: its red, green and blue as a float3.
+static inline tide_float3 tide_color_rgb(const tide_color c) { return (tide_float3){c.r, c.g, c.b}; }
 
 static inline tide_color tide_add_color(const tide_color a, const tide_color b)
 {

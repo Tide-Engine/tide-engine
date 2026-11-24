@@ -122,6 +122,17 @@ system CheckWorkers(WorkerLink link, World world, mut Probe probe)
         || world.Get<Self>(link.child).value != link.child || world.Get<Self>(this).value != this) probe.invalidWorker = true;
 }
 
+// A function's prefab load is the match's unless it says whose; its unload goes by the entity
+LocalEntity LoadLocalDescendants()
+{
+    return local Scene.Load(LocalDescendants);
+}
+
+void UnloadLocal(LocalEntity scene)
+{
+    Scene.Unload(scene);
+}
+
 view LocalSetup(mut LocalProbe probe)
 {
     if (!probe.started)
@@ -131,11 +142,11 @@ view LocalSetup(mut LocalProbe probe)
         probe.loaded = Scene.Load(SharedTree, Data { value = 21 });
         probe.started = true;
     }
-    if (probe.unload) { Scene.Unload(probe.loaded); probe.unload = false; }
+    if (probe.unload) { UnloadLocal(probe.loaded); probe.unload = false; }
     if (probe.spawnDescendants)
     {
         probe.descendants = local Spawn(LocalDescendants);
-        probe.descendantsAgain = Scene.Load(LocalDescendants);
+        probe.descendantsAgain = LoadLocalDescendants();
         probe.spawnDescendants = false;
     }
 }

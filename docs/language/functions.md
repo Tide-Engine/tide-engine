@@ -130,7 +130,7 @@ system Regenerate(mut Unit unit)
 - A parameter can be `out`, which gives the caller's variable its value: see [Out parameters](#out-parameters).
 - A function shares its name with nothing else in its namespace but other functions, and a method never with a field.
 
-Functions work from their parameters, constants and the functions they call; methods also see their own fields. To read or update another entity's component, take the caller's [`World`](../game/systems.md#other-entities-the-world) explicitly: reads use `World`, and `Set` needs `mut World`. What the helper reaches counts toward the caller's access, and a view can't call a helper that writes the match. A function can draw and use the GUI, and then only views, and other functions like it, can call it. A function can also send events, spawn and change entities, and start tasks, as the code that calls it could: see [Sending and spawning](#sending-and-spawning). [Async functions](../game/tasks.md#async-functions) run as tasks and have their world's entity operations.
+Functions work from their parameters, constants and the functions they call; methods also see their own fields. To read or update another entity's component, take the caller's [`World`](../game/systems.md#other-entities-the-world) explicitly: reads use `World`, and `Set` and `Edit` need `mut World`. What the helper reaches counts toward the caller's access, and a view can't call a helper that writes the match. A function can draw and use the GUI, and then only views, and other functions like it, can call it. A function can also send events, spawn and change entities, and start tasks, as the code that calls it could: see [Sending and spawning](#sending-and-spawning). [Async functions](../game/tasks.md#async-functions) run as tasks and have their world's entity operations.
 
 A helper can `Set<T>` beside either a read-only or mutable component parameter. A read-only parameter keeps its captured value; setting the current entity replaces its active `mut T` parameter immediately. This follows through synchronous helper chains, including when the mutable parameter is passed by reference to another helper. Ordinary value parameters and explicit copies keep their own values. Later world reads see the Set immediately, while subsequent edits to the mutable parameter retain normal write-back timing.
 
@@ -265,8 +265,8 @@ Nothing is wrong with such a function by itself. A call is an error only from a 
 
 | The function | Who can call it |
 | --- | --- |
-| Sends a match event, or spawns or changes the match's entities | Match systems, event handlers, command handlers and the match's tasks |
-| Sends a local event or a [command](../game/commands.md), or spawns or changes local entities | Views, local handlers and this machine's tasks |
+| Sends a match event, or spawns or changes the match's entities | Match systems, event handlers, commands and the match's tasks |
+| Sends a local event, calls a [command](../game/commands.md), or spawns or changes local entities | Views, local handlers and this machine's tasks |
 | Does neither | Anything, as before |
 
 ```csharp
@@ -277,6 +277,7 @@ view Hud(Kitchen kitchen)
 ```
 
 - **It follows calls.** A function that calls one that sends counts as sending too, through however many.
+- **A function that calls a command is local code's.** A system calls the command itself, which queues it for the end of the tick (see [Commands](../game/commands.md#from-systems-and-bots)); calling such a function from a system is an error that says so.
 - **Which world** is told by what's written: a match event or a local one, an `Entity` or a `LocalEntity`, the match's components or local ones. A `Spawn` with no components is the match's.
 - **A function has no `this`.** It takes the entity as a parameter, `Entity target`, and writes `target.Send(...)`. A component's method has `this`, the entity it's called for.
 - **What it spawns joins the scene of the entity its caller runs for**, as the caller's own spawns do.

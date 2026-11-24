@@ -1,3 +1,11 @@
+## Checkpoints on a page (2026-11-17)
+
+`tide.js` gives every program `checkpoint_save`, `checkpoint_saved`, `checkpoint_fetch`, `checkpoint_copy` and
+`checkpoint_list` (stubs keep nothing); the `tide run` block replaces them with requests to tide's server, with the
+X-Tide header, and fetches a `--from` checkpoint before the first build starts. `tide.release.js` regenerated.
+Each takes a kind first (0 a checkpoint, 1 a recording, 2026-11-17), with a list per kind.
+notes/standard-host.md, Checkpoints.
+
 ## [Linear] images (2026-11-14)
 
 WebGPU uploads `TIDE_GPU_SRGBA8` as rgba8unorm-srgb; private GPU color 10 is the same sRGB attachment format

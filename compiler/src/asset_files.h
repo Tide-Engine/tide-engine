@@ -42,17 +42,28 @@ typedef enum asset_kind {
     ASSET_TEXTURE_ARRAY,
 } asset_kind;
 
+// An image's texture as the build's cache has it prepared (texture_cache.h), known by its entry's first bytes: its
+// size and how it's kept, the content that tells it in a pack, and the entry's key, which finds its pixels.
+typedef struct asset_prepared {
+    uint32_t width, height;
+    uint32_t format, levels, bytes; // Its blocks' (tide/texture_blocks.h), or 0, 0 and its RGBA's bytes
+    bool linear, raw;
+    uint8_t content[32], key[32];
+} asset_prepared;
+
 typedef struct asset_match {
     const char *key;      // The path as written from the declaring file, forward slashes: a map's key. A URL as it is.
     const char *abs;      // Where the bytes were read from
-    const uint8_t *data;  // File bytes, or an imported Clip's PCM WAV (kept until the file changes)
+    // File bytes, or an imported Clip's PCM WAV (kept until the file changes). NULL for a Texture or a Mesh whose
+    // import the cache had, where the file is as a build recorded it (asset_files_trust): asset_match_bytes reads
+    // them when something wants them after all. `size` is the file's either way.
+    const uint8_t *data;
     size_t size;
     uint8_t hash[32];     // SHA-256 of the original file bytes
     tide_png_image image; // ASSET_GRID and ASSET_TEXTURE: its pixels
     tide_texture_blocks image_mips; // Optional authored full RGBA8 chain, straight samples; cache-owned.
-    const uint8_t *prepared_texture; // Checked draw-only texture payload; pixels may stay undecoded.
-    size_t prepared_texture_size;
-    bool prepared_raw;
+    bool has_prepared;       // A draw-only texture the cache has: its pixels stay in the cache's file, undecoded
+    asset_prepared prepared; // ...and what its entry says of it
     mesh_file mesh;       // ASSET_MESH: its vertices and triangles, which stay until the file changes, as its bytes do
     const uint8_t *skinned;
     uint32_t skinned_size;
@@ -118,6 +129,18 @@ void asset_watched(const char *declaring, str path, asset_path_fn found, void *u
 // same way; what's wrong with one is said when an asset reads it.
 void asset_files_decode_ahead(const char *const *declaring, const str *paths, int count, const char *game_folder);
 
+// The skinned models a [Parts] declaration will ask for (asset_choose_parts, then asset_resolve), looked for in the
+// build's cache ahead, at once: each a file `path` names from the file `declaring` (one file: a glob's or a URL's
+// is left to its declaration) with the patterns its Parts has. After asset_files_decode_ahead, which reads the
+// files' hashes. What's found is what asset_resolve would read from the cache, taken by it when it's asked.
+typedef struct asset_parts_wanted {
+    const char *declaring;
+    str path;
+    const str *patterns;
+    int count;
+} asset_parts_wanted;
+void asset_files_parts_ahead(const asset_parts_wanted *wanted, int count, const char *game_folder);
+
 // Whether `path` (forward slashes) matches the glob `pattern`: `*` within a
 // name, `**` across folders, `?` a character; Windows paths ignore case.
 bool asset_glob_match(const char *pattern, const char *path);
@@ -148,3 +171,26 @@ void asset_files_changed(const char *path);
 // prepared Texture instead of float pixels. Off for direct importer/editor
 // callers and inspection-only checks.
 void asset_files_use_build_cache(bool enabled);
+
+// A build with the cache on takes a file's hash from the game's record of it (<game>/.tide/assets.times) where the
+// file's size and last-write time are as recorded, without reading it, as git takes a file to be unchanged by
+// them (owner, 2026-11-17). asset_files_trust reads the record for the compilation that follows, or lets go of it
+// for NULL; asset_files_save_times writes it from the files read and taken so far. A file is recorded only where
+// it was read at least two seconds after it was last written: one written again inside the time its file system
+// can tell apart is read again next time, as git reads a file as new as its index.
+void asset_files_trust(const char *game_folder);
+void asset_files_save_times(const char *game_folder);
+
+// The SHA-256 of the file at `path`, as reading an asset's file gives it: from the game's record where the file is
+// as recorded, else read. False where there's no file, or it can't be read.
+bool asset_file_hash(const char *path, uint8_t hash[32]);
+
+// The SHA-256 of an imported model's bytes (asset_match.skinned), worked out once for each run of bytes, by where
+// they are: megabytes each, which the simulation's identity, the model's meshes, their levels and its block in the
+// pack each ask for. asset_bytes_hash_forget starts afresh, for a compilation whose bytes are other ones.
+void asset_bytes_hash(const uint8_t *bytes, size_t size, uint8_t hash[32]);
+void asset_bytes_hash_forget(void);
+
+// An item's file bytes, read now where they weren't (asset_match.data): NULL where the file can't be read. Called
+// from several threads only for items whose bytes are there already.
+const uint8_t *asset_match_bytes(const asset_match *item, size_t *size);

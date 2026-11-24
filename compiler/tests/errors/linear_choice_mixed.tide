@@ -1,0 +1,6 @@
+// expect: this switch picks between images of different roles: [Linear] on some and not on the others
+[Linear] asset Texture lit = "../e2e/assets/hero.png";
+asset Texture plain = "../e2e/assets/hero.png";
+local singleton Art { [Linear] Texture pick; int which; }
+scene Main { }
+view V(mut Art art) { art.pick = art.which switch { 0 => lit, _ => plain }; }

@@ -1,0 +1,13 @@
+// expect: 'Shiny' uses the local fields of 'Painted', and a frag or vert hands a function those only with a component that holds a texture or a list
+// expect: read the local field in the vert and pass what it holds
+// The same for a component's, from a vert
+scene Main { }
+component Painted { float gloss; local float shine; }
+local singleton Scenery { List<Vertex3> mesh; }
+float Shiny(Painted painted) { return painted.shine * painted.gloss; }
+vert Raise(mut Vertex3 vertex, Painted painted)
+{
+    vertex.position.y += Shiny(painted);
+}
+event(Spawned) Setup(with Main) { Spawn(Painted); }
+view Show(Scenery scenery, with Painted) { Draw.Mesh(scenery.mesh, [0, 1, 2], float4x4.identity, Raise); }

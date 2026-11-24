@@ -25,9 +25,10 @@ typedef struct codegen_options {
     // With line_directives: write the plumbing, all but the game's own code, as <name>_plumbing.c, for a debug build
     // to compile optimized while the game's code (<name>.c) stays as it was written (plumbing_split.inc).
     bool split_plumbing;
+    bool split_own_code;           // With split_plumbing and split_code: the game's own code in parts too, as the plumbing is
     bool split_code; // Stable generated C partitions, listed in <name>_parts.txt.
     size_t split_code_min_bytes; // Smaller files stay whole (CLI only; tidec splits explicitly).
-    int split_code_parts;          // The most parts of the code: a power of two up to 16 (0: 4).
+    int split_code_parts;          // The most parts of the code: a power of two up to 32 (0: 4).
     size_t split_code_part_bytes;  // Fewer parts where they'd have less code than this each (0: always the most).
     bool visualizers;        // Also write <name>.natvis and <name>_lldb.py: how debuggers show the game's values.
     bool layout;             // Describe the data layout as tide_game_layout (tide/layout.h), for hot reloading.
@@ -63,12 +64,12 @@ typedef struct codegen_options {
     int define_count;
     const uint8_t *external_identity; // Optional SHA-256 of game C/headers/libraries, independent of target.
     const char *scene; // Explicit startup prefab or scene, overriding settings.startScene and Main.
-    const char *editor_prefab; // Internal native-editor build: qualified prefab to instantiate without gameplay startup.
-    bool editor_local;
-    const char *editor_source, *editor_text; // Unsaved source overlay, retaining the original path and asset scope.
     // The game's types alone: its systems, views, handlers, functions, frags and verts are left out before checking,
     // so code that doesn't build yet doesn't keep its types from building (tide unity --declarations)
     bool declarations_only;
+    // A dev build (tidec --dev): `dev` declarations are in it. Without it they're left out; code without `dev` can't
+    // use them either way
+    bool dev;
     // Build code (build_code.h): how its program is compiled, which a build that has none can't run. The C compiler,
     // as a command (NULL-terminated: {"clang"}, or {"tide", "cc"}), with flags for every compile and link (a target,
     // a sysroot) and for the link alone (its libraries), each NULL-terminated or NULL; and where the engine's

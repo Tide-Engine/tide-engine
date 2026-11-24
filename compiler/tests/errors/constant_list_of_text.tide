@@ -1,0 +1,4 @@
+// expect: a constant list holds plain values, not string: they're the build's bytes, the same on every machine
+// expect: for text, a switch expression on the index picks one
+const List<string> NAMES = ["Easy", "Hard"];
+scene Main { }

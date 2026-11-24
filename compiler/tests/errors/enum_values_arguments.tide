@@ -1,0 +1,5 @@
+// expect: Direction.Values() takes no arguments or type arguments
+enum Direction { North, East }
+singleton Match { int n; }
+scene Main { }
+system S(mut Match match) { foreach (var d in Direction.Values(2)) match.n++; }

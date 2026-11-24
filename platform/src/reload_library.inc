@@ -216,6 +216,9 @@ static bool keep_library(const char *from, const char *to)
 // lines of each library it loads, and what goes wrong loading one. Unset, both go to stderr alone.
 static void (*library_heard)(const char *text);
 static void (*library_problem)(const char *text);
+// Which tide built the host, as it says (tide_run_desc.made_by, tide_embed_made_by): the libraries it loads say the
+// same (TIDE_HOST_LIBRARY_MADE_BY). NULL takes any
+static const char *library_made_by;
 
 // A line about a library that didn't load: to stderr, and to the host's own listener
 static void library_say(const char *format, ...) __attribute__((format(printf, 1, 2)));
@@ -271,6 +274,26 @@ static const tide_host_game *load(const uint32_t build, void **library, const bo
         library_close(opened);
         if (fresh) remove(path);
         return NULL;
+    }
+    // ...and by the very tide that built the host, where the host says which that is: another build of tide can lay
+    // the same tables out alike and mean something else by them
+    if (library_made_by) {
+        const library_fn said = library_find(opened, TIDE_HOST_LIBRARY_MADE_BY);
+        const char *(*made_by)(void) = NULL;
+        memcpy(&made_by, &said, sizeof made_by);
+        const char *theirs = made_by ? made_by() : NULL;
+        if (!theirs || strcmp(theirs, library_made_by) != 0) {
+            char published[4096]; // The build as tide wrote it, which the copy that was opened is of
+            library_path(build, published, sizeof published);
+            library_say("tide: %s was built by tide %s, and what runs it by tide %s, so it isn't loaded: tide was "
+                        "installed again, or another one took its place, since the game started. Stop the game and "
+                        "start it again once tide has built it (in Unity: leave Play, wait for tide's build, and "
+                        "enter Play again), so that one tide built both",
+                        published, theirs ? theirs : "of before libraries said which (an older one)", library_made_by);
+            library_close(opened);
+            if (fresh) remove(path);
+            return NULL;
+        }
     }
     *library = opened;
     const tide_host_game *loaded = game();

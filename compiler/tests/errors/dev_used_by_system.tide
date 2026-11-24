@@ -1,0 +1,15 @@
+// expect: 'GiveAmmo' is 'dev', which builds without dev leave out, so 'Reload' can't use it
+// expect: mark 'Reload' 'dev' too, or leave 'GiveAmmo' to dev code
+// build: dev
+component Gun { int ammo; }
+scene Main { }
+
+dev command(int amount) GiveAmmo(mut Gun gun, PlayerID sender)
+{
+    gun.ammo += amount;
+}
+
+system Reload(Gun gun)
+{
+    if (gun.ammo == 0) GiveAmmo(30);
+}

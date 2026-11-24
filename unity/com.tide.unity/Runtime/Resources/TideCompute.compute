@@ -7,18 +7,20 @@
 #pragma kernel TideVolumeClearInt
 #pragma kernel TideVolumeCopy
 #pragma kernel TideVolumeCopyInt
+#pragma kernel TideIntsTo2D
+#pragma kernel TideIntsToArray
+#pragma kernel TideIntsTo3D
 
 ByteAddressBuffer _TideFrom;
 RWByteAddressBuffer _TideTo;
 uint4 _TideCopy; // The byte it reads from, the byte it writes from, how many words, and the groups along x
+uint4 _TideCopySizes; // The two buffers' bytes, which TideRender.cs says: Metal's shaders can't ask a buffer its size
 
 [numthreads(64, 1, 1)]
 void TideCopy(uint3 group : SV_GroupID, uint thread : SV_GroupIndex)
 {
     uint i = (group.y * _TideCopy.w + group.x) * 64u + thread;
-    uint from, to;
-    _TideFrom.GetDimensions(from);
-    _TideTo.GetDimensions(to);
+    uint from = _TideCopySizes.x, to = _TideCopySizes.y;
     uint read = _TideCopy.x + 4u * i, written = _TideCopy.y + 4u * i;
     if (i < _TideCopy.z && read + 4u <= from && written + 4u <= to) _TideTo.Store(written, _TideFrom.Load(read));
 }
@@ -69,4 +71,47 @@ void TideVolumeCopyInt(uint3 at : SV_DispatchThreadID)
     _TideVolumeToInt.GetDimensions(x, y, z);
     if (all(at < uint3(width, height, depth)) && all(written < uint3(x, y, z)))
         _TideVolumeToInt[written] = _TideVolumeFromInt.Load(int4(at, 0));
+}
+
+// Unity makes no Texture2D, Texture2DArray or Texture3D of an integer format (it refuses them for Sample usage), so
+// an integer image is a render texture, and these copy a box of its pixels into it from a raw buffer: a word or four
+// a pixel, row after row from the top, then layer after layer. Cells outside the image are left out.
+ByteAddressBuffer _TideIntsFrom;
+RWTexture2D<int4> _TideIntsTo2D;
+RWTexture2DArray<int4> _TideIntsToArray;
+uint4 _TideIntsBox;  // Where the box starts (x, y, then a layer or z) and the words a pixel, 1 or 4
+uint4 _TideIntsSize; // The box's width, height and depth
+
+int4 TideIntsAt(uint3 at)
+{
+    uint word = ((at.z * _TideIntsSize.y + at.y) * _TideIntsSize.x + at.x) * _TideIntsBox.w;
+    if (_TideIntsBox.w == 4u) return asint(_TideIntsFrom.Load4(word * 4u));
+    return int4(asint(_TideIntsFrom.Load(word * 4u)), 0, 0, 0);
+}
+
+[numthreads(8, 8, 4)]
+void TideIntsTo2D(uint3 at : SV_DispatchThreadID)
+{
+    uint width, height;
+    _TideIntsTo2D.GetDimensions(width, height);
+    uint2 written = _TideIntsBox.xy + at.xy;
+    if (all(at < _TideIntsSize.xyz) && all(written < uint2(width, height))) _TideIntsTo2D[written] = TideIntsAt(at);
+}
+
+[numthreads(8, 8, 4)]
+void TideIntsToArray(uint3 at : SV_DispatchThreadID)
+{
+    uint width, height, layers;
+    _TideIntsToArray.GetDimensions(width, height, layers);
+    uint3 written = _TideIntsBox.xyz + at;
+    if (all(at < _TideIntsSize.xyz) && all(written < uint3(width, height, layers))) _TideIntsToArray[written] = TideIntsAt(at);
+}
+
+[numthreads(8, 8, 4)]
+void TideIntsTo3D(uint3 at : SV_DispatchThreadID)
+{
+    uint width, height, depth;
+    _TideVolumeToInt.GetDimensions(width, height, depth);
+    uint3 written = _TideIntsBox.xyz + at;
+    if (all(at < _TideIntsSize.xyz) && all(written < uint3(width, height, depth))) _TideVolumeToInt[written] = TideIntsAt(at);
 }

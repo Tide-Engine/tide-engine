@@ -65,7 +65,7 @@ set_source_files_properties(src/asset_cache.c PROPERTIES COMPILE_DEFINITIONS
 
 # Web and Android builds use a native tidec instead (cmake/HostTidec.cmake),
 # and the language server and tide run natively, so only native builds have them.
-if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID AND NOT TIDE_IOS)
     # Assets: tidec reads PNG/PSD itself, imports JPEG/TGA/BMP pixels and
     # converts MP3/FLAC into PCM WAV, then writes
     # its pack with the engine's own builder (tide/png.h, tide/pack.h), so what

@@ -1,3 +1,279 @@
+# Review of the format and role work: locals, cycles, choices, typed roles (2026-11-15)
+
+A review of 2a9255e33, f5bd8b149 and 9ef197989 reported twelve faults; each was probed with tidec first and all were
+real. What follows replaces the two sections below where they differ.
+
+- **Each place is followed once a query** (`image_places_begin`/`image_place_again`, shader_kernel.inc, declared in
+  ast.h). Every walker (`origins_target_format`, `origins_storage_format`, `numeric_origins`, check.c's
+  `linear_origins_format`) asks before following a field's, a parameter's or a local's origins, keyed by the place
+  and the image index; one followed already adds nothing (-3, 0 or false). A query starts at depth 0 (every caller
+  passes 0). `note_image_place` records a place when the argument is the callee's own parameter, so a recursive
+  helper's parameter had itself among its origins: the depth limit made the target unknown (an int frag into an
+  R32i field handed to `void Touch(mut RenderTarget t, int n)` was "isn't fixed"), and `numeric_image_origin`
+  followed every path, 43 s for two self-calls and no end for three. Fields assigned from each other (a ping-pong
+  pair swapped through a local) were the same cycle. The visited list is a static array reused each query (the
+  checker runs on one thread), on its own heap and not the arena's: tidels resets the arena between analyses, and
+  an arena vector there was a use after free (`lsp_cubemaps` under ASan, a crash on MinGW).
+- **A local is followed as a field is.** `stmt.image_assignments` holds what `check_assign` gives an image local
+  (`note_local_origin`) and the places `note_image_place` now makes for a local argument; a local's origins are its
+  initializer and those, whether or not it's `assigned`. It was the initializer alone where the local wasn't
+  assigned and unknown where it was, so `mut RenderTarget t = RenderTarget(8, 8, 1); Remake(t);` (R32i) took a Color
+  frag (skipped as it ran) and refused an int one as Rgba8's, `Make(out var t)` had no format at all, and a kernel's
+  store into a volume re-made that way declared rgba16float and dropped every write. Union semantics, as a field's:
+  that local now has no one format, which a Color draw that may reach numbers, a kernel store, `Read<T>` and
+  `[Linear]` refuse; `RenderTarget t; Make(out t);` and `t = RenderTarget(...)` after a declaration are known.
+- **An unseen maker is named.** A place whose callee is C, virtual or an override keeps that decl in its `method`;
+  `note_unseen_image_maker` (after every "isn't fixed" error, and the [Linear] one) says which function and why.
+  A Color frag's error into a target that may hold numbers says that, not "this numeric frag".
+- **Choices of images.** `check_conditional` and `check_switch_value` hold a grid of numbers on any side to the
+  `[Raw(T)]` the choice goes to (`number_grid_value` handed on to each side, nested too), where a Texture and a
+  `Grid2<float2>` side typed the choice Texture and the grid went in unchecked (drawn as colors; a `Grid2<int>` got
+  the fallback). `note_role_use` returns T_ERR for a mixed choice, so it's one error: `raw_and_linear` names a
+  `[Raw]` side and a `[Linear]` one (three errors before), `raw_types_mixed` two typed sides of different T.
+- **Typed roles through locals and parameters.** `declared_image_type` (shader.c, `image_type_of`) follows a local
+  that isn't mut and a choice's first arm, as `declared_role` does, so `Texture t = art.i;` is a `[Raw(int)]` frag
+  source. A CPU function's `[Raw(T)]` parameter takes a `[Raw(T)]` image of its T (`check_raw_uses`, the error
+  names both roles otherwise), and `check_role_argument` refuses a typed image for a bare `[Raw]` parameter, which
+  would have read its numbers as colors.
+- **Several textures to a frag** (merged with b671bed0b): `check_raw_uses`, `check_linear_uses`, `check_blit`,
+  `check_mesh_draw` and `gen_shader_textures` hold each given texture to the frag parameter that reads it
+  (`given_param`, `shader_given_texture`), not to every marked parameter; a vert's and a frag's Texture of one name
+  with the frag's `[Raw]` or `[Linear]` is the two-roles error.
+- **Tests:** errors `image_recursive_helper_output`, `image_recursive_helper_paths` (60 s timeout: the unfixed tidec
+  never ends), `image_fields_cycle_output`, `image_out_local_output`, `image_out_var_output`,
+  `image_assigned_local_output`, `image_out_local_clear`, `image_mut_local_output`, `_kernel`, `_read`,
+  `linear_mut_local_target`, `image_mut_argument_output` (now its only origin is the helper's),
+  `_numeric_output`, `_clear`, `_read`, `image_virtual_argument_output`, `image_extern_argument_numeric_output`
+  (its note), `number_grid_choice_texture`, `_return`, `number_grid_switch_texture`, `raw_parameter_typed_argument`,
+  `raw_typed_parameter_other_role`, `raw_linear_choice_mixed`, `raw_typed_choice_mixed`,
+  `texture_shared_marked_role`; `tidec_e2e_marked_globs` pins each draw's capture (RawCopy's raw, LitCopy's
+  linear, a frag's marked and plain textures each its own) and a typed image through a local and a CPU parameter;
+  `platform/tests/images.tide` Mismatched fills every cell of its float grid, so the int read's probe lands on
+  bits an unguarded read would see.
+
+# [Raw] and [Linear] beyond one declaration (2026-11-14)
+
+From an audit: the marks went on one asset or a field and nowhere else, so a folder of normal maps was 40
+declarations, a `?:` of two `[Raw]` assets gave two contradictory errors, a helper couldn't take a bare `[Raw]`
+parameter, and a local lost the role. The role stays static (Provisional in spec.md, Alpha and color space, Where
+a role goes, with the run-time bit weighed and left out); no ABI, shader or reference change.
+
+- **Where it comes from.** `declared_role` (shader.c, behind `declared_raw`/`declared_linear`) adds a marked
+  glob's element (`E_INDEX` of a many-asset or of a marked `List<Texture>`/`Map<string, Texture>` parameter,
+  `texture_collection`), a `foreach` variable over one and an entry's `value`, a local that isn't mut (its
+  initializer's), a `?:` or switch whose every arm has it, and a parameter's `raw_role`/`linear_role` (parser:
+  `parse_image_role` takes bare `[Raw]` and `[Linear]`, on functions' and frags' parameters; systems' and views'
+  still refuse `[Linear]`).
+- **Uses.** `note_role_use` (check.c, after every `check_expr_any` and a switch's `check_switch_value`) makes each
+  such value a use in `raw_uses`/`linear_uses` once (`expr.role_noted`) and marks what it's made of kept: an
+  element its collection, a choice its arms (`mixed_roles` says a choice whose arms differ, once, and keeps the
+  arms quiet). `check_var` keeps a non-mut local's initializer (and lets a `[Raw]` grid in, `c->raw_value`).
+  `count`, `Has` and `foreach` keep a marked glob; `use_asset` makes a marked glob's name a use, so handing it on
+  whole is an error naming the `[Raw] List<Texture>` parameter. A typed `[Raw(T)]` field now keeps a `[Raw]` value
+  assigned to it (it took any image before, but left the value's use unkept).
+- **Parameters.** `check_param_role` (functions) and `check_shader_decl` (frags) allow the marks on read-only
+  image or texture-collection parameters and on a frag's Texture source. `check_role_argument`, from
+  `check_raw_uses`/`check_linear_uses`, holds every call's argument to the role and keeps it. A frag's marked
+  source takes a marked image from its draw (a `[Linear]` one a Color grid too); `check_mesh_draw` and `check_blit`
+  let a `[Raw]` grid through to a `[Raw]` source. Codegen captures that source with `tide_draw_texture_source_raw`
+  or `_linear`; `ex_sample_read` already skips `tide_straight` for a `[Raw]` parameter.
+- **The pack.** A marked glob's images are packed as one marked asset's (`pack_item` raw/linear, and
+  `want_textures` for the cache). A `[Linear]` glob's list entry is `TIDE_PACK_TEXTURE | TIDE_PACK_LINEAR` and a
+  map's count has the bit; `lay_textures` (pack_load.c) strips it and marks each element's place, so `pack_reads`
+  refuses an element read the other way, as for one asset. `textures_room` takes the marked list.
+- **Tests:** `tidec_e2e_marked_globs` (raw glob bytes kept at a clear pixel, a Linear map's and list's elements
+  packed for the mark, both kinds of parameter, a list parameter, locals, a `?:` and a switch, frag sources and
+  their captures); errors `raw_choice_mixed`, `linear_choice_mixed`, `raw_parameter_unmarked_argument`,
+  `linear_parameter_unmarked_argument`, `raw_parameter_mut`, `raw_parameter_escape`, `raw_glob_handed_on`,
+  `raw_glob_element_drawn`, `linear_glob_element_unmarked_field`, `raw_frag_source_unmarked`,
+  `linear_frag_source_unmarked`, `linear_frag_role_other_param`; `raw_on_list`, `linear_glob`,
+  `raw_field_escape_local`, `linear_escape_local` (now `mut` locals), `linear_on_parameter`, `linear_on_local`,
+  `raw_texture_local`, `raw_grid_local` (the local is named) changed with the rules; `lsp_test` (a `[Linear]`
+  parameter has no diagnostic).
+
+# Grids of numbers as textures (2026-11-14)
+
+From an audit (only `Grid2<Color>` and `Grid2<float>` converted, so a flow field had to be split into float grids).
+The rules and the picks weighed are Provisional in spec.md (Views and drawing, Textures, Grids of other numbers);
+users: game/meshes-and-textures.md (Grids of other numbers), game/shaders.md (Number images).
+
+- **tidec.** `type_number_grid_role` (types.c): a Grid2 of float2, float4, int or byte reads as float2, float4 or
+  int. `type_assignable` takes it to `Texture`, and the checker refuses it wherever no `[Raw(T)]` of its T takes it
+  (`refuse_number_grid` from `check_expr_want_any`, with `checker.number_grid_value`/`_role` set by
+  `check_field_value` for a typed Texture field and by `check_method_args` for a typed parameter; the draw and
+  blit checks look at the frag's `[Raw(T)]` Texture). `declared_image_type` gives such a grid its role, so a Sample
+  by its name is a typed read (`check_grid_sample`), `typed_through_sampler` blends a float2/float4 grid's
+  (`READ_NUMBER_BLEND`, which no longer gets `tide_straight` even where the source is a grid handed to a helper),
+  and `image_role_fits` lets a `Grid2<float>` be a `[Raw(float)]` source too. `image_target_format` gives them
+  Rg16f, Rgba16f and R32i for the format checks; `image_origin_format` refuses a kernel's store into any Grid2's
+  Texture (-7). `note_conversion` names the accepted grids for a Texture that isn't one.
+- **Generated C.** `gen_as` writes `tide_texture_of_grid_cells(grid, &shape, cells, sampling)` (cells 3 to 6,
+  `number_grid_cells`); a grid field sampled by name is `tide_draw_grid_number_texture`; a `[Raw]`/`[Raw(T)]`
+  Texture field's capture is now `tide_draw_texture_source_raw`, where it was an inline `tide_texture_grid ?
+  tide_draw_grid_texture_raw : tide_draw_texture_source` (which would have read a float4 grid's shape as colors).
+  Games with neither change byte for byte except that capture's text, and no header changes.
+- **Runtime.** A grid's Texture keeps its cells' kind in bits 32 to 39 (`TIDE_TEXTURE_CELLS_*`, mesh.h) as it kept
+  1 or 2; `tide_texture_grid` takes kinds 1 to 6 and gives the shape the right cell bytes, and
+  `tide_texture_grid_cells` says which, since 16 bytes is a Color or a float4 and 4 a float or an int.
+  `texture_source` (draw.c) sends kinds 3 to 6 to `tide_draw_grid_number_texture` (mesh.c), which validates as
+  `grid_texture` does (`see_grid_texture`, shared) and writes through `grid_cells` with `halves_cells` or
+  `ints_cells`: `TIDE_TEXELS_HALF2`, `_HALF4` and `_INT` (draw.h), changed chunks only, a writer kind of its own
+  for each cell kind. A linear capture of a number grid is none.
+- **Renderer.** `texture_for` makes `TIDE_GPU_RG16F` (new, gpu.h), `RGBA16F` and `R32I`; `texture_to_read_as`
+  gives an integer read the `TIDE_TEXELS_INT` images alone and no other read those; `mipmaps_needed` makes no
+  smaller images of an int texture (Vulkan's `blits` and WebGPU's `gpu_mipmaps` refuse them too). Vulkan
+  `R16G16_SFLOAT`, WebGPU `rg16float` (`tide.release.js` regenerated), Unity `R16G16_SFloat` and integer textures
+  without a mip chain (`NewTexture`), embed ABI 25 (unity.md).
+- **Tests:** `tidec_e2e_number_grids` (each value's cells, the list's halves and ints byte for byte, a million as
+  65504, one changed cell the only area, a forged kind no texture, no linear capture; native and WASI);
+  `textures`' forged-handle sweep now takes all six kinds; golden `shaders/number_grids` (spirv-val, fxc); errors
+  `number_grid_*` (9), `texture_grid_other_cells`, `gpu_sample_grid_type` (now a Grid2<bool>);
+  `embed_render_number_grid_textures`; six pixel probes in `platform/tests/images.tide` (NumberGrids: blended and
+  exact float2s, float4s by name and at a level, exact ints through a helper, bytes by name and as a frag's source,
+  a cell changed every frame) on Vulkan with the validation layer and WebGPU with device loss. Unity's replay was
+  not run (no Unity here): its change is the format's mapping and the mip flags.
+
+# Image origins through `out` and `mut` (2026-11-14)
+
+From an audit: `program.image_places` (an image field given as an `out` or `mut` argument) was read by
+`linear_source_format` alone. `image_target_format` (frag outputs, typed Clear, `Read<T>`, typed sampling) and
+`image_origin_format` (a kernel's storage format) walked the field's assignments only, so `void Make(out
+RenderTarget t) { t = RenderTarget(8, 8, 1, Format.R32i); }` then a Color frag drawn into the field compiled, and the
+draw was skipped as it ran (likewise a kernel's Color store into a volume re-made R32i through `mut`).
+
+- **Followed, not refused** (Provisional in the spec, Compute on the GPU, Formats). `note_image_place(arg, callee,
+  index)` (check.c) pushes an origin of its own onto the field's `image_assignments`: an `E_NAME` with
+  `expr.image_place` and `param` the callee's parameter. A function's image parameter now has
+  `image_assignments` too (`note_param_origin`, from `t = ...` in its body, and places of the calls it hands `t`
+  to), so a chain of helpers is followed. Every walker (`origins_target_format`, `origins_storage_format`,
+  `numeric_image_origin`, `linear_source_format`) reads a place as its parameter's origins. A place whose callee
+  can't be seen is `param` NULL, unknown (-1): C (`is_extern`), a virtual function or an override, and a built-in's
+  or a function value's `out` (`finish_out_arg`; a function's own `out` arguments go through
+  `finish_out_variable` and are noted with their parameter in `check_arg_types`). `program.image_places` is gone.
+- **What an unknown origin does** is what it did for a RenderTarget parameter: a numeric output, a kernel's store, a
+  `[Linear]` read and `Read<T>` with T a number are errors that say to fix the format where the compiler sees it; a
+  Color output or Color Clear is left to the run-time checks, which are unchanged (`shader_pipeline_of`,
+  `image_destination_fits`, `texture_to_read_as`).
+- **The kernel guard's fixture** (`platform/tests/images.tide`, Mismatched) re-made its volume through a Tide `mut`
+  helper, which is now a compile error; images.c re-makes it as R32i from C behind the code's back, once the view
+  has made it, which is the case the guard is for.
+- **Tests:** errors `image_out_argument_output`, `_numeric_output` (through two helpers), `_kernel`, `_clear`,
+  `_read`, `image_mut_argument_output`, `_kernel`, `image_extern_argument_numeric_output`, `_read`,
+  `linear_extern_argument_target`; `linear_out_argument_target`/`_mut_` now name the format the helper gives (R32i,
+  Rgba16f) instead of "not fixed". `tide_platform_images` on Vulkan with the validation layer.
+
+# [Linear] review: six findings and the pack's mark (2026-11-14)
+
+A review of the commits that built `[Linear]` (a59e6a0b9, 91030e254, 9e07d53c8) reported six faults from reading
+the code. Each was confirmed before it was changed; all six were real. What follows replaces what the section
+below says where they differ (how a copy is kept fresh, "Pack layout is unchanged", what a field's origins are).
+
+1. **Generic functions skipped the format check.** `place_generic_instance` (`check.c`) merged a generic body's
+   `linear_uses` and not its `linear_sources`, where `check_placement_body` merges both: `void Bind<T>(mut Art a,
+   T tag) { a.lit = a.hdr.color; }` with `hdr` an Rgba16f or R32i target compiled, and the same line in a function
+   with no type parameter was an error. It merges both now. Fixtures `errors/linear_generic_float_target`,
+   `linear_generic_int_target`.
+2. **A field with no recorded assignment counted as compatible, and nothing checked at run time.**
+   `linear_source_format` gave 0 (Rgba8, or no image) for a field whose `image_assignments` were empty, and only
+   `check_assign` filled them: `s.h = Holder { rt = RenderTarget(64, 64, Format.R32i) }; s.lit = s.h.rt.color;`
+   compiled, as did a target made through an `out` or changed through a `mut` parameter.
+   - **Origins** are `note_image_origin`'s: an assignment's value and a struct literal's initializer (so a struct
+     built anywhere and copied whole is seen: every value of the field starts as one of those or its default).
+     This is the list storage-image and numeric-output inference read too (`shader_kernel.inc`), which gain the
+     literals.
+   - **A place a call makes or may change** (an image field as an `out` or `mut` argument, `note_image_place`)
+     had no known format here. Superseded the same day (top section, Image origins through `out` and `mut`):
+     every format inference now follows what the callee assigns its parameter, and only a place whose callee's
+     body can't be seen (C, a built-in, a virtual function) is unknown.
+   - **At run time** `prepare_linear_target` (`platform.c`) makes no copy of a source that isn't
+     `TIDE_TARGET_RGBA8` (`linear_source_bytes`, by the id's own format bits: a target's image, a cube, an
+     array), and `texture_unavailable` passes the draw by with the reason, as it does for a disposed target: no
+     pipeline is bound to a float or int image, whatever code (C, a reload, a gap in the checker) put it under
+     the mark. `texture_to_read` only ever gives a marked target read its copy or the fallback.
+   - Fixtures `errors/linear_struct_literal_target`, `linear_struct_literal_returned`,
+     `linear_out_argument_target`, `linear_mut_argument_target`; `check_linear_copies` in
+     `platform/tests/targets.c` (an Rgba16f target, an R32i one, and the float second image of a target whose
+     first is bytes: the read is passed by, no copy counted, the window as it was; with Vulkan's validation layer
+     and WebGPU's validation, which stop the test for any error).
+3. **Finding a marked texture's place scanned the list.** `linear_source` (`draw.c`) looped over every texture
+   for each marked texture of each shaded draw. It asks the index (`find_texture_role(d, space, id, true)`),
+   which finds the same first place. `draw_linear_twins_are_found_through_the_index` (`tests/test_draw.c`: 300
+   textures, 2,000 draws of 3 marked ones, another version, a frame's pruning). Measured on this machine (the
+   sanitize build's engine, `-O2` with ASan, best of 50 frames): 6,000 marked sources among 300 textures 1.4 ms
+   a frame before, 0.3 after, and what's left no longer grows with the list.
+4. **A rendered image's copy was remade whenever `source_epoch` moved**, which is every frame and every target
+   switch, at full size with its mips. notes/rendering.md, top section, has the fix (the source's `drawn` and
+   `version`, as its own mips go by), the copies without depth, and the test that counts copies.
+5. **A pow a channel, where none was needed.** The bytes a marked image stores are
+   `byte(ToDisplay(ToLinear(straight) * alpha / 255))`. `tide/transfer_bytes.h` finds them by comparing:
+   - `tide_transfer_display_from[256]`, the least linear float of each display byte, and
+     `tide_transfer_same_from[256]`, the least straight float an opaque pixel stores as each byte (there and
+     back: not `b / 255 - 0.5 / 255`, as the two pows leave a value a hair off). Both functions never go down,
+     so a byte is one run of floats and the comparison gives the formula's byte for every float.
+   - `tide_transfer_display_byte(light)` starts from `tide_transfer_display_guess` (417 bytes: the display byte
+     at each thirty-second of an octave from 2^-13 to 1) and walks up; `tide_transfer_premultiplied_byte(straight,
+     alpha)` is 0 for a clear pixel, the there-and-back table for an opaque one (no pow), and one pow (the
+     decode) for the rest; `tide_transfer_table` is the 256 decoded bytes a mip's average adds up.
+   - **Users:** `texture_make_linear` (`texture_cache.c`, with a 256 by 256 memo an image so an 8-bit file's
+     soft pixels cost a pow once a value), `texture_compress_linear`'s mips (`texture_compress.c`: 256 pows an
+     image), and the draw list's capture of a `[Linear]` Color grid (`color_cells`, `mesh.c`).
+   - **No output byte changed, proved over every input:** a harness with the old code verbatim beside the new
+     compared, for all 1,065,353,217 floats from 0 to 1, the display byte, the opaque channel (both old
+     callers'), soft channels under alphas 1, 128 and 254, and `ToLinear`/`ToDisplay` themselves bit for bit
+     (identical everywhere but `ToDisplay(1)`, finding 6): no mismatch. Every byte under every alpha (65,536)
+     and 20 million random mip sums: none. The existing goldens pass unchanged (`texture_compress` unit,
+     `texture_compression` and `linear_textures` e2e, `draw_linear_grid_captures_keep_roles_and_alpha`, pass 33
+     of the platform shaders on Vulkan and WebGPU), and `tidec` before and after packs a 2048 by 2048 opaque
+     image and a soft one to the same texture bytes (the packs differ in the entry's new mark bit and the
+     header's digest alone).
+   - **`math_transfer_bytes`** (`tests/test_math.c`) holds the tables to the formula on every platform: each
+     entry is the first float of its byte (it gives the byte, the float before gives the one under), the guesses
+     are the formula's, a sweep of every 4,099th float, every byte under every alpha, and what's out of range.
+     A change to `tide_pow_f` or the transfer functions fails it; the tables are then made again by bisecting
+     the formula for each byte's first float.
+   - **Correction (audit, 2026-11-14):** `tide_transfer_display_byte` tested the saturated value's bits, and
+     saturating keeps -0's sign, so -0 (bits 0x80000000) indexed the 417-entry guesses at 4,544: an
+     out-of-bounds read for a `[Linear]` Color grid cell of -0 (`mesh.c`, any alpha from 1 to 254) or a build
+     function's -0 pixel (`texture_cache.c`'s `marked_byte`, which then memoized the byte for +0 too). It tests
+     the value now (`!(x >= 2^-13)`), and `math_transfer_bytes` checks -0 under every alpha. The read landed in
+     other rodata, so neither ASan nor the old test saw it; the check pins the result, not the read.
+   - **Measured** (this machine, 2048 by 2048). The loops alone, `-O2` without sanitizers, old code against
+     new on the same buffers: an opaque image's capture 894 ms before and 29 after (floats that are no bytes
+     900 and 28), a soft one's 879 and 574 (one pow a channel left: the memo isn't in this loop), a mip chain's
+     averages 621 and 43. `tidec` whole (the sanitize build's, with ASan, no cache, three runs each) on one
+     `[Linear] asset Texture` of a 2048 by 2048 PNG, decode and BC compression included: opaque 1.73 to 2.02 s
+     before and 0.45 after, soft 1.61 to 1.72 s before and 0.45 to 0.46 after.
+6. **`Math.ToDisplay(1.0)` was 0.99999994** (`1.055f * 1 - 0.055f` rounds under 1), so white wasn't white
+   through `ToDisplay(ToLinear(white))`. Both functions return exactly 1 at and above 1 (`tide/math.h`), and the
+   GPU helper says the same before its pow (`H_TRANSFER`, `shader.c`), as a GPU's pow of 1 needn't be 1 either.
+   `ToLinear` is bit for bit what it was (it already gave 1), and `ToDisplay` differs at 1 alone, so no stored
+   byte and no simulation hash moved; `compiler/tests/shaders/math.txt` has the two new lines. Exact tests:
+   `math_srgb_transfer` (both ends of each function and of both, above 1, infinity, NaN, -0, a Color, every byte
+   there and back in both orders), and the `Sink` frag of `platform/tests/shaders.tide` (the same on the GPU,
+   with a number the compiler can't fold), on Vulkan and WebGPU.
+
+**The pack's mark** (reported lower). The mark lived in the declaration alone, so a pack built with an asset
+unmarked and loaded under code that marks it was read as the other encoding for soft pixels, with nothing said.
+A Texture's, a Cubemap's and a TextureArray's entry had room: `TIDE_PACK_LINEAR` (the top bit of
+`tide_pack_entry.extra`, whose other bits no loader reads for these kinds) is set by tidec for a marked
+declaration, the loader keeps it with the image, the cube or the array (`tide_pack_image_linear`), and the draw
+list asks before it draws one (`pack_reads`, `draw.c`): an image stored for the other reading isn't drawn (no
+texture, as for a name the pack hasn't got), and the reason is said once with the fix, to build again. Refused
+rather than converted: an unmarked image's soft pixels are already rounded for the other encoding, so a
+conversion would be a third result. The pack's version is as it was (a pack from before the bit reads as
+unmarked, which a marked build then refuses with the same message). The last-found pack image a list keeps
+(`pack_named`) is an unmarked reading's alone. `linear_textures` e2e: a replacement pack with the bit draws
+through the retained field, the same image read unmarked draws nothing, and a pack without the bit draws nothing
+through the marked field and draws as itself unmarked.
+
+**Validation** (Clang 23.1.2, Node 24.22.1, `TIDE_HIDDEN`): the sanitize preset's `tide_tests` math (23) and
+draw (125) groups, all 2,650 tidec diagnostic, warning, shader-golden and SPIR-V tests, `tidec_e2e_linear_textures`,
+`_texture_compression`, `_texture_arrays`, `_cubemaps`, `tidec_texture_compress`, the HLSL checks of `math` and
+`linear_textures`, and `tide_platform_targets`, `_shaders` and `_draw` with their depth-fallback and
+no-anisotropy runs on Vulkan with the validation layer; web-debug's `tide_tests`, both e2es, and
+`tide_platform_targets` and `_shaders` with the depth and RGBA fallbacks on WebGPU. Not run: Unity (its replay
+still gives a copy a depth: the recorder's packets are as they were), Android, Linux and macOS, which are CI's.
+
 # Linear-light sampled images (2026-11-14)
 
 Owner-approved: [Linear] marks display-encoded color images sampled in linear light, and Math.ToLinear/
@@ -37,6 +313,8 @@ meshes-and-textures.md, views.md and language/math.md. No sRGB target Format or 
 - Unity marked replay requires Player Color Space Linear, diagnosed once in Gamma projects without changing
   settings or unmarked resources. The actual Gamma GPU strips sRGB storage despite explicit formats;
   notes/unity.md records the measured limitation and Unity replay validation.
+  Corrected 2026-11-15: Gamma projects replay marked images through a linear-light RGBA16F copy decoded from
+  their stored bytes (TideSrgbDecode.shader), with no refusal; notes/unity.md, top section.
 
 Final integration after merging typed numeric images from origin/dev: Windows Clang 23.1.2 ASan
 passes 65 focused CTests; Node 24.22.1/web-debug passes 57 focused CTests. These include 37 Linear
@@ -74,9 +352,17 @@ expectations unchanged; new argument/CPU/volume diagnostics pass. Shader LSP tes
 381/381, docs build pass. Unity 6000.6.0f1 hidden D3D11, D3D12, Vulkan and OpenGL Core ComputeReplayTests pass 10/10 each (existing image/volume/order
 suite). Explicit levels use the already tested HLSL level-sampling helpers. NaN maps to zero through Tide's clamp;
 infinities clamp to the range, then samplers clamp to the available chain. Point/Bilinear remain level zero.
-Typed numeric texture roles now connect the new public Format members through Sample, returning their
-declared numeric type with Point only. These images have no mip chain; SampleLevel and SampleGrad are
-refused with guidance to use Sample. Metal and other machines remain CI/device coverage.
+Typed numeric texture roles connect the public Format members through Sample, returning their declared
+numeric type. R8/Rg8/R16f/Rg16f/Rgba16f roles also take SampleLevel, SampleGrad and the blending filters, with a
+mip chain made on demand; R32f/Rgba32f blend Bilinear through exact loads and have no chain, R32i is nearest
+(render-targets.md, top). Metal and other machines remain CI/device coverage.
+
+Correction (2026-11-14, later): a Color texture's, cube's or array's SampleLevel that named no filter went through
+the texture's own filter (a cube's Bilinear), whose sampler clamps its level to 0: the editors' two-argument
+snippet silently read the base image. Unnamed is Trilinear now (`said_filter` in `ex_sample_read`, spec Provisional,
+explicit mip level), as it was for typed images; SampleGrad keeps the texture's filter. Generated C of a game with
+such a call changes (its sampler bits gain TIDE_SAMPLING_MIPS, and the texture's mips are made when read); the
+linear_textures golden moved, images.tide pins a Color texture's, cube's and array's level 3 as the mean.
 
 # Textures and how they are sampled
 
@@ -342,6 +628,10 @@ Vulkan's least `maxImageArrayLayers`).
    camera, clip and settings, depth and stencil of its own). `array.depth` is its `DepthTextureArray`: each layer's depth.
    So shadow cascades are `TextureArray(2048, 2048, 3, 1, Format.Depth)`, each cascade drawn into `cascades.layers[c]`,
    read as `cascades.depth.Compare(uv, c, value)`. `Resize(width, height)` and `Dispose()` as a target's.
+   **Corrected 2026-11-15:** its "arguments aren't named" check read each argument expression's own name, so a
+   constant given as a size (`TextureArray(SIZE, SIZE, 3, 1, Format.Depth)`) was refused as a named argument; it
+   reads the call's argument names now. Pinned by `e2e/texture_arrays.tide` (constants for the side and the layer
+   count) and `errors/texture_array_named.tide` (a real `samples: 4` beside constant sizes).
 4. **Reading one in a frag or a vert:** `array.Sample(uv, layer[, filter][, wrap])`, `array.SampleGrad(uv, dx, dy,
    layer[, filter][, wrap])`, `depthArray.Sample(uv, layer)` and `depthArray.Compare(uv, layer, value)`. `layer` is an
    `int` of any expression, so it can differ from pixel to pixel (a cascade picked by depth, a material by a splat
@@ -778,13 +1068,13 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **A grid's `Texture` is a name, in the 48 bytes a `tide_texture_ref` always was** (`tide/draw.h`, `tide/mesh.h`): no pixels, no target, `image.height` `TIDE_TEXTURE_GRID`, and in `image.version` the grid's handle (its low 32 bits), its cells (1 colors, 2 floats) and its chunks' shifts. `tide_texture_grid` reads it back, and `tide_draw_texture_source` then calls `tide_draw_grid_texture`, as a grid's own draw always did: the list's copy, versioned by chunk hashes, nothing to upload or free.
   - **Sampling is 4 bits of the reference** (`tide_texture_sampling`: bit 0 for the nearest pixel, the wrap from bit 2), the top of `image.version` (`TIDE_TEXTURE_SAMPLING_SHIFT`, 60), free there for a target's reference (whose `image` is otherwise zero), a pack image's (whose name is masked to `TIDE_TEXTURE_NAME`: `texture_name` in `engine/src/pack_load.c`, `pack_slot` in `draw.c`) and a grid's. A reference to C's own pixels keeps all 64 bits of C's version, so its sampling is in `target.size.scale`, as a whole number, which nothing reads where there's no target. So a zeroed reference, and one C makes with nothing said, are blended and clamped. A `tide_texture_ref` is compared or hashed nowhere; code that starts to masks the sampling.
   - **`tide/mesh.h` has one function for each textured draw** (`tide_draw_mesh_texture`, `tide_draw_mesh3_texture`, `tide_draw_mesh3_instances_texture`), which take the reference and nothing else. The grid ones and every `_wrapped` twin there are gone.
-  - **A shader's function takes one `tide_texture_ref tide_texture`** where its draw gives a texture, and no filter, wrap or shape: `gen_shaders` writes each texture's source as before and the run's `sampling` as a constant for what's known as the game compiles, or'd with `tide_sampling_filter_of` and `tide_sampling_wrap_of` of the reference for what isn't (the draw's own texture in a shader with no frag: both; a `Sample` of a `Texture` parameter or field: what it leaves unsaid).
+  - **A shader's function takes a `tide_texture_ref tide_texture`** where its draw gives a texture (and `tide_texture1`, `tide_texture2`... for each more it gives since 2026-11-14: notes/shaders.md, Several textures a draw gives), and no filter, wrap or shape: `gen_shaders` writes each texture's source as before and the run's `sampling` as a constant for what's known as the game compiles, or'd with `tide_sampling_filter_of` and `tide_sampling_wrap_of` of the reference for what isn't (the draw's own texture in a shader with no frag: both; a `Sample` of a `Texture` parameter or field: what it leaves unsaid).
   - **Nothing ties a grid's `Texture` to the grid's lifetime**, and the heap's handles are offsets, so `tide_draw_grid_texture` trusts nothing a handle names: the directory, its records and each chunk are read through `span` (`engine/src/mesh.c`), which gives bytes only where they're all within one page of the heap (`tide_pack_span` for the pack's region), the shape's shifts are checked before a chunk's size is worked out (shifts of 15 made a chunk of 0 bytes and passed, which `compiler/tests/e2e/textures` found), a chunk's place is worked out 64 bits wide, and the directory has to be one a grid of that size could have (its chunk counts, and no more records than chunks). A side past `TIDE_GRID_TEXTURE_MOST` (16384) is no texture, which also keeps bytes that aren't a grid's from asking for gigabytes. A stale reference draws nothing or anything. It's part of what No Tide code can corrupt memory rests on (see Language): a read path that's added for a grid named by a `Texture` goes through `span`.
   - **A `Grid2<float>` is `TIDE_TEXELS_HALF` in the draw list** (`tide_draw_texture.format`, `tide_draw_texture_slot_as`: 2 bytes a pixel) and `TIDE_GPU_R16F` on the GPU (`platform/src/gpu.h`; `GL_R16F` with `GL_HALF_FLOAT` in `gpu_gl.c` and `gl.h`, whose WebGL upload takes a `Uint16Array`: `pixels` in `tide.js`; `r16float` in `tide.js`'s `gpu_texture`, by `tide_gpu_format`'s numbers). Picked over 32 bits because every backend blends a half between pixels with nothing asked, where a float of 32 needs `OES_texture_float_linear` on WebGL 2 and `float32-filterable` on WebGPU, whose bind group layouts would then depend on the texture a frag is given. So no device falls back. `tide_half_from_float` (`mesh.c`) rounds to the nearest, ties to even, with 65504 for what's past it and for an infinity, and 0 for NaN. A shader reads it as `(r, 0, 0, 1)`, which is what each backend gives a one-channel texture: no shader text depends on it. The platform's texture cache tells a texture by its format too (`gpu_texture.format` in `platform.c`).
   - **A hot reload keeps a `Texture` of the pack's or of a grid's**, and a target's with its sampling (`gen_resource_fields`): only one of C's own pixels, or of a target that isn't the game's, is zeroed. (It zeroed the pack's too before, which nobody had noticed.) After a migration to another layout a grid's `Texture` may name another place; nothing clears it.
   - **Generated C:** 20 of 246 games differ from what the compiler before wrote (old and new tidec over every game's source list, with `--layout` and without), all in their `.c` and none in a header, so no game's hash moved: textured draws convert their grid at the argument and call the one function, shader functions take one reference and work their sampling out, and reloads carry sampling. The 224 others are byte for byte what they were.
-  - **Not built:** a way to change a `Texture`'s sampling in Tide outside a draw; a `Texture`'s size; grids of other cells and `Grid3` as textures; a `Grid2<float>` asset; clearing a grid's `Texture` when its grid goes or when a reload migrates; a live docs example of a float grid.
-  - **Tests:** `compiler/tests/e2e/textures` (a grid as a texture drawn, kept, passed, returned, in 3D, instanced and into a target; sampling carried from a grid's field and a target's, and a draw's over it; frags whose runs carry it, one shader in three runs; a float grid's halves and the conversion's rounding; every offset of a heap, and past it, as a grid's handle), natively and under Node; `compiler/tests/e2e/asset_textures` (a kept asset draws as declared, in a mesh and in a frag); pass 12 of `platform/tests/shaders.tide` with `run_height_checks` in `shaders.c` (a float grid in a frag, with no frag, blended, numbers past 1 and under 0, a kept `Texture` with and without the draw's wrap) and pass 10's kept image, the same pixels on OpenGL 3.3, WebGL 2 and WebGPU, where the device is then lost and found; `compiler/tests/errors/` for the messages that changed; `lsp_wrap`, `lsp_meshes`, `lsp_asset_textures_and_declared_sampling`. Not run: Android, and OpenGL on a Mac.
+  - **Not built:** a way to change a `Texture`'s sampling in Tide outside a draw; a `Texture`'s size (built since); grids of other cells and `Grid3` as textures (`Grid3` built 2026-11-05, grids of float2s, float4s, ints and bytes 2026-11-14: top); a `Grid2<float>` asset; clearing a grid's `Texture` when its grid goes or when a reload migrates; a live docs example of a float grid.
+  - **Tests:** `compiler/tests/e2e/textures` (a grid as a texture drawn, kept, passed, returned, in 3D, instanced and into a target; sampling carried from a grid's field and a target's, and a draw's over it; frags whose runs carry it, one shader in three runs; a float grid's halves and the conversion's rounding; every offset of a heap, and past it, as a grid's handle), natively and under Node; `compiler/tests/e2e/asset_textures` (a kept asset draws as declared, in a mesh and in a frag); pass 12 of `platform/tests/shaders.tide` with `run_height_checks` in `shaders.c` (a float grid in a frag, with no frag, blended, numbers past 1 and under 0, a kept `Texture` with and without the draw's wrap) and pass 10's kept image, the same pixels on OpenGL 3.3, WebGL 2 and WebGPU, where the device is then lost and found; `compiler/tests/errors/` for the messages that changed; `lsp_wrap`, `lsp_meshes`, `lsp_asset_textures_and_declared_sampling`. Android: the apps of `shaders.tide` and `draw.c`, in CI's Android job (`notes/android-and-mingw.md`, Every window fixture an app). Not run: OpenGL on a Mac.
 - **Mipmaps are a filter, `Filter.Trilinear`** (item 6 of the reshaping, built 2026-10-07; that the drawing side gets mipmaps and that the card designs how a mipmapped sample is written where code samples in a branch are the owner's; each rule is Claude's pick, Provisional in `docs/spec.md`, Views and drawing, Mipmaps, with the options that were weighed). `docs/game/meshes-and-textures.md` (Drawn smaller) and `docs/game/shaders.md` (Textures) are the users' pages. What's built, and what code relies on:
   - **The filter's numbers**: `tide_filter` has `TIDE_FILTER_TRILINEAR` (2) after point and bilinear, with `tide_filter_of`, which makes any number one (what's none is bilinear). A mesh command's `filter` is that number, as it was. A texture reference's sampling has bit 1 for it beside bit 0 for the nearest pixel (`tide_sampling_bits`, `tide_texture_filter`; `tide_texture_filtered` replaces both and `tide_texture_wrapped` keeps both), so a zeroed reference is still blended. A shader run's `sampling` has bit `TIDE_SAMPLING_MIPS` (24) + i for texture i, set with its blended bit i (`tide_sampling_filtered`, `tide_sampling_filter`), so the word generated C writes for a game with no Trilinear is the text it was, and code that only asks `tide_sampling_blended` reads it as blended.
   - **`gpu.h`:** `sample(slot, texture, filter, wrap)` takes a `tide_gpu_filter` (`_NEAREST`, `_LINEAR`, `_MIPMAPS`, with `tide_filter`'s numbers by a `_Static_assert` in `gpu_filter`, `platform/src/platform.c`) where it took a bool, and `mipmaps(texture)` makes a texture's smaller images from its pixels as they are, outside a pass, for an uploaded texture and for a target's color image alike. Nothing keeps them up to date but calling it again.
@@ -797,7 +1087,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **What a uv can be made of is `liftable`'s to say**: the frag's parameters that aren't `mut` or `out`, the pixel's fields through `this`, constants, members and swizzles of those, operators, `?:`, struct literals, constructors, the engine's functions, a game's functions that take nothing `mut` or `out`, a texture read with a filter known not to be Trilinear, and locals that aren't `mut`, a loop's, an `out` argument's or assigned again, whose own values are so. Anything else isn't. Where the filter is known, that's an error at the uv (`compiler/tests/errors/gpu_sample_trilinear_*.tide`); where it's the texture's to say, the Sample reads level 0. **What `liftable` allows is written twice in the shader, so it has to change nothing**: an expression kind that joins it is one with no side effect.
   - **`program.names_trilinear`** is set where a `Filter.Trilinear` member is resolved (`check_member`'s enum path, and an asset's `[Filter]` in `check_sampling_attribute`), never by `Filter(2)`. `codegen` hides the enum's third member in a game that doesn't name it (its count is cut to 2 as codegen starts, so tidels still offers it), and the shader writer goes by the same flag: such a game's generated C and shaders are what they were, byte for byte (old and new tidec over every game's source list, with `--layout` and without: 209 games, none differs). A shader's `filter` (`shader_sample.filter`, `shader_texture.filter`: 0, 1 or 2, where they had a bool) is a binding's key, as it was.
   - **Not built:** anisotropy (built 2026-11-10: `Filter.Anisotropic`, above); a level or a bias a game picks; a Trilinear Sample at a uv a loop makes; mipmaps an asset brings, or made at build time; Duel's blur doesn't use it.
-  - **Tests:** `mipmaps` in `platform/tests/draw.c` (a texture of stripes drawn an eighth and a quarter of its size reads as the mean of what each pixel covers, the same texture read bilinear beside it in the same frame doesn't, its own size is its own pixels, a 3D mesh's, and other pixels make them again), pass 14 of `platform/tests/shaders.tide` with `run_mipmap_checks` in `shaders.c` (from Tide: a declared grid sampled in a branch, a carried filter after a discard, one frag in runs read two ways, a Sample that says it, a uv a loop changes, meshes with no frag and with a vert alone, a grid of floats, and a target's color made again as it's drawn into), the same pixels on OpenGL 3.3, WebGL 2 and WebGPU, where the device is then lost and found; `compiler/tests/e2e/mipmaps` (what each draw records, natively and under Node); `compiler/tests/shaders/mipmaps`; the two error tests; `lsp_trilinear`. Not run: Android, and OpenGL on a Mac.
+  - **Tests:** `mipmaps` in `platform/tests/draw.c` (a texture of stripes drawn an eighth and a quarter of its size reads as the mean of what each pixel covers, the same texture read bilinear beside it in the same frame doesn't, its own size is its own pixels, a 3D mesh's, and other pixels make them again), pass 14 of `platform/tests/shaders.tide` with `run_mipmap_checks` in `shaders.c` (from Tide: a declared grid sampled in a branch, a carried filter after a discard, one frag in runs read two ways, a Sample that says it, a uv a loop changes, meshes with no frag and with a vert alone, a grid of floats, and a target's color made again as it's drawn into), the same pixels on OpenGL 3.3, WebGL 2 and WebGPU, where the device is then lost and found; `compiler/tests/e2e/mipmaps` (what each draw records, natively and under Node); `compiler/tests/shaders/mipmaps`; the two error tests; `lsp_trilinear`. Android: the apps of `shaders.tide` and `draw.c`, in CI's Android job (`notes/android-and-mingw.md`, Every window fixture an app). Not run: OpenGL on a Mac.
 - Nothing but a render target (below) holds a GPU texture: a mesh names pixels where the game keeps them, and every layer keeps a copy it can make again. An image of the game's pack (an `asset Texture`: see Assets, under Tech stack) is the one whose pixels the draw list doesn't copy: it draws them where the pack has them.
   - The draw list copies a texture's pixels when they aren't what it has (`tide_draw_texture_slot`: whose they are, and a version), and the platform uploads from that copy (`texture_for` in `platform/src/platform.c`). Each lets a texture go once a frame draws without it.
   - Tide's own pixels are grids, `Grid2<Color>` and `Grid2<float>` (`tide/mesh.h`), local or the match's, which are `Texture`s where one is wanted (see `Texture` is the one type, below). Their version is a hash of their chunks' page hashes, which a heap keeps until a page changes (`tide_heap_block_hash`), so an unchanged grid costs a hash per chunk, not its cells. Asking counts as a move of the heap, so a chunk cache that held the page looks it up again and says it changed.
@@ -812,7 +1102,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
     - **`tide_draw_append` hands on what it knows** (`append_texture`): the areas that changed since the pixels the other list has are all it copies, under a kind of its own (the writer's, turned), so that the writer itself on that list finds none of its numbers and writes it whole.
     - **`tide_platform_gpu_written()`** (`tide/platform.h`; the name is Claude's pick) counts the bytes of textures' pixels the renderer sent the GPU, for tests and tools.
     - **Measured** (`tide_platform_draw --bench`, release, OpenGL 3.3 on an RTX 4080 SUPER, three runs each, `gpu-data-before` and `gpu-data` in `bench/results/draw.jsonl`; a frame is recorded, drawn and a pixel read back, and "nothing" takes 0.28 to 0.30 ms of that): a 1024 by 1024 grid of colors as a texture with a brush of 64 cells painted each frame, 2.2 to 2.4 ms a frame before and 0.13 to 0.16 after (recording it 1.5 before and 0.02 to 0.03 after); a list of 65,536 lights of 25 numbers a shader reads, 16 of them written each frame, 1.7 to 1.9 before and 0.20 to 0.23 after (recording 0.63 to 0.70 and 0.06 to 0.07). What a list costs when all of it is sent goes by what's read of it (`notes/shaders.md`, Only what's read of an element is sent): the same list sent whole each frame took 1.7 ms with its 25 numbers and 0.7 with the 7 a shader reads. The workloads that keep nothing (shapes, quads, instances) are as they were.
-    - **Tests:** `draw_textures_say_what_changed` (`tests/test_draw.c`, no GPU: the areas after a cell, cells of several chunks, two edits in a frame, a frame with none, a list handed on by an append, a grid that's cleared, a list's element, elements across rows, a shorter list, another layout of one list); `draw_textures_kept_are_the_textures_made_anew` beside it (240 frames of changes picked by a seed to a grid of colors, a `Grid3` of ints with no size along an axis, which is cleared now and then, and a list that's resized: each frame the kept texture is, byte for byte, the one packed from nothing, and the areas it says are all that differs from the frame before; it only tells what the kept path gets wrong, as a fault in packing itself is in both); `changed_textures` in `platform/tests/draw.c` (pixels and the exact bytes sent after each kind of change, for a grid of colors and one of floats, and a frame that wasn't drawn), on OpenGL 3.3, WebGL 2 and WebGPU, where it's run again after the device is lost; pass 18 of `platform/tests/shaders.tide`, whose lists, maps and grids are written between frames. Not run: Android, and OpenGL on a Mac.
+    - **Tests:** `draw_textures_say_what_changed` (`tests/test_draw.c`, no GPU: the areas after a cell, cells of several chunks, two edits in a frame, a frame with none, a list handed on by an append, a grid that's cleared, a list's element, elements across rows, a shorter list, another layout of one list); `draw_textures_kept_are_the_textures_made_anew` beside it (240 frames of changes picked by a seed to a grid of colors, a `Grid3` of ints with no size along an axis, which is cleared now and then, and a list that's resized: each frame the kept texture is, byte for byte, the one packed from nothing, and the areas it says are all that differs from the frame before; it only tells what the kept path gets wrong, as a fault in packing itself is in both); `changed_textures` in `platform/tests/draw.c` (pixels and the exact bytes sent after each kind of change, for a grid of colors and one of floats, and a frame that wasn't drawn), on OpenGL 3.3, WebGL 2 and WebGPU, where it's run again after the device is lost; pass 18 of `platform/tests/shaders.tide`, whose lists, maps and grids are written between frames. Android: the apps of `shaders.tide` and `draw.c`, in CI's Android job (`notes/android-and-mingw.md`, Every window fixture an app). Not run: OpenGL on a Mac.
     - **Not built:** meshes (a list of corners that changed is copied and sent whole, into buffers of its own: nothing measured said it costs on OpenGL); a texture's smaller images made again for the part that changed; partial copies of C's `tide_texture` pixels, whose owner says nothing of what changed.
 - **Alpha is premultiplied under the hood, and colors are the display's values** (card 7 of the reshaping; the owner picked both 2026-10-07 from a proposal with captures of the fringe: "go with your recommendations, we will polish if we find out it wasnt ideal after all"; built the same day; the rules are Claude's picks, Provisional in `docs/spec.md`, Views and drawing, Alpha and color space). `docs/game/draw-settings.md` (Alpha), `docs/game/views.md` (Colors) and `docs/game/shaders.md` (Textures) are the users' pages. What it's for: a straight-alpha sprite blended between its pixels took in its clear pixels' color (a white disc over white had a gray rim, 194 of 255 halfway across its edge), and a target's alpha came out as `a * a + d * (1 - a)`, so half-clear draws into a clear target and then from it were washed out. What's built, and what code relies on:
   - **Nothing a game writes changed:** a `Color` is a color as it is, with its alpha, everywhere (draws, tints, vertices, grids, PNGs, C's `tide_texture` pixels, a frag's outputs). The engine multiplies where bytes for the GPU are made and where a shader writes a pixel.

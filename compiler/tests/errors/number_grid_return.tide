@@ -1,0 +1,5 @@
+// expect: a Grid2<byte> is a Texture only where a [Raw(int)] Texture is wanted
+scene Main { }
+local singleton Art { Grid2<byte> masks = Grid2(4, 4); }
+Texture Give(Art art) { return art.masks; }
+view Show(Art art) { var s = Give(art).size; }

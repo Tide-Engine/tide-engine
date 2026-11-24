@@ -77,7 +77,7 @@ frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun)
 }
 ```
 
-- **The vertex comes first.** It's the struct the mesh's list holds, and the frag gets it blended across the triangle: at each pixel, a mix of the triangle's three vertices by how near each is. It can't change it. Its ints don't blend, so a frag can't read them.
+- **The vertex comes first.** It's the struct the mesh's list holds, and the frag gets it blended across the triangle: at each pixel, a mix of the triangle's three vertices by how near each is. It can't change it. Its ints and int vectors don't blend: a frag reads them exactly as the triangle's first corner has them, as it reads [what a vert hands it](#from-a-vert-to-its-frag), so a per-face material or ID is the same whole number at every pixel of the face. Each field it reads is one of the 15 values carried from the corners.
 - **`this` is the pixel the frag runs for.** Its read-only fields say where it is, and `this.Discard()` leaves it undrawn: see [Where the pixel is](#where-the-pixel-is).
 - **`out Color color` is the pixel.** A frag writes its output through an [`out` parameter](../language/functions.md#out-parameters), and returns nothing. What it wrote there when it ends is the pixel's color, blended over what's behind it by its alpha.
 - **It starts with no value, so the frag writes it.** On every path that ends, and before reading it: `color.a = 1` alone, with nothing written first, is an error, and so is a frag whose only write is inside an `if` with no `else`. It isn't the pixel already on the screen either: a GPU doesn't let a frag read that. A path that ends in [`this.Discard()`](#where-the-pixel-is) draws no pixel, and owes it nothing.
@@ -196,12 +196,36 @@ frag Show(Vertex vertex, out Color color, Buffers buffers)
 }
 ```
 
-`Sample` returns exactly the role's `float`, `float2`, `float4` or `int`. Typed numeric images read the nearest
-pixel, with `Filter.Point` as the default and the only accepted filter; they have no numeric mipmaps or
-`SampleGrad`. Clamp, Repeat and Mirror still control coordinates outside the image. This avoids requiring
-optional 32-bit float filtering and keeps IDs exact. Bare `[Raw]` retains its existing four-channel behavior.
-The typed role goes on fields, including Texture3D fields, and on read-only image parameters of synchronous
-GPU helpers. A caller supplies an image with the same role:
+`Sample` returns exactly the role's `float`, `float2`, `float4` or `int`. With no filter named, a typed image
+reads its nearest pixel. Clamp, Repeat and Mirror still control coordinates outside the image.
+
+Float images in `R8`, `Rg8`, `R16f`, `Rg16f` and `Rgba16f` blend too, and have mipmaps made of what was drawn:
+
+```csharp
+float soft = images.mask.Sample(vertex.uv, Filter.Bilinear);          // Between pixels
+float wide = images.mask.SampleLevel(vertex.uv, 3);                   // A smaller image: a cheap blur
+float2 moments = images.velocity.Sample(vertex.uv, Filter.Trilinear); // Between pixels and levels
+```
+
+`Filter.Anisotropic` and `SampleGrad` work as they do for a color. `R32f` and `Rgba32f` blend too, with
+`Filter.Bilinear`: a GPU only blends 32-bit floats with an optional feature, so tidec loads the four pixels
+around the uv exactly and blends them in the shader, and the picture is the same bits on every device. They
+have no mipmaps, so `Filter.Trilinear`, `Filter.Anisotropic`, and a `SampleLevel` or `SampleGrad` that reads
+between levels, on one are a compile error naming `R16f` or `Rgba16f`. Their one level is the image itself: a
+`SampleLevel` or `SampleGrad` naming `Filter.Point` reads its nearest pixel, one naming `Filter.Bilinear` blends
+the four, and `SampleLevel(uv, 0)` blends them too. A cube's `R32f` and `Rgba32f` faces are only read at their
+nearest pixel: its `SampleLevel` names `Filter.Point`, even at level 0. `R32i` is always exact: a GPU blends no integers. Bare `[Raw]`
+retains its existing four-channel behavior.
+
+```csharp
+float distance = images.distances.Sample(vertex.uv, Filter.Bilinear); // An R32f image: four exact loads, blended
+```
+
+The typed role goes on `Texture` and `Texture3D` fields, on `TextureArray` and `Cubemap` fields (any number
+format makes layers and faces: `[Raw(int)]` for `R32i`), and on read-only image parameters of synchronous GPU
+helpers. An array of `R32f` or `Rgba32f` is read at its nearest pixel as an exact load, and blends with
+`Filter.Bilinear` as above. A cube of `R32f`, `Rgba32f` or `R32i` is read at its nearest pixel: the face the
+direction points at and the pixel nearest it, loaded exactly. A caller supplies an image with the same role:
 
 ```csharp
 float Height([Raw(float)] Texture image, float2 uv)
@@ -213,6 +237,26 @@ float Height([Raw(float)] Texture image, float2 uv)
 An ordinary Texture parameter still samples Color; the explicit role keeps numeric types through helper chains.
 A frag's direct image source can carry the role too, such as `[Raw(int)] Texture source`; give that frag a
 matching numeric image in the draw's Texture argument.
+
+A CPU grid of numbers is an image of its role as well: a `Grid2<float>` reads through `[Raw(float)]` (or as a
+color's `r`), a `Grid2<float2>` through `[Raw(float2)]`, a `Grid2<float4>` through `[Raw(float4)]`, and a
+`Grid2<int>` or `Grid2<byte>` through `[Raw(int)]`. It goes into a field, a helper's parameter or a frag's or vert's
+Texture parameter of that role (any of the textures a draw gives), and a frag samples it by its name as those
+numbers (see [Grids of other
+numbers](./meshes-and-textures.md#grids-of-other-numbers)):
+
+```csharp
+local singleton Wind { Grid2<float2> flow = Grid2(128, 128); Grid2<int> zones = Grid2(128, 128); }
+
+float2 Push([Raw(float2)] Texture flow, float2 uv) { return flow.Sample(uv, Filter.Bilinear); }
+
+frag Drift(Vertex vertex, out Color color, Wind wind)
+{
+    float2 push = Push(wind.flow, vertex.uv);
+    int zone = wind.zones.Sample(vertex.uv);
+    color = Color(push.x, push.y, zone == 3 ? 1 : 0);
+}
+```
 
 R8, Rg8, R16f and Rg16f support multisampling and resolve each channel by its mean. R32f, Rgba32f and R32i
 require a single-sample target. Numeric `float4` into Rgba16f supports that format's ordinary mean resolve.
@@ -420,7 +464,7 @@ After the vertex, and what each writes (a frag's color, the structs a vert hands
 - A [`local` field](./local-state.md) of the match's component or singleton is read like any other: `box.highlight`, which a view set for the entity under the mouse.
 - With [`Draw.Instanced`](#instances-from-a-list), an ordinary struct parameter takes the current item of the instance list. It is read-only too. (A frag's struct of a type its draw's vert writes is [the vert's](#from-a-vert-to-its-frag) instead.)
 - An ordinary struct parameter also takes [the values a draw gives](#values-for-one-draw) after its vert and frag: `Draw.Blit(source, destination, Blur, BlurStep { along = float2(1, 0) })`.
-- A read-only `Texture` parameter receives the explicit image passed to `Draw.Mesh`, `Draw.Instanced`, a target's `Mesh` or `Instanced`, or [`Draw.Blit`](./render-targets.md#post-processing). Each stage takes at most one; when both stages take it, they receive the same source. `source.Sample(vertex.uv[, Filter.Point[, Wrap.Repeat]])` uses the same top-left UVs as grid sampling. Local component and singleton `Texture` fields can be sampled too.
+- Read-only `Texture` parameters receive the explicit images passed to `Draw.Mesh`, `Draw.Instanced`, a target's `Mesh` or `Instanced`, or [`Draw.Blit`](./render-targets.md#post-processing), in order: the frag's first, then the vert's own, and a vert's and a frag's of one name are the one image (see [Several textures](#several-textures)). `source.Sample(vertex.uv[, Filter.Point[, Wrap.Repeat]])` uses the same top-left UVs as grid sampling. Local component and singleton `Texture` fields can be sampled too.
 
 The view needn't take them itself. It has to run for entities that have the components, so `with Box` is enough, and it's an error at the mesh draw when it doesn't:
 
@@ -680,41 +724,6 @@ frag Shade(BoxVertex vertex, out Color color, Ramp ramp)
 
 ## Textures
 
-### Linear-light color
-
-Mark color images used by lighting with `[Linear]`. Their stored RGB is display-encoded sRGB;
-GPU reads decode it to linear light before filtering, including `SampleGrad` and `SampleLevel`.
-Alpha stays coverage. Leave normal maps, masks and other numeric images unmarked or `[Raw]`.
-
-```csharp
-[Linear] asset Texture wood = "art/wood.png";
-
-frag Lit(Vertex vertex, out Color color)
-{
-    Color surface = wood.Sample(vertex.uv);
-    color = surface * Color(0.5, 0.5, 0.5); // Lighting uses linear values
-}
-```
-
-Keep copied references in `[Linear] Texture`, `[Linear] TextureArray` or `[Linear] Cubemap`
-fields. Sample these by their field or asset name. Read-only GPU helpers can borrow their
-source with an ordinary resource parameter. An unmarked local/field/CPU parameter or a
-draw's own texture argument would lose the mark, so the compiler refuses those escapes.
-`[Raw, Linear]` is an error.
-
-A marked Texture field can take a `Grid2<Color>` or an RGBA8 target's `.color`; a marked
-TextureArray field can take a `Grid3<Color>` or a runtime RGBA8 array, and a marked Cubemap
-field can take a runtime RGBA8 cube. Float and single-channel formats have no sRGB form.
-The mark changes only the sampled image: CPU grid cells, `Decode`, the original target
-and `target.Read()` keep their values. It does not convert a frag's output or the screen.
-For a final display pass, tone-map linear light first and use `Math.ToDisplay`; for an
-unmarked input that needs explicit conversion, use `Math.ToLinear`. Both take `float`,
-`float3` and `Color`; Color alpha is preserved.
-
-In Unity, marked images require **Project Settings > Player > Other Settings > Color Space > Linear**.
-Tide reports a clear error in a Gamma project and leaves its settings and unmarked images alone.
-
-
 `Sample` reads a [texture](./meshes-and-textures.md#textures) at a `uv`, and gives its color there. A frag samples the textures it can name three ways:
 
 ```csharp
@@ -731,10 +740,10 @@ view Crates(Models models)
 }
 ```
 
-- **A field**: a `Texture`, a `Grid2<Color>` or a `Grid2<float>` of a component or a singleton the frag takes.
+- **A field**: a `Texture`, a `Grid2<Color>` or a `Grid2<float>` of a component or a singleton the frag takes (and a grid of other numbers, read as [its numbers](#number-images)).
 - **`Sample` gives the color itself**, with its alpha beside it, blended between pixels so that a clear pixel counts for none of the color (see [Alpha](./draw-settings.md#alpha)). A pixel with no alpha reads as `Color(0, 0, 0, 0)`. What a frag writes is a color as it is too: `Color(1, 0, 0, 0.5)` is red, half clear.
 - **An asset**, by its name, with no parameter for it: `asset Texture tiles = "art/tiles.png";` and then `tiles.Sample(uv)` (see [Assets](./assets.md#images-to-draw-with)).
-- **Its own `Texture` parameter**, one at the most, which is whatever texture the draw gives after its mesh: an asset, a target's color, a grid, a `Texture` a field holds. A [`Draw.Blit`](./render-targets.md#post-processing)'s source is its frag's.
+- **Its own `Texture` parameters**, as many as it takes, which are whatever textures the draw gives after its mesh, in order: an asset, a target's color, a grid, a `Texture` a field holds. A [`Draw.Blit`](./render-targets.md#post-processing)'s source is its frag's first (see [Several textures](#several-textures)).
 
 `uv` is as a mesh's: (0, 0) is the outer corner of the texture's first pixel and (1, 1) the outer corner of its last. Verts sample too. A `Grid2<float>` gives its number as the color's `r`, with `g` and `b` 0 and `a` 1 (see [One channel](./meshes-and-textures.md#one-channel)).
 
@@ -753,7 +762,35 @@ Past 0 and 1, `uv` reads what the [wrap](./meshes-and-textures.md#past-the-edges
 - A filter and a wrap written at a `Sample` are written out, `Filter.Point` and `Wrap.Repeat`, never read from a variable: the GPU is told how a texture is read before any pixel runs. Where they come with the texture, the engine tells it for each draw.
 - A wrap comes after a filter, so a `Sample` that says how it wraps says both. The names work too: `Sample(uv: corner.uv, filter: Filter.Bilinear, wrap: Wrap.Repeat)`.
 - One texture can be read several ways in one frag, clamped here and repeated there. It counts once among the 16 textures a draw reads, however it's read. Each way of reading takes a sampler, and a draw has 16 of those too: textures read the same way share one, and the same way twice is one. A `Texture` parameter or field whose `Sample` leaves its filter or wrap to the texture has a sampler of its own for that, since the texture says how at each draw; so there, a `Sample` that says nothing and one that says the default are two samplers.
-- A draw gives a texture to a frag that takes one, and none to a frag that doesn't: `Draw.Mesh(corners, faces, models.wood, Shade)` is an error where `Shade` has no `Texture` parameter.
+- A draw gives as many textures as its frag and vert take, and none to a frag that takes none: `Draw.Mesh(corners, faces, models.wood, Shade)` is an error where `Shade` has no `Texture` parameter, and so is a draw that gives fewer or more than its frag takes.
+
+### Several textures
+
+A frag takes as many `Texture` parameters as it reads, and the draw gives them in the same order after its mesh. A material of three images is one frag, drawn with each part's images:
+
+```csharp
+frag Lit(PartVertex vertex, out Color color, Texture colour, Texture normal, Texture orm, Look look)
+{
+    float3 n = normal.Sample(vertex.uv).rgb * 2 - 1;
+    Color orms = orm.Sample(vertex.uv);
+    color = colour.Sample(vertex.uv) * look.tint * Math.Saturate(n.z) * (1 - orms.g);
+}
+
+view Parts(Kit kit)
+{
+    kit.target.Mesh(kit.barrel, kit.transform, kit.metalColour, kit.metalNormal, kit.metalOrm, Lit, Look { tint = kit.metal });
+    kit.target.Mesh(kit.stock, kit.transform, kit.woodColour, kit.woodNormal, Filter.Point, kit.woodOrm, Lit, Look { tint = kit.wood });
+}
+```
+
+`Look` is a struct, `struct Look { Color tint; }`, given as [the draw's values](#values-for-one-draw) after the frag.
+
+- **In the frag's order.** The first texture after the mesh's arguments (a 3D mesh's transform, an `Instanced` draw's list) is the frag's first `Texture` parameter, and so on. Every draw form takes them so: `Mesh`, `Instanced`, `SkinnedMesh` and a target's own, over the CPU's lists or a GPU list's.
+- **A filter and a wrap go after the texture they're for**, and are that texture's alone for this draw: above, the wood's normal map is read at its nearest pixels, and its colour and ORM as they say. A texture with nothing after it is read as it says itself, or as the frag's `Sample` says.
+- **A vert takes them too.** Its `Texture` parameters are the draw's as well: one of the same name as a frag's is that one texture, and one of its own comes after all of the frag's. `vert Raise(mut PartVertex vertex, Texture normal, Texture height)` drawn with `Lit` takes `colour, normal, orm, height`. With no frag, the first texture is what the mesh's pixels are drawn with.
+- **A blit gives them before its destination**: `Draw.Blit(source, lut, Draw.window, Grade)` for `frag Grade(Vertex vertex, out Color color, Texture source, Texture lut)`. It takes no filter or wrap; its frag's `Sample` says those.
+- **A [`[Linear]`](#linear-light-color) image goes to a `[Linear] Texture` parameter**: `frag Lit(PartVertex vertex, out Color color, [Linear] Texture colour, Texture normal, Texture orm, Look look)` takes the material's marked albedo from the draw beside the unmarked normal and ORM maps. A marked image given to an unmarked parameter is an error, since it would lose its mark, and so is an unmarked one given to a marked parameter (a `Grid2<Color>` goes to either). A `[Linear]` field of a component or singleton the frag takes, or that a [function it calls is handed](#in-a-function), works too.
+- **Each is a texture of the draw's own**, among the 16 it reads, with samplers of its own where its `Sample` leaves the filter or wrap to the texture. A draw that gives fewer or more textures than its frag and vert take is an error that names the ones they take, in order.
 
 `Filter.Trilinear` reads between the texture's smaller copies too, so it's smooth where the texture ends up [smaller than it is](./meshes-and-textures.md#drawn-smaller):
 
@@ -837,6 +874,85 @@ frag Shade(Corner corner, out Color color, Models models, Texture source)
 - **A function's `Sample` reads the texture's own pixels, never between its smaller copies.** `Filter.Trilinear` is for a frag's own `Sample`, of a `uv` the frag can work out as it starts, and a function's `uv` is its call's. In a function a frag reaches, it's an error where the `Sample` says `Filter.Trilinear` or leaves its filter to a texture that says it, and a warning where it leaves it to a `Texture` that may (a field, the frag's own): write `Filter.Bilinear` there, sample in the frag, or use `SampleGrad` with explicit derivatives passed from the frag.
 - **A [`[Raw]`](#textures-that-are-numbers) source keeps numeric sampling through GPU helpers.** Pass the original Raw asset, Raw texture field or Raw grid field expression to the helper's `Texture` parameter. The compiler specializes the helper for that source; this does not allow a Raw texture to escape through an ordinary CPU `Texture` value.
 
+A function can take the component or the singleton that holds the textures, too, and sample its fields, so a lighting helper reads a stage's shadows and sky without a parameter for each:
+
+```csharp
+local singleton Stage
+{
+    RenderTarget near;
+    DepthTexture shadow;
+    Cubemap sky;
+    float4x4 toLamp;
+    float3 sun;
+
+    Color Above(float3 way) { return sky.Sample(way); }   // A method samples its own fields
+}
+
+float3 Sunlit(Stage stage, float3 world, float3 normal)
+{
+    float3 at = FromLamp(world, stage.toLamp);
+    float lit = stage.shadow.Compare(at.xy, at.z - 0.001);
+    return stage.sun * lit * Math.Saturate(normal.y) + stage.Above(normal).rgb * 0.25;
+}
+
+frag Ground(Corner corner, out Color color, Stage stage)
+{
+    float3 light = Sunlit(stage, this.world, corner.normal);
+    color = Color(light.x, light.y, light.z);
+}
+```
+
+- **What the frag or vert was given, by its name**: its own component or singleton parameter, or a function's parameter that stands for one, as for [what holds a list](#passing-on-what-holds-a-list). Nothing is passed for it while it runs: each texture of it is the shader's, by its type and its field, and the function is written once however many calls it has.
+- **Everything a function does with its own `Texture` it does with a field**: `Sample`, `SampleLevel` and `SampleGrad` with or without a filter and a wrap, a depth's `Compare`, a cube's, an array's and a volume's reads, `.size`, a kernel helper's store into an image, and passing `stage.shadow` on to a function that takes a `DepthTexture`. A method of the singleton samples its fields by their names, `sky.Sample(way)`, and calls its other methods on the same one. A component's textures and fields are each entity's, as a frag reads them, from its vert and from its frag alike.
+- **Local fields go with it.** A frag or vert hands such a function the local fields of the match's component or singleton it reads, as a view hands its own functions. One that holds no texture and no list goes to a function as a value of its match fields, as it did, so a function that reads its local fields is an error there: read the local field in the frag and pass what it holds.
+- **It's still a name, not a value**: a copy of the singleton in a local, `var kept = stage;`, is an error, as it is for one that holds a list. One whose textures are all `local` fields of a match component or singleton is a value of its other fields, as before, in a frag and in a function alike: the copy has none of its textures, and goes nowhere the one it was made of goes. A plain struct carries no texture to the GPU, so a function that samples a struct's field is an error that says to take the component or singleton, or the texture itself; and a texture in a struct the singleton holds, `stage.lamps.shadow`, isn't sampled in a function yet.
+- **It's the GPU's alone**, as any function that samples is: a view that calls `Sunlit` is an error.
+
+### Linear-light color
+
+Mark color images used by lighting with `[Linear]`. Their stored RGB is display-encoded sRGB;
+GPU reads decode it to linear light before filtering, including `SampleGrad` and `SampleLevel`.
+Alpha stays coverage. Leave normal maps, masks and other numeric images unmarked or `[Raw]`.
+
+```csharp
+[Linear] asset Texture wood = "art/wood.png";
+
+frag Lit(Vertex vertex, out Color color)
+{
+    Color surface = wood.Sample(vertex.uv);
+    color = surface * Color(0.5, 0.5, 0.5); // Lighting uses linear values
+}
+```
+
+Keep copied references in `[Linear] Texture`, `[Linear] TextureArray` or `[Linear] Cubemap`
+fields. Sample these by their field or asset name. Read-only GPU helpers can borrow their
+source with an ordinary resource parameter. The mark goes on a glob's list or map too, every
+image marked (`[Linear] asset List<Texture> albedos = "art/albedo/*.png";`, read by element or
+`foreach`), through a local that isn't `mut`, a `?:` or switch whose every side is marked, a
+function's `[Linear] Texture` parameter and a frag's `[Linear] Texture` source. An unmarked
+field, `mut` local or parameter, a return, or the engine's own draw would lose the mark, so the
+compiler refuses those escapes. `[Raw, Linear]` is an error.
+
+A marked Texture field can take a `Grid2<Color>` or an RGBA8 target's `.color`; a marked
+TextureArray field can take a `Grid3<Color>` or a runtime RGBA8 array, and a marked Cubemap
+field can take a runtime RGBA8 cube. Float and single-channel formats have no sRGB form.
+The compiler follows where the target comes from, into a field or a local alike: an
+assignment, a struct's `{ target = RenderTarget(...) }`, and what a function assigns a target
+it's handed as `out` or `mut`, a recursive one too. Every way a field or local is given an
+image counts, so one made two ways has no one format. One C, a built-in or a `virtual`
+function makes has no format the compiler can see, and is an error that names the function.
+A marked read of an image that turns out not to be RGBA8 draws nothing and says so.
+A rendered image is copied for its marked reads when it has been drawn into, not every frame.
+The mark changes only the sampled image: CPU grid cells, `Decode`, the original target
+and `target.Read()` keep their values. It does not convert a frag's output or the screen.
+For a final display pass, tone-map linear light first and use `Math.ToDisplay`; for an
+unmarked input that needs explicit conversion, use `Math.ToLinear`. Both take `float`,
+`float3` and `Color`; Color alpha is preserved.
+
+In Unity, marked images work in either color space. A Linear project uses Unity's sRGB formats; a Gamma
+project, which has none, reads them through a copy decoded to linear light, at twice an RGBA8 image's memory.
+Tide never changes the project's settings.
+
 ### Textures that are numbers
 
 A texture is colors, each with how much of it there is: where a pixel's alpha is 0 it has no color, and a `Sample` there gives `Color(0, 0, 0, 0)` (see [Alpha](./draw-settings.md#alpha)). That's wrong for an image whose channels are four numbers of their own: a mask in alpha beside a roughness in red, a lookup table, a flow map. `[Raw]` says so where the texture is declared:
@@ -872,7 +988,28 @@ frag Ground(Vertex vertex, out Color color, Terrain terrain)
 - Arrays and cubes follow the same rules as `Texture`: a `[Raw] TextureArray` field takes a `[Raw]` array asset, another `[Raw] TextureArray` field or a `[Raw] Grid3<Color>`, and a `[Raw] Cubemap` field a `[Raw]` cube asset or another such field. Their `Sample` gives the numbers as they are.
 - A `[Raw] Texture` field accepts `default`, a singular `[Raw] Texture` asset, another `[Raw] Texture` field, or a `[Raw] Grid2<Color>` field or asset. A grid-backed texture still names the grid's cells, with the [same lifetime rules](./meshes-and-textures.md#a-texture-is-a-value). Assigning an ordinary color texture to a Raw field is an error.
 - A frag or a vert samples the Raw asset or field by name, directly or through a [GPU texture helper](#in-a-function). Samples preserve the channel numbers, including where alpha is zero. The Raw field declaration determines numeric sampling; there is no separate Raw texture type or runtime Raw marker carried by arbitrary `Texture` values.
-- Raw sources cannot become ordinary `Texture` fields or CPU locals, be returned as `Texture`, or be supplied directly to a draw or blit. These uses are errors. Keep the original Raw source expression when forwarding it through GPU helpers.
+- **The role goes where the compiler can see it go.** A glob's list or map takes the mark for every image (`[Raw] asset List<Texture> normals = "art/normals/*.png";`), and `normals[i]`, a `foreach`'s variable and a map entry's `value` are Raw images. A local that isn't `mut` keeps the role of what it's given, and so does a `?:` or a switch whose every side is Raw. A function takes one as a `[Raw] Texture` parameter (or a whole glob as `[Raw] List<Texture>`), whose argument must be Raw, and a frag takes one as its `[Raw] Texture` source, which a draw gives it:
+
+```csharp
+[Raw] asset List<Texture> normals = "art/normals/*.png";
+
+local singleton Material { [Raw] Texture normal; int kind; }
+
+void Use(mut Material m, [Raw] Texture normal) { m.normal = normal; }
+
+frag Copy(Vertex vertex, out Color color, [Raw] Texture source) { color = source.Sample(vertex.uv); }
+
+view Pick(mut Material m)
+{
+    var chosen = m.kind < normals.count ? normals[m.kind] : normals[0]; // Raw, as both sides are
+    Use(m, chosen);
+    Draw.Blit(normals[0], Draw.window, Copy);
+}
+```
+
+- Raw sources cannot become ordinary `Texture` fields, `mut` locals or unmarked parameters, be returned, or be drawn by the engine's own shader (a draw with no frag). These uses are errors, and so is a `?:` with a Raw side and a color side, or a `[Raw]` side and a `[Linear]` one: a value has one role, never one added or dropped along the way.
+- Each typed role, `[Raw(float)]`, `[Raw(float2)]`, `[Raw(float4)]` and `[Raw(int)]`, is a role of its own: it goes through a local that isn't `mut`, a choice whose every side has it, and a function's parameter of that role (`int2 Size([Raw(int)] Texture ids)`), on the CPU too, but not into a bare `[Raw]` parameter or one of another type, and a `?:` between two of them is an error. A frag draws a typed local's image as its typed source.
+- Each texture a draw gives goes to the frag parameter that reads it, and is held to that one's role alone: a frag taking a `[Linear] Texture` and a plain one is given a `[Linear]` image and an ordinary one. A vert's Texture and a frag's of one name are one texture, so they take the same role, and a vert's takes neither `[Raw]` nor `[Linear]`.
 - `rawField.size` is available as ordinary texture metadata, including `int2(0)` for a default or unavailable image; pack reload follows the currently bound asset. Reading its size does not read or convert its pixels.
 - The same file can be declared twice, once `[Raw]` and once not: they're two textures. Where `[Raw]` changes nothing, as for an image with no transparency, the pack and the GPU keep one copy for both.
 - A Raw `Texture` asset is [compressed](./assets.md#gpu-compression) as a color one is, when it's big enough: BC1 or BC3, its channels as the file has them, each a little off. For numbers that must be exact, a lookup table or a flow map, add `[Lossless]`: `[Raw, Lossless] asset Texture flow = "art/flow.png";`.
@@ -1011,7 +1148,8 @@ view Reflect(mut Room room)
 - **`cube.faces[0]` to `cube.faces[5]`** are `RenderTarget`s, in the order `+x`, `-x`, `+y`, `-y`, `+z`, `-z`. Each has everything a target has: its own camera, clip and settings, `Clear`, `Mesh`, `Instanced` and the rest, and depth of its own.
 - **A face that's drawn again each frame is cleared first.** Its color and its depth stay from frame to frame, as any target's do: without a `Clear`, what was nearest in the frames before hides what's drawn now.
 - **A face is what a camera at the cube's middle sees along the face's axis,** with a field of view of 90: `+y` is up for the four around, and for the one above and the one below, `-z` and `+z`. That's six rotations, which the example below has as `Facing`.
-- `Cubemap(size, Format.Rgba16f)` holds floats, which keep what's brighter than 1, where the device draws into them.
+- `Cubemap(size, Format.Rgba16f)` holds floats, which keep what's brighter than 1, where the device draws into them. A [number format](#number-images) holds numbers, and `Cubemap(size, Format.Depth)` depth alone, for a lamp that shines every way: its frag reads `cube.depth`, a `DepthCubemap` kept in a field, with `Sample(direction)` and `Compare(direction, depth)` (see [A cube of depth alone](./render-targets.md#a-cube-of-depth-alone)).
+- **`cube.SampleLevel(direction, level)`** reads a smaller image, between the two nearest it: a blurred reflection's roughness, `room.around.SampleLevel(reflected, roughness * 5)`.
 - Its size is in pixels, whatever the display. `cube.Resize(size)` gives it another, with empty images, and `cube.Dispose()` lets it go. Copies share it, as a target's do.
 - **A draw into a face doesn't read that face's cube.** It's passed by, with a line that says so. What reflects itself in itself takes two cubes.
 - A face has no `color` or `depth` of its own to hand out: the cube is what's read.
@@ -1027,7 +1165,7 @@ The scene below has both. The sky is the asset, drawn on a ball around the camer
 - **The sky is a ball around the eye,** drawn from inside (`Cull.Front`) and with `Depth.None`, so everything else is in front of it. Its frag reads the cube towards each corner's own position.
 - **A reflection is `Math.Reflect`:** the way from the eye to the pixel, bounced off the pixel's normal, is the way the mirror reads.
 - **Six passes a frame is what a live reflection costs.** A cube that only holds what doesn't move is drawn once and kept: its images stay from frame to frame, like any target's.
-- **`Filter.Trilinear` reads a cube's smaller images,** which the renderer makes of what was last drawn into it when a draw reads them. That's what keeps a reflection of something far away from shimmering. There's no choosing the level yet, so a rough surface's blurred reflection isn't there.
+- **`Filter.Trilinear` reads a cube's smaller images,** which the renderer makes of what was last drawn into it when a draw reads them. That's what keeps a reflection of something far away from shimmering. A rough surface's blurred reflection picks a smaller image itself with `cube.SampleLevel(direction, level)`, above.
 
 ## Texture arrays
 
@@ -1347,7 +1485,7 @@ view GrassField(Foliage foliage, Models models)
 - For a 2D mesh, the instance list holds an ordinary struct and a vert places its vertices, as `Place` does above. A field named `transform` is ordinary data there; the engine doesn't apply it, and `Instance.transform` remains identity.
 - Components still come from the calling view's entity, and singletons are shared by the draw. The list items don't have to be entities and don't add any.
 - Only the instance fields the shaders read are sent, beside the 3D transform. Unread fields take no GPU space. The fields that are read follow the same GPU type and attribute limits as components.
-- Textures, filters, wraps, verts and frags go after the instance list, in the same order as `Mesh`: `Draw.Instanced(vertices, indices, instances[, texture[, filter[, wrap]]][, vert][, frag])`. A frag can sample fields of its parameters, or receive an explicit `Texture` through its read-only `Texture` parameter.
+- Textures, filters, wraps, verts and frags go after the instance list, in the same order as `Mesh`: `Draw.Instanced(vertices, indices, instances[, texture[, filter[, wrap]]...][, vert][, frag])`. A frag can sample fields of its parameters, or receive the draw's explicit textures through its read-only `Texture` parameters, in order (see [Several textures](#several-textures)).
 - An empty instance list draws nothing. Items draw in list order, in one instanced draw; adjacent compatible calls can join the same run.
 
 Every mote below is an item of a list, and none is an entity. A vert places the quad's four corners for each, with that mote's own center, size and phase, and a frag makes a soft dot of it in its tint. The slider changes how many the list holds: they're one draw either way.
@@ -1394,7 +1532,7 @@ view DrawMeadow(Meadow meadow, Models models)
 }
 ```
 
-A kernel takes what a frag does: components of the entity the calling view runs for, singletons, and one struct of values, which `GPU.Run` gives after what it runs over. It returns nothing, changes nothing it takes, and writes GPU lists. What a frag's code can do, a kernel's can: math, noise, lists, grids, maps, functions, and `Sample` at a texture's own level.
+A kernel takes what a frag does: components of the entity the calling view runs for, singletons, and one struct of values, which `GPU.Run` gives after what it runs over. It returns nothing, changes nothing it takes, and writes GPU lists. What a frag's code can do, a kernel's can: math, noise, lists, grids, maps, functions, `Sample` at a texture's own level and `SampleLevel` at the level it picks (see [Reading images](#reading-images)).
 
 ### Which invocation
 
@@ -1564,6 +1702,29 @@ view DrawSparks(Sparks sparks, Burst burst)
 
 A mesh whose indices are a GPU list's has its vertices in one too: they're picked on the GPU. Levels of detail (`lod:`) are made of the CPU's vertices, so they're not for a mesh of a GPU list's. Instances of such a mesh from a `List<T>` are frustum culled by the bounds [`Draw.Bounds`](./draw-settings.md) gives, a box around every vertex the kernel can make: the CPU has none of its own for them, and without them, every instance is drawn.
 
+### Reading images
+
+A kernel reads the images a frag reads, through the same fields: a `Texture`, a `DepthTexture`, a `Cubemap`, a `TextureArray` and a `DepthTextureArray`, a `Texture3D`, and the typed `[Raw(T)]` ones. A kernel has no neighbouring pixels to tell how small an image is drawn, so its `Sample` reads the image's own pixels; `SampleLevel` reads the level the kernel picks:
+
+```csharp
+local singleton Glow
+{
+    RenderTarget scene;
+    Texture image;          // scene.color
+    GPUList<Color> average; // What the whole frame comes to
+}
+
+[Group(1)]
+compute Average(Glow glow)
+{
+    glow.average[0] = glow.image.SampleLevel(float2(0.5), 10, Filter.Trilinear); // The frame's smallest image
+}
+```
+
+- **The smaller images are made of what was last drawn into the image,** before the run, as they are for a draw that reads them: a target's colors, a multisampled target's too, an array's layers and a cube's faces. A target drawn into again after the run, or written by a kernel, has them made again for the next read.
+- **The `SampleLevel` decides,** as in a frag: one that names no filter reads between levels, whatever filter the `Texture` carries (a target's color carries `Filter.Bilinear`), typed reads too; one that names `Filter.Point` or `Filter.Bilinear`, and one at a level written `0`, read the image's own pixels.
+- **What it isn't given reads as in a frag:** a depth the far limit (and `Compare` gives 1), a cube black, an array and a texture white, and a typed image zeros. So does an image that was disposed, an image a target hasn't got, and the colors of an image of depth alone. A `TextureArray` or a target made with `Format.Depth` and read as colors is an error where the compiler can see it: read its depth through a `DepthTextureArray` or `DepthTexture` field instead.
+
 ### Writing images
 
 A kernel writes a render target's image or a [`Texture3D`](./meshes-and-textures.md#volumes) by cell:
@@ -1615,13 +1776,17 @@ Kernels run everywhere Tide draws: Vulkan (desktop and Android), WebGPU, and Uni
 
 ## Choosing a mip level
 
-`source.SampleLevel(uv, level, Filter.Trilinear)` reads a level you choose, including from a vert, kernel or GPU
-helper. Level 0 is the original image, level 1 halves its dimensions, and 1.5 blends levels 1 and 2. Levels clamp
-to the available images. Use Trilinear to read the mip chain; Point and Bilinear read the original image.
-A cubemap takes a direction: `sky.SampleLevel(direction, 2, Filter.Trilinear)`. An array takes its layer first:
-`images.SampleLevel(uv, layer, 2, Filter.Trilinear)`. Texture3D has no mipmaps; use its Sample method.
-Typed number images have no mipmaps and cannot use SampleLevel or SampleGrad. Use `Sample(uv)` to read
-their nearest pixel, with implicit or explicit `Filter.Point`.
+`source.SampleLevel(uv, level)` reads a level you choose, including from a vert, kernel or GPU helper. Level 0
+is the original image, level 1 halves its dimensions, and 1.5 blends levels 1 and 2. Levels clamp to the
+available images. A SampleLevel that names no filter reads between levels (`Filter.Trilinear`), on a color
+texture, a cube, an array and a number image alike; naming `Filter.Point` or `Filter.Bilinear` reads the original
+image. A level written as `0` (or less) reads the original image blended, as `Filter.Bilinear` does, which is what
+reading between levels gives there: so `frame.SampleLevel(uv, 0)` of a target drawn every frame costs no chain of
+smaller images, where a level the game works out as it runs has the chain made after each frame's drawing. A cubemap takes a direction: `sky.SampleLevel(direction, roughness * 5)` for a blurred reflection. An array
+takes its layer first: `images.SampleLevel(uv, layer, 2)`. Texture3D has no mipmaps; use its Sample method.
+Number images in R8, Rg8, R16f, Rg16f and Rgba16f take SampleLevel and SampleGrad as colors do; R32f, Rgba32f
+and R32i have no mipmaps, and read with `Sample(uv)` (an R32f or Rgba32f one blended with `Filter.Bilinear`, or
+with `SampleLevel(uv, 0)`).
 Drawing into a selected mip level is not available.
 
 ## Writing a pixel's depth
@@ -1641,3 +1806,4 @@ both forms and keep their own setting. Blocks restore what they found; 2D draws 
 The constant counts GPU precision steps (truncated to a whole number), and slope scales pixel-depth slope.
 A floating depth image's step follows its depth precision, rather than a fixed fraction of the range.
 Constants outside ±65536, slopes outside ±16 and nonfinite values become zero. Start with small factors.
+A biased draw is never [occlusion tested](./3d.md#occlusion-culling): it's drawn whole. How the factors count is provisional.

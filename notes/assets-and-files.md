@@ -1,3 +1,232 @@
+## The pack read while the window opens (2026-11-18, later)
+
+What the section below left: the window and the Vulkan device take 0.18 s to open and the pack 0.115 s to read
+after them. `tide_platform_pack_ahead` (platform.c; the host calls it first in `tide_host_run`, for a game with
+assets) starts the read on eight threads of its own (`tide_jobs_read_ahead`, jobs.c, which has the systems'
+threads; not the pool's, which starts later and is the game's), into memory with the room a read leaves, and
+`tide_platform_pack` and `tide_platform_pack_counted` take what was read (`tide_jobs_read_ahead_take`: the caller
+reads the pieces left with them, then waits for them), known as a read's are (`tide_platform_read_room`), so the
+loader takes it in place as before. A desktop's alone (`tide_window_pack_path`, glfw.c); nothing for a pack under
+32 MiB, on the web or on Android, and a read that fails leaves the ordinary one to be made.
+
+Mount & Rifle, the program alone, two frames, four runs each: 0.66-0.69 s to 0.60-0.64 s. Checked (Windows, ASan):
+the 63 pack tests, `tide_platform_jobs`, `tide_server_pack`, `tide_platform_skinned`, `tide_platform_baked`,
+`tide_platform_shaders`, `tide_platform_texture_capacity`, `tide_cli_run_exit`, `tide_cli_hidden`. Not run: a
+window's loading screen, Linux/macOS (pthreads' branch): CI's.
+
+## A pack loaded where it was read (2026-11-18)
+
+Owner, on the 1.0-1.4 s a run of Mount & Rifle takes to start (notes/cli-and-packages.md): "try looking into the
+startup then". Timed with marks through `tide_host_run` (taken out again), a run with no window of two frames:
+
+| | before | after |
+|---|---|---|
+| the window and the Vulkan device | 0.19 s | 0.18 s |
+| the pack's file read (1.48 GB) | 0.27-0.35 s | 0.115 s |
+| the game's `assets` (the pack loaded) | 0.24-0.32 s | 0.08 s |
+| local state, the session, the match asked for | 0.003 s | the same |
+| the first frame | 0.08 s | 0.07 s |
+| the second, and closing | 0.24-0.35 s | 0.18 s (0.08 of it the window and device closing) |
+| the program alone, two frames | 1.4-1.8 s | 0.65-0.69 s |
+
+Nothing of it was the game's own: the file was read into memory, copied into the loaded pack's memory, and the
+first copy kept by the host, which nothing read again.
+
+- **The loader takes the bytes it's given** (`tide_pack_give`, `tide_pack_given`, engine/src/pack_load.c): whoever
+  read the file offers its bytes and how much is allocated there, and the next `tide_pack_load` of exactly those
+  bytes makes the file's region the loaded pack's, where it's a whole pack that isn't compressed and the room
+  holds what loading lays out after the region (`textures_room`, to a megabyte's slot). What's past the file's
+  bytes is zeroed, as `tide_alloc`'s memory is. `tide_pack_unload` frees them. Anything else loads as it did, by
+  a copy: a compressed pack, bytes with no room, bytes nobody offered (the web's, Android's, a test's).
+  Generated C is as it was: `tide_assets_load` calls `tide_pack_load`, after its fingerprints' check of the
+  bytes as the file has them.
+- **The host offers them** (`tide_run_load_given`, tide/host.h; both where it loads in place and on the loading
+  screen's thread), and no longer keeps bytes the pack took (`tide_run_pack` is NULL then; `tide_run_loader.found`
+  says a pack was read). A game's library with a runtime of its own doesn't see the host's offer and loads by a
+  copy, as before.
+- **The file is read with room, and by the pool's threads where nobody's shown how far it got**
+  (`tide_platform_read_counted`, platform.c: a sixteenth of the file and 2 MiB more than its size, which
+  `tide_platform_read_room` says; pieces of 8 MiB each through a handle of the thread's own, `read_some`, for a
+  read with no `progress`, which is the host's in place, on the thread that runs the pool). The loading screen's
+  read is one thread's, as it was, counting as it goes.
+
+A run's memory is a pack less: 1.48 GB for this game.
+
+Left, of the 0.66 s: the Vulkan loader finding its drivers and layers 0.09 s and the device 0.08 s (the file
+could be read meanwhile: 0.1 s); `assets` 0.08 s; the two frames 0.17 s; closing 0.08 s; the process ending
+0.05 s.
+
+Tests: `pack_given_is_loaded_where_it_was_read_and_copied_where_it_has_no_room` (tests/test_pack.c: a region that
+stays and one that follows its entries read from the given bytes, garbage after the file's bytes, the pack let go
+of by the next load, bytes with no room or offered as another size or for an earlier load left the caller's).
+Validation (Windows, Clang 23.1.2, ASan): the 63 pack tests, `tide_server_pack`, `tide_platform_skinned`,
+`tide_platform_baked`, `tide_platform_shaders`, `tide_platform_texture_capacity`, three asset e2e fixtures; Mount &
+Rifle runs from the packaged tide. Not run: a window's loading screen (its read and its handing over are the
+same calls), Linux/macOS/Android, the web (which has no file to read): CI's.
+
+## Files taken by size and time, pixels left in the cache, a pack known without being built (2026-11-17)
+
+Owner, on the 2.25 s a build of Mount & Rifle spent on assets that hadn't changed (notes/cli-and-packages.md):
+"doesn't git use timestamps for it? if git can surely we can too". This replaces two earlier decisions below
+("Primary source bytes are still read and hashed, so fresh processes detect same-size/same-time edits too",
+2026-11-03; "Stat-based source hashing was not adopted", 2026-11-10).
+
+**A file's size and last-write time say whether it changed.** `<game>/.tide/assets.times` is the record: a line a
+file, its SHA-256, size, time and absolute path, under a first line that names the format. `asset_files_trust`
+(compile.c, for a compilation that writes code and has a game folder) reads it; `read_at` takes a file that is as
+recorded from it (`file_known`, `take_known`): its hash, with no byte read. `asset_files_save_times` (check.c,
+after the hashes' file) writes it from the files' table where it differs.
+
+- **The guard git has for a file as new as its index.** A file goes in the record only when it was read two
+  seconds or more after it was last written (`read_into`, `recorded`; two seconds is the coarsest file system's
+  step). One written again inside the time its file system can tell apart, or whose time is ahead of the clock,
+  is read every build until it's old enough.
+  `asset_cache_test.mjs` sets its fixture files' times two hours back before the first build for this: a copy
+  keeps its source's time on Windows and takes the present one elsewhere, where the first version of the test
+  found no record (Linux and macOS, 2026-11-18).
+- **What isn't seen**: an edit that keeps both the size and the time of a recorded file. Its time has to be put
+  back by hand for that. Touching the file, or any ordinary save, is seen.
+- A file said to have changed (`asset_files_changed`, a watching run) is read whatever the record says. The
+  language server and other callers without the build cache never read the record.
+- **Bytes are read when something wants them** (`file_bytes`). `read_item` reads them for every kind but a Texture
+  whose prepared texture the cache has and a Mesh whose import the cache has: `asset_match.data` is NULL for
+  those (`size` is the file's), and `asset_match_bytes` reads them for the one reader left, `texture_make_linear`
+  making a variant the cache lacks (`want_texture` reads them first, as the images are made on threads). Bytes
+  read late are hashed as any are, so a file that isn't what the record said is what it is from there on.
+- The files' table has a hash index by path (`files_find`): a lookup compared every path, 0.3 s of a build with
+  950 files.
+
+**A prepared texture is known by its entry's first bytes** (`texture_cache_peek`, `asset_cache_peek`: the key and
+the 52 bytes that say its size, format and content). `asset_match.prepared` (`asset_prepared`) replaces the
+payload pointer. The entry's digest is checked when its pixels are read, which is when a pack is written.
+
+**The pack is laid out with room for those pixels and no more** (engine/src/pack.c; notes/runtime-ownership.md):
+
+- `tide_pack_texture_room` makes the block `tide_pack_texture_blocks` would, header and words written, pixels
+  left as a hole (`tide_pack_hole`: place, size, content). `block_with_hole` zeroes only what's outside it, so a
+  gigabyte isn't touched.
+- `tide_pack_lay` gives the file's bytes with the digest zero and the holes; `tide_pack_recipe` is the SHA-256 of
+  every byte outside the holes (in the digest's 4 MiB pieces, on threads) and of each hole's place, size and
+  content; `tide_pack_seal` writes the digest once they're filled. `tide_pack_end` is lay and seal.
+- `build_pack` (a pack going to its own file, not build code's and not `--pack-c`) passes `pack_item` a list:
+  an image the cache has an entry for is given room and listed (`later_image`). `write_pack` works out the recipe
+  and compares it with `<pack>.recipe` (the recipe, then the header the pack was written with): the same recipe
+  over a file of the same size that still starts with that header is the pack (`pack_kept`), and nothing is read
+  or written. Otherwise `pack_fill` reads each entry into its hole (twelve at once), seals, and the pack is
+  written and its recipe after it. The recipe is removed before the pack is replaced.
+- An entry found gone or damaged as the pack is filled is made again from its file (`texture_make_linear`), and
+  must come out the size and content the hole was laid out for; one that doesn't is removed and the build says to
+  build again.
+- A fingerprint of an image's pixels (an asset match code depends on that is a Texture, a Cubemap or a
+  TextureArray) fills the pack first (`fingerprint_assets`). Meshes, models and the rest are in the laid pack.
+
+**Cache reads on every processor**: the levels of detail's files (`mesh_lod_find`, `mesh_lod_find_listed`; 333
+files, 0.3 s one after another); the static mesh, its tangent variant and the skinned model of each file named as
+a model (`model_one`, for entries with no file beside their own; `asset_import_cache_read_alone`), which
+`read_item` and `asset_mesh_tangents` take where they would read the same entry. Such a read doesn't mark its
+entry used; taking it does (`asset_cache_mark_used`), so an entry read ahead and never taken still expires. A
+model's bytes are hashed once a compilation (`model_hash_of`).
+
+Not done: [Parts] models ahead (0.3 s of Mount & Rifle's 0.6 s left: the patterns are known as each declaration is
+checked); meshes laid out with holes (their vertices are laid out by the game's struct, 0.1 s).
+
+Both `asset_files.c` and `texture_cache.c` are among the importers' sources, so this change re-imports a game's
+assets once.
+
+Measured, Mount & Rifle, a build that changed no asset: reading ahead 0.70 s to 0.05-0.10 s, checking 0.57 s to
+0.31 s, the pack 0.67 s to 0.11-0.15 s and 0.01 s to find it kept; one image changed and changed back gives the
+pack it was, to the digest.
+
+Tests: `tidec_asset_disk_cache` (asset_cache_test.mjs: the record and the recipe written; a code-only edit leaves
+the pack's time alone; an edit at a new time seen; an edit keeping size and time seen for a file not yet old
+enough to record and not seen for a recorded one, until its time changes; a damaged image entry found as the pack
+is filled); `pack_room_filled_later_is_the_pack_made_at_once_and_its_recipe_tells_packs_apart` (tests/test_pack.c:
+the bytes and digest of `tide_pack_end`'s, a region that stays and one that's moved, the recipe the same whatever
+the holes hold and another's for another content or another byte outside). Validation (Windows, Clang 23.1.2,
+ASan): those, `tidec_asset_files`, `tidec_asset_cache`, `tidec_asset_usage`, `tidec_mesh_files`, `tidec_mesh_lod`,
+`tidec_pack_fingerprint`, `tidec_texture_compress`, `tidec_retarget_assets`, twenty asset e2e fixtures,
+`tide_cli_assets`, `tide_cli_build_report`, `tide_server_pack`, `tide_add_game_asset_deletion`. The packaged tide
+passes `cache_test.mjs --part cache --gpu` and `--part modes --gpu`, and builds and runs Mount & Rifle in debug
+and in release. Not run: web and Android builds, Linux/macOS (the record's times are `st_mtim`'s there): CI's.
+
+## The engine's folder: the store's files out of the game's reach (2026-11-17)
+
+The owner's decision: the server's store keeps its files in `<persistent>/Tide/store/` (was `saved/`), and
+`<persistent>/Tide/` is the engine's, refused to the game's `File` and `Directory` calls. The store's "listed once,
+answered from memory" (notes/voxels.md, 3f) is then safe by construction: nothing of the game's can add, change or
+remove a file there. No backward compatibility: old `saved/` folders aren't read, moved or deleted.
+
+- **Names**: `TIDE_IO_ENGINE_FOLDER` ("Tide", `tide/io.h`) and `TIDE_STORAGE_FOLDER` ("Tide/store",
+  `TIDE_STORAGE_FOLDER_SIZE` 10, `tide/storage.h`). `TIDE_STORAGE_PATH_MOST` grew by 5 with the folder.
+  `storage.c` builds every path from them (`tide_storage_path`/`tide_storage_key`, the hashed `%%` folder, the
+  listing walk and the provider's file list); a `_Static_assert` keeps the size and the text together.
+- **Where it's checked**: the engine's wrapper (`engine/src/io.c`), the one way every game call reaches any provider,
+  native or the page's; providers don't check (the store calls them directly with `Tide/store/...`). So one piece of
+  code serves desktop, Android and the web, and the same path is refused on every platform.
+- **The rule** (`tide_io_engine_path(io, path, or_above)`): a path is joined to `persistent_data_path` if it's relative
+  (no leading separator, no `X:`), then folded lexically (`fold_path`): `\` is `/`; a leading `\\?\` or `\\.\` (and
+  `UNC\` after it) is dropped; empty parts and `.` are dropped; `..` takes the last part off, never a drive's; a part
+  ends at its first `:` (an NTFS stream's name; not a first `X:` drive) and loses trailing dots and spaces (as Win32
+  names a file), and a part left empty is dropped; ASCII letters go small. The root is folded the same way plus
+  `/tide`. In: the folded path is that or under it. `or_above`: also the root and every folder above it. Where the
+  root has a drive and the path a leading `/` with none, the root's drive is left out (the process's drive).
+- **Calls**: create, read (text/bytes), write/append, `File.Delete`, `File.Copy`/`File.Move` (both paths), and the
+  listings refuse a path in it with `TIDE_IO_ACCESS_DENIED` before the provider is asked; `Directory.Delete` and
+  `Directory.Move` (both paths) refuse `or_above` too, since a folder moved or deleted takes the store along (the
+  owner's decision named the folder's paths; this follows from it: deleting the persistent root would delete the
+  store). `Exists` is false there, with nothing asked. A listing of a folder above it keeps the `Tide` folder's own
+  entry and drops every entry in it (`list_entry`: an entry in it whose parent is in it too). An invalid path
+  (`path_error`) is still `INVALID_PATH` first. The first refusal of a run prints one line to stderr saying what to
+  do (`refused`, an atomic flag).
+- **Choices made here** (the owner asked for case tricks on Windows and macOS): the fold is the same on every
+  platform, so `tide/`, `Tide./` or `Tide:x` is refused on Linux and the web too, where it'd be another folder: a game
+  that works on one platform works on all. Only ASCII letters fold, and the comparison is of text: links and junctions
+  (which the game's calls can't make), 8.3 short names of the root, other spellings of the root (`\\localhost\C$\`,
+  a `subst` drive) and non-ASCII letters of the root in another case aren't seen. Native absolute paths are otherwise
+  the OS's, as before, and a game's C is trusted.
+- **Tests**: `io_engine_folder_paths_however_written` and `io_engine_folder_refused_to_the_games_calls`
+  (`tests/test_io_engine_folder.c`, in `tide_tests`: the fold for Windows, POSIX, page and missing roots, and every
+  call through a fake provider that counts what it's asked, which is nothing for a refused call, and a root listing
+  with the store's entries in it); `io_native_engine_folder_is_the_engines` (`tide_platform_io`: real files under a
+  `--data-dir`-style root, the store's file written through the provider, each call refused for relative, `..`,
+  back-in-through-the-root's-name, mixed case, backslash, trailing dot/space and absolute shouted paths, folders
+  above refused, similar names allowed, listings without the store's files, the store's file unchanged); the web's
+  `tide_platform_web_io` write phase (the page's provider, the same checks). The store's tests, the headless store
+  test and `bench_voxels` use the new folder; no pinned hash moved (the store's files aren't world state).
+- Logs (`Player.log`, `Crashes/`) and other files the engine keeps in the persistent folder stay where they were.
+
+## The file provider's own thread, for the server's store (2026-11-15)
+
+- `tide_io` gained `post(user, work, context)` and `settle(user)` (`tide/io.h`): work run on a thread of the
+  provider's own, after everything posted before it, and a wait for all of it. The native provider
+  (`platform/src/io.c`: `backend_post`, `post_worker`, `backend_settle`) starts one thread for the process at the first
+  post, beside the flush worker, with a lock and two condition variables of its own; its other calls were already
+  safe from several threads (the dirty paths are under `io_lock`). `tide_platform_io_init` settles it before it
+  switches apps, as the work uses the provider's folders. The web's provider has none: a page's files are its own
+  thread's JS. Only the server's store posts (notes/voxels.md, section 3a); local code's `File`, `Directory` and
+  `Storage.Flush` are as they were.
+- The store lists a folder a level at a time (`list` with `recursive` false, files then folders), never recursively:
+  the native provider's paths join the resolved folder and each name, which says nothing of where the folder asked for
+  ends (notes/voxels.md, section 3b).
+
+## The pack says which images are [Linear]; marked import without a pow a channel (2026-11-14)
+
+- `TIDE_PACK_LINEAR` (0x80000000 in `tide_pack_entry.extra`) is set in a Texture's, a Cubemap's and a
+  TextureArray's entry when its declaration is `[Linear]` (`build_pack`'s three `tide_pack_name` calls,
+  `codegen.c`). The loader keeps it beside the image, the cube and the array (`packed_texture.linear` and its
+  two siblings, `pack_load.c`), `tide_pack_image_linear(named, &linear)` says it, and the draw list refuses an
+  image stored for the other reading with one message (`pack_reads`, `engine/src/draw.c`). No other bit of
+  `extra` is read for these kinds, the pack's version is unchanged, and a glob's list or map had no mark (the
+  checker refused `[Linear]` on one) until later that day: a marked glob's list entry has the bit beside its element
+  kind (`TIDE_PACK_TEXTURE | TIDE_PACK_LINEAR`) and a map's beside its count, each image packed for the reading
+  (`[Raw]` ones as numbers); `lay_textures` strips the bit and keeps it with each element's place (textures.md,
+  top). A game's `.simulation` and pack digest move for a game with a marked asset, as they do for any change to
+  its pack.
+- Marked import (`texture_make_linear`, `texture_compress_linear`) finds its bytes through
+  `tide/transfer_bytes.h`: the same bytes as before for every input, about four times faster for a 2048 by 2048
+  image through tidec. The proof, the numbers and the test that guards the tables are in notes/textures.md, top
+  section, finding 5.
+
 ## Linear color import (2026-11-14)
 
 Marked Texture/TextureArray/Cubemap assets prepare RGB as encode(decode(straightRGB)*alphaByte/255), with
@@ -9,6 +238,89 @@ texture_compress unit (marked premult bytes, opaque role separation, BC1/BC3 and
 linear_textures E2E (pack replacement with a retained marked field). Full contracts: textures.md, top section.
 
 # Assets and local files
+
+## Compressed packs: what a release ships (2026-11-16)
+
+Owner: "the `pack` file can be further compressed it seems", then "lets try option 1" (compress release packs at
+rest, decompress at load, debug and `tide run` packs as they are). The codec is Claude's pick, changed from the
+zstd first recommended once the numbers were in: **LZ4 blocks, by the engine's own code**. The runtime has nobody
+else's code but musl's doubles, the engine is compiled with every game, and an LZ4 reader is one short function to audit
+(`lz_read`) where zstd's is thousands of lines; LZ4 gets most of what zstd does on these files and reads at three times the speed.
+zstd stays open if the owner wants the last points (it would be a vendored decoder in the runtime).
+
+Measured on packs on this machine, 4 MiB pieces each compressed alone (Python's lz4/zstd/zlib modules, one thread):
+
+| Pack | Raw | lz4 fast | lz4 hc9 | zlib 6 | zstd 3 | zstd 19 | the engine's |
+|---|---|---|---|---|---|---|---|
+| Mount & Rifle, native release | 446.7 MB | 64.1% | 56.3% | 50.4% | 51.3% | | 56.8% |
+| Gravewake, release | 35.4 MB | 55.2% | 51.3% | 44.2% | 42.3% | 38.6% | 51.5% |
+| Sidekick, release | 236.1 MB | 28.5% | 24.8% | 21.5% | 14.8% | 13.4% | 25.6% |
+
+Where the bytes are (zstd 3 of each kind alone): BC1 blocks 61% (262 MB of Mount & Rifle's 447), BC3 22-37%, mesh
+vertices 24-36%, 32-bit indices 36-39% (8% in Sidekick), skinned model bytes 15-25% (199 of Sidekick's 236 MB),
+RGBA images 63%, clips 84-88%. Making the contents smaller (the skinned models' keys, 16-bit indices) would cut
+memory too and is separate work, not done.
+
+- **The file** (`tide/pack.h`, A pack compressed): `tide_pack_compressed_header` (magic `TIDEPKLZ`, version 1,
+  the count of pieces, the pack file's size), a `uint32_t` a piece (its bytes in the file), then the pieces. A
+  piece is `TIDE_PACK_PIECE` (4 MiB) of the pack *file* (header, entries and region alike; the last piece is
+  what's left), as one LZ4 block, or as it is where that's no smaller (its size in the table is then the
+  piece's). The blocks are the format lz4's own tools read and write (the last 5 bytes literals, no match
+  starting in the last 12), so either side can be checked against them.
+- **`tide_pack_compress(bytes, size, each, &compressed)`** (pack.c, the builder's half): each piece alone, at
+  once through `each` (`tide_pack_each`) or one after another, to the same bytes. The match finder is a hash of 4
+  bytes to its last place and a chain of the places before it (64 tried, 64 KiB back), with one byte of lazy
+  matching under 128 bytes. One thread: 71 MB/s on Mount & Rifle (6.3 s), 106 and 121 MB/s on the other two, for a ratio within a point
+  of lz4's hc9; tide compresses the pieces on every processor (`build_threads_each`), which wasn't timed.
+- **`tide_pack_load` reads either file.** A compressed one (`load_compressed`, pack_load.c): the pieces that start
+  before the region (the header and entries: one piece, more only past ~75,000 entries) go into memory let go of
+  after; every other piece is read straight into the region's own allocation, so the pack is never in memory
+  twice and nothing copies it. The allocation is the file's region plus a slot (1 MiB), which holds what's laid
+  out after it (lists and maps of textures, clips and fonts); a pack whose laid-out blocks need more is
+  reallocated once its counts are read. The pack loaded before stays until all of the new one has been read and
+  checked, as for a raw pack. The loaded pack is the same in every byte, with the same digest (the raw header's):
+  nothing that reads a loaded pack can tell which file it came from, and asset-relative state transfers between
+  a machine with a compressed file and one with a raw file agree.
+- **A forged file reads nothing outside itself or the piece being written** (`compressed_is_whole`, `lz_read`):
+  the table must add up to the file's size exactly, a piece is never more than its bytes nor fewer than a 255th
+  of them (LZ4's limit, so the file's own size bounds the memory it asks for), a literal run stays in the block
+  and the piece, a match starts no earlier than its own piece's first byte and ends inside it, and a block must
+  fill its piece exactly. The 8-bytes-a-step match copy writes at most 7 bytes past a match, only where the
+  piece has 8 more.
+- **`tide_pack_expand(bytes, size, &pack_size)`**: the raw file a compressed one holds, for tools and tests.
+  `tide_pack_skinned_content` takes a raw pack only (its callers have tidec's file).
+- **What ships compressed** (`pack_ships_compressed`, compiler/cli/build.c): `tide build --release` and
+  `--distribution`, natively beside the program (`<name>.pack`, `<name>-server.pack`), a split web page's
+  `index.pack` (the page's `TIDE_FILES.pack.size` is the file's), and the APK's `assets/game.pack` (a
+  `game.pack.shipped` beside tidec's file). Not compressed: debug builds, `tide run` of any kind (watching, or a
+  run with no window: `build_options.run_pack`), a `--single-file` page (its gzip of the raw pack is smaller than
+  gzip of LZ4), managed hosting's `server.pack` (tide-services reads it), Unity's, and CMake's `tide_add_game`
+  copies in this repo. `gen/game.pack` is always tidec's raw file, so hot reload, `pack_file_is`, the fingerprint
+  and `<name>_pack.c` are untouched. `place_file(from, to, compressed)` is `place_pack` with the choice: its
+  marker's record says `compressed`, so a debug build after a release (same `.build/<name>.pack`) writes the raw
+  file again and a release after it compresses again; an unchanged pack is not compressed twice. The step shows as
+  "compressing assets". A build report's `pack.bytes` stays the pack's own size (what it is in memory); the
+  shipped file's size is under its outputs.
+
+Load time, release engine, best of 5 from bytes already in memory (so without the file read a smaller file
+saves): Gravewake 5 ms raw, 13 ms compressed; Sidekick 78 ms raw, 124 ms compressed. `tide_pack_expand` alone
+runs at 3.0-3.6 GB/s on one thread. Loading stays on one thread: the pack isn't what a game's start is (Pack
+format 5, below), and the runtime has no pool of its own before the host's.
+
+Tests: `pack_compressed_loads_as_the_pack_it_holds` (the test packs of text, grids, maps, textures in lists and
+maps, meshes, a 20 MiB blob, an empty pack, bytes that don't compress, and pieces of both kinds in one file: the
+same bytes whatever makes the pieces, expanded byte for byte, and loaded to the same digest and the same region
+with what's laid out after it), `pack_compressed_entries_past_its_first_piece_are_read` (80,000 entries, region
+in the last piece and before it), `pack_compressed_bytes_that_are_not_one_are_refused_and_the_loaded_pack_stays`
+(every truncation, a byte more, forged version/count/size/piece sizes, and every byte of a file flipped three
+ways under ASan, with the pack loaded before still there after each refusal); native ASan and the WASI suite.
+`tide_cli_build_report` checks the placed files: a release's `.build/<name>.pack` is `TIDEPKLZ` and smaller, a
+warm build doesn't compress again, a debug build writes `TIDEPACK` there and a release after it compresses again,
+and a web page's `index.pack` likewise with the page told the file's size. Checked by hand, not in the suite:
+lz4's own reader takes the engine's blocks and the engine's reader takes lz4's (fast and hc9) for all 173 pieces
+of the three packs above, and `sample_tag` run with no window draws the same capture, byte for byte, from its
+pack raw and compressed. Not run: an APK built with a compressed pack (the loader is the same code as
+desktop's; building and running one needs the Android setup, which this change didn't use).
 
 ## Pack format 5: built in place, a digest of pieces (2026-11-10)
 
@@ -364,7 +676,8 @@ function, pack format, asset semantics or deterministic expectation is introduce
 - Models retain external-buffer paths and content digests. A hit re-reads/hashes
   dependencies and rebuilds their watcher/depfile records. A mismatch discards
   tentative dependencies and reimports. Primary source bytes are still read and
-  hashed, so fresh processes detect same-size/same-time edits too.
+  hashed, so fresh processes detect same-size/same-time edits too. (Until 2026-11-17: a file is taken by its
+  size and time now, the first section.)
 - Audio retains validation results and converted PCM WAV bytes. Converted cache
   payloads are checked as WAV before use; raw byte assets still use source bytes.
 - Texture preparation retains exact RGBA8 or BC/authored-mip payloads, separately
@@ -430,7 +743,7 @@ measured right after the owner's (no cache writes) spent only 0.44 s in imports
 and ~2.8 s in the whole row. The rest of the owner's 10 s was not reproduced; a
 cold OS file cache for the ~4 GB read and hashed is the likely cause. Owner chose
 the recommendation: importer-scoped keys plus cleanup. Stat-based source hashing
-was not adopted (same-size/same-time edits are still caught).
+was not adopted (same-size/same-time edits are still caught). (Adopted 2026-11-17, the first section.)
 
 - `compiler/CMakeLists.txt` hashes only the code whose output the cache keeps
   (`TIDE_ASSET_CACHE_IMPORTERS`): vendored ufbx/dr_libs/stb, the compiler's asset,
@@ -2146,7 +2459,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 
 - Assets are built (agreed 2026-10-06; `docs/spec.md`, Assets, where the picks beyond what was agreed are Provisional; `docs/game/assets.md` for users): `asset Grid2<Color> hero = "art/hero.png";` is a declaration (`DECL_ASSET`) that resolves to a plain type, read-only, read by name wherever a value of its type is, in match code too, as every machine has the same pack. What's built, and what code relies on:
   - **The language.** `asset` is a declaration word (`parse_asset` in `compiler/src/parser.c`): a type, a name, `=`, an expression and `;`. The type is `string` (UTF-8), `List<byte>` (any file) or `Grid2<Color>` (a PNG or a PSD composite), or a `List<T>` or `Map<string, T>` of one, for a glob's matches or for the one file a path names, which is the one place a list or a map holds a grid (`asset_type` in `check.c` resolves the type at `PLACE_ASSET`, where `element_ok` takes one, and reads its shape off the tree; see A type is read as a tree, and Containers nest, under Language). The path is a constant text (`is_constant`, `text_literal`), relative to the declaring file whatever its namespace. A name is looked up as `NAME_ASSET` after `NAME_CONST` (`use_asset`: `BIND_ASSET`, with the declaration in `expr.constant`); `check_writable` refuses it, `local` and `virtual` are refused, and a frag samples one by its bare name only (`check_grid_sample`, `ex_sample` in `shader.c`: `shader_sample.asset`, `shader_texture.asset`), never an element of a list of them.
-  - **Resolving** is `compiler/src/asset_files.c` (tidec_core, so tidels and tide share it; `folders.c` moved there from `compiler/lsp/`): a glob (`*` within a name, `**` across folders, `?`; `asset_glob_match`, which tidels uses too) walks from its fixed prefix and sorts matches by their written paths' bytes, which are a map's keys. The walk only goes into folders the pattern could match in (`glob_reaches`, through `folder_find_files_in`): each folder's name has to match the pattern's part in its place, up to a part with a `**`, so `*.png` reads one folder's entries and none of the folders under it. Walking everything under the prefix, as it first did, walked the whole disk for a file at its root, which is where the language server's tests have theirs (`file:///test.tide`): `tidels_tests` took 70 seconds on Windows and never ended on Linux. A file is read once per process until its size or time changes (`read_at`), or an explicit editor notification marks its path or a parent folder changed (`asset_files_changed`). Notifications mark existing reads without freeing them until the next resolution, and also invalidate meshes whose external buffer paths changed, even when size/time match, hashed with SHA-256 and, for a grid, decoded with `tide_png_decode` or `psd_file_read`; a URL is fetched with curl through `popen` once per process (`fetch_url`) into `<game>/.tide/assets/urls/<sha256 of the URL>` beside its `.etag`, asked for again with `If-None-Match` (a 304 keeps the cache; the header goes to curl in `<hash>.request`, `-H @file`, never on the command line, since an ETag is the server's and a quote of it would end its argument on `cmd.exe`: `notes/memory-safety.md`, Remote assets), and taken from the cache when the server can't be reached; with no game folder (tidec on its own) a temporary folder stands in. The diagnostics say what tidels says, so its fixes attach to them: `there's no file at '<path>' (<abs>)` with a note naming a file of the same bytes (by the hashes `.tide/assets.sha256` keeps, which tidels writes) or files of that name, in order of their paths (`candidate_order`, as the server sorts its own: a system lists a folder in whatever order it keeps it in, which is by name on Windows and not on Linux), `'<glob>' matches no file`, `'<path>' isn't a PNG or a PSD that decodes`, `'<path>' isn't UTF-8 text`, and one each for a glob where the type holds one file, a type an asset can't be, a path that isn't constant. **One file where the type holds many is no error** (the owner, 2026-10-08, of `asset List<Clip> shot = "sfx/shot.wav";` and `asset Map<string, Clip> shot = "sfx/shot.wav";`: "should still be valid, i know its only one entry but this allows to change the scope of the search without changing the signature"): `asset_resolve` gives a value that's `many` with one item, whose key is the path as written, which is what a glob's key for that file is, so `write_pack` makes the list or the map of one with the code a glob's goes through, and nothing in codegen or the loader has a rule for it. A URL is taken the same way, its key the URL (Claude's pick, Provisional in `docs/spec.md`, Assets: the owner spoke of files). A `Cubemap` still wants its glob, and `[Raw]` still refuses a list or a map. To the editor such a path is a single file's, as everything there goes by whether the path is a glob, never by the type: a rename rewrites it, a missing one is found by its bytes, and completion in it offers the globs too. Tests: `compiler/tests/e2e/audio` (the owner's two lines, played by place and by key), `assets` (text, bytes and grids, a key through a `const string`), `asset_textures`, `tide_cli_assets` (a URL, fetched once for three declarations), `lsp_asset_one_file_for_a_list_or_a_map`. tidec takes `--game <folder>` (tide passes the game's) for the hashes and the cache.
+  - **Resolving** is `compiler/src/asset_files.c` (tidec_core, so tidels and tide share it; `folders.c` moved there from `compiler/lsp/`): a glob (`*` within a name, `**` across folders, `?`; `asset_glob_match`, which tidels uses too) walks from its fixed prefix and sorts matches by their written paths' bytes, which are a map's keys. The walk only goes into folders the pattern could match in (`glob_reaches`, through `folder_find_files_in`): each folder's name has to match the pattern's part in its place, up to a part with a `**`, so `*.png` reads one folder's entries and none of the folders under it. Walking everything under the prefix, as it first did, walked the whole disk for a file at its root, which is where the language server's tests have theirs (`file:///test.tide`): `tidels_tests` took 70 seconds on Windows and never ended on Linux. A file is read once per process until its size or time changes (`read_at`), or an explicit editor notification marks its path or a parent folder changed (`asset_files_changed`). Notifications mark existing reads without freeing them until the next resolution, and also invalidate meshes whose external buffer paths changed, even when size/time match, hashed with SHA-256 and, for a grid, decoded with `tide_png_decode` or `psd_file_read`; a URL is fetched with curl through `popen` once per process (`fetch_url`) into `<game>/.tide/assets/urls/<sha256 of the URL>` beside its `.etag`, asked for again with `If-None-Match` (a 304 keeps the cache; the header goes to curl in `<hash>.request`, `-H @file`, never on the command line, since an ETag is the server's and a quote of it would end its argument on `cmd.exe`: `notes/memory-safety.md`, Remote assets), and taken from the cache when the server can't be reached; with no game folder (tidec on its own) a temporary folder stands in. The diagnostics say what tidels says, so its fixes attach to them: `there's no file at '<path>' (<abs>)` with a note naming a file of the same bytes (by the hashes `.tide/assets.sha256` keeps, which tidels writes) or files of that name, in order of their paths (`candidate_order`, as the server sorts its own: a system lists a folder in whatever order it keeps it in, which is by name on Windows and not on Linux), `'<glob>' matches no file`, `'<path>' isn't a PNG or a PSD that decodes`, `'<path>' isn't UTF-8 text`, and one each for a glob where the type holds one file, a type an asset can't be, a path that isn't constant. **One file where the type holds many is no error** (the owner, 2026-10-08, of `asset List<Clip> shot = "sfx/shot.wav";` and `asset Map<string, Clip> shot = "sfx/shot.wav";`: "should still be valid, i know its only one entry but this allows to change the scope of the search without changing the signature"): `asset_resolve` gives a value that's `many` with one item, whose key is the path as written, which is what a glob's key for that file is, so `write_pack` makes the list or the map of one with the code a glob's goes through, and nothing in codegen or the loader has a rule for it. A URL is taken the same way, its key the URL (Claude's pick, Provisional in `docs/spec.md`, Assets: the owner spoke of files). A `Cubemap` still wants its glob. `[Raw]` and `[Linear]` go before a glob's `List<Texture>` or `Map<string, Texture>` (since 2026-11-14, top of this file and notes/textures.md), and still refuse a glob of grids (`raw_on_list`). To the editor such a path is a single file's, as everything there goes by whether the path is a glob, never by the type: a rename rewrites it, a missing one is found by its bytes, and completion in it offers the globs too. Tests: `compiler/tests/e2e/audio` (the owner's two lines, played by place and by key), `assets` (text, bytes and grids, a key through a `const string`), `asset_textures`, `tide_cli_assets` (a URL, fetched once for three declarations), `lsp_asset_one_file_for_a_list_or_a_map`. tidec takes `--game <folder>` (tide passes the game's) for the hashes and the cache.
   - **The pack** (`tide/pack.h`: the builder in `engine/src/pack.c`, which tidec compiles too with `png_read.c`, `sha256.c`, `page.c` and `net.c`; the loader in `pack_load.c`) is one region laid out as a heap lays blocks out, so the code that reads text, lists, maps and grids reads it unchanged: a text or `List<byte>` is a block with a NUL after its bytes, a text's saying its characters in its header and a list's its room (below); a `Grid2<Color>` its directory and the chunks that have a color in them, with the file's hash in the directory's header as the version the draw list tells it by (`tide_pack_grid_version`, which `tide_draw_grid_texture` reads for a pack grid); a glob's list a block of handles; a map its entries and an index hashed as the game's lookups hash. A file is in the region once for each kind of block it's read as (by its content's SHA-256 and that kind), and a declaration is an entry by the SHA-256 of its qualified name and its kind. **A file's text and its bytes are one block only where each byte is a character** (2026-10-08): a block's header has two words, which a text reads as its bytes and its characters (`tide_text_view`, for every `tide_text` handle: a list's elements, a map's keys and values) and a list as its count and its room (`b`, of which a read only asks `TIDE_LIST_CHUNKED`, but which everything that writes a list takes to be no less than the count), so one block can't say both of text with a character of several bytes. Shared, as it was, such a text's `.length` was its bytes wherever it was read through a handle (`oneRules[RULES].length` 27 for a file of 26 characters), and right only for an `asset string` alone, whose characters are its entry's `extra`. So text goes through `tide_pack_string` (`engine/src/pack.c`: `pack_item` for `ASSET_TEXT`, and a map's keys, in `compiler/src/codegen.c`), which gives the bytes' own block (`tide_pack_bytes`, shared as `TIDE_PACK_BYTES`) for text of a byte a character, and otherwise a block of the text's own with its characters in `b`, shared as `TIDE_PACK_TEXT`: a file with characters past ASCII that's declared as text and as a `List<byte>` is in the pack as each. A pack of text that's all ASCII is the bytes it was, and the file format's version didn't change. New code that puts text in the pack calls `tide_pack_string`, never `tide_pack_bytes`. At load (`tide_pack_load`) the region is at the top of the scratch area's offsets, from `TIDE_PACK_BASE` (512 MiB; `tide_pack_holds`), so a handle into it is a scratch handle (`TIDE_IN_SCRATCH`), which `tide_scratch_at` reads through once each thread has mapped the region into its slots (`tide_pack_use`, which generated code calls beside `tide_text_use` and in `tide_prepare`); the scratch area stops short of it while a pack is loaded. A grid with no heap reads its chunks the same way (`tide_grid_chunk_at`), cached against a heap that never moves (`tide_pack_still`). No world holds any of it. Generated C has a global per asset (`tide_asset_<name>`), `tide_assets_load(bytes, size)` (declared in the header with `TIDE_HAS_ASSETS`, so only games with assets change their header), which finds each name's entry, says on stderr which a pack from another build lacks (they read as empty), and `tide_pack_use` where it sets the thread's heaps.
   - **Where the pack is.** tidec writes `<out>/<name>.pack` beside the generated C (nothing for a game with no assets), and with `--pack-c` the same as `<name>_pack.c` (`tide_game_pack`, `tide_game_pack_size`), which `tide_add_game` gives `HOST` programs so a test loads it itself; a game with a window gets `<target>.pack` beside its program (`cmake/copy_pack.cmake`), inside its page (`tide_web_page ... PACK`, `web_page.mjs`: `TIDE_PACK` as base64) and in its APK (`tide_android_app ... PACK`, `tide_apk --pack-if-any`: `assets/game.pack`). `tide build` does the same (`place_pack`, `make_page`, `apk_desc.pack`). The standard host loads it before the first frame (`tide_run_load_assets` in `tide/host.h`, from `tide_platform_pack`: `tide_window_pack`, which on desktop reads `<program>.pack` by the program's own path, on the web asks the page (`pack_size`, `pack_copy`) and on Android the APK's assets) and hands it to each reloaded library (`tide_host_game.assets`). Under `tide run` tide writes the pack into the run's folder as `pack-<n>` with each build and again when a file an asset names changes (`asset_stamp` over `game_info.asset_paths`, `repack`: the front end runs, nothing compiles or links), which the host loads between frames (`check_pack` in `platform/src/reload.c`), and `tide run --web` serves (`/build` says the newest pack, `/pack-<n>`; the page fetches it and calls the program's `tide_pack_changed`): a saved image is in the running game within a moment, as data.
   - **Tests:** `tests/test_png.c` (the reader against the writer and hand-made PNGs), `tests/test_pack.c` (built, loaded, read through the list, map, grid and draw-list code; text of two-byte characters alone, in a list and as a map's keys and values, with its characters, beside the same content's bytes), `compiler/tests/e2e/assets` (each type, globs as lists and maps, one with a `*` for a folder, two names of one file, a path through a constant, the `.length` of a list's and a map's text whose characters aren't a byte each, with the same file's bytes, a grid drawn and sampled in a frag, match code, a world packed and back, a stale pack; its files are `-text` in `.gitattributes`, as an asset is its file's bytes, line endings and all, and CI's Windows checkouts would make a text file's Windows') with `assets_plain` (the same game with none: the same empty world hash, `assets_same.h`), `compiler/tests/errors/asset_*.tide` (one a diagnostic), `tide_cli_assets` (`compiler/cli/tests/assets_test.mjs`: the pack, its C, and URLs against a server on this machine: fetched once, asked with the ETag, built from the cache offline, an error uncached), and the docs' live example (`docs/examples/assets.tide`). A game with no `asset` generates the C it did, byte for byte (old and new tidec over every game's source list, 211 games).
@@ -2193,7 +2506,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **The draw list tells a pack's mesh by its file and final defaults**: `list_version` in `engine/src/mesh.c` asks `tide_pack_list_version` first for a list in the scratch area. Without it a pack's list was hashed whole at every draw, as a list made along the way is: megabytes a draw call for a model. So a mesh is filled into the list once, drawn from a view a thousand times a frame costs a block's header each, and a pack loaded again with the file as it was is the mesh the list and the GPU have.
   - **Hot reload** needed nothing of its own: `tide run` packs again when a named file changes, the mesh has another version, and the draw list makes another; the one nothing draws goes as any does.
   - **Editors:** `notes/editors.md`, Assets, the editor side.
-  - **Tests:** `tidec_mesh_files` (the numbers it reads, a .glb, a .gltf and an .obj cut and spoiled anywhere, what a description says that its bytes don't bear out); `compiler/tests/e2e/asset_meshes` with the files `asset_meshes_make.mjs` writes into `e2e/assets/meshes/` (every field by its name against values worked out by hand: a node that moves, nodes in nodes that scale, one that mirrors, one that turns; bytes as positions, a strip, a fan, a sparse accessor, a buffer beside the file and one inside it; a part with no normals; an OBJ; the same file as three structs; a glob as a list and a map, one file for a list; a Mesh in a local, a parameter and a result; the fields no file fills; a copy changed with the mesh as it was; the draws as runs, one mesh however it's named, a step in the Mesh's expression run once, the pack loaded again; a pack of another layout). `mesh_assets_defaults_read_forward_assets_of_the_current_pack` checks single/list/map meshes whose vertex defaults read later text, byte-list, text-list, text-map and mesh assets, on first and repeated loads and after replacing the UTF-8 text with a shorter value and restoring it. `asset_defaults` continues to pin declared sampling carried into field defaults. `compiler/tests/errors/asset_mesh_*.tide`, a file a diagnostic, with the refused files in `e2e/assets/meshes/bad/`; `pack_meshes_*` in `tests/test_pack.c` (two lists, a list and a map, versions, the vertices to write, drawn once, loaded again elsewhere and edited; blocks cut short); pass 21 of `tide_platform_shaders` (`Models` in `platform/tests/shaders.tide`, `run_model_checks`: a file's front is what's drawn with nothing said and its back isn't, mirrored with both sides, its uvs the texture as it is, a vertex of the game's through a frag with its default, an .obj the same square as a .glb, instances, a list's, a map's, by its two lists: the same pixels on OpenGL 3.3, WebGL 2 and WebGPU, where the device is then lost and found); `lsp_asset_meshes`. The docs' `model` example draws a .glb of several meshes and nodes with no normals, looked at with no window. Not run: Android, and OpenGL on a Mac. The original glTF/OBJ test files are made by scripts from their specifications. FBX now has real Blender and Maya exporter fixtures as recorded above; real exporter GLB/OBJ files remain unproven here.
+  - **Tests:** `tidec_mesh_files` (the numbers it reads, a .glb, a .gltf and an .obj cut and spoiled anywhere, what a description says that its bytes don't bear out); `compiler/tests/e2e/asset_meshes` with the files `asset_meshes_make.mjs` writes into `e2e/assets/meshes/` (every field by its name against values worked out by hand: a node that moves, nodes in nodes that scale, one that mirrors, one that turns; bytes as positions, a strip, a fan, a sparse accessor, a buffer beside the file and one inside it; a part with no normals; an OBJ; the same file as three structs; a glob as a list and a map, one file for a list; a Mesh in a local, a parameter and a result; the fields no file fills; a copy changed with the mesh as it was; the draws as runs, one mesh however it's named, a step in the Mesh's expression run once, the pack loaded again; a pack of another layout). `mesh_assets_defaults_read_forward_assets_of_the_current_pack` checks single/list/map meshes whose vertex defaults read later text, byte-list, text-list, text-map and mesh assets, on first and repeated loads and after replacing the UTF-8 text with a shorter value and restoring it. `asset_defaults` continues to pin declared sampling carried into field defaults. `compiler/tests/errors/asset_mesh_*.tide`, a file a diagnostic, with the refused files in `e2e/assets/meshes/bad/`; `pack_meshes_*` in `tests/test_pack.c` (two lists, a list and a map, versions, the vertices to write, drawn once, loaded again elsewhere and edited; blocks cut short); pass 21 of `tide_platform_shaders` (`Models` in `platform/tests/shaders.tide`, `run_model_checks`: a file's front is what's drawn with nothing said and its back isn't, mirrored with both sides, its uvs the texture as it is, a vertex of the game's through a frag with its default, an .obj the same square as a .glb, instances, a list's, a map's, by its two lists: the same pixels on OpenGL 3.3, WebGL 2 and WebGPU, where the device is then lost and found); `lsp_asset_meshes`. The docs' `model` example draws a .glb of several meshes and nodes with no normals, looked at with no window. Android: the shaders' app, in CI's Android job (`notes/android-and-mingw.md`, Every window fixture an app). Not run: OpenGL on a Mac. The original glTF/OBJ test files are made by scripts from their specifications. FBX now has real Blender and Maya exporter fixtures as recorded above; real exporter GLB/OBJ files remain unproven here.
   - **Not built:** the textures inside a model file (declare supported images separately), a material beyond its color, a file's parts apart, skins, animation and morph targets, `Mesh<V>` as a field's type (for a mesh a game makes, or naming an asset's as a `Texture` does), a mesh read from bytes while the game runs, a 2D mesh from a file, and a frag or a vert reading `mesh.vertices` (`data_of` in `shader.c` resolves an asset by its declaration alone, with no part of one; it's an error that says what to write, and a gap by the rule that GPU code refuses only what a GPU can't do).
 - Runtime loading (built 2026-10-06, from the Assets design in `docs/spec.md`, Provisional, Decoding and Fetching; the picks beyond it are listed there): `grid.Decode(bytes)` and `await Web.Fetch(url)`. What's built, and what code relies on:
   - **The PNG reader is the engine's** (`engine/include/tide/png.h`, `engine/src/png_read.c`, from RFC 2083 with its own inflate from RFC 1951 under zlib's wrapper, no code of anyone else's): `tide_png_decode` gives a whole picture as `tide_color`s, `tide_png_decode_rows` hands rows over as they're decoded (an interlaced picture's pass by pass), `tide_inflate` is the raw deflate stream into a sink, and `tide_grid_decode` is `grid.Decode`: it decodes into a new grid in the world's heap, writes each row's cells a chunk's span at a time (a span of zeros makes no chunk), and only once the whole picture decoded lets the old grid go, so a failed decode leaves the grid as it was. A sample is `v / max` in floats, which IEEE 754 defines, so a picture decoded in a tick is the same bits on every machine (`compiler/tests/e2e/decode` pins the world's hash, native and web). What's made for a decode is a few rows. A picture of more than `TIDE_GRID_DECODE_MAX_PIXELS` (4096², 256 MiB of cells; 2026-10-26, the owner asked for clear limits that are easy to change) is refused in `grid_began` before a cell is made, and inflated bytes past the last scanline are read for the checksum up to `TIDE_PNG_MAX_EXTRA_BYTES` (1 MiB), so a decode's work is its picture's: both in the Limits block of `tide/png.h`. Pictures within the limit that together fill the heap still end in `tide_out_of_memory` (`compiler/tests/safety/decode.tide`: 4097 by 16 decodes, 4097 by 4096 white pixels a bit each is `InvalidData` and the grid stays 4097 by 16). `tide_platform_png_decode` (`platform/tests/png_decode.mjs`) reads back pictures Node's zlib wrote of every color type, depth, filter and interlacing, and refuses files wrong in each way. The asset card decodes at build time with the same reader.

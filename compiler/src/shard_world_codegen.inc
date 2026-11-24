@@ -812,8 +812,12 @@ static void gen_shard_tasks(gen *g)
                      "            const uint32_t row = tide_table_add(&w->tide_tasks_%s, &tide_columns_tasks_%s);\n"
                      "            tide_task_%s *t = tide_table_cell(&w->tide_tasks_%s, &tide_columns_tasks_%s, row, 0);\n"
                      "            t->task = (tide_task){w->tide_task_order++, wake, owner, scene, 0u, 0u};\n"
-                     "            t->frame = f;\n            break;\n        }\n",
+                     "            t->frame = f;\n",
                   i, frame, client_codec_id(codec, (type){TY_STRUCT, ti->frame}), frame, id, id, id, id, id);
+        // One that waits for the store asks again here, the shard that has it now: the answer to the shard it came
+        // from finds no task there (the server binds its store around the messages it takes before a tick)
+        if (task_awaits_store(ti->fn, 0)) sb_printf(o, "            tide_stored_ask_%s(w, &t->frame);\n", frame);
+        sb_put(o, "            break;\n        }\n");
     }
     sb_put(o, "        default: return false;\n        }\n    }\n    return true;\n}\n\n");
 }

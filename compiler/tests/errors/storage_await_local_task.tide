@@ -1,0 +1,10 @@
+// expect: Storage.Load is the match's, and 'Refresh' is this machine's task: it uses local state on line 5
+// expect: a match task, which uses no local state, can await the store
+scene Main { }
+local singleton Menu { int bytes; }
+async void Refresh(mut Menu menu)
+{
+    var got = await Storage.Load("menu") ?? [];
+    menu.bytes = got.count;
+}
+view Show(mut Menu menu) { if (menu.bytes == 0) Refresh(menu); }

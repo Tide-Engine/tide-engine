@@ -1,0 +1,15 @@
+// expect: frag output 1 is Color, but Format.R32i takes int: change the output type or this image's format
+scene Main { }
+local singleton Images { RenderTarget a; RenderTarget b; RenderTarget c; }
+frag Paint(Vertex vertex, out Color color) { color = Color.red; }
+view V(mut Images images)
+{
+    images.a = RenderTarget(8, 8, 1, Format.R32i);
+    // Fields assigned from each other, round and round: each is one of the others' origins
+    images.b = images.a; images.c = images.b; images.a = images.c; images.b = images.c; images.c = images.a;
+    RenderTarget swap = images.a;
+    images.a = images.b;
+    images.b = swap;
+    List<Vertex> quad = [Vertex { position = float2(0) }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }];
+    images.a.Mesh(quad, [0, 1, 2], Paint);
+}

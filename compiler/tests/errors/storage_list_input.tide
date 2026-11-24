@@ -1,0 +1,8 @@
+// expect: the server's store is used by match code, not input sampling or defaults
+scene Main { }
+input Keys
+{
+    bool jump;
+    Sample() { Storage.List("x"); }
+}
+event(Listed listed) Count() { }

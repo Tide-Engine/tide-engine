@@ -1,0 +1,13 @@
+// expect: 'Doubled' is 'dev', and this build isn't a dev one, so it's left out
+struct Magazine
+{
+    int rounds;
+    dev int Doubled() { return rounds * 2; }
+}
+component Gun { Magazine clip; }
+scene Main { }
+
+system Reload(mut Gun gun)
+{
+    gun.clip.rounds = gun.clip.Doubled();
+}

@@ -324,11 +324,6 @@ event Struck { int seat; Power power; int target; }
 event RoundOver { int round; int winner; }
 event RoundBuilt { int round; }
 
-// What the buttons ask of the match.
-command Use { }
-command Rebuild { }
-command Bots { }
-
 // The player who has a seat, or no player.
 PlayerID Sitter(Towers towers, int seat)
 {
@@ -824,20 +819,20 @@ system Rounds(mut Towers towers, query (Seat seat) seats)
     Send(RoundBuilt { round = towers.round });
 }
 
-// A player uses what their tower earned.
-command(Use use, PlayerID sender) UsePower(Towers towers)
+// What the buttons ask of the match. A player uses what their tower earned.
+command() Use(Towers towers, PlayerID sender)
 {
     if (towers.seats.TryGet(sender, out var seat)) towers.plinths[seat].Send(Spent { });
 }
 
 // The New game button: a first round again, with nobody's wins.
-command(Rebuild rebuild, PlayerID sender) Reset(mut Towers towers)
+command() Rebuild(mut Towers towers, PlayerID sender)
 {
     towers.phase = Phase.Clear;
     towers.round = 0;
 }
 
-command(Bots bots, PlayerID sender) Idle(mut Towers towers)
+command() Bots(mut Towers towers, PlayerID sender)
 {
     towers.bots = !towers.bots;
 }

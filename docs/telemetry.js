@@ -21,6 +21,7 @@ export const MAX_EVENTS = 100;
 const MAX_MS = 86_400_000;
 const PER_MINUTE = 30;
 
+// 'open' was the scene editor's command, which versions before its removal still send.
 export const allowed = {
     command: new Set(['add', 'build', 'deploy', 'editors', 'eject', 'fetch', 'help', 'ide', 'login', 'logout', 'open', 'publish',
         'run', 'schedule', 'shaders', 'unity', 'update', 'upgrade', 'version', 'other']),

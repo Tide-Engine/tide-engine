@@ -28,13 +28,6 @@ that awaits a [local worker](./tasks.md#local-workers), and draw the last
 completed geometry while it works. A heavy calculation directly in a view
 blocks that frame.
 
-`[RunInEditor]` also runs a view in the native prefab editor's compiled preview.
-`[EditorOnly]` runs it only there; an unmarked view runs only in the game. Choose
-one attribute, without arguments. Both keep the ordinary view access rules.
-The preview has authored values/defaults and its own local visual state, with
-no gameplay handlers or systems. See [the native editor](../tools/editors.md#native-scene-editor)
-for initialization, camera and service limits.
-
 For see-through shapes, sprites and 3D meshes, see [Transparency](./draw-settings.md#transparency): alpha controls opacity, and 3D also needs the right depth setting and draw order.
 
 Tap a circle to select it, then change the camera's size. The grid and circles use world coordinates; the heading and slider keep their size in screen pixels. Pointer picking uses `ScreenToWorld` with that frame's camera.
@@ -129,7 +122,7 @@ Each frame starts black, with the camera at the origin and one world unit per pi
 
 `Color` has `r`, `g`, `b` and `a`, floats from 0 to 1, as in Unity. Its constructor takes scalars and vectors totaling 3 or 4 channels, in order, just as vector constructors do. `Color(r, g, b)`, `Color(uv.xy, 0)` and `Color(rgb)` have alpha 1; `Color(r, g, b, a)`, `Color(rgb, a)` and `Color(rgba)` set it. Ints and int vectors convert to floats. The constants are `Color.white`, `black`, `red`, `green`, `blue`, `yellow`, `cyan`, `magenta`, `gray` and `clear`. Components and singletons can hold colors.
 
-Colors add, subtract and multiply channel by channel, alpha too, and scale by a number: `tint * Color.red * 0.5`. `Math`'s component-by-component functions take them the same way: `Math.Lerp(a, b, t)` blends two colors, in a view or in a frag.
+Colors add, subtract and multiply channel by channel, alpha too, and scale by a number: `tint * Color.red * 0.5`. `==` and `!=` compare two colors whole, every channel and alpha, as they do vectors ([Operators](../language/math.md#operators)). `Math`'s component-by-component functions take them the same way: `Math.Lerp(a, b, t)` blends two colors, in a view or in a frag.
 
 A color's numbers are the display's own: `Color(0.5, 0.5, 0.5)` is the middle gray a paint program shows for 128, a PNG's pixels are drawn as the file has them, and colors blend and add as those numbers. Nothing is converted on the way in or out, and the screen performs no automatic color-space conversion. It's what sprites and UI want. It isn't how light adds up: two lamps of half don't make white's brightness, and a half-clear white over black is darker than half the light. A game that wants that uses [Linear image sampling](./shaders.md#linear-light-color) for its color textures and works in light in a float target. For unmarked inputs, explicit conversion is also available:
 
@@ -269,6 +262,10 @@ view Buttons()
 | `Gradient.Radial(inner, outer)` | Its middle out to the middle of its sides, and on to its corners |
 
 `color.WithAlpha(a)` is the color with another alpha, its red, green and blue as they are: a glow of an item's color, `rarity.WithAlpha(0.4)`. It works in a fill, and in any GPU code, too.
+
+`color.rgb` is its red, green and blue as a `float3`, for the math a light or a blend does on them: `Color(tint.rgb * shade, tint.a)`. It's read, never assigned, and works in GPU code.
+
+A `Rect` reads as vectors too: `rect.position` is its top left corner, `rect.size` its width and height and `rect.center` its middle, each a `float2`, so a label goes at `slot.center` with `Anchor.MiddleCenter`. `rect.Contains(point)` says whether a point is in it, like the pointer over a slot (its left and top edges are in, its right and bottom ones out, so slots side by side share no point), and `rect.Inset(amount)` is the rect with every edge moved in by that much, or out by an amount under 0: `Draw.Rect(slot.Inset(1), 4, fill)` inside a border.
 
 Each takes two, three or four colors, spread evenly: `Gradient.Vertical(a, b, c)` is `b` at the middle. Colors blend with their alpha, so a gradient to `Color.clear` fades without darkening.
 

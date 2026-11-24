@@ -1,41 +1,13 @@
-// expect: 'bone' is made of ints, which don't blend across a triangle, so a frag can't read it
+// expect: this draw's pixels read 16 values from the mesh's corners, and a GPU carries 15 between them
+// expect: each field of the vertex the frag reads is one
 scene Main { }
-
-struct V
+struct V { float3 position; int a; int b; int c; int d; int e; int f; int g; int h; int i; int j; int k; }
+struct Extra { int w; int x; int y; int z; }
+local singleton Models { List<V> crate; List<int> faces; }
+vert Hand(mut V vertex, out Extra extra) { extra = Extra { w = 1, x = 2, y = 3, z = vertex.a }; }
+frag Shade(V vertex, Extra extra, out Color color)
 {
-    float3 position;
-    float2 uv;
-    int bone;
+    color = Color(vertex.position.x + float(vertex.a + vertex.b + vertex.c + vertex.d + vertex.e + vertex.f + vertex.g
+                  + vertex.h + vertex.i + vertex.j + vertex.k + extra.w + extra.x + extra.y + extra.z), 0, 0);
 }
-
-component Box
-{
-    Color tint = Color.white;
-}
-
-singleton Sun
-{
-    float3 direction = float3(0, -1, 0);
-}
-
-local singleton Models
-{
-    List<V> crate;
-    List<int> faces;
-    Grid2<Color> wood = Grid2(4, 4);
-}
-
-event(Spawned) Setup(with Main)
-{
-    Spawn(Box);
-}
-
-frag Shade(V vertex, out Color color)
-{
-    color = Color.white * vertex.bone;
-}
-
-view Show(Box box, Models models)
-{
-    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade);
-}
+view Show(Models models) { Draw.Mesh(models.crate, models.faces, float4x4.identity, Hand, Shade); }

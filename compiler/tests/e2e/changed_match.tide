@@ -1,0 +1,92 @@
+// Changed<...> handled by match code: as a tick ends, a field that changed
+// over it is sent to the match's handlers, whose own changes to fields
+// watched make another round, until nothing more changes. A puzzle's board
+// follows its level number, whoever sets the number.
+
+singleton Workshop
+{
+    int level;
+    int board;  // The level the board was built for
+    int serial; // Moves sent before the board changed are stale
+    int loads;
+    int serials; // Changes of serial the match heard
+    int sum;     // ...each old * 100 + value, added up
+}
+
+component Unit
+{
+    int id;
+    int hp = 3;
+    bool down;
+}
+
+component Tally
+{
+    int heard;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Unit { id = 1 }, Tally { });
+    Spawn(Unit { id = 2 }, Tally { });
+}
+
+system Play(mut Workshop workshop, Time time)
+{
+    if (time.tick == 10) workshop.level = 4;
+    // Set and set back in one tick: no change
+    if (time.tick == 20) workshop.level = 9;
+    if (time.tick == 20) workshop.level = 4;
+    if (time.tick == 30) workshop.level = 5;
+}
+
+system Hurt(mut Unit unit, Time time)
+{
+    if (time.tick == 40 && unit.id == 2) unit.hp = 0;
+    if (time.tick == 50) unit.hp -= 1;
+}
+
+// The board follows the number
+event(Changed<Workshop.level> change) Load(mut Workshop workshop)
+{
+    workshop.board = change.value;
+    workshop.loads += 1;
+    workshop.serial += 1;
+}
+
+// ...and that change is heard in a round of its own, the same tick
+event(Changed<Workshop.serial> change) Stale(mut Workshop workshop)
+{
+    workshop.serials += 1;
+    workshop.sum += change.old * 100 + change.value;
+}
+
+// Per entity: the entity whose field changed
+event(Changed<Unit.hp> change) Fall(mut Unit unit, mut Tally tally)
+{
+    tally.heard += 1;
+    if (change.value <= 0) unit.down = true;
+}
+
+#if ENDLESS
+// Each round changes the field it watches: a chain that never ends, which stops the program
+event(Changed<Unit.hp> change) Again(mut Unit unit)
+{
+    unit.hp += 1;
+}
+#endif
+
+// Local handlers still hear a change match code handles, once
+local singleton Heard
+{
+    int levels;
+    int last;
+}
+
+local event(Changed<Workshop.level> change) HearLevel(mut Heard heard)
+{
+    heard.levels += 1;
+    heard.last = change.old * 100 + change.value;
+}

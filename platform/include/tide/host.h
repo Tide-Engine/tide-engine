@@ -13,9 +13,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "tide/checkpoint.h"
+#include "tide/embed_game.h"
+#include "tide/timeline.h"
 #include "tide/layout.h"
 #include "tide/hosting.h"
 #include "tide/network.h"
+#include "tide/pack.h"
 #include "tide/page.h"
 #include "tide/platform.h"
 #include "tide/profiler.h"
@@ -24,6 +28,8 @@
 #include "tide/sha256.h"
 #include "tide/stats.h"
 #include "tide/time.h"
+#include "tide/tweaks.h"
+#include "tide/inspect.h"
 #include "tide/voice.h"
 #include "tide/screen_keyboard.h"
 #include "tide/worker.h"
@@ -49,6 +55,9 @@ typedef struct tide_run_desc {
     // no window (see tide/run.h)
     int argc;
     char **argv;
+    // tide_host_run_library: which tide built this host, as a game's library says it (TIDE_HOST_LIBRARY_MADE_BY).
+    // A library that says another isn't loaded. NULL to take any
+    const char *made_by;
 } tide_run_desc;
 
 // A game as a host runs it: what sessions run (tide_game), and this machine's
@@ -145,6 +154,16 @@ typedef struct tide_host_game {
     // Optional: tide_debug_log_to, which a host that shows the game's Debug.Log lines itself (tide/embed.h, for the
     // program it's inside of) calls as it loads the library, whose engine copy is the one that logs.
     void (*debug_log_to)(void (*heard)(const char *text));
+    // Optional: the game's `dev` views by name, NULL after them (tidec's tide_dev_view_names), which the dev menu
+    // lists, and tide_show_dev_views, which the host calls before each frame with a byte for each: nonzero, it runs
+    const char *const *dev_views;
+    void (*show_dev_views)(const uint8_t *shown);
+    // Optional: a dev build's tweaks (tide/tweaks.h, tidec's tide_game_tweaks), which the host takes the values tide run works out for
+    // again as it changes and the dev menu shows and writes; NULL for none
+    const struct tide_tweaks_api *(*tweaks)(void);
+    // Optional: a dev build's inspector (tide/inspect.h, tidec's tide_game_inspect), which the dev menu shows the match's
+    // and this machine's state with and changes them through; NULL for none
+    const struct tide_inspect_api *(*inspect)(void);
 } tide_host_game;
 
 // A game's library exports this function, which returns its table.
@@ -153,9 +172,16 @@ typedef struct tide_host_game {
 // game through are. A library another tide built, whose tables are laid out otherwise, says another number (or has
 // no such function), and the host says so rather than load it and call through members that aren't where it looks.
 #define TIDE_HOST_LIBRARY_SHAPE "tide_host_library_shape"
+// ...and this one, which returns which tide built the library, as text: its version and a number of what it built
+// with (itself, the installation's headers, engine and platform layer), which tide writes. A host that says which
+// tide built it (tide_run_desc.made_by, tide_embed_made_by) loads only libraries that say the same text: tables of
+// one size can still mean other things between two tides, and each library has an engine copy of its own, which the
+// host's has to agree with. A host that doesn't say takes any library of its shape.
+#define TIDE_HOST_LIBRARY_MADE_BY "tide_host_library_made_by"
 #define TIDE_HOST_SHAPE                                                                                               \
-    ((uint64_t)(sizeof(tide_host_game) & 0xFFFF) | (uint64_t)(sizeof(tide_game) & 0xFFFF) << 16                       \
-     | (uint64_t)(sizeof(tide_io) & 0xFFFF) << 32                                                                     \
+    ((uint64_t)((sizeof(tide_host_game) + sizeof(struct tide_embed_game)) & 0xFFFF) /* ...and what it embeds by */    \
+     | (uint64_t)(sizeof(tide_game) & 0xFFFF) << 16                                                                   \
+     | (uint64_t)((sizeof(tide_io) + sizeof(tide_gpu_reads)) & 0xFFFF) << 32 /* The read table the host shares */     \
      | (uint64_t)((sizeof(tide_layout) + 3u * sizeof(tide_layout_type) + 7u * sizeof(tide_layout_field)) & 0xFFFF) << 48)
 #ifdef _WIN32
 #define TIDE_HOST_EXPORT __declspec(dllexport)
@@ -199,12 +225,24 @@ static inline void tide_run_assets_kept(uint8_t *bytes, const size_t size, const
     tide_clips_prepare(tide_platform_jobs()); // Its clips decoded now, on the pool's threads, not at their first play
 }
 
+// Has the game load the pack in `bytes`, where they were read: offered to the loader (tide_pack_give), which takes
+// them as the pack's memory where it can. A gigabyte isn't then copied, and kept twice.
+static inline bool tide_run_load_given(uint8_t *bytes, const size_t size)
+{
+#ifndef __wasm__ // A page's pack is fetched, with no room past its bytes
+    const size_t room = tide_platform_read_room(bytes);
+    if (room) tide_pack_give(bytes, size, room);
+#endif
+    return tide_run_game->assets(bytes, size);
+}
+
 // The pack from `bytes` (malloc'd, the host's from here on): the game loads it.
 static inline void tide_run_assets_from(uint8_t *bytes, const size_t size)
 {
     free(tide_run_pack); // The last one's bytes first: a pack can be gigabytes
     tide_run_pack = NULL;
-    const bool loaded = !tide_run_game->assets || !bytes || tide_run_game->assets(bytes, size);
+    const bool loaded = !tide_run_game->assets || !bytes || tide_run_load_given(bytes, size);
+    if (tide_pack_given(bytes)) bytes = NULL; // The loaded pack's own memory now
     tide_run_assets_kept(bytes, size, loaded);
 }
 
@@ -297,6 +335,81 @@ static bool tide_run_alongside;
 static uint32_t tide_run_alongside_ended;
 // The room the last frame told local code the match is in (Session.room)
 static char tide_run_room[TIDE_NETWORK_ADDRESS_BYTES];
+
+// Checkpoints (tide/checkpoint.h), a dev build's: their folder (--checkpoints; tide run gives the project's
+// `checkpoints`), the one the run starts from, and starts over from (--from, then the last loaded), and what the menu
+// or a script asked for, carried out as the next frame begins (tide_run_checkpoints_poll)
+static const char *tide_run_checkpoints = "checkpoints";
+static char tide_run_from[TIDE_CHECKPOINT_NAME];
+static bool tide_run_from_force; // ...loaded with what carries over (--force)
+static void *tide_run_from_world; // ...loaded already, for tide_run_begin to start from, and the player who saved it
+static int32_t tide_run_from_player;
+// On a page, one on its way from tide (1 to load, 2 to load what carries over), and one saved, until tide says it's kept
+static int tide_run_checkpoint_coming;
+static char tide_run_checkpoint_coming_name[TIDE_CHECKPOINT_NAME];
+static char tide_run_checkpoint_saving[TIDE_CHECKPOINT_NAME];
+static int tide_run_checkpoint_saving_kind; // ...a checkpoint (0), or a recording (1)
+static int tide_run_checkpoint_want = -1; // 0 save, 1 load, 2 load what carries over
+static char tide_run_checkpoint_name[TIDE_CHECKPOINT_NAME];
+static char tide_run_checkpoint_said[240];  // What the last one did, for the menu
+static bool tide_run_checkpoint_forceable;  // ...refused for what loading anyway gets past: the menu offers it
+static char tide_run_checkpoint_refused[TIDE_CHECKPOINT_NAME];
+// The folder's checkpoints, newest first, as last listed
+#define TIDE_RUN_CHECKPOINTS_LISTED 64u
+static char tide_run_checkpoint_names[TIDE_RUN_CHECKPOINTS_LISTED][TIDE_CHECKPOINT_NAME];
+static uint32_t tide_run_checkpoint_count;
+static double tide_run_checkpoints_listed_at = -1.0;
+
+// Pausing a dev build's match, stepping it, and going back (tide/timeline.h), from the dev menu: the match this machine
+// runs is recorded as it runs, the worlds of its last ticks kept (any since it began made again by replaying). Paused,
+// the match gets no time but a step's, or with other machines' players in it, goes on for them while the frames hold
+// the tick shown; an earlier tick shows through this machine's views as they are, with nothing they send or ask for,
+// nor its devices, reaching the match; and the match can go on from the tick shown. A recording (its ticks saved as a
+// file beside the checkpoints) replays in the match's place. The embedded host has its own (embed.c).
+static struct {
+    tide_timeline *live;          // The match's ticks...
+    const tide_session *recorded; // ...of this session's match, by this build
+    const tide_game *game;
+    bool paused, step;
+    uint32_t shown; // The tick shown while paused
+    // A recording replayed in the match's place: its ticks from its first, played at its rate or stepped through
+    tide_timeline *replay;
+    tide_timeline_about about;
+    char replay_name[TIDE_CHECKPOINT_NAME];
+    uint32_t replay_shown;
+    bool playing;
+    double played;
+    char coming[TIDE_CHECKPOINT_NAME]; // On a page, a recording on its way from tide to be replayed
+    char said[240];                    // What the last save or replay did, for the menu
+} tide_run_travel;
+// The recordings in the checkpoints' folder, newest first, as last listed
+static char tide_run_recording_names[TIDE_RUN_CHECKPOINTS_LISTED][TIDE_CHECKPOINT_NAME];
+static uint32_t tide_run_recording_count;
+static double tide_run_recordings_listed_at = -1.0;
+
+// Pausing, stepping and going back (with the frame, below)
+static inline const char *tide_run_travel_why(void);
+static inline uint32_t tide_run_travel_first(void);
+static inline uint32_t tide_run_travel_last(void);
+static inline uint32_t tide_run_travel_shown(void);
+static inline bool tide_run_travel_background(void);
+static inline void tide_run_travel_pause(bool paused);
+static inline void tide_run_travel_forward(void);
+static inline void tide_run_travel_back(void);
+static inline void tide_run_travel_show(uint32_t tick);
+static inline void tide_run_travel_go_on(void);
+static inline const void *tide_run_travel_world(void);
+static inline void tide_run_travel_save(void);
+static inline void tide_run_travel_replay(const char *name);
+static inline void tide_run_travel_stop_replay(void);
+
+
+static inline void tide_run_checkpoint_ask(const int way, const char *name)
+{
+    tide_run_checkpoint_want = way;
+    snprintf(tide_run_checkpoint_name, sizeof tide_run_checkpoint_name, "%s", name);
+}
+
 
 // The network the game registered, or NULL: its matches are in Tide's rooms.
 static inline const tide_network *tide_run_registered(void)
@@ -430,6 +543,9 @@ static inline void tide_run_sample(void *user, const uint32_t tick, void *input)
     (void)tick;
     if (!tide_run_game->sample_input) return;
     tide_devices sampled = tide_run_devices;
+    // While the frames show another tick and the match goes on (for other machines' players), this machine's player
+    // lets go of everything, as nothing seen is the match as it is
+    if (tide_run_travel_world()) memset(&sampled, 0, sizeof sampled);
     tide_gui_hide(&tide_run_gui, &sampled); // A click on a button isn't the game's
     tide_stats_hide(&tide_run_drawer, &sampled); // ...nor one on the stats
     tide_run_game->sample_input(&sampled, tide_run_local, input);
@@ -811,6 +927,8 @@ static inline void tide_run_configure(const tide_run_desc *desc)
             tide_run_settings.debug_views = true;
         } else if (strcmp(arg, "--ticks-alongside") == 0) {
             tide_run_alongside = true;
+        } else if (strcmp(arg, "--paced") == 0) {
+            tide_run_headless_desc.paced = true;
         } else if (strcmp(arg, "--frame-rate") == 0) {
             const char *takes = "how many frames a second a run with no window makes up, from 1 to 1000, like --frame-rate 144";
             tide_run_headless_desc.frame_rate = (uint32_t)tide_run_number(&i, arg, 1.0, 1000.0, takes);
@@ -859,6 +977,18 @@ static inline void tide_run_configure(const tide_run_desc *desc)
             const char *takes = "a display's scale from 0.25 to 8, like --scale 2";
             tide_run_headless_desc.scale = (float)tide_run_number(&i, arg, 0.25, 8.0, takes);
             scaled = true;
+        } else if (strcmp(arg, "--checkpoints") == 0) {
+            tide_run_checkpoints = tide_run_value(&i, arg, "the folder a dev build's checkpoints are in, like --checkpoints checkpoints");
+        } else if (strcmp(arg, "--from") == 0) {
+            const char *name = tide_run_value(&i, arg, "a checkpoint's name, which the match starts from, like --from boss-fight");
+            char why[200];
+            if (!tide_checkpoint_name_ok(name, why, sizeof why)) {
+                fprintf(stderr, "tide: --from: %s\n", why);
+                exit(2);
+            }
+            snprintf(tide_run_from, sizeof tide_run_from, "%s", name);
+        } else if (strcmp(arg, "--force") == 0) {
+            tide_run_from_force = true;
         } else if (strcmp(arg, "--frames") == 0) {
             const char *takes = "how many frames the run lasts, like --frames 300";
             tide_run_headless_desc.frames = (uint32_t)tide_run_number(&i, arg, 1.0, 1e9, takes);
@@ -986,10 +1116,16 @@ static inline void tide_run_close(void)
     if (tide_run_session) tide_run_end();
 }
 
+static inline const char *tide_run_name_game(const tide_host_game *game, char *fallback, size_t size);
+
 static inline void tide_run_open(const tide_run_desc *desc)
 {
     tide_platform_on_close(tide_run_close);
     tide_run_configure(desc);
+    // Named before its window opens: the GPU driver is told where the game's own cache of compiled shaders is as
+    // Vulkan starts, and not after (tide_platform_driver_cache)
+    char fallback[512];
+    (void)tide_run_name_game(tide_run_game, fallback, sizeof fallback);
     if (tide_run_headless) {
         tide_platform_open_headless(&tide_run_headless_desc);
         return;
@@ -1043,6 +1179,1284 @@ static inline void tide_run_debug_views(void)
     tide_run_gui.profile = tide_run_profiling || tide_run_reporting ? profile : NULL;
 }
 
+// The dev menu: in a dev build with `dev` views, the key under Escape (backquote, ` on a US keyboard, where Valve's
+// games open their console) shows it and hides it again, and it lists those views, each one shown or not. Views are
+// off until it shows them. What's shown is kept by name, so a reload keeps it. The game sees the key too.
+#define TIDE_RUN_DEV_VIEWS 64
+static bool tide_run_dev_open;
+static bool tide_run_dev_key; // Its key was held at the last frame
+static char tide_run_dev_on[TIDE_RUN_DEV_VIEWS][64]; // The views shown, by name
+static uint32_t tide_run_dev_on_count;
+
+static inline bool tide_run_dev_shown(const char *name)
+{
+    for (uint32_t i = 0; i < tide_run_dev_on_count; i++) {
+        if (strncmp(tide_run_dev_on[i], name, sizeof tide_run_dev_on[i]) == 0) return true;
+    }
+    return false;
+}
+
+static inline void tide_run_dev_show(const char *name, const bool shown)
+{
+    for (uint32_t i = 0; i < tide_run_dev_on_count; i++) {
+        if (strncmp(tide_run_dev_on[i], name, sizeof tide_run_dev_on[i]) != 0) continue;
+        if (!shown) memmove(tide_run_dev_on[i], tide_run_dev_on[i + 1], (size_t)(--tide_run_dev_on_count - i) * sizeof tide_run_dev_on[i]);
+        return;
+    }
+    if (!shown || tide_run_dev_on_count == TIDE_RUN_DEV_VIEWS) return;
+    snprintf(tide_run_dev_on[tide_run_dev_on_count++], sizeof tide_run_dev_on[0], "%s", name);
+}
+
+// Before the frame: which dev views run (tide_host_game.show_dev_views)
+static inline void tide_run_dev_views(const tide_host_game *game)
+{
+    if (!game->dev_views || !game->show_dev_views) return;
+    uint8_t shown[TIDE_RUN_DEV_VIEWS] = {0};
+    for (uint32_t i = 0; i < TIDE_RUN_DEV_VIEWS && game->dev_views[i]; i++) shown[i] = tide_run_dev_shown(game->dev_views[i]);
+    game->show_dev_views(shown);
+}
+
+// After the frame's views, in its GUI: the menu, over them
+// A dev build's tweaks (tide/tweaks.h): the values tide run works out again as a .tweaks file changes, with no C
+// built (tide_tweaks_api.values), taken half a second at the most after they're written, go to this machine's copy
+// and to the match (tide_tweaks_api.send). What the file last held, so the same values aren't taken twice.
+static uint64_t tide_run_tweaks_seen;
+static double tide_run_tweaks_at = -1.0;
+
+static inline uint64_t tide_run_bytes_hash(const uint8_t *bytes, const size_t length)
+{
+    uint64_t h = 0xCBF29CE484222325ull;
+    for (size_t i = 0; i < length; i++) h = (h ^ bytes[i]) * 0x100000001B3ull;
+    return h | 1u; // Never 0, which is nothing taken yet
+}
+
+#ifdef __wasm__
+// On a page, under tide run --web, which has the values from tide's server (tide.js): copies them if they fit in
+// `capacity` bytes, returning their size, 0 for none. And a value the menu changed, for tide to write into its file.
+__attribute__((import_module("tide"), import_name("tweaks_copy"))) uint32_t tide_web_tweaks_copy(void *to, uint32_t capacity);
+__attribute__((import_module("tide"), import_name("tweak_write"))) void tide_web_tweak_write(const char *file, const char *name,
+                                                                                            const char *value);
+// A dev build's checkpoints (`kind` 0) and recordings (1) on a page, which tide run --web keeps in the game's folder
+// (tide.js): one saved, and whether it was kept (0 not yet, 1 kept, 2 not); one asked for, and copied once it's come
+// (its size, 0 while it hasn't, UINT32_MAX for one that isn't there); a kind's names, newest first, a line each, as
+// last listed
+__attribute__((import_module("tide"), import_name("checkpoint_save"))) void tide_web_checkpoint_save(uint32_t kind,
+                                                                                                    const char *name,
+                                                                                                    const void *bytes,
+                                                                                                    uint32_t size);
+__attribute__((import_module("tide"), import_name("checkpoint_saved"))) uint32_t tide_web_checkpoint_saved(void);
+__attribute__((import_module("tide"), import_name("checkpoint_fetch"))) void tide_web_checkpoint_fetch(uint32_t kind,
+                                                                                                      const char *name);
+__attribute__((import_module("tide"), import_name("checkpoint_copy"))) uint32_t tide_web_checkpoint_copy(uint32_t kind,
+                                                                                                        const char *name,
+                                                                                                        void *to,
+                                                                                                        uint32_t capacity);
+__attribute__((import_module("tide"), import_name("checkpoint_list"))) uint32_t tide_web_checkpoint_list(uint32_t kind,
+                                                                                                        char *to,
+                                                                                                        uint32_t capacity);
+#endif
+
+static inline void tide_run_tweaks_poll(const tide_host_game *game)
+{
+    const tide_tweaks_api *api = game->tweaks ? game->tweaks() : NULL;
+    if (!api || !api->values[0] || (tide_run_tweaks_at >= 0.0 && tide_run_now - tide_run_tweaks_at < 0.5)) return;
+    tide_run_tweaks_at = tide_run_now;
+    static uint8_t bytes[8192];
+#ifdef __wasm__
+    const size_t length = tide_web_tweaks_copy(bytes, sizeof bytes);
+    if (!length || length > sizeof bytes) return;
+#else
+    FILE *f = fopen(api->values, "rb");
+    if (!f) return;
+    const size_t length = fread(bytes, 1, sizeof bytes, f);
+    fclose(f);
+#endif
+    const uint64_t h = tide_run_bytes_hash(bytes, length);
+    if (h == tide_run_tweaks_seen) return;
+    const bool first = !tide_run_tweaks_seen;
+    uint8_t values[4096];
+    if (api->size > sizeof values || !tide_tweaks_load(api, values, bytes, length)) return; // Another build's, or half written
+    tide_run_tweaks_seen = h;
+    void *here = api->here(tide_run_local);
+    if (memcmp(here, values, api->size) == 0) return; // As this machine has them
+    memcpy(here, values, api->size);
+    api->send(tide_run_local);
+    if (!first) fprintf(stderr, "tide: the tweaks' new values are in\n");
+}
+
+// One value's editor in the dev menu, by its kind (tide_tweak_kind): a switch for a bool, a button that steps through
+// an enum's members, a field for a number, a vector or a Color, ints, longs, bytes and doubles as the fields for ints
+// and floats have them; `count` components of `size` bytes at `at`. True when it changed.
+static inline bool tide_run_dev_value(const uint32_t id, const char *name, const uint32_t kind, const uint32_t count,
+                                      const uint32_t size, const bool color, const char *const *members,
+                                      const int32_t *member_values, const uint32_t member_count, uint8_t *at)
+{
+    tide_gui *g = &tide_run_gui;
+    bool changed = false;
+    if (kind == TIDE_TWEAK_BOOL) {
+        bool v = *at != 0;
+        if (tide_gui_layout_toggle(g, id, name, &v)) {
+            *at = v ? 1u : 0u;
+            changed = true;
+        }
+    } else if (kind == TIDE_TWEAK_ENUM) {
+        int32_t v = 0;
+        memcpy(&v, at, size < 4u ? size : 4u); // Little-endian, as every target is
+        uint32_t m = 0;
+        while (m < member_count && member_values[m] != v) m++;
+        char label[160];
+        snprintf(label, sizeof label, "%s: %s", name, m < member_count ? members[m] : "?");
+        if (tide_gui_layout_button(g, id, label) && member_count) {
+            const int32_t next = member_values[m < member_count ? (m + 1u) % member_count : 0u];
+            memcpy(at, &next, size < 4u ? size : 4u);
+            changed = true;
+        }
+    } else if (color) {
+        changed = tide_gui_layout_color_field(g, id, name, (tide_color *)(void *)at);
+    } else if (kind == TIDE_TWEAK_FLOAT) {
+        if (count == 1) changed = tide_gui_layout_float_field(g, id, name, (float *)(void *)at);
+        else if (count == 2) changed = tide_gui_layout_float2_field(g, id, name, (tide_float2 *)(void *)at);
+        else if (count == 3) changed = tide_gui_layout_float3_field(g, id, name, (tide_float3 *)(void *)at);
+        else changed = tide_gui_layout_float4_field(g, id, name, (tide_float4 *)(void *)at);
+    } else {
+        // A component at a time, side by side: ints, longs, bytes and doubles as the fields for ints and floats have them
+        const int row = tide_gui_begin_horizontal(g, id + 7u);
+        for (uint32_t k = 0; k < count; k++) {
+            const char *label = k ? "" : name;
+            if (kind == TIDE_TWEAK_DOUBLE) {
+                double d;
+                memcpy(&d, at + 8u * k, 8);
+                float v = (float)d;
+                if (tide_gui_layout_float_field(g, id + k, label, &v)) {
+                    d = v;
+                    memcpy(at + 8u * k, &d, 8);
+                    changed = true;
+                }
+                continue;
+            }
+            int32_t v = 0;
+            if (kind == TIDE_TWEAK_INT) memcpy(&v, at + 4u * k, 4);
+            else if (kind == TIDE_TWEAK_BYTE) v = at[k];
+            else {
+                int64_t l;
+                memcpy(&l, at + 8u * k, 8);
+                v = l > INT32_MAX ? INT32_MAX : l < INT32_MIN ? INT32_MIN : (int32_t)l;
+            }
+            if (!tide_gui_layout_int_field(g, id + k, label, &v)) continue;
+            if (kind == TIDE_TWEAK_INT) memcpy(at + 4u * k, &v, 4);
+            else if (kind == TIDE_TWEAK_BYTE) at[k] = (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v);
+            else {
+                const int64_t l = v;
+                memcpy(at + 8u * k, &l, 8);
+            }
+            changed = true;
+        }
+        tide_gui_close(g, row);
+    }
+    return changed;
+}
+
+// The dev menu's look: quieter than a game's GUI, which it sits over. Its text a little smaller, its controls faint
+// washes of white rather than blocks, fields sunk into the panel, a soft blue for what's focused or on.
+#define TIDE_RUN_DEV_DIM ((tide_color){0.55f, 0.58f, 0.65f, 1.0f})   // What says more of a row, and section names
+#define TIDE_RUN_DEV_FAINT ((tide_color){1.0f, 1.0f, 1.0f, 0.07f})   // The tree's guides, the tabs' rule
+#define TIDE_RUN_DEV_TYPE ((tide_color){0.56f, 0.76f, 1.0f, 1.0f})   // A component's name over its fields
+
+static inline tide_gui_theme tide_run_dev_theme(void)
+{
+    tide_gui_theme t = tide_gui_theme_default();
+    t.text = (tide_color){0.9f, 0.91f, 0.94f, 1.0f};
+    t.panel = (tide_color){0.075f, 0.08f, 0.1f, 0.96f};
+    t.control = (tide_color){1.0f, 1.0f, 1.0f, 0.1f};
+    t.hot = (tide_color){1.0f, 1.0f, 1.0f, 0.12f};
+    t.pressed = (tide_color){1.0f, 1.0f, 1.0f, 0.04f};
+    t.field = (tide_color){0.0f, 0.0f, 0.0f, 0.28f};
+    t.field_hot = (tide_color){0.0f, 0.0f, 0.0f, 0.4f};
+    t.accent = (tide_color){0.42f, 0.66f, 1.0f, 1.0f};
+    t.radius = 5.0f;
+    t.border = (tide_color){1.0f, 1.0f, 1.0f, 0.06f};
+    t.border_width = 1.0f;
+    t.shadow = (tide_color){0.0f, 0.0f, 0.0f, 0.45f};
+    t.shadow_size = 20.0f;
+    t.text_size = 14.0f;
+    t.spacing = 3.0f;
+    t.padding = 10.0f;
+    return t;
+}
+
+// A label in a color of its own, at a size of its own
+static inline void tide_run_dev_label(const char *text, const float size, const tide_color color)
+{
+    tide_gui *g = &tide_run_gui;
+    tide_gui_theme theme = g->theme;
+    theme.text = color;
+    const int depth = tide_gui_begin_theme(g, theme);
+    tide_gui_layout_label_sized(g, text, size);
+    tide_gui_close(g, depth);
+}
+
+// A section's heading: small capitals, quiet, with room above it
+static inline void tide_run_inspect_heading(const char *text)
+{
+    tide_gui_layout_space(&tide_run_gui, 6.0f);
+    tide_run_dev_label(text, 11.0f, TIDE_RUN_DEV_DIM);
+}
+
+// A line from `a` to `b`, `width` wide with round ends
+static inline void tide_run_dev_line(const tide_float2 a, const tide_float2 b, const float width, const tide_color color)
+{
+    const float dx = b.x - a.x, dy = b.y - a.y;
+    tide_shape s = TIDE_SHAPE_WHITE;
+    s.center = (tide_float2){(a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f};
+    s.size = (tide_float2){sqrtf(dx * dx + dy * dy) + width, width};
+    s.rotation = atan2f(dy, dx);
+    s.radius = width * 0.5f;
+    s.color = color;
+    tide_draw_shape(&tide_run_gui.list, s);
+}
+
+// A chevron centered on `c`: pointing right, or down when what it's on is open
+static inline void tide_run_dev_chevron(const tide_float2 c, const bool open, const tide_color color)
+{
+    const float a = 3.5f, b = 1.75f;
+    if (open) {
+        tide_run_dev_line((tide_float2){c.x - a, c.y - b}, (tide_float2){c.x, c.y + b}, 1.5f, color);
+        tide_run_dev_line((tide_float2){c.x, c.y + b}, (tide_float2){c.x + a, c.y - b}, 1.5f, color);
+    } else {
+        tide_run_dev_line((tide_float2){c.x - b, c.y - a}, (tide_float2){c.x + b, c.y}, 1.5f, color);
+        tide_run_dev_line((tide_float2){c.x + b, c.y}, (tide_float2){c.x - b, c.y + a}, 1.5f, color);
+    }
+}
+
+// Text at `x`, centered on `middle`, in the theme's font at its size
+static inline float tide_run_dev_text(const char *text, const float x, const float middle, const tide_color color)
+{
+    tide_gui *g = &tide_run_gui;
+    const float size = g->theme.text_size;
+    if (!text[0]) return 0.0f;
+    tide_draw_text_at(&g->list, text, (tide_float2){x, middle - size * 0.5f}, size, color, TIDE_ANCHOR_UPPER_LEFT,
+                      g->theme.font);
+    return g->measure ? g->measure(text, size, NULL, g->theme.font).x : 8.0f * (float)strlen(text);
+}
+
+// The tweaks in the menu, laid out one under another: an editor each, by its kind, or a worked-out one's value.
+// Changed, the copy goes to the match, and the value into its .tweaks file.
+static inline void tide_run_dev_tweaks(const tide_tweaks_api *api)
+{
+    tide_gui *g = &tide_run_gui;
+    uint8_t *values = api->here(tide_run_local);
+    tide_run_inspect_heading("TWEAKS");
+    for (uint32_t i = 0; i < api->count; i++) {
+        const tide_tweak *t = &api->tweaks[i];
+        uint8_t *at = values + t->offset;
+        const uint32_t id = 0xDE710000u + i * 8u;
+        bool changed = false;
+        if (!t->plain) {
+            // Worked out in its file from others: shown, and left to the file
+            char value[160], label[320];
+            tide_tweaks_format(t, values, value, sizeof value);
+            snprintf(label, sizeof label, "%s = %s (worked out)", t->name, value);
+            tide_gui_layout_label(g, label);
+            continue;
+        }
+        changed = tide_run_dev_value(id, t->name, t->kind, t->count, t->size, t->color, t->members, t->member_values,
+                                     t->member_count, at);
+        if (!changed) continue;
+        // To the match at once, and into its .tweaks file, from which tide run works out the tweaks made from it
+        api->send(tide_run_local);
+#ifdef __wasm__
+        char value[256]; // Written by tide, which has the files
+        if (tide_tweaks_format(t, values, value, sizeof value) < sizeof value) tide_web_tweak_write(t->file, t->name, value);
+#else
+        if (!tide_tweaks_save(t, values)) fprintf(stderr, "tide: can't write %s to %s\n", t->name, t->file);
+#endif
+    }
+}
+
+// The dev menu's inspector (tide/inspect.h): the match's or this machine's local world, as packets made while it's
+// open, as a tree: its singletons, then its entities under their parents, each opened in place with its fields. Every
+// row is there to scroll to, and as deep as the tree goes, the list scrolls sideways. A field of the match changes
+// through the server, so the field shows what was sent until the match has it; the local world's changes here.
+static bool tide_run_inspect_local; // The local world's, not the match's (the menu's tab)
+static tide_packet tide_run_inspect_packets[2];
+
+// What's open in the tree, by what it is, so it stays open as the world changes: an entity by its handle, a singleton
+// by its section's kind and type; each in the world of its tab
+typedef struct tide_run_inspect_node {
+    tide_entity entity;
+    uint32_t kind; // 0: an entity
+    int32_t type;
+    bool local;
+} tide_run_inspect_node;
+#define TIDE_RUN_INSPECT_OPEN 256u
+static tide_run_inspect_node tide_run_inspect_open[TIDE_RUN_INSPECT_OPEN];
+static uint32_t tide_run_inspect_open_count;
+
+// An entity a field's button opened, scrolled to as its row is laid out
+static tide_entity tide_run_inspect_reveal;
+static uint32_t tide_run_inspect_revealing; // Frames left to find it in: the one it's asked in may be past its row
+// The list's viewport this frame, and where it's scrolled to: rows past it are only room
+static tide_rect tide_run_inspect_view;
+static tide_float2 *tide_run_inspect_offset;
+
+// Each frame's, from its packet: the entities' children (the first and the next, UINT32_MAX for none), each entity's
+// components (from its start, as a section and a row of it), and a stack of rows to lay out
+typedef struct tide_run_inspect_has {
+    uint32_t part, row;
+} tide_run_inspect_has;
+static uint32_t *tide_run_inspect_first, *tide_run_inspect_next, *tide_run_inspect_start, *tide_run_inspect_stack;
+static uint32_t tide_run_inspect_entity_capacity;
+static tide_run_inspect_has *tide_run_inspect_comps;
+static uint32_t tide_run_inspect_comp_capacity;
+static tide_packet_part *tide_run_inspect_parts;
+static uint32_t tide_run_inspect_part_capacity;
+static const tide_packet *tide_run_inspect_indexed; // The packet they're of, NULL for none this frame
+static const tide_layout *tide_run_inspect_layout;  // The inspector's
+
+// A change sent to the match and not back yet: shown as sent, a second at the most
+typedef struct tide_run_inspect_sent {
+    tide_entity target;
+    int32_t type;
+    uint32_t offset, size;
+    uint8_t bytes[TIDE_INSPECT_BYTES];
+    double at;
+} tide_run_inspect_sent;
+static tide_run_inspect_sent tide_run_inspect_pending[16];
+
+// Its fields' widgets' ids, one after another in the frame
+static uint32_t tide_run_inspect_id;
+
+#define TIDE_RUN_INSPECT_INDENT 16.0f // A level of the tree, in pixels
+#define TIDE_RUN_INSPECT_GUIDE 9.0f   // Where in its level a row's chevron is, and the guide down from it
+
+static inline const char *tide_run_inspect_type_name(const tide_layout *layout, const uint32_t type)
+{
+    return type < layout->type_count ? layout->types[type].name : "?";
+}
+
+// A type that's the engine's own, every field of it hidden (a command's sequences, a ghost's): never listed
+static inline bool tide_run_inspect_internal(const tide_layout *layout, const uint32_t type)
+{
+    if (type >= layout->type_count || !layout->types[type].field_count) return false;
+    const tide_layout_type *t = &layout->types[type];
+    for (uint32_t i = 0; i < t->field_count; i++) {
+        if (!t->fields[i].hidden) return false;
+    }
+    return true;
+}
+
+// An entity as the menu names it: by its birth, which stays what it is, and where the packet has others born with it
+// (spawned in the same tick), a little of its lineage after it, which tells them apart
+static inline void tide_run_inspect_entity_name(const tide_packet *p, const tide_entity e, char *out, const size_t size)
+{
+    const uint32_t n = tide_packet_entities(p->bytes, p->size);
+    bool shared = false;
+    for (uint32_t i = 0; i < n && !shared; i++) {
+        const tide_entity other = tide_packet_entity(p->bytes, p->size, i, NULL);
+        shared = other.birth == e.birth && other.lineage != e.lineage;
+    }
+    if (shared) snprintf(out, size, "#%llu/%04llx", (unsigned long long)e.birth, (unsigned long long)(e.lineage & 0xFFFFu));
+    else snprintf(out, size, "#%llu", (unsigned long long)(e.birth ? e.birth : e.lineage));
+}
+
+static inline uint32_t tide_run_inspect_place(const tide_packet *p, const tide_entity e)
+{
+    const uint32_t n = tide_packet_entities(p->bytes, p->size);
+    for (uint32_t i = 0; i < n; i++) {
+        const tide_entity at = tide_packet_entity(p->bytes, p->size, i, NULL);
+        if (at.birth == e.birth && at.lineage == e.lineage) return i;
+    }
+    return UINT32_MAX;
+}
+
+// Entity `i`'s parent, as its place: UINT32_MAX for a root (or a parent that isn't among them, or itself)
+static inline uint32_t tide_run_inspect_parent(const tide_packet *p, const uint32_t i)
+{
+    const uint32_t n = tide_packet_entities(p->bytes, p->size);
+    if (i >= n) return UINT32_MAX;
+    uint32_t parent;
+    memcpy(&parent, p->bytes + TIDE_PACKET_HEADER + (size_t)i * TIDE_PACKET_ENTITY + 24u, sizeof parent);
+    return parent < n && parent != i ? parent : UINT32_MAX;
+}
+
+static inline uint32_t tide_run_inspect_find(const uint32_t kind, const int32_t type, const tide_entity e)
+{
+    for (uint32_t i = 0; i < tide_run_inspect_open_count; i++) {
+        const tide_run_inspect_node *o = &tide_run_inspect_open[i];
+        if (o->kind == kind && o->type == type && o->local == tide_run_inspect_local && o->entity.birth == e.birth
+            && o->entity.lineage == e.lineage)
+            return i;
+    }
+    return UINT32_MAX;
+}
+
+// Opens it (the longest open closing, past as many as are kept), or closes it
+static inline void tide_run_inspect_set_open(const uint32_t kind, const int32_t type, const tide_entity e, const bool open)
+{
+    const uint32_t at = tide_run_inspect_find(kind, type, e);
+    if ((at != UINT32_MAX) == open) return;
+    if (!open) {
+        memmove(&tide_run_inspect_open[at], &tide_run_inspect_open[at + 1],
+                (size_t)(--tide_run_inspect_open_count - at) * sizeof tide_run_inspect_open[0]);
+        return;
+    }
+    if (tide_run_inspect_open_count == TIDE_RUN_INSPECT_OPEN) {
+        memmove(&tide_run_inspect_open[0], &tide_run_inspect_open[1],
+                (size_t)--tide_run_inspect_open_count * sizeof tide_run_inspect_open[0]);
+    }
+    tide_run_inspect_open[tide_run_inspect_open_count++] = (tide_run_inspect_node){e, kind, type, tide_run_inspect_local};
+}
+
+// An entity in the tree, opened, and every entity it's under, then scrolled to
+static inline void tide_run_inspect_show(const tide_packet *p, const tide_entity e)
+{
+    tide_run_inspect_reveal = e;
+    tide_run_inspect_revealing = 2;
+    uint32_t at = tide_run_inspect_place(p, e);
+    for (uint32_t depth = 0; at != UINT32_MAX && depth < 256u; depth++) {
+        tide_run_inspect_set_open(0, -1, tide_packet_entity(p->bytes, p->size, at, NULL), true);
+        at = tide_run_inspect_parent(p, at);
+    }
+}
+
+// As tall as a row is: a widget's (gui.c's LINE)
+static inline float tide_run_inspect_line(void)
+{
+    return tide_run_gui.theme.text_size + 12.0f;
+}
+
+// Whether the next row of the tree shows in the list, its top in `y`. One that doesn't is only room, taken here, so a
+// world of any size costs what's shown: none of its text is made or measured.
+static inline bool tide_run_inspect_row_shows(const uint32_t depth, float *y)
+{
+    tide_gui *g = &tide_run_gui;
+    const tide_float2 next = tide_gui_layout_next(g);
+    const float line = tide_run_inspect_line();
+    const tide_rect v = tide_run_inspect_view;
+    *y = next.y;
+    if (next.y + line >= v.y && next.y <= v.y + v.height) return true;
+    tide_gui_layout_reserve(g, (tide_float2){TIDE_RUN_INSPECT_INDENT * (float)depth, line});
+    return false;
+}
+
+// The tree's guides beside what's `depth` levels in, from `top` to `bottom`: a faint line down from each level's
+// chevron, so what's under an open row reads as its
+static inline void tide_run_inspect_guides(const float x, const uint32_t depth, const float top, const float bottom)
+{
+    for (uint32_t l = 0; l < depth; l++) {
+        const float at = x + TIDE_RUN_INSPECT_INDENT * (float)l + TIDE_RUN_INSPECT_GUIDE;
+        tide_run_dev_line((tide_float2){at, top}, (tide_float2){at, bottom}, 1.0f, TIDE_RUN_DEV_FAINT);
+    }
+}
+
+// A row of the tree that shows, `depth` levels in: a chevron, its name, then what says more of it, dimmer. Lit under
+// the pointer, as wide as the list at least; `label` to scripts and the GUI's listing. True when it's clicked.
+static inline bool tide_run_inspect_row(const uint32_t id, const char *label, const char *name, const char *more,
+                                        const uint32_t depth, const bool open)
+{
+    tide_gui *g = &tide_run_gui;
+    const float indent = TIDE_RUN_INSPECT_INDENT * (float)depth, chevron = 20.0f, gap = 8.0f;
+    const float size = g->theme.text_size;
+    const float named = g->measure ? g->measure(name, size, NULL, g->theme.font).x : 8.0f * (float)strlen(name);
+    const float said = more[0] ? gap + (g->measure ? g->measure(more, size, NULL, g->theme.font).x : 8.0f * (float)strlen(more)) : 0.0f;
+    const float line = tide_run_inspect_line();
+    const tide_rect r = tide_gui_layout_reserve(g, (tide_float2){indent + chevron + named + said + 8.0f, line});
+    tide_run_inspect_guides(r.x, depth, r.y - g->theme.spacing, r.y + r.height);
+    const float wide = r.width > tide_run_inspect_view.width ? r.width : tide_run_inspect_view.width;
+    const tide_rect hit = {r.x + indent, r.y, wide - indent, r.height};
+    tide_gui_describe(g, id, TIDE_GUI_KIND_BUTTON, label);
+    const tide_control c = tide_gui_control(g, id, hit);
+    const float lit = 0.06f * c.hover + 0.04f * c.press;
+    const tide_float2 center = {hit.x + hit.width * 0.5f, hit.y + hit.height * 0.5f};
+    if (lit > 0.002f) tide_draw_round_rect(&g->list, center, (tide_float2){hit.width, hit.height}, 4.0f, (tide_color){1.0f, 1.0f, 1.0f, lit});
+    if (c.focused) {
+        tide_shape s = TIDE_SHAPE_WHITE;
+        s.center = center;
+        s.size = (tide_float2){hit.width, hit.height};
+        s.radius = 4.0f;
+        s.color = (tide_color){0.0f, 0.0f, 0.0f, 0.0f};
+        s.outline = 1.5f;
+        s.outline_color = g->theme.accent;
+        tide_draw_shape(&g->list, s);
+    }
+    const float middle = hit.y + hit.height * 0.5f;
+    tide_run_dev_chevron((tide_float2){hit.x + TIDE_RUN_INSPECT_GUIDE, middle}, open, c.hover > 0.5f ? g->theme.text : TIDE_RUN_DEV_DIM);
+    const float x = hit.x + chevron;
+    tide_run_dev_text(name, x, middle, g->theme.text);
+    if (more[0]) tide_run_dev_text(more, x + named + gap, middle, TIDE_RUN_DEV_DIM);
+    return c.clicked;
+}
+
+// What an open row holds, `indent` pixels in: a row of its own with room before a column. Returns what closes it,
+// -1 for nothing to close (and nothing laid out)
+static inline int tide_run_inspect_begin_indent(const uint32_t id, const float indent)
+{
+    tide_gui *g = &tide_run_gui;
+    const int row = tide_gui_begin_horizontal(g, id);
+    if (row < 0) return -1;
+    tide_gui_layout_space(g, indent);
+    if (tide_gui_begin_vertical(g, id + 1u) < 0) {
+        tide_gui_close(g, row);
+        return -1;
+    }
+    return row;
+}
+
+// Where an open row's fields start: under its name, past its chevron
+static inline float tide_run_inspect_fields_at(const uint32_t depth)
+{
+    return TIDE_RUN_INSPECT_INDENT * (float)depth + 20.0f;
+}
+
+#define TIDE_RUN_DEV_COLUMN 130.0f // A field's name, then its value: as wide as the GUI's labelled widgets' names
+
+static inline void tide_run_inspect_summary(const tide_layout *layout, const tide_packet *p, uint32_t i, char *has,
+                                            size_t has_size, char *preview, size_t preview_size);
+
+// A field that's no value an editor changes, said as it is, its value where an editor's would be: text, an entity (a
+// link that shows it in the tree), how much a list or a map holds
+static inline void tide_run_inspect_shown_value(const tide_packet *p, const tide_layout_field *f, const char *name,
+                                                const uint8_t *at)
+{
+    tide_gui *g = &tide_run_gui;
+    char value[256];
+    const char *type = f->type ? f->type : "";
+    const bool entity = strcmp(type, "Entity") == 0 || strcmp(type, "LocalEntity") == 0;
+    tide_entity e = {0, 0};
+    if (entity) {
+        memcpy(&e, at, sizeof e);
+        const uint32_t place = tide_entity_is_null(e) || tide_run_inspect_indexed != p ? UINT32_MAX : tide_run_inspect_place(p, e);
+        if (tide_entity_is_null(e)) snprintf(value, sizeof value, "none");
+        else if (place == UINT32_MAX) {
+            tide_run_inspect_entity_name(p, e, value, sizeof value);
+            snprintf(value + strlen(value), sizeof value - strlen(value), " (not here)");
+        } else {
+            char has[160], preview[96];
+            tide_run_inspect_summary(tide_run_inspect_layout, p, place, has, sizeof has, preview, sizeof preview);
+            snprintf(value, sizeof value, "%s%s%s", has[0] ? has : "(empty)", preview[0] ? " " : "", preview);
+        }
+    } else if (strcmp(type, "string") == 0 || strncmp(type, "List<", 5) == 0 || strncmp(type, "Map<", 4) == 0
+               || strncmp(type, "Set<", 4) == 0) {
+        const bool text = type[0] == 's', map = type[0] == 'M' || type[0] == 'S';
+        uint64_t handle = 0;
+        if (map) {
+            uint32_t m;
+            memcpy(&m, at, sizeof m);
+            handle = m;
+        } else memcpy(&handle, at, sizeof handle);
+        uint32_t length = 0;
+        const uint8_t *bytes = tide_packet_text_of(p->bytes, p->size, handle, &length);
+        if (text) snprintf(value, sizeof value, "\"%.*s\"", (int)(length < 200u ? length : 200u), bytes ? (const char *)bytes : "");
+        else if (map) {
+            uint32_t count = 0;
+            if (bytes && length >= 4u) memcpy(&count, bytes, 4);
+            snprintf(value, sizeof value, "%s, %u", type, count);
+        } else snprintf(value, sizeof value, "%s, %u bytes", type, length);
+    } else {
+        snprintf(value, sizeof value, "%s", type);
+    }
+    const float size = g->theme.text_size;
+    const float named = g->measure ? g->measure(name, size, NULL, g->theme.font).x : 8.0f * (float)strlen(name);
+    const float column = named + 16.0f > TIDE_RUN_DEV_COLUMN ? named + 16.0f : TIDE_RUN_DEV_COLUMN;
+    const float said = g->measure ? g->measure(value, size, NULL, g->theme.font).x : 8.0f * (float)strlen(value);
+    const tide_rect r = tide_gui_layout_reserve(g, (tide_float2){column + said + 20.0f, tide_run_inspect_line()});
+    const float middle = r.y + r.height * 0.5f;
+    tide_run_dev_text(name, r.x, middle, g->theme.text);
+    if (!entity || tide_entity_is_null(e)) {
+        tide_run_dev_text(value, r.x + column + 10.0f, middle, entity ? TIDE_RUN_DEV_DIM : g->theme.text);
+        return;
+    }
+    // An entity: a link to it
+    const uint32_t id = tide_run_inspect_id++;
+    const tide_rect link = {r.x + column, r.y, said + 20.0f, r.height};
+    tide_gui_describe(g, id, TIDE_GUI_KIND_BUTTON, value);
+    const tide_control c = tide_gui_control(g, id, link);
+    tide_draw_round_rect(&g->list, (tide_float2){link.x + link.width * 0.5f, middle}, (tide_float2){link.width, link.height},
+                         g->theme.radius, (tide_color){0.42f, 0.66f, 1.0f, 0.1f + 0.08f * c.hover});
+    tide_run_dev_text(value, link.x + 10.0f, middle, g->theme.accent);
+    if (c.clicked) tide_run_inspect_show(p, e);
+}
+
+// A changed field: to the server (the match's own), or here (the local world's, or the local fields of the match's)
+static inline void tide_run_inspect_write(const tide_inspect_api *api, const uint32_t kind, const tide_entity target,
+                                          const int32_t type, const uint32_t offset, const uint8_t *bytes,
+                                          const uint32_t size)
+{
+    if (!tide_run_inspect_local && (kind == TIDE_PACKET_COMPONENT || kind == TIDE_PACKET_SINGLETON)) {
+        api->set(tide_run_local, target, type, offset, bytes, size);
+        // Shown as sent till the match has it
+        uint32_t slot = 0;
+        for (uint32_t i = 0; i < 16u; i++) {
+            const tide_run_inspect_sent *s = &tide_run_inspect_pending[i];
+            const bool same = s->type == type && s->offset == offset && s->target.birth == target.birth
+                           && s->target.lineage == target.lineage;
+            if (same || s->at < tide_run_inspect_pending[slot].at) slot = i;
+            if (same) break;
+        }
+        tide_run_inspect_sent *s = &tide_run_inspect_pending[slot];
+        *s = (tide_run_inspect_sent){target, type, offset, size, {0}, tide_run_now};
+        memcpy(s->bytes, bytes, size);
+        return;
+    }
+    if (!api->set_local(tide_run_local, target, type, offset, bytes, size)) fprintf(stderr, "tide: that field can't be changed\n");
+}
+
+// The fields of `type` at `base` in `value` (the root type's, `root`), an editor each or a line, structs' fields
+// under their names
+static inline void tide_run_inspect_fields(const tide_inspect_api *api, const tide_packet *p, const uint32_t kind,
+                                           const tide_entity target, const int32_t root, const int32_t type,
+                                           uint8_t *value, const uint32_t base, const char *prefix, const int depth)
+{
+    const tide_layout *layout = api->layout;
+    if (type < 0 || (uint32_t)type >= layout->type_count || depth > 8) return;
+    const tide_layout_type *t = &layout->types[type];
+    for (uint32_t i = 0; i < t->field_count; i++) {
+        const tide_layout_field *f = &t->fields[i];
+        if (f->hidden) continue; // The engine's own
+        char name[160];
+        snprintf(name, sizeof name, "%s%s%s", prefix, prefix[0] ? "." : "", f->name);
+        const uint32_t offset = base + f->offset;
+        if (f->kind == TIDE_LAYOUT_STRUCT) {
+            tide_run_inspect_fields(api, p, kind, target, root, f->decl, value, offset, name, depth + 1);
+            continue;
+        }
+        if (!tide_inspect_field(layout, root, offset, f->size)) {
+            tide_run_inspect_shown_value(p, f, name, value + offset);
+            continue;
+        }
+        // Its editor, by what the layout says it is
+        uint32_t edit_kind = TIDE_TWEAK_INT, count = f->dim ? f->dim : 1u, size = f->size / count;
+        bool color = false;
+        const char *names[64];
+        int32_t values[64];
+        uint32_t members = 0;
+        switch (f->kind) {
+        case TIDE_LAYOUT_FLOAT: edit_kind = TIDE_TWEAK_FLOAT; break;
+        case TIDE_LAYOUT_DOUBLE: edit_kind = TIDE_TWEAK_DOUBLE; break;
+        case TIDE_LAYOUT_LONG: edit_kind = TIDE_TWEAK_LONG; break;
+        case TIDE_LAYOUT_BYTE: edit_kind = TIDE_TWEAK_BYTE; break;
+        case TIDE_LAYOUT_ENUM: {
+            edit_kind = TIDE_TWEAK_ENUM;
+            count = 1;
+            size = f->size;
+            const tide_layout_enum *e = f->decl >= 0 && (uint32_t)f->decl < layout->enum_count ? &layout->enums[f->decl] : NULL;
+            for (uint32_t m = 0; e && m < e->member_count && m < 64u; m++) {
+                names[m] = e->members[m].name;
+                values[m] = e->members[m].value;
+                members++;
+            }
+            break;
+        }
+        case TIDE_LAYOUT_PLAIN: // A bool, or a Color
+            if (f->size == 1) edit_kind = TIDE_TWEAK_BOOL;
+            else {
+                edit_kind = TIDE_TWEAK_FLOAT;
+                color = true;
+                count = 4;
+                size = 4;
+            }
+            break;
+        default: break;
+        }
+        uint64_t field[TIDE_INSPECT_BYTES / 8u]; // Aligned for the editors
+        memcpy(field, value + offset, f->size);
+        const uint32_t id = tide_run_inspect_id;
+        tide_run_inspect_id += 8u;
+        if (tide_run_dev_value(id, name, edit_kind, count, size, color, names, values, members, (uint8_t *)field)
+            && memcmp(field, value + offset, f->size) != 0) {
+            memcpy(value + offset, field, f->size);
+            tide_run_inspect_write(api, kind, target, root, offset, (const uint8_t *)field, f->size);
+        }
+    }
+}
+
+// A value of a section, with what was sent of it and isn't back yet over it, then its fields
+static inline void tide_run_inspect_value(const tide_inspect_api *api, const tide_packet *p, const tide_packet_part *part,
+                                          const uint32_t index, const tide_entity target)
+{
+    uint8_t value[4096];
+    if (part->stride > sizeof value) {
+        tide_gui_layout_label(&tide_run_gui, "(too big to show)");
+        return;
+    }
+    memcpy(value, part->values + (size_t)index * part->stride, part->stride);
+    for (uint32_t i = 0; i < 16u && !tide_run_inspect_local; i++) {
+        tide_run_inspect_sent *s = &tide_run_inspect_pending[i];
+        if (!s->size || s->type != (int32_t)part->type || s->target.birth != target.birth || s->target.lineage != target.lineage
+            || s->offset + s->size > part->stride)
+            continue;
+        if (memcmp(value + s->offset, s->bytes, s->size) == 0 || tide_run_now - s->at > 1.0) s->size = 0; // Back, or never
+        else memcpy(value + s->offset, s->bytes, s->size);
+    }
+    // An earlier tick's, while paused there, are shown as they were: a change goes to the match as it is now
+    const int frozen = tide_gui_begin_disabled(&tide_run_gui, tide_run_travel_world() != NULL);
+    tide_run_inspect_fields(api, p, part->kind, target, (int32_t)part->type, (int32_t)part->type, value, 0, "", 0);
+    if (frozen >= 0) tide_gui_close(&tide_run_gui, frozen);
+}
+
+// Room for `count` of `each` bytes in `*buffer`, kept between frames; false when there's none
+static inline bool tide_run_inspect_room(void **buffer, uint32_t *capacity, const uint32_t count, const size_t each)
+{
+    if (count <= *capacity) return true;
+    const uint32_t want = count < 64u ? 64u : count + count / 2u;
+    void *grown = realloc(*buffer, (size_t)want * each);
+    if (!grown) return false;
+    *buffer = grown;
+    *capacity = want;
+    return true;
+}
+
+// From the packet: its components' sections the menu lists, each entity's of them, and its children
+static inline bool tide_run_inspect_index(const tide_layout *layout, const tide_packet *p, const uint32_t n,
+                                          uint32_t *parts_out)
+{
+    uint32_t parts = 0, total = 0, at = 0;
+    tide_packet_part part;
+    while (tide_packet_next(p->bytes, p->size, &at, &part)) {
+        if (part.kind != TIDE_PACKET_COMPONENT && part.kind != TIDE_PACKET_COMPONENT_LOCAL) continue;
+        if (tide_run_inspect_internal(layout, part.type)) continue;
+        if (!tide_run_inspect_room((void **)&tide_run_inspect_parts, &tide_run_inspect_part_capacity, parts + 1u,
+                                   sizeof *tide_run_inspect_parts))
+            return false;
+        tide_run_inspect_parts[parts++] = part;
+        total += part.count;
+    }
+    uint32_t capacity = tide_run_inspect_entity_capacity;
+    if (!tide_run_inspect_room((void **)&tide_run_inspect_first, &capacity, n + 1u, sizeof(uint32_t))) return false;
+    capacity = tide_run_inspect_entity_capacity;
+    if (!tide_run_inspect_room((void **)&tide_run_inspect_next, &capacity, n + 1u, sizeof(uint32_t))) return false;
+    capacity = tide_run_inspect_entity_capacity;
+    if (!tide_run_inspect_room((void **)&tide_run_inspect_start, &capacity, n + 1u, sizeof(uint32_t))) return false;
+    capacity = tide_run_inspect_entity_capacity;
+    if (!tide_run_inspect_room((void **)&tide_run_inspect_stack, &capacity, n + 1u, sizeof(uint32_t))) return false;
+    tide_run_inspect_entity_capacity = capacity;
+    if (!tide_run_inspect_room((void **)&tide_run_inspect_comps, &tide_run_inspect_comp_capacity, total + 1u,
+                               sizeof *tide_run_inspect_comps))
+        return false;
+    // Each entity's components, side by side: counted, then each one's start, then put in its place in order
+    uint32_t *start = tide_run_inspect_start;
+    memset(start, 0, (size_t)(n + 1u) * sizeof *start);
+    for (uint32_t k = 0; k < parts; k++) {
+        for (uint32_t r = 0; r < tide_run_inspect_parts[k].count; r++) {
+            const uint32_t e = tide_run_inspect_parts[k].rows[r];
+            if (e < n) start[e + 1u]++;
+        }
+    }
+    for (uint32_t i = 0; i < n; i++) start[i + 1u] += start[i];
+    uint32_t *fill = tide_run_inspect_stack; // For now, where each entity's next one goes
+    memcpy(fill, start, (size_t)n * sizeof *fill);
+    for (uint32_t k = 0; k < parts; k++) {
+        for (uint32_t r = 0; r < tide_run_inspect_parts[k].count; r++) {
+            const uint32_t e = tide_run_inspect_parts[k].rows[r];
+            if (e < n) tide_run_inspect_comps[fill[e]++] = (tide_run_inspect_has){k, r};
+        }
+    }
+    // Children, in the order the entities are: from the last up, each its parent's first so far
+    for (uint32_t i = 0; i < n; i++) tide_run_inspect_first[i] = tide_run_inspect_next[i] = UINT32_MAX;
+    for (uint32_t i = n; i-- > 0;) {
+        const uint32_t parent = tide_run_inspect_parent(p, i);
+        if (parent == UINT32_MAX) continue;
+        tide_run_inspect_next[i] = tide_run_inspect_first[parent];
+        tide_run_inspect_first[parent] = i;
+    }
+    *parts_out = parts;
+    return true;
+}
+
+// A field's value in a few characters, for a row's preview: text (quoted, the first 40 characters), a number or a
+// vector of them, a bool, an enum's member. False for what's none of those.
+static inline bool tide_run_inspect_brief(const tide_layout *layout, const tide_packet *p, const tide_layout_field *f,
+                                          const uint8_t *at, char *out, const size_t size)
+{
+    const char *type = f->type ? f->type : "";
+    if (strcmp(type, "string") == 0) {
+        uint64_t handle;
+        memcpy(&handle, at, sizeof handle);
+        uint32_t length = 0;
+        const uint8_t *bytes = tide_packet_text_of(p->bytes, p->size, handle, &length);
+        if (!bytes || !length) return false;
+        snprintf(out, size, "\"%.*s%s\"", (int)(length < 40u ? length : 40u), (const char *)bytes, length > 40u ? "..." : "");
+        return true;
+    }
+    const uint32_t dim = f->dim ? f->dim : 1u;
+    size_t used = 0;
+    for (uint32_t k = 0; k < dim && k < 4u; k++) {
+        char one[48];
+        switch (f->kind) {
+        case TIDE_LAYOUT_INT: {
+            int32_t v;
+            memcpy(&v, at + 4u * k, 4);
+            snprintf(one, sizeof one, "%d", v);
+            break;
+        }
+        case TIDE_LAYOUT_FLOAT: {
+            float v;
+            memcpy(&v, at + 4u * k, 4);
+            snprintf(one, sizeof one, "%g", (double)v);
+            break;
+        }
+        case TIDE_LAYOUT_DOUBLE: {
+            double v;
+            memcpy(&v, at + 8u * k, 8);
+            snprintf(one, sizeof one, "%g", v);
+            break;
+        }
+        case TIDE_LAYOUT_LONG: {
+            int64_t v;
+            memcpy(&v, at + 8u * k, 8);
+            snprintf(one, sizeof one, "%lld", (long long)v);
+            break;
+        }
+        case TIDE_LAYOUT_BYTE: snprintf(one, sizeof one, "%u", (unsigned)at[k]); break;
+        case TIDE_LAYOUT_ENUM: {
+            int32_t v = 0;
+            memcpy(&v, at, f->size < 4u ? f->size : 4u);
+            const char *member = "?";
+            if (f->decl >= 0 && (uint32_t)f->decl < layout->enum_count) {
+                const tide_layout_enum *e = &layout->enums[f->decl];
+                for (uint32_t m = 0; m < e->member_count; m++)
+                    if (e->members[m].value == v) member = e->members[m].name;
+            }
+            snprintf(out, size, "%s", member);
+            return true;
+        }
+        case TIDE_LAYOUT_PLAIN:
+            if (f->size == 1 && strcmp(type, "bool") == 0) {
+                snprintf(out, size, "%s", at[0] ? "true" : "false");
+                return true;
+            }
+            return false;
+        default: return false;
+        }
+        used += (size_t)snprintf(out + used, used < size ? size - used : 0, "%s%s", k ? ", " : dim > 1 ? "(" : "", one);
+    }
+    if (dim > 1) snprintf(out + used, used < size ? size - used : 0, ")");
+    return true;
+}
+
+// What entity `i` is, said in a few words, from the frame's index: its components' names into `has`, and into
+// `preview` a value of one of them, a text field's if one has any (a name, most likely), else its first field's that
+// can be said ("level 3")
+static inline void tide_run_inspect_summary(const tide_layout *layout, const tide_packet *p, const uint32_t i, char *has,
+                                            const size_t has_size, char *preview, const size_t preview_size)
+{
+    size_t used = 0;
+    has[0] = preview[0] = '\0';
+    for (int pass = 0; pass < 3; pass++) {
+        for (uint32_t c = tide_run_inspect_start[i]; c < tide_run_inspect_start[i + 1u]; c++) {
+            const tide_packet_part *of = &tide_run_inspect_parts[tide_run_inspect_comps[c].part];
+            if (of->kind != TIDE_PACKET_COMPONENT) continue; // Its local fields are its component's
+            if (pass == 0) {
+                if (used < has_size)
+                    used += (size_t)snprintf(has + used, has_size - used, "%s%s", used ? ", " : "",
+                                             tide_run_inspect_type_name(layout, of->type));
+                continue;
+            }
+            if (of->type >= layout->type_count || preview[0]) continue;
+            const tide_layout_type *t = &layout->types[of->type];
+            const uint8_t *value = of->values + (size_t)tide_run_inspect_comps[c].row * of->stride;
+            for (uint32_t k = 0; k < t->field_count && !preview[0]; k++) {
+                const tide_layout_field *f = &t->fields[k];
+                const bool text = f->type && strcmp(f->type, "string") == 0;
+                if (f->hidden || f->offset + f->size > of->stride || (pass == 1) != text) continue;
+                char brief[96];
+                if (!tide_run_inspect_brief(layout, p, f, value + f->offset, brief, sizeof brief)) continue;
+                if (text) snprintf(preview, preview_size, "%s", brief);
+                else snprintf(preview, preview_size, "%s %s", f->name, brief);
+            }
+        }
+    }
+}
+
+// An entity's row's id, by its handle, so it's the same widget whatever's around it
+static inline uint32_t tide_run_inspect_row_id(const tide_entity e)
+{
+    const uint64_t key[2] = {e.birth, e.lineage};
+    const uint64_t h = tide_run_bytes_hash((const uint8_t *)key, sizeof key);
+    return (uint32_t)(h ^ (h >> 32)) | 0x80000000u;
+}
+
+static inline void tide_run_inspect_tree(const tide_inspect_api *api, const tide_packet *p)
+{
+    const tide_layout *layout = api->layout;
+    const uint32_t n = tide_packet_entities(p->bytes, p->size);
+    uint32_t parts = 0;
+    tide_run_inspect_indexed = n && tide_run_inspect_index(layout, p, n, &parts) ? p : NULL;
+    // Singletons, by name, each opened in place
+    tide_packet_part part;
+    uint32_t at = 0;
+    bool any = false;
+    while (tide_packet_next(p->bytes, p->size, &at, &part)) {
+        if (part.kind != TIDE_PACKET_SINGLETON && part.kind != TIDE_PACKET_SINGLETON_LOCAL) continue;
+        const char *type = tide_run_inspect_type_name(layout, part.type);
+        if (strcmp(type, "TideTweaks") == 0 || strcmp(type, "TideTweaksHere") == 0) continue; // The Dev tab's tweaks
+        if (tide_run_inspect_internal(layout, part.type) || !part.count) continue;
+        if (!any) tide_run_inspect_heading("SINGLETONS");
+        any = true;
+        const tide_entity none = {0, 0};
+        const bool open = tide_run_inspect_find(part.kind, (int32_t)part.type, none) != UINT32_MAX;
+        const uint32_t id = 0xDE730000u + part.type * 8u + part.kind;
+        float y;
+        if (tide_run_inspect_row_shows(0, &y)
+            && tide_run_inspect_row(id, type, type,
+                                    part.kind == TIDE_PACKET_SINGLETON_LOCAL && !tide_run_inspect_local ? "local fields" : "",
+                                    0, open))
+            tide_run_inspect_set_open(part.kind, (int32_t)part.type, none, !open);
+        if (!open) continue;
+        const tide_float2 from = tide_gui_layout_next(&tide_run_gui);
+        const int block = tide_run_inspect_begin_indent(0xDE740000u + part.type * 8u + part.kind * 2u, tide_run_inspect_fields_at(0));
+        if (block < 0) continue;
+        tide_run_inspect_value(api, p, &part, 0, none);
+        tide_gui_close(&tide_run_gui, block);
+        tide_run_inspect_guides(from.x, 1, from.y - tide_run_gui.theme.spacing, tide_gui_layout_next(&tide_run_gui).y);
+    }
+    // Entities, from those under none: each opened in place with its components, then the entities under it
+    if (!tide_run_inspect_indexed) return;
+    char heading[48];
+    snprintf(heading, sizeof heading, "ENTITIES  %u", n);
+    tide_run_inspect_heading(heading);
+    // Depth-first, by a stack of places, each with its depth above it
+    uint32_t *stack = tide_run_inspect_stack, top = 0;
+    static uint32_t *depths;
+    static uint32_t depth_capacity;
+    if (!tide_run_inspect_room((void **)&depths, &depth_capacity, n + 1u, sizeof *depths)) return;
+    for (uint32_t i = n; i-- > 0;) {
+        if (tide_run_inspect_parent(p, i) != UINT32_MAX) continue;
+        depths[top] = 0;
+        stack[top++] = i;
+    }
+    while (top) {
+        const uint32_t i = stack[--top], depth = depths[top];
+        const tide_entity e = tide_packet_entity(p->bytes, p->size, i, NULL);
+        const bool open = tide_run_inspect_find(0, -1, e) != UINT32_MAX;
+        // Its row, where it shows: its name, and its components'
+        const uint32_t id = tide_run_inspect_row_id(e);
+        float y;
+        if (tide_run_inspect_row_shows(depth, &y)) {
+            char has[400], preview[128], number[48], more[192], label[460];
+            tide_run_inspect_entity_name(p, e, number, sizeof number);
+            tide_run_inspect_summary(layout, p, i, has, sizeof has, preview, sizeof preview);
+            uint32_t under = 0;
+            for (uint32_t child = tide_run_inspect_first[i]; child != UINT32_MAX && under < n; child = tide_run_inspect_next[child]) under++;
+            if (under) snprintf(more, sizeof more, "%s%s\xC2\xB7 %u under it", preview, preview[0] ? "  " : "", under);
+            else snprintf(more, sizeof more, "%s", preview);
+            snprintf(label, sizeof label, "%s %s", number, has[0] ? has : "(empty)"); // Its number tells scripts which
+            if (tide_run_inspect_row(id, label, has[0] ? has : "(empty)", more, depth, open)) tide_run_inspect_set_open(0, -1, e, !open);
+        }
+        if (tide_run_inspect_revealing && e.birth == tide_run_inspect_reveal.birth
+            && e.lineage == tide_run_inspect_reveal.lineage) {
+            // Shown at the top of the list
+            if (tide_run_inspect_offset) tide_run_inspect_offset->y += y - tide_run_inspect_view.y;
+            tide_run_inspect_revealing = 0;
+        }
+        if (!open) continue;
+        // Its components, a level in
+        const tide_float2 opened = tide_gui_layout_next(&tide_run_gui);
+        const int block = tide_run_inspect_begin_indent(id ^ 0x40000000u, tide_run_inspect_fields_at(depth));
+        if (block >= 0) {
+            char number[64], said[96];
+            tide_run_inspect_entity_name(p, e, number, sizeof number);
+            snprintf(said, sizeof said, "Entity %s", number);
+            tide_run_dev_label(said, 11.0f, TIDE_RUN_DEV_DIM);
+            for (uint32_t c = tide_run_inspect_start[i]; c < tide_run_inspect_start[i + 1u]; c++) {
+                const tide_packet_part *of = &tide_run_inspect_parts[tide_run_inspect_comps[c].part];
+                char title[160];
+                snprintf(title, sizeof title, "%s%s", tide_run_inspect_type_name(layout, of->type),
+                         of->kind == TIDE_PACKET_COMPONENT_LOCAL && !tide_run_inspect_local ? "  (local fields)" : "");
+                if (c > tide_run_inspect_start[i]) tide_gui_layout_space(&tide_run_gui, 4.0f);
+                tide_run_dev_label(title, 13.0f, TIDE_RUN_DEV_TYPE);
+                // Its fields a step in under its name
+                const int fields = tide_run_inspect_begin_indent((id ^ 0x20000000u) + 4u * (c - tide_run_inspect_start[i] + 1u), 12.0f);
+                if (fields < 0) continue;
+                tide_run_inspect_value(api, p, of, tide_run_inspect_comps[c].row, e);
+                tide_gui_close(&tide_run_gui, fields);
+            }
+            if (tide_run_inspect_start[i] == tide_run_inspect_start[i + 1u]) tide_run_dev_label("No components", 13.0f, TIDE_RUN_DEV_DIM);
+            tide_gui_close(&tide_run_gui, block);
+            tide_gui_layout_space(&tide_run_gui, 4.0f);
+            tide_run_inspect_guides(opened.x, depth + 1u, opened.y - tide_run_gui.theme.spacing, tide_gui_layout_next(&tide_run_gui).y);
+        }
+        // Then the entities under it, in their order
+        const uint32_t from = top;
+        for (uint32_t child = tide_run_inspect_first[i]; child != UINT32_MAX && top < n; child = tide_run_inspect_next[child]) {
+            depths[top] = depth + 1u;
+            stack[top++] = child;
+        }
+        for (uint32_t a = from, b = top; a + 1u < b; a++, b--) { // Reversed, so the first comes off first
+            const uint32_t s = stack[a];
+            stack[a] = stack[b - 1u];
+            stack[b - 1u] = s;
+        }
+    }
+    if (tide_run_inspect_revealing) tide_run_inspect_revealing--; // Not found
+}
+
+static inline void tide_run_dev_inspect(const tide_inspect_api *api, const void *match)
+{
+    tide_run_inspect_id = 0xDE720000u;
+    tide_run_inspect_layout = api->layout;
+    api->view(match, tide_run_local, &tide_run_inspect_packets[0], &tide_run_inspect_packets[1]);
+    tide_run_inspect_tree(api, &tide_run_inspect_packets[tide_run_inspect_local ? 1 : 0]);
+}
+
+// The checkpoints' folder's files of a kind (0 checkpoints, 1 recordings), newest first, into `names`: how many
+static inline uint32_t tide_run_list_kind(const uint32_t kind, char (*names)[TIDE_CHECKPOINT_NAME])
+{
+#ifdef __wasm__
+    static char listed[TIDE_RUN_CHECKPOINTS_LISTED * TIDE_CHECKPOINT_NAME];
+    const uint32_t size = tide_web_checkpoint_list(kind, listed, sizeof listed - 1u);
+    listed[size < sizeof listed ? size : 0u] = '\0';
+    uint32_t count = 0;
+    for (char *line = listed; *line && count < TIDE_RUN_CHECKPOINTS_LISTED;) {
+        char *end = strchr(line, '\n');
+        if (end) *end = '\0';
+        char why[8];
+        if (tide_checkpoint_name_ok(line, why, sizeof why)) snprintf(names[count++], TIDE_CHECKPOINT_NAME, "%s", line);
+        if (!end) break;
+        line = end + 1;
+    }
+    return count;
+#else
+    const uint32_t count = tide_checkpoint_list_of(tide_run_checkpoints, kind ? ".recording" : ".checkpoint", names,
+                                                   TIDE_RUN_CHECKPOINTS_LISTED);
+    return count < TIDE_RUN_CHECKPOINTS_LISTED ? count : TIDE_RUN_CHECKPOINTS_LISTED;
+#endif
+}
+
+// The next free name of `prefix`-<n>, past every one listed
+static inline void tide_run_next_name(const char *prefix, char (*listed)[TIDE_CHECKPOINT_NAME], const uint32_t count, char *out)
+{
+    uint32_t next = 1;
+    const size_t n = strlen(prefix);
+    for (uint32_t i = 0; i < count; i++) {
+        unsigned number = 0;
+        char tail;
+        if (strncmp(listed[i], prefix, n) == 0 && sscanf(listed[i] + n, "-%u%c", &number, &tail) == 1 && number >= next) next = number + 1u;
+    }
+    snprintf(out, TIDE_CHECKPOINT_NAME, "%s-%u", prefix, (unsigned)next);
+}
+
+// The Dev tab's recordings: Save recording (named recording-<n>), the match's ticks so far, and each saved one, newest
+// first, which a click replays in the match's place
+static inline void tide_run_dev_recordings(void)
+{
+    tide_gui *g = &tide_run_gui;
+    if (tide_run_recordings_listed_at < 0.0 || tide_run_now - tide_run_recordings_listed_at > 1.0) {
+        tide_run_recording_count = tide_run_list_kind(1u, tide_run_recording_names);
+        tide_run_recordings_listed_at = tide_run_now;
+    }
+    tide_run_inspect_heading("RECORDINGS");
+    if (tide_gui_layout_button(g, 0xDE780001u, "Save recording")) tide_run_travel_save();
+    if (tide_run_travel.said[0]) tide_run_dev_label(tide_run_travel.said, 12.0f, TIDE_RUN_DEV_DIM);
+    for (uint32_t i = 0; i < tide_run_recording_count; i++) {
+        const char *name = tide_run_recording_names[i];
+        float y;
+        if (!tide_run_inspect_row_shows(0, &y)) continue;
+        const bool on = tide_run_travel.replay && strcmp(name, tide_run_travel.replay_name) == 0;
+        if (tide_run_inspect_row(0xDE790000u + i, name, name, on ? "replaying" : "", 0, false)) tide_run_travel_replay(name);
+    }
+    if (!tide_run_recording_count) tide_run_dev_label("None yet: Save recording keeps the match's ticks so far", 12.0f, TIDE_RUN_DEV_DIM);
+}
+
+// The Dev tab's checkpoints: Save (named checkpoint-<n>, the next number), then each saved one, newest first, which a
+// click loads; the one the run starts over from is marked, and Start fresh forgets it
+static inline void tide_run_dev_checkpoints(void)
+{
+    tide_gui *g = &tide_run_gui;
+    if (tide_run_checkpoints_listed_at < 0.0 || tide_run_now - tide_run_checkpoints_listed_at > 1.0) {
+        tide_run_checkpoint_count = tide_run_list_kind(0u, tide_run_checkpoint_names);
+        tide_run_checkpoints_listed_at = tide_run_now;
+    }
+    tide_run_inspect_heading("CHECKPOINTS");
+    const int row = tide_gui_begin_horizontal(g, 0xDE750000u);
+    if (tide_gui_layout_button(g, 0xDE750001u, "Save")) {
+        char name[TIDE_CHECKPOINT_NAME];
+        tide_run_next_name("checkpoint", tide_run_checkpoint_names, tide_run_checkpoint_count, name);
+        tide_run_checkpoint_ask(0, name);
+    }
+    if (tide_run_from[0] && tide_gui_layout_button(g, 0xDE750002u, "Start fresh")) tide_run_checkpoint_ask(3, "");
+    if (row >= 0) tide_gui_close(g, row);
+    if (tide_run_checkpoint_said[0]) tide_run_dev_label(tide_run_checkpoint_said, 12.0f, TIDE_RUN_DEV_DIM);
+    if (tide_run_checkpoint_forceable && tide_gui_layout_button(g, 0xDE750003u, "Load anyway"))
+        tide_run_checkpoint_ask(2, tide_run_checkpoint_refused);
+    const uint32_t listed = tide_run_checkpoint_count < TIDE_RUN_CHECKPOINTS_LISTED ? tide_run_checkpoint_count : TIDE_RUN_CHECKPOINTS_LISTED;
+    for (uint32_t i = 0; i < listed; i++) {
+        const char *name = tide_run_checkpoint_names[i];
+        float y;
+        if (!tide_run_inspect_row_shows(0, &y)) continue;
+        const bool from = strcmp(name, tide_run_from) == 0;
+        if (tide_run_inspect_row(0xDE760000u + i, name, name, from ? "starts over here" : "", 0, false)) tide_run_checkpoint_ask(1, name);
+    }
+    if (!listed) tide_run_dev_label("None yet: Save keeps the match as it is", 12.0f, TIDE_RUN_DEV_DIM);
+}
+
+// A bar of the ticks from `first` to `last`, the one shown `shown`, which a drag shows another of
+static inline void tide_run_dev_scrub(const uint32_t id, const uint32_t first, const uint32_t last, const uint32_t shown)
+{
+    if (last <= first) return;
+    int32_t tick = (int32_t)shown;
+    if (tide_gui_layout_int_slider(&tide_run_gui, id, "", &tick, (int32_t)first, (int32_t)last) && tick >= 0)
+        tide_run_travel_show((uint32_t)tick);
+}
+
+// The match's time, at the menu's top whatever its tab: Pause or Play, then paused, Back and Step a tick, the tick
+// shown, a bar to drag through the ticks, and at an earlier one, Go on from here, which the match goes on from. Why it
+// can't pause, where it can't. A recording replayed has its own: Play or Pause, Back, Step, its bar, whether this build
+// replays it as it was recorded, and Stop replay.
+static inline void tide_run_dev_time(void)
+{
+    tide_gui *g = &tide_run_gui;
+    char line[160];
+    if (tide_run_travel.replay) {
+        tide_timeline *r = tide_run_travel.replay;
+        const uint32_t first = tide_timeline_first(r), last = tide_timeline_last(r), shown = tide_run_travel.replay_shown;
+        const int row = tide_gui_begin_horizontal(g, 0xDE770010u);
+        if (row < 0) return;
+        if (tide_gui_layout_button(g, 0xDE770011u, tide_run_travel.playing ? "Pause" : "Play")) tide_run_travel_pause(tide_run_travel.playing);
+        if (tide_gui_layout_button(g, 0xDE770012u, "Back")) tide_run_travel_back();
+        if (tide_gui_layout_button(g, 0xDE770013u, "Step")) tide_run_travel_forward();
+        snprintf(line, sizeof line, "%s: tick %u of %u", tide_run_travel.replay_name, (unsigned)shown, (unsigned)last);
+        tide_run_dev_label(line, 12.0f, TIDE_RUN_DEV_DIM);
+        tide_gui_close(g, row);
+        tide_run_dev_scrub(0xDE770014u, first, last, shown);
+        tide_timeline_check check;
+        tide_timeline_check_of(r, &check);
+        if (check.unreadable) snprintf(line, sizeof line, "This build can't replay tick %u", (unsigned)check.unreadable);
+        else if (check.differs) snprintf(line, sizeof line, "Tick %u differs from the recording", (unsigned)check.differs);
+        else snprintf(line, sizeof line, "As recorded, to tick %u", (unsigned)check.checked);
+        tide_run_dev_label(line, 12.0f, check.differs || check.unreadable ? g->theme.accent : TIDE_RUN_DEV_DIM);
+        if (tide_gui_layout_button(g, 0xDE770015u, "Stop replay")) tide_run_travel_stop_replay();
+        return;
+    }
+    const char *why = tide_run_travel_why();
+    const bool paused = tide_run_travel.paused;
+    if (why[0] && !paused) {
+        snprintf(line, sizeof line, "Can't pause: %s", why);
+        tide_run_dev_label(line, 12.0f, TIDE_RUN_DEV_DIM);
+        return;
+    }
+    const int row = tide_gui_begin_horizontal(g, 0xDE770000u);
+    if (row < 0) return;
+    if (tide_gui_layout_button(g, 0xDE770001u, paused ? "Play" : "Pause")) tide_run_travel_pause(!paused);
+    if (paused && tide_gui_layout_button(g, 0xDE770002u, "Back")) tide_run_travel_back();
+    if (paused && tide_gui_layout_button(g, 0xDE770003u, "Step")) tide_run_travel_forward();
+    const uint32_t shown = tide_run_travel_shown(), last = tide_run_travel_last();
+    if (paused && shown < last) snprintf(line, sizeof line, "tick %u of %u", (unsigned)shown, (unsigned)last);
+    else snprintf(line, sizeof line, "tick %u", (unsigned)last);
+    tide_run_dev_label(line, 12.0f, TIDE_RUN_DEV_DIM);
+    tide_gui_close(g, row);
+    if (!paused) return;
+    tide_run_dev_scrub(0xDE770005u, tide_run_travel_first(), last, shown);
+    if (tide_run_travel_background()) tide_run_dev_label("The match goes on for the other players", 12.0f, TIDE_RUN_DEV_DIM);
+    if (shown < last && tide_gui_layout_button(g, 0xDE770004u, "Go on from here")) tide_run_travel_go_on();
+}
+
+// The menu's tab: 0 the game's dev views and tweaks, 1 the match's inspector, 2 the local world's. Each tab's list
+// where it's scrolled to, from its top, and how tall it last was
+static uint32_t tide_run_dev_tab;
+static tide_float2 tide_run_dev_offsets[3];
+static float tide_run_dev_heights[3] = {64.0f, 64.0f, 64.0f};
+static float tide_run_dev_tabs_tall = 40.0f; // The tabs' row, and the room under it
+
+static inline void tide_run_dev_menu(const tide_host_game *game, const void *match)
+{
+    const tide_tweaks_api *tweaks = game->tweaks ? game->tweaks() : NULL;
+    if (tweaks && !tweaks->count) tweaks = NULL;
+    const tide_inspect_api *inspect = game->inspect ? game->inspect() : NULL;
+    if ((!game->dev_views || !game->dev_views[0]) && !tweaks && !inspect) return;
+    const bool key = tide_run_devices.keyboard.backquote.held;
+    if (key && !tide_run_dev_key) tide_run_dev_open = !tide_run_dev_open;
+    tide_run_dev_key = key;
+    if (!tide_run_dev_open) return;
+    tide_gui *g = &tide_run_gui;
+    const float pad = 8.0f, width = 320.0f, margin = 8.0f;
+    const tide_float2 screen = tide_platform_screen_size();
+    const float most = screen.y - 2.0f * pad > 0.0f ? screen.y - 2.0f * pad : 0.0f;
+    // Inside the panel, past its margin: as much as the screen has
+    const float x = pad + margin, inner = most - 2.0f * margin > 0.0f ? most - 2.0f * margin : 0.0f;
+    tide_gui_view(g, UINT32_MAX); // Its own: no view's claims hide the devices from it
+    const bool dev = (game->dev_views && game->dev_views[0]) || tweaks || inspect; // A dev build's checkpoints
+    if (!dev && tide_run_dev_tab == 0) tide_run_dev_tab = 1;
+    if (!inspect) tide_run_dev_tab = 0;
+    // As tall as they were a frame before: the tabs, and under them this tab's list, which a longer list scrolls past
+    // (the wheel, or a drag on a touchscreen)
+    const float tabs = inspect ? (tide_run_dev_tabs_tall < inner ? tide_run_dev_tabs_tall : inner) : 0.0f;
+    const float top = x + tabs, room = inner - tabs;
+    tide_float2 *offset = &tide_run_dev_offsets[tide_run_dev_tab];
+    float *last = &tide_run_dev_heights[tide_run_dev_tab];
+    const float shown = tabs + (*last < room ? *last : room) + 2.0f * margin;
+    // A panel behind it all, so its text reads over any game. The pointer is its over the panel alone: below it, the
+    // game's
+    const tide_rect back = {pad, pad, width + 2.0f * margin, shown < most ? shown : most};
+    tide_gui_claim_pointer_at(g, back);
+    const int themed = tide_gui_begin_theme(g, tide_run_dev_theme()); // Its own look, whatever the game's
+    const int area = tide_gui_begin_area(g, 0xDE6D0000u, back);
+    if (inspect) {
+        // Its tabs, which stay at the top however far the list is scrolled: Dev for a game with dev views or tweaks,
+        // and the inspector's two worlds (a container of their own, as tall as their row was)
+        static tide_float2 none;
+        none = (tide_float2){0.0f, 0.0f};
+        const int box = tide_gui_begin_scroll(g, 0xDE6E0000u, (tide_rect){x, x, width, tabs}, &none);
+        const int row = tide_gui_begin_horizontal(g, 0xDE6E0001u);
+        static const char *const names[3] = {"Dev", "Match", "Local"};
+        const float size = g->theme.text_size, line = size + 14.0f;
+        for (uint32_t t = dev ? 0u : 1u; t < 3u; t++) {
+            const float w = g->measure ? g->measure(names[t], size, NULL, g->theme.font).x : 8.0f * (float)strlen(names[t]);
+            const tide_rect r = tide_gui_layout_reserve(g, (tide_float2){w + 20.0f, line});
+            tide_gui_describe(g, 0xDE6E0002u + t, TIDE_GUI_KIND_BUTTON, names[t]);
+            const tide_control c = tide_gui_control(g, 0xDE6E0002u + t, r);
+            const bool on = tide_run_dev_tab == t;
+            const tide_color text = on || c.hover > 0.5f ? g->theme.text : TIDE_RUN_DEV_DIM;
+            if (c.hover > 0.01f && !on) {
+                tide_draw_round_rect(&g->list, (tide_float2){r.x + r.width * 0.5f, r.y + r.height * 0.5f},
+                                     (tide_float2){r.width, r.height}, 5.0f, (tide_color){1.0f, 1.0f, 1.0f, 0.05f * c.hover});
+            }
+            tide_run_dev_text(names[t], r.x + 10.0f, r.y + r.height * 0.5f - 1.0f, text);
+            if (on) tide_draw_rect(&g->list, (tide_float2){r.x + r.width * 0.5f, r.y + r.height - 1.0f}, (tide_float2){w + 8.0f, 2.0f}, g->theme.accent);
+            if (c.clicked) tide_run_dev_tab = t;
+        }
+        tide_gui_close(g, row);
+        tide_run_dev_time();
+        const tide_rect rule = tide_gui_layout_reserve(g, (tide_float2){width, 1.0f});
+        tide_draw_rect(&g->list, (tide_float2){rule.x + width * 0.5f, rule.y + 0.5f}, (tide_float2){width, 1.0f}, TIDE_RUN_DEV_FAINT);
+        tide_gui_layout_space(g, 2.0f);
+        const tide_rect below = tide_gui_layout_reserve(g, (tide_float2){0.0f, 0.0f});
+        tide_gui_close(g, box);
+        if (below.y > x) tide_run_dev_tabs_tall = below.y - x;
+    }
+    const tide_rect list = {x, top, width, room};
+    const int depth = tide_gui_begin_scroll(g, 0xDE6F0000u + tide_run_dev_tab, list, offset);
+    if (tide_run_dev_tab == 0) {
+        for (uint32_t i = 0; game->dev_views && i < TIDE_RUN_DEV_VIEWS && game->dev_views[i]; i++) {
+            bool on = tide_run_dev_shown(game->dev_views[i]);
+            if (tide_gui_layout_toggle(g, 0xDE700000u + i, game->dev_views[i], &on)) tide_run_dev_show(game->dev_views[i], on);
+        }
+        if (tweaks) tide_run_dev_tweaks(tweaks);
+        if (inspect) tide_run_dev_checkpoints();
+        if (inspect) tide_run_dev_recordings();
+    } else {
+        tide_run_inspect_local = tide_run_dev_tab == 2;
+        tide_run_inspect_view = list;
+        tide_run_inspect_offset = offset;
+        tide_run_dev_inspect(inspect, match);
+    }
+    // Where the list ends, as an empty place after it: its height, wherever it's scrolled to
+    const tide_rect end = tide_gui_layout_reserve(g, (tide_float2){0.0f, 0.0f});
+    tide_gui_close(g, depth);
+    tide_gui_close(g, area);
+    tide_gui_close(g, themed);
+    const float height = end.y + offset->y - list.y;
+    if (height > 0.0f) *last = height;
+}
+
+// Where the matches this machine hosts keep their store (Storage.Save and Load in match code): the game's own
+// files, once they're named (tide_run_bind_io), for a game whose match code uses it
+static const tide_io *tide_run_store;
+// ...in a run with no window, those files with no thread of their own: its sessions have no clock, so a run repeats,
+// and an answer read on the provider's thread would reach whichever tick was running as the disk finished. Carried
+// out as each tick ends instead, its answers go to the next tick, every run
+static tide_io tide_run_store_here;
+
 // A session for tide_run_game, in no match yet. Its matches tick at the game's
 // rate unless the host said otherwise.
 static inline tide_session *tide_run_new_session(void)
@@ -1059,6 +2473,7 @@ static inline tide_session *tide_run_new_session(void)
         .tick_rate = (uint32_t)tide_run_settings.tick_rate,
         .sample = tide_run_sample,
         .jobs = tide_run_jobs(),      // Ticks on every core
+        .io = tide_run_store,
         // To keep running predicted ticks again within a frame's budget. A run
         // with no window has no clock, so it goes the same on every machine.
         .now_ns = tide_run_headless ? NULL : tide_time_now_ns,
@@ -1099,7 +2514,10 @@ static inline void tide_run_bind_io(const tide_host_game *game, void *local)
 {
     char fallback[512];
     const char *id = tide_run_name_game(game, fallback, sizeof fallback);
-    if (!game->set_io) return;
+    // The provider makes the game's folders at once: a run with no window (a test's) of a game that uses neither
+    // files nor the store leaves none behind. A window's run has them for its log anyway, and makes the store for
+    // whichever build first uses it, so a reload that adds Storage keeps what it saves.
+    if (tide_run_headless && !game->set_io && !game->game->stored) return;
     const char *directory = tide_run_data_directory;
     char *player_directory = NULL;
     if (directory && tide_platform_players() > 1u) {
@@ -1108,7 +2526,19 @@ static inline void tide_run_bind_io(const tide_host_game *game, void *local)
         snprintf(player_directory, size, "%s/player-%u", directory, (unsigned)tide_platform_player());
         directory = player_directory;
     }
-    game->set_io(local, tide_platform_io_init(id, directory));
+    const tide_io *io = tide_platform_io_init(id, directory);
+    if (game->set_io) game->set_io(local, io);
+    // ...and the matches this machine runs keep their store there (Storage.Save in match code), whichever build first
+    // uses it: a session made now hands its servers this provider, which stays the same across reloads
+    tide_run_store = io;
+    if (io && tide_run_headless) {
+        tide_io here = *io;
+        here.post = NULL;
+        here.settle = NULL;
+        // Written only where it changed: a reload binds again while the server may read it
+        if (memcmp(&here, &tide_run_store_here, sizeof here) != 0) tide_run_store_here = here;
+        tide_run_store = &tide_run_store_here;
+    }
     free(player_directory);
 }
 
@@ -1128,6 +2558,8 @@ static inline void tide_run_prewarm(void)
     tide_platform_prewarm(tide_run_game->shaders, count);
 }
 
+static inline bool tide_run_checkpoint_world(const char *name, bool force, void **world, int32_t *player);
+
 // Starts tide_run_game: its local state and a session, then the match the
 // command line asks for, or Main's if it's the match's.
 static inline void tide_run_begin(void)
@@ -1143,8 +2575,27 @@ static inline void tide_run_begin(void)
     tide_run_prewarm();
     game->local_init(tide_run_local);
     tide_run_session = tide_run_new_session();
+    // From a checkpoint: --from, or the one loaded last. The first time, one that can't be loaded ends the run, so a
+    // script or an agent that asked for it hears why; after, the game starts fresh, saying why
+    static bool begun;
+    void *from = tide_run_from_world; // Loaded already, by the menu or a script
+    int32_t from_player = tide_run_from_player;
+    tide_run_from_world = NULL;
+    if (!from && tide_run_from[0] && !tide_run_checkpoint_world(tide_run_from, tide_run_from_force, &from, &from_player)) {
+#ifdef __wasm__
+        if (tide_run_checkpoint_coming) tide_run_from[0] = '\0'; // On its way: it's gone on from as it comes
+        else
+#endif
+        if (!begun) exit(2);
+        tide_run_from[0] = '\0';
+    }
+    begun = true;
     tide_session_request request = {0};
     bool asked = tide_run_arguments(&request);
+    if (from && asked && request.kind != TIDE_REQUEST_OPEN) {
+        fprintf(stderr, "tide: --from starts this machine's match from a checkpoint: it takes no --join or --connect\n");
+        exit(2);
+    }
     if (tide_platform_players() && !game->main_is_local) {
         // A run of several players: the first opens Main's match, as --host would, and the others join its room
         asked = true;
@@ -1155,7 +2606,15 @@ static inline void tide_run_begin(void)
         }
     }
     const bool open = asked && request.kind == TIDE_REQUEST_OPEN;
-    if (asked && !open) {
+    if (from) {
+        // The match goes on from it, this machine's player the one who saved it
+        tide_player_set players = {0};
+        tide_players_add(&players, from_player >= 0 ? (uint32_t)from_player : 0u);
+        tide_session_start_from(tide_run_session, from, players, tide_run_now);
+        game->game->free_world(from);
+        free(from);
+        if (open) tide_run_request(&request, NULL);
+    } else if (asked && !open) {
         tide_run_request(&request, NULL); // --join or --connect
     } else if (!game->main_is_local) {
         // Main is the match's: it starts right away, opened with --host
@@ -1181,6 +2640,7 @@ typedef struct tide_run_loader {
     uint8_t *bytes;       // What was read, and whether the game loaded it: the thread's until the job's done
     size_t size;
     bool loaded;
+    bool found;     // There was a pack to read (its bytes may be the loaded pack's by now, and not kept here)
     bool read;      // A pack is read on the pool: none, where the game has no pack or it was read in place
     bool on;        // Frames show where it is, until it's in and the game has begun
     bool named;     // The platform knows the game by its ID (tide_run_name_game), from the loader's first frame
@@ -1198,8 +2658,9 @@ static inline void tide_run_load_work(void *context)
     uint8_t *bytes = l->path ? tide_platform_read_counted(l->path, &size, l->progress)
                              : tide_platform_pack_counted(&size, l->progress);
     __atomic_store_n(&l->checking, 1u, __ATOMIC_RELAXED);
-    l->loaded = !bytes || tide_run_game->assets(bytes, size);
-    l->bytes = bytes;
+    l->loaded = !bytes || tide_run_load_given(bytes, size);
+    l->found = bytes != NULL;
+    l->bytes = tide_pack_given(bytes) ? NULL : bytes; // The loaded pack's own memory, where it took them
     l->size = size;
 }
 
@@ -1266,12 +2727,12 @@ static inline int tide_run_loading_frame(void *user, const float seconds)
         l->named = true;
     }
     if (!l->warming && __atomic_load_n(&l->job.done, __ATOMIC_ACQUIRE)) {
-        if (l->read && !l->bytes && !l->path) {
+        if (l->read && !l->found && !l->path) {
             fprintf(stderr, "tide: the game's pack of assets isn't with the program (<program>.pack beside it): they read as empty\n");
         }
         free(l->path);
         l->path = NULL;
-        if (l->bytes) tide_run_assets_kept(l->bytes, l->size, l->loaded);
+        if (l->found) tide_run_assets_kept(l->bytes, l->size, l->loaded);
         char fallback[512];
         (void)tide_run_name_game(tide_run_game, fallback, sizeof fallback); // How its shaders drew before, read first
         tide_run_prewarm();
@@ -1337,6 +2798,8 @@ static inline int tide_run_loading_frame(void *user, const float seconds)
     return TIDE_KEEP_RUNNING;
 }
 
+static inline void tide_run_travel_drop(void);
+
 // Ends what tide_run_begin started: the match, if any, and the local state.
 static inline void tide_run_end(void)
 {
@@ -1348,6 +2811,7 @@ static inline void tide_run_end(void)
         }
     }
     tide_run_hosting_leave();
+    tide_run_travel_drop();
     const bool open = tide_run_drawer.open;
     tide_stats_free(&tide_run_drawer);
     tide_run_drawer.open = open;
@@ -1367,6 +2831,200 @@ static inline void tide_run_end(void)
     tide_draw_free(&tide_run_gui.list);
     memset(&tide_run_gui, 0, sizeof tide_run_gui);
     tide_draw_forget(&tide_run_draw); // What the game starts over with is other pixels
+}
+
+// The game's layout, which checkpoints are saved with and carried over by: a dev build's (its inspector's), or one
+// tide run's library has; NULL for neither
+static inline const tide_layout *tide_run_layout(void)
+{
+    const tide_host_game *game = tide_run_game;
+    const tide_inspect_api *inspect = game->inspect ? game->inspect() : NULL;
+    return inspect && inspect->layout ? inspect->layout : game->layout;
+}
+
+// The world of checkpoint `name`, carried over to this build, into `*world` (free it with free_world, then free()),
+// and the player who saved it: false, having said why (and kept it for the menu)
+static inline bool tide_run_checkpoint_world(const char *name, const bool force, void **world, int32_t *player)
+{
+    const tide_host_game *game = tide_run_game;
+    const tide_layout *layout = tide_run_layout();
+    tide_run_checkpoint_forceable = false;
+    if (!layout) {
+        snprintf(tide_run_checkpoint_said, sizeof tide_run_checkpoint_said,
+                 "checkpoints are a dev build's: tide run, or tide build --dev");
+        fprintf(stderr, "tide: %s\n", tide_run_checkpoint_said);
+        return false;
+    }
+    tide_checkpoint_loaded loaded;
+#ifdef __wasm__
+    const uint32_t size = tide_web_checkpoint_copy(0u, name, NULL, 0);
+    if (!size) { // Not here yet: asked for, and loaded as it comes (tide_run_checkpoints_poll)
+        tide_web_checkpoint_fetch(0u, name);
+        tide_run_checkpoint_coming = force ? 2 : 1;
+        snprintf(tide_run_checkpoint_coming_name, sizeof tide_run_checkpoint_coming_name, "%s", name);
+        snprintf(tide_run_checkpoint_said, sizeof tide_run_checkpoint_said, "Loading %s", name);
+        return false;
+    }
+    void *bytes = size != UINT32_MAX ? malloc(size) : NULL;
+    if (bytes) tide_web_checkpoint_copy(0u, name, bytes, size);
+    else if (size == UINT32_MAX) { // Forgotten, so a later ask fetches it again
+        char none;
+        tide_web_checkpoint_copy(0u, name, &none, 0);
+    }
+    const bool ok = bytes && tide_checkpoint_unpack(bytes, size, name, layout, game->game, force, world, player, &loaded);
+    if (!bytes) {
+        loaded = (tide_checkpoint_loaded){0};
+        snprintf(loaded.carried.failed, sizeof loaded.carried.failed,
+                 size == UINT32_MAX ? "there's no checkpoint %s in the game's checkpoints folder (it's tide run --web's)"
+                                    : "there wasn't enough memory for %s",
+                 name);
+    }
+    free(bytes);
+    if (!ok) {
+#else
+    if (!tide_checkpoint_load(tide_run_checkpoints, name, layout, game->game, force, world, player, &loaded)) {
+#endif
+        const bool scene = strncmp(loaded.carried.failed, "the scene ", 10) == 0;
+        snprintf(tide_run_checkpoint_said, sizeof tide_run_checkpoint_said, "%s didn't load: %s", name, loaded.carried.failed);
+        fprintf(stderr, "tide: checkpoint %s%s\n", tide_run_checkpoint_said,
+                scene && !force ? "; load what carries over with --force, `checkpoint force-load`, or the menu's Load anyway" : "");
+        tide_run_checkpoint_forceable = scene && !force;
+        if (tide_run_checkpoint_forceable) snprintf(tide_run_checkpoint_refused, sizeof tide_run_checkpoint_refused, "%s", name);
+        return false;
+    }
+    int n = snprintf(tide_run_checkpoint_said, sizeof tide_run_checkpoint_said, "Loaded %s, from tick %u", name, (unsigned)loaded.tick);
+    if (!loaded.same) {
+        const tide_migration *m = &loaded.carried;
+        n += snprintf(tide_run_checkpoint_said + n, sizeof tide_run_checkpoint_said - (size_t)n, ", carried over to this build");
+        if (loaded.fields_reset)
+            n += snprintf(tide_run_checkpoint_said + n, sizeof tide_run_checkpoint_said - (size_t)n, "; %u field%s reset",
+                          (unsigned)loaded.fields_reset, loaded.fields_reset == 1 ? "" : "s");
+        if (m->entities_dropped)
+            n += snprintf(tide_run_checkpoint_said + n, sizeof tide_run_checkpoint_said - (size_t)n, "; %u entit%s dropped%s%s",
+                          (unsigned)m->entities_dropped, m->entities_dropped == 1 ? "y" : "ies",
+                          m->scene_dropped[0] ? " with the scene " : "", m->scene_dropped);
+        if (m->tasks_dropped)
+            snprintf(tide_run_checkpoint_said + n, sizeof tide_run_checkpoint_said - (size_t)n, "; %u waiting task%s dropped",
+                     (unsigned)m->tasks_dropped, m->tasks_dropped == 1 ? "" : "s");
+    }
+    printf("tide: %s\n", tide_run_checkpoint_said);
+    fflush(stdout);
+    return true;
+}
+
+// Saves the match this machine's server runs as checkpoint `name`
+static inline void tide_run_checkpoint_save(const char *name)
+{
+    const tide_host_game *game = tide_run_game;
+    const tide_layout *layout = tide_run_layout();
+    tide_run_checkpoint_forceable = false;
+    // As it is after the tick that's running, if one runs beside the frame
+    const tide_server *server = tide_run_session && layout ? tide_session_server(tide_run_session) : NULL;
+    const void *world = server ? tide_session_server_world(tide_run_session) : NULL;
+    char why[200];
+    if (!layout) {
+        snprintf(tide_run_checkpoint_said, sizeof tide_run_checkpoint_said, "checkpoints are a dev build's: tide run, or tide build --dev");
+    } else if (!world) {
+        snprintf(tide_run_checkpoint_said, sizeof tide_run_checkpoint_said,
+                 "%s isn't saved: this machine doesn't run the match's server, so save on the one that hosts it", name);
+    } else {
+        const tide_session_status status = tide_session_status_of(tide_run_session);
+        const uint32_t tick = status.client.server_tick;
+        const int32_t player = tide_player_index(status.client.player);
+#ifdef __wasm__
+        // A page's go to tide, which keeps them in the game's folder: kept once it says so (tide_run_checkpoints_poll)
+        uint32_t size = 0;
+        uint8_t *bytes = NULL;
+        if (tide_checkpoint_name_ok(name, why, sizeof why)) {
+            bytes = tide_checkpoint_pack(layout, game->game, world, player, tick, &size);
+            if (!bytes) snprintf(why, sizeof why, "there wasn't enough memory");
+        }
+        if (bytes) {
+            tide_web_checkpoint_save(0u, name, bytes, size);
+            free(bytes);
+            snprintf(tide_run_checkpoint_saving, sizeof tide_run_checkpoint_saving, "%s", name);
+            tide_run_checkpoint_saving_kind = 0;
+            snprintf(tide_run_checkpoint_said, sizeof tide_run_checkpoint_said, "Saving %s, at tick %u", name, (unsigned)tick);
+            return;
+        }
+#else
+        if (tide_checkpoint_save(tide_run_checkpoints, name, layout, game->game, world, player, tick, why, sizeof why)) {
+            snprintf(tide_run_checkpoint_said, sizeof tide_run_checkpoint_said, "Saved %s, at tick %u", name, (unsigned)tick);
+            printf("tide: %s (%s/%s.checkpoint)\n", tide_run_checkpoint_said, tide_run_checkpoints, name);
+            fflush(stdout);
+            tide_run_checkpoints_listed_at = -1.0; // Listed again
+            return;
+        }
+#endif
+        snprintf(tide_run_checkpoint_said, sizeof tide_run_checkpoint_said, "%s isn't saved: %s", name, why);
+    }
+    fprintf(stderr, "tide: checkpoint %s\n", tide_run_checkpoint_said);
+}
+
+// Starts the game again from checkpoint `name` (`force`: what of it carries over), which it starts over from from now
+// on; one that won't load leaves the match as it is. A checkpoint is the match's: the local state starts over, as at a
+// full reload, and the game's local code makes it again from the match. "" starts fresh.
+static inline void tide_run_checkpoint_go(const char *name, const bool force)
+{
+    if (name[0]) {
+        void *world = NULL;
+        int32_t player = -1;
+        if (!tide_run_checkpoint_world(name, force, &world, &player)) return;
+        tide_run_from_world = world; // tide_run_begin starts from it
+        tide_run_from_player = player;
+    }
+    snprintf(tide_run_from, sizeof tide_run_from, "%s", name);
+    tide_run_from_force = force;
+    tide_run_end();
+    tide_platform_audio_forget();
+    tide_devices_consume(&tide_run_devices);
+    tide_run_begin();
+    if (!name[0]) {
+        snprintf(tide_run_checkpoint_said, sizeof tide_run_checkpoint_said, "Started fresh");
+        printf("tide: started fresh\n");
+        fflush(stdout);
+    }
+}
+
+// What the menu or a script asked of checkpoints, as a frame begins
+static inline void tide_run_checkpoints_poll(void)
+{
+    uint32_t way = 0;
+    char name[TIDE_CHECKPOINT_NAME];
+#ifdef __wasm__
+    if (tide_run_checkpoint_saving[0]) {
+        const uint32_t saved = tide_web_checkpoint_saved();
+        if (saved) {
+            char *said = tide_run_checkpoint_saving_kind ? tide_run_travel.said : tide_run_checkpoint_said;
+            snprintf(said, sizeof tide_run_checkpoint_said, saved == 1u ? "Saved %s" : "%s isn't saved: "
+                     "a page keeps them in the game's folder only under tide run --web", tide_run_checkpoint_saving);
+            printf("tide: %s\n", said);
+            tide_run_recordings_listed_at = -1.0;
+            tide_run_checkpoint_saving[0] = '\0';
+            tide_run_checkpoints_listed_at = -1.0;
+        }
+    }
+    if (tide_run_travel.coming[0] && tide_web_checkpoint_copy(1u, tide_run_travel.coming, NULL, 0)) {
+        snprintf(name, sizeof name, "%s", tide_run_travel.coming);
+        tide_run_travel.coming[0] = '\0';
+        tide_run_travel_replay(name);
+    }
+    if (tide_run_checkpoint_coming && tide_web_checkpoint_copy(0u, tide_run_checkpoint_coming_name, NULL, 0)) {
+        const bool force = tide_run_checkpoint_coming == 2;
+        tide_run_checkpoint_coming = 0;
+        snprintf(name, sizeof name, "%s", tide_run_checkpoint_coming_name);
+        tide_run_checkpoint_go(name, force);
+    }
+#endif
+    while (tide_platform_checkpoint_asked(&way, name, sizeof name)) {
+        if (way == 0u) tide_run_checkpoint_save(name);
+        else tide_run_checkpoint_go(name, way == 2u);
+    }
+    const int want = tide_run_checkpoint_want;
+    tide_run_checkpoint_want = -1;
+    if (want == 0) tide_run_checkpoint_save(tide_run_checkpoint_name);
+    else if (want == 1 || want == 2) tide_run_checkpoint_go(tide_run_checkpoint_name, want == 2);
+    else if (want == 3) tide_run_checkpoint_go("", false);
 }
 
 // Host migration (see tide_session_take_over). The machine that runs a match
@@ -1428,6 +3086,340 @@ static inline void tide_run_send_commands(void)
             game->command_sent(tide_run_local, channel);
         }
     }
+}
+
+// The match's ticks a second, which a recording says it was made at
+static inline uint32_t tide_run_travel_rate(void)
+{
+    if (tide_run_settings.tick_rate > 0) return (uint32_t)tide_run_settings.tick_rate;
+    return tide_run_game && tide_run_game->game->tick_rate ? tide_run_game->game->tick_rate : 60u;
+}
+
+// Players of other machines are in the match: it never stops for them
+static inline bool tide_run_travel_background(void)
+{
+    return tide_run_session && tide_session_remote_players(tide_run_session) > 0u;
+}
+
+static inline void tide_run_travel_stop_replay(void)
+{
+    tide_timeline_destroy(tide_run_travel.replay);
+    tide_run_travel.replay = NULL;
+    tide_run_travel.playing = false;
+    tide_run_travel.replay_name[0] = '\0';
+}
+
+// Lets go of the recording (and of a pause, and a replay): before the code of the build that made its worlds goes
+static inline void tide_run_travel_drop(void)
+{
+    if (tide_run_travel.live && tide_run_session && tide_run_travel.recorded == tide_run_session) {
+        tide_session_record(tide_run_session, NULL);
+    }
+    tide_timeline_destroy(tide_run_travel.live);
+    tide_run_travel.live = NULL;
+    tide_run_travel.recorded = NULL;
+    tide_run_travel.game = NULL;
+    tide_run_travel.paused = tide_run_travel.step = false;
+    tide_run_travel_stop_replay();
+}
+
+// Why the match can't pause now, "" when it can: a dev build's match that this machine runs
+static inline const char *tide_run_travel_why(void)
+{
+    const tide_host_game *game = tide_run_game;
+    if (tide_run_embedded || !game || !game->inspect) return "pausing is a dev build's";
+    if (!tide_run_session) return "there's no match";
+    if (game->game->shards) return "a sharded match doesn't pause";
+    const tide_session_status status = tide_session_status_of(tide_run_session);
+    if (!status.server) return status.client.state == TIDE_SESSION_OFFLINE ? "there's no match" : "the match is another machine's";
+    if (!tide_run_travel.live || !tide_timeline_started(tide_run_travel.live)) return "the match hasn't started";
+    return "";
+}
+
+// The match recorded while it's one this machine runs in a dev build, and a pause that can't last ended
+static inline void tide_run_travel_follow(void)
+{
+    const tide_host_game *game = tide_run_game;
+    const bool wanted = !tide_run_embedded && game && game->inspect && tide_run_session && !game->game->shards
+                     && tide_session_status_of(tide_run_session).server;
+    if (!wanted || (tide_run_travel.live && (tide_run_travel.recorded != tide_run_session || tide_run_travel.game != game->game))) {
+        if (tide_run_travel.live || tide_run_travel.paused) {
+            tide_timeline *replay = tide_run_travel.replay; // A recording replayed isn't the match's: it stays
+            tide_run_travel.replay = NULL;
+            tide_run_travel_drop();
+            tide_run_travel.replay = replay;
+        }
+    }
+    if (wanted && !tide_run_travel.live) {
+        tide_run_travel.live = tide_timeline_create(&(tide_timeline_desc){.game = game->game, .jobs = tide_run_jobs(),
+                                                                          .layout = game->layout});
+        if (!tide_run_travel.live) return;
+        tide_run_travel.recorded = tide_run_session;
+        tide_run_travel.game = game->game;
+        const tide_session_recorder recorder = tide_timeline_recorder(tide_run_travel.live);
+        tide_session_record(tide_run_session, &recorder);
+    }
+    if (tide_run_travel.paused && tide_run_travel_why()[0]) tide_run_travel.paused = tide_run_travel.step = false; // It goes on
+}
+
+static inline uint32_t tide_run_travel_first(void)
+{
+    return tide_run_travel.live ? tide_timeline_first(tide_run_travel.live) : 0u;
+}
+
+static inline uint32_t tide_run_travel_last(void)
+{
+    return tide_run_travel.live ? tide_timeline_last(tide_run_travel.live) : 0u;
+}
+
+// The tick the frames show: the latest, but for an earlier one shown while paused
+static inline uint32_t tide_run_travel_shown(void)
+{
+    const uint32_t last = tide_run_travel_last();
+    return tide_run_travel.paused && tide_run_travel.shown < last ? tide_run_travel.shown : last;
+}
+
+// Pauses, or goes on: a recording replayed plays or stops
+static inline void tide_run_travel_pause(const bool paused)
+{
+    if (tide_run_travel.replay) {
+        const bool ended = tide_run_travel.replay_shown >= tide_timeline_last(tide_run_travel.replay);
+        if (!paused && ended) tide_run_travel.replay_shown = tide_timeline_first(tide_run_travel.replay); // Again from its start
+        tide_run_travel.playing = !paused;
+        tide_run_travel.played = 0.0;
+        return;
+    }
+    if (!paused) { // Going on from the latest
+        tide_run_travel.paused = tide_run_travel.step = false;
+        return;
+    }
+    if (tide_run_travel_why()[0] || tide_run_travel.paused) return;
+    tide_run_travel.paused = true;
+    tide_run_travel.step = false;
+    tide_run_travel.shown = tide_run_travel_last();
+}
+
+// A tick on: the next one kept, or from the latest, the match's next tick (which goes by itself for other players)
+static inline void tide_run_travel_forward(void)
+{
+    if (tide_run_travel.replay) {
+        tide_run_travel.playing = false;
+        if (tide_run_travel.replay_shown < tide_timeline_last(tide_run_travel.replay)
+            && tide_timeline_world(tide_run_travel.replay, tide_run_travel.replay_shown + 1u)) tide_run_travel.replay_shown++;
+        return;
+    }
+    if (!tide_run_travel.paused) return;
+    if (tide_run_travel.shown < tide_run_travel_last()) tide_run_travel.shown++;
+    else if (!tide_run_travel_background()) tide_run_travel.step = true;
+}
+
+// A tick back, if there's one before it
+static inline void tide_run_travel_back(void)
+{
+    if (tide_run_travel.replay) {
+        tide_run_travel.playing = false;
+        if (tide_run_travel.replay_shown > tide_timeline_first(tide_run_travel.replay)
+            && tide_timeline_world(tide_run_travel.replay, tide_run_travel.replay_shown - 1u)) tide_run_travel.replay_shown--;
+        return;
+    }
+    if (!tide_run_travel.paused || !tide_run_travel.live) return;
+    const uint32_t shown = tide_run_travel_shown();
+    if (shown > tide_timeline_first(tide_run_travel.live) && tide_timeline_world(tide_run_travel.live, shown - 1u)) {
+        tide_run_travel.shown = shown - 1u;
+    }
+}
+
+// Tick `tick` shown, from the first to the last: made again by replaying where it isn't kept
+static inline void tide_run_travel_show(const uint32_t tick)
+{
+    if (tide_run_travel.replay) {
+        if (tide_timeline_world(tide_run_travel.replay, tick)) tide_run_travel.replay_shown = tick;
+        tide_run_travel.playing = false;
+        return;
+    }
+    if (!tide_run_travel.paused || !tide_run_travel.live) return;
+    const uint32_t last = tide_run_travel_last();
+    if (tick < tide_timeline_first(tide_run_travel.live) || tick > last) return;
+    if (tick < last && !tide_timeline_world(tide_run_travel.live, tick)) return;
+    tide_run_travel.shown = tick;
+    tide_run_travel.step = false;
+}
+
+// The match goes on from the tick shown, for every machine in it: the ticks after it are let go
+static inline void tide_run_travel_go_on(void)
+{
+    if (tide_run_travel.replay || !tide_run_travel.paused || !tide_run_travel.live) return;
+    const uint32_t tick = tide_run_travel_shown();
+    const void *world = tide_timeline_world(tide_run_travel.live, tick);
+    if (!world || !tide_session_rewind(tide_run_session, world)) return;
+    tide_timeline_cut(tide_run_travel.live, tick, tide_session_server_world(tide_run_session));
+    tide_run_travel.paused = tide_run_travel.step = false;
+}
+
+// The match's ticks so far, as a recording beside the checkpoints, named recording-<n>
+static inline void tide_run_travel_save(void)
+{
+    tide_run_travel_follow();
+    if (!tide_run_travel.live || !tide_timeline_started(tide_run_travel.live)) {
+        snprintf(tide_run_travel.said, sizeof tide_run_travel.said, "Nothing's recorded: %s",
+                 tide_run_travel_why()[0] ? tide_run_travel_why() : "the match hasn't started");
+        return;
+    }
+    char name[TIDE_CHECKPOINT_NAME];
+    tide_run_next_name("recording", tide_run_recording_names, tide_run_recording_count, name);
+    const uint32_t player = tide_run_session ? tide_session_status_of(tide_run_session).client.player.id : 0u;
+    uint32_t size = 0;
+    uint8_t *bytes = tide_timeline_save(tide_run_travel.live, tide_run_travel_rate(), player, &size);
+    if (!bytes) {
+        snprintf(tide_run_travel.said, sizeof tide_run_travel.said, "%s isn't saved: there wasn't enough memory", name);
+        return;
+    }
+    const uint32_t ticks = tide_timeline_last(tide_run_travel.live) - tide_timeline_first(tide_run_travel.live);
+#ifdef __wasm__
+    tide_web_checkpoint_save(1u, name, bytes, size); // Kept once tide says so (tide_run_checkpoints_poll)
+    snprintf(tide_run_checkpoint_saving, sizeof tide_run_checkpoint_saving, "%s", name);
+    tide_run_checkpoint_saving_kind = 1;
+    snprintf(tide_run_travel.said, sizeof tide_run_travel.said, "Saving %s, %u ticks", name, (unsigned)ticks);
+#else
+    char why[200];
+    if (tide_checkpoint_write(tide_run_checkpoints, name, ".recording", bytes, size, why, sizeof why)) {
+        snprintf(tide_run_travel.said, sizeof tide_run_travel.said, "Saved %s, %u ticks", name, (unsigned)ticks);
+        printf("tide: %s (%s/%s.recording)\n", tide_run_travel.said, tide_run_checkpoints, name);
+        fflush(stdout);
+        tide_run_recordings_listed_at = -1.0;
+    } else {
+        snprintf(tide_run_travel.said, sizeof tide_run_travel.said, "%s isn't saved: %s", name, why);
+        fprintf(stderr, "tide: recording %s\n", tide_run_travel.said);
+    }
+#endif
+    free(bytes);
+}
+
+// Recording `name` replayed in the match's place, from its first tick, playing: the match this machine runs pauses
+// meanwhile, but for other machines' players, for whom it goes on. A recording of another layout isn't replayed.
+static inline void tide_run_travel_replay(const char *name)
+{
+    char why[200] = "";
+    uint32_t size = 0;
+    uint8_t *bytes = NULL;
+#ifdef __wasm__
+    const uint32_t coming = tide_web_checkpoint_copy(1u, name, NULL, 0);
+    if (!coming) { // Not here yet: asked for, and replayed as it comes (tide_run_checkpoints_poll)
+        tide_web_checkpoint_fetch(1u, name);
+        snprintf(tide_run_travel.coming, sizeof tide_run_travel.coming, "%s", name);
+        snprintf(tide_run_travel.said, sizeof tide_run_travel.said, "Loading %s", name);
+        return;
+    }
+    if (coming == UINT32_MAX) {
+        char none;
+        tide_web_checkpoint_copy(1u, name, &none, 0);
+        snprintf(why, sizeof why, "there's no recording %s in the game's checkpoints folder", name);
+    } else if ((bytes = malloc(coming)) != NULL) {
+        tide_web_checkpoint_copy(1u, name, bytes, coming);
+        size = coming;
+    } else {
+        snprintf(why, sizeof why, "there wasn't enough memory");
+    }
+#else
+    bytes = tide_checkpoint_read(tide_run_checkpoints, name, ".recording", &size, why, sizeof why);
+#endif
+    tide_timeline_about about = {0};
+    tide_timeline *r = bytes ? tide_timeline_load(&(tide_timeline_desc){.game = tide_run_game->game, .jobs = tide_run_jobs(),
+                                                                        .layout = tide_run_game->layout},
+                                                  bytes, size, &about, why, sizeof why)
+                             : NULL;
+    free(bytes);
+    if (!r) {
+        snprintf(tide_run_travel.said, sizeof tide_run_travel.said, "%s isn't replayed: %s", name, why);
+        fprintf(stderr, "tide: recording %s\n", tide_run_travel.said);
+        return;
+    }
+    tide_run_travel_stop_replay();
+    if (!tide_run_travel_background() && !tide_run_travel.paused && !tide_run_travel_why()[0]) { // At the latest
+        tide_run_travel.paused = true;
+        tide_run_travel.step = false;
+        tide_run_travel.shown = tide_run_travel_last();
+    }
+    tide_run_travel.replay = r;
+    tide_run_travel.about = about;
+    snprintf(tide_run_travel.replay_name, sizeof tide_run_travel.replay_name, "%s", name);
+    tide_run_travel.replay_shown = tide_timeline_first(r);
+    tide_run_travel.playing = true;
+    tide_run_travel.played = 0.0;
+    snprintf(tide_run_travel.said, sizeof tide_run_travel.said, "Replaying %s%s", name,
+             about.other_layout ? ", recorded by a build laid out otherwise: carried over by name, its ticks unchecked"
+             : about.other_build ? ", recorded by another build: its ticks may go otherwise" : "");
+}
+
+// A new build takes over (reload_library.inc's reload_before, while the old one's code is still loaded): one of the
+// same layout keeps the recording and a replay, their worlds its to show and free from now on, and the pause;
+// another, or a full reload, lets go of them, and the match goes on
+static inline void tide_run_travel_reload(const tide_host_game *old, const tide_host_game *next)
+{
+    if (next && next->game->hash == old->game->hash) {
+        tide_timeline_set_game(tide_run_travel.live, next->game);
+        tide_timeline_set_game(tide_run_travel.replay, next->game);
+        tide_timeline_set_layout(tide_run_travel.live, next->layout); // The old build's description goes with its code
+        tide_timeline_set_layout(tide_run_travel.replay, next->layout);
+        if (tide_run_travel.live) tide_run_travel.game = next->game;
+        return;
+    }
+    tide_run_travel_drop();
+}
+
+// What the frame gives the match: its own length, or paused, none but a step's, to just past the next tick; with
+// other machines' players, its own length all the same. A recording replayed plays on by the frame's.
+static inline float tide_run_travel_seconds(const float seconds)
+{
+    tide_run_travel_follow();
+    tide_timeline *r = tide_run_travel.replay;
+    if (r && tide_run_travel.playing) {
+        const uint32_t rate = tide_run_travel.about.tick_rate ? tide_run_travel.about.tick_rate : tide_run_travel_rate();
+        tide_run_travel.played += tide_is_finite_d((double)seconds) && seconds > 0.0f ? (double)seconds : 0.0;
+        if (tide_run_travel.played > 0.25) tide_run_travel.played = 0.25; // A frame that took long doesn't race on
+        while (tide_run_travel.played * rate >= 1.0 && tide_run_travel.replay_shown < tide_timeline_last(r)) {
+            tide_run_travel.played -= 1.0 / rate;
+            if (!tide_timeline_world(r, tide_run_travel.replay_shown + 1u)) {
+                tide_run_travel.playing = false;
+                break;
+            }
+            tide_run_travel.replay_shown++;
+        }
+        if (tide_run_travel.replay_shown >= tide_timeline_last(r)) tide_run_travel.playing = false;
+    }
+    if (!tide_run_travel.paused || tide_run_travel_background()) return seconds;
+    const bool step = tide_run_travel.step && tide_run_travel_shown() == tide_run_travel_last();
+    tide_run_travel.step = false;
+    if (!step) return 0.0f;
+    tide_run_travel.shown = tide_run_travel_last() + 1u; // ...where the frames go, as the step is the latest
+    return (float)(tide_session_until_tick(tide_run_session) + 1e-6);
+}
+
+// The world the frame's views draw in the match's place: a recording's tick replayed, or one of the match's earlier
+// ticks while paused there. NULL for the match as it is.
+static inline const void *tide_run_travel_world(void)
+{
+    if (tide_run_travel.replay) return tide_timeline_world(tide_run_travel.replay, tide_run_travel.replay_shown);
+    if (!tide_run_travel.paused || !tide_run_travel.live || tide_run_travel.shown >= tide_run_travel_last()) return NULL;
+    return tide_timeline_world(tide_run_travel.live, tide_run_travel.shown);
+}
+
+// After a frame of an earlier tick: what its views sent or asked for goes nowhere
+static inline void tide_run_travel_discard(void)
+{
+    const tide_host_game *game = tide_run_game;
+    void *local = tide_run_local;
+    if (game->command && game->command_sent) {
+        uint32_t size;
+        for (uint32_t i = 0; i <= tide_game_command_channels(game->game); i++) {
+            const uint32_t channel = tide_run_command_channel(i);
+            while (game->command(local, channel, &size)) game->command_sent(local, channel);
+        }
+    }
+    tide_session_request request;
+    void *start = calloc(1, game->game->start_size ? game->game->start_size : 1u);
+    while (start && game->take_request(local, &request, start)) {}
+    free(start);
 }
 
 // Only between complete frames: no views, GPU calls, reload, session requests
@@ -1498,6 +3490,7 @@ static inline void tide_run_typing(const tide_host_game *game, const bool typing
 static inline int tide_run_frame(void *user, const float seconds)
 {
     if (tide_run_loading.on) return tide_run_loading_frame(user, seconds); // The game's pack isn't in yet
+    if (tide_run_session) tide_run_checkpoints_poll(); // Before anything of the frame reads the match
     const tide_host_game *game = tide_run_game;
     // Asked every frame: a reload can bring the setting, or take it away. Inside another program's frame they're
     // drawn with the frame, as the views' drawing is, and say only what's Tide's
@@ -1533,7 +3526,9 @@ static inline int tide_run_frame(void *user, const float seconds)
     tide_profile *measured = timing || tide_run_profiling || tide_run_reporting ? &tide_run_profiler.profile : NULL;
     tide_platform_jobs_profile(measured);
     tide_run_alone.profile = measured;
-    tide_run_frame_now += seconds;
+    // Paused, the match gets no time but a step's (tide_run_travel)
+    const float match_seconds = tide_run_travel_seconds(seconds);
+    tide_run_frame_now += match_seconds;
     const float update_seconds = tide_run_frame_now > tide_run_now ? (float)(tide_run_frame_now - tide_run_now) : 0.0f;
     if (tide_run_frame_now > tide_run_now) tide_run_now = tide_run_frame_now;
     tide_profiler_mark(profiler, TIDE_FRAME_INPUT);
@@ -1551,7 +3546,7 @@ static inline int tide_run_frame(void *user, const float seconds)
     tide_session *s = tide_run_session;
     // Existing visual errors age before this update adds fresh corrections.
     if (game->age_views) game->age_views(tide_run_local, update_seconds);
-    game->frame_time(tide_run_local, seconds);
+    game->frame_time(tide_run_local, match_seconds);
     // A room joined that isn't one, or whose host can't be reached, fails now
     // rather than timing out.
     if (tide_platform_room_failed() || tide_platform_players_failed()) tide_session_fail(s, TIDE_DISCONNECT_FAILED);
@@ -1638,9 +3633,17 @@ static inline int tide_run_frame(void *user, const float seconds)
 
     // Views draw at the frame rate, the match blended between its last two ticks
     tide_view_worlds view = tide_session_view(s);
-    if (tide_run_unblended) {
+    if (tide_run_unblended || tide_run_travel.paused) {
         view.previous = view.verified_previous = NULL;
         view.alpha = view.verified_alpha = 1.0f;
+    }
+    // Paused at an earlier tick: its world
+    const void *earlier = tide_run_travel_world();
+    if (earlier) view.current = view.verified = earlier;
+    if (earlier && tide_run_travel.replay) { // Its views see the recording's player as this machine's
+        const uint32_t player = tide_run_travel.about.player;
+        game->set_session(tide_run_local, TIDE_SESSION_CONNECTED, player ? tide_player_from_index((int32_t)player - 1) : (tide_player_id){0},
+                          0, true, false, "");
     }
     const void *match = view.current;
 #ifdef __wasm__
@@ -1682,19 +3685,25 @@ static inline int tide_run_frame(void *user, const float seconds)
         const uint32_t n = tide_session_views(s, more, shards, TIDE_SESSION_VIEWS);
         game->frame_shards(more, n < TIDE_SESSION_VIEWS ? n : TIDE_SESSION_VIEWS);
     }
+    tide_run_dev_views(game);
+    tide_run_tweaks_poll(game); // The tweaks' values tide run worked out since: this machine's copy and the match's
     game->frame(match, view.previous, view.alpha, view.verified, view.verified_previous, view.verified_alpha, tide_run_local, &tide_run_draw, &tide_run_gui);
     tide_loops_leave(loops_before);
+    tide_run_dev_menu(game, match);
     if (game->voice) {
         const tide_voice_provider *voice = game->voice();
         if (voice) voice->frame(voice->self, s, &tide_run_audio, tide_run_now);
     }
     tide_session_mark_presented(s);
     tide_gui_end(&tide_run_gui, &tide_run_draw);
+    if (earlier) tide_run_travel_discard(); // What its views sent or asked for goes nowhere
     tide_profiler_mark(profiler, TIDE_FRAME_VIEWS);
     if (tide_run_reporting) tide_profile_report_mark(&tide_run_report, TIDE_FRAME_VIEWS);
     tide_profiler_draw(profiler, &tide_run_draw, tide_platform_screen_size(), tide_platform_measure_text);
     tide_run_typing(game, tide_gui_typing(&tide_run_gui));
-    tide_platform_cursor_lock(tide_gui_cursor_lock(&tide_run_gui)); // The next poll says whether the window holds it
+    // The next poll says whether the window holds it. The dev menu frees it while it's open, as a modal does: a game
+    // that locks it (a first-person one) would otherwise turn with the mouse and no switch could be clicked
+    tide_platform_cursor_lock(tide_gui_cursor_lock(&tide_run_gui) && !tide_run_dev_open);
     if (timing && tide_run_draw.epoch != tide_run_timing_epoch) {
         // A retained native reload keeps the host, but the samples are the old build's.
         tide_run_reset_timing(true);
@@ -1849,6 +3858,7 @@ static inline int tide_run_frame(void *user, const float seconds)
 _Noreturn static inline void tide_host_run(const tide_run_desc *desc, const tide_host_game *game)
 {
     tide_run_game = game;
+    if (game->assets) tide_platform_pack_ahead(); // Read while the window and the device open
     tide_run_open(desc);
     if (!tide_run_load_shown(NULL)) tide_run_load_assets();
     tide_run_begin_loaded();

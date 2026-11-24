@@ -24,6 +24,46 @@ Set `TIDE_BENCH_MACHINE` to the CPU/machine and `TIDE_BENCH_REVISION` to the sou
 
 `bench_views` (`views/`) times views that run once for each of 20,000 entities, a view at a time: reading one field of a wide component and of a small one, per entity and through a query, and a helper handed a big local singleton's lists. `bench_views [frames]`. Results: `notes/benchmarks.md`, Views over wide components.
 
+## Voxels and the server's store (2026-11-15)
+
+`bench_voxels` plays an endless world of blocks with bots that fly, dig, build and change dimension (`notes/voxels.md`; its At scale section has the view two and three times as far, 16 to 64 players, one and two threads, and a player's own frame). `--near` and `--tall` are the box of chunks a player has, `--look <n>` makes that many bots of each hundred turn a little every tick, as a player's mouse does (an input that changes every tick, which goes to every player), and `--watch 0` switches off the counting below for a profiler. After the server's lines it says how many chunks came to a bot's machine a second and what their cells alone would be, and how many ticks the box of a dimension a bot hops into took to be there, nine tenths of it and whole. The version to play has no flags: `-DTIDE_VOXELS_VIEWS="4;8;12"` at configure makes `voxels_near4`, `voxels_near8` and `voxels_near12`, with that many chunks each way and play.tide's own counts logged each frame (`voxels_near8 --frames 600 --size 1920 1080 --profile out.json`).
+
+A build of everything that says `TIDE_PAGE_STATS` (a tree of its own: `cmake --preset release -B <folder> "-DCMAKE_C_FLAGS=-DTIDE_PAGE_STATS"`) has every session benchmark print, under the world's size, the pages the server's updates took a frame and the clients', with their bytes, and how many of them were copies of a page another holder shares (`tide_page_stats`, `tide/page.h`): what a tick's writes cost beside the worlds a session keeps. With `-DTIDE_INDEX_STATS` as well, a game's own counts of its loops' indexes follow for each side (starts that found their index as it was, that took in what changed, table chunks compared and rows looked at, indexes made whole and copied; `notes/indexed-loops.md`). Neither is in an ordinary build, and the counts are the same every run.
+
+What the process holds, for a long run that grows (`--every <s>` says the worlds' sizes and the process's as it goes): a tree with `bench/alloc_count.h` in front of every C file (`cmake --preset release -B build/count "-DCMAKE_C_FLAGS=-include <checkout>/bench/alloc_count.h"`; Windows and clang) counts every block malloc gives by its caller. After each `--every` line a session benchmark then says what malloc holds, the server's updates' and the bots', the sixteen callers holding the most and the sixteen that grew the most since the line before, each with the functions it was called through; with `TIDE_ALLOC_ALL=1` in the environment, every caller. Its timings aren't a run's (every block goes through one table), and the process's own size is an ordinary build's to say. In every build, a run whose updates leave anything in their thread's scratch area fails and says how many bytes: nothing gives those back (`notes/benchmarks.md`, What the process holds).
+
+Every session benchmark's report gained three things with it (2026-11-16). The `pack` and `unpack` columns take in a game's repairs by what changed (`tide_game.client_changes`, and a client's `client_changes_base` and `apply_client_changes`), which were in no column: a third of a voxels server's update. A line under the table gives each side's updates in all, in ms a second, and what the columns leave of it (sending and receiving, the store, the session's own work). And under what's sent, what each bot is sent by kind of datagram, with how many datagrams: a world's or a repair's parts and downloads, ticks, and the rest, each with its header and whatever was sent again, so parts sent twice show against "worlds a bot's machine got", which counts each once. Under that, how far behind the server's a bot's verified world was over its frames from five seconds after it caught up (its first view is still coming until then): on average, in 99 frames of 100 and in 999 of 1,000, in ticks, beside the most it ever was; `lag_mean_ticks`, `lag_p99_ticks` and `lag_p999_ticks` in a saved row. It's what a lost datagram costs a player (notes/netcode.md, Ticks in as many datagrams as the loss takes). `bench_desc.watch`, if a game gives one, is called for each bot in the match after every frame with the world its machine has, outside every timing. Its server keeps chunks nobody is near in a store kept in memory; `--files <folder>` keeps them as the platform's own files in that folder's `Tide/store/` instead, read and written on the files' own thread as the standard hosts do, and `--files-here <folder>` the same as each tick ends, to see what that costs a server's update. Any benchmark of a game that uses the store takes both, natively (a web bench has no platform files).
+
+Later the same day, for what a server's worst update is made of and for long runs. `--worst <n>` (any session
+benchmark) lists the server's n longest updates after the report, each with when it was, its tick, what it spent
+simulating, hashing (and of it, in brackets, every player's projection checked at once as the tick ended,
+`client_hashes`; the rest is the world's own hash and the frozen worlds the repairs compare), snapshotting and
+packing, and of its simulating what its handlers and changes took and its
+three longest systems (the server ticks with a `tide_profile` for it, which reads the clock around each system, so
+those runs' times are a little longer). Under that list it gives each of the server's systems in ms a second over
+the run, longest first, and the server's updates split in two, those after which it held as many entities as before
+and those in which some came or went (`bench_desc.held`), each with its count and what an update of it took on
+average: in all, simulating (its systems, and the handlers and changes after them), hashing (the world's own hash
+and its players' projections': a game that hides state hashes the world as part of the second), snapshots, packing.
+`--every <s>` prints a line every so many made-up seconds: the server's
+world in memory and what it holds, bot 0's, the process's memory (Windows and Linux), and the server's updates
+since the last line, on average and at most; and every report ends with the most the process held.
+`--outage <s>` (any session benchmark) cuts the bots off 3 s after the last one caught up: nothing goes to or from
+them for that long (`--outage-bots <n>`: the first n of them alone, the rest playing on). Past the 4 s of ticks a
+server keeps (and under the 5 s a connection waits before it gives up), every bot cut off is sent its world again
+when it's back, all at once. The report then has the server's updates from the outage's start until every such bot
+is back as a row of their own (`server, during an outage`; the `server` row is the rest), how long after the
+outage's end a bot's verified world was within half a second of the server's again (median and at most), and how
+many worlds they were sent; a bot that never is fails the run (`notes/netcode.md`, top section).
+`bench_desc.watch_server` is `watch` for the server's world, called before the bots' of the frame. Voxels' report
+says with it where a hop's time goes: how many ticks after the bot's machine hopped the server had asked for its
+box, had nine tenths of it made and had all of it, beside when the bot's machine had them. Its new flags: `--make`
+(what a dimension makes of chunks a tick: `Worlds.make`), `--spread <cells>` (bots start that far apart on a square
+grid, where they started together), `--park 1` (the nth bot starts in dimension n of `--dimensions`), the store's line (the loads it served and those it answered with no read: `tide/storage.h`, The files a provider has), `--out 1`, `--back <s>` with it (out for that long, back as long, then still: a world that held many chunks and holds few; `--every` then also says what the server's world's memory is made of, its heaps' pages in memory and given back)
+(each flies straight out its own way for the whole run) and `--fill <ticks>` (the run fails where a hop's whole box
+took longer at the median: `bench_voxels_arrives`). `--ask` is what a dimension spawns of chunks a tick
+(`Worlds.ask`, 1,024: a box of more is asked for over the ticks it takes, and a box left goes over as many).
+
 ## Earth under load (2026-10-24)
 
 `bench_earth` plays the home page's planet (`examples/earth`, with room for 256 players) with bots that land in towns, walk, drive, wave and go to other towns: `--towns 1` puts everyone in one, `--drivers` and `--hop` say how many drive and how often they travel. As any benchmark of a sharded game, `--split <n>` runs its world split into `n` regions, each shard timed apart (`--most` and `--busiest` let regions split and merge); `--lag <ticks>` lets bots fall further behind before the run fails; and with visibility, `--diverge <bot>` says what differs between that bot's world and what the server says it is, tick by tick. Results and what they mean: `notes/benchmarks.md`, Earth under load.

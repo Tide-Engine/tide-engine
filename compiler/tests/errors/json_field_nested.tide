@@ -1,7 +1,8 @@
-// expect: JSON has nothing for float3, which 'Spot.at' holds
+// expect: JSON has nothing for float4x4, which 'Spot.at' holds
+// expect: a vector is an array of numbers in JSON, and a matrix has nothing: keep its columns in vector fields
 scene Main { }
 struct Info { string id; int players; }
 singleton Seen { string text; int count; }
-struct Spot { float3 at; }
+struct Spot { float4x4 at; }
 struct Level { List<Spot> spots; }
 system Run(mut Seen seen) { seen.count = (Json.Read<Level>(seen.text) ?? Level { }).spots.count; }

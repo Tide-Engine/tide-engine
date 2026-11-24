@@ -16,23 +16,22 @@ component Ball
 }
 
 singleton Slots { List<Entity> rooms = [default, default, default]; }
-command Toggle { int slot; }
 
 float2 Center(int slot)
 {
     return float2((slot - 1) * 1.3, 0);
 }
 
-command(Toggle toggle, PlayerID sender) LoadOrUnload(mut Slots slots)
+command(int slot) Toggle(mut Slots slots, PlayerID sender)
 {
-    if (toggle.slot < 0 || toggle.slot > 2) return;
-    if (slots.rooms[toggle.slot] == default)
-        slots.rooms[toggle.slot] = Scene.Load(Room { slot = toggle.slot });
+    if (slot < 0 || slot > 2) return;
+    if (slots.rooms[slot] == default)
+        slots.rooms[slot] = Scene.Load(Room { slot = slot });
     else
     {
         // Unloading destroys the room and every entity spawned into it.
-        Scene.Unload(slots.rooms[toggle.slot]);
-        slots.rooms[toggle.slot] = default;
+        Scene.Unload(slots.rooms[slot]);
+        slots.rooms[slot] = default;
     }
 }
 
@@ -68,7 +67,7 @@ view Buttons(Slots slots, mut Count count)
         Draw.WireRoundRect(Center(slot), float2(1.1, 2.3), 0.1, 0.03, loaded ? Color(0.98, 0.75, 0.14) : Color(0.24, 0.25, 0.27));
         var corner = Draw.WorldToScreen(Center(slot) + float2(-0.55, -1.3));
         var width = Draw.WorldToScreen(Center(slot) + float2(0.55, 0)).x - corner.x;
-        if (GUI.Button(Rect(corner.x, corner.y, width, 32), loaded ? "Unload" : "Load")) Send(Toggle { slot = slot });
+        if (GUI.Button(Rect(corner.x, corner.y, width, 32), loaded ? "Unload" : "Load")) Toggle(slot);
     }
 }
 

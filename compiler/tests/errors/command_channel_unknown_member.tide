@@ -2,5 +2,5 @@
 // expect: did you mean 'Chat'?
 enum Channels { Chat, Video }
 [Channel(Channels.Chatt)]
-command Say { string text; }
+command(string text) Say(PlayerID sender) { }
 scene Main { }

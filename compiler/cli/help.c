@@ -8,7 +8,7 @@ enum {
     RUN = 1u << 0, BUILD = 1u << 1, DEPLOY = 1u << 2, LOGIN = 1u << 3,
     LOGOUT = 1u << 4, SCHEDULE = 1u << 5, SHADERS = 1u << 6, ADD = 1u << 7,
     UPDATE = 1u << 8, EJECT = 1u << 9, FETCH = 1u << 10, PUBLISH = 1u << 11,
-    EDITORS = 1u << 12, OPEN = 1u << 13, UPGRADE = 1u << 14, VERSION = 1u << 15,
+    EDITORS = 1u << 12, UPGRADE = 1u << 14, VERSION = 1u << 15,
     HELP = 1u << 16, CC = 1u << 17, IDE = 1u << 18, UNITY = 1u << 19, TELEMETRY = 1u << 20, PIN = 1u << 21,
     COMPILE = RUN | BUILD | SCHEDULE | SHADERS | UNITY,
     FOLDERS = COMPILE | DEPLOY | FETCH | PUBLISH
@@ -113,12 +113,6 @@ static const command_help commands[] = {
      "Examples: tide ide emacs\n"
      "          tide ide vim\n"
      "          tide ide neovim", IDE},
-    {"open", "open <file.tprefab> [options]", "Open the native scene editor",
-     "Opens the desktop editor for an authored prefab or scene. The project\n"
-     "is the nearest enclosing tide.packages folder, or the prefab's folder.\n"
-     "Use --project when the game root is elsewhere. Packages must already\n"
-     "be available locally (tide fetch). --check validates without a window.\n"
-     "With TIDE_HIDDEN set, use --check or a bounded capture/script run.", OPEN},
     {"upgrade", "upgrade [options]", "Update Tide or change release channel",
      "Installs the newest version in the current channel unless --version\n"
      "selects one. --nightly and --stable save the channel for future upgrades.\n"
@@ -169,13 +163,19 @@ static const argument_help arguments[] = {
     {"package", "<package>", "Name of a package listed by this game",
      "Use the package's source name as listed in tide.packages.\n"
      "update accepts several names, or none for every git package; eject takes one.", UPDATE | EJECT},
-    {"file.tprefab", "<file.tprefab>", "Authored prefab or scene file",
-     "Selects the file to edit or validate. Use --project to choose the game root.", OPEN},
     {"--release", "--release", "Optimize game code for testing and profiling",
      "Keeps debug symbols, readable diagnostics and assertions, and optimizes\n"
      "the game's code, which debug builds leave unoptimized. DEBUG is\n"
      "undefined. Standalone builds collect unused code and data, and Tide-only\n"
      "games omit unreferenced assets. Use --distribution for shipping cuts.", COMPILE},
+    {"--dev", "--dev", "Include the game's dev declarations",
+     "A dev build has what the game marks 'dev': its tools, cheats, dev scenes\n"
+     "and dev views, which the menu under Escape shows. tide run builds with dev unless\n"
+     "--distribution or --no-dev says otherwise; tide build adds it with --dev.\n"
+     "Code without 'dev' can't use what's dev, in either build.", RUN | BUILD},
+    {"--no-dev", "--no-dev", "Leave the game's dev declarations out of a run",
+     "tide run builds with them by default; this runs the game as tide build\n"
+     "would build it.", RUN},
     {"--distribution", "--distribution", "Build an optimized game for distribution",
      "Implies --release. Standalone builds also strip debug symbols and\n"
      "readable diagnostic/shader names, keeping a private game.names map in\n"
@@ -215,17 +215,26 @@ static const argument_help arguments[] = {
      "bundle and require the game's appId. unity --android builds the game's\n"
      "library for a Unity Android player, for each of Android's CPUs, once.\n"
      "Choose native, web or Android.", RUN | BUILD | UNITY},
-    {"--define", "--define <SYMBOL>", "Define a symbol for #if lines",
+    {"--ios", "--ios", "Write a Unity iOS player's game as sources",
+     "With unity: the game's generated C, its packages' C and the engine's\n"
+     "sources go to <-o>/ios/Tide, with sources.txt naming each file's compiler\n"
+     "flags, and its pack to <-o>/ios/pack, once. tide compiles nothing: Unity's\n"
+     "Tide package puts them in the Xcode project it exports, which builds on a\n"
+     "Mac without tide. Works on every system.", UNITY},
+    {"--define", "--define <SYMBOL>[=<value>]", "Define a symbol for #if lines, with a value code reads",
      "Repeat for as many symbols as needed, like --define FAST --define STEAM.\n"
-     "Builds also define these macros as 1 in game/package C and C++ sources.\n"
-     "DEBUG is automatic without --release; PACKAGE_<NAME> is automatic for\n"
-     "each package. TIDE_ and PACKAGE_ prefixes are reserved.", COMPILE},
+     "SYMBOL=value also gives code a value: const int SIDE = define(SIDE, 500);\n"
+     "reads --define SIDE=1000 as 1000, and 500 without it. #if SIDE is true either way.\n"
+     "Builds also define these macros in game/package C and C++ sources: as 1, or as\n"
+     "the value. DEBUG is automatic without --release; PACKAGE_<NAME> is automatic\n"
+     "for each package. TIDE_ and PACKAGE_ prefixes are reserved.", COMPILE},
     {"--title", "--title <title>", "Override the game's window title",
      "Defaults to the game's title setting, or its folder name.", RUN | BUILD},
     {"--scene", "--scene <qualified-name>", "Start directly in an authored prefab or scene",
      "Overrides the project default: settings { startScene = Levels.Start; }.\n"
      "Without either selection, the game starts in Main. Runs normal\n"
-     "Spawned handlers, systems and views, with the usual session and devices.", RUN | BUILD},
+     "Spawned handlers, systems and views, with the usual session and devices.\n"
+     "A scene can be given its fields: --scene \"Battle { side = 50 }\".", RUN | BUILD},
     {"--stats", "--stats", "Enable the stats drawer (F8)",
      "Shows frame rate, CPU/GPU time, ping, bandwidth, memory, draw calls and\n"
      "slow systems. run starts the drawer open; build starts it closed.\n"
@@ -249,6 +258,12 @@ static const argument_help arguments[] = {
      "a second unless this says, from 1 to 1000. At another rate than the\n"
      "match's ticks, some frames have a tick and some none, as in a window:\n"
      "--frame-rate 144 for a profile of what a 144 Hz display's frames cost.", RUN},
+    {"--paced", "--paced", "Hold a run with no window to the frames' own length",
+     "A run with --frames, --script or --capture goes as fast as the machine\n"
+     "takes it. With --paced each frame waits out what's left of its length,\n"
+     "as a display holds a window's, and the run says how many frames took\n"
+     "longer than one as it ends: for measuring what a player would see. The\n"
+     "match and the pictures are the same either way.", RUN},
     {"--report", "--report <file>", "Write where the build's time and bytes went",
      "Writes a report of the build: the time of each step and of the compiler's\n"
      "phases, each C/C++ file's compile time, each asset's import time and the\n"
@@ -331,8 +346,21 @@ static const argument_help arguments[] = {
      "regions owning a quarter of n together merge back into one.", RUN},
     {"--shard-journal", "--shard-journal <folder>", "Keep a sharded server's world in a folder",
      "Requires run --server. A checkpoint now and then, and every shard's ticks\n"
-     "since, on the disk before anything a shard sends goes on: a server\n"
-     "started again with the same folder goes on where the world was.", RUN},
+     "since, on the disk before anything a shard sends goes on, and the\n"
+     "match's store: a server started again with the same folder goes on\n"
+     "where the world was. Only the build that kept a world goes on with it.", RUN},
+    {"--shard-verify", "--shard-verify", "Say whether a kept world goes on with this build",
+     "Requires run --server and --shard-journal. Reads the folder, runs its\n"
+     "journal again, prints where each shard is and exits. Writes nothing\n"
+     "and listens on nothing.", RUN},
+    {"--shard-seal", "--shard-seal", "Seal a kept world and exit",
+     "Requires run --server and --shard-journal. Goes on from the folder and\n"
+     "seals the world as a server that stops does: what another build of\n"
+     "the game takes up with --shard-upgrade.", RUN},
+    {"--shard-upgrade", "--shard-upgrade", "Take up a world another build sealed",
+     "Requires run --server and --shard-journal. For a build whose match\n"
+     "state is laid out as the sealing build's. The sealed world stays in\n"
+     "the folder as checkpoint.<its build>.", RUN},
     {"--interactive", "--interactive <replay.txt>", "Play dynamically over stdin without a window",
      "Draws frame 1, then waits for commands: future-frame script lines queue\n"
      "input; step <n> advances; capture <file.png> observes; quit or EOF ends.\n"
@@ -343,7 +371,7 @@ static const argument_help arguments[] = {
      "Supports --players. Desktop only; cannot combine with --script.", RUN},
     {"--capture", "--capture <file.png>", "Save the last frame as a PNG",
      "Runs natively without a window; add --frames or a script's quit.\n"
-     "The output path is relative to the directory where tide was invoked.", RUN | OPEN},
+     "The output path is relative to the directory where tide was invoked.", RUN},
     {"--data-dir", "--data-dir <folder>", "Use a separate native save directory",
      "Overrides Application.persistentDataPath and relative file paths. Creates\n"
      "the directory and parents; paths are relative to where tide was invoked.\n"
@@ -364,21 +392,16 @@ static const argument_help arguments[] = {
     {"--frames", "--frames <n>", "End a native headless run after n frames",
      "Game captures use fixed 1/60-second frames. Also bounds dedicated server\n"
      "runs. Unavailable with run --web or --android.", RUN},
-    {"--frames", "--frames <n>", "End an editor run after n frames",
-     "Bounds the native editor's hidden input/capture loop. With preview\n"
-     "enabled, waits for its current build; a failed build returns 1.", OPEN},
     {"--script", "--script <file>", "Read frame-numbered input and capture actions",
      "Native only. Lines include: 120 key d down, 200 mouse 640 360,\n"
      "201 button left, 400 capture fight.png, 500 quit. Use --frames or quit\n"
-     "to end the run. The script path is relative to where tide was invoked.", RUN | OPEN},
+     "to end the run. The script path is relative to where tide was invoked.", RUN},
     {"--scale", "--scale <s>", "Headless display scale (default: 1)",
      "Native only. For example, --size 1280 720 --scale 2 draws 2560 by 1440\n"
      "pixels. Combine with --frames, --capture or --script.", RUN},
     {"--size", "--size <width> <height>", "Native window size (default: 960 by 540)",
      "Also controls headless capture size, before --scale.\n"
      "Unavailable with run --web or --android.", RUN},
-    {"--size", "--size <width> <height>", "Editor size (default: 1440 by 900)",
-     "Accepts widths from 1100 to 8192 and heights from 650 to 8192.", OPEN},
     {"--seed", "--seed <n>", "Choose the seed of matches the game starts",
      "A whole number from 0 to 2147483647. Defaults to 0 for headless runs\n"
      "and a different seed for every match in a window. The same seed and\n"
@@ -411,18 +434,6 @@ static const argument_help arguments[] = {
      "Omits the client build from the local release bundle.", DEPLOY},
     {"--bundle-only", "--bundle-only", "Build a deployment bundle without uploading",
      "Needs no login and ignores tide.deploy.json. Can combine with --server-only.", DEPLOY},
-    {"--project", "--project <folder>", "Choose the native editor's game root",
-     "Overrides discovery of the nearest enclosing tide.packages folder,\n"
-     "or the prefab's folder when none exists.", OPEN},
-    {"--check", "--check", "Validate a prefab without opening a window",
-     "Uses front-end validation and asset metadata, without a full game build,\n"
-     "even with --preview. Returns 1 for project errors.", OPEN},
-    {"--preview", "--preview", "Enable compiled views on authored match entities",
-     "Runs only RunInEditor and EditorOnly views, without gameplay\n"
-     "initialization or systems. Requires the full native build toolchain.\n"
-     "Bounded captures wait for the build and return 1 on failure.", OPEN},
-    {"--local-preview", "--local-preview", "Enable compiled views with local placement",
-     "Like --preview, using local entities instead of match placement.", OPEN},
     {"--nightly", "--nightly", "Follow nightly Tide versions",
      "Saves the nightly channel for future upgrades.", UPGRADE},
     {"--stable", "--stable", "Follow stable Tide versions",
@@ -436,7 +447,7 @@ static const argument_help arguments[] = {
      "where it goes, the install ID and the settings folder.", TELEMETRY},
     {"--help", "--help, -h", "Show help for a command",
      "Use tide <command> --help or tide <command> -h. For argument details,\n"
-     "use tide help <argument> or tide help <command> <argument>.", FOLDERS | LOGIN | LOGOUT | ADD | UPDATE | EJECT | PIN | EDITORS | OPEN | UPGRADE | VERSION | HELP | TELEMETRY},
+     "use tide help <argument> or tide help <command> <argument>.", FOLDERS | LOGIN | LOGOUT | ADD | UPDATE | EJECT | PIN | EDITORS | UPGRADE | VERSION | HELP | TELEMETRY},
 };
 
 static const command_help *find_command(const char *name)

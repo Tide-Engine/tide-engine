@@ -1,4 +1,3 @@
-// expect: command handlers don't return values; use 'return;'
-command Rename { string name; }
-command(Rename rename, PlayerID sender) Handle() { return true; }
+// expect: a command returns nothing; use 'return;'
+command(string name) Rename(PlayerID sender) { return true; }
 scene Main { }

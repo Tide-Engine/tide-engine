@@ -1,0 +1,5 @@
+// expect: 'SIZES' is a constant, so it can't change
+const float[4] SIZES = [1.5, 2, 2.5, 4];
+singleton Match { int n; }
+scene Main { }
+system Bump(mut Match match) { SIZES[match.n] = 3; }

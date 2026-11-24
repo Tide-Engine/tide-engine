@@ -1,0 +1,58 @@
+// A sharded world's shard in the managed reactor (tide/managed_run.h with
+// TIDE_GAME_SHARDED, built natively): the root's start saves before its server
+// is made, which the server's first tick hands to the service; tasks that await
+// loads, one the service answers and one it holds; and the shard started again
+// from its world and its journal, in whose ticks the first answer came, which
+// asks again only for what still waits.
+
+settings
+{
+    shards = true;
+    reach = 4;
+}
+
+component Keeper
+{
+    [Position] float2 position;
+    int got;   // What the load of "a" gave: its bytes
+    int held;  // ...and the load of "held/b"
+    int tries; // Tasks that got to their end
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Keeper { position = float2(0, 0) });
+    Storage.Save("started", Bytes(4)); // The root's start runs before its server
+}
+
+// A value of `count` bytes
+List<byte> Bytes(int count)
+{
+    mut List<byte> made = [];
+    for (var i = 0; i < count; i++) made.Add(byte(i));
+    return made;
+}
+
+async void Fetch(mut Keeper k, string key, int which)
+{
+    if (await Storage.Load(key) is List<byte> bytes)
+    {
+        if (which == 0) k.got = bytes.count;
+        else k.held = bytes.count;
+    }
+    k.tries += 1;
+}
+
+system Work(mut Keeper k, Time time)
+{
+    if (time.tick == 2)
+    {
+        Storage.Save("a", Bytes(3));
+        Storage.Save("held/b", Bytes(5));
+    }
+    if (time.tick == 4) Fetch(k, "a", 0);
+    // A tick of its own: a tick's answers are given together, so one held holds its tick's others
+    if (time.tick == 6) Fetch(k, "held/b", 1);
+}

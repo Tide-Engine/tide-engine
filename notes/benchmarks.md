@@ -1,5 +1,93 @@
 # Benchmarks
 
+## An outage for every session bench (2026-11-20)
+
+`--outage <s>` and `--outage-bots <n>` (bench/bench.c, bench/README.md): 3 s after the last bot caught up, nothing
+goes to or from the bots (or the first n of them) for that long; the wire drops their datagrams both ways
+(`port.cut`, `wire.cut_from`, `cut_until`). A bot cut off isn't held to the lag limit until it's back (a verified
+world within `CAUGHT_UP` ticks of the server's, after the outage's end), the worlds it's sent again meanwhile are
+counted as the outage's and not as worlds gone wrong, and one that never is back fails the run. The server's
+updates from the outage's start until every such bot is back are a row of their own, so the `server` row stays the
+steady state's. Past 4 s (the ticks a server keeps) and under 5 (a connection's timeout) it's every bot's world
+again at once: what notes/netcode.md's top section measures. `bench_voxels_outage_1` and `_12` pin a small one.
+
+## A view arriving, the sweep again, and what a server's worst update is made of (2026-11-16, last)
+
+`bench_voxels` with a whole view arriving faster (notes/voxels.md, A whole view arriving) and every "At scale" table
+measured again on that build, with players spread over the world, a dimension each, a ten-minute run and the version
+to play paced at 60 Hz (the same note, The sweep again). The bench's side (bench/README.md, Voxels): `--worst <n>`
+lists the server's longest updates with what each spent where, down to its longest systems, which is how the worst
+update turned out to be `Generate` making a tick's 64 new chunks on one thread whatever the pool's size, and not
+the tick a box is spawned in; `--every <s>` says what the run holds as it goes; every report ends with the most the
+process held; `bench_desc.watch_server` looks at the server's world each frame, and voxels times a hop's stages on
+the server with it. `bench_gallery`'s pin moved: its joins are shorter (notes/netcode.md, top section).
+
+## Voxels at scale, and what the session benches report (2026-11-16)
+
+`bench_voxels` at two and three times its view, with 16, 32 and 64 bots, on one and two threads and two cores, and
+the version to play at 1920 by 1080: the tables, what breaks first on each axis and what was fixed are in
+notes/voxels.md, At scale. The bench's side of it (bench/README.md, Voxels): repairs by what changed are timed into
+`pack` and `unpack`; a line gives each side's updates in all and what the columns leave; what each bot is sent is
+split by kind of datagram; `bench_desc.watch` lets a game look at each bot's world after every frame (voxels counts
+the chunks that come and times a hop's box; `--watch 0` for a profiler); `--look` makes voxels' bots turn every
+tick. Profiling a whole run with `tide_sample` sees the counting unless it's switched off: a first profile had
+`watch` and the entity lookups under it as a tenth of the samples.
+
+## What the process holds, by who asked for it (2026-11-16)
+
+For finding what grows in a long run (notes/voxels.md, The process's growth, is what it found). Two things, in
+`bench/bench.c` for every session benchmark:
+
+- **A run whose updates leave anything in their thread's scratch area fails** (`results.scratch_left`, said under
+  the hash: the bots' machines' updates' bytes and the server's). The scratch mark is read around the bots' updates
+  and around the server's each frame; a handler, a system and a view go back to their own marks, so what an update
+  leaves is never given back. In every build, at the cost of two reads a frame.
+- **A counting build**: `bench/alloc_count.h` in front of every C file of a tree of its own
+  (`cmake --preset release -B build/count "-DCMAKE_C_FLAGS=-include <checkout>/bench/alloc_count.h"`, then the
+  benchmark's target). It makes `malloc`, `calloc`, `realloc` and `free` macros that keep every block in a table
+  by its address (16 M slots, one lock: a counting run's timings aren't a run's), with its size and its caller: the
+  file and line, ten return addresses (`RtlCaptureStackBackTrace`) and whose work it was (`tide_alloc_tag`, which
+  the bench sets to the bots' or the server's around their updates; a worker's blocks are whoever's update is
+  running). After each `--every` line the bench prints what malloc holds in all and for each side, the sixteen
+  callers holding the most and the sixteen that grew the most since the line before, each with its functions by
+  name (dbghelp, from the program's own symbols); `TIDE_ALLOC_ALL=1` in the environment prints every caller, to
+  take two lines apart afterwards. Pages aren't kept spare in such a build (`spare_size` in `engine/src/page.c`
+  says none: notes/runtime-ownership.md), so a page is counted as whoever took it last and not as whoever first
+  asked the system for one that has been through a thread's spares since. A block freed by code the header isn't
+  in front of is freed uncounted and said (none in `bench_voxels`). Windows and clang only. Limits: "the process
+  has ... of its own" in its line includes the table (256 MB of address space, touched as blocks come and go), so
+  the process's own size is an ordinary build's to say; a page shared by several worlds is its taker's alone.
+
+## What a server's projection checks read again (2026-11-15)
+
+`bench_voxels_counts` is `bench_voxels` built with `TIDE_CLIENT_COUNTS`: at the program's end it prints what the
+server's checks read again and why (pieces by their reason and how many kept their arrays, rows, grids encoded, blocks
+hashed again and their bytes, pages looked at, big containers' chunks read again and kept) and how long each part of
+a check took, over the whole run (2026-11-16: also, inside the rows read, the rows read from the heap again and the
+grids, maps and lists encoded for them: `TIDE_CLIENT_FROM`/`TIDE_CLIENT_TO`). The `bench_voxels_counts` test runs it
+quick with `bench_voxels`' pin (the counting changes no hash), so a counting build that breaks or crashes fails where
+it's built. The counting makes its timings no measure of the build without it: time with `bench_voxels`. The numbers it gave are in notes/netcode.md,
+top section.
+
+## The server's store as files (2026-11-15)
+
+A benchmark of a game that uses the store (`bench_voxels`) takes `--files <folder>`: the server's store is the
+platform's own files in the folder's `Tide/store/` (`tide_platform_io_init("dev.tide.bench", folder)`, emptied as the run
+starts), carried out on the provider's own thread as the standard hosts do. `--files-here <folder>` is the same with
+the provider's `post` and `settle` taken out, so each tick's requests are carried out as the tick ends, as they were
+before 2026-11-15. Without either, the game's own (`bench_desc.io`: voxels' in memory, whose counts the report
+prints; with files they're 0). The numbers they gave are in notes/voxels.md, section 3a. What a game's start asks of the
+store as `make_world` runs it is bound to a `tide_storage` of the bench's and handed to the server
+(`tide_server_desc.asked`, 2026-11-15): voxels' start asks nothing, and its pin is the same. Native only: on the web the platform's files are the page's (`tide.js` gives `io_init`), which the WASI runner the benches run under has none of, so a web bench refuses both and doesn't link the provider (CI's web jobs failed every bench at instantiation before, 2026-11-15).
+
+## Grids in runs, and runs by identity (2026-11-14)
+
+What a per-entity system that changes its rows' grids, or text and lists while queueing nothing, gains on threads:
+schedule-and-threads.md, top section (a streaming-chunks game's `Generate` 2.85-3.08 ms a tick on the pool before,
+0.58-0.63 after; `tidec_e2e_row_grids` with `TIDE_ROW_GRIDS_TIME`). The gallery's quick pin moved, its canvases'
+system now putting each canvas's blocks in its own run's heap: tick 272 `c8e6ab383a684a0a`, the same on 1, 4 and 12
+threads.
+
 ## A flock with `previous` (2026-11-13, evening)
 
 `bench/flock` (`bench_flock`, `bench_flock_now`; each test runs `--quick --expect <hash>`): one component and one
@@ -446,6 +534,13 @@ so neither build's tick goes on threads at these sizes. Before a system's own lo
 once it was found to hold that tick, checking the index's facts under the lock for every entity made the indexed
 build 22 ms a tick at 10,000. Details: notes/indexed-loops.md, Code generation.
 
+Since 2026-11-14 it also has chunks found by their place (`--chunks n --lookers n [--ways 1|2|3]`, none unless
+asked; `--quick` takes 400 and 50): each looker finds one chunk a tick by an `int3` and an `int` (ways 1), by a
+`long` packed from them (2) or both (3), and the run fails unless every lookup found its one chunk both ways. Before
+and after exact keys: indexed-loops.md, Exact keys (10,000 chunks, 1,000 lookups a tick: 6.4-7.1 ms to 0.061 by
+place, 74.5 to 0.055 by the long, which wasn't indexed). `bench_index` times the same at the runtime's level
+(`run_chunks`).
+
 ## Listed runs culled on the GPU, Mount & Rifle's menu (2026-11-05)
 
 Numbers, method and why the route couldn't run: drawing.md, Listed runs culled on the GPU. In short, the menu's
@@ -483,6 +578,12 @@ frames past 200 averaged. Its `PerfProbeMark` views bracket the views, Camera to
   called what: the sampled function and its caller, and chains of the program's own four deep. A walk costs far
   more than a sample: with `--main --hz 2000`. It found the per-run loop indexes (indexed-loops.md, No index for one
   run alone). Frames it can't name show as `?`.
+- `tide_sample --under <function>` (2026-11-17) keeps only the samples whose stack has the function in it, and
+  prints each function's inclusive share (anywhere in the nearest 16 of the program's frames): with `--main` and a
+  session bench's `--threads 1`, `--under tide_server_update` is the server's own work without its bots' (they run
+  on the same thread). A walk costs about what a sample does in a busy program, so `--hz 500`; the program slows,
+  and the system's heap more than the rest under it (notes/ecs.md, Spare pages of every size: four fifths of the
+  server's samples there with the walks at 1,500 Hz, a fifth of its time without them).
 - `tide_sample --after <seconds>` (2026-11-13) starts sampling that long after the program starts, to leave its
   loading out; used with `--main` and `--ticks-alongside` to see a frame thread's views by file
   (schedule-and-threads.md, How much of the views is recording draws).

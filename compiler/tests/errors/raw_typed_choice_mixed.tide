@@ -1,0 +1,4 @@
+// expect: this ?: picks between images of different roles, [Raw(float)] and [Raw(int)], and a value has one role
+scene Main { }
+local singleton Art { [Raw(int)] Texture ids; [Raw(int)] Texture more; [Raw(float)] Texture heights; bool flag; }
+view Show(mut Art art) { art.ids = art.flag ? art.heights : art.more; }

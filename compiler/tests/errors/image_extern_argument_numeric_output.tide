@@ -1,0 +1,12 @@
+// expect: this numeric frag's destination format isn't fixed by its constructor assignments
+// expect: 'c_make' makes it in C, where the compiler can't see its format
+scene Main { }
+local singleton Images { RenderTarget target; }
+extern void c_make(out RenderTarget t);
+frag Paint(Vertex vertex, out int id) { id = 3; }
+view V(mut Images images)
+{
+    c_make(out images.target);
+    List<Vertex> quad = [Vertex { position = float2(0) }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }];
+    images.target.Mesh(quad, [0, 1, 2], Paint);
+}

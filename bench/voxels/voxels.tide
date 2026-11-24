@@ -1,0 +1,1431 @@
+// Voxels: an endless world of blocks in several dimensions, the open-world
+// benchmark. Bots walk and fly across it, dig and build, and hop between
+// dimensions. play.tide makes it a game people play: it draws the chunks
+// this machine has and what's past them.
+//
+// A dimension is a scene. Its blocks are in chunks, an entity each with a
+// 16-cube grid, made as a player first comes near and gone a while after the
+// last one left. One a player changed is kept in the server's store, every
+// while it's held and as it goes, and comes back from there when someone next
+// comes near. Each player's
+// machine has only the chunks around its player (see docs/spec.md, State visibility), and no part
+// in deciding which: the code that makes chunks and says who has them runs for
+// components only the server has (Streamer, Seen), so a player's machine runs
+// none of it.
+//
+// Farther off, a player has far regions: an entity for each 8 by 8 chunk
+// columns, with the top of each 8 by 8 cell column that players changed there
+// (Far), so what's built far away shows past the chunks. The server keeps
+// them as players change chunks (Summary), sends what changed every half second,
+// a few columns at a time, and keeps them in the store as it keeps chunks.
+
+settings
+{
+    maxPlayers = 128;
+}
+
+enum Block : byte
+{
+    Air,
+    Stone,
+    Dirt,
+    Grass,
+    Sand,
+    Water,
+    Wood,
+    Leaves,
+    Plank
+}
+
+const int SIZE = 16;        // Cells along a chunk's side
+// The box of chunks a player has, in a build that says another (--define VOXELS_NEAR=8): the version to play has
+// no flags, and a wider view is measured with one (notes/voxels.md, At scale). The bench sets its own (--near)
+const int NEAR = define(VOXELS_NEAR, 4);
+const int TALL = define(VOXELS_TALL, 2);
+const float SPEED = 12;     // Cells a second, flying
+const float WALK = 5;       // ...and on foot
+const float GRAVITY = 24;
+const float JUMP = 8;
+const int REACH = 60;       // Tenths of a cell a player digs and builds from
+const int SEA = 0;          // Water fills up to here
+const int RETRY = 300;      // Ticks before a load that hasn't been answered, or failed, is asked again
+const int DEAR = 10;        // What a chunk with ground in it costs to make, against one of air or water (Pace)
+const int JOINS = 8;        // Chunks that are there a dimension has take or lose a player in a tick, to each it spawns
+                            // (Worlds.ask; Watch, Depart): 8,192, more than a view at three times the default radius,
+                            // as a player's view taken in or let go over two ticks is a repair more, a round trip
+                            // later, for them. Players coming or going together go over a few ticks
+const int SQUARE = 8;       // Cells along a far column's side...
+const int COLUMNS = 16;     // ...and far columns along a far region's: 16 by 16 of them, 8 by 8 chunks
+
+scene Main { }
+
+// One world of blocks. Its chunks are its scene's entities.
+scene Dimension
+{
+    int number;
+    int seed;
+}
+
+// A box a player left: the chunk they were in, and the places of the box gone through (Depart)
+struct Left
+{
+    PlayerID player;
+    int3 from;
+    int place;
+}
+
+// A dimension's own, the server's alone: the chunk each player there is in, as last looked at, and the chunks
+// it has by their places (KeyOf), from the tick each is spawned: two players who come near one place in one
+// tick find the chunk the first one's coming made
+component Streamer
+{
+    Map<PlayerID, int3> watching;
+    Map<long, Entity> chunks;
+    Map<long, Entity> regions;  // Far regions, the same way
+    List<Entity> line;          // Far regions whose columns changed, in the order they did, to be sent
+    List<Entity> making;        // Chunks asked for and not yet let be made, nearest their player first (Pace)
+    Map<PlayerID, int> asking;  // Players whose box isn't all asked for yet: the places of it gone through (Watch)
+    Map<PlayerID, int3> had;    // ...and the chunk each was in before, where that box was whole
+    int asked;                  // Chunks spawned in the tick `askedAt`, of Worlds.ask
+    int askedAt;
+    int emptying;               // The tick the chunks a player leaves now say they emptied in, and how many have:
+    int emptied;                // Worlds.ask a tick, so a box left whole goes over a few (Depart)
+    int joined;                 // Chunks that were there and took a player in the tick `askedAt`, of Worlds.ask * JOINS
+    List<Left> leaving;         // Boxes players left whose chunks haven't all lost them yet, oldest first (Depart)
+    int left;                   // Chunks that lost a player in the tick `leftAt`, of Worlds.ask * JOINS
+    int leftAt;
+    int audits;                 // The bench's checks of its far regions (Audit), and what they found wrong
+    int wrong;
+}
+
+singleton Worlds
+{
+    List<Entity> dimensions;
+    int near = NEAR;    // Chunks a player has around them, sideways...
+    int tall = TALL;    // ...and up and down
+    int count = 2;      // Dimensions
+    int keep = 600;     // Ticks between saves of a chunk players changed, while it's held
+    int linger = 120;   // Ticks a chunk nobody has stays before it goes
+    int far = 6;        // Far regions a player has around the one they're in, sideways: 768 cells, the far ground's.
+                        // Never fewer than the chunks' box needs (FarOf): a region's players have to hold its chunks'
+    int gap = 30;       // Ticks between sendings of a dimension's far changes...
+    int pace = 64;      // ...and the far columns each sends at most
+    int audit;          // Ticks between the bench's checks of the far regions (Audit); 0 never
+    int make = 480;     // What a dimension makes of chunks a tick at most (Pace): a chunk of air or water counts 1,
+                        // one with ground in it DEAR, so 48 of those, about 7 ms of one thread
+    int ask = 1024;     // What a dimension spawns of chunks a tick at most (Watch): four times what the store answers in
+                        // one, so a box is asked for faster than it could be made, and no tick spawns a whole view.
+                        // JOINS times as many chunks that are there take a player (Watch), and as many lose one
+                        // (Depart): a whole view joined or left where others hold it goes over a few ticks too
+    int spread;         // Cells between players' starts, on a square grid, for the bench: 0 has them start together
+    int park;           // 1: the bench's players start a dimension each (the nth in dimension n of `count`, around)
+    bool ready;
+}
+
+component Chunk
+{
+    int3 at;                // In chunks: what it's found by
+    int dimension;
+    int seed;
+    Grid3<Block> blocks = Grid3(16, 16, 16);
+    Stage stage;
+    int edits;              // Changes players made: a chunk with any is kept in the store
+    int stamp;              // Its changes, each mixed in: blocks that differ have another
+    // This machine's own (play.tide): its faces as a mesh, made on a worker, and the stamp they were made at
+    local Mesh<Vertex3> mesh;
+    local int drawn;
+    local bool meshed;
+    local LocalTask job;    // Its faces being made
+    local bool blank;       // Its mesh has no faces: a chunk of air, or one buried in stone
+    local int triangles;
+    local int begun;        // The frame its faces were begun in, from its blocks and its neighbours' as they were then...
+    local int asked;        // ...and the frame faces begun before are to be made again from, for a neighbour's side
+    local bool urgent;      // ...and one changed, rather than came or went
+    local int epoch;        // Which of the player's comings into its dimension its faces were last made in
+    local int read;         // ...and last begun in, from what Sight.seen says it read at its sides
+    local int3 place;       // ...and where: when it goes, its local fields are all there is of it (Leaving)
+    local int stale;        // Checks in a row that found its faces made from a neighbour's side that changed since
+    local Mesh<Vertex3> next;   // Faces made that wait for the neighbours whose faces they changed (Awaits)...
+    local bool holding;
+    local bool nextBlank;
+    local int nextTriangles;
+    local int waited;       // ...since this frame
+}
+
+// A chunk is asked for from the store first, made from the seed if it isn't there, and only then anyone's
+enum Stage
+{
+    Asked,
+    Missing,
+    Made
+}
+
+// Who has a chunk or a far region, the server's alone
+component Seen
+{
+    VisibilityGroup group;
+    Audience audience;      // Who wants it: the group's audience once it's made
+    bool shown;
+    bool dear;              // A chunk with ground in it, by its middle column: what making it costs (Pace)
+    bool ready;             // A chunk the store had nothing for, waiting to be made...
+    bool go;                // ...and let be (Pace): Generate makes it
+    int emptied;            // The tick its last player left it
+    int saved;              // Its edits as the store last had them
+    int asked;              // The tick it was last asked for from the store
+    int summed;             // A chunk's edits as its far region last had them
+}
+
+// A far column, 8 by 8 cells: its highest block that isn't air, and which block that is
+struct Column
+{
+    byte at;                // In its region, z * COLUMNS + x
+    Block top;
+    int height;
+}
+
+// A chunk's part of a far column: its highest block that isn't air in it, or none (`empty`), in the chunk from
+// `floor` up
+struct Part
+{
+    int2 square;            // The far column's place, in columns
+    int floor;
+    Column column;
+    bool empty;
+}
+
+// A far region, 8 by 8 chunk columns, for the players farther from it than its chunks: the columns players changed,
+// so that what's built far off shows. Columns that are as the seed has them aren't in it, so a region nobody built in
+// has none, and is no player's
+component Far
+{
+    int2 at;                // In regions
+    int dimension;
+    List<Column> columns;   // In order of `at`
+    int version;            // Counts the times its columns were sent
+}
+
+// A far region as the server has it, its alone: its columns as they are, which Far's follow a few at a time
+component Summary
+{
+    Stage stage;
+    List<Column> columns;
+    int edits;              // Changes to them
+    bool queued;            // In its dimension's line to be sent
+    List<Part> waiting;     // What its chunks said before it was loaded
+}
+
+component Avatar
+{
+    [Position] float3 position; // Its feet
+    float3 velocity;
+    float yaw;
+    float pitch;
+    int dimension;
+    int hops;               // Dimension changes its player has asked for, as taken
+    int wait;               // Ticks until it digs or builds again
+    bool landed;
+    bool placing;           // Just come into a dimension: rising out of whatever it's in, before it walks
+}
+
+// What this machine's player asked for that isn't a key held down (play.tide)
+local singleton Travel
+{
+    int hops;
+}
+
+input Controls
+{
+    bool fly;           // A bot's way: straight through everything, along `move`
+    float3 move;        // At most 1 long
+    float2 walk;        // On foot: to the right and ahead, as the avatar faces
+    float2 look;        // How far it turns this tick
+    bool jump;
+    bool dig;
+    bool build;
+    int hops;           // Counts dimension changes asked for
+
+    Sample(Devices devices, Travel travel)
+    {
+        var keys = devices.keyboard;
+        if (keys.d.pressed) walk.x += 1;
+        if (keys.a.pressed) walk.x -= 1;
+        if (keys.w.pressed) walk.y += 1;
+        if (keys.s.pressed) walk.y -= 1;
+        jump = keys.space.pressed;
+        if (Cursor.locked)
+        {
+            look = devices.mouse.delta * 0.003;
+            dig = devices.mouse.left.pressed;
+            build = devices.mouse.right.pressed;
+        }
+        hops = travel.hops;
+    }
+}
+
+event Want { PlayerID player; int3 to; bool has; }
+event Put { int dimension; int3 cell; Block block; }
+event Change { int3 cell; Block block; }
+event Expire { }
+event Gone { int3 at; Entity chunk; }
+event Top { Part part; }
+event Queue { Entity region; }
+event Faded { int2 at; Entity region; }
+
+int3 ChunkOf(float3 position)
+{
+    return int3(int(Math.Floor(position.x / SIZE)), int(Math.Floor(position.y / SIZE)), int(Math.Floor(position.z / SIZE)));
+}
+
+int3 ChunkOfCell(int3 cell)
+{
+    return int3(cell.x >> 4, cell.y >> 4, cell.z >> 4);
+}
+
+bool Same(int3 a, int3 b)
+{
+    return a.x == b.x && a.y == b.y && a.z == b.z;
+}
+
+// A chunk's place as one number, for a map: 21 bits each way, a million chunks from the middle
+long KeyOf(int3 at)
+{
+    return (long(at.x + (1 << 20)) << 42) | (long(at.y + (1 << 20)) << 21) | long(at.z + (1 << 20));
+}
+
+int SeedOf(int dimension)
+{
+    return 1000 + dimension * 77;
+}
+
+system Setup(mut Worlds worlds)
+{
+    if (worlds.ready) return;
+    worlds.ready = true;
+    for (var i = 0; i < worlds.count; i++)
+    {
+        mut var hidden = Visibility { };
+        hidden.Set<Streamer>(Audience.None);
+        worlds.dimensions.Add(Scene.Load(Dimension { number = i, seed = SeedOf(i) }, hidden, Streamer { }));
+    }
+}
+
+// The bench's check of the far regions, every Worlds.audit ticks (0 never), the server's alone: what it finds wrong is
+// counted in Streamer.wrong, which the bench fails on. Each column the server can work out from the chunks it has is
+// as its region says; a region that has sent all it has has it in Far, and is shown where it has columns; its
+// audience is the players whose square it's in; each chunk someone has is in a region; and a chunk's audience is the
+// players whose box it's in, where none is still being joined or left. Declared before Generate,
+// so it sees the regions as the last tick's events left them, every chunk's word taken
+system Audit(mut Streamer streamer, Dimension dimension, Worlds worlds, Time time,
+             query (Far far, Summary summary, Seen seen) regions, query (Chunk chunk) chunks, query (Chunk chunk, Seen seen) held)
+{
+    if (worlds.audit <= 0 || time.tick % worlds.audit != 0 || streamer.watching.count == 0) return;
+    streamer.audits += 1;
+    var far = FarOf(worlds);
+    mut var low = 1 << 30;      // The chunks' heights the players' boxes take in
+    mut var high = -(1 << 30);
+    foreach (var entry in streamer.watching)
+    {
+        low = Math.Min(low, entry.value.y - worlds.tall);
+        high = Math.Max(high, entry.value.y + worlds.tall);
+    }
+    foreach (var row in regions)
+    {
+        if (row.far.dimension != dimension.number) continue;
+        mut var audience = Audience.None;
+        foreach (var entry in streamer.watching)
+        {
+            var at = RegionOf(entry.value);
+            if (Math.Abs(at.x - row.far.at.x) <= far && Math.Abs(at.y - row.far.at.y) <= far) audience.Add(entry.key);
+        }
+        if (row.seen.audience != audience) streamer.wrong += 1;
+        if (row.summary.stage != Stage.Made) continue;
+        if (!row.summary.queued && (!Matches(row.far.columns, row.summary.columns) || row.seen.shown != (row.far.columns.count > 0)))
+        {
+            streamer.wrong += 1;
+        }
+        for (var place = 0; place < COLUMNS * COLUMNS; place++)
+        {
+            if (!Agrees(row.far, row.summary, place, low, high, chunks)) streamer.wrong += 1;
+        }
+    }
+    // Where no box is still being joined or left (Watch, Depart), each chunk's audience is the players whose box it's in
+    var settled = streamer.asking.count == 0 && streamer.leaving.count == 0;
+    foreach (var row in held)
+    {
+        if (row.chunk.dimension != dimension.number) continue;
+        if (settled)
+        {
+            mut var audience = Audience.None;
+            foreach (var entry in streamer.watching)
+            {
+                if (Within(row.chunk.at, entry.value, worlds.near, worlds.tall)) audience.Add(entry.key);
+            }
+            if (row.seen.audience != audience) streamer.wrong += 1;
+        }
+        if (row.seen.audience == Audience.None) continue;
+        if (!streamer.regions.Has(KeyOfRegion(RegionOf(row.chunk.at)))) streamer.wrong += 1;
+    }
+}
+
+bool Matches(List<Column> a, List<Column> b)
+{
+    if (a.count != b.count) return false;
+    for (var i = 0; i < a.count; i++)
+    {
+        if (a[i].at != b[i].at || !Alike(a[i], b[i])) return false;
+    }
+    return true;
+}
+
+// Whether a far column is as the chunks the server has say, where they say anything: going down through the chunks
+// of its column the server has, from the highest the players' boxes take in, to the first block that isn't air,
+// against what the region has (the seed's where it has none). Where its top could be in a chunk the server hasn't,
+// above them or below a gap, nothing's said
+bool Agrees(Far far, Summary summary, int place, int low, int high, query (Chunk chunk) chunks)
+{
+    var square = int2(far.at.x * COLUMNS + place % COLUMNS, far.at.y * COLUMNS + place / COLUMNS);
+    var q = (square.y & 1) * 2 + (square.x & 1);
+    mut var held = false;
+    mut var ceiling = 0;        // The highest cell of the highest chunk it has...
+    mut var floor = 0;          // ...and the lowest of the lowest, down to the first it hasn't
+    mut var found = false;
+    mut Column truth = default;
+    for (var y = high; y >= low && !found; y--)
+    {
+        var at = int3(square.x >> 1, y, square.y >> 1);
+        mut var has = false;
+        mut var part = Column { height = -1 };
+        indexed foreach (var row in chunks)
+        {
+            if (row.chunk.at.x != at.x || row.chunk.at.y != at.y || row.chunk.at.z != at.z) continue;
+            if (row.chunk.dimension != far.dimension || row.chunk.stage != Stage.Made) continue;
+            has = true;
+            part = PartOf(row.chunk.blocks, q % 2, q / 2);
+        }
+        if (!has)
+        {
+            if (held) break;
+            continue;
+        }
+        if (!held) ceiling = y * SIZE + SIZE - 1;
+        held = true;
+        floor = y * SIZE;
+        if (part.height >= 0)
+        {
+            found = true;
+            truth = Column { top = part.top, height = y * SIZE + part.height };
+        }
+    }
+    if (!held) return true;
+    var slot = Slot(summary.columns, place);
+    var said = slot >= 0 ? summary.columns[slot] : SeedColumn(SeedOf(far.dimension), square);
+    if (said.height > ceiling) return true;
+    if (found) return Alike(said, truth);
+    return said.height < floor;
+}
+
+// The bench can start its players apart (Worlds.spread: the nth to join on the nth place of a square grid that
+// far apart) and a dimension each (Worlds.park); a game's start is together
+event(PlayerJoined joined) Join(Worlds worlds, query (with Avatar) avatars)
+{
+    mut var n = 0;
+    foreach (var row in avatars) n++;
+    mut var side = 1;
+    while (side * side <= n) side++;
+    var place = float3(0.5 + float((n % side) * worlds.spread), 40, 0.5 + float((n / side) * worlds.spread));
+    Spawn(Avatar { position = place, dimension = worlds.park > 0 ? n % worlds.count : 0 }, Owner { player = joined.player });
+}
+
+event(PlayerLeft left) Leave(Worlds worlds, query (Owner owner, with Avatar) avatars)
+{
+    foreach (var row in avatars)
+    {
+        if (row.owner.player == left.player) row.entity.Destroy();
+    }
+    foreach (var dimension in worlds.dimensions) dimension.Send(Want { player = left.player });
+}
+
+// The ground's height at a column, and what a cell is made of there
+int Ground(int seed, int x, int z)
+{
+    var wide = Math.Perlin(float2(x * 0.004, z * 0.004), seed) * 48;
+    var fine = Math.Perlin(float2(x * 0.03, z * 0.03), seed + 1) * 8;
+    return int(Math.Floor(wide + fine));
+}
+
+Block Natural(int seed, int3 cell, int ground)
+{
+    if (cell.y > ground) return cell.y <= SEA ? Block.Water : Block.Air;
+    if (cell.y < ground - 3)
+    {
+        // Caves
+        if (Math.Perlin(float3(cell.x * 0.06, cell.y * 0.09, cell.z * 0.06), seed + 2) > 0.55) return Block.Air;
+        return Block.Stone;
+    }
+    if (ground <= SEA + 1) return Block.Sand;
+    return cell.y == ground ? Block.Grass : Block.Dirt;
+}
+
+// Where a chunk is kept in the server's store
+string SavedAs(int dimension, int3 at)
+{
+    return $"chunks/{dimension}/{at.x}_{at.y}_{at.z}";
+}
+
+// ...and a far region
+string FarAs(int dimension, int2 at)
+{
+    return $"far/{dimension}/{at.x}_{at.y}";
+}
+
+// The far region a chunk is in: 8 by 8 chunks each
+int2 RegionOf(int3 chunk)
+{
+    return int2(chunk.x >> 3, chunk.z >> 3);
+}
+
+long KeyOfRegion(int2 at)
+{
+    return KeyOf(int3(at.x, 0, at.y));
+}
+
+// The far regions a player has around theirs: `far`, and at least as many as hold the chunks' box (`near` chunks
+// each way from theirs, which can start a region's 8 chunks), so every chunk a player has is in a region they have
+int FarOf(Worlds worlds)
+{
+    return Math.Max(worlds.far, (worlds.near + 7) / 8);
+}
+
+// A far column's place in its region's list, from its place in columns
+int PlaceIn(int2 region, int2 square)
+{
+    return (square.y - region.y * COLUMNS) * COLUMNS + square.x - region.x * COLUMNS;
+}
+
+// A far column as the seed makes it: of its 8 by 8 cell columns the highest cell that isn't air, the first of
+// them going by z and then x where several are as high, as PartOf finds it in a chunk
+Column SeedColumn(int seed, int2 square)
+{
+    mut var found = Column { height = -1000000 };
+    for (var z = 0; z < SQUARE; z++)
+        for (var x = 0; x < SQUARE; x++)
+        {
+            var cell = int3(square.x * SQUARE + x, 0, square.y * SQUARE + z);
+            var ground = Ground(seed, cell.x, cell.z);
+            var height = Math.Max(ground, SEA);
+            if (height <= found.height) continue;
+            found.height = height;
+            found.top = Natural(seed, int3(cell.x, height, cell.z), ground);
+        }
+    return found;
+}
+
+// The same of a quarter of a chunk (8 by 8 of its cell columns, `qx` and `qz` 0 or 1), its height in the chunk:
+// -1 where all of it is air
+Column PartOf(Grid3<Block> blocks, int qx, int qz)
+{
+    for (var y = SIZE - 1; y >= 0; y--)
+        for (var z = 0; z < SQUARE; z++)
+            for (var x = 0; x < SQUARE; x++)
+            {
+                var block = blocks[qx * SQUARE + x, y, qz * SQUARE + z];
+                if (block != Block.Air) return Column { top = block, height = y };
+            }
+    return Column { height = -1 };
+}
+
+bool Alike(Column a, Column b)
+{
+    return a.height == b.height && a.top == b.top;
+}
+
+// Where a column's place is in a region's list, or -1; and where one would go
+int Slot(List<Column> columns, int at)
+{
+    for (var i = 0; i < columns.count; i++)
+    {
+        if (int(columns[i].at) == at) return i;
+    }
+    return -1;
+}
+
+int Spot(List<Column> columns, int at)
+{
+    mut var i = 0;
+    while (i < columns.count && int(columns[i].at) < at) i++;
+    return i;
+}
+
+// What the store had for a chunk: its blocks as they were saved (ToBytes), or nothing, or bytes that aren't a
+// chunk's, and it's made from the seed. One whose bytes couldn't be read waits, and is asked for again (Retry):
+// made afresh, it would be saved over them
+event(Loaded loaded) Fill(mut Chunk chunk, mut Seen seen, query (Far far, Summary summary) regions)
+{
+    if (chunk.stage != Stage.Asked || loaded.failed) return;
+    if (loaded.found && Grid3<Block>.FromBytes(loaded.bytes) is Grid3<Block> saved)
+    {
+        chunk.blocks = saved.Copy();
+        chunk.edits = 1;
+        seen.saved = 1;
+        chunk.stage = Stage.Made;
+        seen.shown = true;
+        Visibility.Set(seen.group, seen.audience);
+        // Its far region hears what it is, in case the two were saved apart
+        Summarise(chunk, seen, -1, regions);
+        return;
+    }
+    chunk.stage = Stage.Missing;
+    seen.ready = true;
+}
+
+// What a dimension makes in a tick: the chunks the store had nothing for, in the order they were asked for
+// (nearest their player first, Watch), up to Worlds.make of them by what each costs. The store answers faster than
+// chunks can be made, and a tick that made every chunk it heard of would be as long as they are many. One still
+// asked for, or whose load failed (Retry asks again), keeps its place
+system Pace(mut Streamer streamer, Worlds worlds, Time time, mut World world)
+{
+    // What's left of the boxes players left: one who hopped away sends this dimension no Want to go on by
+    Depart(streamer, world, worlds, time.tick);
+    if (streamer.making.count == 0) return;
+    mut var left = worlds.make;
+    mut var kept = 0;
+    for (var i = 0; i < streamer.making.count; i++)
+    {
+        var chunk = streamer.making[i];
+        mut var seen = world.Get<Seen>(chunk);
+        if (seen.go || seen.shown) continue;
+        if (seen.ready && left > 0)
+        {
+            left -= seen.dear ? DEAR : 1;
+            seen.go = true;
+            world.Set<Seen>(chunk, seen);
+            continue;
+        }
+        streamer.making[kept] = chunk;
+        kept++;
+    }
+    while (streamer.making.count > kept) streamer.making.RemoveAt(streamer.making.count - 1);
+}
+
+// A chunk's blocks, from its dimension's seed alone, and then the players who wait for it have it. Its far region
+// hears of it where it has columns over it (Survey)
+system Generate(mut Chunk chunk, mut Seen seen, query (Far far, Summary summary) regions)
+{
+    if (chunk.stage != Stage.Missing || !seen.go) return;
+    chunk.stage = Stage.Made;
+    var origin = chunk.at * SIZE;
+    for (var z = 0; z < SIZE; z++)
+    {
+        for (var x = 0; x < SIZE; x++)
+        {
+            var ground = Ground(chunk.seed, origin.x + x, origin.z + z);
+            if (origin.y > ground && origin.y > SEA) continue;
+            for (var y = 0; y < SIZE; y++)
+            {
+                var block = Natural(chunk.seed, origin + int3(x, y, z), ground);
+                if (block != Block.Air) chunk.blocks[x, y, z] = block;
+            }
+        }
+    }
+    seen.shown = true;
+    Visibility.Set(seen.group, seen.audience);
+    Survey(chunk, regions);
+}
+
+// The block at a cell, on this machine: air where it has no chunk there
+Block At(int dimension, int3 cell, query (Chunk chunk) chunks)
+{
+    var at = ChunkOfCell(cell);
+    mut var found = Block.Air;
+    indexed foreach (var row in chunks)
+    {
+        if (row.chunk.at.x != at.x || row.chunk.at.y != at.y || row.chunk.at.z != at.z) continue;
+        if (row.chunk.dimension == dimension) found = row.chunk.blocks[cell.x & 15, cell.y & 15, cell.z & 15];
+    }
+    return found;
+}
+
+// Whether this machine has a chunk, made
+bool Has(int dimension, int3 at, query (Chunk chunk) chunks)
+{
+    mut var has = false;
+    indexed foreach (var row in chunks)
+    {
+        if (row.chunk.at.x != at.x || row.chunk.at.y != at.y || row.chunk.at.z != at.z) continue;
+        if (row.chunk.dimension == dimension && row.chunk.stage == Stage.Made) has = true;
+    }
+    return has;
+}
+
+bool Solid(Block block)
+{
+    return block != Block.Air && block != Block.Water;
+}
+
+// What a body meets at a cell: a solid block, or a chunk this machine hasn't made, which it can't walk into
+bool Firm(int dimension, int3 cell, query (Chunk chunk) chunks)
+{
+    var at = ChunkOfCell(cell);
+    mut var firm = true;
+    indexed foreach (var row in chunks)
+    {
+        if (row.chunk.at.x != at.x || row.chunk.at.y != at.y || row.chunk.at.z != at.z) continue;
+        if (row.chunk.dimension == dimension)
+        {
+            firm = row.chunk.stage != Stage.Made || Solid(row.chunk.blocks[cell.x & 15, cell.y & 15, cell.z & 15]);
+        }
+    }
+    return firm;
+}
+
+int3 CellOf(float3 place)
+{
+    return int3(int(Math.Floor(place.x)), int(Math.Floor(place.y)), int(Math.Floor(place.z)));
+}
+
+// Whether a body with its feet at a place is in a block: 0.6 across and 1.8 tall
+bool Blocked(int dimension, float3 feet, query (Chunk chunk) chunks)
+{
+    for (var h = 0; h < 3; h++)
+        for (var side = 0; side < 4; side++)
+        {
+            var corner = feet + float3(side % 2 == 0 ? -0.3 : 0.3, h * 0.89, side < 2 ? -0.3 : 0.3);
+            if (Firm(dimension, CellOf(corner), chunks)) return true;
+        }
+    return false;
+}
+
+// Whether a cell takes in any of a body with its feet at a place
+bool Inside(int3 cell, float3 feet)
+{
+    return float(cell.x) < feet.x + 0.3 && float(cell.x + 1) > feet.x - 0.3 && float(cell.z) < feet.z + 0.3
+        && float(cell.z + 1) > feet.z - 0.3 && float(cell.y) < feet.y + 1.8 && float(cell.y + 1) > feet.y;
+}
+
+// A player turns, moves, digs and builds, and tells its dimension where it is. On foot it falls, stands on
+// blocks and stops at them, once the chunks it's in are there; a bot flies through everything.
+system Move(mut Avatar avatar, Controls controls, Owner owner, Worlds worlds, Time time, query (Chunk chunk) chunks)
+{
+    if (!worlds.ready) return;
+    var before = avatar.dimension;
+    avatar.yaw += controls.look.x;
+    avatar.pitch = Math.Clamp(avatar.pitch - controls.look.y, -1.5, 1.5);
+    if (controls.hops != avatar.hops)
+    {
+        avatar.hops = controls.hops;
+        avatar.dimension = (avatar.dimension + 1) % worlds.count;
+        // The other dimension's ground is somewhere else: it starts on its seed's ground there, and rises out of
+        // what players built or the hills hold once that's there
+        var column = CellOf(avatar.position);
+        avatar.position.y = Math.Max(avatar.position.y, float(Ground(SeedOf(avatar.dimension), column.x, column.z) + 1));
+        avatar.velocity = float3(0, 0, 0);
+        avatar.placing = !controls.fly;
+    }
+    var standing = Has(avatar.dimension, ChunkOf(avatar.position), chunks)
+                && Has(avatar.dimension, ChunkOf(avatar.position + float3(0, 1.8, 0)), chunks);
+    if (controls.fly) avatar.position += controls.move * SPEED * time.dt;
+    else if (standing && avatar.placing)
+    {
+        if (Blocked(avatar.dimension, avatar.position, chunks)) avatar.position.y += 1;
+        else avatar.placing = false;
+    }
+    else if (standing)
+    {
+        var sin = Math.Sin(avatar.yaw);
+        var cos = Math.Cos(avatar.yaw);
+        avatar.velocity.x = (controls.walk.x * cos + controls.walk.y * sin) * WALK;
+        avatar.velocity.z = (controls.walk.y * cos - controls.walk.x * sin) * WALK;
+        avatar.velocity.y = Math.Max(avatar.velocity.y - GRAVITY * time.dt, -40);
+        if (controls.jump && avatar.landed) avatar.velocity.y = JUMP;
+        var step = avatar.velocity * time.dt;
+        if (!Blocked(avatar.dimension, avatar.position + float3(step.x, 0, 0), chunks)) avatar.position.x += step.x;
+        if (!Blocked(avatar.dimension, avatar.position + float3(0, 0, step.z), chunks)) avatar.position.z += step.z;
+        avatar.landed = false;
+        if (!Blocked(avatar.dimension, avatar.position + float3(0, step.y, 0), chunks)) avatar.position.y += step.y;
+        else
+        {
+            avatar.landed = step.y < 0;
+            avatar.velocity.y = 0;
+        }
+    }
+    if (before != avatar.dimension) worlds.dimensions[before].Send(Want { player = owner.player });
+    worlds.dimensions[avatar.dimension].Send(Want { player = owner.player, to = ChunkOf(avatar.position), has = true });
+    if (controls.fly)
+    {
+        var under = CellOf(avatar.position) - int3(0, 2, 0);
+        if (controls.dig) Send(Put { dimension = avatar.dimension, cell = under, block = Block.Air });
+        if (controls.build) Send(Put { dimension = avatar.dimension, cell = under + int3(0, 4, 0), block = Block.Plank });
+        return;
+    }
+    // On foot: the first block along where it looks is dug, or built on
+    avatar.wait = Math.Max(avatar.wait - 1, 0);
+    if (avatar.wait > 0 || (!controls.dig && !controls.build)) return;
+    var eye = avatar.position + float3(0, 1.6, 0);
+    var aim = Math.Forward(quaternion.Euler(float3(avatar.pitch, avatar.yaw, 0)));
+    // From the eye's own cell, which a body buried to its eyes digs; what's built goes in the last cell the ray
+    // went through, never one the body is in
+    mut var last = CellOf(eye);
+    mut var through = false;
+    for (var i = 0; i <= REACH; i++)
+    {
+        var cell = CellOf(eye + aim * (i * 0.1));
+        if (through && Same(cell, last)) continue;
+        if (Solid(At(avatar.dimension, cell, chunks)))
+        {
+            if (controls.dig) Send(Put { dimension = avatar.dimension, cell = cell, block = Block.Air });
+            else if (through && !Inside(last, avatar.position)) Send(Put { dimension = avatar.dimension, cell = last, block = Block.Plank });
+            avatar.wait = 12;
+            break;
+        }
+        last = cell;
+        through = true;
+    }
+}
+
+bool Within(int3 chunk, int3 center, int near, int tall)
+{
+    return Math.Abs(chunk.x - center.x) <= near && Math.Abs(chunk.z - center.z) <= near && Math.Abs(chunk.y - center.y) <= tall;
+}
+
+// The chunk at a place on this machine, or none: found by its place, which the loop's guard says (an indexed loop)
+Entity Find(int dimension, int3 at, query (Chunk chunk) chunks)
+{
+    mut Entity found = default;
+    indexed foreach (var row in chunks)
+    {
+        if (row.chunk.at.x != at.x || row.chunk.at.y != at.y || row.chunk.at.z != at.z) continue;
+        if (row.chunk.dimension == dimension) found = row.entity;
+    }
+    return found;
+}
+
+// The chunks of the boxes players left lose them: Worlds.ask * JOINS of a dimension's chunks a tick, the oldest box
+// first. A whole view left where others hold it (6,845 chunks at three times the default radius) was a tick as long
+// as they are many. Only what's outside the box the player has now goes, so one who came back keeps what they came
+// back to, and a chunk is some player's a few ticks longer than their box says, never less: the game's own choice,
+// as what a player may have is whatever the group's audience says.
+//
+// A box left whole would also go whole, a linger later, in one tick: 3,125 chunks saved, forgotten and destroyed
+// were 12 ms of it. Each Worlds.ask of a dimension's chunks that empty say they did a tick after the ones before
+// (Streamer.emptying), so a box goes over the ticks it was asked for in, whoever else leaves with its player
+void Depart(mut Streamer streamer, mut World world, Worlds worlds, int tick)
+{
+    if (streamer.leaving.count == 0) return;
+    if (streamer.leftAt != tick)
+    {
+        streamer.leftAt = tick;
+        streamer.left = 0;
+    }
+    var near = worlds.near;
+    var tall = worlds.tall;
+    var wide = 2 * near + 1;
+    var high = 2 * tall + 1;
+    var places = wide * high * wide;
+    var most = worlds.ask * JOINS;
+    mut var done = 0;
+    while (done < streamer.leaving.count && streamer.left < most)
+    {
+        mut var box = streamer.leaving[done];
+        var here = streamer.watching.TryGet(box.player, out var now);
+        while (box.place < places && streamer.left < most)
+        {
+            var place = box.place;
+            box.place++;
+            var at = int3(box.from.x - near + place % wide, box.from.y - tall + place / wide % high,
+                          box.from.z - near + place / (wide * high));
+            if (here && Within(at, now, near, tall)) continue;
+            if (!streamer.chunks.TryGet(KeyOf(at), out var chunk)) continue;
+            mut var seen = world.Get<Seen>(chunk);
+            // (A box that wasn't all asked for has chunks that were never the player's)
+            if (!seen.audience.Contains(box.player)) continue;
+            seen.audience.Remove(box.player);
+            if (seen.audience == Audience.None)
+            {
+                if (streamer.emptying < tick)
+                {
+                    streamer.emptying = tick;
+                    streamer.emptied = 0;
+                }
+                seen.emptied = streamer.emptying;
+                streamer.emptied += 1;
+                if (streamer.emptied >= worlds.ask)
+                {
+                    streamer.emptying += 1;
+                    streamer.emptied = 0;
+                }
+            }
+            if (seen.shown) Visibility.Set(seen.group, seen.audience);
+            world.Set<Seen>(chunk, seen);
+            streamer.left += 1;
+        }
+        if (box.place < places)
+        {
+            streamer.leaving[done] = box;
+            break;
+        }
+        done++;
+    }
+    if (done == 0) return;
+    for (var i = done; i < streamer.leaving.count; i++) streamer.leaving[i - done] = streamer.leaving[i];
+    for (var i = 0; i < done; i++) streamer.leaving.RemoveAt(streamer.leaving.count - 1);
+}
+
+// The chunks a player has are a box around the one they're in. As that moves,
+// the chunks the box left lose the player and those it took in get them, made
+// first where there's none. Only the server's machine has a Streamer, so only
+// it runs this.
+//
+// A box is asked for over as many ticks as it takes at Worlds.ask new chunks a tick for the dimension: a whole view
+// spawned in one tick (3,125 chunks at twice the default radius, 6,845 at three times) was that tick's whole length
+// and more. Move sends Want every tick, so the tick after goes on where this one stopped (Streamer.asking). The
+// store answers 256 loads a tick in the order they're asked, nearest first, so a box asked for at four times that is
+// made no later than one asked for at once.
+event(Want want) Watch(mut Streamer streamer, Dimension dimension, Worlds worlds, Time time, mut World world)
+{
+    var known = streamer.watching.TryGet(want.player, out var from);
+    if (!want.has && !known) return;
+    var going = streamer.asking.TryGet(want.player, out var gone);
+    var moved = !(want.has && known && Same(from, want.to));
+    if (!moved && !going) return;
+    var near = worlds.near;
+    var tall = worlds.tall;
+    // The box left loses the player over the ticks it takes (Depart), what the box now takes in aside: the tick's
+    // worth of it first, as the player is where they are now
+    if (moved && known)
+    {
+        streamer.leaving.Add(Left { player = want.player, from = from });
+        if (want.has) streamer.watching[want.player] = want.to;
+        else streamer.watching.Remove(want.player);
+        Depart(streamer, world, worlds, time.tick);
+    }
+    if (!want.has)
+    {
+        Regions(streamer, world, dimension.number, FarOf(worlds), time.tick, want, known, from);
+        streamer.watching.Remove(want.player);
+        streamer.asking.Remove(want.player);
+        streamer.had.Remove(want.player);
+        return;
+    }
+    mut var start = gone;
+    if (moved)
+    {
+        // The places the box before had are the player's still, where that box was whole: they're passed over by
+        // where they are. One that wasn't whole says nothing, and each chunk is looked at
+        if (known && !going) streamer.had[want.player] = from;
+        else streamer.had.Remove(want.player);
+        start = 0;
+    }
+    var sure = streamer.had.TryGet(want.player, out var before);
+    if (streamer.askedAt != time.tick)
+    {
+        streamer.askedAt = time.tick;
+        streamer.asked = 0;
+        streamer.joined = 0;
+    }
+    // Nearest first, a square ring around the player's chunk at a time, and in each the player's own height before
+    // the ones above and below: the store answers in the order it's asked, and chunks are made in it (Pace), so what
+    // a player stands in and looks at is there before the edge of their view
+    mut var place = 0;
+    mut var full = false;
+    for (var ring = 0; ring <= near && !full; ring++)
+        for (var level = 0; level <= 2 * tall && !full; level++)
+        {
+            // 0, then 1 up, 1 down, 2 up, 2 down...
+            var y = want.to.y + (level % 2 == 1 ? (level + 1) / 2 : -(level / 2));
+            // Around the ring, each chunk beside the one before it: chunks side by side are alike, and a repair that
+            // lists them so is smaller (entities go in the order they were spawned)
+            var around = ring == 0 ? 1 : 8 * ring;
+            if (place + around <= start)
+            {
+                place += around;
+                continue;
+            }
+            for (var step = 0; step < around && !full; step++)
+                {
+                    place++;
+                    if (place <= start) continue;
+                    var side = ring == 0 ? 0 : step / (2 * ring);
+                    var along = ring == 0 ? 0 : step % (2 * ring);
+                    var x = want.to.x + (side == 0 ? along - ring : side == 1 ? ring : side == 2 ? ring - along : -ring);
+                    var z = want.to.z + (side == 0 ? -ring : side == 1 ? along - ring : side == 2 ? ring : ring - along);
+                    var at = int3(x, y, z);
+                    if (sure && Within(at, before, near, tall)) continue;
+                    if (streamer.chunks.TryGet(KeyOf(at), out var chunk))
+                    {
+                        if (!world.Has<Seen>(chunk))
+                        {
+                            // Spawned this tick, by another player's coming, or gone and not yet forgotten (Forget):
+                            // it can't take the player until it's there, so the next tick goes on here
+                            place--;
+                            full = true;
+                            continue;
+                        }
+                        mut var seen = world.Get<Seen>(chunk);
+                        if (seen.audience.Contains(want.player)) continue;
+                        if (streamer.joined >= worlds.ask * JOINS)
+                        {
+                            // The tick's worth of chunks that are there have the player: the next goes on here
+                            place--;
+                            full = true;
+                            continue;
+                        }
+                        seen.audience.Add(want.player);
+                        if (seen.shown) Visibility.Set(seen.group, seen.audience);
+                        world.Set<Seen>(chunk, seen);
+                        streamer.joined += 1;
+                    }
+                    else if (streamer.asked >= worlds.ask)
+                    {
+                        // The tick's worth is spawned: this place is where the next tick starts
+                        place--;
+                        full = true;
+                    }
+                    else
+                    {
+                        // Nobody's until it's made: its blocks from the store, if it was ever saved there. What it
+                        // costs to make is its ground's: cells under it are caves' noise, one by one
+                        var group = Visibility.CreateGroup(Audience.None);
+                        mut var visibility = Visibility { group = group };
+                        visibility.Set<Seen>(Audience.None);
+                        var dear = y * SIZE <= Ground(dimension.seed, x * SIZE + SIZE / 2, z * SIZE + SIZE / 2) + SIZE;
+                        var made = Spawn(Chunk { at = at, dimension = dimension.number, seed = dimension.seed }, visibility,
+                                         Seen { group = group, audience = Audience.Only(want.player), asked = time.tick,
+                                                dear = dear });
+                        streamer.chunks[KeyOf(at)] = made;
+                        streamer.making.Add(made);
+                        Storage.Load(SavedAs(dimension.number, at), made);
+                        streamer.asked += 1;
+                    }
+                }
+        }
+    if (full) streamer.asking[want.player] = place;
+    else
+    {
+        streamer.asking.Remove(want.player);
+        streamer.had.Remove(want.player);
+    }
+    if (!moved) return;
+    // Its far regions after the chunks, which come first from the store and are what the player needs first
+    Regions(streamer, world, dimension.number, FarOf(worlds), time.tick, want, known, from);
+    streamer.watching[want.player] = want.to;
+}
+
+// The far regions a player has are a square of `far` around the one they're in, wider than their chunks' box: as
+// it moves, the regions it left lose them and those it took in get them, made first where there's none. One is
+// asked for from the store as a chunk is, and is nobody's while it has no columns: a world nobody built in sends
+// nobody anything for it
+void Regions(mut Streamer streamer, mut World world, int dimension, int far, int tick, Want want, bool known, int3 from)
+{
+    var was = RegionOf(from);
+    var to = RegionOf(want.to);
+    if (known && want.has && was == to) return;
+    if (known)
+    {
+        for (var z = was.y - far; z <= was.y + far; z++)
+            for (var x = was.x - far; x <= was.x + far; x++)
+            {
+                if (want.has && Math.Abs(x - to.x) <= far && Math.Abs(z - to.y) <= far) continue;
+                if (!streamer.regions.TryGet(KeyOfRegion(int2(x, z)), out var region)) continue;
+                world.Edit<Seen>(region, seen)
+                {
+                    seen.audience.Remove(want.player);
+                    seen.emptied = tick;
+                    if (seen.shown) Visibility.Set(seen.group, seen.audience);
+                }
+            }
+    }
+    if (!want.has) return;
+    for (var z = to.y - far; z <= to.y + far; z++)
+        for (var x = to.x - far; x <= to.x + far; x++)
+        {
+            if (known && Math.Abs(x - was.x) <= far && Math.Abs(z - was.y) <= far) continue;
+            var at = int2(x, z);
+            if (streamer.regions.TryGet(KeyOfRegion(at), out var region))
+            {
+                world.Edit<Seen>(region, seen)
+                {
+                    seen.audience.Add(want.player);
+                    if (seen.shown) Visibility.Set(seen.group, seen.audience);
+                }
+                continue;
+            }
+            var group = Visibility.CreateGroup(Audience.None);
+            mut var visibility = Visibility { group = group };
+            visibility.Set<Seen>(Audience.None);
+            visibility.Set<Summary>(Audience.None);
+            var made = Spawn(Far { at = at, dimension = dimension }, visibility,
+                             Seen { group = group, audience = Audience.Only(want.player), asked = tick }, Summary { });
+            streamer.regions[KeyOfRegion(at)] = made;
+            Storage.Load(FarAs(dimension, at), made);
+        }
+}
+
+// A block changes in the chunk it's in, where this machine has one: a player's
+// machine changes the chunks it has as the server does, with no wait
+event(Put put) Place(query (Chunk chunk) chunks)
+{
+    var chunk = Find(put.dimension, ChunkOfCell(put.cell), chunks);
+    if (chunk != default) chunk.Send(Change { cell = put.cell, block = put.block });
+}
+
+event(Change change) Apply(mut Chunk chunk)
+{
+    if (chunk.stage != Stage.Made) return;
+    var cell = int3(change.cell.x & 15, change.cell.y & 15, change.cell.z & 15);
+    if (chunk.blocks[cell] == change.block) return;
+    chunk.blocks[cell] = change.block;
+    chunk.edits += 1;
+    chunk.stamp = chunk.stamp * 31 + ((cell.z * SIZE + cell.y) * SIZE + cell.x) * 16 + int(change.block) + 1;
+}
+
+// ...after which, on the server, its far region hears of it: of the quarter the cell is in, as nothing else of the
+// chunk changed
+event(Change change) Note(Chunk chunk, mut Seen seen, query (Far far, Summary summary) regions)
+{
+    Summarise(chunk, seen, (change.cell.z & 15) / SQUARE * 2 + (change.cell.x & 15) / SQUARE, regions);
+}
+
+// A chunk nobody has had for a while goes. It writes nothing until then: a chunk that only waits costs the
+// server no hashing. (`emptied` is a tick or a few later for a chunk of a box left whole: Watch.)
+system Idle(Seen seen, Chunk chunk, Worlds worlds, Time time)
+{
+    if (seen.audience != Audience.None || chunk.stage != Stage.Made || time.tick - seen.emptied < worlds.linger) return;
+    this.Send(Expire { });
+}
+
+// ...in its tick's events, after the Wants of the tick's moves: a player who came back to it this tick keeps it.
+// One players changed goes into the store first.
+event(Expire) Drop(Seen seen, Chunk chunk, Worlds worlds)
+{
+    if (seen.audience != Audience.None) return;
+    if (chunk.edits != seen.saved) Storage.Save(SavedAs(chunk.dimension, chunk.at), chunk.blocks.ToBytes());
+    Visibility.DestroyGroup(seen.group);
+    worlds.dimensions[chunk.dimension].Send(Gone { at = chunk.at, chunk = this });
+    this.Destroy();
+}
+
+event(Gone gone) Forget(mut Streamer streamer)
+{
+    var key = KeyOf(gone.at);
+    if (streamer.chunks.TryGet(key, out var chunk) && chunk == gone.chunk) streamer.chunks.Remove(key);
+}
+
+// What players changed of a chunk they're near is saved every while too, each chunk in a tick of its own: a
+// server that stops loses at most that while of it
+system Keep(mut Seen seen, Chunk chunk, Worlds worlds, Time time)
+{
+    if (chunk.edits == seen.saved || (time.tick + chunk.at.x * 7 + chunk.at.y * 3 + chunk.at.z * 13) % worlds.keep != 0) return;
+    Storage.Save(SavedAs(chunk.dimension, chunk.at), chunk.blocks.ToBytes());
+    seen.saved = chunk.edits;
+}
+
+// A load whose answer never came (the server stopped, or went back in time, first) or failed is asked again
+system Retry(mut Seen seen, Chunk chunk, Time time)
+{
+    if (chunk.stage != Stage.Asked || time.tick - seen.asked < RETRY) return;
+    seen.asked = time.tick;
+    Storage.Load(SavedAs(chunk.dimension, chunk.at), this);
+}
+
+// Far regions, the server's side of them. A chunk players changed tells its region the top of a quarter of it (0 to
+// 3), or of all four (-1, and where it told the region nothing of a change before this one). Only the server has
+// Seen and Summary, so only it runs any of this
+void Summarise(Chunk chunk, mut Seen seen, int quarter, query (Far far, Summary summary) regions)
+{
+    if (chunk.stage != Stage.Made || seen.summed == chunk.edits) return;
+    var all = quarter < 0 || seen.summed != chunk.edits - 1;
+    var at = RegionOf(chunk.at);
+    mut Entity region = default;
+    indexed foreach (var row in regions)
+    {
+        if (row.far.at.x != at.x || row.far.at.y != at.y || row.far.dimension != chunk.dimension) continue;
+        region = row.entity;
+    }
+    if (region == default) return;  // None: the chunks a player can change are in the regions they have (FarOf)
+    seen.summed = chunk.edits;
+    for (var q = 0; q < 4; q++)
+    {
+        if (all || q == quarter) region.Send(Top { part = QuarterOf(chunk, q) });
+    }
+}
+
+// A chunk's part of the far column over one of its quarters (0 to 3)
+Part QuarterOf(Chunk chunk, int q)
+{
+    var floor = chunk.at.y * SIZE;
+    mut var column = PartOf(chunk.blocks, q % 2, q / 2);
+    var empty = column.height < 0;
+    column.height += floor;
+    return Part { square = int2(chunk.at.x * 2 + q % 2, chunk.at.z * 2 + q / 2), floor = floor, column = column, empty = empty };
+}
+
+// A chunk made from the seed tells its region the tops of its quarters where the region has columns of its own. A
+// region is saved apart from its chunks, so it can have what a chunk that came back from the seed hasn't: a build
+// the server stopped before it saved the chunk, or a chunk whose bytes weren't one. Where the region has no column,
+// the seed's chunk says what the seed does. One that isn't loaded yet looks at the chunks the server has once it is
+// (Recall)
+void Survey(Chunk chunk, query (Far far, Summary summary) regions)
+{
+    var at = RegionOf(chunk.at);
+    indexed foreach (var row in regions)
+    {
+        if (row.far.at.x != at.x || row.far.at.y != at.y || row.far.dimension != chunk.dimension) continue;
+        if (row.summary.stage != Stage.Made || row.summary.columns.count == 0) continue;
+        for (var q = 0; q < 4; q++)
+        {
+            var square = int2(chunk.at.x * 2 + q % 2, chunk.at.z * 2 + q / 2);
+            if (Slot(row.summary.columns, PlaceIn(at, square)) >= 0) row.entity.Send(Top { part = QuarterOf(chunk, q) });
+        }
+    }
+}
+
+// What a chunk's part says of a column, kept until the region is loaded where it isn't yet: one part a quarter of a
+// chunk, as a later one says all an earlier one did, so what waits is bounded however long the load takes
+event(Top top) Merge(Far far, mut Summary summary, Worlds worlds, query (Chunk chunk) chunks)
+{
+    if (summary.stage == Stage.Made)
+    {
+        Take(this, far, summary, top.part, worlds, chunks);
+        return;
+    }
+    for (var i = 0; i < summary.waiting.count; i++)
+    {
+        var part = summary.waiting[i];
+        if (part.square.x != top.part.square.x || part.square.y != top.part.square.y || part.floor != top.part.floor) continue;
+        summary.waiting[i] = top.part;
+        return;
+    }
+    summary.waiting.Add(top.part);
+}
+
+// What a column's top is, given a chunk's part of it: a block above the top makes it higher, a top dug out of
+// its chunk is looked for below. Only columns unlike the seed's are kept, and a change puts the region in its
+// dimension's line to be sent
+void Take(Entity region, Far far, mut Summary summary, Part part, Worlds worlds, query (Chunk chunk) chunks)
+{
+    var at = PlaceIn(far.at, part.square);
+    var slot = Slot(summary.columns, at);
+    var natural = SeedColumn(SeedOf(far.dimension), part.square);
+    var was = slot >= 0 ? summary.columns[slot] : natural;
+    if (was.height >= part.floor + SIZE) return;    // Its top is above this chunk, which doesn't show
+    mut var now = part.column;
+    if (part.empty)
+    {
+        if (was.height < part.floor) return;        // Air above a top below
+        now = Beneath(far.dimension, part.square, part.floor, natural, chunks);
+    }
+    now.at = byte(at);
+    if (Alike(now, natural))
+    {
+        if (slot < 0) return;
+        summary.columns.RemoveAt(slot);
+    }
+    else if (slot >= 0)
+    {
+        if (Alike(now, was)) return;
+        summary.columns[slot] = now;
+    }
+    else summary.columns.Insert(Spot(summary.columns, at), now);
+    summary.edits += 1;
+    if (summary.queued) return;
+    summary.queued = true;
+    worlds.dimensions[far.dimension].Send(Queue { region = region });
+}
+
+// A column's top under a chunk that has none: the first block that isn't air in the chunks below that the server
+// has, or, under one it hasn't, the seed's top if that's in or below it, else that chunk's highest cells, taken as
+// the ground they were
+Column Beneath(int dimension, int2 square, int floor, Column natural, query (Chunk chunk) chunks)
+{
+    for (var y = floor - SIZE; y > floor - SIZE * 8; y -= SIZE)
+    {
+        var at = int3(square.x >> 1, y >> 4, square.y >> 1);
+        mut var found = false;
+        mut var part = Column { height = -1 };
+        indexed foreach (var row in chunks)
+        {
+            if (row.chunk.at.x != at.x || row.chunk.at.y != at.y || row.chunk.at.z != at.z) continue;
+            if (row.chunk.dimension != dimension) continue;
+            if (row.chunk.stage == Stage.Made)
+            {
+                found = true;
+                part = PartOf(row.chunk.blocks, square.x & 1, square.y & 1);
+            }
+        }
+        if (!found) return natural.height < y + SIZE ? natural : Column { top = Block.Stone, height = y + SIZE - 1 };
+        if (part.height >= 0) return Column { top = part.top, height = y + part.height };
+    }
+    return Column { top = Block.Stone, height = floor - SIZE * 8 };
+}
+
+event(Queue queue) Enqueue(mut Streamer streamer)
+{
+    streamer.line.Add(queue.region);
+}
+
+// The regions in a dimension's line are sent to their players together, every `gap` ticks, `pace` columns at most,
+// in the order they changed: so building costs a player far off at most that much, however much is built, and
+// what changed comes in one correction each time, not one for each region. A region is shown to its players once
+// it has columns, and hidden again once it has none left to send: a removal can take the last of the budget before
+// an addition after it, which leaves it empty for a while, not gone
+system Publish(mut Streamer streamer, Worlds worlds, Time time, mut World world)
+{
+    if (streamer.line.count == 0 || time.tick % worlds.gap != 0) return;
+    mut var budget = worlds.pace;
+    while (streamer.line.count > 0 && budget > 0)
+    {
+        var region = streamer.line[0];
+        mut var done = true;
+        world.Edit<Summary>(region, summary), world.Edit<Far>(region, far), world.Edit<Seen>(region, seen)
+        {
+            var changes = Follow(far.columns, summary.columns, budget, out var all);
+            budget -= changes;
+            if (changes > 0) far.version += 1;
+            done = all;
+            if (all) summary.queued = false;
+            var shown = far.columns.count > 0 || (seen.shown && !all);
+            // The bench's check (Audit): never hidden while it has columns
+            if (worlds.audit > 0 && !shown && summary.columns.count > 0) streamer.wrong += 1;
+            if (shown != seen.shown)
+            {
+                seen.shown = shown;
+                Visibility.Set(seen.group, shown ? seen.audience : Audience.None);
+            }
+        }
+        if (!done) break;
+        streamer.line.RemoveAt(0);
+    }
+}
+
+// Makes `sent` more like `columns`, both in order of place, by `most` changes at most: how many it made, and
+// whether they're alike now
+int Follow(mut List<Column> sent, List<Column> columns, int most, out bool all)
+{
+    mut List<Column> made = [];
+    mut var changes = 0;
+    mut var i = 0;
+    mut var j = 0;
+    all = true;
+    while (i < sent.count || j < columns.count)
+    {
+        var a = i < sent.count ? int(sent[i].at) : 256;
+        var b = j < columns.count ? int(columns[j].at) : 256;
+        if (a == b && Alike(sent[i], columns[j]))
+        {
+            made.Add(sent[i]);
+            i++;
+            j++;
+            continue;
+        }
+        if (changes == most)
+        {
+            // Out of changes: the rest of what was sent stays as it was
+            all = false;
+            if (a <= b)
+            {
+                made.Add(sent[i]);
+                i++;
+            }
+            if (b <= a) j++;
+            continue;
+        }
+        // Changed or new, taken; gone, left out
+        changes++;
+        if (b <= a) made.Add(columns[j]);
+        if (a <= b) i++;
+        if (b <= a) j++;
+    }
+    sent = made;
+    return changes;
+}
+
+// What the store had for a region: its columns as they were saved, put in order, each place once. Then what its
+// chunks said while it was asked for, and then each column is looked at again against the chunks the server has
+// (Recheck): saved apart from them, a region can say what one that came back from the seed, or from an older
+// save, hasn't. They're sent whole to the players who have it now, as a chunk is: the pace is for what changes
+event(Loaded loaded) Recall(mut Far far, mut Seen seen, mut Summary summary, Worlds worlds, query (Chunk chunk) chunks)
+{
+    if (summary.stage != Stage.Asked || loaded.failed) return;
+    summary.stage = Stage.Made;
+    if (loaded.found && Json.Read<List<Column>>(loaded.bytes) is List<Column> saved)
+    {
+        foreach (var column in saved)
+        {
+            var slot = Slot(summary.columns, int(column.at));
+            if (slot >= 0) summary.columns[slot] = column;
+            else summary.columns.Insert(Spot(summary.columns, int(column.at)), column);
+        }
+        summary.edits = 1;
+        seen.saved = 1;
+    }
+    foreach (var part in summary.waiting) Take(this, far, summary, part, worlds, chunks);
+    summary.waiting.Clear();
+    var had = summary.columns;
+    foreach (var column in had) Recheck(this, far, summary, column, worlds, chunks);
+    if (summary.columns.count == 0) return;
+    far.columns = summary.columns;
+    far.version = 1;
+    seen.shown = true;
+    Visibility.Set(seen.group, seen.audience);
+}
+
+// A column a region has, against the chunks the server has between its top and the seed's: each one there tells
+// the region its part, so a top no chunk has goes, and a pit dug out of a chunk that came back from the seed is
+// filled again. One whose top is in a chunk the server hasn't is as it was saved, until that chunk is made (Survey)
+void Recheck(Entity region, Far far, mut Summary summary, Column column, Worlds worlds, query (Chunk chunk) chunks)
+{
+    var square = int2(far.at.x * COLUMNS + int(column.at) % COLUMNS, far.at.y * COLUMNS + int(column.at) / COLUMNS);
+    var natural = SeedColumn(SeedOf(far.dimension), square);
+    var q = (square.y & 1) * 2 + (square.x & 1);
+    for (var y = Math.Max(column.height, natural.height) >> 4; y >= Math.Min(column.height, natural.height) >> 4; y--)
+    {
+        var at = int3(square.x >> 1, y, square.y >> 1);
+        mut var has = false;
+        mut Part part = default;
+        indexed foreach (var row in chunks)
+        {
+            if (row.chunk.at.x != at.x || row.chunk.at.y != at.y || row.chunk.at.z != at.z) continue;
+            if (row.chunk.dimension != far.dimension || row.chunk.stage != Stage.Made) continue;
+            has = true;
+            part = QuarterOf(row.chunk, q);
+        }
+        if (has) Take(region, far, summary, part, worlds, chunks);
+    }
+}
+
+// What a chunk's Idle, Keep and Retry are, of a region, in one system: one whose load wasn't answered, or failed,
+// is asked for again; one nobody has had for a while goes, into the store first if its columns changed (Forgo);
+// one players changed is saved every while it's held, each in a tick of its own
+system Tend(mut Seen seen, Far far, Summary summary, Worlds worlds, Time time)
+{
+    if (summary.stage == Stage.Asked)
+    {
+        if (time.tick - seen.asked < RETRY) return;
+        seen.asked = time.tick;
+        Storage.Load(FarAs(far.dimension, far.at), this);
+        return;
+    }
+    if (seen.audience == Audience.None && time.tick - seen.emptied >= worlds.linger)
+    {
+        this.Send(Expire { });
+        return;
+    }
+    if (summary.edits == seen.saved || (time.tick + far.at.x * 7 + far.at.y * 13) % worlds.keep != 0) return;
+    Storage.Save(FarAs(far.dimension, far.at), Json.Write(summary.columns).ToBytes());
+    seen.saved = summary.edits;
+}
+
+event(Expire) Forgo(Seen seen, Far far, Summary summary, Worlds worlds)
+{
+    if (seen.audience != Audience.None) return;
+    if (summary.edits != seen.saved) Storage.Save(FarAs(far.dimension, far.at), Json.Write(summary.columns).ToBytes());
+    Visibility.DestroyGroup(seen.group);
+    worlds.dimensions[far.dimension].Send(Faded { at = far.at, region = this });
+    this.Destroy();
+}
+
+event(Faded faded) Unlist(mut Streamer streamer)
+{
+    var key = KeyOfRegion(faded.at);
+    if (streamer.regions.TryGet(key, out var region) && region == faded.region) streamer.regions.Remove(key);
+}

@@ -49,7 +49,8 @@ namespace Tide
         // Whether it shows an entity of this frame's packet (false once the entity's gone)
         public bool Showing => Runner != null && Row >= 0;
 
-        // Whether the entity has `T`'s component this frame.
+        // Whether the entity has `T`'s component this frame. Asking, as TryGet and Get do, reads `T` from the match from
+        // then on: the first time, the frame's packet is written again with it.
         public bool Has<T>() where T : unmanaged
         {
             return Runner != null && Row >= 0 && Runner.Find<T>(Row, out _);
@@ -98,6 +99,12 @@ namespace Tide
             TideHearing.Listen(hearingVerified, heard, false);
         }
 
+        void OnDestroy()
+        {
+            TideHearing.Forget(hearing);
+            TideHearing.Forget(hearingVerified);
+        }
+
         // Whether anything here hears events of `kind`, as predicted or once verified
         internal bool Hears(Type kind, bool verified)
         {
@@ -116,12 +123,20 @@ namespace Tide
         internal int LiveCount;
         internal int LiveSeen;     // How many of them the entity had in frame LiveSeenAt
         internal int LiveSeenAt = -1;
+        // How many of them are of types the packet doesn't carry (nothing enabled reads them, and no script asked), as
+        // of the runner's LiveUnreadAt'th set of what's read: those stay as they are, the entity's or not
+        internal int LiveUnread;
+        internal int LiveUnreadAt = -1;
+        // Its component that makes the entity a part of another's body, if it has one: where its shapes are is asked of
+        // it each frame (TideParts)
+        internal ITidePart Part;
         static readonly List<TideComponent> found = new List<TideComponent>();
 
         // Finds the Tide components the GameObject has now: those authored on it, or left by the entity it showed last.
         internal void CollectLive()
         {
             LiveCount = 0;
+            Part = null;
             GetComponents(found);
             foreach (var component in found) AddLive(component, component.GetType());
             found.Clear();
@@ -137,6 +152,30 @@ namespace Tide
             live[LiveCount] = component;
             liveKinds[LiveCount] = kind;
             LiveCount++;
+            LiveUnreadAt = -1;
+            component.Beside = this;
+            if (component is ITidePart part) Part = part;
+        }
+
+        // Takes `live[i]` out of what's kept
+        void Forget(int i)
+        {
+            if (ReferenceEquals(live[i], Part)) Part = null;
+            live[i] = live[LiveCount - 1];
+            liveKinds[i] = liveKinds[LiveCount - 1];
+            live[--LiveCount] = null;
+            LiveUnreadAt = -1;
+        }
+
+        // Counts the components of types the packet doesn't carry, for the runner's `serial`th set of what's read
+        internal void CountUnread(TideRunner runner, int serial)
+        {
+            LiveUnread = 0;
+            for (var i = 0; i < LiveCount; i++)
+            {
+                if (!runner.Carries(liveKinds[i])) LiveUnread++;
+            }
+            LiveUnreadAt = serial;
         }
 
         // Its component of `kind`, added where it has none.
@@ -147,9 +186,7 @@ namespace Tide
                 if (liveKinds[i] != kind) continue;
                 if (live[i] != null) return live[i];
                 // Something else destroyed it: forgotten, and added again
-                live[i] = live[LiveCount - 1];
-                liveKinds[i] = liveKinds[LiveCount - 1];
-                live[--LiveCount] = null;
+                Forget(i);
                 break;
             }
             // One a script added since is taken as it is: a GameObject has one of each
@@ -159,15 +196,14 @@ namespace Tide
         }
 
         // Destroys the components the entity didn't have in frame `frame`: it lost them, or never had what was authored.
-        internal void DropStale(int frame)
+        // One of a type the packet doesn't carry stays: whether the entity has it isn't known.
+        internal void DropStale(int frame, TideRunner runner)
         {
             for (var i = LiveCount - 1; i >= 0; i--)
             {
-                if (live[i] != null && live[i].LiveFrame == frame) continue;
+                if (live[i] != null && (live[i].LiveFrame == frame || !runner.Carries(liveKinds[i]))) continue;
                 if (live[i] != null) Destroy(live[i]);
-                live[i] = live[LiveCount - 1];
-                liveKinds[i] = liveKinds[LiveCount - 1];
-                live[--LiveCount] = null;
+                Forget(i);
             }
         }
     }

@@ -1,0 +1,4 @@
+// expect: 'Rename' is called with 1 value, and this is one more
+command(string name) Rename(PlayerID sender) { }
+view Ask() { Rename("x", 2); }
+scene Main { }

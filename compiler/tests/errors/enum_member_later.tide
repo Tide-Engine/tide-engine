@@ -1,0 +1,3 @@
+// expect: 'Step.First' is worked out from 'Step.Second', which comes after it and has no number yet
+enum Step { First = int(Step.Second) - 1, Second = 4 }
+scene Main { }

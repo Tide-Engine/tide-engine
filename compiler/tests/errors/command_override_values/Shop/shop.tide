@@ -1,0 +1,7 @@
+namespace Shop;
+singleton Till { int sold; }
+virtual command(int item) Buy(mut Till till, PlayerID sender)
+{
+    _ = sender;
+    till.sold += item;
+}

@@ -83,16 +83,20 @@ typedef struct tide_entity_slot
 
 struct tide_entity_index;
 struct tide_entity_order;
+struct tide_entity_retired_order;
 struct tide_entity_filtered_order;
+struct tide_entity_order_log;
 typedef struct tide_entities
 {
     uint32_t next_unused, free_head, pages, room; // Private dense storage only.
     tide_page **page;
     struct tide_entity_index *index, *births;
     uint64_t key_clock, unkeyed_next;
-    struct tide_entity_order *ordered, *retired_order;
+    struct tide_entity_order *ordered;
+    struct tide_entity_retired_order *retired_order;
     struct tide_entity_filtered_order *filtered_order;
     uint32_t order_lock;
+    struct tide_entity_order_log *order_log; // What came and went since its orders were made, for them to take in
 } tide_entities;
 
 // Trusted C/local allocation uses a separate monotonic namespace (birth 0).
@@ -125,6 +129,11 @@ void tide_entity_set_location(tide_entities *t, tide_entity e, tide_location loc
 // Imports a permitted existing identity. False for null or an already alive identity.
 // Imported identities do not enter the local current-clock spawn registry.
 bool tide_entity_install(tide_entities *t, tide_entity e);
+// Takes an alive identity out leaving nothing of it: no destruction evidence
+// (tide_entity_died_here is false) and no key, so it can be installed again.
+// What a recipient's world does with an entity that left its sight, or whose
+// row it is about to take again as the server has it. False if it isn't alive.
+bool tide_entity_erase(tide_entities *t, tide_entity e);
 // Removes local data, retaining an away marker when it lives on another shard.
 void tide_entity_forget(tide_entities *t, tide_entity e, bool away);
 // Releases the matching away marker after its owner reports destruction.
@@ -167,6 +176,8 @@ tide_entity tide_entity_in_slot(const tide_entities *t, uint32_t index);
 // Borrowed sorted ALIVE logical keys, including pending spawns. The array remains
 // valid until settle even if structural changes invalidate this table's cache.
 // Location, snap and presentation metadata writes do not invalidate it.
+// After entities came or went, the next call gives another array: the one
+// before with those taken in, not every key sorted again.
 const tide_entity *tide_entities_ordered(const tide_entities *t, uint32_t *count);
 // Canonical ALIVE keys in an ascending unique set of archetype IDs. The cache
 // owns the IDs, so callers may replace generated/reloaded storage afterward.
@@ -196,6 +207,11 @@ static inline tide_location tide_entity_location_at(const tide_entities *t, cons
                                __atomic_load_n(&s->row, __ATOMIC_RELAXED)};
     return tide_entity_location(t, e);
 }
+
+// The hash of the table's page `page` of slots (a slot's index >> TIDE_ENTITY_PAGE_SHIFT), as the table's own
+// hash takes it and keeps it until the page changes: what says a page's entities are where they were, with the
+// snaps they had. 0 for a page it hasn't got.
+uint64_t tide_entities_slot_page_hash(const tide_entities *t, uint32_t page);
 
 // For snapshots: `to` becomes `from`, sharing its pages (see tide/page.h),
 // including optional presentation metadata. The hash covers private allocation

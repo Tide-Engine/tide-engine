@@ -1,0 +1,3 @@
+// expect: what a command is called with is copied to the match, so it can't be 'mut'
+command(mut string name) Rename(PlayerID sender) { }
+scene Main { }

@@ -6,6 +6,7 @@
 #include "tide/page.h"
 #include "tide/worker.h"
 #include "tide/time.h"
+#include "tide/storage.h"
 
 struct tide_preparation {
     const tide_game *game;
@@ -21,6 +22,10 @@ struct tide_preparation {
     tide_event_log events;
     tide_event_log *per_player;
     uint32_t players;
+    // The server's: what preparation asks of the match's store (Storage.Save, Load), handed to the server's own
+    // requests as the prepared world becomes the match's. A player's machine's preparation asks nothing
+    bool asks;
+    tide_storage store;
 };
 
 static TIDE_THREAD_LOCAL tide_preparation *current;
@@ -81,7 +86,9 @@ static void prepare(void *context)
     tide_preparation *outer = current;
     current = p;
     unpack(p->game, p->world, p->input, p->input_size);
+    if (p->asks) tide_storage_bind(p->world, &p->store);
     p->game->prepare(p->world, p->jobs, p->per_player, &p->events);
+    if (p->asks) tide_storage_unbind(p->world);
     current = outer;
     tide_worker_leave(previous);
 }
@@ -94,6 +101,12 @@ bool tide_preparation_update(tide_preparation **state, const tide_game *game,
 
 bool tide_preparation_update_clients(tide_preparation **state, const tide_game *game,
                                      void *world, const tide_jobs *jobs, tide_event_log *per_player, tide_event_log *events)
+{
+    return tide_preparation_update_server(state, game, world, jobs, per_player, events, NULL);
+}
+
+bool tide_preparation_update_server(tide_preparation **state, const tide_game *game, void *world, const tide_jobs *jobs,
+                                    tide_event_log *per_player, tide_event_log *events, tide_storage *store)
 {
     if (!game->prepare_pending || !game->prepare) return true;
     tide_preparation *p = *state;
@@ -115,6 +128,7 @@ bool tide_preparation_update_clients(tide_preparation **state, const tide_game *
             p->players = tide_game_players(game);
             p->per_player = tide_alloc_zeroed(p->players, sizeof *p->per_player);
         }
+        p->asks = store != NULL && game->stored != NULL;
         p->ticket = tide_worker_start(&p->workers, jobs, prepare, NULL, p);
     }
     if (!tide_worker_poll(p->workers, p->ticket)) {
@@ -130,6 +144,7 @@ bool tide_preparation_update_clients(tide_preparation **state, const tide_game *
         return false;
     }
     game->copy_world(world, p->world);
+    if (store) tide_storage_take(store, &p->store);
     if (events) tide_event_log_take(events, &p->events);
     if (per_player && p->per_player)
         for (uint32_t i = 0; i < p->players; i++) tide_event_log_take(&per_player[i], &p->per_player[i]);
@@ -149,5 +164,6 @@ void tide_preparation_free(tide_preparation *p)
     tide_event_log_free(&p->events);
     for (uint32_t i = 0; i < p->players; i++) tide_event_log_free(&p->per_player[i]);
     free(p->per_player);
+    tide_storage_free(&p->store);
     free(p);
 }

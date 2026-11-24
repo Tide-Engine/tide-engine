@@ -19,6 +19,8 @@
 
 #ifdef __wasm__
 #include "tide_web.h"
+#else
+#include "gpu_vk.h" // For the levels a Vulkan array is made with
 #endif
 
 enum { WIDTH = 4, HEIGHT = 6 };
@@ -560,6 +562,35 @@ static uint64_t held_with_target(const int width, const int height)
         render_expect(expected, "a frame without the disposed target");
     }
     return held;
+}
+
+// An array drawn into of 32-bit numbers (R32f, Rgba32f, R32i: a TextureArray's layers, or a cube of them, six
+// layers) has one level on Vulkan, as on WebGPU: it's loaded, never blended, so nothing makes or reads a smaller
+// image of it, and room for them would be a third more memory than the renderer counts. An array of bytes has room
+// for its whole chain (every device blits Rgba8). WebGPU's levels are tide.js's, which make one for these too.
+static void check_array_levels(void)
+{
+#ifndef __wasm__
+    const tide_gpu *gpu = tide_window_gpu();
+    if (gpu != &tide_gpu_vulkan) return;
+    static const tide_gpu_color loaded[] = {TIDE_GPU_COLOR_R32F, TIDE_GPU_COLOR_RGBA32F, TIDE_GPU_COLOR_R32I};
+    for (size_t i = 0; i < sizeof loaded / sizeof loaded[0]; i++) {
+        const tide_gpu_id array = gpu->array(tide_gpu_target_with(TIDE_GPU_TARGET_DEPTH, loaded[i]), 16, 16, 6, NULL);
+        const uint32_t levels = tide_gpu_vk_texture_levels(array);
+        if (!array || levels != 1u) {
+            fprintf(stderr, "an array of 32-bit numbers (color %u) has %u levels, where it's loaded at its first alone\n",
+                    (unsigned)loaded[i], (unsigned)levels);
+            failures++;
+        }
+        if (array) gpu->texture_free(array);
+    }
+    const tide_gpu_id bytes = gpu->array(TIDE_GPU_TARGET_COLOR, 16, 16, 2, NULL);
+    if (!bytes || tide_gpu_vk_texture_levels(bytes) != 5u) {
+        fprintf(stderr, "an array of bytes has %u levels, not its chain's 5\n", (unsigned)tide_gpu_vk_texture_levels(bytes));
+        failures++;
+    }
+    if (bytes) gpu->texture_free(bytes);
+#endif
 }
 
 // The count grows by a target's bytes (4 of color and 4 of depth a pixel) as
@@ -2620,6 +2651,161 @@ static void check_render_colors(void)
 }
 
 // ---------------------------------------------------------------------------
+// [Linear] reads of rendered images: the renderer's own copy of the image, decoded, which is made when the image
+// was drawn into and not again until more is; with no depth of its own; and never of an image that isn't bytes.
+
+static void blit_linear(const tide_texture_ref color)
+{
+    const uint32_t texture = tide_draw_texture_source_linear(&render_list, color);
+    const float settings[4] = {0, WIDTH * 2, HEIGHT * 2, 0};
+    tide_draw_blit(&render_list, &list_shader, TIDE_BLEND_REPLACE, NULL, settings, &texture, 0);
+}
+
+static void expect_copies(const uint64_t wanted, const char *what)
+{
+    if (tide_platform_linear_copies() == wanted) return;
+    failures++;
+    fprintf(stderr, "%s: %llu copies for [Linear] reads so far, where %llu were due\n", what,
+            (unsigned long long)tide_platform_linear_copies(), (unsigned long long)wanted);
+}
+
+static void check_linear_copies(void)
+{
+    enum { WIDE = WIDTH * 2, HIGH = HEIGHT * 2 };
+    const tide_render_target scene = tide_render_target_make(WIDE, HIGH);
+    const tide_texture_ref color = tide_render_target_color(scene);
+    const uint32_t gray = 0x373737ffu;   // 128 of 255, decoded: 0.2158 is 55
+    const uint32_t orange = 0xff3700ffu; // 1 and 0 are themselves
+    uint64_t copies = tide_platform_linear_copies();
+
+    // Drawn into once and read as it is, frame after frame, till what a frame holds has settled: no copy
+    for (int frame = 0; frame <= TIDE_MESH_ONCE_FRAMES + 1; frame++) {
+        tide_draw_reset(&render_list);
+        if (frame == 0) {
+            tide_draw_render_target(&render_list, scene);
+            tide_draw_clear(&render_list, (tide_color){128.0f / 255.0f, 128.0f / 255.0f, 128.0f / 255.0f, 1});
+            tide_draw_to(&render_list, 0, 0, 0);
+        }
+        blit_color(color, &list_shader);
+        read_window(WIDE, HIGH, 1.0f);
+        expect_all(0x808080ffu, "a target's color read without the mark is its bytes");
+        expect_copies(copies, "a target read without the mark");
+    }
+    const uint64_t held_plain = tide_platform_gpu_memory();
+
+    // Read as [Linear], frame after frame, with nothing drawn into it: its bytes decoded, from one copy
+    for (int frame = 0; frame <= TIDE_MESH_ONCE_FRAMES + 1; frame++) {
+        tide_draw_reset(&render_list);
+        blit_linear(color);
+        read_window(WIDE, HIGH, 1.0f);
+        expect_all(gray, "a [Linear] read of a target's color is its bytes decoded");
+        expect_copies(copies + 1u, "a target drawn into once and read as [Linear] every frame");
+    }
+    copies++;
+    // What the copy holds: its colors alone, with no depth, on the backends that make it with none
+    const tide_gpu *gpu = tide_window_gpu();
+    const uint64_t depth = gpu->depth_bytes ? gpu->depth_bytes() : 4u;
+    const bool depthless = strcmp(tide_platform_renderer(), "Vulkan") == 0 || strcmp(tide_platform_renderer(), "WebGPU") == 0;
+    const uint64_t copy_bytes = (uint64_t)WIDE * HIGH * (depthless ? 4u : 4u + depth);
+    if (tide_platform_gpu_memory() - held_plain != copy_bytes) {
+        failures++;
+        fprintf(stderr, "[Linear] copy: %llu bytes held more with a target's copy, where it comes to %llu\n",
+                (unsigned long long)(tide_platform_gpu_memory() - held_plain), (unsigned long long)copy_bytes);
+    }
+
+    // Read in several passes of one frame, with other targets drawn into in between: still that copy
+    tide_draw_reset(&render_list);
+    blit_linear(color);
+    tide_draw_to(&render_list, TARGET_A, WIDTH, HEIGHT);
+    tide_draw_clear(&render_list, TIDE_COLOR_BLUE);
+    blit_linear(color);
+    tide_draw_to(&render_list, TARGET_B, WIDTH, HEIGHT);
+    blit_linear(color);
+    tide_draw_to(&render_list, 0, 0, 0);
+    blit_linear(color);
+    read_window(WIDE, HIGH, 1.0f);
+    expect_all(gray, "a [Linear] read in several passes of a frame");
+    expect_copies(copies, "a target read as [Linear] in several passes, other targets drawn into between them");
+
+    // Drawn into again: copied again, once, and the read is the new colors; twice in a frame, twice
+    tide_draw_reset(&render_list);
+    tide_draw_render_target(&render_list, scene);
+    tide_draw_clear(&render_list, (tide_color){1, 128.0f / 255.0f, 0, 1});
+    tide_draw_to(&render_list, 0, 0, 0);
+    blit_linear(color);
+    read_window(WIDE, HIGH, 1.0f);
+    expect_all(orange, "a [Linear] read of a target drawn into again");
+    expect_copies(++copies, "a target drawn into again and read as [Linear]");
+    tide_draw_reset(&render_list);
+    tide_draw_render_target(&render_list, scene);
+    tide_draw_clear(&render_list, TIDE_COLOR_BLUE);
+    tide_draw_to(&render_list, TARGET_A, WIDTH, HEIGHT);
+    blit_linear(color);
+    tide_draw_render_target(&render_list, scene);
+    tide_draw_clear(&render_list, (tide_color){128.0f / 255.0f, 128.0f / 255.0f, 128.0f / 255.0f, 1});
+    tide_draw_to(&render_list, 0, 0, 0);
+    blit_linear(color);
+    read_window(WIDE, HIGH, 1.0f);
+    expect_all(gray, "a [Linear] read after each of two draws into its target in one frame");
+    copies += 2;
+    expect_copies(copies, "a target drawn into and read as [Linear] twice in a frame");
+
+    // Resized: another image, black, copied once
+    tide_render_target_resize(scene, WIDE, HIGH + 2);
+    for (int frame = 0; frame < 2; frame++) {
+        tide_draw_reset(&render_list);
+        blit_linear(color);
+        read_window(WIDE, HIGH, 1.0f);
+        expect_all(0x000000ffu, "a [Linear] read of a resized target, which is black");
+        expect_copies(copies + 1u, "a resized target read as [Linear]");
+    }
+    copies++;
+
+    // An image that isn't Format.Rgba8 under the mark (which tidec refuses wherever it sees one): the read's draw is
+    // passed by, on every backend, with no copy made and nothing bound. A float image, an int image, and the float
+    // second image of a target whose first is bytes, whose own [Linear] read still works
+    const tide_target_format floats[] = {TIDE_TARGET_RGBA16F}, ints[] = {TIDE_TARGET_R32I};
+    const tide_target_format mixed[] = {TIDE_TARGET_RGBA8, TIDE_TARGET_RGBA16F};
+    const tide_render_target light = tide_render_target_make_scaled_of(WIDE, HIGH, 1, floats, 1);
+    const tide_render_target numbers = tide_render_target_make_scaled_of(WIDE, HIGH, 1, ints, 1);
+    const tide_render_target both = tide_render_target_make_scaled_of(WIDE, HIGH, 1, mixed, 2);
+    const tide_texture_ref refused[] = {tide_render_target_color(light), tide_render_target_color(numbers),
+                                        tide_render_target_color_at(both, 1)};
+    for (size_t i = 0; i < sizeof refused / sizeof refused[0]; i++) {
+        for (int frame = 0; frame < 2; frame++) {
+            tide_draw_reset(&render_list);
+            tide_draw_render_target(&render_list, i == 0 ? light : i == 1 ? numbers : both);
+            if (i != 1) tide_draw_clear(&render_list, TIDE_COLOR_RED);
+            tide_draw_to(&render_list, 0, 0, 0);
+            tide_draw_clear(&render_list, TIDE_COLOR_GREEN);
+            blit_linear(refused[i]);
+            read_window(WIDE, HIGH, 1.0f);
+            expect_all(0x00ff00ffu, "a [Linear] read of an image that isn't Format.Rgba8 is passed by");
+            expect_copies(copies, "a [Linear] read of an image that isn't Format.Rgba8");
+        }
+    }
+    tide_draw_reset(&render_list);
+    tide_draw_clear(&render_list, TIDE_COLOR_GREEN);
+    blit_linear(tide_render_target_color(both));
+    read_window(WIDE, HIGH, 1.0f);
+    expect_all(0xff0000ffu, "a [Linear] read of the Rgba8 image beside a float one");
+    expect_copies(++copies, "the Rgba8 image of a mixed target read as [Linear]");
+
+    // Disposed: the copy goes with its image, and so does what was held
+    tide_render_target_dispose(scene);
+    tide_render_target_dispose(light);
+    tide_render_target_dispose(numbers);
+    tide_render_target_dispose(both);
+    for (int frame = 0; frame <= TIDE_MESH_ONCE_FRAMES; frame++) {
+        tide_draw_reset(&render_list);
+        tide_draw_clear(&render_list, TIDE_COLOR_GREEN);
+        read_window(WIDE, HIGH, 1.0f);
+    }
+    tide_draw_forget(&render_list);
+    tide_render_targets_free();
+}
+
+// ---------------------------------------------------------------------------
 // Multisampled targets: each pixel drawn with several samples, which a
 // triangle's edge covers some of, and color images that are what those come
 // to when a pass ends.
@@ -3244,6 +3430,9 @@ static int frame(void *user, const float seconds)
     checked("the backend's targets of several colors");
     check_render_colors();
     checked("the renderer's targets of several colors");
+    check_linear_copies();
+    check_linear_copies(); // With the copy's pipeline made, and its targets' places used again
+    checked("the renderer's copies for [Linear] reads");
     check_samples();
     check_samples(); // Its pipelines and targets are made again
     checked("the backend's multisampled targets");
@@ -3255,6 +3444,8 @@ static int frame(void *user, const float seconds)
     check_cubes();
     check_cubes(); // Its pipelines and its cubes are made again
     checked("the backend's cubes");
+    check_array_levels();
+    checked("the backend's arrays of 32-bit numbers");
     check_gpu_memory();
     checked("the renderer's count of what it has on the GPU");
     if (failures) return 1;

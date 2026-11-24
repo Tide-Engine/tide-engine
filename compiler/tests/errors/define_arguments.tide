@@ -1,0 +1,5 @@
+// expect: define takes a symbol's name and the value it has when the build gives it none: 'define(ARMY_SIDE, 500)'
+// expect: a symbol is what '#if' reads: the build's '--define NAME' or '--define NAME=value', or the file's '#define NAME'
+const int ARMY_SIDE = define(ARMY_SIDE);
+singleton Army { int side = ARMY_SIDE; }
+scene Main { }

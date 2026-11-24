@@ -2,7 +2,7 @@
 // build_overlap_test.mjs, so the report's steps, compiles, pack bytes, left-out assets and outputs are checked
 // without compiling C or running a game.
 import { spawn } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 import assert from "node:assert/strict";
 
@@ -15,6 +15,9 @@ for (const folder of [bin, tools, events]) mkdirSync(folder, { recursive: true }
 const suffix = process.platform === "win32" ? ".exe" : "";
 cpSync(tide, join(bin, `tide${suffix}`));
 cpSync(compiler, join(tools, `clang${suffix}`));
+// ...and a WebAssembly linker beside it, which web builds look for there first (the fake clang links nothing): a
+// machine whose own wasm-ld isn't on PATH (Linux's LLVM packages) builds the pages below too
+cpSync(compiler, join(tools, `wasm-ld${suffix}`));
 for (const original of new Set([dirname(tide), dirname(compiler)])) {
     for (const name of readdirSync(original).filter(name => name.endsWith(".dll"))) {
         cpSync(join(original, name), join(bin, name));
@@ -94,7 +97,13 @@ try {
     assert.equal(resolve(assets.rules.files[0]), join(game, "rules.txt"));
     assert(assets.rules.importMs >= 0);
     const packFile = join(game, ".build", "reported.pack");
-    assert.equal(report.pack.bytes, statSync(packFile).size, "the pack's size is the file's");
+    // A release's pack ships compressed (tide/pack.h): the report's bytes are the pack's, as it is in memory
+    const generatedPack = join(game, ".tide", "native-release", "gen", "game.pack");
+    assert.equal(report.pack.bytes, statSync(generatedPack).size, "the pack's size is the generated file's");
+    assert.equal(readFileSync(generatedPack).subarray(0, 8).toString(), "TIDEPACK");
+    assert.equal(readFileSync(packFile).subarray(0, 8).toString(), "TIDEPKLZ", "the release's pack is compressed");
+    assert(statSync(packFile).size < report.pack.bytes, "...and smaller");
+    assert(stages.includes("compressing assets"), `${stages}`);
     assert(report.pack.bytes >= report.pack.assetBytes);
 
     assert.equal(report.leftOut.length, 1);
@@ -114,6 +123,8 @@ try {
     const warm = await run(["build", game, "--release", "--report", textPath]);
     assert.equal(warm.code, 0, warm.said);
     const table = readFileSync(textPath, "utf8");
+    assert(!/compressing assets/.test(table), "an unchanged pack isn't compressed again");
+    assert.equal(readFileSync(packFile).subarray(0, 8).toString(), "TIDEPKLZ");
     assert.match(table, /^reported: release native build, [\d.]+ s \(tide /);
     assert.match(table, /C\/C\+\+: 0 compiled \(0 ms of compiler time\), [1-9]\d* up to date/);
     assert.match(table, /Pack: .* 2 assets/);
@@ -131,6 +142,28 @@ try {
     assert.equal(debugReport.leftOut.length, 0);
     assert.equal(debugReport.pack.assets.length, 3);
     assert(debugReport.cuts.some(cut => /every asset is packed/.test(cut)), `${debugReport.cuts}`);
+    // ...as tidec wrote it, in the place the release's was: and a release after it is compressed there again
+    assert.equal(readFileSync(packFile).subarray(0, 8).toString(), "TIDEPACK", "a debug build's pack isn't compressed");
+    assert.equal(debugReport.pack.bytes, statSync(packFile).size);
+    assert(!debugReport.stages.some(stage => stage.name === "compressing assets"));
+    const again = await run(["build", game, "--release"]);
+    assert.equal(again.code, 0, again.said);
+    assert.equal(readFileSync(packFile).subarray(0, 8).toString(), "TIDEPKLZ");
+
+    // A release's web page downloads a compressed pack too, whose size the page is told; a debug page's is as it is
+    put(join(installation, "lib", "web", "libtide_platform.a"), "!<arch>\n");
+    put(join(installation, "wasi", "libclang_rt.builtins.a"), "fixture");
+    put(join(installation, "web", "shell.html"), "<html><body>{{{ SCRIPT }}}</body></html>\n");
+    put(join(installation, "web", "tide.js"), "// page runtime\n");
+    put(join(installation, "web", "tide.release.js"), "// page runtime\n");
+    for (const [mode, magic] of [[["--release"], "TIDEPKLZ"], [[], "TIDEPACK"]]) {
+        const page = await run(["build", game, "--web", ...mode]);
+        assert.equal(page.code, 0, page.said);
+        const pagePack = readFileSync(join(game, ".build", "web", "index.pack"));
+        assert.equal(pagePack.subarray(0, 8).toString(), magic, `a page built with ${mode}`);
+        assert.match(readFileSync(join(game, ".build", "web", "index.html"), "utf8"),
+            new RegExp(`pack: \\{ url: "index\\.pack\\?v=[0-9a-f]+", size: ${pagePack.length} \\}`));
+    }
 
     // A server's pack has what its match code reads
     const serverPath = join(root, "reports", "server.json");
@@ -169,7 +202,34 @@ try {
     assert.notEqual(identity(), definedIdentity);
     assert.equal(compiledDefined().filter(name => name.startsWith("custom.")).length, 4);
     assert(!compiledDefined().includes("engine.c"), "user defines preserve engine-object reuse");
+    // ...and so does a value: C gets -D BATTLE_TEST=7, code reads it with define(), and another value is another game
+    put(join(defined, "game.tide"), "scene Main { }\nconst int TROOPS = define(BATTLE_TEST, 1);\nsingleton Army { int troops = TROOPS; }\n");
+    env.TIDE_TEST_BUILD_DEFINE = "7";
+    const valued = await run([...definedArgs, "--define", "BATTLE_TEST=7"]);
+    assert.equal(valued.code, 0, valued.said);
+    const valuedIdentity = identity();
+    const header = readFileSync(join(defined, ".tide", "native-release", "gen", "game.h"), "utf8");
+    assert.match(header, / BATTLE_TEST="7"/);
+    env.TIDE_TEST_BUILD_DEFINE = "8";
+    const otherValue = await run([...definedArgs, "--define", "BATTLE_TEST=6", "--define", "BATTLE_TEST=8"]); // The later one
+    assert.equal(otherValue.code, 0, otherValue.said);
+    assert.notEqual(identity(), valuedIdentity);
+    const notInt = await run([...definedArgs, "--define", "BATTLE_TEST=many"]);
+    assert.notEqual(notInt.code, 0);
+    assert.match(notInt.said, /the build gives 'BATTLE_TEST' the value 'many', and 'define\(BATTLE_TEST, \.\.\.\)' reads an int here/);
+    assert.match(notInt.said, /--define BATTLE_TEST=500/);
+    const unnamed = await run([...definedArgs, "--define", "=7"]);
+    assert.equal(unnamed.code, 2, unnamed.said);
+    assert.match(unnamed.said, /--define ARMY_SIDE=500/);
     delete env.TIDE_TEST_BUILD_DEFINE;
+    // DEBUG given a value keeps it in a debug build, where tide defines DEBUG itself, with none
+    put(join(defined, "game.tide"), "scene Main { }\nconst int LEVEL = define(DEBUG, 0);\nsingleton Army { int level = LEVEL; }\n");
+    const debugValued = await run(["schedule", defined, "--define", "DEBUG=3"]);
+    assert.equal(debugValued.code, 0, debugValued.said);
+    const debugBare = await run(["schedule", defined]);
+    assert.notEqual(debugBare.code, 0);
+    assert.match(debugBare.said, /'DEBUG' is defined with no value, and 'define\(DEBUG, \.\.\.\)' reads an int here/);
+    put(join(defined, "game.tide"), "scene Main { }\n");
 
     // Large generated code is in parts, as many as its size takes, and its data's, with ThinLTO compilation and a
     // cached link.
@@ -198,6 +258,98 @@ try {
     assert(compiledLarge().length >= 1 && compiledLarge().length <= 2, `only the body and identity parts rebuild: ${compiledLarge()}`);
     assert(compiledLarge().every(name => partNames.includes(name)), `${compiledLarge()}`);
     delete env.TIDE_TEST_BUILD_REQUIRE_THIN;
+
+    // A debug build's plumbing is in parts too, each an object of its own: no ThinLTO, whose link compiled every
+    // part again as one (and far slower) whenever a layout changed. Its game.c stays whole.
+    const wide = join(root, "wide");
+    const wideCount = 220; // Enough archetypes and systems for 4 MiB of plumbing (components under 32 lanes: no loops)
+    const wideSource = "scene Main { }\nsingleton Tally { int n; }\n" + Array.from({ length: wideCount }, (_, i) =>
+        `component C${i} { int a; int b; int[24] pad; }\nsystem S${i}(mut C${i} c, mut Tally tally) { c.a += c.b; tally.n += 1; }\n`).join("")
+        + "event(Spawned) Setup(with Main)\n{\n" + Array.from({ length: wideCount }, (_, i) => `    Spawn(C${i} { a = ${i} });\n`).join("") + "}\n";
+    put(join(wide, "game.tide"), wideSource);
+    env.TIDE_TEST_BUILD_FORBID_THIN = "1";
+    const wideReport = join(root, "reports", "wide.json");
+    const wideBuild = await run(["build", wide, "--report", wideReport]);
+    assert.equal(wideBuild.code, 0, wideBuild.said);
+    const wideParts = readFileSync(join(wide, ".tide", "native-debug", "gen", "game_parts.txt"), "utf8").trim().split("\n");
+    assert.equal(wideParts[0], "0 0 game.c");
+    const plumbingParts = wideParts.filter(line => line.startsWith("1 1 game_plumbing"));
+    assert(plumbingParts.length >= 3, `the plumbing in parts, and its data: ${wideParts}`);
+    const compiledWide = JSON.parse(readFileSync(wideReport, "utf8")).compiles.files.map(file => basename(file.source));
+    for (const line of wideParts) assert(compiledWide.includes(line.slice(4)), `${line} compiled: ${compiledWide}`);
+    // game.c starts compiling while the plumbing is still being cut (compile_written): once, and after an edit of
+    // a system's code it alone
+    const compiledWideNow = () => JSON.parse(readFileSync(wideReport, "utf8")).compiles.files.map(file => basename(file.source));
+    assert.equal(compiledWide.filter(name => name === "game.c").length, 1, `${compiledWide}`);
+    put(join(wide, "game.tide"), wideSource.replace("c.a += c.b;", "c.a += c.b + 1;"));
+    const wideEdit = await run(["build", wide, "--report", wideReport]);
+    assert.equal(wideEdit.code, 0, wideEdit.said);
+    assert.equal(compiledWideNow().filter(name => name === "game.c").length, 1, `${compiledWideNow()}`);
+    assert(compiledWideNow().length <= 2, `the code, and at most the part of the plumbing that goes by it: ${compiledWideNow()}`);
+    // Plumbing that comes out the same is left in the files it was cut into (game_plumbing.parts): not written again
+    const wideGen = join(wide, ".tide", "native-debug", "gen");
+    const written = () => plumbingParts.map(line => statSync(join(wideGen, line.slice(4))).mtimeMs).join(" ");
+    assert(existsSync(join(wideGen, "game_plumbing.parts")), "the plumbing's cut is recorded");
+    const before = written();
+    put(join(wide, "game.tide"), wideSource.replace("c.a += c.b;", "c.a += c.b + 2;"));
+    const wideAgain = await run(["build", wide, "--report", wideReport]);
+    assert.equal(wideAgain.code, 0, wideAgain.said);
+    assert.deepEqual(compiledWideNow(), ["game.c"]);
+    assert.equal(written(), before, "the plumbing's parts as they were");
+    // ...and cut again when one of them isn't what the cut left
+    writeFileSync(join(wideGen, plumbingParts[1].slice(4)), "changed\n");
+    const wideCut = await run(["build", wide, "--report", wideReport]);
+    assert.equal(wideCut.code, 0, wideCut.said);
+    assert(readFileSync(join(wideGen, plumbingParts[1].slice(4)), "utf8").length > 100, "the changed part is written again");
+    // A part's stamp is kept (parts.stamped) once its file was two seconds old when it was read, and taken from
+    // there while the file's size and time stay: a build that leaves the plumbing alone doesn't read it to say so
+    await new Promise(resolve => setTimeout(resolve, 2200));
+    const wideKept = await run(["build", wide, "--report", wideReport]);
+    assert.equal(wideKept.code, 0, wideKept.said);
+    const stamped = readFileSync(join(wideGen, "parts.stamped"), "utf8");
+    for (const line of plumbingParts) assert(stamped.includes(` ${line.slice(4)}\n`), `${line.slice(4)} in ${stamped}`);
+    put(join(wide, "game.tide"), wideSource.replace("c.a += c.b;", "c.a += c.b + 3;"));
+    const wideTaken = await run(["build", wide, "--report", wideReport]);
+    assert.equal(wideTaken.code, 0, wideTaken.said);
+    assert.deepEqual(compiledWideNow(), ["game.c"], "the plumbing's objects stand by their kept stamps");
+    assert.equal(readFileSync(join(wideGen, "parts.stamped"), "utf8"), stamped, "kept stamps stay as they were");
+
+    // A layout edit invalidates every generated object. With one worker the
+    // report exposes launch order, so large optimized parts must go first.
+    const wideLayout = wideSource.replace("int n;", "int n; int extra;");
+    put(join(wide, "game.tide"), wideLayout);
+    env.TIDE_JOBS = "1";
+    const wideChanged = await run(["build", wide, "--report", wideReport]);
+    assert.equal(wideChanged.code, 0, wideChanged.said);
+    assert.equal(compiledWideNow()[0], "game.c");
+    const layoutParts = readFileSync(join(wideGen, "game_parts.txt"), "utf8").trim().split("\n").map(line => line.slice(4));
+    const changedPlumbing = compiledWideNow().filter(name => name.startsWith("game_plumbing"));
+    assert.deepEqual(changedPlumbing.toSorted(), layoutParts.filter(name => name.startsWith("game_plumbing")).toSorted());
+    const sizes = changedPlumbing.map(name => statSync(join(wideGen, name)).size);
+    assert(new Set(sizes).size > 1, "fixture must exercise unequal compile priorities");
+    assert.deepEqual(sizes, sizes.toSorted((a, b) => b - a));
+    const generated = ["game.h", ...layoutParts].map(name => [name, readFileSync(join(wideGen, name))]);
+    env.TIDE_JOBS = "2";
+    const wideLayoutWarm = await run(["build", wide, "--report", wideReport]);
+    assert.equal(wideLayoutWarm.code, 0, wideLayoutWarm.said);
+    assert.deepEqual(compiledWideNow(), [], "changing job count keeps the rebuilt objects");
+    for (const [name, bytes] of generated) assert(bytes.equals(readFileSync(join(wideGen, name))), `${name} is identical`);
+
+    // A debug build's own code is in parts once it's big, compiled as game.c is and without ThinLTO; an edit of a
+    // function compiles the parts it changed, which start as soon as they're written
+    const largeDebug = await run(["build", large, "--report", largeReport]);
+    assert.equal(largeDebug.code, 0, largeDebug.said);
+    const debugParts = readFileSync(join(large, ".tide", "native-debug", "gen", "game_parts.txt"), "utf8").trim().split("\n");
+    const codeParts = debugParts.filter(line => line.startsWith("0 1 game")).map(line => line.slice(4));
+    assert(codeParts.length >= 3 && codeParts[0] === "game.c", `the code in parts: ${debugParts}`);
+    for (const name of codeParts) assert.equal(compiledLarge().filter(file => file === name).length, 1, `${name} once: ${compiledLarge()}`);
+    put(join(large, "game.tide"), largeSource(3));
+    const largeDebugEdit = await run(["build", large, "--report", largeReport]);
+    assert.equal(largeDebugEdit.code, 0, largeDebugEdit.said);
+    const changed = compiledLarge().filter(name => codeParts.includes(name));
+    assert(changed.length >= 1 && changed.length <= 2, `the function's part, and the identity's: ${compiledLarge()}`);
+    assert.equal(new Set(compiledLarge()).size, compiledLarge().length, `each once: ${compiledLarge()}`);
+    delete env.TIDE_TEST_BUILD_FORBID_THIN;
 
     // A failed build still says where its time went
     put(join(game, "game.tide"), "system Broken() { Missing(); }\n");

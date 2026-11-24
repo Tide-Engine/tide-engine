@@ -1,0 +1,4 @@
+// expect: a local worker's call starts before the others that wait, 'WorkerPriority.Urgent'
+local worker int Build(int value) { return value; }
+async void Run() { var built = await Build(1, priority: WorkerPriority.High); }
+scene Main;

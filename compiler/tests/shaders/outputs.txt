@@ -276,17 +276,8 @@ struct tt_Vertex {
     m_uv: vec2f,
     m_color: vec4f,
 }
-fn tide_f(x: f32) -> f32 {
-    return x;
-}
-fn tide_nan(x: f32) -> bool {
-    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
-}
 fn tide_max1(a: f32, b: f32) -> f32 {
-    if (tide_nan(b)) { return a; }
-    if (tide_nan(a)) { return b; }
-    if (a > b) { return a; }
-    return b;
+    return select(select(select(b, a, a > b), b, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000), a, (bitcast<i32>(b) & 0x7fffffff) > 0x7f800000);
 }
 fn tide_straight(c: vec4f) -> vec4f {
     if (c.a == 0.0) { return vec4f(0.0); }
@@ -294,7 +285,7 @@ fn tide_straight(c: vec4f) -> vec4f {
 }
 fn ts_Light(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
     var t_normal: vec4f = tide_straight(textureSampleLevel(pixels0, sampler0, t_vertex.m_uv, 0.0));
-    (*t_color) = (tide_straight(textureSampleLevel(pixels1, sampler1, t_vertex.m_uv, 0.0)) * tide_max1(t_normal.b, tide_f(0.1)));
+    (*t_color) = (tide_straight(textureSampleLevel(pixels1, sampler1, t_vertex.m_uv, 0.0)) * tide_max1(t_normal.b, 0.1));
 }
 
 @vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f) -> tide_corner {

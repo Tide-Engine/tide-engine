@@ -1,0 +1,5 @@
+// expect: [Linear] cannot read Rgba16f: this format has no sRGB counterpart
+scene Main { }
+local singleton Art { RenderTarget rt; [Linear] Texture lit; }
+void Make(mut RenderTarget t) { t = RenderTarget(64, 64, Format.Rgba16f); }
+view V(mut Art s) { s.rt = RenderTarget(64, 64); Make(s.rt); s.lit = s.rt.color; }

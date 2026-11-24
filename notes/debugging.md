@@ -1,6 +1,37 @@
 # Debugging Tide code in native debuggers
 
+## The natvis finds a run's heap past the first (2026-11-15)
+
+The section below's gap, closed for text, lists, maps and sets (a review's finding). Rather than one expression
+choosing between an owner's first heap and `runs[run - 1]`, which names the heap twice, each place a view reads a
+block is written once for each case a handle can be, under a `Condition` that says which
+(`debug_views_codegen.inc`: `view_case`, `view_condition`, `view_heap` and `view_block` take the case):
+
+- **the scratch area's** (and the pack's): `world == 2`, the world being `at >> 62`;
+- **a world's, in its owner's first heap**: `world != 2 && run == 0`, the heap as before;
+- **a world's, in a run's heap past the first**: `world != 2 && run != 0`, the heap
+  `(tide_world_heaps[world]->all + tide_heap_slots[at & 0xFFF])->runs + (run - 1)`.
+
+The run is the handle's five bits from bit 54 (`at >> 54 & 31`), and a world's page place now leaves them out:
+`at << 10 >> 32`, where `at << 2 >> 24` took them in (so a run's handle read past the table). The cases don't
+overlap, so where several nodes show (a `DisplayString`, a `StringView`, an `IndexListItems` with its `ValueNode`s)
+one does, and the case comes first in each `Condition`, so nothing of a block is read through another case's
+expression. A map's or a set's `CustomListItems` finds its block and heap once, into variables `b` and `h` (an
+`If`/`Elseif` on the case), and its loop reads through them. Each expression is shorter than before (the longest
+`DisplayString` or `StringView` text is 533 characters, 869 before, in the debugger fixture's natvis); there are
+more of them (the file is 60 KB, 44 before).
+
+Test: `tidec_debugger_natvis`. The fixture has a `Bag { int id; string note; List<int> items; Map<int, int>
+counts; }` changed by `Pack`, a system in runs by identity (schedule-and-threads.md, top sections), for eight bags;
+the test stops on the last of a tick's rows (`[packed]`, eighth hit), checks the bag's text handle is in a run past
+the first (`bag->note.at >> 54 & 31` nonzero: 28), and that its text, its list's count and elements and its map's
+entry show. With the views from before, exactly those three fail and the rest pass. LLDB's views find a run's heap
+already (below); `tidec_debugger_lldb` is CI's (Linux) and doesn't look at the bag. Neither debugger has a view of a
+grid: a grid field shows its handle.
+
 ## Handles name a run's heap too (2026-11-13, later)
+
+(The natvis part is corrected above, 2026-11-15.)
 
 A handle also says which run's heap of its owner its block is in, five bits from bit 54
 (schedule-and-threads.md, top section; `tide_heap.runs`). LLDB's views follow it (`_heap` in

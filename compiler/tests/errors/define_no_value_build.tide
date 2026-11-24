@@ -1,0 +1,6 @@
+// expect: 'ARMY_SIDE' is defined with no value, and 'define(ARMY_SIDE, ...)' reads an int here
+// expect: give it one, '--define ARMY_SIDE=<value>', or read whether it's defined: 'defined(ARMY_SIDE)'
+// define: ARMY_SIDE
+const int ARMY_SIDE = define(ARMY_SIDE, 500);
+singleton Army { int side = ARMY_SIDE; }
+scene Main { }

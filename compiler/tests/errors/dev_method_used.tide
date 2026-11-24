@@ -1,0 +1,14 @@
+// expect: 'Doubled' is 'dev', which builds without dev leave out, so 'Reload' can't use it
+// build: dev
+struct Magazine
+{
+    int rounds;
+    dev int Doubled() { return rounds * 2; }
+}
+component Gun { Magazine clip; }
+scene Main { }
+
+system Reload(mut Gun gun)
+{
+    gun.clip.rounds = gun.clip.Doubled();
+}

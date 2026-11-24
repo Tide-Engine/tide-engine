@@ -213,28 +213,82 @@ static void pixel_reads_unload(void)
     }
 }
 
-uint32_t tide_render_target_read_begin(const tide_render_target target)
+// Whether `target` has the image a read of `kind` names: what the renderer checks again against what it made.
+static bool target_read_names(const tide_render_target target, const int32_t image, const uint32_t kind)
+{
+    const uint64_t id = target.id;
+    if (!id || id == TIDE_RENDER_WINDOW || id == TIDE_RENDER_INVALID || kind >= TIDE_TARGET_READ_KINDS) return false;
+    if (!tide_render_target_live(id)) return false;
+    // A Texture3D's cells, of its one format, which has no depth
+    if (id & TIDE_RENDER_VOLUME) return image == 0 && kind != TIDE_TARGET_READ_DEPTH && tide_target_read_fits(tide_render_target_formats(id).color[0], kind);
+    // A cube and an array are read a face and a layer at a time, as they're drawn into
+    if (tide_render_target_cubic(id) && tide_render_target_face(id) < 0) return false;
+    if (tide_render_target_arrayed(id) && tide_render_target_layer(id) < 0) return false;
+    if (kind == TIDE_TARGET_READ_DEPTH) return image == 0 && tide_render_target_managed(id); // Every target of Tide's has depth
+    const tide_target_formats formats = tide_render_target_formats(id);
+    if (image < 0 || (uint32_t)image >= formats.count) return false;
+    return tide_target_read_fits(formats.color[image], kind); // An R32i face's and layer's ints too
+}
+
+uint32_t tide_render_target_read_begin_part(const tide_render_target target, const int32_t image, const uint32_t kind,
+                                            const int32_t from[3], const int32_t size[3])
 {
     for (uint32_t i = 0; i < TIDE_GPU_READS; i++) {
         tide_gpu_read_request *r = &reads_now->requests[i];
         if (r->state != TIDE_GPU_READ_FREE) continue;
         if (++reads_now->serial >= (UINT32_MAX >> 6)) reads_now->serial = 1;
         *r = (tide_gpu_read_request){.target = target, .serial = reads_now->serial, .state = TIDE_GPU_READ_ASKED};
-        if (!target.id || !tide_render_target_live(target.id) || !tide_render_target_colors(target.id)) r->state = TIDE_GPU_READ_FAILED;
+        // An image is one deep; a part of nothing (a size of 0 or less on an axis) has nothing to read
+        const bool volume = (target.id & TIDE_RENDER_VOLUME) != 0;
+        const bool some = from && size && size[0] > 0 && size[1] > 0 && (volume ? size[2] > 0 : true);
+        if (some && target_read_names(target, image, kind)) {
+            r->image = (uint8_t)image;
+            r->kind = (uint8_t)kind;
+            for (int a = 0; a < 3; a++) r->from[a] = a < 2 || volume ? from[a] : 0, r->size[a] = a < 2 || volume ? size[a] : 1;
+        } else {
+            r->target.id = TIDE_RENDER_INVALID; // Still a target's read (nonzero), of nothing
+            r->state = TIDE_GPU_READ_FAILED;
+        }
         return ticket_of(i);
     }
     return 0;
 }
 
+uint32_t tide_render_target_read_begin_as(const tide_render_target target, const int32_t image, const uint32_t kind)
+{
+    static const int32_t from[3] = {0, 0, 0}, all[3] = {INT32_MAX, INT32_MAX, INT32_MAX};
+    return tide_render_target_read_begin_part(target, image, kind, from, all);
+}
+
+uint32_t tide_render_target_read_begin(const tide_render_target target)
+{
+    return tide_render_target_read_begin_as(target, 0, TIDE_TARGET_READ_COLOR);
+}
+
 tide_grid tide_render_target_read_grid(const tide_gpu_read_result result, const tide_grid_shape *shape)
 {
-    if (!result.ok || result.width <= 0 || result.height <= 0 || result.stride != 4u || !result.words) return (tide_grid){0};
-    tide_grid grid = tide_grid_new(2u, result.width, result.height, 0);
-    tide_grid_cache cache = {0};
-    for (int32_t y = 0; y < result.height; y++) for (int32_t x = 0; x < result.width; x++) {
-        const uint32_t *words = result.words + ((size_t)y * (size_t)result.width + (size_t)x) * 4u;
-        void *cell = tide_grid_cached_poke(&cache, &grid, x, y, 0, shape, true, TIDE_IN_SCRATCH);
-        if (cell) memcpy(cell, words, sizeof(tide_color));
+    // The pixels' bytes are the cells': a result of another kind than the grid's is no grid, whoever asked
+    const int32_t depth = result.depth > 0 ? result.depth : 1;
+    if (!result.ok || result.width <= 0 || result.height <= 0 || !result.words || !shape || result.stride == 0u
+        || result.stride > 4u || result.step < result.stride || shape->cell != result.stride * 4u
+        || (shape->dims != 2u && shape->dims != 3u) || (shape->dims == 2u && depth != 1)
+        || (int64_t)result.width * result.height * depth != (int64_t)result.count) return (tide_grid){0};
+    tide_grid grid = tide_grid_new(shape->dims, result.width, result.height, depth);
+    // A row's run of cells in a chunk is side by side in it (tide_grid_place): a run is one poke and a copy, of the
+    // run's pixels as they are where a pixel is its cell's words, and else a pixel's first `stride` words of the
+    // `step` it was read as (a face's float is the first of four)
+    const int32_t run = 1 << shape->shift[0];
+    const size_t cell = (size_t)result.stride * 4u;
+    for (int32_t z = 0; z < depth; z++) for (int32_t y = 0; y < result.height; y++) {
+        const uint32_t *row = result.words + (((size_t)z * (size_t)result.height + (size_t)y) * (size_t)result.width) * result.step;
+        for (int32_t x0 = 0; x0 < result.width; x0 += run) {
+            const int32_t n = result.width - x0 < run ? result.width - x0 : run;
+            uint8_t *cells = tide_grid_poke(&grid, x0, y, z, shape, true, TIDE_IN_SCRATCH);
+            if (!cells) continue;
+            const uint32_t *words = row + (size_t)x0 * result.step;
+            if (result.step == result.stride) memcpy(cells, words, (size_t)n * cell);
+            else for (int32_t k = 0; k < n; k++) memcpy(cells + (size_t)k * cell, words + (size_t)k * result.step, cell);
+        }
     }
     return grid;
 }
@@ -257,8 +311,15 @@ bool tide_gpu_list_read_poll(const uint32_t ticket, tide_gpu_read_result *out)
     if (r->state == TIDE_GPU_READ_ASKED || r->state == TIDE_GPU_READ_BEGUN) return false;
     if (r->state == TIDE_GPU_READ_FAILED || !r->data) return true;
     if (r->target.id) {
-        *out = (tide_gpu_read_result){.ok = true, .count = r->width * r->height, .width = r->width,
-            .height = r->height, .stride = 4u, .words = r->data + TIDE_GPU_LIST_HEADER_WORDS};
+        // What the renderer wrote is as many pixels as it said, each of its kind's words or more (a face's and a
+        // layer's numbers are read four words a pixel, whatever the read keeps of them): never past `bytes`
+        const uint32_t stride = tide_target_read_words(r->kind);
+        const int32_t depth = (r->target.id & TIDE_RENDER_VOLUME) ? r->depth : 1;
+        const uint64_t count = r->width > 0 && r->height > 0 && depth > 0 ? (uint64_t)r->width * (uint64_t)r->height * (uint64_t)depth : 0u;
+        const uint64_t held = r->bytes / 4u > TIDE_GPU_LIST_HEADER_WORDS ? r->bytes / 4u - TIDE_GPU_LIST_HEADER_WORDS : 0u;
+        if (!stride || !count || count > (uint64_t)INT32_MAX || held / count < stride) return true;
+        *out = (tide_gpu_read_result){.ok = true, .count = (int32_t)count, .width = r->width, .height = r->height,
+            .stride = stride, .step = (uint32_t)(held / count), .words = r->data + TIDE_GPU_LIST_HEADER_WORDS, .depth = depth};
         return true;
     }
     const tide_gpu_list_state *s = tide_gpu_list_state_of(r->list);

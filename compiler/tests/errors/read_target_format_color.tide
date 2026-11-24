@@ -1,0 +1,5 @@
+// expect: Read<float4> gives a Grid2<float4>, but this target's image 0 is Format.Rgba8, which holds Color: write 'await target.Read()'
+scene Main {}
+local singleton State { RenderTarget target; }
+view Make(mut State state) { state.target = RenderTarget(8, 8); }
+async void Read(State state) { var pixels = await state.target.Read<float4>(); }

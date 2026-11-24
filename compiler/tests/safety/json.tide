@@ -3,6 +3,7 @@
 // expect: spoiled 2590 tries, 628 read, sum 7406
 // expect: digits false false true 0 false true false true 0
 // expect: big 262146 131073 786432 true 1001 1007 393219
+// expect: shapes false false false 9 1000 false false true 1320 tries, 336 read, sum 1811
 // expect: pieces 1048577 1 349526 false true 1048576
 // expect: numbers false false false 0 false 0 true 0 false
 // expect: kept 131073 131073 3 back 262146
@@ -47,6 +48,24 @@ struct Numbers
     List<float> floats;
     List<long> longs;
     List<int> ints;
+}
+
+enum Side
+{
+    Left,
+    Right,
+}
+
+struct Pose
+{
+    float3 at;
+    int2 cell;
+    Color tint;
+    quaternion turn;
+    Set<int> taken;
+    Set<string> names;
+    Map<int, int> byId;
+    Map<Side, float2> bySide;
 }
 
 singleton Kept
@@ -160,6 +179,45 @@ void Big(mut Kept kept)
     kept.counts = counts;
 }
 
+void Shapes()
+{
+    // Vectors given far more numbers than they have, sets and maps by numbers given a hundred thousand of them, keys no
+    // int holds or no member has, and a pose's text with each byte of it spoiled
+    var list = Times("1,-2,3,40,5,6,7,8,", 14) + "0"; // 131,073 numbers
+    var nines = Times("9", 17);
+    var at = Json.Read<Pose>("{\"at\":[" + list + "]}") != null;
+    var tint = Json.Read<Pose>("{\"tint\":[" + list + "]}") != null;
+    var nested = Json.Read<Pose>("{\"turn\":" + Times("[", 17) + "}") != null;
+    var taken = (Json.Read<Pose>("{\"taken\":[" + list + "]}") ?? Pose { }).taken.count;
+    mut var keys = "\"0\":0";
+    for (var i = 1; i < 2000; i++) keys += $",\"{i % 1000 - 500}\":{i}";
+    var byId = (Json.Read<Pose>("{\"byId\":{" + keys + "}}") ?? Pose { }).byId.count;
+    var digits = Json.Read<Pose>("{\"byId\":{\"" + nines + "\":1}}") != null;
+    var named = Json.Read<Pose>("{\"bySide\":{\"" + Times("Left", 16) + "\":[1,2]}}") != null;
+    var whole = "{\"at\":[1,2,3],\"cell\":[-4,5],\"tint\":[0.5,1,0],\"turn\":[0,0,0,1],\"taken\":[3,1],\"names\":[\"a\"],"
+              + "\"byId\":{\"-7\":2},\"bySide\":{\"Right\":[1,-1]}}";
+    var bytes = whole.ToBytes();
+    List<byte> others = [0, 34, 44, 45, 48, 58, 91, 93, 125, 255];
+    mut var tries = 0;
+    mut var read = 0;
+    mut var sum = 0;
+    for (var i = 0; i < bytes.count; i++)
+    {
+        mut var spoiled = bytes;
+        foreach (var other in others)
+        {
+            spoiled[i] = other;
+            tries++;
+            if (Json.Read<Pose>(spoiled) is Pose pose)
+            {
+                read++;
+                sum += pose.cell.x + pose.cell.y + pose.taken.count + pose.names.count + pose.byId.count + pose.bySide.count;
+            }
+        }
+    }
+    Debug.Log($"shapes {at} {tint} {nested} {taken} {byId} {digits} {named} {Json.Read<Pose>(whole) != null} {tries} tries, {read} read, sum {sum}");
+}
+
 void Pieces(mut Kept kept)
 {
     // A million pieces, none at all, and bytes that are and aren't text
@@ -205,6 +263,7 @@ system Run(mut Kept kept)
     Spoiled();
     Digits();
     Big(kept);
+    Shapes();
     Pieces(kept);
     Parsed(kept);
 }

@@ -84,6 +84,7 @@ static void compare(const tide_jobs *jobs, const bool beside)
         }
     }
     TIDE_CHECK(one.Tally.lost > 100 && one.Tally.heard > 0 && one.Tally.startNames != 0 && one.Tally.told > 0);
+    TIDE_CHECK(one.Tally.paired > 0); // Pair's exact key of the tick's start found the next boids
     tide_world_free(&many);
     tide_world_free(&one);
 }

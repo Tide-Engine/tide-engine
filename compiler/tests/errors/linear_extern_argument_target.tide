@@ -1,0 +1,6 @@
+// expect: this [Linear] source's format is not fixed by its constructor assignments
+// expect: an image from C, a list, a function's result or another parameter has no format the compiler can see
+scene Main { }
+local singleton Art { RenderTarget rt; [Linear] Texture lit; }
+extern void c_make(out RenderTarget t);
+view V(mut Art s) { c_make(out s.rt); s.lit = s.rt.color; }

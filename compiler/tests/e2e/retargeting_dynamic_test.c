@@ -59,7 +59,7 @@ TIDE_TEST(retargeting_dynamic_owned_bakes_survive_inputs_pack_and_snapshots)
     TIDE_CHECK(tide_heaps_used(&world.heap) == used && world.Probe.passed == world.Probe.checks);
     TIDE_CHECK(tide_scratch_mark() == 0);
     printf("    baked world hash: %llu\n", (unsigned long long)tide_world_hash(&world));
-    TIDE_CHECK(tide_world_hash(&world) == UINT64_C(17630739187767656375));
+    TIDE_CHECK(tide_world_hash(&world) == UINT64_C(5781616130388194082));
     tide_world_free(&copy);
     tide_world_free(&world);
 }

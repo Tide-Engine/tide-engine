@@ -19,18 +19,15 @@ struct tt_SkyVertex {
     m_position: vec2f,
     m_uv: vec2f,
 }
-fn tide_f(x: f32) -> f32 {
-    return x;
-}
 fn tide_i(x: i32) -> i32 {
     return x;
 }
 fn tide_xxh_word(h: u32, w: i32) -> u32 {
-    var k: u32 = h + u32(w) * 0xC2B2AE3Du;
+    let k: u32 = h + u32(w) * 0xC2B2AE3Du;
     return ((k << 17) | (k >> 15)) * 0x27D4EB2Fu;
 }
 fn tide_xxh_lane(h: u32, w: i32) -> u32 {
-    var k: u32 = h + u32(w) * 0x85EBCA77u;
+    let k: u32 = h + u32(w) * 0x85EBCA77u;
     return ((k << 13) | (k >> 19)) * 0x9E3779B1u;
 }
 fn tide_xxh_end(h: u32) -> i32 {
@@ -51,15 +48,15 @@ fn tide_hash3(v: vec3i) -> i32 {
     return tide_xxh_end(tide_xxh_word(tide_xxh_word(tide_xxh_word(0x165667BDu, v.x), v.y), v.z));
 }
 fn tide_hash4(v: vec4i) -> i32 {
-    var a: u32 = tide_xxh_lane(0x24234428u, v.x);
-    var b: u32 = tide_xxh_lane(0x85EBCA77u, v.y);
-    var c: u32 = tide_xxh_lane(0u, v.z);
-    var d: u32 = tide_xxh_lane(0x61C8864Fu, v.w);
+    let a: u32 = tide_xxh_lane(0x24234428u, v.x);
+    let b: u32 = tide_xxh_lane(0x85EBCA77u, v.y);
+    let c: u32 = tide_xxh_lane(0u, v.z);
+    let d: u32 = tide_xxh_lane(0x61C8864Fu, v.w);
     return tide_xxh_end(((a << 1) | (a >> 31)) + ((b << 7) | (b >> 25)) + ((c << 12) | (c >> 20)) + ((d << 18) | (d >> 14)) + 16u);
 }
 fn ts_Stars(t_vertex: tt_SkyVertex, t_color: ptr<function, vec4f>) {
-    var t_cell: vec2i = vec2i(floor((t_vertex.m_uv * tide_f(64.0))));
-    var t_luck: i32 = (((tide_hash2(t_cell) ^ tide_hash1(tide_block.tide_v0.x)) ^ tide_hash3(vec3i(t_cell, tide_block.tide_v0.x))) ^ tide_hash4(vec4i(t_cell, tide_i(1), tide_i(2))));
+    var t_cell: vec2i = vec2i(floor((t_vertex.m_uv * 64.0)));
+    var t_luck: i32 = (((tide_hash2(t_cell) ^ tide_hash1(tide_block.tide_v0.x)) ^ tide_hash3(vec3i(t_cell, tide_block.tide_v0.x))) ^ tide_hash4(vec4i(t_cell, 1, 2)));
     (*t_color) = select(vec4f(0.0, 0.0, 0.0, 1.0), vec4f(1.0, 1.0, 1.0, 1.0), ((t_luck % tide_i(30)) == 0));
 }
 
@@ -104,18 +101,12 @@ struct tt_SkyVertex {
     m_position: vec2f,
     m_uv: vec2f,
 }
-fn tide_f(x: f32) -> f32 {
-    return x;
-}
-fn tide_nan(x: f32) -> bool {
-    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
-}
 fn tide_saturate1(a: f32) -> f32 {
-    if (tide_nan(a)) { return 0.0; }
-    return clamp(a, 0.0, 1.0);
+    return select(clamp(a, 0.0, 1.0), 0.0, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000);
 }
 fn tide_tolinear1(v: f32) -> f32 {
-    var x: f32 = tide_saturate1(v);
+    let x: f32 = tide_saturate1(v);
+    if (x >= 1.0) { return 1.0; }
     if (x <= 0.04045) { return x / 12.92; }
     return pow((x + 0.055) / 1.055, 2.4);
 }
@@ -126,7 +117,8 @@ fn tide_tolinear4(v: vec4f) -> vec4f {
     return vec4f(tide_tolinear3(v.rgb), v.a);
 }
 fn tide_todisplay1(v: f32) -> f32 {
-    var x: f32 = tide_saturate1(v);
+    let x: f32 = tide_saturate1(v);
+    if (x >= 1.0) { return 1.0; }
     if (x <= 0.0031308) { return x * 12.92; }
     return 1.055 * pow(x, 1.0 / 2.4) - 0.055;
 }
@@ -138,8 +130,8 @@ fn tide_todisplay4(v: vec4f) -> vec4f {
 }
 fn ts_Transfer(t_vertex: tt_SkyVertex, t_color: ptr<function, vec4f>) {
     var t_scalar: f32 = tide_tolinear1(t_vertex.m_uv.x);
-    var t_rgb: vec3f = tide_todisplay3(vec3f(t_scalar, t_vertex.m_uv.y, tide_f(1.0)));
-    (*t_color) = tide_todisplay4(tide_tolinear4(vec4f(t_rgb, tide_f(0.37))));
+    var t_rgb: vec3f = tide_todisplay3(vec3f(t_scalar, t_vertex.m_uv.y, 1.0));
+    (*t_color) = tide_todisplay4(tide_tolinear4(vec4f(t_rgb, 0.37)));
 }
 
 @vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f) -> tide_corner {
@@ -155,6 +147,109 @@ fn ts_Transfer(t_vertex: tt_SkyVertex, t_color: ptr<function, vec4f>) {
     tide_at = in.tide_at;
     var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
     ts_Transfer(tt_SkyVertex(vec2f(), in.tide_s1), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+
+// Towards on SkyVertex: WGSL
+const tide_reversed_depth = true;
+fn tide_depth(d: f32) -> f32 { return select(d, 1.0 - d, tide_reversed_depth); }
+fn tide_clip_depth(p: vec4f) -> f32 { return select((p.z + p.w) * 0.5, (p.w - p.z) * 0.5, tide_reversed_depth); }
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) @invariant tide_at: vec4f,
+    @location(0) tide_s1: vec2f,
+}
+struct tt_SkyVertex {
+    m_position: vec2f,
+    m_uv: vec2f,
+}
+fn tide_saturate1(a: f32) -> f32 {
+    return select(clamp(a, 0.0, 1.0), 0.0, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000);
+}
+fn tide_movetowards1(c: f32, t: f32, s: f32) -> f32 {
+    let d: f32 = t - c;
+    var r: f32 = c + s;
+    if (d < 0.0) { r = c - s; }
+    if (abs(d) <= s) { r = t; }
+    return r;
+}
+fn tide_movetowards2(c: vec2f, t: vec2f, s: f32) -> vec2f {
+    let d: vec2f = t - c;
+    let l: f32 = sqrt(dot(d, d));
+    var r: vec2f = t;
+    if (l > s) { if (l > 0.0) { r = c + d * (s / l); } }
+    return r;
+}
+fn tide_movetowards3(c: vec3f, t: vec3f, s: f32) -> vec3f {
+    let d: vec3f = t - c;
+    let l: f32 = sqrt(dot(d, d));
+    var r: vec3f = t;
+    if (l > s) { if (l > 0.0) { r = c + d * (s / l); } }
+    return r;
+}
+fn tide_deltaangle(a: f32, b: f32) -> f32 {
+    let d: f32 = b - a;
+    let turn: f32 = d - floor(d / 6.2831855) * 6.2831855;
+    var r: f32 = 0.0;
+    if (turn >= 0.0) {
+        if (turn <= 6.2831855) {
+            r = turn;
+            if (turn > 3.1415927) { r = turn - 6.2831855; }
+        }
+    }
+    return r;
+}
+fn tide_wrapangle(a: f32) -> f32 {
+    return tide_deltaangle(0.0, a);
+}
+fn tide_movetowardsangle(c: f32, t: f32, s: f32) -> f32 {
+    return tide_movetowards1(c, c + tide_deltaangle(c, t), s);
+}
+fn tide_damp_share(rate: f32, dt: f32) -> f32 {
+    return tide_saturate1(1.0 - exp(0.0 - rate * dt));
+}
+fn tide_damp1(c: f32, t: f32, rate: f32, dt: f32) -> f32 {
+    return c + (t - c) * tide_damp_share(rate, dt);
+}
+fn tide_damp2(c: vec2f, t: vec2f, rate: f32, dt: f32) -> vec2f {
+    return c + (t - c) * tide_damp_share(rate, dt);
+}
+fn tide_damp3(c: vec3f, t: vec3f, rate: f32, dt: f32) -> vec3f {
+    return c + (t - c) * tide_damp_share(rate, dt);
+}
+fn ts_Towards(t_vertex: tt_SkyVertex, t_color: ptr<function, vec4f>) {
+    var t_step: f32 = tide_movetowards1(t_vertex.m_uv.x, 1.0, 0.25);
+    var t_walked: vec2f = tide_movetowards2(t_vertex.m_uv, vec2f(1.0, 0.0), t_step);
+    var t_turn: f32 = ((tide_deltaangle(t_vertex.m_uv.x, t_vertex.m_uv.y) + tide_wrapangle((t_step * 9.0))) + tide_movetowardsangle(t_step, 6.0, 0.1));
+    var t_eased: vec3f = tide_damp3(vec3f(t_walked, t_turn), vec3f(1.0), 4.0, t_vertex.m_uv.y);
+    (*t_color) = vec4f(tide_damp3(t_eased, vec4f(t_eased, 1.0).rgb, 2.0, 0.5), tide_damp1(t_step, 1.0, 3.0, 0.1));
+}
+
+@vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f) -> tide_corner {
+    var tide_vertex: tt_SkyVertex = tt_SkyVertex(tide_a0, tide_a1);
+    let tide_place = vec4f(tide_vertex.m_position, 0.0, 1.0);
+    let tide_clip = tide_block.tide_camera * tide_place;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, tide_clip_depth(tide_clip), tide_clip.w);
+    out.tide_s1 = tide_vertex.m_uv;
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    ts_Towards(tt_SkyVertex(vec2f(), in.tide_s1), &tide_color);
     tide_color = tide_color * tide_block.tide_tint;
     tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
     if (tide_block.tide_screen.w > 0.0) {
@@ -196,69 +291,48 @@ fn tide_f(x: f32) -> f32 {
 fn tide_i(x: i32) -> i32 {
     return x;
 }
-fn tide_nan(x: f32) -> bool {
-    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
-}
 fn tide_min1(a: f32, b: f32) -> f32 {
-    if (tide_nan(b)) { return a; }
-    if (tide_nan(a)) { return b; }
-    if (a < b) { return a; }
-    return b;
+    return select(select(select(b, a, a < b), b, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000), a, (bitcast<i32>(b) & 0x7fffffff) > 0x7f800000);
 }
 fn tide_max1(a: f32, b: f32) -> f32 {
-    if (tide_nan(b)) { return a; }
-    if (tide_nan(a)) { return b; }
-    if (a > b) { return a; }
-    return b;
+    return select(select(select(b, a, a > b), b, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000), a, (bitcast<i32>(b) & 0x7fffffff) > 0x7f800000);
 }
 fn tide_max2(a: vec2f, b: vec2f) -> vec2f {
     return vec2f(tide_max1(a.x, b.x), tide_max1(a.y, b.y));
 }
 fn tide_clamp1(a: f32, b: f32, c: f32) -> f32 {
-    if (tide_nan(a)) { return b; }
-    return tide_max1(b, tide_min1(c, a));
+    return select(tide_max1(b, tide_min1(c, a)), b, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000);
 }
 fn tide_clamp3(a: vec3f, b: vec3f, c: vec3f) -> vec3f {
     return vec3f(tide_clamp1(a.x, b.x, c.x), tide_clamp1(a.y, b.y, c.y), tide_clamp1(a.z, b.z, c.z));
 }
 fn tide_saturate1(a: f32) -> f32 {
-    if (tide_nan(a)) { return 0.0; }
-    return clamp(a, 0.0, 1.0);
+    return select(clamp(a, 0.0, 1.0), 0.0, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000);
 }
 fn tide_smoothstep1(a: f32, b: f32, c: f32) -> f32 {
-    var numerator: f32 = c - a;
-    var denominator: f32 = b - a;
-    var divisor: f32 = denominator;
-    if (divisor == 0.0) { divisor = 1.0; }
-    var t: f32 = tide_saturate1(numerator / divisor);
-    if (denominator == 0.0) {
-        t = 0.0;
-        if (bitcast<i32>(denominator) < 0) {
-            if (numerator < 0.0) { t = 1.0; }
-        } else if (numerator > 0.0) { t = 1.0; }
-    }
+    let numerator: f32 = c - a;
+    let denominator: f32 = b - a;
+    let level: bool = denominator == 0.0;
+    let past: f32 = select(numerator, 0.0 - numerator, bitcast<i32>(denominator) < 0);
+    let t: f32 = select(tide_saturate1(numerator / select(denominator, 1.0, level)), select(0.0, 1.0, past > 0.0), level);
     return t * t * (3.0 - 2.0 * t);
 }
 fn tide_pow1(a: f32, b: f32) -> f32 {
-    if (b == 0.0) { return 1.0; }
-    var w: bool = a < 0.0 && floor(b) == b;
-    var x: f32 = a;
-    if (w) { x = -a; }
-    var p: f32 = pow(x, b);
-    if (w && floor(b * 0.5) * 2.0 != b) { return -p; }
-    return p;
+    let w: bool = (a < 0.0) & (floor(b) == b);
+    let p: f32 = pow(select(a, -a, w), b);
+    return select(select(p, -p, w & (floor(b * 0.5) * 2.0 != b)), 1.0, b == 0.0);
 }
 fn tide_atan2_1(a: f32, b: f32) -> f32 {
     if (a == 0.0 && b == 0.0) { return 0.0; }
     return atan2(a, b);
 }
 fn tide_normalize3(v: vec3f) -> vec3f {
-    var l: f32 = dot(v, v);
+    let l: f32 = dot(v, v);
     if (l > 1.17549435e-38) { return v * inverseSqrt(l); }
     return vec3f(0.0);
 }
 fn tide_normalize_q(q: vec4f) -> vec4f {
-    var l: f32 = dot(q, q);
+    let l: f32 = dot(q, q);
     if (l > 1.17549435e-38) { return q * inverseSqrt(l); }
     return vec4f(0.0, 0.0, 0.0, 1.0);
 }
@@ -266,7 +340,7 @@ fn tide_mul_q(a: vec4f, b: vec4f) -> vec4f {
     return vec4f(a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y, a.w * b.y + a.y * b.w + a.z * b.x - a.x * b.z, a.w * b.z + a.z * b.w + a.x * b.y - a.y * b.x, a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z);
 }
 fn tide_rotate_q(q: vec4f, v: vec3f) -> vec3f {
-    var t: vec3f = 2.0 * cross(q.xyz, v);
+    let t: vec3f = 2.0 * cross(q.xyz, v);
     return v + q.w * t + cross(q.xyz, t);
 }
 fn tide_inverse_q(q: vec4f) -> vec4f {
@@ -288,30 +362,30 @@ fn tide_slerp_q(a: vec4f, b: vec4f, t: f32) -> vec4f {
         c = -b;
     }
     if (d < 0.9995) {
-        var w: f32 = acos(d);
-        var s: f32 = inverseSqrt(1.0 - d * d);
+        let w: f32 = acos(d);
+        let s: f32 = inverseSqrt(1.0 - d * d);
         return a * (sin(w * (1.0 - t)) * s) + c * (sin(w * t) * s);
     }
     return tide_nlerp_q(a, c, t);
 }
 fn tide_angle_q(a: vec4f, b: vec4f) -> f32 {
-    var d: vec4f = tide_normalize_q(tide_mul_q(vec4f(-a.xyz, a.w), b));
-    var w: f32 = asin(min(length(d.xyz), 1.0));
+    let d: vec4f = tide_normalize_q(tide_mul_q(vec4f(-a.xyz, a.w), b));
+    let w: f32 = asin(min(length(d.xyz), 1.0));
     return w + w;
 }
 fn tide_axisangle_q(v: vec3f, w: f32) -> vec4f {
     return vec4f(v * sin(0.5 * w), cos(0.5 * w));
 }
 fn tide_euler_q(v: vec3f) -> vec4f {
-    var s: vec3f = sin(0.5 * v);
-    var c: vec3f = cos(0.5 * v);
+    let s: vec3f = sin(0.5 * v);
+    let c: vec3f = cos(0.5 * v);
     return tide_mul_q(tide_mul_q(vec4f(0.0, s.y, 0.0, c.y), vec4f(s.x, 0.0, 0.0, c.x)), vec4f(0.0, 0.0, s.z, c.z));
 }
 fn tide_q_from_m3(m: mat3x3f) -> vec4f {
-    var x: f32 = m[0].x;
-    var y: f32 = m[1].y;
-    var z: f32 = m[2].z;
-    var t: f32 = x + y + z;
+    let x: f32 = m[0].x;
+    let y: f32 = m[1].y;
+    let z: f32 = m[2].z;
+    let t: f32 = x + y + z;
     if (t > 0.0) {
         var s: f32 = sqrt(t + 1.0) * 2.0;
         if (s == 0.0) { s = 1.0; }
@@ -333,74 +407,74 @@ fn tide_q_from_m3(m: mat3x3f) -> vec4f {
 }
 fn tide_fromto_unit3(v: vec3f) -> vec3f {
     if ((bitcast<i32>(v.x) & 0x7f800000) == 0x7f800000 || (bitcast<i32>(v.y) & 0x7f800000) == 0x7f800000 || (bitcast<i32>(v.z) & 0x7f800000) == 0x7f800000) { return vec3f(0.0); }
-    var largest: f32 = max(max(abs(v.x), abs(v.y)), abs(v.z));
+    let largest: f32 = max(max(abs(v.x), abs(v.y)), abs(v.z));
     if (largest == 0.0) { return vec3f(0.0); }
     return tide_normalize3(v / largest);
 }
 fn tide_fromto_q(f: vec3f, t: vec3f) -> vec4f {
-    var a: vec3f = tide_fromto_unit3(f);
-    var b: vec3f = tide_fromto_unit3(t);
+    let a: vec3f = tide_fromto_unit3(f);
+    let b: vec3f = tide_fromto_unit3(t);
     if (dot(a, a) == 0.0 || dot(b, b) == 0.0) { return vec4f(0.0, 0.0, 0.0, 1.0); }
-    var d: f32 = clamp(dot(a, b), -1.0, 1.0);
-    var axis: vec3f = cross(a, b);
+    let d: f32 = clamp(dot(a, b), -1.0, 1.0);
+    let axis: vec3f = cross(a, b);
     if (d >= 0.0) { return tide_normalize_q(vec4f(axis, 1.0 + d)); }
-    var largest: f32 = max(max(abs(axis.x), abs(axis.y)), abs(axis.z));
+    let largest: f32 = max(max(abs(axis.x), abs(axis.y)), abs(axis.z));
     if (largest == 0.0 || (a.x == -b.x && a.y == -b.y && a.z == -b.z)) {
-        var absolute: vec3f = abs(a);
+        let absolute: vec3f = abs(a);
         var side: vec3f = vec3f(0.0, 0.0, 1.0);
         if (absolute.x <= absolute.y && absolute.x <= absolute.z) { side = vec3f(1.0, 0.0, 0.0); }
         else if (absolute.y <= absolute.z) { side = vec3f(0.0, 1.0, 0.0); }
         return vec4f(tide_fromto_unit3(cross(a, side)), 0.0);
     }
-    var scaled: vec3f = axis / largest;
-    var size: f32 = length(scaled);
-    var sine: f32 = sqrt(0.5 * (1.0 - d));
+    let scaled: vec3f = axis / largest;
+    let size: f32 = length(scaled);
+    let sine: f32 = sqrt(0.5 * (1.0 - d));
     return tide_normalize_q(vec4f(scaled * (sine / size), (largest * size) / (2.0 * sine)));
 }
 fn tide_lookrotation_q(f: vec3f, u: vec3f) -> vec4f {
-    var z: vec3f = tide_fromto_unit3(f);
-    var side: vec3f = cross(tide_fromto_unit3(u), z);
+    let z: vec3f = tide_fromto_unit3(f);
+    let side: vec3f = cross(tide_fromto_unit3(u), z);
     var q: vec4f = vec4f(0.0, 0.0, 0.0, 1.0);
     if (dot(side, side) < 1e-10) {
         q = tide_fromto_q(vec3f(0.0, 0.0, 1.0), f);
     } else {
-        var y: vec3f = tide_normalize3(cross(z, tide_normalize3(side)));
+        let y: vec3f = tide_normalize3(cross(z, tide_normalize3(side)));
         q = tide_normalize_q(tide_q_from_m3(mat3x3f(cross(y, z), y, z)));
     }
     return q;
 }
 fn tide_m3_from_q(q: vec4f) -> mat3x3f {
-    var x: f32 = q.x + q.x;
-    var y: f32 = q.y + q.y;
-    var z: f32 = q.z + q.z;
-    var xx: f32 = q.x * x;
-    var yy: f32 = q.y * y;
-    var zz: f32 = q.z * z;
-    var xy: f32 = q.x * y;
-    var xz: f32 = q.x * z;
-    var yz: f32 = q.y * z;
-    var wx: f32 = q.w * x;
-    var wy: f32 = q.w * y;
-    var wz: f32 = q.w * z;
+    let x: f32 = q.x + q.x;
+    let y: f32 = q.y + q.y;
+    let z: f32 = q.z + q.z;
+    let xx: f32 = q.x * x;
+    let yy: f32 = q.y * y;
+    let zz: f32 = q.z * z;
+    let xy: f32 = q.x * y;
+    let xz: f32 = q.x * z;
+    let yz: f32 = q.y * z;
+    let wx: f32 = q.w * x;
+    let wy: f32 = q.w * y;
+    let wz: f32 = q.w * z;
     return mat3x3f(1.0 - (yy + zz), xy + wz, xz - wy, xy - wz, 1.0 - (xx + zz), yz + wx, xz + wy, yz - wx, 1.0 - (xx + yy));
 }
 fn tide_m4_from_m3(m: mat3x3f, t: vec3f) -> mat4x4f {
     return mat4x4f(vec4f(m[0], 0.0), vec4f(m[1], 0.0), vec4f(m[2], 0.0), vec4f(t, 1.0));
 }
 fn tide_trs(t: vec3f, q: vec4f, s: vec3f) -> mat4x4f {
-    var m: mat3x3f = tide_m3_from_q(q);
+    let m: mat3x3f = tide_m3_from_q(q);
     return mat4x4f(vec4f(m[0] * s.x, 0.0), vec4f(m[1] * s.y, 0.0), vec4f(m[2] * s.z, 0.0), vec4f(t, 1.0));
 }
 fn tide_scaling(s: vec3f) -> mat4x4f {
     return mat4x4f(vec4f(s.x, 0.0, 0.0, 0.0), vec4f(0.0, s.y, 0.0, 0.0), vec4f(0.0, 0.0, s.z, 0.0), vec4f(0.0, 0.0, 0.0, 1.0));
 }
 fn tide_perspective(v: f32, a: f32, n: f32, f: f32) -> mat4x4f {
-    var c: f32 = 1.0 / tan(v * 0.5);
-    var r: f32 = 1.0 / (n - f);
+    let c: f32 = 1.0 / tan(v * 0.5);
+    let r: f32 = 1.0 / (n - f);
     return mat4x4f(vec4f(c / a, 0.0, 0.0, 0.0), vec4f(0.0, c, 0.0, 0.0), vec4f(0.0, 0.0, (f + n) * r, -1.0), vec4f(0.0, 0.0, 2.0 * n * f * r, 0.0));
 }
 fn tide_ortho(w: f32, h: f32, n: f32, f: f32) -> mat4x4f {
-    var r: f32 = 1.0 / (f - n);
+    let r: f32 = 1.0 / (f - n);
     return mat4x4f(vec4f(2.0 / w, 0.0, 0.0, 0.0), vec4f(0.0, 2.0 / h, 0.0, 0.0), vec4f(0.0, 0.0, -2.0 * r, 0.0), vec4f(0.0, 0.0, -(f + n) * r, 1.0));
 }
 fn tide_reciprocal(value: f32) -> f32 {
@@ -411,59 +485,59 @@ fn tide_reciprocal(value: f32) -> f32 {
     return result;
 }
 fn tide_inverse2(m: mat2x2f) -> mat2x2f {
-    var s: f32 = tide_reciprocal(m[0].x * m[1].y - m[1].x * m[0].y);
+    let s: f32 = tide_reciprocal(m[0].x * m[1].y - m[1].x * m[0].y);
     return mat2x2f(m[1].y * s, -m[0].y * s, -m[1].x * s, m[0].x * s);
 }
 fn tide_inverse3(m: mat3x3f) -> mat3x3f {
-    var a: vec3f = cross(m[1], m[2]);
-    var b: vec3f = cross(m[2], m[0]);
-    var c: vec3f = cross(m[0], m[1]);
+    let a: vec3f = cross(m[1], m[2]);
+    let b: vec3f = cross(m[2], m[0]);
+    let c: vec3f = cross(m[0], m[1]);
     return transpose(mat3x3f(a, b, c)) * tide_reciprocal(dot(m[0], a));
 }
 fn tide_inverse4(m: mat4x4f) -> mat4x4f {
-    var a00: f32 = m[0].x;
-    var a01: f32 = m[1].x;
-    var a02: f32 = m[2].x;
-    var a03: f32 = m[3].x;
-    var a10: f32 = m[0].y;
-    var a11: f32 = m[1].y;
-    var a12: f32 = m[2].y;
-    var a13: f32 = m[3].y;
-    var a20: f32 = m[0].z;
-    var a21: f32 = m[1].z;
-    var a22: f32 = m[2].z;
-    var a23: f32 = m[3].z;
-    var a30: f32 = m[0].w;
-    var a31: f32 = m[1].w;
-    var a32: f32 = m[2].w;
-    var a33: f32 = m[3].w;
-    var s0: f32 = a00 * a11 - a10 * a01;
-    var s1: f32 = a00 * a12 - a10 * a02;
-    var s2: f32 = a00 * a13 - a10 * a03;
-    var s3: f32 = a01 * a12 - a11 * a02;
-    var s4: f32 = a01 * a13 - a11 * a03;
-    var s5: f32 = a02 * a13 - a12 * a03;
-    var k5: f32 = a22 * a33 - a32 * a23;
-    var k4: f32 = a21 * a33 - a31 * a23;
-    var k3: f32 = a21 * a32 - a31 * a22;
-    var k2: f32 = a20 * a33 - a30 * a23;
-    var k1: f32 = a20 * a32 - a30 * a22;
-    var k0: f32 = a20 * a31 - a30 * a21;
-    var d: f32 = tide_reciprocal(s0 * k5 - s1 * k4 + s2 * k3 + s3 * k2 - s4 * k1 + s5 * k0);
+    let a00: f32 = m[0].x;
+    let a01: f32 = m[1].x;
+    let a02: f32 = m[2].x;
+    let a03: f32 = m[3].x;
+    let a10: f32 = m[0].y;
+    let a11: f32 = m[1].y;
+    let a12: f32 = m[2].y;
+    let a13: f32 = m[3].y;
+    let a20: f32 = m[0].z;
+    let a21: f32 = m[1].z;
+    let a22: f32 = m[2].z;
+    let a23: f32 = m[3].z;
+    let a30: f32 = m[0].w;
+    let a31: f32 = m[1].w;
+    let a32: f32 = m[2].w;
+    let a33: f32 = m[3].w;
+    let s0: f32 = a00 * a11 - a10 * a01;
+    let s1: f32 = a00 * a12 - a10 * a02;
+    let s2: f32 = a00 * a13 - a10 * a03;
+    let s3: f32 = a01 * a12 - a11 * a02;
+    let s4: f32 = a01 * a13 - a11 * a03;
+    let s5: f32 = a02 * a13 - a12 * a03;
+    let k5: f32 = a22 * a33 - a32 * a23;
+    let k4: f32 = a21 * a33 - a31 * a23;
+    let k3: f32 = a21 * a32 - a31 * a22;
+    let k2: f32 = a20 * a33 - a30 * a23;
+    let k1: f32 = a20 * a32 - a30 * a22;
+    let k0: f32 = a20 * a31 - a30 * a21;
+    let d: f32 = tide_reciprocal(s0 * k5 - s1 * k4 + s2 * k3 + s3 * k2 - s4 * k1 + s5 * k0);
     return mat4x4f((a11 * k5 - a12 * k4 + a13 * k3) * d, (-a10 * k5 + a12 * k2 - a13 * k1) * d, (a10 * k4 - a11 * k2 + a13 * k0) * d, (-a10 * k3 + a11 * k1 - a12 * k0) * d, (-a01 * k5 + a02 * k4 - a03 * k3) * d, (a00 * k5 - a02 * k2 + a03 * k1) * d, (-a00 * k4 + a01 * k2 - a03 * k0) * d, (a00 * k3 - a01 * k1 + a02 * k0) * d, (a31 * s5 - a32 * s4 + a33 * s3) * d, (-a30 * s5 + a32 * s2 - a33 * s1) * d, (a30 * s4 - a31 * s2 + a33 * s0) * d, (-a30 * s3 + a31 * s1 - a32 * s0) * d, (-a21 * s5 + a22 * s4 - a23 * s3) * d, (a20 * s5 - a22 * s2 + a23 * s1) * d, (-a20 * s4 + a21 * s2 - a23 * s0) * d, (a20 * s3 - a21 * s1 + a22 * s0) * d);
 }
 fn ts_Blow(t_vertex: ptr<function, tt_SkyVertex>) {
-    var t_spin: vec4f = tide_mul_q(tide_block.tide_u0, tide_axisangle_q(vec3f(tide_f(0.0), tide_f(0.0), tide_f(1.0)), tide_block.tide_u5.w));
-    var t_eased: vec4f = tide_slerp_q(tide_euler_q(tide_block.tide_u1.xyz), tide_inverse_q(t_spin), tide_f(0.5));
+    var t_spin: vec4f = tide_mul_q(tide_block.tide_u0, tide_axisangle_q(vec3f(0.0, 0.0, 1.0), tide_block.tide_u5.w));
+    var t_eased: vec4f = tide_slerp_q(tide_euler_q(tide_block.tide_u1.xyz), tide_inverse_q(t_spin), 0.5);
     var t_scalar: vec4f = tide_euler_q(vec3f(tide_block.tide_u1.xyz.x, tide_block.tide_u1.xyz.y, tide_block.tide_u1.xyz.z));
     var t_named: vec4f = tide_euler_q(vec3f(tide_block.tide_u1.xyz.x, tide_block.tide_u1.xyz.y, tide_block.tide_u1.xyz.z));
     var t_whole: vec4f = tide_euler_q(vec3f(1.0, 2.0, 3.0));
     var t_aligned: vec4f = tide_fromto_q(tide_block.tide_u1.xyz, vec3f(0.0, 1.0, 0.0));
     var t_degrees: vec4f = tide_euler_q(vec3f(3.14159274, (-0.794124782), 1.57079637));
     var t_angle: f32 = ((tide_f(0.00872664619) + tide_f(0.314159274)) - tide_f(0.0));
-    var t_aimed: vec4f = tide_nlerp_q(tide_lookrotation_q(tide_rotate_q(t_eased, vec3f(0.0, 0.0, 1.0)), tide_rotate_q(t_spin, vec3f(0.0, 1.0, 0.0))), tide_conjugate_q(tide_normalize_q(t_spin)), tide_f(0.5));
-    var t_pushed: vec3f = (tide_rotate_q(t_aimed, vec3f((*t_vertex).m_position, tide_f(0.0))) + (tide_rotate_q(t_spin, vec3f(1.0, 0.0, 0.0)) * tide_angle_q(t_spin, t_eased)));
-    var t_placed: mat4x4f = (tide_trs(tide_block.tide_u1.xyz, tide_q_from_m3(tide_m3_from_q(t_aimed)), vec3f(tide_f(1.0))) * tide_inverse4(mat4x4f(vec4f(tide_block.tide_u1.w, tide_block.tide_u2.x, tide_block.tide_u2.y, tide_block.tide_u2.z), vec4f(tide_block.tide_u2.w, tide_block.tide_u3.x, tide_block.tide_u3.y, tide_block.tide_u3.z), vec4f(tide_block.tide_u3.w, tide_block.tide_u4.x, tide_block.tide_u4.y, tide_block.tide_u4.z), vec4f(tide_block.tide_u4.w, tide_block.tide_u5.x, tide_block.tide_u5.y, tide_block.tide_u5.z))));
+    var t_aimed: vec4f = tide_nlerp_q(tide_lookrotation_q(tide_rotate_q(t_eased, vec3f(0.0, 0.0, 1.0)), tide_rotate_q(t_spin, vec3f(0.0, 1.0, 0.0))), tide_conjugate_q(tide_normalize_q(t_spin)), 0.5);
+    var t_pushed: vec3f = (tide_rotate_q(t_aimed, vec3f((*t_vertex).m_position, 0.0)) + (tide_rotate_q(t_spin, vec3f(1.0, 0.0, 0.0)) * tide_angle_q(t_spin, t_eased)));
+    var t_placed: mat4x4f = (tide_trs(tide_block.tide_u1.xyz, tide_q_from_m3(tide_m3_from_q(t_aimed)), vec3f(1.0)) * tide_inverse4(mat4x4f(vec4f(tide_block.tide_u1.w, tide_block.tide_u2.x, tide_block.tide_u2.y, tide_block.tide_u2.z), vec4f(tide_block.tide_u2.w, tide_block.tide_u3.x, tide_block.tide_u3.y, tide_block.tide_u3.z), vec4f(tide_block.tide_u3.w, tide_block.tide_u4.x, tide_block.tide_u4.y, tide_block.tide_u4.z), vec4f(tide_block.tide_u4.w, tide_block.tide_u5.x, tide_block.tide_u5.y, tide_block.tide_u5.z))));
     var t_seen: mat4x4f = (tide_perspective(tide_f(1.0), tide_f(1.5), tide_f(0.1), tide_f(100.0)) * tide_ortho(tide_f(4.0), tide_f(3.0), tide_f(0.1), tide_f(100.0)));
     var t_moved: mat4x4f = (mat4x4f(vec4f(1.0, 0.0, 0.0, 0.0), vec4f(0.0, 1.0, 0.0, 0.0), vec4f(0.0, 0.0, 1.0, 0.0), vec4f(t_pushed, 1.0)) * tide_m4_from_m3(tide_inverse3(tide_m3_from_q(t_spin)), tide_block.tide_u1.xyz));
     var t_flat: mat2x2f = tide_inverse2(mat2x2f(tide_f(2.0), f32((-tide_i(1))), tide_f(1.0), tide_f(3.0)));
@@ -471,13 +545,13 @@ fn ts_Blow(t_vertex: ptr<function, tt_SkyVertex>) {
 }
 
 fn ts_Calm(t_vertex: tt_SkyVertex, t_color: ptr<function, vec4f>) {
-    var t_least: f32 = tide_min1(tide_block.tide_u5.w, tide_f(2.0));
-    var t_most: vec2f = tide_max2(t_vertex.m_uv, vec2f(tide_f(0.5)));
-    var t_held: vec3f = tide_clamp3(tide_block.tide_u1.xyz, vec3f(tide_f(0.0)), vec3f(tide_f(1.0)));
-    var t_eased: f32 = tide_smoothstep1(tide_f(1.0), tide_f(0.0), tide_saturate1(t_least));
-    var t_raised: f32 = tide_pow1((tide_block.tide_u5.w - tide_f(2.0)), tide_f(2.0));
-    var t_turned: f32 = tide_atan2_1((t_vertex.m_uv.y - tide_f(0.5)), (t_vertex.m_uv.x - tide_f(0.5)));
-    var t_capped: i32 = max(tide_i(0), min(tide_i(9), tide_block.tide_v0.x));
+    var t_least: f32 = tide_min1(tide_block.tide_u5.w, 2.0);
+    var t_most: vec2f = tide_max2(t_vertex.m_uv, vec2f(0.5));
+    var t_held: vec3f = tide_clamp3(tide_block.tide_u1.xyz, vec3f(0.0), vec3f(1.0));
+    var t_eased: f32 = tide_smoothstep1(1.0, 0.0, tide_saturate1(t_least));
+    var t_raised: f32 = tide_pow1((tide_block.tide_u5.w - 2.0), 2.0);
+    var t_turned: f32 = tide_atan2_1((t_vertex.m_uv.y - 0.5), (t_vertex.m_uv.x - 0.5));
+    var t_capped: i32 = max(0, min(9, tide_block.tide_v0.x));
     var t_scalar: vec4f = tide_euler_q(vec3f(tide_block.tide_u1.xyz.x, tide_block.tide_u1.xyz.y, tide_block.tide_u1.xyz.z));
     var t_aligned: vec4f = tide_fromto_q(tide_block.tide_u1.xyz, vec3f(0.0, f32((-1)), 0.0));
     var t_named: vec4f = tide_euler_q(vec3f(1.0, 2.0, 3.0));
@@ -529,15 +603,12 @@ struct tt_SkyVertex {
     m_position: vec2f,
     m_uv: vec2f,
 }
-fn tide_f(x: f32) -> f32 {
-    return x;
-}
 fn tide_xxh_word(h: u32, w: i32) -> u32 {
-    var k: u32 = h + u32(w) * 0xC2B2AE3Du;
+    let k: u32 = h + u32(w) * 0xC2B2AE3Du;
     return ((k << 17) | (k >> 15)) * 0x27D4EB2Fu;
 }
 fn tide_xxh_lane(h: u32, w: i32) -> u32 {
-    var k: u32 = h + u32(w) * 0x85EBCA77u;
+    let k: u32 = h + u32(w) * 0x85EBCA77u;
     return ((k << 13) | (k >> 19)) * 0x9E3779B1u;
 }
 fn tide_xxh_end(h: u32) -> i32 {
@@ -552,178 +623,150 @@ fn tide_hash3(v: vec3i) -> i32 {
     return tide_xxh_end(tide_xxh_word(tide_xxh_word(tide_xxh_word(0x165667BDu, v.x), v.y), v.z));
 }
 fn tide_hash4(v: vec4i) -> i32 {
-    var a: u32 = tide_xxh_lane(0x24234428u, v.x);
-    var b: u32 = tide_xxh_lane(0x85EBCA77u, v.y);
-    var c: u32 = tide_xxh_lane(0u, v.z);
-    var d: u32 = tide_xxh_lane(0x61C8864Fu, v.w);
+    let a: u32 = tide_xxh_lane(0x24234428u, v.x);
+    let b: u32 = tide_xxh_lane(0x85EBCA77u, v.y);
+    let c: u32 = tide_xxh_lane(0u, v.z);
+    let d: u32 = tide_xxh_lane(0x61C8864Fu, v.w);
     return tide_xxh_end(((a << 1) | (a >> 31)) + ((b << 7) | (b >> 25)) + ((c << 12) | (c >> 20)) + ((d << 18) | (d >> 14)) + 16u);
 }
 fn tide_fade(t: f32) -> f32 {
     return t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
 }
 fn tide_grad2(h: i32, x: f32, y: f32) -> f32 {
-    var gx: f32 = 1.0;
-    var gy: f32 = 0.0;
-    if ((h & 4) != 0) {
-        gx = 0.70710678;
-        gy = 0.70710678;
-        if ((h & 1) != 0) { gx = -0.70710678; }
-        if ((h & 2) != 0) { gy = -0.70710678; }
-    } else if ((h & 2) != 0) {
-        gx = 0.0;
-        gy = 1.0;
-        if ((h & 1) != 0) { gy = -1.0; }
-    } else if ((h & 1) != 0) {
-        gx = -1.0;
-    }
+    let one: bool = (h & 1) != 0;
+    let two: bool = (h & 2) != 0;
+    let four: bool = (h & 4) != 0;
+    let gx: f32 = select(select(select(1.0, -1.0, one), 0.0, two), select(0.70710678, -0.70710678, one), four);
+    let gy: f32 = select(select(0.0, select(1.0, -1.0, one), two), select(0.70710678, -0.70710678, two), four);
     return gx * x + gy * y;
 }
 fn tide_grad3(h: i32, x: f32, y: f32, z: f32) -> f32 {
-    var k: i32 = h & 15;
-    var u: f32 = x;
-    var v: f32 = y;
-    if (k >= 8) { u = y; }
-    if (k >= 4) { v = z; }
-    if (k == 12 || k == 14) { v = x; }
-    if ((k & 1) != 0) { u = -u; }
-    if ((k & 2) != 0) { v = -v; }
-    return u + v;
+    let k: i32 = h & 15;
+    let u: f32 = select(x, y, k >= 8);
+    let v: f32 = select(select(y, z, k >= 4), x, (k == 12) | (k == 14));
+    return select(u, -u, (k & 1) != 0) + select(v, -v, (k & 2) != 0);
 }
 fn tide_perlin2(p: vec2f, seed: i32) -> f32 {
-    var f: vec2f = floor(p);
-    var i: vec2i = vec2i(f);
-    var j: vec2i = i + 1;
-    var x: f32 = p.x - f.x;
-    var y: f32 = p.y - f.y;
-    var u: f32 = tide_fade(x);
-    var v: f32 = tide_fade(y);
-    var n00: f32 = tide_grad2(tide_hash3(vec3i(i.x, i.y, seed)), x, y);
-    var n10: f32 = tide_grad2(tide_hash3(vec3i(j.x, i.y, seed)), x - 1.0, y);
-    var n01: f32 = tide_grad2(tide_hash3(vec3i(i.x, j.y, seed)), x, y - 1.0);
-    var n11: f32 = tide_grad2(tide_hash3(vec3i(j.x, j.y, seed)), x - 1.0, y - 1.0);
-    var a: f32 = n00 + u * (n10 - n00);
-    var b: f32 = n01 + u * (n11 - n01);
+    let f: vec2f = floor(p);
+    let i: vec2i = vec2i(f);
+    let j: vec2i = i + 1;
+    let x: f32 = p.x - f.x;
+    let y: f32 = p.y - f.y;
+    let u: f32 = tide_fade(x);
+    let v: f32 = tide_fade(y);
+    let n00: f32 = tide_grad2(tide_hash3(vec3i(i.x, i.y, seed)), x, y);
+    let n10: f32 = tide_grad2(tide_hash3(vec3i(j.x, i.y, seed)), x - 1.0, y);
+    let n01: f32 = tide_grad2(tide_hash3(vec3i(i.x, j.y, seed)), x, y - 1.0);
+    let n11: f32 = tide_grad2(tide_hash3(vec3i(j.x, j.y, seed)), x - 1.0, y - 1.0);
+    let a: f32 = n00 + u * (n10 - n00);
+    let b: f32 = n01 + u * (n11 - n01);
     return (a + v * (b - a)) * 1.41421356;
 }
 fn tide_perlin3(p: vec3f, seed: i32) -> f32 {
-    var f: vec3f = floor(p);
-    var i: vec3i = vec3i(f);
-    var j: vec3i = i + 1;
-    var x: f32 = p.x - f.x;
-    var y: f32 = p.y - f.y;
-    var z: f32 = p.z - f.z;
-    var u: f32 = tide_fade(x);
-    var v: f32 = tide_fade(y);
-    var w: f32 = tide_fade(z);
-    var n000: f32 = tide_grad3(tide_hash4(vec4i(i.x, i.y, i.z, seed)), x, y, z);
-    var n100: f32 = tide_grad3(tide_hash4(vec4i(j.x, i.y, i.z, seed)), x - 1.0, y, z);
-    var n010: f32 = tide_grad3(tide_hash4(vec4i(i.x, j.y, i.z, seed)), x, y - 1.0, z);
-    var n110: f32 = tide_grad3(tide_hash4(vec4i(j.x, j.y, i.z, seed)), x - 1.0, y - 1.0, z);
-    var n001: f32 = tide_grad3(tide_hash4(vec4i(i.x, i.y, j.z, seed)), x, y, z - 1.0);
-    var n101: f32 = tide_grad3(tide_hash4(vec4i(j.x, i.y, j.z, seed)), x - 1.0, y, z - 1.0);
-    var n011: f32 = tide_grad3(tide_hash4(vec4i(i.x, j.y, j.z, seed)), x, y - 1.0, z - 1.0);
-    var n111: f32 = tide_grad3(tide_hash4(vec4i(j.x, j.y, j.z, seed)), x - 1.0, y - 1.0, z - 1.0);
-    var a0: f32 = n000 + u * (n100 - n000);
-    var a1: f32 = n010 + u * (n110 - n010);
-    var b0: f32 = n001 + u * (n101 - n001);
-    var b1: f32 = n011 + u * (n111 - n011);
-    var a: f32 = a0 + v * (a1 - a0);
-    var b: f32 = b0 + v * (b1 - b0);
+    let f: vec3f = floor(p);
+    let i: vec3i = vec3i(f);
+    let j: vec3i = i + 1;
+    let x: f32 = p.x - f.x;
+    let y: f32 = p.y - f.y;
+    let z: f32 = p.z - f.z;
+    let u: f32 = tide_fade(x);
+    let v: f32 = tide_fade(y);
+    let w: f32 = tide_fade(z);
+    let n000: f32 = tide_grad3(tide_hash4(vec4i(i.x, i.y, i.z, seed)), x, y, z);
+    let n100: f32 = tide_grad3(tide_hash4(vec4i(j.x, i.y, i.z, seed)), x - 1.0, y, z);
+    let n010: f32 = tide_grad3(tide_hash4(vec4i(i.x, j.y, i.z, seed)), x, y - 1.0, z);
+    let n110: f32 = tide_grad3(tide_hash4(vec4i(j.x, j.y, i.z, seed)), x - 1.0, y - 1.0, z);
+    let n001: f32 = tide_grad3(tide_hash4(vec4i(i.x, i.y, j.z, seed)), x, y, z - 1.0);
+    let n101: f32 = tide_grad3(tide_hash4(vec4i(j.x, i.y, j.z, seed)), x - 1.0, y, z - 1.0);
+    let n011: f32 = tide_grad3(tide_hash4(vec4i(i.x, j.y, j.z, seed)), x, y - 1.0, z - 1.0);
+    let n111: f32 = tide_grad3(tide_hash4(vec4i(j.x, j.y, j.z, seed)), x - 1.0, y - 1.0, z - 1.0);
+    let a0: f32 = n000 + u * (n100 - n000);
+    let a1: f32 = n010 + u * (n110 - n010);
+    let b0: f32 = n001 + u * (n101 - n001);
+    let b1: f32 = n011 + u * (n111 - n011);
+    let a: f32 = a0 + v * (a1 - a0);
+    let b: f32 = b0 + v * (b1 - b0);
     return a + w * (b - a);
 }
 fn tide_corner2(h: i32, x: f32, y: f32) -> f32 {
-    var t: f32 = 0.5 - x * x - y * y;
-    if (t < 0.0) { return 0.0; }
-    var tt: f32 = t * t;
-    return tt * tt * tide_grad2(h, x, y);
+    let t: f32 = 0.5 - x * x - y * y;
+    let tt: f32 = t * t;
+    return select(tt * tt * tide_grad2(h, x, y), 0.0, t < 0.0);
 }
 fn tide_simplex2(p: vec2f, seed: i32) -> f32 {
-    var s: f32 = (p.x + p.y) * 0.36602540;
-    var fi: f32 = floor(p.x + s);
-    var fj: f32 = floor(p.y + s);
-    var t: f32 = (fi + fj) * 0.21132487;
-    var x0: f32 = p.x - (fi - t);
-    var y0: f32 = p.y - (fj - t);
-    var i1: i32 = 0;
-    var j1: i32 = 1;
-    if (x0 > y0) {
-        i1 = 1;
-        j1 = 0;
-    }
-    var x1: f32 = x0 - f32(i1) + 0.21132487;
-    var y1: f32 = y0 - f32(j1) + 0.21132487;
-    var x2: f32 = x0 - 1.0 + 0.42264973;
-    var y2: f32 = y0 - 1.0 + 0.42264973;
-    var i: i32 = i32(fi);
-    var j: i32 = i32(fj);
-    var n0: f32 = tide_corner2(tide_hash3(vec3i(i, j, seed)), x0, y0);
-    var n1: f32 = tide_corner2(tide_hash3(vec3i(i + i1, j + j1, seed)), x1, y1);
-    var n2: f32 = tide_corner2(tide_hash3(vec3i(i + 1, j + 1, seed)), x2, y2);
+    let s: f32 = (p.x + p.y) * 0.36602540;
+    let fi: f32 = floor(p.x + s);
+    let fj: f32 = floor(p.y + s);
+    let t: f32 = (fi + fj) * 0.21132487;
+    let x0: f32 = p.x - (fi - t);
+    let y0: f32 = p.y - (fj - t);
+    let i1: i32 = select(0, 1, x0 > y0);
+    let j1: i32 = 1 - i1;
+    let x1: f32 = x0 - f32(i1) + 0.21132487;
+    let y1: f32 = y0 - f32(j1) + 0.21132487;
+    let x2: f32 = x0 - 1.0 + 0.42264973;
+    let y2: f32 = y0 - 1.0 + 0.42264973;
+    let i: i32 = i32(fi);
+    let j: i32 = i32(fj);
+    let n0: f32 = tide_corner2(tide_hash3(vec3i(i, j, seed)), x0, y0);
+    let n1: f32 = tide_corner2(tide_hash3(vec3i(i + i1, j + j1, seed)), x1, y1);
+    let n2: f32 = tide_corner2(tide_hash3(vec3i(i + 1, j + 1, seed)), x2, y2);
     return (n0 + n1 + n2) * 99.2;
 }
 fn tide_simplex_lane(h: u32, w: i32, r: u32) -> u32 {
-    var v: u32 = tide_xxh_lane(h, w);
+    let v: u32 = tide_xxh_lane(h, w);
     return (v << r) | (v >> (32u - r));
 }
 fn tide_simplex_pick(a: u32, b: u32, high: i32) -> u32 {
-    var v: u32 = a;
-    if (high != 0) { v = b; }
-    return v;
+    return select(a, b, high != 0);
 }
 fn tide_corner3(h: i32, x: f32, y: f32, z: f32) -> f32 {
-    var t: f32 = 0.6 - x * x - y * y - z * z;
-    if (t < 0.0) { return 0.0; }
-    var tt: f32 = t * t;
-    return tt * tt * tide_grad3(h, x, y, z);
+    let t: f32 = 0.6 - x * x - y * y - z * z;
+    let tt: f32 = t * t;
+    return select(tt * tt * tide_grad3(h, x, y, z), 0.0, t < 0.0);
 }
 fn tide_simplex3(p: vec3f, seed: i32) -> f32 {
-    var s: f32 = (p.x + p.y + p.z) * 0.33333334;
-    var fi: f32 = floor(p.x + s);
-    var fj: f32 = floor(p.y + s);
-    var fk: f32 = floor(p.z + s);
-    var t: f32 = (fi + fj + fk) * 0.16666667;
-    var x0: f32 = p.x - (fi - t);
-    var y0: f32 = p.y - (fj - t);
-    var z0: f32 = p.z - (fk - t);
-    var i1: i32 = 0;
-    var j1: i32 = 0;
-    var k1: i32 = 0;
-    var i2: i32 = 0;
-    var j2: i32 = 0;
-    var k2: i32 = 0;
-    if (x0 >= y0 && x0 >= z0) { i1 = 1; }
-    if (y0 > x0 && y0 >= z0) { j1 = 1; }
-    if (z0 > x0 && z0 > y0) { k1 = 1; }
-    if (x0 >= y0 || x0 >= z0) { i2 = 1; }
-    if (y0 > x0 || y0 >= z0) { j2 = 1; }
-    if (z0 > x0 || z0 > y0) { k2 = 1; }
-    var x1: f32 = x0 - f32(i1) + 0.16666667;
-    var y1: f32 = y0 - f32(j1) + 0.16666667;
-    var z1: f32 = z0 - f32(k1) + 0.16666667;
-    var x2: f32 = x0 - f32(i2) + 0.33333334;
-    var y2: f32 = y0 - f32(j2) + 0.33333334;
-    var z2: f32 = z0 - f32(k2) + 0.33333334;
-    var x3: f32 = x0 - 0.5;
-    var y3: f32 = y0 - 0.5;
-    var z3: f32 = z0 - 0.5;
-    var i: i32 = i32(fi);
-    var j: i32 = i32(fj);
-    var k: i32 = i32(fk);
-    var ax: u32 = tide_simplex_lane(0x24234428u, i, 1u);
-    var bx: u32 = tide_simplex_lane(0x24234428u, i + 1, 1u);
-    var ay: u32 = tide_simplex_lane(0x85EBCA77u, j, 7u);
-    var by: u32 = tide_simplex_lane(0x85EBCA77u, j + 1, 7u);
-    var az: u32 = tide_simplex_lane(0u, k, 12u);
-    var bz: u32 = tide_simplex_lane(0u, k + 1, 12u);
-    var ds: u32 = tide_simplex_lane(0x61C8864Fu, seed, 18u);
-    var h0: i32 = tide_xxh_end(ax + ay + az + ds + 16u);
-    var h1: i32 = tide_xxh_end(tide_simplex_pick(ax, bx, i1) + tide_simplex_pick(ay, by, j1) + tide_simplex_pick(az, bz, k1) + ds + 16u);
-    var h2: i32 = tide_xxh_end(tide_simplex_pick(ax, bx, i2) + tide_simplex_pick(ay, by, j2) + tide_simplex_pick(az, bz, k2) + ds + 16u);
-    var h3: i32 = tide_xxh_end(bx + by + bz + ds + 16u);
-    var n0: f32 = tide_corner3(h0, x0, y0, z0);
-    var n1: f32 = tide_corner3(h1, x1, y1, z1);
-    var n2: f32 = tide_corner3(h2, x2, y2, z2);
-    var n3: f32 = tide_corner3(h3, x3, y3, z3);
+    let s: f32 = (p.x + p.y + p.z) * 0.33333334;
+    let fi: f32 = floor(p.x + s);
+    let fj: f32 = floor(p.y + s);
+    let fk: f32 = floor(p.z + s);
+    let t: f32 = (fi + fj + fk) * 0.16666667;
+    let x0: f32 = p.x - (fi - t);
+    let y0: f32 = p.y - (fj - t);
+    let z0: f32 = p.z - (fk - t);
+    let i1: i32 = select(0, 1, (x0 >= y0) & (x0 >= z0));
+    let j1: i32 = select(0, 1, (y0 > x0) & (y0 >= z0));
+    let k1: i32 = select(0, 1, (z0 > x0) & (z0 > y0));
+    let i2: i32 = select(0, 1, (x0 >= y0) | (x0 >= z0));
+    let j2: i32 = select(0, 1, (y0 > x0) | (y0 >= z0));
+    let k2: i32 = select(0, 1, (z0 > x0) | (z0 > y0));
+    let x1: f32 = x0 - f32(i1) + 0.16666667;
+    let y1: f32 = y0 - f32(j1) + 0.16666667;
+    let z1: f32 = z0 - f32(k1) + 0.16666667;
+    let x2: f32 = x0 - f32(i2) + 0.33333334;
+    let y2: f32 = y0 - f32(j2) + 0.33333334;
+    let z2: f32 = z0 - f32(k2) + 0.33333334;
+    let x3: f32 = x0 - 0.5;
+    let y3: f32 = y0 - 0.5;
+    let z3: f32 = z0 - 0.5;
+    let i: i32 = i32(fi);
+    let j: i32 = i32(fj);
+    let k: i32 = i32(fk);
+    let ax: u32 = tide_simplex_lane(0x24234428u, i, 1u);
+    let bx: u32 = tide_simplex_lane(0x24234428u, i + 1, 1u);
+    let ay: u32 = tide_simplex_lane(0x85EBCA77u, j, 7u);
+    let by: u32 = tide_simplex_lane(0x85EBCA77u, j + 1, 7u);
+    let az: u32 = tide_simplex_lane(0u, k, 12u);
+    let bz: u32 = tide_simplex_lane(0u, k + 1, 12u);
+    let ds: u32 = tide_simplex_lane(0x61C8864Fu, seed, 18u);
+    let h0: i32 = tide_xxh_end(ax + ay + az + ds + 16u);
+    let h1: i32 = tide_xxh_end(tide_simplex_pick(ax, bx, i1) + tide_simplex_pick(ay, by, j1) + tide_simplex_pick(az, bz, k1) + ds + 16u);
+    let h2: i32 = tide_xxh_end(tide_simplex_pick(ax, bx, i2) + tide_simplex_pick(ay, by, j2) + tide_simplex_pick(az, bz, k2) + ds + 16u);
+    let h3: i32 = tide_xxh_end(bx + by + bz + ds + 16u);
+    let n0: f32 = tide_corner3(h0, x0, y0, z0);
+    let n1: f32 = tide_corner3(h1, x1, y1, z1);
+    let n2: f32 = tide_corner3(h2, x2, y2, z2);
+    let n3: f32 = tide_corner3(h3, x3, y3, z3);
     return (n0 + n1 + n2 + n3) * 32.5;
 }
 fn tide_nearest(best: vec2f, d: f32) -> vec2f {
@@ -732,18 +775,18 @@ fn tide_nearest(best: vec2f, d: f32) -> vec2f {
     return best;
 }
 fn tide_feature2(i: vec2i, ox: i32, oy: i32, seed: i32, fx: f32, fy: f32) -> f32 {
-    var h: i32 = tide_hash3(vec3i(i.x + ox, i.y + oy, seed));
-    var px: f32 = f32(ox) + f32(h & 32767) * 0.000030518509;
-    var py: f32 = f32(oy) + f32((h >> 15) & 32767) * 0.000030518509;
-    var dx: f32 = px - fx;
-    var dy: f32 = py - fy;
+    let h: i32 = tide_hash3(vec3i(i.x + ox, i.y + oy, seed));
+    let px: f32 = f32(ox) + f32(h & 32767) * 0.000030518509;
+    let py: f32 = f32(oy) + f32((h >> 15) & 32767) * 0.000030518509;
+    let dx: f32 = px - fx;
+    let dy: f32 = py - fy;
     return dx * dx + dy * dy;
 }
 fn tide_cellular2(p: vec2f, seed: i32) -> vec2f {
-    var f: vec2f = floor(p);
-    var i: vec2i = vec2i(f);
-    var x: f32 = p.x - f.x;
-    var y: f32 = p.y - f.y;
+    let f: vec2f = floor(p);
+    let i: vec2i = vec2i(f);
+    let x: f32 = p.x - f.x;
+    let y: f32 = p.y - f.y;
     var best: vec2f = vec2f(8.0, 8.0);
     best = tide_nearest(best, tide_feature2(i, -1, -1, seed, x, y));
     best = tide_nearest(best, tide_feature2(i, 0, -1, seed, x, y));
@@ -757,21 +800,21 @@ fn tide_cellular2(p: vec2f, seed: i32) -> vec2f {
     return vec2f(sqrt(best.x), sqrt(best.y));
 }
 fn tide_feature3(i: vec3i, ox: i32, oy: i32, oz: i32, seed: i32, fx: f32, fy: f32, fz: f32) -> f32 {
-    var h: i32 = tide_hash4(vec4i(i.x + ox, i.y + oy, i.z + oz, seed));
-    var px: f32 = f32(ox) + f32(h & 1023) * 0.00097751711;
-    var py: f32 = f32(oy) + f32((h >> 10) & 1023) * 0.00097751711;
-    var pz: f32 = f32(oz) + f32((h >> 20) & 1023) * 0.00097751711;
-    var dx: f32 = px - fx;
-    var dy: f32 = py - fy;
-    var dz: f32 = pz - fz;
+    let h: i32 = tide_hash4(vec4i(i.x + ox, i.y + oy, i.z + oz, seed));
+    let px: f32 = f32(ox) + f32(h & 1023) * 0.00097751711;
+    let py: f32 = f32(oy) + f32((h >> 10) & 1023) * 0.00097751711;
+    let pz: f32 = f32(oz) + f32((h >> 20) & 1023) * 0.00097751711;
+    let dx: f32 = px - fx;
+    let dy: f32 = py - fy;
+    let dz: f32 = pz - fz;
     return dx * dx + dy * dy + dz * dz;
 }
 fn tide_cellular3(p: vec3f, seed: i32) -> vec2f {
-    var f: vec3f = floor(p);
-    var i: vec3i = vec3i(f);
-    var x: f32 = p.x - f.x;
-    var y: f32 = p.y - f.y;
-    var z: f32 = p.z - f.z;
+    let f: vec3f = floor(p);
+    let i: vec3i = vec3i(f);
+    let x: f32 = p.x - f.x;
+    let y: f32 = p.y - f.y;
+    let z: f32 = p.z - f.z;
     var best: vec2f = vec2f(8.0, 8.0);
     best = tide_nearest(best, tide_feature3(i, -1, -1, -1, seed, x, y, z));
     best = tide_nearest(best, tide_feature3(i, 0, -1, -1, seed, x, y, z));
@@ -807,9 +850,9 @@ fn ts_Ripple(t_vertex: ptr<function, tt_SkyVertex>) {
 }
 
 fn ts_Clouds(t_vertex: tt_SkyVertex, t_color: ptr<function, vec4f>) {
-    var t_cover: f32 = ((tide_perlin2((t_vertex.m_uv * tide_f(8.0)), 0) * 0.5) + (tide_simplex3(vec3f(t_vertex.m_uv, tide_block.tide_u0.x), tide_block.tide_v0.x) * 0.5));
-    var t_cells: vec2f = tide_cellular2((t_vertex.m_uv * tide_f(4.0)), tide_block.tide_v0.x);
-    (*t_color) = vec4f(t_cover, (t_cells.y - t_cells.x), tide_cellular3(vec3f(t_vertex.m_uv, tide_f(1.0)), 0).x, 1.0);
+    var t_cover: f32 = ((tide_perlin2((t_vertex.m_uv * 8.0), 0) * 0.5) + (tide_simplex3(vec3f(t_vertex.m_uv, tide_block.tide_u0.x), tide_block.tide_v0.x) * 0.5));
+    var t_cells: vec2f = tide_cellular2((t_vertex.m_uv * 4.0), tide_block.tide_v0.x);
+    (*t_color) = vec4f(t_cover, (t_cells.y - t_cells.x), tide_cellular3(vec3f(t_vertex.m_uv, 1.0), 0).x, 1.0);
 }
 
 @vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f) -> tide_corner {

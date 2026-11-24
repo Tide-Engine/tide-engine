@@ -75,6 +75,11 @@ typedef struct tide_headless_desc {
     // How many frames make up a second of its time, from 1 to 1000; 0 for 60. Another rate than the match's ticks
     // has frames with a tick and frames without, as a window's do. A recorded GIF still plays 30 pictures a second.
     uint32_t frame_rate;
+    // Each frame waits out what's left of its length on the wall clock, as a display holds a window's: for
+    // measuring what a player would see (workers have a real frame's time; frames that took longer than one are
+    // counted and said as the run ends). The run's own time is made up as ever, so its match and its pictures are
+    // what they are without it; only how long it takes differs.
+    bool paced;
     const char *capture; // The file the run's last frame goes to, as a PNG; NULL for none
     const char *record;  // The file the whole run goes to, as a GIF (tide_platform_record); NULL for none
     // The file everything the run played goes to, as a WAV (tide_platform_capture_audio); NULL for none
@@ -117,6 +122,11 @@ void tide_platform_open_headless(const tide_headless_desc *desc);
 // The next tide_platform_poll takes it. False, having said why, for what
 // isn't an event, or when the window isn't headless.
 bool tide_platform_input(const char *event);
+
+// A script's `checkpoint` line once its frame drew (or an interactive run's, at once), which the host carries out
+// (tide/checkpoint.h): what it asks, 0 save, 1 load, 2 load what carries over (`force-load`), and the checkpoint's
+// name. The next one asked for, oldest first; false when none is waiting.
+bool tide_platform_checkpoint_asked(uint32_t *way, char *name, size_t size);
 
 // The frame a headless window last drew (tide_platform_draw, and what was
 // drawn over it), whole: `*width` by `*height` pixels of 4 bytes each (red, green,
@@ -207,12 +217,12 @@ void tide_platform_on_close(void (*closing)(void));
 // 60th of a second. Frames others see come at the display's pace.
 void tide_platform_next_frame(double seconds);
 
-// Optional match-only work while desktop Vulkan waits for a frame's GPU
-// resources. Called on the frame thread, after the frame function returned;
-// elapsed is seconds since that frame began. Return seconds from that point
-// until the next update is due. Never poll input, draw, reload or change GPU
-// or window resources here. NULL disables it. Headless runs and other backends
-// never call it.
+// Optional match-only work while Vulkan waits for a frame's GPU resources, in
+// a desktop window and an Android app. Called on the frame thread, after the
+// frame function returned; elapsed is seconds since that frame began. Return
+// seconds from that point until the next update is due. Never poll input,
+// draw, reload or change GPU or window resources here. NULL disables it.
+// Headless runs and the web's WebGPU never call it.
 void tide_platform_update_while_waiting(double (*update)(void *user, double elapsed), void *user);
 
 // Updates the devices with the input since the previous frame. Call once per
@@ -429,11 +439,21 @@ uint64_t tide_platform_gpu_memory(void);
 // is what the frame's textures cost to keep up to date.
 uint64_t tide_platform_gpu_written(void);
 
+// How many times the renderer has copied a rendered image for a [Linear] read since the program started: when a
+// marked field first reads an image views draw into, and again only once more has been drawn into it (or it's
+// another image: resized, or made again). An image drawn once and read every frame is copied once. For tools and
+// tests.
+uint64_t tide_platform_linear_copies(void);
+
 // The game's pack of assets (tide/pack.h), as its build left it with the
 // program: beside it as <program>.pack on desktop, in its page on the web and
 // in its APK on Android. malloc'd bytes, the caller's to free, or NULL for
 // none. The standard host loads it before the game runs (tide/host.h).
 uint8_t *tide_platform_pack(size_t *size);
+// Starts reading that pack on threads of its own, where it's a file (a desktop's): for a host to call before it
+// opens its window, so the two take the time of the longer. tide_platform_pack and tide_platform_pack_counted
+// then give what was read. Nothing elsewhere, or for a small pack.
+void tide_platform_pack_ahead(void);
 // The same, saying as it goes how far it has read: progress[0] the bytes read
 // so far, progress[1] the whole pack's, each stored atomically, so another
 // thread can show them while this one reads (the host's loading screen).
@@ -441,6 +461,10 @@ uint8_t *tide_platform_pack_counted(size_t *size, uint64_t progress[2]);
 // A file read whole the same way, counting as it goes; NULL for one that
 // can't be read. Desktop and Android: the web has no files to read this way.
 uint8_t *tide_platform_read_counted(const char *path, size_t *size, uint64_t progress[2]);
+// How many bytes are allocated at `bytes`, where they're what the last tide_platform_read_counted (or a pack read
+// through it) returned: more than the file's, so a pack can be loaded where it was read (tide_pack_give). 0 for
+// any other bytes.
+size_t tide_platform_read_room(const uint8_t *bytes);
 
 // 64 bits from the system's random number generator, which nobody could guess:
 // what a session makes the seeds of the matches it starts from

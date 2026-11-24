@@ -9,7 +9,10 @@
 // Every tick's projection hash, over 150 ticks, hashed together. Built with
 // TIDE_CLIENT_MEMO_OFF (tidec_e2e_visibility_hash_memo_off) nothing is kept
 // from one hash to the next, and the hashes must be these too.
-#define HASHES UINT64_C(0x71be8a1a5b8c2bf0)
+// (2026-11-16: 0xa15bc20786198050 before a container too big for one chunk of
+// its list hashed as a tree of its chunks, which the catalog's 40,000 bytes
+// are: another function of the same value, memo on and off alike.)
+#define HASHES UINT64_C(0xc8f1048a1b38d2a4)
 
 static uint64_t hash_of(const tide_world *w)
 {

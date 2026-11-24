@@ -1,3 +1,3 @@
-// expect: [Linear] marks one Texture, TextureArray or Cubemap asset, or a field of those types
+// expect: [Linear] marks a Texture, TextureArray or Cubemap asset, a glob's List<Texture> or Map<string, Texture>, or a field of those types
 [Linear] component Body { float x; }
 scene Main { }

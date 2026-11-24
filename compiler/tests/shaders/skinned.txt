@@ -258,27 +258,18 @@ struct tt_Corner {
     m_color: vec4f,
     m_glow: f32,
 }
-fn tide_f(x: f32) -> f32 {
-    return x;
-}
-fn tide_nan(x: f32) -> bool {
-    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
-}
 fn tide_max1(a: f32, b: f32) -> f32 {
-    if (tide_nan(b)) { return a; }
-    if (tide_nan(a)) { return b; }
-    if (a > b) { return a; }
-    return b;
+    return select(select(select(b, a, a > b), b, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000), a, (bitcast<i32>(b) & 0x7fffffff) > 0x7f800000);
 }
 fn tide_normalize3(v: vec3f) -> vec3f {
-    var l: f32 = dot(v, v);
+    let l: f32 = dot(v, v);
     if (l > 1.17549435e-38) { return v * inverseSqrt(l); }
     return vec3f(0.0);
 }
 fn tide_normals(m: mat4x4f) -> mat3x3f {
-    var a: vec3f = cross(m[1].xyz, m[2].xyz);
-    var b: vec3f = cross(m[2].xyz, m[0].xyz);
-    var c: vec3f = cross(m[0].xyz, m[1].xyz);
+    let a: vec3f = cross(m[1].xyz, m[2].xyz);
+    let b: vec3f = cross(m[2].xyz, m[0].xyz);
+    let c: vec3f = cross(m[0].xyz, m[1].xyz);
     if (dot(m[0].xyz, a) < 0.0) {
         return mat3x3f(-a, -b, -c);
     }
@@ -326,7 +317,7 @@ fn tide_skinning(vertex: i32) -> mat4x4f {
     return mat4x4f(c0 / total, c1 / total, c2 / total, c3 / total);
 }
 fn ts_Inspect(t_corner: tt_Corner, t_color: ptr<function, vec4f>) {
-    (*t_color) = (t_corner.m_color * tide_max1(tide_normalize3(mat3x3f(tide_normals0, tide_normals1, tide_normals2) * (t_corner.m_normal)).y, tide_f(0.1)));
+    (*t_color) = (t_corner.m_color * tide_max1(tide_normalize3(mat3x3f(tide_normals0, tide_normals1, tide_normals2) * (t_corner.m_normal)).y, 0.1));
 }
 
 @vertex fn vertex(@location(0) tide_a0: vec3f, @location(1) tide_a1: vec3f, @location(2) tide_a2: vec4f, @location(3) tide_a3: vec4f, @location(4) tide_a4: f32, @location(5) tide_in0: vec4f, @location(6) tide_in1: vec4f, @location(7) tide_in2: vec4f, @location(8) tide_in3: vec4f, @location(9) tide_ij0: vec4i, @builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32) -> tide_corner {
@@ -412,14 +403,14 @@ struct tt_Corner {
     m_glow: f32,
 }
 fn tide_normalize3(v: vec3f) -> vec3f {
-    var l: f32 = dot(v, v);
+    let l: f32 = dot(v, v);
     if (l > 1.17549435e-38) { return v * inverseSqrt(l); }
     return vec3f(0.0);
 }
 fn tide_normals(m: mat4x4f) -> mat3x3f {
-    var a: vec3f = cross(m[1].xyz, m[2].xyz);
-    var b: vec3f = cross(m[2].xyz, m[0].xyz);
-    var c: vec3f = cross(m[0].xyz, m[1].xyz);
+    let a: vec3f = cross(m[1].xyz, m[2].xyz);
+    let b: vec3f = cross(m[2].xyz, m[0].xyz);
+    let c: vec3f = cross(m[0].xyz, m[1].xyz);
     if (dot(m[0].xyz, a) < 0.0) {
         return mat3x3f(-a, -b, -c);
     }
@@ -543,27 +534,18 @@ struct tt_Corner {
     m_color: vec4f,
     m_glow: f32,
 }
-fn tide_f(x: f32) -> f32 {
-    return x;
-}
-fn tide_nan(x: f32) -> bool {
-    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
-}
 fn tide_max1(a: f32, b: f32) -> f32 {
-    if (tide_nan(b)) { return a; }
-    if (tide_nan(a)) { return b; }
-    if (a > b) { return a; }
-    return b;
+    return select(select(select(b, a, a > b), b, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000), a, (bitcast<i32>(b) & 0x7fffffff) > 0x7f800000);
 }
 fn tide_normalize3(v: vec3f) -> vec3f {
-    var l: f32 = dot(v, v);
+    let l: f32 = dot(v, v);
     if (l > 1.17549435e-38) { return v * inverseSqrt(l); }
     return vec3f(0.0);
 }
 fn tide_normals(m: mat4x4f) -> mat3x3f {
-    var a: vec3f = cross(m[1].xyz, m[2].xyz);
-    var b: vec3f = cross(m[2].xyz, m[0].xyz);
-    var c: vec3f = cross(m[0].xyz, m[1].xyz);
+    let a: vec3f = cross(m[1].xyz, m[2].xyz);
+    let b: vec3f = cross(m[2].xyz, m[0].xyz);
+    let c: vec3f = cross(m[0].xyz, m[1].xyz);
     if (dot(m[0].xyz, a) < 0.0) {
         return mat3x3f(-a, -b, -c);
     }
@@ -575,7 +557,7 @@ fn ts_Deform(t_corner: ptr<function, tt_Corner>) {
 }
 
 fn ts_Inspect(t_corner: tt_Corner, t_color: ptr<function, vec4f>) {
-    (*t_color) = (t_corner.m_color * tide_max1(tide_normalize3(mat3x3f(tide_normals0, tide_normals1, tide_normals2) * (t_corner.m_normal)).y, tide_f(0.1)));
+    (*t_color) = (t_corner.m_color * tide_max1(tide_normalize3(mat3x3f(tide_normals0, tide_normals1, tide_normals2) * (t_corner.m_normal)).y, 0.1));
 }
 
 @vertex fn vertex(@location(0) tide_a0: vec3f, @location(1) tide_a1: vec3f, @location(2) tide_a2: vec4f, @location(3) tide_a3: vec4f, @location(4) tide_a4: f32, @location(5) tide_in0: vec4f, @location(6) tide_in1: vec4f, @location(7) tide_in2: vec4f, @location(8) tide_in3: vec4f) -> tide_corner {

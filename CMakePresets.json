@@ -58,6 +58,26 @@
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
     },
     {
+      "name": "ios-base",
+      "hidden": true,
+      "inherits": "base",
+      "toolchainFile": "${sourceDir}/cmake/ios-toolchain.cmake"
+    },
+    {
+      "name": "ios-simulator",
+      "inherits": "ios-base",
+      "displayName": "iOS simulator",
+      "description": "The engine and the platform layer with no window of its own (a game inside Unity's player), for the iOS simulator on an Apple-silicon Mac, through Xcode's clang, optimized. Tests run in a booted simulator: build the tide_ios_tests target (cmake/ios_tests.cmake).",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo", "TIDE_IOS_SDK": "iphonesimulator" }
+    },
+    {
+      "name": "ios-device",
+      "inherits": "ios-base",
+      "displayName": "iOS devices",
+      "description": "The same libraries (tide, tide_platform) for iOS devices, arm64. A build to check they compile for a device's SDK: its programs aren't signed, so nothing of it runs.",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo", "TIDE_IOS_SDK": "iphoneos" }
+    },
+    {
       "name": "android-base",
       "hidden": true,
       "inherits": "base",
@@ -136,6 +156,8 @@
     { "name": "android-debug", "configurePreset": "android-debug" },
     { "name": "android-release", "configurePreset": "android-release" },
     { "name": "android-arm64", "configurePreset": "android-arm64" },
+    { "name": "ios-simulator", "configurePreset": "ios-simulator" },
+    { "name": "ios-device", "configurePreset": "ios-device" },
     { "name": "android-package-arm64", "configurePreset": "android-package-arm64" },
     { "name": "android-package-x86_64", "configurePreset": "android-package-x86_64" },
     { "name": "package", "configurePreset": "package" },
@@ -169,7 +191,8 @@
     { "name": "mingw-release", "configurePreset": "mingw-release", "output": { "outputOnFailure": true } },
     { "name": "android-debug", "configurePreset": "android-debug", "output": { "outputOnFailure": true } },
     { "name": "android-release", "configurePreset": "android-release", "output": { "outputOnFailure": true } },
-    { "name": "android-arm64", "configurePreset": "android-arm64", "output": { "outputOnFailure": true } }
+    { "name": "android-arm64", "configurePreset": "android-arm64", "output": { "outputOnFailure": true } },
+    { "name": "ios-simulator", "configurePreset": "ios-simulator", "output": { "outputOnFailure": true } }
   ],
   "workflowPresets": [
     {

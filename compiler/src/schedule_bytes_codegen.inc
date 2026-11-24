@@ -86,7 +86,9 @@ data_bytes system_param_bytes(const program *prog, const decl *sys, const int i)
     if (p->type.kind == TY_COMPONENT) {
         codegen_options opts;
         const gen g = schedule_gen(prog, &opts, sys);
-        if (!system_param_splits(&g, sys, i)) return all;
+        // (A handler's copy is of the lanes its code reads and writes too, but what it's scheduled by is its
+        // component whole, as it was: the copy is its dispatch's alone)
+        if (sys->is_handler || !system_param_splits(&g, sys, i)) return all;
         const lane_mask read = system_param_lanes(&g, sys, i);
         lane_mask written = {{0}};
         if (p->mode == PARAM_MUT) written = written_lanes(&g, sys, d->index);
@@ -131,7 +133,7 @@ static void schedule_row_loops(const stmt *s, schedule_rows *w)
         const loop_index *plan = s->index;
         const decl *comp = w->p->type.decl;
         const int width = comp_width(comp), lanes = comp_lanes(comp);
-        for (int k = 0; plan && k < plan->count && k < 3; k++) {
+        for (int k = 0; plan && k < plan->count && k < INDEX_KEYS_MOST; k++) {
             const ix_query x = {.q = w->q, .selection = w->q, .row = w->q->type.decl};
             int off = -1, size = 0;
             const int b = ix_key_binding(&x, &plan->keys[k], &off, &size);

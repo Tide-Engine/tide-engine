@@ -144,7 +144,7 @@ const char *telemetry_off(const char *root, const char *version)
 // An event
 
 static const char *const commands[] = {"add", "build", "deploy", "editors", "eject", "fetch", "help", "ide", "login", "logout",
-                                       "open", "publish", "run", "schedule", "shaders", "unity", "update", "upgrade", "version",
+                                       "publish", "run", "schedule", "shaders", "unity", "update", "upgrade", "version",
                                        NULL};
 
 static bool is_help(const char *a)
@@ -153,7 +153,7 @@ static bool is_help(const char *a)
 }
 
 // The command an event names, from the allow-list or "other"; NULL for a run
-// that sends nothing: tide's own (cc, _editor-preview, the sender itself, the
+// that sends nothing: tide's own (cc, the sender itself, the
 // editors' update an upgrade starts) and the telemetry command.
 static const char *command_of(const int argc, const char *const *argv)
 {

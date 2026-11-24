@@ -1,0 +1,6 @@
+// expect: image 'heights' is read between its smaller images, and Format.R32f has none: read it with Sample(uv) or Filter.Bilinear, or draw the numbers into Format.R16f
+// expect: no GPU blends 32-bit floats on every device, so tidec loads them exactly
+scene Main { }
+local singleton Images { RenderTarget target; [Raw(float)] Texture distance; }
+frag ReadHeights(Vertex vertex,out Color color,[Raw(float)] Texture heights) { color=Color(heights.Sample(vertex.uv,Filter.Trilinear),0,0); }
+view Show(mut Images images) { images.target=RenderTarget(8,8,Format.R32f); images.distance=images.target.color; Draw.Blit(images.distance,Draw.window,ReadHeights); }

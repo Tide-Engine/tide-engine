@@ -10,6 +10,7 @@
 
 #include "android.h"
 #include "apk.h"
+#include "assets.h"
 #include "asset_sizes.h"
 #include "build_report.h"
 #include "common.h"
@@ -28,7 +29,10 @@
 #include "unity_assets.h"
 #include "unity_code.h"
 #include "unity_shaders.h"
+#include "tide/pack.h"
 #include "tide/sha256.h"
+#include "tide/tweaks.h"
+#include "build_threads.h"
 
 #ifdef TIDE_EMBEDDED_CLANG
 #include <zlib.h>
@@ -436,7 +440,7 @@ static bool find_packages(const char *folder, game_packages *out)
 // Every .tide file of the game, in the order they compile: each package's,
 // in the packages' order, then the game's own, each by path. `paths` holds
 // the paths. NULL after saying the game has no files of its own.
-static compile_input *game_inputs(const char *folder, const game_packages *packages, file_list *paths, int *count, const char *overlay)
+static compile_input *game_inputs(const char *folder, const game_packages *packages, file_list *paths, int *count)
 {
     *paths = (file_list){0};
     const char **names = malloc(sizeof(char *) * 1); // Each path's package
@@ -446,41 +450,6 @@ static compile_input *game_inputs(const char *folder, const game_packages *packa
         const char *name = p < packages->count ? packages->items[p].name : NULL;
         if (!name) game_start = paths->count;
         file_list files = tide_files(name ? packages->items[p].folder : folder);
-        if (!name && overlay) {
-            bool found = false;
-            for (int k = 0; k < paths->count; k++) found |=
-#ifdef _WIN32
-                _stricmp(paths->items[k], overlay) == 0;
-#else
-                path_compare(paths->items[k], overlay) == 0;
-#endif
-            for (int k = 0; k < files.count; k++) found |=
-#ifdef _WIN32
-                _stricmp(files.items[k], overlay) == 0;
-#else
-                path_compare(files.items[k], overlay) == 0;
-#endif
-            if (!found) {
-                char *prefix = path_join(folder, "");
-                const size_t len = strlen(prefix);
-                const bool inside = strlen(overlay) > len &&
-#ifdef _WIN32
-                    _strnicmp(prefix, overlay, len) == 0;
-#else
-                    strncmp(prefix, overlay, len) == 0;
-#endif
-                free(prefix);
-                if (!inside || (!has_extension(overlay, ".tide") && !has_extension(overlay, ".tprefab"))) {
-                    fprintf(stderr, "tide: a new source overlay must name a .tide or .tprefab file in the selected project: %s\n", overlay);
-                    free_files(&files);
-                    free_files(paths);
-                    free(names);
-                    return NULL;
-                }
-                add_file(&files, overlay);
-                qsort(files.items, (size_t)files.count, sizeof(char *), path_order);
-            }
-        }
         names = realloc(names, sizeof(char *) * (size_t)(paths->count + files.count + 1));
         if (!names) abort();
         for (int i = 0; i < files.count; i++) {
@@ -752,6 +721,7 @@ static bool find_target(const char *root, const build_options *opts)
 {
     const char *runtime = NULL;
     if (opts->android) return true; // Each of its CPUs, as it's built (build_android)
+    if (opts->ios) return true;     // Compiled by the Xcode project its sources go to (tide_unity_ios)
     if (opts->web) {
         build_target.flag = opts->managed ? "--target=wasm32-wasip1" : "--target=wasm32-wasip1-threads";
         runtime = "wasi";
@@ -796,6 +766,11 @@ typedef struct build {
     int jobs;         // How many files compile at once
     bool engine_built;
     bool generated_lto; // The current generated manifest contains ThinLTO partitions.
+    // The game's own code starts compiling as soon as a generate has written it (game_written), into `early`:
+    struct compiles *early;   // ...the build's list, NULL for a generate that compiles nothing ahead
+    const char *early_gen;    // ...the generated files' folder
+    char *early_object;       // ...game.c's object, NULL for a build that waits for the generate to end
+    file_list early_queued;   // ...and the files looked at this way, by name: queue_game leaves them be
     game_info info; // Its settings, from its last generate
     sb externs;     // ...and the C function of each of its extern functions, a line each
     file_list engine;       // The engine's objects
@@ -1034,7 +1009,7 @@ typedef struct compile_job {
     bool cpp;
     bool first;       // Started ahead of its turn: the game's own code, which takes the longest
     bool engine;      // One of the engine's files, which have one stamp for them all (compiles.engine_stamp)
-    int64_t size;     // Start larger engine files early; their compile often sets the cold build's finish time
+    int64_t size;     // Start large engine and generated files early
     char *stamp_path; // The file that says what the object was made of, NULL for a file with none of its own:
     char *stamp;      // gone while the file compiles, so a compile that's cut short leaves no object that passes, and written once it has
     bool started;
@@ -1122,8 +1097,8 @@ static void free_compiles(compiles *list)
     *list = (compiles){0};
 }
 
-// The next file before `stop`: the game's generated code first, then larger
-// engine sources, then the remaining files in order. Diagnostics keep their
+// The next file before `stop`: explicitly prioritized jobs first, then larger
+// engine and generated sources, then the remaining files in order. Diagnostics keep their
 // original order independently. -1 when none is left.
 static int next_compile(const compiles *list, const int stop)
 {
@@ -1307,14 +1282,15 @@ static bool setup(build *b, const char *root, const build_options *opts, const b
 #ifdef __APPLE__
     // macOS's headers and libraries come with Apple's command line tools,
     // which clang finds through SDKROOT.
-    if (!opts->web && !find_macos_sdk()) {
+    if (!opts->web && !opts->ios && !find_macos_sdk()) {
         fprintf(stderr, "tide: building for macOS needs Apple's command line tools\n");
         fprintf(stderr, "  = note: install them with `xcode-select --install`\n");
         return false;
     }
 #endif
 #else
-    b->compiler = opts->web ? find_web_clang() : find_clang();
+    // An iOS player's sources are compiled elsewhere: this machine needs no compiler for them
+    b->compiler = opts->ios ? format("%s", "clang", NULL) : opts->web ? find_web_clang() : find_clang();
     if (!b->compiler) {
         fprintf(stderr, "tide: clang isn't installed, and tide needs it to build games\n");
         fprintf(stderr, "  = note: install LLVM (https://github.com/llvm/llvm-project/releases), add it to PATH, "
@@ -1351,17 +1327,15 @@ static bool setup(build *b, const char *root, const build_options *opts, const b
     if (b->jobs > SYS_AT_ONCE) b->jobs = SYS_AT_ONCE;
 
     // Everything tide makes goes in <folder>/.tide/<configuration>.
-    char *tide_dir = opts->work ? path_absolute(opts->work) : tide_work_folder(b->folder);
+    char *tide_dir = tide_work_folder(b->folder);
     char config[32];
-    snprintf(config, sizeof config, "%s-%s%s", opts->managed ? "managed" : opts->server ? "server" : opts->web ? "web" : opts->android ? "android" : "native",
+    snprintf(config, sizeof config, "%s-%s%s", opts->managed ? "managed" : opts->server ? "server" : opts->web ? "web" : opts->android ? "android" : opts->ios ? "ios" : "native",
              opts->distribution ? "distribution" : opts->release ? "release" : "debug",
              opts->optimization ? opts->optimization : "");
     b->cache = path_join(tide_dir, config);
     free(tide_dir);
-    if (!opts->work && (opts->scene || opts->editor_source)) {
-        uint64_t identity = hash_text(0xCBF29CE484222325ull, opts->scene ? opts->scene : "");
-        identity = hash_text(identity, opts->editor_source ? opts->editor_source : "");
-        identity = hash_text(identity, opts->editor_draft ? opts->editor_draft : "");
+    if (opts->scene) {
+        const uint64_t identity = hash_text(0xCBF29CE484222325ull, opts->scene);
         char selected[40];
         snprintf(selected, sizeof selected, "startup-%016llx", (unsigned long long)identity);
         char *cache = path_join(b->cache, selected);
@@ -1506,6 +1480,13 @@ static unsigned target_cpu(const build *b)
 #endif
 }
 
+// A second, as sys_time and sys_file_written count
+#ifdef _WIN32
+#define SYS_TIME_SECOND 10000000ull
+#else
+#define SYS_TIME_SECOND 1000000000ull
+#endif
+
 static uint64_t hash_text(uint64_t h, const char *text)
 {
     for (const char *p = text; *p; p++) h = (h ^ (uint8_t)*p) * 0x100000001B3ull;
@@ -1531,7 +1512,7 @@ static uint64_t header_stamp(const char *folder)
 // compiled from, `first` for the one to start ahead of its turn, `optimized`
 // for one compiled as the engine is.
 static void queue_unless_stamped(const build *b, compiles *list, const char *source, const char *object, const char *gen,
-                                 const uint64_t h, const bool first, const bool optimized, const bool thin)
+                                 const uint64_t h, const bool first, const bool optimized, const bool thin, const bool lean)
 {
     char stamp[32];
     snprintf(stamp, sizeof stamp, "%016llx", (unsigned long long)h);
@@ -1542,10 +1523,10 @@ static void queue_unless_stamped(const build *b, compiles *list, const char *sou
         // if the source is then put back exactly as it was before the failure.
         // The stamp goes as the compile starts (run_compiles).
         compile_job *job = queue_compile_as(list, b, source, object, gen, false, optimized);
-        if (thin) {
-            arg(&job->a, "-flto=thin");
-            job->size = sys_file_size(source);
-        }
+        if (thin) arg(&job->a, "-flto=thin");
+        if (thin || optimized) job->size = sys_file_size(source);
+        // Every type the game declares is in game.o's debug info (config_flags): once is enough
+        if (lean && !b->opts->distribution) arg(&job->a, "-feliminate-unused-debug-types");
         job->stamp_path = stamp_path;
         job->stamp = copy_text(stamp);
         job->first = first;
@@ -1564,8 +1545,8 @@ static void queue_unless_stamped(const build *b, compiles *list, const char *sou
 // the one to start ahead of its turn, `plumbing` for the generated plumbing a
 // debug build compiles as the engine (splits_plumbing). False when the
 // generated files aren't there to read.
-static bool queue_generated(const build *b, compiles *list, const char *source, const char *object, const char *gen,
-                            const bool first, const bool plumbing, const bool thin)
+static bool generated_text_stamp(const build *b, const char *source, const char *gen, const bool first, const bool plumbing,
+                            const bool thin, const bool lean, uint64_t *stamp)
 {
     char *text = sys_read_file(source, NULL);
     char *header_path = path_join(gen, "game.h");
@@ -1579,6 +1560,7 @@ static bool queue_generated(const build *b, compiles *list, const char *source, 
     char *flags = stamp_of(b, plumbing, false);
     uint64_t h = hash_text(0xCBF29CE484222325ull, flags);
     if (thin) h = hash_text(h, "ThinLTO partitions v1");
+    if (lean) h = hash_text(h, "a part of the code");
     h = hash_text(hash_text(h, source), text);
     // Only the managed reactor embeds this macro in its launcher. Ordinary
     // launchers use the game API's identity, so gameplay edits still reuse
@@ -1597,8 +1579,137 @@ static bool queue_generated(const build *b, compiles *list, const char *source, 
     free(flags);
     free(text);
     free(header);
-    queue_unless_stamped(b, list, source, object, gen, h, first, plumbing, thin);
+    *stamp = h;
     return true;
+}
+
+static bool queue_generated(const build *b, compiles *list, const char *source, const char *object, const char *gen,
+                            const bool first, const bool plumbing, const bool thin, const bool lean)
+{
+    uint64_t h = 0;
+    if (!generated_text_stamp(b, source, gen, first, plumbing, thin, lean, &h)) return false;
+    queue_unless_stamped(b, list, source, object, gen, h, first, plumbing, thin, lean);
+    return true;
+}
+
+// The stamps of a manifest's files, each on a thread: a big game's generated C is a hundred megabytes to read and
+// hash, a third of a second one file after another.
+typedef struct part_stamp {
+    const build *b;
+    const char *gen;
+    char *source;
+    bool first, plumbing, thin, lean;
+    bool wanted; // Not looked at already (game_written)
+    bool ok;
+    uint64_t stamp;
+    // What the stamp was last time, for a file that is as it was then (parts_stamped): its size and time, and what
+    // else the stamp is made of. A big game's plumbing is a hundred megabytes an edit of its code leaves alone.
+    uint64_t file, with;
+    bool known, settled;
+    uint64_t known_stamp;
+} part_stamp;
+
+static void part_stamp_work(void *context, const uint32_t i)
+{
+    part_stamp *p = &((part_stamp *)context)[i];
+    if (!p->wanted) return;
+    p->file = sys_file_stamp(p->source);
+    if (p->known && p->file) { // (p->known says the last file's size and time, and the rest, are these)
+        p->stamp = p->known_stamp;
+        p->ok = true;
+        return;
+    }
+    const uint64_t before = sys_time();
+    p->ok = generated_text_stamp(p->b, p->source, p->gen, p->first, p->plumbing, p->thin, p->lean, &p->stamp);
+    // Kept for next time where a later write would show: read two seconds or more after it was written, and the
+    // same file after the read as before it
+    const uint64_t written = sys_file_written(p->source);
+    p->settled = p->ok && written && written <= before && before - written >= 2u * SYS_TIME_SECOND
+              && sys_file_stamp(p->source) == p->file;
+}
+
+// What a part's stamp is made of besides its own text: the flags it compiles with, how it's cut, and the header as
+// generated_text_stamp takes it (whole, or without the simulation's identity).
+static uint64_t part_stamp_with(const build *b, const part_stamp *p, const char *header, const char *header_plain)
+{
+    char *flags = stamp_of(b, p->plumbing, false);
+    uint64_t h = hash_text(0xCBF29CE484222325ull, flags);
+    free(flags);
+    const char marks[] = {(char)('0' + p->thin), (char)('0' + p->lean), (char)('0' + p->first), (char)('0' + p->plumbing), 0};
+    h = hash_text(hash_text(h, marks), p->source);
+    return hash_text(h, (!p->first || p->plumbing) && !b->opts->managed ? header_plain : header);
+}
+
+#define PARTS_STAMPED_FILE "parts.stamped"
+
+// Fills each wanted part's `with`, and `known` where <gen>/parts.stamped has its stamp for the file as it is now.
+static void parts_stamped_read(const build *b, const char *gen, part_stamp *stamps, const int count)
+{
+    char *header_path = path_join(gen, "game.h");
+    char *header = sys_read_file(header_path, NULL);
+    free(header_path);
+    if (!header) return;
+    char *plain = copy_text(header);
+    char *identity = strstr(plain, "\n#define TIDE_SIMULATION_ID ");
+    if (identity) { // The text without that line, as generated_text_stamp hashes its two halves
+        char *end = strchr(identity + 1, '\n');
+        memmove(identity, end ? end : identity + strlen(identity), strlen(end ? end : "") + 1u);
+    }
+    for (int i = 0; i < count; i++) {
+        if (stamps[i].wanted && stamps[i].source) stamps[i].with = part_stamp_with(b, &stamps[i], header, plain);
+    }
+    free(plain);
+    free(header);
+    char *path = path_join(gen, PARTS_STAMPED_FILE);
+    char *text = sys_read_file(path, NULL);
+    free(path);
+    for (char *line = text; line && *line;) {
+        char *end = strchr(line, '\n');
+        if (!end) break;
+        *end = 0;
+        unsigned long long file = 0, with = 0, stamp = 0;
+        int at = 0;
+        if (sscanf(line, "%llx %llx %llx %n", &file, &with, &stamp, &at) == 3 && at > 0) {
+            for (int i = 0; i < count; i++) {
+                part_stamp *p = &stamps[i];
+                if (!p->wanted || !p->source || p->known || p->with != with || strcmp(path_base(p->source), line + at) != 0) continue;
+                // The file's size and time are asked on the thread that would read it: here only what was kept
+                p->known = sys_file_stamp(p->source) == file && file != 0;
+                p->known_stamp = stamp;
+            }
+        }
+        line = end + 1;
+    }
+    free(text);
+}
+
+// Keeps the stamps that may be kept (part_stamp.settled, and the ones taken as kept this time), where that differs
+// from what's there.
+static void parts_stamped_write(const char *gen, const part_stamp *stamps, const int count)
+{
+    char *path = path_join(gen, PARTS_STAMPED_FILE);
+    char *was = sys_read_file(path, NULL);
+    size_t len = 0, room = 256;
+    char *text = malloc(room);
+    if (!text) abort();
+    text[0] = 0;
+    for (int i = 0; i < count; i++) {
+        const part_stamp *p = &stamps[i];
+        if (!p->wanted || !p->source || !p->ok || !(p->known || p->settled)) continue;
+        const char *name = path_base(p->source);
+        const size_t need = strlen(name) + 64u;
+        if (len + need > room) {
+            room = (len + need) * 2u;
+            text = realloc(text, room);
+            if (!text) abort();
+        }
+        len += (size_t)snprintf(text + len, room - len, "%016llx %016llx %016llx %s\n", (unsigned long long)p->file,
+                                (unsigned long long)p->with, (unsigned long long)p->stamp, name);
+    }
+    if (!was || strcmp(was, text) != 0) sys_write_text(path, text);
+    free(was);
+    free(text);
+    free(path);
 }
 
 // Lists the .c and .cpp files of the game, or of one of its packages
@@ -1700,8 +1811,39 @@ static bool queue_game(build *b, compiles *list, const char *gen, const char *ga
     free(manifest_path);
     bool ok = true;
     b->generated_lto = false;
+    part_stamp *stamps = NULL;
+    int stamp_count = 0, at = 0;
     if (manifest) {
-        for (char *line = manifest; *line && ok;) {
+        // Well-formed lines alone: the loop below says what's wrong with another
+        for (const char *line = manifest; *line; line = strchr(line, '\n') ? strchr(line, '\n') + 1 : line + strlen(line)) stamp_count++;
+        stamps = calloc((size_t)stamp_count + 1u, sizeof *stamps);
+        if (!stamps) abort();
+        int n = 0;
+        for (const char *line = manifest; *line && n < stamp_count; n++) {
+            const char *end = strchr(line, '\n');
+            const size_t len = end ? (size_t)(end - line) : strlen(line);
+            char *name = len >= 10 ? malloc(len - 3) : NULL;
+            if (name) {
+                memcpy(name, line + 4, len - 4);
+                name[len - 4] = 0;
+            }
+            if (name && (line[0] == '0' || line[0] == '1') && line[1] == ' ' && (line[2] == '0' || line[2] == '1') && line[3] == ' '
+                && strncmp(name, "game", 4) == 0 && has_extension(name, ".c") && !strchr(name, '/') && !strchr(name, 92)
+                && !strstr(name, "..")) {
+                const bool plumbing = line[0] == '1', main = strcmp(name, "game.c") == 0;
+                bool early = false;
+                for (int i = 0; i < b->early_queued.count; i++) early = early || strcmp(b->early_queued.items[i], name) == 0;
+                stamps[n] = (part_stamp){.b = b, .gen = gen, .source = path_join(gen, name), .first = main, .plumbing = plumbing,
+                                         .thin = line[2] == '1' && !splits_plumbing(b),
+                                         .lean = !plumbing && !main && splits_plumbing(b), .wanted = !early};
+            }
+            free(name);
+            line = end ? end + 1 : line + len;
+        }
+        parts_stamped_read(b, gen, stamps, stamp_count);
+        build_threads_each((uint32_t)stamp_count, (uint32_t)(b->jobs > 0 ? b->jobs : 1), part_stamp_work, stamps);
+        parts_stamped_write(gen, stamps, stamp_count);
+        for (char *line = manifest; *line && ok; at++) {
             char *end = strchr(line, '\n');
             if (end) *end = '\0';
             if (strlen(line) < 10 || strncmp(line + 4, "game", 4) != 0 || !has_extension(line + 4, ".c")
@@ -1712,7 +1854,7 @@ static bool queue_game(build *b, compiles *list, const char *gen, const char *ga
                 ok = false;
                 break;
             }
-            const bool plumbing = line[0] == '1', thin = line[2] == '1';
+            const bool plumbing = line[0] == '1', thin = line[2] == '1' && !splits_plumbing(b);
             const char *name = line + 4;
             const bool main = strcmp(name, "game.c") == 0;
             char *source = path_join(gen, name);
@@ -1723,19 +1865,29 @@ static bool queue_game(build *b, compiles *list, const char *gen, const char *ga
             char *object = main ? copy_text(objects->items[0]) : format("%s%s.o", stem, suffix);
             free(stem);
             free(suffix);
-            ok = queue_generated(b, list, source, object, gen, main, plumbing, thin);
+            // A debug build's code beside game.c: its other parts, compiled as it is. (And any of them looked at
+            // already, and compiling if it changed: game_written)
+            bool early = false;
+            for (int i = 0; i < b->early_queued.count; i++) early = early || strcmp(b->early_queued.items[i], name) == 0;
+            if (!early) {
+                ok = stamps[at].ok;
+                if (ok) queue_unless_stamped(b, list, source, object, gen, stamps[at].stamp, main, plumbing, thin, stamps[at].lean);
+            }
             if (!main) add_file(&c->objects, object);
             b->generated_lto = b->generated_lto || thin;
             free(source);
             free(object);
             line = end ? end + 1 : line + strlen(line);
         }
+        for (int i = 0; i < stamp_count; i++) free(stamps[i].source);
+        free(stamps);
         free(manifest);
     } else {
         fprintf(stderr, "tide: the generated C manifest for %s is missing; rebuild the game\n", game_c);
         ok = false;
     }
-    if (ok) ok = queue_generated(b, list, start_c, objects->items[1], gen, false, false, false);
+    if (ok) ok = queue_generated(b, list, start_c, objects->items[1], gen, false, false, false, false);
+    free_files(&b->early_queued);
     if (!ok) {
         free_compiles(list);
         return false;
@@ -2110,6 +2262,59 @@ static void generated_lto_flags(args *a, const build *b, char **cache_flag, char
 // debug info on Windows goes in `pdb`. With `kept`, only when it would make
 // something other than what it made there last time: <output>.stamp says what
 // that was made of.
+// Runs a link whose arguments may be more than a command line holds (Windows': 32,767 characters, which a big
+// game's objects' paths pass): then they go in a file beside the output, `<output>.rsp`, that the compiler reads
+// (@file), each quoted as its command line's reader takes it.
+static int run_link(const char *const *items, const char *output)
+{
+    size_t length = 0;
+    int count = 0;
+    for (; items[count]; count++) length += strlen(items[count]) + 3u;
+#ifdef TIDE_EMBEDDED_CLANG
+    const int head = 2; // tide, cc
+#else
+    const int head = 1;
+#endif
+    if (length < 24000u || count <= head) return sys_run(items, NULL, false);
+    size_t room = length * 2u + 16u, at = 0;
+    char *text = malloc(room);
+    if (!text) abort();
+    for (int i = head; i < count; i++) {
+        text[at++] = '"';
+        for (const char *c = items[i]; *c;) {
+#ifdef _WIN32
+            // Backslashes are themselves but before a quote, or the closing one, where each is two
+            size_t slashes = 0;
+            while (c[slashes] == 92) slashes++;
+            if (slashes) {
+                const bool doubled = c[slashes] == '"' || !c[slashes];
+                for (size_t k = 0; k < slashes * (doubled ? 2u : 1u); k++) text[at++] = 92;
+                c += slashes;
+                continue;
+            }
+#else
+            if (*c == 92) text[at++] = 92;
+#endif
+            if (*c == '"') text[at++] = 92;
+            text[at++] = *c++;
+        }
+        text[at++] = '"';
+        text[at++] = 10;
+    }
+    text[at] = 0;
+    char *file = format("%s.rsp", output, NULL);
+    char *named = format("@%s", file, NULL);
+    int code = -1;
+    if (sys_write_text(file, text)) {
+        const char *run[4] = {items[0], head == 2 ? items[1] : named, head == 2 ? named : NULL, NULL};
+        code = sys_run(run, NULL, false);
+    }
+    free(named);
+    free(file);
+    free(text);
+    return code;
+}
+
 static bool link_objects(const build *b, const file_list *objects, const c_side *c, const char *output,
                          const bool shared, const char *pdb, const bool kept)
 {
@@ -2216,7 +2421,7 @@ static bool link_objects(const build *b, const file_list *objects, const c_side 
     // A ThinLTO link optimizes the generated C's parts as a whole first, which is most of its time
     build_step_shown(same ? "linked output is up to date" : "linking",
                      !same && b->generated_lto ? "optimizing across files and linking" : NULL);
-    const int code = same ? 0 : sys_run(a.items, NULL, false);
+    const int code = same ? 0 : run_link(a.items, output);
     if (code == 0 && stamp_path && !same) sys_write_text(stamp_path, stamp);
     free(stamp_path);
     if (code > 0) explain_link(b, a.items);
@@ -2439,12 +2644,28 @@ static bool page_file(const char *page, const char *extension, const char *data,
     return ok;
 }
 
+// The pack's pieces compressed on every processor (tide_pack_compress)
+static void pack_each(const uint32_t count, void (*work)(void *context, uint32_t i), void *context)
+{
+    build_threads_each(count, 0u, work, context);
+}
+
+// Whether a build's pack ships compressed (tide/pack.h, A pack compressed): a release's or a distribution's,
+// which is built to be handed on. A debug build's, a watched run's and a run's with no window stay as tidec
+// wrote them, copied with no pass over their bytes. Managed hosting takes the pack as it is.
+static bool pack_ships_compressed(const build_options *opts)
+{
+    return opts->release && !opts->watch && !opts->run_pack && !opts->managed && !opts->unity;
+}
+
 // The page. Split (tide build --web): the program and its pack beside it, as
 // <page>.wasm and <page>.pack, which it downloads, showing how much has come,
 // and a browser caches between visits. Single (--single-file): both inside
-// it as base64, gzipped in a release, so it opens straight from disk.
+// it as base64, gzipped in a release, so it opens straight from disk. With
+// `compressed_pack`, a split page's pack is compressed (a single page's is
+// gzipped with the rest of it, which makes fewer bytes of the pack as it is).
 static bool make_page(const char *root, const char *folder, const char *program, const char *page, const char *pack,
-                      const char *const *args, const bool release, const bool single_file)
+                      const char *const *args, const bool release, const bool single_file, const bool compressed_pack)
 {
     char *script_path = path_join(root, release ? "web/tide.release.js" : "web/tide.js");
     char *shell = page_shell(root, folder);
@@ -2455,6 +2676,13 @@ static bool make_page(const char *root, const char *folder, const char *program,
     char *wasm = sys_read_file(program, &wasm_len);
     size_t pack_len = 0;
     char *packed = pack ? sys_read_file(pack, &pack_len) : NULL; // The game's assets
+    if (packed && compressed_pack && !single_file) { // The file the page downloads (tide/pack.h, A pack compressed)
+        size_t compressed_len = 0;
+        char *compressed = (char *)tide_pack_compress((const uint8_t *)packed, pack_len, pack_each, &compressed_len);
+        free(packed);
+        packed = compressed;
+        pack_len = compressed_len;
+    }
     const char *slot = shell ? strstr(shell, "{{{ SCRIPT }}}") : NULL;
     bool ok = false;
     FILE *f = NULL;
@@ -2610,7 +2838,7 @@ static void stamp_asset_file(void *user, const char *path, unsigned long long si
 static bool records_generation(const build *b)
 {
     const build_options *o = b->opts;
-    return !o->unity && !o->unity_assets && !o->editor_prefab && !o->editor_source && !o->editor_draft && !o->declarations;
+    return !o->unity && !o->unity_assets && !o->declarations;
 }
 
 // ...and whether this build takes the generate there: not one that asks what a generate does (its report, its
@@ -2631,6 +2859,8 @@ static void key_number(tide_sha256 *h, const uint64_t n)
 }
 
 // What a generate is made of, but its assets' files: 64 hex digits. Empty when tide can't stamp itself.
+static uint64_t tweaks_stamp(const build *b);
+
 static void generation_key(const build *b, const char *gen, const bool layout, char out[65])
 {
     out[0] = '\0';
@@ -2650,7 +2880,8 @@ static void generation_key(const build *b, const char *gen, const bool layout, c
     key_text(&h, gen);
     const uint8_t flags[] = {layout, b->library, (uint8_t)b->abi, o->release, o->distribution, o->web, o->single_file,
                              o->android, o->server, o->managed, o->server_strip_assets, o->strip_assets, o->watch,
-                             splits_plumbing(b), debug_views(o), strip_server_assets(b), strip_game_assets(b, layout)};
+                             splits_plumbing(b), debug_views(o), strip_server_assets(b), strip_game_assets(b, layout),
+                             o->dev};
     tide_sha256_add(&h, flags, sizeof flags);
     key_text(&h, o->optimization);
     key_text(&h, o->scene);
@@ -2662,6 +2893,7 @@ static void generation_key(const build *b, const char *gen, const bool layout, c
         key_text(&h, b->packages.items[i].folder); // One from git is in a folder named for its commit
     }
     key_number(&h, game_stamp(b));
+    key_number(&h, tweaks_stamp(b)); // A new .tweaks file is no file the last generation watched
     uint8_t digest[32];
     tide_sha256_end(&h, digest);
     for (int i = 0; i < 32; i++) snprintf(out + i * 2, 3, "%02x", digest[i]);
@@ -2732,8 +2964,8 @@ static void generation_free(generation *g)
     *g = (generation){0};
 }
 
-// Leaves the record of the generate just made in `gen`.
-static void generation_keep(const build *b, const char *gen, const char *key)
+// Leaves the record of the generate just made in `gen`. `assets` is stamp_assets of its paths, taken after it ran.
+static void generation_keep(const build *b, const char *gen, const char *key, const uint64_t assets)
 {
     char *path = path_join(gen, GENERATION_FILE);
     char *fresh = format("%s.new", path, NULL);
@@ -2743,7 +2975,7 @@ static void generation_keep(const build *b, const char *gen, const char *key)
         const game_info *info = &b->info;
         const char *externs = b->externs.data ? b->externs.data : "";
         fprintf(f, "%s\n%s\n%016llx\n%016llx\n%d%d%d\n", GENERATION_FORMAT, key,
-                (unsigned long long)stamp_assets(info->asset_paths, info->asset_count),
+                (unsigned long long)assets,
                 (unsigned long long)generated_stamp(gen), info->bold, info->microphone, info->assets_affect_match);
         const char *const texts[] = {info->simulation, info->title, info->app_id, info->version, externs};
         for (size_t i = 0; i < sizeof texts / sizeof texts[0]; i++) fprintf(f, "%zu\n%s\n", strlen(texts[i]), texts[i]);
@@ -2837,18 +3069,18 @@ static bool generation_read(const char *gen, generation *g)
 // Whether the generate `last` records in `gen` is the one `key` asks for, its assets' files and what tidec wrote as
 // they were: then `b` has what that generate gave it (its settings, its externs' names, the paths its assets name),
 // and `last` is empty.
-static bool generation_kept(build *b, const char *gen, const char *key, generation *last)
+static bool generation_kept(build *b, const char *gen, const char *key, generation *last, const uint64_t assets)
 {
     if (!last->text || strcmp(last->key, key) != 0) return false;
     char stamp[32];
-    snprintf(stamp, sizeof stamp, "%016llx", (unsigned long long)stamp_assets(last->info.asset_paths, last->info.asset_count));
+    snprintf(stamp, sizeof stamp, "%016llx", (unsigned long long)assets);
     if (strcmp(stamp, last->assets) != 0) return false;
     snprintf(stamp, sizeof stamp, "%016llx", (unsigned long long)generated_stamp(gen));
     if (strcmp(stamp, last->written) != 0) return false;
     // The .tide files it compiled, as a generate lists them
     file_list paths = {0};
     int count = 0;
-    compile_input *inputs = game_inputs(b->folder, &b->packages, &paths, &count, NULL);
+    compile_input *inputs = game_inputs(b->folder, &b->packages, &paths, &count);
     if (!inputs) return false; // Its error is said: the generate that follows says it again, and fails
     free(inputs);
     arena_reset(); // What an earlier build compiled, when a run rebuilds the game
@@ -2870,11 +3102,13 @@ static bool generation_kept(build *b, const char *gen, const char *key, generati
 // it hasn't. `last` is the record before that generate, whose paths' stamp then was `before`: with the same paths
 // now, their stamp tells. Otherwise (a first generate, another asset declared) none may have been written since
 // the generate started, at `started`.
-static bool assets_stayed(const build *b, const generation *last, const uint64_t before, const uint64_t started)
+// *now gets the paths' stamp as it is after the generate, for its record.
+static bool assets_stayed(const build *b, const generation *last, const uint64_t before, const uint64_t started, uint64_t *now)
 {
     bool same = last->text && last->info.asset_count == b->info.asset_count;
     for (int i = 0; same && i < b->info.asset_count; i++) same = strcmp(last->info.asset_paths[i], b->info.asset_paths[i]) == 0;
-    if (same) return before == stamp_assets(b->info.asset_paths, b->info.asset_count);
+    *now = stamp_assets(b->info.asset_paths, b->info.asset_count);
+    if (same) return before == *now;
     return assets_newest(b) < started;
 }
 
@@ -2882,7 +3116,7 @@ static bool generate_sources(build *b, const char *gen, const bool layout)
 {
     file_list paths;
     int count = 0;
-    compile_input *inputs = game_inputs(b->folder, &b->packages, &paths, &count, b->opts->editor_source);
+    compile_input *inputs = game_inputs(b->folder, &b->packages, &paths, &count);
     if (!inputs) return false;
     // A Unity project's prefabs and scenes, as the prefabs tide makes of them, after the game's own files
     unity_sources unity = {0};
@@ -2984,8 +3218,6 @@ static bool generate_sources(build *b, const char *gen, const bool layout)
     game_info next_info = {0};
     char *pack = pack_of(gen);
     // The game's folder is where its .tide/ is: the hashes of the files its assets name, and fetched URLs, are kept there
-    char *editor_text = b->opts->editor_draft ? sys_read_file(b->opts->editor_draft, NULL) : NULL;
-    if (b->opts->editor_draft && !editor_text) { fprintf(stderr, "tide: cannot read the source overlay replacement: %s\n", b->opts->editor_draft); free(pack); free_files(&paths); free(inputs); unity_sources_free(&unity); return false; }
     sb outline = {0}, shaders = {0};
     if (b->opts->asset_sizes) asset_sizes_free(b->opts->asset_sizes); // This compile's, as each Android CPU's is the same
     free(b->views);
@@ -3020,10 +3252,10 @@ static bool generate_sources(build *b, const char *gen, const bool layout)
     const char *const *build_libs = native_link.items;
 #endif
     const codegen_options codegen = {.name = "game", .out_dir = gen, .line_directives = true, .layout = layout,
-                                     .split_plumbing = splits_plumbing(b),
+                                     .split_plumbing = splits_plumbing(b), .split_own_code = true,
                                      .split_code = true, .split_code_min_bytes = 4u * 1024u * 1024u,
-                                     .split_code_parts = 16,
-                                     .split_code_part_bytes = 512u * 1024u,
+                                     .split_code_parts = splits_plumbing(b) ? 32 : 16, // A debug build: plain objects, more of them
+                                     .split_code_part_bytes = splits_plumbing(b) ? 128u * 1024u : 512u * 1024u,
                                      .build_cc = build_cc, .build_flags = native_flags, .build_libs = build_libs,
                                      .build_include = b->include, .build_engine = engine_src,
                                      .visualizers = b->views != NULL,
@@ -3040,14 +3272,11 @@ static bool generate_sources(build *b, const char *gen, const bool layout)
                                      .defines = b->opts->defines, .define_count = b->opts->define_count,
                                      .external_identity = has_external ? external_identity : NULL,
                                      .scene = b->opts->scene,
-                                     .editor_prefab = b->opts->editor_prefab, .editor_local = b->opts->editor_local,
-                                     .editor_source = b->opts->editor_source, .editor_text = editor_text,
-                                     .declarations_only = b->opts->declarations};
+                                     .declarations_only = b->opts->declarations, .dev = b->opts->dev};
     compile_set_progress(tide_progress);
     const bool ok = compile_inputs(inputs, count, &codegen, NULL);
     compile_set_progress(NULL);
     if (!ok) telemetry_fail(TELEMETRY_ERROR_COMPILE);
-    free(editor_text);
     free(engine_src);
     free(native_sysroot);
     free(native_builtins); // native_link is the arena's
@@ -3080,9 +3309,44 @@ static bool generate_sources(build *b, const char *gen, const bool layout)
     return ok;
 }
 
+// A generate has written a file of the game's own code whole (compile_written): a debug build's game.c and its
+// parts, compiled at -O0, which take nothing the generate writes after them. One that changed starts compiling
+// now, a compile more than are running, while the generate cuts the plumbing into its parts. Not when files
+// compile one at a time (TIDE_JOBS=1). Their objects are named as queue_game names them.
+static build *early_build;
+
+static void game_written(const char *path)
+{
+    build *b = early_build;
+    const char *name = path_base(path);
+    if (!b || !b->early || !b->early_object || b->jobs < 2 || !splits_plumbing(b)) return;
+    if (strncmp(name, "game", 4) != 0 || strncmp(name, "game_plumbing", 13) == 0 || !has_extension(name, ".c")) return;
+    const bool main = strcmp(name, "game.c") == 0;
+    char *stem = copy_text(b->early_object);
+    if (has_extension(stem, ".o")) stem[strlen(stem) - 2] = '\0';
+    char *suffix = copy_text(name + 4);
+    suffix[strlen(suffix) - 2] = '\0';
+    char *object = main ? copy_text(b->early_object) : format("%s%s.o", stem, suffix);
+    const int before = b->early->count;
+    if (queue_generated(b, b->early, path, object, b->early_gen, main, false, false, !main)) {
+        add_file(&b->early_queued, name);
+        if (b->early->count > before && b->early->running_count < b->jobs) {
+            b->early->items[before].first = true; // Whichever it is, it starts now
+            int stop = b->early->count;
+            start_compiles(b->early, b->early->running_count + 1, &stop);
+        }
+    }
+    free(stem);
+    free(suffix);
+    free(object);
+}
+
 static bool generate(build *b, const char *gen, const bool layout, compiles *ahead)
 {
     const bool own_feedback = begin_build_feedback();
+    b->early = ahead;
+    b->early_gen = gen;
+    free_files(&b->early_queued);
     build_step("resolving packages");
     const bool packages = find_packages(b->folder, &b->packages);
     if (packages && ahead) {
@@ -3099,7 +3363,10 @@ static bool generate(build *b, const char *gen, const bool layout, compiles *ahe
     if (packages && records_generation(b)) generation_key(b, gen, layout, key);
     generation last = {0};
     if (key[0]) generation_read(gen, &last);
-    const bool kept = key[0] && keeps_generation(b) && generation_kept(b, gen, key, &last);
+    // The stamp of the files the last generate's assets named, as they are now: what says whether it stands, and
+    // what they're compared with once this one has run. Asked for once: a thousand files' sizes and times.
+    const uint64_t before = last.text ? stamp_assets(last.info.asset_paths, last.info.asset_count) : 0;
+    const bool kept = key[0] && keeps_generation(b) && generation_kept(b, gen, key, &last, before);
     if (kept) build_step("Tide code and assets are up to date");
     else if (packages) build_step("compiling Tide code and assets");
     if (packages && !kept) { // What's there is no generate's until this one ends well
@@ -3107,12 +3374,17 @@ static bool generate(build *b, const char *gen, const bool layout, compiles *ahe
         sys_remove(record);
         free(record);
     }
-    const uint64_t before = last.text ? stamp_assets(last.info.asset_paths, last.info.asset_count) : 0;
     const uint64_t started = sys_time();
     const unsigned long said = diag_warnings_said();
+    early_build = b;
+    compile_set_written(game_written);
     const bool ok = packages && (kept || generate_sources(b, gen, layout));
+    compile_set_written(NULL);
+    early_build = NULL;
+    b->early = NULL;
+    uint64_t after = 0;
     if (ok && !kept && key[0] && said == diag_warnings_said() && !b->info.fetched_assets
-        && assets_stayed(b, &last, before, started)) generation_keep(b, gen, key);
+        && assets_stayed(b, &last, before, started, &after)) generation_keep(b, gen, key, after);
     generation_free(&last);
     if (!ok && ahead) free_compiles(ahead);
     if (own_feedback) end_build_feedback(ok);
@@ -3197,16 +3469,38 @@ static bool place_debug_views(const build *b, const char *output, const char *st
 }
 
 // What a marker beside `from` says of its last copy to `to` (place_pack): where it went, and both files' stamps
-// after it.
-static char *placed_record(const char *from, const char *to)
+// after it, and whether it went there compressed (place_file).
+static char *placed_record(const char *from, const char *to, const bool compressed)
 {
     char stamps[64];
-    snprintf(stamps, sizeof stamps, "\n%016llx %016llx\n", (unsigned long long)sys_file_stamp(from),
-             (unsigned long long)sys_file_stamp(to));
+    snprintf(stamps, sizeof stamps, "%s\n%016llx %016llx\n", compressed ? "\ncompressed" : "",
+             (unsigned long long)sys_file_stamp(from), (unsigned long long)sys_file_stamp(to));
     return format("%s%s", to, stamps);
 }
 
+// The pack at `from` written compressed at `to`.
+static bool write_compressed_pack(const char *from, const char *to)
+{
+    size_t size = 0, compressed_size = 0;
+    char *bytes = sys_read_file(from, &size);
+    if (!bytes) return false;
+    build_step("compressing assets");
+    uint8_t *compressed = tide_pack_compress((const uint8_t *)bytes, size, pack_each, &compressed_size);
+    free(bytes);
+    const bool ok = sys_write_file(to, (const char *)compressed, compressed_size);
+    free(compressed);
+    return ok;
+}
+
+static bool place_file(const char *from, const char *to, bool compressed);
+
 static bool place_pack(const char *from, const char *to)
+{
+    return place_file(from, to, false);
+}
+
+// `from` copied to `to`, or with `compressed` (a pack) written there compressed.
+static bool place_file(const char *from, const char *to, const bool compressed)
 {
     // A big game's pack is hundreds of megabytes, which tidec leaves alone when it comes out the same: copied again
     // only when it or the copy changed since the last copy. A marker for each place it goes, so a build's copy and
@@ -3214,7 +3508,7 @@ static bool place_pack(const char *from, const char *to)
     char place[32];
     snprintf(place, sizeof place, "%016llx", (unsigned long long)hash_text(0xCBF29CE484222325ull, to));
     char *marker = format("%s.placed-%s", from, place);
-    char *record = placed_record(from, to);
+    char *record = placed_record(from, to, compressed);
     char *last = sys_read_file(marker, NULL);
     const bool same = last && strcmp(last, record) == 0 && sys_exists(to);
     free(last);
@@ -3229,10 +3523,10 @@ static bool place_pack(const char *from, const char *to)
         sys_remove(to);
         return true;
     }
-    const bool ok = sys_copy_file(from, to);
+    const bool ok = compressed ? write_compressed_pack(from, to) : sys_copy_file(from, to);
     if (!ok) fprintf(stderr, "tide: can't write %s\n", to);
     if (ok) {
-        record = placed_record(from, to);
+        record = placed_record(from, to, compressed);
         sys_write_text(marker, record);
         free(record);
     }
@@ -3295,6 +3589,7 @@ static char *build_game(const char *root, const build_options *opts, const char 
     sys_mkdirs(gen);
 
     compiles list = {0};
+    b.early_object = path_join(b.cache, "game.o");
     if (!generate(&b, gen, false, &list)) return NULL;
     report_cuts(&b);
     char *main_c = path_join(gen, "main.c");
@@ -3339,14 +3634,17 @@ static char *build_game(const char *root, const build_options *opts, const char 
     char *pack = pack_of(gen);
     if (opts->web && !opts->managed) {
         build_step("packaging web page");
-        if (!make_page(root, b.folder, program, output, pack, args, opts->distribution && !opts->watch, opts->single_file)) return NULL;
+        if (!make_page(root, b.folder, program, output, pack, args, opts->distribution && !opts->watch, opts->single_file,
+                       pack_ships_compressed(opts))) {
+            return NULL;
+        }
     }
     if (!opts->web || opts->managed) { // Beside the program, as <name>.pack, which tide/run.h loads
         char file[512];
         snprintf(file, sizeof file, "%s.pack", opts->managed ? "server" : b.name);
         if (opts->server && !opts->managed) snprintf(file, sizeof file, "%s-server.pack", b.name);
         char *beside = path_join(output_dir, file);
-        const bool placed = place_pack(pack, beside);
+        const bool placed = place_file(pack, beside, pack_ships_compressed(opts));
         free(beside);
         if (!placed) return NULL;
     }
@@ -3473,9 +3771,50 @@ typedef struct run {
     // (find_player_schema), and that schema and its outline, NULL where the two are one game
     struct run *player;
     char *player_schema, *player_outline;
+    // tide unity: which tide built the host Unity loads and wrote library.c (made_by)
+    char made_by[96];
 } run;
 
 static bool queue_host(run *r, compiles *list, file_list *objects);
+
+static void made_by_file(void *user, const char *source)
+{
+    uint64_t *h = user;
+    *h += hash_file(0xCBF29CE484222325ull, source); // Summed: in whichever order the folder lists them
+}
+
+// Which tide builds, as it is now: its version, and a number of what a build is made with, which are tide itself,
+// its compiler, the installation's headers, the engine's sources and the platform layer's library. A host that
+// loads games' libraries (tide run's, and the one Unity loads) and each library say it (tide/host.h's
+// TIDE_HOST_LIBRARY_MADE_BY), and a host loads only what its own tide built.
+// Two tides of one version (a development tide built again) are two, and so is one whose files changed under it.
+static void made_by(const build *b, char out[96])
+{
+    // tide itself as it was when this process first asked: one replaced on disk under a running tide is still the
+    // old program here, and the tide started from the new file is another
+    static uint64_t self;
+    static bool stamped;
+    if (!stamped) {
+        char *tide = sys_exe_path();
+        self = hash_file(0xCBF29CE484222325ull, tide);
+        free(tide);
+        stamped = true;
+    }
+    uint64_t h = (hash_text(0xCBF29CE484222325ull, TIDE_VERSION) ^ self) * 0x100000001B3ull;
+    h = hash_file(h, b->compiler); // clang where tide hasn't it built in
+    h = (h ^ header_stamp(b->include)) * 0x100000001B3ull;
+    char *engine_src = path_join(b->root, "src/engine/");
+    uint64_t sources = header_stamp(engine_src);
+    folder_find(engine_src, ".c", made_by_file, &sources);
+    free(engine_src);
+    h = (h ^ sources) * 0x100000001B3ull;
+    char *platform_lib = path_join(b->root, "lib/native/libtide_platform.a");
+    h = hash_file(h, platform_lib);
+    free(platform_lib);
+    snprintf(out, 96, "%.60s (%016llx)", TIDE_VERSION, (unsigned long long)h);
+}
+
+static bool write_if_changed(const char *path, const char *text, size_t size);
 
 // The game's pack as the last generate left it, into the run's folder as the
 // next pack-<n>, which the host loads (platform/src/reload.c). Nothing for a
@@ -3517,22 +3856,58 @@ static void stamp_asset_file(void *user, const char *path, const unsigned long l
     stamp_file(user, path);
 }
 
+static void stamp_file(void *user, const char *path);
+
 // Changes whenever a file the game's assets name does, or one comes or goes
-// in a folder a glob names: the paths the last generate listed.
+// in a folder a glob names: the paths the last generate listed. And whenever
+// one of the game's .tweaks files does, or one comes or goes (tweaks.c): a new
+// one is read as the game's next values are worked out.
+// The game's .tweaks files, in its folder and the folders in it: one made or removed changes it, as an edit does
+static uint64_t tweaks_stamp(const build *b)
+{
+    uint64_t h = 0;
+    char *dir = path_join(b->folder, "");
+    folder_find_own(dir, ".tweaks", stamp_file, &h);
+    free(dir);
+    return h;
+}
+
 static uint64_t asset_stamp(const build *b)
 {
-    return stamp_assets(b->info.asset_paths, b->info.asset_count);
+    return stamp_assets(b->info.asset_paths, b->info.asset_count) ^ tweaks_stamp(b);
 }
 
 // The same for the `count` paths a generate listed (game_info.asset_paths): a folder's ends in a slash.
+// (Each file's stamp is asked of the system on a thread of its own turn: a big game names a thousand, a tenth of
+// a second one after another, and a build asks before it generates and after. The stamp is what one thread makes.)
+typedef struct asset_stamps {
+    char *const *paths;
+    uint64_t *stamps;
+} asset_stamps;
+
+static void asset_stamp_work(void *context, const uint32_t i)
+{
+    const asset_stamps *a = context;
+    const char *path = a->paths[i];
+    if (!(path[0] && path[strlen(path) - 1] == '/')) a->stamps[i] = sys_file_stamp(path);
+}
+
 static uint64_t stamp_assets(char *const *paths, const int count)
 {
     uint64_t h = 0xCBF29CE484222325ull;
+    asset_stamps a = {paths, calloc((size_t)count + 1u, sizeof *a.stamps)};
+    if (!a.stamps) abort();
+    build_threads_each((uint32_t)count, 0u, asset_stamp_work, &a);
     for (int i = 0; i < count; i++) {
         const char *path = paths[i];
-        if (path[0] && path[strlen(path) - 1] == '/') folder_find_files(path, stamp_asset_file, &h);
-        else stamp_file(&h, path);
+        if (path[0] && path[strlen(path) - 1] == '/') {
+            folder_find_files(path, stamp_asset_file, &h);
+            continue;
+        }
+        for (const char *c = path; *c; c++) h = (h ^ (uint8_t)*c) * 0x100000001B3ull; // As stamp_file
+        h = (h ^ a.stamps[i]) * 0x100000001B3ull;
     }
+    free(a.stamps);
     return h;
 }
 
@@ -3560,6 +3935,8 @@ static char *build_path(const run *r, const uint32_t n, const char *suffix)
 static bool build_library_work(run *r)
 {
     compiles list = {0};
+    free(r->b.early_object);
+    r->b.early_object = path_join(r->dir, "game.o");
     if (!generate(&r->b, r->gen, true, &list)) return false;
     const char *suffix = r->web ? ".wasm" : LIBRARY_SUFFIX;
     char *game_c = path_join(r->gen, "game.c");
@@ -3620,21 +3997,6 @@ static bool build_library(run *r)
     return ok;
 }
 
-char *tide_build_editor(const char *root, const build_options *opts)
-{
-    if (!opts->editor_prefab || !opts->output || opts->web || opts->android) return NULL;
-    run r = {0};
-    if (!build_setup(&r.b, root, opts, true)) return NULL;
-    r.dir = path_absolute(opts->output);
-    r.gen = path_join(r.dir, "gen");
-    if (!sys_mkdirs(r.gen)) return NULL;
-    char *stub = path_join(r.gen, "library.c");
-    const bool wrote = sys_write_text(stub, "#include \"game.h\"\n");
-    free(stub);
-    if (!wrote || !build_library(&r)) return NULL;
-    return build_path(&r, 1, LIBRARY_SUFFIX);
-}
-
 // The host: tide/host.h's loop, reloading the libraries in the run's folder.
 static bool queue_host(run *r, compiles *list, file_list *objects)
 {
@@ -3650,11 +4012,11 @@ static bool queue_host(run *r, compiles *list, file_list *objects)
              "int main(int argc, char **argv)\n"
              "{\n"
              "    tide_host_run_library(&(tide_run_desc){%s, .stats = %s, .stats_open = %s, .debug_views = %s,\n"
-             "                                           .argc = argc, .argv = argv},\n"
+             "                                           .argc = argc, .argv = argv, .made_by = \"%s\"},\n"
              "                          \"%s\");\n"
              "}\n",
              title, r->b.opts->stats ? "true" : "false", r->b.opts->stats_open ? "true" : "false",
-             r->b.opts->debug_views ? "true" : "false", dir);
+             r->b.opts->debug_views ? "true" : "false", r->made_by, dir);
     char *host_c = path_join(r->gen, "host.c");
     add_file(objects, path_join(r->dir, "host.o"));
     // Compiled again only when it changed, or what it's compiled with: the run's folder keeps it (clear_run_entry)
@@ -3662,37 +4024,65 @@ static bool queue_host(run *r, compiles *list, file_list *objects)
     const uint64_t h = hash_text(hash_text(hash_text(0xCBF29CE484222325ull, flags), host_c), text);
     free(flags);
     bool ok = sys_write_text(host_c, text);
-    if (ok) queue_unless_stamped(&r->b, list, host_c, objects->items[0], NULL, h, false, false, false);
+    if (ok) queue_unless_stamped(&r->b, list, host_c, objects->items[0], NULL, h, false, false, false, false);
     free(host_c);
     return ok;
 }
 
 // What the host loads from each library (see tide/host.h): the game, with its
 // data layout.
-static bool write_library(const run *r)
+static bool write_library(run *r)
 {
+    made_by(&r->b, r->made_by);
     char *path = path_join(r->gen, "library.c");
-    const bool ok = sys_write_text(path, "// Generated by tide. Do not edit.\n"
-                                         "#include \"game.h\"\n"
-                                         "#include \"tide/run.h\"\n"
-                                         "\n"
-                                         "extern const tide_layout tide_game_layout;\n"
-                                         "\n"
-                                         "TIDE_HOST_EXPORT const tide_host_game *tide_host_library(void)\n"
-                                         "{\n"
-                                         "    static tide_host_game game;\n"
-                                         "    game = tide_host_game_api;\n"
-                                         "    game.layout = &tide_game_layout;\n"
-                                         "    return &game;\n"
-                                         "}\n"
-                                         "\n"
-                                         "// How this build lays out what the host reads the game through\n"
-                                         "TIDE_HOST_EXPORT uint64_t tide_host_library_shape(void)\n"
-                                         "{\n"
-                                         "    return TIDE_HOST_SHAPE;\n"
-                                         "}\n");
+    char text[2048];
+    snprintf(text, sizeof text,
+             "// Generated by tide. Do not edit.\n"
+             "#include \"game.h\"\n"
+             "#include \"tide/run.h\"\n"
+             "\n"
+             "extern const tide_layout tide_game_layout;\n"
+             "\n"
+             "TIDE_HOST_EXPORT const tide_host_game *tide_host_library(void)\n"
+             "{\n"
+             "    static tide_host_game game;\n"
+             "    game = tide_host_game_api;\n"
+             "    game.layout = &tide_game_layout;\n"
+             "    return &game;\n"
+             "}\n"
+             "\n"
+             "// How this build lays out what the host reads the game through\n"
+             "TIDE_HOST_EXPORT uint64_t tide_host_library_shape(void)\n"
+             "{\n"
+             "    return TIDE_HOST_SHAPE;\n"
+             "}\n"
+             "\n"
+             "// Which tide built it: the host that loads it was built by the same\n"
+             "TIDE_HOST_EXPORT const char *tide_host_library_made_by(void)\n"
+             "{\n"
+             "    return \"%s\";\n"
+             "}\n",
+             r->made_by);
+    const bool ok = write_if_changed(path, text, strlen(text));
     free(path);
     return ok;
+}
+
+// The watched game built again, unless tide's installation changed since the run's host was built (tide upgraded or
+// installed again, a development tide built again, while the game runs): a build made of the files as they are now
+// is another tide's, which the host wouldn't load, and the host can't be built again while it runs.
+static bool run_build(run *r)
+{
+    char now[96];
+    made_by(&r->b, now);
+    if (strcmp(now, r->made_by) != 0) {
+        fprintf(stderr, "tide: tide's installation changed since this run started (it was tide %s, and is tide %s now), so "
+                        "the game isn't built again: what's running was built by the first, and loads no other's builds\n"
+                        "  = note: stop this run and start `tide run` again, which builds the game and what runs it anew\n",
+                r->made_by, now);
+        return false;
+    }
+    return build_library(r);
 }
 
 // Removes the folders of runs whose tide has ended without cleaning up.
@@ -3738,7 +4128,6 @@ static void stamp_folder(uint64_t *h, const char *folder)
 static uint64_t game_stamp(const build *b)
 {
     uint64_t h = 0xCBF29CE484222325ull;
-    if (b->opts->editor_draft) stamp_file(&h, b->opts->editor_draft);
     if (b->opts->notified && packages_unity_assets(b->folder)) {
         // The editor says what else changes in Assets (a file made, moved or gone, a prefab, a scene, a package):
         // here, only the files it compiled and its tide.packages, which an editor outside Unity may save while
@@ -3861,6 +4250,7 @@ int tide_run_native(const char *root, const build_options *opts, const char *con
     build_options standalone = *opts;
     standalone.output = output; // Another run never links over this one's executable
     standalone.keep_output = r.kept_folder;
+    standalone.run_pack = true;
     char *program = tide_build(root, &standalone);
     int code = 1;
     if (program) {
@@ -3945,11 +4335,11 @@ static int run_reloading(const char *root, const build_options *opts, const char
         if (changed_at >= 0 && sys_now_ms() - changed_at >= SETTLE_MS) {
             changed_at = -1;
             assets_changed_at = -1; // A build brings the pack as the files are now
-            if (!build_library(&r)) fprintf(stderr, "tide: the game keeps running its last build\n");
+            if (!run_build(&r)) fprintf(stderr, "tide: the game keeps running its last build\n");
         } else if (assets_changed_at >= 0 && sys_now_ms() - assets_changed_at >= SETTLE_MS) {
             assets_changed_at = -1;
             if (r.b.info.assets_affect_match) {
-                if (!build_library(&r)) fprintf(stderr, "tide: the game keeps running its last build\n");
+                if (!run_build(&r)) fprintf(stderr, "tide: the game keeps running its last build\n");
             } else {
                 repack(&r);
             }
@@ -3991,7 +4381,9 @@ static const char *const embed_exports[] = {"tide_embed_abi", "tide_embed_create
                                             "tide_embed_audio", "tide_embed_microphone",
                                             "tide_embed_travel_of", "tide_embed_travel_keep", "tide_embed_pause",
                                             "tide_embed_step", "tide_embed_show", "tide_embed_continue", "tide_embed_recording", "tide_embed_replay",
-                                            "tide_embed_replay_end", "tide_embed_log", NULL};
+                                            "tide_embed_replay_end", "tide_embed_log", "tide_embed_view_want",
+                                            "tide_embed_view_again", "tide_embed_local_texture", "tide_embed_local_object",
+                                            "tide_embed_sounds", NULL};
 
 typedef struct numbered {
     const char *prefix, *suffix;
@@ -4017,31 +4409,43 @@ static uint32_t highest_numbered(const char *dir, const char *prefix, const char
     return n.most;
 }
 
-// What each library loads the game through: tide/run.h's table, with what --embed generated and the layout.
-static bool write_unity_library(const run *r)
+// What each library loads the game through: tide/run.h's table, with what --embed generated and the layout, and
+// which tide built it, as it is now (`r->made_by`). Written only where it changes: a build compiles what did.
+static bool write_unity_library(run *r)
 {
+    made_by(&r->b, r->made_by);
     char *path = path_join(r->gen, "library.c");
-    const bool ok = sys_write_text(path, "// Generated by tide. Do not edit.\n"
-                                         "#define TIDE_HAS_EMBED 1 // tide/run.h's table has tide_game_embed and the layout\n"
-                                         "#include \"game.h\"\n"
-                                         "#include \"tide/run.h\"\n"
-                                         "\n"
-                                         "TIDE_HOST_EXPORT const tide_host_game *tide_host_library(void)\n"
-                                         "{\n"
-                                         "    return &tide_host_game_api;\n"
-                                         "}\n"
-                                         "\n"
-                                         "// How this build lays out what the host reads the game through\n"
-                                         "TIDE_HOST_EXPORT uint64_t tide_host_library_shape(void)\n"
-                                         "{\n"
-                                         "    return TIDE_HOST_SHAPE;\n"
-                                         "}\n"
-                                         "\n"
-                                         "// The schema, for tide to write beside the build: what Unity's package binds the game by\n"
-                                         "TIDE_HOST_EXPORT uint32_t tide_unity_schema(char *out, uint32_t capacity)\n"
-                                         "{\n"
-                                         "    return tide_game_embed.schema(out, capacity);\n"
-                                         "}\n");
+    char text[2048];
+    snprintf(text, sizeof text,
+             "// Generated by tide. Do not edit.\n"
+             "#define TIDE_HAS_EMBED 1 // tide/run.h's table has tide_game_embed and the layout\n"
+             "#include \"game.h\"\n"
+             "#include \"tide/run.h\"\n"
+             "\n"
+             "TIDE_HOST_EXPORT const tide_host_game *tide_host_library(void)\n"
+             "{\n"
+             "    return &tide_host_game_api;\n"
+             "}\n"
+             "\n"
+             "// How this build lays out what the host reads the game through\n"
+             "TIDE_HOST_EXPORT uint64_t tide_host_library_shape(void)\n"
+             "{\n"
+             "    return TIDE_HOST_SHAPE;\n"
+             "}\n"
+             "\n"
+             "// Which tide built it: the host that loads it was built by the same\n"
+             "TIDE_HOST_EXPORT const char *tide_host_library_made_by(void)\n"
+             "{\n"
+             "    return \"%s\";\n"
+             "}\n"
+             "\n"
+             "// The schema, for tide to write beside the build: what Unity's package binds the game by\n"
+             "TIDE_HOST_EXPORT uint32_t tide_unity_schema(char *out, uint32_t capacity)\n"
+             "{\n"
+             "    return tide_game_embed.schema(out, capacity);\n"
+             "}\n",
+             r->made_by);
+    const bool ok = write_if_changed(path, text, strlen(text));
     free(path);
     return ok;
 }
@@ -4052,8 +4456,18 @@ static bool build_embed_host(run *r)
 {
     char *source = path_join(r->gen, "embed_host.c");
     char *object = path_join(r->dir, "embed_host.o");
-    bool ok = sys_write_text(source, "// Generated by tide. Do not edit. The host is the platform layer's tide/embed.h\n"
-                                     "#include \"tide/embed.h\"\n");
+    char text[1024];
+    snprintf(text, sizeof text,
+             "// Generated by tide. Do not edit. The host is the platform layer's tide/embed.h\n"
+             "#include \"tide/embed.h\"\n"
+             "\n"
+             "// Which tide built this host, said as it's loaded: a game's library another tide built isn't loaded\n"
+             "__attribute__((constructor)) static void made_by(void)\n"
+             "{\n"
+             "    tide_embed_made_by(\"%s\");\n"
+             "}\n",
+             r->made_by);
+    bool ok = sys_write_text(source, text);
     compiles list = {0};
     if (ok) {
         queue_compile(&list, &r->b, source, object, NULL, false);
@@ -4130,7 +4544,7 @@ static bool build_embed_host(run *r)
     return ok;
 }
 
-// Writes `text` to `path` unless it holds it already: Unity compiles again for what changes.
+// Writes `text` to `path` unless it holds it already: Unity, and tide, compile again for what changes.
 static bool write_if_changed(const char *path, const char *text, const size_t size)
 {
     size_t had = 0;
@@ -4224,8 +4638,9 @@ static void find_player_schema(run *r)
         if (!r->player || !opts || !defines) abort();
         *opts = *r->b.opts;
         opts->define_count = 0;
-        for (int i = 0; i < r->b.opts->define_count; i++) {
-            if (strcmp(r->b.opts->defines[i], "DEBUG") != 0) defines[opts->define_count++] = r->b.opts->defines[i];
+        for (int i = 0; i < r->b.opts->define_count; i++) { // DEBUG, with a value or not
+            const char *d = r->b.opts->defines[i];
+            if (strncmp(d, "DEBUG", 5) != 0 || (d[5] != '\0' && d[5] != '=')) defines[opts->define_count++] = d;
         }
         opts->defines = defines;
         opts->output = path_join(r->dir, "player");
@@ -4690,7 +5105,44 @@ static const char unity_web_exports[] =
     "    tide_embed_camera(unity_embed, given ? unity_camera_matrices : NULL, given ? unity_camera_matrices + 16 : NULL);\n"
     "}\n";
 
+// ...and the assets of Unity's own that the game's local fields take
+static const char unity_web_asset_exports[] =
+    "\n"
+    "// An image of the page's other program (Unity's texture) into a local Texture field: `sampling` its filter in the\n"
+    "// low byte and its wrap in the next\n"
+    "TIDE_UNITY_EXPORT(tide_unity_local_texture) int tide_unity_local_texture(uint32_t type, uint32_t offset, uint32_t birth_low, uint32_t birth_high,\n"
+    "                                                                         uint32_t lineage_low, uint32_t lineage_high, uint32_t image, uint32_t width,\n"
+    "                                                                         uint32_t height, uint32_t sampling)\n"
+    "{\n"
+    "    return tide_embed_local_texture(unity_embed, type, offset, (uint64_t)birth_low | (uint64_t)birth_high << 32,\n"
+    "                                    (uint64_t)lineage_low | (uint64_t)lineage_high << 32, image, width, height, sampling & 255u,\n"
+    "                                    sampling >> 8 & 255u);\n"
+    "}\n"
+    "\n"
+    "TIDE_UNITY_EXPORT(tide_unity_local_object) int tide_unity_local_object(uint32_t type, uint32_t offset, uint32_t birth_low, uint32_t birth_high,\n"
+    "                                                                       uint32_t lineage_low, uint32_t lineage_high, uint32_t object)\n"
+    "{\n"
+    "    return tide_embed_local_object(unity_embed, type, offset, (uint64_t)birth_low | (uint64_t)birth_high << 32,\n"
+    "                                   (uint64_t)lineage_low | (uint64_t)lineage_high << 32, object);\n"
+    "}\n"
+    "\n"
+    "// The frame's sounds of Unity's own, for the page to copy out: where they are, and how many (12 bytes each)\n"
+    "static uint32_t unity_sound_count;\n"
+    "TIDE_UNITY_EXPORT(tide_unity_sounds) const tide_embed_sound *tide_unity_sounds(void) { return tide_embed_sounds(unity_embed, &unity_sound_count); }\n"
+    "TIDE_UNITY_EXPORT(tide_unity_sound_count) uint32_t tide_unity_sound_count(void) { return unity_sound_count; }\n";
+
 // ...and time travel's (tide/embed.h): its status, and what the jslib asks of it
+// What the page reads of the match (tide_embed_view_want, _again): a string of its own, as one literal holds 4,095
+// characters
+static const char unity_web_read_exports[] =
+    "\n"
+    "// What the page reads of the match: `types` bits at `bits` (tide_unity_buffer's, so aligned), or none for everything\n"
+    "TIDE_UNITY_EXPORT(tide_unity_view_want) void tide_unity_view_want(const void *bits, uint32_t types)\n"
+    "{\n"
+    "    tide_embed_view_want(unity_embed, bits, types);\n"
+    "}\n"
+    "TIDE_UNITY_EXPORT(tide_unity_view_again) int tide_unity_view_again(void) { return tide_embed_view_again(unity_embed); }\n";
+
 static const char unity_web_travel_exports[] =
     "\n"
     "// Time travel (tide/embed.h): its status, and what the jslib asks of it\n"
@@ -4787,10 +5239,13 @@ static int tide_unity_web(const char *root, const build_options *opts)
     if (!generate(&b, gen, false, &list)) goto done;
     char escaped[512];
     c_string(escaped, sizeof escaped, b.name);
-    char *text = malloc(sizeof unity_web_main + strlen(escaped) + sizeof unity_web_exports + sizeof unity_web_travel_exports);
+    char *text = malloc(sizeof unity_web_main + strlen(escaped) + sizeof unity_web_exports + sizeof unity_web_read_exports
+                        + sizeof unity_web_asset_exports + sizeof unity_web_travel_exports);
     if (!text) abort();
     sprintf(text, unity_web_main, escaped);
     strcat(text, unity_web_exports);
+    strcat(text, unity_web_read_exports);
+    strcat(text, unity_web_asset_exports);
     strcat(text, unity_web_travel_exports);
     const bool wrote = sys_write_text(main_c, text);
     free(text);
@@ -4977,6 +5432,258 @@ static int tide_unity_android(const char *root, const build_options *opts)
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// tide unity --ios: a Unity iOS player's game, as sources. An iOS game is linked into the player (a static library:
+// iOS loads no library of an app's by name), and what compiles for iOS is Xcode's clang with Apple's SDK, on a Mac. So
+// tide compiles nothing here, on any system: into <-o>/ios/Tide go the game's generated C, its packages' C, the
+// engine's sources and the platform layer's with no window of its own (platform/embedded: tide/embed.h's host, files,
+// UDP and rooms), and <-o>/ios/Tide/sources.txt lists each file to compile with its flags, the determinism flags
+// among them, as tide would compile it. Unity's package adds them to the Xcode project it exports (TideIosBuild), which
+// then builds on a Mac that has no tide. The game's pack goes to <-o>/ios/pack, a file in the app.
+//
+// sources.txt: `tide sources 1`, then a line each, tab-separated:
+//   framework <name>           a system framework to link
+//   needs microphone           the game listens to the microphone, which an app says before its system lets it
+//   source <path> <flags>      a file to compile, from the folder's root, with its flags; `@` in a flag is the folder
+// Nothing in it is iOS's but the frameworks: a console's project would take the same folder.
+
+typedef struct tree_copy {
+    const char *from, *to;
+    const char *const *extensions; // NULL for every file
+    bool ok;
+} tree_copy;
+
+static void copy_tree_entry(void *user, const char *name, const bool is_dir)
+{
+    tree_copy *t = user;
+    if (!t->ok || name[0] == '.') return;
+    char *from = path_join(t->from, name), *to = path_join(t->to, name);
+    if (is_dir) {
+        tree_copy inner = {from, to, t->extensions, true};
+        sys_list(from, copy_tree_entry, &inner);
+        t->ok = inner.ok;
+    } else {
+        bool wanted = !t->extensions;
+        for (int i = 0; !wanted && t->extensions[i]; i++) wanted = has_extension(name, t->extensions[i]);
+        if (wanted) {
+            sys_mkdirs(t->to);
+            if (!sys_copy_file(from, to)) {
+                fprintf(stderr, "tide: can't copy %s to %s\n", from, to);
+                t->ok = false;
+            }
+        }
+    }
+    free(from);
+    free(to);
+}
+
+// Copies the files of `from` and its folders that have one of `extensions` into `to`, laid out the same.
+static bool copy_tree(const char *from, const char *to, const char *const *extensions)
+{
+    tree_copy t = {from, to, extensions, true};
+    sys_list(from, copy_tree_entry, &t);
+    return t.ok;
+}
+
+static bool is_slash(const char c)
+{
+    return c == '/' || c == '\\';
+}
+
+// What follows `base` in `path`, when `path` is inside it, whichever way their slashes lean; else NULL.
+static const char *path_under(const char *path, const char *base)
+{
+    size_t i = 0;
+    for (; base[i]; i++) {
+        if (is_slash(base[i]) ? !is_slash(path[i]) : path[i] != base[i]) return NULL;
+    }
+    if (i && is_slash(base[i - 1])) return path + i;
+    return is_slash(path[i]) ? path + i + 1 : NULL;
+}
+
+static void put_slashed(sb *out, const char *path)
+{
+    for (; *path; path++) sb_printf(out, "%c", *path == '\\' ? '/' : *path);
+}
+
+// A file tide would compile, as a line of sources.txt: where it is in the folder (`placed`), and of its compiler's
+// arguments the ones that say how its code is made (the language, the determinism flags, the optimization, macros and
+// the two folders of headers), not this machine's target, debugger or paths.
+static void put_source(sb *out, const build *b, const compile_job *job, const char *placed)
+{
+    static const char *const kept[] = {"-fno-fast-math", "-ffp-contract=off", "-w", "-nostdinc++", "-fno-exceptions",
+                                       "-fno-rtti", "-fno-threadsafe-statics", NULL};
+    sb_put(out, "source\t");
+    put_slashed(out, placed);
+    sb_put(out, "\t");
+    bool first = true;
+    for (int i = 0; i < job->a.count; i++) {
+        const char *a = job->a.items[i];
+        const char *flag = NULL;
+        char macro[1024];
+        if (strncmp(a, "-std=", 5) == 0 || (a[0] == '-' && a[1] == 'O')) flag = a;
+        else if (strcmp(a, "-D") == 0 && i + 1 < job->a.count) {
+            snprintf(macro, sizeof macro, "-D%s", job->a.items[++i]);
+            flag = macro;
+        } else if (strncmp(a, "-D", 2) == 0) flag = a;
+        else if (strncmp(a, "-I", 2) == 0) flag = strcmp(a + 2, b->include) == 0 ? "-I@/include" : "-I@/game";
+        for (int k = 0; !flag && kept[k]; k++) {
+            if (strcmp(a, kept[k]) == 0) flag = a;
+        }
+        if (!flag) continue;
+        sb_printf(out, "%s%s", first ? "" : " ", flag);
+        first = false;
+    }
+    sb_put(out, "\n");
+}
+
+typedef struct platform_sources {
+    sb *out;
+    const char *base; // <root>/src/platform
+} platform_sources;
+
+static void put_platform_source(void *user, const char *source)
+{
+    const platform_sources *p = user;
+    const char *rest = path_under(source, p->base);
+    // Vulkan is a window's: inside another program, what's drawn is written down for it (gpu_record.c)
+    if (!rest || strcmp(path_base(source), "gpu_vk.c") == 0) return;
+    sb_put(p->out, "source\tplatform/");
+    put_slashed(p->out, rest);
+    sb_put(p->out, "\t-std=c17 -fno-fast-math -ffp-contract=off -w -O2 -I@/include -I@/platform/src -I@/platform/third_party "
+                   "-I@/platform/gen/kernels\n");
+}
+
+static int tide_unity_ios(const char *root, const build_options *opts)
+{
+    build b = {0};
+    if (!build_setup(&b, root, opts, false)) return 1;
+    char *platform = path_join(root, "src/platform");
+    char *embedded = path_join(platform, "embedded/window.c");
+    if (!sys_exists(embedded)) {
+        fprintf(stderr, "tide: this installation can't build iOS games: %s is missing\n", platform);
+        fprintf(stderr, "  = note: reinstall tide, or for a build of this repo install its platform sources (the package preset)\n");
+        return 1;
+    }
+    free(embedded);
+    char *dir = path_absolute(opts->output);
+    char *gen = path_join(b.cache, "gen-unity");
+    sys_mkdirs(dir);
+    sys_mkdirs(gen);
+    if (!generate(&b, gen, true, NULL)) return 1;
+    char *main_c = path_join(gen, "library.c");
+    char *game_c = path_join(gen, "game.c");
+    if (!sys_write_text(main_c, "// Generated by tide. Do not edit.\n"
+                                "#define TIDE_HAS_EMBED 1 // tide/run.h's table has tide_game_embed and the layout\n"
+                                "#include \"game.h\"\n"
+                                "#include \"tide/run.h\"\n"
+                                "\n"
+                                "// The game, linked into the program that runs it (tide_embed_desc.game)\n"
+                                "TIDE_HOST_EXPORT const tide_host_game *tide_host_library(void)\n"
+                                "{\n"
+                                "    return &tide_host_game_api;\n"
+                                "}\n")) {
+        fprintf(stderr, "tide: can't write %s\n", main_c);
+        return 1;
+    }
+    // Every file of the build, as tide would compile it: nothing here was compiled before, so each is listed
+    char *cache = b.cache;
+    b.cache = path_join(cache, "unity-ios");
+    sys_remove_tree(b.cache);
+    sys_mkdirs(b.cache);
+    file_list objects = {0};
+    add_file(&objects, path_join(b.cache, "game.o"));
+    add_file(&objects, path_join(b.cache, "library.o"));
+    compiles list = {0};
+    c_side c = {0};
+    if (!queue_game(&b, &list, gen, game_c, main_c, &objects, &c)) return 1;
+    char *out = path_join(dir, "ios");
+    char *tide = path_join(out, "Tide");
+    sys_remove_tree(out);
+    sys_mkdirs(tide);
+    char *engine = path_join(root, "src/engine");
+    static const char *const code[] = {".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hh", ".hxx", ".inl", ".inc", NULL};
+    char *to_include = path_join(tide, "include"), *to_engine = path_join(tide, "engine"), *to_game = path_join(tide, "game");
+    char *to_platform = path_join(tide, "platform");
+    bool ok = copy_tree(b.include, to_include, NULL) && copy_tree(engine, to_engine, code) && copy_tree(gen, to_game, code)
+        && copy_tree(platform, to_platform, code);
+    sb text = {0};
+    sb_put(&text, "tide sources 1\nframework\tSecurity\nframework\tCoreFoundation\n");
+    if (b.info.microphone) sb_put(&text, "needs\tmicrophone\n"); // The game says Clip.Microphone: its app asks to record
+    for (int i = 0; i < list.count && ok; i++) {
+        const compile_job *job = &list.items[i];
+        const char *source = job->made[0], *rest;
+        char *placed = NULL;
+        if ((rest = path_under(source, engine))) placed = format("engine/%s", rest, NULL);
+        else if ((rest = path_under(source, gen))) placed = format("game/%s", rest, NULL);
+        for (int p = 0; !placed && p < b.packages.count; p++) {
+            if (!(rest = path_under(source, b.packages.items[p].folder))) continue;
+            // Its C with the headers beside it, once for the package
+            char *sub = format("packages/%s", b.packages.items[p].name, NULL);
+            char *to = path_join(tide, sub);
+            if (!sys_exists(to)) ok = copy_tree(b.packages.items[p].folder, to, code);
+            placed = format("%s/%s", sub, rest);
+            free(to);
+            free(sub);
+        }
+        if (!placed && (rest = path_under(source, b.folder))) {
+            char *to = path_join(tide, "own");
+            if (!sys_exists(to)) ok = copy_tree(b.folder, to, code);
+            placed = format("own/%s", rest, NULL);
+            free(to);
+        }
+        if (!placed) {
+            fprintf(stderr, "tide: %s is in none of the folders an iOS player's sources come from\n", source);
+            ok = false;
+            break;
+        }
+        put_source(&text, &b, job, placed);
+        free(placed);
+    }
+    platform_sources listed = {&text, platform};
+    char *platform_folder = path_join(platform, ""); // Ending in a slash, as folder_find takes one
+    if (ok) folder_find(platform_folder, ".c", put_platform_source, &listed);
+    free(platform_folder);
+    // Prebuilt libraries are the project's own to add: tide can't tell an iOS one from a Mac's
+    file_list libraries = own_files_of(b.folder, library_extensions);
+    for (int p = 0; p < b.packages.count; p++) {
+        file_list more = own_files_of(b.packages.items[p].folder, library_extensions);
+        for (int i = 0; i < more.count; i++) add_file(&libraries, more.items[i]);
+        free_files(&more);
+    }
+    for (int i = 0; i < libraries.count; i++) {
+        fprintf(stderr, "%s:1:1: warning: tide doesn't add this library to an iOS player: add one built for iOS to the "
+                        "Xcode project yourself, if the game's C needs it there\n", libraries.items[i]);
+    }
+    free_files(&libraries);
+    char *manifest = path_join(tide, "sources.txt");
+    if (ok && !sys_write_file(manifest, text.data ? text.data : "", text.len)) {
+        fprintf(stderr, "tide: can't write %s\n", manifest);
+        ok = false;
+    }
+    char *pack = pack_of(gen), *packed = path_join(out, "pack");
+    if (ok && sys_exists(pack) && !sys_copy_file(pack, packed)) {
+        fprintf(stderr, "tide: can't copy %s to %s\n", pack, packed);
+        ok = false;
+    }
+    char *map = path_join(dir, "unity.json");
+    const char *mapped = b.unity_map ? b.unity_map : "{\"assets\": []}\n";
+    if (ok && !sys_write_file(map, mapped, strlen(mapped))) {
+        fprintf(stderr, "tide: can't write %s\n", map);
+        ok = false;
+    }
+    if (ok) {
+        write_game_hash(gen, dir);
+        printf("tide: wrote the game for Unity's iOS player in %s\n", dir);
+    }
+    free_compiles(&list);
+    free_game_c(&c);
+    free_files(&objects);
+    free(b.cache);
+    b.cache = cache;
+    return ok ? 0 : 1;
+}
+
 // While the game's code doesn't build, the C# of its components still comes: a project starts with code that spawns a
 // Unity prefab, which doesn't build until the prefab is made, which needs the component the code declares. So after a
 // build that failed, tide unity builds the game's declarations alone (--declarations, quietly: the errors are the
@@ -5025,6 +5732,25 @@ static void building(const run *r)
     fflush(stdout);
 }
 
+// The editor's game built again, by tide as it is now. Where that's another tide than built the host Unity loads
+// (installed again, or a development tide built again, under a running editor: each build reads the installation's
+// files as they are), the host is built again with it first, so the next Play's host and game are one tide's. A
+// Play that's running keeps the host it loaded, which says the new build isn't its tide's and goes on with its own.
+static bool unity_build(run *r)
+{
+    char now[96];
+    made_by(&r->b, now);
+    if (strcmp(now, r->made_by) != 0) {
+        r->b.headers = header_stamp(r->b.include); // What was compiled with the headers as they were isn't kept
+        r->b.engine_built = false;
+        if (!write_unity_library(r) || !build_embed_host(r)) {
+            r->made_by[0] = '\0'; // The host is still the old tide's: built again with the next build
+            return false;
+        }
+    }
+    return build_library(r);
+}
+
 // tide unity --declarations: the game's types alone, and the C# made of them (write_unity_declarations).
 static int tide_unity_declared(const char *root, const build_options *opts)
 {
@@ -5042,6 +5768,7 @@ int tide_unity(const char *root, const build_options *opts)
 {
     if (opts->web) return tide_unity_web(root, opts);
     if (opts->android) return tide_unity_android(root, opts);
+    if (opts->ios) return tide_unity_ios(root, opts);
     if (opts->declarations) return tide_unity_declared(root, opts);
     run r = {0};
     if (!build_setup(&r.b, root, opts, true)) return 1;
@@ -5110,7 +5837,7 @@ int tide_unity(const char *root, const build_options *opts)
             changed_at = -1;
             assets_changed_at = -1; // A build brings the pack as the files are now
             building(&r);
-            if (build_library(&r) && write_unity_schema(&r)) {
+            if (unity_build(&r) && write_unity_schema(&r)) {
                 printf("tide: built game-%u\n", (unsigned)r.builds);
             } else {
                 write_unity_declarations(&r);
@@ -5121,7 +5848,7 @@ int tide_unity(const char *root, const build_options *opts)
             assets_changed_at = -1;
             if (r.b.info.assets_affect_match) {
                 building(&r);
-                if (build_library(&r)) printf("tide: built game-%u\n", (unsigned)r.builds);
+                if (unity_build(&r)) printf("tide: built game-%u\n", (unsigned)r.builds);
                 else fprintf(stderr, "tide: the game keeps running its last build\n");
                 fflush(stdout);
             } else {
@@ -5153,6 +5880,12 @@ typedef struct web_run {
     char *pack;    // The newest pack of assets, likewise
     size_t pack_size;
     uint32_t pack_number;
+    char *tweaks; // A dev build's tweaks as tidec last worked them out (<gen>/game_tweaks.bin), and a hash of them
+    size_t tweaks_size;
+    uint32_t tweaks_stamp;
+    char *checkpoint; // The checkpoint the page last asked for, and the game's checkpoints' names, a line each
+    size_t checkpoint_size;
+    char *checkpoint_names;
     // Without watching, the built page's program and pack beside it, and their paths
     char *files[2];
     size_t file_sizes[2];
@@ -5225,9 +5958,174 @@ static char *web_page(const char *root, const char *folder, const char *const *a
     return page;
 }
 
-static void answer_web(void *user, const char *path, serve_reply *reply)
+// What a query's `key=` holds, %-decoded, into `out`: false if it isn't there or doesn't fit
+static bool query_value(const char *query, const char *key, char *out, const size_t size)
+{
+    const size_t n = strlen(key);
+    for (const char *at = query; at && *at; at = strchr(at, '&') ? strchr(at, '&') + 1 : NULL) {
+        if (strncmp(at, key, n) != 0 || at[n] != '=') continue;
+        size_t o = 0;
+        for (const char *c = at + n + 1; *c && *c != '&'; c++) {
+            int byte = (unsigned char)*c;
+            if (byte == '%' && isxdigit((unsigned char)c[1]) && isxdigit((unsigned char)c[2])) {
+                const char hex[3] = {c[1], c[2], '\0'};
+                byte = (int)strtol(hex, NULL, 16);
+                c += 2;
+            } else if (byte == '+') {
+                byte = ' ';
+            }
+            if (o + 1 >= size) return false;
+            out[o++] = (char)byte;
+        }
+        out[o] = '\0';
+        return true;
+    }
+    return false;
+}
+
+// The dev menu of a page, which has no files of this machine, writing a tweak's value into its .tweaks file:
+// `/tweak?file=...&name=...&value=...`. The file is a .tweaks file in the game's folder, the name a tweak's, and
+// the value one expression, as tide_tweaks_save writes it; the watch loop then works the tweaks out again.
+static bool write_page_tweak(const web_run *w, const char *query)
+{
+    char file[1024], name[256], value[512];
+    if (!query_value(query, "file", file, sizeof file) || !query_value(query, "name", name, sizeof name)
+        || !query_value(query, "value", value, sizeof value))
+        return false;
+    const size_t n = strlen(file);
+    if (n < 8 || strcmp(file + n - 7, ".tweaks") != 0 || strstr(file, "..") || !asset_path_under(file, w->r.b.folder))
+        return false;
+    for (const char *c = name; *c; c++)
+        if (!isalnum((unsigned char)*c) && *c != '_' && *c != '.') return false;
+    for (const char *c = value; *c; c++)
+        if (*c == ';' || *c == '\n' || *c == '\r' || *c == '/') return false; // One value, with nothing after it
+    return tide_tweaks_write(file, name, value);
+}
+
+// The tweaks' values file tidec last wrote, read again when it changed: its stamp, 0 for none
+static uint32_t read_page_tweaks(web_run *w)
+{
+    char *path = path_join(w->r.gen, "game_tweaks.bin");
+    size_t size = 0;
+    char *bytes = sys_read_file(path, &size);
+    free(path);
+    if (!bytes) return w->tweaks_stamp = 0;
+    uint32_t h = 2166136261u;
+    for (size_t i = 0; i < size; i++) h = (h ^ (uint8_t)bytes[i]) * 16777619u;
+    h |= 1u;
+    free(w->tweaks);
+    w->tweaks = bytes;
+    w->tweaks_size = size;
+    return w->tweaks_stamp = h;
+}
+
+// A dev build's checkpoints for a page, which has no files of this machine (tide/checkpoint.h): in the game's
+// `checkpoints` folder, named by letters, digits, '-', '_' and '.' (not first)
+static bool page_checkpoint_name(const char *query, char *name, const size_t size)
+{
+    if (!query_value(query, "name", name, size) || !name[0] || strlen(name) >= 64u) return false;
+    for (const char *c = name; *c; c++)
+        if (!isalnum((unsigned char)*c) && *c != '-' && *c != '_' && (*c != '.' || c == name)) return false;
+    return true;
+}
+
+typedef struct page_checkpoint {
+    char name[64];
+    int64_t when;
+} page_checkpoint;
+
+// Which kind a query asks for: a checkpoint's file (no kind, or `kind=checkpoint`) or a recording's
+// (`kind=recording`), by its extension; NULL for another
+static const char *page_checkpoint_kind(const char *query)
+{
+    char kind[32];
+    if (!query || !query_value(query, "kind", kind, sizeof kind) || strcmp(kind, "checkpoint") == 0) return ".checkpoint";
+    return strcmp(kind, "recording") == 0 ? ".recording" : NULL;
+}
+
+typedef struct page_checkpoints {
+    const char *folder;
+    const char *extension;
+    page_checkpoint *found;
+    size_t count, capacity;
+} page_checkpoints;
+
+static void page_checkpoint_found(void *user, const char *file, const bool is_dir)
+{
+    page_checkpoints *l = user;
+    const size_t n = strlen(file), suffix = strlen(l->extension);
+    if (is_dir || n <= suffix || n - suffix >= 64u || strcmp(file + n - suffix, l->extension) != 0) return;
+    if (l->count == l->capacity) {
+        l->capacity = l->capacity ? l->capacity * 2u : 16u;
+        l->found = realloc(l->found, l->capacity * sizeof *l->found);
+        if (!l->found) abort();
+    }
+    page_checkpoint *c = &l->found[l->count++];
+    memcpy(c->name, file, n - suffix);
+    c->name[n - suffix] = '\0';
+    char *path = path_join(l->folder, file);
+    c->when = sys_mtime(path);
+    free(path);
+}
+
+static int page_checkpoint_newest(const void *a, const void *b)
+{
+    const page_checkpoint *x = a, *y = b;
+    if (x->when != y->when) return x->when > y->when ? -1 : 1;
+    return strcmp(x->name, y->name);
+}
+
+// `/checkpoints`: their names, newest first, a line each; `/checkpoint?name=...`: one's bytes; a POST to it saves one.
+// With `kind=recording`, a recording's (a match's ticks) beside them instead.
+static bool answer_checkpoint(web_run *w, const char *path, const uint8_t *body, const size_t size, serve_reply *reply)
+{
+    const char *query = strchr(path, '?');
+    const char *extension = page_checkpoint_kind(query ? query + 1 : NULL);
+    if (!extension) return false;
+    char *folder = path_join(w->r.b.folder, "checkpoints");
+    char name[64];
+    bool answered = true;
+    if (!body && (strcmp(path, "/checkpoints") == 0 || strncmp(path, "/checkpoints?", 13) == 0)) {
+        page_checkpoints l = {folder, extension, NULL, 0, 0};
+        sys_list(folder, page_checkpoint_found, &l);
+        if (l.count) qsort(l.found, l.count, sizeof *l.found, page_checkpoint_newest);
+        free(w->checkpoint_names);
+        w->checkpoint_names = malloc(l.count * 64u + 1u);
+        if (!w->checkpoint_names) abort();
+        size_t at = 0;
+        for (size_t i = 0; i < l.count; i++) at += (size_t)sprintf(w->checkpoint_names + at, "%s\n", l.found[i].name);
+        w->checkpoint_names[at] = '\0';
+        free(l.found);
+        *reply = (serve_reply){200, "text/plain; charset=utf-8", w->checkpoint_names, at};
+    } else if (strncmp(path, "/checkpoint?", 12) == 0 && page_checkpoint_name(path + 12, name, sizeof name)) {
+        char file[96];
+        snprintf(file, sizeof file, "%s%s", name, extension);
+        char *at = path_join(folder, file);
+        if (body) {
+            // Written whole beside it, then in its place, as a native run writes one
+            char *part = path_join(folder, "saving.part");
+            const bool saved = sys_mkdirs(folder) && sys_write_file(part, (const char *)body, size) && sys_rename(part, at);
+            if (saved) *reply = (serve_reply){200, "text/plain; charset=utf-8", "", 0};
+            else fprintf(stderr, "tide: the page's checkpoint %s couldn't be written to %s\n", name, at);
+            free(part);
+        } else {
+            free(w->checkpoint);
+            w->checkpoint = sys_read_file(at, &w->checkpoint_size);
+            if (w->checkpoint) *reply = (serve_reply){200, "application/octet-stream", w->checkpoint, w->checkpoint_size};
+        }
+        free(at);
+    } else {
+        answered = false;
+    }
+    free(folder);
+    return answered;
+}
+
+static void answer_web(void *user, const char *path, const uint8_t *body, const size_t size, serve_reply *reply)
 {
     web_run *w = user;
+    if (w->r.b.opts->watch && answer_checkpoint(w, path, body, size, reply)) return;
+    if (body) return; // No other POST
     char newest[64], pack[64];
     snprintf(newest, sizeof newest, "/game-%u.wasm", (unsigned)w->r.builds);
     snprintf(pack, sizeof pack, "/pack-%u", (unsigned)w->r.packs);
@@ -5242,9 +6140,16 @@ static void answer_web(void *user, const char *path, serve_reply *reply)
         }
     }
     if (w->r.b.opts->watch && strcmp(path, "/build") == 0) {
-        // The newest build, how often to start over, and the newest pack of assets (0 for none)
-        snprintf(w->status, sizeof w->status, "%u %u %u", (unsigned)w->r.builds, (unsigned)w->restarts, (unsigned)w->r.packs);
+        // The newest build, how often to start over, the newest pack of assets (0 for none), and the tweaks' values
+        // (0 for none)
+        snprintf(w->status, sizeof w->status, "%u %u %u %u", (unsigned)w->r.builds, (unsigned)w->restarts,
+                 (unsigned)w->r.packs, (unsigned)read_page_tweaks(w));
         *reply = (serve_reply){200, "text/plain; charset=utf-8", w->status, strlen(w->status)};
+    } else if (w->r.b.opts->watch && strcmp(path, "/tweaks") == 0) {
+        if (w->tweaks) *reply = (serve_reply){200, "application/octet-stream", w->tweaks, w->tweaks_size};
+    } else if (w->r.b.opts->watch && strncmp(path, "/tweak?", 7) == 0) {
+        if (write_page_tweak(w, path + 7)) *reply = (serve_reply){200, "text/plain; charset=utf-8", "", 0};
+        else fprintf(stderr, "tide: the page's tweak couldn't be written\n");
     } else if (w->r.packs && strcmp(path, pack) == 0) {
         if (w->pack_number != w->r.packs) {
             char *file = path_join(w->r.dir, pack + 1);
@@ -5575,6 +6480,12 @@ static char *build_android_work(const char *root, const build_options *opts, cha
     }
     desc.icon = sys_exists(icon) ? icon : NULL;
     char *pack = pack_of(gen);
+    if (sys_exists(pack) && pack_ships_compressed(opts)) { // The app's is a compressed copy of it, made beside it
+        char *shipped = format("%s.shipped", pack, NULL);
+        if (!place_file(pack, shipped, true)) return NULL;
+        free(pack);
+        pack = shipped;
+    }
     desc.pack = sys_exists(pack) ? pack : NULL; // The game's assets, as assets/game.pack
     desc.microphone = b.info.microphone;
     char error[512];
@@ -5760,7 +6671,7 @@ bool tide_schedule(const build_options *opts, const bool shaders)
     game_packages packages = {0};
     file_list paths;
     int count = 0;
-    compile_input *inputs = find_packages(folder, &packages) ? game_inputs(folder, &packages, &paths, &count, NULL) : NULL;
+    compile_input *inputs = find_packages(folder, &packages) ? game_inputs(folder, &packages, &paths, &count) : NULL;
     if (!inputs) return false;
     // A Unity project's prefabs and scenes, and its packages' Tide for Unity, as tide unity has them
     unity_sources unity = {0};
@@ -5781,7 +6692,7 @@ bool tide_schedule(const build_options *opts, const bool shaders)
     }
     const codegen_options codegen = {.name = game_name(folder), .line_directives = true, .shaders = shaders, .game_folder = folder,
                                      .defines = opts->defines, .define_count = opts->define_count,
-                                     .profile = shaders ? NULL : opts->measured};
+                                     .profile = shaders ? NULL : opts->measured, .dev = true}; // What a game has at most
     sb text = {0};
     const bool ok = compile_inputs(inputs, count, &codegen, &text);
     unity_sources_free(&unity);

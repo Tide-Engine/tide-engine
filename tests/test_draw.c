@@ -2011,6 +2011,34 @@ TIDE_TEST(draw_meshes_3d_are_kept_and_instanced)
     tide_draw_free(&d);
 }
 
+// Draw.DepthBias: instances of one 3D mesh drawn one after another are one command under one bias, and a command of
+// their own under another, each command with its bias: a decal right after its base never draws with the base's.
+TIDE_TEST(draw_meshes_3d_join_under_one_depth_bias_only)
+{
+    tide_draw_list d = {0};
+    const tide_mesh mesh = {cube_corners, 4, cube_indices, 9, 1};
+    tide_draw_set_camera_3d(&d, tide_f3(0.0f, 0.0f, -5.0f), tide_identity_q(), 60.0f);
+    const tide_float2 biases[6] = {{0, 0}, {0, 0}, {-8, 0}, {-8, 0}, {-8, 1.5f}, {0, 0}};
+    for (int i = 0; i < 6; i++) {
+        if (i == 5) tide_draw_unset_depth_bias(&d);
+        else if (i == 2 || i == 4) tide_draw_set_depth_bias(&d, biases[i].x, biases[i].y);
+        tide_draw_mesh_3d(&d, &mesh, tide_translate_f4x4(tide_f3((float)i, 0.0f, 0.0f)), NULL, TIDE_FILTER_BILINEAR);
+    }
+    uint32_t meshes = 0;
+    const tide_draw_command *runs[6] = {0};
+    for (uint32_t i = 0; i < d.count; i++) {
+        if (d.commands[i].kind == TIDE_DRAW_MESH_3D && meshes < 6u) runs[meshes++] = &d.commands[i];
+    }
+    TIDE_REQUIRE(meshes == 4);
+    const uint32_t counts[4] = {2, 2, 1, 1}, firsts[4] = {0, 2, 4, 5};
+    for (uint32_t k = 0; k < 4; k++) {
+        TIDE_CHECK(runs[k]->mesh3.count == counts[k]);
+        TIDE_CHECK(runs[k]->depth_bias.x == biases[firsts[k]].x && runs[k]->depth_bias.y == biases[firsts[k]].y);
+        TIDE_CHECK(d.matrices[runs[k]->mesh3.first].c3.x == (float)firsts[k]);
+    }
+    tide_draw_free(&d);
+}
+
 // Many meshes are each found again, frame after frame, without a copy.
 TIDE_TEST(draw_meshes_3d_many)
 {
@@ -2368,6 +2396,51 @@ TIDE_TEST(draw_linear_grid_captures_keep_roles_and_alpha)
     tide_heaps_free(&heap);
 }
 
+// A [Linear] source's place is found through the list's index (it was a scan of every texture, at each marked
+// texture of each shaded draw): the same place however many textures the list holds and however often it's asked,
+// following its source's pixels, apart from the source's own place, and still found after a frame's pruning.
+TIDE_TEST(draw_linear_twins_are_found_through_the_index)
+{
+    enum { images = 300, marked = 3 };
+    static uint8_t pixels[images][4];
+    tide_draw_list d = {0};
+    uint32_t plain[images], twins[marked];
+    for (uint32_t i = 0; i < images; i++) {
+        memset(pixels[i], (int)(i & 255u), 4);
+        plain[i] = tide_draw_texture_source(&d, (tide_texture_ref){.image = {pixels[i], 1, 1, 7}});
+        TIDE_REQUIRE(plain[i] == i + 1u);
+    }
+    for (uint32_t k = 0; k < marked; k++) {
+        twins[k] = tide_draw_texture_source_linear(&d, (tide_texture_ref){.image = {pixels[k * 100u], 1, 1, 7}});
+        TIDE_REQUIRE(twins[k] == images + k + 1u);
+        const tide_draw_texture *twin = &d.textures[twins[k] - 1u], *source = &d.textures[plain[k * 100u] - 1u];
+        TIDE_CHECK(twin->linear && !source->linear && twin->space == source->space && twin->id == source->id);
+        TIDE_CHECK(twin->pixels == source->pixels && twin->capacity == 0 && !twin->changes); // Borrowed: the source's to free
+    }
+    for (uint32_t draw = 0; draw < 2000u; draw++) { // As many shaded draws of the three: no place more, each its own
+        for (uint32_t k = 0; k < marked; k++) {
+            const tide_texture_ref image = {.image = {pixels[k * 100u], 1, 1, 7}};
+            if (tide_draw_texture_source_linear(&d, image) != twins[k]) TIDE_REQUIRE(false);
+        }
+    }
+    TIDE_CHECK(d.texture_count == images + marked);
+    // The source's pixels at another version: the same two places, and the twin has what the source now has
+    pixels[100][0] = 99;
+    TIDE_CHECK(tide_draw_texture_source_linear(&d, (tide_texture_ref){.image = {pixels[100], 1, 1, 8}}) == twins[1]);
+    TIDE_CHECK(d.textures[twins[1] - 1u].version == 8 && d.textures[plain[100] - 1u].version == 8);
+    TIDE_CHECK(d.textures[twins[1] - 1u].pixels == d.textures[plain[100] - 1u].pixels && d.textures[twins[1] - 1u].pixels[0] == 39); // 99 under an alpha of 100
+    TIDE_CHECK(d.texture_count == images + marked);
+    // A frame that draws only one marked image keeps its two places, compacted, and finds them again
+    tide_draw_reset(&d);
+    const uint32_t kept = tide_draw_texture_source_linear(&d, (tide_texture_ref){.image = {pixels[200], 1, 1, 7}});
+    tide_draw_reset(&d);
+    TIDE_REQUIRE(d.texture_count == 2u && kept);
+    const uint32_t again = tide_draw_texture_source_linear(&d, (tide_texture_ref){.image = {pixels[200], 1, 1, 7}});
+    TIDE_REQUIRE(again == 2u && d.textures[1].linear && !d.textures[0].linear && d.texture_count == 2u);
+    TIDE_CHECK(tide_draw_texture_source(&d, (tide_texture_ref){.image = {pixels[200], 1, 1, 7}}) == 1u);
+    tide_draw_free(&d);
+}
+
 TIDE_TEST(draw_numeric_target_formats_keep_images_samples_and_reload)
 {
     for (int f = TIDE_TARGET_R8; f <= TIDE_TARGET_R32I; f++) {
@@ -2429,6 +2502,38 @@ TIDE_TEST(draw_typed_clears_keep_float_and_integer_bits_when_appended)
     tide_draw_clear_images(&list, values, 1);
     TIDE_CHECK(list.count == count);
     tide_draw_free(&list); tide_draw_free(&appended);
+    tide_render_targets_free();
+}
+
+// Every number format makes cube faces and array layers, 32-bit floats and integers too (loaded exactly), and a cube
+// of depth alone holds no color: its depth is what's read (tide_cubemap_depth), a color cube's none.
+TIDE_TEST(draw_number_cubes_and_arrays_hold_every_format)
+{
+    const tide_target_format held[7] = {TIDE_TARGET_R8, TIDE_TARGET_RG8, TIDE_TARGET_R16F, TIDE_TARGET_RG16F,
+                                        TIDE_TARGET_R32F, TIDE_TARGET_RGBA32F, TIDE_TARGET_R32I};
+    for (uint32_t i = 0; i < 7; i++) {
+        const tide_cubemap_ref cube = tide_cubemap_make_as(8, held[i]);
+        TIDE_REQUIRE(cube.target.id != 0);
+        TIDE_CHECK(tide_render_target_formats(cube.target.id).count == 1);
+        TIDE_CHECK(tide_render_target_formats(cube.target.id).color[0] == held[i]);
+        TIDE_CHECK(tide_render_target_samples(cube.target.id) == 1);
+        TIDE_CHECK(tide_cubemap_depth(cube).target.id == TIDE_RENDER_INVALID);
+        const tide_texture_array_ref array = tide_texture_array_make((tide_target_size){.width = 8, .height = 4, .scale = 1.0f}, 3, held[i]);
+        TIDE_REQUIRE(array.target.id != 0 && array.layers == 3);
+        TIDE_CHECK(tide_render_target_formats(array.target.id).color[0] == held[i]);
+    }
+    TIDE_CHECK(tide_render_target_formats(tide_cubemap_make_as(8, TIDE_TARGET_RGBA16F).target.id).color[0] == TIDE_TARGET_RGBA16F);
+    // A depth cube: no color, its faces destinations of depth alone, its depth the cube's own id, kept through a reload
+    const tide_cubemap_ref lamp = tide_cubemap_make_as(16, TIDE_TARGET_DEPTH);
+    TIDE_REQUIRE(lamp.target.id != 0);
+    TIDE_CHECK(tide_render_target_formats(lamp.target.id).count == 0 && tide_render_target_cubic(lamp.target.id));
+    const tide_render_target face = tide_cubemap_face(lamp, 3);
+    TIDE_CHECK(tide_render_target_face(face.id) == 3 && tide_render_target_colors(face.id) == 0);
+    const tide_depth_ref depth = tide_cubemap_depth(lamp);
+    TIDE_CHECK(depth.target.id == tide_render_target_cube_of(lamp.target.id) && tide_render_target_cubic(depth.target.id));
+    const tide_render_target again = tide_render_target_recreate(depth.target);
+    TIDE_CHECK(tide_render_target_cubic(again.id) && tide_render_target_formats(again.id).count == 0);
+    TIDE_CHECK(tide_cubemap_depth((tide_cubemap_ref){0}).target.id == 0);
     tide_render_targets_free();
 }
 

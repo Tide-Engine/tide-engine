@@ -1,0 +1,5 @@
+// expect: 'Rename' is called with 'name', and this call leaves it out
+// expect: a default where the command is declared lets calls leave it out: 'command(string name = ...)'
+command(string name, int times = 1) Rename(PlayerID sender) { }
+view Ask() { Rename(times: 2); }
+scene Main { }

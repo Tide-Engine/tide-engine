@@ -1,0 +1,146 @@
+// A hosted match's store (tide/managed_run.h): saves, loads, deletes and
+// listings asked of the managed service, which answers when it has read them,
+// later than the tick that asked; tasks that await loads and listings, which a
+// match restarted from its checkpoint asks again; and a service with no store,
+// which leaves the match keeping nothing.
+
+settings { maxPlayers = 2; }
+
+scene Main { }
+
+singleton Vault
+{
+    int found;          // Loads (Loaded) that found their key
+    int missing;        // ...that found nothing
+    int failed;         // ...whose value couldn't be read
+    int sum;            // Every byte they found, added up
+    int order;          // Their keys, mixed in the order their answers came: the order they were asked
+    int listings;       // Listed answers
+    int keys;           // ...their keys
+    int keysHash;       // ...and their bytes, in order
+    int listFailed;     // Listings that couldn't be made
+    int awaited;        // Awaited loads that gave bytes
+    int awaitedSum;
+    int awaitedMissing; // ...that found nothing: IOError.NotFound
+    int pages;          // Pages an awaited listing gave
+    int pageKeys;       // ...their keys
+}
+
+input Controls { float2 move; }
+
+// A value of `count` bytes: start, start + 1, ...
+List<byte> Bytes(int start, int count)
+{
+    mut List<byte> made = [];
+    for (var i = 0; i < count; i++) made.Add(byte(start + i));
+    return made;
+}
+
+// Keys' bytes into a hash, in order: what C checks the keys were
+int Mix(int hash, string key)
+{
+    mut var h = hash;
+    foreach (var b in key.ToBytes()) h = (h ^ int(b)) * 16777619;
+    return (h ^ 47) * 16777619;
+}
+
+// The match's start saves: a server a restore replaces runs one too, which mustn't write over what the match kept
+event(Spawned) Setup(with Main)
+{
+    Storage.Save("start", Bytes(1, 1));
+}
+
+// What the store has under `key`, as the task's own value
+async void Take(mut Vault vault, string key)
+{
+    var got = await Storage.Load(key);
+    if (got is List<byte> bytes)
+    {
+        vault.awaited += 1;
+        foreach (var b in bytes) vault.awaitedSum += b;
+    }
+    else if (got is IOError.NotFound) vault.awaitedMissing += 1;
+}
+
+// Every key under `prefix`, a page at a time
+async void Pages(mut Vault vault, string prefix)
+{
+    mut var after = "";
+    mut var going = true;
+    while (going)
+    {
+        var page = await Storage.List(prefix, after);
+        if (page is StorageKeys keys)
+        {
+            vault.pages += 1;
+            vault.pageKeys += keys.keys.count;
+            going = keys.more;
+            if (going) after = keys.keys[keys.keys.count - 1];
+        }
+        else going = false;
+    }
+}
+
+system Work(mut Vault vault, Time time)
+{
+    if (time.tick == 2)
+    {
+        Storage.Save("start", Bytes(9, 1));         // In place of the start's
+        Storage.Save("boxes/1", Bytes(1, 3));
+        Storage.Save("boxes/2", Bytes(10, 2));
+        Storage.Save("gone", Bytes(5, 1));
+        for (var i = 0; i < 1030; i++) Storage.Save($"page/{i}", Bytes(i, 1)); // Two pages
+    }
+    if (time.tick == 4)
+    {
+        Storage.Load("boxes/1");
+        Storage.Load("boxes/2");
+        Storage.Load("boxes/none");
+        Storage.Load("locked");                     // The host says it couldn't read it
+        Storage.Delete("gone");
+        Storage.Load("gone");                       // After its delete, in the same tick: nothing
+        Storage.List("boxes/");
+        Storage.List("page/");                      // ...and on from its first page's last key (Count)
+        Storage.Save("same", Bytes(50, 2));
+        Storage.Load("same");                       // After its save, in the same tick: found
+    }
+    if (time.tick == 8)
+    {
+        Take(vault, "boxes/1");
+        Take(vault, "boxes/none");
+        Pages(vault, "page/");
+    }
+}
+
+event(Loaded loaded) Took(mut Vault vault)
+{
+    vault.order = Mix(vault.order, loaded.key);
+    if (loaded.failed)
+    {
+        vault.failed += 1;
+        return;
+    }
+    if (!loaded.found)
+    {
+        vault.missing += 1;
+        return;
+    }
+    vault.found += 1;
+    foreach (var b in loaded.bytes) vault.sum += b;
+}
+
+event(Listed listed) Count(mut Vault vault)
+{
+    if (listed.failed)
+    {
+        vault.listFailed += 1;
+        return;
+    }
+    vault.listings += 1;
+    foreach (var key in listed.keys)
+    {
+        vault.keys += 1;
+        vault.keysHash = Mix(vault.keysHash, key);
+    }
+    if (listed.more) Storage.List(listed.prefix, listed.keys[listed.keys.count - 1]);
+}

@@ -1,0 +1,162 @@
+// Repairs from the rows a tick's check wrote down (client_changes_codegen.inc,
+// client_spans_codegen.inc's journal): a repair looks only at the rows the
+// checks between two worlds found changed for its recipient, and must come to
+// the bytes a walk of every row of both comes to. The test
+// (visibility_repairs_test.c) makes one change a tick, picked at random from
+// those below, for hundreds of ticks, and works every player's repair out both
+// ways from worlds one to dozens of ticks old.
+//
+// A cell is its own group's (one player's), with a Secret its Visibility
+// restricts, a Badge it may be given (kept only where it is, and one player's)
+// and a Tag that takes it to another table. The zone is a scene of its own
+// whose cells go by its root's group.
+
+// (How many players the game takes is another file's: visibility_repairs_few.tide has 4, an audience of one word,
+// and visibility_repairs_wide.tide 160, of five, which no change written down keeps one of)
+
+enum Block : byte
+{
+    Air,
+    Stone,
+    Sand
+}
+
+const int CELLS = 1400; // Two table chunks of 1,024 rows
+const int ZONED = 200;  // ...and the zone's
+
+component Cell
+{
+    int id;
+    int value;
+    VisibilityGroup group;                    // Its own: who has it
+    Grid3<Block> blocks = Grid3(4, 4, 4);
+    List<int> notes;
+}
+
+component Secret { int code; }          // Each cell's, restricted by its Visibility
+[Sparse] component Badge { int rank; }  // Given and taken where the cell is: one player's
+component Tag { int mark; }             // Gained and lost: its entity goes to another table and back
+
+// All alike, and everyone's: one that goes as another comes into its row changes nothing there but which entity it is
+component Pebble { int kind; }
+const int PEBBLES = 48;
+
+// What the test asks of a tick (visibility_repairs_test.c)
+singleton Control
+{
+    int step;
+    int target;                 // The cell the step changes
+    int next;                   // The id of the cell a step makes
+    VisibilityGroup zoneGroup;
+    VisibilityGroup otherGroup;
+    Entity zone;
+}
+
+scene Main { }
+scene Zone { int number; }
+
+void MakeCell(int id)
+{
+    var group = Visibility.CreateGroup(Audience.Only(PlayerID(id % 4)));
+    mut var visibility = Visibility { group = group };
+    if (id % 3 == 0) visibility.Set<Secret>(Audience.None);
+    else if (id % 3 == 1) visibility.Set<Secret>(Audience.Only(PlayerID((id + 1) % 4)));
+    visibility.Set<Badge>(Audience.Only(PlayerID((id + 2) % 4)));
+    Spawn(Cell { id = id, value = id * 3, group = group }, Secret { code = id * 7 }, visibility);
+}
+
+event(Spawned) Fill(mut Cell cell)
+{
+    cell.blocks[cell.id % 4, 0, 0] = Block.Stone;
+    cell.notes.Add(cell.id);
+}
+
+event(Spawned) Setup(with Main, mut Control control)
+{
+    control.zoneGroup = Visibility.CreateGroup(Audience.From([PlayerID(0), PlayerID(1), PlayerID(2)]));
+    control.otherGroup = Visibility.CreateGroup(Audience.Only(PlayerID(3)));
+    for (var id = 0; id < CELLS; id++) MakeCell(id);
+    for (var i = 0; i < PEBBLES; i++) Spawn(Pebble { kind = 7 });
+    control.zone = Scene.Load(Zone { number = 1 }, Visibility { group = control.zoneGroup });
+}
+
+event(Spawned) ZoneCells(with Zone)
+{
+    for (var id = 10000; id < 10000 + ZONED; id++) MakeCell(id);
+}
+
+// The step's change to its cell
+system Change(mut Cell cell, mut Secret secret, mut Visibility visibility, Control control)
+{
+    if (control.step == 26) cell.value += 1;                                            // Every cell's: more than a check writes down
+    if (control.step == 31 && cell.id % 4 != 1) Visibility.DestroyGroup(cell.group);   // Most groups gone: the next made packs the directory
+    if (cell.id != control.target) return;
+    if (control.step == 1) Visibility.Set(cell.group, Audience.Only(PlayerID(3)));      // Its group's audience: nothing of its row
+    if (control.step == 2) Visibility.Set(cell.group, Audience.Only(PlayerID(cell.id % 4)));
+    if (control.step == 3) cell.value += 1;                                             // A lane everyone who has it has
+    if (control.step == 4) secret.code += 1;                                            // ...and one only some have
+    if (control.step == 5) cell.blocks[1, 2, 3] = cell.blocks[1, 2, 3] == Block.Sand ? Block.Stone : Block.Sand;
+    if (control.step == 6) visibility.Set<Secret>(Audience.All);                        // A policy
+    if (control.step == 7) visibility.Set<Secret>(Audience.None);
+    if (control.step == 8) visibility.Reset<Secret>();
+    if (control.step == 9) visibility.group = control.otherGroup;                       // Another group
+    if (control.step == 10) visibility.group = cell.group;                              // ...and its own again
+    if (control.step == 25) Visibility.DestroyGroup(cell.group);                        // Its group, gone
+    if (control.step == 28) cell.notes.Add(control.next);                               // Its list, grown
+}
+
+system Mark(Cell cell, Control control)
+{
+    if (cell.id != control.target) return;
+    if (control.step == 11) this.Add(Tag { mark = cell.id });            // Another table
+    if (control.step == 13) this.Add(Badge { rank = cell.id });          // A component one player may have, in its row
+    if (control.step == 14) this.Remove(Badge);
+    if (control.step == 16 || control.step == 18) this.Destroy();        // A row gone
+    if (control.step == 30) this.Snap();                                 // Its snaps: nothing of its row
+}
+
+system Unmark(with Cell, with Tag, Control control)
+{
+    if (control.step == 12) this.Remove(Tag);                            // ...and back, every one
+}
+
+system Rank(Cell cell, mut Badge badge, Control control)
+{
+    if (control.step == 15 && cell.id % 16 == control.target % 16) badge.rank += 1; // The ranks of those that have one
+}
+
+// Every pebble goes as as many come: other entities in their rows, with the same values
+system Roll(with Pebble, Control control)
+{
+    if (control.step == 29) this.Destroy();
+}
+
+// Holes in the first table chunk, which the tick's end fills from the table's end: rows go to other pieces
+system Thin(Cell cell, Control control)
+{
+    if (control.step == 19 && cell.id < 700 && cell.id % 16 == control.target % 16) this.Destroy();
+}
+
+// ...to the zone and the world
+system Zones(Control control)
+{
+    if (control.step == 17 || control.step == 18) MakeCell(control.next);                   // A new cell (18: as another goes)
+    if (control.step == 27)
+    {
+        for (var i = 0; i < 40; i++) MakeCell(control.next + i);                            // Forty at once
+    }
+    if (control.step == 29)
+    {
+        for (var i = 0; i < PEBBLES; i++) Spawn(Pebble { kind = 7 });
+    }
+    if (control.step == 20) Visibility.Set(control.zoneGroup, Audience.Only(PlayerID(1)));  // The zone's group's audience
+    if (control.step == 21) Visibility.Set(control.zoneGroup, Audience.From([PlayerID(0), PlayerID(1), PlayerID(2)]));
+    if (control.step == 24)
+        Visibility.Set(control.otherGroup, control.target % 2 == 0 ? Audience.Only(PlayerID(1)) : Audience.From([PlayerID(0), PlayerID(3)]));
+}
+
+system ZoneRoot(with Zone, mut Visibility visibility, Control control)
+{
+    if (control.step == 22) visibility.group = control.otherGroup;  // Its root's group, another
+    if (control.step == 23) visibility.group = control.zoneGroup;   // ...and its own again
+}

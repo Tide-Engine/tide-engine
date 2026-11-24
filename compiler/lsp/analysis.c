@@ -18,6 +18,7 @@
 #include "model_metadata.h"
 #include "purity.h"
 #include "sha256.h"
+#include "tweaks.h"
 #include "types.h"
 
 // Everything here points into the compiler's arena, so it all belongs to the
@@ -349,8 +350,50 @@ static type numeric_role(const str role)
                   : str_eq_c(role, "float4") ? TY_FLOAT4 : str_eq_c(role, "int") ? TY_INT : TY_COLOR, NULL};
 }
 
+// A command's code: the handler `command(int slot) PickCard(mut Hand hand) { ... }` declares with its type, or
+// an override of one.
+static bool command_code(const decl *d)
+{
+    return d && d->kind == DECL_SYSTEM && d->is_handler && d->is_command;
+}
+
+// The command a command's code runs for: the type declared with it, or for an override, the one it replaces
+// the code of. NULL for other code, and for an override that names no command.
+static const decl *command_type(const decl *code)
+{
+    if (!command_code(code)) return NULL;
+    if (!code->is_override) return code->written_payload;
+    return code->event && code->event->is_command ? code->event : NULL;
+}
+
+// The code a command is declared with, or NULL.
+static const decl *command_code_of(const decl *command)
+{
+    for (int i = 0; command && i < A.written.count; i++) {
+        const decl *d = A.written.items[i];
+        if (command_code(d) && !d->is_override && d->written_payload == command) return d;
+    }
+    return NULL;
+}
+
+// The command's code whose name is written at `at`: its own, or an override's.
+static const decl *command_code_at(const loc at)
+{
+    for (int i = 0; i < A.written.count; i++) {
+        const decl *d = A.written.items[i];
+        if (command_code(d) && loc_cmp(d->at, at) == 0) return d;
+    }
+    return NULL;
+}
+
 static void add_occ(occurrence o)
 {
+    // A command is one name: its code's, where an order or an override names it, is the command's
+    if (o.kind == OCC_SYSTEM && command_type(o.decl)) {
+        o.kind = OCC_TYPE;
+        o.decl = command_type(o.decl);
+        o.type = (type){TY_EVENT, (decl *)o.decl};
+    }
     if (o.decl && o.decl->placement_of) o.decl = o.decl->placement_of;
     if (o.decl && o.decl->accessor) {
         const property *prop = o.decl->accessor;
@@ -636,14 +679,22 @@ static void walk_expr(const expr *e);
 // A call's arguments as its code wrote them. Where a call names arguments or
 // leaves some out, the checker puts `args` in the parameters' order, with
 // their defaults, and keeps what was written apart.
+// A command's call keeps what was written apart too: its one argument is the
+// payload the checker made of them.
 static int written_count(const expr *call)
 {
-    return call->settled ? call->written.count : call->args.count;
+    return call->settled || call->command_call ? call->written.count : call->args.count;
 }
 
 static const expr *written_arg(const expr *call, const int i)
 {
-    return call->settled ? call->written.items[i] : call->args.items[i];
+    return call->settled || call->command_call ? call->written.items[i] : call->args.items[i];
+}
+
+// The command a call calls, `PickCard(0)` or `fighter.PickCard(0)`, or NULL for another call.
+static const decl *called_command(const expr *call)
+{
+    return call->command_call && call->args.count == 1 ? call->args.items[0]->command_value : NULL;
 }
 
 // The name a written argument has, `crit` in `crit: true`, or empty.
@@ -656,6 +707,14 @@ static str written_name(const expr *call, const int i)
 static int written_param(const expr *call, const int i)
 {
     if (call->skinned) return i; // The hidden geometry arguments replace mesh/pose; editor labels stay source ordered.
+    const decl *command = called_command(call);
+    if (command) { // A value the command is called with: by its name, or by its place
+        const str name = written_name(call, i);
+        for (int k = 0; name.len > 0 && k < command->fields.count; k++) {
+            if (str_eq(command->fields.items[k].name, name)) return k;
+        }
+        return i;
+    }
     if (!call->settled) return i;
     for (int k = 0; k < call->args.count; k++) {
         if (call->args.items[k] == call->written.items[i]) return k;
@@ -673,6 +732,7 @@ static const decl *walk_arg_of;
 static void walk_args(const expr *e)
 {
     const decl *m = e->call == CALL_METHOD || e->call == CALL_FUNCTION || e->call == CALL_EFFECT ? e->method : NULL;
+    const decl *command = called_command(e);
     for (int i = 0; i < written_count(e); i++) {
         const str name = written_name(e, i);
         const int k = written_param(e, i);
@@ -680,6 +740,12 @@ static void walk_args(const expr *e)
         if (name.len > 0 && p && str_eq(p->name, name)) {
             add_occ((occurrence){.at = e->arg_name_at.items[i], .len = name.len, .kind = OCC_PARAM, .param = p,
                                  .param_of = m, .name = name, .type = p->type});
+        }
+        // PickCard(slot: 0): a value the command is called with, by its name
+        const field *value = command && k < command->fields.count ? &command->fields.items[k] : NULL;
+        if (name.len > 0 && value && str_eq(value->name, name)) {
+            add_occ((occurrence){.at = e->arg_name_at.items[i], .len = name.len, .kind = OCC_FIELD, .field = value,
+                                 .decl = command, .name = name, .type = value->type});
         }
         walk_arg_param = p;
         walk_arg_of = m;
@@ -703,6 +769,8 @@ static void walk_expr(const expr *e)
     if (e->kind == E_NAME && e->bind == BIND_PARAM && e->param
         && str_eq_c(e->param->name, "tide_preparation_scene")) return;
     if (e->task_source) { walk_expr(e->task_source); return; }
+    // A local worker call's `priority:`, which the checker keeps off its arguments
+    if ((e->kind == E_CALL || e->kind == E_METHOD) && e->mesh_lod && e->method && e->method->is_worker) walk_expr(e->mesh_lod);
     if (!e->is_out) {
         walk_value(e);
         return;
@@ -836,6 +904,7 @@ static void walk_value(const expr *e)
             o.owner = e->name;
             break;
         case BIND_CONST:
+        case BIND_TWEAK: // A tweak read in code: its declaration, as a constant's
         case BIND_ASSET: // An asset read by name: its declaration, as a constant's
             o.kind = OCC_CONST;
             o.decl = e->constant;
@@ -866,7 +935,8 @@ static void walk_value(const expr *e)
     }
 
     case E_MEMBER: {
-        if (!e->enum_shorthand && !e->object->binding_object) walk_expr(e->object);
+        // `slot` in a command's code is a value of its payload, which the code has no name for
+        if (!e->enum_shorthand && !e->object->binding_object && !e->payload_value) walk_expr(e->object);
         occurrence o = {.at = e->at, .len = e->member.len, .name = e->member, .type = e->type,
                         .object_type = e->object->type, .write = e == walk_written};
         const decl *stage = e->object->type.kind == TY_STRUCT ? e->object->type.decl->binding_of : NULL;
@@ -928,7 +998,12 @@ static void walk_value(const expr *e)
         const int name = token_at(e->at);
         const bool in_source = name >= 0 && str_eq(A.files[e->at.file].toks[name].text, o.name);
         if (e->call != CALL_NONE && in_source) vec_push(A.calls, e);
-        if (converts_enum(e) && in_source) { // Card(2): the enum, even where its argument is refused
+        if (called_command(e)) { // PickCard(0): the command
+            o.kind = OCC_TYPE;
+            o.decl = called_command(e);
+            o.type = type_of_decl(o.decl);
+            add_occ(o);
+        } else if (converts_enum(e) && in_source) { // Card(2): the enum, even where its argument is refused
             o.kind = OCC_TYPE;
             o.decl = e->type_alias ? e->type_alias : e->type_decl;
             add_occ(o);
@@ -977,7 +1052,13 @@ static void walk_value(const expr *e)
             const type read = e->call == CALL_JSON && e->type.kind == TY_OPTIONAL ? e->type.decl->fields.items[0].type : type_of_decl(e->type_decl);
             type_place(e->type_arg_ref, e->type_arg_qual_at, e->type_arg_at, e->type_arg, read);
         }
-        if (e->call == CALL_TASK) {
+        if (called_command(e)) { // fighter.PickCard(0): the command, for that entity
+            o.kind = OCC_TYPE;
+            o.decl = called_command(e);
+            o.type = type_of_decl(o.decl);
+            o.object_type = (type){TY_ERROR, NULL};
+            add_occ(o);
+        } else if (e->call == CALL_TASK) {
             o.kind = OCC_METHOD;
             add_occ(o);
         } else if (e->call == CALL_VISIBILITY) {
@@ -997,7 +1078,7 @@ static void walk_value(const expr *e)
             o.decl = e->type_alias ? e->type_alias : e->type_decl;
             o.object_type = (type){TY_ERROR, NULL};
             add_occ(o);
-        } else if (e->call == CALL_ENUM_COUNT || e->call == CALL_SKINNED || e->call == CALL_MESH_DECODE
+        } else if (e->call == CALL_ENUM_COUNT || e->call == CALL_ENUM_VALUES || e->call == CALL_SKINNED || e->call == CALL_MESH_DECODE
                    || (e->resource_operation && (e->object->type.kind == TY_RENDER_TARGET || e->object->type.kind == TY_CUBEMAP
                                                  || e->object->type.kind == TY_TEXTURE_ARRAY))) {
             o.kind = OCC_METHOD;
@@ -1011,7 +1092,7 @@ static void walk_value(const expr *e)
             add_occ(o);
         } else if (e->call == CALL_ADD || e->call == CALL_REMOVE || e->call == CALL_DESTROY || e->call == CALL_SEND
                    || e->call == CALL_PARENT || e->call == CALL_TRANSFORM
-                   || e->call == CALL_LIST || e->call == CALL_MAP || e->call == CALL_GRID || e->call == CALL_SNAP
+                   || e->call == CALL_LIST || e->call == CALL_MAP || e->call == CALL_GRID || e->call == CALL_GRID_BYTES || e->call == CALL_SNAP
                    || e->call == CALL_DISCARD || e->call == CALL_NORMAL || e->call == CALL_DERIVATIVE || e->call == CALL_COVER) {
             // e.Destroy(), items.Add(x), scores.TryGet(k, out v), cells.Clear(), this.Snap(), this.Discard(), instance.Normal(n)
             o.kind = OCC_METHOD;
@@ -1068,6 +1149,7 @@ static void walk_value(const expr *e)
     }
 
     case E_LITERAL:
+        if (e->command_value) break; // What a command's call makes of its arguments, which the call walks as written
         if (e->type_decl) {
             qualifier_ref(e->qual_at, e->at, e->name);
             const str name = last_part(e->name);
@@ -1280,7 +1362,32 @@ static void walk_param(const param *p, const decl *d)
 
 static void walk_params(const decl *d)
 {
-    for (int i = d->preparation_owner ? 2 : 0; i < d->params.count; i++) walk_param(&d->params.items[i], d);
+    for (int i = d->preparation_owner ? 2 : 0; i < d->params.count; i++) {
+        if (d->params.items[i].command_payload) continue; // A command's payload has no name: its values do, the command's
+        walk_param(&d->params.items[i], d);
+    }
+}
+
+// What an override of a command's code says the command is called with, `override command(int slot)
+// Cards.PickCard(...)`: each value's type, and its name, which is the command's own value of that name.
+static void walk_override_payload(const decl *code)
+{
+    const decl *command = command_type(code);
+    const decl *written = code->written_payload;
+    if (!code->is_override || !command || !written || written == command) return;
+    for (int i = 0; i < written->fields.count; i++) {
+        const field *said = &written->fields.items[i];
+        const field *value = NULL;
+        for (int k = 0; k < command->fields.count && !value; k++) {
+            if (str_eq(command->fields.items[k].name, said->name)) value = &command->fields.items[k];
+        }
+        type_place(said->type_ref, said->type_qual_at.line ? said->type_qual_at : said->type_at, said->type_at, said->type_name,
+                   value ? value->type : (type){TY_ERROR, NULL});
+        if (value) {
+            add_occ((occurrence){.at = said->at, .len = said->name.len, .kind = OCC_FIELD, .field = value, .decl = command,
+                                 .name = said->name, .type = value->type});
+        }
+    }
 }
 
 static void walk_routine(const decl *m)
@@ -1458,6 +1565,7 @@ static void index_program(void)
             if (!d->preparation_owner)
                 add_occ((occurrence){.at = d->at, .len = d->name.len, .kind = OCC_SYSTEM, .declaration = true, .decl = d,
                                      .name = d->name});
+            walk_override_payload(d);
             walk_params(d);
             walk_code = d;
             walk_stmt(d->body);
@@ -1475,6 +1583,7 @@ static void index_program(void)
                                  .name = d->name, .type = d->return_type});
             type_place(d->return_type_ref, d->return_type_qual_at, d->return_type_at, d->return_type_name, d->return_type);
             walk_expr(d->value);
+            if (d->code_value) walk_expr(d->code_value); // A tweak's own, where a .tweaks file gives another
             continue;
         }
         add_occ((occurrence){.at = d->at, .len = d->name.len, .kind = OCC_TYPE, .declaration = true, .decl = d,
@@ -1553,6 +1662,14 @@ static void index_program(void)
     }
 
     // In source order, one per position: the first found there.
+    // A .tweaks file's entry names its tweak, as code does: going to it, renaming it, finding it
+    for (int i = 0; i < A.prog->decls.count; i++) {
+        decl *d = A.prog->decls.items[i];
+        if (!d->is_tweak || !d->tweaked_file || d->tweaked_at.file < 0 || d->tweaked_at.file >= A.file_count) continue;
+        const int prefix = d->unit && d->unit->ns.len ? d->unit->ns.len + 1 : 0; // Gun.kick's kick
+        add_occ((occurrence){.at = {d->tweaked_at.line, d->tweaked_at.col + prefix, d->tweaked_at.file}, .len = d->name.len,
+                             .kind = OCC_CONST, .decl = d, .name = d->name});
+    }
     if (A.occs.count > 0) qsort(A.occs.items, (size_t)A.occs.count, sizeof(occurrence), occ_order); // None is no array to hand it
     int n = 0;
     for (int i = 0; i < A.occs.count; i++) {
@@ -1571,7 +1688,9 @@ void analysis_run(const analysis_file *given, const int given_count)
     int count = given_count;
     // ...and so are fills', for as long as it shows one
     bool web = false, fills = false, baked = false;
+    unsigned stored = 0;
     for (int i = 0; i < given_count && !web; i++) web = web_prelude_wanted(given[i].text, given[i].len);
+    for (int i = 0; i < given_count; i++) stored |= storage_prelude_wanted(given[i].text, given[i].len);
     if (given_count > 0) {
         const char **texts = arena_alloc(sizeof(char *) * (size_t)given_count);
         size_t *lens = arena_alloc(sizeof(size_t) * (size_t)given_count);
@@ -1582,13 +1701,18 @@ void analysis_run(const analysis_file *given, const int given_count)
         fills = draw_prelude_wanted(texts, lens, given_count);
         baked = baked_prelude_wanted(texts, lens, given_count);
     }
-    if (web || fills || baked) {
-        analysis_file *all = arena_alloc(sizeof(analysis_file) * (size_t)(given_count + 3));
+    if (web || fills || baked || stored) {
+        analysis_file *all = arena_alloc(sizeof(analysis_file) * (size_t)(given_count + 4));
         if (given_count > 0) memcpy(all, given, sizeof(analysis_file) * (size_t)given_count);
         count = given_count;
         if (web) {
             analysis_file prelude = {"tide:///web.tide", WEB_PRELUDE_PATH, NULL, 0, NULL};
             prelude.text = web_prelude(&prelude.len);
+            all[count++] = prelude;
+        }
+        if (stored) {
+            analysis_file prelude = {"tide:///storage.tide", STORAGE_PRELUDE_PATH, NULL, 0, NULL};
+            prelude.text = storage_prelude(stored, &prelude.len);
             all[count++] = prelude;
         }
         if (fills) {
@@ -1612,7 +1736,6 @@ void analysis_run(const analysis_file *given, const int given_count)
     A.prog = program_new();
     A.prog->game_folder = asset_roots.game_folder; // The checker keeps the assets' hashes and fetched URLs there
     A.prog->asset_metadata_only = true; // Checked model names never need geometry, side buffers or a network request.
-    A.prog->editor_authoring = true; // Opted-in views can match authored trees without a game Spawn.
     // The symbols #if lines read, as `tide run` has them: DEBUG, and the game's packages. What a
     // command line would --define isn't known here, and reads as not defined.
     lex_symbols_reset();
@@ -1648,9 +1771,28 @@ void analysis_run(const analysis_file *given, const int given_count)
         }
         while (f->toks[f->tok_count].kind != T_EOF) f->tok_count++;
         f->query_keywords = arena_alloc(sizeof(bool) * ((size_t)f->tok_count + 1));
-        parse_file(A.prog, &f->src, f->toks, true);
+        // A .tweaks file is the game's too, but not its code: tweaks_read reads it as the checker begins
+        const size_t path_len = strlen(files[i].path);
+        if (path_len >= 7 && strcmp(files[i].path + path_len - 7, ".tweaks") == 0) vec_push(A.prog->given_tweaks, &f->src);
+        else parse_file(A.prog, &f->src, f->toks, true);
     }
     A.syntax_errors = diag_error_count();
+    // The values the .tweaks files give, for lenses and hovers: beside the game's code, in its folder, or the first file's
+    const char *tweaks_folder = asset_roots.game_folder;
+    if (!tweaks_folder && given_count > 0 && A.files[0].src.path) {
+        const char *first = A.files[0].src.path;
+        const char *slash = NULL;
+        for (const char *ch = first; *ch; ch++) {
+            if (*ch == '/' || *ch == '\\') slash = ch;
+        }
+        if (slash) {
+            char *dir = arena_alloc((size_t)(slash - first) + 1);
+            memcpy(dir, first, (size_t)(slash - first));
+            dir[slash - first] = '\0';
+            tweaks_folder = dir;
+        }
+    }
+    tweaks_read(A.prog, &tweaks_folder, tweaks_folder ? 1 : 0, asset_roots.game_folder != NULL);
     check(A.prog);
     diag_set_sink(NULL, NULL);
     diag_set_suggestion_sink(NULL, NULL);
@@ -1799,17 +1941,21 @@ static const char *builtin_type_doc(const type_kind kind)
     case TY_LOCAL_ENTITY: return "A handle to an entity of the local world: this machine's own, which only local code holds.";
     case TY_PLAYER: return "A player, independent of connections. `PlayerID(0)` names a player by index.";
     case TY_COLOR: return "A color: r, g, b and a from 0 to 1. Its constructor takes numbers and vectors totaling 3 or 4 channels, in order: `Color(uv.xy, 0)` or `Color(rgb)` has alpha 1; `Color(rgb, a)` or `Color(rgba)` supplies it. Ints and int vectors widen to floats.";
-    case TY_TEXTURE: return "A local image reference, sampled on the GPU with `Sample(uv[, filter[, wrap]])`. A Blit supplies its source to a read-only Texture shader parameter. A function a frag or vert calls takes one as a parameter, and samples the texture its call names.";
-    case TY_DEPTH_TEXTURE: return "A local reference to a render target's depth, `target.depth`, which a frag or vert reads where it's a field of a component or singleton it takes: `Sample(uv)` gives how far the nearest thing drawn there is, 0 at the near plane to 1 at the far limit, and `Compare(uv, value)` how much of what's stored around there isn't nearer than `value`, 0 to 1, as a shadow wants. A function they call takes one as a parameter, `float Lit(DepthTexture shadow, float3 at)`, and reads the depth its call names, `Lit(lamp.shadow, at)`.";
-    case TY_CUBEMAP: return "A local reference to a cube of six images, which a frag or vert reads by a direction from its middle, `Sample(direction)`, where it's an asset by its name or a field of a component or singleton it takes; a function they call takes one as a parameter, and reads the cube its call names. An asset's is six files a glob matches, named for their faces: `asset Cubemap sky = \"art/sky_??.png\";`. `Cubemap(size)` is one a view draws into, a face at a time: `cube.faces[0]` to `cube.faces[5]` are RenderTargets, in the order +x, -x, +y, -y, +z, -z.";
+    case TY_TEXTURE: return "A local image reference, sampled on the GPU with `Sample(uv[, filter[, wrap]])`. A frag's or vert's read-only Texture parameters receive the textures a draw gives after its mesh's arguments, or a Blit's source and those after it, in order: the frag's first, then the vert's own. A function a frag or vert calls takes one as a parameter, and samples the texture its call names, or takes the component or singleton that holds one, and samples its field: `Tint(look, uv)` reading `look.albedo`.";
+    case TY_DEPTH_TEXTURE: return "A local reference to a render target's depth, `target.depth`, which a frag or vert reads where it's a field of a component or singleton it takes: `Sample(uv)` gives how far the nearest thing drawn there is, 0 at the near plane to 1 at the far limit, and `Compare(uv, value)` how much of what's stored around there isn't nearer than `value`, 0 to 1, as a shadow wants. A function they call takes one as a parameter, `float Lit(DepthTexture shadow, float3 at)`, and reads the depth its call names, `Lit(lamp.shadow, at)`, or takes the component or singleton that holds it, `float Lit(Lamp lamp, float3 at)`, and reads `lamp.shadow`.";
+    case TY_CUBEMAP: return "A local reference to a cube of six images, which a frag or vert reads by a direction from its middle, `Sample(direction)`, where it's an asset by its name or a field of a component or singleton it takes; a function they call takes one as a parameter, and reads the cube its call names, or takes the component or singleton that holds it, and reads its field (`stage.sky`). An asset's is six files a glob matches, named for their faces: `asset Cubemap sky = \"art/sky_??.png\";`. `Cubemap(size)` is one a view draws into, a face at a time: `cube.faces[0]` to `cube.faces[5]` are RenderTargets, in the order +x, -x, +y, -y, +z, -z.";
     case TY_TEXTURE3D: return "A machine-local volume. Create Texture3D(int3 size[, Format format]), Sample(float3 uvw[, Filter[, Wrap]]) in GPU code, or read an exact cell with [int3]. Kernels write cells without mut; writes outside the volume go nowhere. Size is in texels; Resize(int3), Dispose() and contentRevision follow render targets. No mipmaps or slice drawing.";
-    case TY_TEXTURE_ARRAY: return "A local reference to layers of images of one size, which a frag or vert reads by a uv and a layer, `Sample(uv, layer)`, where it's an asset by its name or a field of a component or singleton it takes; a function they call takes one as a parameter, and reads the array its call names. The layer is an int of any expression, and one past the layers reads the nearest. An asset's is the files a glob matches, in path order, or a list of paths, in its order: `asset TextureArray ground = \"art/ground/*.png\";`. `TextureArray(width, height, layers)` is one a view draws into, a layer at a time: `array.layers[0]` is a RenderTarget, and `array.depth` each layer's depth. On the CPU, `array.size` is a layer's pixels and `array.count` how many layers it has.";
-    case TY_DEPTH_TEXTURE_ARRAY: return "A local reference to a TextureArray's depth, `array.depth`, each layer's, which a frag or vert reads where it's a field of a component or singleton it takes: `Sample(uv, layer)` gives how far the nearest thing drawn there is, 0 at the near plane to 1 at the far limit, and `Compare(uv, layer, value)` how much of what's stored around there isn't nearer than `value`, 0 to 1, as a shadow's cascades want. A function they call takes one as a parameter, and reads the depths its call names. On the CPU, `size` is a layer's pixels and `count` how many layers it has.";
+    case TY_TEXTURE_ARRAY: return "A local reference to layers of images of one size, which a frag or vert reads by a uv and a layer, `Sample(uv, layer)`, where it's an asset by its name or a field of a component or singleton it takes; a function they call takes one as a parameter, and reads the array its call names, or takes the component or singleton that holds it, and reads its field. The layer is an int of any expression, and one past the layers reads the nearest. An asset's is the files a glob matches, in path order, or a list of paths, in its order: `asset TextureArray ground = \"art/ground/*.png\";`. `TextureArray(width, height, layers)` is one a view draws into, a layer at a time: `array.layers[0]` is a RenderTarget, and `array.depth` each layer's depth. On the CPU, `array.size` is a layer's pixels and `array.count` how many layers it has.";
+    case TY_DEPTH_TEXTURE_ARRAY: return "A local reference to a TextureArray's depth, `array.depth`, each layer's, which a frag or vert reads where it's a field of a component or singleton it takes: `Sample(uv, layer)` gives how far the nearest thing drawn there is, 0 at the near plane to 1 at the far limit, and `Compare(uv, layer, value)` how much of what's stored around there isn't nearer than `value`, 0 to 1, as a shadow's cascades want. A function they call takes one as a parameter, and reads the depths its call names, or takes the component or singleton that holds it, and reads its field. On the CPU, `size` is a layer's pixels and `count` how many layers it has.";
+    case TY_DEPTH_CUBEMAP: return "A local reference to a depth cube's depth, `cube.depth` of `Cubemap(size, Format.Depth)`, six faces of it, which a frag or vert reads where it's a field of a component or singleton it takes: `Sample(direction)` gives how far the nearest thing drawn that way from the cube's middle is, 0 at the near plane to 1 at the far limit, and `Compare(direction, value)` how much of what's stored around there isn't nearer than `value`, 0 to 1, as a lamp that shines every way wants for its shadows. A function they call takes one as a parameter, and reads the depths its call names, or takes the component or singleton that holds it, and reads its field. A default one reads as the far limit.";
     case TY_RENDER_TARGET: return "A local drawing destination. `RenderTarget(width, height)` is one of that size in logical pixels, like the window's, at the display's full resolution; `RenderTarget(width, height, 1)` has exactly that many pixels, whatever the display; `RenderTarget.Window()` is always the window's size. `samples: 4`, after everything else, draws each of its pixels with that many samples, which smooths the edges of the triangles drawn into it. Each says last what it holds when that isn't one color image: `Format.Depth` is depth alone, and a format for each makes several, `RenderTarget(width, height, Format.Rgba8, Format.Rgba16f)`, which a frag's Color, float, float2, float4 or int outputs go to in order. Numeric outputs must fit their Format and replace the stored value without tint or alpha multiplication. Drawing into one is as drawing into the window. Copies share the image; `Resize(width, height)` discards its contents and `Dispose()` releases it. Color and depth persist across frames. `target.color` is its Texture, `target.colors[1]` its second color image's, and `target.depth` its DepthTexture; `Draw.window` is the window destination.";
     case TY_RECT: return "A rectangle on the screen, for the GUI: x and y from the top left, y down, then width and height.";
     case TY_MESH: return "An asset's mesh: `asset Mesh<Corner> tree = \"art/tree.glb\";` is a glTF, FBX or OBJ file as vertices of the struct in its `<>`, which the file fills by its fields' names (`position`, `normal`, `uv`, `uv2`, `color`, `tangent`). `Draw.Mesh(tree, transform, ...)` and `Draw.Instanced(tree, instances, ...)` draw it; `tree.vertices` and `tree.indices` are its lists, read-only, which any code reads. Fields, lists, arrays, maps, parameters and results keep its stable asset ID; geometry stays shared and resolves on access. `Mesh(vertices, indices)` makes one of the game's own lists, a copy nothing changes after, which goes everywhere an asset's does.";
     case TY_FONT: return "A font text is drawn in, this machine's: `Font.Regular` (the engine's, and a `Font`'s default), `Font.Bold` (its bold weight, a file a game carries only when it says so), an `asset Font` of a TrueType file (`asset Font title = \"fonts/Title.ttf\";`), or one `Font.Decode(bytes)` read from a file's bytes as the game runs. `Draw.Text` and `Draw.MeasureText` take one after their other arguments, and `GUITheme.font` is the GUI's. A character a font has no glyph for is drawn in `Font.Regular`. The match can't use one.";
     case TY_CLIP: return "A sound of the game's pack, this machine's to play: an `asset Clip` by its name, or a copy of one. `Audio.Play(clip[, position][, volume[, pitch]])` plays it once, from views, local handlers and the functions they call; a `Sound` field keeps one playing. The match can't use it.";
+    case TY_UNITY_MESH: return "In a game made in Unity: one of Unity's own meshes, this machine's. A local field holds one, set in Unity's inspector, and `Draw.UnityMesh(mesh, material, transform)` has Unity draw it with a `UnityEngine.Material`. Tide reads nothing of it (for vertices code reads, declare an `asset Mesh<V>`). The match can't use it.";
+    case TY_UNITY_MATERIAL: return "In a game made in Unity: one of Unity's own materials, this machine's. A local field holds one, set in Unity's inspector, and `Draw.UnityMesh(mesh, material, transform)` draws a `UnityEngine.Mesh` with it, by Unity. It draws no mesh of Tide's (a `frag` does). The match can't use it.";
+    case TY_UNITY_CLIP: return "In a game made in Unity: one of Unity's own AudioClips, this machine's. A local field holds one, set in Unity's inspector, and `Audio.Play(clip, volume)` plays it once through Unity's audio, apart from Tide's mixer, buses and effects. The match can't use it.";
     case TY_STRING: return "Text, written in double quotes.";
     case TY_ACTION: return "Code the caller writes in braces after the call, run with `content();`.";
     case TY_DRAW_LIST: return "The frame's draw list, for a game's C to draw into with tide/draw.h: an extern "
@@ -1876,7 +2022,7 @@ static const char *decl_what(const decl *d)
 {
     if (d->kind == DECL_ALIAS) return "type alias";
     if (d->is_worker) return "local worker";
-    const char *what = d->kind == DECL_SYSTEM && d->is_handler ? d->is_command ? "command handler" : "event handler"
+    const char *what = d->kind == DECL_SYSTEM && d->is_handler ? d->is_command ? "command" : "event handler"
                      : d->extern_system                        ? "extern system" // Written in C
                                                                : decl_keyword(d);
     if (!d->is_local) return what;
@@ -1885,23 +2031,47 @@ static const char *decl_what(const decl *d)
     return b.data;
 }
 
+// What each member of the built-in WorkerPriority says of a local worker's call (`priority:`).
+static const char *priority_member_doc(const str name)
+{
+    if (str_eq_c(name, "Urgent"))
+        return "The call starts before the normal and background ones that wait for a thread, in the order the urgent ones "
+               "came, and finds room when the worker's waiting calls are at their limit.";
+    if (str_eq_c(name, "Normal"))
+        return "What a call that says no priority has: it starts in the order it came, after the urgent ones, and after "
+               "four urgent starts while it waits.";
+    if (str_eq_c(name, "Background"))
+        return "The call starts once nothing more urgent waits, or after sixteen starts of other calls while it waits, so "
+               "it never waits for ever. Background calls take at most half of the room for waiting calls.";
+    return NULL;
+}
+
+static const char *enum_member_doc(const decl *d, const str name);
+
 static const char *format_member_doc(const str name)
 {
     static const struct { const char *name, *doc; } formats[] = {
         {"Rgba8", "Four unsigned byte channels (4 bytes per pixel). Takes Color outputs and Color clears; the default target format."},
-        {"Depth", "Depth and stencil without a color image. Use this as the target's only format."},
-        {"Rgba16f", "Four 16-bit floats (8 bytes per pixel). Takes Color or float4 outputs and clears. A float4 preserves four independent channels; Color keeps its alpha and blend behavior."},
-        {"R8", "One unsigned byte channel (1 byte per pixel). Takes float outputs and clears, clamped to 0–1. Read through [Raw(float)] Texture with Point sampling."},
-        {"Rg8", "Two unsigned byte channels (2 bytes per pixel). Takes float2 outputs and clears, clamped to 0–1. Read through [Raw(float2)] Texture with Point sampling."},
-        {"R16f", "One 16-bit float (2 bytes per pixel). Takes float outputs and clears. Read through [Raw(float)] Texture with Point sampling."},
-        {"Rg16f", "Two 16-bit floats (4 bytes per pixel). Takes float2 outputs and clears. Read through [Raw(float2)] Texture with Point sampling."},
-        {"R32f", "One 32-bit float (4 bytes per pixel). Takes float outputs and clears, including values past one. Read through [Raw(float)] Texture with Point sampling. One sample only; kernels can write it."},
-        {"Rgba32f", "Four 32-bit floats (16 bytes per pixel). Takes float4 outputs and clears, with four independent channels. Read through [Raw(float4)] Texture with Point sampling. One sample only; kernels can write it."},
-        {"R32i", "One signed 32-bit integer (4 bytes per pixel). Takes int outputs and clears, exactly. Read through [Raw(int)] Texture with Point sampling. One sample only; kernels can write it."},
+        {"Depth", "Depth and stencil without a color image. Use this as the target's only format; a Cubemap of it holds six faces of depth alone, which a frag reads through 'cube.depth', a DepthCubemap, by a direction (a lamp's shadow that shines every way)."},
+        {"Rgba16f", "Four 16-bit floats (8 bytes per pixel). Takes Color or float4 outputs and clears. A float4 preserves four independent channels, and a [Raw(float4)] read blends on every device, and reads mipmaps but in a Texture3D, which has none; Color keeps its alpha and blend behavior."},
+        {"R8", "One unsigned byte channel (1 byte per pixel). Takes float outputs and clears, clamped to 0–1. Read through a [Raw(float)] Texture, TextureArray layer or Cubemap face: nearest by default, and Filter.Bilinear, Trilinear, Anisotropic, SampleLevel and SampleGrad blend it and read its mipmaps on every device."},
+        {"Rg8", "Two unsigned byte channels (2 bytes per pixel). Takes float2 outputs and clears, clamped to 0–1. Read through a [Raw(float2)] Texture, TextureArray layer or Cubemap face: nearest by default, and Filter.Bilinear, Trilinear, Anisotropic, SampleLevel and SampleGrad blend it and read its mipmaps on every device."},
+        {"R16f", "One 16-bit float (2 bytes per pixel). Takes float outputs and clears. Read through a [Raw(float)] Texture, TextureArray layer or Cubemap face: nearest by default, and Filter.Bilinear, Trilinear, Anisotropic, SampleLevel and SampleGrad blend it and read its mipmaps on every device."},
+        {"Rg16f", "Two 16-bit floats (4 bytes per pixel). Takes float2 outputs and clears. Read through a [Raw(float2)] Texture, TextureArray layer or Cubemap face: nearest by default, and Filter.Bilinear, Trilinear, Anisotropic, SampleLevel and SampleGrad blend it and read its mipmaps on every device."},
+        {"R32f", "One 32-bit float (4 bytes per pixel). Takes float outputs and clears, including values past one. Read through a [Raw(float)] Texture, Texture3D, TextureArray layer or Cubemap face, loaded exactly: the nearest pixel, or with Filter.Bilinear the four around blended in the shader, the same bits on every device (a cube's faces nearest only). No mipmaps: Trilinear, Anisotropic, SampleLevel and SampleGrad need R16f. One sample only; kernels can write it."},
+        {"Rgba32f", "Four 32-bit floats (16 bytes per pixel). Takes float4 outputs and clears, with four independent channels. Read through a [Raw(float4)] Texture, Texture3D, TextureArray layer or Cubemap face, loaded exactly: the nearest pixel, or with Filter.Bilinear the four around blended in the shader, the same bits on every device (a cube's faces nearest only). No mipmaps: Trilinear, Anisotropic, SampleLevel and SampleGrad need Rgba16f. One sample only; kernels can write it."},
+        {"R32i", "One signed 32-bit integer (4 bytes per pixel). Takes int outputs and clears, exactly. Read through a [Raw(int)] Texture, Texture3D, TextureArray layer or Cubemap face at its nearest pixel. One sample only; kernels can write it."},
     };
     for (size_t i = 0; i < sizeof formats / sizeof formats[0]; i++) {
         if (str_eq_c(name, formats[i].name)) return formats[i].doc;
     }
+    return NULL;
+}
+
+static const char *enum_member_doc(const decl *d, const str name)
+{
+    if (d == A.prog->format) return format_member_doc(name);
+    if (d == A.prog->worker_priority) return priority_member_doc(name);
     return NULL;
 }
 
@@ -1933,9 +2103,68 @@ static void format_param(const param *p, sb *out)
     if (p->default_value) sb_printf(out, " = " STR_FMT, STR_ARG(p->default_text)); // One a call can leave out
 }
 
+static void format_value_after(loc name_at, bool argument, sb *out);
+
+// What a command is called with, as its declaration writes it: `string name, int times = 1`.
+static void format_command_values(const decl *payload, sb *out)
+{
+    for (int i = 0; payload && i < payload->fields.count; i++) {
+        const field *f = &payload->fields.items[i];
+        if (f->hidden) continue;
+        if (i) sb_put(out, ", ");
+        sb_printf(out, STR_FMT " " STR_FMT, STR_ARG(f->type_name), STR_ARG(f->name));
+        format_value_after(f->at, true, out);
+    }
+}
+
+// A command as a call of it reads: `Rename(string name, int times = 1)`.
+static void format_command_call(const decl *command, sb *out)
+{
+    sb_printf(out, STR_FMT "(", STR_ARG(command->name));
+    format_command_values(command, out);
+    sb_put(out, ")");
+}
+
+// How many parameters a command's code takes of the match, its second parentheses: all but its payload.
+static int command_param_count(const decl *code)
+{
+    return code->params.count > 0 ? code->params.count - 1 : 0;
+}
+
+// The `i`th of them, in the order written. The checker keeps the sender after the payload, wherever it was
+// written among them.
+static const param *command_param(const decl *code, const int i)
+{
+    const param *sender = code->params.count > 1 && code->params.items[1].mode == PARAM_SENDER ? &code->params.items[1] : NULL;
+    if (!sender) return &code->params.items[i + 1];
+    int before = 0; // How many were written before the sender
+    for (int k = 2; k < code->params.count; k++) before += loc_cmp(code->params.items[k].at, sender->at) < 0;
+    return i < before ? &code->params.items[i + 2] : i == before ? sender : &code->params.items[i + 1];
+}
+
+// `command(string name) Rename(mut Name mine, PlayerID sender)`: what it's called with, then what its code takes
+// of the match.
+static void format_command(const decl *code, sb *out)
+{
+    if (code->is_virtual) sb_put(out, "virtual ");
+    if (code->is_override) sb_put(out, "override ");
+    sb_put(out, "command(");
+    format_command_values(code->written_payload, out);
+    sb_printf(out, ") " STR_FMT "(", STR_ARG(code->is_override && code->override_name.len ? code->override_name : code->name));
+    for (int i = 0; i < command_param_count(code); i++) {
+        if (i) sb_put(out, ", ");
+        format_param(command_param(code, i), out);
+    }
+    sb_put(out, ")");
+}
+
 // `system Move(mut Body body)`, or a handler's `event(Hit hit) TakeHit(mut Health health)`.
 static void format_header(const decl *d, sb *out)
 {
+    if (command_code(d)) {
+        format_command(d, out);
+        return;
+    }
     if (d->preparation_owner) {
         sb_put(out, "prepare(");
         for (int i = 2; i < d->params.count; i++) {
@@ -1951,14 +2180,10 @@ static void format_header(const decl *d, sb *out)
     if (d->is_local) sb_put(out, "local ");
     if (d->is_async) sb_put(out, "async ");
     if (d->is_handler && d->params.count > 0) {
-        sb_put(out, d->is_command ? "command(" : "event(");
+        sb_put(out, "event(");
         format_param(&d->params.items[0], out);
-        if (d->is_command && d->params.count > 1) {
-            sb_put(out, ", ");
-            format_param(&d->params.items[1], out);
-        }
         sb_printf(out, ") " STR_FMT "(", STR_ARG(d->name));
-        first = d->is_command ? 2 : 1;
+        first = 1;
     } else {
         sb_printf(out, "%s%s " STR_FMT "(", d->extern_system ? "extern " : "", decl_keyword(d), STR_ARG(d->name));
     }
@@ -2029,8 +2254,10 @@ static void format_routine(const decl *m, sb *out)
 }
 
 // The source text of a value after a name, from the tokens between '=' and
-// ';': a field's default, or a constant's value.
-static void format_value_after(const loc name_at, sb *out)
+// ';': a field's default, or a constant's value. With `argument`, the default
+// of a value in parentheses, `command(int times = 1)`, which ends at its ','
+// or at the ')' that closes them.
+static void format_value_after(const loc name_at, const bool argument, sb *out)
 {
     const int name = token_at(name_at);
     if (name < 0) return;
@@ -2041,9 +2268,11 @@ static void format_value_after(const loc name_at, sb *out)
     // To the ';', or the '}' that closes the type the field is in: not one of a
     // value's own, like Stats { armor = 2 }.
     for (int depth = 0; toks[last].kind != T_EOF; last++) {
-        if (depth == 0 && (toks[last].kind == T_SEMI || toks[last].kind == T_RBRACE)) break;
-        if (toks[last].kind == T_LBRACE) depth++;
-        else if (toks[last].kind == T_RBRACE) depth--;
+        const tok_kind k = toks[last].kind;
+        if (depth == 0 && (k == T_SEMI || k == T_RBRACE)) break;
+        if (argument && depth == 0 && (k == T_COMMA || k == T_RPAREN || k == T_RBRACKET)) break;
+        if (k == T_LBRACE || (argument && (k == T_LPAREN || k == T_LBRACKET))) depth++;
+        else if (k == T_RBRACE || (argument && (k == T_RPAREN || k == T_RBRACKET))) depth--;
     }
     if (last == first) return;
     const char *start = toks[first].text.ptr - (toks[first].kind == T_STRING ? 1 : 0);
@@ -2055,7 +2284,7 @@ static void format_value_after(const loc name_at, sb *out)
 
 static void format_default(const field *f, sb *out)
 {
-    format_value_after(f->at, out);
+    format_value_after(f->at, false, out);
 }
 
 // How many lines of a prefab its hover shows: a big one's first ones, then its closing brace
@@ -2202,6 +2431,8 @@ static void put_names(sb *out, const method_form *forms, const size_t count)
 static const method_form scene_calls[] = {
     {"Load", "Scene.Load(scene, components...)",
      "Loads a scene and returns its entity. Optional root components are present before its `Spawned` handlers run at the end of the tick. A root `Visibility` group restricts the entire scene."},
+    {"Switch", "Scene.Switch(scene, components...)",
+     "Unloads every scene loaded in this world, then loads this one and returns its entity, at the end of the tick. Entities in no scene stay."},
     {"Unload", "Scene.Unload(scene)", "Unloads a scene at the end of the tick, destroying every entity in it."},
     {"IsPrepared", "Scene.IsPrepared(scene[, player]) -> bool",
      "Whether this machine has prepared the scene, or the server has acknowledged a player's readiness. Games choose their own waiting and timeout policy."},
@@ -2219,6 +2450,46 @@ static const method_form visibility_static_calls[] = {
     {"CreateGroup", "Visibility.CreateGroup(Audience audience) -> VisibilityGroup", "Creates a match-owned shared audience. Group changes are made by match code."},
     {"Set", "Visibility.Set(VisibilityGroup group, Audience audience)", "Changes the shared group's audience for every member, retaining individual component restrictions."},
     {"DestroyGroup", "Visibility.DestroyGroup(VisibilityGroup group)", "Releases the shared group. Stale group handles remain restricted rather than becoming public."},
+};
+// The server's store, from match code (storage_check.inc), and Flush from local async code
+static const method_form storage_calls[] = {
+    {"Save", "Storage.Save(string key, List<byte> bytes)",
+     "Asks the machine that runs the match to keep the bytes under the key, replacing what it kept there. Nothing of the "
+     "match changes; the file is written at the tick's end."},
+    {"Load", "Storage.Load(string key)",
+     "Asks for what the machine that runs the match keeps under the key. Its answer is a `Loaded` event in a later tick: "
+     "its bytes, whether they were found, and whether reading them failed."},
+    {"Load", "Storage.Load(string key, Entity entity)",
+     "Asks for what is kept under the key, answered by a `Loaded` event to the entity in a later tick."},
+    {"Delete", "Storage.Delete(string key)", "Asks the machine that runs the match to forget what it keeps under the key."},
+    {"List", "Storage.List(string prefix)",
+     "Asks for the keys the machine that runs the match keeps that start with the prefix. Its answer is a `Listed` event "
+     "in a later tick: the keys, sorted by their bytes, 1,024 at the most, whether there are `more` past the last, and "
+     "whether listing them `failed`."},
+    {"List", "Storage.List(string prefix, string after)",
+     "Asks for the keys that start with the prefix and come after `after`: the last key of the answer before, to go on "
+     "from it. Answered by a `Listed` event in a later tick."},
+    {"List", "Storage.List(string prefix, Entity entity)",
+     "Asks for the keys that start with the prefix, answered by a `Listed` event to the entity in a later tick."},
+    {"List", "Storage.List(string prefix, string after, Entity entity)",
+     "Asks for the keys that start with the prefix and come after `after`, answered by a `Listed` event to the entity "
+     "in a later tick."},
+};
+// ...and what a match task awaits of it, the answer its value: the task goes on in the tick the answer is given to,
+// on every machine
+static const method_form storage_awaited_calls[] = {
+    {"Load", "await Storage.Load(string key) -> List<byte> fails IOError",
+     "Waits, in a match task, for what the machine that runs the match keeps under the key: its bytes, or "
+     "`IOError.NotFound` where nothing is kept there and `IOError.Failed` where what's kept couldn't be read. The task "
+     "goes on in the tick the answer is given to, on every machine. A key that's empty or past 256 bytes fails at once "
+     "with `IOError.InvalidPath`."},
+    {"List", "await Storage.List(string prefix) -> StorageKeys fails IOError",
+     "Waits, in a match task, for the keys that start with the prefix: a `StorageKeys`, whose `keys` are sorted by their "
+     "bytes, 1,024 at the most, and whose `more` says whether there are keys past the last. Fails with `IOError.Failed` "
+     "where the store couldn't be listed, and at once with `IOError.InvalidPath` for a prefix past 256 bytes."},
+    {"List", "await Storage.List(string prefix, string after) -> StorageKeys fails IOError",
+     "Waits, in a match task, for the keys that start with the prefix and come after `after`: the last key of the page "
+     "before, to go on from it. Either past 256 bytes fails at once with `IOError.InvalidPath`."},
 };
 static const method_form audience_calls[] = {
     {"Add", "Add(PlayerID player)", "Adds a player to this writable audience value."},
@@ -2280,6 +2551,10 @@ static const method_form session_calls[] = {
 #define TEXTURE_ARRAY_DEPTH_DOC                                                                                        \
     "Each layer's depth, as a DepthTextureArray, for a frag to read: kept in a field of a component or singleton "    \
     "the frag takes, and read there with `Sample(uv, layer)` or `Compare(uv, layer, value)`. An asset's array has none."
+#define CUBEMAP_DEPTH_DOC                                                                                              \
+    "A cube of depth alone's six faces of depth (`Cubemap(size, Format.Depth)`), as a DepthCubemap, for a frag to "  \
+    "read by a direction: kept in a field of a component or singleton the frag takes, and read there with "         \
+    "`Sample(direction)` or `Compare(direction, value)`. A cube of colors keeps no depth to read."
 #define TEXTURE_ARRAY_LAYERS_DOC                                                                                       \
     "The layers of an array made with `TextureArray(width, height, layers)`, each a target to draw into: "            \
     "`layers[0]` is the first, as a RenderTarget, with its own camera, clip and settings. Only indexed."
@@ -2321,18 +2596,29 @@ static const method_form session_calls[] = {
     "shortly after a click or a key, as when a button is pressed. Pasting needs no call: Ctrl+V types what's on the " \
     "clipboard into the text field that has the focus."
 
+// The build's symbols read by code, as constants (the language's, in no table of the engine's).
+#define DEFINED_DOC                                                                                                    \
+    "Whether the symbol is defined here, as `#if NAME` reads it: the file's own `#define`, the build's `--define`, "  \
+    "`DEBUG`, a package's `PACKAGE_<NAME>` or a version of tide. A constant bool."
+#define DEFINE_DOC                                                                                                     \
+    "The value the build's `--define NAME=value` gives the symbol, or `default`, a constant, when it gives none. It "  \
+    "reads as the default's type, or as the type of where it goes when the default converts to that: a bool, byte, " \
+    "int, long, float, double, string or an enum's member. Editors know no command line, so here it's the default."
+
 // Json's calls and string's own: in no table of the engine's, as they take and give types of the game's.
 #define JSON_READ_DOC                                                                                                  \
-    "Reads JSON as a `T`: a struct, a `List<T>` or a `Map<string, T>` of what JSON holds (bool, the integers, float, " \
-    "char, string, enums by their member's name, structs, lists, arrays and maps by text). A field's key is its "      \
-    "name, or what `[Json(\"key\")]` before it says. A key the JSON leaves out keeps its field's default, and so "    \
-    "does a `null`; a key no field has is skipped. Nothing, unwrapped with `??` or `is`, when the text isn't JSON, a "  \
-    "value isn't its field's kind, or a number doesn't fit its field. The same on every machine, so the match can "    \
-    "read what a command brought."
+    "Reads JSON as a `T`: a struct, a `List<T>`, a `Set<T>` or a `Map<K, T>` of what JSON holds (bool, the "           \
+    "integers, float, double, char, string, enums by their member's name, vectors, quaternions and colors as arrays "  \
+    "of their numbers, structs, lists, sets and arrays as arrays, and maps by text, a byte, an int, a long or an "     \
+    "enum). A field's key "                                                                                            \
+    "is its name, or what `[Json(\"key\")]` before it says. A key the JSON leaves out keeps its field's default, and " \
+    "so does a `null`; a key no field has is skipped. Nothing, unwrapped with `??` or `is`, when the text isn't JSON, " \
+    "a value isn't its field's kind, a vector has the wrong number of numbers, or a number doesn't fit its field. The " \
+    "same on every machine, so the match can read what a command brought."
 #define JSON_WRITE_DOC                                                                                                 \
-    "The value as JSON, with no spaces: a struct, a `List<T>` or a `Map<string, T>` of what JSON holds. A float is "   \
-    "written with the fewest digits that read back as the same float, and `null` where it's NaN or infinite. "        \
-    "`Json.Read<T>` of the text gives the value back."
+    "The value as JSON, with no spaces: a struct, a `List<T>`, a `Set<T>` or a `Map<K, T>` of what JSON holds. A "    \
+    "float is written with the fewest digits that read back as the same float, and `null` where it's NaN or "         \
+    "infinite. `Json.Read<T>` of the text gives the value back."
 static const method_form json_calls[] = {
     {"Read", "Json.Read<T>(string json) -> T?", JSON_READ_DOC},
     {"Read", "Json.Read<T>(List<byte> json) -> T?", JSON_READ_DOC},
@@ -2393,6 +2679,16 @@ static const method_form set_calls[] = {
 
 static const method_form grid_calls[] = {
     {"Clear", "Clear()", "Sets every cell back to zero, keeping the size."},
+    {"ToBytes", "ToBytes() -> List<byte>",
+     "The grid as bytes, its size and its cells, which `FromBytes` reads back: for the server's store (`Storage.Save`), a "
+     "command or a file. Only the chunks with something in them are written, and runs of one cell short, so a chunk of air "
+     "is nothing and a chunk of one block a few bytes. The same cells are the same bytes on every machine, so match code "
+     "can make them."},
+    {"FromBytes", "FromBytes(List<byte> bytes) -> GridN<T> fails IOError",
+     "The type's own, `Grid3<Block>.FromBytes(bytes)`: the grid that bytes `ToBytes` wrote are, a grid of its own. Bytes "
+     "from anywhere are safe: what isn't a grid of these cells (cut short, spoiled, saying more than a grid can be) fails "
+     "with `IOError.InvalidData`, and a part of a cell that's no value of its type (a float that isn't finite, an enum "
+     "that's none of its members, a bool that's neither) reads as its zero."},
     {"Sample", "Sample(float2 uv, Filter filter = the grid's, Wrap wrap = the grid's) -> Color",
      "Reads the grid as the texture it is, in a frag or vert: its color at `uv`, from (0, 0) at its first cell to "
      "(1, 1) past its last, blended between cells (`Filter.Bilinear`), the nearest cell's (`Filter.Point`), or "
@@ -2427,7 +2723,7 @@ static const method_form texture_calls[] = {
      "when UVs change inside a loop, and for `Filter.Anisotropic` they are what a pixel covers: it reads along "
      "the longer of the two. Point and Bilinear still read the base image. Omitted filter and wrap "
      "use the texture's settings, as Sample does. Verts and CPU code cannot call SampleGrad."},
-    {"SampleLevel", "SampleLevel(float2 uv, float level, Filter filter = the texture's, Wrap wrap = the texture's) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper. Trilinear blends adjacent levels; levels clamp to the available images."},
+    {"SampleLevel", "SampleLevel(float2 uv, float level, Filter filter = Filter.Trilinear, Wrap wrap = the texture's) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper, between the two levels nearest it (Trilinear, which a filter left out is). Levels clamp to the available images; `Filter.Point` and `Filter.Bilinear` read level 0, and a level written 0 reads it as `Filter.Bilinear` does, with no smaller images made."},
 };
 
 static const method_form depth_calls[] = {
@@ -2456,13 +2752,25 @@ static const method_form cube_calls[] = {
      "Another side for all six faces of a cube made with `Cubemap(size)`, in pixels, and empty images."},
     {"Dispose", "Dispose()",
      "Lets a cube made with `Cubemap(size)` go, its six faces with it. Every copy of it then names no cube."},
-    {"SampleLevel", "SampleLevel(float3 direction, float level, Filter filter = Filter.Bilinear) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper. Trilinear blends adjacent levels; levels clamp to the available images."},
+    {"SampleLevel", "SampleLevel(float3 direction, float level, Filter filter = Filter.Trilinear) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper, between the two levels nearest it (Trilinear, which a filter left out is): a blurred reflection's roughness. Levels clamp to the available images; `Filter.Point` and `Filter.Bilinear` read level 0, and a level written 0 reads it as `Filter.Bilinear` does, with no smaller images made."},
+};
+
+static const method_form depth_cube_calls[] = {
+    {"Sample", "Sample(float3 direction) -> float",
+     "Reads a depth cube's depth in a frag or vert, towards `direction` from the cube's middle, of any length: how far "
+     "the nearest thing drawn that way is, from 0 at the near plane to 1 at the far limit, as a DepthTexture's Sample "
+     "reads one. It's the nearest pixel's, on the face the direction points at."},
+    {"Compare", "Compare(float3 direction, float value) -> float",
+     "Compares a depth cube's depth with `value` in a frag or vert, as a DepthTexture's Compare does: how much of what's "
+     "stored around `direction` isn't nearer than `value`, from 0 to 1, blended within the face it points at. A lamp "
+     "that shines every way: 1 is lit, 0 in shadow."},
 };
 
 static const method_form volume_calls[] = {
-    {"Sample", "Sample(float3 uvw, Filter filter = Filter.Bilinear, Wrap wrap = Wrap.Clamp) -> Color", "Reads a volume in GPU code. Color volumes blend all three axes. A typed Raw volume returns its declared float, float2, float4 or int and reads the nearest cell; only Filter.Point is accepted. Volumes have no mipmaps."},
+    {"Sample", "Sample(float3 uvw, Filter filter = the role's, Wrap wrap = Wrap.Clamp) -> Color", "Reads a volume in GPU code. Color volumes blend all three axes. A typed Raw volume returns its declared float, float2, float4 or int, at the nearest cell where no filter is named; `Filter.Bilinear` blends a float volume's eight cells around (through the GPU's sampler for Rgba16f and a Grid3<float>, loaded exactly and blended in the shader for R32f and Rgba32f). Int volumes read the nearest cell. Volumes have no mipmaps."},
     {"Resize", "Resize(int3 size)", "Changes the volume size in texels, discarding contents. Copies share the resource."},
     {"Dispose", "Dispose()", "Releases this volume and leaves all references empty."},
+    {"Read", "Read<T>([int3 from, int3 size]) -> Grid3<T> fails IOError", "Await in local async code for an owned copy of the volume's cells, a frame or more later, as a render target's image is read: without `<T>` a `Grid3<Color>` of an Rgba8 or Rgba16f volume, `Read<float>()` for R32f, `Read<float4>()` for Rgba32f (and an Rgba16f volume's numbers), `Read<int>()` for R32i, bit for bit. A box of it: its first cell and how many along each axis, `Read(int3(0), int3(8))`, clamped to the volume. The volume's format must be fixed where it's made, as `Texture3D(int3(32), Format.R32f)`; a volume made from a Grid3 isn't read back (read the grid); device loss fails."},
 };
 
 static const method_form array_calls[] = {
@@ -2483,7 +2791,7 @@ static const method_form array_calls[] = {
     {"Dispose", "Dispose()",
      "Lets an array made with `TextureArray(width, height, layers)` go, its layers and depth with it. Every copy of "
      "it then names no array."},
-    {"SampleLevel", "SampleLevel(float2 uv, int layer, float level, Filter filter = the array's, Wrap wrap = the array's) -> Color", "Reads an explicit mip level in a frag, vert, kernel or GPU helper. Trilinear blends adjacent levels; levels clamp to the available images."},
+    {"SampleLevel", "SampleLevel(float2 uv, int layer, float level, Filter filter = Filter.Trilinear, Wrap wrap = the array's) -> Color", "Reads an explicit mip level of a layer in a frag, vert, kernel or GPU helper, between the two levels nearest it (Trilinear, which a filter left out is). Levels clamp to the available images; `Filter.Point` and `Filter.Bilinear` read level 0, and a level written 0 reads it as `Filter.Bilinear` does, with no smaller images made."},
 };
 
 static const method_form depth_array_calls[] = {
@@ -2500,11 +2808,12 @@ static const method_form depth_array_calls[] = {
 static const method_form target_calls[] = {
     {"Resize", "Resize(float width, float height)", "Changes the shared image's size, in logical pixels, and discards its contents, even at the same size. It keeps its pixels per unit. Not for a target made with `RenderTarget.Window`, which follows the window."},
     {"Dispose", "Dispose()", "Releases the shared image. All target and color aliases become invalid; repeated disposal is harmless."},
-    {"Read", "Read() -> Grid2<Color> fails IOError", "Await in local async code for an owned copy of the first resolved color image, a frame or more later. Straight Color values, including HDR. At most 4,000,000 pixels; device loss fails."},
+    {"Read", "Read<T>([int image][, int2 from, int2 size]) -> Grid2<T> fails IOError", "Await in local async code for an owned copy of one resolved color image, a frame or more later: `await target.Read()` its first, `Read(1)` its second, with a constant int. Without `<T>` it's a `Grid2<Color>` of an Rgba8 or Rgba16f image, straight Color values, including HDR. An image of numbers is read as its own type, bit for bit: `Read<float>()` for R8, R16f and R32f, `Read<float2>()` for Rg8 and Rg16f, `Read<float4>()` for Rgba32f (and an Rgba16f image's four numbers as stored), `Read<int>()` for R32i. The target's formats must be fixed where it's made. A part of it: its first pixel and how many pixels across and down, `Read(int2(x, y), int2(16, 16))`, in the image's own pixels, clamped to it (none of it there fails). A cube's face and an array's layer are read the same way: `await cube.faces[0].Read()`. Any size of image; what reads hold together is at most 512 MiB; device loss fails."},
+    {"ReadDepth", "ReadDepth([int2 from, int2 size]) -> Grid2<float> fails IOError", "Await in local async code for an owned copy of the target's depth, a frame or more later: 0 at the near plane and 1 at the far one, as `this.depth` and `DepthTexture.Sample` give it, whatever the device stores. One depth a pixel for a multisampled target. Also for a target of depth alone, a cube's face and an array's layer. A part of it as `Read`'s: its first pixel and how many, int2s, clamped to the image. Any size; device loss fails."},
 };
 
-#define BLIT_FORM "Draw.Blit(Texture source, RenderTarget destination[, Blend blend], frag shader[, values])"
-#define BLIT_DOC "Runs the frag over the whole destination, supplying its Texture parameter from source. No setting changes it: not the camera, the clip, the transform, the tint nor Draw.Blend. It replaces the destination's color, or goes over it as `blend` says (`Blend.Add`), and preserves depth. Source cannot be destination.color. A struct's value after the frag is this blit's values, which the frag reads through a parameter of its type: `Draw.Blit(source, destination, Blur, BlurStep { along = float2(1, 0) })`."
+#define BLIT_FORM "Draw.Blit(Texture source[, Texture textures...], RenderTarget destination[, Blend blend], frag shader[, values])"
+#define BLIT_DOC "Runs the frag over the whole destination, supplying its Texture parameter from source. A frag that takes several is given them in its order, before the destination: `Draw.Blit(source, lut, destination, Grade)`. No setting changes it: not the camera, the clip, the transform, the tint nor Draw.Blend. It replaces the destination's color, or goes over it as `blend` says (`Blend.Add`), and preserves depth. Source cannot be destination.color. A struct's value after the frag is this blit's values, which the frag reads through a parameter of its type: `Draw.Blit(source, destination, Blur, BlurStep { along = float2(1, 0) })`."
 
 // What Draw.Mesh takes beside the built-in signatures' lists of Vertex and
 // Vertex3 (builtins.c): the checker takes those itself.
@@ -2569,7 +2878,9 @@ static const char *shader_record_doc(const decl *d)
     }
     if (d && d == A.prog->pixel) {
         return "A frag's `this`: where its pixel is, on the screen and in the world, and `this.Discard()`, which leaves "
-               "it undrawn. Its read-only fields are `position`, `depth` and `world`. The GPU says them, so nothing is sent for it.";
+               "it undrawn. Its read-only fields are `position`, `depth`, `world` and `front`. The GPU says `position`, `depth` "
+               "and a 2D draw's `front`; `world`, and `front` in 3D (the side corrected for mirrored transforms), are each "
+               "one of the 15 values carried from the mesh's corners, where the frag reads them.";
     }
     if (d && d == A.prog->placed) {
         return "A vert's `this`: its vertex as the engine would place it. Its one read-only field is `clip`, where the "
@@ -2757,6 +3068,12 @@ static const method_form world_calls[] = {
     {"Set", "Set<T>(Entity entity, T value)",
      "Puts the component back on the entity, right away; nothing happens when the entity has none. It needs "
      "`mut World`, counts as writing every entity's, and keeps a system on one thread."},
+    {"Edit", "Edit<T>(Entity entity, name) { ... }",
+     "Changes the entity's component where it is: `name` is new, declared by the call, and in the block it's the "
+     "component itself, as a `mut` parameter is. What the block changes is put back on the entity as the block ends, "
+     "however it's left (`return`, `break`, `continue`, `try`, `fail`). An entity that's gone, or has none, skips the block: "
+     "`world.Edit<Health>(target, health) { health.value -= 5; }`. Like `Set`, it needs `mut World`, counts as "
+     "writing every entity's, and keeps a system on one thread."},
 };
 
 static const method_form singleton_calls[] = {
@@ -2899,6 +3216,7 @@ static const method_form *methods_of(const type t, size_t *count)
     case TY_TEXTURE3D: forms = volume_calls; *count = sizeof volume_calls / sizeof volume_calls[0]; break;
     case TY_TEXTURE_ARRAY: forms = array_calls; *count = sizeof array_calls / sizeof array_calls[0]; break;
     case TY_DEPTH_TEXTURE_ARRAY: forms = depth_array_calls; *count = sizeof depth_array_calls / sizeof depth_array_calls[0]; break;
+    case TY_DEPTH_CUBEMAP: forms = depth_cube_calls; *count = sizeof depth_cube_calls / sizeof depth_cube_calls[0]; break;
     case TY_RENDER_TARGET: forms = target_calls; *count = sizeof target_calls / sizeof target_calls[0]; break;
     case TY_ENTITY: case TY_LOCAL_ENTITY: forms = entity_calls; *count = sizeof entity_calls / sizeof entity_calls[0]; break;
     case TY_SINGLETON: forms = singleton_calls; *count = sizeof singleton_calls / sizeof singleton_calls[0]; break;
@@ -2949,7 +3267,7 @@ static void format_method(const method_form *form, const type t, sb *out)
     const char *value = generic && t.kind == TY_MAP ? type_name(t.decl->fields.items[1].type) : "V";
     sb_put(out, t.kind == TY_RECORD && t.decl == A.prog->pixel ? "this"
                 : generic || t.kind == TY_RECORD || (t.decl && (t.decl->skin_kind || t.decl->asset_ref_geometry || t.decl == A.prog->audience || t.decl == A.prog->visibility)) || t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP
-                  || t.kind == TY_TEXTURE3D || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY ? type_name(t)
+                  || t.kind == TY_TEXTURE3D || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY || t.kind == TY_DEPTH_CUBEMAP ? type_name(t)
                 : t.kind == TY_LIST ? "items"
                 : t.kind == TY_MAP || t.kind == TY_SET ? "keys"
                 : t.kind == TY_GRID ? "cells"
@@ -2967,6 +3285,11 @@ static void format_method(const method_form *form, const type t, sb *out)
             p += 6;
             continue;
         }
+        if (t.kind == TY_GRID && strncmp(p, "GridN<T>", 8) == 0) { // FromBytes: the grid type it's called on
+            sb_put(out, type_name(t));
+            p += 7;
+            continue;
+        }
         const bool alone = (p == form->form || !isalnum((unsigned char)p[-1])) && !isalnum((unsigned char)p[1]);
         if (t.kind == TY_LOCAL_ENTITY && strncmp(p, "Entity", 6) == 0 && !isalnum((unsigned char)p[6])) {
             sb_put(out, "LocalEntity"); p += 5;
@@ -2976,10 +3299,90 @@ static void format_method(const method_form *form, const type t, sb *out)
     }
 }
 
-static void format_numeric_sample(const type image, const type result, sb *out)
+// A [Raw(T)] image's Sample, SampleLevel or SampleGrad as the checker types it: the role's numbers, the nearest pixel
+// where a Sample names no filter, and between two levels where SampleLevel or SampleGrad names none. False for a
+// call the image hasn't (a volume's SampleLevel, a cube's SampleGrad).
+static bool format_numeric_read(const type image, const str name, const type result, sb *out)
 {
-    sb_printf(out, "%s.Sample(float%d uv, Filter filter = Filter.Point, Wrap wrap = Wrap.Clamp) -> %s",
-              type_name(image), image.kind == TY_TEXTURE3D ? 3 : 2, type_name(result));
+    const bool cube = image.kind == TY_CUBEMAP, volume = image.kind == TY_TEXTURE3D;
+    const char *where = cube ? "float3 direction" : volume ? "float3 uvw" : "float2 uv";
+    const char *layer = image.kind == TY_TEXTURE_ARRAY ? ", int layer" : "";
+    const char *wrap = cube ? "" : ", Wrap wrap = Wrap.Clamp";
+    if (str_eq_c(name, "Sample")) {
+        sb_printf(out, "%s.Sample(%s%s, Filter filter = Filter.Point%s) -> %s", type_name(image), where, layer, wrap,
+                  type_name(result));
+    } else if (str_eq_c(name, "SampleLevel") && !volume) {
+        sb_printf(out, "%s.SampleLevel(%s%s, float level, Filter filter = Filter.Trilinear%s) -> %s", type_name(image),
+                  where, layer, wrap, type_name(result));
+    } else if (str_eq_c(name, "SampleGrad") && !volume && !cube) {
+        sb_printf(out, "%s.SampleGrad(float2 uv, float2 dx, float2 dy%s, Filter filter = Filter.Trilinear%s) -> %s",
+                  type_name(image), layer, wrap, type_name(result));
+    } else {
+        return false;
+    }
+    return true;
+}
+
+// Whether a [Raw(T)] image of this kind has the read (format_numeric_read's cases)
+static bool numeric_read_named(const type image, const str name)
+{
+    if (str_eq_c(name, "Sample")) return true;
+    if (image.kind == TY_TEXTURE3D) return false;
+    return str_eq_c(name, "SampleLevel") || (str_eq_c(name, "SampleGrad") && image.kind != TY_CUBEMAP);
+}
+
+// What a [Raw(T)] image's read does, by the image's kind and the call, as the checker and shader.c have it
+static const char *numeric_read_doc(const type image, const str name)
+{
+    if (str_eq_c(name, "SampleLevel") && image.kind == TY_CUBEMAP) {
+        return "Reads a mip level of a cube towards `direction` as its declared numeric type, without alpha conversion, "
+               "between the two levels nearest it where no filter is named: 0 is the faces themselves, each level after "
+               "it half the size. R8, Rg8, R16f, Rg16f and Rgba16f faces have mipmaps. R32f and Rgba32f faces have none "
+               "and are read only at their nearest pixel: name Filter.Point, which reads the faces themselves at any "
+               "level; with no filter (even at level 0) or another filter it is an error at the draw. An int cube has no "
+               "levels: use Sample.";
+    }
+    if (str_eq_c(name, "SampleLevel")) {
+        return "Reads a mip level as the image's declared numeric type, without alpha conversion, between the two levels "
+               "nearest it where no filter is named: 0 is the image itself, each level after it half the size. R8, Rg8, "
+               "R16f, Rg16f and Rgba16f have mipmaps; R32f and Rgba32f have none, so level 0, or a level read naming "
+               "Filter.Point or Filter.Bilinear, is their image itself and any other is an error at the draw. A level "
+               "written 0 with no filter reads the image itself as Filter.Bilinear does, with no smaller images made. "
+               "An int image has no levels: use Sample.";
+    }
+    if (str_eq_c(name, "SampleGrad")) {
+        return "Reads an R8, Rg8, R16f, Rg16f or Rgba16f image as its declared numeric type with the uv's change a pixel "
+               "across (`dx`) and down (`dy`), which picks the mip level (between two, Filter.Trilinear, where no filter "
+               "is named). In a frag or a function a frag calls.";
+    }
+    switch (image.kind) {
+    case TY_TEXTURE3D:
+        return "Reads a volume's declared numeric type, without alpha conversion: the nearest cell where no filter is named, "
+               "or blended across all three axes with Filter.Bilinear, through the GPU's sampler for Rgba16f and a "
+               "Grid3<float>, and as the eight nearest cells loaded exactly and blended in the shader for R32f and "
+               "Rgba32f. A volume has no mipmaps, and an R32i volume reads its nearest cell.";
+    case TY_CUBEMAP:
+        return "Reads a cube's declared numeric type towards `direction`, without alpha conversion: the nearest pixel where "
+               "no filter is named. R8, Rg8, R16f, Rg16f and Rgba16f faces also blend and read mipmaps through the GPU's "
+               "sampler; R32f, Rgba32f and R32i faces are read at their nearest pixel, and a filter other than Filter.Point "
+               "on them is an error.";
+    case TY_TEXTURE_ARRAY:
+        return "Reads layer `layer` as its declared numeric type, without alpha conversion: the nearest pixel where no "
+               "filter is named. R8, Rg8, R16f, Rg16f and Rgba16f layers also blend and read mipmaps through the GPU's "
+               "sampler; R32f and Rgba32f layers blend with Filter.Bilinear, four exact loads blended in the shader, and "
+               "have no mipmaps; int layers are read at their nearest pixel.";
+    default:
+        return "Reads its declared numeric type, without alpha conversion: the nearest pixel where no filter is named. "
+               "R8, Rg8, R16f, Rg16f and Rgba16f also blend and read mipmaps through the GPU's sampler (SampleLevel, "
+               "SampleGrad); R32f and Rgba32f blend with Filter.Bilinear, four exact loads blended in the shader, the same "
+               "bits on every device, and have no mipmaps; ints are read at their nearest pixel. Wrap.Clamp, Wrap.Repeat "
+               "and Wrap.Mirror apply to every axis.";
+    }
+}
+
+static bool numeric_image_kind(const type t)
+{
+    return t.kind == TY_TEXTURE || t.kind == TY_TEXTURE3D || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_CUBEMAP;
 }
 
 static const method_form *find_form(const method_form *forms, const size_t count, const str name)
@@ -3009,6 +3412,7 @@ static void describe_default(const type t, sb *out)
     case TY_CUBEMAP: sb_put(out, "No cube: it reads as black"); break;
     case TY_TEXTURE_ARRAY: sb_put(out, "No array: its size and count are zeros"); break;
     case TY_DEPTH_TEXTURE_ARRAY: sb_put(out, "No array's depth: its size and count are zeros"); break;
+    case TY_DEPTH_CUBEMAP: sb_put(out, "No cube's depth: it reads as the far limit, 1"); break;
     case TY_ENUM: {
         const enum_member *zero = NULL;
         for (int i = 0; i < t.decl->members.count && !zero; i++) {
@@ -3039,16 +3443,14 @@ static bool shader_planned(const decl *d)
 // The fields of its parameter `p` a frag or vert reads, each in backquotes
 // with `prefix` before it, onto the list `out`: the match's, then the local
 // ones of a match component or singleton, which this machine keeps beside
-// them. Grids aren't read: they're sampled (put_samples). Of a frag's vertex,
-// `blended`, ints aren't either: they don't blend across a triangle, so its
-// corners pass none on.
-static void put_reads(const param *p, const char *prefix, const bool blended, sb *out)
+// them. Grids aren't read: they're sampled (put_samples). Of a frag's vertex
+// and of what its vert hands it, the corners pass on ints too, flat.
+static void put_reads(const param *p, const char *prefix, sb *out)
 {
     const decl *t = p->type.decl;
     for (int k = 0; t && k < t->fields.count; k++) {
         const field *f = &t->fields.items[k];
         if (f->hidden || f->type.kind == TY_GRID || !(p->whole || (p->reads && p->reads[k]))) continue;
-        if (blended && type_is_int_based(f->type)) continue;
         sb_printf(out, "%s`%s" STR_FMT "`", out->len ? ", " : "", prefix, STR_ARG(f->name));
     }
     const decl *part = t && p->local_reads ? t->local_part : NULL;
@@ -3149,7 +3551,7 @@ static void describe_shader(const decl *d, sb *out)
                               : "\n\nRuns on the GPU, for each vertex of a mesh a view draws through it: `Draw.%s(..., "
                                 STR_FMT ")`, a %s one. It changes the vertex in place, before its triangles are drawn.",
               instanced ? "Instanced" : "Mesh", STR_ARG(d->name), three_d ? "3D" : "2D");
-    if (hands) sb_put(out, " What it writes to a struct it takes as `out`, the frag it's drawn with reads, blended across the triangle.");
+    if (hands) sb_put(out, " What it writes to a struct it takes as `out`, the frag it's drawn with reads: floats blended across the triangle, integral fields flat from its first corner.");
     if (d->place) {
         sb_printf(out, " It puts its vertex itself, where it writes `" STR_FMT "`, in the place of the draw's transform and "
                        "the camera.", STR_ARG(d->place->name));
@@ -3166,12 +3568,12 @@ static void describe_shader(const decl *d, sb *out)
     for (int i = 0; i < d->params.count; i++) {
         const param *p = &d->params.items[i];
         if (i == 0) { // A vert has its whole vertex
-            if (d->is_frag) put_reads(p, "", true, &vertex);
+            if (d->is_frag) put_reads(p, "", &vertex);
             continue;
         }
         if (p->type.kind == TY_STRUCT && p->is_out) continue; // What a vert writes for its frag: nothing sends it
         if (handed_param(d, p)) { // ...and what the frag reads of it comes from the mesh's corners
-            put_reads(p, type_prefix(p), true, &handed);
+            put_reads(p, type_prefix(p), &handed);
             continue;
         }
         const bool component = p->type.kind == TY_COMPONENT;
@@ -3179,7 +3581,7 @@ static void describe_shader(const decl *d, sb *out)
         const bool values = values_param(d, p); // The draw's own, once for the draw, as a singleton's
         const bool data = p->type.kind == TY_STRUCT && !values;
         if (!component && !transform && !data && !values && p->type.kind != TY_SINGLETON) continue; // Its pixel, which nothing sends
-        put_reads(p, type_prefix(p), false, component || transform || data ? &instance : &draw);
+        put_reads(p, type_prefix(p), component || transform || data ? &instance : &draw);
         put_samples(d, i, type_prefix(p), &textures);
     }
     if (!instance.len && !draw.len && !textures.len && !vertex.len && !handed.len) {
@@ -3190,8 +3592,8 @@ static void describe_shader(const decl *d, sb *out)
     if (instance.len) sb_printf(out, "\n- for each instance: %s", instance.data);
     if (draw.len) sb_printf(out, "\n- for each draw: %s", draw.data);
     if (textures.len) sb_printf(out, "\n- as textures: %s", textures.data);
-    if (vertex.len) sb_printf(out, "\n- of its vertex, blended across the triangle: %s", vertex.data);
-    if (handed.len) sb_printf(out, "\n- of what its vert wrote for it, blended across the triangle: %s", handed.data);
+    if (vertex.len) sb_printf(out, "\n- of its vertex, floats blended across the triangle and integral fields flat from its first corner: %s", vertex.data);
+    if (handed.len) sb_printf(out, "\n- of what its vert wrote for it, floats blended across the triangle and integral fields flat from its first corner: %s", handed.data);
 }
 
 // A frag's or vert's parameter: what it is to the GPU, and for a component
@@ -3204,8 +3606,8 @@ static void describe_shader_param(const decl *d, const param *p, sb *out)
     sb fields = {0};
     sb grids = {0};
     if (index == 0 && d->is_frag) {
-        sb_put(out, "\n\nThe vertex, blended across the triangle from its three corners. A frag reads it.");
-        if (planned) put_reads(p, "", true, &fields);
+        sb_put(out, "\n\nThe vertex, its floats blended across the triangle from its three corners and its integral fields flat from its first corner. A frag reads it.");
+        if (planned) put_reads(p, "", &fields);
         if (fields.len) sb_printf(out, " Fields this code reads, which the corners pass on: %s.", fields.data);
         return;
     }
@@ -3250,15 +3652,15 @@ static void describe_shader_param(const decl *d, const param *p, sb *out)
     }
     if (p->is_out && p->type.kind == TY_STRUCT) {
         sb_printf(out, "\n\nWhat the vert writes for the frag it's drawn with. It starts with no value: the vert writes each "
-                       "of its fields, on every path. A frag that takes a `" STR_FMT "` reads its floats blended and its integral fields flat across the "
-                       "triangle from its three corners, and only the fields it reads go from the corners to the pixels.",
+                       "of its fields, on every path. A frag that takes a `" STR_FMT "` reads its floats blended across the "
+                       "triangle from its three corners and its integral fields flat from its first corner, and only the fields it reads go from the corners to the pixels.",
                   STR_ARG(t->name));
         return;
     }
     if (handed_param(d, p)) {
-        sb_put(out, "\n\nWhat the vert this frag is drawn with wrote for it, an `out` parameter of the vert's, floats blended and integral fields flat "
-                    "across the triangle from its three corners. A draw whose vert writes none is an error at the draw.");
-        if (planned) put_reads(p, "", true, &fields);
+        sb_put(out, "\n\nWhat the vert this frag is drawn with wrote for it, an `out` parameter of the vert's, floats blended "
+                    "across the triangle from its three corners and integral fields flat from its first corner. A draw whose vert writes none is an error at the draw.");
+        if (planned) put_reads(p, "", &fields);
         if (fields.len) sb_printf(out, " Fields this code reads, which the corners pass on: %s.", fields.data);
         return;
     }
@@ -3280,7 +3682,7 @@ static void describe_shader_param(const decl *d, const param *p, sb *out)
         sb_put(out, " Which of its fields this code reads is worked out once the game has no errors.");
         return;
     }
-    put_reads(p, "", false, &fields);
+    put_reads(p, "", &fields);
     put_samples(d, index, "", &grids);
     if (fields.len) sb_printf(out, " Fields this code reads, the only ones sent: %s.", fields.data);
     if (grids.len) sb_printf(out, " Grids it samples, sent as textures: %s.", grids.data);
@@ -3459,6 +3861,41 @@ static void describe_out_param(const param *p, const decl *of, sb *out)
 
 static void describe_replacing(const occurrence *o, sb *out);
 
+// A command, on its name where it's declared, where an override or an order names it, and where it's called:
+// its header, how it's called and when its code runs. Where it's declared, the code is that declaration's;
+// elsewhere, the command's own.
+static void describe_command(const occurrence *o, sb *out)
+{
+    const decl *command = o->decl;
+    const decl *code = o->declaration ? command_code_at(o->at) : NULL;
+    if (!code) code = command_code_of(command);
+    sb header = {0};
+    if (code) format_command(code, &header);
+    else {
+        sb_put(&header, "command(");
+        format_command_values(command, &header);
+        sb_printf(&header, ") " STR_FMT "(...)", STR_ARG(command->name));
+    }
+    code_block(out, header.data);
+    sb call = {0};
+    format_command_call(command, &call);
+    const bool entity = code && code->per_entity;
+    sb_printf(out, "\n\nA command, called as a function is: `%s%s`. From a view or a local handler the call asks the "
+                   "match: the server runs the command's code at the end of a tick, with what it was called with and "
+                   "the player the connection says sent it. Both are untrusted, so the code checks what that player "
+                   "may do before it changes the match. A system or a match handler can call it too, with no player "
+                   "and no network: it's queued for the end of the tick, and its `sender` is `default`.",
+              entity ? "entity." : "", call.data);
+    if (entity) {
+        sb_put(out, "\n\nIts code runs for an entity that matches its parameters: the one it's called on, or, with none "
+                    "named, the one the calling code runs for.");
+    }
+    if (!code) return;
+    describe_world(code, out);
+    describe_order(code, out);
+    describe_replacing(&(occurrence){.kind = OCC_SYSTEM, .decl = code}, out);
+}
+
 static void describe(const occurrence *o, sb *out)
 {
     sb code = {0};
@@ -3476,6 +3913,8 @@ static void describe(const occurrence *o, sb *out)
             sb_put(out, str_eq_c(o->name, "byte")     ? "one byte, so its members go from 0 to 255."
                       : str_eq_c(o->name, "ushort") ? "two bytes, so its members go from 0 to 65535."
                                                     : "four bytes, as it is without one.");
+        } else if (o->decl && o->decl->kind == DECL_EVENT && o->decl->is_command) {
+            describe_command(o, out);
         } else if (o->decl) {
             format_data_decl(o->decl, &code);
             code_block(out, code.data);
@@ -3512,8 +3951,6 @@ static void describe(const occurrence *o, sb *out)
                 sb_put(out, o->decl->is_local ? "\n\nA local scene: loaded with `Scene.Load` from views, on this machine only."
                                               : "\n\nA scene: its entities load and unload together. Load it with `Scene.Load`; "
                                                 "systems that take it run once per loaded one.");
-            } else if (o->decl->kind == DECL_EVENT && o->decl->is_command) {
-                sb_put(out, "\n\nSent with `Send` from views or local handlers to one match handler. Its payload is untrusted; the connection supplies the sender's PlayerID.");
             } else if (o->decl->kind == DECL_EVENT && o->decl->is_local) {
                 sb_put(out, "\n\nLocal: sent with `Send` from views, and handled by `local event(...)` handlers at the end of the frame.");
             } else if (o->decl->kind == DECL_EVENT) {
@@ -3561,7 +3998,7 @@ static void describe(const occurrence *o, sb *out)
             break;
         }
         if (o->decl->is_handler && o->decl->event) {
-            if (o->decl->is_command) sb_put(out, "\n\nHandles an untrusted player submission. The connection supplies its sender; check permissions and game rules before changing match state.");
+            if (o->decl->is_command) sb_put(out, "\n\nA command's code: what it's called with is a player's, untrusted. The connection supplies its sender; check permissions and game rules before changing match state.");
             const str event = o->decl->event->name;
             const char *when = o->decl->is_local ? "frame" : "tick";
             const char *to = o->decl->per_entity ? " to an entity that matches its parameters" : "";
@@ -3607,6 +4044,15 @@ static void describe(const occurrence *o, sb *out)
         const bool with = o->param->mode == PARAM_WITH;
         const bool listener = o->param_of && o->param_of->listens;
         code_block(out, with ? "with ownership" : "without ownership");
+        if (o->param_of && o->param_of->is_handler && !o->param_of->is_local && o->param_of->event && o->param_of->event->is_command) {
+            sb_put(out, with ? "\n\nFilter: the command's code runs for the entities the player who sent the command owns: "
+                               "those with an `Owner` whose `player` is the sender. A player's call for any other entity is "
+                               "dropped, as a guard would drop it. For entities any player owns, write `with Owner`."
+                             : "\n\nFilter: the command's code runs for the entities the player who sent the command doesn't "
+                               "own: another player's, and those with no `Owner`. A player's call for the sender's own is dropped.");
+            sb_put(out, " A call the match's own code makes has no player, and runs whoever owns the entity.");
+            break;
+        }
         sb_printf(out, "\n\nFilter: the %s runs for ", listener ? "local handler" : "view");
         sb_put(out, with ? "the entities this machine's player owns: those with an `Owner` "
                            "whose `player` is `Session.player`. For entities any player owns, write `with Owner`."
@@ -3661,7 +4107,7 @@ static void describe(const occurrence *o, sb *out)
     case OCC_CONST:
         if (o->decl->kind == DECL_ASSET) {
             sb_printf(&code, "asset " STR_FMT " " STR_FMT, STR_ARG(o->decl->return_type_name), STR_ARG(o->decl->name));
-            format_value_after(o->decl->at, &code);
+            format_value_after(o->decl->at, false, &code);
             code_block(out, code.data);
             sb_put(out, "\n\nAsset: the file's contents, read as the game is built and packed with it, the same on every machine. "
                         "Any code can read it, and nothing can change it.");
@@ -3732,13 +4178,15 @@ static void describe(const occurrence *o, sb *out)
             }
             if (o->decl->sample_linear) {
                 sb_put(out, "\n\nIt's `[Linear]`: sRGB color storage, sampled and filtered in linear light. "
-                            "Alpha is unchanged. Keep it in `[Linear]` fields or borrow its source in a read-only GPU helper.");
+                            "Alpha is unchanged. Keep it in `[Linear]` fields, `[Linear]` parameters and locals that aren't `mut`, or "
+                            "borrow its source in a read-only GPU helper.");
             }
             if (o->decl->sample_raw) {
                 sb_put(out, "\n\nIt's `[Raw]`: its pixels are numbers, kept as the file has them. It can initialize "
                             "`[Raw] Texture` fields and be borrowed by GPU sampling and metadata helpers, preserving the "
-                            "original source's Raw role. `.size` is readable on the CPU and GPU. It cannot be drawn or "
-                            "escape to ordinary Texture storage, CPU arguments or returns.");
+                            "original source's Raw role, and goes on through `[Raw]` parameters and locals that aren't `mut`. "
+                            "`.size` is readable on the CPU and GPU. It cannot be drawn by the engine's own shader or "
+                            "escape to ordinary Texture storage, unmarked parameters or returns.");
             }
             if (o->decl->sample_filter || o->decl->sample_wrap) { // [Filter] and [Wrap] before it
                 sb_put(out, "\n\nWhere a draw or a `Sample` doesn't say, it's sampled with ");
@@ -3757,13 +4205,31 @@ static void describe(const occurrence *o, sb *out)
             }
             break;
         }
+        if (o->decl->is_tweak) {
+            sb_printf(&code, "tweak " STR_FMT " " STR_FMT, STR_ARG(o->decl->return_type_name), STR_ARG(o->decl->name));
+            format_value_after(o->decl->at, false, &code);
+            code_block(out, code.data);
+            if (o->decl->tweaked_text) sb_printf(out, "\n\nIts .tweaks file gives it `%s`, in place of the code's.", o->decl->tweaked_text);
+            sb_put(out, "\n\nTweak: a value a .tweaks file can give in place of the code's, which a dev build changes while it "
+                        "runs, for everyone in the match. Code reads it; nothing that has to be known while compiling can.");
+            break;
+        }
         sb_printf(&code, "const " STR_FMT " " STR_FMT, STR_ARG(o->decl->return_type_name), STR_ARG(o->decl->name));
-        format_value_after(o->decl->at, &code);
+        format_value_after(o->decl->at, false, &code);
         code_block(out, code.data);
         sb_put(out, "\n\nConstant: the same on every machine. Any code can read it, and reading it makes no system wait.");
         break;
     case OCC_FIELD:
         sb_printf(&code, "%s%s " STR_FMT, o->field->is_local ? "local " : "", type_name(o->field->type), STR_ARG(o->field->name));
+        if (o->decl && o->decl->kind == DECL_EVENT && o->decl->is_command) { // `slot` of `command(int slot) PickCard(...)`
+            format_value_after(o->field->at, true, &code);
+            code_block(out, code.data);
+            sb_printf(out, "\n\nWhat the command `" STR_FMT "` is called with: a call passes it by its place or by its name, `"
+                           STR_FMT "(" STR_FMT ": ...)`%s. Its code reads it by name, read-only; it comes from a player, "
+                           "so check it before changing the match.", STR_ARG(o->decl->name), STR_ARG(o->decl->name),
+                      STR_ARG(o->field->name), o->field->default_value ? ", or leaves it out for its default" : "");
+            break;
+        }
         if (o->decl && !o->decl->builtin) format_default(o->field, &code);
         code_block(out, code.data);
         if (o->decl && o->field->is_local) {
@@ -3783,7 +4249,11 @@ static void describe(const occurrence *o, sb *out)
         const decl *of = o->param_of ? o->param_of : decl_of_param(o->param);
         if (o->param->sample_role.len) {
             sb_put(out, "\n\nA numeric image borrowed from its caller, with the same declared role. Sample returns its "
-                        "declared type and reads the nearest cell, with Filter.Point only and no mipmaps or alpha conversion.");
+                        "declared type with no alpha conversion, and reads the nearest cell unless it names a filter. "
+                        "R8, Rg8, R16f, Rg16f and Rgba16f images blend and read mipmaps (SampleLevel, SampleGrad; a "
+                        "Texture3D blends and has no mipmaps); "
+                        "32-bit floats blend with Filter.Bilinear, loaded exactly and blended in the shader, and have no "
+                        "mipmaps; int images are nearest only.");
         }
         if (o->param->mode == PARAM_QUERY) {
             if (o->param->function_param) {
@@ -3797,7 +4267,7 @@ static void describe(const occurrence *o, sb *out)
             sb_printf(out, "\n\nA second entity set, independent of the entity this %s runs for. "
                            "`foreach` yields rows with `entity` and the named component values. Traversal follows "
                            "the ECS; it does not sort by entity ID or distance.",
-                      of && of->is_view ? "view" : of && of->is_handler ? "handler" : "system");
+                      of && of->is_view ? "view" : command_code(of) ? "command" : of && of->is_handler ? "handler" : "system");
             // Local code reads the match as it sees it, or this machine's own entities as they are
             if (o->param->query_local && of && (of->is_view || of->is_local)) {
                 sb_put(out, " These are this machine's own entities, as they are.");
@@ -3867,7 +4337,7 @@ static void describe(const occurrence *o, sb *out)
                         "borrowed parameter; read its count, elements and entries without copying the collection. "
                         "The borrow can't be stored, returned or retained by a task.");
         else if (o->param->mode == PARAM_EVENT) sb_put(out, of && of->is_command ? "\n\nThe untrusted command payload being handled, read-only." : "\n\nThe event being handled, read-only.");
-        else if (o->param->mode == PARAM_SENDER) sb_put(out, "\n\nThe command sender's PlayerID, authenticated by the connection. Check its permissions before changing match state.");
+        else if (o->param->mode == PARAM_SENDER) sb_put(out, "\n\nThe command sender's PlayerID, authenticated by the connection. Check its permissions before changing match state. It's `default` for a call the match's own code made, which no player sent.");
         else if (o->param->mode == PARAM_IN) sb_put(out, "\n\nParameter, read-only: C gets a pointer to the value.");
         else if (o->param->is_out) describe_out_param(o->param, of, out);
         else if (o->param->mode == PARAM_MUT) sb_put(out, "\n\nParameter, writable.");
@@ -3913,6 +4383,9 @@ static void describe(const occurrence *o, sb *out)
             sb_printf(out, "\n\nThe vertex `" STR_FMT "` runs for. %s", STR_ARG(d->name), shader_record_doc(A.prog->placed));
         } else if (d->kind == DECL_METHOD) {
             sb_printf(out, "\n\nThe entity whose `" STR_FMT "` this is.", STR_ARG(d->owner->name));
+        } else if (command_code(d)) {
+            sb_printf(out, "\n\nThe entity the command `" STR_FMT "` runs for: the one it was called on, or with none "
+                           "named, the one the calling code ran for.", STR_ARG(d->name));
         } else if (d->is_handler && d->event) {
             sb_printf(out, "\n\nThe entity the `" STR_FMT "` was sent to.", STR_ARG(d->event->name));
         } else {
@@ -3960,7 +4433,11 @@ static void describe(const occurrence *o, sb *out)
                                                          "match's seconds."
                       : str_eq_c(o->name, "File") || str_eq_c(o->name, "Directory") ? "\n\nThis machine's filesystem, accessible from local code and its helpers. Fallible operations use IOError."
                       : str_eq_c(o->name, "Application") ? "\n\nPersistent save and temporary cache directories, selected by the game's stable appId, the game's title, and Quit, which ends the program after the frame."
-                      : str_eq_c(o->name, "Storage") ? "\n\nAwait Storage.Flush() to confirm that preceding changes reached persistent storage."
+                      : str_eq_c(o->name, "Storage") ? "\n\nThe server's store: match code saves, loads, deletes and lists bytes "
+                                                       "under keys on the machine that runs the match, and a load's answer is "
+                                                       "a `Loaded` event, a listing's a `Listed` event. Local async code awaits "
+                                                       "`Storage.Flush()` to confirm that preceding changes reached persistent "
+                                                       "storage."
                       : str_eq_c(o->name, "Web") ? "\n\nThis machine's network: `await Web.Fetch(url)` gives a URL's bytes, from local code, failing with IOError."
                       : str_eq_c(o->name, "Json") ? "\n\nJSON to and from the game's own structs: `Json.Read<T>(json)` gives a `T?`, and `Json.Write(value)` its text. The same on every machine."
                       : str_eq_c(o->name, "Path") ? "\n\nPure lexical path operations, without accessing the filesystem."
@@ -4002,7 +4479,29 @@ static void describe(const occurrence *o, sb *out)
             }
             break;
         }
-        if (o->call == CALL_VISIBILITY || str_eq_c(o->owner, "Audience")) {
+        if (o->call == CALL_VISIBILITY && str_eq_c(o->owner, "Storage")) {
+            // Load's and List's forms, every one, as the hover's occurrence doesn't keep how many arguments the call
+            // has, and the first's words: an awaited one's (its value is the answer) before the others where it's
+            // awaited, after them where it isn't
+            const char *doc = NULL;
+            sb forms = {0};
+            const bool awaited = o->type.kind == TY_FAILABLE;
+            for (int pass = 0; pass < 2; pass++) {
+                const bool waits = awaited ? pass == 0 : pass == 1;
+                const method_form *calls = waits ? storage_awaited_calls : storage_calls;
+                const size_t count = waits ? sizeof storage_awaited_calls / sizeof storage_awaited_calls[0]
+                                           : sizeof storage_calls / sizeof storage_calls[0];
+                for (size_t i = 0; i < count; i++) {
+                    if (!str_eq_c(o->name, calls[i].name)) continue;
+                    sb_printf(&forms, "%s%s", forms.len ? "\n" : "", calls[i].form);
+                    if (!doc) doc = calls[i].doc;
+                }
+            }
+            if (doc) {
+                code_block(out, forms.data);
+                sb_printf(out, "\n\n%s", doc);
+            }
+        } else if (o->call == CALL_VISIBILITY || str_eq_c(o->owner, "Audience")) {
             if (o->kind == OCC_CONSTANT) {
                 sb_printf(&code, "Audience Audience." STR_FMT, STR_ARG(o->name));
                 code_block(out, code.data);
@@ -4087,6 +4586,14 @@ static void describe(const occurrence *o, sb *out)
                       o->object_type.decl->members.count);
             break;
         }
+        if (o->call == CALL_ENUM_VALUES) {
+            sb_printf(&code, "%s.Values() -> %s[%d]", name_for(o->object_type.decl), name_for(o->object_type.decl),
+                      o->object_type.decl->members.count);
+            code_block(out, code.data);
+            sb_put(out, "\n\nEvery declared member once, in the order they're declared, as an array of `Count()` of them: "
+                        "`foreach (var value in E.Values())`. A member with another's number is there at its own place.");
+            break;
+        }
         if (is_routine(o->decl)) {
             format_routine(o->decl, &code);
             code_block(out, code.data);
@@ -4137,16 +4644,15 @@ static void describe(const occurrence *o, sb *out)
                 && retarget_bake_catalog_result(o->type))
                 form = &retarget_map_calls[2];
             if (!form) break;
-            const bool numeric = (o->object_type.kind == TY_TEXTURE || o->object_type.kind == TY_TEXTURE3D)
-                              && str_eq_c(o->name, "Sample") && o->type.kind != TY_COLOR && o->type.kind != TY_ERROR;
+            // A [Raw(T)] image's reads give its numbers, with the typed defaults (the checker's type of the call)
+            bool numeric = numeric_image_kind(o->object_type) && o->type.kind != TY_COLOR && o->type.kind != TY_ERROR;
             if (o->object_type.kind == TY_WORLD) format_world_method(form, o->component, &code);
-            else if (numeric)
-                format_numeric_sample(o->object_type, o->type, &code);
-            else format_method(form, o->object_type, &code);
+            else if (!numeric || !format_numeric_read(o->object_type, o->name, o->type, &code)) {
+                numeric = false;
+                format_method(form, o->object_type, &code);
+            }
             code_block(out, code.data);
-            sb_printf(out, "\n\n%s", numeric ? "Reads the nearest cell as the declared numeric type, without alpha conversion. "
-                      "The filter is implicit or explicit Filter.Point; other filters and mipmaps are unsupported. "
-                      "Wrap.Clamp, Wrap.Repeat and Wrap.Mirror apply to every axis." : form->doc);
+            sb_printf(out, "\n\n%s", numeric ? numeric_read_doc(o->object_type, o->name) : form->doc);
         }
         break;
     case OCC_MEMBER:
@@ -4206,6 +4712,7 @@ static void describe(const occurrence *o, sb *out)
             if (str_eq_c(o->name, "depth")) sb_put(out, "\n\n" TEXTURE_ARRAY_DEPTH_DOC);
             if (str_eq_c(o->name, "layers")) sb_put(out, "\n\n" TEXTURE_ARRAY_LAYERS_DOC);
         }
+        if (o->object_type.kind == TY_CUBEMAP && str_eq_c(o->name, "depth")) sb_put(out, "\n\n" CUBEMAP_DEPTH_DOC);
         break;
     case OCC_ATTRIBUTE: {
         static const struct {
@@ -4213,8 +4720,6 @@ static void describe(const occurrence *o, sb *out)
             const char *form;
             const char *doc;
         } attributes[] = {
-            {"RunInEditor", "[RunInEditor]", "Includes this view in both game rendering and the authored prefab preview. Preview does not run systems or gameplay handlers."},
-            {"EditorOnly", "[EditorOnly]", "Runs this view only in the authored prefab preview, not in game frames. Ordinary view access rules still apply."},
             {"Stage", "[Stage(Stages.Phase, offset = 0)]",
              "Places this declaration in an enum phase. Phases follow the enum's declaration order; signed integer "
              "offsets order work within a phase. The enum's numeric values don't affect phase order."},
@@ -4282,9 +4787,11 @@ static void describe(const occurrence *o, sb *out)
              "field, and no two fields of a struct have one key."},
             {"Linear", "[Linear]",
              "This Texture, TextureArray or Cubemap stores sRGB color and GPU reads return linear light. Filtering and "
-             "mipmaps operate in linear light; alpha stays coverage. It goes before one asset or a resource field, "
-             "not parameters or locals. Keep values in [Linear] fields, or borrow their source in a read-only GPU "
-             "helper. Color grids and RGBA8 runtime images can initialize marked fields. Float, single-channel, "
+             "mipmaps operate in linear light; alpha stays coverage. It goes before an asset (one, or a glob's "
+             "List<Texture> or Map<string, Texture>, each element marked), a resource field, a read-only image "
+             "parameter of a function or a frag's Texture source, not a local: a local that isn't mut keeps its "
+             "initializer's mark, and a ?: or switch of marked images keeps it. Keep values in [Linear] fields and "
+             "parameters, or borrow their source in a read-only GPU helper. Color grids and RGBA8 runtime images can initialize marked fields. Float, single-channel, "
              "depth and numeric formats have no sRGB counterpart. [Raw] and [Linear] cannot be combined."},
             {"Raw", "[Raw]",
              "This texture's pixels are numbers, not colors to draw: they're kept as the file or the grid has them, with "
@@ -4293,11 +4800,19 @@ static void describe(const occurrence *o, sb *out)
              "before an asset that's one `Texture` or one `Grid2<Color>`, or before `Texture` fields and `Grid2<Color>` "
              "fields. `[Raw] Texture` fields accept Raw Texture or Raw Grid2<Color> assets and fields, or `default`, "
              "and keep their Raw role. A frag or a vert samples them directly or through GPU sampling and metadata "
-             "helpers that borrow the original source. `.size` is readable on the CPU and GPU. Raw textures cannot "
-             "escape to ordinary Texture storage, CPU arguments or returns, or draws. "
-             "On a Texture/Texture3D field or read-only GPU helper parameter, [Raw(float)], [Raw(float2)], [Raw(float4)] or [Raw(int)] declares "
-             "the image's numeric Sample result. These typed images read the nearest cell, with only Filter.Point "
-             "and no mipmaps; the role must fit their format."},
+             "helpers that borrow the original source. `.size` is readable on the CPU and GPU. A glob's `List<Texture>` "
+             "or `Map<string, Texture>` takes it for every image, read by element or foreach; a local that isn't "
+             "`mut` keeps the role of what it's given, a `?:` or switch of Raw images keeps it, and a function or a "
+             "frag takes one as a `[Raw] Texture` parameter or source. Raw textures cannot escape to ordinary Texture "
+             "storage, unmarked parameters, returns, or the engine's own draws. "
+             "On a Texture/Texture3D field or read-only function parameter, [Raw(float)], [Raw(float2)], [Raw(float4)] or [Raw(int)] declares "
+             "the image's numeric Sample result, on a Texture, Texture3D, TextureArray or Cubemap. Typed images read "
+             "the nearest cell unless a Sample names a filter: R8, Rg8, R16f, Rg16f and Rgba16f blend and read mipmaps on "
+             "every device (a Texture3D has none); R32f and Rgba32f blend with Filter.Bilinear, loaded exactly and blended in the shader (a cube's "
+             "faces nearest only), with no mipmaps; int images are nearest only. The role must fit their format. A grid of "
+             "numbers is a Texture of its role alone: a Grid2<float> takes [Raw(float)] (or none), a Grid2<float2> [Raw(float2)], a "
+             "Grid2<float4> [Raw(float4)], a Grid2<int> or Grid2<byte> [Raw(int)], as a field's value, a typed helper's "
+             "argument or a typed frag's source, and each is sampled by its own name as those numbers."},
             {"Lossless", "[Lossless]",
              "Keeps this `Texture` asset's pixels exact in the pack, a byte a channel. Without it, an image whose sides are "
              "powers of two and at least 128 pixels is block-compressed as the game is built (BC1, or BC3 with alpha), "
@@ -4325,8 +4840,7 @@ static void describe(const occurrence *o, sb *out)
             sb_printf(&code, STR_FMT "." STR_FMT " = %lld", STR_ARG(o->decl->name), STR_ARG(m->name), (long long)m->number);
             code_block(out, code.data);
             sb_printf(out, "\n\nMember of enum `" STR_FMT "`.", STR_ARG(o->decl->name));
-            if (o->decl == A.prog->format && format_member_doc(m->name))
-                sb_printf(out, " %s", format_member_doc(m->name));
+            if (enum_member_doc(o->decl, m->name)) sb_printf(out, " %s", enum_member_doc(o->decl, m->name));
         }
         break;
     case OCC_NAMESPACE: {
@@ -4488,6 +5002,23 @@ static void write_location(jbuf *out, const loc at, const int len)
     jb_put(out, ",\"range\":");
     write_range(out, at, len);
     jb_put(out, "}");
+}
+
+// A place in a .tweaks file, which isn't one of the analysis's files (tweaks_read reads it from disk)
+static void write_tweaks_location(jbuf *out, const char *path, const loc at, const int len)
+{
+    jb_put(out, "{\"uri\":");
+    sb uri = {0};
+    sb_put(&uri, path[0] == '/' ? "file://" : "file:///");
+    for (const char *ch = path; *ch; ch++) {
+        const unsigned char u = (unsigned char)*ch;
+        if ((u >= 'a' && u <= 'z') || (u >= 'A' && u <= 'Z') || (u >= '0' && u <= '9') || strchr("/-._~:", u)) sb_putn(&uri, ch, 1);
+        else sb_printf(&uri, "%%%02X", u);
+    }
+    jb_string(out, uri.data);
+    // Its columns as the file's bytes: no analysed text to count UTF-16 by, and a tweak's name is ASCII
+    jb_printf(out, ",\"range\":{\"start\":{\"line\":%d,\"character\":%d},\"end\":{\"line\":%d,\"character\":%d}}}",
+              at.line - 1, at.col - 1, at.line - 1, at.col - 1 + len);
 }
 
 // A lens with `title` over the name at `at`, up to what its click does.
@@ -4716,6 +5247,24 @@ void analysis_code_lenses(jbuf *out)
             if (d->alongside_count > shown) sb_printf(&alongside, " and %d more", d->alongside_count - shown);
             write_lens_to(out, &written, d, alongside.data, d->alongside.items, d->alongside.count);
         }
+    }
+    // A tweak a .tweaks file gives another value: what it gives, which a click opens there
+    for (int i = 0; i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        if (!d->is_tweak || !d->tweaked_text || !d->tweaked_file || d->at.file != A.doc) continue;
+        const char *file = d->tweaked_file;
+        for (const char *ch = d->tweaked_file; *ch; ch++) {
+            if (*ch == '/') file = ch + 1;
+        }
+        sb title = {0};
+        sb_printf(&title, "%s: %s", file, d->tweaked_text);
+        open_lens(out, &written, d->at, d->name.len, title.data);
+        open_lens_command(out, "editor.action.goToLocations", d->at);
+        // The name it gives the value under
+        const int named = (d->unit && d->unit->ns.len ? d->unit->ns.len + 1 : 0) + d->name.len;
+        if (d->tweaked_at.file >= 0 && d->tweaked_at.file < A.file_count) write_location(out, d->tweaked_at, named);
+        else write_tweaks_location(out, d->tweaked_file, d->tweaked_at, named);
+        jb_put(out, "],\"goto\"]}}");
     }
     loop_lenses lenses = {out, &written};
     each_guarded_loop(A.prog, write_loop_lens, &lenses);
@@ -5667,6 +6216,7 @@ void analysis_symbols(jbuf *out)
     for (int i = 0; i < A.written.count; i++) {
         const decl *d = A.written.items[i];
         if (d->builtin || d->at.file != A.doc || d->preparation_owner) continue; // This document's declarations
+        if (command_code(d) && !d->is_override) continue; // A command is one declaration: its type's, with what it's called with
         const int kind = symbol_kind(d);
         const loc start = {d->at.line, 1, d->at.file};
         const loc end = d->end.line > 0 ? d->end : d->at;
@@ -5952,6 +6502,11 @@ static caller hierarchy_target(const int line, const int character)
         return (caller){o->decl, str_eq_c(o->name, "Sample") ? o->decl->body : str_eq_c(o->name, "Sanitize") ? o->decl->sanitize : o->decl->predict, o->name, o->at};
     }
     if (o && o->kind == OCC_SYSTEM && o->decl) return (caller){o->decl, o->decl->body, o->decl->name, o->decl->at};
+    if (o && o->kind == OCC_TYPE && o->decl && o->decl->kind == DECL_EVENT && o->decl->is_command) { // A command: its code
+        const decl *declared = o->declaration ? command_code_at(o->at) : NULL;
+        const decl *code = declared ? declared : command_code_of(o->decl);
+        if (code) return (caller){code, code->body, code->name, code->at};
+    }
     if (o && (o->kind == OCC_FUNCTION || o->kind == OCC_METHOD) && is_routine(o->decl)) { // An extern function: no body
         return (caller){o->decl, NULL, o->decl->name, o->decl->at};
     }
@@ -6045,7 +6600,8 @@ void analysis_outgoing_calls(const int line, const int character, jbuf *out)
 }
 
 // Entry points are engine-invoked bodies, not ordinary functions with no
-// callers. Event/command handlers are boundaries: Send is not a call edge.
+// callers. Event handlers and commands are boundaries: a Send and a command's
+// call queue their code, and are not call edges.
 static bool entry_point(const caller *c)
 {
     return c->decl->kind == DECL_SYSTEM || c->decl->kind == DECL_INPUT
@@ -6110,6 +6666,9 @@ static void write_entry_point_lenses(jbuf *out, int *written)
             vec_push(nodes, ((entry_node){.code = {d, body->body, d->name, d->at}}));
         } else if (o->kind == OCC_SYSTEM && (d->kind == DECL_SYSTEM || is_shader(d))) {
             vec_push(nodes, ((entry_node){.code = {d, d->body, d->name, d->at}}));
+        } else if (o->kind == OCC_TYPE && d->kind == DECL_EVENT && d->is_command) { // A command's code, its own or an override's
+            const decl *code = command_code_at(o->at);
+            if (code && !code->replaced_by) vec_push(nodes, ((entry_node){.code = {code, code->body, code->name, code->at}}));
         } else if (o->kind == OCC_TYPE && d->kind == DECL_INPUT) {
             if (d->body) vec_push(nodes, ((entry_node){.code = {d, d->body, str_from("Sample"), d->body_at}}));
             if (d->sanitize) vec_push(nodes, ((entry_node){.code = {d, d->sanitize, str_from("Sanitize"), d->sanitize_at}}));
@@ -6347,6 +6906,30 @@ static const char *past_inactive(const char *p, const char *limit)
     return p < limit ? p : limit;
 }
 
+// The '(' that the ')' at token `close` closes, or -1.
+static int opening(const int close)
+{
+    int parens = 0;
+    for (int k = close; k >= 0; k--) {
+        if (DOC->toks[k].kind == T_RPAREN) parens++;
+        else if (DOC->toks[k].kind == T_LPAREN && --parens == 0) return k;
+    }
+    return -1;
+}
+
+// The line a command starts on, for the '{' at token `brace` that opens its code: `command(int slot)`, whose
+// name and what its code takes can be on the next line. 0 for another brace.
+static int command_line(const int brace)
+{
+    if (brace < 1 || DOC->toks[brace - 1].kind != T_RPAREN) return 0;
+    int name = opening(brace - 1) - 1; // PickCard, or an override's Cards.PickCard
+    while (name >= 2 && DOC->toks[name - 1].kind == T_DOT && DOC->toks[name - 2].kind == T_IDENT) name -= 2;
+    if (name < 1 || DOC->toks[name].kind != T_IDENT || DOC->toks[name - 1].kind != T_RPAREN) return 0;
+    const int values = opening(name - 1);
+    if (values < 1 || DOC->toks[values - 1].kind != T_IDENT || !str_eq_c(DOC->toks[values - 1].text, "command")) return 0;
+    return DOC->toks[values - 1].at.line;
+}
+
 void analysis_folding_ranges(jbuf *out)
 {
     const arena_mark temporary = arena_checkpoint();
@@ -6374,6 +6957,8 @@ void analysis_folding_ranges(jbuf *out)
                 && DOC->toks[o - 1].kind != T_SEMI) {
                 first--; // component Body\n{
             }
+            const int command = command_line(o); // command(int slot)\n    PickCard(mut Hand hand)\n{
+            if (command > 0 && command < first) first = command;
             folding_range(out, &written, first, t->at.line - 1, NULL);
         }
     }
@@ -6612,8 +7197,10 @@ void analysis_inlay_hints(const int start_line, const int end_line, jbuf *out)
     for (int i = 0; i < A.calls.count; i++) { // Heal(unit.stats, amount: 2), Draw.Circle(p, radius: 3, color)
         const expr *call = A.calls.items[i];
         if (call->at.file != A.doc || call->at.line - 1 < start_line || call->at.line - 1 > end_line) continue;
-        str *names = arena_alloc(sizeof(str) * (size_t)call->args.count);
-        const int count = call_param_names(call, names, call->args.count);
+        const decl *command = called_command(call);
+        const int most = command ? command->fields.count : call->args.count; // A command's values, or the call's arguments
+        str *names = arena_alloc(sizeof(str) * (size_t)(most > 0 ? most : 1));
+        const int count = call_param_names(call, names, most);
         for (int n = 0; n < written_count(call); n++) {
             const int k = written_param(call, n);
             const expr *arg = written_arg(call, n);
@@ -6668,6 +7255,7 @@ void analysis_workspace_symbols(const char *query, const workspace_symbol_fn sym
     for (int i = 0; A.prog && i < A.written.count; i++) {
         const decl *d = A.written.items[i];
         if (d->builtin || d->preparation_owner) continue;
+        if (command_code(d) && !d->is_override) continue; // A command is found once, by its type
         const int kind = symbol_kind(d);
         const str ns = decl_home(d) ? decl_home(d)->ns : (str){"", 0};
         if (fuzzy_match(d->name, query)) workspace_symbol(symbol, user, d->name, kind, d->at, d->name.len, ns);
@@ -6738,6 +7326,10 @@ static void classify(const occurrence *o, int *type, int *mods)
             *mods = is_keyword_type(o->type) ? 0 : *mods | SM_DEFAULT_LIBRARY;
             break;
         }
+        if (o->decl->kind == DECL_EVENT && o->decl->is_command) { // Declared and called as a function is
+            *type = ST_FUNCTION;
+            break;
+        }
         // Components and structs are structs, singletons classes, inputs
         // interfaces, and the device records types: editors can color each kind.
         *type = o->decl->kind == DECL_COMPONENT || o->decl->kind == DECL_STRUCT || o->decl->kind == DECL_EVENT ? ST_STRUCT
@@ -6749,6 +7341,11 @@ static void classify(const occurrence *o, int *type, int *mods)
         break;
     case OCC_SYSTEM: *type = ST_FUNCTION; break;
     case OCC_FIELD:
+        if (o->decl && o->decl->kind == DECL_EVENT && o->decl->is_command) { // What a command is called with, read-only in its code
+            *type = ST_PARAMETER;
+            *mods |= SM_READONLY;
+            break;
+        }
         *type = ST_PROPERTY;
         if (o->decl && o->decl->builtin) *mods |= SM_DEFAULT_LIBRARY;
         if (o->decl == A.prog->pixel || o->decl == A.prog->placed || o->decl == A.prog->invocation) *mods |= SM_READONLY;
@@ -7088,6 +7685,17 @@ static void collect_list(stmt *const *stmts, const int count, const loc at, scop
             for (int k = 0; k < 2; k++) { // items.Sort(a, b) { ... }: its two elements
                 if (s->value->compare[k]) vec_push(sc->locals, s->value->compare[k]);
             }
+            const param *edited = s->value->edit_binding;
+            if (edited) { // world.Edit<Party>(id, party) { ... }: its name, the entity's component, as a local of its type is
+                stmt *local = arena_alloc(sizeof *local);
+                memset(local, 0, sizeof *local);
+                local->kind = S_VAR;
+                local->name = edited->name;
+                local->name_at = edited->name_at;
+                local->type = edited->type;
+                local->is_mut = true;
+                vec_push(sc->locals, local);
+            }
             collect_locals(s->value->block, at, sc);
         }
         if (s->kind == S_SWITCH && loc_cmp(at, s->end) <= 0) {
@@ -7152,10 +7760,14 @@ static type name_type(const scope *sc, const str name, const param **param_out)
     if (!sc->decl) return (type){TY_ERROR, NULL};
     for (int i = 0; i < sc->decl->params.count && !sc->in_sanitize; i++) {
         const param *p = &sc->decl->params.items[i];
-        if (p->name.len > 0 && str_eq(p->name, name)) {
+        if (p->name.len > 0 && !p->command_payload && str_eq(p->name, name)) {
             *param_out = p;
             return p->type;
         }
+    }
+    const decl *command = command_type(sc->decl); // What a command was called with, by name in its code
+    for (int i = 0; command && i < command->fields.count; i++) {
+        if (str_eq(command->fields.items[i].name, name)) return command->fields.items[i].type;
     }
     if (sc->fields_of) {
         for (int i = 0; i < sc->fields_of->fields.count; i++) {
@@ -7239,6 +7851,7 @@ static type member_type(const type t, const str member)
     if (t.kind == TY_GPU_LIST && (str_eq_c(member, "count") || str_eq_c(member, "capacity"))) return (type){TY_INT, NULL};
     if (t.kind == TY_GPU_LIST && str_eq_c(member, "contentRevision")) return (type){TY_LONG, NULL};
     if (t.kind == TY_CUBEMAP && str_eq_c(member, "faces")) return t; // Of which an index is a RenderTarget
+    if (t.kind == TY_CUBEMAP && str_eq_c(member, "depth")) return (type){TY_DEPTH_CUBEMAP, NULL};
     if (t.kind == TY_TEXTURE3D && str_eq_c(member, "size")) return (type){TY_INT3, NULL};
     if (t.kind == TY_TEXTURE3D && str_eq_c(member, "contentRevision")) return (type){TY_LONG, NULL};
     if (t.kind == TY_TEXTURE_ARRAY && str_eq_c(member, "layers")) return t; // ...and of an array's layers
@@ -7257,6 +7870,10 @@ static type member_type(const type t, const str member)
     if (t.kind == TY_RECT && (str_eq_c(member, "x") || str_eq_c(member, "y") || str_eq_c(member, "width")
                               || str_eq_c(member, "height"))) {
         return (type){TY_FLOAT, NULL};
+    }
+    if (t.kind == TY_COLOR && str_eq_c(member, "rgb")) return (type){TY_FLOAT3, NULL};
+    if (t.kind == TY_RECT && (str_eq_c(member, "position") || str_eq_c(member, "size") || str_eq_c(member, "center"))) {
+        return (type){TY_FLOAT2, NULL};
     }
     if (t.kind == TY_STRING && str_eq_c(member, "length")) return (type){TY_INT, NULL};
     if ((t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE) && str_eq_c(member, "size")) return (type){TY_INT2, NULL};
@@ -7318,6 +7935,8 @@ static type loop_variable_type(const scope *sc, const int use)
     }
     return (type){TY_ERROR, NULL};
 }
+
+static void complete_commands(completion *c, bool entity, bool local);
 
 static void complete_routine(completion *c, const decl *m, const char *name)
 {
@@ -7501,7 +8120,8 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         if (!gpu) {
             item(c, "colors", CK_PROPERTY, "Texture, by its number",
                  "The target's color images, in the order of the formats it was made with: `colors[1]` is its second, "
-                 "as a Texture, and `colors[0]` is `color`. A frag's `out Color` parameters go to them in that order.",
+                 "as a Texture, and `colors[0]` is `color`. A frag's `out Color` parameters go to them in that order. "
+                 "`colors.count` is how many it holds.",
                  "colors[$1]");
         }
         item(c, "depth", CK_PROPERTY, "DepthTexture",
@@ -7510,7 +8130,8 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         if (!gpu) {
             for (size_t i = 0; i < sizeof target_calls / sizeof target_calls[0]; i++)
                 item(c, target_calls[i].name, CK_METHOD, target_calls[i].form, target_calls[i].doc,
-                     i == 0 ? "Resize($1, $2)" : strcmp(target_calls[i].name, "Read") == 0 ? "Read()" : "Dispose()");
+                     i == 0 ? "Resize($1, $2)" : strcmp(target_calls[i].name, "Read") == 0 ? "Read()"
+                     : strcmp(target_calls[i].name, "ReadDepth") == 0 ? "ReadDepth()" : "Dispose()");
         }
         if (!gpu && sc->decl && (sc->decl->is_view || sc->decl->kind == DECL_FUNCTION)) {
             builtin_list_members(str_from("Draw"), add_target_member, c); // The window's, as its own
@@ -7597,6 +8218,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
                  "`faces[5]`, in the order +x, -x, +y, -y, +z, -z. A face is what a camera at the cube's middle sees "
                  "along that axis with a field of view of 90: +y is up for the four around, and for the one above "
                  "and the one below, -z and +z.", "faces[$1]");
+            item(c, "depth", CK_PROPERTY, "DepthCubemap", CUBEMAP_DEPTH_DOC, NULL);
         }
         if (samples) {
             const method_form *form = &cube_calls[sizeof cube_calls / sizeof cube_calls[0] - 1];
@@ -7610,7 +8232,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
             sb detail = {0};
             format_method(&volume_calls[i], t, &detail);
             item(c, volume_calls[i].name, CK_METHOD, detail.data, volume_calls[i].doc,
-                 i == 0 ? "Sample($1)" : i == 1 ? "Resize($1)" : "Dispose()");
+                 i == 0 ? "Sample($1)" : i == 1 ? "Resize($1)" : i == 2 ? "Dispose()" : "Read()");
         }
         item(c, "size", CK_PROPERTY, "int3", "The volume's size in texels, or zeros for no volume.", NULL);
         if (!gpu) item(c, "contentRevision", CK_PROPERTY, "long", "Changes when the volume's contents are discarded; refill it after a change.", NULL);
@@ -7627,9 +8249,9 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         if (!gpu) {
             item(c, "layers", CK_PROPERTY, "RenderTarget, by its number", TEXTURE_ARRAY_LAYERS_DOC, "layers[$1]");
             item(c, "depth", CK_PROPERTY, "DepthTextureArray", TEXTURE_ARRAY_DEPTH_DOC, NULL);
-            item(c, "size", CK_PROPERTY, "int2", TEXTURE_ARRAY_SIZE_DOC, NULL);
-            item(c, "count", CK_PROPERTY, "int", TEXTURE_ARRAY_COUNT_DOC, NULL);
         }
+        item(c, "size", CK_PROPERTY, "int2", TEXTURE_ARRAY_SIZE_DOC, NULL); // ...in a frag or a vert too
+        item(c, "count", CK_PROPERTY, "int", TEXTURE_ARRAY_COUNT_DOC, NULL);
         if (samples) {
             const method_form *form = &array_calls[sizeof array_calls / sizeof array_calls[0] - 1];
             sb detail = {0}; format_method(form, t, &detail);
@@ -7644,9 +8266,16 @@ static void list_members(completion *c, const type t, const bool edges, const sc
             item(c, depth_array_calls[i].name, CK_METHOD, detail.data, depth_array_calls[i].doc,
                  i == 0 ? "Sample($1, $2)" : "Compare($1, $2, $3)");
         }
-        if (!gpu) {
-            item(c, "size", CK_PROPERTY, "int2", TEXTURE_ARRAY_SIZE_DOC, NULL);
-            item(c, "count", CK_PROPERTY, "int", TEXTURE_ARRAY_COUNT_DOC, NULL);
+        item(c, "size", CK_PROPERTY, "int2", TEXTURE_ARRAY_SIZE_DOC, NULL); // ...in a frag or a vert too
+        item(c, "count", CK_PROPERTY, "int", TEXTURE_ARRAY_COUNT_DOC, NULL);
+        return;
+    }
+    if (t.kind == TY_DEPTH_CUBEMAP) { // A frag reads it by a direction
+        for (size_t i = 0; samples && i < sizeof depth_cube_calls / sizeof depth_cube_calls[0]; i++) {
+            sb detail = {0};
+            format_method(&depth_cube_calls[i], t, &detail);
+            item(c, depth_cube_calls[i].name, CK_METHOD, detail.data, depth_cube_calls[i].doc,
+                 i == 0 ? "Sample($1)" : "Compare($1, $2)");
         }
         return;
     }
@@ -7752,6 +8381,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         item(c, "g", CK_PROPERTY, "float", "Green, 0 to 1.", NULL);
         item(c, "b", CK_PROPERTY, "float", "Blue, 0 to 1.", NULL);
         item(c, "a", CK_PROPERTY, "float", "Alpha, 0 to 1.", NULL);
+        item(c, "rgb", CK_PROPERTY, "float3", "Red, green and blue as a vector, without the alpha. Read only.", NULL);
     }
     if (t.kind == TY_LIST) item(c, "count", CK_PROPERTY, "int", LIST_COUNT_DOC, NULL);
     if (t.kind == TY_MAP || t.kind == TY_SET) item(c, "count", CK_PROPERTY, "int", MAP_COUNT_DOC, NULL);
@@ -7768,6 +8398,9 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         item(c, "y", CK_PROPERTY, "float", "The top side, from the screen's top.", NULL);
         item(c, "width", CK_PROPERTY, "float", NULL, NULL);
         item(c, "height", CK_PROPERTY, "float", NULL, NULL);
+        item(c, "position", CK_PROPERTY, "float2", "Its top left corner: (x, y). Read only.", NULL);
+        item(c, "size", CK_PROPERTY, "float2", "Its width and height. Read only.", NULL);
+        item(c, "center", CK_PROPERTY, "float2", "Its middle. Read only.", NULL);
     }
     if (t.kind == TY_QUATERNION) item(c, "value", CK_PROPERTY, "float4", "(x, y, z) is the vector part.", NULL);
     const int n = matrix_dim(t);
@@ -7784,6 +8417,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
             sb snippet = {0};
             if (strcmp(forms[i].name, "TryGet") == 0) sb_put(&snippet, "TryGet<${1:Component}>(${2:entity}, out var ${3:value})");
             else if (strcmp(forms[i].name, "TryGetPrevious") == 0) sb_put(&snippet, "TryGetPrevious<${1:Component}>(${2:entity}, out var ${3:value})");
+            else if (strcmp(forms[i].name, "Edit") == 0) sb_put(&snippet, "Edit<${1:Component}>(${2:entity}, ${3:name})\n{\n\t$0\n}");
             else sb_printf(&snippet, "%s<$1>($2)", forms[i].name);
             item(c, forms[i].name, CK_METHOD, detail.data, forms[i].doc, snippet.data);
         }
@@ -7798,9 +8432,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
                      && !sc->decl->is_interpolate && !sc->decl->is_audio && (t.kind == TY_ENTITY || t.kind == TY_LOCAL_ENTITY);
     const bool changes = (t.kind == TY_ENTITY && match) || (t.kind == TY_LOCAL_ENTITY && local)
                       || (t.kind == TY_SINGLETON && match && !t.decl->is_local) || passed;
-    if (t.kind == TY_ENTITY && local) {
-        item(c, "Send", CK_METHOD, "Send(command)", "Submits a command to this match entity; its handler checks the authenticated sender and untrusted payload.", "Send($1)");
-    }
+    if (t.kind == TY_ENTITY && (local || match || passed)) complete_commands(c, true, local || passed);
     const bool pixel = t.kind == TY_RECORD && (t.decl == A.prog->pixel || t.decl == A.prog->instance); // ...and an Instance's
     if (t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID || changes || pixel) {
         size_t count;
@@ -7809,6 +8441,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
             if (t.kind == TY_LOCAL_ENTITY && strcmp(forms[i].name, "Snap") == 0) continue; // Local state isn't blended
             if (passed && strcmp(forms[i].name, "Snap") == 0) continue; // A system's or a handler's own to say
             if (t.kind == TY_GRID && strcmp(forms[i].name, "Sample") == 0) continue; // A frag's or vert's, above
+            if (t.kind == TY_GRID && strcmp(forms[i].name, "FromBytes") == 0) continue; // The type's: Grid3<Block>.FromBytes
             sb detail = {0};
             format_method(&forms[i], t, &detail);
             sb snippet = {0};
@@ -7819,6 +8452,29 @@ static void list_members(completion *c, const type t, const bool edges, const sc
     if (edges && t.kind == TY_BOOL) {
         item(c, "down", CK_PROPERTY, "bool", "True on the tick it became true.", NULL);
         item(c, "up", CK_PROPERTY, "bool", "True on the tick it became false.", NULL);
+    }
+}
+
+// The game's commands, each as the call of it: `Rename(string name, int times = 1)`. With `entity`, those whose
+// code runs for an entity, as they're called on one: `fighter.PickCard(0)`. `local` says whose the call is: a
+// view's or a local handler's asks the match for this machine's player, and the match's own has no player.
+static void complete_commands(completion *c, const bool entity, const bool local)
+{
+    for (int i = 0; i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        // A call names its command alone, so one this file can't name that way isn't offered
+        if (d->kind != DECL_EVENT || !d->is_command || d->builtin || !visible_by_name(d)) continue;
+        const decl *code = command_code_of(d);
+        if (entity && !(code && code->per_entity)) continue;
+        const char *name = str_to_cstr(d->name);
+        sb detail = {0};
+        format_command_call(d, &detail);
+        sb snippet = {0};
+        sb_printf(&snippet, "%s(%s)", name, d->fields.count > 0 ? "$1" : "");
+        item(c, name, entity ? CK_METHOD : CK_FUNCTION, detail.data,
+             local ? "Calls the command: the server runs its code in the match for this machine's player, at the end of a tick."
+                   : "Calls the command with no player and no network: its code runs at the end of the tick.",
+             snippet.data);
     }
 }
 
@@ -7867,14 +8523,26 @@ static bool changes_match(const scope *sc)
         && !sc->decl->is_interpolate && !sc->decl->is_audio;
 }
 
+// What a field's image is read as: a grid of numbers' cells (Grid2<float2>...), or its [Raw(T)] role's T.
+static type field_image_role(const field *f)
+{
+    const type numbers = type_number_grid_role(f->type);
+    return numbers.kind != TY_ERROR ? numbers : raw_sample_type(f);
+}
+
 // A half-written Sample can have no expression tree yet. Recover its declared image role from the
 // receiver's field chain, so signature help and member completion do not turn numeric images into colors.
-static type numeric_receiver(const int dot, const loc at)
+// `*held` is the field it's read through, where it's one (NULL for a helper's parameter).
+static type numeric_receiver_of(const int dot, const loc at, const field **held)
 {
     const type color = {TY_COLOR, NULL};
+    *held = NULL;
     if (dot < 1 || DOC->toks[dot - 1].kind != T_IDENT) return color;
     const occurrence *o = occurrence_at(DOC->toks[dot - 1].at);
-    if (o && o->field) return raw_sample_type(o->field);
+    if (o && o->field) {
+        *held = o->field;
+        return field_image_role(o->field);
+    }
     if (o && o->param && o->param->sample_role.len) {
         return numeric_role(o->param->sample_role);
     }
@@ -7893,7 +8561,25 @@ static type numeric_receiver(const int dot, const loc at)
         }
         owner = member_type(owner, DOC->toks[k].text);
     }
-    return image ? raw_sample_type(image) : color;
+    *held = image;
+    return image ? field_image_role(image) : color;
+}
+
+static type numeric_receiver(const int dot, const loc at)
+{
+    const field *held;
+    return numeric_receiver_of(dot, at, &held);
+}
+
+// Whether a typed field's images have smaller images to read: not where its constructor assignments fix it to R32f or
+// Rgba32f (Format 7, 8), which are loaded exactly, never blended between levels. A helper's parameter, or a field whose
+// format isn't fixed yet, may be given either, and offers them.
+static bool field_has_levels(const field *f)
+{
+    if (!f) return true;
+    const expr image = {.field = (field *)(uintptr_t)f};
+    const int format = image_target_format(&image, 0, 0);
+    return format != 7 && format != 8;
 }
 
 static void complete_members(completion *c, const int dot, const loc at, const order_completion order)
@@ -7902,6 +8588,13 @@ static void complete_members(completion *c, const int dot, const loc at, const o
         int open = dot - 2;
         while (open >= 1 && (DOC->toks[open].kind == T_IDENT || DOC->toks[open].kind == T_DOT || DOC->toks[open].kind == T_COMMA)) open--;
         const bool skinned = open >= 1 && DOC->toks[open].kind == T_LT && str_eq_c(DOC->toks[open - 1].text, "SkinnedMesh");
+        if (open >= 1 && DOC->toks[open].kind == T_LT
+            && (str_eq_c(DOC->toks[open - 1].text, "Grid2") || str_eq_c(DOC->toks[open - 1].text, "Grid3"))) { // Grid3<Block>.
+            const scope sc = scope_at(at);
+            const method_form *form = find_form(grid_calls, sizeof grid_calls / sizeof grid_calls[0], str_from("FromBytes"));
+            if (!is_shader(sc.decl) && form) item(c, form->name, CK_METHOD, form->form, form->doc, "FromBytes($1)");
+            return;
+        }
         if (skinned || (open >= 1 && DOC->toks[open].kind == T_LT && str_eq_c(DOC->toks[open - 1].text, "Mesh"))) {
             const scope sc = scope_at(at);
             if (!is_shader(sc.decl)) {
@@ -8057,11 +8750,15 @@ static void complete_members(completion *c, const int dot, const loc at, const o
                 char value[32];
                 snprintf(value, sizeof value, "%lld", (long long)d->members.items[m].number);
                 item(c, str_to_cstr(d->members.items[m].name), CK_ENUM_MEMBER, value,
-                     d == A.prog->format ? format_member_doc(d->members.items[m].name) : NULL, NULL);
+                     enum_member_doc(d, d->members.items[m].name), NULL);
             }
             if (ids[n - 1] == 0 || DOC->toks[ids[n - 1] - 1].kind != T_CASE) {
                 item(c, "Count()", CK_METHOD, "Count() -> int",
                      "Number of declared members, including members with the same numeric value. A compile-time constant.", "Count()");
+                if (d->members.count > 0) {
+                    item(c, "Values()", CK_METHOD, "Values() -> array",
+                         "Every declared member once, in declaration order: an array of Count() of them, for 'foreach'.", "Values()");
+                }
             }
             return;
         }
@@ -8090,6 +8787,42 @@ static void complete_members(completion *c, const int dot, const loc at, const o
                 item(c, "Barrier", CK_FUNCTION, "GPU.Barrier()", GPU_BARRIER_DOC, "Barrier();");
             } else if (!gpu && sc.decl && (sc.decl->is_view || sc.decl->kind == DECL_FUNCTION || sc.decl->is_local)) {
                 item(c, "Run", CK_FUNCTION, "GPU.Run(kernel, over[, values])", GPU_RUN_DOC, "Run(${1:kernel}, ${2:over});");
+            }
+            return;
+        }
+        if (n == 1 && str_eq_c(base, "Storage") && !gpu) {
+            // The server's store from match code and the functions it calls; Flush from local async code and functions
+            const bool routine = sc.decl && sc.decl->kind == DECL_FUNCTION;
+            const bool match = sc.decl && sc.decl->kind == DECL_SYSTEM && !sc.decl->is_local && !sc.decl->is_view;
+            // `await Storage.`: in a match task, the load and the listing whose answer is the task's value
+            const int before = ids[n - 1] - 1;
+            if (before >= 0 && DOC->toks[before].kind == T_AWAIT) {
+                if (!sc.in_input && sc.decl && sc.decl->is_async && !sc.decl->is_local && !sc.decl->is_view
+                    && sc.decl->task_side != TASK_LOCAL) {
+                    for (size_t i = 0; i < sizeof storage_awaited_calls / sizeof storage_awaited_calls[0]; i++) {
+                        if (i && strcmp(storage_awaited_calls[i].name, storage_awaited_calls[i - 1].name) == 0) continue;
+                        item(c, storage_awaited_calls[i].name, CK_FUNCTION, storage_awaited_calls[i].form,
+                             storage_awaited_calls[i].doc,
+                             strcmp(storage_awaited_calls[i].name, "Load") == 0 ? "Load(${1:key})" : "List(${1:prefix})");
+                    }
+                }
+                if (sc.decl && sc.decl->is_async && (routine || sc.decl->is_view || sc.decl->is_local)) {
+                    builtin_visit v = {c, false};
+                    builtin_list_members(base, add_builtin_member, &v); // Flush
+                }
+                return;
+            }
+            if (!sc.in_input && (routine || match)) {
+                for (size_t i = 0; i < sizeof storage_calls / sizeof storage_calls[0]; i++) {
+                    if (i && strcmp(storage_calls[i].name, storage_calls[i - 1].name) == 0) continue; // Load's second form
+                    sb snippet = {0};
+                    method_snippet(&storage_calls[i], &snippet);
+                    item(c, storage_calls[i].name, CK_FUNCTION, storage_calls[i].form, storage_calls[i].doc, snippet.data);
+                }
+            }
+            if (sc.decl && sc.decl->is_async && (routine || sc.decl->is_view || sc.decl->is_local)) {
+                builtin_visit v = {c, false};
+                builtin_list_members(base, add_builtin_member, &v); // Flush
             }
             return;
         }
@@ -8135,20 +8868,45 @@ static void complete_members(completion *c, const int dot, const loc at, const o
     }
     // input.jump.down or input.aim.fire.down, including borrowed helper input.
     const bool edges = n >= 2 && p && p->type.kind == TY_INPUT;
-    const type numeric = numeric_receiver(dot, at);
-    if ((t.kind == TY_TEXTURE || t.kind == TY_TEXTURE3D) && numeric.kind != TY_COLOR) {
+    const field *image = NULL;
+    const type numeric = numeric_receiver_of(dot, at, &image);
+    const bool layered = t.kind == TY_TEXTURE_ARRAY || t.kind == TY_CUBEMAP;
+    if ((t.kind == TY_TEXTURE || t.kind == TY_TEXTURE3D || layered) && numeric.kind != TY_COLOR) {
         const bool sample = gpu || (sc.decl && (sc.decl->gpu_only || sc.decl->kind == DECL_FUNCTION || sc.decl->kind == DECL_METHOD));
+        // The forms and texts are hover's and signature help's (format_numeric_read, numeric_read_doc)
         if (sample) {
             sb label = {0};
-            format_numeric_sample(t, numeric, &label);
-            item(c, "Sample", CK_METHOD, label.data,
-                 "Reads the nearest cell as its declared numeric type, without alpha conversion. Only Filter.Point is supported; no mipmaps.",
-                 "Sample($1)");
+            format_numeric_read(t, str_from("Sample"), numeric, &label);
+            item(c, "Sample", CK_METHOD, label.data, numeric_read_doc(t, str_from("Sample")),
+                 t.kind == TY_TEXTURE_ARRAY ? "Sample($1, $2)" : "Sample($1)");
+        }
+        // The formats every device blends have mipmaps too; a field its assignments fix to R32f or Rgba32f has none,
+        // so it's offered neither
+        if (sample && t.kind != TY_TEXTURE3D && numeric.kind != TY_INT && field_has_levels(image)) {
+            sb level = {0};
+            format_numeric_read(t, str_from("SampleLevel"), numeric, &level);
+            item(c, "SampleLevel", CK_METHOD, level.data, numeric_read_doc(t, str_from("SampleLevel")),
+                 t.kind == TY_TEXTURE_ARRAY ? "SampleLevel($1, $2, $3)" : "SampleLevel($1, $2)");
+            if (t.kind != TY_CUBEMAP && !(is_shader(sc.decl) && !sc.decl->is_frag)) {
+                sb grad = {0};
+                format_numeric_read(t, str_from("SampleGrad"), numeric, &grad);
+                item(c, "SampleGrad", CK_METHOD, grad.data, numeric_read_doc(t, str_from("SampleGrad")),
+                     t.kind == TY_TEXTURE_ARRAY ? "SampleGrad($1, $2, $3, $4)" : "SampleGrad($1, $2, $3)");
+            }
+        }
+        if (layered) {
+            if (!sample) list_members(c, t, edges, &sc); // Its faces or layers, its depth and the rest, for the view
+            else if (t.kind == TY_TEXTURE_ARRAY) { // ...and an array's size and count on the GPU too
+                item(c, "size", CK_PROPERTY, "int2", TEXTURE_ARRAY_SIZE_DOC, NULL);
+                item(c, "count", CK_PROPERTY, "int", TEXTURE_ARRAY_COUNT_DOC, NULL);
+            }
+            return;
         }
         item(c, "size", CK_PROPERTY, t.kind == TY_TEXTURE3D ? "int3" : "int2", "The image's size in texels, or zeros for no image.", NULL);
         if (!gpu && t.kind == TY_TEXTURE3D) {
             item(c, "Resize", CK_METHOD, "Texture3D.Resize(int3 size)", volume_calls[1].doc, "Resize($1)");
             item(c, "Dispose", CK_METHOD, "Texture3D.Dispose()", volume_calls[2].doc, "Dispose()");
+            item(c, "Read", CK_METHOD, "Texture3D.Read<T>([int3 from, int3 size]) -> Grid3<T> fails IOError", volume_calls[3].doc, "Read()");
             item(c, "contentRevision", CK_PROPERTY, "long", "Changes when the volume's contents are discarded.", NULL);
         }
         return;
@@ -8236,11 +8994,11 @@ static void complete_components_of(completion *c, const bool local)
 }
 
 // Events: what handlers handle and Send sends. `builtin` includes the engine's own.
-static void complete_events(completion *c, const bool builtin, const bool command, const bool local)
+static void complete_events(completion *c, const bool builtin, const bool local)
 {
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
-        if (d->kind != DECL_EVENT || d->is_command != command || (d->builtin && !builtin)) continue;
+        if (d->kind != DECL_EVENT || d->is_command || (d->builtin && !builtin)) continue;
         if (!local && (d == A.prog->shown || d == A.prog->hidden)) continue;
         item(c, name_for(d), CK_EVENT, decl_what(d), d->builtin ? builtin_event_doc(A.prog, d) : NULL, NULL);
     }
@@ -8273,7 +9031,7 @@ static void complete_events_of(completion *c, const bool local)
 {
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
-        if (d->kind == DECL_EVENT && !d->builtin && (d->is_command ? local : d->is_local == local)) item(c, name_for(d), CK_EVENT, decl_what(d), NULL, NULL);
+        if (d->kind == DECL_EVENT && !d->builtin && !d->is_command && d->is_local == local) item(c, name_for(d), CK_EVENT, decl_what(d), NULL, NULL);
     }
 }
 
@@ -8355,7 +9113,8 @@ static void complete_systems(completion *c, const bool views)
 {
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
-        if (d->kind == DECL_SYSTEM && d->is_view == views && has_name(d)) {
+        // A command's code is its one handler: nothing runs before or after it by name
+        if (d->kind == DECL_SYSTEM && d->is_view == views && has_name(d) && !command_code(d)) {
             item(c, name_for(d), CK_FUNCTION, views ? "view" : "system", NULL, NULL);
         }
     }
@@ -8423,7 +9182,7 @@ static bool complete_in_namespace(completion *c, const str ns, const order_compl
 static const char *const value_types[] = {
     "bool", "byte", "char", "int", "long", "int2", "int3", "int4", "float", "float2", "float3", "float4", "quaternion",
     "double", "double2", "double3", "double4", "double2x2", "double3x3", "double4x4", "float2x2", "float3x3", "float4x4", "Entity", "LocalEntity", "PlayerID", "Color", "Rect",
-    "Texture", "DepthTexture", "Cubemap", "TextureArray", "DepthTextureArray", "RenderTarget", "Clip",
+    "Texture", "DepthTexture", "Cubemap", "TextureArray", "DepthTextureArray", "DepthCubemap", "RenderTarget", "Clip",
 };
 
 // Which built-in types to offer: each place takes its own.
@@ -8457,9 +9216,9 @@ static void complete_value_types(completion *c, const unsigned which)
         if (!(which & kind)) continue;
         if ((which & VT_GPU) && (type_is_double_based(t) || t.kind == TY_LONG || t.kind == TY_PLAYER || t.kind == TY_RECT
             || t.kind == TY_RENDER_TARGET || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_OPTIONAL
-            || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY || t.kind == TY_ARRAY || t.kind == TY_MESH)) continue;
+            || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY || t.kind == TY_DEPTH_CUBEMAP || t.kind == TY_ARRAY || t.kind == TY_MESH)) continue;
         if ((t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET
-             || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY)
+             || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY || t.kind == TY_DEPTH_CUBEMAP)
             && !(which & (VT_LOCAL_ENTITY | VT_GPU))) continue;
         complete_alias(c, d);
     }
@@ -8473,9 +9232,9 @@ static void complete_value_types(completion *c, const unsigned which)
         // Its ints are 32 bits, and it has no handles into the world, nor rects
         if ((which & VT_GPU) && (type_is_double_based(t) || t.kind == TY_LONG || t.kind == TY_PLAYER || t.kind == TY_RECT || t.kind == TY_RENDER_TARGET
                                  || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_TEXTURE_ARRAY
-                                 || t.kind == TY_DEPTH_TEXTURE_ARRAY)) continue; // A depth, a cube and an array are read where they're a field, never a parameter
+                                 || t.kind == TY_DEPTH_TEXTURE_ARRAY || t.kind == TY_DEPTH_CUBEMAP)) continue; // A depth, a cube and an array are read where they're a field, never a parameter
         if ((t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET
-             || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY)
+             || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY || t.kind == TY_DEPTH_CUBEMAP)
             && !(which & (VT_LOCAL_ENTITY | VT_GPU))) continue;
         if (which & kind) item(c, value_types[i], CK_STRUCT, "built-in type", builtin_type_doc(t.kind), NULL);
     }
@@ -8710,6 +9469,37 @@ static void complete_argument_names(completion *c, const int open, const int las
                  "the multiplier `[LOD(...)]` takes on an asset. Written last.",
                  "lod: ");
     }
+    // Build(input, priority: WorkerPriority.Background): a local worker call's one name of the engine's, last
+    bool priority_given = false;
+    for (int n = 0; n < named.count; n++) priority_given |= str_eq_c(named.items[n], "priority");
+    for (int i = 0; !method && !priority_given && i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        if (!d->is_worker || !str_eq(d->name, name)) continue;
+        item(c, "priority:", CK_VARIABLE, "WorkerPriority",
+             "When this call starts among the worker calls that wait for a thread: `WorkerPriority.Urgent` first, "
+             "`WorkerPriority.Normal` (what a call that says nothing has), then `WorkerPriority.Background`, each in "
+             "the order it came, and none waits for ever. Written last. It never interrupts a call that has started.",
+             "priority: WorkerPriority.");
+        break;
+    }
+    // Rename("x", times: 2), fighter.PickCard(slot: 0): the values a command is called with
+    for (int i = 0; i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        if (d->kind != DECL_EVENT || !d->is_command || !str_eq(d->name, name)) continue;
+        for (int p = unnamed; p < d->fields.count; p++) {
+            const field *f = &d->fields.items[p];
+            bool given = f->hidden;
+            for (int n = 0; n < named.count; n++) given |= str_eq(named.items[n], f->name);
+            if (given) continue;
+            sb label = {0};
+            sb detail = {0};
+            sb insert = {0};
+            sb_printf(&label, STR_FMT ":", STR_ARG(f->name));
+            sb_printf(&detail, "%s " STR_FMT, type_name(f->type), STR_ARG(f->name));
+            sb_printf(&insert, STR_FMT ": ", STR_ARG(f->name));
+            item(c, label.data, CK_VARIABLE, detail.data, "Passes this value by its name.", insert.data);
+        }
+    }
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
         for (int k = -1; k < d->methods.count; k++) {
@@ -8794,10 +9584,18 @@ static void complete_expression(completion *c, const loc at, const bool statemen
         for (int i = 0; i < sc.decl->params.count && !sc.in_sanitize; i++) {
             const param *p = &sc.decl->params.items[i];
             if (sc.decl->preparation_owner && i < 2) continue;
-            if (p->name.len == 0) continue;
+            if (p->name.len == 0 || p->command_payload) continue; // A command's payload has no name: its values do
             sb detail = {0};
             format_param(p, &detail);
             item(c, str_to_cstr(p->name), CK_VARIABLE, detail.data, NULL, NULL);
+        }
+        const decl *called_with = command_type(sc.decl);
+        for (int i = 0; called_with && i < called_with->fields.count; i++) {
+            const field *f = &called_with->fields.items[i];
+            if (f->hidden) continue;
+            sb detail = {0};
+            sb_printf(&detail, "%s " STR_FMT, type_name(f->type), STR_ARG(f->name));
+            item(c, str_to_cstr(f->name), CK_VARIABLE, detail.data, "What the command was called with, read-only.", NULL);
         }
         if (sc.fields_of) {
             if (sc.fields_of->kind == DECL_COMPONENT && sc.decl && !sc.decl->is_interpolate)
@@ -8827,10 +9625,11 @@ static void complete_expression(completion *c, const loc at, const bool statemen
                    : "Creates an entity with these components.",
              local ? "local Spawn($1)" : "Spawn($1)");
         item(c, "Send", CK_FUNCTION, "Send(event)",
-             local ? "Sends a local event, or submits a command to the match." : "Sends an event to the whole world, handled at the end of the tick.",
+             local ? "Sends a local event, handled at the end of the frame." : "Sends an event to the whole world, handled at the end of the tick.",
              "Send($1)");
         complete_components_of(c, local);
         complete_events_of(c, local);
+        complete_commands(c, false, local);
         item(c, "Scene", CK_MODULE, "Loads and unloads scenes", NULL, NULL);
     }
     // A function or a method sends and spawns as the code that calls it could, in either world
@@ -8842,6 +9641,7 @@ static void complete_expression(completion *c, const loc at, const bool statemen
              "Send($1)");
         complete_events_of(c, false);
         complete_events_of(c, true);
+        complete_commands(c, false, true); // A function's call of one is its callers', and they are local code
     }
     // Session.Start and the like are statements of their own.
     if (statement && decides_session(&sc)) {
@@ -8864,6 +9664,8 @@ static void complete_expression(completion *c, const loc at, const bool statemen
     complete_value_types(c, !statement ? VT_VALUES : local_code ? VT_LOCALS | VT_LOCAL_ENTITY : VT_LOCALS);
     complete_structs(c);
     item(c, "Math", CK_MODULE, "Math functions and constants", NULL, NULL);
+    item(c, "defined", CK_FUNCTION, "defined(NAME) -> bool", DEFINED_DOC, "defined($1)");
+    item(c, "define", CK_FUNCTION, "define(NAME, default)", DEFINE_DOC, "define($1, $2)");
     complete_namespaces(c, false);
     // What views draw with, which the functions they call can use too.
     if (view || (routine && sc.decl->kind == DECL_FUNCTION)) {
@@ -8907,11 +9709,10 @@ static void complete_declarations(completion *c)
          "input ${1:Name}\n{\n    $0\n\n    Sample(Devices devices)\n    {\n    }\n}");
     item(c, "event", CK_SNIPPET, "event Name { fields }", "Something that happened, sent with Send.",
          "event ${1:Name}\n{\n    $0\n}");
-    item(c, "command", CK_SNIPPET, "command Name { fields }", "A player's untrusted submission, sent from local code to the match.",
-         "command ${1:Name}\n{\n    $0\n}");
-    item(c, "command handler", CK_SNIPPET, "command(Command payload, PlayerID sender) Name(parameters) { ... }",
-         "Checks the authenticated sender and untrusted payload before changing match state.",
-         "command(${1:Command} ${2:payload}, PlayerID sender) ${3:Name}($4)\n{\n    $0\n}");
+    item(c, "command", CK_SNIPPET, "command(values) Name(parameters, PlayerID sender) { ... }",
+         "What local code asks of the match, called as a function is: its code checks the authenticated sender and "
+         "the untrusted values it was called with before changing the match.",
+         "command(${1:int value}) ${2:Name}(${3:PlayerID sender})\n{\n    $0\n}");
     item(c, "scene", CK_SNIPPET, "scene Name { fields }", "Entities that load and unload together, like a level.",
          "scene ${1:Name}\n{\n    $0\n}");
     item(c, "local scene", CK_SNIPPET, "local scene Name { fields }", "A scene on this machine only, like a menu.",
@@ -8972,8 +9773,8 @@ static void complete_code_declarations(completion *c)
          "event(${1:Event} ${2:e}) ${3:Name}($4)\n{\n    $0\n}");
     item(c, "local event handler", CK_SNIPPET, "local event(Event e) Name(parameters) { ... }", NULL,
          "local event(${1:Event} ${2:e}) ${3:Name}($4)\n{\n    $0\n}");
-    item(c, "command handler", CK_SNIPPET, "command(Command payload, PlayerID sender) Name(parameters) { ... }", NULL,
-         "command(${1:Command} ${2:payload}, PlayerID sender) ${3:Name}($4)\n{\n    $0\n}");
+    item(c, "command", CK_SNIPPET, "command(values) Name(parameters, PlayerID sender) { ... }", NULL,
+         "command(${1:int value}) ${2:Name}(${3:PlayerID sender})\n{\n    $0\n}");
     item(c, "function", CK_SNIPPET, "Type Name(parameters) { ... }", NULL, "${1:void} ${2:Name}($3)\n{\n    $0\n}");
     item(c, "async function", CK_SNIPPET, "async Type Name(parameters) { ... }", NULL,
          "async ${1:void} ${2:Name}($3)\n{\n    $0\n}");
@@ -9055,16 +9856,21 @@ static void complete_overrides(completion *c)
             if (theirs == package || (theirs && package && strcmp(theirs, package) == 0)) continue; // Its own: it changes it there
             sb header = {0};
             int first = 0;
-            if (v->kind == DECL_SYSTEM && v->is_handler && v->params.count > 0) {
-                sb_printf(&header, "%s%s%s(", v->is_local ? "local " : "", v->is_async ? "async " : "",
-                          v->is_command ? "command" : "event");
-                put_param_here(&header, &v->params.items[0]);
-                if (v->is_command && v->params.count > 1) {
-                    sb_put(&header, ", ");
-                    put_param_here(&header, &v->params.items[1]);
+            if (command_code(v)) { // What the command is called with, as the command says it, then its name
+                sb_put(&header, "command(");
+                for (int j = 0; v->written_payload && j < v->written_payload->fields.count; j++) {
+                    const field *f = &v->written_payload->fields.items[j];
+                    if (j) sb_put(&header, ", ");
+                    put_type_here(&header, f->type, f->type_name);
+                    sb_printf(&header, " " STR_FMT, STR_ARG(f->name));
                 }
                 sb_put(&header, ") ");
-                first = v->is_command ? 2 : 1;
+                first = v->params.count; // Its code's parameters go in the order written, below
+            } else if (v->kind == DECL_SYSTEM && v->is_handler && v->params.count > 0) {
+                sb_printf(&header, "%s%sevent(", v->is_local ? "local " : "", v->is_async ? "async " : "");
+                put_param_here(&header, &v->params.items[0]);
+                sb_put(&header, ") ");
+                first = 1;
             } else if (v->kind == DECL_SYSTEM) {
                 sb_put(&header, v->is_view ? "view " : "system ");
             } else if (v->kind == DECL_SHADER) {
@@ -9081,6 +9887,10 @@ static void complete_overrides(completion *c)
             for (int j = first; j < v->params.count; j++) {
                 if (j > first) sb_put(&header, ", ");
                 put_param_here(&header, &v->params.items[j]);
+            }
+            for (int j = 0; command_code(v) && j < command_param_count(v); j++) {
+                if (j) sb_put(&header, ", ");
+                put_param_here(&header, command_param(v, j));
             }
             sb_put(&header, ")");
             if (v->fails.kind != TY_VOID && v->fails.kind != TY_ERROR) {
@@ -9249,6 +10059,7 @@ typedef enum header_kind {
     HEADER_NONE,
     HEADER_SYSTEM,  // A system's or view's, or a handler's after its trigger: system Move(mut Body body)
     HEADER_TRIGGER, // A handler's trigger: event(Hit hit)
+    HEADER_COMMAND, // What a command is called with: command(int slot, string name = "")
     HEADER_ROUTINE, // A function's or method's: void Heal(mut Stats stats)
     HEADER_SAMPLE,  // The input's Sample: devices and local singletons; Sanitize takes nothing
     HEADER_SHADER,  // A frag's or vert's: frag Shade(BoxVertex vertex, out Color color, Sun sun)
@@ -9267,7 +10078,8 @@ static header_kind top_header(const int i)
 {
     if (i < 1) return HEADER_NONE;
     const token *name = &DOC->toks[i - 1];
-    if (name->kind == T_IDENT && (str_eq_c(name->text, "event") || str_eq_c(name->text, "command"))) return HEADER_TRIGGER;
+    if (name->kind == T_IDENT && str_eq_c(name->text, "event")) return HEADER_TRIGGER;
+    if (name->kind == T_IDENT && str_eq_c(name->text, "command")) return HEADER_COMMAND;
     if (i < 2) return HEADER_ROUTINE;
     int first = i - 1; // An override's name can be qualified: `override system Combat.Move(`
     while (first >= 2 && DOC->toks[first - 1].kind == T_DOT && DOC->toks[first - 2].kind == T_IDENT) first -= 2;
@@ -9308,6 +10120,20 @@ static bool local_match_handler(const int open)
         if (str_eq(event->name, DOC->toks[name].text) && event->is_local) return false;
     }
     return !str_eq_c(DOC->toks[name].text, "Forgotten");
+}
+
+// The header of a command's code, `command(string name) Rename(`, its name maybe qualified in an override: what it
+// takes of the match. Its filters are by the sender's ownership, and it names the sender.
+static bool command_handler(int open)
+{
+    while (open >= 3 && DOC->toks[open - 2].kind == T_DOT && DOC->toks[open - 3].kind == T_IDENT) open -= 2;
+    if (open < 3 || DOC->toks[open - 2].kind != T_RPAREN) return false;
+    int depth = 1, trigger = open - 3;
+    for (; trigger >= 0; trigger--) {
+        if (DOC->toks[trigger].kind == T_RPAREN) depth++;
+        if (DOC->toks[trigger].kind == T_LPAREN && --depth == 0) break;
+    }
+    return trigger >= 1 && DOC->toks[trigger - 1].kind == T_IDENT && str_eq_c(DOC->toks[trigger - 1].text, "command");
 }
 
 // The header a '(' in a type's body opens, at token `i`: the input's Sample or
@@ -9380,8 +10206,8 @@ static bool starts_declaration(const int i)
         return true; // event(Hit hit) TakeHit(...)
     }
     if (t->kind == T_IDENT && t->at.col == decl_col_at(t->at) && DOC->toks[i + 1].kind == T_IDENT
-        && (str_eq_c(t->text, "async") || str_eq_c(t->text, "cached"))) {
-        return true; // async void Countdown(), async event(...), cached float Width(...)
+        && (str_eq_c(t->text, "async") || str_eq_c(t->text, "cached") || str_eq_c(t->text, "dev") || str_eq_c(t->text, "tweak"))) {
+        return true; // async void Countdown(), async event(...), cached float Width(...), dev view Tools(...)
     }
     if (t->kind == T_IDENT && t->at.col == decl_col_at(t->at) && DOC->toks[i + 1].kind == T_LBRACE && str_eq_c(t->text, "settings")) {
         return true;
@@ -9525,7 +10351,7 @@ static type names_type(const scope *sc, const int first, const int last)
 }
 
 // Draw.Mesh's parameters, in the order they're written:
-// Draw.Mesh(vertices, indices[, transform][, texture[, filter[, wrap]]][, vert][, frag]).
+// Draw.Mesh(vertices, indices[, transform][, texture[, filter[, wrap]]...][, vert][, frag]).
 // A 3D mesh has its transform, and a 2D one none.
 enum { MESH_VERTICES, MESH_INDICES, MESH_TRANSFORM, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG, MESH_INSTANCES,
        MESH_VALUES, MESH_WHOLE, MESH_SKINNED, MESH_POSE, MESH_LOD, MESH_PARAMS };
@@ -10235,6 +11061,27 @@ void analysis_completion(const int line, const int character, jbuf *out)
         if (inside && is_word(t)) last--;
     }
 
+    // A .tweaks file: a tweak's name where a line starts, and after its '=', a value as code's are
+    const size_t path_len = strlen(DOC->src.path);
+    if (path_len >= 7 && strcmp(DOC->src.path + path_len - 7, ".tweaks") == 0) {
+        bool value = false;
+        for (int i = last; i >= 0 && DOC->toks[i].at.line == at.line && !value; i--) value = DOC->toks[i].kind == T_ASSIGN;
+        if (value) {
+            complete_expression(&c, at, false);
+            goto done;
+        }
+        for (int i = 0; i < A.prog->decls.count; i++) {
+            const decl *d = A.prog->decls.items[i];
+            if (!d->is_tweak) continue;
+            sb name = {0}, detail = {0}, snippet = {0};
+            tweak_name_text(&name, d, '.');
+            sb_printf(&detail, "tweak " STR_FMT, STR_ARG(d->return_type_name));
+            sb_printf(&snippet, "%s = $0;", name.data);
+            item(&c, name.data, 21, detail.data, d->tweaked_file ? "Set in a .tweaks file already" : NULL, snippet.data);
+        }
+        goto done;
+    }
+
     // Every consumed token can open at most one frame, plus the top level.
     stack = malloc(((size_t)(last + 1) + 1) * sizeof *stack);
     if (!stack) abort();
@@ -10254,6 +11101,8 @@ void analysis_completion(const int line, const int character, jbuf *out)
         const context_kind top = stack[depth].kind;
         const tok_kind kind = DOC->toks[i].kind;
         const tok_kind before = i > 0 ? DOC->toks[i - 1].kind : T_EOF;
+        // In what a command is called with, a value's attributes and the parentheses of its default are a field's
+        const bool called_with = top == CTX_HEADER && stack[depth].header == HEADER_COMMAND;
         if (kind == T_LBRACKET && top == CTX_TOP) {
             stack[++depth] = (frame){CTX_ATTRIBUTE, i, HEADER_NONE};
         } else if (kind == T_RBRACKET && top == CTX_ATTRIBUTE) {
@@ -10263,11 +11112,11 @@ void analysis_completion(const int line, const int character, jbuf *out)
             stack[++depth] = (frame){CTX_ATTRIBUTE_ARGS, open, HEADER_NONE};
         } else if (kind == T_RPAREN && top == CTX_ATTRIBUTE_ARGS) {
             depth--;
-        } else if (kind == T_LBRACKET && top == CTX_DATA) {
+        } else if (kind == T_LBRACKET && (top == CTX_DATA || called_with)) { // command([Clamp(0, 3)] int slot) too
             stack[++depth] = (frame){CTX_FIELD_ATTRIBUTE, i, HEADER_NONE};
         } else if (kind == T_RBRACKET && top == CTX_FIELD_ATTRIBUTE) {
             depth--;
-        } else if (kind == T_LPAREN && (top == CTX_FIELD_ATTRIBUTE || top == CTX_FIELD_ATTRIBUTE_ARGS)) {
+        } else if (kind == T_LPAREN && (top == CTX_FIELD_ATTRIBUTE || top == CTX_FIELD_ATTRIBUTE_ARGS || called_with)) {
             stack[++depth] = (frame){CTX_FIELD_ATTRIBUTE_ARGS, i, HEADER_NONE}; // One frame per parenthesis: float2(0, 1)
         } else if (kind == T_RPAREN && top == CTX_FIELD_ATTRIBUTE_ARGS) {
             depth--;
@@ -10398,8 +11247,6 @@ void analysis_completion(const int line, const int character, jbuf *out)
 
     case CTX_ATTRIBUTE:
         if (pk == T_LBRACKET || pk == T_COMMA) {
-            item(&c, "RunInEditor", CK_FUNCTION, "[RunInEditor]", "Includes a view in game rendering and authored prefab preview.", "RunInEditor");
-            item(&c, "EditorOnly", CK_FUNCTION, "[EditorOnly]", "Includes a view only in authored prefab preview.", "EditorOnly");
             item(&c, "Stage", CK_FUNCTION, "[Stage(Stages.Phase, offset = 0)]",
                  "Places work in an enum phase, with an optional signed integer offset within that phase.", "Stage($1)");
             item(&c, "Before", CK_FUNCTION, "[Before(DeclarationOrPhase)]",
@@ -10426,10 +11273,11 @@ void analysis_completion(const int line, const int character, jbuf *out)
                  "What a uv past the edges of an asset that's a Texture or a Grid2<Color> reads, where a draw doesn't say.",
                  "Wrap(Wrap.${1:Repeat})");
             item(&c, "Linear", CK_FUNCTION, "[Linear]",
-                 "Marks a Texture, TextureArray or Cubemap asset or field as sRGB storage sampled in linear light. "
-                 "Alpha is unchanged. Keep the mark in fields or GPU source borrowing; float/data formats have no sRGB counterpart.", "Linear");
+                 "Marks a Texture, TextureArray or Cubemap asset (or a glob's List<Texture> or Map<string, Texture>), field or "
+                 "read-only parameter as sRGB storage sampled in linear light. Alpha is unchanged. Keep the mark in fields, "
+                 "parameters, locals that aren't mut or GPU source borrowing; float/data formats have no sRGB counterpart.", "Linear");
             item(&c, "Raw", CK_FUNCTION, "[Raw]",
-                 "Marks Texture or Grid2<Color> assets and fields as numeric data. [Raw] Texture fields keep their Raw role; "
+                 "Marks Texture or Grid2<Color> assets (and globs of Textures), fields and read-only parameters as numeric data. [Raw] Texture fields keep their Raw role; "
                  "GPU sampling and metadata helpers borrow the original source. .size works on the CPU and GPU. "
                  "Raw textures cannot be drawn or escape as ordinary Texture values.",
                  "Raw");
@@ -10468,14 +11316,17 @@ void analysis_completion(const int line, const int character, jbuf *out)
                  "What a uv past the edges of this grid, or of this RenderTarget's color, reads, where a draw doesn't say.",
                  "Wrap(Wrap.${1:Repeat})");
             item(&c, "Linear", CK_FUNCTION, "[Linear]",
-                 "Marks a Texture, TextureArray or Cubemap asset or field as sRGB storage sampled in linear light. "
-                 "Alpha is unchanged. Keep the mark in fields or GPU source borrowing; float/data formats have no sRGB counterpart.", "Linear");
+                 "Marks a Texture, TextureArray or Cubemap asset (or a glob's List<Texture> or Map<string, Texture>), field or "
+                 "read-only parameter as sRGB storage sampled in linear light. Alpha is unchanged. Keep the mark in fields, "
+                 "parameters, locals that aren't mut or GPU source borrowing; float/data formats have no sRGB counterpart.", "Linear");
             item(&c, "Raw", CK_FUNCTION, "[Raw]",
-                 "Marks Texture fields or Grid2<Color> fields as numeric data. [Raw] Texture fields accept Raw Texture or "
+                 "Marks Texture fields or Grid2<Color> fields (and assets, globs of Textures and read-only parameters) as numeric data. [Raw] Texture fields accept Raw Texture or "
                  "Raw Grid2<Color> assets and fields, or default. GPU sampling and metadata helpers borrow the original "
                  "source. .size works on the CPU and GPU; Raw textures cannot be drawn or escape as ordinary Texture values. "
-                 "[Raw(float)], [Raw(float2)], [Raw(float4)] and [Raw(int)] on Texture/Texture3D fields or read-only GPU helper parameters declare "
-                 "numeric Sample results, nearest-cell reads and Filter.Point only.", "Raw");
+                 "[Raw(float)], [Raw(float2)], [Raw(float4)] and [Raw(int)] on Texture, Texture3D, TextureArray and Cubemap fields "
+                 "or read-only GPU helper parameters declare numeric Sample results. Reads are nearest unless a filter is "
+                 "named; 32-bit floats blend with Filter.Bilinear alone, and int images are nearest only. A Grid2<float2>, "
+                 "Grid2<float4>, Grid2<int> or Grid2<byte> is a Texture where its role (float2, float4, int) takes it.", "Raw");
             item(&c, "Json", CK_FUNCTION, "[Json(\"key\")]",
                  "This struct field's key in JSON, where it isn't the field's name: what Json.Read and Json.Write call it.",
                  "Json(\"$1\")");
@@ -10490,7 +11341,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
             static const char *const types[] = {"float", "float2", "float4", "int"};
             for (size_t i = 0; i < sizeof types / sizeof types[0]; i++)
                 item(&c, types[i], CK_STRUCT, "The numeric type this image stores and Sample returns",
-                     "Typed numeric images read the nearest cell. Their only filter is Filter.Point, with no mipmaps.", NULL);
+                     "Typed numeric images read the nearest cell unless a Sample names a filter. Float images in R8, Rg8, R16f, Rg16f or Rgba16f blend and have mipmaps (a Texture3D has none); R32f and Rgba32f blend with Filter.Bilinear, loaded exactly, and have no mipmaps; int images are nearest only.", NULL);
             break;
         }
         complete_value_types(&c, VT_VALUES);
@@ -10566,6 +11417,23 @@ void analysis_completion(const int line, const int character, jbuf *out)
         }
         if (f.header == HEADER_SHADER) { // frag Shade(BoxVertex vertex, out Color color, Sun sun)
             complete_shader_header(&c, f.open, last);
+            break;
+        }
+        if (f.header == HEADER_COMMAND) { // command(int slot, string name = ""): what a call passes, each a value
+            bool value = false; // After a value's '=': its default, a constant
+            for (int k = last; k > f.open && DOC->toks[k].kind != T_COMMA && !value; k--) value = DOC->toks[k].kind == T_ASSIGN;
+            if (value) {
+                complete_value_types(&c, VT_VALUES);
+                complete_structs(&c);
+                complete_constants(&c, TY_ERROR);
+                item(&c, "Math", CK_MODULE, "Math functions and constants", NULL, NULL);
+            } else if (pk == T_LPAREN || pk == T_COMMA || pk == T_RBRACKET) {
+                complete_value_types(&c, VT_LOCALS);
+                complete_structs(&c);
+                complete_namespaces(&c, false);
+            } else if (pk == T_IDENT) {
+                complete_param_name(&c, prev->text);
+            }
             break;
         }
         // event(Hit hit): the trigger; event(Hit hit) TakeHit(...): a handler's parameters.
@@ -10645,20 +11513,17 @@ void analysis_completion(const int line, const int character, jbuf *out)
         const bool view = f.header == HEADER_SYSTEM && f.open >= 2 && DOC->toks[f.open - 2].kind == T_IDENT
                        && str_eq_c(DOC->toks[f.open - 2].text, "view");
         if (trigger) {
-            const bool command = str_eq_c(DOC->toks[f.open - 1].text, "command");
             // local event(verified Died died): a local handler hears the match's events, confirmed ones too
-            const bool hears = !command && local_trigger(f.open);
+            const bool hears = local_trigger(f.open);
             if (pk == T_LPAREN) {
                 if (hears) {
                     item(&c, "verified", CK_KEYWORD, "Once the server confirmed the tick that sent the event", NULL, NULL);
                 }
-                complete_events(&c, true, command, hears);
+                complete_events(&c, true, hears);
                 complete_namespaces(&c, false);
             } else if (hears && before_verified == T_LPAREN) {
                 complete_match_events(&c);
                 complete_namespaces(&c, false);
-            } else if (command && pk == T_COMMA) {
-                item(&c, "PlayerID", CK_STRUCT, "Authenticated command sender", builtin_type_doc(TY_PLAYER), NULL);
             } else if (pk == T_IDENT) {
                 complete_param_name(&c, prev->text);
             }
@@ -10673,10 +11538,13 @@ void analysis_completion(const int line, const int character, jbuf *out)
                 complete_param_name(&c, prev->text);
             }
         } else if (pk == T_WITH || pk == T_WITHOUT) {
-            // Views and local match-event handlers can filter by this machine's player.
+            // Views and local match-event handlers can filter by this machine's player, and a command's code by the sender.
             if (view || (f.header == HEADER_SYSTEM && local_match_handler(f.open))) {
                 item(&c, "ownership", CK_KEYWORD,
                      pk == T_WITH ? "Entities this machine's player owns" : "Entities this machine's player doesn't own", NULL, NULL);
+            } else if (f.header == HEADER_SYSTEM && command_handler(f.open)) {
+                item(&c, "ownership", CK_KEYWORD,
+                     pk == T_WITH ? "Entities the command's sender owns" : "Entities the command's sender doesn't own", NULL, NULL);
             }
             if (view) {
                 // ...and with verified Dead: by the world the server has confirmed, which only they see
@@ -10693,6 +11561,14 @@ void analysis_completion(const int line, const int character, jbuf *out)
             complete_namespaces(&c, false);
         } else if (pk == T_LPAREN || pk == T_COMMA || pk == T_MUT) {
             if (pk != T_MUT) {
+                // command(string name) Rename(mut Name mine, PlayerID sender): the player who sent it, once
+                bool sender = f.header != HEADER_SYSTEM || !command_handler(f.open);
+                for (int k = f.open + 1; k <= last && !sender; k++) sender = str_eq_c(DOC->toks[k].text, "PlayerID");
+                if (!sender) {
+                    item(&c, "PlayerID sender", CK_VARIABLE, "The player who sent the command",
+                         "Authenticated by the connection: check what that player may do before changing the match. "
+                         "It's `default` for a call the match's own code made.", NULL);
+                }
                 item(&c, "mut", CK_KEYWORD, "Write access", NULL, NULL);
                 // view HealthBar(Health health, verified Health confirmed): where a view's parameter starts, like mut
                 if (view) item(&c, "verified", CK_KEYWORD, "As the server confirmed it, not as this machine predicts it", NULL, NULL);
@@ -10816,7 +11692,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
             const str name = DOC->toks[f.open - 1].text;
             for (int i = 0; i < A.prog->decls.count; i++) {
                 const decl *d = A.prog->decls.items[i];
-                if ((d->kind != DECL_COMPONENT && d->kind != DECL_STRUCT && d->kind != DECL_EVENT) || !str_eq(d->name, name)) continue;
+                if ((d->kind != DECL_COMPONENT && d->kind != DECL_STRUCT && d->kind != DECL_EVENT) || d->is_command || !str_eq(d->name, name)) continue;
                 for (int k = 0; k < d->fields.count; k++) {
                     const field *fl = &d->fields.items[k];
                     if (fl->hidden) continue;
@@ -11184,22 +12060,33 @@ static bool param_named(const decl *d, const str name)
     return false;
 }
 
+// Whether `code` is a command's and the command is called with a value named `name`, which its code reads by
+// that name.
+static bool command_value_named(const decl *code, const str name)
+{
+    const decl *command = command_type(code);
+    for (int i = 0; command && i < command->fields.count; i++) {
+        if (str_eq(command->fields.items[i].name, name)) return true;
+    }
+    return false;
+}
+
 static const char *check_new_name(const occurrence *target, const str name)
 {
     // Words the parser reads as keywords where a declaration or a part of one
     // goes, though the lexer reads them as names. The first ones only start
     // declarations, so parameters and locals can still take them.
     static const char *const contextual[] = {"input", "view", "struct", "event", "command", "enum", "scene", "local", "namespace",
-                                             "using", "extern", "const", "frag", "vert", "compute", "async", "cached", "settings",
+                                             "using", "extern", "const", "frag", "vert", "compute", "async", "cached", "dev", "tweak", "settings",
                                              "operator", "virtual", "override",
                                              "fails", "in", "by", "offset", "void"};
     enum { DECL_WORDS = 16 };
     static const char *const reserved[] = {"Math", "Draw", "Draw2D", "Draw3D", "Devices", "Time", "Owner", "Visibility", "VisibilityGroup", "Audience", "Spawn", "Send", "Spawned",
                                            "Destroyed", "Shown", "Hidden", "PlayerJoined", "PlayerLeft", "Scene", "Prediction", "Debug",
                                            "GUI", "GUILayout", "Screen", "Cursor", "Frame", "Anchor", "Action", "Session", "SessionState", "Clipboard",
-                                           "Vertex", "Vertex3", "Shape", "GUITheme", "GUIControl", "Filter", "Wrap", "Font", "Blend", "Depth", "Cull", "Format", "StencilTest", "StencilOp", "Draw", "DrawList", "Random",
+                                           "Vertex", "Vertex3", "Shape", "GUITheme", "GUIControl", "Filter", "Wrap", "Font", "Blend", "Depth", "Cull", "Format", "StencilTest", "StencilOp", "WorkerPriority", "Draw", "DrawList", "Random",
                                            "DisconnectReason", "Connected", "Disconnected", "Wait", "File", "Directory", "Path", "Application", "Storage", "IOError", "Json", "List", "Map", "Set", "Grid2", "Grid3",
-                                           "string", "Sample", "Sanitize", "Predict"};
+                                           "string", "Sample", "Sanitize", "Predict", "define", "defined"};
     static char message[160];
 
     if (name.len == 0 || !(isalpha((unsigned char)name.ptr[0]) || name.ptr[0] == '_')) return "Names start with a letter.";
@@ -11227,15 +12114,21 @@ static const char *check_new_name(const occurrence *target, const str name)
     }
 
     bool clash = false;
+    // A command, or a value it's called with: its name is its type's and its code's, and its values are names
+    // in its code, among that code's parameters and locals
+    const decl *command = (target->kind == OCC_TYPE || target->kind == OCC_FIELD) && target->decl
+                           && target->decl->kind == DECL_EVENT && target->decl->is_command ? target->decl : NULL;
     switch (target->kind) {
     case OCC_TYPE:
     case OCC_SYSTEM:
         // Types share one namespace, and systems and views another; a
-        // function, a frag or a vert shares its name with nothing.
+        // function, a frag or a vert shares its name with nothing, and a
+        // command is a type and code.
         for (int i = 0; i < A.prog->decls.count; i++) {
             const decl *d = A.prog->decls.items[i];
-            const bool same_namespace = d->kind == DECL_FUNCTION || is_shader(d) || is_shader(target->decl)
+            const bool same_namespace = command || d->kind == DECL_FUNCTION || is_shader(d) || is_shader(target->decl)
                                      || (d->kind == DECL_SYSTEM) == (target->kind == OCC_SYSTEM);
+            if (command && command_type(d) == command) continue; // Its own code, renamed with it
             if (d != target->decl && same_namespace && str_eq(d->name, name)) clash = true;
         }
         break;
@@ -11262,6 +12155,10 @@ static const char *check_new_name(const occurrence *target, const str name)
             const field *f = field_of(target->decl, i);
             if (f != target->field && str_eq(f->name, name)) clash = true;
         }
+        for (int i = 0; command && i < A.written.count; i++) {
+            const decl *code = A.written.items[i];
+            if (command_type(code) == command) clash |= param_named(code, name) || local_named(code->body, name);
+        }
         break;
     case OCC_ENUM_MEMBER:
         for (int i = 0; i < target->decl->members.count; i++) {
@@ -11272,12 +12169,12 @@ static const char *check_new_name(const occurrence *target, const str name)
         const decl *d = decl_of_param(target->param);
         const param *query = target->param->query_source;
         clash = query ? str_eq_c(name, "entity") || query_binding(query, name) != NULL
-                      : param_named(d, name) || (d && local_named(d->body, name));
+                      : param_named(d, name) || (d && local_named(d->body, name)) || command_value_named(d, name);
         break;
     }
     case OCC_LOCAL: {
         const decl *d = decl_of_local(target->local);
-        clash = param_named(d, name) || (d && local_named(d->body, name));
+        clash = param_named(d, name) || (d && local_named(d->body, name)) || command_value_named(d, name);
         break;
     }
     case OCC_NAMESPACE: {
@@ -11811,7 +12708,8 @@ static void unity_key(const str name, const char *owner, char *out, const size_t
         jb_free(&k);
         k = p;
     }
-    static const char *const members[] = {"Value", "TideName", "ReadLive", "Pack", "From", "Tick", "Verified", "Target", "TargetEntity"};
+    static const char *const members[] = {"Value", "TideName", "ReadLive", "Pack", "From", "Tick", "Verified", "Target", "TargetEntity",
+                                          "WriteAssets"};
     bool reserved = strcmp(k.data, owner) == 0;
     for (size_t i = 0; i < sizeof members / sizeof members[0]; i++) reserved |= strcmp(k.data, members[i]) == 0;
     snprintf(out, size, "%s%s", k.data, reserved ? "_" : "");
@@ -12199,10 +13097,11 @@ static const struct {
      "A Cubemap that's drawn into: six square images of `size` pixels a side, each a destination, `cube.faces[0]` "
      "to `cube.faces[5]` in the order +x, -x, +y, -y, +z, -z, with depth of its own, and all six what a frag "
      "reads by a direction, `cube.Sample(direction)`. A face is what a camera at the cube's middle sees along "
-     "its axis with a field of view of 90. Its faces hold `Format.Rgba8`, or `Format.Rgba16f`, floats that keep "
-     "any number. It starts black; copies share it, and `Dispose()` lets it go."},
+     "its axis with a field of view of 90. Its faces hold `Format.Rgba8`, or another format: `Format.Rgba16f`, floats "
+     "that keep any number, a number format, or `Format.Depth`, six faces of depth alone that a frag reads through "
+     "`cube.depth` (a lamp's shadows every way). It starts black, its depth far; copies share it, and `Dispose()` lets it go."},
     {"Texture3D", {"Texture3D(int3 size)", "Texture3D(int3 size, Format format)"},
-     "Creates a machine-local volume of the given size in texels. Rgba8 by default; Rgba16f, R32f, Rgba32f and R32i are portable writable formats. Typed Raw fields sample numeric values at the nearest cell, without mipmaps. Fill it with a compute kernel."},
+     "Creates a machine-local volume of the given size in texels. Rgba8 by default; Rgba16f, R32f, Rgba32f and R32i are portable writable formats. Typed Raw fields read their numbers at the nearest cell, or blended across all three axes with Filter.Bilinear (an int volume nearest only); a volume has no mipmaps. Fill it with a compute kernel."},
     {"TextureArray", {"TextureArray(float width, float height, int layers)",
                       "TextureArray(float width, float height, int layers, float pixelsPerUnit)",
                       "TextureArray(float width, float height, int layers, Format format)",
@@ -12210,13 +13109,16 @@ static const struct {
      "A TextureArray that's drawn into: `layers` images of one size, 1 to 256, in logical pixels like a "
      "RenderTarget's, or `pixelsPerUnit` of them a unit. Each layer is a destination, `array.layers[0]` the first, "
      "with depth of its own, `array.depth`, and all of them what a frag reads by a uv and a layer, "
-     "`array.Sample(uv, layer)`. Its layers hold `Format.Rgba8`, `Format.Rgba16f`, floats that keep any number, or "
+     "`array.Sample(uv, layer)`. Its layers hold `Format.Rgba8`, `Format.Rgba16f`, floats that keep any number, a "
+     "number format (R8 to R32i, read through a `[Raw(T)]` field), or "
      "`Format.Depth`, depth alone, as shadow cascades want: `TextureArray(2048, 2048, 3, 1, Format.Depth)`. It "
      "starts empty; copies share it, and `Dispose()` lets it go."},
     {"PlayerID", {"PlayerID(int index)"}, "A player by index, for local play and tests."},
     {"Random", {"Random(long seed)"}, RANDOM_SEEDED_DOC},
     {"Spawn", {"Spawn(components...)"}, "Creates an entity with these components. It's added at the end of the tick."},
     {"Send", {"Send(event)"}, "Sends an event to the whole world, handled at the end of the tick."},
+    {"defined", {"defined(NAME) -> bool"}, DEFINED_DOC},
+    {"define", {"define(NAME, default)"}, DEFINE_DOC},
     {"Grid2", {"Grid2(int width = 0, int height = 0)"}, GRID_SIZE_DOC},
     {"Grid3", {"Grid3(int width = 0, int height = 0, int depth = 0)"}, GRID_SIZE_DOC},
 };
@@ -12365,19 +13267,19 @@ static void collect_label(void *user, const char *label, const char *doc)
 // a List<Vertex> and a List<Vertex3> with no vert and no frag; the checker
 // takes the rest itself (check_mesh_draw).
 static const char *const mesh_labels[2] = {
-    "Draw.Mesh(vertices, indices[, texture[, filter[, wrap]]][, vert][, frag][, values])",
-    "Draw.Mesh(vertices, indices, transform[, texture[, filter[, wrap]]][, vert][, frag][, values][, lod: multiplier])",
+    "Draw.Mesh(vertices, indices[, texture[, filter[, wrap]]...][, vert][, frag][, values])",
+    "Draw.Mesh(vertices, indices, transform[, texture[, filter[, wrap]]...][, vert][, frag][, values][, lod: multiplier])",
 };
 
 static const char *const instanced_labels[2] = {
-    "Draw.Instanced(vertices, indices, instances[, texture[, filter[, wrap]]][, vert][, frag][, values])",
-    "Draw.Instanced(vertices, indices, instances[, texture[, filter[, wrap]]][, vert][, frag][, values][, lod: multiplier])",
+    "Draw.Instanced(vertices, indices, instances[, texture[, filter[, wrap]]...][, vert][, frag][, values])",
+    "Draw.Instanced(vertices, indices, instances[, texture[, filter[, wrap]]...][, vert][, frag][, values][, lod: multiplier])",
 };
 
 // ...and the forms a Mesh asset is drawn by: the Mesh where its vertices and its indices go.
-static const char *const whole_mesh_label = "Draw.Mesh(mesh, transform[, texture[, filter[, wrap]]][, vert][, frag][, values][, lod: multiplier])";
-static const char *const whole_instanced_label = "Draw.Instanced(mesh, instances[, texture[, filter[, wrap]]][, vert][, frag][, values][, lod: multiplier])";
-static const char *const skinned_mesh_label = "Draw.SkinnedMesh(mesh, transform[, pose][, texture[, filter[, wrap]]][, vert][, frag][, values][, lod: multiplier])";
+static const char *const whole_mesh_label = "Draw.Mesh(mesh, transform[, texture[, filter[, wrap]]...][, vert][, frag][, values][, lod: multiplier])";
+static const char *const whole_instanced_label = "Draw.Instanced(mesh, instances[, texture[, filter[, wrap]]...][, vert][, frag][, values][, lod: multiplier])";
+static const char *const skinned_mesh_label = "Draw.SkinnedMesh(mesh, transform[, pose][, texture[, filter[, wrap]]...][, vert][, frag][, values][, lod: multiplier])";
 
 // Each of its parameters: what it's called in those, and what it takes, in a
 // 2D mesh and, where that differs, in a 3D one.
@@ -12392,7 +13294,8 @@ static const struct {
     [MESH_TRANSFORM] = {"transform", {"A `float4x4`: where the mesh is in the world."}},
     [MESH_TEXTURE] = {"texture",
                       {"A `Texture`, read at each corner's `uv`: an asset's, a render target's color, or a `Grid2<Color>` or "
-                       "`Grid2<float>`, which is one here. A frag or vert with a Texture parameter receives it as its source."}},
+                       "`Grid2<float>`, which is one here. A frag's and a vert's Texture parameters receive the textures a draw "
+                       "gives, in order: the frag's first, then the vert's own; a filter and a wrap after one are its alone."}},
     [MESH_FILTER] = {"filter", {"How the texture is read between cells, `Filter.Bilinear`, `Filter.Point`, `Filter.Trilinear` or `Filter.Anisotropic`: the texture's own "
                                 "where the draw leaves it out."}},
     [MESH_WRAP] = {"wrap",
@@ -12425,6 +13328,11 @@ static const struct {
 static int call_param_names(const expr *call, str *names, const int max)
 {
     int count = 0;
+    const decl *command = called_command(call);
+    if (command) { // Rename("x", 2): what the command is called with
+        for (; count < command->fields.count && count < max; count++) names[count] = command->fields.items[count].name;
+        return count;
+    }
     if (call->skinned) {
         for (; count < written_count(call) && count < max; count++) {
             const expr *arg = written_arg(call, count);
@@ -12472,6 +13380,17 @@ static int call_param_names(const expr *call, str *names, const int max)
     label_list list = {0};
     switch (call->call) {
     case CALL_VISIBILITY: {
+        if (call->visibility_operation & VISIBILITY_STORAGE) { // Storage.Save(key, bytes), Load(key, entity), List(prefix, after, entity)
+            const bool list = str_eq_c(call->name, "List");
+            // A listing's second argument is `after` unless it's the entity, as the checker read it
+            const bool after = list && (call->args.count == 3 || (call->args.count == 2 && call->arg_want.count == 2
+                                                                  && call->arg_want.items[1].kind == TY_STRING));
+            for (; count < call->args.count && count < max; count++) {
+                names[count] = str_from(count == 0 ? (list ? "prefix" : "key") : str_eq_c(call->name, "Save") ? "bytes"
+                                        : list && count == 1 && after ? "after" : "entity");
+            }
+            return count;
+        }
         const bool receiver = (call->visibility_operation & VISIBILITY_RECEIVER) != 0u;
         for (; count < call->args.count && count < max; count++) {
             const char *name = receiver && call->object->type.decl == A.prog->audience ? "player"
@@ -12580,7 +13499,8 @@ static int call_param_names(const expr *call, str *names, const int max)
         }
         break;
     case CALL_SKINNED:
-    case CALL_MESH_DECODE: {
+    case CALL_MESH_DECODE:
+    case CALL_GRID_BYTES: {
         size_t forms_count;
         const method_form *forms = methods_of(call->object->type, &forms_count);
         for (size_t i = 0; i < forms_count; i++) {
@@ -12683,11 +13603,23 @@ static void mesh_signature_help(const int open, const int commas, const loc at, 
     const int count = (whole ? 8 : instanced || three_d ? 9 : 8) + (three_d ? 1 : 0); // A 3D mesh's lod: last
     const int fixed = skinned || whole ? 2 : instanced || three_d ? 3 : 2; // The lists or the Mesh, and a 3D mesh's transform or the instances
 
+    // Where the texture is, and the vert after its filter and its wrap: a draw gives several textures, each with its
+    // own filter and wrap, so another texture before the vert is the texture again
+    int texture = 0, vert = 0;
+    for (int k = 0; k < count; k++) {
+        if (order[k] == MESH_TEXTURE) texture = k;
+        if (order[k] == MESH_VERT) vert = k;
+    }
     int active = 0;
     int next = 0; // The first parameter the next argument can be
     for (int a = 0; a <= commas && a < args.count; a++) {
         active = next < count ? next : count - 1;
         const int kind = a < fixed ? order[active] : mesh_argument(&sc, args.first[a], args.last[a]);
+        if (kind == MESH_TEXTURE && next > texture && next <= vert) {
+            active = texture;
+            next = texture + 1;
+            continue;
+        }
         for (int k = next; k < count; k++) {
             if (order[k] != kind) continue;
             active = k;
@@ -12724,6 +13656,71 @@ static void mesh_signature_help(const int open, const int commas, const loc at, 
     jb_printf(out, "],\"activeSignature\":0,\"activeParameter\":%d}", active);
 }
 
+// Draw.Blit's parameters, as BLIT_FORM names them, and what each takes.
+enum { BLIT_SOURCE, BLIT_TEXTURES, BLIT_DESTINATION, BLIT_BLEND, BLIT_FRAG, BLIT_VALUES, BLIT_PARAMS };
+static const struct {
+    const char *name;
+    const char *doc;
+} blit_params[BLIT_PARAMS] = {
+    [BLIT_SOURCE] = {"Texture source", "The frag's first `Texture` parameter: a render target's color, an asset, or a "
+                                       "`Grid2<Color>` or `Grid2<float>`, which is one here. Never the destination's own color."},
+    [BLIT_TEXTURES] = {"Texture textures...", "The frag's other `Texture` parameters, in its order, before the destination: "
+                                              "`Draw.Blit(source, lut, destination, Grade)`."},
+    [BLIT_DESTINATION] = {"RenderTarget destination", "Where the frag's pixels go: a render target, or `Draw.window`."},
+    [BLIT_BLEND] = {"Blend blend", "How the pixels go over the destination, `Blend.Add`: they replace it where the blit "
+                                   "leaves this out."},
+    [BLIT_FRAG] = {"frag shader", "A frag on `Vertex`, the destination's full quad, by name."},
+    [BLIT_VALUES] = {"values", "A struct's value, after the frag, which reads it through a read-only parameter of its type: "
+                               "this blit's own."},
+};
+
+// Whether the parentheses opened at token `open` are Draw.Blit's.
+static bool opens_blit(const int open)
+{
+    const token *toks = DOC->toks;
+    return open >= 3 && toks[open - 1].kind == T_IDENT && str_eq_c(toks[open - 1].text, "Blit") && toks[open - 2].kind == T_DOT
+        && toks[open - 3].kind == T_IDENT && str_eq_c(toks[open - 3].text, "Draw");
+}
+
+// Signature help in Draw.Blit's parentheses, opened at token `open`, with `commas` before the cursor: its source, the
+// textures after it, its destination, how it goes over it, its frag and its values, by what each argument is, as
+// several textures and a blend can be there or not. An argument that isn't written yet is the first it can be after
+// what's before it: the destination after a texture.
+static void blit_signature_help(const int open, const int commas, const loc at, jbuf *out)
+{
+    const scope sc = scope_at(at);
+    call_args args;
+    call_arguments(open, &args);
+    int active = BLIT_SOURCE;
+    int next = BLIT_SOURCE; // The first parameter the next argument can be
+    for (int a = 0; a <= commas && a < args.count; a++) {
+        const int first = args.first[a], last = args.last[a];
+        const int kind = mesh_argument(&sc, first, last);
+        const type t = first <= last && DOC->toks[first].kind == T_IDENT ? names_type(&sc, first, last) : (type){0};
+        if (next == BLIT_SOURCE) active = BLIT_SOURCE;
+        else if (kind == MESH_TEXTURE && next <= BLIT_TEXTURES) active = BLIT_TEXTURES;
+        else if (kind == MESH_FRAG) active = BLIT_FRAG;
+        else if (kind == MESH_VALUES) active = BLIT_VALUES;
+        else if (t.kind == TY_ENUM && t.decl == A.prog->blend) active = BLIT_BLEND;
+        else active = next < BLIT_DESTINATION ? BLIT_DESTINATION : next < BLIT_PARAMS ? next : BLIT_PARAMS - 1;
+        next = active == BLIT_TEXTURES ? BLIT_TEXTURES : active + 1;
+    }
+    jb_put(out, "{\"signatures\":[{\"label\":");
+    jb_string(out, BLIT_FORM);
+    jb_put(out, ",\"documentation\":{\"kind\":\"markdown\",\"value\":");
+    jb_string(out, BLIT_DOC);
+    jb_put(out, "},\"parameters\":[");
+    for (int i = 0; i < BLIT_PARAMS; i++) {
+        const char *found = strstr(BLIT_FORM, blit_params[i].name);
+        const int start = found ? (int)(found - BLIT_FORM) : 0;
+        jb_printf(out, "%s{\"label\":[%d,%d],\"documentation\":{\"kind\":\"markdown\",\"value\":", i ? "," : "", start,
+                  start + (int)strlen(blit_params[i].name));
+        jb_string(out, blit_params[i].doc);
+        jb_put(out, "}}");
+    }
+    jb_printf(out, "]}],\"activeSignature\":0,\"activeParameter\":%d}", active);
+}
+
 void analysis_signature_help(const int line, const int character, jbuf *out)
 {
     const arena_mark temporary = arena_checkpoint();
@@ -12743,6 +13740,10 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
     }
     if (opens_mesh_draw(open)) {
         mesh_signature_help(open, commas, at, out);
+        goto done;
+    }
+    if (opens_blit(open)) {
+        blit_signature_help(open, commas, at, out);
         goto done;
     }
     const str name = DOC->toks[callee].text;
@@ -12775,7 +13776,7 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
         } else if (str_eq_c(name, "Retarget")) {
             add_signature(&s, RETARGET_ATTRIBUTE_FORM, RETARGET_ATTRIBUTE_DOC);
         } else if (str_eq_c(name, "Raw")) {
-            add_signature(&s, "Raw(type)", "On Texture/Texture3D fields or read-only GPU helper parameters, float, float2, float4 or int declares the numeric Sample type. Reads use the nearest cell, with Filter.Point only and no mipmaps. Bare Raw retains its existing numeric-channel role.");
+            add_signature(&s, "Raw(type)", "On Texture, Texture3D, TextureArray and Cubemap fields or read-only GPU helper parameters, float, float2, float4 or int declares the numeric Sample type. Reads use the nearest cell unless a filter is named; R8, Rg8, R16f, Rg16f and Rgba16f blend and read mipmaps (a Texture3D has none); R32f and Rgba32f blend with Filter.Bilinear (four exact loads, a volume's eight) and have no mipmaps, and a cube's R32f and Rgba32f faces are nearest only; int images are nearest only. Bare Raw retains its existing numeric-channel role.");
         }
     } else if (str_eq_c(owner, "HumanoidRig") || str_eq_c(owner, "RetargetMap")) {
         const method_form *form = str_eq_c(owner, "HumanoidRig") ? &humanoid_rig_calls[0] : &retarget_map_calls[0];
@@ -12783,6 +13784,13 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
             sb label = {0};
             sb_printf(&label, STR_FMT ".%s", STR_ARG(owner), form->form);
             add_signature(&s, label.data, form->doc);
+        }
+    } else if (str_eq_c(owner, "Storage") && !str_eq_c(name, "Flush")) { // Flush is a builtin, below
+        for (size_t i = 0; i < sizeof storage_calls / sizeof storage_calls[0]; i++) {
+            if (str_eq_c(name, storage_calls[i].name)) add_signature(&s, storage_calls[i].form, storage_calls[i].doc);
+        }
+        for (size_t i = 0; i < sizeof storage_awaited_calls / sizeof storage_awaited_calls[0]; i++) { // ...and awaited
+            if (str_eq_c(name, storage_awaited_calls[i].name)) add_signature(&s, storage_awaited_calls[i].form, storage_awaited_calls[i].doc);
         }
     } else if (str_eq_c(owner, "Audience") || str_eq_c(owner, "Visibility")) {
         const bool audience = str_eq_c(owner, "Audience");
@@ -12832,6 +13840,10 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
             sb_printf(&label, "%s.Count() -> int", name_for(t.decl));
             add_signature(&s, label.data,
                           "Number of declared members, including members with the same numeric value. A compile-time constant.");
+        } else if (called && called->call == CALL_ENUM_VALUES) {
+            sb label = {0};
+            sb_printf(&label, "%s.Values() -> %s[%d]", name_for(t.decl), name_for(t.decl), t.decl->members.count);
+            add_signature(&s, label.data, "Every declared member once, in declaration order: an array of Count() of them.");
         } else if (t.kind == TY_STRING) {
             builtin_signatures(str_from("string"), name, visit_signature, &s);
         } else if (t.kind == TY_STRUCT && t.decl == A.prog->random) {
@@ -12864,11 +13876,11 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
                     s.picked = i == (retarget_bake_catalog_result(called->type) ? 2u : 1u);
                 add_signature(&s, label.data, forms[i].doc);
             }
-        } else if (form && (t.kind == TY_TEXTURE || t.kind == TY_TEXTURE3D) && str_eq_c(name, "Sample")
-                   && numeric_receiver(callee - 1, at).kind != TY_COLOR) {
+        } else if (form && numeric_image_kind(t) && numeric_receiver(callee - 1, at).kind != TY_COLOR
+                   && numeric_read_named(t, name)) {
             sb label = {0};
-            format_numeric_sample(t, numeric_receiver(callee - 1, at), &label);
-            add_signature(&s, label.data, "Reads the nearest cell as the declared numeric type. Only Filter.Point is supported; no mipmaps or alpha conversion.");
+            format_numeric_read(t, name, numeric_receiver(callee - 1, at), &label);
+            add_signature(&s, label.data, numeric_read_doc(t, name));
         } else if (form) {
             sb label = {0};
             format_method(form, t, &label);
@@ -12900,6 +13912,19 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
             sb_printf(&label, "%s(int number)", name_for(converted));
             describe_enum_conversion(converted, &doc);
             add_signature(&s, label.data, doc.data);
+        }
+    }
+    if (s.shown == 0) {
+        // A command's call, Rename( or fighter.PickCard(: the one the call resolved to, or while it's half
+        // written, the one of that name
+        const occurrence *o = occurrence_at(DOC->toks[callee].at);
+        const decl *meant = o && o->kind == OCC_TYPE && o->decl && o->decl->kind == DECL_EVENT && o->decl->is_command ? o->decl : NULL;
+        for (int i = 0; i < A.prog->decls.count; i++) {
+            const decl *d = A.prog->decls.items[i];
+            if (d->kind != DECL_EVENT || !d->is_command || (meant ? d != meant : !str_eq(d->name, name))) continue;
+            sb label = {0};
+            format_command_call(d, &label);
+            add_signature(&s, label.data, "Calls the command: the match runs its code at the end of a tick, with these values.");
         }
     }
     if (s.shown == 0) {
@@ -13141,6 +14166,22 @@ static bool closes_header(const int i)
     return false;
 }
 
+// Whether the ')' at token `i` ends what a command is called with, `command(int slot)`: its name and what its
+// code takes can go on the next line, which continues the header.
+static bool closes_command_values(const int i)
+{
+    if (DOC->toks[i].kind != T_RPAREN) return false;
+    int parens = 0;
+    for (int k = i; k > 0; k--) {
+        if (DOC->toks[k].kind == T_RPAREN) {
+            parens++;
+        } else if (DOC->toks[k].kind == T_LPAREN && --parens == 0) {
+            return DOC->toks[k - 1].kind == T_IDENT && str_eq_c(DOC->toks[k - 1].text, "command");
+        }
+    }
+    return false;
+}
+
 // How many levels deeper than its braces each token goes for the switch
 // sections around it: statements under `case X:` go one level in, the labels
 // stay at the switch's level.
@@ -13362,6 +14403,7 @@ const char *analysis_format(int tab_size, const bool insert_spaces, const int fi
     bool statement_open = false;
     bool opened_pending = false;
     bool ended_comma = false; // ...or ended with a comma, which in an enum ends a member
+    bool command_open = false; // ...or ended with what a command is called with, whose name the next line has
     for (int l = 1; l <= line_count; l++) {
         const str original = line_text(l);
         const fmt_line *items = &lines[l];
@@ -13419,9 +14461,11 @@ const char *analysis_format(int tab_size, const bool insert_spaces, const int fi
                 // A line that continues an expression or an argument list goes one
                 // level deeper, or keeps its own indentation if that's deeper
                 // still: code aligned under an opening parenthesis stays aligned.
-                const bool continuation = first != T_LBRACE && first != T_RBRACE && (depth > top || parens > 0)
-                                       && ((parens > parens_at[depth] && first != T_RPAREN)
-                                           || (statement_open && !opened_pending && !(enum_at[depth] && ended_comma)));
+                // ...and so does a command's name under what it's called with, where a declaration starts
+                const bool continuation = (first != T_LBRACE && first != T_RBRACE && (depth > top || parens > 0)
+                                           && ((parens > parens_at[depth] && first != T_RPAREN)
+                                               || (statement_open && !opened_pending && !(enum_at[depth] && ended_comma))))
+                                       || (command_open && first == T_IDENT);
                 int own_width = 0;
                 if (piece == 0) {
                     for (const char *c = original.ptr; c < from->text; c++) own_width += *c == '\t' ? tab_size : 1;
@@ -13479,6 +14523,7 @@ const char *analysis_format(int tab_size, const bool insert_spaces, const int fi
                 const bool stacked = k == T_COMMA && (breaks[last_tok] & BREAK_STACKED);
                 statement_open = k != T_SEMI && k != T_LBRACE && k != T_RBRACE && !label && !stacked;
                 ended_comma = k == T_COMMA;
+                command_open = k == T_RPAREN && parens == 0 && depth == top && closes_command_values(last_tok);
             }
         }
         if (!verbatim[l] && (text.len != (size_t)original.len || memcmp(text.data, original.ptr, text.len) != 0)) {

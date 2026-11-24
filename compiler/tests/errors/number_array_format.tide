@@ -1,3 +1,0 @@
-// expect: a TextureArray uses Format.Rgba8, Rgba16f or Depth
-scene Main { }
-view Show() { var array=TextureArray(8,8,2,Format.R32f); array.Dispose(); }

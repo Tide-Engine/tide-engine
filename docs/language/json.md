@@ -40,7 +40,7 @@ async void Refresh(string url, mut Lobbies lobbies)
 
 ## What a struct is in JSON
 
-A struct is an object, and each field is a key: the field's name, or what `[Json("key")]` before it says. `T` is a struct, a `List<T>` or a `Map<string, T>`, and what's in it is what JSON has something for:
+A struct is an object, and each field is a key: the field's name, or what `[Json("key")]` before it says. `T` is a struct, a `List<T>`, a `Set<T>` or a `Map<K, T>`, and what's in it is what JSON has something for:
 
 | In Tide | In JSON |
 | --- | --- |
@@ -51,11 +51,31 @@ A struct is an object, and each field is a key: the field's name, or what `[Json
 | `string` | A string |
 | `char` | A string of one character, or `""` for `'\0'` |
 | An enum | Its member's name, as a string: `"Ranked"` |
+| `float2`-`float4`, `int2`-`int4`, `double2`-`double4` | An array of exactly its numbers: `[1, 2.5, -3]` |
+| `quaternion` | An array of four numbers, `[x, y, z, w]` |
+| `Color` | An array of `[r, g, b, a]`, or `[r, g, b]`, which reads with alpha 1 |
 | A struct | An object |
 | `List<T>` and `T[N]` | An array |
+| `Set<T>` of strings, chars, bytes, ints, longs or enums | An array of its keys |
 | `Map<string, T>` | An object, a key for each entry |
+| `Map<K, T>` by a `byte`, an `int`, a `long` or an enum | An object whose keys are the number's digits, `"12"` and `"-3"`, or the member's name, `"Ranked"` |
 
-Anything else is a compile error that names the field: an `Entity`, a vector, a `Set<T>`, a map whose keys aren't text, a grid, a component. Copy what you need of those into a struct of plain fields.
+Anything else is a compile error that names the field: an `Entity`, a matrix, a set of entities, a map by a `char` or an `Entity`, a grid, a component. Copy what you need of those into a struct of plain fields: a matrix's position, rotation and scale, say.
+
+```csharp
+struct Spawn
+{
+    float3 position;
+    quaternion rotation = quaternion.identity;
+    Color tint = Color.white;
+    Set<string> tags;
+    Map<int, string> names;   // by a player's number
+}
+
+// {"position":[0,2.5,-4],"tint":[1,0.8,0.2],"tags":["boss","night"],"names":{"1":"Ann","2":"Bo"}}
+var spawn = Json.Read<Spawn>(text) ?? Spawn { };
+// spawn.position.y == 2.5, spawn.tint.a == 1, spawn.rotation is the identity, spawn.names[2] == "Bo"
+```
 
 ## Reading
 
@@ -68,7 +88,7 @@ Reading is forgiving about what's there and strict about what it is:
 - **A value of the wrong kind makes the whole read give nothing**: a string where a number goes, a number that doesn't fit its field (`300` for a `byte`, `1e40` for a `float`), an enum's name no member has, an object where an array goes.
 - **Text that isn't JSON gives nothing**: a missing brace, a comma after the last element, a comment, single quotes, bytes that aren't UTF-8.
 
-A fixed array takes the elements it has room for: fewer leave the rest as they were, and more are skipped. An enum also reads from its number, which is how one with no member's name is written.
+A fixed array takes the elements it has room for: fewer leave the rest as they were, and more are skipped. A vector or a quaternion is stricter: an array with a number too few or too many makes the read give nothing, as `[1, 2]` for a `float3` does, since a missing `z` is more likely a mistake than a zero. A `Color` takes three numbers or four. A `null` in place of one number leaves that number at the field's default. An enum also reads from its number, which is how one with no member's name is written, and a set or a map read from an array or an object that names one key twice keeps it once, the last value a map's.
 
 ```csharp
 enum Mode { Casual, Ranked }
@@ -90,11 +110,12 @@ The top of the JSON can be an array or an object of anything, too:
 ```csharp
 var lobbies = Json.Read<List<LobbyInfo>>(body) ?? [];
 var prices = Json.Read<Map<string, int>>(body) ?? default;
+var path = Json.Read<List<float3>>(body) ?? [];
 ```
 
 ## Writing
 
-`Json.Write` writes every field that has a value, in the order the struct declares them, and a map's entries in the order they were added:
+`Json.Write` writes every field that has a value, in the order the struct declares them, a map's entries and a set's keys in the order they were added, and a color with all four of its numbers:
 
 ```csharp
 var text = Json.Write(LobbyInfo { id = "a1", name = "Friday", tags = ["casual"] });
@@ -117,7 +138,7 @@ var text = Json.Write(LobbyChange { open = false });
 
 Reading works the same way round: a key that's missing or `null` leaves the field with nothing.
 
-What it writes, `Json.Read` reads back as the same value. A float or double is written with the fewest digits that read back as the same value, bit for bit. Double fields retain binary64 precision without first rounding to float. JSON has no number for NaN or an infinity, so those are written as `null`, which reads back as the field's default.
+What it writes, `Json.Read` reads back as the same value. A float or double is written with the fewest digits that read back as the same value, bit for bit. Double fields retain binary64 precision without first rounding to float. JSON has no number for NaN or an infinity, so those are written as `null`, which reads back as the field's default: in a vector, that one number's default.
 
 To send it, turn the text into bytes:
 

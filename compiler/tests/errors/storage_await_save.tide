@@ -1,0 +1,10 @@
+// expect: Storage.Save gives nothing to wait for: call it as a statement, 'Storage.Save(key, bytes);'
+// expect: a load after it finds what it left
+scene Main { }
+singleton Seen { int saved; }
+async void Keep(mut Seen seen)
+{
+    await Storage.Save("chunk", [1, 2]);
+    seen.saved += 1;
+}
+system Ask(mut Seen seen) { if (seen.saved == 0) Keep(seen); }

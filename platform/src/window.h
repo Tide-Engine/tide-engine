@@ -44,7 +44,8 @@ void tide_window_pixel_size(int *width, int *height);
 // happened since the last call: the calls below read the devices as of then.
 void tide_window_present(void);
 
-// From platform.c, for desktop Vulkan's end-of-frame fence wait only: runs
+// From platform.c, for Vulkan's end-of-frame fence wait only (the desktop's
+// window and Android's activity give it to tide_gpu_vk_present_updating): runs
 // the host's match-only callback and returns seconds until its next update.
 // Negative means no callback is active. This never pumps window events.
 double tide_window_update_while_waiting(void);
@@ -151,3 +152,9 @@ void tide_window_typing(bool typing);
 // `progress`, if not NULL, is the bytes read so far and the whole size, which
 // another thread may read while this one reads (tide_platform_pack_counted).
 uint8_t *tide_window_pack(size_t *size, uint64_t progress[2]);
+// Where that pack's file is, on a desktop: false where the program's own path can't be had.
+bool tide_window_pack_path(char path[4096]);
+// A file read ahead on threads of its own (jobs.c), and taken: its bytes (malloc'd, `room` allocated) once read,
+// or NULL where none was started, it couldn't be read, or `path` is another file's.
+void tide_jobs_read_ahead(const char *path);
+uint8_t *tide_jobs_read_ahead_take(const char *path, size_t *size, size_t *room);

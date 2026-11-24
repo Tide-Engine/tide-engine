@@ -44,25 +44,16 @@ struct tt_Fog {
     m_depth: f32,
     m_drift: vec2f,
 }
-fn tide_f(x: f32) -> f32 {
-    return x;
-}
-fn tide_nan(x: f32) -> bool {
-    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
-}
 fn tide_max1(a: f32, b: f32) -> f32 {
-    if (tide_nan(b)) { return a; }
-    if (tide_nan(a)) { return b; }
-    if (a > b) { return a; }
-    return b;
+    return select(select(select(b, a, a > b), b, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000), a, (bitcast<i32>(b) & 0x7fffffff) > 0x7f800000);
 }
 fn tide_normalize3(v: vec3f) -> vec3f {
-    var l: f32 = dot(v, v);
+    let l: f32 = dot(v, v);
     if (l > 1.17549435e-38) { return v * inverseSqrt(l); }
     return vec3f(0.0);
 }
 fn tf_Light(t_from: vec3f, t_normal: vec3f, t_glow: ptr<function, f32>) {
-    (*t_glow) = tide_max1(dot(t_normal, tide_normalize3((-t_from))), tide_f(0.0));
+    (*t_glow) = tide_max1(dot(t_normal, tide_normalize3((-t_from))), 0.0);
 }
 
 fn ts_Place(t_corner: ptr<function, tt_Corner>, t_lamp: ptr<function, tt_FromLamp>, t_fog: ptr<function, tt_Fog>) {
@@ -165,29 +156,19 @@ struct tt_Fog {
     m_depth: f32,
     m_drift: vec2f,
 }
-fn tide_f(x: f32) -> f32 {
-    return x;
-}
-fn tide_nan(x: f32) -> bool {
-    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
-}
 fn tide_max1(a: f32, b: f32) -> f32 {
-    if (tide_nan(b)) { return a; }
-    if (tide_nan(a)) { return b; }
-    if (a > b) { return a; }
-    return b;
+    return select(select(select(b, a, a > b), b, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000), a, (bitcast<i32>(b) & 0x7fffffff) > 0x7f800000);
 }
 fn tide_saturate1(a: f32) -> f32 {
-    if (tide_nan(a)) { return 0.0; }
-    return clamp(a, 0.0, 1.0);
+    return select(clamp(a, 0.0, 1.0), 0.0, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000);
 }
 fn tide_normalize3(v: vec3f) -> vec3f {
-    var l: f32 = dot(v, v);
+    let l: f32 = dot(v, v);
     if (l > 1.17549435e-38) { return v * inverseSqrt(l); }
     return vec3f(0.0);
 }
 fn tf_Light(t_from: vec3f, t_normal: vec3f, t_glow: ptr<function, f32>) {
-    (*t_glow) = tide_max1(dot(t_normal, tide_normalize3((-t_from))), tide_f(0.0));
+    (*t_glow) = tide_max1(dot(t_normal, tide_normalize3((-t_from))), 0.0);
 }
 
 fn ts_Place(t_corner: ptr<function, tt_Corner>, t_lamp: ptr<function, tt_FromLamp>, t_fog: ptr<function, tt_Fog>) {
@@ -203,7 +184,7 @@ fn ts_Place(t_corner: ptr<function, tt_Corner>, t_lamp: ptr<function, tt_FromLam
 }
 
 fn tf_Haze(t_fog: tt_Fog) -> f32 {
-    return tide_saturate1(((t_fog.m_depth * tide_f(0.1)) + t_fog.m_drift.x));
+    return tide_saturate1(((t_fog.m_depth * 0.1) + t_fog.m_drift.x));
 }
 
 fn ts_Misty(t_corner: tt_Corner, t_color: ptr<function, vec4f>, t_fog: tt_Fog, t_lamp: tt_FromLamp) {
@@ -286,25 +267,16 @@ struct tt_Fog {
     m_depth: f32,
     m_drift: vec2f,
 }
-fn tide_f(x: f32) -> f32 {
-    return x;
-}
-fn tide_nan(x: f32) -> bool {
-    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
-}
 fn tide_max1(a: f32, b: f32) -> f32 {
-    if (tide_nan(b)) { return a; }
-    if (tide_nan(a)) { return b; }
-    if (a > b) { return a; }
-    return b;
+    return select(select(select(b, a, a > b), b, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000), a, (bitcast<i32>(b) & 0x7fffffff) > 0x7f800000);
 }
 fn tide_normalize3(v: vec3f) -> vec3f {
-    var l: f32 = dot(v, v);
+    let l: f32 = dot(v, v);
     if (l > 1.17549435e-38) { return v * inverseSqrt(l); }
     return vec3f(0.0);
 }
 fn tf_Light(t_from: vec3f, t_normal: vec3f, t_glow: ptr<function, f32>) {
-    (*t_glow) = tide_max1(dot(t_normal, tide_normalize3((-t_from))), tide_f(0.0));
+    (*t_glow) = tide_max1(dot(t_normal, tide_normalize3((-t_from))), 0.0);
 }
 
 fn ts_Place(t_corner: ptr<function, tt_Corner>, t_lamp: ptr<function, tt_FromLamp>, t_fog: ptr<function, tt_Fog>) {
@@ -369,12 +341,8 @@ struct tt_Fog {
     m_depth: f32,
     m_drift: vec2f,
 }
-fn tide_nan(x: f32) -> bool {
-    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
-}
 fn tide_saturate1(a: f32) -> f32 {
-    if (tide_nan(a)) { return 0.0; }
-    return clamp(a, 0.0, 1.0);
+    return select(clamp(a, 0.0, 1.0), 0.0, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000);
 }
 fn ts_Fall(t_flake: ptr<function, tt_Flake>, t_fog: ptr<function, tt_Fog>) {
     (*t_flake).m_position.y = ((*t_flake).m_position.y - tide_block.tide_u0.x);

@@ -10,7 +10,7 @@ static void usage(void)
 {
     fprintf(stderr,
             "usage: tidec <file.tide>... -o <output-dir> [--name <name>] [--no-line] [--visualizers] [--layout] [--embed]\n"
-            "             [--split-plumbing] [--split-code] [--define <SYMBOL>]...\n"
+            "             [--split-plumbing] [--split-code] [--define <SYMBOL>[=<value>]]...\n"
             "       tidec <file.tide>... --schedule [--name <name>] [--measured <profile.json>]\n"
             "       tidec <file.tide>... --shaders\n"
             "       tidec <file.tide>... --outline\n"
@@ -25,10 +25,12 @@ static void usage(void)
             "  --package <P>  the files after it are package P's, to the next --package;\n"
             "                 a line of a list can say it too. Packages' files compile\n"
             "                 first, in the order the packages are named\n"
-            "  --define <S>   a symbol every file's #if conditions read as defined, like DEBUG;\n"
+            "  --define <S>   a symbol every file's #if conditions read as defined, like DEBUG,\n"
+            "                 or S=value, which code reads with define(S, default) too;\n"
             "                 a line of a list can say it too. PACKAGE_<NAME> is defined for\n"
             "                 each package named\n"
-            "  --name <name>  base name of the generated files (default: the first file's name)\n"
+            "  --name <name>  base name of the generated files (default: the first file's name)\n");
+    fprintf(stderr,
             "  --scene <name> start directly in this qualified prefab or scene, overriding settings.startScene\n"
             "  --no-line      don't map generated code back to .tide lines for debuggers\n"
             "  --visualizers  also write <name>.natvis and <name>_lldb.py, how debuggers show the game's values\n"
@@ -40,6 +42,7 @@ static void usage(void)
             "  --embed        ...and what another program needs to run the game (tide/embed.h), as tide unity builds it\n"
             "  --declarations the game's types alone: its systems, views, handlers, functions, frags and verts\n"
             "                 left out, as tide unity builds them while the code doesn't build\n"
+            "  --dev          a dev build: 'dev' declarations are in it (without it they're left out)\n"
             "  --strip-unused-assets  leave unreferenced assets out of generated loaders and the pack\n"
             "  --strip-names          strip diagnostic/shader identifiers; write a private <name>.names map\n"
             "  --server               preserve the client identity and emit server build metadata\n"
@@ -78,26 +81,11 @@ typedef struct input_list {
 static const char *defines[256];
 static int define_count;
 
-static char *overlay_text(const char *path)
-{
-    FILE *f = fopen(path, "rb");
-    if (!f) return NULL;
-    fseek(f, 0, SEEK_END);
-    const long size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char *text = size >= 0 ? malloc((size_t)size + 1u) : NULL;
-    const size_t read = text ? fread(text, 1, (size_t)size, f) : 0u;
-    const bool ok = text && read == (size_t)size && !ferror(f);
-    fclose(f);
-    if (!ok) { free(text); return NULL; }
-    text[read] = '\0';
-    return text;
-}
-
 static bool add_define(const char *name)
 {
-    if (!lex_symbol_ok(name)) {
-        fprintf(stderr, "tidec: --define takes a symbol's name, like `--define FAST`, and '%s' isn't one%s\n", name,
+    if (!lex_define_ok(name)) {
+        fprintf(stderr, "tidec: --define takes a symbol's name, like `--define FAST`, or a name and a value, like `--define SIDE=500`, "
+                        "and '%.*s' isn't a name%s\n", lex_define_name_length(name), name,
                 strncmp(name, "TIDE_", 5) == 0 || strncmp(name, "PACKAGE_", 8) == 0
                     ? ": symbols that start with TIDE_ and PACKAGE_ are tide's to say"
                     : "");
@@ -247,16 +235,10 @@ int main(const int argc, char **argv)
             opts.name = argv[++i];
         } else if (strcmp(argv[i], "--scene") == 0 && i + 1 < argc && !opts.scene) {
             opts.scene = argv[++i];
-        } else if (strcmp(argv[i], "--source-overlay") == 0 && i + 2 < argc && !opts.editor_source) {
-            opts.editor_source = argv[++i];
-            const char *replacement = argv[++i];
-            opts.editor_text = overlay_text(replacement);
-            if (!opts.editor_text) {
-                fprintf(stderr, "tidec: can't read the source overlay replacement '%s'; check that it exists and is readable\n", replacement);
-                return 2;
-            }
         } else if (strcmp(argv[i], "--strip-unused-assets") == 0) {
             opts.strip_unused_assets = true;
+        } else if (strcmp(argv[i], "--dev") == 0) {
+            opts.dev = true;
         } else if (strcmp(argv[i], "--strip-names") == 0) {
             opts.strip_names = true;
         } else if (strcmp(argv[i], "--server") == 0) {
@@ -305,10 +287,6 @@ int main(const int argc, char **argv)
             opts.embed = true;
         } else if (strcmp(argv[i], "--declarations") == 0) {
             opts.declarations_only = true;
-        } else if (strcmp(argv[i], "--editor-prefab") == 0 && i + 1 < argc) {
-            opts.editor_prefab = argv[++i];
-        } else if (strcmp(argv[i], "--editor-local") == 0) {
-            opts.editor_local = true;
         } else if (strcmp(argv[i], "--schedule") == 0) {
             schedule = true;
         } else if (strcmp(argv[i], "--measured") == 0 && i + 1 < argc) {
@@ -336,20 +314,17 @@ int main(const int argc, char **argv)
         } else if (strcmp(argv[i], "--define") == 0 && i + 1 < argc) {
             if (!add_define(argv[++i])) return 2;
         } else if (argv[i][0] == '-') {
-            static const char *const valued[] = {"-o", "--name", "--scene", "--game", "--depfile", "--editor-prefab",
+            static const char *const valued[] = {"-o", "--name", "--scene", "--game", "--depfile",
                                                 "--spirv", "--hlsl", "--kernels", "--package", "--define", "--build-cc",
                                                 "--build-flag", "--build-lib", "--build-include", "--build-engine"};
             bool takes_value = false;
             for (size_t j = 0; j < sizeof valued / sizeof valued[0]; j++) {
                 if (strcmp(argv[i], valued[j]) == 0) takes_value = true;
             }
-            if ((strcmp(argv[i], "--scene") == 0 && opts.scene) || (strcmp(argv[i], "--depfile") == 0 && depfile)
-                || (strcmp(argv[i], "--source-overlay") == 0 && opts.editor_source))
+            if ((strcmp(argv[i], "--scene") == 0 && opts.scene) || (strcmp(argv[i], "--depfile") == 0 && depfile))
                 fprintf(stderr, "tidec: '%s' can be specified only once; remove the duplicate option\n", argv[i]);
             else if (takes_value)
                 fprintf(stderr, "tidec: '%s' needs a value after it; see the usage below\n", argv[i]);
-            else if (strcmp(argv[i], "--source-overlay") == 0)
-                fprintf(stderr, "tidec: --source-overlay needs the original source path and a replacement file path\n");
             else
                 fprintf(stderr, "tidec: unknown option '%s'; check its spelling in the usage below\n", argv[i]);
             usage();

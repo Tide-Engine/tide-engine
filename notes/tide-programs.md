@@ -1,5 +1,15 @@
 # `tide_add_game` and the generated header
 
+## SCENE (2026-11-16)
+
+`tide_add_game(... SCENE <text> ...)` passes `--scene <text>` to tidec: a prefab's or scene's name, or a scene with its
+fields, `"Battle { side = 50 }"` (notes/language.md, Scenarios).
+
+## DEV (2026-11-16)
+
+`tide_add_game(... DEV ...)` passes `--dev` to tidec: the game's `dev` declarations are in the build
+(notes/language.md, `dev` declarations).
+
 ## SPLIT_CODE (2026-11-05)
 
 2026-11-06: the generated outputs are now five, `<name>_data.c` (the large constants, notes/language.md) after
@@ -149,8 +159,9 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 
 ### Tide programs
 
-`tide_add_game(<target> [SOURCES <file.tide|file.c|file.cpp>...] [HOST <file.c>...] [WINDOW] [NAME <name>] [TITLE <title>] [STATS] [LAYOUT] [WARNINGS <text>...] [PACKAGES <Name> <file.tide>...] [DEFINES <SYMBOL>...] [SHELL <page.html>])` builds a game as the program `<target>` (see `cmake/Tide.cmake`):
+`tide_add_game(<target> [SOURCES <file.tide|file.c|file.cpp>...] [HOST <file.c>...] [WINDOW] [NAME <name>] [TITLE <title>] [STATS] [LAYOUT] [WARNINGS <text>...] [PACKAGES <Name> <file.tide>...] [DEFINES <SYMBOL>[=<value>]...] [SHELL <page.html>])` builds a game as the program `<target>` (see `cmake/Tide.cmake`):
 
+- `DEFINES` gives tidec a `--define` for each, `SYMBOL` or `SYMBOL=value` (2026-11-14; what code reads with `define(SYMBOL, default)`, `notes/language.md`), plus `DEBUG` in a Debug build unless `DEFINES` names `DEBUG` itself (`DEBUG=3` keeps its value, 2026-11-15). `<target>_schedule` passes the same `--define`s, so it prints the schedule of the program the target builds (a stage's offset can be a `define`). They're the Tide code's alone: the game's C gets no `-D` from CMake, unlike `tide`'s builds. A value with a `;` would split CMake's list; quote one with spaces, as `compiler/tests/CMakeLists.txt`'s `defines` test does.
 - The game is every `.tide` file in the current source folder and its subfolders; the next build picks up new files. `SOURCES` lists the files instead, for tests and folders that hold several games.
 - The game's C (its `extern` functions') is every `.c` file there but the `HOST` ones and those in hidden folders or `build/`, or the `.c` files in `SOURCES`. Its C++ files (`.cpp`, `.cc`, `.cxx`) go the same way, with tide's flags for them (`TIDE_CPP_FLAGS`): the project stays C, so the C compiler compiles them and programs link as C. `compiler/tests/e2e/cpp` runs C++ with no runtime on every target. Unlike `tide`, it doesn't pick up prebuilt libraries.
 - Without `HOST`, the game is the whole program and needs no C: a generated `main` runs it in a window through `tide/run.h`. On the web it's `<target>.html`, around the canvas `SHELL` makes (`tide_web_page`'s, `platform/web/shell.html` without one): Earth's (`examples/earth/page.html`) gives the program `Tide.arguments`, its regions.

@@ -16,12 +16,6 @@ Invoke-RestMethod https://tide-engine.dev/install.ps1 | Invoke-Expression
 
 Windows needs nothing else: `tide` brings the headers and libraries games build with.
 
-To offer Tide's native editor in **Open With** for `.tprefab` files, set
-`$env:TIDE_ASSOCIATE_PREFABS = '1'` before running the installer (or rerunning it).
-This registers Tide for your user and preserves your current default. Choose
-Tide in Windows' **Open With** dialog to make it the default if desired.
-You can also launch it directly with `tide open Level.tprefab`.
-
 ## Linux and macOS
 
 ```sh

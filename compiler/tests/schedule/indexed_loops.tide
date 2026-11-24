@@ -178,4 +178,74 @@ system OwnList(mut Field field, with Body)
     }
 }
 
+component Chunk
+{
+    int3 at;
+    int dimension;
+    long key;
+    byte kind;
+    float heat;
+}
+
+// Exact keys: an int3's components and an int, a long, whole numbers beside a bound on a float, and a byte against
+// a float, which C compares as floats (no exact key). Of a binding taken `previous` and one that isn't, the first
+// key's kind of table alone.
+system Chunks(Sight sight, query (Chunk chunk) chunks, query (previous Chunk was, Unit unit) pairs)
+{
+    var at = int3(int(sight.range), 2, 3);
+    indexed foreach (var row in chunks)
+    {
+        if (row.chunk.at.x != at.x || row.chunk.at.y != at.y || row.chunk.at.z != at.z || row.chunk.dimension != 1) continue;
+        Send(Hit { amount = 11 });
+    }
+    indexed foreach (var row in chunks)
+    {
+        if (row.chunk.key != 5000000000000000001L) continue;
+        Send(Hit { amount = 12 });
+    }
+    foreach (var row in chunks)
+    {
+        if (row.chunk.dimension != 2 || row.chunk.heat > sight.range || row.chunk.at.y < 0) continue;
+        Send(Hit { amount = 13 });
+    }
+    foreach (var row in chunks)
+    {
+        if (row.chunk.kind != 2.0) continue;
+        Send(Hit { amount = 14 });
+    }
+    foreach (var p in pairs)
+    {
+        if (p.was.dimension != 1 || p.unit.team != 2) continue;
+        Send(Hit { amount = 15 });
+    }
+}
+
+// A view hands its own component to a local task and to a helper as mut: they write its local fields alone, so
+// neither changes the place its loop finds the others by
+component Patch
+{
+    int3 at;
+    Grid3<int> cells = Grid3(4, 4, 4);
+    local int seen;
+    local LocalTask job;
+}
+
+async void Note(mut Patch patch, Grid3<int> beside)
+{
+    await Wait.Frames(1);
+    patch.seen = beside[int3(0, 0, 0)];
+}
+
+void Tally(mut Patch patch) { patch.seen += 1; }
+
+view Patches(mut Patch patch, query (Patch other) patches)
+{
+    foreach (var row in patches)
+    {
+        if (row.other.at.x != patch.at.x + 1 || row.other.at.y != patch.at.y || row.other.at.z != patch.at.z) continue;
+        Tally(patch);
+        if (!patch.job.isRunning) patch.job = Note(patch, row.other.cells);
+    }
+}
+
 scene Main { }

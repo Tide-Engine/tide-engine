@@ -476,6 +476,10 @@ void packages_set_symbols(const char *const *names, const int count)
 typedef struct condition {
     const char *p;
     char wrong[160];
+    // The symbol the last operand read was, when the build gave it a value (--define STEAM=480): what an `==` beside
+    // it can't compare
+    const char *valued;
+    int valued_len;
 } condition;
 
 static bool condition_or(condition *c);
@@ -511,6 +515,8 @@ static bool version_symbol(const char *name, const int len, int v[3])
 static bool condition_primary(condition *c)
 {
     condition_space(c);
+    c->valued = NULL;
+    c->valued_len = 0;
     if (*c->p == '!' && c->p[1] != '=') {
         c->p++;
         return !condition_primary(c);
@@ -521,12 +527,21 @@ static bool condition_primary(condition *c)
         condition_space(c);
         if (*c->p == ')') c->p++;
         else condition_wrong(c, "a '(' in the condition is missing its ')'%.*s", 0, "");
+        c->valued = NULL; // What's in parentheses is a condition, no symbol
+        c->valued_len = 0;
         return value;
     }
     if (isalpha((unsigned char)*c->p) || *c->p == '_') {
         const char *name = c->p;
         while (isalnum((unsigned char)*c->p) || *c->p == '_') c->p++;
         const int len = (int)(c->p - name);
+        const char *after = c->p;
+        while (*after == ' ' || *after == '\t') after++;
+        if (len == 7 && memcmp(name, "defined", 7) == 0 && *after == '(') { // C's spelling, and Tide code's
+            condition_wrong(c, "a condition reads a symbol by its name alone: '#if STEAM', not 'defined(STEAM)'%.*s", 0, "");
+            while (*c->p) c->p++;
+            return false;
+        }
         if (len == 4 && memcmp(name, "true", 4) == 0) return true;
         if (len == 5 && memcmp(name, "false", 5) == 0) return false;
         if (len >= 5 && memcmp(name, "TIDE_", 5) == 0) {
@@ -539,8 +554,15 @@ static bool condition_primary(condition *c)
             condition_wrong(c, "'%.*s' is a symbol this file's packages make, so no line of it depends on one", len, name);
             return false;
         }
-        for (int i = 0; i < symbol_count; i++) {
-            if ((int)strlen(symbols[i]) == len && memcmp(symbols[i], name, (size_t)len) == 0) return true;
+        for (int i = 0; i < symbol_count; i++) { // NAME, or NAME=value: defined either way
+            const char *equals = strchr(symbols[i], '=');
+            const int named = equals ? (int)(equals - symbols[i]) : (int)strlen(symbols[i]);
+            if (named != len || memcmp(symbols[i], name, (size_t)len) != 0) continue;
+            if (equals) {
+                c->valued = name;
+                c->valued_len = len;
+            }
+            return true;
         }
         return false;
     }
@@ -550,17 +572,51 @@ static bool condition_primary(condition *c)
     return false;
 }
 
+static int trimmed(const char *text);
+
+// == and != compare whether symbols are defined, as the lexer's do: never a value (`#if STEAM == 480`), and not a
+// symbol the build gave one, which they'd quietly read as defined.
 static bool condition_equality(condition *c)
 {
     bool value = condition_primary(c);
+    const char *valued = c->valued;
+    int valued_len = c->valued_len;
     for (;;) {
         condition_space(c);
         const bool eq = c->p[0] == '=' && c->p[1] == '=';
         const bool ne = c->p[0] == '!' && c->p[1] == '=';
         if (!eq && !ne) return value;
         c->p += 2;
+        condition_space(c);
+        if (isdigit((unsigned char)*c->p) || *c->p == '"' || *c->p == '\'' || *c->p == '-' || *c->p == '.') {
+            condition_wrong(c, "a condition reads whether symbols are defined, not values: it can't compare '%.*s'", trimmed(c->p), c->p);
+            while (*c->p) c->p++;
+            return false;
+        }
         const bool other = condition_primary(c);
+        if (!valued) {
+            valued = c->valued;
+            valued_len = c->valued_len;
+        }
+        if (valued) {
+            condition_wrong(c, "the build gives '%.*s' a value, and a condition reads only whether a symbol is defined: "
+                               "say a symbol for each choice", valued_len, valued);
+            while (*c->p) c->p++;
+            return false;
+        }
         value = eq ? value == other : value != other;
+    }
+}
+
+// What's left of a condition's line once it's read: nothing, or what's wrong.
+static void condition_end(condition *c)
+{
+    condition_space(c);
+    if (*c->p == '#') *((char *)c->p) = '\0'; // A comment after it
+    if (*c->p == '<' || *c->p == '>' || *c->p == '=') { // #if STEAM > 400
+        condition_wrong(c, "a condition reads whether symbols are defined, not values: it can't compare '%.*s'", trimmed(c->p), c->p);
+    } else if (*c->p) {
+        condition_wrong(c, "the condition ends before '%.*s'", trimmed(c->p), c->p);
     }
 }
 
@@ -661,11 +717,9 @@ bool packages_read(const char *folder, packages_file *out, const packages_report
                     ok = false;
                     continue;
                 }
-                condition c = {rest, ""};
+                condition c = {rest, "", NULL, 0};
                 bool holds = condition_or(&c);
-                condition_space(&c);
-                if (*c.p == '#') *((char *)c.p) = '\0'; // A comment after it
-                if (*c.p) condition_wrong(&c, "the condition ends before '%.*s'", trimmed(c.p), c.p);
+                condition_end(&c);
                 if (c.wrong[0]) {
                     report_at(report, user, path, number, "conditions are symbols, like `#if DEBUG` or `#if STEAM && !DEMO`", "%s",
                               c.wrong);
@@ -698,11 +752,9 @@ bool packages_read(const char *folder, packages_file *out, const packages_report
                 b->closed = true;
                 continue;
             }
-            condition c = {rest, ""}; // #elif
+            condition c = {rest, "", NULL, 0}; // #elif
             bool holds = condition_or(&c);
-            condition_space(&c);
-            if (*c.p == '#') *((char *)c.p) = '\0';
-            if (*c.p) condition_wrong(&c, "the condition ends before '%.*s'", trimmed(c.p), c.p);
+            condition_end(&c);
             if (c.wrong[0]) {
                 report_at(report, user, path, number, "conditions are symbols, like `#elif DEBUG` or `#elif STEAM && !DEMO`", "%s",
                           c.wrong);

@@ -1,0 +1,195 @@
+// Projection hashes kept 64 rows at a time (client_spans_codegen.inc, a table
+// chunk's pieces): what could make a piece's rows come out otherwise while the
+// piece is passed over, one change at a time, in a world of a few thousand
+// entities with grids, lists and a component each hides. The test
+// (visibility_pieces_test.c) checks each tick that every player's projection
+// hash is the one a copy of the world hashes to with nothing kept, and that a
+// repair by what changed is the same from what the tick's check kept as from
+// the rows themselves.
+//
+// Each change is to one cell in the middle of a piece nothing else touches, or
+// to the zone, a scene of its own whose root's group every one of its cells
+// goes by; each runs with the world otherwise still, and again with blocks
+// coming and going in the heap's pages all over (Noise). Beside the cells:
+// cards, whose only blocks in the heap are their Visibility's policies; bags,
+// each a list small enough that a page holds hundreds, one after another; and
+// rovers, which a parent in the zone takes into its scene.
+
+settings { maxPlayers = 4; }
+
+enum Block : byte
+{
+    Air,
+    Stone,
+    Sand
+}
+
+const int CELLS = 2600; // Three table chunks of 1,024 rows: 41 pieces
+const int ZONED = 300;  // ...and the zone's, a table of their own
+const int CARDS = 256;  // A table chunk's four pieces
+const int BAGS = 256;
+
+component Cell
+{
+    int id;
+    int value;
+    VisibilityGroup group;                    // Its own: who has it
+    Grid3<Block> blocks = Grid3(8, 8, 8);
+    List<int> notes;
+}
+
+component Secret { int code; }  // Each cell's, restricted by its Visibility
+component Tag { int mark; }     // Gained and lost: its entity goes to another table and back
+
+// Nothing of theirs in the heap but their Visibility's policies: even ones have Face denied everyone from the start
+component Card { int id; int rank; }
+component Face { int value; }
+
+// A list each, the bags made one after another sharing a page of the heap
+component Bag
+{
+    int id;
+    List<int> items;
+}
+
+// In Main until a parent in the zone takes it into the zone's scene
+component Rover { int id; }
+
+// What the test asks of a tick (visibility_pieces_test.c, STEPS)
+singleton Control
+{
+    int step;
+    int target;                 // The cell, card, bag or rover the step changes
+    bool noise;                 // Lists grow all over, so pages change under every piece
+    VisibilityGroup zoneGroup;
+    VisibilityGroup otherGroup;
+    Entity zone;
+    Entity post;                // The zone's rovers' parent
+}
+
+scene Main { }
+scene Zone { int number; }
+
+void MakeCell(int id)
+{
+    var group = Visibility.CreateGroup(Audience.Only(PlayerID(id % 4)));
+    mut var visibility = Visibility { group = group };
+    if (id % 3 == 0) visibility.Set<Secret>(Audience.None);
+    else if (id % 3 == 1) visibility.Set<Secret>(Audience.Only(PlayerID((id + 1) % 4)));
+    Spawn(Cell { id = id, value = id * 3, group = group }, Secret { code = id * 7 }, visibility);
+}
+
+void MakeCard(int id)
+{
+    mut var visibility = Visibility { };
+    if (id % 2 == 0) visibility.Set<Face>(Audience.None);
+    Spawn(Card { id = id, rank = id % 13 }, Face { value = id * 11 }, visibility);
+}
+
+event(Spawned) Fill(mut Cell cell)
+{
+    cell.blocks[cell.id % 8, 0, 0] = Block.Stone;
+    if (cell.id % 5 == 0) cell.blocks[7, 7, 7] = Block.Sand;
+    cell.notes.Add(cell.id);
+}
+
+event(Spawned) Setup(with Main, mut Control control)
+{
+    control.zoneGroup = Visibility.CreateGroup(Audience.From([PlayerID(0), PlayerID(1), PlayerID(2)]));
+    control.otherGroup = Visibility.CreateGroup(Audience.Only(PlayerID(3)));
+    for (var id = 0; id < CELLS; id++) MakeCell(id);
+    for (var id = 0; id < CARDS; id++) MakeCard(id);
+    for (var id = 0; id < BAGS; id++) Spawn(Bag { id = id, items = [id] });
+    Spawn(Transform, Rover { id = 0 });
+    Spawn(Transform, Rover { id = 12 });
+    control.zone = Scene.Load(Zone { number = 1 }, Visibility { group = control.zoneGroup });
+}
+
+event(Spawned) ZoneCells(with Zone, mut Control control)
+{
+    for (var id = 10000; id < 10000 + ZONED; id++) MakeCell(id);
+    control.post = Spawn(Transform);
+}
+
+// The step's change to its cell
+system Change(mut Cell cell, mut Visibility visibility, Control control)
+{
+    if (cell.id != control.target) return;
+    if (control.step == 1) Visibility.Set(cell.group, Audience.Only(PlayerID(3)));      // Its group's audience
+    if (control.step == 5) cell.blocks[1, 2, 3] = Block.Sand;                          // A cell of its grid, where it is
+    if (control.step == 6) cell.notes[0] = cell.notes[0] + 7;                          // An element of its list
+    if (control.step == 7) visibility.Set<Secret>(Audience.All);                       // A policy, where it is
+    if (control.step == 10) Visibility.DestroyGroup(cell.group);                       // Its group, gone
+    if (control.step == 12) cell.value += 1;                                           // A lane
+    if (control.step == 13) visibility.group = control.otherGroup;                     // Another group
+    if (control.step == 15) visibility.Reset<Secret>();                                // A policy, gone
+    if (control.step == 17) visibility.Set<Secret>(Audience.None);                     // A policy where there was none
+    if (control.step == 18) visibility.Set<Secret>(Audience.All);                      // ...then another, where it is
+}
+
+// ...to a card's policies, which are all it has in the heap
+system Turn(Card card, mut Visibility visibility, Control control)
+{
+    if (card.id != control.target) return;
+    if (control.step == 19) visibility.Set<Face>(Audience.All);                // Where it is
+    if (control.step == 20) visibility.Set<Face>(Audience.Only(PlayerID(2)));  // Where there was none
+    if (control.step == 21) visibility.Set<Face>(Audience.All);                // ...then another, where it is
+}
+
+// ...to a bag's list, where it is: its page is the bags' before it in the piece too
+system Shake(mut Bag bag, Control control)
+{
+    if (control.step == 23 && bag.id == control.target) bag.items[0] = bag.items[0] + 5;
+}
+
+// ...to a rover's scene, which its row says in place
+system Roam(Rover rover, Control control)
+{
+    if (control.step == 22 && rover.id == control.target) this.SetParent(control.post, false);
+}
+
+// For visibility_pieces_measure: every cell changes, a lane of its Cell or of its Secret
+system Stir(mut Cell cell, mut Secret secret, Control control)
+{
+    if (control.step == 30) cell.value += 1;
+    if (control.step == 31) secret.code += 1;
+}
+
+// ...to its table: another component, and back
+system Mark(Cell cell, Control control)
+{
+    if (control.step == 8 && cell.id == control.target) this.Add(Tag { mark = cell.id });
+}
+
+system Unmark(with Cell, with Tag, Control control)
+{
+    if (control.step == 9) this.Remove(Tag);
+}
+
+// ...or to many: holes in the first table chunk past a 32nd of the table, which the tick's end fills from its end, so
+// rows of the last piece go into other pieces and chunks
+system Thin(Cell cell, Control control)
+{
+    if (control.step == 4 && cell.id < 1000 && cell.id % 8 == 0) this.Destroy();
+}
+
+// ...or to the zone and the world
+system Zones(Control control)
+{
+    if (control.step == 2) Visibility.Set(control.zoneGroup, Audience.Only(PlayerID(1)));   // The zone's group's audience
+    if (control.step == 11) MakeCell(CELLS + control.target);                                // A new cell
+    if (control.step == 16)
+        Visibility.Set(control.otherGroup, control.noise ? Audience.Only(PlayerID(1)) : Audience.From([PlayerID(0), PlayerID(3)]));
+}
+
+system ZoneRoot(with Zone, mut Visibility visibility, Control control)
+{
+    if (control.step == 3) visibility.group = control.otherGroup;  // Its root's group, another
+    if (control.step == 14) this.Remove(Visibility);               // ...and none
+}
+
+// Pages that change under pieces: a list here and there grows, in blocks of the heap's beside other cells'
+system Noise(mut Cell cell, Control control, Time time)
+{
+    if (control.noise && (cell.id + time.tick) % 61 == 0) cell.notes.Add(time.tick);
+}

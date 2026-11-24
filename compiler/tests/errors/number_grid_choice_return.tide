@@ -1,0 +1,5 @@
+// expect: a Grid2<int> is a Texture only where a [Raw(int)] Texture is wanted
+scene Main { }
+local singleton Art { Grid2<int> ids = Grid2(4, 4); Texture tex; bool flag; }
+Texture Pick(Art art) { return art.flag ? art.ids : art.tex; }
+view Show(Art art) { var s = Pick(art).size; }

@@ -1,0 +1,6 @@
+// expect: operator '>=' can't be used with Phase and int
+// expect: compare it with a member, like 'x >= Phase.Warmup', or its number with a number: 'int(x) >= n'
+enum Phase { Warmup, Playing }
+singleton Match { Phase phase; bool late; }
+scene Main { }
+system S(mut Match match) { match.late = match.phase >= 1; }

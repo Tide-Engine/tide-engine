@@ -45,7 +45,7 @@ TIDE_TEST(unity_prefabs_and_scenes_as_tide_prefabs)
     TIDE_CHECK(strstr(declared, "    event(Spawned) Begin(with Main, mut LoadedScenes scenes)\n    {\n"
                                 "        if (scenes.opened) return; // The editor's command came first\n"
                                 "        scenes.loaded[1] = Scene.Load(UnityEngine.Scenes.Fixture.Level);\n") != NULL);
-    TIDE_CHECK(strstr(declared, "    command OpenScene\n") != NULL);
+    TIDE_CHECK(strstr(declared, "    command(int asset, bool only) OpenScene(mut LoadedScenes scenes, PlayerID sender)\n") != NULL);
     TIDE_CHECK(strstr(declared, "            case 1: scenes.loaded[1] = Scene.Load(UnityEngine.Scenes.Fixture.Level); break;\n") != NULL);
     TIDE_CHECK(strstr(declared, "Scene.Load(Thing)") == NULL); // A prefab is no scene to open
     TIDE_CHECK(strstr(declared, "CloseScene") == NULL); // Scenes loaded by hand during Play are local: none are sent

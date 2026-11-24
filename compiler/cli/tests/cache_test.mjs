@@ -339,8 +339,12 @@ int Native(int value)
                 const stem = output.slice(0, -".html".length);
                 program = readFileSync(`${stem}.wasm`);
                 check(program.subarray(0, 4).equals(Buffer.from([0, 0x61, 0x73, 0x6d])), "the page's program is not WebAssembly");
-                check(readFileSync(`${stem}.pack`).equals(pack), "the page's pack differs from generated pack");
-                for (const [name, bytes] of [["program", program], ["pack", pack]]) {
+                // A debug page's pack is the one tidec wrote; a release's and a distribution's ships compressed
+                // (tide/pack.h, A pack compressed), and the page names those bytes
+                const shipped = readFileSync(`${stem}.pack`);
+                if (mode === "debug") check(shipped.equals(pack), "the page's pack differs from generated pack");
+                else check(shipped.subarray(0, 8).toString() === "TIDEPKLZ", `web ${mode}: the page's pack isn't compressed`);
+                for (const [name, bytes] of [["program", program], ["pack", shipped]]) {
                     const hash = createHash("sha256").update(bytes).digest("hex").slice(0, 16);
                     const file = `${basename(stem)}.${name === "program" ? "wasm" : "pack"}`;
                     check(page.includes(`${name}: { url: "${file}?v=${hash}", size: ${bytes.length} }`),
@@ -579,6 +583,32 @@ async function webRunTest(tide, root, release = false, optimization = null) {
         check(page.includes('Tide.arguments = [ "--seed","7"]'), "web run passes the game's arguments");
         check(page.includes("Tide.reload = true;"), "web run enables page polling by default");
         await waitFor(async () => await buildNumber() === 1, "initial web build");
+        // A dev build's checkpoints, which tide keeps in the game's folder for the page: saved by the page's own POST,
+        // listed and read back; another site's POST, and a name that's a path, aren't taken
+        const checkpoint = (method, name, body, page = true) => fetch(`${url}checkpoint?name=${name}`,
+            { method, body, headers: page ? { "X-Tide": "1" } : {}, signal: AbortSignal.timeout(5000) });
+        const kept = join(game, "checkpoints", "boss.checkpoint");
+        check((await checkpoint("POST", "boss", Uint8Array.of(1, 2, 3))).ok, "web run keeps the page's checkpoint");
+        check(existsSync(kept) && readFileSync(kept).equals(Buffer.from([1, 2, 3])), "the checkpoint is in the game's checkpoints folder");
+        const refused = await checkpoint("POST", "other", Uint8Array.of(1), false).then(r => !r.ok, () => true); // Closed on
+        check(refused && !existsSync(join(game, "checkpoints", "other.checkpoint")), "a POST without the page's header isn't taken");
+        check(!(await checkpoint("POST", "..%2Fescape", Uint8Array.of(1))).ok && !existsSync(join(game, "escape.checkpoint")),
+              "a checkpoint's name can't be a path");
+        const back = await checkpoint("GET", "boss");
+        check(back.ok && Buffer.from(await back.arrayBuffer()).equals(Buffer.from([1, 2, 3])), "the page reads the checkpoint back");
+        check(!(await checkpoint("GET", "nowhere")).ok, "one that isn't there isn't served");
+        const listed = await fetch(`${url}checkpoints`, { headers: { "X-Tide": "1" }, signal: AbortSignal.timeout(5000) });
+        check(listed.ok && await listed.text() === "boss\n", "the page lists the game's checkpoints");
+        // ...and recordings, beside them, listed apart
+        const recording = (method, name, body) => fetch(`${url}checkpoint?name=${name}&kind=recording`,
+            { method, body, headers: { "X-Tide": "1" }, signal: AbortSignal.timeout(5000) });
+        check((await recording("POST", "run", Uint8Array.of(4, 5))).ok
+              && readFileSync(join(game, "checkpoints", "run.recording")).equals(Buffer.from([4, 5])), "a recording is kept beside them");
+        const recordings = await fetch(`${url}checkpoints?kind=recording`, { headers: { "X-Tide": "1" }, signal: AbortSignal.timeout(5000) });
+        check(recordings.ok && await recordings.text() === "run\n", "recordings are listed apart from checkpoints");
+        check(!(await fetch(`${url}checkpoint?name=run&kind=other`, { headers: { "X-Tide": "1" }, signal: AbortSignal.timeout(5000) })).ok,
+              "no other kind is served");
+        rmSync(join(game, "checkpoints"), { recursive: true, force: true });
         const cache = join(game, ".tide", `web-${release ? "release" : "debug"}${optimization ?? ""}`);
         let before = mark(cache);
         const generated = [...before.keys()].find((file) => /^run\/watch-\d+\/game\.o$/.test(file));

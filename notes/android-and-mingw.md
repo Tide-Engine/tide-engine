@@ -108,7 +108,8 @@ Tried on this machine's emulator (x86_64, API 36), the android-debug build:
   window, closes it and returns 0, on any device; on one without Vulkan 1.3
   after the screen), and, labelled `gpu` (`--vulkan`),
   `tide_platform_draw_app`, `_targets_app` and `_shaders_app`, until then
-  started by hand.
+  started by hand. Since 2026-11-14 every window fixture has one (Every window
+  fixture an app, below).
 - **Checked on this machine's emulator (x86_64, API 36, android-debug):**
   - `-gpu host`: the unfixed draw app aborted at exit as above (reproduced);
     fixed, `tide_platform_app_exit` and `tide_platform_draw_app` (3,399
@@ -204,6 +205,186 @@ Tried on this machine's emulator (x86_64, API 36), the android-debug build:
   SwiftShader Vulkan, so 1.2), `-gpu guest`, a newer system image. lavapipe
   made them unnecessary.
 
+## Every window fixture an app (2026-11-14; Claude's picks, Provisional)
+
+Until then five app tests ran on Android (draw, exit, targets, shaders,
+readback), so compute, kernels, image stores, Texture3D, number frag outputs,
+culling, occlusion and the depth fixtures never ran on Android or on any CI
+Vulkan (CI's desktop jobs leave `gpu` out; the emulator's lavapipe is CI's one
+Vulkan). Now every GPU fixture a desktop runs as a window program has an app
+twin, made the way the shaders' and readback's are: `tide_add_game(... HOST
+<host.c> WINDOW)` for a game with a host, `add_library(SHARED)` with
+`tide_android_app` for a C program, and `tide_android_app_test(... GPU)`.
+
+- **The tests** (this machine's emulator, `-gpu lavapipe`, android-debug, each
+  test's own time; all on the device's descriptor sets, as it has no push
+  descriptors):
+  - `platform/`: `tide_platform_gpu_time_app` 4 s, `_draw_app_no_anisotropy`
+    (`TIDE_VULKAN_ANISOTROPY=1`) 11 s, `_compute_app` 3 s, `_kernels_app` 4 s,
+    `_images_app` 4 s, `_occlusion_app` 7 s, `_cull_app` 6 s,
+    `_cull_app_decided` (`TIDE_GPU_CULLING=decide`) 3 s, `_prewarm_app`
+    (prewarm.cmake's ten runs) 19 s, `_texture_capacity_app`,
+    `_gpu_functions_app`, `_fills_app`, `_float_bits_app`,
+    `_camera_precision_app`, `_skinned_app` and `_baked_app` 1.5 to 2.6 s each,
+    `_loading_app` 2 s, `_gpu_wait_app` 2 s, `_pipeline_cache_app`
+    (pipeline_cache.cmake's ten runs) 16 s, `_swapchain_app` (below) 4 s,
+    `_depth_camera_app` (`--frames=1`) 7 s, `_depth_reads_app` and its
+    `_fallback` 3 s each, and with `TIDE_TEST_DEPTH_FALLBACK=1` (24-bit depth,
+    as many phones' is) `_targets_app_depth_fallback` 10 s,
+    `_shaders_app_depth_fallback` 24 s, `_occlusion_app_depth_fallback` 6 s,
+    `_readback_app_depth_fallback` 3 s.
+  - `demo_smoke_app` (`demo.apk --smoke`) 6 s.
+  - `packages/`: `tide_render2d_pixels_app` 5 s, `tide_render3d_fog_app`,
+    `_foliage_pixels_app`, `_shadows_pixels_app`, `_post_pixels_app`,
+    `_skinning_pixels_app`, `_material_pixels_app`,
+    `_shadow_batches_pixels_app` and `_pixels_app` 2 to 6 s each,
+    `tide_particles_pixels_app` 2 s.
+  - 38 tests more, about 200 s of the emulator's; the 43 app tests together
+    took about 250 s with nothing else running (beside builds of four jobs,
+    prewarm's ten runs alone took 57 s). Each printed its checks (the verbose run was read: every one
+    said `renderer: Vulkan` or its own summary, and the variants differ where
+    they should: `anisotropy 1`, `depths: within a 24-bit step`, the culling the
+    CPU decided).
+- **`tide_android_app_test(<target> [BACK] [GPU] [STEPS] [NAME <test>] [ARGS
+  ...] [ENVIRONMENT ...] [RUNS ...])`**: NAME for another test of one app,
+  ARGS for main's arguments (the intent's `tide.args`), ENVIRONMENT for Tide's
+  settings, RUNS for a script's runs in order, STEPS for what a player does.
+  `run_android.mjs --app` takes them as `--env`, `--run` and `--steps`
+  (`tide_android_runner` tests each with adb mocked):
+  - `--env TIDE_NAME=value`, refused for any other name or a value with a space,
+    goes as the intent's `tide.env`, words apart. `activity.c` sets them in the
+    environment before `main` (`intent_env`), for a debuggable app alone
+    (`ApplicationInfo.FLAG_DEBUGGABLE`, through JNI: every app but `tide build
+    --android --distribution`'s), names of `TIDE_` and capitals, digits and
+    underscores alone. Not for an app built to ship: any app on the phone can
+    start another's activity with extras, and `TIDE_RELAY`, `TIDE_RTC_CERT` or
+    `TIDE_LOBBY_PORT` would point its game elsewhere. A test's own settings
+    alone go, not the shell's `TIDE_` variables as a program's do: the
+    caller's `TIDE_HIDDEN` would make an app's runs here and CI's differ.
+    Considered: an extra a setting (`tide.env.TIDE_X`), which needs the
+    intent's keys through JNI for nothing more.
+    - **Each setting is said, and the runner holds the app to it** (fixed
+      2026-11-14 after review): the fixtures work out what to expect from the
+      same `getenv` (`depth_reads.c` and `readback.c` from
+      `TIDE_TEST_DEPTH_FALLBACK`, `cull.c` from `TIDE_GPU_CULLING`, `draw.c`
+      from `tide_texture_anisotropy()`), so a variant whose settings never
+      arrived (an app that isn't debuggable, the extra lost, `intent_env`
+      misreading it) ran the default and passed as a copy of its base test.
+      `intent_env` now prints `setting: TIDE_NAME=value` for each it set, and
+      a line for each it left out (not a `TIDE_` name of capitals, digits and
+      underscores; `setenv` failing); an app that isn't debuggable says it
+      left the intent's `tide.env` out; an extra longer than the 1,023 bytes
+      read keeps its whole words and says so (a cut word would be a setting
+      of another value). `run_android.mjs` gathers the `setting:` lines of
+      the app's own pid at every look while it runs (they're its first
+      lines, which a long run could push out of the log's ring before it
+      ends) and from the last read, and fails a run, for each `--run` too,
+      whose app didn't say each of its `--env` exactly, naming the missing
+      ones, with the app's own code where that wasn't 0. `tide_android_runner`
+      tests it: all said, said only while running, one never said (another
+      pid's word for it ignored), none said with the app's code kept, another
+      value, no `--env`, and each of several runs. On the emulator the eight
+      variants' outputs have their `setting:` lines.
+    - Started by hand, several settings need the phone's shell's quotes inside
+      the host's (`--es tide.env "'TIDE_A=1 TIDE_B=2'"`): `adb shell` joins
+      its arguments and the device's shell splits them again, so with the
+      host's quotes alone `TIDE_B=2` was lost (checked on the emulator, from
+      PowerShell: one `setting:` line against two). `docs/tools/cli.md`,
+      Android, says so; the runner quotes for the device (`quote`).
+  - `--run <arguments>`, once or more: the app is installed once, its data
+    cleared (`pm clear`, as the desktop scripts empty their folder first),
+    started for each run in turn with those arguments, printing `--- <arguments>`
+    before each; the first run that doesn't end with 0 ends the test. What
+    the app keeps (its cache folder) stays between runs: prewarm.cmake's and
+    pipeline_cache.cmake's orders run so. With `--run` there may be no
+    arguments after the APK.
+  - `--steps`: as it polls the log for the app's end, the runner does what the
+    app's lines `step: <what>` ask, each once, in order: `turn` (the screen to
+    landscape: `accelerometer_rotation` 0, `user_rotation` 1), `upright`
+    (`user_rotation` 0), `home` (KEYCODE_HOME) and `front` (`am start` again,
+    which a singleTask activity takes as coming back); another word stops the
+    app and fails. The rotation settings as they were are put back as the run
+    ends, whatever happened (`settings delete` for one that was never set).
+- **Correction (2026-11-15):** the test counted swapchains in all (2, 3, 4, 5), and CI's
+  emulator once turned the screen in two sizes, a swapchain at each (run
+  43705400689: "made 2 times (3)", every later count one over). It now counts
+  how many more each step made, and a turn may make one or two.
+- **`tide_platform_swapchain_app`**, `swapchain.c` on Android: GLFW's resizes
+  are the screen turned to landscape and back (the window 2400 by 1080, then
+  1080 by 2400, a swapchain made for each), the device lost as a frame is
+  shown, then the app sent home (`tide_window_unseen`: no window) and brought
+  back, where the new surface's swapchain is the fifth and the device is the
+  one before (`tide_gpu_vk_surface_changed` keeps everything made on it). It
+  passed at once: 116 frames, every one read back.
+- **Found by them, fixed:**
+  - Android's frames never let the match go on while the frame's fence was
+    waited for: `tide_window_present` called `tide_gpu_vk_present()`, not
+    `tide_gpu_vk_present_updating(tide_window_update_while_waiting)` as GLFW's
+    window does, so `tide_platform_update_while_waiting` (the standard host's
+    match work during a GPU wait, `notes/standard-host.md`) did nothing on
+    Android, and the gpu_wait app failed seven of its checks. It's called as on
+    desktop now, and they pass.
+  - Tests that held only on a display of scale 1, a window the test's size,
+    or a fast desktop: `gpu_time.c` took a pass of the window's to be the
+    window's pixels, but the frame it reads back (`tide_platform_read_pixels`)
+    is a pass at the window's logical pixels (411 by 914 here, against 1080 by
+    2400). It first accepted either size for any window pass, which let a
+    window pass of logical pixels through on any display above a scale of 1
+    (review, 2026-11-14); now the readback draws a list of its own, `list` with
+    a second rect in the window's pass (15 vertices where the window's have 9),
+    so that pass alone may be the logical size, measured once at most, and
+    every other window pass must be the window's pixels. The emulator's run
+    says `readback: its window pass measured 1 time, at 411x914`; desktop's
+    (scale 1) 120x64, and the web's readback pass went unmeasured, as any
+    pass may; `loading.c` read the loading screen as
+    a 320 by 180 window where it's laid out on the screen's size, and now reads
+    it at the window's own, in one read of 844 points rather than a read a
+    point. That made a race visible on desktop too: the screen's pipelines are
+    made in the background (the standard host's `background_pipelines`), so
+    its first frames can show the background alone, and the old test only
+    passed by the time its hundreds of one-pixel reads took. It now waits for
+    the bar and the text (600 frames at most) before it lets `assets()` go, and
+    asks for six frames or more where it asked for exactly six.
+  - `pipeline_cache.c`'s `outgrown` run set the read limit to 64 bytes, "any
+    real file is bigger": the emulator's driver (gfxstream over lavapipe) keeps
+    nothing in its pipeline cache but the 32 bytes of its header, so a warm
+    run reads 32 bytes and caching pipelines does nothing there. The limit is
+    now one byte under the driver's data in the file the last run left. A
+    whole file was first taken as one of at least the two headers (24 and 32
+    bytes) on every device, which let a desktop regression writing a file of
+    headers alone, no pipelines in it, pass all ten runs (review,
+    2026-11-14). Now the driver is asked apart from the device's own cache
+    (`tide_gpu_vk_pipeline_cache_keeps` in `gpu_vk.c`: a compute shader that
+    does nothing, hand-written SPIR-V 1.0, compiled into an empty cache of its
+    own, whose data must be more than its 32-byte header). Where it keeps
+    pipelines, the outgrown run's file must be more than the headers and a
+    warm run must read more than the driver's header, stricter than before
+    (`read > 0`); where it keeps none, the file must be exactly the headers,
+    and each run says `pipeline cache: this device's driver keeps no
+    pipelines, only its 32-byte header`. This machine's desktop GPU (Windows,
+    sanitize, under the validation layer) keeps them: warm runs read 79,359 bytes and up, the
+    outgrown file 79,409; the emulator says it keeps none, its outgrown file
+    56 bytes.
+- **Not twinned, and why:** runs with no window, which Android refuses ("a
+  game runs without a window on desktop only", `tide_platform_open_headless`):
+  `tide_platform_gpu_wait_headless`, the benchmarks' `--quick` tests
+  (bench_occlusion, bench_skinned's three, bench_render3d, bench_forest's two,
+  bench_prepass: they open headless natively, a hidden window only on the web;
+  tried, each app said so and ended), tide/run.h's `--capture`, `--script`,
+  `--players` and `--interactive` tests (capture, profile, data_directory,
+  stats, first_tick, quit, interactive, players, hidden_runs),
+  `tide_network_hosted` and `tide_voice_host`; the watching host's reload
+  (`tide_platform_reload`, `_reload_reads`: a desktop host that reopens the
+  game's library); `tide_platform_cursor` (GLFW's lock: Android never locks
+  the cursor); `tide_platform_draw_vulkan_sets` and `_compute_vulkan_sets`
+  (the emulator has no push descriptors, so every app writes sets already);
+  the editor's (`tools/tide-editor`, desktop) and `versus_draw` (GLFW's
+  loader). Headless runs on Android would bring the first group: not built,
+  as no one has asked what a run with no window means on a phone.
+- CI: not yet run on a hosted runner; the next Build run's Android job is the
+  check, three or four minutes more of its emulator if it's as fast as this
+  one, and the apps' builds.
+
 CLI modes (2026-10-30): --release is optimized with symbols and debuggable APKs,
 using a default app ID if needed, and links with --gc-sections. --distribution
 owns symbol stripping, shipping exports, appId requirement and AAB creation. The CLI builds warning-free under Windows ASan;
@@ -230,7 +411,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 ### Android builds
 
 - The `android-debug` and `android-release` presets build everything for Android on x86_64, the emulator's, and `android-arm64` for phones and tablets: `cmake --workflow --preset android-debug`. They're clang with Android's NDK (`cmake/android-toolchain.cmake`), whose C library, headers and compiler runtime Google's license keeps out of this repo and the package: the build finds the NDK installed (ANDROID_NDK_HOME or ANDROID_NDK_ROOT, or the newest in the SDK: ANDROID_HOME, ANDROID_SDK_ROOT, or where Android Studio puts it). Programs run on Android 10 (API 29) and up, the first with thread-locals of its own, and with 16 KiB pages.
-- Tests run on a device or emulator through adb (`cmake/run_android.mjs`): each program goes to a folder of its own under `/data/local/tmp`, so they run at once, with the `TIDE_` variables the test sets. A test that shares a file between processes names it with `--fixture <filename>` before the program: the wrapper copies it from the host working directory when present, and back after a successful run, before removing the device folder. Box3D's join test uses this for its snapshot; `tide_android_runner` tests the transfers and failure cleanup against mocked adb, without a device. The emulator runs x86_64 on x86_64 machines; arm64 needs a device (or an arm64 machine). Games generate their C with a native tidec, as web builds do.
+- Tests run on a device or emulator through adb (`cmake/run_android.mjs`): each program goes to a folder of its own under `/data/local/tmp`, so they run at once, with the `TIDE_` variables the test sets. A test that shares files between processes names each with `--fixture <filename>` before the program: the wrapper copies it from the host working directory when present, and back after a successful run, before removing the device folder. Box3D's join test uses this for its snapshot, and time travel's two tests for the recordings one build leaves the other (three files, named by `TIDE_TRAVEL_RECORDING` relative to the folder; until 2026-11-20 they were given the host's absolute path, which no device has, and failed in CI); `tide_android_runner` tests the transfers and failure cleanup against mocked adb, without a device. The emulator runs x86_64 on x86_64 machines; arm64 needs a device (or an arm64 machine). Games generate their C with a native tidec, as web builds do.
 - A game that opens a window (no `HOST`, or `HOST` with `WINDOW`) is an app: a shared library in `<target>.apk` (`tide_android_app`), which Android's own NativeActivity loads, so apps have no Java. The platform layer's window there is the activity's (`platform/android/activity.c`): the activity's callbacks run on Android's main thread, and the program's `main` on a thread of its own, which takes what changed (its window, its input queue) through its looper; a callback that takes something away waits until the program let it go. It draws with Vulkan where the device has what the renderer needs (see Vulkan on Android, below; until 2026-11-05 else with OpenGL ES 3 through EGL, and now a screen saying what's needed), in logical pixels (the window's over dpi / 160). Keys are by position, the back button is Escape (as in Unity), a mouse is the mouse, and fingers are touches. Its stdout and stderr go to the system's log (`adb logcat -s tide`).
 - The renderer's pixel checks run as an app there too, `tide_platform_draw_app.apk` (`platform/tests/draw.c`, which keeps to the screen's top left corner whatever its size): its test (label `gpu`, since 2026-11-05: An app's end, above) installs and starts it (by hand: `adb shell am start -n dev.tide.tide_platform_draw_app/android.app.NativeActivity`), and it prints them to the log. `tide_platform_targets_app.apk` and `tide_platform_shaders_app.apk` are the targets' and the shaders' checks the same way (`targets.c`, and `shaders.c` with `shaders.tide`, whose frames are a window of their own size through `tide_platform_read_pixels_as`, whatever the screen's): OpenGL ES 3 compiled what tidec wrote there (until 2026-11-05), which is how the loop above was found; now the device's Vulkan takes tidec's SPIR-V.
 - **Vulkan on Android (2026-10-14, after the owner's "let's close those gaps"; Claude's picks, Provisional).**

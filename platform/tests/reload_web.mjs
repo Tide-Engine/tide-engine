@@ -5,9 +5,15 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
-const source = await readFile(new URL('../web/tide.js', import.meta.url), 'utf8');
+// (Lines as \n: a Windows checkout may have \r\n, which the searches below would miss)
+const source = (await readFile(new URL('../web/tide.js', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
 const block = source.slice(source.indexOf('    // <tide run>'), source.indexOf('    // </tide run>'));
 assert.ok(block.includes('if (config.reload)'), 'the production reload block is present');
+// ...and the page's tweaks and checkpoints, which every page has and the block fills in
+const tweakEnd = 'return names.length;\n    };';
+const tweaks = source.slice(source.indexOf('    let tweakBytes = null;'), source.indexOf(tweakEnd) + tweakEnd.length);
+assert.ok(tweaks.includes('platform.tweaks_copy'), 'the production tweak functions are present');
+assert.ok(tweaks.includes('platform.checkpoint_copy'), 'the production checkpoint functions are present');
 const settle = async () => { for (let i = 0; i < 32; i++) await Promise.resolve(); };
 
 function deferred() {
@@ -16,15 +22,17 @@ function deferred() {
     return { promise, resolve };
 }
 
-async function runtime(watch = true, notReady = null) {
+async function runtime(watch = true, notReady = null, words = []) {
     const listeners = new Map(), timers = [], programs = [], errors = [], messages = [], requests = [];
     const memory = new Uint8Array(32);
     new DataView(memory.buffer).setUint32(8, 8, true);
     let saves = 0, rooms = 0, active = 0, maximum = 0, fetchGate = null, instantiateGate = null, asked = 0;
-    let build = 1, restarts = 0, offline = false;
+    let build = 1, restarts = 0, offline = false, tweaked = 0;
+    const strings = new Map(), writes = [], posts = [];
     const context = {
-        config: { reload: watch }, platform: {}, gl: null, device: null, exports: null, performance,
-        stopped: false, failed: false, packBytes: null,
+        config: { reload: watch }, platform: {}, gl: null, device: null, exports: null, performance, words,
+        stopped: false, failed: false, packBytes: null, URLSearchParams,
+        string: ptr => strings.get(ptr),
         keyIndex: new Map([['KeyR', 0]]), keysHeld: [1], keysTapped: [1],
         u8: () => memory, view: () => new DataView(memory.buffer),
         print: message => messages.push(message), printErr: error => errors.push(error),
@@ -35,10 +43,35 @@ async function runtime(watch = true, notReady = null) {
             assert.equal(milliseconds, 250);
             timers.push(callback);
         },
-        async fetch(path) {
+        async fetch(path, init) {
             requests.push(path);
             if (offline) throw new context.TypeError('the watching server has stopped');
-            if (path === 'build') return { async text() { return `${build} ${restarts} 0`; } };
+            if (path === 'build') return { async text() { return `${build} ${restarts} 0 ${tweaked}`; } };
+            if (path === 'tweaks') return { ok: true, async arrayBuffer() { return Uint8Array.of(tweaked).buffer; } };
+            if (path === 'checkpoints?kind=recording') {
+                return { ok: true, async arrayBuffer() { return new TextEncoder().encode('run\n').buffer; } };
+            }
+            if (path === 'checkpoint?name=run&kind=recording') {
+                return { ok: true, async arrayBuffer() { return Uint8Array.of(5, 6).buffer; } };
+            }
+            if (path === 'checkpoints?kind=checkpoint') {
+                return { ok: true, async arrayBuffer() { return new TextEncoder().encode('boss\nsaved\n').buffer; } };
+            }
+            if (path.startsWith('checkpoint?')) {
+                const query = new URLSearchParams(path.slice(11));
+                const name = query.get('name');
+                if (query.get('kind') !== 'checkpoint') return { ok: false };
+                if (init.method === 'POST') {
+                    posts.push({ name, headers: init.headers, body: [...init.body] });
+                    return { ok: name !== 'unwritable' };
+                }
+                if (name !== 'boss') return { ok: false };
+                return { ok: true, async arrayBuffer() { return Uint8Array.of(7, 8, 9).buffer; } };
+            }
+            if (path.startsWith('tweak?')) {
+                writes.push({ query: Object.fromEntries(new URLSearchParams(path.slice(6))), headers: init.headers });
+                return { ok: true };
+            }
             assert.match(path, /^game-\d+\.wasm$/);
             const gate = fetchGate;
             fetchGate = null;
@@ -63,13 +96,15 @@ async function runtime(watch = true, notReady = null) {
     // Errors raised by fetch must belong to the page's realm: production
     // recognizes a failed network request by its TypeError.
     vm.runInNewContext('globalThis.TypeError = TypeError;', context);
-    await vm.runInNewContext(`(async () => { ${block}\n})()`, context);
+    await vm.runInNewContext(`(async () => { ${tweaks}\n${block}\n})()`, context);
     await settle();
     return {
         context, programs, errors, messages, requests,
         get saves() { return saves; }, get rooms() { return rooms; }, get maximum() { return maximum; },
         get asked() { return asked; },
         latest(next, restart = restarts) { build = next; restarts = restart; },
+        tweak(stamp) { tweaked = stamp; },
+        writes, strings, posts,
         offline() { offline = true; },
         holdFetch() { fetchGate = deferred(); return fetchGate; },
         holdInstantiate() { instantiateGate = deferred(); return instantiateGate; },
@@ -233,4 +268,99 @@ async function runtime(watch = true, notReady = null) {
     assert.equal(test.programs.at(-1).resumed, 0, 'Reset code can install a build fresh');
     assert.equal(test.requests.length, 0);
 }
-console.log('ok: Ctrl/Cmd+R starts web instances fresh and serializes with watched builds; plain pages keep browser reload');
+// A dev build's tweaks: the page takes tide's values as they change, for the program to copy, and the menu's writes
+// go to tide one after another, read from the program's memory at once, with the header that lets them through
+{
+    const test = await runtime();
+    assert.equal(test.context.platform.tweaks_copy(0, 16), 0, 'no values before tide has any');
+    test.tweak(7);
+    await test.tick();
+    assert.equal(test.requests.filter(path => path === 'tweaks').length, 1);
+    assert.equal(test.context.platform.tweaks_copy(0, 16), 1);
+    assert.equal(test.context.u8()[0], 7, 'the values are copied into the program');
+    await test.tick();
+    assert.equal(test.requests.filter(path => path === 'tweaks').length, 1, 'the same values are fetched once');
+    test.strings.set(1, 'D:/game/game.tweaks').set(2, 'KickUp').set(3, '0.75');
+    test.context.platform.tweak_write(1, 2, 3);
+    test.strings.set(3, '1');
+    test.context.platform.tweak_write(1, 2, 3);
+    test.strings.clear();
+    await settle();
+    assert.deepEqual(test.writes.map(w => w.query), [
+        { file: 'D:/game/game.tweaks', name: 'KickUp', value: '0.75' },
+        { file: 'D:/game/game.tweaks', name: 'KickUp', value: '1' }], 'writes go in order, with the text as it was');
+    assert.ok(test.writes.every(w => w.headers['X-Tide'] === '1'));
+    assert.deepEqual(test.errors, []);
+}
+console.log('ok: Ctrl/Cmd+R starts web instances fresh and serializes with watched builds; plain pages keep browser reload; tweaks come and go through tide');
+
+// A dev build's checkpoints, which tide keeps in the game's folder: --from's is in before the first build starts; one
+// asked for is copied once it's come, once; one that isn't there says so; a save goes with the page's header and says
+// whether it was kept; the names are listed, a second at the most apart
+{
+    const test = await runtime(true, null, ['--seed', '7', '--from', 'boss']);
+    const page = test.context.platform;
+    assert.ok(test.requests.indexOf('checkpoint?name=boss&kind=checkpoint') >= 0, 'the --from checkpoint is asked for');
+    assert.ok(test.requests.indexOf('checkpoint?name=boss&kind=checkpoint') < test.requests.indexOf('game-1.wasm'),
+              'and is in before the first build starts');
+    test.strings.set(1, 'boss');
+    assert.equal(page.checkpoint_copy(0, 1, 0, 0), 3, 'its size, before it is copied');
+    assert.equal(page.checkpoint_copy(0, 1, 16, 2), 3, 'too little room copies nothing');
+    assert.equal(page.checkpoint_copy(0, 1, 16, 32), 3);
+    assert.deepEqual([...test.context.u8().slice(16, 19)], [7, 8, 9]);
+    assert.equal(page.checkpoint_copy(0, 1, 0, 0), 0, 'copied once, then gone');
+    test.strings.set(2, 'nowhere');
+    page.checkpoint_fetch(0, 2);
+    assert.equal(page.checkpoint_copy(0, 2, 0, 0), 0, 'not come yet');
+    await settle();
+    assert.equal(page.checkpoint_copy(0, 2, 0, 0), 0xFFFFFFFF, 'one that is not there');
+    assert.equal(page.checkpoint_copy(0, 2, 16, 32), 0xFFFFFFFF);
+    assert.equal(page.checkpoint_copy(0, 2, 0, 0), 0, 'and forgotten once said');
+
+    test.context.u8().set([1, 2, 3], 20);
+    test.strings.set(3, 'saved');
+    page.checkpoint_save(0, 3, 20, 3);
+    test.context.u8().fill(0, 20, 23); // The program's bytes are its own again at once
+    assert.equal(page.checkpoint_saved(), 0, 'not kept yet');
+    await settle();
+    assert.equal(page.checkpoint_saved(), 1, 'kept');
+    assert.equal(page.checkpoint_saved(), 0, 'said once');
+    assert.deepEqual(JSON.parse(JSON.stringify(test.posts)), [{ name: 'saved', headers: { 'X-Tide': '1' }, body: [1, 2, 3] }]);
+    test.strings.set(4, 'unwritable');
+    page.checkpoint_save(0, 4, 20, 3);
+    await settle();
+    assert.equal(page.checkpoint_saved(), 2, 'not kept');
+
+    assert.equal(page.checkpoint_list(0, 0, 0), 0, 'none listed yet: asked for');
+    await settle();
+    assert.equal(page.checkpoint_list(0, 0, 32), 11);
+    assert.equal(new TextDecoder().decode(test.context.u8().slice(0, 11)), 'boss\nsaved\n');
+    const asked = test.requests.filter(r => r === 'checkpoints?kind=checkpoint').length;
+    page.checkpoint_list(0, 0, 32);
+    assert.equal(test.requests.filter(r => r === 'checkpoints?kind=checkpoint').length, asked, 'not asked again within a second');
+    // ...and recordings, the other kind, listed and fetched apart from them
+    assert.equal(page.checkpoint_list(1, 0, 0), 0);
+    await settle();
+    assert.equal(page.checkpoint_list(1, 0, 32), 4);
+    assert.equal(new TextDecoder().decode(test.context.u8().slice(0, 4)), 'run\n');
+    test.strings.set(5, 'run');
+    page.checkpoint_fetch(1, 5);
+    await settle();
+    assert.equal(page.checkpoint_copy(0, 5, 0, 0), 0, 'a checkpoint of the name is another file');
+    assert.equal(page.checkpoint_copy(1, 5, 16, 32), 2);
+    assert.deepEqual([...test.context.u8().slice(16, 18)], [5, 6]);
+    assert.deepEqual(test.errors, []);
+}
+
+// A page without tide keeps none: a save isn't kept, and one asked for isn't there
+{
+    const test = await runtime(false);
+    const page = test.context.platform;
+    test.strings.set(1, 'boss');
+    page.checkpoint_save(0, 1, 0, 1);
+    assert.equal(page.checkpoint_saved(), 2);
+    page.checkpoint_fetch(0, 1);
+    assert.equal(page.checkpoint_copy(0, 1, 0, 0), 0xFFFFFFFF);
+    assert.equal(page.checkpoint_list(0, 0, 32), 0);
+}
+console.log('checkpoints: ok');

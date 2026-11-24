@@ -1,3 +1,37 @@
+## [Linear] copies: made when the source is drawn, with no depth, of bytes alone (2026-11-14)
+
+From a review of the section below (notes/textures.md, top section, has all of it). Three things here replace
+what that section says of "source epoch invalidation":
+
+- **A copy is as fresh as its source's `drawn` and `version`.** `linear_target_copy` kept `stamp ==
+  source_epoch + 1` as its only freshness test, and `checks_begin` and every target switch move the epoch: an
+  image drawn once and read `[Linear]` every frame was copied at full size every frame, and its mips made again.
+  It keeps the source's `version` and `drawn` now (`gpu_target`, `gpu_cube`, `gpu_array`: the counters their own
+  mips go by, which count each pass begun on the target, each kernel that writes it, and its image being made),
+  and is copied again only when one moved or the GPU image is another. `tide_platform_linear_copies()`
+  (`tide/platform.h`) counts the copies drawn, for tests and tools.
+- **The copy has no depth or stencil.** A target whose first color is `TIDE_GPU_COLOR_SRGB` is the renderer's own
+  copy and nothing else (`tide_gpu_target_depthless`, `gpu.h`): Vulkan makes it, a cube's faces and an array's
+  layers of that color with no depth image, begins their passes with no depth attachment and makes the pipelines
+  into them with no depth format; WebGPU the same (no `depthStencilAttachment`, no `depthStencil`). Each had a
+  depth and stencil of its own before, 4 or 8 bytes a pixel (a cube six, an array a depth array) that nothing
+  read. `made_target`, `made_face` and `made_array` count what the backend made (`target_depth`/`array_depth`
+  of 0 is none), so the count is right on the backends that still give one: `gpu_none`, and Unity's recorder,
+  whose packets are as they were.
+- **A source that isn't `TIDE_TARGET_RGBA8` is never bound.** `prepare_linear_target` had no format guard: a
+  float target was clamped with nothing said, and an R32i one bound to the copy's `texture_2d<f32>` is a
+  validation error on WebGPU and an undefined read on Vulkan. `linear_source_bytes` refuses it, by the id's own
+  formats, in `prepare_linear_target` (no copy) and in `texture_unavailable` (the draw passed by, with why).
+
+`check_linear_copies` (`platform/tests/targets.c`, run twice): a target drawn into once and read unmarked for
+frames (no copy), then `[Linear]` for frames (one copy, its bytes decoded, and exactly width by height by 4 bytes
+more held on Vulkan and WebGPU), in several passes of a frame with other targets drawn between (still one), drawn
+into again (one more), drawn and read twice in a frame (two), resized (one), the three refused formats, and
+disposal. Vulkan with the validation layer, WebGPU on the web-debug page, both depth fallbacks. Pass 33 of the
+shader fixture covers the cube's and the array's copies as before. Android: `tide_platform_targets_app` and its 24-bit
+depth fallback, in CI's Android job (`notes/android-and-mingw.md`, Every window fixture an app). Not run: Unity, Linux,
+macOS.
+
 ## [Linear] sampled images (2026-11-14)
 
 A draw texture carries a static `linear` interpretation independently from its source id. GPU upload cache
@@ -28,7 +62,7 @@ these changes require the parent's final compilation/unit check. No other-device
 ## Numeric image rendering (2026-11-14)
 
 The language feature above the attachment groundwork is complete (render-targets.md, shaders.md). Numeric
-read kinds 9–12 are unfiltered float/int 2D/3D bindings with compatible zero fallbacks; storage volume and
+read kinds 9â€“12 are unfiltered float/int 2D/3D bindings with compatible zero fallbacks; storage volume and
 2D formats reuse the existing portable storage API. Shader numeric_outputs selects replace blending per
 attachment; output_types guards dynamically supplied incompatible targets before pipeline creation.
 The internal RESET_ALONE depth mode resets depth with every color write disabled. Sixteen static clear
@@ -100,6 +134,105 @@ are provisional, within that approved work:
   configurations actually used on the second run. The web prewarm test passes with both checks retained.
 
 
+## The driver's cache in a folder of the game's (2026-11-16, later)
+
+Owner: "lets do option 2" (the entry below: NVIDIA's machine-wide folder was full and took nothing new). Desktop.
+
+- **`tide_platform_driver_cache`** (`platform/src/io.c`, declared in `files.h`), called first in glfw.c's
+  `tide_window_open`: where a game is named it makes `<cache folder>/driver` and sets
+  `__GL_SHADER_DISK_CACHE_PATH` to it, with backslashes on Windows (`_putenv_s`, which sets the process's
+  environment too; `setenv` elsewhere). Nothing where the environment already names a folder (the machine's own
+  setting, or an earlier window of the same program) or says `__GL_SHADER_DISK_CACHE=0`. A folder over
+  `DRIVER_CACHE_MOST` (256 MiB; M&R's is 17 MB) is removed first and made again: the driver only adds, as
+  `pipelines.vulkan` does, and that costs one cold start. Other vendors' drivers ignore the variable; Mesa evicts
+  on its own, AMD's and Intel's Windows caches weren't looked at.
+- **Before Vulkan starts, or not at all.** Measured with the probe host: set before `tide_platform_open` the driver
+  wrote 20 MB into the folder; set after the window opened (instance and device made), nothing. So
+  **`tide_run_open` (`tide/host.h`) names the game before it opens the window** (`tide_run_name_game`, declared
+  ahead of it): its folders, its log and background pipelines are set a step earlier, and naming again later
+  changes nothing, as before. A host that names the game after `tide_platform_open` (`platform/tests/prewarm.c`,
+  `pipeline_cache.c`) gets the driver's default folder, as before; `docs/c/hosts.md` says to name it first.
+- **Both caches are wanted**: with the driver's folder warm and no `pipelines.vulkan`, the step took 0.84 s; with
+  `pipelines.vulkan` alone 0.78-0.93 s (below); with both 0.05 s.
+- Checked with the probe (M&R's shaders, debug tree): a fresh game 2.74 s cold and the folder made (17.3 MB); the
+  next run 0.048 s; with `__GL_SHADER_DISK_CACHE_PATH` set by the caller, its folder used and the game's untouched;
+  the folder padded past 256 MiB, removed and made again (0.70 s, `pipelines.vulkan` still warm), then 0.045 s.
+  Through the standard host: `tide_platform_capture --frames 3 --capture` made `dev.tide.tide_platform_capture/driver`.
+  Not checked: Linux's NVIDIA driver (the same variables; CI has no GPU), a visible window.
+
+## The shader step measured again: NVIDIA's own cache folder was full (2026-11-16)
+
+Owner: "i have a suspicion that shader compilation stage is slower than it should be". Measured, nothing built.
+Setup (scratch, not kept): Mount & Rifle's sources through `tide_add_game` in a debug tree with a host that only
+calls `tide_platform_prewarm` over `tide_game_shaders` in a hidden window with background pipelines on, a copy of
+the owner's `pipelines.keys` (136 keys) put back before each run (a run that draws nothing ages them), and
+`make_work` timing each `vkCreate*Pipelines`. RTX 4080 SUPER, 24 threads, 11 making pipelines. Today's game: 139
+shaders, 267 pipelines of 208 modules.
+
+| Run | Step | Driver time in the calls |
+|---|---|---|
+| Nothing cached anywhere (`__GL_SHADER_DISK_CACHE_PATH` an empty folder, no `pipelines.vulkan`) | 4.8 s | 44 s on 11 threads; 30 s one at a time (30.2 s step) |
+| Warm, the driver's cache in a folder with room | 0.05 s | 0.15 s |
+| Warm, the driver's default folder (this machine's) | 0.77 s | 7.8 s on 11 threads; 0.71-0.78 s one at a time |
+| Warm, the driver's cache off (`__GL_SHADER_DISK_CACHE=0`), `pipelines.vulkan` alone | 0.78-0.93 s | 8.2-9.7 s |
+
+- **`%LOCALAPPDATA%\NVIDIA\GLCache` is at its 1024 MB limit and takes nothing new.** The driver keeps a file per
+  program there; the probe's stayed at 113 KB over every run, where the same run with the folder elsewhere wrote
+  21 MB. Its oldest files are from 2026-10-20: nothing is put out to make room. The third and fourth rows are the
+  same: with the folder full the driver's cache answers nothing, and `pipelines.vulkan` is all that does.
+- **`pipelines.vulkan` alone is the slow kind of hit**: about 3 ms a pipeline, and one at a time whatever the
+  threads (eleven threads take eleven times the thread time for the same wall time). The driver's own cache is
+  fifteen times faster. So our file doesn't stand in for the driver's.
+- **Every graphics pipeline is in the cache now** (251 of 251 by `FAIL_ON_PIPELINE_COMPILE_REQUIRED`); the 216 that
+  never were on 2026-11-10 (below) are gone. Not explained; a full driver folder that day is a guess.
+- Cold, threads still help (30 s of work in 4.8 s), and one shader is a tenth of it: `LandVert and GroundLit`,
+  65,585 words, 1.8-2.7 s.
+
+Not measured: the owner's own `game.exe` in a window (its file in the driver's folder is 147 MB and was written
+today, so it may still be answered from there; a build whose shaders changed since can't add to it). For the owner:
+emptying that folder or raising NVIDIA's shader cache size fixes this machine; whether the engine should give the
+driver a folder of the game's own (`__GL_SHADER_DISK_CACHE_PATH`, set before Vulkan loads: NVIDIA's alone, and a
+folder that's emptied when `pipelines.vulkan` starts over) is the owner's to decide.
+
+### What an optimizer would add, after the new helpers (2026-11-16, later still)
+
+Owner: "do we not optimize the spirv code?" No: `spirv.c` translates tidec's WGSL as it is, and the driver inlines
+and cleans up. `spirv-opt` passes over the game's SPIR-V with the new helpers, cold, two runs each, the probe's
+variants keyed by the hash of the game's current shaders (the first try's were keyed by the old ones and loaded none,
+which the probe's "0 of 139" line said): as built 2.96/3.03 s; every call inlined first
+(`--inline-entry-points-exhaustive --eliminate-dead-functions`) 2.58/2.74; then SSA 2.51/2.77; then folding and dead
+code 2.86/2.64; all of `-O` 2.74/2.36; before the helpers 4.27/4.32. So inlining is most of what an optimizer gives,
+about 11% of its 15%. tidec has no inliner, and SPIRV-Tools is C++ that tidec (and the playground's wasm tidec)
+would then build with: the owner's to pick.
+
+### What the driver compiles cold: mostly tidec's helpers (2026-11-16, later)
+
+Owner: "sure look into that" (the shaders' size). Each shader's SPIR-V and WGSL read out of the generated C, the
+probe's host loading other SPIR-V for a shader from a folder (by the FNV of its own words). Nothing built.
+
+- **Cold time goes by the code once every call is inlined, not by the file's size.** Over the game's 155 graphics
+  pipelines made one at a time: r = 0.89 with inlined instructions (about 11 ms a thousand), 0.77 with words.
+  `LandVert and GroundLit`'s fragment stage is 6,323 instructions as written and 96,795 inlined; the game's
+  shaders are 398 thousand instructions as written and 1.5 million inlined.
+- **Three quarters of that is helpers tidec writes** (shader.c's `tide_*`), by times inlined times size: noise
+  40.6% (`tide_simplex3` 1,167 instructions a call, 365 calls; `tide_grad3`, `tide_grad2`, the xxh hash steps),
+  the forgiving math 35.2% (`tide_smoothstep1` 7.3%, `tide_nan` 6.3% over 15,835 calls, `tide_max1` 5.6%, `tide_f`
+  4.1% over 20,939 calls, `tide_pow1`, `tide_saturate1`, `tide_min1`), the game's own functions 24.2%.
+- **The same pipelines cold, by what SPIR-V they're given** (11 threads; base twice):
+
+| SPIR-V | Step | Driver time |
+|---|---|---|
+| As tidec writes it | 4.6-5.0 s | 43-45 s |
+| `spirv-opt -O` (every call inlined, then cleaned: 21% more words) | 3.2 s | 32 s |
+| Cleaned with no inlining (`--ssa-rewrite`, dead code, CCP...: 31% fewer words) | 4.3 s | 40 s |
+| Every helper `DontInline` | 9.0 s | 89 s |
+
+  Warm, all four are the same (0.05-0.07 s). Not checked: that the optimized SPIR-V draws the same pixels.
+- Built since (shaders.md, Helpers that cost the driver less to compile): the cold step 4.72 s to 3.64 s.
+- Not tried then, for the owner: the helpers written with fewer instructions for the same values (`tide_grad2/3`'s
+  branches as a table, `tide_smoothstep1`, `tide_max1`... without branches), which changes the shader goldens; and
+  tidec doing what `spirv-opt -O` does, which it has no code for (SPIRV-Tools is C++).
+
 ## Why a warm shader step still takes 5 s on Mount & Rifle, and keys that age (2026-11-10)
 
 Owner: "5s vs 7.7s for cached shaders still seems high no?" Measured with the hidden-loader setup of the entry
@@ -155,6 +288,11 @@ driver at every start, and past `CACHE_MOST` (256 MiB, which the owner's file wa
   has an `outgrown` run: a whole file a run would read, with the size set under it, is read as 0 bytes, and the
   run after reads the file that was written over it. Passing under ASan on Windows with `tide_platform_prewarm`,
   `_loading` and `_draw`.
+- Since 2026-11-14 the size set is one byte under the driver's data in the last run's file, and the test asks the
+  driver whether it keeps pipelines at all (`tide_gpu_vk_pipeline_cache_keeps`, gpu_vk.h: a compute pipeline that
+  does nothing, compiled into an empty cache of its own): where it does, a file must hold more than the two headers
+  and a warm run read more than the driver's header; the Android emulator's keeps its header alone, and its files
+  are the headers exactly (`notes/android-and-mingw.md`, Every window fixture an app).
 - The fallback folder's file (`%TEMP%/dev.tide.game/pipelines.vulkan`, which games with no name yet shared) is no
   longer read by the standard host; what's there is the owner's to delete.
 
@@ -188,6 +326,13 @@ What held the frame's thread, found by attaching LLDB during the stall and by ti
   nothing) and `tide_platform_prewarm_waiting` is 1 meanwhile, so the loader waits. Whatever writes, switches or
   lets go of the cache takes the read first (`finish_cache_read`). Without background (headless, custom hosts) it's
   read in place as before.
+- **A driver whose cache data is short of its own header (2026-11-20).** CI's Android emulator (`-gpu lavapipe`,
+  installed new each run) began giving 20 bytes from `vkGetPipelineCacheData`: a header saying it is 32 long, cut
+  4 bytes into its UUID (`26.2`). `write_pipeline_cache` writes them as given and `cache_for_device` refuses the
+  file at the next run, so such a device compiles from nothing each run, as one with no file. The engine is
+  unchanged. `pipeline_cache.c` reads the last run's file before its own: where the driver's data is shorter than
+  the header it claims, every run must read 0 bytes and the spoiling modes have nothing to spoil; it says so and
+  prints the file's size and first bytes. Until then `tide_platform_pipeline_cache_app` failed at its warm run.
 - **Two files were read.** The platform followed the cache folder of a game with no name yet (`dev.tide.game`,
   another 268 MB here: every unnamed `game.exe` shares it), then at `tide_run_name_game`, after the pack, switched:
   a `vkGetPipelineCacheData` and hash of the first (0.37 s) and a read of the second. The loader now names the game
@@ -752,9 +897,9 @@ results and stale callback cancellation. Report/schema coverage is recorded
 in standard-host.md. Other OSes and Android were not run locally.
 
 
-## Match updates during desktop Vulkan frame waits (2026-11-03)
+## Match updates during Vulkan frame waits (2026-11-03; Android 2026-11-14)
 
-The desktop's `tide_gpu_vk_present_updating` polls the next frame slot's fence
+A window's `tide_gpu_vk_present_updating` (desktop's, and Android's since 2026-11-14) polls the next frame slot's fence
 after submission and presentation. If it is still pending, the platform may
 run the host's match-only callback between timed waits. The callback receives
 elapsed time since the render frame began and returns its next update delay
@@ -766,8 +911,13 @@ indefinite wait.
 `tide_platform_update_while_waiting` is optional and active only after the
 frame callback returns `TIDE_KEEP_RUNNING`, during presentation. It must not
 poll input/events, render, reload, or change GPU/window resources. Desktop
-GLFW supplies it; Android retains `tide_gpu_vk_present` without an updater,
-and OpenGL/web are unchanged. Headless runs never call the host updater, so
+GLFW supplies it, and since 2026-11-14 Android's activity too (Claude's pick,
+Provisional: it presented without an updater, so a phone's match waited out
+every GPU-bound frame's fence; `tide_platform_gpu_wait_app` found it,
+`notes/android-and-mingw.md`, Every window fixture an app; the public comment
+in `tide/platform.h`, `gpu_vk.h` and `window.h` say so since 2026-11-14 too,
+and `docs/spec.md` has it under Sessions, Provisional); the web is unchanged.
+Headless runs never call the host updater, so
 their made-up time and scripted frame boundaries remain unchanged.
 
 Two frame slots remain in flight. Fence completion still precedes garbage

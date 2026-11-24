@@ -19,8 +19,11 @@ draw-only textures can skip image decoding too. The cache is keyed by source
 contents, external model buffers, import options and importer/decoder revision;
 editing code, or updating to a Tide whose importers are unchanged, keeps it
 useful. Entries unused for 30 days, and other Tide versions' results after 14
-days, are removed. Each build still discovers glob matches and
-packs the current declarations and vertex layouts. Grid images keep their exact
+days, are removed. A file whose size and last-write time are as the last build
+recorded them (in `.tide/assets.times`) is taken as unchanged without being read,
+as git takes one; saving a file, or touching it, has it read again. A build that
+changes no asset leaves the pack file as it is. Each build still discovers glob
+matches and lays out the current declarations and vertex layouts. Grid images keep their exact
 CPU-readable decoder path. Cache files are disposable: missing, incompatible or
 damaged entries fall back to the ordinary import, and an unwritable cache does
 not prevent a build.
@@ -110,9 +113,10 @@ component Sign
 For color images used by lighting, declare `[Linear] asset Texture albedo = "art/albedo.png";`.
 The same mark works on a singular `TextureArray` or `Cubemap` asset. GPU reads then return
 linear light, with filtering and mipmaps in that space, while alpha stays unchanged.
-Unmarked images keep their existing display-number behavior. `[Linear]` does not go on a
-CPU-readable grid or a glob's List/Map; declare each sampled source separately. See
-[Linear-light color](./shaders.md#linear-light-color) for fields and helper functions.
+Unmarked images keep their existing display-number behavior. A glob's `List<Texture>` or
+`Map<string, Texture>` takes the mark for every image it holds, each packed for that reading;
+`[Linear]` does not go on a CPU-readable grid or a glob of grids. See
+[Linear-light color](./shaders.md#linear-light-color) for fields, parameters and helper functions.
 `[Raw, Linear]` is refused; `[Linear, Lossless]` keeps a color image uncompressed.
 
 Marked DDS images rebuild their mip chain from the base image in linear light, so authored
@@ -150,7 +154,7 @@ view Show(mut Player player)
 - What a field keeps of `hero` or of `run[2]` is that image as the files have it now: under `tide run`, a saved picture shows through the copies a game kept, as it does through `hero` itself.
 - How it's sampled can be said once, on its declaration: `[Filter(Filter.Point), Wrap(Wrap.Repeat)]` before the asset (see [Saying it once, on the texture](./meshes-and-textures.md#saying-it-once-on-the-texture)). The `Texture` carries it: what a field keeps of `hero` is sampled as `hero` is.
 
-For numeric images, declare `[Raw] asset Texture masks = "art/masks.png";` and retain it in a `[Raw] Texture` field, or sample the asset by name in a shader. Raw images preserve all channels and stay out of ordinary color draws and `Texture` values. See [Textures that are numbers](./shaders.md#textures-that-are-numbers) for field assignments and GPU helper forwarding.
+For numeric images, declare `[Raw] asset Texture masks = "art/masks.png";` and retain it in a `[Raw] Texture` field, or sample the asset by name in a shader. A folder of them is a glob's `[Raw] asset List<Texture> normals = "art/normals/*.png";` (or a `Map<string, Texture>`), each image kept as numbers and each element a Raw image. Raw images preserve all channels and stay out of ordinary color draws and `Texture` values. See [Textures that are numbers](./shaders.md#textures-that-are-numbers) for field assignments, parameters and GPU helper forwarding.
 
 ### GPU compression
 
@@ -275,8 +279,6 @@ The same reference rules support `Asset<SkinnedMesh<V>>`, including transparent
 type aliases. Its `.Value` preserves the packed model's skinning palette and LOD
 paths; persistent model assignment still uses ordinary owned value semantics.
 See [Skinned meshes and animation](./animation.md) for an example.
-The [native editor](../tools/editors.md#native-scene-editor) can browse, assign
-and preview static mesh fields; your views still choose materials and drawing.
 
 
 A model an artist made, or one a tool generated, is a mesh file: glTF (a `.glb`, or a `.gltf` with its buffers), FBX (`.fbx`, binary or ASCII) or a Wavefront `.obj`. `asset Mesh<V>` declares one as vertices of a struct of yours, `V`, which the file fills by its fields' names:
@@ -400,12 +402,10 @@ using Model = Mesh<Vertex3>;
 
 singleton Arena { Model statue; PlayerID host; string message; }
 
-command SetStatue { List<byte> model; }
-
-command(SetStatue value, PlayerID sender) Apply(mut Arena arena)
+command(List<byte> model) SetStatue(mut Arena arena, PlayerID sender)
 {
     if (sender != arena.host) return;
-    if (Model.Decode(value.model) is Model statue) arena.statue = statue;
+    if (Model.Decode(model) is Model statue) arena.statue = statue;
     else arena.message = "That isn't a model";
 }
 ```
@@ -581,7 +581,7 @@ The editor keeps assets in step with their files: renaming a file or a folder re
 
 `tide build` packs the closure of the game's `asset` declarations, and nothing else in the folder. A file is in the pack once however many declarations name it, and they all read the same value: a `Grid2<Color>` of the pack lives in a read-only region every world can name, outside every world's heap, so no world copies, hashes or sends it. A file declared as a `Grid2<Color>` and as a `Texture` is in it once as each, and so is a text file with characters past ASCII that's declared as a `string` and as a `List<byte>`.
 
-Where the pack is: beside the program as `<name>.pack` on desktop, inside the self-contained page on the web, and in the APK on Android. Under `tide run`, tide watches the files assets name. Ordinary images and static models reload as data. [Skinned models and animation catalogs](./animation.md) and assets their vertex defaults read require a matching game build because their values can become match state; the running game refuses a mismatched pack and keeps the current one. This also applies to asset dependencies of vertex defaults used by runtime skinned decoding. A C host of its own (`tide_add_game` with `HOST`) gets the pack as a C array, `tide_game_pack`, to hand `tide_assets_load`.
+Where the pack is: beside the program as `<name>.pack` on desktop, inside the self-contained page on the web, and in the APK on Android. A release or distribution build's pack is compressed as a file and read into the same memory, so a game's assets take the room on disk and in a download that their content needs, and the room in memory that they always did. Under `tide run`, tide watches the files assets name. Ordinary images and static models reload as data. [Skinned models and animation catalogs](./animation.md) and assets their vertex defaults read require a matching game build because their values can become match state; the running game refuses a mismatched pack and keeps the current one. This also applies to asset dependencies of vertex defaults used by runtime skinned decoding. A C host of its own (`tide_add_game` with `HOST`) gets the pack as a C array, `tide_game_pack`, to hand `tide_assets_load`.
 
 ## Loading at runtime
 
@@ -600,7 +600,7 @@ Bytes that every player should see go into the match through a [command](./comma
 
 Bytes can come from anywhere, so a small file can't ask for much. A picture of more than 4096 × 4096 pixels (16,777,216) is `InvalidData` before anything is made for it, whatever its shape; at that size its cells are 256 MiB of the match. So is a file whose compressed data goes on for more than 1 MiB past its last row. These limits are the engine's, the same for every game, so every machine in a match refuses the same files. A picture refused for one says so on each machine's log, naming the limit: `tide: grid.Decode refused a PNG: it's 5000 by 5000 pixels, 25,000,000 in all, more than the 16,777,216 grid.Decode takes (TIDE_GRID_DECODE_MAX_PIXELS)`. Build-time imports past a limit are errors that name it the same way.
 
-It's pure, so it runs in match code as well as local code: a handler that decodes gives every machine the same pixels, bit for bit, because the engine's own reader does the decoding, with no system library in the way. The grid then draws as a texture like any `Grid2<Color>` (see [Meshes and textures](./meshes-and-textures.md#textures)).
+It's pure, so it runs in match code as well as local code: a command or handler that decodes gives every machine the same pixels, bit for bit, because the engine's own reader does the decoding, with no system library in the way. The grid then draws as a texture like any `Grid2<Color>` (see [Meshes and textures](./meshes-and-textures.md#textures)).
 
 A player's own picture, decoded for this machine alone:
 
@@ -623,7 +623,7 @@ view Pick(mut Picker picker)
 }
 ```
 
-In the match, the handler of a command decodes, and every machine gets the same pixels:
+In the match, a command decodes, and every machine gets the same pixels:
 
 ```csharp
 singleton Arena
@@ -632,12 +632,10 @@ singleton Arena
     PlayerID host;
 }
 
-command SetBackground { List<byte> png; }
-
-command(SetBackground value, PlayerID sender) Apply(mut Arena arena)
+command(List<byte> png) SetBackground(mut Arena arena, PlayerID sender)
 {
     if (sender != arena.host) return;
-    arena.background.Decode(value.png)!;
+    arena.background.Decode(png)!;
 }
 ```
 

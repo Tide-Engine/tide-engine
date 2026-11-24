@@ -36,16 +36,29 @@ TIDE_TEST(indexed_loops_give_what_plain_loops_give)
     tide_local_init(&local);
     uint64_t at[80] = {0};
     int swings = 0, swung_most = 0; // Ticks Swing's loop found rows in, and found most of them in
+    int ranged = 0, kinds = 0, marks = 0, helped = 0, doubled = 0; // Ticks exact keys found cells in, and found two at a place
     for (int t = 0; t < 80; t++) {
         tide_world_tick_events(&world, NULL, &events);
         const uint64_t drawn = frame();
         at[t] = tide_world_hash(&world);
-        printf("ixloops %d %016" PRIx64 " %" PRIu64 " %.9g %d %d %d %d %.9g %d %d %d %d %d %d %.9g\n", t, at[t], drawn, (double)local.Drawn.sum,
+        printf("ixloops %d %016" PRIx64 " %" PRIu64 " %.9g %d %d %d %d %.9g %d %d %d %d %d %d %.9g", t, at[t], drawn, (double)local.Drawn.sum,
                world.Stats.teams, world.Stats.low, world.Stats.band, world.Stats.tagged, (double)world.Stats.sum,
                world.Stats.around, world.Stats.shifting, world.Sparks.warm, local.Drawn.glanced, local.Drawn.marked,
                world.Stats.swing, (double)world.Stats.swung);
+        printf(" %d %d %d %d %d %d %d %d %d %d %016" PRIx64 " %d\n", world.Found.places, world.Found.keys, world.Found.ranged,
+               world.Found.kinds, world.Found.marks, world.Found.listed, world.Found.helped, world.Found.pinged,
+               world.Found.floats, world.Found.converted, (uint64_t)world.Found.sum, local.Drawn.cells);
+        // Keys compared as doubles and floats find their neighbours too: more than the exact keys do
+        TIDE_CHECK(world.Found.converted > world.Found.keys);
+        // A place and a dimension, or the long they pack to: the same cells
+        TIDE_CHECK(world.Found.places == world.Found.keys);
         swings += world.Stats.swing > 0;
         swung_most += world.Stats.swing > 2000;
+        ranged += world.Found.ranged > 0;
+        kinds += world.Found.kinds > 0;
+        marks += world.Found.marks > 0;
+        helped += world.Found.helped > 0;
+        doubled += world.Found.places > 24;
         if (t == 30) tide_world_copy(&snapshot, &world);
     }
     TIDE_CHECK(world.Stats.teams > 0 && world.Stats.low > 0 && world.Stats.band > 0 && world.Stats.tagged > 0);
@@ -53,6 +66,8 @@ TIDE_TEST(indexed_loops_give_what_plain_loops_give)
     TIDE_CHECK(world.Stats.around > 0 && world.Stats.shifting > 0 && local.Drawn.marked > 0);
     TIDE_CHECK(local.Drawn.glanced > 0);
     TIDE_CHECK(swings > swung_most && swung_most > 0); // Few rows on some ticks, most on others
+    TIDE_CHECK(ranged > 40 && kinds > 40 && marks > 40 && helped > 40 && doubled > 0);
+    TIDE_CHECK(world.Found.listed > 0 && world.Found.pinged > 0 && world.Found.floats > 0 && local.Drawn.cells > 0);
 #ifdef IXTEST_INDEXED
     TIDE_CHECK(world.tide_index_cache != NULL);
     TIDE_CHECK(local.tide_index_cache != NULL);

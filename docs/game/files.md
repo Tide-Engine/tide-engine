@@ -10,7 +10,7 @@ description: "Read and write local files in Tide, use persistent save and tempor
 
 `Application.persistentDataPath` is the game's save directory. Its contents survive normal restarts and application updates. `Application.temporaryCachePath` is for disposable files; code must tolerate their disappearance. Both are read-only runtime properties.
 
-The engine keeps two files of its own in the temporary cache folder. `pipelines.vulkan` holds the GPU programs it compiled with Vulkan, so the game's next run starts drawing sooner. `pipelines.keys` says how each of the game's shaders was drawn (into which kind of target, blended how), so the next run compiles them as it starts, rather than in the frame that first draws one; a shader whose code changed keeps its name, so it's compiled as it starts too. They're there whether or not the game uses files: `pipelines.vulkan` for a game that draws with Vulkan, `pipelines.keys` for any that draws on a desktop or a phone; a page keeps neither. Deleting them is harmless: the next run compiles its shaders as it draws them, and writes them again.
+The engine keeps two files of its own in the temporary cache folder. `pipelines.vulkan` holds the GPU programs it compiled with Vulkan, so the game's next run starts drawing sooner. `pipelines.keys` says how each of the game's shaders was drawn (into which kind of target, blended how), so the next run compiles them as it starts, rather than in the frame that first draws one; a shader whose code changed keeps its name, so it's compiled as it starts too. On a desktop with an NVIDIA GPU, the `driver` folder beside them is the driver's own cache of what it compiled for the game, which it would otherwise keep with every other program's; past 256 MB it starts over. It isn't used where `__GL_SHADER_DISK_CACHE_PATH` or `__GL_SHADER_DISK_CACHE=0` is set. They're there whether or not the game uses files: `pipelines.vulkan` for a game that draws with Vulkan, `pipelines.keys` for any that draws on a desktop or a phone; a page keeps neither. Deleting them is harmless: the next run compiles its shaders as it draws them, and writes them again.
 
 Save locations use the game's stable `appId` setting, independently of its window title:
 
@@ -28,10 +28,102 @@ Without an explicit `appId`, the standard host derives one from the game's folde
 
 Relative paths resolve under the persistent data directory on every platform. Explicit absolute paths are usable on native platforms subject to the OS's permissions. On the web, files stay inside this game's persistent and temporary virtual roots.
 
+### The engine's folder
+
+The `Tide` folder in `Application.persistentDataPath` is the engine's: the match's [store](#saving-the-match) keeps its files in `Tide/store/`. `File` and `Directory` calls can't use it, so a game's files can never be mistaken for the store's or overwrite them. Every call on a path in it, the folder itself too, fails with `IOError.AccessDenied`, as does moving or deleting a folder it's in (the persistent data directory itself, say); `File.Exists` and `Directory.Exists` are false there. Listing a folder it's in names the `Tide` folder, but nothing inside it. Keep the game's own files anywhere else in the directory, and what the match needs kept in `Storage`. The first refused call of a run prints that to the log.
+
+A path is refused however it's written: relative or absolute, with `/` or `\`, through `.` or `..` (`saves/../Tide/x`), and in any case (`TIDE/store`), on every platform alike, so a game that works on one works on all. Names that only look like it are the game's: `Tide2/`, `tide-notes.txt` and `saves/Tide/` are fine.
+
 For native desktop tests, [`--data-dir <folder>`](../tools/cli.md#without-a-window)
 selects a separate persistent directory. Scripted runs otherwise use the normal
 saves. The override changes relative paths and `Application.persistentDataPath`;
 explicit absolute paths still reach the files they name.
+
+## Saving the match
+
+Match code can't touch files: they're this machine's, and the match is the same on every machine. What a match needs kept, it asks the machine that runs it to keep, with `Storage`:
+
+```csharp
+// As a chunk nobody is near goes
+Storage.Save($"chunks/{chunk.at.x}_{chunk.at.z}", chunk.blocks.ToBytes());
+
+// As someone next comes near: the answer is an event, a tick later
+Storage.Load($"chunks/{at.x}_{at.z}", chunk);
+
+event(Loaded loaded) Fill(mut Chunk chunk)
+{
+    if (loaded.found) chunk.blocks = Grid3<Block>.FromBytes(loaded.bytes) ?? Grid3(16, 16, 16);
+}
+```
+
+A grid's `ToBytes()` and its type's `FromBytes(bytes)` turn it into a `List<byte>` and back, its size and its cells, a chunk of air as nothing and a chunk of one block as a few bytes (see [Grids as bytes](../language/grids.md#grids-as-bytes)). For values of other kinds, a game writes its own bytes, or [JSON](../language/json.md).
+
+`Storage.Save(key, bytes)` keeps a `List<byte>` under a key, replacing what was there. `Storage.Load(key)` asks for it back: the answer is a `Loaded` event in a later tick, with the `key`, the `bytes`, whether it was `found`, and whether reading it `failed` (something is kept there that couldn't be read, which a game shouldn't make afresh and save over), sent to the entity the load names (`Storage.Load(key, entity)`) or to the world. `Storage.Delete(key)` forgets it.
+
+`Storage.List(prefix)` asks for the keys that start with a prefix: the answer is a `Listed` event in a later tick, with the `keys` sorted by their bytes, 1,024 at the most, whether there are `more` past the last, and whether listing them `failed`. To go on, list again after the last key, `Storage.List(prefix, after)`. Like a load, a listing goes to the entity it names, `Storage.List(prefix, entity)` or `Storage.List(prefix, after, entity)`, or to the world:
+
+```csharp
+// Every chunk dimension 0 has saved, a page at a time
+Storage.List("chunks/0/", this);
+
+event(Listed listed) Count(mut Atlas atlas)
+{
+    if (listed.failed) return;
+    atlas.saved += listed.keys.count;
+    if (listed.more) Storage.List(listed.prefix, listed.keys[listed.keys.count - 1], this);
+}
+```
+
+A listing has only keys a save made: other files in the folder (a half-written save the server stopped in, a file someone put there) are left out.
+
+### Waiting for the answer in a task
+
+A match [task](./tasks.md) can wait for a load or a listing instead, and have the answer as a value: `await Storage.Load(key)` gives the `List<byte>` kept under the key, and `await Storage.List(prefix)` or `await Storage.List(prefix, after)` a `StorageKeys`, its `keys` and whether there are `more`. Each fails with an `IOError`: `NotFound` where nothing is kept under the key, `Failed` where something is kept that couldn't be read, or the keys couldn't be listed, and `InvalidPath` at once, in the tick it's awaited, for a key the store can't keep: an empty one, or one longer than 256 bytes (a listing's prefix or `after` longer than that too).
+
+```csharp
+// A chunk's blocks, once the store has answered
+async void Fill(mut Chunk chunk, string key)
+{
+    var saved = await Storage.Load(key);
+    if (saved is List<byte> bytes && Grid3<Block>.FromBytes(bytes) is Grid3<Block> blocks) chunk.blocks = blocks.Copy();
+    else if (saved is IOError.NotFound) chunk.stage = Stage.Missing; // Never saved: made from the seed
+    // Anything else was kept but couldn't be read: not made afresh over it
+}
+
+// Every key under a prefix, a page at a time
+async void Survey(mut Atlas atlas, string prefix)
+{
+    mut var after = "";
+    mut var going = true;
+    while (going)
+    {
+        var page = await Storage.List(prefix, after);
+        if (page is StorageKeys keys)
+        {
+            atlas.saved += keys.keys.count;
+            going = keys.more;
+            if (going) after = keys.keys[keys.keys.count - 1];
+        }
+        else going = false;
+    }
+}
+```
+
+The answer is the same as a `Loaded`'s or a `Listed`'s, and comes the same way: in a later tick, the same one on every machine, which the task goes on at the end of with the other tasks whose time has come. An awaited load names no entity, as its answer is the task's; without `await`, `Storage.Load(key)` is answered by a `Loaded` event, in a task too. Two tasks that await one key are answered apart.
+
+What a task waits for is kept in it, so a snapshot, a joining player and a rewind keep it too. A task that ends before its answer comes (its entity was destroyed, or it was cancelled) is gone, and its answer changes nothing. Rewinding the match drops the answers on their way, and the tasks the rewound match has waiting ask again. Only match tasks wait for the store: local code keeps this machine's files with `File`.
+
+The answer comes once the files have been read, usually the next tick or the one after, and its handlers run after that tick's systems. In a match that doesn't hide state, an answer of more than about 1 KiB goes to every player first, as a big command does, so it can take longer, and the answers after it wait for it. The answers come in the order they were asked, and what a tick asks is carried out after what the ticks before it asked: a load after a save of its key, in the same tick or a later one, finds what was saved.
+
+The standard hosts read and write the files on a thread of their own, so a tick never waits for the disk; a page keeps them on its own thread, between ticks. A [run with no window](../tools/cli.md#without-a-window) (`--frames`, `--capture`, `--script`) reads and writes them as each tick ends instead, so every answer comes the tick after it was asked and the run goes the same every time. A server that stops cleanly writes what it was asked to save first.
+
+A load of a key nothing was saved under costs no read: the server lists `Tide/store/` once, at its first load, and from then on knows which keys have a file (those listed, and those it saved since). So a world that asks for every chunk a player comes near, most of them never changed, asks the disk only for the ones that were. The game's own file calls can't touch the folder (see [The engine's folder](#the-engine-s-folder)); a file put there by anything else while the server runs (a backup copied in by hand) may not be found until the server starts again.
+
+Only the server asks: a player's machine that runs the same tick saves and loads nothing. With the standard hosts, each key is a file in `Tide/store/` in the game's persistent data folder, on the machine that runs the match: the hosting player's, or a dedicated server's (the same folder, named for the game's `appId` or, without one, for the game). A key is any text up to 256 bytes, with `/` for folders, and a value up to 32 MiB. Any key is a file of its own on every system: in its file's name, everything but small letters, digits, `-`, `_` and the dots of its last part is written out as `%XX`, and so is the first letter of a Windows device's name (`con`, `nul`). A save is written whole beside the old file and then moved over it, so a server that stops mid-save keeps one or the other. Every match a server hosts shares the folder, so a game with several worlds puts the world's name in its keys. A match that uses the store can't change hands (`hostMigration`): what it keeps is on the hosting machine.
+
+A match the [hosting service](../multiplayer/hosting.md#the-match-s-store) runs keeps its store there, with the same keys, values and answers: the service reads and writes it while the match goes on, and the answers come in the order they were asked, as from files. Each world keeps its own (a long-lived match's, which it finds again when it's resumed or recovered, or a sharded world's, which all its shards share), within the service's limits on a value, on what one world and one account keep and on how fast a world reads and writes; a save past them isn't kept, and the match's log says why. Every load is answered, as `failed` where the service couldn't read it.
+
+`Storage.Flush` is local code's, and about this machine's own files.
 
 ## Logs and crashes
 

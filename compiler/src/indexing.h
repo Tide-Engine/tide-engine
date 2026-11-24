@@ -26,6 +26,9 @@ typedef struct bound {
     int comp;
     const struct bound *a;
     const struct bound *b;
+    // What its comparison read went through a conversion the analysis saw past (an int in a float local, a helper's
+    // int returned as a float): C compares it as the converted type, so it's never an exact key's
+    bool inexact;
 } bound;
 
 // One number of each row the index sorts or places rows by.
@@ -37,9 +40,18 @@ typedef struct index_key {
     const bound *hi;  // ...and key <= hi (NULL: no upper bound)
 } index_key;
 
+// The whole numbers of one exact key at most (TIDE_INDEX_EXACT, tide/index.h), and the keys of a plan at most:
+// those, then up to three doubles beside them
+#define INDEX_EXACT_MOST 8
+#define INDEX_KEYS_MOST (INDEX_EXACT_MOST + 3)
+
 typedef struct loop_index {
-    index_key keys[3]; // One to three keys: a grid over a vector's components, or one key sorted
+    // One to three keys: a grid over a vector's components, or one key sorted. With `exact`, the first `exact` are
+    // whole numbers (integers, enums, bools, chars) the guard says are each equal to one value, found as one exact
+    // key (tide_index_find_exact), and up to three more are doubles bounded beside them
+    index_key keys[INDEX_KEYS_MOST];
     int count;
+    int exact;
     const decl *component; // A query's key: the component its field is in
     // A query's key in a binding the system's query takes `previous`: the component as the tick started, which
     // nothing changes, so its index is made at most once a tick whatever the code writes (index_codegen.inc)
@@ -49,13 +61,21 @@ typedef struct loop_index {
     const stmt *list_local;
 } loop_index;
 
+// The program's functions, systems, handlers, views and methods (each declaration, then its methods), ordered so
+// that each comes after the ones it calls, where the calls don't go round: what a pass that carries facts from
+// callee to caller goes through to settle in one go. The arena's. Made from the calls the checked program has
+// (plan_loop_indexes starts it afresh), and good until call_graph_reset or the next program.
+const decl **call_graph_bottom_up(const program *prog, int *count);
+void call_graph_reset(void);
+
 // Plans every loop's index once the program is checked, and reports the
 // loops written `indexed` that can't have one.
 void plan_loop_indexes(program *prog);
 
 // What a loop plan says, for the editor and `tidec --schedule`: "indexed by
-// Body.position (x, y)" or "not indexed: <why>". NULL for loops over anything
-// but a query or a list.
+// o.body.position.x, o.body.position.y", "indexed by r.chunk.at.x and
+// r.chunk.dimension as one exact key" or "not indexed: <why>". NULL for loops
+// over anything but a query or a list.
 const char *loop_index_summary(const stmt *loop);
 
 // Calls `fn` for each loop over a query or a list that starts by skipping

@@ -20,16 +20,13 @@ event(Spawned) Build(with Main)
 }
 
 // What a tap asks of the match.
-command Drop { float2 at; }
-command Kick { }
-
-command(Drop drop, PlayerID sender) DropBall()
+command(float2 at) Drop(PlayerID sender)
 {
-    Spawn(Body { position = drop.at }, Circle { radius = 0.3, bounce = 0.5 }, Ball);
+    Spawn(Body { position = at }, Circle { radius = 0.3, bounce = 0.5 }, Ball);
 }
 
 // Code moves a body by writing its component: the next step pushes it, once.
-command(Kick kick, PlayerID sender) KickCrate(mut Body body, with Crate)
+command() Kick(mut Body body, PlayerID sender, with Crate)
 {
     body.impulse = float2(2, 7);
 }
@@ -58,10 +55,10 @@ view Play(Devices devices, query (Body body, with Crate) crates)
     foreach (var crate in crates)
     {
         if (kicked || Math.Distance(at, crate.body.position) > 0.5) continue;
-        crate.entity.Send(Kick { });
+        crate.entity.Kick();
         kicked = true;
     }
-    if (!kicked) Send(Drop { at = at });
+    if (!kicked) Drop(at);
 }
 
 // A view sees a body where the last step left it, blended between ticks.

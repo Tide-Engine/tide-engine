@@ -1,3 +1,0 @@
-// expect: EditorOnly takes no arguments
-[EditorOnly(1)] view Render() { }
-scene Main { }

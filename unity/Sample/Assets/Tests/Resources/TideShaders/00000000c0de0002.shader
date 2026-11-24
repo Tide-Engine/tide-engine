@@ -19,7 +19,13 @@ Shader "Hidden/Tide/00000000c0de0002"
     {
         Pass
         {
-            Blend [_TideSrcColor] [_TideDstColor], [_TideSrcAlpha] [_TideDstAlpha]
+            Blend 0 [_TideSrcColor] [_TideDstColor], [_TideSrcAlpha] [_TideDstAlpha]
+            Blend 1 [_TideSrcColor] [_TideDstColor], [_TideSrcAlpha] [_TideDstAlpha]
+            Blend 2 [_TideSrcColor] [_TideDstColor], [_TideSrcAlpha] [_TideDstAlpha]
+            Blend 3 [_TideSrcColor] [_TideDstColor], [_TideSrcAlpha] [_TideDstAlpha]
+            ColorMask 0 1
+            ColorMask 0 2
+            ColorMask 0 3
             ZTest [_TideZTest]
             ZWrite [_TideZWrite]
             Cull [_TideCull]
@@ -77,7 +83,10 @@ float4 tidehl_position(float4 p) {
     p.w = 1.0 / p.w;
     return p;
 }
-bool tidehl_facing(bool front) { return tidehl_flip() < 0.0 ? !front : front; }
+// A triangle's side. Unity turns the rasterizer's sides round with its own flips (the camera's projection, and a
+// render texture on Direct3D, Vulkan and Metal, which TideRender undoes in a target's pass), so only Tide's flip of
+// a target (OpenGL Core's) turns them
+bool tidehl_facing(bool front) { return _TideFlip < 0.0 ? !front : front; }
 // A color into Unity's own target, which takes linear colors where its project is in linear color space
 float4 tidehl_output(float4 c) {
     if (_TideLinear > 0.5 && c.a > 0.0) {
@@ -291,9 +300,19 @@ cbuffer TideUniforms {
 ByteAddressBuffer _TideStorage0;
 ByteAddressBuffer _TideStorage1;
 
+#if defined(SHADER_API_METAL)
+uint _TideStorageBytes0;
+uint tidehl_length0() { return _TideStorageBytes0 / 8u; }
+#else
 uint tidehl_length0() { uint n; _TideStorage0.GetDimensions(n); return n / 8u; }
+#endif
 uint tidehl_at0(uint i) { return min(i, tidehl_length0() - 1u) * 8u; }
+#if defined(SHADER_API_METAL)
+uint _TideStorageBytes1;
+uint tidehl_length1() { return _TideStorageBytes1 / 4u; }
+#else
 uint tidehl_length1() { uint n; _TideStorage1.GetDimensions(n); return n / 4u; }
+#endif
 uint tidehl_at1(uint i) { return min(i, tidehl_length1() - 1u) * 4u; }
 float4 vertex(uint i);
 float4 fragment();

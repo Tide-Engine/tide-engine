@@ -29,7 +29,7 @@ So `ClampPlayer` runs for every entity that has a `Transform` and a `Player`, an
 
 Keeping what a system touches (its access) apart from which entities it picks (its filters) is what lets the engine run systems side by side safely: two systems that only filter on the same component never wait for each other.
 
-Only the amber row has `Moving` without `Frozen`, so only those entities match `Move`. Their positions change by `time.dt` in the match, and views draw the result. The button sends a command to pause or resume the match's movement.
+Only the amber row has `Moving` without `Frozen`, so only those entities match `Move`. Their positions change by `time.dt` in the match, and views draw the result. The button calls a command to pause or resume the match's movement.
 
 ::: tide-example systems Component filters in motion
 
@@ -80,7 +80,7 @@ Query data reads the current world and participates in [the schedule](./schedule
 
 Queries have read-only component bindings and component filters. Queries are used directly in `foreach`, or [borrowed by synchronous helpers](../language/functions.md#borrowing-a-query) with the same `query (...)` parameter syntax. The caller's selection and data timing stay intact. Queries and whole rows cannot be stored or returned; whole rows cannot be passed to functions. Keep iteration and forwarding outside parallel loops (other than the query's own, below) and callback blocks. A component value such as `fighter.body` can be copied or passed to a function. It follows the usual component copy rules, so a method that uses `this` needs the entity's own component parameter.
 
-Systems, views and synchronous event and command handlers take queries. A match handler reads the current world at its turn in the tick-end queue: see [Events](./events.md#querying-other-entities). A view's rows are the match as it draws it, blended between ticks, or [`verified`](./views-and-the-match.md#confirmed-state): see [Views and the match](./views-and-the-match.md#other-entities). A local handler's are the match as the tick that sent its event left it: see [Events](./events.md#other-entities). Async handlers and tasks take none yet.
+Systems, views, synchronous event handlers and commands take queries. A match handler or a command reads the current world at its turn in the tick-end queue: see [Events](./events.md#querying-other-entities). A view's rows are the match as it draws it, blended between ticks, or [`verified`](./views-and-the-match.md#confirmed-state): see [Views and the match](./views-and-the-match.md#other-entities). A local handler's are the match as the tick that sent its event left it: see [Events](./events.md#other-entities). Async handlers and tasks take none yet.
 
 ### As the tick started
 
@@ -161,6 +161,19 @@ Each boid looks at the boids near it, not at all of them. Nothing changes about 
 
 The condition can be a distance (`Math.Distance`, `DistanceSq`, `Length` or `LengthSq` of a difference, or `dx * dx + dy * dy`), a box written axis by axis, a comparison of one of the row's numbers (`b.unit.health < 10`), or an equality (`b.unit.team == myTeam`), combined with `&&`, `||` and `!`, written in the loop or in a function that returns it. Read-only locals can come first. The same goes for lists: `foreach (var wall in level.walls)`.
 
+Equalities of whole numbers are found exactly, all of them at once, unless the condition also bounds a `float` place both ways (a distance or a box), which is searched instead. A world of chunks finds one by its place, an `int3`, and its dimension:
+
+```csharp
+foreach (var row in chunks)
+{
+    if (row.chunk.at.x != at.x || row.chunk.at.y != at.y || row.chunk.at.z != at.z) continue;
+    if (row.chunk.dimension != dimension) continue;
+    found = row.entity;
+}
+```
+
+The loop visits the chunks at that place in that dimension and no others, however many share its `x`. Any of the row's `int`, `long`, `byte` and `char` numbers, enums and bools count, and an `int2`'s or `int3`'s components: a `long` a place is packed into (`row.chunk.key == key`) is found the same way. A whole number compared as a `float` or a `double` (`double d = row.chunk.key;`) is not exact, and is searched as the number it's compared as. Other bounds in the same condition, like `row.chunk.heat < limit`, narrow those further.
+
 Write `indexed` before a loop that has to be indexed:
 
 ```csharp
@@ -171,7 +184,7 @@ indexed foreach (var b in boids) { ... }
 
 - Something happens before the condition, such as a `Send`. Move the condition first.
 - The value compared with changes inside the loop.
-- The system changes the same field of its own entity, such as `body.position += body.velocity` in a system whose loop finds boids by `position`. The index is kept while the rows it was made from don't change, so read the others as [the tick started](#as-the-tick-started) (`query (previous Body other, with Boid) boids`), or move that change into a system of its own.
+- The system changes the same field of its own entity, such as `body.position += body.velocity` in a system whose loop finds boids by `position`. The index is kept while the rows it was made from don't change, so read the others as [the tick started](#as-the-tick-started) (`query (previous Body other, with Boid) boids`), or move that change into a system of its own. Handing the component as `mut` to a function or a task counts where that changes its match fields; a view handing its own to a [local task](./tasks.md#local-fields) changes only its local fields, which no loop finds rows by. Handing it to C as `mut` (an `extern` function, or one that passes it on to one) counts as changing all of it.
 
 `tidec --schedule` lists every loop that skips rows, and whether an index finds the rest or why not. An index of rows that don't change, like walls, is made once and kept across ticks.
 
@@ -207,15 +220,34 @@ system Reset(mut Health health, mut World world)
 
 Between the `Set` and the final write-back, `Get` and queries read the published value of 20. An explicit copy made before `Set` keeps its old value.
 
-What `Get` gives is a copy, as a list's element is, so changing another entity's component is taking it out, changing it and putting it back:
+What `Get` gives is a copy, as a list's element is. To change another entity's component, `Edit` it where it is: the block after the call names the component, and what the block changes is put back on the entity as the block ends.
 
 ```csharp
 system Heal(Healer healer, mut World world)
 {
-    mut var health = world.Get<Health>(healer.patient);
-    health.value += 1;
-    world.Set<Health>(healer.patient, health);
+    world.Edit<Health>(healer.patient, health)
+    {
+        if (health.value >= 100) return;
+        health.value += 1;
+        health.lastHealer = this;
+    }
 }
+```
+
+- In the block, `health` is the entity's `Health` itself, as a `mut` parameter is the component of the entity a system runs for: its fields change where they are, its lists and text too, with nothing copied, and a function's `mut` parameter can take it. The name is new, and only the block has it.
+- It's put back however the block is left: at its end, or by a `return`, or a `break` or `continue` of a loop the `Edit` is in, or a `try` or `fail` in a function that can fail, in an async handler as anywhere. There's no `Set` to forget on an early `return`.
+- An entity that's gone, or has no `Health`, skips the block, as `Set` does nothing then. Check `world.Has<Health>(e)` first for what to do instead.
+- It needs `mut World`, like `Set`, and the schedule counts it as `Set`: it reads and writes every entity's `Health`, and keeps the system on one thread. So an `Edit` whose block never changes its name is a warning: read with `TryGet` instead.
+- `this` can be edited beside a read-only parameter of the same component, as it can be `Set`: the stored component changes, and the parameter keeps what it read. Beside a `mut` parameter of it, change the parameter.
+- Inside the block, read and change `health`, not `world.Get<Health>` of the same entity: the compiler says so where it can tell they're the same, and a task can't `await` there.
+- `world.Edit<Purse>(from, a), world.Edit<Purse>(to, b) { ... }` edits two entities in one block, as other calls that take a block are listed. If they turn out to be one entity, `a` and `b` are the same component, and both changes land.
+
+Taking it out, changing it and putting it back is what `Edit` does for you, and still works:
+
+```csharp
+mut var health = world.Get<Health>(healer.patient);
+health.value += 1;
+world.Set<Health>(healer.patient, health);
 ```
 
 ### As the tick started, by handle
@@ -232,7 +264,7 @@ system Chase(mut Body body, Bot bot, World world)
 
 Like a [`previous` binding](#as-the-tick-started), they read nothing the tick can change: the system waits for no system that changes `Body`, none waits for it, and its entities go across threads though it changes `Body` itself, where `world.Get<Body>` would keep them on one. An entity that wasn't there when the tick started (spawned this tick) has no `Body` then: `HasPrevious` is false and `GetPrevious` gives the zero value. Systems, match handlers and the functions they hand their World to can call them; views and tasks can't.
 
-The signature doesn't say which components a system reaches this way: the engine reads it off the calls. Each counts as access to every entity's component, so the system is scheduled like one that touches them all, and one that calls `Set` runs on one thread. [The schedule](./schedule.md#through-the-world) and your editor show what each system reads and writes through its `World`. Where the change can wait for the end of the tick, an event (`e.Send(Hit { ... })`) keeps systems running side by side; see [Events](./events.md).
+The signature doesn't say which components a system reaches this way: the engine reads it off the calls. Each counts as access to every entity's component, so the system is scheduled like one that touches them all, and one that calls `Set` or `Edit` runs on one thread. [The schedule](./schedule.md#through-the-world) and your editor show what each system reads and writes through its `World`. Where the change can wait for the end of the tick, an event (`e.Send(Hit { ... })`) keeps systems running side by side; see [Events](./events.md).
 
 A function or method can take the `World` too, and the system passes its own:
 
@@ -248,7 +280,7 @@ system Aim(mut Attacker attacker, World world)
 }
 ```
 
-What the function reaches through it counts as the system's own, through however many functions it's passed, so nothing about the schedule changes: `Aim` reads every entity's `Health`. A function that calls `Set` takes `mut World`, and so does the system that passes it. The parameter rules above apply through helpers too, and a view can't call one that changes the match.
+What the function reaches through it counts as the system's own, through however many functions it's passed, so nothing about the schedule changes: `Aim` reads every entity's `Health`. A function that calls `Set` or `Edit` takes `mut World`, and so does the system that passes it. The parameter rules above apply through helpers too, and a view can't call one that changes the match.
 
 Views and event handlers take a `World` too; a view only reads the match through it, and can change local entities with `mut World`. A [local handler](./events.md#local-handlers) of one of the match's events takes none: it hears the match as the event left it, and the `World` is the match as it is now.
 
@@ -330,7 +362,7 @@ stage 2  Move  (per entity)
          after Steer: both write Body
 ```
 
-Declaring more than a system uses makes others wait for nothing, so it's a warning: a parameter that's never used, or a `mut` one that's never written (a `mut World` that never calls `Set` too). A component that's only there to pick entities belongs in `with`. The editors offer quick fixes for these.
+Declaring more than a system uses makes others wait for nothing, so it's a warning: a parameter that's never used, or a `mut` one that's never written (a `mut World` that never calls `Set` or `Edit` too). A component that's only there to pick entities belongs in `with`. The editors offer quick fixes for these.
 
 ## Written in C
 

@@ -1,5 +1,458 @@
 # `tide`, packages and the package
 
+## Starting large generated C files earlier (2026-11-19)
+
+The CLI now gives optimized generated C the same descending source-size priority as engine and ThinLTO
+objects. A layout edit rebuilds every generated object that includes the changed header. Starting the largest
+plumbing parts before the smaller jobs reduces the wait at the end of that batch. The existing first-job
+priority, compiler arguments, object stamps, link order and diagnostic order are unchanged. Watching builds
+use the same scheduler and publish at the same point, after the completed link. Simulation ID calculation
+still fingerprints this CLI source as part of the toolchain revision.
+
+Measured Mount & Rifle `480c451` against Tide `1b0cbe623` and the change above, on a Windows Ryzen 9 7900X
+with packaged Clang 23.1.2 and 24 jobs. Both scratch copies used the development Tide binaries and their own
+warmed caches. Ran `tide run <copy> --frames 2` with `TIDE_HIDDEN=1` and `TIDEC_TIMES=1`. Each pair alternated
+which compiler went first. There were eight view-constant edits (`FIELD_OF_VIEW`) and four additions and four
+removals of an `int` field in the match singleton `Admin`. One earlier probe edited a singleton in an inactive
+conditional and was discarded after it rebuilt zero objects.
+
+| Edit | Total before / after | Prep and packages | Tide and object queue | C batch tail | Link | Game |
+|---|---:|---:|---:|---:|---:|---:|
+| Constant | 3.39 / 3.52 | 0.11 / 0.11 | 2.21 / 2.32 | 0.12 / 0.13 | 0.18 / 0.19 | 0.74 / 0.78 |
+| Add field | 8.47 / 8.30 | 0.11 / 0.11 | 2.62 / 2.56 | 4.82 / 4.67 | 0.18 / 0.17 | 0.73 / 0.71 |
+| Remove field | 8.35 / 7.88 | 0.12 / 0.11 | 2.55 / 2.49 | 4.80 / 4.38 | 0.18 / 0.17 | 0.73 / 0.73 |
+
+Columns are medians in seconds, taken independently. The C tail starts at the CLI's batch announcement.
+Game-code jobs can start before that announcement. The field addition rebuilt 67 C files and improved in
+all four pairs. A constant edit rebuilt one unoptimized part and exercises the same launch path on both CLIs.
+Most of the measured difference for that edit was before the C batch. There was no demonstrated constant-edit
+win. The older 3.53 and 7.76 s measurements used another toolchain and edits. The paired baseline above is
+the comparison for this change.
+
+On the baseline constant edit, lexing/parsing took 0.11 s, asset checks and cache reads 0.29 s, and the
+remaining checks and scheduling 0.29 s. Pack preparation took 0.12 s and C generation took 1.23 s, including
+0.61 s to separate and partition generated C. The corresponding field addition spent 0.40 s parsing, checking
+code and scheduling, and 0.94 s separating and partitioning. The generated `game_plumbing_part11.c` finished last.
+A separate Clang time trace of that file showed 0.44 s in the C front end and 5.78 s in the backend. The largest
+single function optimization event was 1.83 s in `tide_game_near_same`. Reducing that function's compile cost
+would need runtime performance measurements on the prediction path. Whole-program incremental analysis alone
+would address roughly 0.4 s of the current constant edit. Partitioning and generated C compile cost merit separate
+measurement before a redesign of the checker.
+
+Validation on Windows: the ASan build-report fixture catches the old launch order after a layout edit, checks
+that all plumbing objects rebuild, then checks reuse and byte-identical generation when the job count changes.
+The build overlap and generation tests also passed. Both benchmark CLIs ran the game, and all 68 generated C,
+header and manifest files matched after normalizing scratch paths and the toolchain revision's Simulation ID.
+The staged package passed `cache_test.mjs --part at-once --web` and `--part cache --web --gpu`, covering native
+and web object parity, rebuilds after a failed compile, installed toolchain and header invalidation, a hidden
+native run, and debug and release web watch publication. Native windowed hot reload and Android were not run.
+
+## `tide unity --ios`: a player's game as sources (2026-11-19)
+
+The agent's picks, Provisional; the design and the Unity side are in `notes/unity.md`, iOS players.
+
+- **`--ios`** (`build_options.ios`; `unity` alone, once, not with `--web` or `--android`; help.c's catalog and
+  docs/tools/cli.md have it) runs `tide_unity_ios`: generate as any Unity build, then `queue_game` into a compile
+  list in a cache of its own (`<cache>/unity-ios`, emptied first, so nothing is "up to date" and every file is
+  listed), and the list is written out instead of run: `<-o>/ios/Tide/sources.txt` and the files it names.
+  `setup` finds no compiler, target or SDK for it (`b->compiler` is the word "clang", for the stamps' text), so it
+  runs on a machine with none. The configuration folder is `ios-<mode>`.
+- **The package has the platform layer's sources** for it: a desktop tree installs `platform/src` (`.c`, `.h`,
+  `.inc`), `platform/embedded`, `third_party/stb_truetype.h` and the build's own `tide_font.c`,
+  `tide_font_bold.c`, `shaders_spirv.c` and `kernels/cull_kernels.h` under `src/platform` (about 3 MB). Without
+  them `--ios` says the installation can't build iOS games. Everything else it needs was installed already
+  (`include/`, `src/engine`, `src/packages`).
+- **Not in it:** `log.c`'s `TIDE_VERSION` (a macro with quotes, which an Xcode flag would have to escape: the
+  log says "unknown" there, and nothing under Unity opens that log); a game's prebuilt libraries (a warning each);
+  telemetry's `target` still says `native` for it, as adding `ios` there is a new value and the owner's decision
+  (`docs/tools/telemetry.md`).
+- **Tests:** `compiler/cli/tests/unity_ios_test.mjs` with `unity_ios_host.c`: runs `tide unity --ios` on a game,
+  checks the list (the files it must have, each one there, each with the two determinism flags), compiles every
+  file with its flags, links them with a stand-in for Unity's player and the frameworks, and runs it: 240 frames
+  through tide/embed.h, the match's tick and world hash every 60, then PASS. `--simulator` builds for the iOS
+  simulator with Xcode's clang and runs it there; `--also <clang>` builds it again for the machine with another
+  compiler and requires the same lines; `--syntax` only compiles. CI's package jobs run it on the Unity sample
+  (`check.yml`, Try the package (Unity iOS)): on the Mac in the simulator and again natively with LLVM's clang,
+  on Windows and Linux natively. Run 44530030202 (2026-11-19): all four builds passed and said the same four
+  lines, tick 119's world `b22f206cd96c179c`, as this Windows machine's clang 23 does: Linux and Windows with
+  LLVM 23, the Mac with Homebrew's LLVM, and the iOS simulator with Xcode's AppleClang 21.
+## `tide unity` says which tide builds (2026-11-19)
+
+`made_by` (`build.c`): `<TIDE_VERSION> (<16 hex digits>)`, the digits FNV-1a over tide's own executable (path, size
+and time, as it was when the process first asked: the file replaced under a running tide doesn't make the running
+program the new one), its compiler (clang where tide hasn't it built in), the installation's headers (`header_stamp(include)`), the engine's sources (`src/engine`, headers and
+`.c` files, summed so the folder's order doesn't matter) and `lib/native/libtide_platform.a`: everything the host
+Unity loads and a game's library are made of, by their stamps (`sys_file_stamp`), not their bytes. Worked out as
+each build starts, about 180 files' stamps (4 ms in Python on this machine's installation, against builds of seconds). `write_unity_library` writes it into
+`library.c` as `tide_host_library_made_by` (the file written only where its text changes, `write_if_changed`), and
+`build_embed_host` into `embed_host.c` as a constructor calling `tide_embed_made_by` (notes/hot-reload.md, A library
+says which tide built it; notes/unity.md, top).
+
+**The installation changing under a watching `tide unity`** (an upgrade, a reinstall, a development tide's
+`cmake --install` while the editor is open): each build reads the installed files as they are, so the next game was
+another tide's than the host built at the start (and, as "Replacing installed headers requires restarting a running
+`tide run`" below says of that command, old objects went on being used). `unity_build` (the loop's two builds) works the text out again,
+and where it isn't `run.made_by`, stamps the headers again (`b.headers`: objects compiled with the old ones aren't
+reused), has the engine's objects looked at again (`engine_built`), and writes `library.c` and builds the host
+again before the game; a host that didn't build is tried again with the next build. So after any build, the host on
+disk and the newest game are one tide's. `embed_host.c` is no longer one line: it has the constructor.
+
+**`tide run`** (watching): `write_library` exports the text and `queue_host` gives it to the host
+(`tide_run_desc.made_by`). Its host can't be built again while it runs, so `run_build` builds nothing once the text
+isn't the run's, and says to start `tide run` again (notes/hot-reload.md). Not in the number: `mingw/` and
+`lib/clang/` (thousands of files; they change with tide itself) and macOS's MoltenVK.
+
+Test: `tide_cli_unity_made_by` (`tests/unity_made_by_test.mjs`, with `tide_cli_build_compiler`'s controlled
+compiler and a made-up installation, as `tide_cli_generation`): both texts are tide's version and one number; a
+change of the game leaves the host as it is (not compiled or linked again); the platform layer's library, a
+header, an engine source and a new engine file changing each give another number in both, with the host compiled
+again; then nothing more changes; and a `tide run` of the controlled host writes the same tide into `host.c` and
+`library.c`. The controlled linker's library isn't one, so each build ends at the schema's
+read, after what's checked. Not covered there: tide's own executable changing (it's the running program; the
+editor's build service starts tide again for that, notes/unity.md).
+
+## Two of tidec's phases beside each other, and the [Parts] models read ahead (2026-11-18, later)
+
+Owner, on running tidec's independent phases in parallel: "yes go ahead". What turned out independent enough to
+do safely, for Mount & Rifle:
+
+- **What local journals read, beside the pack** (`codegen_side`, codegen.c). `collect_heard_reads`,
+  `collect_heard_codecs` and `collect_shard_codecs` walk the code and write `gen.heard_*`, `value_codec` and
+  `heard_heap`; `collect_asset_dependencies`, `build_pack` and the fingerprints write the pack and the two lists
+  of dependencies. Neither reads the other's, neither says a diagnostic the other could, names are made in the
+  arena (each thread's own blocks, `arena_thread`) and codegen.c has no other state they share (its statics are
+  flags set before). 0.14 s and 0.18 s, at once.
+- **A [Parts] declaration's model is read from the cache ahead** (`asset_files_parts_ahead`, asset_files.c;
+  check.c gathers each declaration's patterns as `check_parts_attribute` would, `attribute_pattern`). Each was
+  an entry of megabytes read, checked and unpacked as its declaration was checked, one after another: 28 of
+  them. Now on threads after the files' read-ahead, by the key `asset_choose_parts` and `import_cache_key` give
+  (`import_cache_key_of`), and `read_item` takes what was read where it would read the same entry
+  (`read_file.parts_ahead`), marking it used. A declaration whose patterns aren't plain constants, a glob or a
+  URL is read as before.
+
+What wasn't: the assets beside the code's checking (a model's catalogs are types the code is checked with); the
+simulation's identity beside the bodies (it hashes the program as codegen leaves it at one moment, and must be the
+same number every build); parsing files at once (the declarations' lists and the diagnostics are one thread's).
+
+Measured side by side with the tide before (each on its own copy, by turns, six rounds; the machine was busy, so
+the least of each): a constant edited 3.55 s to 3.33, a field added 8.87 s to 8.05. tidec's phases: "generating C"
+before the pack 0.19 s to 0.05; the assets 0.43 s to 0.35.
+
+Tests and validation (Windows, Clang 23.1.2, ASan): 34 focused tests (the asset reader's and cache's, skinned, [Parts] and animation fixtures, listeners and local events, the split and debugger tests, `tide_cli_build_report`, `tide_cli_assets`, `tide_cli_generation`); the packaged tide passes `cache_test.mjs --part cache --gpu` and `--part modes --gpu` and builds and runs Mount & Rifle. The compiler before the round of 2026-11-17 and this
+one write the same C for every e2e fixture but the identity's line (355 of them; six storage files and `dev_build` differ by two fixes merged from dev since, 3a6ded61e and 730408c1e). Not run: Linux/macOS, web, Android: CI's.
+
+## tide's own steps around a generate, and thirty-two parts (2026-11-18)
+
+Owner: "time to run is extremely important to me". What tide itself did around tidec, timed with marks (taken
+out), for Mount & Rifle:
+
+- **The assets' files' stamp was taken four times a build, 0.06-0.08 s each** (`stamp_assets`: a size and a time
+  asked for each of 870 files, one after another): by `generation_kept` and again as `before`, then by
+  `assets_stayed` and again by `generation_keep`. Now once before and once after (`generate` hands them on), each
+  file's asked on a thread (`asset_stamp_work`); the stamp is the same number.
+- **A generated file's stamp is kept** (`<gen>/parts.stamped`: the file's size and time, a hash of what else its
+  stamp is made of, `part_stamp_with`, and the stamp): a part whose file is as it was isn't read to be hashed,
+  0.05 s of a hundred megabytes of plumbing an edit of the code leaves alone. Kept only for a file read two
+  seconds or more after it was written and the same after the read (`part_stamp.settled`), as an asset's file is
+  recorded (notes/assets-and-files.md).
+- **The debugger's views are written beside the cut** (`parts_task.views`, codegen.c): 0.1 s of tidec that
+  nothing waits for.
+- **A debug build's code and plumbing are cut into up to 32 parts** (`split_code_parts`, of 128 KiB at the
+  least; `SPLIT_MOST_PARTS` 32; a release's ThinLTO parts stay 16 of 512 KiB). The part an edit changes compiles
+  in 0.1 s where it took 0.2, and a layout's 67 files fill 24 processors more evenly than 35 did: their compile
+  3.8-4.4 s where it was 5.0. 64 parts were no faster.
+- **A link's arguments go in a file where they're more than a command line holds** (`run_link`: over 24,000
+  characters, `<output>.rsp`, each quoted for the reader; `tide cc` takes `@file`, cc.cpp). 67 objects' paths in a
+  long folder passed Windows' 32,767, and the link said it couldn't start.
+
+Side by side with the tide before (each on its own copy of the game, by turns, six rounds, a quiet machine;
+medians): a field added 7.99 s to 7.76, a constant edited 3.59 s to 3.53, nothing changed 0.94 s to 0.87.
+
+The constant's edit gains little because what follows tidec now waits for the changed part's own compile:
+tidec ends at 2.4 s, the part is compiled at 2.58 (it's written 0.2 s before tidec ends), the link takes 0.17
+and the game 0.8. What's left is tidec's 2.4 s: the assets 0.4, parsing and checking 0.45, the journals' reads
+0.14, the pack laid out with its fingerprints and the identity 0.26, the C 0.4, code from plumbing 0.22, the cut
+0.35.
+
+Tests: `tide_cli_build_report` (the plumbing's parts in `parts.stamped` once they're two seconds old, their
+objects standing by it over an edit of the code, the file as it was after). Validation (Windows, Clang 23.1.2,
+ASan): 11 focused tests (`tide_cli_tests`, `tide_cli_build_overlap`, `tide_cli_build_report`,
+`tide_cli_generation`, `tide_cli_assets`, `tidec_debugger_natvis`, `tidec_split_code_stable`, `tidec_recompile`,
+three `_debug` fixtures); the packaged tide passes `cache_test.mjs --part cache --gpu` and `--part modes --gpu`
+and builds and runs Mount & Rifle in debug (its link through a file) and in release. Not run: Linux/macOS (the
+file's quoting there is the other branch), web and Android: CI's.
+
+## The game's start (2026-11-18)
+
+The biggest piece the fourth round below left: 1.0-1.4 s of every `tide run`, in every build mode. It was the
+pack read, copied and kept twice, not the game: notes/assets-and-files.md, its first section. Mount & Rifle, the
+same measure, a quiet machine, three passes: the program alone 1.4-1.8 s to 0.65-0.69 s; nothing changed 1.4 s to
+0.87 s; a constant edited 3.9-4.3 s to 3.5 s; a field added to a singleton 9.0 s to 7.8-7.9 s.
+
+## Debug builds of big games, fourth round: where tidec's own time went (2026-11-17, night)
+
+Owner, after the round below: "i expected a bigger jump, how can we achieve a drastic change in total time", and
+agents start `tide run` afresh for each test, so nothing can be kept in a process. I had proposed generating C a
+source file at a time and skipping the files an edit leaves alone, estimating tidec's 3.4 s would come to about
+1 s. Measured step by step first (`diag_step` in check.c's last phase and codegen's first), that estimate was
+wrong: writing the systems' and functions' bodies is 0.27 s of it. The rest was a score of whole-program steps
+of 0.05-0.3 s each, and the program is small: 55,000 lines, 4,559 declarations, 207,000 nodes, which one walk
+goes through in a millisecond. So most steps were doing work again, not work a redesign would save.
+
+Same game and measure (`tide run game --frames 2`, debug, a machine a fifth busy):
+
+| | before | after |
+|---|---|---|
+| a constant edited | 4.8 s | 3.9-4.3 s |
+| a field added to a singleton | 10.4 s | 9.0 s |
+| tidec, of the constant's edit | 3.4 s | 2.45 s |
+
+What changed:
+
+- **Which code calls which, found once** (`call_graph`, indexing.c). `key_still` asked, for each key of each loop
+  in borrowed-query code and each system, whether the system reaches the loop's code (`calls_stmt`, a walk of
+  everything the system calls, with a list for what it had seen): 2,824 walks, 0.29 s. The graph is one walk of
+  every body; who reaches a target is found once a target, from its callers back (`calls_code`). 0.034 s.
+- **Local journals' reads, callees first** (`collect_heard_reads`, notes/verified-and-local-handlers.md): seven
+  passes over the program to four, by walking each routine after the ones it calls
+  (`call_graph_bottom_up`), and each member's path text made once (`heard_member_path`'s table). 0.30 s to 0.14.
+  What's read is the same set in any order, and only asked as a set (`heard_reads`).
+- **Shaders' SPIR-V kept** in the game's build cache (`gen_shader_spirv`: by the WGSL and the compiler's identity,
+  as an asset's import is kept). 0.20 s to 0.08.
+- **The simulation's identity hashes each model's digest**, not its megabytes for each declaration that names it
+  (`asset_bytes_hash`, shared with the pack's blocks and the levels of detail), and a side file's SHA-256 comes
+  from the files' record (`asset_file_hash`): 0.14 s to 0.08. TIDE_SIMULATION_ID changes for a game with skinned
+  models, as it does with any tide.
+- **The code and the plumbing are cut beside each other, and a level's parts on a thread each**
+  (`write_code_parts`, `halve_part`, `write_part`, `parts_one`). 0.53 s to 0.31 for an edit of the code (the
+  plumbing's hash runs beside it), and 1.9 s to 0.63 where the plumbing is cut too. For this the arena gives each
+  thread build_threads starts blocks of its own (`arena_thread`, common.c: no lock but to list a new block, all
+  freed by `arena_reset`), and the splitter's "why it failed" and its listed runs are a thread's own
+  (`_Thread_local`, plumbing_split.inc). A cut that fails says why to its caller, which reports it.
+
+What the constant's edit pays now (about 3.9 s): tidec 2.45 s (the assets 0.4; parsing 0.1; checking 0.25;
+`collect_heard_reads` 0.14; the pack laid out 0.11, its fingerprints 0.07, the identity 0.08; shaders 0.08;
+bodies 0.27; the rest of the C 0.1; code from plumbing 0.21; the parts 0.31; the debugger's views 0.1); tide's
+stamps of the generated files 0.19 (each read whole to be hashed); link 0.2; the game's start 1.05-1.4 s (the same
+in release: its own, not measured further).
+
+Not done, each measured:
+- The stamps: a file whose size and time are as they were when it was last stamped needn't be read (0.12-0.15 s).
+- The debugger's views beside the cut, on a thread (0.1 s); the [Parts] models read ahead (0.15-0.2 s); the
+  journals' reads by a worklist in place of the last passes (0.06 s).
+- **Generating C as several files directly.** It would take away "code from plumbing", the cut and most of the
+  stamps, about 0.6 s. The splitter is what makes one text's statics link across files (externs, renames, shared
+  constants): the generator would have to write that linkage itself, in every place it writes C.
+- **The game's start**, the biggest piece left and the same in every build mode.
+
+Tests and validation (Windows, Clang 23.1.2, ASan): 40 focused tests (indexed loops, the lanes' and nested
+splits' fixtures as plain and as a debugger's build, listeners and local events, shaders and SPIR-V, the asset and
+identity tests, `tidec_split_code_stable`, `tidec_recompile`, `tidec_debugger_natvis`, `tide_cli_build_report`).
+The compiler before this round and after it write the same C for every e2e fixture but the identity's line
+(each compiled alone with --split-code --split-plumbing, 355 of them). Not run: web and Android builds, Linux/macOS: CI's.
+
+## Debug builds of big games, third round: the assets of a build that changed none (2026-11-17, evening)
+
+Owner, on the open item of the round below ("skipping it means trusting sizes and times"): "doesn't git use
+timestamps for it? if git can surely we can too". Built: notes/assets-and-files.md, its first section. Same game
+and measure (`tide run game --frames 2`, debug; the machine a fifth busy with other sessions, so each row is this
+evening's before and after):
+
+| | before | after |
+|---|---|---|
+| the assets' files read ahead | 0.70 s | 0.05-0.10 s |
+| the assets checked | 0.57 s | 0.31 s |
+| the pack | 0.67 s | 0.11-0.15 s, and 0.01 s to find the file there is it |
+| a constant edited | 7.1 s (6.6-6.8 on a quiet machine) | 5.1-5.9 s |
+| a field added to a singleton | 13.5 s | 12.0-12.2 s |
+| nothing changed | 2.5 s | 1.4 s |
+
+What a constant's edit pays now: assets 0.6 s (0.3 of it the game's [Parts] models, each declaration's own entry
+read, checked and copied, one after another); parsing and checking 0.8 s; generating C 1.2 s; plumbing from code
+0.25 s; cutting the code 0.55 s; the rest as below. An asset that did change pays what it did: one image edited is
+1.2 s to read the cache's 1.2 GB of pixels into the pack and write it.
+
+Next, in order: the release build's ThinLTO link (11 s an edit); the [Parts] models read ahead (their patterns
+are known only as each declaration is checked); the splitter on threads; `-O1` for a debug build's plumbing.
+
+## Debug builds of big games, second round: the code in parts, a cut kept, less plumbing (2026-11-17, later)
+
+Owner, after the round below: "we should aim for as quick as possible". Same game, machine and measure
+(`tide run game --frames 2`, debug, assets cached, a quiet machine; three passes):
+
+| | at the start of the day | after the round below | now |
+|---|---|---|---|
+| a constant edited | 10.6 s | 8.6-9.4 s | 6.6-6.8 s |
+| a field added to a singleton | 35.0 s | 14.9-16.8 s | 11.9-12.4 s |
+| every object again (a new tide; assets cached) | 47-63 s | 21-25 s | 21 s |
+
+What changed:
+
+- **A debug build's own code is in parts too** (`codegen_options.split_own_code`, which tide sets; `tidec
+  --split-code --split-plumbing` is as it was, so CMake's lists of a game's files stand). game.c at -O0 was
+  2.3-2.9 s in one file: 0.8 s to parse, the rest code and debug info. Its parts are cut as the plumbing's are
+  (up to 16 of 512 KiB, `game_part<n>.c`, `game_data.c`), compiled with game.c's flags and
+  `-feliminate-unused-debug-types` (`queue_unless_stamped`'s `lean`: every type the game declares is in game.o's
+  debug info once). An edit of a function compiles its part, and game.c when the simulation's identity changed
+  with it: Mount & Rifle's constant in a view compiles `game_part12.c` alone, done before the generate ends.
+- **Each of them starts compiling as it's written** (`compile_written` for every file of the code;
+  `game_written` names their objects as `queue_game` does and keeps the names in `build.early_queued`).
+- **A cut is kept** (`<name>.parts` beside the files, `parts_key`/`parts_kept` in codegen.c): the SHA-256 of the
+  text and of what the cut is made of (the compiler's sources' identity, the paths, the options), then each
+  file's size, time and manifest line. A text that comes out the same is cut into the files there: nothing is
+  cut or written. The plumbing of a code-only edit is that text: 1.0-1.4 s (cutting out its data, four levels of
+  halves, writing 50 MB) became 0.1 s, its hash. A file that isn't as the record says, or a record that isn't
+  this text's, cuts again; the record is removed before a cut and written after its files.
+- **The generated files' stamps are found on threads** (`part_stamp_work`, build.c): each is its whole text
+  read and hashed, a hundred megabytes, 0.3 s one after another.
+- **A wide component comes to a debugger's build's rows functions as arrays** (`rows_spread`: never spread
+  where `split_plumbing` and `lanes_looped`). A parameter a lane lets a row loop know its lanes are apart; a
+  debugger's build copies rows whole, and each call of a rows function (five forms for each archetype) and each
+  of its variants spelled 190 of them for Campaign.Party. The plumbing's text: 41 MB to 27 MB before its
+  `#line`s. Another build's rows functions are as they were.
+- **A debugger's build loads a wide component's row with a loop** (`rows_lanes_looped`: `tide_load_<C>_at`,
+  `tide_load_some_<C>_at`, `tide_gather_some_<C>`). Another build keeps a copy a lane, which a row loop that
+  reads a few fields folds down to those.
+- `tide_near_same_rows_<C>` is `noinline` (it was inlined back, 108 times), and a dev build's
+  `tide_inspect_match` is `cold, minsize` (`gen_packet_view`): 4.5 s to 3.9 s of its part; Unity's
+  `tide_embed_view`, the same generator's, is as it was.
+
+The plumbing's sixteen parts: 85 s of clang in all at the start of the day, 42 s after the round below, 32 s now;
+the slowest two 4.3 and 3.9 s, the rest 2.3 s or less.
+
+What a constant's edit pays now (6.6 s): reading and hashing the assets' files 0.8 s, checking the assets 0.65 s,
+packing 0.8 s (2.25 s of assets that didn't change: the next thing, below); parsing and checking 0.75 s;
+generating C 1.2 s; plumbing from code 0.26 s; cutting the code 0.55 s; the plumbing's hash 0.1 s; the debugger's
+views 0.13 s; stamps and link 0.3 s; the game's start 1.2-1.3 s (the same started alone: Vulkan, its 1.4 GB
+pack, its own setup; a watching run's reload has none of it).
+
+Not done, and why:
+- **The assets of a build that changed none** (done the same evening: the section above): every build reads and
+  hashes 960 MB of sources and 1.48 GB of
+  prepared textures, reads and checks 700 cache entries, and builds a 1.4 GB pack to find it's the one there.
+  Skipping it means trusting sizes and times for the sources (as the kept generate does, and as the 2026-11-03
+  note below chose not to: "so fresh processes detect same-size/same-time edits too"), an item's bytes read
+  only when something needs them, and the pack known unchanged from its inputs' hashes without being built.
+  A day's work in asset_files.c, the import caches and build_pack, and the trust is the owner's call.
+- The splitter on threads (a level's halves are apart): its lists and the arena are one thread's.
+- `-O1` for a debug build's plumbing: a fifth less compile (one part: 10.0 to 7.8 s before this round), for
+  slower debug play; not measured in a battle.
+- Layout changes compile every part because each stamp holds the whole header. A part's stamp of the
+  declarations it names would leave most parts alone, and needs the header read as C.
+
+Tests: `tide_cli_build_report`: the debug game's plumbing left as it was by an edit of a system's code (its
+files' times, and game.c alone compiled), cut again when a part is written over; a big game's code in parts in a
+debug build, each compiled once, and an edit compiling one or two. `tidec_e2e_kept_lanes_debug`,
+`wide_lanes_debug`, `row_lanes_debug`: those fixtures as a debugger's build (SPLIT_PLUMBING), where the wide
+components' loops and array parameters are.
+
+Validation (Windows, Clang 23.1.2, ASan): 26 focused tests pass (the 19 of the round below, the three `_debug`
+fixtures, `tidec_e2e_nested_split_debug`, `tidec_debugger_natvis`, `tidec_split_code_stable`, `tidec_recompile`).
+The packaged tide passes `cache_test.mjs --part cache --gpu` and `--part modes --gpu`. Mount & Rifle builds
+and runs in debug. Not run: the other fixtures, web and Android builds, a watching run with a window,
+Linux/macOS: CI's.
+
+## Debug builds of big games: no ThinLTO, wide components' columns in loops (2026-11-17)
+
+Owner: Mount & Rifle's `tide run` "takes like 30+ seconds", so much that `--release` was no slower. Measured with
+this checkout's packaged tide (embedded clang/lld 23.1.2) on a scratch copy of the game at 480c451 (unpinned, debug,
+assets cached), Ryzen 9 7900X, `tide run game --frames 2`, redirected output with each line timed:
+
+| | before | after |
+|---|---|---|
+| a field added to a singleton (every plumbing part compiles) | 35.0 s (link 23.3 s) | 14.9-16.8 s (link 0.2 s) |
+| a constant edited (game.c alone) | 10.6 s | 8.6-9.4 s |
+| every object again (a new tide; assets cached) | 47-63 s (link 24 s) | 21-25 s |
+| nothing changed | 2.5 s | 2.5 s |
+
+What it was, and what changed:
+
+- **A debug build's plumbing parts are objects of their own, with no ThinLTO** (`queue_game`: `thin` only when
+  `!splits_plumbing(b)`). lld's trace of the debug link (`-Xlinker -Xlink=--time-trace=<file>`): 32 s wall for
+  112 s of backend work, of which one function, `tide_task_Campaign_Pursue`, was 24.6 s (15.7 s printing assembly,
+  5.3 s `Live DEBUG_VALUE analysis`): ThinLTO imported the system's rows function (190 parameters, one a lane) into
+  its task once for each of six archetypes. The same part compiled alone, `-O2 -g`, took 10 s. So the cross-part
+  optimization made every layout change a 23 s link, and since a layout change compiles every part again (each has
+  the types), the cached link never applied. The measurement that picked ThinLTO for the parts (2026-11-05, below)
+  was of release builds and of the compile alone. Release, distribution and `-O<n>` builds keep ThinLTO: their
+  link after an edit is 11 s here, the same import into the same tasks, and is the next thing to look at.
+  Runtime: the game's `tools/performance-route.txt` (seed 42, 3,230 frames, 1280x720, `--define PERFORMANCE_TRACE`,
+  `--profile`), two runs each way and two more: views 3.75-4.05 ms a frame without ThinLTO against 3.96-4.00 with,
+  match 0.042-0.048 against 0.044-0.045. That route's match is light in this version of the game; a battle's
+  wasn't measured.
+- **A wide component's columns come from a loop** (`lanes_looped`, `gen_columns_loop` in codegen.c; `LANES_LOOPED`
+  = 32 lanes, every lane taken). Generated C fetched each lane's column with a call of its own
+  (`tide_table_column`/`_mut`, inlined): for Campaign.Party (744 bytes, 186 lanes), in every archetype of every
+  system and query that takes it. `tide_task_Campaign_Pursue` was 5.5 s of clang at -O2 for 1,116 such lines, and
+  0.2 s as six loops; `-ftime-trace` over the sixteen parts had the Party systems' tasks and
+  `tide_game_near_same` as most of the four slowest. Looped: a chunk's kept columns (`gen_system_chunk`, both
+  forms), `gen_chunk_columns`, the lanes a system can't write (`gen_unwritten_lanes`, runs of 32 or more), a
+  query's bindings, a canonical loop's read-only components, and `tide_game_near_same`'s two arrays. The arrays
+  filled by a loop aren't `const` arrays with initializers any more; the row loops are handed their elements or
+  the array as before. Narrow components and ones taken in part keep a line a lane, so the SIMD loops' places
+  stay named apart. Plumbing parts: 2.4-12.5 s each before, 1.9-2.8 s after but for two (5.5 and 6.6 s).
+- **`tide_game_near_same` compares a component's rows in one function a component**
+  (`tide_near_same_rows_<Component>`, predict_far_codegen.inc), called for each archetype that stores it, where
+  each archetype had the two gathers and every field's comparison of its own: 2.9 s to 1.7 s of its part.
+- **`tide_world_print` is compiled as written** (`optnone, noinline`): it prints, and optimizing a big game's was
+  1.7 s of the slowest part.
+- **A debug build's game.c starts compiling as soon as it's written** (`compile_written` in common.h, called by
+  codegen once the code's file is whole and before the plumbing is cut; `game_written` in build.c queues it into
+  the build's list with its stamp and starts one compile more). The generate goes on for about 1.9 s after
+  (cutting the plumbing's data and parts, the debugger's views, the objects' stamps), which the 2.3 s compile now
+  overlaps. `build.early_object` says where a build wants it (`build_game`, `build_library_work`); `queue_game`
+  leaves a file looked at this way alone (`early_queued`). Not with `TIDE_JOBS=1`, nor for release builds, whose
+  code is in parts written last.
+- **More than 256 components is said and nothing more is checked** (`check`, after `collect_decls`): the error was
+  said and checking went on, and `check_params` then read a 256-bit set of components past its end (ASan, found
+  by this work's first test fixture). `errors/components_too_many.tide`.
+- `diag_step` (common.h): steps inside a phase, said under `TIDEC_TIMES` alone (a report keeps phases by name).
+  codegen's end says its own: plumbing from code, cutting out data, cutting parts, writing parts, views and names.
+
+What an edit of a constant still pays (8.6 s): the Tide step 5.9-6.5 s (declarations 1.15 s, of it reading and
+hashing 960 MB of asset files; checking 0.5 s; generating C 1.85 s; packing 0.65 s; plumbing from code 0.4 s;
+cutting out its data 0.3 s; cutting its parts 1.06 s, four levels each going through all of it; views 0.17 s;
+stamps of the generated files 0.3 s), game.c at -O0 2.3 s (1 s of it past the generate now), link 0.2 s, the
+game's start 1.2 s. A layout change adds the plumbing's parts, 7-8 s for the slowest two with all sixteen
+compiling (`tide_inspect_match` 2 s, what's left of `tide_game_near_same` 1.7 s). Ideas not done: one N-way
+cut of the plumbing instead of four binary levels, or the levels' halves on threads; shaders' arrays written
+straight to the data part instead of cut out of the plumbing; game.c in parts at -O0 (each part's debug info
+would hold every type: `-fno-eliminate-unused-debug-types`); the rows functions of a debugger's build taking a
+wide component as arrays instead of a parameter a lane (`rows_spread`), which copies rows whole anyway.
+A new tide compiles everything again, build code included: 21-25 s, of which the Tide step is 11-17 s.
+
+Tests: `tide_cli_build_report` builds a debug game of 140 components and systems (4 MiB of plumbing, so parts)
+with the controlled compiler refusing `-flto=thin` and `--thinlto-*` (`TIDE_TEST_BUILD_FORBID_THIN`), expects the
+manifest's parts all compiled and game.c once, and after an edit of a system's code game.c once and at most one
+part more. `tidec_error_components_too_many`.
+
+Validation (Windows, Clang 23.1.2, ASan): 19 focused tests pass: `tidec_e2e_wide_lanes`, `kept_lanes`,
+`row_lanes`, `handler_lanes`, `handler_lanes_net`, `predict_near`, `predict_near_split`, `predict_kept`,
+`predict_owned`, the three `_lanes_codegen` text checks, `tide_cli_tests`, `build_report`, `build_overlap`,
+`generation`, `run_exit`, `help`, the new error fixture. Mount & Rifle builds and runs in debug (the route above)
+and release (two frames). Not run: the rest of the compiler's fixtures against the changed C (looped columns
+for any component of 32 lanes or more, `tide_near_same_rows_*` in every game), web builds of them, a watching
+run with a window (hidden runs refuse one; its build is `build_library_work`, which `build_overlap`'s host case
+covers with the inert host), Linux/macOS/Android: CI's.
+
+## Checkpoints in `tide run` (2026-11-17)
+
+`tide run` passes the game `--checkpoints <project>/checkpoints` (not for `--server`, Android or the web) and
+forwards `--from <name>` and `--force` (refused with `--no-dev`, `--distribution` or `--server`). For a page,
+`serve.c` now takes POST bodies: only with the X-Tide header (others are closed before their body is held), with a
+Content-Length up to `SERVE_BODY_MOST` (1 GiB); `serve_fn` gets the body. `answer_checkpoint` (build.c, watching
+runs) answers `GET /checkpoints` (names, newest first), `GET /checkpoint?name=` and `POST /checkpoint?name=` (written
+to `saving.part`, renamed into place), names checked as the host checks them. notes/standard-host.md, Checkpoints.
+`kind=recording` (2026-11-17) serves and keeps `.recording` files beside them, listed apart; another kind is 404.
+
+
+## `--dev` and `--no-dev` (2026-11-16)
+
+`build_options.dev` (build.h) goes to `codegen_options.dev`. `main.c` sets it from `--dev`/`--no-dev` (`run` only),
+and without either to `run && !distribution`: `tide run` builds with dev, `tide build` without. The listing compile
+(schedule, shaders) passes `.dev = true`. Help has both options; docs/tools/cli.md and docs/tools/dev-tools.md say
+what they do. Tested: `tide_cli_help`, `tide_cli_run_exit`.
+
 ## Faster `tide run`: kept generates, kept run folders, the front end (2026-11-10)
 
 Owner: "look into optimizing `tide run`", with Mount & Rifle as the realistic case. Measured with this checkout's
@@ -50,6 +503,11 @@ What changed, in order of what it gave:
   A folder whose program can't be opened for writing (a game left running by a tide that ended) is passed over.
   A run that finds no folder free still uses `run/<pid>`, removed after. The copies stay on disk: Mount & Rifle's
   once-1 is 1.5 GB.
+- **A release's placed pack is compressed** (2026-11-16; notes/assets-and-files.md, Compressed packs):
+  `place_file(from, to, compressed)` is `place_pack` with that choice (`pack_ships_compressed`: release or
+  distribution, not a run, managed hosting or Unity). It reads tidec's file, compresses its pieces on every
+  processor and writes the result, under the step "compressing assets"; the marker's record says `compressed`, so
+  the same destination is rewritten when the mode changes and left alone when nothing did.
 - **`place_pack`'s marker is per destination** (`<from>.placed-<hash of to>`), so `tide build`'s copy in `.build/`
   and a run's copy don't take each other's, and it copies with `sys_copy_file` (Windows' CopyFile: 0.3 s for
   1.4 GB against 1.1 s read and written; elsewhere 4 MB at a time, without holding the file).
@@ -344,7 +802,7 @@ existing stronger header invalidation. Neither engine/package objects nor the ga
 Measurements (Windows, clang/lld 23.1.2, Ryzen 9 7900X; exploratory single passes, ordinary desktop load): Mount &
 Rifle's 102,183,928-byte C took 49.47 s to compile as one file, 29.84 s with the prior two-file split, 19.39 s in four
 parts, and 6.71 s in four ThinLTO parts. Successful DLL links retaining the game API took 0.32 / 0.45 / 0.56 / 10.24 s
-respectively: about 49.8 to 17.0 s for that C-and-link work. These are MSVC-ABI experiments, not timings of the
+respectively: about 49.8 to 17.0 s for that C-and-link work. These are MSVC-355 of them; six storage files and `dev_build` differ by two fixes merged from dev since, 3a6ded61e and 730408c1eI experiments, not timings of the
 packaged MinGW CLI or total game builds; asset import/Tide generation and engine/package compilation are excluded.
 Separating shader arrays alone took 51.20 s and was rejected. The initial full-file time trace put 23.3 s in LLVM
 optimization and 28.7 s in backend code generation, against 5.9 s in the frontend. Raw data and identities:
@@ -578,7 +1036,7 @@ channels and active users/installers are skipped. Last-use stamps live outside
 the installations and refresh before and after commands. Legacy caches acquire
 a new 30-day grace period on first observation. Expired pins are downloaded again
 with existing consent. Lock files remain to preserve cross-process lock identity.
-No background service, runtime ABI, telemetry field or game code changes.
+No background service, runtime 355 of them; six storage files and `dev_build` differ by two fixes merged from dev since, 3a6ded61e and 730408c1eI, telemetry field or game code changes.
 
 Validation: strict warning-free Windows Clang 23.1.2 ASan builds; the seven
 focused CLI CTests and tidels_tests pass (8/8). The final version fixture passes
@@ -588,7 +1046,7 @@ sharing/update deferral, consent, checksum/offline fallback, last-use expiry,
 legacy grace, active exact-version protection and symlink/junction boundaries.
 It exercises both host commands and --web forwarding without running a game.
 Unity 6000.6.0f1 VersionTests passes 12 tests in a scratch Sample under
-TIDE_HIDDEN/batchmode/nographics/noAudio; one existing ABI-5-host test is ignored
+TIDE_HIDDEN/batchmode/nographics/noAudio; one existing 355 of them; six storage files and `dev_build` differ by two fixes merged from dev since, 3a6ded61e and 730408c1eI-5-host test is ignored
 because that unrelated fixture was not supplied. Editor lock exclusion/release
 and last-use refresh pass. Node 24.22.1 docs production build and diff checks
 pass; the docs retain existing allowed unstaged-game-page 404s. Release-dispatch
@@ -702,7 +1160,7 @@ then starts generated/game/package C within the existing TIDE_JOBS budget.
 The front end stays on its caller thread: no concurrent arena, checker or
 importer access. Already-cached engines start no speculative jobs; TIDE_JOBS=1
 keeps generation and C compilation serial. Android still generates once before
-its two ABI builds; its C batches use the shared scheduler without prelaunch.
+its two 355 of them; six storage files and `dev_build` differ by two fixes merged from dev since, 3a6ded61e and 730408c1eI builds; its C batches use the shared scheduler without prelaunch.
 
 Within the existing batch, generated game.c keeps first priority, followed by
 engine sources in descending file-size order, then other C in its existing
@@ -854,7 +1312,7 @@ package resolution, Tide/asset compilation, C/C++ compilation and linking.
 C/C++ batches announce their file/worker counts and each successful completion
 with a completed/total count and basename; empty batches and reused links say
 they are up to date. Native runs announce launch; web/Android standalone builds
-announce packaging, and Android links identify their ABI. Shared build paths
+announce packaging, and Android links identify their 355 of them; six storage files and `dev_build` differ by two fixes merged from dev since, 3a6ded61e and 730408c1eI. Shared build paths
 also give watched rebuilds this feedback. stdout completion messages, diagnostic
 ordering, cache stamps, compiler scheduling and runtime contracts stay unchanged.
 These are real file counts, not an estimated overall percentage or timer.
@@ -976,7 +1434,7 @@ after successful code generation, using the existing `game_info.asset_paths`
 collection. It refuses inspection-only modes and fails on output I/O errors.
 `tide_add_game` consumes the file for reference model/side-buffer rebuilds;
 the in-process CLI watcher already reads the same asset path collection.
-No game runtime ABI or telemetry fields change. Contracts and validation:
+No game runtime 355 of them; six storage files and `dev_build` differ by two fixes merged from dev since, 3a6ded61e and 730408c1eI or telemetry fields change. Contracts and validation:
 notes/tide-programs.md and notes/assets-and-files.md.
 
 ## Release prunes again; distribution keeps only shipping cuts (2026-10-30)
@@ -990,7 +1448,7 @@ collects sections in every mode, as before. Distribution alone keeps: symbol
 stripping (-s, Apple -S -x -no_exported_symbols, wasm -s), name/shader-name
 stripping with the private game.names map, debugger-sidecar cleanup, -DNDEBUG,
 the Windows GUI subsystem, the minified/compressed web page, Android's export
-allowlist, appId requirement, non-debuggable APK and AAB. Release keeps -g,
+allowlist, appId requirement, non-debuggable APK and A355 of them; six storage files and `dev_build` differ by two fixes merged from dev since, 3a6ded61e and 730408c1e. Release keeps -g,
 PDB/dSYM, natvis/LLDB views, names and assertions. NDEBUG stays a distribution
 cut: it is no pruning, and the split's release-keeps-assertions choice stands
 until the owner says otherwise.
@@ -1061,7 +1519,7 @@ undefined; no new language symbol or telemetry field is introduced.
 Caches are separate <target>-debug/release/distribution directories. Custom-C
 simulation identity records all three modes because NDEBUG can affect trusted
 C. Android release APKs stay debuggable and accept the default app ID;
-distribution requires appId and produces the shipping AAB/limited exports.
+distribution requires appId and produces the shipping A355 of them; six storage files and `dev_build` differ by two fixes merged from dev since, 3a6ded61e and 730408c1e/limited exports.
 Deploy explicitly requests distribution, preserving its shipping contract.
 Unity declaration fallback forwards the selected mode. CMake configurations
 and tidec's explicit strip options are unchanged.
@@ -1229,9 +1687,9 @@ their APIs. Android standalone release links use platform/android/game.exports:
 only ANativeActivity_onCreate is global; all other game/runtime definitions are
 local. Its entry point already has the required explicit visibility/root.
 The platform install ships that file as lib/android/game.exports, shared by
-the two ABI folders. A missing file fails the release build with reinstall
+the two 355 of them; six storage files and `dev_build` differ by two fixes merged from dev since, 3a6ded61e and 730408c1eI folders. A missing file fails the release build with reinstall
 guidance. Separately supplied game libraries are not relinked or restricted.
-The APK, generated headers and host ABI do not change. Custom code relying on
+The APK, generated headers and host 355 of them; six storage files and `dev_build` differ by two fixes merged from dev since, 3a6ded61e and 730408c1eI do not change. Custom code relying on
 dynamic lookup of libgame.so's former incidental exports must expose its API in
 a separate library. CMake shipping apps use the same export policy; debug and
 profiling configs retain names.
@@ -1251,7 +1709,7 @@ and batching pass Vulkan/OpenGL/WebGL/D3D11/WebGPU. The all-fixture check pins
 Native/web installed --strip-only checks pass with actual shader sentinels and
 private maps, including split/single-file pages and debug-to-release cleanup.
 
-Both Android platform ABI libraries build and install the allowlist. The staged
+Both Android platform 355 of them; six storage files and `dev_build` differ by two fixes merged from dev since, 3a6ded61e and 730408c1eI libraries build and install the allowlist. The staged
 CLI passes cpp_test.cmake with WEB and ANDROID enabled: real debug/release APKs,
 C++ constructors/virtual dispatch/custom allocation, expected failure cases,
 and only the NativeActivity export in both release libgame.so files. CMake's
@@ -1345,57 +1803,13 @@ selection is a declaration-valued `settings { startScene = Levels.Start; }`;
 Main behavior remains. A prefab entry uses the ordinary checked Scene.Load
 path, its authored root and normal Spawned handlers, then ordinary systems,
 views and session startup. Match and local scene entries retain their normal
-placement. No new runtime function or generated-C/runtime ABI is introduced.
+placement. No new runtime function or generated-C/runtime 355 of them; six storage files and `dev_build` differ by two fixes merged from dev since, 3a6ded61e and 730408c1eI is introduced.
 CLI help exposes --scene for build/run and describes hosting and several-player
 startup using the selected match/local entry. The help fixture pins the option,
 persisted-setting example and removal of the former Main-only requirements.
 
-The private editor flags `--source-overlay <original> <draft>` and
-`--editor-cache <directory>` build an applied unsaved document using its
-original source path, namespace/package context and relative asset paths. An
-original .tprefab not present on disk is included as a game input. The private
-cache isolates generated files and objects from ordinary builds and other
-editor runs; its configuration subdirectory keeps the usual target/mode
-separation. Neither the persisted source bytes nor its project startup setting
-are changed by this build. These flags are internal editor plumbing, separate
-from the public startup selection.
-
-`tools/tide-editor/play.h` exposes a zero-initialized editor_play, Start/Poll/
-Stop/Close and explicit STOPPED, BUILDING, RUNNING, FINISHED and FAILED states.
-Start copies the applied source, qualified selected prefab, project/path,
-revision and runtime arguments into a unique .tide/editor-play/<pid>-<serial>
-workspace. It first builds a standalone normal game, then Poll launches its
-executable through the ordinary game host. All normal views run, including
-unmarked ones; the game's own camera, devices, local player and session are
-used. This is distinct from the frozen authored-view preview. The UI must Stop
-before replacing or closing its document. Later authoring edits do not change
-the captured running build. Stop destroys the runtime process and its private
-artifacts; it does not copy simulation state into the authoring document.
-
-The compiler and game are each owned by sys_start_tree_logged: a Windows job
-assigned while the new process is suspended, or a POSIX process group set
-before exec. Cancellation kills descendants, and a completed parent also
-cleans up remaining descendants. Output is logged, windows remain suppressed
-under TIDE_HIDDEN, and the helper refuses hidden Play without bounded --frames,
---capture or --script arguments. Errors retain the workspace/log until Stop,
-Close or another Start. Tests use explicit scratch --data-dir paths.
-
-Focused Windows validation: tide_editor_play passes its actual executable/
-grandchild cancellation fixture, cleanup after a successful compiler exits,
-immutable unsaved revision, build/run/error states and hidden/conflict refusals.
-The installed-game test
-`node tools/tide-editor/tests/play.mjs <tide_editor_play_tests> <installed tide>
-<work>` passes against this checkout's debug CLI and freshly built MinGW
-platform/runtime. It builds a no-Main authored game twice, verifies unsaved
-values, Spawned, systems, unmarked views, scripted input and fresh runtime
-state after Stop, checks real camera/capture pixels, and preserves source
-bytes and the dirty authoring document. The standalone process test requires
-no GPU; the installed-game test does. POSIX process groups and other desktop
-hosts were not run here. The native scene_startup lifecycle fixture and compiler
-startup contract script pass on native and web. Full native/web builds and all
-engine checks pass; the final seven editor CTests and docs build pass. An
-external prototype hash-pin failure reproduces with the HEAD compiler; optional
-external browser playthroughs were stopped. Details: notes/editors.md.
+The private editor flags `--source-overlay` and `--editor-cache`, and the editor's
+Play helper, went with the native scene editor (2026-11-16, `notes/editors.md`).
 
 ## Bundled JetBrains installation (2026-10-21)
 
@@ -1977,37 +2391,6 @@ Linux, MinGW and sanitizers. All platform tests/package checks passed and
 v0.3.0 published; the separate Marketplace upload failure and remaining setup
 are recorded in notes/releases-and-ci.md.
 
-## Native editor preview builds (2026-10-13)
-
-The native editor's private _editor-preview command takes project, original
-prefab source, draft file, qualified prefab, output directory and match/local
-placement. tide_build_editor reuses ordinary folder/package/generated C/native
-library compilation and asset packs, with DEBUG. The unsaved source overlay
-keeps its original path, checked against the selected project boundary. Engine
-objects reuse the ordinary native cache; revision modules have separate game
-outputs. The command is an internal transport, not advertised as a user build
-mode. Preview flags and lifecycle are documented under tide open and Editors.
-Installed packages include the private tide/editor_preview.h callback header.
-
-On Windows, logged/quiet children use CREATE_NO_WINDOW so preview compiler jobs
-create no console windows. Unredirected children explicitly inherit the caller's
-stdio handles, preserving --check/hidden-run output when tide-editor is a GUI
-subsystem app. Existing sys_run's output contract stays the same. Installed
-preview.mjs checks the real native build/asset/library path, shader captures,
-unsaved drafts/undo/redo and C link failure. Ordinary CLI/hidden/installer tests
-run in the full native suite. No browser or new runtime entry point is needed.
-
-## Native authoring command (2026-10-12)
-
-tide open forwards arguments to the sibling tide-editor executable and returns
-its exit code; it builds/runs no game and opens no browser. Native builds with
-the platform enabled install the app in bin beside tide/tidels. The CLI names
-the missing desktop installation/build target if the app is absent. Project
-discovery, --check, bounded captures/scripts and limits are in docs/tools/cli.md,
-docs/tools/editors.md and notes/editors.md. The app uses the shared package
-resolver without fetching, and checks with DEBUG/package symbols. Normal build,
-watch and package behavior is unchanged. CLI/UI fixtures exercise real dispatch.
-
 ## Optimized engine in development builds (2026-10-12)
 
 The owner approved optimizing the engine by default after the external
@@ -2023,7 +2406,7 @@ fully unoptimized for engine development and correctness testing.
 Engine compile jobs and their object stamps use the same engine-specific
 flags. An old engine stamp rebuilds engine objects without changing the
 game's compilation policy. Existing per-game/configuration caches remain;
-ordinary game edits do not rebuild the engine. No ABI, runtime API or
+ordinary game edits do not rebuild the engine. No 355 of them; six storage files and `dev_build` differ by two fixes merged from dev since, 3a6ded61e and 730408c1eI, runtime API or
 language semantics changed, and no animation sampling/binding cache was added.
 
 The package cache integration test checks optimization/assertion macros in
@@ -2125,7 +2508,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 - **Standalone release games collect unused code and data** (2026-10-10). `compiler/cli/build.c` compiles release engine/game/package C with `-ffunction-sections` and `-fdata-sections`, then links MinGW and ELF executables with `--gc-sections,-s`, macOS executables with `-dead_strip,-S,-x`, and WebAssembly with `-s` (wasm-ld already collects unused functions and data in every configuration). The section flags enter the ordinary object stamps; every build relinks, so a changed link policy never reuses a stale program. `-O2` and the determinism flags stay as before, with no LTO. Debug links and watched/hot-reload links keep their existing policy and public API. Android release libraries collect private sections and strip debug/symbol tables while retaining public exports, including the NativeActivity entry; no export visibility is narrowed. Prebuilt platform objects get sections in Release, RelWithDebInfo and MinSizeRel through `tide_flags`, so collection can work within an archive member as well as between members. Runtime references, retained exports and callbacks remain roots, and arbitrary prebuilt third-party libraries can only be collected as finely as their own sections allow.
   - `cache_test.mjs` checks the installed build path using a private installation copy: an extra engine source and the game's own C each contain a called function/data sentinel and an uncalled one. Both uncalled markers exist in the release objects but disappear from the final native/web program, both called markers remain, and native debug retains all four. An asset with no Tide reference remains available to the game's C. `--strip-only` runs these checks without the cache/watch cases; they also run in the ordinary package cache test. `cpp_test.cmake` builds the successful constructor, virtual-dispatch and custom-allocation cases in debug and release on native/web, and its Android case in both configurations when requested.
   - Automatic unused-asset pruning is enabled only for release standalone games without layout/watch mode and without C/C++ or prebuilt libraries in the game or any resolved package. C can look up a pack entry by name without a Tide reference, so such interop games keep every asset. This opt-in is independent of `DEBUG`; the compiler's default and custom-host builds keep their asset API. Asset graph details are in `notes/assets-and-files.md`.
-  - Validation on Windows: the staged package passed native/web sentinel checks, all C++ package cases in debug/release, and Android compilation for both ABIs using the installed NDK. Both Android release libraries retained `ANativeActivity_onCreate` and `main` exports. Web watching passed in debug and release; the native scripted reload/swap test passed with ordinary debug libraries and isolated optimized libraries compiled with function/data sections. Node syntax and strict C17 warning checks passed. No Android emulator or macOS linker was run for this change.
+  - Validation on Windows: the staged package passed native/web sentinel checks, all C++ package cases in debug/release, and Android compilation for both 355 of them; six storage files and `dev_build` differ by two fixes merged from dev since, 3a6ded61e and 730408c1eIs using the installed NDK. Both Android release libraries retained `ANativeActivity_onCreate` and `main` exports. Web watching passed in debug and release; the native scripted reload/swap test passed with ordinary debug libraries and isolated optimized libraries compiled with function/data sections. Node syntax and strict C17 warning checks passed. No Android emulator or macOS linker was run for this change.
   - Full debug suites passed 2,061 native and 2,031 web tests, and the production docs build passed. With identical source cases and LLVM 23.1.2, a minimal Windows release shrank from 1,534,464 to 991,744 bytes and Duel from 1,915,392 to 1,436,160; their WASM payloads shrank from 835,829 to 601,001 and 1,274,398 to 1,033,845 bytes. These are raw payload sizes, not compressed download sizes. The runtime JavaScript stayed at 148,672 bytes. Bounded native/browser smoke runs, stale-pack cleanup and unused URL/path omission passed; asset pack measurements are in `assets-and-files.md`.
   - WSL passed the seven asset-usage cases under ASan/UBSan with leak detection. ELF probes using Clang 18/23 and both GNU ld and lld preserved called functions, C++ constructors and virtual dispatch, removed unused function/data sections and stripped `.symtab`. GNU ld retained a pooled unused string sharing a section with a used literal; packaged Linux's embedded lld removed it. After merging concurrent skinned runtime/codegen optimizations, the affected asset/model/pack/order suites passed 206 native and 201 web tests. Requested Build run `38079507404` covers `c75ebcda`, including these changes; its Windows and macOS package checks exposed the missing private-header installation described below.
 - **Gameplay model assets rebuild under watching** (built 2026-10-08, extended 2026-10-09): `game_info.assets_affect_match` is true when generated code has a skinned asset or assets reached by its typed skinned vertex defaults, including Decode-only programs. Native and web watchers in `compiler/cli/build.c` send settled asset changes, including external glTF buffers, through the ordinary library/program build path; the generated header's canonical model-content and selected default-dependency fingerprints give that build its new identity. A game without either keeps its existing pack-only repack path. A failed generation retains the last successful `game_info` and its watched asset paths, so correcting a bad model triggers another build without an unrelated source edit. `game_info` is returned in-process; there is no serialized CLI metadata format for this flag. `tidec_skinned_default_identity` covers asset dependencies through Decode without an imported skinned declaration.
@@ -2217,5 +2600,11 @@ was edited.
 Mount & Rifle reported that --define affected Tide but never its C files. queue_c_files now passes each selected symbol as a separate -D argument (value 1) to handwritten game and package C/C++. This includes the existing default-debug DEBUG entry. Automatic PACKAGE_ symbols remain Tide-only. Generated code, host launchers and engine sources receive no user macros; engine-object reuse is preserved. The path is shared by native, web, Android and reload builds.
 
 The handwritten-source stamp contains exactly these additional arguments. A symbol used only by trusted C also enters the external simulation fingerprint: changing it must change compatibility even if no Tide #if reads it. No new symbol syntax or runtime API is introduced. User docs/help describe C/C++ forwarding.
+
+## --define NAME=value (2026-11-14)
+
+The language side (`defined(NAME)`, `define(NAME, default)`) is in `notes/language.md`. The CLI's part: `main.c`'s `--define` takes `lex_define_ok` (a name `lex_symbol_ok` takes, then nothing or `=` and any value) and keeps one `defines[]` entry per name, the later, so `c_defines` says each `-D` once; it passes `NAME=value` as given, which clang reads as `#define NAME value` (C tokens: a text value isn't a C string). `packages_read`'s conditions compare a symbol's name up to its `=`, so `--define STEAM=480` takes `#if STEAM` lines. Nothing else changed: `generation_key`, the handwritten-source stamp and the external simulation fingerprint already took each define's whole text, value included, and `tide unity` and the hot-reload player pass the strings through. Help (`help.c`) and `docs/tools/cli.md` describe the form. Tests: `tide_cli_build_report` (the fake compiler, `build_compiler.c`, now checks `-D BATTLE_TEST=<value>` when `TIDE_TEST_BUILD_DEFINE` is a value) and `tide_cli_packages`.
+
+Review fixes (2026-11-15): `main.c` adds the debug mode's `DEBUG` only when no `--define` named `DEBUG` (by `lex_define_name_length`), so `--define DEBUG=3` keeps its value in a debug build: before, a plain `DEBUG` came after it, the lexer kept that later, valueless one, and C got `-D DEBUG=3 -D DEBUG`. The hot-reload player's build (`build.c`, the build without DEBUG beside a Unity editor's) drops `DEBUG` with or without a value. `tide unity --declarations` already passed every define but a plain `DEBUG`. `packages.c` conditions refuse values (`#if STEAM == 480`, `#if STEAM > 400`), `==`/`!=` beside a symbol given a value, and `defined(STEAM)`. `docs/tools/cli.md` says a text value reaches C as tokens (an apostrophe warns in every C file). Tests: `tide_cli_build_report` (`tide schedule --define DEBUG=3` reads 3 through `define(DEBUG, 0)`; a plain debug schedule gives the no-value error) and `tide_cli_packages` (the four refusals, and `#if STEAM == DEMO` with no values still compared).
 
 Validation: Windows Clang 23.1.2 ASan CLI/helper builds and help, build_overlap and build_report pass (3/3). The controlled-compiler regression checks game and package .c/.cpp macro arguments, no macros on engine/generated sources, a zero-compile unchanged rebuild, and removing a C-only symbol recompiling all four handwritten sources while retaining engine objects and changing the simulation ID. This validates the common host-side command/cache path, without a game or browser launch; Android/other OS execution remains CI coverage. The integrating task ran the production docs build; the added CLI wording changes no docs structure.

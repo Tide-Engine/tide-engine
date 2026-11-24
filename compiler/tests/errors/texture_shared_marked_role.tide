@@ -1,0 +1,7 @@
+// expect: vert 'Raise' and frag 'Shade' take the one texture 'height' with two roles
+// expect: the frag's is [Raw], which a vert's Texture can't be: name them apart for two textures
+scene Main { }
+local singleton Art { [Raw] Texture height; List<Vertex3> mesh; }
+vert Raise(mut Vertex3 vertex, Texture height) { vertex.position.y += height.Sample(vertex.uv).r; }
+frag Shade(Vertex3 vertex, out Color color, [Raw] Texture height) { color = height.Sample(vertex.uv); }
+view Show(Art art) { Draw.Mesh(art.mesh, [0, 1, 2], float4x4.identity, art.height, Raise, Shade); }

@@ -1,0 +1,7 @@
+// expect: this ?: picks between images of different roles, [Raw] on some and [Linear] on others, and a value has one role
+// expect: pick with if/else and assign each side where its role goes
+[Raw] asset Texture numbers = "../e2e/assets/hero.png";
+[Linear] asset Texture lit = "../e2e/assets/hero.png";
+local singleton Art { [Raw] Texture pick; bool flag; }
+scene Main { }
+view V(mut Art art) { art.pick = art.flag ? numbers : lit; }

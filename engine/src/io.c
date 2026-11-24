@@ -1,8 +1,11 @@
 #include "tide/io.h"
 
 #include <limits.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "tide/page.h"
 
 static tide_io_void_result result(const tide_io_error error)
 {
@@ -38,6 +41,108 @@ static tide_io_error path_error(const tide_str path)
     return TIDE_IO_NONE;
 }
 
+static bool separator(const char c) { return c == '/' || c == '\\'; }
+static char small_letter(const char c) { return c >= 'A' && c <= 'Z' ? (char)(c - 'A' + 'a') : c; }
+
+// `size` bytes of a path as the engine's folder is compared with (tide_io_engine_path): each part after a '/', its
+// letters small, into `out` (room for size + 1 bytes). Its length; `drive` says whether its first part is a drive's
+// ("/c:"), which ".." never takes off.
+static uint32_t fold_path(const char *path, const uint32_t size, char *out, bool *drive)
+{
+    uint32_t at = 0, n = 0;
+    *drive = false;
+    // "\\?\" and "\\.\" give the system the path as it's written: the same file, where its parts are a file's names
+    if (size >= 4u && separator(path[0]) && separator(path[1]) && (path[2] == '?' || path[2] == '.') && separator(path[3])) {
+        at = 4u;
+        if (size - at >= 4u && small_letter(path[at]) == 'u' && small_letter(path[at + 1u]) == 'n'
+            && small_letter(path[at + 2u]) == 'c' && separator(path[at + 3u])) at += 3u; // "UNC\server\share"
+    }
+    const uint32_t first = at;
+    while (at < size) {
+        while (at < size && separator(path[at])) at++;
+        const uint32_t start = at;
+        while (at < size && !separator(path[at])) at++;
+        uint32_t end = at;
+        if (end == start || (end - start == 1u && path[start] == '.')) continue;
+        if (end - start == 2u && path[start] == '.' && path[start + 1u] == '.') {
+            const uint32_t keep = *drive ? 3u : 0u;
+            while (n > keep && out[n - 1u] != '/') n--;
+            if (n > keep) n--;
+            continue;
+        }
+        if (start == first && !n && end - start == 2u && path[start + 1u] == ':') {
+            *drive = true;
+        } else {
+            // A ':' starts an NTFS stream's name, of the file before it; Windows drops a name's trailing dots and spaces
+            for (uint32_t i = start; i < end; i++) {
+                if (path[i] == ':') { end = i; break; }
+            }
+            while (end > start && (path[end - 1u] == '.' || path[end - 1u] == ' ')) end--;
+            if (end == start) continue; // "...", " " or ":x": the folder it's in
+        }
+        out[n++] = '/';
+        for (uint32_t i = start; i < end; i++) out[n++] = small_letter(path[i]);
+    }
+    return n;
+}
+
+bool tide_io_engine_path(const tide_io *io, const tide_str path, const bool or_above)
+{
+    if (!path.ptr || path.bytes <= 0) return false;
+    const char *root = io && io->persistent_data_path ? io->persistent_data_path : "";
+    const size_t root_size = strlen(root), size = (size_t)path.bytes;
+    const bool relative = !separator(path.ptr[0]) && !(size >= 2u && path.ptr[1] == ':');
+    if (!root_size && !relative) return false;
+    if (root_size > UINT32_MAX / 4u || size > UINT32_MAX / 4u) return true; // No path is this long: refused
+    // A relative path is the root's, ".." in it as much as in an absolute one
+    const size_t whole = relative ? root_size + 1u + size : size;
+    char *joined = tide_alloc(whole + 1u);
+    if (relative) {
+        memcpy(joined, root, root_size);
+        joined[root_size] = '/';
+        memcpy(joined + root_size + 1u, path.ptr, size);
+    } else memcpy(joined, path.ptr, size);
+    char *folded = tide_alloc(whole + 1u), *engine = tide_alloc(root_size + 1u + sizeof "/" TIDE_IO_ENGINE_FOLDER);
+    bool drive = false, root_drive = false;
+    const uint32_t n = fold_path(joined, (uint32_t)whole, folded, &drive);
+    uint32_t e = fold_path(root, (uint32_t)root_size, engine, &root_drive);
+    engine[e++] = '/';
+    for (const char *c = TIDE_IO_ENGINE_FOLDER; *c; c++) engine[e++] = small_letter(*c);
+    // "\Users\..." is on whichever drive is the process's: the root's, as far as this can tell
+    const uint32_t skip = root_drive && !drive ? 3u : 0u;
+    const char *in = engine + skip;
+    const uint32_t m = e - skip;
+    bool found = n >= m && memcmp(folded, in, m) == 0 && (n == m || folded[m] == '/');
+    if (!found && or_above) found = m >= n && memcmp(in, folded, n) == 0 && (n == m || in[n] == '/');
+    free(joined);
+    free(folded);
+    free(engine);
+    return found;
+}
+
+// A game's call refused for the engine's folder: said once a run, with what to do instead.
+static tide_io_error refused(const tide_str path)
+{
+    static int said;
+    if (!__atomic_exchange_n(&said, 1, __ATOMIC_RELAXED)) {
+        fprintf(stderr,
+                "tide: File and Directory calls can't use \"%.*s\": the \"" TIDE_IO_ENGINE_FOLDER "\" folder in "
+                "Application.persistentDataPath holds the engine's own files (the match's Storage keeps its keys "
+                "there). Keep the game's files in another folder, and the match's in Storage. (IOError.AccessDenied, "
+                "said once a run)\n",
+                path.bytes > 512 ? 512 : (int)path.bytes, path.ptr);
+    }
+    return TIDE_IO_ACCESS_DENIED;
+}
+
+// path_error, then the engine's folder: a path in it, or with `or_above` one it's in.
+static tide_io_error game_path_error(const tide_io *io, const tide_str path, const bool or_above)
+{
+    const tide_io_error invalid = path_error(path);
+    if (invalid) return invalid;
+    return tide_io_engine_path(io, path, or_above) ? refused(path) : TIDE_IO_NONE;
+}
+
 static tide_str copy_text(const char *data, const int32_t size)
 {
     char *copy = tide_scratch_memory((size_t)size + 1u);
@@ -48,7 +153,8 @@ static tide_str copy_text(const char *data, const int32_t size)
 
 static bool exists(const tide_io *io, const tide_str path, const bool directory)
 {
-    return path_error(path) == TIDE_IO_NONE && io && io->exists && io->exists(io->user, tide_str_c(path), directory);
+    return path_error(path) == TIDE_IO_NONE && !tide_io_engine_path(io, path, false) && io && io->exists
+        && io->exists(io->user, tide_str_c(path), directory);
 }
 
 bool tide_file_exists(const tide_io *io, const tide_str path) { return exists(io, path, false); }
@@ -56,7 +162,7 @@ bool tide_directory_exists(const tide_io *io, const tide_str path) { return exis
 
 static tide_io_void_result create(const tide_io *io, const tide_str path, const bool directory)
 {
-    const tide_io_error invalid = path_error(path);
+    const tide_io_error invalid = game_path_error(io, path, false);
     if (invalid) return result(invalid);
     return result(io && io->create ? io->create(io->user, tide_str_c(path), directory) : TIDE_IO_STORAGE_UNAVAILABLE);
 }
@@ -66,7 +172,7 @@ tide_io_void_result tide_directory_create_directory(const tide_io *io, const tid
 
 static tide_io_error read_file(const tide_io *io, const tide_str path, uint8_t **data, uint32_t *size)
 {
-    const tide_io_error invalid = path_error(path);
+    const tide_io_error invalid = game_path_error(io, path, false);
     if (invalid) return invalid;
     if (!io || !io->read) return TIDE_IO_STORAGE_UNAVAILABLE;
     const tide_io_error error = io->read(io->user, tide_str_c(path), data, size);
@@ -104,7 +210,7 @@ tide_io_list_result tide_file_read_all_bytes(const tide_io *io, const tide_str p
 static tide_io_void_result write_file(const tide_io *io, const tide_str path, const uint8_t *data, const uint32_t size,
                                       const bool append)
 {
-    const tide_io_error invalid = path_error(path);
+    const tide_io_error invalid = game_path_error(io, path, false);
     if (invalid) return result(invalid);
     return result(io && io->write ? io->write(io->user, tide_str_c(path), data, size, append) : TIDE_IO_STORAGE_UNAVAILABLE);
 }
@@ -138,8 +244,9 @@ tide_io_void_result tide_file_write_all_bytes(const tide_io *io, const tide_str 
 static tide_io_void_result transfer(const tide_io *io, const tide_str source, const tide_str destination,
                                     const bool overwrite, const bool move, const bool directory)
 {
-    tide_io_error error = path_error(source);
-    if (!error) error = path_error(destination);
+    // A directory moved takes what's in it along: one the engine's folder is in can't go
+    tide_io_error error = game_path_error(io, source, directory);
+    if (!error) error = game_path_error(io, destination, directory);
     if (error) return result(error);
     if (!io || (move ? !io->move : !io->copy)) return result(TIDE_IO_STORAGE_UNAVAILABLE);
     const char *from = tide_str_c(source), *to = tide_str_c(destination);
@@ -163,7 +270,7 @@ tide_io_void_result tide_directory_move(const tide_io *io, const tide_str source
 
 static tide_io_void_result remove_path(const tide_io *io, const tide_str path, const bool directory, const bool recursive)
 {
-    const tide_io_error error = path_error(path);
+    const tide_io_error error = game_path_error(io, path, directory);
     if (error) return result(error);
     return result(io && io->remove ? io->remove(io->user, tide_str_c(path), directory, recursive) : TIDE_IO_STORAGE_UNAVAILABLE);
 }
@@ -177,6 +284,8 @@ tide_io_void_result tide_directory_delete(const tide_io *io, const tide_str path
 typedef struct listing {
     tide_list list;
     tide_io_error error;
+    const tide_io *io;
+    bool above; // The folder listed has the engine's in it, whose files are left out
 } listing;
 
 static void list_entry(void *user, const char *path)
@@ -184,7 +293,11 @@ static void list_entry(void *user, const char *path)
     listing *entries = user;
     const size_t size = strlen(path);
     if (size > INT32_MAX || !utf8((const uint8_t *)path, (uint32_t)size)) { entries->error = TIDE_IO_INVALID_DATA; return; }
-    const tide_text text = tide_text_temp((tide_str){path, (int32_t)size, tide_utf8_chars(path, (int32_t)size)});
+    const tide_str entry = {path, (int32_t)size, tide_utf8_chars(path, (int32_t)size)};
+    // The engine's folder itself is listed, as the name it has; what's in it isn't the game's
+    if (entries->above && tide_io_engine_path(entries->io, entry, false)
+        && tide_io_engine_path(entries->io, tide_path_get_directory_name(entry), false)) return;
+    const tide_text text = tide_text_temp(entry);
     *(tide_text *)tide_list_add(&entries->list, sizeof(tide_text), TIDE_IN_SCRATCH) = text;
 }
 
@@ -198,8 +311,9 @@ static int compare_entries(const void *a, const void *b)
 
 static tide_io_list_result list_paths(const tide_io *io, const tide_str path, const bool directories, const bool recursive)
 {
-    listing entries = {0};
-    tide_io_error error = path_error(path);
+    listing entries = {.io = io};
+    tide_io_error error = game_path_error(io, path, false);
+    if (!error) entries.above = tide_io_engine_path(io, path, true);
     if (!error) error = io && io->list ? io->list(io->user, tide_str_c(path), directories, recursive, list_entry, &entries)
                                       : TIDE_IO_STORAGE_UNAVAILABLE;
     if (!error) error = entries.error;
@@ -220,8 +334,6 @@ tide_io_list_result tide_directory_get_directories(const tide_io *io, const tide
 {
     return list_paths(io, path, true, recursive);
 }
-
-static bool separator(const char c) { return c == '/' || c == '\\'; }
 
 tide_str tide_path_combine(const tide_str a, const tide_str b)
 {

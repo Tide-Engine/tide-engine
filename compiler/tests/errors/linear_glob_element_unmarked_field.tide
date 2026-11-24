@@ -1,0 +1,5 @@
+// expect: this image is [Linear]; an unmarked value would lose its sRGB sampling role
+[Linear] asset Map<string, Texture> lits = "../e2e/assets/run/*.png";
+local singleton Art { Texture plain; }
+scene Main { }
+view V(mut Art art) { foreach (var entry in lits) art.plain = entry.value; }

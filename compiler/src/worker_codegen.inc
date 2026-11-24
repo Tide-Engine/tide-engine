@@ -246,13 +246,31 @@ static void gen_worker_await(gen *g, expr *e, const char *name)
     sb ticket_name = {0};
     sb_printf(&ticket_name, "tide_worker_ticket%d", k);
     const char *ticket = task_slot_for(g, ticket_name.data, (type){TY_INT, NULL});
+    // Its `priority:`, read once as the call begins: before it waits for room, which is by priority, and before
+    // its arguments. Kept in the frame, for each frame it waits. A call that says none is as it was.
+    sb can_reserve = {0}, reserve = {0};
+    if (call->mesh_lod) {
+        sb priority_name = {0};
+        sb_printf(&priority_name, "tide_worker_level%d", k);
+        const char *priority = task_slot_for(g, priority_name.data, (type){TY_INT, NULL});
+        hoist_spawns(g, call->mesh_lod);
+        indent(g, o);
+        sb_printf(o, "tide_f->%s = (int32_t)(", priority);
+        gen_as(g, o, call->mesh_lod, (type){TY_ENUM, g->prog->worker_priority});
+        sb_put(o, ");\n");
+        sb_printf(&can_reserve, "tide_worker_can_reserve_at(tide_l->tide_workers, (uint32_t)tide_f->%s)", priority);
+        sb_printf(&reserve, "tide_worker_reserve_at(&tide_l->tide_workers, tide_l->tide_worker_jobs, (uint32_t)tide_f->%s)", priority);
+    } else {
+        sb_put(&can_reserve, "tide_worker_can_reserve(tide_l->tide_workers)");
+        sb_put(&reserve, "tide_worker_reserve(&tide_l->tide_workers, tide_l->tide_worker_jobs)");
+    }
     line(g, o, "tide_f->%s = 0;", ticket);
     line(g, o, "tide_worker_resume%d:;", k);
     line(g, o, "if (!tide_f->%s) {", ticket);
     g->indent++;
-    if (waits) line(g, o, "if (!tide_worker_can_reserve(tide_l->tide_workers)) {");
+    if (waits) line(g, o, "if (!%s) {", can_reserve.data);
     else {
-        line(g, o, "tide_f->%s = (int32_t)tide_worker_reserve(&tide_l->tide_workers, tide_l->tide_worker_jobs);", ticket);
+        line(g, o, "tide_f->%s = (int32_t)%s;", ticket, reserve.data);
         line(g, o, "if (!tide_f->%s) {", ticket);
     }
     g->indent++;
@@ -295,7 +313,7 @@ static void gen_worker_await(gen *g, expr *e, const char *name)
         line(g, o, "tide_worker_submit%d:;", r);
         line(g, o, "if (!tide_f->%s) {", ticket);
         g->indent++;
-        line(g, o, "tide_f->%s = (int32_t)tide_worker_reserve(&tide_l->tide_workers, tide_l->tide_worker_jobs);", ticket);
+        line(g, o, "tide_f->%s = (int32_t)%s;", ticket, reserve.data);
         line(g, o, "if (!tide_f->%s) {", ticket);
         g->indent++;
         gen_spill_live(g);

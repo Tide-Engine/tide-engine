@@ -1,0 +1,5 @@
+// expect: 'name' is what the command is called with, and a parameter of its code too
+// expect: give one of them another name: the code reads both by name
+component Name { string value; }
+command(string name) Rename(mut Name name, with ownership) { name.value = name; }
+scene Main { }

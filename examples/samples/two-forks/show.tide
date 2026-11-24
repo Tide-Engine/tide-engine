@@ -696,10 +696,10 @@ view Hud(Kitchen kitchen, Devices devices, Me me, Layout layout, mut Fx fx, Pad 
         fx.undoHeld -= 0.09;
         undo = true;
     }
-    if (undo) Send(Undo { level = kitchen.level });
-    if (devices.keyboard.r.down || devices.gamepad.select.down) Send(Restart { level = kitchen.level });
+    if (undo) Undo(kitchen.level);
+    if (devices.keyboard.r.down || devices.gamepad.select.down) Restart(kitchen.level);
     // A development shortcut, deliberately absent from normal play's UI.
-    if (devices.keyboard.n.down) Send(Goto { level = NextKitchen(kitchen.level) });
+    if (devices.keyboard.n.down) Goto(NextKitchen(kitchen.level));
     if (!pad.touched) return;
     var reach = layout.reach;
     for (var way = 0; way < 4; way++)

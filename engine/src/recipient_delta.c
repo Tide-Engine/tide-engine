@@ -8,6 +8,7 @@
 #define REGION 16384u
 #define SLOTS 65536u
 #define MATCH 8u
+#define FRESH_LEAST (256u * 1024u)
 enum { XOR_REGIONS, COPY_SPANS, LITERALS };
 
 // One candidate per hash, no chains or unbounded searches. Collisions can only
@@ -35,10 +36,14 @@ static void literals(tide_writer *w, const uint8_t *now, uint32_t from, uint32_t
     tide_write_bytes(w, now + from, to - from);
 }
 
+_Static_assert(TIDE_RECIPIENT_INDEX_BYTES == SLOTS * 2u * sizeof(uint32_t), "copy_spans' index");
+
+// `room`: TIDE_RECIPIENT_INDEX_BYTES to use, whatever they hold, or NULL for its own
 static uint8_t *copy_spans(const uint8_t *now, uint32_t count,
-                           const uint8_t *base, uint32_t base_count, uint32_t *size)
+                           const uint8_t *base, uint32_t base_count, uint32_t *size, uint32_t *room)
 {
-    uint32_t *indexes = tide_alloc_zeroed(SLOTS * 2u, sizeof *indexes);
+    uint32_t *indexes = room ? room : tide_alloc_zeroed(SLOTS * 2u, sizeof *indexes);
+    if (room) memset(room, 0, TIDE_RECIPIENT_INDEX_BYTES);
     uint32_t *old = indexes, *current = indexes + SLOTS;
     // Sparse baseline anchors avoid drowning the fixed index in nearby keys.
     // The current scan visits every byte, so shifts retain the opportunity to
@@ -84,7 +89,7 @@ static uint8_t *copy_spans(const uint8_t *now, uint32_t count,
         literal = at;
     }
     if (literal < count) literals(&w, now, literal, count);
-    free(indexes);
+    if (!room) free(indexes);
     *size = w.size;
     return w.data;
 }
@@ -92,23 +97,35 @@ static uint8_t *copy_spans(const uint8_t *now, uint32_t count,
 uint8_t *tide_recipient_delta_pack(const uint8_t *now, uint32_t count,
     const uint8_t *base, uint32_t base_count, uint32_t *size)
 {
-    tide_delta_writer d;
+    return tide_recipient_delta_pack_with(now, count, base, base_count, size, NULL);
+}
+
+uint8_t *tide_recipient_delta_pack_with(const uint8_t *now, uint32_t count,
+    const uint8_t *base, uint32_t base_count, uint32_t *size, uint32_t *index)
+{
     const uint64_t hash = tide_hash(now, count);
-    tide_delta_begin(&d, base != NULL, NULL, 0, hash);
-    for (uint32_t at = 0; at < count;) {
-        const uint32_t n = count - at < REGION ? count - at : REGION;
-        const uint32_t bn = at < base_count ? (base_count - at < REGION ? base_count - at : REGION) : 0u;
-        tide_delta_region(&d, now + at, n, bn ? base + at : NULL, bn, false, 0);
-        at += n;
+    uint32_t xor_size = UINT32_MAX, copy_size = UINT32_MAX;
+    uint8_t *xor_bytes = NULL, *copy = NULL;
+    // Mostly new bytes (a view arriving, a first world: at least four times the base's): there is next to nothing
+    // to XOR them with, so the spans go first, and where they come to an eighth of the bytes or less the regions
+    // aren't packed only to be compared with them. Whichever is chosen says so in the first byte.
+    const bool fresh = count >= FRESH_LEAST && base_count <= count / 4u;
+    if (fresh) copy = copy_spans(now, count, base, base_count, &copy_size, index);
+    if (!fresh || copy_size > count / 8u) {
+        tide_delta_writer d;
+        tide_delta_begin(&d, base != NULL, NULL, 0, hash);
+        for (uint32_t at = 0; at < count;) {
+            const uint32_t n = count - at < REGION ? count - at : REGION;
+            const uint32_t bn = at < base_count ? (base_count - at < REGION ? base_count - at : REGION) : 0u;
+            tide_delta_region(&d, now + at, n, bn ? base + at : NULL, bn, false, 0);
+            at += n;
+        }
+        tide_delta_close(&d);
+        xor_bytes = tide_delta_end(&d, &xor_size);
     }
-    tide_delta_close(&d);
-    uint32_t xor_size = 0, copy_size = 0;
-    uint8_t *xor_bytes = tide_delta_end(&d, &xor_size);
     // The common sparse/unchanged path is already tiny. Do not build an LZ
     // index and scan the baseline just to save a few bytes on such a repair.
-    uint8_t *copy = NULL;
-    if (xor_size > 64u && xor_size > count / 32u) copy = copy_spans(now, count, base, base_count, &copy_size);
-    else copy_size = UINT32_MAX;
+    if (!fresh && xor_size > 64u && xor_size > count / 32u) copy = copy_spans(now, count, base, base_count, &copy_size, index);
     const uint32_t mode = xor_size < copy_size && xor_size < count ? XOR_REGIONS
         : copy_size < count ? COPY_SPANS : LITERALS;
     tide_writer w = {.grows = true};

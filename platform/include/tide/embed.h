@@ -23,7 +23,7 @@ typedef struct tide_embed tide_embed;
 
 // What another language binds against: a change to anything here that it lays
 // out or calls changes the number, and tide_embed_abi says it.
-#define TIDE_EMBED_ABI 24u
+#define TIDE_EMBED_ABI 30u
 uint32_t tide_embed_abi(void);
 
 typedef struct tide_embed_desc {
@@ -125,6 +125,20 @@ void tide_embed_status_of(const tide_embed *e, tide_embed_status *out);
 // built without it (tidec --embed).
 const uint8_t *tide_embed_view(const tide_embed *e, uint32_t *size);
 
+// What of the match the other program reads, which is all the view packet carries from the next frame on: `bits`
+// has a bit for each of the schema's first `types` types (bit i of the 64-bit word i / 64), set for a component, a
+// singleton or an event that's read. A component's local fields and a singleton's come with it; an event that isn't
+// read isn't kept. The entities are always there, and so is any type past `types`. NULL or 0 types: everything,
+// as before the first call. It's of the build running: a build laid out otherwise coming in (its types are numbered
+// anew) brings everything back until this is called for it.
+void tide_embed_view_want(tide_embed *e, const uint64_t *bits, uint32_t types);
+
+// Writes the last frame's view packet again, with what's read now: the same worlds, entities in the same places and
+// events, so the other program can ask for a type the moment something of its reads it for the first time, without
+// waiting a frame. tide_embed_view gives it. False where that frame's worlds aren't there to write from any more (a
+// request or a time travel call since): the packet stays as it was, and the next frame's has what's read.
+bool tide_embed_view_again(tide_embed *e);
+
 // The game's schema, as JSON: its types as its C lays them out (tide/layout.h),
 // which are the packet's and the commands', with what they are, its enums,
 // commands, prefabs and scenes. Valid until a new build comes in; NULL for a game
@@ -143,6 +157,13 @@ enum {
     TIDE_EMBED_LOG_PROBLEM = 2, // The host's: something went wrong
 };
 const uint8_t *tide_embed_log(tide_embed *e, uint32_t *size);
+
+// Which tide built this host, as text that stays where it is (a literal): the games' libraries it loads from
+// tide_embed_desc.library_dir have to say the same (tide/host.h's TIDE_HOST_LIBRARY_MADE_BY), and one that says
+// another isn't loaded, with a problem in tide_embed_log saying what to do. The process's, said before
+// tide_embed_create: the host tide builds for Unity says it as it's loaded, so the other program never calls this.
+// NULL, or never said, takes any library. A game linked in (tide_embed_desc.game) isn't checked: one build made both.
+void tide_embed_made_by(const char *made_by);
 
 // What the frame's views drew (tide/draw.h's draw list), for the other program
 // to draw in its own window, as bytes: this header, then its arrays, each from
@@ -271,6 +292,18 @@ typedef enum tide_embed_render_op {
     // image's storage format (tide_gpu_format). Written images use the existing IMAGE slot, without a sampler.
     TIDE_EMBED_RENDER_PIPELINE_IMAGES,
     TIDE_EMBED_RENDER_DEPTH_BIAS, // float constant, float slope; positive away
+    // id, image, width, height, flags: a texture that's an image of the other program's own, the one it gave the
+    // number `image` (tide_embed_local_texture), bound as it is wherever a draw or a kernel reads the texture. Nothing
+    // of it is written, no MIPMAPS is said of it, and TEXTURE_FREE lets go of the number alone, never of the image.
+    // `flags`: bit 0 for a [Linear] read (its colors as linear light), bit 1 for a [Raw] one (its channels as they
+    // are). With neither, its colors are read as every texture's of Tide's are, each times its alpha, which the
+    // other program sees to as it samples an image that's stored without (Unity's are), in display encoding.
+    TIDE_EMBED_RENDER_EXTERNAL,
+    // mesh, material, then 16 floats: in a pass on the other program's own target, a mesh of its own drawn by it
+    // with a material of its own (the numbers it gave them, tide_embed_local_object), placed by the matrix, column by
+    // column, from the mesh to the world, where the command is among the pass's draws. Its camera, lighting and
+    // everything the material does are that program's (Unity's CommandBuffer.DrawMesh).
+    TIDE_EMBED_RENDER_EXTERNAL_DRAW,
 } tide_embed_render_op;
 
 const uint8_t *tide_embed_render(tide_embed *e, uint32_t *size);
@@ -312,6 +345,35 @@ void tide_embed_render_reset(tide_embed *e);
 // text that isn't UTF-8, or a command too big to send.
 bool tide_embed_command(tide_embed *e, uint32_t type, uint64_t target_birth, uint64_t target_lineage, const void *value,
                         uint32_t size);
+
+// An image of the other program's own (a texture Unity imported) into a Texture field of the game's local state, for
+// its views to draw with: local fields alone, as the match holds no rendering resource. `type` is the schema's type
+// of the local fields (a component's, with the entity `birth`/`lineage` whose they are, or a singleton's, with
+// zeros) and `offset` the field's place in it. `image` is the number the other program knows the image by, from 1,
+// which TIDE_EMBED_RENDER_EXTERNAL then names wherever it's drawn, with nothing of it copied; `width` and `height`
+// are its pixels, which the game's `texture.size` reads; `filter` and `wrap` (tide_filter, tide_wrap) are how it's
+// sampled where a draw doesn't say. An `image` of 0 gives the field no texture. The field keeps what it's given
+// until the game or another call writes it, through hot reloads too, so the number stays that image's while the
+// embed lives. False for a type or an offset that's no Texture field of the game's local state, a size that's none
+// (a side of 0 or past 65,535), or a game built without tidec's --embed.
+bool tide_embed_local_texture(tide_embed *e, uint32_t type, uint32_t offset, uint64_t birth, uint64_t lineage, uint32_t image,
+                              uint32_t width, uint32_t height, uint32_t filter, uint32_t wrap);
+
+// ...and an object of the other program's that isn't a texture, into a local field that's a UnityEngine.Mesh, a
+// UnityEngine.Material or a UnityEngine.AudioClip: `object` the number that program knows it by, from 1, or 0 for
+// none. The game reads nothing of it: its draws and plays hand the number back (TIDE_EMBED_RENDER_EXTERNAL_DRAW,
+// tide_embed_sounds), so which kind of object a number is, is the other program's to keep. False as above.
+bool tide_embed_local_object(tide_embed *e, uint32_t type, uint32_t offset, uint64_t birth, uint64_t lineage, uint32_t object);
+
+// The sounds of the other program's own that the last frame's local code played (Audio.Play of a
+// UnityEngine.AudioClip), for it to play through its own audio: `count` of them, in the order played. Valid until
+// the next frame; each is said once, in the frame that played it.
+typedef struct tide_embed_sound {
+    uint32_t clip; // The number tide_embed_local_object gave the field
+    float volume;  // 1 is the clip as it is
+    float pitch;   // 1 is its own speed
+} tide_embed_sound;
+const tide_embed_sound *tide_embed_sounds(tide_embed *e, uint32_t *count);
 
 // What local code's Session calls do: TIDE_REQUEST_START (`text` a scene's
 // name in the schema, or NULL for Main's), _JOIN (`text` a room's code), _CONNECT (`text` an address, with
@@ -361,10 +423,27 @@ void tide_embed_microphone(tide_embed *e, const float *samples, uint32_t frames,
 // those ticks as bytes, which replay on any machine with a build of the same
 // data layout, each tick's world checked against the hash the server's had.
 //
-// Only a match this machine runs: tide_embed_travel says why not otherwise.
 // With players of other machines in it, pausing never stops it for them: the
 // match goes on behind what's shown (`background`), this machine's player as
-// if it let go of everything, and going on shows its latest tick again. A
+// if it let go of everything, and going on shows its latest tick again.
+//
+// A match another machine runs is recorded here too where the game hides
+// nothing from its players: this machine is sent all that goes into a tick,
+// so its ticks since it joined are kept, made again, heard and saved as its
+// own match's are (`followed` 3); it never stops for this machine, and isn't
+// this machine's to take back. Where the game hides state, it has no journal
+// here, so it's followed
+// (`followed` 1) rather than recorded: the worlds of the latest ticks this
+// machine had confirmed are kept, as it may have them (what its player may
+// see, in a game that hides state), with what each tick sent. Pausing holds
+// those ticks to show (the match going on behind, as above, and none of the
+// ticks it runs meanwhile kept) and going on follows it again from its
+// latest. It can't be stepped past what's kept, taken back or recorded from
+// here: the machine that runs it does those. A sharded match is followed the
+// same way wherever it runs, as its player has it: each tick the home
+// shard's world with the worlds of the other shards it follows beside it,
+// named by the home's tick (shards count alike). One this machine runs with
+// nobody else in it really pauses and steps, every shard at once. A
 // frame that shows another tick than the latest runs the views on a local
 // state of their own, so the match's is as it was when it goes on, and what's
 // pressed or sent there never reaches the match.
@@ -392,16 +471,32 @@ typedef struct tide_embed_travel {
     uint32_t differs;
     uint32_t unreadable;
     uint8_t playing;     // Replaying: it goes on at the tick rate (tide_embed_pause false)
-    uint8_t other_build; // The recording was made by a build whose simulation was another
+    // The recording was made by a build whose simulation was another (1), or whose data was laid out otherwise (2):
+    // then its worlds were carried over by name and its ticks run with this build's code, with nothing to check them
+    // against (`checked` stays at `first`, `differs` 0)
+    uint8_t other_build;
     uint8_t background;  // Players of other machines are in the match: it goes on behind what's shown
-    uint8_t tide_pad[1];
+    // Not a match this machine runs alone to record, 0. 1, 2: followed rather than recorded: the ticks this machine
+    // had confirmed are kept and shown (`first` the first of them), and it can't be taken back or recorded from here.
+    // 1: another machine's, in a game that hides state from its players. 2: a sharded match, here or elsewhere: each
+    // tick is its player's home shard's world with the other shards it followed beside it, and one this machine runs
+    // alone really pauses and steps. 3: another machine's in a game that hides nothing, recorded here from what this
+    // machine is sent, as its own would be (every tick since it joined, a recording to save), but not taken back
+    uint8_t followed;
     uint64_t hash;       // The shown world's
     uint64_t expected, got;
     char why[TIDE_EMBED_TRAVEL_TEXT];     // Why it can't pause the match now, "" when it can
     char refused[TIDE_EMBED_TRAVEL_TEXT]; // Why the last recording given to replay wasn't, "" when it was
+    // A recording of another layout shown (`other_build` 2): what didn't carry over by name. Fields both layouts
+    // have whose type changed to one they don't convert to (they start at their defaults), entities no storage of
+    // this build takes, and waiting tasks whose code changed
+    uint32_t fields_reset;
+    uint32_t entities_dropped;
+    uint32_t tasks_dropped;
+    uint32_t tide_pad_end;
 } tide_embed_travel;
 
-_Static_assert(sizeof(tide_embed_travel) == 64 + 2 * TIDE_EMBED_TRAVEL_TEXT,
+_Static_assert(sizeof(tide_embed_travel) == 80 + 2 * TIDE_EMBED_TRAVEL_TEXT,
                "tide_embed_travel has no padding the compiler adds");
 
 void tide_embed_travel_of(const tide_embed *e, tide_embed_travel *out);
@@ -439,9 +534,12 @@ const uint8_t *tide_embed_recording(tide_embed *e, uint32_t *size);
 
 // Shows a recording (copied), from its first tick, paused: the match, if any,
 // pauses until tide_embed_replay_end. Its ticks are made again with this
-// build as they're shown, each world checked against the recording's. False,
-// saying why in tide_embed_travel's `refused`, for bytes that aren't a
-// recording, one of another data layout, or a match that can't pause.
+// build as they're shown, each world checked against the recording's. One a
+// build of another data layout saved replays too where it says that layout
+// (recordings do since version 2): its worlds carried over by name, its
+// ticks unchecked (`other_build` 2). False, saying why in tide_embed_travel's
+// `refused`, for bytes that aren't a recording, one of another data layout
+// that can't be carried over, or a match that can't pause.
 bool tide_embed_replay(tide_embed *e, const uint8_t *data, uint32_t size);
 
 // Back to the match from a recording, paused where it was.

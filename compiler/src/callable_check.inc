@@ -92,6 +92,10 @@ static type check_callable_value(checker *c, expr *e, const type want)
         fn = callable_decl(c, DECL_FUNCTION, "Lambda", e->at);
         sb identity = {0};
         const decl *owner = c->method ? c->method : c->system;
+        // Its code is the declaration's it's written in, `dev` or not (dev_used)
+        fn->written_in = owner ? owner : c->declaring;
+        while (fn->written_in && fn->written_in->written_in) fn->written_in = fn->written_in->written_in;
+        fn->is_dev = fn->written_in && fn->written_in->is_dev;
         sb_printf(&identity, STR_FMT ":%d:%d", STR_ARG(owner ? owner->qualified : c->unit->ns), e->at.line, e->at.col);
         callable_identity(fn, "Lambda", callable_hash(identity.data));
         fn->named_in = fn->unit;

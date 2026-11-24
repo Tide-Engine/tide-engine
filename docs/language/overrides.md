@@ -34,7 +34,7 @@ It happens while compiling. What was replaced isn't in the build, so an override
 
 ## What can be replaced
 
-Declarations with code: systems, views, handlers (an event's, a command's, and local ones), functions, methods, frags and verts.
+Declarations with code: systems, views, handlers (an event's, and local ones), commands, functions, methods, frags and verts. A command's override writes the command's own values again, in order: `override command(int item) Shop.Buy(...)`.
 
 ```csharp
 virtual view Show(Body body) { ... }
@@ -50,7 +50,7 @@ struct Stats
 }
 ```
 
-Data isn't replaced: components, singletons, structs, events, commands, enums, scenes, the input, constants and the settings. Neither are `extern` functions, whose code is C, nor operators and `Interpolate`. A package that needs more data adds components of its own to the game's entities, as any code does.
+Data isn't replaced: components, singletons, structs, events, enums, scenes, the input, constants and the settings. Neither are `extern` functions, whose code is C, nor operators and `Interpolate`. A package that needs more data adds components of its own to the game's entities, as any code does.
 
 `virtual` and `override` are words of their own only before a declaration. Anywhere else they're names like any other.
 

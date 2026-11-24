@@ -1,4 +1,5 @@
 // expect: Unordered orders a command's delivery, and 'Health' isn't a command
+// expect: it goes before a command: '[Unordered] command(int at) Ping(PlayerID sender) { ... }'
 [Unordered]
 component Health { int value; }
 scene Main { }

@@ -50,7 +50,7 @@ An event is JSON with these fields, and only these:
 | `packages` | How many packages it lists: `0`, `1`, `2-5` or `6+` |
 
 - `id` is 128 random bits from the system's cryptographic random source, made on the first run that would send. It names an installation, not a person or a machine, and is what lets two events be counted as one install.
-- `command` is one of `add`, `build`, `deploy`, `editors`, `eject`, `fetch`, `help`, `ide`, `login`, `logout`, `open`, `publish`, `run`, `schedule`, `shaders`, `unity`, `update`, `upgrade` and `version`, or `other` for anything else.
+- `command` is one of `add`, `build`, `deploy`, `editors`, `eject`, `fetch`, `help`, `ide`, `login`, `logout`, `publish`, `run`, `schedule`, `shaders`, `unity`, `update`, `upgrade` and `version`, or `other` for anything else.
 - `ci` is `true` when one of the variables CI services set is: `CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, `BUILDKITE`, `CIRCLECI`, `TRAVIS`, `JENKINS_URL`, `TF_BUILD`, `TEAMCITY_VERSION`, `BITBUCKET_BUILD_NUMBER`, `APPVEYOR`, `CODEBUILD_BUILD_ID`, `DRONE`, `BUILD_ID` or `CI_NAME`.
 - `error` is one of `usage` (the command line), `setup` (no compiler or engine files), `packages`, `compile` (the game's Tide code), `c` (a C or C++ file), `link`, `network`, `game` (the game a run started exited with an error) and `other`.
 - `files` and `packages` are there only for commands that read a game.
@@ -63,7 +63,7 @@ Every value comes from a fixed list or is a number, so nothing you type, name or
 
 Not sent: what you build or run, the arguments you give, paths, names of projects, folders or files, code, compiler output or error messages, your user or machine name, your locale or time zone. Your IP address reaches the server, as every request's does; it's used only to limit how many requests one address can make in a minute, kept in memory for that minute, and never stored.
 
-`tide telemetry` itself records nothing, and neither do the runs `tide` starts for its own work: its built-in compiler, the scene editor's previews, the editor update after an upgrade and the background sender.
+`tide telemetry` itself records nothing, and neither do the runs `tide` starts for its own work: its built-in compiler, the editor update after an upgrade and the background sender.
 
 ## Where it goes
 

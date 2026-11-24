@@ -30,6 +30,7 @@
 #include "lld/Common/Driver.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Plugins/PassPlugin.h"
+#include "llvm/Support/Allocator.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/CrashRecoveryContext.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -275,6 +276,18 @@ int tide_cc(const int argc, const char **argv)
     const std::string self = llvm::sys::fs::getMainExecutable(argv[0], reinterpret_cast<void *>(&tide_cc));
     args[0] = self.c_str();
     if (args.size() > 1 && llvm::StringRef(args[1]) == "cc") args.erase(args.begin() + 1);
+    // Arguments in a file (@file), as clang's own main takes them: a link of a big game's hundreds of objects is
+    // more than a command line holds on Windows (tide's build.c writes one then)
+    llvm::BumpPtrAllocator expanded;
+#ifdef _WIN32
+    llvm::cl::ExpansionContext expansion(expanded, llvm::cl::TokenizeWindowsCommandLine);
+#else
+    llvm::cl::ExpansionContext expansion(expanded, llvm::cl::TokenizeGNUCommandLine);
+#endif
+    if (llvm::Error error = expansion.expandResponseFiles(args)) {
+        llvm::errs() << "tide cc: " << llvm::toString(std::move(error)) << "\n";
+        return 1;
+    }
     if (args.size() > 1 && llvm::StringRef(args[1]) == "-cc1") {
         return cc1(llvm::ArrayRef<const char *>(args).slice(1), self.c_str());
     }

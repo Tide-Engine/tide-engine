@@ -77,10 +77,12 @@ static const char *outside_type(const type t)
     case TY_ACTION: return "runs an Action";
     case TY_DRAW_LIST: return "uses the frame's draw list";
     case TY_TEXTURE3D: case TY_TEXTURE: case TY_DEPTH_TEXTURE: case TY_CUBEMAP: case TY_TEXTURE_ARRAY: case TY_DEPTH_TEXTURE_ARRAY:
+    case TY_DEPTH_CUBEMAP:
         return "uses a texture, which is this machine's";
     case TY_RENDER_TARGET: return "uses a render target, which is this machine's";
     case TY_GPU_LIST: return "uses a GPU list, which is this machine's";
     case TY_FONT: return "uses a font, which is this machine's";
+    case TY_UNITY_MESH: case TY_UNITY_MATERIAL: case TY_UNITY_CLIP: return "uses an object of Unity's, which is this machine's";
     case TY_RESIDENT: return "uses a C library's state";
     case TY_RECORD: return "reads Devices";
     default: return NULL;
@@ -216,10 +218,12 @@ static void walk_expr(pctx *c, const expr *e)
     switch (e->call) {
     case CALL_CONSTRUCT:
     case CALL_ENUM_COUNT:
+    case CALL_ENUM_VALUES:
     case CALL_TEXT:
     case CALL_LIST:  // A list, a map, a set or a grid it could change is a `mut` local of its own
     case CALL_MAP:
     case CALL_GRID:
+    case CALL_GRID_BYTES: // Cells to bytes and back, worked out from what it's given alone
     case CALL_NEW_GRID:
     case CALL_NEW_MESH:
     case CALL_MESH_DECODE:
@@ -352,6 +356,7 @@ static void check_flags(pctx *c)
     }
     if (d->rolls) impure(c, d->rolls_at, "rolls with Random");
     if (d->reads_seed) impure(c, d->reads_seed_at, "reads Random.seed");
+    if (d->reads_tweaks) impure(c, d->at, "reads tweaks, which a dev build changes while it runs");
     if (d->frame_time) impure(c, d->frame_time_at, "reads Frame.dt");
     if (d->draws) impure(c, d->draws_at, d->frame_devices ? "reads Devices" : d->frame_cursor ? "uses the Cursor" : "draws");
     if (d->plays) impure(c, d->plays_at, "plays sound");

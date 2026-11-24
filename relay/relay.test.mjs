@@ -3,6 +3,7 @@
 
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
+import { createServer } from 'node:http';
 import { connect as tcpConnect } from 'node:net';
 import { after, before, test } from 'node:test';
 
@@ -567,4 +568,38 @@ test('without TURN credentials, players get STUN only', async () => {
     const ice = await cloudflareTurn('KEY', 'WRONG', { fetch })();
     console.error = errors;
     assert.deepEqual(ice, DEFAULT_ICE);
+});
+
+test('a cold relay can register and join rooms while TURN credential fetching stalls', { timeout: 8000 }, async t => {
+    let requests = 0;
+    let recovered = false;
+    const upstream = createServer((_request, response) => {
+        requests++;
+        response.writeHead(201, { 'content-type': 'application/json' });
+        if (recovered) response.end(JSON.stringify(CLOUDFLARE));
+        else response.write('{'); // Headers arrive, but reading credentials never finishes.
+    });
+    t.after(() => {
+        upstream.close();
+        upstream.closeAllConnections();
+    });
+    await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
+    const upstreamUrl = `http://127.0.0.1:${upstream.address().port}`;
+    const iceServers = cloudflareTurn('KEY', 'TOKEN', { fetch: (_url, init) => fetch(upstreamUrl, init) });
+    const r = await statisticsRelay(t, { iceServers });
+
+    const [host, joiner] = await Promise.all([r.connect(), r.connect()]);
+    assert.equal(requests, 1);
+    assert.deepEqual(host.welcome.ice, DEFAULT_ICE);
+    assert.deepEqual(joiner.welcome.ice, DEFAULT_ICE);
+    host.send({ host: 'ABCDEF' });
+    assert.deepEqual(await host.next(), { hosting: 'ABCDEF' });
+    joiner.send({ join: 'ABCDEF' });
+    assert.deepEqual(await joiner.next(), { joined: 'ABCDEF' });
+    assert.deepEqual(await host.next(), { peer: 1 });
+
+    recovered = true;
+    const next = await r.connect();
+    assert.equal(requests, 2);
+    assert.ok(next.welcome.ice.some(server => server.username === 'user'));
 });

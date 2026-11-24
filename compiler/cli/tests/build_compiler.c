@@ -25,15 +25,23 @@ int main(int argc, char **argv)
         if (source && (strcmp(path_base(source), "game.c") == 0 || strstr(path_base(source), "_part")) && !thin) return 8;
         if (!source && output && (!thin || !cache || !jobs)) return 9;
     }
+    if (sys_env("TIDE_TEST_BUILD_FORBID_THIN")) { // A debug build: no file compiled for ThinLTO, and no link that runs it
+        for (int i = 1; i < argc; i++) {
+            if (strcmp(argv[i], "-flto=thin") == 0 || strncmp(argv[i], "--thinlto-", 10) == 0) return source ? 11 : 12;
+        }
+    }
     if (!output) return 0; // The fake host, or a compiler discovery probe
     const char *symbol = sys_env("TIDE_TEST_BUILD_DEFINE");
-    if (source && symbol) {
+    if (source && symbol) { // "on" for -D BATTLE_TEST, "off" for none, anything else for -D BATTLE_TEST=<it>
+        const bool valued = strcmp(symbol, "on") != 0 && strcmp(symbol, "off") != 0;
+        char expected[64];
+        snprintf(expected, sizeof expected, "BATTLE_TEST%s%s", valued ? "=" : "", valued ? symbol : "");
         bool found = false;
         for (int i = 1; i + 1 < argc; i++) {
-            if (strcmp(argv[i], "-D") == 0 && strcmp(argv[i + 1], "BATTLE_TEST") == 0) found = true;
+            if (strcmp(argv[i], "-D") == 0 && strcmp(argv[i + 1], expected) == 0) found = true;
         }
         const bool authored = strncmp(path_base(source), "custom.", 7) == 0;
-        if (found != (authored && strcmp(symbol, "on") == 0)) return 10;
+        if (found != (authored && strcmp(symbol, "off") != 0)) return 10;
     }
     const char *events = sys_env("TIDE_TEST_BUILD_EVENTS");
     if (!events) return 2;

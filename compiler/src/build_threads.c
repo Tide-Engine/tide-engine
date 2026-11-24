@@ -3,6 +3,8 @@
 #endif
 #include "build_threads.h"
 
+#include "common.h"
+
 #include <stdatomic.h>
 #include <stddef.h>
 
@@ -43,12 +45,14 @@ void build_threads_each(const uint32_t count, const uint32_t most, void (*work)(
 #ifdef _WIN32
 static DWORD WINAPI thread_main(LPVOID e)
 {
+    arena_thread();
     take(e);
     return 0;
 }
 #else
 static void *thread_main(void *e)
 {
+    arena_thread();
     take(e);
     return NULL;
 }

@@ -117,6 +117,7 @@ type matrix_column(type t);
 bool type_assignable(type to, type from);
 // A grid that's a texture where one is wanted: a Grid2<Color>, or a Grid2<float> (one channel).
 bool type_is_texture_grid(type t);
+type type_number_grid_role(type t); // Grid2<float2>, <float4>, <int>, <byte>: float2, float4, int; else TY_ERROR
 bool type_is_array_grid(type t);
 
 // Suffix of the tide/math.h functions for a type: f3, i2, q, f4x4, ...

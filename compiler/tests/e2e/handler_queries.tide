@@ -36,8 +36,6 @@ event Change { int delta; }
 event CullSamples { }
 event SelfCheck { }
 event Update { }
-command Shift { int delta; }
-command SetActor { int value; }
 local singleton UI { bool shift; bool targeted; Entity target; }
 scene Main { }
 
@@ -176,24 +174,26 @@ void ShiftRows(int delta, mut Seen seen, mut World world, query (Sample sample) 
     }
 }
 
-command(Shift shift, PlayerID sender) ShiftAll(mut Seen seen, mut World world,
-                                             query (Sample sample, with Selected, without Excluded) samples)
+command(int delta)
+    Shift(mut Seen seen, mut World world,
+                                             query (Sample sample, with Selected, without Excluded) samples, PlayerID sender)
 {
     if (sender != PlayerID(0)) return;
-    ShiftRows(shift.delta, seen, world, samples);
+    ShiftRows(delta, seen, world, samples);
     Send(Probe { slot = 0 });
 }
 
-command(SetActor change, PlayerID sender) SetOne(mut Actor actor, mut Seen seen,
-                                               query (Sample sample, with Selected, without Excluded) samples)
+command(int value)
+    SetActor(mut Actor actor, mut Seen seen,
+                                               query (Sample sample, with Selected, without Excluded) samples, PlayerID sender)
 {
     if (sender != PlayerID(0)) return;
-    actor.value = change.value;
+    actor.value = value;
     foreach (var row in samples) seen.commandRows += row.sample.number;
 }
 
 view Submit(mut UI ui)
 {
-    if (ui.shift) { Send(Shift { delta = 7 }); ui.shift = false; }
-    if (ui.targeted) { ui.target.Send(SetActor { value = 42 }); ui.targeted = false; }
+    if (ui.shift) { Shift(7); ui.shift = false; }
+    if (ui.targeted) { ui.target.SetActor(42); ui.targeted = false; }
 }

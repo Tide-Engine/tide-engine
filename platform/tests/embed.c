@@ -38,6 +38,28 @@ void Seen(const int ticks, const int presses, const float width, const float hei
     seen_height = height;
 }
 
+// The sizes of the other program's images, as the game's view read them at the last frame (embed.tide's Faces).
+// The tests reading them draw, so the web's build, which has none of those, keeps nothing.
+#if !defined(__wasm__)
+static tide_int2 faced_face, faced_bumps, faced_logo;
+static int faced_note; // ...and how long its `note` is, a local field beside them with a declared default
+#endif
+
+void Faced(const tide_int2 face, const tide_int2 bumps, const tide_int2 logo, const int note)
+{
+#if !defined(__wasm__)
+    faced_face = face;
+    faced_bumps = bumps;
+    faced_logo = logo;
+    faced_note = note;
+#else
+    (void)face;
+    (void)bumps;
+    (void)logo;
+    (void)note;
+#endif
+}
+
 static char program[] = "embed";
 
 static tide_embed *start(int argc, char **argv)
@@ -350,6 +372,135 @@ TIDE_TEST(embed_view_packet)
     tide_embed_destroy(e);
 }
 
+// How many events of `type` the packet's EVENTS has
+static uint32_t heard_of(const uint8_t *p, const uint32_t size, const uint32_t type)
+{
+    uint32_t count = 0, found = 0, at = 0;
+    const uint8_t *records = section(p, size, TIDE_PACKET_EVENTS, 0, &count, NULL);
+    for (uint32_t i = 0; records && i < count; i++) {
+        found += u32_at(records, at + 4) == type;
+        at += u32_at(records, at);
+    }
+    return found;
+}
+
+static void want(uint64_t *bits, const int32_t type)
+{
+    bits[type >> 6] |= 1ull << (type & 63);
+}
+
+// The packet carries what the other program reads (tide_embed_view_want): a component, a singleton or an event
+// nothing reads is left out, the entities and what's read are as they were, and a type asked for between two frames
+// is in the same frame's packet written again (tide_embed_view_again), with the events it had.
+TIDE_TEST(embed_view_carries_what_is_read)
+{
+    char *argv[] = {program};
+    tide_embed *e = start(1, argv);
+    TIDE_CHECK(e != NULL);
+    frames(e, 30, NULL);
+    const int32_t counter = type_named("Counter"), tally = type_named("Tally"), shelf = type_named("Shelf");
+    const uint32_t ticked = tide_game_layout.type_count + 2u; // After the commands, Bump and Rename
+    const uint32_t types = tide_game_layout.type_count + 3u;
+    TIDE_REQUIRE(counter >= 0 && tally >= 0 && shelf >= 0 && types <= 256u);
+    uint32_t size = 0, count = 0;
+    const uint8_t *p = tide_embed_view(e, &size);
+    TIDE_REQUIRE(p != NULL);
+    const uint32_t whole = size;
+    TIDE_CHECK(section(p, size, TIDE_PACKET_COMPONENT, counter, &count, NULL) != NULL);
+    TIDE_CHECK(section(p, size, TIDE_PACKET_SINGLETON, shelf, &count, NULL) != NULL);
+
+    // The counter alone: no singleton, and none of Shelf's lists, maps and grid in STRINGS
+    uint64_t bits[4] = {0};
+    want(bits, counter);
+    tide_embed_view_want(e, bits, types);
+    frames(e, 1, NULL);
+    p = tide_embed_view(e, &size);
+    TIDE_REQUIRE(p != NULL && u32_at(p, 16) == size);
+    TIDE_CHECK(u32_at(p, 36) == 2u); // The entities are always there
+    const uint8_t *rows = NULL;
+    const uint8_t *values = section(p, size, TIDE_PACKET_COMPONENT, counter, &count, &rows);
+    TIDE_REQUIRE(values != NULL && count == 1u);
+    Counter read;
+    memcpy(&read, values, sizeof read);
+    TIDE_CHECK(read.ticks == seen_ticks);
+    uint32_t length = 0;
+    const uint8_t *label = strings_entry(p, size, read.label.at, &length);
+    TIDE_CHECK(label && length == 7u && memcmp(label, "counted", 7) == 0);
+    TIDE_CHECK(section(p, size, TIDE_PACKET_SINGLETON, tally, &count, NULL) == NULL);
+    TIDE_CHECK(section(p, size, TIDE_PACKET_SINGLETON, shelf, &count, NULL) == NULL);
+    TIDE_CHECK(size < whole);
+    const uint32_t small = size;
+
+    // Asked for after the frame: the same frame's packet again, with the singleton and the counter as it was
+    want(bits, tally);
+    tide_embed_view_want(e, bits, types);
+    TIDE_CHECK(tide_embed_view_again(e));
+    p = tide_embed_view(e, &size);
+    TIDE_REQUIRE(p != NULL && size > small && u32_at(p, 36) == 2u);
+    values = section(p, size, TIDE_PACKET_COMPONENT, counter, &count, &rows);
+    TIDE_REQUIRE(values != NULL && count == 1u);
+    Counter again;
+    memcpy(&again, values, sizeof again);
+    TIDE_CHECK(again.ticks == read.ticks && again.presses == read.presses);
+    const uint8_t *value = section(p, size, TIDE_PACKET_SINGLETON, tally, &count, NULL);
+    TIDE_CHECK(value != NULL && count == 1u);
+    TIDE_CHECK(section(p, size, TIDE_PACKET_SINGLETON, shelf, &count, NULL) == NULL);
+
+    // An event nothing hears isn't kept; one that is, is in its frame's packet, and in that packet written again
+    uint32_t unheard = 0;
+    for (int frame = 0; frame < 30; frame++) {
+        frames(e, 1, NULL);
+        p = tide_embed_view(e, &size);
+        TIDE_REQUIRE(p != NULL);
+        unheard += heard_of(p, size, ticked);
+    }
+    TIDE_CHECK(unheard == 0u);
+    want(bits, (int32_t)ticked);
+    tide_embed_view_want(e, bits, types);
+    uint32_t heard = 0, kept = 0, later = 0;
+    for (int frame = 0; frame < 30; frame++) {
+        frames(e, 1, NULL);
+        p = tide_embed_view(e, &size);
+        TIDE_REQUIRE(p != NULL);
+        const uint32_t now = heard_of(p, size, ticked);
+        if (!now) continue;
+        heard += now;
+        TIDE_CHECK(tide_embed_view_again(e));
+        p = tide_embed_view(e, &size);
+        TIDE_REQUIRE(p != NULL);
+        kept += heard_of(p, size, ticked);
+        frames(e, 1, NULL); // ...and never in the next frame's
+        p = tide_embed_view(e, &size);
+        TIDE_REQUIRE(p != NULL);
+        later += heard_of(p, size, ticked);
+        frame++;
+    }
+    TIDE_CHECK(heard >= 1u && kept == heard && later == 0u);
+
+    // A request may end the match: its frame's packet isn't written again
+    TIDE_CHECK(tide_embed_request(e, TIDE_REQUEST_LEAVE, NULL, 0));
+    TIDE_CHECK(!tide_embed_view_again(e));
+
+    // Everything again: with no bits, and for types past those said
+    tide_embed_view_want(e, NULL, 0);
+    char *argv2[] = {program};
+    tide_embed_destroy(e);
+    e = start(1, argv2);
+    TIDE_REQUIRE(e != NULL);
+    frames(e, 10, NULL);
+    p = tide_embed_view(e, &size);
+    TIDE_REQUIRE(p != NULL);
+    TIDE_CHECK(section(p, size, TIDE_PACKET_SINGLETON, shelf, &count, NULL) != NULL); // The next game starts with all
+    uint64_t none[1] = {0};
+    tide_embed_view_want(e, none, 1u); // Only the first type is said, and not read: every other is
+    frames(e, 1, NULL);
+    p = tide_embed_view(e, &size);
+    TIDE_REQUIRE(p != NULL);
+    TIDE_CHECK(section(p, size, TIDE_PACKET_SINGLETON, shelf, &count, NULL) != NULL || shelf == 0);
+    TIDE_CHECK(section(p, size, TIDE_PACKET_COMPONENT, counter, &count, NULL) != NULL || counter == 0);
+    tide_embed_destroy(e);
+}
+
 // What the views drew, for the other program to draw: the header says the parts, each from a multiple of 8, and
 // Show's rect and text are among the commands, the text's words in the text part.
 TIDE_TEST(embed_draw_packet)
@@ -461,7 +612,14 @@ TIDE_TEST(embed_camera)
 #if !defined(__wasm__)
 // What a frame's render commands hold, read as the other program reads them (tide_embed_render).
 typedef struct rendered {
-    uint32_t ops[TIDE_EMBED_RENDER_DEPTH_BIAS + 1];
+    uint32_t ops[TIDE_EMBED_RENDER_EXTERNAL_DRAW + 1];
+    uint32_t drawn[2];      // The last EXTERNAL_DRAW's mesh and material...
+    float drawn_matrix[16]; // ...and its matrix
+    // The other program's images named (EXTERNAL), the first 4: each one's id, image, width, height and flags, whether
+    // an IMAGE bound it after, and whether it was freed
+    uint32_t externals[4][5];
+    bool external_bound[4], external_freed[4];
+    uint32_t external_count;
     uint32_t used[16]; // The pipelines USE named, the first 16
     uint32_t used_count;
     uint32_t pipelines[32]; // ...and those made, by `keys`' places
@@ -485,7 +643,7 @@ static rendered read_commands(const uint8_t *p, const uint32_t size)
         }
         memcpy(head, p + at, 8u);
         at += 8u;
-        if (head[1] % 4u || head[1] > size - at || head[0] == 0 || head[0] > TIDE_EMBED_RENDER_DEPTH_BIAS) {
+        if (head[1] % 4u || head[1] > size - at || head[0] == 0 || head[0] > TIDE_EMBED_RENDER_EXTERNAL_DRAW) {
             r.whole = false;
             break;
         }
@@ -500,6 +658,21 @@ static rendered read_commands(const uint8_t *p, const uint32_t size)
         if (head[0] == TIDE_EMBED_RENDER_USE && r.used_count < 16u) r.used[r.used_count++] = words[0];
         if (head[0] == TIDE_EMBED_RENDER_UNIFORMS && r.ops[head[0]] == 1u && head[1] >= 68u) memcpy(r.camera, p + at + 4, 64);
         if (head[0] == TIDE_EMBED_RENDER_BEGIN && words[0] == 0 && words[1]) r.window_cleared = true;
+        if (head[0] == TIDE_EMBED_RENDER_EXTERNAL_DRAW && head[1] == 72u) {
+            memcpy(r.drawn, p + at, 8u);
+            memcpy(r.drawn_matrix, p + at + 8u, 64u);
+        }
+        if (head[0] == TIDE_EMBED_RENDER_EXTERNAL && head[1] == 20u && r.external_count < 4u) {
+            memcpy(r.externals[r.external_count++], p + at, 20u);
+        }
+        for (uint32_t i = 0; i < r.external_count; i++) {
+            if (head[0] == TIDE_EMBED_RENDER_IMAGE && words[1] == r.externals[i][0]) r.external_bound[i] = true;
+            if (head[0] == TIDE_EMBED_RENDER_TEXTURE_FREE && words[0] == r.externals[i][0]) r.external_freed[i] = true;
+            // Nothing of the other program's image is written or made smaller images of
+            if ((head[0] == TIDE_EMBED_RENDER_TEXTURE_WRITE || head[0] == TIDE_EMBED_RENDER_MIPMAPS) && words[0] == r.externals[i][0]) {
+                r.whole = false;
+            }
+        }
         at += head[1];
     }
     return r;
@@ -728,6 +901,74 @@ TIDE_TEST(embed_render_srgb_images_retain_encoding_formats)
     tide_gpu_record_reset();
 }
 
+// A grid of numbers' textures, as the replay makes them (TideRender.cs TextureFormat, PixelBytes): Rg16f (format 9, two
+// halves a pixel), Rgba16f and R32i, each pixel's bytes as given, and a part of one written with its own width's rows.
+TIDE_TEST(embed_render_number_grid_textures)
+{
+    const uint16_t pairs[4] = {0x3E00u, 0xC000u, 0x3400u, 0x7BFFu}; // (1.5, -2), (0.25, 65504)
+    const int32_t ids[2] = {-2147483647, 16777217};
+    const uint16_t fours[4] = {0x3C00u, 0x4000u, 0x4200u, 0x3800u};
+    tide_gpu_record_begin();
+    const tide_gpu_id rg = tide_gpu_record.texture(TIDE_GPU_RG16F, 2, 1, pairs);
+    const tide_gpu_id r32i = tide_gpu_record.texture(TIDE_GPU_R32I, 2, 1, ids);
+    const tide_gpu_id rgba = tide_gpu_record.texture(TIDE_GPU_RGBA16F, 1, 1, fours);
+    tide_gpu_record.texture_write_part(rg, pairs, 1, 0, 1, 1);
+    uint32_t size;
+    const uint8_t *packet = tide_gpu_record_end(&size);
+    // Three textures of 28 bytes and 8 of pixels each, then a write of 28 bytes and one pixel of 4
+    TIDE_REQUIRE(rg && r32i && rgba && size == 3u * 36u + 32u);
+    TIDE_CHECK(u32_at(packet, 0) == TIDE_EMBED_RENDER_TEXTURE && u32_at(packet, 12) == 9u && u32_at(packet, 16) == 2u);
+    TIDE_CHECK(memcmp(packet + 28u, pairs, sizeof pairs) == 0);
+    TIDE_CHECK(u32_at(packet, 36 + 12) == TIDE_GPU_R32I && memcmp(packet + 36u + 28u, ids, sizeof ids) == 0);
+    TIDE_CHECK(u32_at(packet, 72 + 12) == TIDE_GPU_RGBA16F && memcmp(packet + 72u + 28u, fours, sizeof fours) == 0);
+    // The part: the second pixel alone, at x 1, its four bytes from the texture's own row
+    TIDE_CHECK(u32_at(packet, 108) == TIDE_EMBED_RENDER_TEXTURE_WRITE && u32_at(packet, 108 + 12) == 1u);
+    TIDE_CHECK(memcmp(packet + 108u + 28u, pairs + 2, 4u) == 0);
+    tide_gpu_record_reset();
+}
+
+// A target's packet as the replay reads it (TideRender.cs MakeTarget, AttachmentFormat): its format word verbatim, a
+// color's number 4 bits each from the lowest and its samples from bit 16, which are written here as the numbers the
+// C# switch takes (2 RGBA16F, 5 R16F, 6 RG16F, 7 R32F, 8 RGBA32F, 9 R32I, 10 sRGB) so a renumbered tide_gpu_color
+// fails here and not only in Unity; then its four color ids (0 past the last) and its depth's, 0 where it's
+// multisampled (the depth is read through resolve_depth). The samples a target gets: none for 32-bit numbers.
+TIDE_TEST(embed_render_target_packets_name_formats_by_number)
+{
+    TIDE_CHECK(TIDE_GPU_COLOR_FLOAT == 2 && TIDE_GPU_COLOR_R16F == 5 && TIDE_GPU_COLOR_RG16F == 6 && TIDE_GPU_COLOR_R32F == 7
+               && TIDE_GPU_COLOR_RGBA32F == 8 && TIDE_GPU_COLOR_R32I == 9 && TIDE_GPU_COLOR_SRGB == 10);
+    const tide_gpu_target_format four = 0x9671u; // Bytes, R32f, Rg16f, R32i
+    const tide_gpu_target_format halves = 0x40005u, wide = 0x40007u, ids = 0x40009u, srgb = 10u;
+    TIDE_CHECK(tide_gpu_target_with(tide_gpu_target_with(tide_gpu_target_with(TIDE_GPU_TARGET_COLOR, TIDE_GPU_COLOR_R32F),
+                                                         TIDE_GPU_COLOR_RG16F), TIDE_GPU_COLOR_R32I) == four);
+    TIDE_CHECK(tide_gpu_target_sampled(TIDE_GPU_COLOR_R16F, 4) == halves);
+    TIDE_CHECK(tide_gpu_record.target_samples(halves) == 4u && tide_gpu_record.target_samples(0x40001u) == 4u);
+    TIDE_CHECK(tide_gpu_record.target_samples(wide) == 1u && tide_gpu_record.target_samples(ids) == 1u);
+    TIDE_CHECK(tide_gpu_record.target_samples(0x40008u) == 1u && tide_gpu_record.target_samples(0x40071u) == 1u);
+    TIDE_CHECK(tide_gpu_record.target_samples(0x80001u) == 8u && tide_gpu_record.target_samples(0x30001u) == 2u);
+    tide_gpu_record_begin();
+    const tide_gpu_id targets[] = {tide_gpu_record.target(four, 3, 2), tide_gpu_record.target(halves, 5, 7),
+                                   tide_gpu_record.target(srgb, 4, 4), tide_gpu_record.target(TIDE_GPU_TARGET_DEPTH, 2, 2)};
+    const uint32_t formats[] = {0x9671u, 0x40005u, 10u, 0u}, widths[] = {3, 5, 4, 2}, heights[] = {2, 7, 4, 2};
+    const uint32_t colors[] = {4, 1, 1, 0};
+    uint32_t size;
+    const uint8_t *packet = tide_gpu_record_end(&size);
+    TIDE_REQUIRE(size == 4u * 44u);
+    for (uint32_t t = 0; t < 4; t++) {
+        const uint8_t *p = packet + 44u * t;
+        TIDE_CHECK(u32_at(p, 0) == TIDE_EMBED_RENDER_TARGET && u32_at(p, 4) == 36u);
+        TIDE_CHECK(u32_at(p, 8) == targets[t] && u32_at(p, 12) == formats[t]);
+        TIDE_CHECK(u32_at(p, 16) == widths[t] && u32_at(p, 20) == heights[t]);
+        for (uint32_t c = 0; c < TIDE_GPU_MAX_COLORS; c++) {
+            const uint32_t id = u32_at(p, 24 + 4 * c);
+            TIDE_CHECK(c < colors[t] ? id != 0u && id == tide_gpu_record.target_texture(targets[t], c) : id == 0u);
+        }
+        const uint32_t depth = u32_at(p, 40);
+        TIDE_CHECK(depth == tide_gpu_record.target_depth(targets[t]) && (t == 1 ? depth == 0u : depth != 0u));
+    }
+    for (uint32_t t = 0; t < 4; t++) tide_gpu_record.target_free(targets[t]);
+    tide_gpu_record_reset();
+}
+
 // gpu.h's compute calls, written down as the replay reads them (TideRender.cs): a kernel's pipeline and what it binds
 // of storage, a compute pass, direct and indirect dispatches and draws, a draw of records as many as a count says, a
 // copy, and a read back the other program answers (tide_embed_render_read) for buffer_read_done to give, once. The
@@ -857,6 +1098,137 @@ TIDE_TEST(embed_render_target_revision_sees_reset_before_render)
     tide_embed_destroy(e);
 }
 
+// A multisampled target read between its smaller images: the renderer asks the other program for the mipmaps of the
+// target's resolved color, an id the TARGET packet that made the target names, with the format that says its samples.
+// That's all the other program needs to make a chain of its own (Unity's multisampled textures have none), which is
+// its replay's to do. An R32f image read so has none asked for, as no sampler blends it; nor has a target's again
+// before more was drawn into it.
+TIDE_TEST(embed_render_multisampled_target_mipmaps)
+{
+    char *argv[] = {program};
+    tide_embed *e = start(1, argv);
+    TIDE_REQUIRE(e != NULL);
+    frames(e, 1, NULL);
+    const tide_target_format rgba = TIDE_TARGET_RGBA8, r32 = TIDE_TARGET_R32F;
+    const tide_render_target smooth = tide_render_target_make_sampled(8.0f, 8.0f, &rgba, 1, 4);
+    const tide_render_target exact = tide_render_target_make_sampled(8.0f, 8.0f, &r32, 1, 1);
+    tide_draw_list draw = {0};
+    for (int frame = 0; frame < 2; frame++) {
+        tide_draw_reset(&draw);
+        if (frame == 0) {
+            tide_draw_render_target(&draw, smooth);
+            tide_draw_clear(&draw, TIDE_COLOR_RED);
+        }
+        tide_draw_render_target(&draw, (tide_render_target){.id = TIDE_RENDER_WINDOW});
+        const tide_texture_ref a = tide_texture_filtered(tide_render_target_color(smooth), TIDE_FILTER_TRILINEAR);
+        const tide_texture_ref b = tide_texture_filtered(tide_render_target_color(exact), TIDE_FILTER_TRILINEAR);
+        tide_draw_sprite_placed(&draw, &a, tide_f2(4.0f, 4.0f), tide_f2(2.0f, 2.0f), (tide_rect){0, 0, 1, 1}, 0.0f, TIDE_COLOR_WHITE);
+        tide_draw_sprite_placed(&draw, &b, tide_f2(8.0f, 4.0f), tide_f2(2.0f, 2.0f), (tide_rect){0, 0, 1, 1}, 0.0f, TIDE_COLOR_WHITE);
+        uint32_t size = 0;
+        const uint8_t *p = tide_platform_embed_render(&draw, &size);
+        TIDE_REQUIRE(p != NULL || size == 0);
+        static uint32_t sampled_color, exact_color; // Made in the first frame, kept after
+        uint32_t sampled_mips = 0, exact_mips = 0, sampled_format = 0;
+        for (uint32_t at = 0; at + 8u <= size;) {
+            const uint32_t kind = u32_at(p, at), length = u32_at(p, at + 4u);
+            TIDE_REQUIRE(length <= size - at - 8u);
+            if (kind == TIDE_EMBED_RENDER_TARGET && length >= 4u * (4u + TIDE_GPU_MAX_COLORS + 1u)) {
+                const uint32_t format = u32_at(p, at + 12u), color = u32_at(p, at + 24u);
+                if (tide_gpu_target_samples((tide_gpu_target_format)format) > 1u) sampled_color = color, sampled_format = format;
+                else if (tide_gpu_target_color((tide_gpu_target_format)format, 0) == TIDE_GPU_COLOR_R32F) exact_color = color;
+            }
+            if (kind == TIDE_EMBED_RENDER_MIPMAPS && length >= 4u) {
+                sampled_mips += sampled_color && u32_at(p, at + 8u) == sampled_color;
+                exact_mips += exact_color && u32_at(p, at + 8u) == exact_color;
+            }
+            at += 8u + length;
+        }
+        TIDE_CHECK(sampled_color != 0 && exact_color != 0);
+        if (frame == 0) TIDE_CHECK(tide_gpu_target_samples((tide_gpu_target_format)sampled_format) == 4u);
+        TIDE_CHECK(sampled_mips == (frame == 0 ? 1u : 0u)); // Drawn into once: its chain is made once
+        TIDE_CHECK(exact_mips == 0u);
+    }
+    tide_draw_free(&draw);
+    tide_render_target_dispose(smooth);
+    tide_render_target_dispose(exact);
+    tide_embed_destroy(e);
+}
+
+// A typed array's or a 32-bit cube's layers loaded where no image is given (TIDE_SHADER_READ_NUMBER_LAYERS,
+// _INT_LAYERS): what's bound for none is an array of a format, which the other program makes of zeros it writes
+// (ARRAY_OF, as a Grid3's), one layer of RGBA32F or R32I; never an array to draw into (ARRAY with no pixels), which
+// Unity makes as a render texture whose pixels nothing has cleared, and which a clear would make black, not zeros.
+static const tide_shader number_layers_shader = {
+    .name = "number layers",
+    .wgsl = "@group(0) @binding(1) var pixels0: texture_2d_array<f32>;\n"
+            "@vertex fn vertex(@location(0) p: vec2f) -> @builtin(position) vec4f { return vec4f(p, 0.0, 1.0); }\n"
+            "@fragment fn fragment() -> @location(0) vec4f { return textureLoad(pixels0, vec2i(0), 5, 0); }\n",
+    .id = 0x7E57A11A,
+    .dims = 2,
+    .vertex_size = 2 * sizeof(float),
+    .attribute_count = 1,
+    .attributes = {{TIDE_SHADER_FLOAT2, 0}},
+    .texture_count = 1,
+    .texture_reads = {TIDE_SHADER_READ_NUMBER_LAYERS},
+};
+static const tide_shader int_layers_shader = {
+    .name = "int layers",
+    .wgsl = "@group(0) @binding(1) var pixels0: texture_2d_array<i32>;\n"
+            "@vertex fn vertex(@location(0) p: vec2f) -> @builtin(position) vec4f { return vec4f(p, 0.0, 1.0); }\n"
+            "@fragment fn fragment() -> @location(0) vec4f { return vec4f(textureLoad(pixels0, vec2i(0), 5, 0)); }\n",
+    .id = 0x7E57A11B,
+    .dims = 2,
+    .vertex_size = 2 * sizeof(float),
+    .attribute_count = 1,
+    .attributes = {{TIDE_SHADER_FLOAT2, 0}},
+    .texture_count = 1,
+    .texture_reads = {TIDE_SHADER_READ_INT_LAYERS},
+};
+
+TIDE_TEST(embed_render_number_layers_fallback_is_zeros)
+{
+    char *argv[] = {program};
+    tide_embed *e = start(1, argv);
+    TIDE_REQUIRE(e != NULL);
+    frames(e, 1, NULL);
+    tide_draw_list draw = {0};
+    tide_draw_reset(&draw);
+    tide_draw_render_target(&draw, (tide_render_target){.id = TIDE_RENDER_WINDOW});
+    static const float corners[4][2] = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}};
+    static const uint32_t indices[6] = {0, 1, 2, 0, 2, 3};
+    bool fill;
+    const uint32_t mesh = tide_draw_mesh_slot(&draw, TIDE_MESH_BYTES, 0x7E57A11C, 0, 1, &fill);
+    if (fill) tide_draw_mesh_fill_bytes(&draw, mesh, corners, sizeof corners[0], 4, indices, 6);
+    const uint32_t none[TIDE_SHADER_TEXTURES] = {0};
+    tide_draw_shaded(&draw, &number_layers_shader, mesh, NULL, NULL, none, 0);
+    tide_draw_shaded(&draw, &int_layers_shader, mesh, NULL, NULL, none, 0);
+    uint32_t size = 0;
+    const uint8_t *p = tide_platform_embed_render(&draw, &size);
+    TIDE_REQUIRE(p != NULL && size > 0);
+    uint32_t floats = 0, ints = 0, drawn_into = 0, bound[2] = {0}, bound_count = 0;
+    for (uint32_t at = 0; at + 8u <= size;) {
+        const uint32_t kind = u32_at(p, at), length = u32_at(p, at + 4u);
+        TIDE_REQUIRE(length <= size - at - 8u);
+        if (kind == TIDE_EMBED_RENDER_ARRAY_OF && length >= 20u && u32_at(p, at + 16u) == 1u && u32_at(p, at + 20u) == 1u
+            && u32_at(p, at + 24u) == 1u) {
+            if (u32_at(p, at + 12u) == TIDE_GPU_RGBA32F) floats = u32_at(p, at + 8u);
+            if (u32_at(p, at + 12u) == TIDE_GPU_R32I) ints = u32_at(p, at + 8u);
+        }
+        if (kind == TIDE_EMBED_RENDER_ARRAY && length >= 28u) {
+            const tide_gpu_target_format format = (tide_gpu_target_format)u32_at(p, at + 12u);
+            const tide_gpu_color color = tide_gpu_target_color(format, 0);
+            const bool numbers = color == TIDE_GPU_COLOR_RGBA32F || color == TIDE_GPU_COLOR_R32I;
+            drawn_into += numbers && u32_at(p, at + 28u) == 0u; // Made with no pixels: to be drawn into
+        }
+        if (kind == TIDE_EMBED_RENDER_IMAGE && length >= 8u && bound_count < 2u) bound[bound_count++] = u32_at(p, at + 12u);
+        at += 8u + length;
+    }
+    TIDE_CHECK(floats != 0 && ints != 0 && drawn_into == 0u);
+    TIDE_CHECK(bound_count == 2u && bound[0] == floats && bound[1] == ints);
+    tide_draw_free(&draw);
+    tide_embed_destroy(e);
+}
+
 TIDE_TEST(embed_render)
 {
     char *argv[] = {program};
@@ -918,6 +1290,201 @@ TIDE_TEST(embed_render)
     TIDE_CHECK(again.ops[TIDE_EMBED_RENDER_TEXTURE] >= 1u);
     TIDE_CHECK(again.first_pipeline > 0u && again.first_pipeline <= first.first_pipeline);
     tide_embed_destroy(e);
+}
+
+// Where the local fields `type` have their field `name`: its offset, or UINT32_MAX.
+static uint32_t local_field(const int32_t type, const char *name)
+{
+    if (type < 0) return UINT32_MAX;
+    const tide_layout_type *t = &tide_game_layout.types[type];
+    for (uint32_t i = 0; i < t->field_count; i++) {
+        if (strcmp(t->fields[i].name, name) == 0) return t->fields[i].offset;
+    }
+    return UINT32_MAX;
+}
+
+// An image of the other program's own (Unity's imported texture) in a local Texture field: the game reads the size
+// it was told and draws with it, and what's recorded names the image by the other program's number, with nothing of
+// it uploaded, written or made smaller images of. A [Raw] field's read says so, a singleton's field takes one with
+// no entity, the field keeps it from frame to frame and across a reset of the other program's GPU, and an image of
+// 0 leaves the field with no texture. No other field takes one, and the match's hash is as it was.
+TIDE_TEST(embed_local_textures_are_the_other_programs)
+{
+    char *argv[] = {program};
+    tide_embed *e = start(1, argv);
+    TIDE_REQUIRE(e != NULL);
+    frames(e, 10, NULL);
+    uint32_t size = 0, count = 0;
+    const uint8_t *p = tide_embed_view(e, &size);
+    const uint8_t *rows = NULL;
+    TIDE_REQUIRE(p && section(p, size, TIDE_PACKET_COMPONENT, type_named("Counter"), &count, &rows) && count == 1u);
+    uint64_t key[2];
+    memcpy(key, p + TIDE_PACKET_HEADER + u32_at(rows, 0) * TIDE_PACKET_ENTITY, sizeof key);
+    const int32_t locals = type_named("Counter local"), tally = type_named("Tally local");
+    const uint32_t face = local_field(locals, "face"), bumps = local_field(locals, "bumps"), logo = local_field(tally, "logo");
+    TIDE_REQUIRE(locals >= 0 && tally >= 0 && face != UINT32_MAX && bumps != UINT32_MAX && logo != UINT32_MAX);
+    TIDE_CHECK(faced_face.x == 0 && faced_bumps.x == 0 && faced_logo.x == 0 && faced_note == 4);
+    const rendered before = render(e);
+    TIDE_REQUIRE(before.whole && before.ops[TIDE_EMBED_RENDER_EXTERNAL] == 0u);
+
+    // What takes none: a field that's no Texture, another type, no entity for a component's, a size that's none
+    const uint32_t point = (uint32_t)TIDE_FILTER_POINT, repeat = (uint32_t)TIDE_WRAP_REPEAT;
+    TIDE_CHECK(!tide_embed_local_texture(e, (uint32_t)locals, local_field(locals, "drawn"), key[0], key[1], 7, 64, 32, point, repeat));
+    TIDE_CHECK(!tide_embed_local_texture(e, (uint32_t)locals, face + 4u, key[0], key[1], 7, 64, 32, point, repeat));
+    TIDE_CHECK(!tide_embed_local_texture(e, (uint32_t)type_named("Counter"), 0, key[0], key[1], 7, 64, 32, point, repeat));
+    TIDE_CHECK(!tide_embed_local_texture(e, (uint32_t)locals, face, 0, 0, 7, 64, 32, point, repeat));
+    TIDE_CHECK(!tide_embed_local_texture(e, (uint32_t)locals, face, key[0], key[1], 7, 0, 32, point, repeat));
+    TIDE_CHECK(!tide_embed_local_texture(e, (uint32_t)locals, face, key[0], key[1], 7, 64, 65536, point, repeat));
+    TIDE_CHECK(!tide_embed_local_texture(e, 1000000u, face, key[0], key[1], 7, 64, 32, point, repeat));
+    frames(e, 1, NULL);
+    TIDE_CHECK(faced_face.x == 0 && render(e).ops[TIDE_EMBED_RENDER_EXTERNAL] == 0u);
+
+    const uint64_t hash = tide_game_api.hash;
+    TIDE_CHECK(tide_embed_local_texture(e, (uint32_t)locals, face, key[0], key[1], 7, 64, 32, point, repeat));
+    TIDE_CHECK(tide_embed_local_texture(e, (uint32_t)locals, bumps, key[0], key[1], 8, 16, 16, 1, 0));
+    TIDE_CHECK(tide_embed_local_texture(e, (uint32_t)tally, logo, 0, 0, 9, 256, 128, 2, 0));
+    frames(e, 1, NULL);
+    TIDE_CHECK(faced_face.x == 64 && faced_face.y == 32);
+    TIDE_CHECK(faced_bumps.x == 16 && faced_bumps.y == 16);
+    TIDE_CHECK(faced_logo.x == 256 && faced_logo.y == 128);
+    TIDE_CHECK(faced_note == 4); // The row the write made has the other fields' declared defaults
+    TIDE_CHECK(tide_game_api.hash == hash);
+    const rendered given = render(e);
+    TIDE_REQUIRE(given.whole && given.external_count == 3u);
+    bool found[3] = {false, false, false};
+    for (uint32_t i = 0; i < given.external_count; i++) {
+        const uint32_t *x = given.externals[i];
+        TIDE_CHECK(x[0] != 0u && given.external_bound[i] && !given.external_freed[i]);
+        if (x[1] == 7u) found[0] = x[2] == 64u && x[3] == 32u && x[4] == 0u;
+        if (x[1] == 8u) found[1] = x[2] == 16u && x[3] == 16u && x[4] == 2u; // [Raw]: its channels as they are
+        if (x[1] == 9u) found[2] = x[2] == 256u && x[3] == 128u && x[4] == 0u;
+    }
+    TIDE_CHECK(found[0] && found[1] && found[2]);
+
+    // The fields keep them: drawn again with nothing named again, and named again once the other program's GPU
+    // starts over
+    frames(e, 1, NULL);
+    const rendered kept = render(e);
+    TIDE_REQUIRE(kept.whole);
+    TIDE_CHECK(kept.ops[TIDE_EMBED_RENDER_EXTERNAL] == 0u && faced_face.x == 64);
+    tide_embed_render_reset(e);
+    frames(e, 1, NULL);
+    const rendered again = render(e);
+    TIDE_REQUIRE(again.whole);
+    TIDE_CHECK(again.external_count == 3u && again.external_bound[0] && again.external_bound[1] && again.external_bound[2]);
+
+    // None again: the field has no texture, and its name is let go of, which frees nothing of the other program's
+    TIDE_CHECK(tide_embed_local_texture(e, (uint32_t)locals, face, key[0], key[1], 0, 0, 0, 0, 0));
+    frames(e, 1, NULL);
+    TIDE_CHECK(faced_face.x == 0 && faced_face.y == 0 && faced_bumps.x == 16);
+    const rendered taken = render(e);
+    TIDE_REQUIRE(taken.whole);
+    TIDE_CHECK(taken.ops[TIDE_EMBED_RENDER_EXTERNAL] == 0u && taken.ops[TIDE_EMBED_RENDER_TEXTURE_FREE] >= 1u);
+    tide_embed_destroy(e);
+    TIDE_CHECK(!tide_embed_local_texture(e, (uint32_t)locals, face, key[0], key[1], 7, 64, 32, point, repeat)); // No embed
+}
+
+// A tick shown again (time travel: a pause, then an earlier tick) runs the views on a local state of its own, which
+// is given what the other program gave the match's: the game reads the image's size and the frame names it there
+// too, for what was given before the pause and for what's given while an earlier tick shows.
+TIDE_TEST(embed_shown_ticks_have_what_was_given)
+{
+    char *argv[] = {program};
+    tide_embed *e = start(1, argv);
+    TIDE_REQUIRE(e != NULL);
+    tide_embed_travel_keep(e, 10.0f);
+    frames(e, 20, NULL);
+    uint32_t size = 0, count = 0;
+    const uint8_t *p = tide_embed_view(e, &size);
+    const uint8_t *rows = NULL;
+    TIDE_REQUIRE(p && section(p, size, TIDE_PACKET_COMPONENT, type_named("Counter"), &count, &rows) && count == 1u);
+    uint64_t key[2];
+    memcpy(key, p + TIDE_PACKET_HEADER + u32_at(rows, 0) * TIDE_PACKET_ENTITY, sizeof key);
+    const int32_t locals = type_named("Counter local");
+    const uint32_t face = local_field(locals, "face"), shape = local_field(locals, "shape"), look = local_field(locals, "look");
+    TIDE_REQUIRE(face != UINT32_MAX && shape != UINT32_MAX && look != UINT32_MAX);
+    TIDE_CHECK(tide_embed_local_texture(e, (uint32_t)locals, face, key[0], key[1], 7, 64, 32, 0, 0));
+    frames(e, 20, NULL);
+    tide_embed_travel travel;
+    tide_embed_travel_of(e, &travel);
+    TIDE_REQUIRE(travel.state == TIDE_TRAVEL_LIVE && travel.last > travel.first + 4u);
+    TIDE_REQUIRE(tide_embed_pause(e, true));
+    TIDE_REQUIRE(tide_embed_show(e, travel.last - 3u));
+    faced_face = tide_i2(0, 0);
+    frames(e, 1, NULL);
+    TIDE_CHECK(faced_face.x == 64 && faced_face.y == 32); // The shown tick's own local state has it
+    TIDE_CHECK(render(e).ops[TIDE_EMBED_RENDER_EXTERNAL_DRAW] == 0u);
+    // Given while it shows: there the next frame
+    TIDE_CHECK(tide_embed_local_object(e, (uint32_t)locals, shape, key[0], key[1], 11));
+    TIDE_CHECK(tide_embed_local_object(e, (uint32_t)locals, look, key[0], key[1], 12));
+    frames(e, 1, NULL);
+    TIDE_CHECK(render(e).ops[TIDE_EMBED_RENDER_EXTERNAL_DRAW] == 1u);
+    // ...and the match's own has both as it goes on
+    TIDE_REQUIRE(tide_embed_pause(e, false));
+    frames(e, 2, NULL);
+    TIDE_CHECK(faced_face.x == 64 && render(e).ops[TIDE_EMBED_RENDER_EXTERNAL_DRAW] == 1u);
+    tide_embed_destroy(e);
+}
+
+// The other program's own mesh, material and sound in local fields of those types: the game reads nothing of them
+// and hands their numbers back, the mesh and material in a draw recorded where the view made it, with its matrix,
+// for that program to draw itself, and the sound among the frame's sounds for it to play, once. With either of a
+// draw's two unset nothing is recorded; a field takes only what's its size, so an object is no texture's and the
+// other way round.
+TIDE_TEST(embed_local_objects_are_handed_back)
+{
+    char *argv[] = {program};
+    tide_embed *e = start(1, argv);
+    TIDE_REQUIRE(e != NULL);
+    frames(e, 10, NULL);
+    uint32_t size = 0, count = 0;
+    const uint8_t *p = tide_embed_view(e, &size);
+    const uint8_t *rows = NULL;
+    TIDE_REQUIRE(p && section(p, size, TIDE_PACKET_COMPONENT, type_named("Counter"), &count, &rows) && count == 1u);
+    uint64_t key[2];
+    memcpy(key, p + TIDE_PACKET_HEADER + u32_at(rows, 0) * TIDE_PACKET_ENTITY, sizeof key);
+    const int32_t locals = type_named("Counter local");
+    const uint32_t shape = local_field(locals, "shape"), look = local_field(locals, "look"), ding = local_field(locals, "ding");
+    const uint32_t face = local_field(locals, "face");
+    TIDE_REQUIRE(locals >= 0 && shape != UINT32_MAX && look != UINT32_MAX && ding != UINT32_MAX && face != UINT32_MAX);
+    TIDE_CHECK(render(e).ops[TIDE_EMBED_RENDER_EXTERNAL_DRAW] == 0u);
+    TIDE_CHECK(tide_embed_sounds(e, &count) == NULL && count == 0u);
+
+    // Each field takes its own size alone, and a component's wants its entity
+    TIDE_CHECK(!tide_embed_local_object(e, (uint32_t)locals, face, key[0], key[1], 11));
+    TIDE_CHECK(!tide_embed_local_texture(e, (uint32_t)locals, shape, key[0], key[1], 7, 64, 32, 0, 0));
+    TIDE_CHECK(!tide_embed_local_object(e, (uint32_t)locals, shape + 4u, key[0], key[1], 11));
+    TIDE_CHECK(!tide_embed_local_object(e, (uint32_t)locals, shape, 0, 0, 11));
+
+    // A mesh with no material draws nothing
+    TIDE_CHECK(tide_embed_local_object(e, (uint32_t)locals, shape, key[0], key[1], 11));
+    frames(e, 1, NULL);
+    TIDE_CHECK(render(e).ops[TIDE_EMBED_RENDER_EXTERNAL_DRAW] == 0u);
+    TIDE_CHECK(tide_embed_local_object(e, (uint32_t)locals, look, key[0], key[1], 12));
+    TIDE_CHECK(tide_embed_local_object(e, (uint32_t)locals, ding, key[0], key[1], 13));
+    frames(e, 1, NULL);
+    const rendered drawn = render(e);
+    TIDE_REQUIRE(drawn.whole && drawn.ops[TIDE_EMBED_RENDER_EXTERNAL_DRAW] == 1u);
+    TIDE_CHECK(drawn.drawn[0] == 11u && drawn.drawn[1] == 12u);
+    // Where the view placed it: the identity moved by (1, 2, 3), column by column
+    TIDE_CHECK(drawn.drawn_matrix[0] == 1.0f && drawn.drawn_matrix[5] == 1.0f && drawn.drawn_matrix[10] == 1.0f
+               && drawn.drawn_matrix[15] == 1.0f && drawn.drawn_matrix[1] == 0.0f);
+    TIDE_CHECK(drawn.drawn_matrix[12] == 1.0f && drawn.drawn_matrix[13] == 2.0f && drawn.drawn_matrix[14] == 3.0f);
+    const tide_embed_sound *sounds = tide_embed_sounds(e, &count);
+    TIDE_REQUIRE(sounds != NULL && count == 1u);
+    TIDE_CHECK(sounds[0].clip == 13u && sounds[0].volume == 0.5f && sounds[0].pitch == 1.0f);
+    TIDE_CHECK(tide_embed_sounds(e, &count) == NULL && count == 0u); // Said once
+    frames(e, 1, NULL);
+    TIDE_CHECK(tide_embed_sounds(e, &count) != NULL && count == 1u); // ...and again for the next frame's play
+
+    // None again: nothing drawn, nothing played
+    TIDE_CHECK(tide_embed_local_object(e, (uint32_t)locals, look, key[0], key[1], 0));
+    TIDE_CHECK(tide_embed_local_object(e, (uint32_t)locals, ding, key[0], key[1], 0));
+    frames(e, 1, NULL);
+    TIDE_CHECK(render(e).ops[TIDE_EMBED_RENDER_EXTERNAL_DRAW] == 0u);
+    TIDE_CHECK(tide_embed_sounds(e, &count) == NULL && count == 0u);
+    tide_embed_destroy(e);
+    TIDE_CHECK(!tide_embed_local_object(e, (uint32_t)locals, shape, key[0], key[1], 11)); // No embed
 }
 #endif
 

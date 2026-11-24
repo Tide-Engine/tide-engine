@@ -1,0 +1,5 @@
+// expect: define gives a bool, a byte, an int, a long, a float, a double, a string or an enum, what a command line's text can say, and this is float3
+// expect: read the parts it's made from, each a define of its own: 'float3(define(X, 0.0), define(Y, 0.0), 0)'
+const float3 START = define(START, float3(0, 1, 0));
+singleton Spawn { float3 at = START; }
+scene Main { }

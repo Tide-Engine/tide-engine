@@ -1,0 +1,4 @@
+// expect: 'Back.Q' is worked out from 'Front', whose members are being worked out from 'Back': enums can't be numbered from each other in a circle
+enum Front { P = int(Back.Q) + 1 }
+enum Back { Q = int(Front.P) + 1 }
+scene Main { }

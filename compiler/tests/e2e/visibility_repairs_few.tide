@@ -1,0 +1,2 @@
+// visibility_repairs.tide with four players: an Audience small enough to keep with each row written down
+settings { maxPlayers = 4; }

@@ -1,6 +1,3 @@
-// expect: a [Raw] texture is read in a frag or a vert by its own name, which one of 'frames' hasn't got
-[Raw] asset List<Texture> frames = "../e2e/assets/run/*.png";
-
-scene Main
-{
-}
+// expect: [Raw] goes before a glob's List<Texture> or Map<string, Texture>, and 'frames' is List<Grid2<Color>>
+[Raw] asset List<Grid2<Color>> frames = "../e2e/assets/run/*.png";
+scene Main { }

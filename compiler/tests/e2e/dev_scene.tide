@@ -1,0 +1,33 @@
+// A dev scene as a scenario: --scene starts the build in it, with the fields
+// it's given, in place of the start scene, whose own setup then doesn't run.
+
+component Soldier { int side; }
+
+singleton Started
+{
+    int mains;    // Main's setup ran
+    int battles;  // Battle's did
+    int side;     // ...with this field
+    bool alone;
+}
+
+scene Main { }
+
+event(Spawned) Setup(mut Started started, with Main)
+{
+    started.mains += 1;
+}
+
+dev scene Battle
+{
+    int side = 500;
+    bool alone;
+}
+
+dev event(Spawned) Arena(Battle battle, mut Started started)
+{
+    started.battles += 1;
+    started.side = battle.side;
+    started.alone = battle.alone;
+    for (int i = 0; i < battle.side / 50; i++) Spawn(Soldier { side = 1 });
+}

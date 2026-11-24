@@ -1,0 +1,7 @@
+// expect: 'ARMY_SIDE' is defined with no value, and 'define(ARMY_SIDE, ...)' reads an int here
+// expect: this file's '#define ARMY_SIDE' defines it with none, over the build's: take the '#define' away to read '--define ARMY_SIDE=<value>', or write the value as a constant, 'const int ARMY_SIDE = 500;'
+// define: ARMY_SIDE=500
+#define ARMY_SIDE
+const int ARMY_SIDE = define(ARMY_SIDE, 500);
+singleton Army { int side = ARMY_SIDE; }
+scene Main { }

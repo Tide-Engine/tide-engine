@@ -1,0 +1,24 @@
+extern_spawns: 4 systems each tick, 3 stages deep; 3 can run alongside others.
+A system starts once everything it runs after is done.
+
+stage 1  Move  (per entity, in C)
+         reads Velocity, Time
+         writes Position
+         alongside nothing
+
+stage 2  Launch  (once)
+         reads Time
+         after Move: it's in C, which can see the entities this spawns
+         alongside Drift
+stage 2  Drift  (per entity)
+         writes Velocity
+         after Move: it reads Velocity, which this writes
+         alongside Launch, Tally
+
+stage 3  Tally  (once, in C)
+         writes Count
+         after Launch: it spawns entities, which this, in C, can see
+         alongside Drift
+
+Event handlers, at the end of the tick, as their events are sent:
+         Spawned: Setup

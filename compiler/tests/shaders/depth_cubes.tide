@@ -1,0 +1,26 @@
+scene Main { }
+
+// A lamp that shines every way: a cube of depth alone, drawn a face at a time, and its depth read by a direction,
+// as a number and compared, in a frag, a vert and a function they call
+local singleton Lamp { Cubemap cube; DepthCubemap shadows; float3 at; }
+
+struct ToFrag { float lit; }
+float Shadowed(DepthCubemap shadows, float3 way, float depth) { return shadows.Compare(way, depth); }
+frag Caster(Vertex3 vertex, out Color color) { color = Color(1, 1, 1); }
+vert Bent(mut Vertex3 vertex, out ToFrag to, Lamp lamp) { to.lit = lamp.shadows.Sample(vertex.position - lamp.at); }
+frag Lit(Vertex3 vertex, ToFrag from, out Color color, Lamp lamp)
+{
+    float3 way = vertex.position - lamp.at;
+    float near = lamp.shadows.Sample(way);
+    float lit = lamp.shadows.Compare(way, 0.5) + Shadowed(lamp.shadows, -way, near - 0.01);
+    color = Color(lit, near, from.lit);
+}
+view Show(mut Lamp lamp)
+{
+    lamp.cube = Cubemap(256, Format.Depth);
+    lamp.shadows = lamp.cube.depth;
+    List<Vertex3> mesh = [Vertex3 { position = float3(0) }, Vertex3 { position = float3(1, 0, 0) }, Vertex3 { position = float3(0, 1, 0) }];
+    lamp.cube.faces[0].Clear(Color(0, 0, 0));
+    lamp.cube.faces[4].Mesh(mesh, [0, 1, 2], float4x4.identity, Caster);
+    Draw.Mesh(mesh, [0, 1, 2], float4x4.identity, Bent, Lit);
+}

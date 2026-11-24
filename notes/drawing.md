@@ -1,3 +1,11 @@
+## Several textures a draw gives (2026-11-14)
+
+`Mesh`, `Instanced`, `SkinnedMesh`, a target's forms and `Blit` give a frag and a vert as many Textures as they
+take, in the frag's order then the vert's own, each with its filter and wrap after it; a blit's go before its
+destination. No draw-list, runtime or backend change: `tide_shade_<n>` takes `tide_texture`, `tide_texture1`...
+and fills `tide_textures` as it did for one, and runs split by texture as they did. Compiler details, tests and
+gaps: shaders.md (top).
+
 ## Per-image typed clears (2026-11-14)
 
 tide_draw_clear_images records at most four type-checked values into the draw list's uniform bytes, retaining
@@ -27,13 +35,34 @@ depth-precision-production.md.
 
 # Depth bias (2026-11-14)
 
+Corrections and tests (audit, 2026-11-14). "Level gathering compares it" (below) wasn't so: `level_follows`
+(`engine/src/draw.c`), which `tide_draw_gather_levels` goes by on the CPU's path, compared blend, depth and cull
+but not the bias, so a biased draw of a leveled mesh right after an unbiased one was gathered into its runs and
+drawn with its bias (none). It compares the pair now. Every place two draws can become one is pinned, each
+failing when its comparison is taken out (checked so):
+- `draw_culled_depth_bias_keeps_sets_apart_and_out_of_occlusion` (`tests/test_draw_culled.c`): culled draws of
+  one list differing only in bias (constant, then slope) are sets of their own, the next under the same bias joins
+  its set, each command keeps its bias, and only the unbiased ones test occlusion.
+- `draw_meshes_3d_join_under_one_depth_bias_only` (`tests/test_draw.c`): shader-less 3D instances of one mesh in a
+  row are one command under one bias, two under two.
+- `draw_levels_under_another_depth_bias_are_gathered_apart` (`tests/test_draw_levels.c`): the gathering above, a
+  mesh's instances and a shader's, and the shaded merge (`last->depth_bias` in `shaded_instances`' run join).
+- `cull.tide`/`cull.c` setting 6 (`tide_platform_cull`, `_cull_decided`, web `tide_platform_cull`): six boxes near
+  and far, so each draw is runs of two levels that join where the device takes first instances, drawn green under
+  `Cull.None` (a call apart), then red under `Draw.DepthBias(8, 0)`, which fails against them, then red with none,
+  which covers them. The middle box's middle must be red on the GPU's culling and the CPU's, and the frames the same
+  pixels: with `cull_joins_with`'s bias comparison taken out, the GPU path drew it green (3,076 pixels differed).
+  The CPU path drew it red even with the second red draw left out before the gathering fix (the biased draw took
+  the green one's bias); both draw it green then now.
+All pass natively (ASan, Vulkan with validation) and on web-debug (WASI units, software WebGPU pixels).
+
 Corrections (review, 2026-11-14). WebGPU kept the last bias past its pass: a kernel run after a frame whose
 last draw was biased made its compute pipeline again as a render pipeline and threw (TypeError in
 `createRenderPipeline`), and pipelines used directly (hi-z, linear copies) got a biased variant. `tide.js` now
 starts every render and compute pass with none, as Vulkan's dynamic state does; `kernels.tide` ends its frame
 with a biased draw, which failed on web-debug before the fix and passes after. GPU-culled joins
 (`cull_joins_with`) now compare the bias, so two draws of a family that differ only in bias stay two calls;
-that one has no fixture of its own.
+that one had no fixture of its own (it has since: above).
 
 Owner-approved 2026-11-13: destination-owned DepthBias/SetDepthBias, block restore and zero-argument reset,
 3D only. Picks and alternatives are Provisional in spec.md. Constant is truncated, bounded precision units;
@@ -1247,6 +1276,20 @@ changed RGBA pixels. Independent cache review found no blocking issues.
 [Measured forest results and reproduction](../bench/results/forest-opt-20261102/README.md)
 record the complete optimization task; those timings do not isolate this cache.
 
+A grid sampled as a texture (`Texture`, `TextureArray`, a `Grid3` as layers) is
+versioned on every draw that samples it: `grid_hash` (mesh.c) takes each chunk's
+place and its page's kept hash (`tide_heap_block_hash`, a `moves` each as before).
+Since 2026-11-18 those are laid side by side, 64 chunks at a time, and hashed at
+once with `tide_hash_wide`, where two `tide_hash_more` a chunk ran word by word.
+LOAM's tiles, a `Grid3<Color>` of 16x16x128 in 32 chunks, are sampled by about
+1,100 draws a frame: a sampling went from 0.26 us to 0.17 (measured by asking it
+eight more times a draw), and the far world's views from 0.47 ms to 0.42. The
+version is only the draw list's key for the grid's pixels, so its numbers
+changing is nothing; LOAM's 1280x720 capture is the same bytes. What's left is a
+page lookup for each chunk. A version found once a view, or once a frame where
+nothing wrote the grid, would take that too; it wants a way to know nothing
+wrote it (the pages' `hashed` say so only chunk by chunk), not built.
+
 ## Picks out of the camera's view (2026-11-04)
 
 Mount & Rifle's gap ("A render target's LOD pixel tolerance barely moves instanced
@@ -1850,9 +1893,9 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 - 3D is meshes too, kept bare so that games and libraries scale it up: `Vertex3` (`tide_vertex3`: a position, a uv and a color), drawn by `Draw.Mesh(vertices, indices, transform)` (`tide_draw_mesh_3d`) through a camera of their own, `Draw.SetCamera(position, rotation, fieldOfView)` or any `transform` and `projection`. No lighting is built in: normals and what a pixel does with them are a vertex struct and a `frag` of the game's. What the engine has for them is `instance.Normal`, a normal as it is in the world under the draw's transform (`notes/shaders.md`).
 - **A mesh draw takes a `Mesh<V>` where its vertices and its indices go** (2026-10-08): `Draw.Mesh(mesh, transform, ...)` and `Draw.Instanced(mesh, instances, ...)`, a target's too, for an asset's mesh (`notes/assets-and-files.md`, An asset can be a `Mesh<V>`). It's the checker's alone: `check_mesh_draw` makes the call's arguments the Mesh's two lists, so nothing in `builtins.c`'s signatures, the shader writer or the draw list knows a Mesh from two lists, and every rule of a mesh draw (the transform a 3D mesh takes, a texture, a vert, a frag, values, runs) is the lists'. What the draw list had to learn is to tell a list of the pack's without reading it (`list_version` in `engine/src/mesh.c`).
 - **A mesh marked `[LOD]` draws at a level of detail each instance picks** (2026-10-11; `notes/assets-and-files.md`, Levels of detail, has all of it). What the draw list relies on: a level is a mesh of the list's with no vertices of its own (`tide_draw_mesh_data.base` names the mesh whose it draws with), so commands, runs and their merging know nothing of levels; `tide_draw_instance`, `tide_draw_instances` and `tide_draw_shaded_instances` pick, and the inner functions that `tide_draw_append` and the primitives call don't; `Draw.LOD` and `Draw.LODCamera` are a destination's own (`tide_draw_place.lod`, `lod_camera`) and record no command; and `tide_draw_gather_levels`, which `tide_draw_prepare` calls, makes the runs of one mesh's levels that follow each other a run a level, leaving commands that draw nothing (a mesh of 0, a zeroed run) where the others were. A host says the window's size for the pick with `tide_draw_screen_size`.
-- Manual instancing is `Draw.Instanced`, and a target's `Instanced` (`(vertices, indices, instances[, texture[, filter]][, vert][, frag])`): one mesh for each list item, without entities. In 3D, a `List<float4x4>` supplies transforms, or an ordinary struct's optional `float4x4 transform` does (identity without it). A shader's read-only ordinary struct parameter receives the list item; other components still come from the view's entity and singletons are shared. In 2D a vert places each item, and the engine applies no instance transform. Only read fields are sent, beside a 3D transform; an empty list draws nothing, and each compatible run is one GPU draw. See `docs/game/shaders.md`, Instances from a list.
+- Manual instancing is `Draw.Instanced`, and a target's `Instanced` (`(vertices, indices, instances[, texture[, filter[, wrap]]...][, vert][, frag])`): one mesh for each list item, without entities. In 3D, a `List<float4x4>` supplies transforms, or an ordinary struct's optional `float4x4 transform` does (identity without it). A shader's read-only ordinary struct parameter receives the list item; other components still come from the view's entity and singletons are shared. In 2D a vert places each item, and the engine applies no instance transform. Only read fields are sent, beside a 3D transform; an empty list draws nothing, and each compatible run is one GPU draw. See `docs/game/shaders.md`, Instances from a list.
 - A game's C draws through the view's list: an extern function takes a `DrawList` (`tide_draw_list *`), which only `Draw.list` is, in views and the functions they call. C calls `tide/draw.h` itself (`tide_draw_vertices` and `tide_draw_triangles` for vertices several batches share), so libraries that hand over triangles (Dear ImGui, Nuklear, Spine) need no copy through Tide lists.
-- **Skinned mesh drawing** (2026-10-08, optional pose added 2026-10-10; `docs/spec.md`, Skinned meshes and animation): `Draw.SkinnedMesh(model, transform[, pose][, texture][, vert][, frag][, values])`, and the same on a render target. The model is a typed `SkinnedMesh<V>` and the transform a `float4x4`. Omitting the Pose draws authored rest, including models with no clips; `model.defaultPose` returns an independently editable authored-rest Pose, as `model.skeleton.RestPose()` does. An explicit invalid Pose still records no draw. `Draw.Mesh` and `Draw.Instanced` keep their existing APIs.
+- **Skinned mesh drawing** (2026-10-08, optional pose added 2026-10-10; `docs/spec.md`, Skinned meshes and animation): `Draw.SkinnedMesh(model, transform[, pose][, texture[, filter[, wrap]]...][, vert][, frag][, values])`, and the same on a render target. The model is a typed `SkinnedMesh<V>` and the transform a `float4x4`. Omitting the Pose draws authored rest, including models with no clips; `model.defaultPose` returns an independently editable authored-rest Pose, as `model.skeleton.RestPose()` does. An explicit invalid Pose still records no draw. `Draw.Mesh` and `Draw.Instanced` keep their existing APIs.
   - `check_mesh_draw` retains the original model and optional pose, expands the model into its ordinary vertex/index lists, and plans a skinned shader even for a plain `Vertex3` with no custom stage. Generated draw adapters evaluate the written operands once, in order, use strictly compatible poses directly, or bind compatible separate exports through `tide_skinned_pose_into` (see `notes/runtime-ownership.md`). Failed binding records no draw. Rest and bound transforms live in scratch until capture has owned the current values; the adapter then resets its scratch mark. Two READ_DATA textures hold palette matrices and all hidden vertex influences. Neither stream adds fields to V. Later pose edits and draws do not change an earlier palette capture.
   - CPU sampling and model-space hierarchy evaluation are deterministic, usable in systems and views (`tide/skinned.h`). GPU deformation precedes a custom vert, so its position, normal and tangent are already posed in model-local space. The outer Draw transform and camera run afterward; `instance.Normal` applies only the outer transform. A vert's `this.clip` projects its current posed position, and its `out float4` supplies explicit placement through the ordinary shader path. A shadow target calls the same draw with the same pose and vert; depth-only targets use the existing shaded-mesh path.
   - Loaded skinned records establish immutable canonical-byte provenance once (`tide_pack_skinned_version`, 2026-10-10), after all pack sanitization. Their draws reuse full validation and the exact influence-content hash from pack load, removing per-character scans of unchanged geometry and animation keys. Owned/copied/decoded models and unrelated packed byte lists keep the checked path. Replacement/unload discard proofs, and a packed geometry-default write invalidates any physically aliased model proof through a sorted span index.

@@ -1,4 +1,3 @@
-// expect: command handlers run in the match, so they can't be local
-command Rename { string name; }
-local command(Rename rename, PlayerID sender) Handle() { }
+// expect: a command's code runs in the match, so it can't be local
+local command(string name) Rename(PlayerID sender) { }
 scene Main { }

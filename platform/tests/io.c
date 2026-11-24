@@ -3,9 +3,11 @@
 #endif
 
 #include "tide/platform.h"
+#include "tide/storage.h"
 #include "tide_test.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #ifdef _WIN32
@@ -172,6 +174,101 @@ TIDE_TEST(io_native_data_directory_override)
     io = tide_platform_io_init("dev.tide.io.tests", NULL);
     TIDE_CHECK(!tide_str_eq(tide_application_persistent_data_path(io), first));
     TIDE_REQUIRE(tide_directory_delete(io, root, true).ok);
+    tide_scratch_reset(mark);
+}
+
+// The engine's folder, Tide/ in the persistent root, with the store's files in it: the game's calls can't reach them
+// however the path is written, its own files with names like it are its, and the store's are as the store left them.
+TIDE_TEST(io_native_engine_folder_is_the_engines)
+{
+    const uint64_t mark = tide_scratch_mark();
+    const tide_io *io = tide_platform_io_init("dev.tide.io.tests", NULL);
+    char folder[80];
+#ifdef _WIN32
+    snprintf(folder, sizeof folder, "engine-folder-%lu", (unsigned long)GetCurrentProcessId());
+#else
+    snprintf(folder, sizeof folder, "engine-folder-%ld", (long)getpid());
+#endif
+    const tide_str top = path(tide_application_temporary_cache_path(io), folder);
+    if (tide_directory_exists(io, top)) TIDE_REQUIRE(tide_directory_delete(io, top, true).ok);
+    const tide_str root = path(top, "Game.Root");
+    TIDE_REQUIRE(tide_directory_create_directory(io, root).ok);
+    io = tide_platform_io_init("dev.tide.io.tests", tide_str_c(root));
+    TIDE_REQUIRE(io && tide_str_eq(tide_application_persistent_data_path(io), root));
+    // What the store keeps, through the provider as the store writes it
+    TIDE_REQUIRE(io->create(io->user, TIDE_STORAGE_FOLDER "/chunks", true) == TIDE_IO_NONE);
+    TIDE_REQUIRE(io->write(io->user, TIDE_STORAGE_FOLDER "/chunks/k.bin", (const uint8_t *)"kept", 4, false) == TIDE_IO_NONE);
+    TIDE_CHECK(io->exists(io->user, "Tide/store/chunks/k.bin", false));
+
+    static const char *const refused[] = {
+        "Tide/store/chunks/k.bin", "Tide\\store\\chunks\\k.bin", "TIDE/Store/chunks/k.bin", "./Tide/./store/chunks/k.bin",
+        "saves/../Tide/store/chunks/k.bin", "../Game.Root/Tide/store/chunks/k.bin", "../game.root/tide/store/chunks/k.bin",
+        "Tide./store/chunks/k.bin", "Tide /store/chunks/k.bin",
+    };
+    for (size_t i = 0; i < sizeof refused / sizeof refused[0]; i++) {
+        const tide_str name = text(refused[i]);
+        TIDE_CHECK(!tide_file_exists(io, name));
+        TIDE_CHECK(tide_file_read_all_text(io, name).error == TIDE_IO_ACCESS_DENIED);
+        TIDE_CHECK(tide_file_read_all_bytes(io, name).error == TIDE_IO_ACCESS_DENIED);
+        TIDE_CHECK(tide_file_write_all_text(io, name, text("game")).error == TIDE_IO_ACCESS_DENIED);
+        TIDE_CHECK(tide_file_append_all_text(io, name, text("game")).error == TIDE_IO_ACCESS_DENIED);
+        TIDE_CHECK(tide_file_create(io, name).error == TIDE_IO_ACCESS_DENIED);
+        TIDE_CHECK(tide_file_delete(io, name).error == TIDE_IO_ACCESS_DENIED);
+        TIDE_CHECK(tide_file_copy(io, name, text("copy.bin"), true).error == TIDE_IO_ACCESS_DENIED);
+        TIDE_CHECK(tide_file_move(io, name, text("moved.bin"), true).error == TIDE_IO_ACCESS_DENIED);
+    }
+    // Absolute: the root's own path, in another case, and a separator of the other kind
+    const tide_str absolute = path(root, "Tide/store/chunks/k.bin");
+    TIDE_CHECK(tide_file_read_all_text(io, absolute).error == TIDE_IO_ACCESS_DENIED);
+    char shouted[512];
+    snprintf(shouted, sizeof shouted, "%s", tide_str_c(absolute));
+    for (char *c = shouted; *c; c++) {
+        if (*c >= 'a' && *c <= 'z') *c = (char)(*c - 'a' + 'A');
+        else if (*c == '/') *c = '\\';
+    }
+    TIDE_CHECK(tide_file_read_all_bytes(io, text(shouted)).error == TIDE_IO_ACCESS_DENIED);
+    TIDE_CHECK(tide_file_write_all_text(io, text("note.txt"), text("game")).ok);
+    TIDE_CHECK(tide_file_copy(io, text("note.txt"), text("Tide/store/chunks/k.bin"), true).error == TIDE_IO_ACCESS_DENIED);
+    TIDE_CHECK(tide_file_move(io, text("note.txt"), text("tide\\store\\x.bin"), true).error == TIDE_IO_ACCESS_DENIED);
+    TIDE_CHECK(tide_directory_create_directory(io, text("Tide/mine")).error == TIDE_IO_ACCESS_DENIED);
+    TIDE_CHECK(!tide_directory_exists(io, text("Tide")) && !tide_directory_exists(io, text("Tide/store")));
+    TIDE_CHECK(tide_directory_get_files(io, text("Tide"), true).error == TIDE_IO_ACCESS_DENIED);
+    TIDE_CHECK(tide_directory_delete(io, text("Tide"), true).error == TIDE_IO_ACCESS_DENIED);
+    TIDE_CHECK(tide_directory_delete(io, text("Tide/store/chunks"), true).error == TIDE_IO_ACCESS_DENIED);
+    TIDE_CHECK(tide_directory_move(io, text("Tide/store"), text("taken")).error == TIDE_IO_ACCESS_DENIED);
+    // Nor the folders it's in, whose move or delete would take it along
+    TIDE_CHECK(tide_directory_delete(io, root, true).error == TIDE_IO_ACCESS_DENIED);
+    TIDE_CHECK(tide_directory_delete(io, text("."), true).error == TIDE_IO_ACCESS_DENIED);
+    TIDE_CHECK(tide_directory_move(io, root, path(top, "Moved")).error == TIDE_IO_ACCESS_DENIED);
+
+    // Names like it are the game's
+    TIDE_REQUIRE(tide_directory_create_directory(io, text("Tide2")).ok);
+    TIDE_CHECK(tide_file_write_all_text(io, text("Tide2/x.txt"), text("two")).ok && contents(io, text("Tide2/x.txt"), "two"));
+    TIDE_CHECK(tide_file_write_all_text(io, text("tide-notes.txt"), text("notes")).ok);
+    TIDE_REQUIRE(tide_directory_create_directory(io, text("saves/Tide")).ok);
+    TIDE_CHECK(tide_file_write_all_text(io, text("saves/Tide/slot.txt"), text("slot")).ok);
+    TIDE_CHECK(tide_directory_delete(io, text("saves"), true).ok);
+    // A listing of the root names the engine's folder, and nothing in it
+    const tide_io_list_result files = tide_directory_get_files(io, root, true);
+    TIDE_REQUIRE(files.ok && tide_list_count(files.value) == 3);
+    for (int32_t i = 0; i < 3; i++) {
+        const tide_str got = tide_text_view(*(const tide_text *)tide_list_at(files.value, i, sizeof(tide_text)));
+        TIDE_CHECK(!tide_io_engine_path(io, got, false));
+    }
+    const tide_io_list_result folders = tide_directory_get_directories(io, root, true);
+    TIDE_REQUIRE(folders.ok && tide_list_count(folders.value) == 2); // Tide, Tide2
+    TIDE_CHECK(tide_str_eq(tide_text_view(*(const tide_text *)tide_list_at(folders.value, 0, sizeof(tide_text))),
+                           path(root, "Tide")));
+
+    // The store's file is as the store left it
+    uint8_t *data = NULL;
+    uint32_t size = 0;
+    TIDE_CHECK(io->read(io->user, "Tide/store/chunks/k.bin", &data, &size) == TIDE_IO_NONE && size == 4
+               && memcmp(data, "kept", 4) == 0);
+    free(data);
+    TIDE_CHECK(finish_flush(io, tide_storage_flush_begin(io)) == TIDE_IO_NONE);
+    io = tide_platform_io_init("dev.tide.io.tests", NULL);
+    TIDE_REQUIRE(tide_directory_delete(io, top, true).ok);
     tide_scratch_reset(mark);
 }
 

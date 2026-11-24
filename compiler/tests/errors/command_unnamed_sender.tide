@@ -1,0 +1,6 @@
+// expect: command 'Rename' must name the player who sent it, among what its code takes
+// expect: write 'Rename(..., PlayerID sender)', and check what that player may do before acting
+// expect: or take 'with ownership', which runs it only for an entity the sender owns, and leave the sender out
+component Name { string value; }
+scene Main { }
+command(string text) Rename(mut Name name) { name.value = text; }

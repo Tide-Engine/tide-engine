@@ -1,0 +1,4 @@
+// expect: Read takes which color image as a constant int, counted from 0
+scene Main {}
+local singleton State { RenderTarget target; }
+async void Read(State state) { var pixels = await state.target.Read(1.5); }

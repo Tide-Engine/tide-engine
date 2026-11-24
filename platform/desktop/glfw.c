@@ -11,6 +11,7 @@
 #endif
 
 #include "window.h"
+#include "files.h" // tide_platform_driver_cache
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -298,6 +299,7 @@ bool tide_window_open(const tide_window_desc *desc)
 {
     // In a run nobody watches (TIDE_HIDDEN), no window shows, whatever asked for it
     const bool hidden = desc->hidden || tide_hidden();
+    tide_platform_driver_cache(); // Before Vulkan starts, which is when the driver reads where its cache is
     glfwSetErrorCallback(on_error);
 #ifdef __APPLE__
     find_vulkan(); // Before GLFW starts, which looks for Vulkan as it does
@@ -592,26 +594,32 @@ void tide_window_typing(const bool typing)
 
 // The program's own path, with its extension replaced by .pack: what tide
 // build and tide_add_game put a game's assets in, beside it.
-uint8_t *tide_window_pack(size_t *size, uint64_t progress[2])
+bool tide_window_pack_path(char path[4096])
 {
-    *size = 0;
-    char path[4096];
 #ifdef _WIN32
-    const DWORD n = GetModuleFileNameA(NULL, path, sizeof path);
-    if (!n || n >= sizeof path) return NULL;
+    const DWORD n = GetModuleFileNameA(NULL, path, 4096);
+    if (!n || n >= 4096) return false;
 #elif defined(__APPLE__)
-    uint32_t n = sizeof path;
-    if (_NSGetExecutablePath(path, &n) != 0) return NULL;
+    uint32_t n = 4096;
+    if (_NSGetExecutablePath(path, &n) != 0) return false;
 #else
-    const ssize_t n = readlink("/proc/self/exe", path, sizeof path - 1);
-    if (n <= 0) return NULL;
+    const ssize_t n = readlink("/proc/self/exe", path, 4096 - 1);
+    if (n <= 0) return false;
     path[n] = '\0';
 #endif
     char *dot = strrchr(path, '.');
     const char *slash = strrchr(path, '/');
     const char *backslash = strrchr(path, '\\');
     if (dot && (!slash || dot > slash) && (!backslash || dot > backslash)) *dot = '\0';
-    if (strlen(path) + 6 >= sizeof path) return NULL;
+    if (strlen(path) + 6 >= 4096) return false;
     strcat(path, ".pack");
+    return true;
+}
+
+uint8_t *tide_window_pack(size_t *size, uint64_t progress[2])
+{
+    *size = 0;
+    char path[4096];
+    if (!tide_window_pack_path(path)) return NULL;
     return tide_platform_read_counted(path, size, progress);
 }

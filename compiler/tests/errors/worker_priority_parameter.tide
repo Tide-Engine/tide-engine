@@ -1,0 +1,3 @@
+// expect: 'priority' is what a worker's call says of when it starts, 'Build(..., priority: WorkerPriority.Background)': give the parameter another name
+local worker int Build(int priority) { return priority; }
+scene Main;

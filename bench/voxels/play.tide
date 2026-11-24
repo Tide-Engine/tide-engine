@@ -1,0 +1,644 @@
+// Voxels to play: the chunks this machine has, drawn, the ground past them,
+// and a player's own eyes. voxels.tide is the game; this only draws it and
+// keeps this machine's own state.
+//
+// A chunk's faces are a mesh made once, on a worker, from the chunk's blocks
+// and its six neighbours' as they were, and made again when a block of it
+// changes, or a neighbour comes, changes at its side or goes: the frame never
+// waits for one. The chunks around the player have theirs made first, the
+// far ground's after the chunks' (each call's `priority:`). Past the chunks
+// the server sent, the ground is drawn from the dimension's seed, which every
+// machine has: the same hills the server would make there, with nothing sent
+// for them, but where a far region says players changed a column, which is
+// drawn as they left it.
+
+settings { title = "Voxels"; }
+
+const int FAR = 96;         // Squares of far ground each way from its middle...
+const int FAR_STEP = 8;     // ...each this many cells across
+const float SUNK = 5;       // How far the far ground is drawn below where it is, to stay under the chunks'
+const int SETTLE = 15;      // Frames with no neighbour coming or going before a chunk's faces are made again
+const int HOLD = 10;        // Frames a chunk's faces wait at most for a neighbour's they changed
+const int CLOSE = 2;        // Chunks each way from the player's whose faces are made before the others'
+// A build that measures (--define VOXELS_MEASURE=1) logs, each frame, how many chunks this machine has and how
+// many of them have no faces yet, around the player and in all
+const int MEASURE = define(VOXELS_MEASURE, 0);
+
+struct Built
+{
+    List<Vertex3> vertices;
+    List<int> indices;
+    int[6] planes;          // A chunk's blocks along each of its six sides as one number (Plane)...
+    int[6] near;            // ...and its neighbours' sides toward it, as it read them
+}
+
+// What a chunk's faces were last made from at its sides (Sight.seen): each neighbour's side toward it and its own
+// sides, each as one number (Plane); the frame they were read in; and the frame the faces being made were begun in,
+// later than that while they are, whose sides aren't known until they're made
+struct Edges
+{
+    int[6] near;
+    int[6] own;
+    int frame;
+    int pending;
+}
+
+local singleton Sight
+{
+    int dimension;
+    float3 eye;
+    bool has;               // This machine's player has an avatar
+    int3 chunk;             // ...and the chunk its feet are in
+    int drawn;              // Chunks drawn this frame, those waiting for a mesh, and the chunks' triangles drawn
+    int waiting;
+    int triangles;
+    int close;              // The chunks within CLOSE of the player's, those of them with no faces yet...
+    int closeWaiting;
+    int here;               // ...and all the chunks of its dimension this machine has
+    int frame;              // Counts frames
+    int epoch;              // Counts the player's comings into a dimension: the one the maps below are of
+    // Chunks, by KeyOf, whose faces are to be made again if they were begun before a frame, for a neighbour's side
+    // that changed, came or went...
+    Map<long, int3> bumped; // ...each with whether one changed, and the frame it was said in (Bump)
+    Map<long, int> awaited; // Chunks whose faces a neighbour's wait for, and the frame theirs are to be begun from
+    Map<long, Edges> seen;  // Chunks, by KeyOf, and what their faces were last begun from at their sides
+    // Chunks found with faces made from a neighbour's side that has changed since, both settled: this machine's own
+    // check that a side that changes makes its neighbour's faces again
+    int wrong;
+    // The ground past the chunks, of one dimension around one place
+    Mesh<Vertex3> far;
+    int farDimension = -1;
+    float3 farMiddle;
+    int3 farChunk;          // The chunk the player was in, around which the chunks drawn leave it out
+    int farStamp;           // What the far regions said
+    bool farMaking;
+    bool farMade;
+}
+
+Color Tone(Block block)
+{
+    if (block == Block.Stone) return Color(0.5, 0.5, 0.52);
+    if (block == Block.Dirt) return Color(0.47, 0.33, 0.2);
+    if (block == Block.Grass) return Color(0.36, 0.62, 0.25);
+    if (block == Block.Sand) return Color(0.84, 0.78, 0.55);
+    if (block == Block.Water) return Color(0.2, 0.42, 0.8);
+    if (block == Block.Wood) return Color(0.4, 0.28, 0.14);
+    if (block == Block.Leaves) return Color(0.2, 0.5, 0.2);
+    return Color(0.75, 0.6, 0.35);
+}
+
+// A block's color in less light: a side that faces away from the sky
+Color Shade(Color tone, float light)
+{
+    return Color(tone.r * light, tone.g * light, tone.b * light);
+}
+
+// A square of two triangles from a corner along two edges, drawn from the side `across` cross `up` points to
+void Face(mut List<Vertex3> vertices, mut List<int> indices, float3 corner, float3 across, float3 up, Color color)
+{
+    var first = vertices.count;
+    vertices.Add(Vertex3 { position = corner, color = color });
+    vertices.Add(Vertex3 { position = corner + across, color = color });
+    vertices.Add(Vertex3 { position = corner + across + up, color = color });
+    vertices.Add(Vertex3 { position = corner + up, color = color });
+    indices.Add(first);
+    indices.Add(first + 1);
+    indices.Add(first + 2);
+    indices.Add(first);
+    indices.Add(first + 2);
+    indices.Add(first + 3);
+}
+
+// Whether a block's side shows: where air is beside it, and where water is beside a block that isn't water (the
+// ground under the sea)
+bool Shows(Block block, Block beside)
+{
+    return beside == Block.Air || (beside == Block.Water && block != Block.Water);
+}
+
+// A chunk's faces: each side of a block that shows, in the chunk or across its edge in the next one, so no faces
+// are made between two chunks' blocks. `east` is the blocks of the chunk at x + 1, `above` at y + 1, `north` at
+// z + 1. One this machine hasn't is no grid's, all air, and the faces toward it are there.
+local worker Built Faces(Grid3<Block> blocks, Grid3<Block> east, Grid3<Block> west, Grid3<Block> above,
+                         Grid3<Block> below, Grid3<Block> north, Grid3<Block> south)
+{
+    mut List<Vertex3> vertices = [];
+    mut List<int> indices = [];
+    var last = SIZE - 1;
+    for (var z = 0; z < SIZE; z++)
+        for (var y = 0; y < SIZE; y++)
+            for (var x = 0; x < SIZE; x++)
+            {
+                var block = blocks[int3(x, y, z)];
+                if (block == Block.Air) continue;
+                var tone = Tone(block);
+                var at = float3(x, y, z);
+                var right = x < last ? blocks[int3(x + 1, y, z)] : east[int3(0, y, z)];
+                var left = x > 0 ? blocks[int3(x - 1, y, z)] : west[int3(last, y, z)];
+                var up = y < last ? blocks[int3(x, y + 1, z)] : above[int3(x, 0, z)];
+                var down = y > 0 ? blocks[int3(x, y - 1, z)] : below[int3(x, last, z)];
+                var ahead = z < last ? blocks[int3(x, y, z + 1)] : north[int3(x, y, 0)];
+                var behind = z > 0 ? blocks[int3(x, y, z - 1)] : south[int3(x, y, last)];
+                if (Shows(block, right)) Face(vertices, indices, at + float3(1, 0, 0), float3(0, 1, 0), float3(0, 0, 1), Shade(tone, 0.8));
+                if (Shows(block, left)) Face(vertices, indices, at, float3(0, 0, 1), float3(0, 1, 0), Shade(tone, 0.8));
+                if (Shows(block, up)) Face(vertices, indices, at + float3(0, 1, 0), float3(0, 0, 1), float3(1, 0, 0), tone);
+                if (Shows(block, down)) Face(vertices, indices, at, float3(1, 0, 0), float3(0, 0, 1), Shade(tone, 0.5));
+                if (Shows(block, ahead)) Face(vertices, indices, at + float3(0, 0, 1), float3(1, 0, 0), float3(0, 1, 0), Shade(tone, 0.65));
+                if (Shows(block, behind)) Face(vertices, indices, at, float3(0, 1, 0), float3(1, 0, 0), Shade(tone, 0.65));
+            }
+    // Its sides and its neighbours' toward it, each as one number, which say whether its faces or its neighbours'
+    // need making again (Remesh)
+    mut int[6] planes = default;
+    for (var side = 0; side < 6; side++) planes[side] = Plane(blocks, side);
+    mut int[6] near = default;
+    near[0] = Plane(east, 1);
+    near[1] = Plane(west, 0);
+    near[2] = Plane(above, 3);
+    near[3] = Plane(below, 2);
+    near[4] = Plane(north, 5);
+    near[5] = Plane(south, 4);
+    return Built { vertices = vertices, indices = indices, planes = planes, near = near };
+}
+
+// A chunk's blocks along a side, x = 15, x = 0, y = 15, y = 0, z = 15 or z = 0, as one number: 0 where they're all
+// air, as no grid's are
+int Plane(Grid3<Block> blocks, int side)
+{
+    var last = SIZE - 1;
+    mut var plane = 0;
+    for (var a = 0; a < SIZE; a++)
+        for (var b = 0; b < SIZE; b++)
+        {
+            var at = side == 0 ? int3(last, b, a) : side == 1 ? int3(0, b, a) : side == 2 ? int3(b, last, a)
+                   : side == 3 ? int3(b, 0, a) : side == 4 ? int3(b, a, last) : int3(b, a, 0);
+            plane = plane * 31 + int(blocks[at]);
+        }
+    return plane;
+}
+
+// The side across from one: a chunk's side toward its neighbour is the neighbour's `Back` toward it
+int Back(int side)
+{
+    return side % 2 == 0 ? side + 1 : side - 1;
+}
+
+// Makes a chunk's faces, off the frame, from its blocks and its neighbours' as the view found them (copies of the
+// task's own: what changes after the call isn't these), and keeps them in the chunk's local fields: a task that uses
+// them is this machine's, and gets them again with the chunk after its wait. If the chunk goes from this machine
+// while it waits, so does the task, and so do the fields. What they were made from at the sides goes in Sight.seen,
+// and is compared with what each neighbour's last faces were made from, so the two agree whichever was begun first
+// and whichever is made first: a neighbour whose faces read another side of these blocks than these are has them
+// made again (Bump), and so has this chunk where it read another side of the neighbour than the neighbour's own
+// faces were made from, each unless its own side there is all air, where it has no faces the other hides. A
+// neighbour whose faces are being made compares when they're made. So a side that changes and changes back while
+// one chunk's faces are made, which its neighbour's read, makes them again too. A block changed inside a chunk is one
+// mesh made again, a chunk of sky that comes is none of its neighbours', and chunks that come together read each
+// other's blocks once. Where its side changed toward a neighbour, the new faces wait for the neighbour's (Awaits), so
+// the two show together: a block dug at the edge leaves no hole beside it while the neighbour's faces are made.
+async void Remesh(mut Chunk chunk, mut Sight sight, int version, int epoch, WorkerPriority priority, Grid3<Block> east,
+                  Grid3<Block> west, Grid3<Block> above, Grid3<Block> below, Grid3<Block> north, Grid3<Block> south)
+{
+    var built = await Faces(chunk.blocks, east, west, above, below, north, south, priority: priority);
+    chunk.drawn = version;
+    mut var wait = false;
+    if (epoch == sight.epoch)
+    {
+        var key = KeyOf(chunk.at);
+        // Begun once a neighbour waited for it: the neighbour's show with these
+        if (sight.awaited.TryGet(key, out var since) && chunk.begun >= since) sight.awaited.Remove(key);
+        var first = chunk.epoch != epoch;
+        var had = sight.seen.Get(key) ?? default;
+        sight.seen[key] = Edges { near = built.near, own = built.planes, frame = chunk.begun, pending = had.pending };
+        for (var side = 0; side < 6; side++)
+        {
+            var beside = Beside(chunk.at, side);
+            if (!sight.seen.TryGet(KeyOf(beside), out var other) || other.pending > other.frame) continue;
+            var back = Back(side);
+            if (built.planes[side] != 0 && built.near[side] != other.own[back]) Bump(sight, chunk.at, true, chunk.begun + 1);
+            if (other.own[back] == 0 || other.near[back] == built.planes[side]) continue;
+            Bump(sight, beside, !first, other.frame + 1);
+            if (first || !chunk.meshed) continue;
+            sight.awaited[KeyOf(beside)] = sight.frame + 1;
+            wait = true;
+        }
+        chunk.epoch = epoch;
+    }
+    var blank = built.indices.count == 0;
+    if (wait)
+    {
+        chunk.next = blank ? default : Mesh(built.vertices, built.indices);
+        chunk.nextBlank = blank;
+        chunk.nextTriangles = built.indices.count / 3;
+        chunk.holding = true;
+        chunk.waited = sight.frame;
+        return;
+    }
+    chunk.holding = false;
+    chunk.next = default;
+    chunk.blank = blank;
+    if (!blank) chunk.mesh = Mesh(built.vertices, built.indices);
+    chunk.triangles = built.indices.count / 3;
+    chunk.meshed = true;
+}
+
+// Whether a neighbour of a chunk is still to have faces another waits for
+bool Awaits(Sight sight, int3 at)
+{
+    for (var side = 0; side < 6; side++)
+    {
+        if (sight.awaited.Has(KeyOf(Beside(at, side)))) return true;
+    }
+    return false;
+}
+
+// The chunk beside one on a side: x + 1, x - 1, y + 1, y - 1, z + 1, z - 1
+int3 Beside(int3 at, int side)
+{
+    var step = side % 2 == 0 ? 1 : -1;
+    return side < 2 ? at + int3(step, 0, 0) : side < 4 ? at + int3(0, step, 0) : at + int3(0, 0, step);
+}
+
+// The blocks of the chunk on a side of a place, as this machine has it made, or no grid's: all air
+Grid3<Block> Near(query (Chunk other) chunks, int3 at, int dimension, int side)
+{
+    var place = Beside(at, side);
+    indexed foreach (var row in chunks)
+    {
+        if (row.other.at.x != place.x || row.other.at.y != place.y || row.other.at.z != place.z) continue;
+        if (row.other.dimension != dimension || row.other.stage != Stage.Made) continue;
+        return row.other.blocks.Copy();
+    }
+    return default;
+}
+
+// Whether the faces of a chunk whose own are settled were made from what its neighbour on a side has toward it,
+// where that neighbour's are settled too, so made from its blocks as they are: one that isn't, or isn't there, says
+// nothing (Chunks' check)
+bool MadeFrom(query (Chunk other) chunks, Sight sight, int3 at, int dimension, int side, Edges seen)
+{
+    var place = Beside(at, side);
+    indexed foreach (var row in chunks)
+    {
+        if (row.other.at.x != place.x || row.other.at.y != place.y || row.other.at.z != place.z) continue;
+        if (row.other.dimension != dimension || row.other.stage != Stage.Made) continue;
+        if (!Settled(row.other) || !sight.seen.TryGet(KeyOf(place), out var other)) return true;
+        return other.own[Back(side)] == seen.near[side];
+    }
+    return true;
+}
+
+// Whether a chunk's faces are made from its blocks as they are, with nothing making them again or waiting
+bool Settled(Chunk chunk)
+{
+    return chunk.meshed && !chunk.job.isRunning && !chunk.holding && chunk.drawn == chunk.stamp
+        && chunk.asked <= chunk.begun;
+}
+
+// A chunk's faces are to be made again if they were begun before the frame `since`, for a neighbour's side: at
+// once where it changed (a block dug or built at the edge shows its neighbour's face beside it), and where a
+// neighbour came or went once no other has for a few frames (a view's worth of chunks comes over many, and the
+// faces between them are hidden ones). A word for each chunk: the latest `since`, whether any was at once, and the
+// frame it was said in
+void Bump(mut Sight sight, int3 at, bool now, int since)
+{
+    var key = KeyOf(at);
+    var had = sight.bumped.Get(key) ?? default;
+    sight.bumped[key] = int3(Math.Max(had.x, since), now || had.y != 0 ? 1 : 0, sight.frame);
+}
+
+// A chunk that leaves this machine, as its local fields go: hidden from its player, or destroyed, the hosting
+// machine's way, as it reads the server's world (where a destruction isn't a concealment). Its neighbours' faces
+// toward it are made again, where they were made from a side of it that wasn't all air toward one of theirs that
+// wasn't either, or are being made from what isn't known yet: read once it was there, whether its own faces were
+// made or not
+local event(Forgotten) Leaving(Chunk chunk, mut Sight sight)
+{
+    if (chunk.read != sight.epoch) return;
+    var key = KeyOf(chunk.place);
+    sight.awaited.Remove(key);
+    sight.seen.Remove(key);
+    for (var side = 0; side < 6; side++)
+    {
+        var beside = Beside(chunk.place, side);
+        if (!sight.seen.TryGet(KeyOf(beside), out var other)) continue;
+        var back = Back(side);
+        if (other.pending > other.frame) Bump(sight, beside, false, other.pending + 1);
+        else if (other.near[back] != 0 && other.own[back] != 0) Bump(sight, beside, false, other.frame + 1);
+    }
+}
+
+// A far column's place in the far ground, as one number: its 8 by 8 cells' place along x and z, in squares
+long SquareKey(int x, int z)
+{
+    return KeyOf(int3(x, 0, z));
+}
+
+// The ground past the chunks around a middle, a square every FAR_STEP cells (a far column's 8): the seed's, or
+// a column as high as a far region says players left it, sides down to the seed's ground around it (`built`, by
+// SquareKey). Where this machine has the chunks (`near` around the player's chunk sideways, `tall` up and down),
+// they show the ground as it is, pits and what players dug included: no square of it there, and of a column only
+// what's above or below their box (a tower taller than it, a pit dug under a player high up)
+local worker Built Ground3(int seed, int middleX, int middleZ, int3 chunk, int near, int tall, Map<long, Column> built)
+{
+    mut List<Vertex3> vertices = [];
+    mut List<int> indices = [];
+    var fromX = (chunk.x - near) * SIZE - middleX;
+    var toX = (chunk.x + near + 1) * SIZE - middleX;
+    var fromZ = (chunk.z - near) * SIZE - middleZ;
+    var toZ = (chunk.z + near + 1) * SIZE - middleZ;
+    var bottom = (chunk.y - tall) * SIZE;
+    var top = (chunk.y + tall + 1) * SIZE;
+    // The seed's ground at the squares' corners, each worked out once
+    var side = FAR * 2 + 1;
+    mut List<int> heights = [];
+    for (var gz = -FAR; gz <= FAR; gz++)
+        for (var gx = -FAR; gx <= FAR; gx++)
+            heights.Add(Ground(seed, middleX + gx * FAR_STEP, middleZ + gz * FAR_STEP));
+    for (var gz = -FAR; gz < FAR; gz++)
+        for (var gx = -FAR; gx < FAR; gx++)
+        {
+            var x = gx * FAR_STEP;
+            var z = gz * FAR_STEP;
+            var corner = (gz + FAR) * side + gx + FAR;
+            var a = heights[corner];
+            var b = heights[corner + 1];
+            var c = heights[corner + side + 1];
+            var d = heights[corner + side];
+            var high = Math.Max(Math.Max(a, b), Math.Max(c, d));
+            var low = Math.Min(Math.Min(a, b), Math.Min(c, d));
+            var covered = x >= fromX && x + FAR_STEP <= toX && z >= fromZ && z + FAR_STEP <= toZ;
+            if (built.TryGet(SquareKey((middleX >> 3) + gx, (middleZ >> 3) + gz), out var column))
+            {
+                var tone = Tone(column.top);
+                var y = float(column.height + 1);
+                var under = Math.Min(y, float(Math.Max(low, SEA) + 1));
+                var over = Math.Max(y, float(Math.Max(high, SEA) + 1));
+                if (!covered || column.height < bottom || column.height >= top)
+                {
+                    Face(vertices, indices, float3(x, y, z), float3(0, 0, FAR_STEP), float3(FAR_STEP, 0, 0), tone);
+                }
+                if (!covered) Walls(vertices, indices, x, z, under, over, tone);
+                else
+                {
+                    Walls(vertices, indices, x, z, under, Math.Min(over, float(bottom)), tone);
+                    Walls(vertices, indices, x, z, Math.Max(under, float(top)), over, tone);
+                    // ...and where it goes on into the box from below, its cut there
+                    if (column.height >= bottom && under < float(bottom))
+                    {
+                        Face(vertices, indices, float3(x, bottom, z), float3(0, 0, FAR_STEP), float3(FAR_STEP, 0, 0), tone);
+                    }
+                }
+                continue;
+            }
+            if (covered && low >= bottom && Math.Max(high, SEA) < top) continue;
+            var tone = high <= SEA ? Tone(Block.Water) : high <= SEA + 1 ? Tone(Block.Sand) : Tone(Block.Grass);
+            var first = vertices.count;
+            vertices.Add(Vertex3 { position = float3(x, Math.Max(a, SEA) + 1, z), color = tone });
+            vertices.Add(Vertex3 { position = float3(x, Math.Max(d, SEA) + 1, z + FAR_STEP), color = tone });
+            vertices.Add(Vertex3 { position = float3(x + FAR_STEP, Math.Max(c, SEA) + 1, z + FAR_STEP), color = tone });
+            vertices.Add(Vertex3 { position = float3(x + FAR_STEP, Math.Max(b, SEA) + 1, z), color = tone });
+            indices.Add(first);
+            indices.Add(first + 1);
+            indices.Add(first + 2);
+            indices.Add(first);
+            indices.Add(first + 2);
+            indices.Add(first + 3);
+        }
+    return Built { vertices = vertices, indices = indices };
+}
+
+// A far square's four sides from one height to another
+void Walls(mut List<Vertex3> vertices, mut List<int> indices, int x, int z, float from, float to, Color tone)
+{
+    if (to <= from) return;
+    var wall = float3(0, to - from, 0);
+    Face(vertices, indices, float3(x, from, z), float3(0, 0, FAR_STEP), wall, Shade(tone, 0.8));
+    Face(vertices, indices, float3(x + FAR_STEP, from, z), float3(0, 0, FAR_STEP), wall, Shade(tone, 0.8));
+    Face(vertices, indices, float3(x, from, z), float3(FAR_STEP, 0, 0), wall, Shade(tone, 0.65));
+    Face(vertices, indices, float3(x, from, z + FAR_STEP), float3(FAR_STEP, 0, 0), wall, Shade(tone, 0.65));
+}
+
+async void MakeFar(mut Sight sight, int dimension, int seed, float3 middle, int3 chunk, int near, int tall,
+                   Map<long, Column> changed, int stamp)
+{
+    sight.farMaking = true;
+    // After the chunks' faces: it's the ground far off, and it takes as long as a hundred chunks' do
+    var built = await Ground3(seed, int(middle.x), int(middle.z), chunk, near, tall, changed,
+                              priority: WorkerPriority.Background);
+    sight.far = Mesh(built.vertices, built.indices);
+    sight.farDimension = dimension;
+    sight.farMiddle = middle;
+    sight.farChunk = chunk;
+    sight.farStamp = stamp;
+    sight.farMade = true;
+    sight.farMaking = false;
+}
+
+// This machine's player's eyes
+view Eyes(Avatar avatar, mut Sight sight, with ownership)
+{
+    // Into a dimension: what was said of chunks' neighbours is of the one it left
+    if (!sight.has || sight.dimension != avatar.dimension)
+    {
+        sight.epoch += 1;
+        sight.bumped.Clear();
+        sight.awaited.Clear();
+        sight.seen.Clear();
+    }
+    sight.has = true;
+    sight.dimension = avatar.dimension;
+    sight.eye = avatar.position + float3(0, 1.6, 0);
+    sight.chunk = ChunkOf(avatar.position);
+    sight.drawn = 0;
+    sight.waiting = 0;
+    sight.triangles = 0;
+    sight.close = 0;
+    sight.closeWaiting = 0;
+    sight.here = 0;
+    sight.frame += 1;
+    // A neighbour's word that no chunk took in a frame is for one this machine hasn't; a wait for one that never made
+    // its faces is over once a chunk would have stopped waiting
+    if (sight.bumped.count > 0)
+    {
+        mut List<long> stale = [];
+        foreach (var entry in sight.bumped)
+        {
+            if (entry.value.z < sight.frame - 2) stale.Add(entry.key);
+        }
+        foreach (var key in stale) sight.bumped.Remove(key);
+    }
+    if (sight.awaited.count > 0)
+    {
+        mut List<long> over = [];
+        foreach (var entry in sight.awaited)
+        {
+            if (entry.value < sight.frame - HOLD) over.Add(entry.key);
+        }
+        foreach (var key in over) sight.awaited.Remove(key);
+    }
+    Draw.Clear(avatar.dimension == 0 ? Color(0.55, 0.72, 0.92) : Color(0.42, 0.26, 0.4));
+    Draw.SetCamera(sight.eye, quaternion.Euler(float3(avatar.pitch, avatar.yaw, 0)), 75);
+    Cursor.Lock();
+}
+
+// The ground past the chunks: made again, on a worker, as the player goes into another chunk or dimension, and as
+// the far regions this machine has change. Both sides of its triangles are drawn: a far column's walls face out
+// of what's built and into what's dug
+view Beyond(Dimension dimension, Worlds worlds, mut Sight sight, query (Far far) regions)
+{
+    if (!sight.has || dimension.number != sight.dimension) return;
+    // What they say, as one number, of those the far ground reaches from the player's chunk: the hosting machine has
+    // every region of the match, all players' far ones too. Those with no columns say nothing
+    var near = RegionOf(sight.chunk);
+    var reach = FAR * FAR_STEP / (COLUMNS * SQUARE) + 1;
+    mut var stamp = 0;
+    foreach (var row in regions)
+    {
+        if (row.far.dimension != dimension.number || row.far.columns.count == 0) continue;
+        if (Math.Abs(row.far.at.x - near.x) > reach || Math.Abs(row.far.at.y - near.y) > reach) continue;
+        stamp += Math.Hash(int3(row.far.at.x, row.far.at.y, row.far.version));
+    }
+    var stale = sight.farDimension != dimension.number || !Same(sight.farChunk, sight.chunk) || sight.farStamp != stamp;
+    if (stale && !sight.farMaking)
+    {
+        mut Map<long, Column> changed = [];
+        foreach (var row in regions)
+        {
+            if (row.far.dimension != dimension.number) continue;
+            if (Math.Abs(row.far.at.x - near.x) > reach || Math.Abs(row.far.at.y - near.y) > reach) continue;
+            foreach (var column in row.far.columns)
+            {
+                var x = row.far.at.x * COLUMNS + int(column.at) % COLUMNS;
+                var z = row.far.at.y * COLUMNS + int(column.at) / COLUMNS;
+                changed[SquareKey(x, z)] = column;
+            }
+        }
+        var middle = float3(Math.Floor(sight.eye.x / FAR_STEP) * FAR_STEP, 0, Math.Floor(sight.eye.z / FAR_STEP) * FAR_STEP);
+        MakeFar(sight, dimension.number, dimension.seed, middle, sight.chunk, worlds.near, worlds.tall, changed, stamp);
+    }
+    if (!sight.farMade || sight.farDimension != dimension.number) return;
+    Draw.Cull(Cull.None)
+    {
+        Draw.Mesh(sight.far, float4x4.Translate(sight.farMiddle - float3(0, SUNK, 0)));
+    }
+}
+
+// Each chunk of the player's dimension, once it has a mesh. Handing the chunk to its task as `mut` changes its
+// local fields alone, so Near finds its neighbours by an indexed loop over their places
+view Chunks(mut Chunk chunk, mut Sight sight, query (Chunk other) chunks)
+{
+    if (!sight.has || chunk.stage != Stage.Made || chunk.dimension != sight.dimension) return;
+    // Where it is, for Leaving: from here on its neighbours' faces can read its blocks
+    chunk.read = sight.epoch;
+    chunk.place = chunk.at;
+    // How far it is from the player's chunk, in chunks
+    var away = Math.Max(Math.Max(Math.Abs(chunk.at.x - sight.chunk.x), Math.Abs(chunk.at.z - sight.chunk.z)),
+                        Math.Abs(chunk.at.y - sight.chunk.y));
+    sight.here += 1;
+    if (away <= CLOSE)
+    {
+        sight.close += 1;
+        if (!chunk.meshed) sight.closeWaiting += 1;
+    }
+    // Faces that waited for their neighbours' show once those are made, or after HOLD frames
+    if (chunk.holding && (sight.frame - chunk.waited > HOLD || !Awaits(sight, chunk.at)))
+    {
+        chunk.holding = false;
+        chunk.blank = chunk.nextBlank;
+        if (!chunk.blank) chunk.mesh = chunk.next;
+        chunk.next = default;
+        chunk.triangles = chunk.nextTriangles;
+    }
+    // A neighbour's side changed, came or went
+    if (sight.bumped.count > 0 && sight.bumped.TryGet(KeyOf(chunk.at), out var bump))
+    {
+        chunk.asked = Math.Max(chunk.asked, bump.x);
+        chunk.urgent = chunk.urgent || bump.y != 0;
+        sight.bumped.Remove(KeyOf(chunk.at));
+    }
+    // Made again when its blocks are others than its faces were made from: a stamp of its changes, so a
+    // correction that leaves as many changes, of other blocks, makes them again too; when the player came into its
+    // dimension since; and when a neighbour's side changed, came or went after they were begun (Bump). The task's
+    // handle, not a flag, says one is being made: a task can end with its fields kept (a destroy this machine
+    // guessed and the server undid, a reload of its code), and a flag would say so for ever
+    var changed = !chunk.meshed || chunk.drawn != chunk.stamp || chunk.epoch != sight.epoch;
+    var asked = chunk.asked > chunk.begun && (chunk.urgent || sight.frame - chunk.asked >= SETTLE);
+    if (!chunk.job.isRunning && (changed || asked))
+    {
+        // When its faces are made, among all that wait for a thread: before the others' around the player, where
+        // they show first and a block dug or built is the player's own; after them where only a neighbour came
+        // or went, whose faces toward it are mostly hidden ones
+        var priority = !changed && !chunk.urgent ? WorkerPriority.Background
+                     : away <= CLOSE ? WorkerPriority.Urgent : WorkerPriority.Normal;
+        chunk.begun = sight.frame;
+        chunk.urgent = false;
+        var at = chunk.at;
+        var d = chunk.dimension;
+        var east = Near(chunks, at, d, 0);
+        var west = Near(chunks, at, d, 1);
+        var above = Near(chunks, at, d, 2);
+        var below = Near(chunks, at, d, 3);
+        var north = Near(chunks, at, d, 4);
+        var south = Near(chunks, at, d, 5);
+        // Being made: what from at the sides is known once they are (Remesh)
+        var key = KeyOf(at);
+        mut var seen = sight.seen.Get(key) ?? default;
+        seen.pending = sight.frame;
+        sight.seen[key] = seen;
+        chunk.job = Remesh(chunk, sight, chunk.stamp, sight.epoch, priority, east, west, above, below, north, south);
+    }
+    // This machine's own check, of each chunk once every 32 frames: faces made from a neighbour's side that has
+    // changed since, both chunks' faces settled, twice in a row, are a line in the log
+    if (((Math.Hash(chunk.at) + sight.frame) & 31) == 0 && Settled(chunk)
+        && sight.seen.TryGet(KeyOf(chunk.at), out var made))
+    {
+        mut var agrees = true;
+        for (var side = 0; side < 6; side++)
+        {
+            if (made.own[side] != 0 && !MadeFrom(chunks, sight, chunk.at, chunk.dimension, side, made)) agrees = false;
+        }
+        chunk.stale = agrees ? 0 : chunk.stale + 1;
+        if (chunk.stale == 2)
+        {
+            sight.wrong += 1;
+            Debug.Log($"Voxels: {sight.wrong} chunks' faces made from a neighbour's side that has changed since");
+        }
+    }
+    if (!chunk.meshed)
+    {
+        sight.waiting += 1;
+        return;
+    }
+    if (chunk.blank) return;
+    sight.drawn += 1;
+    sight.triangles += chunk.triangles;
+    Draw.Mesh(chunk.mesh, float4x4.Translate(float3(chunk.at.x * SIZE, chunk.at.y * SIZE, chunk.at.z * SIZE)));
+}
+
+// A build that measures says each frame's counts: when the chunks around the player all have faces, and when all do
+view Measure(Sight sight)
+{
+    if (MEASURE == 0 || !sight.has) return;
+    var far = sight.farMade && sight.farDimension == sight.dimension ? 1 : 0;
+    Debug.Log($"Voxels measure: frame {sight.frame} epoch {sight.epoch} close {sight.close} waiting {sight.closeWaiting} here {sight.here} waiting {sight.waiting} far {far}");
+}
+
+// The other players, a box each
+view Others(Avatar avatar, Sight sight, without ownership)
+{
+    if (avatar.dimension != sight.dimension) return;
+    Draw.Cube(avatar.position + float3(0, 0.9, 0), float3(0.6, 1.8, 0.6), Color(0.95, 0.75, 0.2));
+}
+
+view Panel(Devices devices, Sight sight, mut Travel travel)
+{
+    if (devices.keyboard.h.down) travel.hops += 1;
+    Draw.SetScreen();
+    var middle = float2(Screen.width, Screen.height) * 0.5;
+    Draw.Rect(middle, float2(12, 2), Color.white);
+    Draw.Rect(middle, float2(2, 12), Color.white);
+    Draw.Text($"Dimension {sight.dimension}   {int(sight.eye.x)}, {int(sight.eye.y)}, {int(sight.eye.z)}   chunks {sight.drawn} (+{sight.waiting}), {sight.triangles} triangles",
+              float2(16, 14), 14, Color.white);
+    Draw.Text("WASD and the mouse to move, space to jump, click to dig, right click to build, H for the other dimension",
+              float2(16, Screen.height - 24), 12, Color.white);
+}

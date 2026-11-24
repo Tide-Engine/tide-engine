@@ -1,0 +1,5 @@
+// expect: image 'source' is read between its smaller images, and Format.R32f has none: read it with Sample(uv) or Filter.Bilinear, or draw the numbers into Format.R16f
+scene Main { }
+local singleton Images { RenderTarget target; [Raw(float)] Texture source; }
+frag Read(Vertex vertex,out Color color,Images images) { color=Color(images.source.SampleGrad(vertex.uv,float2(0.1,0),float2(0,0.1)),0,0); }
+view Show(mut Images images) { images.target=RenderTarget(8,8,Format.R32f); images.source=images.target.color; List<Vertex> quad=[Vertex {position=float2(0)},Vertex {position=float2(1,0)},Vertex {position=float2(0,1)}]; Draw.Mesh(quad,[0,1,2],Read); }

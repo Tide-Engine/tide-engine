@@ -1,4 +1,4 @@
-// expect: Read takes no arguments
+// expect: Read takes the color image's number, or nothing for the first, then a part of it if not all
 scene Main {}
 local singleton State { RenderTarget target; }
-async void Read(State state) { var pixels = await state.target.Read(0); }
+async void Read(State state) { var pixels = await state.target.Read(0, 1); }

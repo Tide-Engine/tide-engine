@@ -5,9 +5,17 @@
 # package Mod's files, for schedule/overrides.tide. With RELATIVE, it runs in
 # SOURCE's folder and names the files from there, for output that prints paths.
 # MEASURED is a profiling report for --measured, named from SOURCE's folder.
+# A `// define: <S>` line at the start of one of SOURCE's lines builds with
+# `--define <S>` (S or S=value), as expect_error.cmake's do.
 if(NOT DEFINED OPTION)
     set(OPTION --schedule)
 endif()
+file(READ "${SOURCE}" source_text)
+string(REGEX MATCHALL "(^|\n)// define: [^\n]*" define_lines "${source_text}")
+foreach(line IN LISTS define_lines)
+    string(REGEX REPLACE "^\n?// define: " "" symbol "${line}")
+    list(APPEND OPTION --define "${symbol}")
+endforeach()
 if(DEFINED MEASURED)
     list(APPEND OPTION --measured "${MEASURED}") # A run's profiling report, to set the schedule against
 endif()

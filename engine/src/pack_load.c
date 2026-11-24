@@ -34,6 +34,7 @@ typedef struct packed_texture {
     int32_t width, height; // An image's; a clip's (`clip`) has its file's size in `width`
     bool clip;
     bool blocks_only; // An image of GPU blocks with no RGBA beside them (texture_at)
+    bool linear;      // Its entry says it was packed for a [Linear] reading (TIDE_PACK_LINEAR): a declaration's own image
 } packed_texture;
 
 // An entry of a map from text to clips, as generated code lays it out.
@@ -70,6 +71,7 @@ typedef struct packed_cube {
     uint64_t version; // What's in its six faces
     int32_t size;
     const uint8_t *faces[TIDE_CUBE_FACES];
+    bool linear; // TIDE_PACK_LINEAR
 } packed_cube;
 
 // A texture array as a declaration names it: its layers' pixels, where the region has them.
@@ -80,6 +82,7 @@ typedef struct packed_array {
     uint32_t layers;
     const uint8_t **pixels;      // Its own allocation: a pointer for each layer, NULL for one kept as blocks alone
     tide_texture_blocks *blocks; // ...and each layer's blocks, none for one kept as RGBA alone
+    bool linear;                 // TIDE_PACK_LINEAR
 } packed_array;
 
 static tide_texture_blocks blocks_at(const packed_texture *t);
@@ -103,6 +106,7 @@ typedef struct skinned_span {
 static struct {
     uint8_t digest[32];
     uint8_t *region;
+    uint8_t *given; // The file's bytes the region is in, where a reader gave them (tide_pack_give): what's freed
     uint64_t size;
     uint64_t file_size; // Before mutable texture/clip references are laid out after it.
     tide_pack_entry *entries;
@@ -538,7 +542,7 @@ static uint64_t textures_room(const uint8_t *region, const uint64_t size, const 
     uint64_t room = 0;
     for (uint32_t i = 0; i < count; i++) {
         const tide_pack_entry *e = &entries[i];
-        if (e->kind == TIDE_PACK_LIST && e->extra == TIDE_PACK_TEXTURE) {
+        if (e->kind == TIDE_PACK_LIST && (e->extra & ~TIDE_PACK_LINEAR) == TIDE_PACK_TEXTURE) {
             room += padded((uint64_t)count_at(region, size, e->offset, sizeof(tide_handle)) * sizeof(tide_texture_ref));
         } else if (e->kind == TIDE_PACK_TEXTURES) {
             room += padded((uint64_t)count_at(region, size, e->offset, sizeof(handle_entry)) * sizeof(texture_entry));
@@ -635,18 +639,26 @@ static void lay_textures(const uint64_t file)
     for (uint32_t i = 0; i < pack.entry_count; i++) {
         tide_pack_entry *e = &pack.entries[i];
         if (e->kind == TIDE_PACK_TEXTURE) {
-            note_texture(texture_name(e->name, ALONE, NULL, 0), e->offset, file);
-        } else if (e->kind == TIDE_PACK_LIST && e->extra == TIDE_PACK_TEXTURE) {
+            const uint64_t named = texture_name(e->name, ALONE, NULL, 0);
+            if (note_texture(named, e->offset, file).image.version) texture_place(named)->linear = (e->extra & TIDE_PACK_LINEAR) != 0;
+        } else if (e->kind == TIDE_PACK_LIST && (e->extra & ~TIDE_PACK_LINEAR) == TIDE_PACK_TEXTURE) {
+            // A [Linear] glob's images were packed for that reading: each says so, as a single asset's does (pack_reads)
+            const bool linear = (e->extra & TIDE_PACK_LINEAR) != 0;
+            e->extra = TIDE_PACK_TEXTURE;
             const uint32_t count = count_at(pack.region, file, e->offset, sizeof(tide_handle));
             const uint64_t at = lay_block(count, (uint64_t)count * sizeof(tide_texture_ref));
             const tide_handle *handles = (const tide_handle *)(const void *)(pack.region + e->offset + sizeof(tide_block));
             tide_texture_ref *out = (tide_texture_ref *)(void *)(pack.region + at + sizeof(tide_block));
             for (uint32_t k = 0; k < count; k++) {
-                out[k] = note_texture(texture_name(e->name, k, NULL, 0), place_of(handles[k], file), file);
+                const uint64_t named = texture_name(e->name, k, NULL, 0);
+                out[k] = note_texture(named, place_of(handles[k], file), file);
+                if (out[k].image.version) texture_place(named)->linear = linear;
             }
             e->offset = at;
             e->size = count;
         } else if (e->kind == TIDE_PACK_TEXTURES) {
+            const bool linear = (e->extra & TIDE_PACK_LINEAR) != 0; // Its count's top bit: a [Linear] glob's map
+            e->extra &= ~TIDE_PACK_LINEAR;
             const uint32_t count = count_at(pack.region, file, e->offset, sizeof(handle_entry));
             const uint64_t at = lay_block(count, (uint64_t)count * sizeof(texture_entry));
             const handle_entry *from = (const handle_entry *)(const void *)(pack.region + e->offset + sizeof(tide_block));
@@ -656,7 +668,9 @@ static void lay_textures(const uint64_t file)
                 const uint8_t *key = text_at(pack.region, file, place_of(from[k].key, file), &key_size);
                 out[k].live = from[k].live;
                 out[k].key = from[k].key;
-                out[k].value = note_texture(texture_name(e->name, KEYED, key, key_size), place_of(from[k].value, file), file);
+                const uint64_t named = texture_name(e->name, KEYED, key, key_size);
+                out[k].value = note_texture(named, place_of(from[k].value, file), file);
+                if (out[k].value.image.version) texture_place(named)->linear = linear;
             }
             e->offset = at;
             e->extra = e->extra > count ? count : e->extra; // Its live count
@@ -722,7 +736,7 @@ static void note_cubes(void)
         if (e->kind != TIDE_PACK_CUBEMAP || count_at(pack.region, pack.size, e->offset, sizeof(tide_handle)) != TIDE_CUBE_FACES) continue;
         tide_handle handles[TIDE_CUBE_FACES];
         memcpy(handles, pack.region + e->offset + sizeof(tide_block), sizeof handles);
-        packed_cube cube = {.named = texture_name(e->name, ALONE, NULL, 0)};
+        packed_cube cube = {.named = texture_name(e->name, ALONE, NULL, 0), .linear = (e->extra & TIDE_PACK_LINEAR) != 0};
         tide_sha256 s;
         tide_sha256_init(&s);
         bool whole = true;
@@ -757,7 +771,8 @@ static void note_arrays(void)
         if (e->kind != TIDE_PACK_TEXTURE_ARRAY) continue;
         const uint64_t count = count_at(pack.region, pack.size, e->offset, sizeof(tide_handle));
         if (count == 0 || count > TIDE_TEXTURE_ARRAY_LAYERS) continue;
-        packed_array array = {.named = texture_name(e->name, ALONE, NULL, 0), .layers = (uint32_t)count};
+        packed_array array = {.named = texture_name(e->name, ALONE, NULL, 0), .layers = (uint32_t)count,
+                              .linear = (e->extra & TIDE_PACK_LINEAR) != 0};
         array.pixels = tide_alloc_zeroed(count, sizeof *array.pixels);
         array.blocks = tide_alloc_zeroed(count, sizeof *array.blocks);
         tide_sha256 s;
@@ -791,35 +806,38 @@ static void note_arrays(void)
     }
 }
 
-bool tide_pack_load(const uint8_t *bytes, const size_t size)
+// Whether a pack file of `size` bytes can have the header `h`, and the entries after it places in its region.
+static bool file_is_whole(const tide_pack_header *h, const tide_pack_entry *entries, const uint64_t size)
 {
-    tide_pack_header h;
-    if (size < sizeof h) return false;
-    memcpy(&h, bytes, sizeof h);
-    if (memcmp(h.magic, TIDE_PACK_MAGIC, 8) != 0 || h.version != TIDE_PACK_VERSION) return false;
-    const uint64_t table_end = (uint64_t)sizeof h + (uint64_t)h.entries * sizeof(tide_pack_entry);
-    if (table_end > h.region_at || h.region_size > size || h.region_at != size - h.region_size) return false;
-    const tide_pack_entry *entries = (const tide_pack_entry *)(const void *)(bytes + sizeof h);
-    for (uint32_t i = 0; i < h.entries; i++) {
-        if (entries[i].offset >= h.region_size && h.region_size) return false;
+    if (memcmp(h->magic, TIDE_PACK_MAGIC, 8) != 0 || h->version != TIDE_PACK_VERSION) return false;
+    const uint64_t table_end = (uint64_t)sizeof *h + (uint64_t)h->entries * sizeof(tide_pack_entry);
+    if (table_end > h->region_at || h->region_size > size || h->region_at != size - h->region_size) return false;
+    for (uint32_t i = 0; entries && i < h->entries; i++) {
+        if (entries[i].offset >= h->region_size && h->region_size) return false;
     }
-    // Its lists and maps of textures are laid out after the file's region, as Tide reads them
-    const uint64_t whole = h.region_size + textures_room(bytes + h.region_at, h.region_size, entries, h.entries);
-    // The region in memory of its own, a whole number of slots of the scratch
-    // area's, as a piece of it is, so that reading a block's last bytes and
-    // the one after them stays in the region's memory
-    const uint64_t room = (whole + TIDE_SCRATCH_BYTES - 1u) & ~(uint64_t)(TIDE_SCRATCH_BYTES - 1u);
-    if (whole > TIDE_PACK_BASE || room > SIZE_MAX) return false; // More than memory holds
-    tide_pack_unload();
-    memcpy(pack.digest, h.digest, sizeof pack.digest); // The build hashed it (tide_pack_end)
-    pack.region = tide_alloc(room ? (size_t)room : 16u);
-    memcpy(pack.region, bytes + h.region_at, (size_t)h.region_size);
-    pack.size = h.region_size;
-    pack.file_size = h.region_size;
-    pack.entries = tide_alloc(h.entries ? h.entries * sizeof(tide_pack_entry) : 16u);
-    memcpy(pack.entries, entries, (size_t)h.entries * sizeof(tide_pack_entry));
-    pack.entry_count = h.entries;
-    lay_textures(h.region_size);
+    return true;
+}
+
+// The region in memory of its own is a whole number of slots of the scratch
+// area's, as a piece of it is, so that reading a block's last bytes and
+// the one after them stays in the region's memory
+static uint64_t slots_for(const uint64_t bytes)
+{
+    return (bytes + TIDE_SCRATCH_BYTES - 1u) & ~(uint64_t)(TIDE_SCRATCH_BYTES - 1u);
+}
+
+// The loaded pack is the file with the header `h` and these entries, whose region's bytes are in `region`: memory
+// this takes, with room for what's laid out after them (textures_room). Nothing is loaded as this is called.
+static void take_region(const tide_pack_header *h, const tide_pack_entry *entries, uint8_t *region)
+{
+    memcpy(pack.digest, h->digest, sizeof pack.digest); // The build hashed it (tide_pack_end)
+    pack.region = region;
+    pack.size = h->region_size;
+    pack.file_size = h->region_size;
+    pack.entries = tide_alloc(h->entries ? h->entries * sizeof(tide_pack_entry) : 16u);
+    memcpy(pack.entries, entries, (size_t)h->entries * sizeof(tide_pack_entry));
+    pack.entry_count = h->entries;
+    lay_textures(h->region_size);
     check_meshes();
     check_skinned();
     index_skinned_spans();
@@ -829,6 +847,219 @@ bool tide_pack_load(const uint8_t *bytes, const size_t size)
     __atomic_add_fetch(&generation, 1u, __ATOMIC_RELEASE);
     tide_pack_region_size = pack.size;
     tide_pack_use();
+}
+
+// ---------------------------------------------------------------------------
+// A pack compressed (tide/pack.h). The builder's half is pack.c.
+
+// An LZ4 block of `size` bytes into exactly `want` bytes at `out`: false for one that isn't that, with nothing
+// read or written outside either. A match reaches back no further than the block's own first byte.
+static bool lz_read(const uint8_t *in, const size_t size, uint8_t *out, const size_t want)
+{
+    size_t i = 0, o = 0;
+    while (i < size) {
+        const uint8_t token = in[i++];
+        size_t literals = token >> 4;
+        if (literals == 15u) {
+            uint8_t more;
+            do {
+                if (i >= size) return false;
+                more = in[i++];
+                literals += more;
+            } while (more == 255u);
+        }
+        if (literals > size - i || literals > want - o) return false;
+        // Short runs are most of them: 16 bytes at once where both sides have them
+        if (literals <= 16u && size - i >= 16u && want - o >= 16u) memcpy(out + o, in + i, 16u);
+        else memcpy(out + o, in + i, literals);
+        i += literals;
+        o += literals;
+        if (i == size) break; // The last sequence is literals alone
+        if (size - i < 2u) return false;
+        const size_t back = (size_t)in[i] | (size_t)in[i + 1u] << 8;
+        i += 2u;
+        if (!back || back > o) return false;
+        size_t length = (token & 15u) + 4u;
+        if ((token & 15u) == 15u) {
+            uint8_t more;
+            do {
+                if (i >= size) return false;
+                more = in[i++];
+                length += more;
+            } while (more == 255u);
+        }
+        if (length > want - o) return false;
+        const uint8_t *from = out + o - back;
+        uint8_t *to = out + o;
+        o += length;
+        if (back >= 8u && want - o >= 8u) {
+            // Eight bytes a step, which may write up to 7 past the match: into bytes the block has yet to fill
+            for (size_t n = 0; n < length; n += 8u) memcpy(to + n, from + n, 8u);
+        } else {
+            for (size_t n = 0; n < length; n++) to[n] = from[n]; // Bytes it has just written are read again
+        }
+    }
+    return o == want;
+}
+
+// How many bytes of a pack file of `size` its piece `i` is.
+static uint32_t piece_bytes(const uint64_t size, const uint32_t i)
+{
+    const uint64_t at = (uint64_t)i * TIDE_PACK_PIECE;
+    return (uint32_t)(size - at < TIDE_PACK_PIECE ? size - at : TIDE_PACK_PIECE);
+}
+
+// Whether `size` bytes are a whole compressed pack: its header, a size for each piece, and as many bytes as those
+// say, none of them more than its piece or fewer than LZ4 can make of one (so the file's own size bounds the
+// memory it asks for).
+static bool compressed_is_whole(const uint8_t *bytes, const size_t size, tide_pack_compressed_header *h)
+{
+    if (size < sizeof *h) return false;
+    memcpy(h, bytes, sizeof *h);
+    if (memcmp(h->magic, TIDE_PACK_COMPRESSED_MAGIC, 8) != 0 || h->version != TIDE_PACK_COMPRESSED_VERSION) return false;
+    if (h->size < sizeof(tide_pack_header) || h->size > TIDE_PACK_BASE) return false;
+    if ((h->size + TIDE_PACK_PIECE - 1u) / TIDE_PACK_PIECE != h->pieces) return false;
+    uint64_t at = sizeof *h + (uint64_t)h->pieces * sizeof(uint32_t);
+    if (at > size) return false;
+    for (uint32_t i = 0; i < h->pieces; i++) {
+        uint32_t stored;
+        memcpy(&stored, bytes + sizeof *h + (size_t)i * sizeof stored, sizeof stored);
+        const uint32_t whole = piece_bytes(h->size, i);
+        if (!stored || stored > whole || whole / 255u > stored || stored > size - at) return false;
+        at += stored;
+    }
+    return at == size;
+}
+
+// Pieces `first` to `last` (not included) of the compressed pack `bytes`, which is whole, one after another at
+// `out`. *at is where piece `first` is in the file, and where piece `last` is after.
+static bool read_pieces(const uint8_t *bytes, const tide_pack_compressed_header *h, const uint32_t first, const uint32_t last,
+                        uint64_t *at, uint8_t *out)
+{
+    for (uint32_t i = first; i < last; i++) {
+        uint32_t stored;
+        memcpy(&stored, bytes + sizeof *h + (size_t)i * sizeof stored, sizeof stored);
+        const uint32_t whole = piece_bytes(h->size, i);
+        if (stored == whole) memcpy(out, bytes + *at, whole); // Kept as it is
+        else if (!lz_read(bytes + *at, stored, out, whole)) return false;
+        *at += stored;
+        out += whole;
+    }
+    return true;
+}
+
+uint8_t *tide_pack_expand(const uint8_t *bytes, const size_t size, size_t *pack_size)
+{
+    tide_pack_compressed_header c;
+    if (!compressed_is_whole(bytes, size, &c) || c.size > SIZE_MAX) return NULL;
+    uint8_t *out = tide_alloc((size_t)c.size);
+    uint64_t at = sizeof c + (uint64_t)c.pieces * sizeof(uint32_t);
+    if (!read_pieces(bytes, &c, 0, c.pieces, &at, out)) {
+        free(out);
+        return NULL;
+    }
+    *pack_size = (size_t)c.size;
+    return out;
+}
+
+// Loads a compressed pack. The pieces before its region (its header and entries: one piece, but for a pack with
+// tens of thousands of entries) are read into memory let go of after; every other piece is read where the region
+// has it, so the pack is never in memory twice. The pack loaded before stays until all of this one has been read.
+static bool load_compressed(const uint8_t *bytes, const size_t size)
+{
+    tide_pack_compressed_header c;
+    if (!compressed_is_whole(bytes, size, &c)) return false;
+    uint64_t at = sizeof c + (uint64_t)c.pieces * sizeof(uint32_t);
+    uint64_t front_bytes = piece_bytes(c.size, 0);
+    uint8_t *front = tide_alloc((size_t)front_bytes);
+    uint8_t *region = NULL;
+    tide_pack_header h = {0};
+    bool ok = read_pieces(bytes, &c, 0, 1, &at, front);
+    if (ok) {
+        memcpy(&h, front, sizeof h);
+        ok = file_is_whole(&h, NULL, c.size);
+    }
+    // The pieces that start before the region: the last of them has its first bytes too
+    uint32_t before = 1;
+    if (ok && h.region_at > front_bytes) {
+        before = (uint32_t)((h.region_at + TIDE_PACK_PIECE - 1u) / TIDE_PACK_PIECE);
+        const uint64_t all = before == c.pieces ? c.size : (uint64_t)before * TIDE_PACK_PIECE;
+        ok = all <= SIZE_MAX;
+        if (ok) {
+            front = tide_realloc(front, (size_t)front_bytes, (size_t)all);
+            ok = read_pieces(bytes, &c, 1, before, &at, front + front_bytes);
+            front_bytes = all;
+        }
+    }
+    // A slot more than the file's region, which is room for what's laid out after it in all but a pack with tens
+    // of thousands of images in lists: its room is known once its blocks are read
+    const uint64_t room = ok ? slots_for(h.region_size + TIDE_SCRATCH_BYTES) : 0u;
+    ok = ok && room <= SIZE_MAX;
+    if (ok) {
+        region = tide_alloc((size_t)room);
+        if (front_bytes > h.region_at) memcpy(region, front + h.region_at, (size_t)(front_bytes - h.region_at));
+        ok = read_pieces(bytes, &c, before, c.pieces, &at, region + (front_bytes - h.region_at));
+    }
+    const tide_pack_entry *entries = (const tide_pack_entry *)(const void *)(front + sizeof h);
+    ok = ok && file_is_whole(&h, entries, c.size);
+    if (ok) {
+        const uint64_t whole = h.region_size + textures_room(region, h.region_size, entries, h.entries);
+        ok = whole <= TIDE_PACK_BASE && slots_for(whole) <= SIZE_MAX;
+        if (ok && slots_for(whole) > room) region = tide_realloc(region, (size_t)room, (size_t)slots_for(whole));
+    }
+    if (ok) {
+        tide_pack_unload();
+        take_region(&h, entries, region);
+    } else free(region);
+    free(front);
+    return ok;
+}
+
+// What a reader offered (tide_pack_give), until the next load
+static struct {
+    uint8_t *bytes;
+    size_t size, room;
+} offered;
+
+void tide_pack_give(uint8_t *bytes, const size_t size, const size_t room)
+{
+    offered.bytes = bytes;
+    offered.size = size;
+    offered.room = room;
+}
+
+bool tide_pack_given(const uint8_t *bytes)
+{
+    return bytes && pack.given == bytes;
+}
+
+bool tide_pack_load(const uint8_t *bytes, const size_t size)
+{
+    uint8_t *given = offered.bytes == bytes && offered.size == size ? offered.bytes : NULL;
+    const size_t given_room = offered.room;
+    offered.bytes = NULL; // This load's, or nobody's
+    if (size >= 8u && memcmp(bytes, TIDE_PACK_COMPRESSED_MAGIC, 8) == 0) return load_compressed(bytes, size);
+    tide_pack_header h;
+    if (size < sizeof h) return false;
+    memcpy(&h, bytes, sizeof h);
+    const tide_pack_entry *entries = (const tide_pack_entry *)(const void *)(bytes + sizeof h);
+    if (!file_is_whole(&h, entries, size)) return false;
+    // Its lists and maps of textures are laid out after the file's region, as Tide reads them
+    const uint64_t whole = h.region_size + textures_room(bytes + h.region_at, h.region_size, entries, h.entries);
+    const uint64_t room = slots_for(whole);
+    if (whole > TIDE_PACK_BASE || room > SIZE_MAX) return false; // More than memory holds
+    tide_pack_unload();
+    // Where the file was read: its region is the loaded pack's, with no copy, as long as what's laid out after it
+    // has its room there too
+    if (given && h.region_at <= given_room && room <= given_room - h.region_at) {
+        memset(given + size, 0, (size_t)(h.region_at + room - size)); // As tide_alloc's memory: zero past the file
+        take_region(&h, entries, given + h.region_at);
+        pack.given = given;
+        return true;
+    }
+    uint8_t *region = tide_alloc(room ? (size_t)room : 16u);
+    memcpy(region, bytes + h.region_at, (size_t)h.region_size);
+    take_region(&h, entries, region);
     return true;
 }
 
@@ -836,7 +1067,8 @@ void tide_pack_unload(void)
 {
     tide_asset_pack_clear();
     memset(pack.digest, 0, sizeof pack.digest);
-    free(pack.region);
+    free(pack.given ? pack.given : pack.region);
+    pack.given = NULL;
     free(pack.entries);
     free(pack.textures);
     free(pack.cubes);
@@ -1241,6 +1473,30 @@ bool tide_pack_texture_find(const uint64_t named, tide_texture *image)
     *image = (tide_texture){.pixels = t->blocks_only ? NULL : pack.region + t->offset + sizeof(tide_block) + 2u * sizeof(int32_t),
                             .width = t->width, .height = t->height, .version = t->version};
     return true;
+}
+
+bool tide_pack_image_linear(const uint64_t named, bool *linear)
+{
+    *linear = false;
+    if (!named) return false;
+    if (pack.texture_places) {
+        const packed_texture *t = texture_place(named);
+        if (t->named == named && !t->clip) {
+            *linear = t->linear;
+            return true;
+        }
+    }
+    for (uint32_t i = 0; i < pack.array_count; i++) {
+        if (pack.arrays[i].named != named) continue;
+        *linear = pack.arrays[i].linear;
+        return true;
+    }
+    for (uint32_t i = 0; i < pack.cube_count; i++) {
+        if (pack.cubes[i].named != named) continue;
+        *linear = pack.cubes[i].linear;
+        return true;
+    }
+    return false;
 }
 
 // The blocks an image of the pack's keeps (its trailer's), or none.

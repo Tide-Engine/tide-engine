@@ -95,13 +95,15 @@ The view below draws its scene into a target, then blits it to the window throug
 
 :::
 
-`Draw.Blit(source, destination, frag)` runs the frag on a fixed `Vertex` quad over the entire destination. It supplies the frag's read-only `Texture` parameter from `source`, replaces color and alpha, and preserves depth. It temporarily ignores camera and clip, then restores them. Its source can also be a `Grid2<Color>`, uploaded from CPU cells. Sampling the image being written is an error; use a second target between effects.
+`Draw.Blit(source, destination, frag)` runs the frag on a fixed `Vertex` quad over the entire destination. It supplies the frag's first read-only `Texture` parameter from `source` (any others from the textures after it, below), replaces color and alpha, and preserves depth. It temporarily ignores camera and clip, then restores them. Its source can also be a `Grid2<Color>`, uploaded from CPU cells. Sampling the image being written is an error; use a second target between effects.
 
 What one pass needs beyond its source goes after the frag, as a struct the frag takes: `Draw.Blit(lens.bright.color, lens.spread, Blur, BlurStep { along = float2(1, 0) })` and then the same frag the other way, `BlurStep { along = float2(0, 1) }`. Those are [the Blit's values](./shaders.md#values-for-one-draw), and each Blit has its own.
 
-A Blit replaces what's in its destination, and nothing blends two images for you yet, so an effect that adds to the picture, like a glow, ends in a frag that reads both and writes their sum: the scene as the Blit's source, and the other image as a `Texture` field of a singleton the frag takes. The [Duel](https://github.com/Tide-Engine/tide-engine/tree/dev/examples/duel) example does it: its arena goes into a `RenderTarget.Window()`, the arena's bright parts are blurred through targets a quarter and an eighth of the size, and one frag puts the arena and its light in the window. Its score and menus are drawn into the window afterwards, so their text has none of that light on it.
+A frag that reads more than one image takes a `Texture` parameter for each, and the Blit gives them in that order, before its destination: `Draw.Blit(scene.color, lens.glow.color, Draw.window, Combine)` for `frag Combine(Vertex vertex, out Color color, Texture scene, Texture glow)` (see [Several textures](./shaders.md#several-textures)).
 
-A frag has no way to ask how many pixels a texture has. It doesn't need to: a step of a blur is a logical pixel, `1 / Screen.width` across the screen's texture and `1 / Screen.height` down, which the view puts in a singleton for the frag, and the blur is then as wide on every display.
+A Blit replaces what's in its destination unless it's given a blend: `Draw.Blit(glow, frame, Blend.Add, Copy)` adds a glow onto the picture where it is. An effect that mixes two images some other way ends in a frag that reads both and writes the mix: the scene as the Blit's source, and the other image as the Texture after it, or as a `Texture` field of a singleton the frag takes. The [Duel](https://github.com/Tide-Engine/tide-engine/tree/dev/examples/duel) example does it: its arena goes into a `RenderTarget.Window()`, the arena's bright parts are blurred through targets a quarter and an eighth of the size, and one frag puts the arena and its light in the window. Its score and menus are drawn into the window afterwards, so their text has none of that light on it.
+
+A frag can ask how many pixels a texture has, `source.size`, its physical pixels. A step of a blur is usually a logical pixel instead, `1 / Screen.width` across the screen's texture and `1 / Screen.height` down, which the view puts in a singleton for the frag, and the blur is then as wide on every display.
 
 Target color is GPU data: `.color` gives a `Texture` reference and does no readback, as `.colors[i]` does for each image of a target that holds several, and so is its depth, a `DepthTexture`. None of them is assigned: what's drawn into the target is what changes them. Neither has a constructor; CPU pixel sources remain `Grid2<Color>`, and C can supply a CPU texture reference. `Draw.window` has no sampleable color or depth and cannot be resized or disposed by the game. Texture references, depth references and targets can be stored only in local state. The GUI and stats draw onto the window. Hot reload preserves managed references, their sizes and pixels per unit, whether they follow the window, what they hold, and shared aliases, recreating their images on the web; it discards rendered contents and clears borrowed references supplied by the old build. Device loss also discards rendered contents. Drawing with an invalid or disposed target is skipped with a diagnostic; disposal also invalidates uses already recorded in the frame.
 
@@ -137,8 +139,54 @@ in `Rgba16f`. An output that does not fit the image is a compile error at the dr
 
 Read a numeric image through a declared [typed texture field](./shaders.md#number-images):
 `[Raw(float2)] Texture velocity;` then `velocity = target.colors[1];` in local code. Its `Sample` returns a
-`float2`. Typed numeric images always read the nearest pixel: omit the filter, or write `Filter.Point`.
-They have no numeric mipmaps. This also makes 32-bit float and integer reads portable to every device.
+`float2`. A typed read that names no filter reads the nearest pixel. Images in `R8`, `Rg8`, `R16f`, `Rg16f`
+and `Rgba16f` also blend (`Filter.Bilinear`, `Filter.Trilinear`, `Filter.Anisotropic`) and have mipmaps, read
+with `SampleLevel` and `SampleGrad`: a blurred mask or a variance shadow map works on every device. `R32f` and
+`Rgba32f` blend with `Filter.Bilinear` as four exact loads blended in the shader, the same bits on every device
+(only some GPUs blend 32-bit floats themselves), and have no mipmaps; `R32i` reads its nearest pixel, since no GPU
+blends integers. Asking one of them for what it hasn't got is a compile error that names the format to draw into
+instead.
+
+Every number format makes array layers and cube faces: `TextureArray(256, 256, 4, Format.R16f)`,
+`Cubemap(256, Format.R32f)`, `TextureArray(64, 64, 8, Format.R32i)`. Draw numbers into `array.layers[i]` or
+`cube.faces[i]`, and read them through a `[Raw(float)] TextureArray`, `[Raw(int)] Cubemap` or other typed field.
+A cube of `R32f`, `Rgba32f` or `R32i` is read at its nearest pixel, exactly: a distance cube a lamp's shadow keeps
+to full precision, or an id per direction.
+
+### A cube of depth alone
+
+`Cubemap(1024, Format.Depth)` is six faces of depth alone, for a lamp that shines every way. Draw each face from
+the lamp's place, as for any cube, and read the depth through `cube.depth`, a `DepthCubemap`, kept in a field of a
+component or singleton the frag takes. `Sample(direction)` gives the nearest thing's depth that way, 0 near to 1
+far, and `Compare(direction, depth)` how much of what's stored around there isn't nearer than `depth`, blended
+within the face: 1 is lit.
+
+```tide
+local singleton Lamp { Cubemap cube; DepthCubemap shadows; float3 at; bool made; }
+
+view MakeLamp(mut Lamp lamp)
+{
+    if (!lamp.made) { lamp.cube = Cubemap(1024, Format.Depth); lamp.shadows = lamp.cube.depth; lamp.made = true; }
+    // ...then each face drawn from lamp.at with float4x4.PerspectiveFov(1.5707964, 1, 0.1, 50)
+}
+
+// The depth a face's camera stores for a point `way` from the lamp: along the face's axis, its perspective's
+float LampDepth(float3 way)
+{
+    float along = Math.Max(Math.Abs(way.x), Math.Max(Math.Abs(way.y), Math.Abs(way.z)));
+    return 50 / (50 - 0.1) * (1 - 0.1 / along);
+}
+
+frag Lit(Vertex3 vertex, out Color color, Lamp lamp)
+{
+    float3 way = this.world - lamp.at;
+    float lit = lamp.shadows.Compare(way, LampDepth(way) - 0.0005);
+    color = Color(lit, lit, lit);
+}
+```
+
+Its faces read back with `await cube.faces[i].ReadDepth()`. A cube of colors keeps no depth to read: each face
+draws with depth of its own, and `cube.depth` of one is a compile error where its format is known.
 
 ### Clearing each image
 
@@ -195,7 +243,7 @@ frag Copy(Vertex vertex, out Color color, Texture source)
 }
 ```
 
-- **Its color is read like any target's.** `target.color` and `target.colors[i]` are what each pixel's samples come to, worked out each time drawing into the target ends. A frag samples them, and a `Draw.Blit` reads them, as it would any other target's.
+- **Its color is read like any target's.** `target.color` and `target.colors[i]` are what each pixel's samples come to, worked out each time drawing into the target ends. A frag or a kernel samples them, and a `Draw.Blit` reads them, as it would any other target's: between its smaller images too (`Filter.Trilinear`, `SampleLevel`), made of what the samples came to. (Unity's replay doesn't make those yet, and reads the resolved image alone there.)
 - **Its depth is read like any target's.** `target.depth` is one depth a pixel: one of the pixel's samples, as they are when the draw that reads it comes. It's only worked out for a target whose depth some draw reads, and again only after more was drawn into the target, so a target nothing reads the depth of costs nothing more. An edge in it is a step, as in a target with no samples. `Format.Depth` with `samples` is still an error: a target of depth alone has one sample.
 - **It costs memory:** as many colors and depths a pixel as it has samples, plus the color they come to. Four samples at the window's size is about four and a half times a plain target. A frag still runs once for each pixel a triangle covers, so drawing costs little more.
 - **A device may have fewer.** 4 is there on everything Tide draws with, for images of bytes. Where a device hasn't got what's asked, the target is drawn with the most it has under that, and the engine says so once in the game's output. WebGPU has 1 and 4 alone: 2 is 4 there, and 8 is 4.
@@ -279,12 +327,127 @@ async void SavePixels(RenderTarget target)
 }
 ```
 
-It takes a frame or more and can fail if the device is lost or the image exceeds the limits. Never read it in
-match code. Multisampled targets read their resolved color. Float images retain colors above one, and alpha
-is not multiplied into RGB. Copy a grid into a field with `.Copy()`, following normal grid ownership.
-Reads share 64 slots with GPU list reads. An image can contain up to 4,000,000 pixels; outstanding pixel results
-are limited to 128 MiB. Window, depth, cube faces and array layers cannot be read this way. Draw into an
-ordinary Rgba8 or Rgba16f color target first. `Read` always interprets Rgba16f as Color and unpremultiplies
-RGB; use `[Raw(float4)]` shader reads to keep four independent channels. Other numeric formats are read in
-shaders through their typed texture declaration. To bring a numeric result into local code, have a kernel
-write a GPU list and read that list.
+It takes a frame or more and can fail if the device is lost or what reads hold together passes the limit. Never
+read it in match code. Multisampled targets read their resolved color. Float images retain colors above one, and
+alpha is not multiplied into RGB. Copy a grid into a field with `.Copy()`, following normal grid ownership, or keep
+it in the task: a task keeps a grid across its later waits as it keeps its lists, so `pixels` can still be read
+after another `await`. Reads share 64 slots with GPU list reads. An image of any size is read, a 4K or 5K window's
+too; what reads hold together, until they're let go of, is at most 512 MiB.
+
+### A part of an image
+
+A read takes a part of the image after its number, if it has one: its first pixel and how many pixels across and
+down, in the image's own pixels, as the grid is. The part is clamped to the image, and the grid is what's inside it,
+from that part's first pixel; a part with nothing of the image in it fails. Reading one pixel under the mouse copies
+one pixel, and a big image can be read in tiles.
+
+```tide
+local singleton Picked { RenderTarget ids; int id; }
+
+view Make(mut Picked picked)
+{
+    // Its format is where it's made, as the read's type is the image's: each object is drawn into it with its number
+    if (!picked.ids.valid) picked.ids = RenderTarget.Window(Format.R32i);
+}
+
+async void PickAt(mut Picked picked, int2 pixel)
+{
+    if (await picked.ids.Read<int>(pixel, int2(1, 1)) is Grid2<int> one) picked.id = one[0, 0];
+}
+```
+
+`ReadDepth(from, size)` and a face's or a layer's reads take a part the same way.
+
+### Which image, and as what
+
+A target that holds several images reads any of them, by its number: `await target.Read(1)` reads
+`target.colors[1]`. The number is a constant, as what a read gives depends on the image.
+
+An image of numbers is read as its own type, written in `<>`, with the bits it stores:
+
+| The image's format | The read | What it gives |
+|---|---|---|
+| `Rgba8`, `Rgba16f` | `Read()` | `Grid2<Color>`, alpha not multiplied in |
+| `R8`, `R16f`, `R32f` | `Read<float>()` | `Grid2<float>` |
+| `Rg8`, `Rg16f` | `Read<float2>()` | `Grid2<float2>` |
+| `Rgba32f`, `Rgba16f` | `Read<float4>()` | `Grid2<float4>`, its four numbers as stored |
+| `R32i` | `Read<int>()` | `Grid2<int>` |
+
+```tide
+local singleton Picking { RenderTarget scene; Grid2<int> ids; Grid2<float> depths; }
+
+view Make(mut Picking picking)
+{
+    if (!picking.scene.valid) picking.scene = RenderTarget.Window(Format.Rgba8, Format.R32i);
+}
+
+async void ReadIds(mut Picking picking)
+{
+    if (await picking.scene.Read<int>(1) is Grid2<int> ids) picking.ids = ids.Copy();
+    if (await picking.scene.ReadDepth() is Grid2<float> depths) picking.depths = depths.Copy();
+}
+```
+
+- **Floats and ints come back bit for bit.** `R32f`, `Rgba32f` and `R32i` give what a frag or a clear wrote.
+  `R16f` and `Rg16f` give the 16-bit float that was stored, and `R8` and `Rg8` the stored byte over 255.
+- **The compiler checks the type against the target's format,** so the target has to be made one way wherever
+  it's assigned, with its formats written there: `Read<float>()` of a `RenderTarget` parameter, or of a target
+  made with `R32f` in one place and `Rg16f` in another, is an error that says so. A plain `Read()` of a target
+  whose formats aren't known is checked as it runs, and fails where the image isn't a Color's.
+- **`Read<float4>()` of an `Rgba16f` image** gives its four numbers as they're stored, where `Read()` gives
+  them as a Color, dividing its alpha out again. Use it for an image a frag wrote a `float4` into.
+
+### Depth
+
+`await target.ReadDepth()` returns `Grid2<float> fails IOError`: each pixel's depth, 0 at the near plane and 1
+at the far limit, as [`this.depth` and a depth's `Sample`](#a-target-s-depth) give it, whichever way the device
+stores it. Every target has one, a target of depth alone too. A multisampled target gives one depth a pixel.
+Where depth is stored as floats (reversed, as most devices store it), a depth a frag wrote comes back exactly when
+it's 0.5 or more, or a multiple of 2^-24; otherwise to the nearest such step, about 6e-8 (0.1 comes back as
+0.10000002). On a device with 24-bit depth it comes back to the nearest of that format's steps. Compare with a
+tolerance, not `==`.
+
+### Cube faces and array layers
+
+A [cube's face](./meshes-and-textures.md) and an array's layer are targets, and are read the same way, one at
+a time: `await cube.faces[2].Read()`, `await array.layers[1].Read()`, and `ReadDepth()` of either. Each is one
+image, with its rows from the top as it was drawn, of the format its cube or array was made with: a face of a
+`Cubemap(256, Format.R16f)` is read with `Read<float>()`, a layer of a `Format.Rg8` array with `Read<float2>()`,
+an `R32i` face or layer with `Read<int>()`, by the table above. A face of a `Cubemap(size, Format.Depth)` has its
+depth alone: `ReadDepth()`.
+
+### A volume's cells
+
+A `Texture3D` is read the same way, into a `Grid3` of its format's type: `await volume.Read()` for an `Rgba8` or
+`Rgba16f` volume, `Read<float>()` for `R32f`, `Read<float4>()` for `Rgba32f`, `Read<int>()` for `R32i`, each cell as a
+kernel's `volume[at]` reads it. As with a target, the volume is made with its format wherever it's assigned. A box of
+it is its first cell and how many along each axis, `int3`s:
+
+```tide
+local singleton Fluid { [Raw(float)] Texture3D pressure; bool made; Grid3<float> slice; }
+
+view Make(mut Fluid fluid)
+{
+    // A kernel writes its cells each frame
+    if (!fluid.made) { fluid.made = true; fluid.pressure = Texture3D(int3(32), Format.R32f); }
+}
+
+async void Probe(mut Fluid fluid)
+{
+    if (await fluid.pressure.Read<float>(int3(0, 0, 8), int3(32, 32, 1)) is Grid3<float> slice) fluid.slice = slice.Copy();
+}
+```
+
+A volume made from a `Grid3` is that grid's cells, which the CPU has already: read the grid, not the volume (its read
+is an error that says so, or fails as it runs where the compiler can't see what the volume was made of).
+
+### How many images
+
+`target.colors.count` is how many color images a target holds: 0 for a target of depth alone and for one that
+was never made or was disposed.
+
+### The window
+
+`Draw.window` can't be read: its image is the display's own, which the GPU doesn't hand back to a kernel, and
+under Unity it's Unity's. Draw the frame into `RenderTarget.Window()`, read that, and
+[`Draw.Blit`](./shaders.md) it to the window.

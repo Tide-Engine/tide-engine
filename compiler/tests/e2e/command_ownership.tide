@@ -1,0 +1,64 @@
+// `with ownership` on a command's handler: only for an entity the command's sender owns; `without`, any other
+
+component Counter { int value; int pokes; }
+singleton Log { int stolen; PlayerID last; int seen; bool tithe; bool levy; }
+local singleton UI { Entity target; int which; bool send; bool own; }
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Counter, Owner { player = PlayerID(0) });
+    Spawn(Counter, Owner { player = PlayerID(1) });
+    Spawn(Counter); // Nobody's
+}
+
+// No sender named: the filter is all the check there is
+command(int amount) Poke(mut Counter counter, with ownership)
+{
+    counter.value += amount;
+    counter.pokes++;
+}
+
+// A sender named too, and the filter's other side: only what the sender doesn't own, whoever's it is
+command(int amount) Steal(mut Counter counter, mut Log log, PlayerID sender, without ownership)
+{
+    counter.value -= amount;
+    log.stolen += amount;
+    log.last = sender;
+    log.seen++;
+}
+
+view Submit(mut UI ui)
+{
+    if (!ui.send) return;
+    ui.send = false;
+    if (ui.which == 0) ui.target.Poke(5);
+    else ui.target.Steal(2);
+}
+
+// A call that names no entity is for the one the code runs for: here this machine's player's own
+view SubmitOwn(Counter counter, mut UI ui, with ownership)
+{
+    if (!ui.own) return;
+    ui.own = false;
+    Poke(counter.pokes + 9);
+}
+
+// The match's own calls: no player sent them and nothing crosses the network. They run at the end of the tick,
+// as a player's do, whoever owns the entity (the match is the authority), and their sender is no player
+system Tithe(Log log, with Counter)
+{
+    if (log.tithe) Poke(amount: 1);
+}
+
+system Levy(Log log, query (with Counter) counters)
+{
+    if (!log.levy) return;
+    foreach (var row in counters) row.entity.Steal(3);
+}
+
+system Collected(mut Log log)
+{
+    log.tithe = false;
+    log.levy = false;
+}

@@ -43,7 +43,7 @@ A floor, two walls and three stacks of crates. Tap a crate to kick it, and anywh
 - `Build` makes the world out of entities: each has a `Body`, and a `Box` or a `Circle` for its shape. The floor and the walls are `Static`, and the crates are dynamic, as a body is unless it says otherwise.
 - Nothing in the game moves a crate. The package's systems step the world every tick, and write where each body is into its `Body`.
 - The views draw from the same components: `body.position` and `body.angle`, with the size its `Box` or `Circle` says. A ball has a spoke, so that its turning shows.
-- A tap is a [command](../game/commands.md). `DropBall` spawns a body where the tap was. `KickCrate` writes the crate's `impulse`, and the next step pushes it.
+- A tap is a [command](../game/commands.md). `Drop` spawns a body where the tap was. `Kick` writes the crate's `impulse`, and the next step pushes it.
 - `Expire` destroys a ball after ten seconds, and its body goes with it.
 - `Count` hears `Touched`, which the package sends to a body's entity when it starts touching another.
 
@@ -292,7 +292,7 @@ The package's systems run before the game's, as every [package's](../packages/us
 3. Each body's `Body` gets where the step left it.
 4. `Touched` and `Parted` are sent.
 
-So a system of the game's reads this tick's positions, and what it writes goes into the next tick's step. The same goes for what an event's or a command's handler writes, at the end of the tick. An entity spawned in a tick has its body made at the start of the next, and is in that tick's step.
+So a system of the game's reads this tick's positions, and what it writes goes into the next tick's step. The same goes for what an event's handler or a command writes, at the end of the tick. An entity spawned in a tick has its body made at the start of the next, and is in that tick's step.
 
 ### Before the step
 

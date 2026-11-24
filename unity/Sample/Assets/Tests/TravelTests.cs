@@ -153,6 +153,82 @@ public sealed unsafe class TravelTests
         Assert.IsNotNull(Tossed());
     }
 
+    // The ticks shown are heard: the ball's Bounced reaches C# again at the tick shown that it was sent in (as predicted
+    // and as confirmed, with that tick's number), the ball's local handler counts it in a local state of the shown
+    // ticks' own, a tick shown again says nothing again, and a recording played says every bounce the match had
+    [UnityTest]
+    public IEnumerator ShownTicksAreHeard()
+    {
+        // Heard from the match's start: the ball is dropped from 2 units up, and bounces twice as it lands
+        SceneManager.LoadScene(Bounce);
+        yield return null;
+        var runner = Object.FindAnyObjectByType<TideRunner>();
+        var heard = new List<uint>();
+        var confirmed = new List<uint>();
+        System.Action<Tide.Game.Bounced> hear = e => heard.Add(e.Tick);
+        System.Action<Tide.Game.Bounced> confirm = e => confirmed.Add(e.Tick);
+        runner.On(hear);
+        runner.OnVerified(confirm);
+        TideEntity ball = null;
+        yield return Until(() => (ball = MyBall()) != null && heard.Count >= 2 && confirmed.Count >= 2, 15f);
+        Assert.IsNotNull(ball, "the player's ball shows");
+        Assert.GreaterOrEqual(heard.Count, 2, "the ball bounced, live");
+        yield return Until(() => false, 0.2f);
+        Assert.IsTrue(runner.Pause());
+        yield return null;
+        yield return null;
+        var live = new List<uint>(heard);
+        Assert.AreEqual(live, confirmed, "the match this machine runs confirms what it hears");
+        var counted = ball.GetComponent<Tide.Game.Ball>().heard;
+        Assert.AreEqual(live.Count, counted, "the ball's local handler counted them");
+        var bounce = live[live.Count - 1];
+        Assert.Greater(bounce, runner.Travel.first, "the last bounce is in the ticks recorded");
+
+        // Back to the world its tick made: said again, once
+        heard.Clear();
+        confirmed.Clear();
+        Assert.IsTrue(runner.ShowTick(bounce + 1));
+        yield return null;
+        Assert.AreEqual(new List<uint> { bounce }, heard, "the tick shown is heard, with its tick");
+        Assert.AreEqual(new List<uint> { bounce }, confirmed, "and as confirmed");
+        Assert.AreEqual(1, MyBall().GetComponent<Tide.Game.Ball>().heard, "counted in the shown ticks' own local state");
+        yield return null;
+        yield return null;
+        Assert.AreEqual(1, heard.Count, "a tick shown again says nothing again");
+        // The tick before it sent none; a step on from it says it again
+        Assert.IsTrue(runner.ShowTick(bounce));
+        yield return null;
+        Assert.AreEqual(1, heard.Count);
+        Assert.IsTrue(runner.Step());
+        yield return null;
+        Assert.AreEqual(new List<uint> { bounce, bounce }, heard, "a step to it hears it");
+        Assert.AreEqual(2, MyBall().GetComponent<Tide.Game.Ball>().heard);
+
+        // A recording of the match, played: every bounce of its ticks, in order
+        var first = runner.Travel.first;
+        var path = System.IO.Path.Combine(Application.temporaryCachePath, "travel-heard.tiderec");
+        Assert.IsTrue(runner.SaveRecording(path));
+        Assert.IsTrue(runner.ReplayFile(path), "replayed: " + runner.Travel.Refused);
+        System.IO.File.Delete(path);
+        yield return null;
+        heard.Clear();
+        confirmed.Clear();
+        Assert.IsTrue(runner.Resume(), "it plays");
+        yield return Until(() => runner.Travel.playing == 0, 30f);
+        yield return null;
+        var recorded = live.FindAll(tick => tick >= first);
+        Assert.AreEqual(recorded, heard, "the recording's bounces as it plays");
+        Assert.AreEqual(recorded, confirmed);
+        runner.EndReplay();
+        Assert.IsTrue(runner.ShowTick(runner.Travel.last));
+        yield return null;
+        yield return null;
+        // Back at the match's latest tick, its own frame: a GameObject a tick shown had no entity for was made again
+        Assert.AreEqual(counted, MyBall().GetComponent<Tide.Game.Ball>().heard, "the match's own local state heard none of it");
+        runner.Off(hear);
+        runner.OffVerified(confirm);
+    }
+
     // The match's recording, saved to a file and replayed: every tick's world has the hash the match's had, its
     // GameObjects as the match had them, and each tick checked as it plays
     [UnityTest]
@@ -212,10 +288,26 @@ public sealed unsafe class TravelTests
         yield return null;
         Assert.AreEqual(TideTravelState.Paused, runner.Travel.state, "back to the match, paused");
         Assert.AreEqual(live.last, runner.Travel.last);
+        // Another layout's hash: the recording says the layout it was recorded with, so it's carried over by name (to
+        // the same fields here) and replayed with nothing to check its ticks against
         var bytes = System.IO.File.ReadAllBytes(path);
-        bytes[13] ^= 1; // Its layout's hash
-        Assert.IsFalse(runner.Replay(bytes));
-        StringAssert.Contains("laid out otherwise", runner.Travel.Refused);
+        bytes[12] ^= 1;
+        Assert.IsTrue(runner.Replay(bytes), "carried over: " + runner.Travel.Refused);
+        Assert.AreEqual(2, runner.Travel.otherBuild, "laid out otherwise");
+        Assert.IsTrue(runner.ShowTick(middle));
+        yield return null;
+        t = runner.Travel;
+        Assert.AreEqual(t.first, t.checkedTo, "nothing checked");
+        Assert.AreEqual(0u, t.differs);
+        Assert.AreEqual(0u, t.unreadable);
+        Assert.Less(Vector3.Distance(there, MyBall().transform.position), 1e-4f, "the ball where the match had it, by name");
+        runner.EndReplay();
+        yield return null;
+        // Cut short: refused, saying so
+        var cut = new byte[bytes.Length - 5];
+        System.Array.Copy(bytes, cut, cut.Length);
+        Assert.IsFalse(runner.Replay(cut));
+        StringAssert.Contains("cut short", runner.Travel.Refused);
         System.IO.File.Delete(path);
     }
 

@@ -1,0 +1,21 @@
+// expect: code the GPU runs reads a list constant by its elements and count, 'QUAD[i]' and 'QUAD.count', or goes through it with foreach
+const List<int> QUAD = [0, 1, 2, 0, 2, 3];
+scene Main { }
+local singleton Geometry { List<Vertex3> vertices; List<int> indices; }
+
+int Sum(List<int> values)
+{
+    mut int sum = 0;
+    foreach (var v in values) sum += v;
+    return sum;
+}
+
+frag Shade(Vertex3 vertex, out Color color)
+{
+    color = Color(float(Sum(QUAD)), 0, 0, 1);
+}
+
+view Show(Geometry geometry)
+{
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, Shade);
+}

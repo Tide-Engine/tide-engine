@@ -1,6 +1,7 @@
 // Made by tide unity from the game's WGSL. Do not edit: it's made again as the game is built.
 #pragma kernel tidehl_compute
 #include "Packages/com.tide.unity/Runtime/Shaders/TideWarnings.hlsl"
+#define TIDEHL_SOURCE_REVERSED 1
 // Made by tidec from WGSL (compiler/src/hlsl.c). Do not edit.
 #if defined(SHADER_API_D3D11) || defined(SHADER_API_PSSL) || defined(SHADER_API_METAL) || defined(SHADER_API_VULKAN) \
     || defined(SHADER_API_SWITCH) || defined(SHADER_API_XBOXONE) || defined(SHADER_API_GAMECORE) || defined(SHADER_API_WEBGPU)
@@ -41,21 +42,24 @@ float tidehl_flip() { return _TideFlip != 0.0 ? sign(_TideFlip) : _ProjectionPar
 float4 tidehl_clip(float4 p) {
     p.y *= tidehl_flip();
 #if TIDEHL_REVERSED_Z
-    p.z = p.w - p.z;
+    if (!TIDEHL_SOURCE_REVERSED) p.z = p.w - p.z;
 #else
-    p.z = 2.0 * p.z - p.w;
+    p.z = TIDEHL_SOURCE_REVERSED ? p.w - 2.0 * p.z : 2.0 * p.z - p.w;
 #endif
     return p;
 }
-float tidehl_depth_in(float d) { return TIDEHL_REVERSED_Z ? 1.0 - d : d; }
-float tidehl_depth_out(float d) { return TIDEHL_REVERSED_Z ? 1.0 - d : d; }
+float tidehl_depth_in(float d) { return TIDEHL_REVERSED_Z != TIDEHL_SOURCE_REVERSED ? 1.0 - d : d; }
+float tidehl_depth_out(float d) { return TIDEHL_REVERSED_Z != TIDEHL_SOURCE_REVERSED ? 1.0 - d : d; }
 float4 tidehl_position(float4 p) {
     if (tidehl_flip() < 0.0) p.y = _TideHeight - p.y;
     p.z = tidehl_depth_in(p.z);
     p.w = 1.0 / p.w;
     return p;
 }
-bool tidehl_facing(bool front) { return tidehl_flip() < 0.0 ? !front : front; }
+// A triangle's side. Unity turns the rasterizer's sides round with its own flips (the camera's projection, and a
+// render texture on Direct3D, Vulkan and Metal, which TideRender undoes in a target's pass), so only Tide's flip of
+// a target (OpenGL Core's) turns them
+bool tidehl_facing(bool front) { return _TideFlip < 0.0 ? !front : front; }
 // A color into Unity's own target, which takes linear colors where its project is in linear color space
 float4 tidehl_output(float4 c) {
     if (_TideLinear > 0.5 && c.a > 0.0) {
@@ -315,13 +319,13 @@ float tidehl_compare(Texture2D<float> t, SamplerState own, float2 at, float d) {
     float2 p = at * size - 0.5;
     float2 f = frac(p);
     float4 g = t.GatherRed(TIDEHL_NEAREST(own), (floor(p) + 1.0) / size);
-#if TIDEHL_REVERSED_Z
+#if TIDEHL_REVERSED_Z != TIDEHL_SOURCE_REVERSED
     g = 1.0 - g;
 #endif
-    float4 lit = step(d.xxxx, g); // Gathered as (0, 1), (1, 1), (1, 0), (0, 0)
+    float4 lit = TIDEHL_SOURCE_REVERSED ? step(g, d.xxxx) : step(d.xxxx, g); // Gathered as (0, 1), (1, 1), (1, 0), (0, 0)
     return lerp(lerp(lit.w, lit.z, f.x), lerp(lit.x, lit.y, f.x), f.y);
 }
-float tidehl_compare(TextureCube<float> t, SamplerState own, float3 at, float d) { return d <= tidehl_depth(t, own, at) ? 1.0 : 0.0; }
+float tidehl_compare(TextureCube<float> t, SamplerState own, float3 at, float d) { return (TIDEHL_SOURCE_REVERSED ? d >= tidehl_depth(t, own, at) : d <= tidehl_depth(t, own, at)) ? 1.0 : 0.0; }
 float tidehl_depth(Texture2DArray<float> t, SamplerState own, float3 at) { return tidehl_depth_in(t.SampleLevel(TIDEHL_NEAREST(own), at, 0.0)); }
 float tidehl_compare(Texture2DArray<float> t, SamplerState own, float3 at, float d) { // at.z: the layer
     uint w, h, n;
@@ -330,10 +334,10 @@ float tidehl_compare(Texture2DArray<float> t, SamplerState own, float3 at, float
     float2 p = at.xy * size - 0.5;
     float2 f = frac(p);
     float4 g = t.GatherRed(TIDEHL_NEAREST(own), float3((floor(p) + 1.0) / size, at.z));
-#if TIDEHL_REVERSED_Z
+#if TIDEHL_REVERSED_Z != TIDEHL_SOURCE_REVERSED
     g = 1.0 - g;
 #endif
-    float4 lit = step(d.xxxx, g);
+    float4 lit = TIDEHL_SOURCE_REVERSED ? step(g, d.xxxx) : step(d.xxxx, g);
     return lerp(lerp(lit.w, lit.z, f.x), lerp(lit.x, lit.y, f.x), f.y);
 }
 
@@ -430,10 +434,15 @@ float2 tidehl_unpack2x16float(uint u) { return float2(f16tof32(u & 0xFFFFu), f16
 
 struct tide_uniforms {
     int4 tide_v0;
+    int4 tide_v1;
+    int4 tide_v2;
 };
 
+static const bool tide_reversed_depth = true;
 cbuffer TideUniforms {
     int4 tidehl_u_tide_v0;
+    int4 tidehl_u_tide_v1;
+    int4 tidehl_u_tide_v2;
 };
 Texture2D<float4> _TideTexture0;
 SamplerState sampler_TideTexture0;
@@ -448,10 +457,21 @@ cbuffer TideGroups {
     uint3 _TideGroups; // num_workgroups: the dispatch's size, in workgroups
 };
 
+#if defined(SHADER_API_METAL)
+uint _TideStorageBytes0;
+uint tidehl_length0() { return _TideStorageBytes0 / 4u; }
+#else
 uint tidehl_length0() { uint n; _TideStorage0.GetDimensions(n); return n / 4u; }
+#endif
 uint tidehl_at0(uint i) { return min(i, tidehl_length0() - 1u) * 4u; }
+#if defined(SHADER_API_METAL)
+uint _TideStorageBytes2;
+uint tidehl_length2() { return _TideStorageBytes2 / 4u; }
+#else
 uint tidehl_length2() { uint n; _TideStorage2.GetDimensions(n); return n / 4u; }
+#endif
 uint tidehl_at2(uint i) { return min(i, tidehl_length2() - 1u) * 4u; }
+float tide_depth(float d);
 bool tide_nan(float x);
 float tide_min1(float a, float b);
 float tide_max1(float a, float b);
@@ -463,8 +483,14 @@ int tide_count0();
 int tide_capacity0();
 float4 tide_get0(int tide_i);
 void tide_put0(int tide_i, float4 tide_v);
+float2 tf_ReadUv(int t_x, int t_y, int t_across, int t_down);
 void ts_ReadTargetPixels();
 void compute(uint3 tide_gid, uint3 tide_lid, uint tide_lix, uint3 tide_wid, uint3 tide_groups);
+
+float tide_depth(float d)
+{
+    return (tide_reversed_depth ? (1.0 - d) : d);
+}
 
 bool tide_nan(float x)
 {
@@ -525,7 +551,7 @@ float4 tide_straight(float4 c)
 
 uint tide_base0()
 {
-    return ((uint)(tidehl_u_tide_v0.z));
+    return ((uint)(tidehl_u_tide_v1.w));
 }
 
 uint tide_word0(uint tide_k)
@@ -535,12 +561,12 @@ uint tide_word0(uint tide_k)
 
 int tide_count0()
 {
-    return ((int)(min(tide_word0(0u), ((uint)(tidehl_u_tide_v0.w)))));
+    return ((int)(min(tide_word0(0u), ((uint)(tidehl_u_tide_v2.x)))));
 }
 
 int tide_capacity0()
 {
-    return ((int)(min(tide_word0(1u), ((uint)(tidehl_u_tide_v0.w)))));
+    return ((int)(min(tide_word0(1u), ((uint)(tidehl_u_tide_v2.x)))));
 }
 
 float4 tide_get0(int tide_i)
@@ -568,12 +594,17 @@ void tide_put0(int tide_i, float4 tide_v)
     }
 }
 
+float2 tf_ReadUv(int t_x, int t_y, int t_across, int t_down)
+{
+    return ((float2(((float)(t_x)), ((float)(t_y))) + ((float2)(0.5))) / float2(((float)(t_across)), ((float)(t_down))));
+}
+
 void ts_ReadTargetPixels()
 {
-    if ((tide_inv_at.x >= (tidehl_u_tide_v0.x * tidehl_u_tide_v0.y))) {
+    if (((tide_inv_at.x >= tidehl_u_tide_v0.x) || (tide_inv_at.y >= tidehl_u_tide_v0.y))) {
         return;
     } else {
-        tide_put0(tide_inv_at.x, tide_straight(tidehl_sample_level(_TideTexture0, sampler_TideTexture0, tidehl_mode(((_TideSampling >> 0u) & 15u), 0u), ((float2(((float)(tidehl_rem(tide_inv_at.x, tidehl_u_tide_v0.x))), ((float)(tidehl_div(tide_inv_at.x, tidehl_u_tide_v0.x)))) + ((float2)(0.5))) / float2(((float)(tidehl_u_tide_v0.x)), ((float)(tidehl_u_tide_v0.y)))), float(tide_clamp1(0.0, 0.0, 31.0)))));
+        tide_put0(((tide_inv_at.y * tidehl_u_tide_v0.x) + tide_inv_at.x), tide_straight(tidehl_sample_level(_TideTexture0, sampler_TideTexture0, tidehl_mode(((_TideSampling >> 0u) & 15u), 0u), tf_ReadUv((tidehl_u_tide_v0.w + tide_inv_at.x), ((tidehl_u_tide_v1.x + tidehl_u_tide_v0.z) + tide_inv_at.y), tidehl_u_tide_v1.y, tidehl_u_tide_v1.z), float(tide_clamp1(0.0, 0.0, 31.0)))));
     }
 }
 

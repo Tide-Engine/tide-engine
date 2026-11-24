@@ -1,0 +1,216 @@
+// A task keeps its grids across a wait, as it keeps its text and lists: a copy of its own in its frame
+// (task_grids_test.c stands in for the renderer). A grid a read gave, one an earlier await in the same statement gave,
+// a failable local holding one, one the task made and changes after waits, a pack's grid in a foreach, and a match
+// task's, which a snapshot keeps and the world's hash takes in.
+scene Main { }
+asset List<Grid2<Color>> run = "assets/run/*.png";
+asset Map<string, Grid2<Color>> runByName = "assets/run/*.png";
+asset List<Grid2<Color>> walk = "assets/run/*.png"; // The same files by other names: a choice of two to go through
+asset Map<string, Grid2<Color>> walkByName = "assets/run/*.png";
+
+local singleton Reads
+{
+    RenderTarget a;
+    RenderTarget b;
+    bool started;
+    int stage;
+    int failed;
+    Color sum;
+    Grid2<Color> picked;
+    Color failable;
+    Color bound;
+    Color nested;
+    int made;
+    Grid2<int> kept;
+    Color frames;
+    int framesSeen;
+    Color named;
+    int namedSeen;
+    Color framesWant; // ...as a frame's code reads them, without waiting
+    Color namedWant;
+    int litter;
+    // A pack loaded again while a task waits in a loop (task_grids_pack_loaded_again_as_a_task_waits)
+    bool walkNow;
+    bool chooseNow;
+    bool fast;
+    int firstWidth;   // run[0]'s, as Walk began
+    int walked;       // Grids a loop went through, and their widths together
+    int walkedWidths;
+    int walkedNamed;
+    int walkedNamedWidths;
+    int chosenWant;   // ...and what a choice of two held as Choose began
+    int chosen;
+    int chosenWidths;
+    int chosenNamedWant;
+    int chosenNamed;
+    int chosenNamedWidths;
+    int walkStage;
+    // A read kept across waits, a copy in the frame once (task_grids_a_read_kept_across_waits_is_one_copy)
+    RenderTarget big;
+    bool keepNow;
+    Color keptCell;
+    Color boundCell;
+    int keepStage;
+}
+
+Grid2<Color> Pick(Grid2<Color> g, int n)
+{
+    if (n == 2) return g.Copy();
+    return default;
+}
+async int Later() { await Wait.Frames(1); return 2; }
+
+async void ReadAll(mut Reads reads)
+{
+    // Two reads in one statement: the first's grid waits for the second, and is still the first's
+    reads.sum = (await reads.a.Read())![0, 0] + (await reads.b.Read())![1, 0];
+    reads.stage += 1;
+    // A read, then an async call, among one call's arguments
+    reads.picked = Pick((await reads.a.Read())!, await Later());
+    reads.stage += 1;
+    // A failable local, kept across a wait
+    var r = await reads.b.Read();
+    await Wait.Frames(2);
+    reads.failable = r![0, 1];
+    reads.stage += 1;
+    // A name 'is' gives, kept across a read of the other target (it was a compile error before)
+    if (await reads.a.Read() is Grid2<Color> pixels)
+    {
+        if (await reads.b.Read() is Grid2<Color> later) reads.nested = later[1, 1];
+        await Wait.Frames(1);
+        reads.bound = pixels[1, 1];
+    }
+    reads.stage += 1;
+    // A grid the task makes, changed between waits: after one it's the frame's, which it changes through its own copy
+    mut Grid2<int> cells = Grid2(4, 4);
+    cells[1, 1] = 3;
+    await Wait.Frames(1);
+    cells[2, 2] += 4;
+    cells[1, 1] += 10;
+    await Wait.Frames(1);
+    reads.made = cells[1, 1] * 100 + cells[2, 2];
+    cells.Clear();
+    await Wait.Frames(1);
+    cells[3, 3] = 9;
+    reads.kept = cells.Copy();
+    reads.stage += 1;
+    // The pack's grids, a frame at a time: each a copy of its own in the frame as the task waits
+    foreach (var frame in run)
+    {
+        await Wait.Frames(1);
+        reads.frames = reads.frames + frame[0, 0];
+        reads.framesSeen += 1;
+    }
+    foreach (var entry in runByName)
+    {
+        await Wait.Frames(1);
+        reads.named = reads.named + entry.value[0, 0];
+        reads.namedSeen += 1;
+    }
+    reads.stage += 1;
+}
+
+// The pack loaded again while these wait in a loop (task_grids_test.c loads another, as tide run does when a file is
+// saved). A loop over an asset goes on through the asset as it is; one over a choice of two, a list or a map the loop
+// keeps in the frame, through the frame's own copy of what it chose, every grid in it its own.
+async void Walk(mut Reads reads)
+{
+    reads.firstWidth = run[0].size.x;
+    foreach (var frame in run)
+    {
+        await Wait.Frames(1);
+        reads.walked += 1;
+        reads.walkedWidths += frame.size.x;
+    }
+    foreach (var entry in runByName)
+    {
+        await Wait.Frames(1);
+        reads.walkedNamed += 1;
+        reads.walkedNamedWidths += entry.value.size.x;
+    }
+    reads.walkStage += 1;
+}
+async void Choose(mut Reads reads)
+{
+    foreach (var frame in walk) reads.chosenWant += frame.size.x;
+    foreach (var frame in reads.fast ? run : walk)
+    {
+        await Wait.Frames(1);
+        reads.chosen += 1;
+        reads.chosenWidths += frame.size.x;
+    }
+    reads.walkStage += 1;
+    await Wait.Frames(2);
+    foreach (var entry in walkByName) reads.chosenNamedWant += entry.value.size.x;
+    foreach (var entry in reads.fast ? runByName : walkByName)
+    {
+        await Wait.Frames(1);
+        reads.chosenNamed += 1;
+        reads.chosenNamedWidths += entry.value.size.x;
+    }
+    reads.walkStage += 1;
+}
+
+// A read's grid kept across waits is in the frame once: the value its await gave goes as its statement ends
+async void Keep(mut Reads reads)
+{
+    var r = await reads.big.Read();
+    await Wait.Frames(2);
+    reads.keptCell = r![3, 3];
+    reads.keepStage = 1;
+    if (await reads.big.Read() is Grid2<Color> pixels)
+    {
+        await Wait.Frames(2);
+        reads.boundCell = pixels[4, 4];
+    }
+    reads.keepStage = 2;
+}
+
+view Starts(mut Reads reads)
+{
+    if (reads.walkNow) { reads.walkNow = false; Walk(reads); }
+    if (reads.chooseNow) { reads.chooseNow = false; Choose(reads); }
+    if (reads.keepNow) { reads.keepNow = false; Keep(reads); }
+}
+
+// Scratch memory used each frame, as other code uses it: a grid carried as a raw handle would read this
+view Litter(mut Reads reads)
+{
+    mut Grid2<Color> junk = Grid2(64, 64);
+    for (int y = 0; y < 64; y++) for (int x = 0; x < 64; x++) junk[x, y] = Color(9, 9, 9, 9);
+    reads.litter += junk[63, 63].r > 0 ? 1 : 0;
+}
+
+view Start(mut Reads reads)
+{
+    if (reads.started) return;
+    reads.started = true;
+    reads.a = RenderTarget(2, 2, 1);
+    reads.b = RenderTarget(2, 2, 1);
+    foreach (var frame in run) reads.framesWant = reads.framesWant + frame[0, 0];
+    foreach (var entry in runByName) reads.namedWant = reads.namedWant + entry.value[0, 0];
+    ReadAll(reads);
+}
+
+// A match task's grid: in the match's heap as it waits, so a snapshot has it and the hash takes it in
+singleton Field { int sum; int progress; bool started; }
+async void Hold(mut Field field)
+{
+    mut Grid2<int> cells = Grid2(8, 8);
+    cells[1, 2] = 7;
+    await Wait.Ticks(1);
+    field.progress = 1;
+    cells[3, 4] = cells[1, 2] + 1;
+    await Wait.Ticks(2);
+    field.progress = 2;
+    field.sum = cells[1, 2] + cells[3, 4];
+}
+system Begin(mut Field field) { if (!field.started) { field.started = true; Hold(field); } }
+// ...and the match's code using the scratch area each tick, as the local code above does each frame
+singleton Junk { int seen; }
+system Scribble(mut Junk junk)
+{
+    mut Grid2<int> j = Grid2(64, 64);
+    for (int y = 0; y < 64; y++) for (int x = 0; x < 64; x++) j[x, y] = 99;
+    junk.seen += j[63, 63] > 0 ? 1 : 0;
+}

@@ -1,0 +1,4 @@
+// expect: a command is declared with the code that runs for it, as a function is
+// expect: write what it's called with, its name, then what its code takes of the match: 'command(int slot) Rename(mut Hand hand, with ownership) { ... }'
+command Rename { string name; }
+scene Main { }

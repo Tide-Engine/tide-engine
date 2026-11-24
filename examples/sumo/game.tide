@@ -257,10 +257,6 @@ event RoundSet { int round; }
 event Go { }
 event RoundOver { int round; int winner; int best; }
 
-// What the buttons ask of the match.
-command Rebuild { }
-command Bots { }
-
 float SphereMass(float radius, float density)
 {
     return 4.18879 * radius * radius * radius * density;
@@ -867,15 +863,15 @@ system Rounds(mut Ring ring, query (Seat seat) seats)
     if (ring.timer <= 0) ring.phase = Phase.Clear;
 }
 
-// The buttons.
-command(Rebuild rebuild, PlayerID sender) Reset(mut Ring ring)
+// What the buttons ask of the match.
+command() Rebuild(mut Ring ring, PlayerID sender)
 {
     ring.phase = Phase.Clear;
     ring.round = 0;
     ring.fresh = true;
 }
 
-command(Bots bots, PlayerID sender) Idle(mut Ring ring)
+command() Bots(mut Ring ring, PlayerID sender)
 {
     ring.bots = !ring.bots;
 }

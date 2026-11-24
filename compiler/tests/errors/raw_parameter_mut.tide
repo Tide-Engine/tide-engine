@@ -1,0 +1,3 @@
+// expect: [Raw] goes on a read-only parameter of a Tide function: one that's 'mut' or 'out', an extern's or an async function's can't keep the role
+scene Main { }
+void Make([Raw] out Texture made) { made = default; }

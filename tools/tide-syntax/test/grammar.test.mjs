@@ -215,6 +215,7 @@ const cases = {
         ]],
         ['const List<int> NONE', [['const', 'storage.modifier'], ['List', 'support.class'], ['NONE', 'variable.other.constant']]],
         ['const int MAX_HEALTH', [['const', 'storage.modifier'], ['MAX_HEALTH', 'variable.other.constant']]],
+        ['tweak float KickUp', [['tweak', 'storage.modifier'], ['KickUp', 'variable.other.constant']]],
         ['asset Texture logo', [['asset', 'storage.modifier'], ['Texture', 'storage.type.primitive'], ['logo', 'variable.other'], ['logo', '!variable.other.constant']]],
         ['[Filter(Filter.Point)] asset Grid2<Color> tiles', [['asset', 'storage.modifier'], ['Grid2', 'support.class'], ['tiles', 'variable.other'], ['tiles', '!variable.other.constant']]],
         ['asset Map<string, Texture> frames', [['asset', 'storage.modifier'], ['Map', 'support.class'], ['frames', 'variable.other'], ['frames', '!variable.other.constant']]],
@@ -236,13 +237,28 @@ const cases = {
         ['foreach (var event in events)', [['event', '!storage'], ['event', '!keyword'], ['in', 'keyword.control'], ['in', '!entity.name.type']]],
         ['var scene = 1;', [['scene', '!storage']]],
     ],
-    'commands identify their payload, sender and receiver': [
-        ['command Rename', [['command', 'storage.type'], ['Rename', 'entity.name.type']]],
-        ['command(Rename rename, PlayerID sender) RenamePlayer(', [
-            ['command', 'storage.type'], ['Rename', 'entity.name.type'], ['rename', 'variable.parameter'],
-            ['PlayerID', 'storage.type.primitive'], ['sender', 'variable.parameter'], ['RenamePlayer', 'entity.name.function'],
-            ['RenamePlayer', '!entity.name.function.call'],
+    'commands identify what they are called with, their name and what their code takes': [
+        ['command(string name, [Clamp(1, 9)] int times = 1) Rename(', [
+            ['command', 'storage.type'], ['string', 'storage.type.primitive'], ['name', 'variable.parameter'],
+            ['Clamp', 'entity.name.function.attribute'], ['9', 'constant.numeric'], ['int', 'storage.type.primitive'],
+            ['times', 'variable.parameter'], ['=', 'keyword.operator.assignment'], ['Rename', 'entity.name.function'],
+            ['Rename', '!entity.name.function.call'], ['Owner', 'support.class'], ['mut', 'storage.modifier'],
+            ['Name', 'entity.name.type'], ['mine', '!variable.parameter'], ['PlayerID', 'storage.type.primitive'],
         ]],
+        // Its name on the line under what it's called with
+        ['command(List<int> slots, Combat.Stance? stance)', [
+            ['command', 'storage.type'], ['List', 'support.class'], ['int', 'storage.type.primitive'], ['slots', 'variable.parameter'],
+            ['Stance', 'entity.name.type'], ['?', 'keyword.operator.optional'], ['stance', 'variable.parameter'],
+        ]],
+        ['PickCards(mut Hand hand, query (', [
+            ['PickCards', 'entity.name.function'], ['PickCards', '!entity.name.function.call'], ['mut', 'storage.modifier'],
+            ['Hand', 'entity.name.type'], ['query', 'storage.modifier.query'], ['with', 'storage.modifier'],
+            ['Fighter', 'entity.name.type'], ['ownership', 'keyword.other.ownership'],
+        ]],
+        // Called as a function is, on an entity or not, its values by place or by name
+        ['this.Rename("x", times: 2);', [['Rename', 'entity.name.function.call'], ['times', 'variable.parameter']]],
+        ['PickCards(slots, stance: null);', [['PickCards', 'entity.name.function.call'], ['stance', 'variable.parameter']]],
+        ['view RenameMenu(', [['view', 'storage.type'], ['RenameMenu', 'entity.name.function']]],
     ],
     'local and async, in either order': [
         ['local event Displayed', [['local', 'storage.modifier'], ['event', 'storage.type'], ['Displayed', 'entity.name.type']]],
@@ -257,6 +273,16 @@ const cases = {
     'cached functions': [
         ['cached float Width(Catalog catalog, int part)', [['cached', 'storage.modifier'], ['float', 'storage.type.primitive'], ['Width', 'entity.name.function']]],
         ['virtual cached Box Bounds(', [['virtual', 'storage.modifier'], ['cached', 'storage.modifier'], ['Bounds', 'entity.name.function']]],
+    ],
+    'dev declarations': [
+        ['dev view GunTools(Gun gun)', [['dev', 'storage.modifier'], ['view', 'storage.type'], ['GunTools', 'entity.name.function']]],
+        ['dev command(int amount) GiveAmmo(', [
+            ['dev', 'storage.modifier'], ['command', 'storage.type'], ['amount', 'variable.parameter'], ['GiveAmmo', 'entity.name.function'],
+            ['GiveAmmo', '!entity.name.function.call'],
+        ]],
+        ['dev scene GunRange { }', [['dev', 'storage.modifier'], ['scene', 'storage.type'], ['GunRange', 'entity.name.type']]],
+        ['dev int Doubled()', [['dev', 'storage.modifier'], ['Doubled', 'entity.name.function']]],
+        ['var dev = 1;', [['dev', '!storage']]],
     ],
     'local worker declarations': [
         ['local worker List<int> Build(', [['local', 'storage.modifier'], ['worker', 'storage.modifier'], ['Build', 'entity.name.function']]],
@@ -278,11 +304,11 @@ const cases = {
             ['override', 'storage.modifier'], ['local', 'storage.modifier'], ['event', 'storage.type'], ['Combat', 'entity.name.namespace'],
             ['Flash', 'entity.name.function'], ['Flash', '!entity.name.function.call'],
         ]],
-        ['virtual command(Rename rename, PlayerID sender) Renamed(', [
-            ['virtual', 'storage.modifier'], ['command', 'storage.type'], ['Rename', 'entity.name.type'], ['rename', 'variable.parameter'],
-            ['PlayerID', 'storage.type.primitive'], ['sender', 'variable.parameter'], ['Renamed', 'entity.name.function'],
+        ['virtual command(string name) Renamed(', [
+            ['virtual', 'storage.modifier'], ['command', 'storage.type'], ['string', 'storage.type.primitive'], ['name', 'variable.parameter'],
+            ['PlayerID', 'storage.type.primitive'], ['Renamed', 'entity.name.function'], ['Renamed', '!entity.name.function.call'],
         ]],
-        ['override command(Rename rename, PlayerID sender) Combat.OnRename(', [
+        ['override command(string name) Combat.OnRename(', [
             ['override', 'storage.modifier'], ['command', 'storage.type'], ['Combat', 'entity.name.namespace'], ['OnRename', 'entity.name.function'],
             ['OnRename', '!entity.name.function.call'],
         ]],
@@ -366,6 +392,7 @@ const cases = {
                                                 ['StencilTest', 'support.class']]],
         ['Draw.SetStencil(StencilTest.Always, 2, StencilOp.Replace);', [['SetStencil', 'entity.name.function.call'],
                                                                         ['StencilOp', 'support.class']]],
+        ['Faces(blocks, priority: WorkerPriority.Background);', [['WorkerPriority', 'support.class']]],
         ['Draw.Text("DUEL"', [['Text', 'entity.name.function.call'], ['Anchor', 'support.class'], ['Font', 'support.class']]],
         ['extern void DrawUI(DrawList list);', [['DrawList', 'storage.type.primitive']]],
         ['RenderTarget scene; Texture image;', [['RenderTarget', 'storage.type.primitive'], ['Texture', 'storage.type.primitive']]],
@@ -736,11 +763,11 @@ const e2e = path.join(repo, 'compiler', 'tests', 'e2e');
 const programs = fs.readdirSync(e2e, { recursive: true })
     .filter(f => f.endsWith('.tide') && fs.statSync(path.join(e2e, f)).isFile()).sort();
 
-const modifiers = String.raw`(?:(?:local|async|worker|cached|virtual|override)\s+)*`;
+const modifiers = String.raw`(?:(?:dev|local|async|worker|cached|virtual|override)\s+)*`;
 const type = String.raw`[\w.]+(?:\s*<[\w.<>\s]*>)?\??`;
 const keywords = new Set(['return', 'if', 'else', 'var', 'await', 'fail', 'try', 'case', 'switch', 'while', 'for', 'foreach', 'parallel']);
 const declarations = [
-    [new RegExp(String.raw`^${modifiers}(?:component|singleton|struct|input|event|command|enum|scene)\s+(\w+)`), 'entity.name.type'],
+    [new RegExp(String.raw`^${modifiers}(?:component|singleton|struct|input|event|enum|scene)\s+(\w+)`), 'entity.name.type'],
     [new RegExp(String.raw`^${modifiers}(?:system|view|frag|vert)\s+([\w.]+)`), 'entity.name.function'],
     [new RegExp(String.raw`^${modifiers}(?:event|command)\s*\([^)]*\)\s*([\w.]+)`), 'entity.name.function'],
     [new RegExp(String.raw`^const\s+${type}\s+(\w+)\s*=`), 'variable.other.constant'],
@@ -804,6 +831,8 @@ for (const program of programs) {
                     `${program}:${line.number}: ${name} is ${piece.scopes.join(' ')}, not ${scope}\n  ${text}`);
             }
         }
-        assert.ok(found > 0 || program.includes('empty'), `${program} has declarations`);
+        // A file of settings alone goes with another's declarations (visibility_repairs_few.tide)
+        const settingsOnly = lines.every(l => /^\s*(\/\/.*|settings\s*\{.*\}\s*)?$/.test(l.text.replace(/\r$/, '')));
+        assert.ok(found > 0 || settingsOnly || program.includes('empty'), `${program} has declarations`);
     });
 }

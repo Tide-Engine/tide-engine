@@ -28,12 +28,22 @@ singleton Totals
     List<Pair> pairs;
 }
 
+// Changed by a system in runs (Pack): its text, lists and maps are in the heaps of its rows' runs, past the first
+component Bag
+{
+    int id;
+    string note;
+    List<int> items;
+    Map<int, int> counts;
+}
+
 scene Main;
 
 event(Spawned) Setup(with Main)
 {
     var first = Spawn(Player { score = 1, name = "ana" });
     Spawn(Player { score = 10, name = "bo", buddy = first });
+    for (var i = 0; i < 8; i++) Spawn(Bag { id = i });
 }
 
 int Sum(List<int> values)
@@ -57,4 +67,13 @@ system Score(mut Player player, mut Totals totals)
     player.score = Sum(recent); // [call]
     totals.count += 1;
     totals.pairs.Add(Pair { a = gained, b = 0.5 }); // [pairs]
+}
+
+// In runs by identity (nothing queued, nothing but its rows changed): each row's blocks in its entity's run's heap
+system Pack(mut Bag bag)
+{
+    bag.note = $"bag {bag.id}";
+    bag.items.Add(bag.id + 1000);
+    bag.counts[7] = 7007;
+    bag.items.Add(bag.id + 2000); // [packed]
 }

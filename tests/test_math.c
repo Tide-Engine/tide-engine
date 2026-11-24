@@ -5,6 +5,7 @@
 
 #include "tide/math.h"
 #include "tide/color.h"
+#include "tide/transfer_bytes.h"
 #include "tide_test.h"
 
 // Accuracy is measured against the C library in double precision. That's fine
@@ -628,6 +629,46 @@ TIDE_TEST(math_noise_stays_in_its_range_and_is_smooth)
     TIDE_CHECK(tide_cellular_f2(feature, 0).x < 0.0001f);
 }
 
+TIDE_TEST(math_towards_angles_and_damp)
+{
+    TIDE_CHECK(tide_movetowards_f(1.0f, 5.0f, 1.5f) == 2.5f && tide_movetowards_f(5.0f, 1.0f, 1.5f) == 3.5f);
+    TIDE_CHECK(tide_movetowards_f(1.0f, 2.0f, 3.0f) == 2.0f && tide_movetowards_f(2.0f, 2.0f, 0.0f) == 2.0f);
+    TIDE_CHECK(tide_movetowards_f(1.0f, 5.0f, -1.0f) == 0.0f);  // A step under 0 moves away, as Unity's
+    TIDE_CHECK(tide_movetowards_f(1.0f, 5.0f, NAN) == 5.0f && tide_movetowards_f(NAN, 5.0f, 1.0f) == 5.0f);
+    const tide_float2 walked = tide_movetowards_f2(tide_f2(0.0f, 0.0f), tide_f2(3.0f, 4.0f), 2.5f);
+    TIDE_CHECK(fabsf(walked.x - 1.5f) < 0.000001f && fabsf(walked.y - 2.0f) < 0.000001f);
+    const tide_float3 there = tide_movetowards_f3(tide_f3(1.0f, 2.0f, 3.0f), tide_f3(1.0f, 2.0f, 3.0f), 1.0f);
+    TIDE_CHECK(there.x == 1.0f && there.y == 2.0f && there.z == 3.0f); // Already there: no 0 / 0
+    const tide_float3 past = tide_movetowards_f3(tide_f3(0.0f, 0.0f, 0.0f), tide_f3(0.0f, 0.0f, 2.0f), 9.0f);
+    TIDE_CHECK(past.z == 2.0f);
+
+    TIDE_CHECK(fabsf(tide_deltaangle_f(6.2f, 0.1f) - 0.1831853f) < 0.000002f);
+    TIDE_CHECK(fabsf(tide_deltaangle_f(0.1f, 6.2f) + 0.1831853f) < 0.000002f);
+    TIDE_CHECK(tide_deltaangle_f(1.0f, 1.0f) == 0.0f && fabsf(tide_deltaangle_f(0.0f, 1.0f + 5.0f * TIDE_TAU_F) - 1.0f) < 0.00001f);
+    TIDE_CHECK(tide_deltaangle_f(NAN, 1.0f) == 0.0f && tide_deltaangle_f(0.0f, INFINITY) == 0.0f);
+    for (int i = -2000; i <= 2000; i++) { // Over -PI and up to PI, and the same direction as the angle it was given
+        const float angle = (float)i * 0.0137f;
+        const float wrapped = tide_wrapangle_f(angle);
+        TIDE_CHECK(wrapped > -TIDE_PI_F - 0.00001f && wrapped <= TIDE_PI_F);
+        TIDE_CHECK(fabsf(tide_sin_f(wrapped) - tide_sin_f(angle)) < 0.0001f && fabsf(tide_cos_f(wrapped) - tide_cos_f(angle)) < 0.0001f);
+    }
+    TIDE_CHECK(fabsf(tide_movetowardsangle_f(0.1f, 6.2f, 0.05f) - 0.05f) < 0.000001f); // The short way: down
+    TIDE_CHECK(fabsf(tide_wrapangle_f(tide_movetowardsangle_f(0.1f, 6.2f, 1.0f)) - tide_wrapangle_f(6.2f)) < 0.00001f);
+
+    TIDE_CHECK(tide_damp_f(2.0f, 10.0f, 0.0f, 1.0f) == 2.0f && tide_damp_f(2.0f, 10.0f, -3.0f, 1.0f) == 2.0f);
+    TIDE_CHECK(tide_damp_f(2.0f, 10.0f, NAN, 1.0f) == 2.0f && tide_damp_f(2.0f, 10.0f, 1000.0f, 1.0f) == 10.0f);
+    // The same in one step as in many: that's what it's for
+    float stepped = 0.0f;
+    for (int i = 0; i < 100; i++) stepped = tide_damp_f(stepped, 8.0f, 3.0f, 0.01f);
+    TIDE_CHECK(fabsf(stepped - tide_damp_f(0.0f, 8.0f, 3.0f, 1.0f)) < 0.0001f);
+    const tide_float3 eased = tide_damp_f3(tide_f3(0.0f, 0.0f, 0.0f), tide_f3(2.0f, 4.0f, 8.0f), 0.69314718f, 1.0f);
+    TIDE_CHECK(fabsf(eased.x - 1.0f) < 0.00001f && fabsf(eased.y - 2.0f) < 0.00001f && fabsf(eased.z - 4.0f) < 0.00001f);
+    const tide_float2 slid = tide_damp_f2(tide_f2(1.0f, 1.0f), tide_f2(1.0f, 3.0f), 0.69314718f, 1.0f);
+    TIDE_CHECK(slid.x == 1.0f && fabsf(slid.y - 2.0f) < 0.00001f);
+    const tide_float3 rgb = tide_color_rgb((tide_color){0.25f, 0.5f, 1.0f, 0.37f});
+    TIDE_CHECK(rgb.x == 0.25f && rgb.y == 0.5f && rgb.z == 1.0f);
+}
+
 TIDE_TEST(math_srgb_transfer)
 {
     TIDE_CHECK(tide_tolinear_f(0.0f) == 0.0f);
@@ -635,13 +676,85 @@ TIDE_TEST(math_srgb_transfer)
     TIDE_CHECK(fabsf(tide_todisplay_f(0.5f) - 0.73535698f) < 0.000001f);
     TIDE_CHECK(tide_tolinear_f(NAN) == 0.0f);
     TIDE_CHECK(tide_todisplay_f(-1.0f) == 0.0f);
-    TIDE_CHECK(fabsf(tide_todisplay_f(INFINITY) - 1.0f) < 0.000001f);
-    for (int i = 0; i <= 255; i++) {
+    // Both ends exactly, of each function and of both: 1.055f * 1 - 0.055f alone is 0.99999994
+    TIDE_CHECK(tide_todisplay_f(1.0f) == 1.0f && tide_tolinear_f(1.0f) == 1.0f);
+    TIDE_CHECK(tide_todisplay_f(0.0f) == 0.0f && tide_todisplay_f(-0.0f) == 0.0f && tide_todisplay_f(NAN) == 0.0f);
+    TIDE_CHECK(tide_todisplay_f(INFINITY) == 1.0f && tide_todisplay_f(2.0f) == 1.0f && tide_tolinear_f(INFINITY) == 1.0f);
+    TIDE_CHECK(tide_todisplay_f(tide_tolinear_f(1.0f)) == 1.0f && tide_tolinear_f(tide_todisplay_f(1.0f)) == 1.0f);
+    TIDE_CHECK(tide_todisplay_f(tide_tolinear_f(0.0f)) == 0.0f);
+    // ...and nothing under 1 passes it (the float under 1 may round to it)
+    const float under = tide_f_from_bits(tide_f_bits(1.0f) - 1u);
+    TIDE_CHECK(tide_todisplay_f(under) <= 1.0f && tide_tolinear_f(under) <= 1.0f);
+    TIDE_CHECK(tide_todisplay_f(under) > 0.9999f && tide_tolinear_f(under) > 0.9999f);
+    const tide_color white = tide_todisplay_c(tide_tolinear_c((tide_color){1.0f, 1.0f, 1.0f, 1.0f}));
+    TIDE_CHECK(white.r == 1.0f && white.g == 1.0f && white.b == 1.0f && white.a == 1.0f);
+    for (int i = 0; i <= 255; i++) { // Every byte there and back is itself, and within two parts in a million as a float
         const float x = (float)i / 255.0f;
         TIDE_CHECK(fabsf(tide_todisplay_f(tide_tolinear_f(x)) - x) < 0.000002f);
+        TIDE_CHECK((int)(tide_todisplay_f(tide_tolinear_f(x)) * 255.0f + 0.5f) == i);
+        TIDE_CHECK((int)(tide_tolinear_f(tide_todisplay_f(x)) * 255.0f + 0.5f) == i);
     }
     const tide_color c = tide_tolinear_c((tide_color){0.5f, 0.04045f, 1.0f, 0.37f});
-    TIDE_CHECK(c.a == 0.37f && c.r == tide_tolinear_f(0.5f));
+    TIDE_CHECK(c.a == 0.37f && c.r == tide_tolinear_f(0.5f) && c.b == 1.0f);
     const tide_float3 v = tide_todisplay_f3(tide_f3(0.0f, 0.5f, 1.0f));
-    TIDE_CHECK(v.x == 0.0f && v.y == tide_todisplay_f(0.5f));
+    TIDE_CHECK(v.x == 0.0f && v.y == tide_todisplay_f(0.5f) && v.z == 1.0f);
+}
+
+// The formula tide/transfer_bytes.h finds bytes of, written out: each test below holds its tables and functions
+// to it.
+static uint8_t display_byte_by_pow(const float light)
+{
+    return (uint8_t)(tide_todisplay_f(light) * 255.0f + 0.5f);
+}
+
+static uint8_t premultiplied_byte_by_pow(const float straight, const uint8_t alpha)
+{
+    return display_byte_by_pow(tide_tolinear_f(straight) * ((float)alpha / 255.0f));
+}
+
+// The tables were made by bisecting tide_pow_f's results, and the functions compared with the formula for every
+// float from 0 to 1 (1,065,353,217 of them: no difference) when they were, 2026-11-14 (notes/textures.md). Here,
+// every entry is the first float of its byte, which is what makes the functions exact as long as the formula never
+// goes down; a sweep, every byte under every alpha and both sides of every edge say the functions follow them.
+TIDE_TEST(math_transfer_bytes)
+{
+    for (uint32_t b = 1; b < 256u; b++) {
+        const float display = tide_transfer_display_from[b], same = tide_transfer_same_from[b];
+        TIDE_CHECK(display_byte_by_pow(display) == b && premultiplied_byte_by_pow(same, 255) == b);
+        const float before_display = tide_f_from_bits(tide_f_bits(display) - 1u), before_same = tide_f_from_bits(tide_f_bits(same) - 1u);
+        TIDE_CHECK(display_byte_by_pow(before_display) == b - 1u && premultiplied_byte_by_pow(before_same, 255) == b - 1u);
+        TIDE_CHECK(tide_transfer_display_from[b] > tide_transfer_display_from[b - 1u]);
+        TIDE_CHECK(tide_transfer_same_from[b] > tide_transfer_same_from[b - 1u]);
+        // Either side of an edge, and the edge
+        TIDE_CHECK(tide_transfer_display_byte(display) == b && tide_transfer_display_byte(before_display) == b - 1u);
+        TIDE_CHECK(tide_transfer_premultiplied_byte(same, 255) == b && tide_transfer_premultiplied_byte(before_same, 255) == b - 1u);
+    }
+    TIDE_CHECK(tide_transfer_display_from[1] >= tide_f_from_bits(0x39000000u)); // Nothing under the guesses is past byte 0
+    for (uint32_t i = 0; i <= 416u; i++) {
+        TIDE_CHECK(tide_transfer_display_guess[i] == display_byte_by_pow(tide_f_from_bits(0x39000000u + (i << 18))));
+    }
+    // Every 4,099th float from 0 to 1, as a linear value and as an opaque, a nearly clear and a half-clear channel
+    for (uint32_t bits = 0; bits <= 0x3F800000u; bits += 4099u) {
+        const float x = tide_f_from_bits(bits);
+        TIDE_CHECK(tide_transfer_display_byte(x) == display_byte_by_pow(x));
+        TIDE_CHECK(tide_transfer_premultiplied_byte(x, 255) == premultiplied_byte_by_pow(x, 255));
+        TIDE_CHECK(tide_transfer_premultiplied_byte(x, 1) == premultiplied_byte_by_pow(x, 1));
+        TIDE_CHECK(tide_transfer_premultiplied_byte(x, 128) == premultiplied_byte_by_pow(x, 128));
+    }
+    tide_transfer_table table;
+    tide_transfer_table_make(&table);
+    for (int value = 0; value < 256; value++) { // What an 8-bit image holds: every byte under every alpha
+        const float x = (float)value / 255.0f;
+        TIDE_CHECK(table.linear[value] == tide_tolinear_f(x));
+        for (int alpha = 0; alpha < 256; alpha++) {
+            TIDE_CHECK(tide_transfer_premultiplied_byte(x, (uint8_t)alpha) == premultiplied_byte_by_pow(x, (uint8_t)alpha));
+        }
+    }
+    // Out of range and no number, as the functions the formula is made of take them
+    TIDE_CHECK(tide_transfer_display_byte(-1.0f) == 0 && tide_transfer_display_byte(NAN) == 0 && tide_transfer_display_byte(7.0f) == 255);
+    // -0, which saturating keeps: 0 under every alpha, not a byte read past the guesses
+    TIDE_CHECK(tide_transfer_display_byte(-0.0f) == 0 && tide_transfer_display_byte(-0x1p-140f) == 0);
+    for (int alpha = 0; alpha < 256; alpha++) TIDE_CHECK(tide_transfer_premultiplied_byte(-0.0f, (uint8_t)alpha) == 0);
+    TIDE_CHECK(tide_transfer_premultiplied_byte(NAN, 255) == 0 && tide_transfer_premultiplied_byte(9.0f, 255) == 255);
+    TIDE_CHECK(tide_transfer_premultiplied_byte(1.0f, 0) == 0 && tide_transfer_premultiplied_byte(INFINITY, 128) == premultiplied_byte_by_pow(1.0f, 128));
 }

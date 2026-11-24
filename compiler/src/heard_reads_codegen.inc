@@ -79,10 +79,44 @@ static bool heard_add_read(gen *g, const void *source, const char *path)
     return true;
 }
 
-static const char *heard_member_path(const char *member, const char *rest)
+// "member.rest", made once for each member and rest: every member expression of the game asks for one, each pass,
+// and most ask for one made before. `member` is what tells the member (a field, or the text itself for an
+// array's "at[*]") and `rest` a path made here or "", so the two addresses are the key.
+typedef struct heard_path {
+    const void *member;
+    const char *rest, *path;
+} heard_path;
+
+static struct {
+    heard_path *items;
+    uint32_t mask, count;
+} heard_paths;
+
+static const char *heard_member_path(const void *member, const char *name, const char *rest)
 {
+    if (!*rest) rest = ""; // One address for no rest
+    if (!heard_paths.items || (uint64_t)(heard_paths.count + 1u) * 2u > heard_paths.mask) {
+        const uint32_t mask = heard_paths.items ? heard_paths.mask * 2u + 1u : 4095u;
+        heard_path *items = arena_alloc(((size_t)mask + 1u) * sizeof *items);
+        memset(items, 0, ((size_t)mask + 1u) * sizeof *items);
+        for (uint32_t i = 0; heard_paths.items && i <= heard_paths.mask; i++) {
+            const heard_path *had = &heard_paths.items[i];
+            if (!had->path) continue;
+            uint32_t at = (heard_place(had->member, mask) ^ heard_place(had->rest, mask) * 31u) & mask;
+            while (items[at].path) at = (at + 1u) & mask;
+            items[at] = *had;
+        }
+        heard_paths.items = items;
+        heard_paths.mask = mask;
+    }
+    uint32_t at = (heard_place(member, heard_paths.mask) ^ heard_place(rest, heard_paths.mask) * 31u) & heard_paths.mask;
+    for (; heard_paths.items[at].path; at = (at + 1u) & heard_paths.mask) {
+        if (heard_paths.items[at].member == member && heard_paths.items[at].rest == rest) return heard_paths.items[at].path;
+    }
     sb path = {0};
-    sb_printf(&path, "%s%s%s", member, *rest ? "." : "", rest);
+    sb_printf(&path, "%s%s%s", name ? name : field_cname(member), *rest ? "." : "", rest);
+    heard_paths.items[at] = (heard_path){member, rest, path.data};
+    heard_paths.count++;
     return path.data;
 }
 
@@ -103,17 +137,18 @@ static bool heard_access(heard_walk *w, const expr *e, const char *path)
     }
     if (e->kind == E_THIS || (e->kind == E_NAME && e->bind == BIND_FIELD)) {
         if (w->routine->owner) {
-            if (e->kind == E_NAME) path = heard_member_path(field_cname(e->field), path);
+            if (e->kind == E_NAME) path = heard_member_path(e->field, NULL, path);
             w->changed |= heard_add_read(w->g, w->routine, path);
         }
         return true;
     }
     if (e->kind == E_MEMBER) {
-        if (e->field) path = heard_member_path(field_cname(e->field), path);
+        if (e->field) path = heard_member_path(e->field, NULL, path);
         return heard_access(w, e->object, path);
     }
     if (e->kind == E_INDEX) {
-        if (e->object->type.kind == TY_ARRAY) path = heard_member_path("at[*]", path);
+        static const char each[] = "at[*]";
+        if (e->object->type.kind == TY_ARRAY) path = heard_member_path(each, each, path);
         return heard_access(w, e->object, path);
     }
     return false;
@@ -263,7 +298,6 @@ static void heard_read_routine(gen *g, heard_set *seen, const decl *d, bool *cha
     heard_walk w = {.g = g, .routine = d, .seen = seen};
     heard_read_stmt(&w, d->body);
     *changed |= w.changed;
-    for (int i = 0; i < d->methods.count; i++) heard_read_routine(g, seen, d->methods.items[i], changed);
 }
 
 static void collect_heard_reads(gen *g)
@@ -274,9 +308,14 @@ static void collect_heard_reads(gen *g)
         const decl *d = g->prog->decls.items[i];
         if (d->embed_tap && d->params.count) heard_add_read(g, &d->params.items[0], "");
     }
+    // A routine's reads come from the routines it calls, so each is walked after those: one pass settles all but
+    // calls that go round, and the next finds nothing new. What's read is the same set in any order.
+    int count;
+    const decl **routines = call_graph_bottom_up(g->prog, &count);
+    memset(&heard_paths, 0, sizeof heard_paths); // The arena's, as this compilation's
     heard_set seen = {0};
     for (bool changed = true; changed;) {
         changed = false;
-        for (int i = 0; i < g->prog->decls.count; i++) heard_read_routine(g, &seen, g->prog->decls.items[i], &changed);
+        for (int i = 0; i < count; i++) heard_read_routine(g, &seen, routines[i], &changed);
     }
 }

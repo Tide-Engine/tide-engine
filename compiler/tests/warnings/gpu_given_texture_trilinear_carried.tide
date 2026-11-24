@@ -1,0 +1,26 @@
+// warnings: 1
+// expect: 'look.atlas' may say Filter.Trilinear, which a function's Sample can't read: it reads the texture's own pixels
+// expect: frag 'Shade' samples it through 'Tile', here
+// A Texture field of the singleton a function is handed may say Filter.Trilinear, as one it's passed may
+scene Main { }
+
+local singleton Look
+{
+    [Filter(Filter.Trilinear)]
+    Grid2<Color> tiles = Grid2(4, 4);
+    Texture atlas;
+    List<Vertex3> mesh;
+}
+
+Color Tile(Look look, float2 uv) { return look.atlas.Sample(uv); }
+
+frag Shade(Vertex3 vertex, out Color color, Look look)
+{
+    color = Tile(look, vertex.uv) + look.tiles.Sample(vertex.uv);
+}
+
+view Show(mut Look look)
+{
+    look.atlas = look.tiles;
+    Draw.Mesh(look.mesh, [0, 1, 2], float4x4.identity, Shade);
+}

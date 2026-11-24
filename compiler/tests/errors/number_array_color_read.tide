@@ -1,0 +1,5 @@
+// expect: image 'layers' is read as Color, but Format.R16f takes float: declare its numeric role with [Raw(float)]
+scene Main { }
+local singleton Images { TextureArray layers; }
+frag Read(Vertex vertex,out Color color,Images images) { color=images.layers.Sample(vertex.uv,0); }
+view Show(mut Images images) { images.layers=TextureArray(8,8,2,Format.R16f); List<Vertex> quad=[Vertex {position=float2(0)},Vertex {position=float2(1,0)},Vertex {position=float2(0,1)}]; Draw.Mesh(quad,[0,1,2],Read); }

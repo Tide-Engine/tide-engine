@@ -1,0 +1,4 @@
+// How fast shards_players.tide's avatars walk, in a file of its own so that a second build of the game
+// (shards_players_walk_next.tide in its place) has the same state laid out the same and another rule: the
+// game's next build, which a server takes a sealed world up with (platform/tests/server_journal.mjs).
+float WalkSpeed() { return 8.0; }

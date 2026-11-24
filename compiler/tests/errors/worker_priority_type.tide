@@ -1,0 +1,4 @@
+// expect: 'priority:' takes a WorkerPriority, and this is int
+local worker int Build(int value) { return value; }
+async void Run() { var built = await Build(1, priority: 2); }
+scene Main;

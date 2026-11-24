@@ -8,5 +8,6 @@
 
 // Calls work(context, i) once for each i below `count`, on as many threads as there are processors (the caller's
 // among them; `most` at the most where it isn't 0), and returns when every one has returned. Work must touch
-// nothing another item does: no arena, no diagnostics.
+// nothing another item does, and no diagnostics. The arena it may use: each thread started here allocates from
+// blocks of its own (arena_thread), which last as the arena's do.
 void build_threads_each(uint32_t count, uint32_t most, void (*work)(void *context, uint32_t i), void *context);

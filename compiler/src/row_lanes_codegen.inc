@@ -25,12 +25,23 @@ static bool system_rows_plain(const gen *g, const decl *sys)
         && !sys->preparation_owner && !sharded(g);
 }
 
+// ...and a match handler's one row (gen_dispatch_handlers, while it says g->row_single), copied once for the event it
+// runs for: the lanes its code can read or write, as a system's, which are put back only where their bytes changed
+// (gen_row_puts), and its dispatch takes only their columns (gen_chunk_columns). Its guard is the code's own: a
+// handler has no marking pass. A dispatch that gathers or writes another way gets the component whole
+static bool handler_rows_plain(const gen *g, const decl *sys)
+{
+    return !g->opts->split_plumbing && sys->is_handler && g->row_single && sys->per_entity && sys->body && !sys->extern_system && !sys->starts_tasks
+        && !sys->is_async && !sys->is_virtual && !sys->is_override && !sys->replaced_by && !sys->is_local && !sharded(g);
+}
+
 // Whether parameter `i`'s copy can be made of some of its lanes: a component nothing but the system's own code
 // reads the copy of
 static bool system_param_splits(const gen *g, const decl *sys, const int i)
 {
     const param *p = &sys->params.items[i];
-    if (!system_rows_plain(g, sys) || p->type.kind != TY_COMPONENT || (p->mode != PARAM_READ && p->mode != PARAM_MUT)) return false;
+    if (!(system_rows_plain(g, sys) || handler_rows_plain(g, sys)) || p->type.kind != TY_COMPONENT
+        || (p->mode != PARAM_READ && p->mode != PARAM_MUT)) return false;
     const decl *d = p->type.decl;
     const int lanes = comp_lanes(d);
     return lanes > 1 && lanes <= LANE_MASK_MOST && decl_layout(d).size <= LANE_WRITES_MOST && !d->is_local
@@ -117,6 +128,8 @@ static bool guard_plain(const expr *e)
     case E_MEMBER:
         if (e->enum_member) return true;
         if (e->constant) return guard_value(e->type);
+        // Audience.All and Audience.None (check.c) are values; other static members' C can read a machine's state
+        if (e->c_constant && (!strcmp(e->c_constant, "TIDE_AUDIENCE_ALL") || !strcmp(e->c_constant, "((Audience){0})"))) return true;
         if (e->property || e->local_field || e->edge != EDGE_NONE || e->c_constant || e->typed_text || e->raw_sampled
             || e->target_colors || e->asset_ref_value) return false;
         // A list's count, of a field: read where the list is
@@ -165,6 +178,38 @@ static int system_guard_terms(const decl *sys, const expr **terms)
             if (!guard_term(chain[k]) || n == GUARD_TERMS_MOST) return n;
             terms[n++] = chain[k];
         }
+    }
+    return n;
+}
+
+// Whether `e` only reads: names, fields, constants and operators on them, with no call, method, property (a
+// getter is a call) or anything else that could spawn, send or start a task
+static bool reads_alone(const expr *e)
+{
+    if (!e) return true;
+    if (e->hoisted || e->lambda) return false;
+    switch (e->kind) {
+    case E_INT: case E_FLOAT: case E_BOOL: case E_NAME: case E_DEFAULT: case E_THIS: return true;
+    case E_MEMBER: return !e->property && reads_alone(e->object);
+    case E_UNARY: case E_BINARY: return !e->method && reads_alone(e->lhs) && reads_alone(e->rhs);
+    case E_CONDITIONAL: return reads_alone(e->cond) && reads_alone(e->lhs) && reads_alone(e->rhs);
+    default: return false;
+    }
+}
+
+// How many of the statements `sys`'s code starts with are `if (<test>) return;`, each test only reading
+// (reads_alone): none can spawn or send, so what the code needs only for those (its cause, two hashes of its
+// entity) can be worked out after them, and a row they turn away pays none of it. Not a view's.
+static int leading_plain_returns(const decl *sys)
+{
+    if (sys->is_view) return 0;
+    int n = 0;
+    for (int i = 0; i < sys->body->stmts.count; i++, n++) {
+        const stmt *s = sys->body->stmts.items[i];
+        if (s->kind != S_IF || s->else_stmt || !s->cond || !s->then_stmt) return n;
+        const stmt *then = s->then_stmt;
+        if (then->kind == S_BLOCK && then->stmts.count == 1) then = then->stmts.items[0];
+        if (then->kind != S_RETURN || then->value || !reads_alone(s->cond)) return n;
     }
     return n;
 }

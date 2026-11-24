@@ -18,14 +18,6 @@ component Spinner
     char badge = 'S';
 }
 
-// Bonus.unity's entities, while a player has them: the match loads the scene, and Unity loads it with them. Twice:
-// the scene again beside it, which Unity loads another of
-command ShowBonus
-{
-    bool on;
-    bool twice;
-}
-
 singleton Extras
 {
     Entity bonus;
@@ -39,30 +31,20 @@ singleton Extras
 }
 
 // A line from Unity's UI, which the match keeps for everyone: TideRunner.Get<Extras>().said in C#
-command Say
+command(string text) Say(mut Extras extras, PlayerID sender)
 {
-    string text;
-}
-
-command(Say say, PlayerID sender) Saying(mut Extras extras)
-{
-    extras.said = say.text;
+    extras.said = text;
     extras.speakers.Add(sender);
     if (extras.board.size.x == 0) extras.board = Grid2(8, 8);
     extras.board[3, 4] += 1;
-    extras.lines.Add(say.text);
-    Debug.Log($"said {say.text}"); // In Unity's Console, as any Debug.Log of the game's
+    extras.lines.Add(text);
+    Debug.Log($"said {text}"); // In Unity's Console, as any Debug.Log of the game's
 }
 
 // Balls nobody rolls, as many as asked for: what a busy match costs Unity each frame (ScaleTests)
-command Crowd
+command(int count) Crowd(mut Extras extras, PlayerID sender)
 {
-    int count;
-}
-
-command(Crowd crowd, PlayerID sender) Crowding(mut Extras extras)
-{
-    var wanted = Math.Clamp(crowd.count, 0, 4096);
+    var wanted = Math.Clamp(count, 0, 4096);
     while (extras.crowd.count > wanted)
     {
         extras.crowd[extras.crowd.count - 1].Destroy();
@@ -78,34 +60,31 @@ command(Crowd crowd, PlayerID sender) Crowding(mut Extras extras)
 
 // A ball nobody rolls, in and out of the box: a GameObject made and let go of as its entity comes and goes, which
 // TideRunner's pool keeps for the next
-command Toss
+command(bool on) Toss(mut Extras extras, PlayerID sender)
 {
-    bool on;
-}
-
-command(Toss toss, PlayerID sender) Tossing(mut Extras extras)
-{
-    if (toss.on && extras.tossed == default)
+    if (on && extras.tossed == default)
     {
         extras.tossed = Spawn(Roller, Ball { color = Color(1, 1, 1), seat = -1 }, Transform { localPosition = float3(0, 3, 0) });
     }
-    if (!toss.on && extras.tossed != default)
+    if (!on && extras.tossed != default)
     {
         extras.tossed.Destroy();
         extras.tossed = default;
     }
 }
 
-command(ShowBonus show, PlayerID sender) Toggle(mut Extras extras)
+// Bonus.unity's entities, while a player has them: the match loads the scene, and Unity loads it with them. Twice:
+// the scene again beside it, which Unity loads another of
+command(bool on, bool twice) ShowBonus(mut Extras extras, PlayerID sender)
 {
-    if (show.on && extras.bonus == default) extras.bonus = Scene.Load(Bonus);
-    if (show.on && show.twice && extras.again == default) extras.again = Scene.Load(Bonus);
-    if (!show.on && extras.bonus != default)
+    if (on && extras.bonus == default) extras.bonus = Scene.Load(Bonus);
+    if (on && twice && extras.again == default) extras.again = Scene.Load(Bonus);
+    if (!on && extras.bonus != default)
     {
         Scene.Unload(extras.bonus);
         extras.bonus = default;
     }
-    if (!show.on && extras.again != default)
+    if (!on && extras.again != default)
     {
         Scene.Unload(extras.again);
         extras.again = default;
@@ -152,6 +131,14 @@ component Ball
     int bounces;
     Trail trail;
     local int heard; // This machine's, as its local handler counts its bounces (Heard)
+    // One of Unity's own textures, set on the prefab in Unity's inspector (Roller.prefab: Mark.png, as Unity
+    // imported it), which Marks draws
+    local Texture mark;
+    // Unity's own objects, set on the prefab the same way, which Tide's code hands back to Unity: Emblem draws the
+    // mesh with the material over the ball, and Heard plays the clip through Unity's audio
+    local UnityEngine.Mesh badge;
+    local UnityEngine.Material badgeLook;
+    local UnityEngine.AudioClip chime;
 }
 
 // A ball hitting the floor: C# hears it as local handlers do (TideRunner.On, OnVerified, the ball's TideEntity.On)
@@ -164,17 +151,13 @@ local event(Bounced bounced) Heard(mut Ball ball)
 {
     ball.heard += 1;
     Audio.Play(bonk, Math.Min(bounced.speed / 5, 1));
+    Audio.Play(ball.chime, 0.5); // Unity's clip, through Unity's own audio
 }
 
 // Sent to a ball: TideRunner.Send(new Paint { ... }, ballGameObject) in C#
-command Paint
+command(Color color) Paint(mut Ball ball, PlayerID sender)
 {
-    Color color;
-}
-
-command(Paint paint, PlayerID sender) Painting(mut Ball ball)
-{
-    ball.color = paint.color;
+    ball.color = color;
 }
 
 singleton Room
@@ -203,6 +186,28 @@ view Ring(Ball ball, Transform transform)
     {
         Draw.WireCircle(at.xy, 24, ball.color);
     }
+}
+
+// A texture Unity imported, drawn by Tide: the first player's ball's `mark`, at the left of the screen over a black
+// square, so its half-clear pixels show how much of it there is. It's this machine's, and no texture until Unity
+// shows the ball's GameObject and hands it over, a frame after the ball spawns
+view Marks(Ball ball)
+{
+    if (ball.seat != 0 || ball.mark.size.x == 0) return;
+    Draw.Screen()
+    {
+        Draw.Rect(float2(48, Screen.height / 2), float2(72, 72), Color.black);
+        Draw.Sprite(ball.mark, float2(48, Screen.height / 2), float2(64, 64));
+    }
+}
+
+// A mesh and a material of Unity's own, drawn by Unity where this view says, among Tide's own draws: a small cube
+// two units over the first player's ball
+view Emblem(Ball ball, Transform transform)
+{
+    if (ball.seat != 0) return;
+    Draw.UnityMesh(ball.badge, ball.badgeLook,
+        float4x4.TRS(transform.localPosition + float3(0, 2, 0), quaternion.identity, float3(0.3, 0.3, 0.3)));
 }
 
 // Tide's 3D, which Unity draws with its camera's depth: a cube over each ball, and two plates in a frag of the

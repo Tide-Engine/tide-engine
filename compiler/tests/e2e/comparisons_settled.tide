@@ -1,0 +1,115 @@
+// Comparisons whose answer follows from the types and constants alone. Each is valid Tide with one defined answer,
+// so the game builds (clang's warnings of comparisons that are always true or false are errors in generated C)
+// and gives that answer.
+singleton Probe
+{
+    int h = 7;
+    int f = 12;
+    byte small = 200;
+    long wide = 5;
+    bool flag = true;
+    Kind kind = Kind.Second;
+    int passed;
+    int failed;
+}
+
+enum Kind { First, Second, Third }
+
+const int MASK = 31;
+const int NEVER = 99;
+
+void Expect(mut Probe probe, bool got, bool want)
+{
+    if (got == want) probe.passed += 1;
+    else probe.failed += 1;
+}
+
+system Check(mut Probe probe)
+{
+    probe.passed = 0;
+    probe.failed = 0;
+    var h = probe.h;
+    var f = probe.f;
+    var small = probe.small;
+    var wide = probe.wide;
+    // A masked value against a number the mask can't give
+    Expect(probe, ((h + f) & 31) == 99, false);
+    Expect(probe, ((h + f) & 31) != 99, true);
+    Expect(probe, ((h + f) & MASK) == NEVER, false);
+    Expect(probe, (h & 7) == 8, false);
+    Expect(probe, (h & 7) > 7, false);
+    Expect(probe, (h & 7) <= 7, true);
+    Expect(probe, (h & 0) != 0, false);
+    Expect(probe, (wide & 15) == 16, false);
+    Expect(probe, 99 == ((h + f) & 31), false);
+    // An or that always has bits the number hasn't
+    Expect(probe, (h | 8) == 0, false);
+    Expect(probe, (h | 8) != 0, true);
+    Expect(probe, (h | 3) == 4, false);
+    Expect(probe, (wide | 1) == 0, false);
+    // Shifts
+    Expect(probe, (h << 4) == 3, false);
+    Expect(probe, ((h << 4) & 15) != 0, false);
+    Expect(probe, ((small >> 4) & 15) == 16, false);
+    Expect(probe, (small >> 8) == 0, true);
+    Expect(probe, (small >> 9) != 0, false);
+    // A byte is never below 0 or above 255
+    Expect(probe, small < 0, false);
+    Expect(probe, small >= 0, true);
+    Expect(probe, small > 255, false);
+    Expect(probe, small <= 255, true);
+    Expect(probe, small == 256, false);
+    Expect(probe, small != -1, true);
+    Expect(probe, 0 > small, false);
+    Expect(probe, 0 <= small, true);
+    Expect(probe, int(small) < 0, false);
+    Expect(probe, small == 200, true);
+    // An int against a long's range, a remainder against its divisor
+    Expect(probe, h < 3000000000, true);
+    Expect(probe, h >= -3000000000, true);
+    Expect(probe, h == 3000000000, false);
+    Expect(probe, (h % 4) == 4, false);
+    Expect(probe, (h % 4) < 4, true);
+    // The same value on both sides, and constants alone
+    Expect(probe, h == h, true);
+    Expect(probe, h != h, false);
+    Expect(probe, h < h, false);
+    Expect(probe, h <= h, true);
+    Expect(probe, small == small, true);
+    Expect(probe, MASK == NEVER, false);
+    Expect(probe, MASK < NEVER, true);
+    Expect(probe, (MASK & 64) == 0, true);
+    Expect(probe, 3 > 5, false);
+    // Bools and enums
+    Expect(probe, (probe.flag && !probe.flag), false);
+    Expect(probe, (probe.flag || !probe.flag), true);
+    Expect(probe, probe.flag == probe.flag, true);
+    Expect(probe, probe.kind == probe.kind, true);
+    Expect(probe, int(probe.kind) > 2, false);
+    Expect(probe, int(probe.kind) >= 0, true);
+    Expect(probe, (int(probe.kind) & 3) == 4, false);
+    Expect(probe, (h & 1) == int(Kind.Third), false);
+    Expect(probe, int(Kind.Third) == 3, false);
+    Expect(probe, probe.kind != Kind.Second, false);
+    // Two comparisons with constants that can't both hold, or can't both fail
+    Expect(probe, h < 3 && h > 5, false);
+    Expect(probe, h == 3 && h == 5, false);
+    Expect(probe, h != 3 || h != 5, true);
+    // A variable given itself changes nothing
+    mut var same = h;
+    same = same;
+    Expect(probe, same == h, true);
+    // Where code branches on one, and in a loop's condition
+    if (((h + f) & 31) == 99) probe.failed += 1;
+    else probe.passed += 1;
+    if ((h | 8) == 0 || small < 0) probe.failed += 1;
+    else probe.passed += 1;
+    var kept = (h & 7) == 8 ? 1 : 2;
+    Expect(probe, kept == 2, true);
+    mut var turns = 0;
+    while ((turns & 3) == 4) turns += 1;
+    for (var i = 0; (i & 1) == 2; i++) turns += 1;
+    Expect(probe, turns == 0, true);
+}
+
+scene Main;

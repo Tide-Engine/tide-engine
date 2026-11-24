@@ -34,22 +34,15 @@ struct tt_Corner {
     m_position: vec3f,
     m_uv: vec2f,
 }
-fn tide_f(x: f32) -> f32 {
-    return x;
-}
-fn tide_nan(x: f32) -> bool {
-    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
-}
 fn tide_saturate1(a: f32) -> f32 {
-    if (tide_nan(a)) { return 0.0; }
-    return clamp(a, 0.0, 1.0);
+    return select(clamp(a, 0.0, 1.0), 0.0, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000);
 }
 fn tide_straight(c: vec4f) -> vec4f {
     if (c.a == 0.0) { return vec4f(0.0); }
     return vec4f(c.rgb / c.a, c.a);
 }
 fn tf_Disc(t_uv: vec2f) -> f32 {
-    return (length((t_uv - vec2f(tide_f(0.5)))) - 0.4);
+    return (length((t_uv - vec2f(0.5))) - 0.4);
 }
 
 fn ts_Ring(t_vertex: tt_Corner, t_color: ptr<function, vec4f>) {
@@ -62,7 +55,7 @@ fn ts_Ring(t_vertex: tt_Corner, t_color: ptr<function, vec4f>) {
     var t_d: f32 = tf_Disc(t_vertex.m_uv);
     (*t_color) = vec4f(1.0, 1.0, 1.0, 1.0);
     if ((t_vertex.m_uv.x > 0.25)) {
-        var t_edge: f32 = tide_saturate1((tide_f(0.5) - (t_d / tide_d0)));
+        var t_edge: f32 = tide_saturate1((0.5 - (t_d / tide_d0)));
         (*t_color) = vec4f(t_edge, t_edge, t_edge, 1.0);
     }
     var t_slope: vec2f = (tide_d1 + tide_d2);

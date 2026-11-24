@@ -165,3 +165,39 @@ Saves of inactive worlds have finite retention, initially seven days, with a
 final-day dashboard warning. Download or resume a world before its save expires.
 An explicitly ended or payment-suspended world does not restart automatically.
 Email notifications and multiple host machines/regions are not implemented yet.
+
+## The match's store
+
+A match whose code keeps values with [`Storage`](../game/files.md#saving-the-match)
+(`Storage.Save`, `Load`, `Delete` and `List`) keeps them in the service, as a
+dedicated server keeps them in its folder: the same keys, values and answers,
+which reach the match as input in the order they were asked. The service reads
+and writes them while the match goes on, so a tick never waits for its disk.
+
+- **Each world has its own.** A match's values are its own: a long-lived world
+  finds them again when it's resumed or recovered from its save, and its waiting
+  tasks ask again for what they awaited. All shards of a sharded world share
+  the world's. A new match, and a sharded world started on a new release, start
+  with none.
+- **Limits.** A value is at most 4 MiB, and a world keeps at most 100,000 keys
+  in 64 MiB of disk, by default (each key's row counts too, about 256 bytes and
+  the key twice, and a value over 16 KiB by the 4 KiB blocks of its file); the
+  operator sets these, and an account's worlds together and all matches on a
+  host together have limits too. A save past a limit isn't kept, the match's log
+  says why, and what the key held before stays.
+- **Pace.** A world's reads and writes go at a few MiB a second once it has
+  done a world's worth at once; what a match asks faster waits, and past what
+  may wait (64 MiB or 65,536 requests a world) a save isn't kept and a load or
+  a listing comes back as `failed`. Every load and listing is answered.
+- **Storage.** What worlds keep counts in the account's storage, beside
+  releases, saves and reports. Past the plan's allowance with extra usage off,
+  saves that would keep more are refused, as uploads are.
+- **Deletion.** A world's values go with it: when the match ends, when its save
+  is deleted or expires, and for a sharded world when a new release replaces
+  it.
+- What couldn't be read (the disk refused it, or what's there isn't what was
+  saved) comes back as `failed`, not as nothing, so a game doesn't make it
+  afresh and save over it.
+- **A recovered match** goes on from its last save, and the service records a
+  save only once everything the match asked of its store before it is written:
+  its store can be newer than the save, never older.

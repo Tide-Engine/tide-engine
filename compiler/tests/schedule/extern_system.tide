@@ -60,6 +60,30 @@ extern system TallyRocks(mut Count count, with Rock);
 [Before(Blow)]
 extern system Gust(mut Wind wind, Time time);
 
+// What C can change of a singleton's list is in the match's own heap, with every list C can write: a system written
+// in Tide that changes another of them waits for it, with no data in common, as two that change one heap at once
+// would corrupt it
+singleton Topology
+{
+    List<int> pairs;
+}
+
+singleton Journal
+{
+    List<int> lines;
+}
+
+[NativeName("game_topology")]
+extern system Topo(mut Topology topology);
+
+[NativeName("game_journal")]
+extern system Read(mut Journal journal);
+
+system Note(mut Journal journal, Time time)
+{
+    journal.lines.Add(time.tick);
+}
+
 event(Spawned) Setup(with Main)
 {
     Spawn(Position, Velocity, Health { value = 5 }, Ship);

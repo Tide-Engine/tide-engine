@@ -1,0 +1,11 @@
+// expect: a parallel loop's steps run at once, so each changes only its own place
+component Health { int value; Entity target; }
+singleton Roster { List<Entity> all; }
+scene Main { }
+system Hurt(Roster roster, mut World world)
+{
+    parallel (var i in roster.all)
+    {
+        world.Edit<Health>(roster.all[i], other) { other.value -= 1; }
+    }
+}

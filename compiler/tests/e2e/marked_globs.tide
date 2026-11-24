@@ -1,0 +1,78 @@
+// [Raw] and [Linear] beyond one declaration: a glob's list and map, their elements, a foreach, a local that isn't mut,
+// a ?: and a switch of one role, a function's [Raw] and [Linear] parameters, a [Raw] list parameter, and a frag's
+// [Raw] and [Linear] sources; and a typed [Raw(int)] image through a local that isn't mut to a frag's source, and
+// into a CPU function's [Raw(int)] parameter; and a frag that takes a marked texture and a plain one, each given the
+// image of its own role (marked_globs_test.c).
+[Raw] asset List<Texture> maps = "assets/hero.png";
+[Linear] asset Map<string, Texture> lits = "assets/hero.png";
+[Linear] asset List<Texture> listed = "assets/hero.png";
+[Raw] asset Texture single = "assets/hero.png";
+asset Texture plain = "assets/hero.png";
+scene Main { }
+local singleton Material
+{
+    List<Vertex> quad = [Vertex { }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }];
+    [Raw] Texture normal;
+    [Linear] Texture albedo;
+    [Raw] Texture picked;
+    [Raw] Texture switched;
+    [Linear] Texture looped;
+    [Linear] Texture fromList;
+    Grid2<int> cells = Grid2(3, 2);
+    [Raw(int)] Texture ids;
+    [Raw(int)] Texture kept;
+    int which;
+    int count;
+    int2 size;
+    int2 idsSize;
+    bool ready;
+}
+void Bind(mut Material m, [Raw] Texture normal, [Linear] Texture albedo)
+{
+    m.normal = normal;
+    m.albedo = albedo;
+}
+void Pick(mut Material m, [Raw] List<Texture> all, int i) { m.picked = all[i]; }
+int2 Size([Raw] Texture image) { return image.size; }
+int2 TypedSize([Raw(int)] Texture image) { return image.size; }
+void Keep(mut Material m, [Raw(int)] Texture image) { m.kept = image; }
+frag Read(Vertex vertex, out Color color, Material m)
+{
+    color = m.normal.Sample(vertex.uv) + m.albedo.Sample(vertex.uv) + m.picked.Sample(vertex.uv) + m.switched.Sample(vertex.uv)
+          + m.looped.Sample(vertex.uv) + m.fromList.Sample(vertex.uv);
+}
+frag RawCopy(Vertex vertex, out Color color, [Raw] Texture source) { color = source.Sample(vertex.uv); }
+frag LitCopy(Vertex vertex, out Color color, [Linear] Texture source) { color = source.Sample(vertex.uv); }
+frag LitPair(Vertex vertex, out Color color, [Linear] Texture lit, Texture colors) { color = lit.Sample(vertex.uv) * colors.Sample(vertex.uv); }
+frag RawPair(Vertex vertex, out Color color, [Raw] Texture numbers, Texture colors) { color = numbers.Sample(vertex.uv) * colors.Sample(vertex.uv); }
+frag IdCopy(Vertex vertex, out Color color, [Raw(int)] Texture source) { color = Color(float(source.Sample(vertex.uv)), 0, 0, 1); }
+[Before(Show)]
+view Fill(mut Material m)
+{
+    if (!m.ready)
+    {
+        m.ready = true;
+        var first = maps[0];
+        foreach (var entry in lits) Bind(m, first, entry.value);
+        Pick(m, maps, 0);
+        m.picked = m.which > 0 ? single : maps[0];
+        m.switched = m.which switch { 0 => maps[0], _ => single };
+        foreach (var entry in lits) m.looped = entry.value;
+        foreach (var image in listed) m.fromList = image;
+        m.count = maps.count + lits.count;
+        m.size = Size(first);
+        m.ids = m.cells;
+        Keep(m, m.ids);
+        m.idsSize = TypedSize(m.ids);
+    }
+}
+view Show(Material m)
+{
+    Draw.Mesh(m.quad, [0, 1, 2], Read);
+    Draw.Mesh(m.quad, [0, 1, 2], maps[0], RawCopy);
+    Draw.Mesh(m.quad, [0, 1, 2], m.albedo, LitCopy);
+    Texture ids = m.ids;
+    Draw.Mesh(m.quad, [0, 1, 2], ids, IdCopy);
+    Draw.Mesh(m.quad, [0, 1, 2], m.albedo, plain, LitPair);
+    Draw.Mesh(m.quad, [0, 1, 2], single, plain, RawPair);
+}

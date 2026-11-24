@@ -24,7 +24,6 @@ tide <command> [folder] [options]
 | `tide fetch [folder]` | Downloads the game's packages from git that this machine doesn't have yet, and builds nothing |
 | `tide editors` | Installs bundled plugins into detected VS Code family editors and existing JetBrains IDE profiles |
 | `tide ide <editor>` | Prints setup for Emacs, Vim or Neovim using the installed Tide files |
-| `tide open [file.tprefab \| folder]` | Opens the native [scene editor](editors.md#native-scene-editor), ready to open or create an authored tree |
 | `tide upgrade` | Updates tide to the newest version |
 | `tide version` | Shows tide's version and channel, where it's installed, and which compilers it found |
 | `tide telemetry on\|off\|status` | Turns anonymous [usage data](telemetry.md) on or off, or shows what's sent |
@@ -55,14 +54,22 @@ its own timer. Completed stages remain visible before game launch or completion
 output, and diagnostics appear on clean lines. A failed stage keeps its last
 observed progress. Redirected output uses plain stderr lines with file counts.
 
-Large generated C files (at least 4 MiB) compile as four stable partitions in
-parallel, with ThinLTO preserving optimization across them. Each completed
-partition advances the C compilation bar; linking has an activity indicator.
-The linker caches its work beside the game's other cached objects. Small files
-stay whole. In ordinary debug builds, the optimized generated plumbing can be
-partitioned while your game code stays unoptimized for the debugger. A body
-edit keeps unrelated partitions reusable; changes to shared types can rebuild
-them all. `TIDE_JOBS` also limits parallel ThinLTO work.
+Large generated C files (at least 4 MiB) compile as up to sixteen stable
+partitions in parallel, thirty-two in a debug build. Each completed partition advances the C compilation
+bar. Small files stay whole. A body edit keeps unrelated partitions reusable;
+changes to shared types can rebuild them all.
+
+In release builds, ThinLTO preserves optimization across the partitions, and
+linking has an activity indicator; the linker caches its work beside the game's
+other cached objects, and `TIDE_JOBS` also limits parallel ThinLTO work.
+
+In ordinary debug builds, the generated plumbing is optimized while your game
+code stays unoptimized for the debugger, and both are partitioned once they are
+big. Each partition is an ordinary object there, with no ThinLTO, so the link
+takes a fraction of a second whatever changed, and an edit of a function
+compiles the partition it is in. Your game code starts compiling as soon as it
+is written. Plumbing that comes out the same as the last build's is left in the
+files it was partitioned into.
 
 
 Code objects and expensive asset processing are cached between launches.
@@ -80,7 +87,7 @@ images still use their exact image decoder.
 
 When nothing a build is made of changed, `tide build` and `tide run` skip that
 step too and say `Tide code and assets are up to date`: the same Tide, options
-and `--define` symbols, and every source file, package file and asset file with
+and `--define` symbols and values, and every source file, package file and asset file with
 the size and last-write time it had at the last build. A build whose code gave
 a warning is compiled every time, so the warning is shown every time, and so is
 a game with an asset from a URL, which each build asks the server about. Deleting
@@ -172,56 +179,19 @@ Vim/Neovim setup reports installation paths containing `*`, `?`, `[` or `]`:
 their runtime search treats these as wildcards. Use a Tide installation path
 without those characters.
 
-## open
-
-```sh
-tide open .
-tide open scenes/Level.tprefab
-tide open scenes/Level.tprefab --project .
-tide open scenes/Level.tprefab --check
-tide open scenes/Level.tprefab --preview
-```
-
-The desktop app edits rooted [prefabs and scenes](../game/scenes.md#authored-prefabs).
-With a project folder, or no argument for the current folder, it opens a workspace
-where New Scene/New Prefab creates the first authored file. `--check` and preview
-flags require an existing `.tprefab` argument.
-It uses the nearest enclosing `tide.packages` as the project root, or the
-prefab's folder if there is none. Use `--project <folder>` when scripts live
-elsewhere in your game's folder. The selected root is visible in the window.
-The app uses folder/package discovery; it does not read CMake game
-manifests. Packages must already be available locally (`tide fetch` downloads them).
-
-`tide open --check` runs the same authoring validation without opening a window and
-returns 1 for project errors. It inspects asset metadata, rather than compiling/importing
-the full game. For automated editor UI runs, `--frames`, `--capture` and `--script` use
-the normal [hidden input/capture loop](#scripts). The default editor size is
-1440 by 900; the editor's `--size W H` accepts 1100..8192 by 650..8192, unlike a
-game's `tide run --size`. `TIDE_HIDDEN` requires one of these bounded modes or `--check`.
-
-See [the editor controls and current limits](editors.md#native-scene-editor).
-New Scene/New Prefab create rooted authored files in that project; Play builds
-the selected tree with the normal game lifecycle. Set startup saves a persistent
-project selection separately from Play.
-
-`--preview` starts with compiled views enabled on authored match entities;
-`--local-preview` uses local placement. Only `[RunInEditor]` and `[EditorOnly]`
-views execute, with no gameplay initialization or systems. The full native build
-toolchain is required. Bounded captures/scripts wait for the current preview
-build and return 1 if it fails, rather than capturing stale state. `--check`
-still performs only front-end validation, even with a preview flag.
-
 ## run and build
 
 | Option | What it does |
 |---|---|
 | `--release` | Optimizes game and package code for testing and profiling, keeping symbols and diagnostics; standalone builds leave out unused code, data and assets |
 | `--distribution` | Builds for shipping: `--release` plus symbol/name stripping, shader minification and packaging (smaller web pages, Android app bundles) |
+| `--dev`, `--no-dev` | Includes, or leaves out, what the game marks [`dev`](dev-tools.md): its tools, cheats and dev views. `run` includes them unless `--no-dev` or `--distribution` says otherwise; `build` includes them only with `--dev` |
 | `-O0`, `-O1`, `-O2`, `-O3` | Overrides engine, game and package C/C++ optimization; deterministic math and the chosen build mode stay unchanged |
 | `--web` | A web page (WebGPU), built with clang's WebAssembly target |
 | `--android` | An Android app, for phones and the emulator (see [Android](#android)) |
-| `--scene <Name>` | Starts in the named prefab or scene for this run/build, over the project's `startScene` setting; use the qualified name for a declaration in a namespace |
-| `--define <SYMBOL>` | Defines a symbol for the game's [`#if` lines](../language/namespaces.md#symbols-of-your-own), as many times as there are symbols. Builds also pass it as a C/C++ macro with value 1 to the game's and its packages' handwritten sources. `DEBUG` is defined in the default debug mode, including those C/C++ sources. Changing symbols rebuilds these sources and changes custom-C simulation compatibility. `schedule` and `shaders` take it too |
+| `--ios` | With `unity`: a Unity iOS player's game, written as sources for the player's Xcode project (see [Unity](#unity)) |
+| `--scene <Name>` | Starts in the named prefab or scene for this run/build, over the project's `startScene` setting; use the qualified name for a declaration in a namespace. A scene can be given its fields, `--scene "Battle { side = 50 }"`, as a [scenario](dev-tools.md#scenarios) is |
+| `--define <SYMBOL>[=<value>]` | Defines a symbol for the game's [`#if` lines](../language/namespaces.md#symbols-of-your-own), as many times as there are symbols. With `=value`, code reads the value as a constant: `const int ARMY_SIDE = define(ARMY_SIDE, 500);` is 1000 with `--define ARMY_SIDE=1000` and 500 without it ([Values from the build](../language/namespaces.md#values-from-the-build)); a symbol named twice takes the later value. Builds also pass it as a C/C++ macro to the game's and its packages' handwritten sources: with value 1, or as `-D SYMBOL=value`, which C reads as tokens, not a string, so text with an apostrophe or one quote (`Don't stop`) is a warning in every C file there. `DEBUG` is defined in the default debug mode, including those C/C++ sources; the command line's own `--define DEBUG=2` is kept in its place, value and all. Changing symbols or values rebuilds these sources and changes custom-C simulation compatibility. `schedule` and `shaders` take it too |
 | `--title <title>` | The window's title, over the game's `title` setting (default: that, or the folder's name) |
 | `--stats` | Shows the [stats](#stats) in the window's corner, as the game's `stats` setting does. `run` starts them open |
 | `--debug-views` | Turns the [debug views](debug-views.md) on, as the game's `debugViews` setting does: F7 shows the profiler, which says where a frame's time and a tick's go |
@@ -232,6 +202,7 @@ still performs only front-end validation, even with a preview flag.
 | `--size <width> <height>` | `run` only: the window's size in pixels, 960 by 540 without it (not on the web or Android) |
 | `--capture`, `--record`, `--capture-audio`, `--microphone`, `--frames`, `--script`, `--interactive`, `--scale`, `--players` | `run` only: plays the game [without a window](#without-a-window), to see what it draws and hear what it plays, with [several players](#several-players) if you like |
 | `--latency <ms>`, `--jitter <ms>`, `--loss <percent>` | `run` only: plays a match this machine joins as if it were further from its server (see [A slow network](#a-slow-network)) |
+| `--from <name>` | `run` only, a dev build: the match starts from the [checkpoint](dev-tools.md#checkpoints) `checkpoints/<name>.checkpoint` in the project. One that won't load ends the run, saying why; with `--force`, what of it carries over is loaded |
 | `--seed <n>` | `run` only: the seed of the matches the game starts, [`Random.seed`](../language/math.md#the-match-s-seed), from 0 to 2147483647. Without it, every match gets another one |
 | `--data-dir <folder>` | `run` only, native desktop: use this save directory, relative to where the command was invoked. Useful for disposable test saves |
 | `--shards <n>`, `--shard-width <units>` | `run` only: a [sharded game](../multiplayer/shards.md)'s match as `n` regions along x, each this wide (16 times its `reach` without it), all on this machine |
@@ -294,7 +265,7 @@ tide build --distribution --web --report build.txt
 
 - **Time**: each step of the build (preparing, resolving packages, compiling Tide code and assets, compiling C/C++, linking, packaging) with its share of the whole, and the compiler's own phases inside the Tide step: parsing, checking, running build code, generating C and packing assets.
 - **C/C++**: each file compiled and how long its compiler ran, slowest first in the table, and how many objects were already up to date. Compiles run several at once, so their times add up to more than the step's.
-- **Pack**: its size, and each asset's type and how its images are kept (as [`--asset-sizes`](#asset-sizes) says them), the bytes it adds to the pack, the size of the files it was read from and how long reading them took. Content an earlier asset already put in the pack is shared, shown as `shared`; the rest of the pack is its table of names.
+- **Pack**: its size as the game holds it in memory (a release's file is [compressed](#run-and-build), and its size is under Outputs), and each asset's type and how its images are kept (as [`--asset-sizes`](#asset-sizes) says them), the bytes it adds to the pack, the size of the files it was read from and how long reading them took. Content an earlier asset already put in the pack is shared, shown as `shared`; the rest of the pack is its table of names.
 - **Left out**: assets the build didn't pack, and why: in `--release` and `--distribution`, assets nothing in the game's code, defaults or shaders names, and in a `--server` build those its match code never reads.
 - **This mode**: what the mode cut or kept, such as unreferenced code removed by the linker, stripped names and symbols, or why every asset was packed (a game or package with C, which could read an asset by name, unless `--strip-assets`).
 - **Outputs**: the files the build made and their sizes.
@@ -324,7 +295,7 @@ Assets in the pack: 96.4 MB in 41 declarations, biggest first
       2.8 MB   2.9%  groundNormal     Texture 2048x2048 BC1 [Raw]
 ```
 
-Each line has the bytes and share, the declaration's name, its type, an image's size (or how many files a list or map has) and how images are kept: `BC1` or `BC3` when [compressed](../game/assets.md#gpu-compression), `RGBA` when exact, `RGBA mips` for [authored mipmaps](../game/assets.md#authored-mipmaps). The bytes are the pack's, before a web page compresses it. A file two declarations share is in the pack once and counts toward the first. It's the pack of the build it's given with, so `--release` and `--distribution` show what pruning left. `tidec --asset-sizes` prints the same.
+Each line has the bytes and share, the declaration's name, its type, an image's size (or how many files a list or map has) and how images are kept: `BC1` or `BC3` when [compressed](../game/assets.md#gpu-compression), `RGBA` when exact, `RGBA mips` for [authored mipmaps](../game/assets.md#authored-mipmaps). The bytes are the pack's, before a release build or a web page compresses it. A file two declarations share is in the pack once and counts toward the first. It's the pack of the build it's given with, so `--release` and `--distribution` show what pruning left. `tidec --asset-sizes` prints the same.
 
 Release and distribution builds leave out assets no Tide code, default or shader names. A game or package with C/C++ sources or prebuilt libraries keeps every asset instead, since C can find a pack entry by name. When the game's C reads no asset that way, `--strip-assets` says so, and its build is pruned like any other. An asset the C does read by name and nothing in Tide names is then missing at run time: its lookup finds nothing.
 
@@ -339,7 +310,7 @@ Custom build pipelines can pass `tidec --depfile <file>` to write Make-style dep
 
 `tide build --distribution --web` makes a folder to put online as it is, `.build/web/`: `index.html`, and the game's program and assets beside it, `index.wasm` and `index.pack` (none for a game without assets). The page downloads them showing how much has come, and the browser keeps them in its cache between visits until a new build changes them: the page asks for each by its hash. Such a page needs a server, even on your own machine: a page opened from disk can't download its files, and says so. With `-o <path>.html`, the files go beside that page, named after it.
 
-`--single-file` makes one self-contained `.html` file instead, `.build/<name>.html`, with the game inside, which opens straight from disk. Web distributions compress the program and assets inside that file, and decoding is included, so playing it needs no extra tools or downloads. Distribution pages of either kind use a smaller page runtime. Debug, release and hot-reload pages keep the readable runtime and original payloads.
+`--single-file` makes one self-contained `.html` file instead, `.build/<name>.html`, with the game inside, which opens straight from disk. Web distributions compress the program and assets inside that file, and decoding is included, so playing it needs no extra tools or downloads. Distribution pages of either kind use a smaller page runtime. Debug, release and hot-reload pages keep the readable runtime, and a single file's payloads as they are.
 
 ### The page while it loads
 
@@ -356,7 +327,7 @@ Standalone release and distribution builds remove unreachable native code and da
 
 `tide run` builds and plays with [hot reload](#hot-reload) by default, on desktop, the web or Android. Runs [without a window](#without-a-window) play once. On desktop, closing the game window ends the command too.
 
-A game's [assets](../game/assets.md) (its `asset` declarations) are packed with it: beside the program as `<name>.pack`, which has to stay next to it; inside the web page; and in the APK. Nothing else in the folder goes in. Under `tide run`, a file an asset names is watched like the game's code, and a saved image is in the running game within a moment, with no rebuild.
+A game's [assets](../game/assets.md) (its `asset` declarations) are packed with it: beside the program as `<name>.pack`, which has to stay next to it; inside the web page; and in the APK. Nothing else in the folder goes in. A `--release` or `--distribution` build compresses the pack it ships, beside a program, beside a web page and in an APK: roughly half the bytes for a game of images and models, and the game reads either kind, so nothing else changes. Debug builds and `tide run` keep the pack as it was built, with no pass over it. Under `tide run`, a file an asset names is watched like the game's code, and a saved image is in the running game within a moment, with no rebuild.
 
 A web page draws with WebGPU, which every game's shaders and [kernels](../game/shaders.md#compute) need: a current Chrome, Edge or Safari has it, and so does Firefox where WebGPU is on. The page takes whatever device the browser gives, its software one too. A browser without WebGPU shows, in the game's place, a note saying what the game needs.
 
@@ -447,6 +418,7 @@ Building for Android needs two things of Google's: the NDK, Android's C library 
 - To sign with another key (a build server's, or one you already have), set `TIDE_ANDROID_KEY` to its file: PEM, the private key (RSA, 2048 bits or more) and then its certificate. `openssl pkcs12 -in upload.p12 -nodes -out key.pem` makes one from a keystore; a `.jks` keystore becomes a `.p12` first with `keytool -importkeystore -srckeystore upload.jks -destkeystore upload.p12 -deststoretype PKCS12`.
 - Each build's version code, which Android only updates an app to a higher one of, is the minutes since 2020 began, so every build is newer than the last. Where `SOURCE_DATE_EPOCH` is set, it stands in for now. The version people see is the game's `version` setting, like `1.2.0`, or else 1.0.
 - The back button comes to the game as Escape, as in Unity.
+- An app that isn't built with `--distribution` takes Tide's settings, like `TIDE_GPU_CULLING=0`, from how it's started, as a desktop run takes them from its environment: `adb shell am start -n <appId>/android.app.NativeActivity --es tide.env "'TIDE_GPU_CULLING=0 TIDE_VULKAN_ANISOTROPY=1'"`, several apart by spaces. Keep both quotes: the double ones are your shell's, and the single ones the phone's, which reads the command again, so without them only the first setting arrives. The app says each setting it took in its output (`adb logcat -s tide`), as `setting: TIDE_GPU_CULLING=0`, and each it left out. An app built to ship takes none, and says so: any app on the phone can start another with such words.
 - With `tide run --android`, saving a `.tide` or C file builds the app again, installs it and starts it over: a phone can't swap code into a running app, so the match starts over too. Type `r` and press Enter to start it over yourself; closing the app ends the run.
 
 ### Google Play
@@ -484,6 +456,8 @@ Carrying the game over works like this:
 
 When the game gets into a state you don't want, press **Ctrl+R** in the game, or type `r` and press Enter in `tide`'s terminal, to fully reload it. On the web, Cmd+R does the same on macOS. This starts the match, local state, GUI and the game's C or C++ globals over, without carrying state from the old run. With a match on several windows (`--host` in one, `--connect localhost` in another), each window hot reloads when you save, and players stay in the match. A window that joined another's match joins it again a second after that match ends without it: when the other window starts it over, or is still on a build with another data layout. On the web, a hot reload goes on with the match closed for now: the room closes, and the other players drop out.
 
+If `tide` itself is upgraded or installed again while a game runs on desktop, the next save isn't built: `tide run` says its installation changed, and the game goes on with the build it has. Stop the run and start `tide run` again. In Unity, leave Play and enter it again once `tide` has built.
+
 `tide run --web --stats` hot reloads too. `tide` serves the game's page at an address on your machine, like `http://127.0.0.1:52407/?stats`, opens it in your browser, and keeps running until you press Ctrl+C. What each hot reload did shows in the browser's console. VS Code and JetBrains IDEs can play it beside your code instead (see [Editors](editors.md)).
 
 Hot reload is for `tide run`. `tide build` makes a plain program, or a page with nothing of it. Runs [without a window](#without-a-window) play once, with no hot reload.
@@ -508,7 +482,12 @@ game has, which the package's inspectors show. It ends when its input closes, as
 `--once` builds once and ends. `tide unity --android -o <path>` builds the
 game once for a Unity Android player: for each of Android's CPUs, a
 `libtide_game.so` in `<path>/android/<abi>` holding the game, Tide's host and
-the game's assets, which the package's build puts in the app. Unity and other Tide builds of the same game
+the game's assets, which the package's build puts in the app. `tide unity --ios -o <path>` writes the
+game once for a Unity iOS player, as sources: an iOS app links its game in, and only Xcode on a Mac compiles for
+iOS, so `<path>/ios/Tide` gets the game's generated C, its packages' C and the engine's sources, with `sources.txt`
+naming each file's compiler flags, and `<path>/ios/pack` the game's assets. `tide` compiles nothing for it, so it
+works on Windows and Linux too; the package's build adds the files to the Xcode project Unity exports, which then
+builds on a Mac that has no `tide`. Unity and other Tide builds of the same game
 play in the same matches. This is early, and its details may change.
 Debug and release libraries carry debug information: a native debugger attached to the Unity editor
 stops at breakpoints in `.tide` files, with the game's natvis in its `.pdb` and
@@ -666,14 +645,18 @@ inspectors and Tide's drawing following it), goes on from a tick shown, and
 saves and replays recordings of matches, each tick checked against the
 recording, so a tester's bug report replays bit for bit and a changed build
 shows the first tick it changes. With other machines in the match, it never
-stops for them: the match goes on behind the tick shown. The package's README
+stops for them: the match goes on behind the tick shown. A match another
+machine runs is recorded in this editor too, from what it's sent, where the
+game hides nothing from players; where it hides state, and in a sharded match,
+the latest ticks confirmed here are kept to look through. The package's README
 has the details.
 
 Tide's views draw in Unity's frame with Tide's own renderer: 2D, text, 3D
 drawn with the camera's depth (so Tide's meshes and Unity's scene hide each
 other), render targets, stencil, the game's own frags and verts, and its
 compute kernels, GPU lists and their reads back, as Tide draws them in its own
-window. The views' 3D camera is the runner's View Camera, or the main camera.
+window. The views' 3D camera is the runner's View Camera, or the main camera,
+perspective or orthographic.
 tide writes a Unity shader for each of the game's shaders, a compute shader
 for each kernel, and the same for Tide's own, into
 `Packages/com.tide.game/Resources/TideShaders`, which Unity compiles for every
@@ -685,6 +668,25 @@ whose pass the package adds by itself. In Play, the editor's scene view shows
 Tide's 3D too, through its own camera. The game's sound plays through Unity's
 audio, and `Clip.Microphone` is Unity's microphone; a WebGL player's Tide
 program plays through the page, and hears its microphone, itself.
+
+A view draws textures Unity imported, too. A local `Texture` field of a match
+component (`local Texture face;`) is a Texture field of its Unity component,
+set in the inspector on a prefab or in a scene, and the view that reads it
+draws with Unity's own image: its import settings are Unity's, nothing is
+imported a second time, and `face.size` is its size. It's this machine's, as
+every local field, so the match and other machines have nothing of it, and it
+has no texture until Unity shows the entity's GameObject, a frame after the
+entity appears: `if (card.face.size.x == 0) return;` skips the draw until
+then. A script sets it in Play, and a singleton's from
+`runner.Get<Tide.Game.Hud>().logo`. Such a value exists in a Unity project
+alone; `asset Texture logo = "logo.png";` in a `.tide` file is Tide's own
+import of the file, which every host draws. Unity's meshes, materials and
+sounds are local fields of types of their own, `UnityEngine.Mesh`,
+`UnityEngine.Material` and `UnityEngine.AudioClip`, which Tide's code only
+hands back to Unity: `Draw.UnityMesh(mesh, material, transform)` has Unity
+draw the mesh in the material where the call is among the view's draws, and
+`Audio.Play(clip, volume)` plays the clip through Unity's audio. The package's
+README has more.
 
 A package's components are authored on GameObjects like the game's own, as
 a `unity.json` in its folder says (see
@@ -727,7 +729,10 @@ reload. Server executables support:
 | `--udp-only` | Omit the shared WebRTC room |
 | `--shards <n>`, `--shard-width <units>` | A [sharded game](../multiplayer/shards.md)'s world as `n` regions along x, each this wide, each a match; players join the world at match 0 |
 | `--shard-most <n>` | Splits a sharded game's region in two when its shard owns more entities than this, and merges two neighbouring regions owning a quarter of it together |
-| `--shard-journal <folder>` | Keeps a sharded game's world in a folder: a checkpoint now and then and every shard's ticks since, on the disk before anything a shard sends goes on. Started again with the same folder, the server goes on where the world was |
+| `--shard-journal <folder>` | Keeps a sharded game's world in a folder: a checkpoint now and then and every shard's ticks since, on the disk before anything a shard sends goes on, and its match's store. Started again with the same folder, the server goes on where the world was. Only the build of the game that kept a world goes on with it |
+| `--shard-verify` | With `--shard-journal`: says whether this build goes on with the folder's world and where each shard is, then exits. Writes nothing and listens on nothing |
+| `--shard-seal` | With `--shard-journal`: goes on from the folder, seals the world as a server that stops does, and exits |
+| `--shard-upgrade` | With `--shard-journal`: takes up a world another build of the game sealed, when its match state is laid out the same |
 | `--frames <n>` | Bound a test run to this many service iterations |
 
 The service uses wall-clock time and sleeps between iterations, normally about
@@ -847,6 +852,7 @@ tide run --frames 300 --capture menu.png --stats
 | `--microphone <file>` | A WAV or Ogg Vorbis file the microphone plays in the run, looped, where a window's run would hear the capture device (`Clip.Microphone`). Without it a run's microphone is silent |
 | `--frames <n>` | Ends the run after `n` frames |
 | `--frame-rate <n>` | How many frames make up a second of the run's time, from 1 to 1000 (60 without it). At another rate than the match's ticks, some frames have a tick and some have none, as in a window: `--frame-rate 144` profiles what a 144 Hz display's frames cost. A recorded GIF still plays 30 pictures a second |
+| `--paced` | Each frame waits out what's left of its length, as a display holds a window's, where a run with no window otherwise goes as fast as the machine takes it. The match and the pictures are the same either way; the run takes as long as it would in a window, and says as it ends how many frames took longer than one and how long the longest took. For measuring what a player would see: workers have a real frame's time |
 | `--script <file>` | Input by frame from a file, which also says when to capture and when to quit (see [Scripts](#scripts)) |
 | `--interactive <replay.txt>` | Keeps the game alive for [dynamic input and captures](#interactive-play), saving executed actions as a replay script |
 | `--profile <file.json>` | Writes a [profile report](debug-views.md#profile-captures) when the run ends. Combine with `--frames`, `--script` or `--interactive` |
@@ -869,6 +875,7 @@ Nothing of the run depends on the machine it's on, or on what's happening there:
 - **Time is made up.** Every frame is a 60th of a second long, however long it took, and frames come as fast as the machine runs them: 300 frames take about a second.
 - **Input is made up.** The game gets what the script says and nothing else: never the real keyboard, mouse or gamepad, and it leaves the clipboard alone. The cursor is locked whenever the game asks for it.
 - **The window's size and scale are what you asked for,** whatever the display is.
+- **The server's store is read as each tick ends.** In a window, what match code [loads and saves](../game/files.md#saving-the-match) is read and written on a thread of the files' own, and an answer comes once the disk has it. In a run like this every answer comes the tick after it was asked.
 - **The match's seed is 0.** In a window, [`Random.seed`](../language/math.md#the-match-s-seed) is another number every match. In a run like this it's 0 every time, so what the game rolls comes out the same. `--seed 7` picks another seed, to see the game roll otherwise: the same seed is the same run again.
 
 So a run repeats exactly: the match goes the same way on every machine, and the same machine writes the same pictures, byte for byte. Between machines, pixels a GPU blends (the edges of shapes, a shader's gradients) can differ a little. The stats' list and the profiler are the exception, while they're open: they show what this machine's clock measured, which no two runs agree on. The stats' one line doesn't. What the game reads from disk, like its saves, is still this machine's. Made-up time doesn't wait for anyone, so a run like this isn't for a match with another machine, or with another run: neither would wait for the other. A match with [several players](#several-players) is one run, which plays them all.
@@ -968,6 +975,7 @@ frame keep their arrival order. Held input stays held until released.
 | `<frame> <event>` | Queues an action without advancing; at most 65,536 pending actions |
 | `step <n>` | Advances every player together by exactly `n` frames, then waits; `n` is 1 to 1,000,000 and the resulting frame is at most 1,000,000,000 |
 | `capture <file.png>` | Captures the current frame without advancing; `player 2 capture hers.png` selects one player |
+| `checkpoint save <name>`, `checkpoint load <name>` | Saves the match as it is now, or starts over from a saved one, before the next frame (see [Checkpoints](dev-tools.md#checkpoints)) |
 | `status` | Reports the current frame without advancing |
 | `controls` | Lists the GUI widgets the current frame drew, without advancing (below) |
 | `click <n>`, `click "label"` | Clicks a widget from `controls` at the next frame; `<frame> click ...` picks a later one |
@@ -1081,6 +1089,8 @@ tide run --script play.txt --size 1280 720 --stats
 | `capture-audio <file.wav>` | Writes what played since the last such line, or since the run began, as a WAV beside the script |
 | `record <file.gif>` | Records from this frame on, every second frame, as a GIF that loops, beside the script. It goes on to `record stop`, another `record` or the run's end. `--record`'s recording is its own, and goes on beside it |
 | `record stop` | Ends the recording, with this frame in it if it's one of its frames, and writes it out |
+| `checkpoint save <name>` | A dev build: saves the match, once this frame drew, as the [checkpoint](dev-tools.md#checkpoints) `<name>` in the project's `checkpoints` folder |
+| `checkpoint load <name>` | ...starts the game over from one, as the dev menu does; `checkpoint force-load <name>` loads what of an older one carries over. One that won't load leaves the match as it is, saying why |
 | `quit` | Ends the run once this frame drew |
 | `sleep` | The machine sleeps and wakes, as a Steam Deck or a laptop does: it [leaves a match other machines can be in](../multiplayer/matches.md#a-machine-that-sleeps). In a run of several players, it says whose: `player <n> sleep` |
 | `player <n> leave` | In a run of [several players](#several-players), player `n` leaves its match, as `Session.Leave` does: the match hears `PlayerLeft` at once |

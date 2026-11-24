@@ -18,6 +18,7 @@ static bool packed; // The host handed this build the run's pack
 #define READ_CAPACITY 64u
 #endif
 typedef struct local { uint32_t frames; tide_gpu_list list; uint32_t ticket; bool said; } local;
+static tide_render_target reload_target; // A target of this build's, read as the build goes (unload)
 #else
 typedef struct local { uint32_t frames; } local;
 #endif
@@ -121,6 +122,7 @@ static void frame(const void *w, const void *previous, float alpha, const void *
         uint32_t words[READ_CAPACITY];
         for (uint32_t i = 0; i < READ_CAPACITY; i++) words[i] = RELOAD_GAME_HASH * 1000u + i;
         tide_draw_gpu_list_set(draw, mine->list, words, READ_CAPACITY);
+        if (!reload_target.id) reload_target = tide_render_target_make(2, 2);
     }
     if (mine->frames == 1) mine->ticket = tide_gpu_list_read_begin(mine->list, false);
     tide_gpu_read_result got;
@@ -156,7 +158,18 @@ static int32_t current_tick(const void *w) { return (int32_t)((const world *)w)-
 static void unload(void)
 {
 #ifdef RELOAD_GAME_READS
+    // A target's read asked for as the build goes, which no renderer has begun: it names this build's target, so it
+    // fails as the build lets its targets and then its lists go (tide_run_unload's order), and the host's renderer,
+    // which goes on with the next build, never resolves the freed target (an ASan build would say if it did)
+    const uint32_t pending = reload_target.id ? tide_render_target_read_begin(reload_target) : 0u;
+    tide_render_targets_free();
     tide_gpu_lists_free();
+    reload_target = (tide_render_target){0};
+    tide_gpu_read_result got;
+    if (pending) {
+        const bool failed = tide_gpu_list_read_poll(pending, &got) && !got.ok;
+        printf("reload-test: pending target read failed=%d\n", (int)failed);
+    }
 #endif
     printf("reload-test: unloaded static=%u\n", (unsigned)starts);
 }
@@ -182,6 +195,15 @@ TIDE_HOST_EXPORT uint64_t tide_host_library_shape(void)
 #else
     return TIDE_HOST_SHAPE;
 #endif
+}
+
+// Which tide built it, as tide writes for a game's library: a host that says which built it loads only its own
+#ifndef RELOAD_MADE_BY
+#define RELOAD_MADE_BY "9.9.9-test (0000000000000001)"
+#endif
+TIDE_HOST_EXPORT const char *tide_host_library_made_by(void)
+{
+    return RELOAD_MADE_BY;
 }
 
 TIDE_HOST_EXPORT const tide_host_game *tide_host_library(void)

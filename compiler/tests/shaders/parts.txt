@@ -166,21 +166,15 @@ struct tt_Entry_5int_7Gear_6 {
 fn tide_f(x: f32) -> f32 {
     return x;
 }
-fn tide_nan(x: f32) -> bool {
-    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
-}
 fn tide_max1(a: f32, b: f32) -> f32 {
-    if (tide_nan(b)) { return a; }
-    if (tide_nan(a)) { return b; }
-    if (a > b) { return a; }
-    return b;
+    return select(select(select(b, a, a > b), b, (bitcast<i32>(a) & 0x7fffffff) > 0x7f800000), a, (bitcast<i32>(b) & 0x7fffffff) > 0x7f800000);
 }
 fn tide_xxh_word(h: u32, w: i32) -> u32 {
-    var k: u32 = h + u32(w) * 0xC2B2AE3Du;
+    let k: u32 = h + u32(w) * 0xC2B2AE3Du;
     return ((k << 17) | (k >> 15)) * 0x27D4EB2Fu;
 }
 fn tide_xxh_lane(h: u32, w: i32) -> u32 {
-    var k: u32 = h + u32(w) * 0x85EBCA77u;
+    let k: u32 = h + u32(w) * 0x85EBCA77u;
     return ((k << 13) | (k >> 19)) * 0x9E3779B1u;
 }
 fn tide_xxh_end(h: u32) -> i32 {

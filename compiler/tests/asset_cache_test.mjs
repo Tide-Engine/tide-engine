@@ -53,6 +53,9 @@ scene Main { }
 singleton State { int value; }
 system Tick(mut State state) { state.value += 1; }
 `;
+// The assets as files long since written, which a build records: a copy keeps its file's time on Windows only
+const written = new Date(Math.floor(Date.now()/1000)*1000-7200e3);
+for (const n of readdirSync(game)) utimesSync(join(game, n), written, written);
 const input = join(game, "game.tide");
 writeFileSync(input, source);
 async function build(directory=out, success=true, flags=[]) {
@@ -84,19 +87,39 @@ assert(existsSync(join(imports,"used")),"tidy left no used marker");
 const cold=outputs(); assert(cacheFiles().length>=7,"missing import/texture/audio/tangent entries");
 pinCache(); await build(); assert.deepEqual(outputs(),cold,"warm output differs"); unchangedCache();
 assert(readFileSync(join(out,"game.d"),"utf8").includes("shape.bin"),"cache hit lost its external buffer dependency");
+// A build keeps what it read of each file (its size, time and hash), and what tells its pack without the images' pixels
+assert(existsSync(join(game,".tide","assets.times")),"no record of the files' sizes and times");
+assert(existsSync(join(out,"game.pack.recipe")),"no recipe beside a pack with prepared images");
+const packWritten=statSync(join(out,"game.pack")).mtimeMs;
 source=source.replace("+= 1","+= 2"); writeFileSync(input,source);
 await build(); unchangedCache(); assert.equal(outputs()[2],cold[2],"code-only edit repacked different asset bytes");
+assert.equal(statSync(join(out,"game.pack")).mtimeMs,packWritten,"a code-only edit wrote the pack again");
 source=source.replace('asset Texture solo =','[Raw] asset Texture solo =');writeFileSync(input,source);
 await build();const rawVariant=outputs();
 // Force a full import and compare with the newly requested variant's lazy path.
 const savedEarly=join(game,".tide","assets","early-imports");renameSync(root,savedEarly);writeFileSync(root,"blocked");
 await build();assert.deepEqual(outputs(),rawVariant,"new Raw variant changed when fully decoded");remove(root);renameSync(savedEarly,root);
-const beforeImage=outputs()[2], imageTime=statSync(join(game,"picture.png"));
-copyFileSync(join(fixtures,"assets","run","1.png"),join(game,"picture.png"));utimesSync(join(game,"picture.png"),imageTime.atime,imageTime.mtime);
+// A file's size and time say whether it changed, as git's index has it (owner, 2026-11-17). An edit saved as an
+// editor saves one, at a new time, is seen:
+const beforeImage=outputs()[2];
+copyFileSync(join(fixtures,"assets","run","1.png"),join(game,"picture.png"));
 await build();assert.notEqual(outputs()[2],beforeImage,"image edit reused stale pixels");
-const beforeSide=outputs()[2], sideTime=statSync(join(game,"shape.bin"));
-positions.writeFloatLE(2,12);writeFileSync(join(game,"shape.bin"),positions);utimesSync(join(game,"shape.bin"),sideTime.atime,sideTime.mtime);
-await build();assert.notEqual(outputs()[2],beforeSide,"same-size/time side-buffer edit reused stale geometry");
+// ...and so is one that keeps both its size and its time, where the file was no older than two seconds when it was
+// last read (here its time is ahead of the clock): such a file isn't recorded, and is read again
+const ahead=new Date(Math.floor(Date.now()/1000)*1000+3600e3);
+utimesSync(join(game,"shape.bin"),ahead,ahead);await build();
+const beforeSide=outputs()[2];
+positions.writeFloatLE(2,12);writeFileSync(join(game,"shape.bin"),positions);utimesSync(join(game,"shape.bin"),ahead,ahead);
+await build();assert.notEqual(outputs()[2],beforeSide,"an edit of a file as new as its last read reused stale geometry");
+// A file read long after it was written is recorded, and not read again while its size and time stay: an edit that
+// keeps both isn't seen until either changes
+utimesSync(join(game,"shape.bin"),old,old);await build();
+const recorded=outputs()[2];
+assert(readFileSync(join(game,".tide","assets.times"),"utf8").includes("shape.bin"),"a file read long after its write isn't recorded");
+positions.writeFloatLE(3,12);writeFileSync(join(game,"shape.bin"),positions);utimesSync(join(game,"shape.bin"),old,old);
+await build();assert.equal(outputs()[2],recorded,"a file as its record has it was read again");
+const later=new Date(old.getTime()+60e3);utimesSync(join(game,"shape.bin"),later,later);
+await build();assert.notEqual(outputs()[2],recorded,"a file whose time changed wasn't read");
 const beforeParts=outputs()[2];source=source.replace('[Parts("Hat")]','[Parts("Tri*")]');writeFileSync(input,source);
 await build();assert.notEqual(outputs()[2],beforeParts,"part selection reused another selection's model");
 pinCache(); const beforeLayout=outputs()[2]; source=source.replace("float4 tangent;","float4 tangent; float extra = 7;");writeFileSync(input,source);
@@ -106,6 +129,10 @@ await build();const added=outputs()[2];remove(join(game,"mesh2.obj"));await buil
 const valid=outputs();
 for(const n of cacheFiles()) {const p=join(imports,n),b=readFileSync(p);b[b.length-1]^=1;writeFileSync(p,b);}
 await build();assert.deepEqual(outputs(),valid,"damaged caches changed output");
+// An image's entry is read only when the pack is written: one damaged past its first bytes is found then, and the
+// image made from its file again
+remove(join(out,"game.pack"));
+await build();assert.deepEqual(outputs(),valid,"an image entry found damaged as the pack is filled changed output");
 for(const n of cacheFiles()) writeFileSync(join(imports,n),Buffer.alloc(3));
 await build();assert.deepEqual(outputs(),valid,"truncated caches changed output");
 // Corrupt the payload's counts while retaining a valid envelope checksum.

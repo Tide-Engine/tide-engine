@@ -52,6 +52,10 @@ static const type T_CULL = {TY_ENUM, &cull_enum};
 static const decl *cull_decl;
 // And Font, which Draw.Text and Draw.MeasureText take.
 static const type T_FONT = {TY_FONT, NULL};
+// ...and Unity's own objects, in a game made in Unity: what Draw.UnityMesh and Audio.Play take.
+static const type T_UNITY_MESH = {TY_UNITY_MESH, NULL};
+static const type T_UNITY_MATERIAL = {TY_UNITY_MATERIAL, NULL};
+static const type T_UNITY_CLIP = {TY_UNITY_CLIP, NULL};
 // ...and the Format enum, what a render target is made to hold.
 static decl format_enum;
 static const type T_FORMAT = {TY_ENUM, &format_enum};
@@ -248,7 +252,7 @@ typedef struct signature {
     unsigned out;            // A bit per `out` parameter, which the call makes: its bit in `mut` is set too
 } signature;
 
-#define MAX_SIGNATURES 448
+#define MAX_SIGNATURES 512
 
 static signature signatures[MAX_SIGNATURES];
 static int signature_count;
@@ -655,6 +659,13 @@ static void build_signatures(void)
         describe(play, "clip, volume, pitch",
                  "Plays a clip once, from its start: a one-shot the mixer owns from then on, with nothing to stop it. `volume` "
                  "1 is the clip as it is, and `pitch` 1 its own speed (2 an octave up). Plain stereo, from nowhere in particular.");
+        signature *unity = add("Audio", "Play", T_NONE, "tide_audio_play_external", 2, T_UNITY_CLIP, T_F, T_NONE);
+        unity->optional = 1;
+        unity->defaults[1] = "1";
+        describe(unity, "clip, volume",
+                 "In a game made in Unity: plays one of Unity's AudioClips once, through Unity's own audio, at `volume`. "
+                 "It's Unity's sound: Tide's buses, effects and `Sound` fields have nothing of it. The clip is a local "
+                 "field a prefab or a scene sets in Unity's inspector; unset, and outside Unity, nothing plays.");
         signature *flat = add("Audio", "Play", T_NONE, "tide_audio_play_at2", 4, T_CLIP, T_F2, T_F);
         flat->params[3] = T_F;
         flat->optional = 2;
@@ -1014,6 +1025,12 @@ static void build_signatures(void)
     describe(add("RenderTarget", "Window", T_TARGET, "tide_render_target_screen_as", 2, T_F, T_FORMAT, T_NONE), "factor, format",
              window_format_doc);
 
+    describe(add("Draw", "UnityMesh", T_NONE, "tide_draw_external_mesh", 3, T_UNITY_MESH, T_UNITY_MATERIAL, T_F4X4),
+             "mesh, material, transform",
+             "In a game made in Unity: draws one of Unity's meshes with one of Unity's materials, placed by `transform`, where "
+             "this call is in the frame's drawing. Unity draws it, through its own camera, into the screen alone (a render "
+             "target of Tide's gets nothing of it), with every submesh in that material. Both are local fields a prefab or a "
+             "scene sets in Unity's inspector; with either unset, and outside Unity, it draws nothing.");
     describe(add("Draw", "Cube", T_NONE, "tide_draw_cube", 3, T_F3, T_F3, T_COLOR),
              "center, size, color", "A filled cube, centered in the world, with the full size along each axis.");
     signature *cube = add("Draw", "Cube", T_NONE, "tide_draw_cube_rotated", 3, T_F3, T_F3, T_Q);
@@ -1138,6 +1155,35 @@ static void build_signatures(void)
              "`t` from 0 to 1, pulling back a little below 0 before going: an anticipation.");
     describe(add("Math", "EaseOutBack", T_F, "tide_ease_out_back_f", 1, T_F, T_NONE, T_NONE), "t",
              "`t` from 0 to 1, overshooting 1 by about 10% and settling back: a pop.");
+    // A value on its way to another: by a step at the most, and by a share of what's left that's the same
+    // however the seconds are cut into frames or ticks
+    const type towards_types[] = {T_F, T_F2, T_F3};
+    for (int i = 0; i < 3; i++) {
+        const type t = towards_types[i];
+        describe(add("Math", "MoveTowards", t, c_function("movetowards", t), 3, t, t, T_F), "current, target, step",
+                 "`current` moved at most `step` closer to `target`, never past it: `speed = Math.MoveTowards(speed, "
+                 "wanted, 20 * time.dt)`. A point moves along the straight line to the other.");
+        signature *damp = add("Math", "Damp", t, c_function("damp", t), 4, t, t, T_F);
+        damp->params[3] = T_F;
+        describe(damp, "current, target, rate, dt",
+                 "`current` eased towards `target`: closer by the same share every second whatever `dt` is, where "
+                 "`Math.Lerp(a, b, dt * 10)` depends on the frame rate. `rate` is how fast, in shares a second: at 10, "
+                 "about two thirds of the way in a tenth of a second.");
+    }
+    describe(add("Math", "DeltaAngle", T_F, "tide_deltaangle_f", 2, T_F, T_F, T_NONE), "from, to",
+             "The shortest turn from one angle to another, in radians, over -PI and up to PI: 0.2 from 6.2 to 0.1, "
+             "not -6.1.");
+    describe(add("Math", "WrapAngle", T_F, "tide_wrapangle_f", 1, T_F, T_NONE, T_NONE), "angle",
+             "The same angle over -PI and up to PI, like a yaw kept from growing as it turns.");
+    describe(add("Math", "MoveTowardsAngle", T_F, "tide_movetowardsangle_f", 3, T_F, T_F, T_F), "current, target, step",
+             "`current` turned at most `step` radians towards `target`, the short way round: `yaw = "
+             "Math.MoveTowardsAngle(yaw, wanted, turnSpeed * time.dt)`. It isn't wrapped: `Math.WrapAngle` does that.");
+    describe(add("Rect", "Contains", T_BOOL, "tide_rect_contains", 1, T_F2, T_NONE, T_NONE),
+             "point", "Whether the point is in the rect, like the pointer over a slot: its left and top edges are in, "
+             "its right and bottom ones out, so rects side by side share no point.");
+    describe(add("Rect", "Inset", T_RECT, "tide_rect_inset", 1, T_F, T_NONE, T_NONE),
+             "amount", "The rect with every edge moved in by `amount`, or out by one under 0, like a border's inside: "
+             "`Draw.Rect(slot.Inset(1), 4, fill)`. One too small is left with no size at its middle.");
     describe(add("Color", "WithAlpha", T_COLOR, "tide_color_with_alpha", 1, T_F, T_NONE, T_NONE),
              "alpha", "The color with this alpha, its red, green and blue as they are: `glow.WithAlpha(0.5 * fade)`.");
     describe(add("Rect", "MoveInside", T_RECT, "tide_rect_move_inside", 1, T_RECT, T_NONE, T_NONE),
@@ -2712,6 +2758,97 @@ bool web_prelude_wanted(const char *text, const size_t len)
     // IOError.TimedOut is a request's own error, which only a program with this code has (add_builtins in check.c)
     return has_text(text, len, "Web.Request") || has_text(text, len, "WebRequest") || has_text(text, len, "WebResponse")
         || has_text(text, len, "IOError.TimedOut");
+}
+
+// What a load of the server's store comes back as, and a listing of its keys, as an event and as what an awaited
+// listing gives (STORAGE_PRELUDE_PATH)
+#define STORAGE_LOADED_TEXT                                                                                            \
+    "// What Storage.Load asked the server's store for, as it comes back in a later\n"                                \
+    "// tick: sent to the entity the load named, or to the world. `found` is false,\n"                                \
+    "// and `bytes` empty, where the store has nothing under the key. `failed` is\n"                                  \
+    "// true where what's under it couldn't be read: not the same as nothing there,\n"                                \
+    "// so a game doesn't make it afresh and save over it.\n"                                                         \
+    "event Loaded\n"                                                                                                  \
+    "{\n"                                                                                                             \
+    "    string key;\n"                                                                                               \
+    "    List<byte> bytes;\n"                                                                                         \
+    "    bool found;\n"                                                                                               \
+    "    bool failed;\n"                                                                                              \
+    "}\n"
+#define STORAGE_LISTED_TEXT                                                                                            \
+    "// What Storage.List found in the server's store, as it comes back in a later\n"                                 \
+    "// tick: sent to the entity the listing named, or to the world. `keys` are the\n"                                \
+    "// keys that start with `prefix`, past `after` where the listing went on after\n"                                \
+    "// one, sorted by their bytes: 1,024 at the most, and `more` is true where there\n"                              \
+    "// are keys past the last, which a listing after it has. `failed` is true where\n"                               \
+    "// the store couldn't be listed, and `keys` is then empty.\n"                                                    \
+    "event Listed\n"                                                                                                  \
+    "{\n"                                                                                                             \
+    "    string prefix;\n"                                                                                            \
+    "    string after;\n"                                                                                             \
+    "    List<string> keys;\n"                                                                                        \
+    "    bool more;\n"                                                                                                \
+    "    bool failed;\n"                                                                                              \
+    "}\n"                                                                                                             \
+    "\n"                                                                                                              \
+    "// What `await Storage.List(prefix)` gives a match task: the keys, as a Listed\n"                                \
+    "// event has them, and whether there are `more` past the last, which\n"                                          \
+    "// `await Storage.List(prefix, keys[keys.count - 1])` goes on with.\n"                                           \
+    "struct StorageKeys\n"                                                                                            \
+    "{\n"                                                                                                             \
+    "    List<string> keys;\n"                                                                                        \
+    "    bool more;\n"                                                                                                \
+    "}\n"
+
+static const char storage_loaded_text[] = STORAGE_LOADED_TEXT;
+static const char storage_listed_text[] = STORAGE_LISTED_TEXT;
+static const char storage_both_text[] = STORAGE_LOADED_TEXT "\n" STORAGE_LISTED_TEXT;
+
+const char *storage_prelude(const unsigned wanted, size_t *len)
+{
+    if ((wanted & STORAGE_PRELUDE_LOADED) && (wanted & STORAGE_PRELUDE_LISTED)) {
+        *len = sizeof storage_both_text - 1;
+        return storage_both_text;
+    }
+    if (wanted & STORAGE_PRELUDE_LISTED) {
+        *len = sizeof storage_listed_text - 1;
+        return storage_listed_text;
+    }
+    *len = sizeof storage_loaded_text - 1;
+    return storage_loaded_text;
+}
+
+static bool word_char(const char ch)
+{
+    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_';
+}
+
+// Which of the words `Load` and `List` follow `Storage` and `.` in code, with
+// spaces or line breaks between them if any, and not in a comment
+unsigned storage_prelude_wanted(const char *text, const size_t len)
+{
+    unsigned wanted = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (text[i] == '/' && i + 1 < len && text[i + 1] == '/') {
+            while (i < len && text[i] != '\n') i++;
+            continue;
+        }
+        if (text[i] == '/' && i + 1 < len && text[i + 1] == '*') {
+            for (i += 2; i + 1 < len && !(text[i] == '*' && text[i + 1] == '/'); i++) {}
+            i++;
+            continue;
+        }
+        if (text[i] != 'S' || (i > 0 && word_char(text[i - 1])) || len - i < 7 || memcmp(text + i, "Storage", 7) != 0) continue;
+        size_t at = i + 7;
+        while (at < len && (text[at] == ' ' || text[at] == '\t' || text[at] == '\r' || text[at] == '\n')) at++;
+        if (at >= len || text[at] != '.') continue;
+        at++;
+        while (at < len && (text[at] == ' ' || text[at] == '\t' || text[at] == '\r' || text[at] == '\n')) at++;
+        if (len - at < 4 || (len - at > 4 && word_char(text[at + 4]))) continue;
+        if (memcmp(text + at, "Load", 4) == 0) wanted |= STORAGE_PRELUDE_LOADED;
+        if (memcmp(text + at, "List", 4) == 0) wanted |= STORAGE_PRELUDE_LISTED;
+    }
+    return wanted;
 }
 
 // Whether `name` (`n` bytes) is declared somewhere in the texts as a fill

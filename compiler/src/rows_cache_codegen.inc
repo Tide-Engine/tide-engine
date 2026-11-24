@@ -139,7 +139,7 @@ static void gen_rows_cache_helpers(gen *g)
         "    entry->ready = false;\n    entry->rows = rows;\n    entry->pass = 0u;\n"
         "    for (uint32_t f = 0; f < p->filters; f++) {\n"
         "        tide_page *page = t->pages[(size_t)chunk * c->count + p->filter[f].column];\n"
-        "        if (page->refs == UINT32_MAX) {\n"
+        "        if (tide_page_refs(page) == UINT32_MAX) {\n"
         "            for (uint32_t k = 0; k < f; k++) { tide_page_release(held[k], 1u); held[k] = NULL; }\n"
         "            return false; // A cache must never wrap a page's reference count.\n        }\n"
         "        tide_page_retain(page);\n        held[f] = page;\n    }\n    return true;\n}\n\n"

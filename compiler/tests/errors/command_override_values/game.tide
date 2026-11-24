@@ -1,0 +1,8 @@
+// expect: an override of 'Buy' takes what the command is called with: 'command(int item)'
+// expect: it replaces the command's code; what its calls pass stays the command's
+scene Main { }
+override command(string other) Shop.Buy(mut Shop.Till till, PlayerID sender)
+{
+    _ = sender;
+    till.sold += other.length;
+}

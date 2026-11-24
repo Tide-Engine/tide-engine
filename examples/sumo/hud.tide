@@ -6,7 +6,7 @@ using Box3D;
 using Rooms;
 
 // What the menu's room page shows of the match: who has each seat, and the
-// bots' switch; and the commands its buttons send, a new game and the switch.
+// bots' switch; and the commands its buttons call, a new game and the switch.
 view Roster(Ring ring, Session session, mut Lobby lobby)
 {
     lobby.seats = SEATS;
@@ -15,8 +15,8 @@ view Roster(Ring ring, Session session, mut Lobby lobby)
     lobby.mine = ring.players.TryGet(session.player, out var seat) ? seat : -1;
     lobby.offersNewGame = true;
     lobby.offersBots = true;
-    if (lobby.newGame) Send(Rebuild { });
-    if (lobby.toggleBots) Send(Bots { });
+    if (lobby.newGame) Rebuild();
+    if (lobby.toggleBots) Bots();
 }
 
 const float SCORES = 48; // The height of the scores' row

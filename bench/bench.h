@@ -47,6 +47,10 @@ typedef struct bench_options {
     // together), which every platform has to agree on: the run fails if it's
     // another. 0 checks nothing.
     uint64_t expect;
+    // What the bots' machines took of what they were sent (projections and repairs by what changed, each with the
+    // ticks the machine had played then), hashed in bots' order: the run fails if it's another. 0 checks nothing.
+    // A server's datagrams carry its keys, which are a run's own; what they carry is the same whatever its threads.
+    uint64_t expect_taken;
     // A sharded game's world, split into this many regions along x to start
     // with; 0 runs it on one server, as a world one server holds.
     uint32_t split;
@@ -59,6 +63,19 @@ typedef struct bench_options {
     // server says it should be, tick by tick, saying what differs (the bot's
     // number plus 1; 0 for none): what makes a machine ask for repairs.
     uint32_t diverge;
+    // The server's longest updates, this many, each said with what it spent
+    // where: what a server's worst update is made of. 0: none.
+    uint32_t worst;
+    // Seconds between lines that say what the run holds as it goes (the
+    // server's world, a bot's worlds, the process, the last stretch's
+    // updates): whether anything grows in a long run. 0: none.
+    double every;
+    // A network outage once everyone's in: every datagram to and from the first `outage_bots` bots (0: every bot) is
+    // lost for `outage` seconds, from OUTAGE_AT seconds after the last caught up. Past the ticks a server keeps, each
+    // of them is sent its world again, all at once: what that costs the server's updates, and how long after the
+    // outage each has a verified world near the server's again. 0: none.
+    double outage;
+    uint32_t outage_bots;
 } bench_options;
 
 typedef struct bench_desc {
@@ -82,6 +99,9 @@ typedef struct bench_desc {
     // What a world holds, for the report on each server and on what the
     // bots' machines have: its entities, say. NULL: not reported.
     uint32_t (*held)(const void *world);
+    // What the server's world's memory is made of, a line after each --every
+    // line (its entity table's, its tables' and its heaps' pages). NULL: nothing.
+    void (*parts)(const void *world);
     // A sharded game's: the box its regions divide (tide_shards_desc.world)
     tide_shard_box world;
     // For --diverge: the tick a world has run (its Time.tick), and what
@@ -89,6 +109,16 @@ typedef struct bench_desc {
     // as their machine has it: a line each, at most `most` of them. NULL: no --diverge.
     uint32_t (*tick_of)(const void *world);
     void (*differ)(const void *server, const void *client, uint32_t most);
+    // Called for each bot that's in the match after every frame, with the world
+    // its machine has now (its predicted one), outside every timing: for what a
+    // game wants to say about how a player's world comes and goes. NULL: nothing.
+    void (*watch)(const bench_flag *flags, uint32_t bot, const void *world);
+    // The same for the server's world, after every frame and before the bots'
+    // `watch` of that frame (a world one server runs; not split). NULL: nothing.
+    void (*watch_server)(const bench_flag *flags, const void *world);
+    // Where the server keeps the match's store (Storage.Save and Load in match
+    // code: tide_server_desc.io), or NULL: nowhere, so every load finds nothing.
+    const struct tide_io *io;
 } bench_desc;
 
 // Reads the command line, runs the benchmark and reports. Returns the

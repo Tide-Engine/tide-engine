@@ -1,0 +1,5 @@
+// expect: Read<int> gives a Grid3<int>, but this volume is Format.R32f, which holds float: write 'await volume.Read<float>()'
+scene Main {}
+local singleton Fog { Texture3D volume; }
+view Make(mut Fog fog) { fog.volume = Texture3D(int3(4), Format.R32f); }
+async void Read(Fog fog) { var cells = await fog.volume.Read<int>(); }

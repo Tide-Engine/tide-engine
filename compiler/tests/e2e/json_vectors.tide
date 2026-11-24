@@ -1,0 +1,214 @@
+// Json.Read<T> and Json.Write with vectors, quaternions and colors (arrays of
+// their numbers), sets (arrays of their keys) and maps by a number or an enum
+// (objects whose keys are the number's digits or the member's name).
+
+enum Side
+{
+    Left,
+    Right,
+    Middle = 7,
+    Centre = 7,
+}
+
+enum Tiny : byte
+{
+    Zero,
+    One,
+}
+
+struct Pose
+{
+    float2 flat;
+    float3 at = float3(1, 2, 3);
+    float4 wide;
+    int2 cell;
+    int3 block = int3(-1, 0, 1);
+    int4 box;
+    double2 far2;
+    double3 far = double3(0.5d, 0.25d, 0.125d);
+    double4 far4;
+    quaternion turn = quaternion.identity;
+    Color tint = Color(1, 0.5, 0, 0.25);
+    float3? aim;
+    List<float3> path;
+    Map<string, float2> marks;
+    int2[2] corners;
+}
+
+struct Picks
+{
+    Set<int> numbers;
+    Set<string> names;
+    Set<Side> sides;
+    Set<char> letters;
+    Map<int, string> byId;
+    Map<long, int> byLong;
+    Map<byte, int> byByte;
+    Map<Side, int> bySide;
+    Map<Tiny, float> byTiny;
+    Map<int, List<float3>> routes;
+}
+
+component Results
+{
+    int checks;
+    int passed;
+    int firstFailure; // 1-based; 0 if every check passed
+}
+
+// What the match keeps of what it read: its hash is the same on every platform.
+component Kept
+{
+    Pose pose;
+    Picks picks;
+    string posed;
+    string picked;
+    string edges;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Results, Kept);
+}
+
+void Expect(mut Results r, bool ok)
+{
+    r.checks++;
+    if (ok) r.passed++;
+    else if (r.firstFailure == 0) r.firstFailure = r.checks;
+}
+
+bool Reads(string json)
+{
+    return Json.Read<Pose>(json) != null;
+}
+
+Pose Read(string json)
+{
+    return Json.Read<Pose>(json) ?? Pose { flat = float2(-99, -99) };
+}
+
+bool Picked(string json)
+{
+    return Json.Read<Picks>(json) != null;
+}
+
+float Zero(string text)
+{
+    float.TryParse(text, out var value);
+    return value;
+}
+
+void Vectors(mut Results r, mut Kept kept)
+{
+    // Each kind, as an array of its numbers
+    var pose = Read("{\"flat\":[1.5,-2],\"at\":[0.1,-0,3e2],\"wide\":[1,2,3,4],\"cell\":[-2147483648,2147483647],\"block\":[3.0,40e-1,5],"
+                  + "\"box\":[1,2,3,4],\"far2\":[0.1,2],\"far\":[1e300,-1e-300,0.30000000000000004],\"far4\":[1,2,3,4],"
+                  + "\"turn\":[0,0.70710677,0,0.70710677],\"tint\":[0.25,0.5,0.75],\"aim\":[0,1,0],"
+                  + "\"path\":[[1,2,3],[4,5,6]],\"marks\":{\"a\":[1,2]},\"corners\":[[1,2],[3,4]]}");
+    Expect(r, pose.flat.x == 1.5 && pose.flat.y == -2 && pose.at.x == 0.1 && pose.at.y == 0 && 1 / pose.at.y < 0 && pose.at.z == 300);
+    Expect(r, pose.wide.x == 1 && pose.wide.w == 4 && pose.cell.x == -2147483648 && pose.cell.y == 2147483647);
+    Expect(r, pose.block.x == 3 && pose.block.y == 4 && pose.block.z == 5 && pose.box.z == 3);
+    Expect(r, pose.far2.x == 0.1d && pose.far.x == 1e300d && pose.far.y == -1e-300d && pose.far.z == 0.30000000000000004d && pose.far4.w == 4);
+    Expect(r, pose.turn.value.y == 0.70710677 && pose.turn.value.w == 0.70710677 && pose.turn.value.x == 0);
+    Expect(r, pose.tint.r == 0.25 && pose.tint.g == 0.5 && pose.tint.b == 0.75 && pose.tint.a == 1); // Three numbers: alpha 1
+    Expect(r, (pose.aim ?? float3(0)).y == 1 && pose.path.count == 2 && pose.path[1].z == 6 && pose.marks["a"].y == 2);
+    Expect(r, pose.corners[1].x == 3 && pose.corners[1].y == 4);
+    kept.pose = pose;
+
+    // Written: arrays, a color's with alpha, and read back as the same value, bit for bit
+    var text = Json.Write(pose);
+    kept.posed = text;
+    Expect(r, text.StartsWith("{\"flat\":[1.5,-2],\"at\":[0.1,-0,300],\"wide\":[1,2,3,4],\"cell\":[-2147483648,2147483647],\"block\":[3,4,5],"));
+    Expect(r, text.Contains("\"turn\":[0,0.70710677,0,0.70710677],\"tint\":[0.25,0.5,0.75,1],\"aim\":[0,1,0],\"path\":[[1,2,3],[4,5,6]]"));
+    var again = Read(text);
+    Expect(r, Json.Write(again) == text && again.far.z == pose.far.z && 1 / again.at.y < 0 && again.cell.x == pose.cell.x);
+
+    // What's left out keeps its default, a null too, and a null number keeps that number's
+    var bare = Read("{\"at\":null,\"tint\":[null,0,null,null],\"block\":[null,7,null],\"aim\":null}");
+    Expect(r, bare.at.x == 1 && bare.at.z == 3 && bare.tint.r == 1 && bare.tint.g == 0 && bare.tint.b == 0 && bare.tint.a == 0.25);
+    Expect(r, bare.block.x == -1 && bare.block.y == 7 && bare.block.z == 1 && bare.aim == null && bare.turn.value.w == 1);
+    Expect(r, Read("{}").far.y == 0.25d && Read("{}").tint.a == 0.25);
+    Expect(r, Read("{\"tint\":[0,0,0,0.5]}").tint.a == 0.5 && Read("{\"tint\":[1,1,1]}").tint.a == 1);
+
+    // What JSON has no number for is null, and reads back as the default's number
+    var odd = Pose { at = float3(Zero("0") / Zero("0"), 1 / Zero("0"), 2), tint = Color(-1 / Zero("0"), 0, 0, 1) };
+    var oddText = Json.Write(odd);
+    Expect(r, oddText.Contains("\"at\":[null,null,2]") && oddText.Contains("\"tint\":[null,0,0,1]"));
+    var oddBack = Read(oddText);
+    Expect(r, oddBack.at.x == 1 && oddBack.at.y == 2 && oddBack.at.z == 2 && oddBack.tint.r == 1);
+
+    // A vector as the value itself
+    var points = Json.Read<List<float3>>("[[1,2,3],[0,0,0]]") ?? [];
+    Expect(r, points.count == 2 && points[0].y == 2 && Json.Write(points) == "[[1,2,3],[0,0,0]]");
+    Expect(r, Json.Write(Pose { }).Contains("\"far\":[0.5,0.25,0.125]") && Json.Write(Pose { }).Contains("\"turn\":[0,0,0,1]"));
+}
+
+void Refused(mut Results r)
+{
+    // The wrong number of numbers gives nothing; a color takes three or four
+    Expect(r, !Reads("{\"at\":[1,2]}") && !Reads("{\"at\":[1,2,3,4]}") && !Reads("{\"at\":[]}") && !Reads("{\"flat\":[1]}"));
+    Expect(r, !Reads("{\"tint\":[1,1]}") && !Reads("{\"tint\":[1,1,1,1,1]}") && !Reads("{\"turn\":[0,0,1]}") && !Reads("{\"wide\":[1,2,3,4,5]}"));
+    Expect(r, Reads("{\"tint\":[1,1,1]}") && Reads("{\"tint\":[1,1,1,1]}") && Reads("{\"turn\":[0,0,0,1]}"));
+    // Not an array, or not numbers
+    Expect(r, !Reads("{\"at\":3}") && !Reads("{\"at\":{\"x\":1,\"y\":2,\"z\":3}}") && !Reads("{\"at\":\"1,2,3\"}") && !Reads("{\"at\":[1,\"2\",3]}"));
+    Expect(r, !Reads("{\"at\":[1,[2],3]}") && !Reads("{\"at\":[1,true,3]}") && !Reads("{\"at\":[1,2,3,]}") && !Reads("{\"at\":[1 2 3]}"));
+    // Ints whole and fitting; floats any number a float holds
+    Expect(r, !Reads("{\"cell\":[1.5,2]}") && !Reads("{\"cell\":[2147483648,0]}") && !Reads("{\"block\":[0,-2147483649,0]}") && Reads("{\"cell\":[3.0,-0]}"));
+    Expect(r, !Reads("{\"at\":[1e39,0,0]}") && Reads("{\"far\":[1e39,0,0]}") && !Reads("{\"far\":[1e309,0,0]}") && !Reads("{\"at\":[NaN,0,0]}"));
+    // The whole read gives nothing, wherever the vector is
+    Expect(r, !Reads("{\"path\":[[1,2,3],[4,5]]}") && !Reads("{\"marks\":{\"a\":[1,2,3]}}") && !Reads("{\"corners\":[[1,2],[3]]}"));
+    Expect(r, Json.Read<List<float3>>("[[1,2,3],[1,2]]") == null && Json.Read<List<float3>>("[1,2,3]") == null);
+}
+
+void Sets(mut Results r, mut Kept kept)
+{
+    var picks = Json.Read<Picks>("{\"numbers\":[3,1,3,2],\"names\":[\"b\",\"a\",\"\"],\"sides\":[\"Right\",\"Centre\",0],"
+                               + "\"letters\":[\"x\",\"é\"],\"byId\":{\"1\":\"one\",\"-20\":\"minus\",\"007\":\"bond\",\"1\":\"uno\"},"
+                               + "\"byLong\":{\"-9223372036854775808\":1,\"9223372036854775807\":2},\"byByte\":{\"0\":1,\"255\":2},"
+                               + "\"bySide\":{\"Left\":1,\"Centre\":7,\"9\":9},\"byTiny\":{\"One\":0.5},\"routes\":{\"4\":[[1,2,3]]}}") ?? Picks { };
+    Expect(r, picks.numbers.count == 3 && picks.numbers.Has(1) && picks.numbers.Has(2) && picks.numbers.Has(3)); // One read twice: once
+    Expect(r, picks.names.count == 3 && picks.names.Has("") && picks.sides.count == 3 && picks.sides.Has(Side.Middle) && picks.sides.Has(Side.Left));
+    Expect(r, picks.letters.count == 2 && picks.letters.Has('é'));
+    Expect(r, picks.byId.count == 3 && picks.byId[1] == "uno" && picks.byId[-20] == "minus" && picks.byId[7] == "bond"); // A key twice: the last
+    Expect(r, picks.byLong[-9223372036854775807L - 1] == 1 && picks.byLong[9223372036854775807L] == 2 && picks.byByte[255] == 2);
+    Expect(r, picks.bySide[Side.Left] == 1 && picks.bySide[Side.Middle] == 7 && picks.bySide[Side(9)] == 9 && picks.byTiny[Tiny.One] == 0.5);
+    Expect(r, picks.routes[4].count == 1 && picks.routes[4][0].z == 3);
+    kept.picks = picks;
+
+    // Written in the order they were added: numbers' digits and members' first names as keys
+    var text = Json.Write(picks);
+    kept.picked = text;
+    Expect(r, text == "{\"numbers\":[3,1,2],\"names\":[\"b\",\"a\",\"\"],\"sides\":[\"Right\",\"Middle\",\"Left\"],\"letters\":[\"x\",\"é\"],"
+                    + "\"byId\":{\"1\":\"uno\",\"-20\":\"minus\",\"7\":\"bond\"},\"byLong\":{\"-9223372036854775808\":1,\"9223372036854775807\":2},"
+                    + "\"byByte\":{\"0\":1,\"255\":2},\"bySide\":{\"Left\":1,\"Middle\":7,\"9\":9},\"byTiny\":{\"One\":0.5},\"routes\":{\"4\":[[1,2,3]]}}");
+    var again = Json.Read<Picks>(text) ?? Picks { };
+    Expect(r, Json.Write(again) == text);
+
+    // As the value itself
+    var only = Json.Read<Set<string>>("[\"a\",\"b\",\"a\"]") ?? default;
+    var bytes = Json.Read<Set<byte>>("[1,255,1]") ?? default; // A set of bytes too
+    Expect(r, only.count == 2 && Json.Write(only) == "[\"a\",\"b\"]" && Json.Read<Set<int>>("{}") == null
+                  && bytes.count == 2 && Json.Write(bytes) == "[1,255]" && Json.Read<Set<byte>>("[256]") == null);
+    var named = Json.Read<Map<Side, string>>("{\"Right\":\"r\"}") ?? default;
+    Expect(r, named[Side.Right] == "r" && Json.Write(named) == "{\"Right\":\"r\"}");
+    kept.edges = Json.Write(Json.Read<Map<int, int>>("{\"2147483647\":1,\"-2147483648\":2}") ?? default);
+    Expect(r, kept.edges == "{\"2147483647\":1,\"-2147483648\":2}");
+
+    // A key that isn't one gives nothing
+    Expect(r, !Picked("{\"byId\":{\"x\":\"a\"}}") && !Picked("{\"byId\":{\"1.5\":\"a\"}}") && !Picked("{\"byId\":{\"2147483648\":\"a\"}}"));
+    Expect(r, !Picked("{\"byId\":{\" 1\":\"a\"}}") && !Picked("{\"byId\":{\"+1\":\"a\"}}") && !Picked("{\"byId\":{\"\":\"a\"}}") && !Picked("{\"byId\":{\"1e2\":\"a\"}}"));
+    Expect(r, !Picked("{\"byByte\":{\"256\":1}}") && !Picked("{\"byByte\":{\"-1\":1}}") && !Picked("{\"byLong\":{\"9223372036854775808\":1}}"));
+    Expect(r, !Picked("{\"bySide\":{\"Nope\":1}}") && !Picked("{\"bySide\":{\"left\":1}}") && !Picked("{\"byTiny\":{\"256\":1}}") && Picked("{\"byTiny\":{\"255\":1}}"));
+    Expect(r, !Picked("{\"numbers\":{}}") && !Picked("{\"numbers\":[1.5]}") && !Picked("{\"sides\":[\"Up\"]}") && !Picked("{\"letters\":[\"ab\"]}"));
+    Expect(r, !Picked("{\"byId\":[]}") && !Picked("{\"byId\":{\"1\":2}}") && !Picked("{\"routes\":{\"1\":[[1,2]]}}"));
+}
+
+system Check(mut Results r, mut Kept kept)
+{
+    Vectors(r, kept);
+    Refused(r);
+    Sets(r, kept);
+}

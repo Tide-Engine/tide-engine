@@ -137,7 +137,7 @@ Editors gray out the lines left out, and the formatter leaves them, and the dire
 
 ## Symbols of your own
 
-An `#if` also reads symbols that you, the build or the game's packages define. A symbol is defined or it isn't: it has no value, and one that nothing defines is false.
+An `#if` also reads symbols that you, the build or the game's packages define. To `#if`, a symbol is defined or it isn't, and one that nothing defines is false. A build can give one a value too, which code reads as a constant: see [Values from the build](#values-from-the-build).
 
 ```csharp
 #define TRACE_HITS
@@ -151,7 +151,7 @@ event(Hit hit) Trace(Health health)
 ```
 
 - **`#define NAME`** defines a symbol for the file it's in, and **`#undef NAME`** takes one away there, the build's too. Both go at the top of the file, before its first declaration, as they're for all of it. Other files don't see them.
-- **`--define NAME`** on `tide run`, `tide build`, `tide schedule` and `tide shaders` defines a symbol for every file of the game and its packages, as many times as you have symbols: `tide build --define DEMO --define STEAM`.
+- **`--define NAME`** on `tide run`, `tide build`, `tide schedule` and `tide shaders` defines a symbol for every file of the game and its packages, as many times as you have symbols: `tide build --define DEMO --define STEAM`. **`--define NAME=value`** defines it with a value, and `#if NAME` is true either way.
 - **`DEBUG`** is defined in default debug builds, rather than `--release` or `--distribution` builds.
 - **`PACKAGE_<NAME>`** is defined for each package the game builds with, its name in capitals: `PACKAGE_BOX2D` when the game's `tide.packages` lists Box2D. So a package, or a game, can have code that's only there beside another package:
 
@@ -166,8 +166,30 @@ system Splash(Body body, with Raindrop) { ... }
 - Names that start with `TIDE_` and `PACKAGE_` are tide's: neither `#define` nor `--define` takes one.
 - There are no symbols for platforms: a game is the same code on desktop, phones and the web, so their players can share a match.
 
+## Values from the build
+
+Code reads the same symbols as constants. `defined(NAME)` is `true` where `#if NAME` would be, and `define(NAME, default)` is the value `--define NAME=value` gave, or `default` when the build gives none:
+
+```csharp
+const bool PREPASS = !defined(NO_PREPASS);
+const int ARMY_SIDE = define(ARMY_SIDE, 500);
+const float SCALE = define(SCALE, 1);
+const string BANNER = define(BANNER, "Mount up");
+const Difficulty START = define(START, Difficulty.Normal);
+```
+
+`tide run --define ARMY_SIDE=50 --define SCALE=0.5 --define "BANNER=Night battle" --define START=Hard` builds with those; a plain `tide run` with the defaults. Where `#if` picks between pieces of code, these pick between values, so a choice between three army sizes is one line instead of an `#if`, an `#elif` and an `#else`.
+
+- **The value reads as the constant's type**: the type of what it goes into when the default goes there too, so `define(SCALE, 1)` in a `float` reads `--define SCALE=0.5` as a float, and `define(MANY, 5)` in a `long` reads a long. That's a `const`, a field, a local, a parameter, a `return`, or a part of a vector, a color or a quaternion: `float3(define(X, 0), 0, 0)`. Anywhere else, in arithmetic say, it's the default's type, so write the default as the kind of number you want: `define(SCALE, 1.0) * 2`. A default that doesn't go where it goes, `const int SIDE = define(SIDE, 1.5)`, is the error it would be without the `define`, whatever the build gives.
+- **The values**: a `bool` (`true` or `false`), a `byte`, an `int` or a `long` (whole, in digits, a `-` before a negative one, and fitting the type), a `float` or a `double` (a number in decimal, like `2.5` or `-1e3`, that the type holds, not so small it would be 0), a `string` (the text as it is, which has to be UTF-8), or an enum (a member's name, as written). A value that isn't one is an error that says what's wanted: `--define ARMY_SIDE=lots` is "the build gives 'ARMY_SIDE' the value 'lots', and 'define(ARMY_SIDE, ...)' reads an int here".
+- **A symbol defined with no value** (`--define FAST`, `DEBUG`, or a file's `#define FAST`) is `true` to a `bool` `define`, and an error to any other, which says what to do: give it a value on the command line, or take away the file's `#define`, which is over the build's. `--define DEBUG=3` keeps its value in a debug build too. Tide's versions and the packages' `PACKAGE_` symbols never have a value, so `define` doesn't read them: `defined(PACKAGE_BOX2D)` does.
+- **They're constants**, so they go wherever a constant does: a `const`, a field's default, an array's size, a `switch` case, a GPU function. The default has to be one too.
+- `#if` reads whether a symbol is defined, never its value: `#if ARMY_SIDE == 50`, `#if ARMY_SIDE > 50` and, with `--define START=Hard`, `#if START == Hard` are errors, and so is `#if defined(FAST)`, which is code's spelling (`#if FAST` is the condition's). Compare the constant in code, `if (ARMY_SIDE == 50)`, or define a symbol for each choice.
+- `defined` and `define` are names of the language's: no type, function or constant is called either, and an editor won't rename one to them. A method, a parameter or a local `Func` with one of the names is called where it's in scope, as one called `Spawn` would be.
+- **On Windows**, `tide` reads its command line in the console's code page, so a text value with characters outside ASCII is refused as not UTF-8. Keep such text in the game and choose it with an enum's member: `define(BANNER, Banner.Day)` and `--define BANNER=Night`.
+
 ::: warning Builds that differ are different games
-Every machine of a match has to run the same code. So when a game's `#if` lines read `DEBUG`, a `--define` symbol or a package's, the answers are part of what the game is: a debug build and a release build of such a game, or two builds with different `--define`s, can't join each other's matches. A game whose conditions read none of them, or only tide's versions and its files' own `#define`s, isn't affected.
+Every machine of a match has to run the same code. So when a game's `#if` lines, or its `defined` and `define`, read `DEBUG`, a `--define` symbol or a package's, the answers, with each symbol's value, are part of what the game is: a debug build and a release build of such a game, or two builds with different `--define`s, can't join each other's matches. A game that reads none of them, or only tide's versions and its files' own `#define`s, isn't affected.
 :::
 
-Editors read `DEBUG` as defined, and know the game's packages. They don't know what a command line will define, so code under `#if DEMO` is grayed out there.
+Editors read `DEBUG` as defined, and know the game's packages. They don't know what a command line will define, so code under `#if DEMO` is grayed out there, and `define(ARMY_SIDE, 500)` is 500.

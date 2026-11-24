@@ -1,0 +1,3 @@
+// expect: Read<float> gives a Grid3<float> of the volume's own numbers, and this volume's format isn't fixed by its constructor assignments
+scene Main {}
+async void Read(Texture3D volume) { var cells = await volume.Read<float>(); }

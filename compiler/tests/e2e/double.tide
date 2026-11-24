@@ -56,14 +56,12 @@ local singleton Display
     bool submit;
 }
 
-command Move64 { double value; double3 destination; double3x3 basis; }
-
-command(Move64 command, PlayerID sender) Apply(mut Results result)
+command(double value, double3 destination, double3x3 basis) Move64(mut Results result, PlayerID sender)
 {
     if (sender != PlayerID(0)) return;
-    result.commandValue = command.value;
-    result.destination = command.destination;
-    Debug.Assert(command.basis.c1.y == FAR);
+    result.commandValue = value;
+    result.destination = destination;
+    Debug.Assert(basis.c1.y == FAR);
 }
 
 input Controls
@@ -255,7 +253,7 @@ view Present(Position64 p, mut Display display)
     display.matrix = p.matrix;
     if (display.submit)
     {
-        Send(Move64 { value = FAR, destination = p.position, basis = p.basis });
+        Move64(FAR, p.position, p.basis);
         display.submit = false;
     }
 }

@@ -200,7 +200,8 @@ TIDE_TEST(shard_checkpoint_bounds_full_keys_and_directory_uniqueness)
     TIDE_REQUIRE(report_identity(source, 2, 0, key, true));
     uint32_t size = 0;
     uint8_t *bytes = tide_shard_coordinator_save(source, checkpoint_payload, NULL, &size);
-    TIDE_REQUIRE(bytes && size >= 32);
+    enum { ID = 61 }; // The checkpoint's identity, between its version and its directory
+    TIDE_REQUIRE(bytes && size >= 32 + ID);
     tide_shard_coordinator *copy = tide_shard_coordinator_load(&desc, bytes, size, 0);
     TIDE_REQUIRE(copy);
     TIDE_CHECK(tide_shard_coordinator_owner(copy, key) == 2);
@@ -209,27 +210,119 @@ TIDE_TEST(shard_checkpoint_bounds_full_keys_and_directory_uniqueness)
     uint8_t *bad = malloc((size_t)size + 20u);
     TIDE_REQUIRE(bad);
     memcpy(bad, bytes, size);
-    memset(bad + 12u, 0, 16u); // Null directory key
+    memset(bad + ID + 12u, 0, 16u); // Null directory key
     TIDE_CHECK(!tide_shard_coordinator_load(&desc, bad, size, 0));
     memcpy(bad, bytes, size);
-    memset(bad + 28u, 0xff, 4u); // Owner outside the checkpoint's shard set
+    memset(bad + ID + 28u, 0xff, 4u); // Owner outside the checkpoint's shard set
     TIDE_CHECK(!tide_shard_coordinator_load(&desc, bad, size, 0));
-    memcpy(bad, bytes, 32u);
-    memcpy(bad + 32u, bytes + 12u, 20u);
-    memcpy(bad + 52u, bytes + 32u, size - 32u);
-    bad[8] = 2; // Duplicate full key, with a valid count and byte span
+    memcpy(bad, bytes, ID + 32u);
+    memcpy(bad + ID + 32u, bytes + ID + 12u, 20u);
+    memcpy(bad + ID + 52u, bytes + ID + 32u, size - ID - 32u);
+    bad[ID + 8] = 2; // Duplicate full key, with a valid count and byte span
     TIDE_CHECK(!tide_shard_coordinator_load(&desc, bad, size + 20u, 0));
 
     // A huge count must not wrap when converted to a byte span.
     memcpy(bad, bytes, size);
-    memset(bad + 8u, 0xff, 4u);
+    memset(bad + ID + 8u, 0xff, 4u);
     const uint8_t *world = (const uint8_t *)(uintptr_t)1;
     uint32_t world_size = 77, tick = 88, rewritten_size = 99;
     TIDE_CHECK(!tide_shard_checkpoint_world(bad, size, 0, &world, &world_size, &tick));
     TIDE_CHECK(world == (const uint8_t *)(uintptr_t)1 && world_size == 77 && tick == 88);
-    TIDE_CHECK(!tide_shard_checkpoint_rewrite(bad, size, NULL, NULL, &rewritten_size));
+    TIDE_CHECK(!tide_shard_checkpoint_rewrite(bad, size, NULL, NULL, NULL, 0, &rewritten_size));
     TIDE_CHECK(rewritten_size == 99);
     free(bad);
+    free(bytes);
+    tide_shard_coordinator_destroy(source);
+}
+
+// A checkpoint says which build made it and which world it's of, and only that build loads it
+TIDE_TEST(shard_checkpoint_is_its_build_s_alone)
+{
+    tide_shard_coordinator_desc desc = {
+        .range = 5, .dims = 2, .world = {{-40, -10, 0}, {40, 10, 0}}, .split = {2, 1, 1},
+        .layout = 77, .world_id = {UINT64_C(0x1122334455667788), UINT64_C(0x99aabbccddeeff00)},
+    };
+    memset(desc.simulation, 0x5a, sizeof desc.simulation);
+    tide_shard_coordinator *source = tide_shard_coordinator_create(&desc, 0);
+    TIDE_REQUIRE(source);
+    uint32_t size = 0, second_size = 0;
+    uint8_t *bytes = tide_shard_coordinator_save(source, checkpoint_payload, NULL, &size);
+    uint8_t *second = tide_shard_coordinator_save(source, checkpoint_payload, NULL, &second_size);
+    TIDE_REQUIRE(bytes && second);
+    tide_shard_checkpoint_id id, next;
+    TIDE_REQUIRE(tide_shard_checkpoint_identity(bytes, size, &id));
+    TIDE_REQUIRE(tide_shard_checkpoint_identity(second, second_size, &next));
+    TIDE_CHECK(memcmp(id.simulation, desc.simulation, 32) == 0 && id.layout == 77 && !id.sealed);
+    TIDE_CHECK(id.world_id[0] == desc.world_id[0] && id.world_id[1] == desc.world_id[1]);
+    TIDE_CHECK(next.sequence == id.sequence + 1u); // Each checkpoint of a world has its own number
+    free(second);
+
+    // The build that made it loads it, with the world's name and its checkpoints' count
+    tide_shard_coordinator_desc same = desc;
+    same.world_id[0] = same.world_id[1] = 5; // A host's own for a new world: the checkpoint's wins
+    tide_shard_coordinator *copy = tide_shard_coordinator_load(&same, bytes, size, 0);
+    TIDE_REQUIRE(copy);
+    uint64_t world[2] = {0};
+    uint32_t sequence = 0;
+    tide_shard_coordinator_world(copy, world, &sequence);
+    TIDE_CHECK(world[0] == desc.world_id[0] && world[1] == desc.world_id[1] && sequence == id.sequence);
+    tide_shard_coordinator_destroy(copy);
+    TIDE_CHECK(tide_shard_checkpoint_fits(bytes, size, desc.simulation, 77) == TIDE_SHARD_CHECKPOINT_FITS);
+    TIDE_CHECK(tide_shard_checkpoint_fits(bytes, size, desc.simulation, 78) == TIDE_SHARD_CHECKPOINT_FITS); // Simulation decides
+
+    // Another simulation doesn't, whatever its layout
+    tide_shard_coordinator_desc other = desc;
+    other.simulation[31] ^= 1u;
+    TIDE_CHECK(!tide_shard_coordinator_load(&other, bytes, size, 0));
+    TIDE_CHECK(tide_shard_checkpoint_fits(bytes, size, other.simulation, 77) == TIDE_SHARD_CHECKPOINT_OTHER_BUILD);
+
+    // Tables with no simulation identity go by their layout, as admission does
+    tide_shard_coordinator_desc plain = desc;
+    memset(plain.simulation, 0, sizeof plain.simulation);
+    tide_shard_coordinator *bare = tide_shard_coordinator_create(&plain, 0);
+    TIDE_REQUIRE(bare);
+    uint32_t bare_size = 0;
+    uint8_t *bare_bytes = tide_shard_coordinator_save(bare, checkpoint_payload, NULL, &bare_size);
+    TIDE_REQUIRE(bare_bytes);
+    TIDE_CHECK(tide_shard_checkpoint_fits(bare_bytes, bare_size, plain.simulation, 77) == TIDE_SHARD_CHECKPOINT_FITS);
+    TIDE_CHECK(tide_shard_checkpoint_fits(bare_bytes, bare_size, plain.simulation, 78) == TIDE_SHARD_CHECKPOINT_OTHER_BUILD);
+    plain.layout = 78;
+    TIDE_CHECK(!tide_shard_coordinator_load(&plain, bare_bytes, bare_size, 0));
+    TIDE_CHECK(tide_shard_checkpoint_fits(bare_bytes, bare_size, desc.simulation, 77) == TIDE_SHARD_CHECKPOINT_OTHER_BUILD);
+    free(bare_bytes);
+    tide_shard_coordinator_destroy(bare);
+
+    // An older envelope, a head cut short and flags no checkpoint has aren't checkpoints
+    uint8_t *bad = malloc(size);
+    TIDE_REQUIRE(bad);
+    memcpy(bad, bytes, size);
+    bad[4] = 6;
+    TIDE_CHECK(tide_shard_checkpoint_fits(bad, size, desc.simulation, 77) == TIDE_SHARD_CHECKPOINT_UNREADABLE);
+    TIDE_CHECK(!tide_shard_coordinator_load(&desc, bad, size, 0));
+    TIDE_CHECK(tide_shard_checkpoint_fits(bytes, 40u, desc.simulation, 77) == TIDE_SHARD_CHECKPOINT_UNREADABLE);
+    memcpy(bad, bytes, size);
+    bad[68] = 2;
+    TIDE_CHECK(!tide_shard_checkpoint_identity(bad, size, &next));
+    free(bad);
+
+    // Sealed by its maker; rewritten for another build it's that build's, unsealed, the same world
+    TIDE_REQUIRE(tide_shard_checkpoint_seal(bytes, size));
+    TIDE_REQUIRE(tide_shard_checkpoint_identity(bytes, size, &next) && next.sealed);
+    copy = tide_shard_coordinator_load(&desc, bytes, size, 0);
+    TIDE_CHECK(copy != NULL); // A sealed one loads as any
+    tide_shard_coordinator_destroy(copy);
+    uint32_t taken_size = 0;
+    uint8_t *taken = tide_shard_checkpoint_rewrite(bytes, size, NULL, NULL, other.simulation, 91, &taken_size);
+    TIDE_REQUIRE(taken && taken_size == size);
+    TIDE_REQUIRE(tide_shard_checkpoint_identity(taken, taken_size, &next));
+    TIDE_CHECK(memcmp(next.simulation, other.simulation, 32) == 0 && next.layout == 91 && !next.sealed);
+    TIDE_CHECK(next.world_id[0] == id.world_id[0] && next.world_id[1] == id.world_id[1] && next.sequence == id.sequence);
+    TIDE_CHECK(memcmp(taken + 69, bytes + 69, size - 69u) == 0); // Every world as it was
+    TIDE_CHECK(!tide_shard_coordinator_load(&desc, taken, taken_size, 0));
+    copy = tide_shard_coordinator_load(&other, taken, taken_size, 0);
+    TIDE_CHECK(copy != NULL);
+    tide_shard_coordinator_destroy(copy);
+    free(taken);
     free(bytes);
     tide_shard_coordinator_destroy(source);
 }

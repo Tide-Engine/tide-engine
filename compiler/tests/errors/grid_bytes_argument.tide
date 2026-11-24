@@ -1,0 +1,7 @@
+// expect: 'FromBytes' argument 1 is List<byte>, not string
+singleton Field { Grid2<int> cells; string saved; }
+system Load(mut Field field)
+{
+    field.cells = Grid2<int>.FromBytes(field.saved)!;
+}
+scene Main { }

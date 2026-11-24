@@ -48,6 +48,10 @@ static const struct {
     {"Clip", TY_CLIP, "clip", "tide_clip_ref"},
     {"Font", TY_FONT, "font", "tide_font_ref"},
     {"Resident", TY_RESIDENT, "resident", "tide_resident"},
+    {"DepthCubemap", TY_DEPTH_CUBEMAP, "depthcube", "tide_depth_ref"},
+    {"UnityEngine.Mesh", TY_UNITY_MESH, "unitymesh", "tide_external_ref"},
+    {"UnityEngine.Material", TY_UNITY_MATERIAL, "unitymaterial", "tide_external_ref"},
+    {"UnityEngine.AudioClip", TY_UNITY_CLIP, "unityclip", "tide_external_ref"},
 };
 
 #define BUILTIN_COUNT (sizeof builtins / sizeof builtins[0])
@@ -190,8 +194,10 @@ layout type_layout(const type t)
     if (t.kind == TY_TEXTURE_ARRAY) return (layout){40, 8}; // tide_texture_array_ref: a target, a name, its layers
     if (t.kind == TY_TEXTURE3D) return (layout){40, 8}; // tide_texture3d_ref: a target, a grid name and depth
     if (t.kind == TY_DEPTH_TEXTURE_ARRAY) return (layout){24, 8}; // tide_depth_ref: the array's target
+    if (t.kind == TY_DEPTH_CUBEMAP) return (layout){24, 8};        // tide_depth_ref: the cube's target
     if (t.kind == TY_CLIP) return (layout){8, 8};           // tide_clip_ref: a name
     if (t.kind == TY_FONT) return (layout){8, 8};           // tide_font_ref: a number of the registry's
+    if (t.kind == TY_UNITY_MESH || t.kind == TY_UNITY_MATERIAL || t.kind == TY_UNITY_CLIP) return (layout){8, 8}; // tide_external_ref
     if (t.kind == TY_RESIDENT) return (layout){32, 8};      // tide_resident: its pages, then what the hash covers
     if (t.kind == TY_GPU_LIST) return (layout){16, 8};      // tide_gpu_list: its id, then its capacity and stride
     // Text, lists and grids are a handle each (tide_handle: 64 bits, see tide/text.h)
@@ -321,6 +327,16 @@ bool type_is_texture_grid(const type t)
     return cell == TY_COLOR || cell == TY_FLOAT;
 }
 
+// A Grid2 of numbers that's a Texture only where a typed [Raw(T)] role takes it: the T a read of it gives (float2,
+// float4, or int for a grid of ints or of bytes), TY_ERROR for any other type.
+type type_number_grid_role(const type t)
+{
+    if (t.kind != TY_GRID || !t.decl || t.decl->dims != 2 || t.decl->fields.count < 1) return (type){TY_ERROR, NULL};
+    const type_kind cell = t.decl->fields.items[0].type.kind;
+    return (type){cell == TY_FLOAT2 ? TY_FLOAT2 : cell == TY_FLOAT4 ? TY_FLOAT4 : cell == TY_INT || cell == TY_BYTE ? TY_INT
+                  : TY_ERROR, NULL};
+}
+
 // A Grid3 of colors or of floats: what's a TextureArray where one is wanted, its layers its z.
 bool type_is_array_grid(const type t)
 {
@@ -417,7 +433,9 @@ bool type_assignable(const type to, const type from)
     if (from.kind == TY_BYTE && (to.kind == TY_INT || to.kind == TY_LONG || to.kind == TY_FLOAT)) return true;
     // A char goes where an int does, as its code point; an int becomes a char only with char(n)
     if (from.kind == TY_CHAR && (to.kind == TY_INT || to.kind == TY_LONG || to.kind == TY_FLOAT)) return true;
-    if (to.kind == TY_TEXTURE) return type_is_texture_grid(from); // A grid of colors or of floats is a texture
+    // A grid of colors or of floats is a texture, and one of numbers too, where the checker sees a [Raw(T)] role of
+    // its T take it (check.c, refuse_number_grid)
+    if (to.kind == TY_TEXTURE) return type_is_texture_grid(from) || type_number_grid_role(from).kind != TY_ERROR;
     if (to.kind == TY_TEXTURE_ARRAY) return type_is_array_grid(from); // ...and one of three dimensions an array
     if (to.kind == TY_TEXTURE3D) return type_is_array_grid(from);
     if (type_is_double_based(to)) {

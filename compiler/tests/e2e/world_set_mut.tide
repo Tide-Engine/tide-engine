@@ -112,7 +112,6 @@ system Containers(mut Bag bag, Settings settings, mut Results results, mut World
 event Change { }
 event Resume { }
 event AwaitChild { }
-command ChangeCommand { }
 
 // Set is itself a write to the bound parameter: removing mut would change this read.
 event(Change) Apply(mut Bag bag, mut World world, mut Results results)
@@ -120,7 +119,7 @@ event(Change) Apply(mut Bag bag, mut World world, mut Results results)
     Run() { ReplaceBag(this, world); }
     if (bag.value != 20) results.failures++;
 }
-command(ChangeCommand change, PlayerID sender) ApplyCommand(mut Bag bag, mut World world)
+command() ChangeCommand(mut Bag bag, mut World world, PlayerID sender)
 {
     if (sender != PlayerID(0)) return;
     ReplaceBag(this, world);
@@ -183,5 +182,5 @@ view Submit(mut Viewer viewer)
 {
     if (!viewer.submit) return;
     viewer.submit = false;
-    viewer.target.Send(ChangeCommand);
+    viewer.target.ChangeCommand();
 }

@@ -5,7 +5,8 @@
 #include <stdint.h>
 
 // A small web server on this machine only (127.0.0.1), for tide run --web: it
-// answers GET requests with what `answer` gives, and nothing else.
+// answers GET requests with what `answer` gives, and the page's own POSTs (a
+// dev build's checkpoint, saved to the game's folder), and nothing else.
 
 typedef struct serve_reply {
     int status;       // 200, or 404
@@ -14,8 +15,13 @@ typedef struct serve_reply {
     size_t size;
 } serve_reply;
 
-// Fills `reply` for a request of `path`, like "/" or "/build".
-typedef void (*serve_fn)(void *user, const char *path, serve_reply *reply);
+// Fills `reply` for a request of `path`, like "/" or "/build". A query (`?...`) stays on the path only for a request
+// with an X-Tide header, which only the page itself sends. `body` is a POST's (`size` bytes), which only the page
+// sends too; NULL for a GET.
+typedef void (*serve_fn)(void *user, const char *path, const uint8_t *body, size_t size, serve_reply *reply);
+
+// The most a POST's body has: a big game's checkpoint
+#define SERVE_BODY_MOST (1024u * 1024u * 1024u)
 
 typedef struct serve serve;
 

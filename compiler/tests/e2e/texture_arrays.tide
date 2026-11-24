@@ -53,12 +53,15 @@ frag Packed(Vertex vertex, out Color color)
         + packed.Sample(vertex.uv, 1) + exact.Sample(vertex.uv, 0);
 }
 
+const int SHADOW_SIDE = 64;     // A size and a layer count given by name: constants, not named arguments
+const int CASCADES = 4;
+
 view Make(mut Art art)
 {
     if (art.frames == 0)
     {
         art.drawn = TextureArray(32, 16, 3, 1);
-        art.shadows = TextureArray(64, 64, 4, 1, Format.Depth);
+        art.shadows = TextureArray(SHADOW_SIDE, SHADOW_SIDE, CASCADES, 1, Format.Depth);
         art.depths = art.shadows.depth;
         art.kept = sky;
         art.heights[4, 2, 3] = 0.5;

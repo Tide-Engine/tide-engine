@@ -1,7 +1,7 @@
 # tide_add_game(<target> [SOURCES <file.tide|file.c|file.cpp>...] [HOST <file.c>...] [WINDOW] [NAME <name>]
 #               [TITLE <title>] [STATS] [LAYOUT] [EMBED] [VISUALIZERS] [SPLIT_PLUMBING] [SPLIT_CODE] [WARNINGS <text>...]
 #               [PACKAGES <Name> <file.tide>... [<Name> <file.tide>...]]
-#               [DEFINES <SYMBOL>...] [SHELL <page.html>])
+#               [DEFINES <SYMBOL>[=<value>]...] [SHELL <page.html>])
 #
 # Builds a Tide game as the program <target>. The game is every .tide file
 # in the current source folder and its subfolders (new ones are picked up by
@@ -18,8 +18,10 @@
 # packages builds with tide.
 #
 # DEFINES lists symbols the game's #if lines read as defined, as tide's
-# --define does (docs/spec.md, Conditional compilation). DEBUG is defined in a
-# Debug build, and PACKAGE_<NAME> for each package after PACKAGES.
+# --define does (docs/spec.md, Conditional compilation), each one SYMBOL or
+# SYMBOL=value, which the game's define(SYMBOL, default) reads. DEBUG is
+# defined in a Debug build (unless DEFINES names it: DEBUG=2 keeps its value),
+# and PACKAGE_<NAME> for each package after PACKAGES.
 #
 # Without HOST, the game is the whole program: it opens a window titled TITLE,
 # or the game's title setting, or <target>, and runs (see
@@ -146,7 +148,7 @@ function(tide_web_page target)
 endfunction()
 
 function(tide_add_game target)
-    cmake_parse_arguments(ARG "STATS;LAYOUT;EMBED;WINDOW;SERVER;STRIP_SERVER_ASSETS;VISUALIZERS;STRIP_NAMES;SPLIT_PLUMBING;SPLIT_CODE;NO_LOOP_INDEXES;NO_CALL_MERGING;NO_CACHED" "NAME;TITLE;SHELL" "SOURCES;HOST;WARNINGS;PACKAGES;DEFINES" ${ARGN})
+    cmake_parse_arguments(ARG "DEV;STATS;LAYOUT;EMBED;WINDOW;SERVER;STRIP_SERVER_ASSETS;VISUALIZERS;STRIP_NAMES;SPLIT_PLUMBING;SPLIT_CODE;NO_LOOP_INDEXES;NO_CALL_MERGING;NO_CACHED" "NAME;TITLE;SHELL;SCENE" "SOURCES;HOST;WARNINGS;PACKAGES;DEFINES" ${ARGN})
     if(ARG_SERVER AND (TIDE_WEB OR TIDE_ANDROID OR ARG_HOST OR ARG_WINDOW OR ARG_LAYOUT))
         message(FATAL_ERROR "tide_add_game(${target} SERVER) is a standalone native server")
     endif()
@@ -246,12 +248,16 @@ function(tide_add_game target)
         set(layout --layout)
     endif()
     # The symbols the game's #if lines read as defined: DEFINES', and DEBUG in a Debug build, as tide
-    # defines it without --release
+    # defines it without --release, unless DEFINES says DEBUG itself (DEBUG=3 keeps its value)
     set(defines "")
+    set(debug_said OFF)
     foreach(symbol IN LISTS ARG_DEFINES)
         list(APPEND defines --define "${symbol}")
+        if(symbol MATCHES "^DEBUG(=|$)")
+            set(debug_said ON)
+        endif()
     endforeach()
-    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug" AND NOT debug_said)
         list(APPEND defines --define DEBUG)
     endif()
 
@@ -375,6 +381,12 @@ function(tide_add_game target)
     # used for reloading; prune only ordinary standalone optimized games.
     set(strip_assets OFF)
     set(server_flags)
+    if(ARG_DEV) # A dev build: the game's `dev` declarations are in it
+        list(APPEND server_flags --dev)
+    endif()
+    if(ARG_SCENE) # What it starts in, over its startScene: a name, or a scene with its fields, "Battle { side = 50 }"
+        list(APPEND server_flags --scene "${ARG_SCENE}")
+    endif()
     if(ARG_SERVER)
         list(APPEND server_flags --server)
         if(NOT c_sources OR ARG_STRIP_SERVER_ASSETS)
@@ -396,7 +408,7 @@ function(tide_add_game target)
     # <name>_lldb.py, as tide's debug builds have them (compiler/src/debug_views_codegen.inc)
     set(visualizers "")
     set(visualizer_outputs "")
-    if((ARG_VISUALIZERS OR TIDE_VISUALIZERS) AND NOT TIDE_WEB AND NOT TIDE_ANDROID)
+    if((ARG_VISUALIZERS OR TIDE_VISUALIZERS) AND NOT TIDE_WEB AND NOT TIDE_ANDROID AND NOT TIDE_IOS)
         set(visualizers --visualizers)
         set(visualizer_outputs "${out_dir}/${name}.natvis" "${out_dir}/${name}_lldb.py")
     endif()
@@ -543,9 +555,10 @@ int main(int argc, char **argv)
     endif()
 
     # `cmake --build --preset <preset> --target <target>_schedule` prints which
-    # systems can run at the same time, and why the others wait.
+    # systems can run at the same time, and why the others wait: the program
+    # the target builds, so with its DEFINES, which can change stages' offsets
     add_custom_target(${target}_schedule
-        COMMAND ${TIDEC_COMMAND} "@${listed}" --schedule --name "${name}"
+        COMMAND ${TIDEC_COMMAND} "@${listed}" --schedule --name "${name}" ${defines}
         DEPENDS ${TIDEC_DEPENDS}
         VERBATIM
         USES_TERMINAL)

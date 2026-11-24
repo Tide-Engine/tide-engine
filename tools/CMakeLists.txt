@@ -27,7 +27,6 @@ if(TIDE_EDITOR_EXTENSIONS)
             tide-vscode/icon.png
             tide-vscode/icons/tide.svg
             tide-vscode/src/extension.js
-            tide-vscode/src/prefab-client.js
             tide-vscode/src/debug.js
             tide-syntax/language-configuration.json
             tide-syntax/syntaxes/tide.tmLanguage.json

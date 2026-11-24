@@ -140,6 +140,8 @@ namespace Tide.Editor
                 process.Start();
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
+                runningTide = Stamp(tide, out runningSize, out runningWritten) ? tide : null;
+                replacedAt = -1;
                 state = "building";
                 starting = true;
                 Working("Building the game");
@@ -356,8 +358,68 @@ namespace Tide.Editor
             return file != null;
         }
 
+        // The tide that's running, and its file as it was when it started. One replaced under the editor (tide
+        // upgraded or installed again, a development tide built again) is started again: the running one is the old
+        // program, which would go on building with the new installation's files. The host it then builds says it's
+        // another tide's than a Play still running loaded (tide/host.h's TIDE_HOST_LIBRARY_MADE_BY), whose Console
+        // says to enter Play again.
+        static string runningTide;
+        static long runningSize, seenSize;
+        static DateTime runningWritten, seenWritten;
+        static double replacedAt = -1, lookedAt;
+
+        static bool Stamp(string path, out long size, out DateTime written)
+        {
+            size = 0;
+            written = default;
+            try
+            {
+                var info = new FileInfo(path);
+                if (!info.Exists) return false;
+                size = info.Length;
+                written = info.LastWriteTimeUtc;
+                return true;
+            }
+            catch (Exception)
+            {
+                return false; // Being written: looked at again
+            }
+        }
+
+        // Whether the file at `path`, `size` bytes written at `written` when its program started, has been another
+        // file for `settled` seconds: one still being written (a linker's, an installer's) isn't taken yet
+        internal static bool Replaced(string path, long size, DateTime written, double now, double settled = 2)
+        {
+            if (!Stamp(path, out var nowSize, out var nowWritten)) return false;
+            if (nowSize == size && nowWritten == written)
+            {
+                replacedAt = -1;
+                return false;
+            }
+            if (replacedAt < 0 || nowSize != seenSize || nowWritten != seenWritten)
+            {
+                seenSize = nowSize;
+                seenWritten = nowWritten;
+                replacedAt = now;
+                return false;
+            }
+            return now - replacedAt >= settled;
+        }
+
+        // The running tide's process, 0 for none, and its executable: tests follow it being started again
+        internal static int RunningId => process != null && !process.HasExited ? process.Id : 0;
+        internal static string RunningTide => runningTide;
+
+        static void FollowTide()
+        {
+            if (process == null || runningTide == null || EditorApplication.timeSinceStartup - lookedAt < 1) return;
+            lookedAt = EditorApplication.timeSinceStartup;
+            if (Replaced(runningTide, runningSize, runningWritten, lookedAt)) Restart();
+        }
+
         static void Drain()
         {
+            FollowTide();
             while (lines.TryDequeue(out var entry))
             {
                 var line = entry.line;

@@ -1,3 +1,492 @@
+## A platform layer with no window of its own, for iOS (2026-11-19)
+
+New, the agent's, under the `platform/` maintenance below; Provisional. `platform/embedded/window.c` and `audio.c`
+implement `src/window.h`, `src/audio_out.h` and `src/audio_in.h` for a build that lives inside another program
+(tide/embed.h) and has no window, GPU or audio device of its own: an iOS game under Unity, and a console's the same
+way. Every function answers as "none": no window opens (`tide_window_open` says why and returns false), no key is
+held, no pack is beside a program, no device opens. No new function, no changed signature, nothing an existing build
+compiles: the files are in `tide_platform` only where `TIDE_IOS` is set, in place of `desktop/glfw.c`,
+`desktop/audio.c` and `src/gpu_vk.c`. Generated C calls nothing new; no layout, hash, snapshot, wire, embed ABI or
+host shape changed. The rest of the platform layer builds for iOS unchanged, through its `__APPLE__` branches.
+`tide unity --ios` gives the same files to a Unity player's Xcode project as sources (`notes/unity.md`, iOS
+players), for which a desktop package installs `platform/src`, `platform/embedded` and what a build generates for
+them (the font, the renderer's SPIR-V and kernels) under `src/platform`. Contracts and tests: `notes/ios.md`.
+If the owner takes this over: a window of Tide's own on iOS (a standalone app, Metal) would be another backend
+beside this one, not a change to it.
+## A texture of the other program's own (2026-11-19)
+
+**For the owner to confirm** (built as a clear win under the 2026-11-17 rule: additive, inert outside an embed, no
+result of any existing draw changed, tested; notes/unity.md, top section). The generated-C/runtime boundary gained:
+
+- `tide_texture_ref`'s fourth kind (`engine/include/tide/draw.h`): `TIDE_TEXTURE_EXTERNAL` as its `image.height`,
+  `tide_texture_external`, `tide_texture_is_external`, `tide_texture_external_id`, `_size`. Generated code calls
+  none of them: it reads such a reference through the calls it already made (`tide_texture_size`, the
+  `tide_draw_texture_source*` functions), which now know the kind (`engine/src/mesh.c`, `engine/src/draw.c`).
+  `Texture`'s layout is as it was, 48 bytes.
+- `TIDE_PIXELS_EXTERNAL` and `TIDE_PIXELS_EXTERNAL_RAW` (`draw.h`): a draw-list texture with no pixels.
+- `tide_embed_game.set_local` (`engine/include/tide/embed_game.h`), a new last member that `tidec --embed` fills
+  (`tide_embed_set_local`, `embed_codegen.inc`): a local `Texture` field of a component's or singleton's own, by
+  its type and offset, through the existing `tide_get_<part>`/`tide_set_<part>`. The table's size is now part of
+  `TIDE_HOST_SHAPE` (`tide/host.h`, with `tide_host_game`'s), so a library another tide built with a shorter one is
+  refused rather than called through a member it hasn't; `TIDE_EMBED_ABI` is 28.
+- The platform's (the agent's): `gpu.h`'s optional `external`, `TIDE_GPU_EXTERNAL_LINEAR`/`_RAW`,
+  `gpu_record.c`'s `record_external`, `TIDE_EMBED_RENDER_EXTERNAL`, and `tide_embed_local_texture` (`embed.c`).
+
+No world byte, hash, snapshot or wire byte changes: local fields alone take one, and a game's layout is as it was.
+
+**Later the same day** (the owner's "introduce a Unity mesh type directly ... similar for others"; notes/unity.md,
+top section), more of the same kind, embed ABI 29:
+
+- `tide_external_ref` (`draw.h`: a number, 8 bytes), what generated code holds for Tide's `UnityEngine.Mesh`,
+  `UnityEngine.Material` and `UnityEngine.AudioClip`. Generated views call two new functions with it:
+  `tide_draw_external_mesh` (`draw.h`, `draw.c`: `TIDE_DRAW_EXTERNAL`, a command with its matrix, appended between
+  lists like the rest) and `tide_audio_play_external` (`tide/audio.h`, `audio.c`: a one-shot with no samples, by
+  `tide_clip.external`, a new member in what was padding, which the mixer plays nothing of).
+- `tide_embed_game.set_local` takes those fields too, by their size (8) against a Texture's (48).
+- The platform's: `gpu.h`'s optional `external_draw`, `platform.c`'s `STEP_EXTERNAL` (the window's passes alone),
+  `TIDE_EMBED_RENDER_EXTERNAL_DRAW`, `tide_embed_local_object`, `tide_embed_sounds`.
+
+## The view packet carries what's read (2026-11-19)
+
+Mine, a clear win under the guide's rule (measured, what a reader of everything gets unchanged, tested;
+notes/unity.md, The packet carries what Unity reads). `tide_packet` (`tide/embed_game.h`) gained `wanted`,
+`wanted_types` and `again`, which a host sets before each `tide_embed_game.view` call, and the inline
+`tide_packet_wants(p, type)`. Generated C (`embed_codegen.inc`) tests it around each component's and singleton's
+block, and its event taps keep a record only for an event that's wanted (`tide_embed_heard_wants`, from the pointer
+the last view call was given: the host keeps the bits where they are). The heard events now go as the next is heard
+or the next frame's packet is written, where the packet's end dropped them, so the same frame's packet written again
+(`again`) carries them again. No `tide_embed_game` member, signature or `tide_host_game` member changed, so
+`TIDE_HOST_SHAPE` is as it was; a zeroed packet (`wanted` NULL: the dev inspector's, any host that never says) gets
+everything, as before. `tide/embed.h` gained `tide_embed_view_want` and `tide_embed_view_again` (embed ABI 27, with
+Unity's `TideLibrary.Abi`). Hosts, libraries and generated games rebuild together, as for any `tide_packet` change.
+
+## Which tide built a library (2026-11-19)
+
+Clear win, no sign-off (measured: nothing in a frame; results unchanged; tested): a game's library built by
+`tide unity` or `tide run` exports `tide_host_library_made_by` (text, written by the CLI's `library.c`, not by tidec; no generated
+C or game header changes, so no hash moves), and hosts gain a way to say their own: `tide_run_desc.made_by`
+(`tide/host.h`, a new last member, NULL for any) and `tide_embed_made_by(text)` (`tide/embed.h`, the process's,
+called by a constructor in the host `tide unity` builds, never by the other program: no embed ABI change and no new
+export). `reload_library.inc`'s `load` refuses a library that says another text when the host says one.
+notes/hot-reload.md, A library says which tide built it; notes/unity.md, top.
+
+## A check's rows on the tick's pool (2026-11-17, parts)
+
+**For the owner to confirm**: `tide_game.client_hashes` (tide/session.h) may now share its work out on the threads
+handed to its caller's thread (`tide_loops_enter`, tide/jobs.h), with the same values; the header says so. The
+session (`engine/src/session.c`'s `tick_end`, agent-maintained) hands it the tick's pool: `tide_loops_enter(t->jobs)`
+around its call, `tide_loops_leave` after (notes/netcode.md, top section). Generated code (`client_spans_codegen.inc`)
+calls `tide_parallel_for` for its parts, and asks whether a pool was handed to the thread with `tide_loops_enter(NULL)`
+and `tide_loops_leave` (which give back and put back the one there is): both existing runtime functions, so no new
+one, though a `tide_loops_jobs()` that only reads would say it plainer if the owner prefers it. No new hook or
+`tide_game` member; the signature and every hash are as they were. New in generated code alone: the memo's stages
+(`tide_client_stage`, `tide_client_hasher.stage`), the parts (`tide_client_part`, `tide_client_parts`) and, for tests,
+`tide_client_check_digest` under `TIDE_CLIENT_CHECK_DIGEST`.
+
+## Repairs read on several threads at once (2026-11-17, later)
+
+**For the owner to confirm**: what the session asks of `tide_game.client_changes` (tide/session.h) is now that it can
+be called on several threads at once for one match (one `lineage`), outside ticks and checks, and writes nothing
+another call reads; the session reads an update's repairs on the pool (notes/netcode.md, top section). Its signature
+and bytes are as they were. Generated code (`client_state_codegen.inc`, `client_changes_codegen.inc`) gained, for
+itself alone, `tide_client_memo_share` / `_unshare` (the match's memo held to read, by any number of threads:
+`tide_client_memo.readers`), a hasher that reads it and writes nothing (`tide_client_hasher.shared`, `reading`) and
+`tide_client_item_holds`; it calls no runtime function that's new. The session's side: `tide_recipient_delta_pack_with`
+(engine/src/recipient_delta.h, the session's own codec) takes its index's room from the caller. No new hook or
+`tide_game` member.
+
+## A repair's read into the session's writers (2026-11-17)
+
+**For the owner to confirm**: `tide_game.client_changes` (tide/session.h), a hook between the session and generated
+code, now takes three `tide_writer *` (plan, `now`, `was`) and returns a `bool`, where it returned the plan and gave
+`now` and `was` back as `malloc`ed bytes with their sizes. Generated code (`client_changes_codegen.inc`) writes each
+from its writer's start, growing it as any growing writer does; the bytes stay the caller's. The session
+(`engine/src/session.c`, `read_room`) hands it writers with room from repairs already packed, so a read writes into
+memory it wrote before rather than fresh pages (notes/netcode.md, top section). No new runtime function; what's
+written is byte for byte what was. Callers: `session.c`, `bench/bench.c`'s timing wrapper, and seven
+`compiler/tests/e2e/visibility_*_test.c`.
+
+## The inspector (2026-11-16)
+
+New, the agent's: `engine/include/tide/inspect.h`, `engine/src/inspect.c` (notes/standard-host.md, The inspector).
+Generated code calls `tide_inspect_writable` (a dev build's TideSetField handler) and fills `tide_game_inspect()`;
+`tide_host_game` gained `inspect`, and `tide_tweaks_write` (a value as text into a .tweaks file) is new in tweaks.c.
+
+## Tweaks, the .tweaks files (2026-11-16, later)
+
+`tide/tweaks.h` changed with them (notes/language.md, Tweaks, step 5): `tide_tweaks_read`/`_write` (JSON) are gone;
+`tide_tweaks_load`, `_format`, `_save` are new; `tide_tweak` gained `type`, `file` and `plain`, and `tide_tweaks_api`
+`layout` and `values` in place of `code` and `path`. Generated code calls none of it.
+
+## Tweaks (2026-11-16)
+
+New, the agent's: `engine/include/tide/tweaks.h`, `engine/src/tweaks.c` (notes/language.md, Tweaks, step 2). Generated
+code calls nothing of it; it fills the table (`tide_game_tweaks()`) that hosts read. `tide_host_game` gained
+`tweaks` at its end, so hosts and game libraries rebuild together (TIDE_HOST_SHAPE).
+
+## Dev views (2026-11-16)
+
+Generated code gained `tide_dev_view_names` and `tide_show_dev_views` (notes/language.md, `dev` declarations), and
+`tide_host_game` two optional members at its end, `dev_views` and `show_dev_views`, which `tide/run.h` fills, so
+`TIDE_HOST_SHAPE` changes: hosts and game libraries rebuild together. No runtime function generated code calls is new.
+The menu is the standard host's (notes/standard-host.md, The dev menu).
+
+## Page references counted atomically (2026-11-17)
+
+Agent-maintained, under the page and heap maintenance (`tide/page.h`, `engine/src/page.c`, and the counts' users in
+`heap.c`, `tide/heap.h`, `table.c`, `tide/table.h`, `rows.c`, `delta.c`, `resident.c`, `asset_store.c`). A server lets
+go of a kept tick's world on the pool's background threads (`session.c`'s `let_go`, notes/netcode.md, top section),
+while the worlds sharing its pages are copied, written and let go of on others, so every count of references a world
+can share is atomic: a page's `refs`, a resident's table of pages, a heap's asset origins (entity orders' and asset
+pools' already were).
+
+- **New, generated code calls it**: `tide_page_refs(p)` (an acquire load of `p->refs`), where generated C read
+  `->refs` (a system's lanes' fallback in `codegen.c`, the indexes' sites in `index_codegen.inc`, the rows cache in
+  `rows_cache_codegen.inc`). `tide_page_retain_more(p, refs)` (runtime only: `delta.c`'s shared base pages).
+  `tide_page_retain` and `tide_page_release` are atomic; `tide_page_own_copy` and `_own_copy_around` let go of the
+  references they took over through `tide_page_release`, which gives the page back where another holder let go of
+  it meanwhile.
+- **The contract**: whoever sees as many references as it holds has the page alone, and nobody else can change that
+  until it shares the page again; seeing more than it holds, it copies, and a holder that let go meanwhile only makes
+  the copy needless. What a page holds is never read or written by whoever only lets go of a reference. Writing code
+  must keep to it: read `refs` through `tide_page_refs`, change it only through `tide_page_retain`, `_retain_more`
+  and `tide_page_release` (a page nobody else can have yet may be set as before: a new one, a copy, a dropped one
+  taken again).
+- If the owner takes page.c over: these, and that `let_go` relies on them.
+
+## Pages say where they were written (2026-11-17)
+
+**Agreed with the owner 2026-11-17** ("yes you can go ahead"): the runtime keeps which parts of a page were written
+since a check last looked, for the projection checks (netcode.md, top section). Agent-maintained, in `tide/page.h`,
+`engine/src/page.c` and the heap's and entity table's writes (`tide/heap.h`, `engine/src/heap.c`,
+`engine/src/entity.c`), all already under the page and heap maintenance; tests in `tests/test_heap.c` and
+`tests/test_entity.c`. Nothing of it is a world's state: never hashed, packed, sent or compared between machines.
+
+- **What a page keeps** (`tide_page`, whose header is 64 bytes where it was 32): `written`, the lines (64 to a page, a
+  bit each: `tide_page_lines`) written since `hash` was made, or since the hash it had while it's out of date; and,
+  set by `tide_page_hash` each time it makes a hash, `before` (the hash it had) and `wrote` (what `written` was, which
+  starts again). `grain`: a heap page of blocks of one size has their size, 1 << grain bytes (0 for any other page).
+- **The contract**: a page whose hash is of what it holds (`hashed` isn't `UINT32_MAX`) holds, in every line `wrote`
+  leaves out, the bytes it held when it hashed to `before`. `tide_page_same_since(p, kept, from, bytes)` and
+  `tide_page_lines_same_since(p, kept, lines)` say it for whoever kept a hash of the page: true where the page hashes
+  to `kept` now, or hashed to it before and those lines weren't written in between. A hash is of the bytes (as every
+  kept page hash is trusted already), so it holds whichever page, world, copy or world from bytes the hash was kept of.
+- **Who says what**: `tide_page_wrote(p, from, bytes)` and `tide_page_wrote_lines` (atomic: a heap's runs write one
+  page on several threads), `tide_page_dirty` (all of it); `tide_page_own` says all of it, `tide_page_own_for(p, mine,
+  keep, from, bytes)` the bytes it names. A heap write (`tide_heap_write`, `_write_shared`, `_write_over`, a run's copy)
+  says the lines of the block its offset is in (`tide_heap_wrote`, by the page's `grain`, which the place sets as it
+  takes the page, unpacking too, and copies keep); a slot's change (`slot_to_change`) its slot's. Anything else says
+  all of it: a new page, one taken from the spares (`tide_page_start` where a header was a literal), unpacked, a dropped
+  page taken again; and code that only makes `hashed` `UINT32_MAX` (tables' lanes, generated systems'), which
+  `tide_page_hash` takes as all of it where nothing was said. A copy (`tide_page_copy`, `_own_copy`, `_own_copy_around`)
+  has its source's `hash` and `written`, and the lines of what it doesn't copy.
+- **What a writer has to keep to**: it writes only within the block (or slot) it said, between the saying and the next
+  hash; a block's bytes are within its own block (as `hashed` already relied on, for the page). A delta that shares a
+  base's page whose blocks were smaller than its place says now is given a copy (`tide_heap_unpack_delta`), so a page's
+  `grain` is never smaller than its blocks.
+- **Generated code relies on** (client_spans_codegen.inc, client_state_codegen.inc): the contract above for heap pages
+  of one place (`1 << TIDE_HEAP_PAGE_SHIFT` bytes) and slots' pages (`TIDE_ENTITY_PAGE_SHIFT` slots of
+  `tide_entity_slot`); `tide_heap_page_used` as what a page's hash covers; reading a page's `before` and `wrote` only
+  once its hash is made (`tide_client_page_hash`, `tide_entities_slot_page_hash`). If the owner takes page.c or heap.c
+  over, those are what must stay.
+
+## The server's store: the files a provider has (2026-11-16, night)
+
+`engine/src/storage.c`, `tide/storage.h` (notes/voxels.md, section 3f). Nothing generated code calls changed. Hosts
+have two new calls: `tide_storage_forget_files(io)` (the provider's files or folders changed behind the store: listed
+again at the next load; NULL for every provider's; `tide_platform_io_init` calls it as its app's folders change) and
+`tide_storage_loads` (counts, for tests and the bench). A provider's `list` is now also called by a load, once, from
+the thread that carries requests out.
+
+## A heap's places (2026-11-16, night, later)
+
+`engine/src/heap.c`, `tide/heap.h` (notes/ecs.md, top section), under the heap maintenance. No runtime function
+generated code calls changed its contract, but `tide_heap` did: `used`, `free` (and the next section's `live`,
+`stub`, `gone`, `idle`) are gone; `place` (what's at each place), `index`, `low`, `taken`, `most` and `dropped` are
+new, and `pages` counts places with place 0, 0 for an empty heap. A heap's first block is at 16 KiB (place 1).
+Generated code changed with it: `tide_client_page_hash` and `tide_client_page_block` (client_state_codegen.inc)
+take a page's bytes in use from the new inline `tide_heap_page_used` where they worked it out from `used`, and
+`tide_cached_pages` (cached_codegen.inc) mixes in the place count and each free place where it read `used` and gave
+up at a NULL page. Also new: `tide_heap_has` (inline, bytes from an offset in a page the heap has now) and
+`tide_heap_handed_out` (asset_store.c's lease check). A heap's packed bytes, its delta, its hash and every world hash
+are another format: no world from before reads into this build. If the owner takes heap.c over: generated code relies
+on `tide_heap_page_used` being what a page's kept hash covers, on a free place's table entry being NULL, and on a
+page in the table staying allocated while a system that may read the heap runs (`dropped`).
+
+## A heap's pages given back (2026-11-16, night)
+
+Replaced by the section above (its four fields are gone).
+
+`engine/src/heap.c`, `tide/heap.h` (notes/ecs.md, top section). No generated code changed and no runtime function it
+calls changed its contract: `tide_heaps_settle`, which `apply_commands` already called after a tick's changes and
+their flush, now also lets go of each heap's pages whose blocks are all free. Generated code and hosts that read
+`tide_heap.page[...]` for anything but a block they hold have to take NULL for a page that isn't in memory
+(`tide_client_place_page` did). New: `tide_heaps_gone` (the places given back), and `tide_heaps_pages` counts the
+pages in memory. `tide_heap` has four more fields at its end (`live`, `stub`, `gone`, `idle`), none of them part of
+a world's bytes or hash.
+
+## A guard's few rows shared out (2026-11-16, last)
+
+No runtime function is new or changed (schedule-and-threads.md, top section). A system whose entities' order goes to
+threads in shares and whose guard lets few rows through now has a `tide_own_<System>` whether or not it changes a
+component, which the runtime calls before its tasks where it has more than one (`tide_system_tasks.own`, as it was):
+it marks the rows the guard lets through and keeps their keys in a tick-local array the world points at while its
+systems run (`tide_world.tide_live_keys`, `NULL` in a world's bytes, as `tide_run_keys` is), which its tasks read and
+its `tide_done_` reads again. It relies on what the lanes in pieces and the keys by run already rely on: `own` done
+before any task starts and `done` after the last, on one thread each, nothing moving a row while a system's tasks run
+(`tide_entity_location_at` gives in `done` what it gave in `own`), and `tide_table_lanes_end_pieces` called for
+exactly the chunks `tide_table_lanes_begin_pieces` was.
+
+## The completed tick's hash at the projection boundary (2026-11-19)
+
+`tide_game.client_hashes` accepts a nullable pointer to the authoritative
+whole-world hash of the exact state it receives. The session passes
+`ticking.hash` for the completed tick. Generated code uses it only as the
+repair journal's node key and retains the value. Standalone callers pass
+NULL to compute the key there. The checked build compares a supplied hash
+with its own. The generated header marks Session ABI `client hashes (4)`
+so the host and game rebuild together. See netcode.md, Projection journals
+reuse the completed tick's hash.
+
+## Frozen worlds (2026-11-17)
+
+`tide_game` gained `freeze_world(world)` (`tide/session.h`; optional, generated for a game whose servers repair by
+what changed: tidec's `world_freezes`): the session (agent-maintained) says nothing will change a world until it's
+let go of or copied over, and generated `tide_world_hash` keeps what it hashes to the first time (a table by address
+in the generated C, under a lock; `tide_world_free` and `tide_world_copy` take a world out of it). The session freezes
+each kept tick's world and each player's copied confirmed world, which nothing changes. No runtime function is new
+or changed, and nothing generated calls the runtime that it didn't (netcode.md, top section).
+
+## Whom entities came to (2026-11-16, last)
+
+`tide_game` gained `client_came(world, recipients, count, out)` (`tide/session.h`; optional, generated for a game
+with projections): whether a visibility group's audience gained each recipient in the checks of `world`
+(`client_hashes`) since it was last asked. Generated code keeps it (`tide_client_kept.came`, written by
+`tide_client_groups_diff`), nothing in the runtime; the session (agent-maintained) asks once a tick and sends a
+repair asked for of an earlier tick as the world is now (netcode.md, top section). It reads and clears the memo's
+rows under the memos' lock, and says nothing for a world with no memo or one being hashed. No runtime function is
+new or changed. `TIDE_STORED_PER_TICK` (256) is new in `tide/session.h`: the store's answers a server takes into a
+tick of a game with projections.
+
+## A handler's put, and pages counted (2026-11-16, later)
+
+No new runtime function. A match or local handler's dispatch took every lane of a `mut` component with
+`tide_table_column_mut` before its code and stored through the pointers; it now reads them with
+`tide_table_column` and, after the code, calls `tide_table_column_mut` for a lane only where the row's bytes
+changed (notes/ecs.md, top section). A put of more than 16 lanes calls `tide_table_scatter` (tide/table.h,
+engine/src/table.c, agent-maintained with tests/test_table.c) a run of lanes, by the row's number in its table
+(`tide_loc.row`). What generated code leans on, as `tide_store_<C>` already did: `tide_table_scatter` leaves a
+lane whose bytes are the value's with its page and its kept hash, and makes the page of one that differs the
+table's own (a copy when another holder shares it) before the write: one that wrote without comparing would be
+right and would cost a page copy a lane again (`tidec_e2e_handler_lanes` and `tide_tests table_scatter` fail it).
+And of pages: a page's place in a table is another page only once a page others hold is written (or the table
+grows, is unpacked or freed, none of which a handler's code can do), and a page replaced is still its other
+holders' to read: a handler compares against the page it read the row from unless its code can have had the row
+written another way. A system written in C and the far-entity marks (`predict_far_codegen.inc`) still take whole
+lanes with `tide_table_column_mut`.
+
+`TIDE_PAGE_STATS` (a define for a measuring build, nothing in an ordinary one): `tide_page_stats[4]` in page.c,
+declared in tide/page.h, counts pages taken and pages copied from a shared one with their bytes
+(`tide_page_take`, `tide_page_copy`, `tide_page_own_copy_around`); bench/bench.c prints them for each side.
+
+`TIDE_ALLOC_COUNT` (2026-11-16; defined by `bench/alloc_count.h`, which a counting tree puts in front of every C
+file: notes/benchmarks.md, What the process holds): page.c's `spare_size` says no size is kept spare, so every
+page is malloc's and freed, and counted as whoever took it. Nothing in an ordinary build.
+
+## Worker priorities (2026-11-15)
+
+Within the worker maintenance exception (Local worker runtime, Worker admission, below): `tide/worker.h` gained
+`tide_worker_reserve_at`, `tide_worker_can_reserve_at` and `TIDE_WORKER_NORMAL/URGENT/BACKGROUND`, which generated C
+calls only for a worker call that says a `priority:`; the functions without `_at` are those with normal.
+`tide_workers` keeps its queues by priority and hands a provider `threads - 1` calculations at a time, so
+`tide_background` and `tide_jobs` are unchanged and a provider needs nothing new. `tide_worker_limits`' first two
+members count each priority apart. No match storage, tick order, hash or wire format changed: priorities are this
+machine's. Contracts and tests: notes/schedule-and-threads.md (Worker priorities), notes/language.md.
+
+## The server's store: a host that keeps it (2026-11-15, managed hosting)
+
+Agent-maintained, and nothing generated code calls (notes/voxels.md, section 3e). `tide/storage.h` gained
+`tide_storage_host` (a `keep` callback a line hands each batch to), `tide_storage_line.host` and `tide_storage_answer`
+(a host's answer by number, checked against the request); `tide/session.h` gained `tide_server_desc.store` and
+`tide_server_store_answer`. In session.c that's one line in `tide_server_create` (`s->stored.host = desc->store`) and
+the answer function, which lands any tick in flight first. `platform/include/tide/managed_run.h` (agent-maintained, the
+managed reactor) uses them, with three new exports of ABI 1 and no new import. No layout, hash, snapshot or wire
+change, and nothing changes for a server without a host: `tidec_e2e_storage*` pass as they were. After review: a
+hosted batch keeps copies of its loads and listings alone (not the tick's saved values), and `tide_storage_host` says
+the host answers every number it's handed (`FAILED` where nothing else), as one never answered holds back the rest.
+
+## The server's store: review fixes (2026-11-15, after review)
+
+All agent-maintained (notes/voxels.md, sections 3, 3a and 3d). New at the generated-C boundary:
+`tide_storage_takes(kind, key, after)` (tide/storage.h, `static inline`), which an awaited load or listing calls after
+`tide_storage_ask` to fail at once with `IOError.InvalidPath` where the store refuses its key; it keeps the bounds
+`tide_storage_ask` keeps, and the two must stay the same (a request the store refuses that the check took would wait
+for ever). `tide_storage_ask` now takes no save or delete addressed to a task and no kind that isn't one. Hosts:
+`tide_io.settle` takes a `context` (the work posted with it, or NULL for everything posted before), which
+`tide_storage_finish` and a batch that couldn't be queued use to wait for their own line; `tide_server_desc.asked` (the
+requests a start the host ran itself asked, taken into the server's), which `shards.c` and the bench pass. The standard
+host gives a run with no window's sessions its files with no `post` or `settle`. No layout, hash, snapshot or wire
+change; `bench_voxels`' pin is unchanged.
+
+## The server's store: tasks that await it (2026-11-15, later)
+
+For `await Storage.Load(key)` and `await Storage.List(prefix[, after])` (notes/voxels.md, section 3d). The store's
+runtime is unchanged; generated code asks with `TIDE_STORAGE_TO_TASK` and a target of its own (the operation's identity:
+the identity clock and a cause), and its `tide_game.stored` now takes such answers, putting each into the waiting task's
+frame and returning false where none waits. New at the boundary, both agent-maintained: `tide_game.stored_again(world)`
+(tide/session.h), generated for a game whose tasks await the store, which the server (session.c) calls with its store
+bound after `tide_session_rewind` and after making a server from a given world (`tide_server_desc.world`), so a waiting
+task asks again what its frame keeps; and session.c's `dispatch_injected` binds the store around the messages it takes
+before a tick (`tide_storage_bind`/`unbind`), so a sharded game's task that arrives with its entity asks again on its new
+shard (generated `tide_shard_take_tasks`). No layout, hash, snapshot or wire change; `bench_voxels`' pin is unchanged.
+If the owner takes session.c over: those three calls, and that `stored` can return false for an answer it took and
+dropped, are what the generated side relies on.
+
+## The server's store: listings, its own thread, answers for tasks (2026-11-15)
+
+The store's runtime (`tide/storage.h`, `engine/src/storage.c`) is agent-maintained, as is the file provider
+(`platform/src/io.c`). Generated C now calls `tide_storage_ask(world, kind, key, bytes, after, to, target)` (two
+parameters more than before: a listing's `after` and whom the answer is for, `TIDE_STORAGE_TO_EVENT` or
+`TIDE_STORAGE_TO_TASK`) from its eight `tide_storage_*` helpers, and its `tide_game.stored` reads an answer with
+`tide_stored_read` into a `tide_stored` (where it took four out-parameters) and makes the event's values with the new
+`tide_stored_text`, `tide_stored_bytes` and `tide_stored_keys` (where it made the bytes' scratch block itself).
+`tide_stored_next_key`, `tide_storage_key`, the line (`tide_storage_line`, `_send`, `_receive`, `_forget`, `_finish`,
+`_waiting`) and `tide_io.post`/`settle` are the engine's and hosts'. `TIDE_STORED_MESSAGE`'s bytes changed (a kind and
+whom it's for after its first byte), which no wire version marks: an engine of other sources has another simulation
+identity (`TIDE_SIMULATION_RUNTIME` hashes them all), so no player of the old one joins. No layout,
+hash or snapshot change; `bench_voxels`' pinned hash is unchanged. Contracts and tests: notes/voxels.md, sections 3a to
+3c.
+
+## Repairs from the rows a check wrote down (2026-11-16, later)
+
+No runtime function is new or changed, and `tide_game`'s `client_hashes` and `client_changes` take and give what
+they did (netcode.md, top section). What generated code relies on now, all of it existing:
+
+- **A world's hash says what the world holds** (`tide_world_hash`, generated; `tide_page_hash` and the tables',
+  heaps' and entities' hashes under it): a server's check historically called it once more a tick, and a repair once for the world
+  the player confirmed, to know a world as the one a check left. It relies on a copy of a world hashing as its
+  source (pages shared, their hashes kept), on the hash taking in everything a projection reads (tables, heaps, the
+  entity table's slots, the singletons), and on a kept hash of a page being right while the page is as it was.
+- **A check's memo is the world's** (by its address, emptied by `tide_world_free`): the rows written down are kept
+  with it, so they go where it goes.
+- **A test's symbol**: a build that defines `TIDE_CLIENT_CHANGES_STATS` gets a global `tide_client_changes_stats[3]`
+  in the game's C (repairs by the journal, repairs that walked, rows the first looked at). No other build has it.
+- The session now passes the tick's hash to `client_hashes` (2026-11-19, above).
+
+## Projection hashes: rows by their bytes, big containers by their chunks (2026-11-16)
+
+No runtime function is new or changed (netcode.md, top section). What generated code for players relies on now, all
+of it existing:
+
+- **A table chunk's columns**: it copies and compares runs of a column's page (`tide_page_data` of
+  `tide_table.pages`, a column's `tide_columns.sizes` bytes a row), where it hashed them. A row's value of a lane is
+  those bytes, padding and all (generated types' padding is zeroed).
+- **A list in chunks**: a container whose elements are more bytes than `TIDE_LIST_CHUNK` is hashed a chunk's worth
+  of elements at a time (`TIDE_LIST_CHUNK / size`, by index), and where its list is in chunks in the match's heaps,
+  chunk `c`'s part is kept by the hash of the page chunk `c`'s offset is in (the block of offsets after the list's
+  header, as `tide_list_chunk` reads it): it relies on chunk `c` holding elements `c * per` on, `per` of them, and on
+  a map's entries being its list's elements, an entry's first 8 bytes its order (above 0 for a live one:
+  `tide_map_live`). What a big container hashes to doesn't depend on any of it (a list that isn't
+  in chunks is hashed the same chunk's worth at a time); only what's kept does.
+- `TIDE_HASH_START`, `tide_hash_more` and `tide_hash_end` (net.h) chain a list's chunks' hashes.
+
+If the owner changes how many elements a chunk holds, or a map's entry's header, `gen_client_hv`
+(client_state_codegen.inc) says what it assumes; a change to `TIDE_LIST_CHUNK` moves what big containers hash to
+(the pins of `visibility_trees` and `visibility_hash_memo`), a server's and a player's machine's alike.
+
+## Projection hashes kept by blocks (2026-11-15, later)
+
+No runtime function is new or changed (netcode.md, the section after the top). What generated code for players relies on now, all
+of it existing:
+
+- **A block's bytes**: it hashes a block smaller than a page itself, `tide_hash_wide` over `tide_page_data` from the
+  block's offset in its page, for `16 << class` bytes: the class its header's `link` says (`tide_block_class`), or for
+  a grid's chunk, whose header is cells (grid.c), the class of `tide_grid_chunk_bytes`. It relies on a block never
+  crossing its page (heap.c's alloc), on a page of one place holding only blocks smaller than a page, and on a block's
+  bytes being all a value read through it depends on. Bounds are its own: it hashes nothing past the page's `size`
+  or the heap's `used`.
+- **A page's kept hash**: `tide_client_page_hash` reads `tide_page.hashed` (acquire) and `hash` where `hashed` is
+  the bytes in use, as cached functions' keys do (Cached functions' tables, below), and calls `tide_heap_block_hash`
+  otherwise. So a hash already kept is taken without the call's count of a move: no hash is made there, so nothing a
+  grid's chunk cache holds goes stale by it.
+- **Entity slots**: `tide_entity_slot_of` (inline, entity.h) for a slot's `entity` and `snaps`, where it kept the
+  slot `tide_entity_slot_index` gave. A slot whose entity isn't the row's says nothing.
+- **A map's entries list**: the groups' directory is compared chunk by chunk by `tide_list_chunk`'s layout (a block of
+  chunk offsets after the list's header, `TIDE_LIST_CHUNK / size` entries a chunk) and each chunk's page hash.
+
+If the owner changes a block's header, a chunk's layout, or makes a page hold blocks of a page or more beside small
+ones, `tide_client_key` (client_state_codegen.inc) says what it assumes.
+
+## Projection hashes by pieces; a field given a copy (2026-11-15)
+
+No runtime function is new or changed (netcode.md and voxels.md, 2026-11-15). Generated code for players now hashes
+runs of a table chunk's column pages itself, `tide_hash_wide` over `tide_page_data` of `tide_table.pages`, beside
+`tide_page_hash` as before, and digests a Visibility's overrides with `tide_map_next` and `tide_hash_more`. A field
+given `x.Copy()` goes through a generated `tide_grid_set_copy` over the existing `tide_grid_set`, `tide_grid_copy`,
+`tide_heap_of`, `tide_handle_where` and `tide_pack_holds`; it relies on `tide_grid_set` (`tide_grid_own`) copying a
+scratch grid's chunks into the field's heap in its records' order and leaving the scratch grid as it was.
+
+## Heaps per owner in games that hide state (2026-11-14, later)
+
+No runtime function is new or changed (schedule-and-threads.md, top section). Generated code for players now reads
+`tide_heaps.all`, `tide_heap_slots` and `tide_heap.runs` directly (`tide_client_heap`, so a read never makes a heap),
+besides `tide_heap.pages` and `page` as before, and a system in runs whose rows set groups' audiences logs them with
+`tide_gather_push` and reads them back with `tide_gathered` in its `done` (the gathering systems' per-task logs, tag
+1); with one piece it calls `tide_heap_run_enter(0)`/`tide_heap_run_leave` around the set, as cached functions do.
+If the owner takes heap.c or jobs.c over: those fields' meaning, and a `done` seeing its own tasks' logs for a system
+that doesn't gather, are what that code relies on.
+
+## Grids in runs (2026-11-14)
+
+Mine, under the grids, heap and jobs maintenance below (schedule-and-threads.md, top section). No new runtime
+function. `tide/grid.h`'s and `engine/src/grid.c`'s functions tell a field's own grid by `tide_handle_in` (any run's
+heap of its owner) where they compared `where`s, change and release it through the heap its handle names, and
+allocate only from a heap this thread may hand blocks out of: a grid in another run's heap is moved whole into this
+run's first (`grid_home`), its old blocks released as another run's are. `tide_par_begin` keeps the grid's own
+`where` in the loop. Generated code for a system in runs whose rows queue nothing defines `tide_entity_run`, a
+`TIDE_HELPER` of its own (the run of an entity, from its identity), and calls the existing `tide_heap_run_enter` for
+each row. A caller of `tide_grid_poke` or `tide_grid_release` that passes a `where` naming another run of the grid's
+owner (C reaching a grid of an owner a system changes in runs) is now its owner's, where before it was taken for
+another world's and left alone.
+
+## Reads of parts and volumes, banded reads (2026-11-14)
+
+Within the owner-approved pixel readback (2026-11-13) and the owner's "make sure everything we can add or validate we
+do" (2026-11-14), agents maintain the new `tide_render_target_read_begin_part(target, image, kind, from, size)`
+(generated C calls it for a part of an image and for a Texture3D's box), the request's appended `from`, `size` and
+`depth`, `tide_gpu_read_result.depth`, a volume's read in `target_read_names`, and the Grid3 and row-run filling of
+`tide_render_target_read_grid`; the renderer's bands (`pixel_reads`, compute.inc) and four ReadVolume kernels in
+cull.tide. The shared read table changed layout: embed ABI 26, Unity's `TideLibrary.Abi`, and TIDE_HOST_SHAPE counts
+`sizeof(tide_gpu_reads)`, so a library of the other layout isn't loaded. Generated C's new grid helpers
+(`tide_grid_carry`, `tide_grid_mine`) and GPU-ticket forgetting (`tide_forget_gpu_<frame>`) are written into the game's
+C over the existing `tide_grid_set`, `tide_grid_copy`, `tide_handle_where`, `tide_pack_holds` and
+`tide_gpu_list_read_forget`: no other runtime function. Contracts and tests: render-targets.md, top section.
+
+## Grids of numbers as textures (2026-11-14)
+
+Within the owner's "make sure everything we can add or validate we do" (2026-11-14), agents maintain the
+grid-cells kinds of a grid's Texture (`TIDE_TEXTURE_CELLS_*`, `tide_texture_cells_bytes`,
+`tide_texture_of_grid_cells`, `tide_texture_grid_cells`, and `tide_texture_grid` taking kinds 1 to 6),
+`tide_draw_grid_number_texture`, `tide_draw_texture_source_raw` (what a `[Raw]`/`[Raw(T)]` Texture field's capture
+calls in generated C) and the texel formats `TIDE_TEXELS_HALF2`, `_HALF4`, `_INT`, with `TIDE_GPU_RG16F` in gpu.h.
+Generated C calls the first and the capture functions. No resource-reference layout change: the kind is in bits the
+reference had for its 1 or 2. Contracts and tests: textures.md (top); the Unity replay's format and ABI: unity.md.
+The same day, for `[Raw]` and `[Linear]` globs and frag sources: `TIDE_PACK_LINEAR` on a `TIDE_PACK_LIST` of
+textures' element kind and a `TIDE_PACK_TEXTURES` map's count (`lay_textures` strips it and marks each element),
+and generated C capturing a frag's marked source with `tide_draw_texture_source_raw` or `_linear`.
+
+## Grids as bytes (2026-11-14)
+
+Within the grids maintenance exception (`tide/grid.h`, `engine/src/grid.c`), for an endless voxel world's chunks in the
+server's store: generated code calls two new functions, `tide_grid_to_bytes(g, shape, repair)` (`cells.ToBytes()`, a
+`List<byte>` in the scratch area) and `tide_grid_from_bytes(bytes, shape, repair, &out)` (`Grid3<T>.FromBytes`, a scratch
+grid, false for bytes that aren't one), and the inline `tide_cell_bool`, `_float`, `_double` and `_char` from the `repair`
+functions it generates for a cell type (`tide_grid_repair_fn`). `tide_grid_from_memory` is the raw form for C and the tests;
+`TIDE_GRID_BYTES_MOST` the limit. `grid.h` now includes `tide/list.h`. No layout, snapshot, hash or match-state change: the
+bytes are values code makes, and a game that calls neither generates the C it did. The owner should confirm the new
+generated calls and the format (docs/spec.md, Grids, Grids as bytes). Contracts and tests: notes/language.md, Grids as bytes;
+safety: notes/memory-safety.md, Grids from bytes.
+
 ## [Linear] image captures (2026-11-14)
 
 The same owner-approved task adds header-only `tide_tolinear_f`, `_f3`, `_c` and
@@ -30,6 +519,9 @@ unchanged, including native adoption and opaque web reload. Contracts/tests: ren
 Within the owner-approved rendering task, agents maintain tide_render_target_read_begin and
 _tide_render_target_read_grid, generated async lowering, shared read request extensions, pool capture and
 internal kernel. No new gpu.h function. Contracts and lifetimes: render-targets.md.
+Since the same day they also maintain tide_render_target_read_begin_as (an image and a kind, tide_target_read),
+tide_target_read_words/_fits, tide_render_target_color_count, the request's `image` and `kind`, the result's
+`step`, and the ten further read kernels in cull.tide (render-targets.md, Readback of every image).
 
 
 # Depth-bias draw state (2026-11-14)
@@ -137,6 +629,38 @@ unless a host sets it. Generated C calls no new function: `tide/run.h` puts it i
 `tide_host_library_shape` (`TIDE_HOST_SHAPE`, the host tables' sizes), written by the CLI's `library.c`, not by
 tidec: a host refuses a library whose number isn't its own (notes/hot-reload.md). Hosts and libraries rebuild
 together, as for any change to `tide_host_game`.
+
+## Compressed packs (2026-11-16)
+
+Owner-approved ("lets try option 1": release packs compressed at rest and decompressed at load; the LZ4 codec is
+Claude's pick, notes/assets-and-files.md, Compressed packs). New in `tide/pack.h`: `tide_pack_compress` (pack.c,
+for tools), `tide_pack_expand` (pack_load.c, for tools and tests), `tide_pack_compressed_header` and its
+constants. `tide_pack_load` takes a compressed file as well as a raw one and loads the same pack from either;
+its raw path is the code it was, split into `file_is_whole` and `take_region`. Generated C calls no new runtime
+function and no host changes: each hands `tide_assets_load` the file's bytes as before.
+
+## The pack read while the window opens (2026-11-18)
+
+A clear win (measured, the bytes the same, tested: notes/assets-and-files.md, its first section). New in
+`tide/platform.h`: `tide_platform_pack_ahead`, which `tide/host.h` calls before it opens the window.
+
+## A pack loaded where it was read (2026-11-18)
+
+A clear win (measured, the loaded pack the same, tested: notes/assets-and-files.md, its first section). New in
+`tide/pack.h`: `tide_pack_give` and `tide_pack_given`; `tide_pack_load` takes bytes offered to it in place of
+copying them. New in `tide/platform.h`: `tide_platform_read_room`; `tide_platform_read_counted` allocates more
+than the file's size and reads on the pool's threads when it isn't counting. `tide/host.h` offers the pack it read
+(`tide_run_load_given`) and keeps no bytes the pack took. Generated C calls no new runtime function. A page's host
+offers nothing: the web platform has no `tide_platform_read_room` (its pack is fetched), and the call is compiled
+out for `__wasm__`. Correction, 2026-11-18: it wasn't at first, and every page that loaded said tide.js had no
+such function; the Docs job's examples caught it, the web test pages didn't.
+
+## A pack laid out before its images are read (2026-11-17)
+
+A clear win (measured, the pack's bytes unchanged, tested: notes/assets-and-files.md, its first section). New in
+`tide/pack.h`, for tools that build packs: `tide_pack_hole`, the builder's `holes`, `tide_pack_texture_room`,
+`tide_pack_lay`, `tide_pack_recipe` and `tide_pack_seal`; `tide_pack_end` is lay then seal and gives the bytes it
+gave. Generated C calls no new runtime function, the format and `pack_load.c` are as they were.
 
 ## Pack format 5 (2026-11-10)
 
@@ -262,13 +786,26 @@ New and agent-maintained, like `tide/voice.h`: `engine/include/tide/screen_keybo
 
 New and agent-maintained: the index runtime, `engine/include/tide/index.h` and `engine/src/index.c`
 (`tide_index_make`/`free`/`begin`/`add`/`end`/`count`/`ordinals`/`find`, `tide_index_hits_init`/`free`,
-`tide_index_lock`/`unlock`), which generated code calls for every indexed loop. The caches of indexes are
+`tide_index_lock`/`unlock`; since 2026-11-14 exact keys, `tide_index_begin_exact`/`add_exact`/`find_exact` and
+`TIDE_INDEX_EXACT`, within the voxel-world task that asked for them), which generated code calls for every indexed
+loop. The caches of indexes are
 generated helpers (`index_codegen.inc`: `tide_ix_*`, `tide_index_cache_prepare`/`free`), like the rows cache, over
 existing runtime calls (`tide_page_retain`/`release`, `tide_table_*`, `tide_list_*`, `tide_alloc*`); a game with an
 indexed loop gets a `struct tide_index_cache *` at the end of `tide_world` and `tide_local`, and defines
 `tide_loop_indexes_free` (its header says `TIDE_HAS_LOOP_INDEXES`), which `tide_run_unload` (tide/run.h) calls
 before the library is unloaded, for the indexes kept outside the worlds. Contracts: notes/indexed-loops.md, Code
 generation.
+
+Added 2026-11-16, within the task that asked for them (notes/indexed-loops.md, top sections): an index several
+hold, `tide_index_share` and `tide_index_shared`, with `tide_index_free` freeing it for the last holder (a copied
+world's sites take their source's indexes). Generated `tide_world_copy` calls the generated
+`tide_index_cache_share`; a world's `tide_index_cache` is counted by its holders and may outlive its world while a
+copy has yet to take its sites. And followed indexes, an exact-key index that takes in the entries that changed:
+`tide_index_begin_followed`, `tide_index_followed`, `tide_index_group`, `tide_index_put`, `tide_index_drop`,
+`tide_index_clear`, `tide_index_copy` and `tide_index_changes`, which generated code calls for a world's query by
+an exact key (`gen_ix_query_follow`); `tide_index_end` ends one too, and writes nothing to one already built.
+Generated code reads a table chunk's pages beside the ones a site holds (`tide_page_data` of both) to find the
+rows that differ: it relies on a held page keeping its bytes, as the sites always have.
 
 ## Meshes over GPU lists, moved runs (2026-11-05)
 
@@ -911,6 +1448,18 @@ header's Session ABI marker says `rewind (1)`, so hosts and games rebuild togeth
 `tide_session_rewind` and `tide_replay_check`. New platform surface: `tide/timeline.h` (`platform/src/timeline.c`),
 the embed's travel calls (embed ABI 7), `tide_run_unblended` in `tide/host.h` and `reload_before` in
 `reload_library.inc`. Contracts and tests: netcode.md and unity.md.
+
+2026-11-19 (notes/unity.md, Time travel's gaps): `tide_replay_heard` in `session.c` (a replayed tick's events, by the
+existing `tick_events` / `tick_client_events`) and `tide_timeline_heard` in `tide/timeline.h`, both host-side and
+agent-maintained. Generated code calls nothing new, no `tide_game` member is new, and no layout, hash or wire
+format changed. The same day: `tide_session_recorder.verified` (a client's confirmed ticks to a recorder, read from
+its ring after its update) and `tide_timeline_follow` / `_follows`, on the same terms. And
+`tide_timeline_desc.layout`, `tide_timeline_set_layout` and the recording file's version 2 (its layout and its
+worlds as `pack_world` has them, carried over by `tide_migrate_world`): platform-side, nothing in the engine.
+Later that day: `tide_session_recorder.beside` (a sharded match's other followed worlds), a client's journal for its
+session's recorder (`tide_client.journal`, internal to session.c), `tide_timeline_follow_beside` / `_beside`, and
+embed ABI 30 (`tide_embed_travel`'s three counts). Still nothing generated code calls, and no layout, hash or wire
+change.
 
 ## Twelve texture drawing boundary (2026-10-25)
 

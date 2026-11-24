@@ -1,0 +1,249 @@
+// Kernels reading every kind of image a frag reads (platform/tests/kernel_reads.c). No frag or vert in this game reads
+// a depth, a cube or an array, so what a kernel reads where it's given none is made for kernels alone: the far depth,
+// the dark cube, the white array and zeros for a typed read. Then images that were disposed, an array of depth alone
+// handed to a read of its colors, and smaller images made of what was drawn for a kernel's SampleLevel (multisampled
+// targets' too), again once more was drawn or a kernel wrote the image. Each probe writes a pixel of `results`: green
+// where it read what it should.
+
+scene Main { }
+
+local singleton Reads
+{
+    RenderTarget results;
+    // Never given
+    DepthTexture noDepth;
+    Cubemap noCube;
+    TextureArray noLayers;
+    DepthTextureArray noLayerDepths;
+    [Raw(float4)] Cubemap noNumberCube;     // Four channels: zeros' alpha is 0, where the dark cube's is 1
+    [Raw(float4)] TextureArray noNumberLayers;
+    [Raw(float)] Texture noNumbers;
+    // Disposed before they're read
+    Texture goneColor;
+    DepthTexture goneDepth;
+    Cubemap goneCube;
+    TextureArray goneLayers;
+    DepthTextureArray goneLayerDepths;
+    [Raw(float)] Texture goneNumbers;
+    [Raw(float4)] Cubemap goneNumberCube;
+    [Raw(float4)] TextureArray goneNumberLayers;
+    // Given
+    RenderTarget deep;
+    DepthTexture depth;
+    Cubemap cube;
+    TextureArray layers;
+    TextureArray deepLayers;
+    DepthTextureArray layerDepths;
+    TextureArray either;    // An array of depth alone, which the compiler can't follow through ?:
+    // Smaller images, made of what was drawn
+    RenderTarget halves;
+    [Raw(float)] Texture halvesImage;
+    RenderTarget shade;
+    Texture shadeImage;
+    [Raw(float)] TextureArray numberLayers;
+    [Raw(float)] Cubemap numberCube;
+    RenderTarget smooth;
+    [Raw(float)] Texture smoothImage;
+    RenderTarget smoothColor;
+    Texture smoothColorImage;
+    RenderTarget ids;
+    RenderTarget plain;
+    Texture mismatched;     // An integer image, through ?:, read between levels
+    RenderTarget chain;
+    Texture chainImage;
+    List<Vertex> quad;
+    List<Vertex3> card;
+    int frames;
+}
+
+Color Verdict(bool good) { return good ? Color.green : Color.red; }
+bool Near(float a, float b) { return Math.Abs(a - b) < 0.02; }
+bool NearColor(Color a, Color b) { return Near(a.r, b.r) && Near(a.g, b.g) && Near(a.b, b.b) && Near(a.a, b.a); }
+bool Zeros(float4 v) { return v.x == 0 && v.y == 0 && v.z == 0 && v.w == 0; }
+
+[Group(1)]
+compute Missing(Reads reads)
+{
+    float2 uv = float2(0.5);
+    reads.results.color[int2(0, 0)] = Verdict(reads.noDepth.Sample(uv) == 1 && reads.noDepth.Compare(uv, 0.5) == 1);
+    reads.results.color[int2(1, 0)] = Verdict(NearColor(reads.noCube.SampleLevel(float3(0, 0, 1), 0), Color(0, 0, 0, 1)));
+    reads.results.color[int2(2, 0)] = Verdict(NearColor(reads.noLayers.SampleLevel(uv, 0, 0), Color.white));
+    reads.results.color[int2(3, 0)] = Verdict(reads.noLayerDepths.Sample(uv, 0) == 1 && reads.noLayerDepths.Compare(uv, 0, 0.5) == 1);
+    reads.results.color[int2(4, 0)] = Verdict(Zeros(reads.noNumberCube.SampleLevel(float3(0, 0, 1), 0))
+        && Zeros(reads.noNumberLayers.SampleLevel(uv, 0, 0)) && reads.noNumbers.SampleLevel(uv, 0) == 0);
+}
+
+[Group(1)]
+compute Disposed(Reads reads)
+{
+    float2 uv = float2(0.5);
+    reads.results.color[int2(5, 0)] = Verdict(NearColor(reads.goneColor.SampleLevel(uv, 0), Color.white));
+    reads.results.color[int2(6, 0)] = Verdict(reads.goneDepth.Sample(uv) == 1);
+    reads.results.color[int2(7, 0)] = Verdict(NearColor(reads.goneCube.SampleLevel(float3(0, 0, 1), 0), Color(0, 0, 0, 1)));
+    reads.results.color[int2(8, 0)] = Verdict(NearColor(reads.goneLayers.SampleLevel(uv, 0, 0), Color.white)
+        && reads.goneLayerDepths.Sample(uv, 0) == 1);
+    reads.results.color[int2(9, 0)] = Verdict(reads.goneNumbers.SampleLevel(uv, 0) == 0);
+    reads.results.color[int2(15, 0)] = Verdict(Zeros(reads.goneNumberCube.SampleLevel(float3(0, 0, 1), 0))
+        && Zeros(reads.goneNumberLayers.SampleLevel(uv, 0, 0)));
+}
+
+[Group(1)]
+compute Given(Reads reads)
+{
+    float2 uv = float2(0.5);
+    reads.results.color[int2(10, 0)] = Verdict(Near(reads.depth.Sample(uv), 0.25) && reads.depth.Compare(uv, 0.5) == 0);
+    reads.results.color[int2(11, 0)] = Verdict(NearColor(reads.cube.SampleLevel(float3(0, 0, 1), 0), Color(0.8, 0.2, 0, 1)));
+    reads.results.color[int2(12, 0)] = Verdict(NearColor(reads.layers.SampleLevel(uv, 1, 0), Color(0, 0, 1, 1)));
+    reads.results.color[int2(13, 0)] = Verdict(Near(reads.layerDepths.Sample(uv, 1), 0.25) && reads.layerDepths.Sample(uv, 0) == 1);
+    reads.results.color[int2(14, 0)] = Verdict(NearColor(reads.either.SampleLevel(uv, 0, 0), Color.white));
+}
+
+[Group(1)]
+compute Levels(Reads reads)
+{
+    float2 uv = float2(0.5);
+    reads.results.color[int2(0, 1)] = Verdict(Near(reads.halvesImage.SampleLevel(uv, 3), 1) && reads.halvesImage.SampleLevel(uv, 0) == 0);
+    reads.results.color[int2(2, 1)] = Verdict(NearColor(reads.shadeImage.SampleLevel(uv, 3, Filter.Trilinear), Color(0.25, 0.25, 0.25, 1)));
+    reads.results.color[int2(3, 1)] = Verdict(Near(reads.numberLayers.SampleLevel(uv, 1, 3), 1)
+        && Near(reads.numberLayers.SampleLevel(uv, 0, 3), 0.25));
+    reads.results.color[int2(4, 1)] = Verdict(Near(reads.numberCube.SampleLevel(float3(0, 0, 1), 3), 1));
+    reads.results.color[int2(5, 1)] = Verdict(Near(reads.smoothImage.SampleLevel(uv, 3), 1));
+    reads.results.color[int2(6, 1)] = Verdict(NearColor(reads.smoothColorImage.SampleLevel(uv, 3, Filter.Trilinear), Color(0.25, 0.25, 0.25, 1)));
+    reads.results.color[int2(7, 1)] = Verdict(NearColor(reads.mismatched.SampleLevel(uv, 2, Filter.Trilinear), Color.white));
+}
+
+// After `halves` is drawn again: its smaller images are of what's there now
+[Group(1)]
+compute LevelsAgain(Reads reads)
+{
+    reads.results.color[int2(1, 1)] = Verdict(Near(reads.halvesImage.SampleLevel(float2(0.5), 3), 2));
+}
+
+// A target's image with smaller images, written by a kernel, then read again between levels
+[Group(1)]
+compute ChainBefore(Reads reads)
+{
+    reads.results.color[int2(8, 1)] = Verdict(NearColor(reads.chainImage.SampleLevel(float2(0.5), 2, Filter.Trilinear), Color.red));
+}
+
+[Group(8, 8)]
+compute ChainWrite(Reads reads)
+{
+    reads.chain.color[this.at.xy] = Color.green;
+}
+
+[Group(1)]
+compute ChainAfter(Reads reads)
+{
+    float2 uv = float2(0.5);
+    reads.results.color[int2(9, 1)] = Verdict(NearColor(reads.chainImage.SampleLevel(uv, 0), Color.green)
+        && NearColor(reads.chainImage.SampleLevel(uv, 3, Filter.Trilinear), Color.green));
+}
+
+// A quarter's column of 4 at the left: its smallest image is 1, and the middle of the first is 0
+frag Edge(Vertex vertex, out float value) { value = vertex.uv.x < 0.25 ? 4 : 0; }
+frag Two(Vertex vertex, out float value) { value = 2; }
+frag EdgeColor(Vertex vertex, out Color color) { color = vertex.uv.x < 0.25 ? Color.white : Color.black; }
+frag Quarter(Vertex3 vertex, out Color color) { color = Color.white; this.WriteDepth(0.25); }
+
+view Show(mut Reads reads)
+{
+    if (reads.frames == 0)
+    {
+        reads.results = RenderTarget(16, 2, 1);
+        RenderTarget gone = RenderTarget(8, 8, 1);
+        reads.goneColor = gone.color;
+        reads.goneDepth = gone.depth;
+        gone.Dispose();
+        RenderTarget goneNumbers = RenderTarget(8, 8, 1, Format.R16f);
+        reads.goneNumbers = goneNumbers.color;
+        goneNumbers.Dispose();
+        reads.goneCube = Cubemap(8);
+        reads.goneCube.Dispose();
+        reads.goneLayers = TextureArray(8, 8, 2, 1);
+        reads.goneLayerDepths = reads.goneLayers.depth;
+        reads.goneLayers.Dispose();
+        reads.goneNumberCube = Cubemap(8, Format.Rgba16f);
+        reads.goneNumberCube.Dispose();
+        reads.goneNumberLayers = TextureArray(8, 8, 2, 1, Format.Rgba16f);
+        reads.goneNumberLayers.Dispose();
+        reads.deep = RenderTarget(8, 8, 1, Format.Depth);
+        reads.depth = reads.deep.depth;
+        reads.cube = Cubemap(8);
+        reads.layers = TextureArray(8, 8, 3, 1);
+        reads.deepLayers = TextureArray(8, 8, 2, 1, Format.Depth);
+        reads.layerDepths = reads.deepLayers.depth;
+        reads.halves = RenderTarget(8, 8, 1, Format.R16f);
+        reads.halvesImage = reads.halves.color;
+        reads.shade = RenderTarget(8, 8, 1);
+        reads.shadeImage = reads.shade.color;
+        reads.numberLayers = TextureArray(8, 8, 2, 1, Format.R16f);
+        reads.numberCube = Cubemap(8, Format.R16f);
+        reads.smooth = RenderTarget(8, 8, 1, Format.R16f, samples: 4);
+        reads.smoothImage = reads.smooth.color;
+        reads.smoothColor = RenderTarget(8, 8, 1, samples: 4);
+        reads.smoothColorImage = reads.smoothColor.color;
+        reads.ids = RenderTarget(8, 8, 1, Format.R32i);
+        reads.plain = RenderTarget(8, 8, 1);
+        reads.chain = RenderTarget(8, 8, 1);
+        reads.chainImage = reads.chain.color;
+        reads.quad = [Vertex { position = float2(0, 0), uv = float2(0, 0) },
+                      Vertex { position = float2(8, 0), uv = float2(1, 0) },
+                      Vertex { position = float2(8, 8), uv = float2(1, 1) },
+                      Vertex { position = float2(0, 8), uv = float2(0, 1) }];
+        reads.card = [Vertex3 { position = float3(-1, -1, 0.5) }, Vertex3 { position = float3(1, -1, 0.5) },
+                      Vertex3 { position = float3(1, 1, 0.5) }, Vertex3 { position = float3(-1, 1, 0.5) }];
+    }
+    reads.frames++;
+    reads.either = reads.frames > 1 ? reads.deepLayers : reads.layers;
+    reads.mismatched = reads.frames > 1 ? reads.ids.color : reads.plain.color;
+    reads.results.Clear(Color.black);
+
+    // What's given: a depth a frag wrote, faces and layers of their own colors, an array of depth alone
+    reads.deep.Clear(Color.black);
+    reads.deep.SetCamera(float4x4.identity, float4x4.Ortho(2, 2, 0, 1));
+    reads.deep.SetCull(.None); reads.deep.SetDepth(.ReadWrite);
+    reads.deep.Mesh(reads.card, [0, 1, 2, 0, 2, 3], float4x4.identity, Quarter);
+    for (var face = 0; face < 6; face++) reads.cube.faces[face].Clear(Color(face / 5.0, 1 - face / 5.0, 0, 1));
+    reads.layers.layers[0].Clear(Color.red);
+    reads.layers.layers[1].Clear(Color.blue);
+    reads.layers.layers[2].Clear(Color.green);
+    reads.deepLayers.layers[0].Clear(Color.black);
+    var into = reads.deepLayers.layers[1];
+    into.Clear(Color.black);
+    into.SetCamera(float4x4.identity, float4x4.Ortho(2, 2, 0, 1));
+    into.SetCull(.None); into.SetDepth(.ReadWrite);
+    into.Mesh(reads.card, [0, 1, 2, 0, 2, 3], float4x4.identity, Quarter);
+    GPU.Run(Missing, 1);
+    GPU.Run(Disposed, 1);
+    GPU.Run(Given, 1);
+
+    // Smaller images, of what was drawn this frame; `halves` just before the kernel, which a pass more on it follows
+    reads.shade.SetScreen();
+    reads.shade.Mesh(reads.quad, [0, 1, 2, 0, 2, 3], EdgeColor);
+    reads.numberLayers.layers[0].Clear(0.25);
+    reads.numberLayers.layers[1].SetScreen();
+    reads.numberLayers.layers[1].Mesh(reads.quad, [0, 1, 2, 0, 2, 3], Edge);
+    for (var face = 0; face < 6; face++) reads.numberCube.faces[face].Clear(2.0);
+    reads.numberCube.faces[4].SetScreen();
+    reads.numberCube.faces[4].Mesh(reads.quad, [0, 1, 2, 0, 2, 3], Edge);
+    reads.smooth.SetScreen();
+    reads.smooth.Mesh(reads.quad, [0, 1, 2, 0, 2, 3], Edge);
+    reads.smoothColor.SetScreen();
+    reads.smoothColor.Mesh(reads.quad, [0, 1, 2, 0, 2, 3], EdgeColor);
+    reads.ids.Clear(7);
+    reads.plain.Clear(Color.blue);
+    reads.halves.SetScreen();
+    reads.halves.Mesh(reads.quad, [0, 1, 2, 0, 2, 3], Edge);
+    GPU.Run(Levels, 1);
+    reads.halves.Mesh(reads.quad, [0, 1, 2, 0, 2, 3], Two);
+    GPU.Run(LevelsAgain, 1);
+    reads.chain.Clear(Color.red);
+    GPU.Run(ChainBefore, 1);
+    GPU.Run(ChainWrite, int2(8));
+    GPU.Run(ChainAfter, 1);
+
+    Draw.SetScreen();
+    Draw.Clear(Color.black);
+    Draw.Sprite(reads.results.color, float2(8, 1), float2(16, 2), Filter.Point);
+}

@@ -1,0 +1,5 @@
+// expect: a command is called, as a function is: 'Rename(...)'
+// expect: Send is for events; a command's call sends what it's called with
+command(string name) Rename(PlayerID sender) { }
+view Ask() { Send(Rename { name = "x" }); }
+scene Main { }

@@ -15,8 +15,9 @@ namespace Tide.Editor
     // --release) into Temp/TideBuild; each scene's TideRunner gets a link to every Unity prefab the game spawns, so
     // Unity builds them in; after it, the embed, the game's library ("game"), its pack and the map go into the
     // player's StreamingAssets/Tide, where TideLibrary looks; or for WebGL, Tide's program goes in the page; or for
-    // Android, the game's one library goes among the app's (TideAndroidBuild). Desktop players for the editor's own
-    // platform, WebGL and Android, for now.
+    // Android, the game's one library goes among the app's (TideAndroidBuild); or for iOS, the game goes into the
+    // Xcode project as sources (TideIosBuild). Desktop players for the editor's own platform, WebGL, Android and iOS,
+    // for now.
     public sealed class TideBuildProcessor : IPreprocessBuildWithReport, IProcessSceneWithReport, IPostprocessBuildWithReport
     {
         public int callbackOrder => 0;
@@ -44,9 +45,28 @@ namespace Tide.Editor
                 : BuildTarget.StandaloneLinux64;
             var web = target == BuildTarget.WebGL;
             var android = target == BuildTarget.Android;
-            if (target != native && !web && !android)
+            var ios = target == BuildTarget.iOS;
+            if (target != native && !web && !android && !ios)
             {
-                throw new BuildFailedException($"Tide: players build for {native}, WebGL and Android on this machine, for now: the game's library is built by this machine's tide, not for {target}.");
+                throw new BuildFailedException($"Tide: players build for {native}, WebGL, Android and iOS on this machine, for now: the game's library is built by this machine's tide, not for {target}.");
+            }
+            if (ios)
+            {
+                // The package can hear the microphone for a game that listens to it (TideAudio), and Unity builds no
+                // iOS player whose code names the microphone without the words iOS shows as it asks the player
+                if (string.IsNullOrEmpty(PlayerSettings.iOS.microphoneUsageDescription))
+                {
+                    PlayerSettings.iOS.microphoneUsageDescription = "Lets the players of your match hear you.";
+                    Debug.LogWarning("Tide: Player Settings > Other Settings > Microphone Usage Description was empty, which Unity builds no iOS player with while Tide's package can hear the microphone: it's now \"Lets the players of your match hear you.\" Change it to your own words; iOS shows them only if the game listens to the microphone.");
+                }
+                // Tide's drawing replays through compute shaders, which iOS has on Metal alone
+                foreach (var api in PlayerSettings.GetGraphicsAPIs(BuildTarget.iOS))
+                {
+                    if (api != UnityEngine.Rendering.GraphicsDeviceType.Metal)
+                    {
+                        throw new BuildFailedException($"Tide: the iOS player's graphics APIs include {api}, which Tide doesn't draw with: in Player Settings > Other Settings, keep Metal alone (or Auto Graphics API).");
+                    }
+                }
             }
             if (android)
             {
@@ -67,7 +87,7 @@ namespace Tide.Editor
             var start = new ProcessStartInfo
             {
                 FileName = tide,
-                Arguments = $"unity --once --release{(web ? " --web" : android ? " --android" : "")} -o \"{Built}\" --assets \"{Application.dataPath}\"",
+                Arguments = $"unity --once --release{(web ? " --web" : android ? " --android" : ios ? " --ios" : "")} -o \"{Built}\" --assets \"{Application.dataPath}\"",
                 WorkingDirectory = TideSettings.instance.GameFolderPath,
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -187,6 +207,7 @@ namespace Tide.Editor
                 return;
             }
             if (report.summary.platform == BuildTarget.Android) return; // Placed in the Gradle project (TideAndroidBuild)
+            if (report.summary.platform == BuildTarget.iOS) return; // Placed in the Xcode project (TideIosBuild)
             var data = report.summary.platform == BuildTarget.StandaloneOSX
                 ? Path.Combine(output, "Contents", "Resources", "Data")
                 : Path.Combine(Path.GetDirectoryName(output) ?? ".", Path.GetFileNameWithoutExtension(output) + "_Data");

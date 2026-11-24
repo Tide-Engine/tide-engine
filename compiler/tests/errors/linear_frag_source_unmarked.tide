@@ -1,0 +1,5 @@
+// expect: this frag's Texture is [Linear], and the image this draw gives it isn't
+[Raw] asset Texture numbers = "../e2e/assets/hero.png";
+frag Copy(Vertex vertex, out Color color, [Linear] Texture source) { color = source.Sample(vertex.uv); }
+view V() { Draw.Mesh([Vertex { }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }], [0, 1, 2], numbers, Copy); }
+scene Main { }

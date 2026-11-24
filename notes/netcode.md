@@ -1,5 +1,1865 @@
 # Netcode: sessions, prediction, commands
 
+## A command the match calls itself; no protocol change (2026-11-21)
+
+Commands became one declaration called like a function (notes/language.md, top section; docs/spec.md, Commands).
+For the session nothing moved: a player's call packs the same bytes into the same outbox (`tide_local_send_<C>`), and
+the server gives them a tick as before. The command's type has the command's name now, so a game's command IDs and
+hash change with its source, as with any rename.
+
+What's new is a call from match code. It never reaches the session: generated `tide_cmd_send_<C>_cause` pushes a
+`TIDE_CMD_EVENT` of the command's index on the world's queue, with a cause from the call's causal site and
+`c->sender` zero, and the tick's end dispatches it through the command's own dispatcher, among the tick's other
+events and commands in the order they were queued. So:
+
+- it has no sequence, channel, limit or resend, and `tide_command_state` doesn't change for it;
+- every machine that runs the tick queues it, predicted ticks too, as an event a system sends; replay and rollback
+  make it again from the tick, and no journal records it apart;
+- in a match that hides state it runs wherever the calling system runs, unlike a player's command, which is the
+  server's alone. The warning of `check_sends` (a command's code sending an event local handlers hear) still speaks
+  of the player's path;
+- its sender is no player, and the ownership filter passes for it (`tide_me.id != 0 &&` in the row filter; for an
+  entity with no `Owner`, `tide_sender->id != 0` skips a player's command where the archetype used to be left out).
+
+Tested by `command_ownership`'s `command_called_by_the_match_runs_with_no_player_and_no_network`: the three entities'
+counters, no player's sequence moved, the sender read as no player, and the same ticks again from a copy to the same
+hash.
+
+## Whole projections wait their turn; a world sent unasked is no longer stopped before it goes; no protocol change (2026-11-20)
+
+A review of the repairs' allowance (`REPAIR_UPDATE_MOST`, 4 MiB of what repairs by what changed read an update):
+it counts those reads only. A repair that comes to the player's world again (`REPAIR_SNAPSHOT`) or to the hash offer
+(`REPAIR_OFFER`) was counted as nothing and then read a whole projection, and a player's world asked for in a packet
+(`start_snapshot`) and what one lacks of a hash offer (`send_client_lacking`) were read as the packet was. All in
+`engine/src/session.c` (agent-maintained). **Nothing on the wire changed** (`PROTOCOL` as it was), nor any world or
+hash.
+
+**Measured** (`bench_voxels --players 100 --spread 256 --join-every 0.1 --seconds 20 --threads 12 --outage 4.5`: the
+bench's new `--outage`, bench/README.md; Windows release, 12 threads, BelowNormal, the machine shared; timers put in
+for the runs and taken out). Every bot is cut off for 4.5 s, past the 4 s of ticks the server keeps, and asks for a
+repair as it's back: its base is gone, so each is its world again, in the update's sending, one after another. 50
+of them in one update took 152.7 ms of its 162.4 (3.0 to 3.6 ms each: a projection of about 0.9 MB, 94 KB as
+sent), 22 in a later one 82 of 95. And 13 of the 100 bots never had the server's world again (below).
+
+| The outage, all 100 cut off | Longest update (ms) | p99 (ms) | Back after it: median, at most (s) | Never back |
+|---|---:|---:|---:|---:|
+| Before (two runs) | 152.0, 162.4 | 28.8, 32.6 | 0.28, 12.42 (of 87) | 13 |
+| The transfer fix alone, no allowance | 146.2 | 32.0 | 0.30, 0.70 | 0 |
+| An allowance of 4 MiB (built) | 32.7 | 29.2 | 0.38, 0.75 | 0 |
+| ...of 2 MiB | 34.9 | 27.6 | 0.52, 0.95 | 0 |
+| ...of 1 MiB | 25.8 | 22.8 | 0.67, 1.25 | 0 |
+
+The updates are those from the outage's start until every bot is back; "back" is a verified world within half a
+second of the server's, counted from the outage's end. With 20 of the 100 cut off (`--outage-bots 20`): longest
+update 45.5 ms to 23.6, back 0.28 s at the median and 0.50 at most to 0.32 and 0.48; the 80 who played on were 49
+ticks behind at most without the allowance and 45 with it, 25 or fewer in 99 frames of 100 both ways. One run each
+but the first row; the p99 column is within the machine's noise, the longest update isn't.
+
+- **A whole projection waits its turn** (`want_whole`, `prepare_wanted`, `connection.whole_wanted`,
+  `WHOLE_UPDATE_MOST`). A player's world again, a repair by the hash offer and what a player lacks of one are asked
+  for and kept on the connection (which, since when, the offer's tick, the mask of what's lacking), and an update
+  prepares them, the one that has waited longest first, until it has read `WHOLE_UPDATE_MOST` (4 MiB, the repairs'
+  line) of projections' bytes (`tide_server.whole_work`: what `client_state` gave, of the world and of the base
+  where one is compared; a world packed whole for a game without projections counts as packed, once where players
+  share the pack). The first of an update always goes. It's an allowance of its own beside the repairs': an update
+  reads at most one of each, and neither keeps the other waiting.
+- **Prepared where it was** (`tide_server_update`): after the update's packets and timeouts (a world a packet asked
+  for, what one lacks), after its repairs are read and packed (`repair_wants_whole`: those that came to a world
+  again or to the offer), and after its sending (a player `send_frames` found too far behind). So one within the
+  allowance is read from the same world, at the same point, and goes in the same datagrams in the same update as
+  before; only what's past the allowance moves, by whole updates. A repair by the offer that waited gathers its
+  ends again as it's prepared (`repair_ends`, which `repair_read` uses too): the tick it was to, unless the player
+  has it since or something else is on its way; its world again where the ends aren't kept any more.
+- **While it waits**: a player whose world waits is sent a `WELCOME` naming no transfer each update (what a joiner
+  gets until it writes back: "nothing yet") and no ticks, which it couldn't run; no repair is started for it
+  (the due list leaves it out, as one being made) and none is taken from its packets (`on_client`: as one being
+  sent). A put-off repair isn't sent over a world that waits. `stop_sending` lets go of what waits, with the mask.
+  A hot reload still starts its players' worlds again at once (`start_snapshot`, counted in the update's work), one
+  that waited among them.
+- **A world sent unasked isn't stopped by what the player wrote before it heard of it** (`connection.sending_world`,
+  `welcomed_number`, `welcomed_said`, `welcome_heard`; `send_welcome`, `on_client`). A `CLIENT` that wants nothing
+  stops a transfer ("it has the world, or one that needs nothing"). A player too far behind for the ticks kept is
+  sent its world without having asked, and went on saying it wanted nothing, as it had all along, until the
+  `WELCOME` reached it: the server stopped the transfer on the next `CLIENT`, before any datagram of it had gone
+  (it starts in the update's sending, and the next update reads packets first), having already moved the player's
+  acknowledged tick to the world's. The player then had neither the world nor the ticks before it, asked for
+  nothing, and the same happened every 4 s for good: the 13 bots above, each one that had loaded an old repair
+  just as it came back and so asked for none. Now, for a player's world again, such a `CLIENT` stops the transfer
+  only once one of its `CLIENT`s has echoed the time of a `WELCOME` naming the transfer, or a later one (the echo
+  is the last time it heard the server say: `their_time`). Repairs, offers and patches stop as before: the player
+  asked for those. A player on the server's machine names the transfer whole and stops it as before.
+
+**Why everything else is the same.** Which projections an update prepares goes by their order of asking and the
+bytes read, never by a clock or a thread. `bench_voxels` at 100 apart and at 8 bots ends on the pins of 2026-11-19
+(hash `0x5165130e825fa70f` and what the bots took `0xb8fa79ab9a74ff3d`; `0x1fdc545078ce68e8` and
+`0xb4e8a59de2f669db`): joins half a second apart never meet the allowance. Server updates in that 100-apart run:
+7.41 ms median, 22.32 p99 (7.77 and 26.48 on 2026-11-19; one run, the machine shared).
+
+**Found on the way**: with the worlds waiting, a bot's repair request that came during the wait was taken (its
+acknowledged tick hadn't moved yet), outlived the world it was sent, and became a repair nobody asked for, which
+the bot refused and paid for with its world again (3 to 9 of 100 in the first runs with an allowance; the 2 MiB
+row is from before this was closed). Hence no request is taken while one waits.
+
+**Tests.** `tests/test_visibility_session.c`:
+`visibility_a_player_too_far_behind_takes_the_world_it_never_asked_for` (a match nothing is repaired in, 50 ms each
+way, one player hearing nothing from 3 s to 7.5 s and sending all along: its world again once, verified within 30
+ticks a second and a half after; with the old rule it's still at tick 176 then) and
+`visibility_whole_projections_wait_their_turn_past_an_updates_allowance` (projections of 5 MiB: two players joining
+in one update, and both repaired by the hash offer at tick 90, are never read for in the same update, the second a
+single update after the first; without the allowance it fails). `bench_voxels_outage_1` and `_12`
+(bench/CMakeLists.txt): 16 players cut off for 4.5 s, each sent a megabyte's projection again, all back, the same
+world and the same taken on 1 and 12 threads; a run where a bot never is back fails.
+
+Merged with the same day's change to how a lost small repair goes again (the section below), which moved what the
+bots take in `bench_voxels_reads_*` (pinned again here: the same value with this work's session changes and without
+them) and so the outage fixtures' pins, taken on the merged build. That merge also brought a tidec that stopped
+without a word on `bench_voxels` (notes/language.md, Entity/component visibility, the correction), fixed with it.
+
+Run on Windows, no pin moved by this: release, `tide_tests` (all) and the 29 fixtures listed in notes/voxels.md, Tests; ASan
+(`sanitize`), `tide_tests visibility` (33) and `session` (24), `bench_voxels`, `_views`, `_reads_12`, `_outage_1`,
+`_12`, `tidec_e2e_net`, `_net_join_big`, `tidec_e2e_visibility_host_lifecycle` and `_repairs`; the web
+(`web-debug`, under Node), `tide_tests`, `bench_voxels`, `_reads_1`, `_outage_1` and `_12` (on the native pins),
+`tidec_e2e_net` and `tidec_e2e_visibility_repairs`. Each new engine test fails with its change out: the old stop
+rule back (the first), `WHOLE_UPDATE_MOST` out of reach (the second). The full suites and the other platforms are
+CI's.
+
+**Left.**
+- Decided (the owner left both to the agent, 2026-11-20): the line stays at 4 MiB, the repairs' own, as the wait it
+  costs is hardly measurable and 1 MiB doubles it for 7 ms of the longest update; and the stop rule above stands as
+  built. Several worlds at once on the pool isn't begun: it needs the generated `client_state` checked for use from
+  several threads first.
+- For reference, 4 MiB is four or five such worlds an update (10 to 15 ms of
+  it here) and costs a player 0.05 to 0.08 s; 1 MiB halves the longest update's share and doubles the wait.
+- The projections are prepared one after another on the update's thread (each finds its entities on the pool).
+  Several at once on the pool's threads, as repairs are read, would shorten both columns: `client_state` from
+  several threads at once isn't something the generated code has been checked for.
+- Voxels never reached the hash offer or what one lacks in these runs (no calls): they wait their turn by the same
+  rule, which the engine test above covers, with no timing of their own.
+- A game without projections whose player is sent a world of a tick it has already run past (`tick > ahead` is
+  what it takes one by) still refuses it; only projections are taken whenever the server starts one.
+- Nothing bounds a hot reload's worlds: every transfer starts again in the update that commits it, as before.
+
+## A small repair that's lost goes again at once; what a stream's lag is made of; no protocol change (2026-11-20)
+
+From a review of visibility, rollback and host continuity. The recorded continuous-hidden-effects fixture
+(`visibility_continuous_hidden_effects_coalesce_without_rtt_per_tick`: 160 ms round trip, 60 ms jitter, 20% loss,
+hidden consequences on 480 ticks) had its clients' confirmed worlds up to 104 ticks behind (2026-10-15), 76 on `dev`
+before this, with no resync. Measured again with a scratch harness over the same game (one client, 120 updates a
+second, a frame marked presented every other one, the ticks 150 to 570; not in the tree), four things are in that
+number, and they aren't the same thing:
+
+- **What the player's own input does isn't late.** A client goes on predicting from each repair's endpoint
+  (`predict_again`): its predicted tick stayed its usual lead past the server's (7 to 10 ticks at this round trip),
+  with 0 or 1 inputs late, on every network measured. The exception is the one that matters: a client predicts no
+  further than its prediction window past its confirmed world (60 ticks), so **once confirmation is more than a
+  second behind, its own input stops too**. On a seed of the recorded network that happened (the predicted tick
+  stood at 155 + 60, then 167 + 60 for half a second, then 218 + 60). The fixture now asks that it never does.
+- **What's confirmed is as old as its repair's delivery.** In a stream the server sends one transfer at a time and
+  starts the next only once the last is acknowledged, so a confirmation comes once a round trip at best and the
+  confirmed world is about the way there plus half a round trip behind on the whole: 11.2 ticks at 160 ms with
+  nothing lost (the way is 5, the round trip 10). The stream's backoff (`repair_gap`) and its ending once a second,
+  which costs a round trip of ordinary frames before the next (the "probe"), add to that: with a scratch build
+  that never ends a stream while it's asked for, 9.5 ticks on the whole and 14 at the 95th hundredth, from 20; and
+  at no delay 1.0 from 4.8, with 610 repairs where the backoff sends 137, which is what the backoff is for.
+- **What's presented is what's confirmed.** A coalesced repair puts the confirmed view at its endpoint
+  (`load_snapshot`), so the confirmed presentation had no backlog of its own in any run (0 or 1 tick): the display's
+  age is the confirmation's, and nothing was waiting to be shown.
+- **Loss was what made it seconds.** A streamed repair of this game is 66 to 177 bytes: one chunk, one datagram. A
+  transfer under `SPARE_LEAST` chunks has no spares, the early retry needs a later chunk to be acknowledged, and a
+  tick's two copies (`FRAME_COPIES`) are a SERVER's, which doesn't go while a transfer does. So a lost repair went
+  again only after `resend_after`, a round trip and a half (0.3 to 0.4 s here), and two in a row were a second. And
+  the loss is never counted in a stream at this round trip: `servers_read` counts SERVERs, and none goes between
+  one repair's acknowledgement and the next one's start, so `loss_counted` stays false (and a big repair in such a
+  stream has no spares either).
+
+### What's built (`engine/src/session.c`, `send_chunks`; agent-maintained, server only, nothing on the wire)
+
+A projected transfer under `SPARE_LEAST` chunks keeps how many datagrams each chunk went in
+(`connection.chunk_copies`). To a player whose network loses datagrams, a chunk not yet acknowledged goes again in
+the updates after, the ones that went in the fewest first, up to `chunk_copies_for` datagrams each, and in no more
+bytes than a tick's copies may take of a datagram: `FRAME_COPIES_ROOM` (300 bytes) accrues each tick, to a chunk's
+size at most (`copy_room`), so it's 18 KB a second at the very most at 60 ticks, in place of the ticks' copies that
+aren't going. An acknowledged chunk gets none, and the timeout and the early retry are as they were.
+
+How many datagrams: as many as a tick goes in once its SERVERs' loss is counted and takes more than two; and,
+because that count doesn't happen in a stream, `FRAME_COPIES` more than a chunk went in each time one had to go
+again at its timeout, which shows it lost in all of them (`copies_most`: 1, 3, 5, 7, 8; one such chunk of a transfer
+says so; a count of SERVERs that finds no loss to speak of takes it back to 1). **A player who loses nothing gets
+each chunk once, as before**: the fixture's lossless runs send the same 74 chunk datagrams and 35,687 bytes.
+
+What was weighed: every small repair in as many datagrams as a tick from the start (`frame_copies`, 8 until the
+loss is counted, so 8 for a whole stream) was a little better under loss (12 to 16 ticks on the whole) and cost a
+lossless player seven copies of every small repair for nothing (361 chunk datagrams for 74). Two copies always was
+half the gain. Doubling where it's `FRAME_COPIES` more was slower to get there.
+
+### Measured (the scratch harness, sanitize, Windows; made-up time, the same every run)
+
+Confirmation lag in ticks over the stream, before and after, for the fixture's network and four seeds of it:
+
+| Network | On the whole | 95th hundredth | Most | Repairs adopted |
+|---|---|---|---|---|
+| 160 ms, nothing lost | 11.2 → 11.2 | 20 → 20 | 24 → 24 | 41 → 41 |
+| 160 ms, 20% lost | 17.1 → 11.9 | 43 → 22 | 56 → 30 | 36 → 39 |
+| 160 ms, 60 ms jitter, 20% lost | 20.1 → 16.2 | 40 → 31 | 54 → 41 | 27 → 30 |
+| (second seed: a join that took 1.2 s) | 42.6 → 18.5 | 72 → 36 | 80 → 71 | 15 → 30 |
+| (third seed) | 17.1 → 17.0 | 33 → 33 | 40 → 40 | 32 → 35 |
+| (fourth seed) | 18.5 → 16.7 | 35 → 32 | 51 → 38 | 34 → 30 |
+| 40 ms, 5 ms jitter, 3% lost | 5.8 → 5.8 | 14 → 14 | 15 → 16 | 83 → 83 |
+
+(The second seed's 71 is its join: a 33-chunk world whose fourth chunk was lost three times, then the ticks it was
+behind run with no prediction, into the first hidden effect. Its stream after that is as the others'.) Chunk
+datagrams under 20% loss went from 72-93 to 101-158 over the 8 seconds. The fixture itself: most lag 76 → 44 ticks,
+53 → 67 loads for its two clients, no resync; its bound is now under 60 (it was 120).
+`session_view_time_large_changing_repairs_keep_chunks_before_welcome` (3% loss) is unchanged: 131 confirmations,
+307/320 bounded stamps, worst lag 15, on native and WASI.
+
+### Tests
+
+`visibility_small_repairs_go_in_more_datagrams_once_one_was_lost` (`tests/test_visibility_session.c`): a stream at
+160 ms with nothing lost but what the test's wire loses. A watched repair on the clean network comes in 1 datagram;
+one whose datagram is lost comes 31 updates (258 ms) after its WELCOME; the next one's first datagram is lost too
+and it's adopted an update later, having gone in 3. Against the session before: 1, 2 and 2 datagrams, 31 and 30
+updates. The continuous fixture's bound of 60 ticks fails before as well (76).
+
+Validation: `tide_tests` filtered to visibility (32 cases), session, commands and shard on native sanitize (Windows
+ASan), and to visibility and session on web-debug (WASI, Node 24.22.1). No generated code, compiler or wire change,
+so no game was built. Other platforms are CI's.
+
+### Open: smaller steps that would help, not built (each crosses into the server's repair budget or the wire)
+
+- **A stream that doesn't wait for each acknowledgement.** The floor above (the way there plus half a round trip)
+  is stop-and-wait's. A streamed repair every `repair_gap` ticks against the last acknowledged baseline, a newer one
+  replacing the one in flight, would make it the way there plus half the gap: about 6 ticks for 11 at 160 ms. A
+  client must then drop, not fail on, a repair whose baseline it has already gone past (today that's `need_snapshot`),
+  and big repairs can't be replaced mid-flight. Test: this note's harness, lag on the whole under 8 at 160 ms.
+- **The probe at a stream's end costs a round trip while effects go on** (above: 20 → 14 at the 95th hundredth).
+  Sending the ticks' frames with a stream's last repair would let the client compare its own tick the moment it
+  adopts, in place of waiting for frames that start once the server hears of the adoption.
+- **Loss isn't counted while transfers follow each other.** Counting WELCOMEs as SERVERs are counted (a protocol
+  number), or letting frames go beside a small repair, would give `frame_copies` and `spare_group` their authority
+  in a stream, and this change's own count could go.
+- **A client whose confirmation is a prediction window behind stops predicting, silently.** `tide_client_status`
+  could say so (confirmed age beside `verified_tick`), for a game's own "connection problem" display.
+
+The server's side of repairs (what's read and packed an update, the backoff's numbers) was another task's the same
+day; nothing here changes it.
+
+### The two contracts, decided 2026-11-20 (the owner: "go with your gut"; the picks are Claude's, in `docs/spec.md`, State visibility)
+
+Built, in `compiler/src/check.c` (`check_sends`): the first option of each below. A command handler's `Send` of a
+match event that has a local handler warns in a program that uses visibility (`tidec_warning_visibility_command_event`;
+direct sends only, not through a function it calls, and not tasks' continuations or systems that read hidden state,
+which the compiler can't tell apart). `hostMigration = true` with visibility is an error at the setting
+(`tidec_error_visibility_host_migration`); `compiler/tests/e2e/players.tide` no longer sets it, and its test turns it
+on for the copy of the game it takes the projection out of. No repository game or prototype on `dev` had either
+(only `loam` uses visibility there: no host migration, no local handlers of its own events). The runtime's refusals
+stay as the second guard. What was offered:
+
+- **Server-only custom events have no recipients.** In a visibility game commands, tasks' continuations and whatever
+  depends on hidden state run only on the server; only genuine `Spawned`/`Destroyed` are journaled to recipients
+  (`tick_client_events`). An event such code sends reaches no other machine's `local event` or `verified` handler,
+  and nothing says so at build time. Offered: (1) keep it and warn at the `send` (outcomes go in permitted state);
+  (2) journal an event that names an entity to those who may see that entity at the event's turn, as lifecycle
+  events are, scrubbing as they do, with events naming none either refused or public; (3) an explicit audience at
+  the `send`. Recommended: (1) now, (2) when a game needs it; (3) only if (2) proves too coarse.
+- **A visibility match ends with its host.** No player's machine has the whole state, and none may be given it, so
+  nothing a client holds is promoted (`visibility_host_migration_never_promotes_a_partial_world`). Offered: (1)
+  say so as the contract, with `hostMigration = true` an error in a program that uses visibility, as it is with
+  `Storage`, pointing at a dedicated or hosted server, whose recovery already keeps the whole match; (2) a
+  complete-state handover to a machine the game declares trusted (a standby server), never to a player; (3) state
+  escrowed encrypted with the relay or a service, which is a new trusted party. Recommended: (1); (2) if and when
+  self-hosted dedicated servers want failover; not (3).
+
+## Projection journals reuse the completed tick's hash (2026-11-19)
+
+`tick_run` computes the authoritative whole-world hash after simulation. The
+session already uses that hash for the frame and its replay record. The
+generated projection check used to fold the whole world again to name the
+same state in the repair journal. `tick_end` now passes the local hash to
+`client_hashes` together with that world. Each recipient still gets a
+projection computed from its permitted state every tick. The journal uses
+the supplied hash as its node key and computes the key itself for callers
+that pass NULL.
+
+The hash covers the exact post-tick state. Between hashing and projection
+checking, session work reads the world, updates connection and store state,
+and copies to other worlds. The hash pointer is valid only for the call.
+The journal keeps the value. `TIDE_CLIENT_SPANS_CHECK` independently recomputes
+the key and checks recipient hashes from the rows. The walk fixture compares
+repairs and the journal digest with and without a supplied key. The same
+wire protocol and snapshot format apply.
+
+See [Voxels at 100 spread bots](voxels.md#projection-journal-cost-at-100-spread-bots-2026-11-19)
+for the workload, measurements and remaining tick costs.
+
+## A whole projection's entities found on the pool; no protocol change (2026-11-17, joins)
+
+What a player is sent of the world whole (a join, a transfer, a repair offer: generated `client_state`) asked
+`tide_visibility_entity` of every entity of every archetype twice, once to count and once to write, each a lookup of
+the entity and a walk to its scene and groups, on the update's thread. A server's world is every player's: at 100
+players apart, 30,000 or more entities of which a joiner has a few hundred, and the updates where several joined
+were the run's longest (`server, while one joins` p99 28 to 46 ms).
+
+- **Once each, where it is**: `tide_client_see_keys` goes through the archetype's entities in the order of their
+  identities with their slots (`tide_entities_ordered_archetypes_slots`), asks `tide_visibility_entity_at` (the
+  same answer as `tide_visibility_entity` for a live entity at a known place, with a `tide_visibility_walk` keeping
+  the scene's root and the directory found for the rows that share them) and keeps the places of those the
+  recipient may have, which are then written. A client's world (it has only what it may) asks as before.
+- **On the pool**: where the session handed this thread a pool (`tide_loops_enter`, which `start_snapshot`,
+  `offer_client_repair` and `send_client_lacking` now do around the whole projection, on the update's thread; never
+  from the repairs read on the pool) and there are 4,096 entities or more, parts of 2,048 run on its threads, each
+  reading the world alone and writing its own flags, kept in order after. The bytes are the same however many
+  threads: every run below ends on the same world hash, bytes per player and arrival ticks.
+- **Measured** (`bench_voxels --players 100 --spread 256 --seconds 30`, 12 threads, two alternating pairs, the
+  machine shared): updates while one joins, p99 28.5 and 46.1 ms to 14.1 and 15.6; the run's p99 21.2 and 27.7 to
+  24.2 and 27.1 (the steady state, within the machine's noise); 27.8 KB a second for each bot, box fill 31 ticks at
+  the median, hash `0x5165130e825fa70f` in all four.
+- **Tests**: every native release target builds; the `bench_*`, `tidec_e2e_visibility*`, `_net*`, `_storage*`,
+  `_local_fields`/`_events`, codegen pattern tests, `sumo_tests`, `earth_tests`, `towers_tests` and `tide_tests`
+  (109) pass; under ASan (`sanitize`) `bench_voxels` (quick, `_arrives`, `_views`, `_reads_12`), the visibility
+  runs, repairs and walks-on-the-pool fixtures, and 12 players apart joining. No pin moved.
+
+## A check's rows on every thread; no protocol change (2026-11-17, parts)
+
+What was left of the projection checks at 100 players apart (notes/voxels.md, A hundred apart, again): a check after
+the Chunk table settled read 600 to 800 pieces on one thread (20 to 31 ms), 25 of the run's 30 longest updates; and
+of every check, who may have what (audiences) and each player's sums were one thread's too (55 and 45 ms a second of
+the server's 245 of hashing). Generated code (`client_spans_codegen.inc`, `client_state_codegen.inc`) and one line of
+the session; **nothing on the wire, in a world or in any hash changed** (`PROTOCOL` stays 27; no pin moved).
+
+- **The rows' part in parts** (`tide_client_part`): every table chunk's pieces, `TIDE_CLIENT_PART_PIECES` (4) at a
+  time, each a call of `tide_client_rows_chunk<a>(..., chunk, moved, from, to, ...)`, the loop body that was inline.
+  Where the check has `TIDE_CLIENT_SPLIT_ROWS` (4,096) rows or more, the memo and the walk, and a pool was handed to its
+  thread, the parts run on the pool's threads (`tide_parallel_for`, a frame's loop) and are then taken in their order
+  (`tide_client_parts_take`); else each table chunk is one call here, in order, as before. Before the parts: room for
+  every chunk's pieces (`tide_client_span_pieces`, which grows the array they're in) and which of each chunk's columns
+  were written since (`tide_client_span_written`, which hashes the columns' pages), so a part hashes no page; after
+  each chunk's parts, its columns kept (`tide_client_span_kept`) here.
+- **The memo in stages** (`tide_client_stage`, `tide_client_hasher.stage`): a part's hasher reads the memo and never
+  writes it. An entry it uses is copied into its stage the first time (or made there: a put's, a big container's
+  sums'), and is then changed there exactly as the memo's own would be (`tide_client_memo_get`, `_put`, `_sums` take
+  the stage's entry where the hasher has one); each put and each sums call is noted, in order, as the memo grows by
+  them (it rehashes before an insert past half its room). Taken in order (`tide_client_stage_merge`), a stage's calls
+  grow the memo as one thread's would, and each entry the part used becomes the part's, the memo's `kept` counted once
+  for each entry first used this call.
+- **The journal in lists**: what a part notes (`tide_client_noted`, the pending rows of `tide_client_journal_row`) and,
+  later, the rows whose audiences moved (`tide_client_added`, `tide_client_journal_add`'s) go into the journal's lists
+  in the parts' order, then each table's rows past its end, as the serial order had them.
+- **Who may have what, and each piece's routing, in parts** (`tide_client_parts_seen`): once the rows' parts are
+  taken and the directory of groups compared (here), the same parts work out their pieces' audiences
+  (`tide_client_seen_chunk<a>`, each with its own `tide_visibility_walk`) and then route them
+  (`tide_client_route_chunk<a>`: what a piece's rows add to each player's sum), with routing scratch from a list of
+  spares, one for each part at a time. The players' sums are then added up here from every piece's route (wrapping
+  sums of what each piece kept: the same in any order, and they're added in the same order anyway).
+- **The session** (`tick_end`, agent-maintained) hands its tick's pool to the thread around `client_hashes`
+  (`tide_loops_enter(t->jobs)`, `tide_loops_leave`): runtime-ownership.md, top section.
+
+**Why everything is one thread's.** A part reads the world (written by nobody during a check), the state kept by
+the check before for its own pieces and rows, the walk (made here before the parts, and only read by them) and the
+memo as the check began (busy, so no repair shares it, and not written until the parts are done); it writes only its
+own pieces, their rows' kept arrays, its noted and added lists, its stage and its scratch. So what each part comes to
+is what it came to read in turn on one thread: the only state one part's work could see of another's is the memo's
+entries, and an entry is a container's (its handle), which a row's value holds. An entry used by one part's rows is
+the memo's exactly as one thread leaves it. Were one handle read by two parts, the later part's copy would go into
+the memo last, made from the memo as the check began rather than from the earlier part's: it holds whenever the
+earlier one's would (its hashes are of the same bytes), and an entry is only ever a shortcut to them, so every hash,
+the journal and what's sent are the same either way; only that entry's kept items could be another's.
+Every page a part reads was hashed before it (the world's hash after the tick, the walk's on every heap and slots'
+page), so `tide_page_hash` and `tide_client_page_hash` only read: no page's hash, `before` or lines written is
+written by a part. `TIDE_CLIENT_MEMO_OFF` (no walk) and a check worked out again (`again`) never go in parts.
+
+**Threads, checked.** Each part's state is the part's from its start to its end, `tide_parallel_for` returning once
+every part has (the caller's thread takes parts as thread 0); the main hasher, the memo, the journal and every span's
+columns are touched only before and after. The routing spares are under a lock. ASan (`sanitize`): `tide_tests`
+`session`, `visibility`, the visibility fixtures and `tidec_e2e_visibility_walks_pool`. No ThreadSanitizer here. On the
+web (`web-debug`) the fixtures' `_checked` variants, in parts, end on the same pins as natively.
+
+**Tests.** `visibility_walks_checks_on_the_pool_are_one_threads` (`tidec_e2e_visibility_walks_pool`: every check in
+parts of a piece, on the platform's pool, with every hash also worked out from the rows): two worlds through every
+step of `visibility_walks_see_every_page_written_since`, one checked on one thread and one on the pool; after every
+check each player's hash, each repair's bytes from the journal and `tide_client_check_digest` (a test build's hash of
+the memo's entries in their containers' order and of every kept row, piece, walk and journal entry) are the same.
+The `_checked` variants of the runs, pieces, blocks, walks, trees and repairs fixtures read every check in parts of a
+piece here in order (`TIDE_CLIENT_PARTS_ALWAYS`), every hash worked out again from the rows, with the same pins.
+Mutations, each alone: every other part's stage left out of the memo (the pool test fails on the digest, every hash
+the same); a table chunk's noted rows taken from its first part alone (the pool test fails, at the first check whose
+rows another part wrote down); its rows whose audiences moved taken from its first part alone (walks never moves an
+audience, so the pool test passes; `tidec_e2e_visibility_repairs_checked`, in parts, fails: a repair from the rows
+written down isn't one from every row).
+
+**Measured** (notes/voxels.md, A check's rows on every thread): 100 apart, the checks 243 to 256 ms a second to 112
+and p99 35 to 22 ms; 100 together 52 to 28.5 and p99 8.5 to 7.1; 32 apart 54.5 to 30.6 and p99 9.0 to 6.1; 8 bots and
+one thread as they were. The same world hash, what the bots' machines took, bytes and box arrival ticks in every pair.
+
+**Left.**
+- What a check does on its own thread: the walk (every heap and slots' page's hash, 3 ms a second at 100 apart), the
+  directory of groups compared (6), each chunk's columns looked at before and kept after, the stages and lists taken
+  (8 with the rest), the journal's pending rows, the world's hash for the journal (6) and the players' sums (5). A
+  walk by heaps on the pool, and the directory by its chunks, are what's next of it.
+- A row a settle moved still has everything of it worked out again where it lands (its kept arrays are by row): the
+  moves aren't said to the check. With the parts on the pool that's no longer an update's length (the checks after a
+  settle are 5 to 13 ms where they were 20 to 31), only the threads' time.
+- A piece a page of whose rows changed is read whole (its arrays made again), where few of its rows changed.
+- The parts' scratch (their hashers, gathered lists and stages' tables) is fresh memory each check: a few hundred
+  small allocations.
+- Checks for several players at once is what this is: a check is every player's at once, and what's one player's of
+  it (the sums of the pieces' routes and the inputs) is a few microseconds.
+
+## The directory of groups, packed, is compared by its entries' orders; no protocol change (2026-11-17, a hundred apart)
+
+The projection checks compare the directory of visibility groups (`tide_visibility_state.groups`, a map) with the copy
+they kept, entry by entry where they are (`client_spans_codegen.inc`'s `tide_client_groups_diff`). A map packs its
+live entries together once it has more dead than live (`map.c`'s `compact`, on an insert): every entry after the
+first dead one moved, and each was taken as a group that changed and came to all its audience. At 100 players apart
+(80,000 groups, a chunk's each, half of them dead every so often) that check was the run's longest: 11 to 12 ms
+comparing the directory and 20 ms working every row's audience out again, and every player whose group moved was
+said to have had entities come to them (`tide_game.client_came`), so their next repair was one of a view arriving.
+Now a list that isn't the one kept (it packed, or it's small) goes by its entries' orders, which an entry keeps
+wherever it is and which go up along the list, dead ones too: an order in both is compared, one in either alone came
+or went. What's taken as changed is what changed; were orders ever out of order, it would be more than that, never
+less (an entry met in one list alone is taken as changed). The list kept in chunks and still the one kept goes place by place,
+as before. Generated code only; nothing on the wire changed (`PROTOCOL` stays 27), and a player's repairs and what's
+said to have come to them differ only after a pack, where they were more than was true.
+
+**Tests.** `visibility_came_says_whom_a_groups_audience_gained` (`tidec_e2e_visibility_repairs` and its variants):
+three quarters of the groups destroyed, then one made, which packs the directory: it came to its own player alone;
+with the place-by-place comparison back it fails (the groups that moved came to theirs). `bench_voxels_checked` (every
+hash worked out from the rows too) for 15 s at 100 players apart passes.
+
+## Repairs read on every thread; no protocol change (2026-11-17)
+
+What was left of the hundred players (the section below, Left): an update's 20 to 32 repairs were read one after
+another on the update's thread (10 to 12 ms), as `client_changes` took the match's memo for itself (`busy`), and a
+second reader at once would have had another memo with nothing kept. Three changes (`engine/src/session.c`,
+`recipient_delta.c`, agent-maintained; tidec's `client_state_codegen.inc`, `client_changes_codegen.inc`). **Nothing on
+the wire changed** (`PROTOCOL` stays 27), nor any world or hash.
+
+- **A repair's read writes nothing another reads** (generated). `client_changes` takes the match's memo with
+  `tide_client_memo_share`, which any number of threads hold at once (`tide_client_memo.readers`; none while a check
+  hashes with it, `busy`, and none is taken from its world or cleared while one holds it), and hashes with it read
+  and never written (`tide_client_hasher.shared`, `reading`): `tide_client_memo_get` finds an entry and checks its
+  blocks and pages by `tide_client_item_holds`, which writes nothing, not even the entry's page hashes, and works a
+  page's hash out where it isn't kept without keeping it; `tide_client_memo_put` keeps nothing and
+  `tide_client_memo_sums` gives none. The journal and the kept rows were only read already. So where a repair's base
+  rows used to put their containers' hashes into the memo (over the current world's, which the next check then hashed
+  again), now nothing is put; a read is what it was otherwise. What a read writes: its own lists, hasher and writers,
+  the thread's heaps for text (`tide_text_use`, thread-local) and, under a lock, the frozen worlds' hashes and the
+  session's rooms. Every page it reads is hashed already (a tick's world is hashed as it ends, `hash_of`; a kept
+  tick's and a confirmed copy's pages are those of a world that was), so `tide_page_hash` only reads.
+  `tide_client_changes_stats` (a test's) is counted with atomics.
+- **An update reads its repairs on the pool and starts them in the connections' order** (`repairs_read`,
+  `repairs_read_work`, `repair_take`, `repair_drop`). The players whose repair is due are listed in the connections'
+  order (`repair_start` with its `c` and `tick`, nothing of the connection changed yet); with a pool of two threads or
+  more (`tide_jobs.run`) and two or more due, every thread takes them and reads each (`repair_read`, which now changes
+  nothing but its `repair_start` and the rooms: what it reads counts in `work`, and a big one says it's to be put off,
+  `put_off`) and packs it (`repair_pack`). Then the update starts them in order exactly as one thread did: each while
+  the update's reads are under `REPAIR_UPDATE_MOST` (its pending cleared, its stream's tick set, its `work` counted,
+  put off if it said so); the rest are let go and wait for the next update, as before. What's sent goes by the bytes
+  read, in the connections' order, never by which thread read what or when. Threads read ahead of knowing where the
+  allowance ends (each read is a function of the worlds and its connection alone, so reading one that's then let go
+  changes nothing); they stop taking reads past it once the reads before it are in (`stop`, `settled`), or once those
+  before it read so far already make the allowance, so a crowd of views arriving at once reads a few too many, not
+  all of them. They take views arriving first (`connection.came_at`), the longest to read, so the update doesn't wait
+  for one begun last. With one thread, or one repair due, it's read, started and packed where it is, as before.
+- **A pack's index of spans in kept room** (`tide_recipient_delta_pack_with`, `TIDE_RECIPIENT_INDEX_BYTES`): each pack
+  that looks for spans took a 512 KiB index fresh from the system (`calloc`, past the heap's size for its own pages on
+  Windows: mapped, faulted, zeroed and unmapped each time), and packs on twelve threads waited on each other for the
+  address space: with the reads on the pool, 29 repairs' reads took 82 to 122 ms of threads' time where one thread took
+  10. The session gives it room from its rooms (`client_changes_pack`, `read_rooms`), cleared for each pack: the same
+  bytes. 29 reads then take 10 to 20 ms of threads' time, 4 to 6 ms of the update's.
+
+**Why every datagram is the same**: which repairs an update starts, and what each is, is what one thread reading them
+in turn made of them: the reads are functions of the server's worlds and each player's connection (nothing a read
+writes is read by another, and nothing of a connection changes until the update starts its repair), and the update
+starts them in the connections' order by the bytes each read. `bench_voxels_reads_1`, `_4` and `_12` (16 players joining
+and hopping together every second at twice the view, the allowance met several times) pin what the bots' machines
+took of what they were sent, each with the ticks the machine had played then (`--expect-taken`, bench/bench.c), the
+same on 1, 4 and 12 threads; with the allowance left out of the update's choice where it reads on the pool, `_12`
+fails (`0xf5c53a516c89022e`), its world's hash as it was. `bench_voxels_views` pins it too. `bench_voxels` at 8, 64 and
+100 together, 100 apart and on one thread ends on the base's hash, bytes a bot and box arrival ticks in every pair
+(notes/voxels.md, Repairs read on every thread).
+
+**Threads, checked**: the read's state is listed above; the session's `repair_start` of each is one thread's from its
+taking until `done` (`repair_reads.done`, `works`, released; the update reads them after `run` returns). ASan
+(`sanitize`): `tide_tests session`, `visibility`, `page`, `tidec_e2e_visibility_*` and `bench_voxels_reads_*`
+(notes/voxels.md, Tests). There's no ThreadSanitizer on this machine; Linux CI's UBSan runs the same.
+
+**Measured** (notes/voxels.md, Repairs read on every thread): 100 together's 99th percentile 15 to 12.2, 12.5 ms on 12
+threads, 64 together's 9.6, 10.0 to 8.6, 9.2; 8 bots and one thread as they were; the same bytes and ticks.
+
+**Suspected of the handover's flake, and cleared** (2026-11-17; notes/webrtc-and-rooms.md, top section): CI's
+`tide_platform_web_rooms_handover` failed (a joiner never welcomed) on the commit after this one and again later, but
+that game has no `client_changes` and its session no pool, so none of this runs there, and the same failure was seen
+on 2026-11-02. Checked too, by reading: the start loop keeps the serial rule, so the first due repair in the
+connections' order always starts whatever it read (`repair_work` is 0 then), each read past the allowance is one the
+serial loop wouldn't have begun in this update either, and a joiner's whole view, put off as `REPAIR_HEAVY`, leaves
+the due list (`making`) until it's sent. Nothing moved; no pin changed.
+
+**Left.**
+- An update's longest read is now one big repair (a view arriving, 2 to 3 MB: read and packed in 4 to 7 ms, the view
+  as it is now and the tick asked for one after the other on one thread). The two as two tasks was tried and wasn't
+  faster (notes/voxels.md); a view's records written by ranges is what's left of it.
+- The frozen worlds the reads compare are hashed before them on the update's thread (each kept tick's the first time
+  it's asked for: 25 to 30 ms a second 100 apart, under 6 together), so no two threads work one out at once; on the
+  pool, the distinct ones as tasks of their own, they'd be the threads'.
+- The base's rows are still hashed again for every repair whose base they are; with the reads on the pool it's no
+  longer the update's length.
+- Packing's output and the envelope are still fresh memory (small: a repair's bytes as sent).
+## A repair's read writes into room a read had before; no protocol change (2026-11-17)
+
+What was left of the hundred players (the section below, Left; notes/voxels.md, A hundred players): an update's 20 to
+32 repairs read on one thread, 15 to 32 ms. **Where the time was** (`bench_voxels --players 100`, 12 threads, timers
+put into `client_changes`' generated C and taken out; cycles over a 15 s run's 17,000 reads): writing each entity's
+record 76% (`now` 51, `was` 25), the base's rows looked at (`tide_client_see(b, ...)`) 14%, finding the two worlds in
+the journal 7%. A record was about 8,000 cycles for 570 bytes, and it wasn't the encoding: **writing into fresh
+memory was**. `now` and `was` (86 and 30 KB a read on average, megabytes for a view) were `malloc`ed and grown each
+read and `free`d after packing on the pool, so each read's pages came from the system and faulted at their first write
+(0.8 M page faults in the reads of that run, one for nearly every 4 KiB written), each far dearer in a busy process of
+25 threads than in a test of one. Copying a kept record cost as much as reading it again (3,000 cycles for 200 bytes).
+
+- **The session keeps the room** (`session.c`, `read_room`, `tide_server.read_rooms`): a repair's plan, `now` and
+  `was` are written into writers taken from the room of repairs already packed (handed back in `free_repair_made`
+  from whichever thread packed them, under a lock), at most 64 rooms and 64 MiB a server, let go of with it. Which
+  room a read gets has no part in what it writes.
+- **`tide_game.client_changes` writes into the caller's writers** (tide/session.h; runtime-ownership.md, top section,
+  for the owner to confirm): each from its start, growing as needed; it returns whether it made one. Generated code
+  (`client_changes_codegen.inc`) writes the same bytes it wrote into writers of its own.
+
+**Why the datagrams are the same**: the bytes written are a function of the two worlds and the recipient alone, as
+before; only where they're written moved. `bench_voxels` at 8, 64 and 100 together, 100 apart and on one thread ends
+on the base's hash, bytes a bot and box arrival ticks in every pair (notes/voxels.md). `tidec_e2e_visibility_repairs`
+(and `_checked`, `_memo_off`, `_wide`) works every repair from the rows written down into fresh writers and every walked
+one into writers used again, bigger or smaller and holding the last repair's bytes, and fails on a byte's difference.
+
+**Tried and taken out**: an update's records shared between its repairs (a cache by world, entity and which of its
+sparse components the recipient may have, through a hook the session began and ended around its reads): 60% of
+records came from it, but with fresh memory a copy cost what a read did, and with kept room the reads were no faster
+with it (8.8 G cycles of records without, 9.6 to 9.8 with: working out the recipient's components for the key cost
+what it saved). Not kept, so no new hook.
+
+**Left.**
+- ~~The reads are still one thread's (`client_changes` takes the match's memo): an update of 29 repairs reads in 10 to
+  12 ms where it was 32 (notes/voxels.md).~~ Read on the pool since (Repairs read on every thread, above).
+- A record is still about 2,500 cycles; the base's rows are hashed again for each repair whose base they are (a
+  quarter of a read now): their terms are the recipient's only by the audience, so a kept tick's could be kept once.
+- The pool's packing still writes into fresh memory (`tide_recipient_delta_pack`'s output and the envelope), off the
+  reading thread; the update waits for it at the end of its reads. (Its index of spans is kept room since, and a
+  repair read on the pool is packed by the thread that read it: above.)
+
+## A kept tick's world let go of on the pool; a destruction journaled once for every player (2026-11-17)
+
+What a server's tick costs where chunks come and go every tick (notes/voxels.md, The spread tick, has the
+measurements). Two changes; **nothing on the wire or in a world changed** (`PROTOCOL` stays 27; every pin as it was).
+
+- **A kept tick's world is let go of on the pool's background threads** (`session.c`'s `let_go`, `let_go_settle`;
+  `tide_server.letting_go`): the world the ring no longer holds was let go of in `tick_end`, a pass over every page
+  it has (at 100 players apart, 80,000 chunks: 0.6 to 1.8 M cycles each, its heaps' pages half of it, the entity
+  table's a quarter, the tables' a fifth). It's handed to the pool as a helper where the pool has two threads or
+  more (as a repair's packing is), and goes on beside the players' checks, the repairs and the next tick. One at a
+  time: the next `tick_end` waits for it, helping, as do `tide_server_destroy` and a hot reload's `commit_server`
+  (the old build's code lets it go). Safe because page references are atomic (runtime-ownership.md, top section):
+  the world shares its pages with the server's world and the kept worlds after it, which are read, copied and
+  written meanwhile, and only its references are touched; what it has alone (its tables' and heaps' own arrays, the
+  memory of the world) is nobody else's; and its address isn't another world's until it's freed, so nothing kept by
+  a world's address (the projections' memos, frozen worlds' hashes, both under their locks) is taken for it.
+- **A destruction is journaled for each player who sees it from one audience** (`codegen.c`'s
+  `tide_client_destroyed` and a lifecycle event's `tide_hear_*`; `tide_visibility_seers_of`, `tide_visibility_seer`
+  in `visibility_codegen.inc`): a server journaling its players' local handlers asked `tide_visibility_entity` for
+  each of the game's players, a walk to the entity, its scene and their groups each, 128 times for a game of 128
+  (34,000 cycles a chunk destroyed, two thirds of a destruction). It's worked out once, and the same players get the
+  same records.
+
+**Tests.** `page_references_hold_while_another_thread_lets_snapshots_go` (`tests/test_page.c`, Windows: a thread
+lets go of 400 kept copies of a table while this one copies it and writes it; every page is the table's alone at the
+end and it hashes as a twin that shared nothing; with `tide_page_release` not atomic the process stops on a corrupt
+heap). The bench's runs on 12 threads end on the hashes of 1 thread's (notes/voxels.md, Tests).
+
+## Projection checks go by the pages written since the check before (2026-11-17)
+
+What was left of the projection checks (the sections below, Left; notes/voxels.md, The spread case taken apart, 5f):
+every check looked at every piece's heap pages and slots' pages, and where entities came and went, the writes
+scattered over the world (free slots and blocks are taken again) made most pieces find a page of theirs changed, so
+the blocks their rows read in it were hashed again and their rows' slots read again. Counted over a run of 32 players
+apart (`bench_voxels_counts --players 32 --spread 256`, 2,736 checks): 54.7M heap pages' and 9.3M slots' pages'
+hashes looked at (20k and 3.4k a check), 7.75M blocks hashed again (2.56 GB) of which 7.70M were as they were; the
+pieces' part 1.64 s of the run's 3.4 s of checks.
+
+**The runtime** (agreed with the owner 2026-11-17; runtime-ownership.md, top section; notes/ecs.md): a page keeps the
+lines of it (64 to a page) written since its hash was made, and when a hash is made, the hash before (`before`) and
+the lines written between (`wrote`). A heap's writes say their block's lines, a slot's change its slot's, everything
+else all of the page. `tide_page_same_since(p, kept, from, bytes)`: the bytes are those of when the page hashed to
+`kept`.
+
+**The checks** (`client_spans_codegen.inc`, `client_state_codegen.inc`; generated, no session change):
+
+- **A walk** (`tide_client_walk`, each check): every heap page and slots' page of the world, its hash now against the
+  one the walk before found at its place, and the walk it last changed in (`tide_client_kept.walked`,
+  `slots_walked`, a place's that comes or goes too). A piece keeps the walk as of which every one of its pages' kept
+  hashes was its page's (`tide_client_piece.valid`: set where the check went through all its pages, or kept them
+  anew), and passes over a page no walk since found changed without reading it: 20k pages a check looked at to 800.
+- **The lines a piece's rows read** (`tide_client_piece.page_lines`, made as the piece is kept: its rows' blocks'
+  lines in each heap page, its rows' slots' lines in each slots' page). A page that changed, whose hash before is the
+  one the piece kept and none of whose lines it read were written in between (another entity's block or slot), has
+  its new hash kept without its blocks or slots being read: 1.97M heap pages and 1.88M slots' pages a run, where each
+  was its blocks hashed again or its rows' snaps read.
+- **A block is as of the piece's hash of its page** (`tide_client_item_same_by`, `tide_client_piece_page_hash`): a
+  piece's rows' blocks are what they were as of its page's kept hash, which goes on where the page changed in other
+  lines, so a block of a page that changed is checked by the lines since that hash, else hashed again. And the pages
+  of a piece that changed are checked against its rows' blocks in one go (`tide_client_piece_blocks_moved`), where
+  each was a pass over them all.
+
+**Why every page passed over is as it was.** Everything goes by a page's hash, which says its bytes (as every kept
+hash already does), and nothing by which page or world it is. The walk: a place's hash is compared with the one the
+walk before found there, every check, so a piece's kept hash, equal to the place's as of its `valid` walk, is equal
+to it now while no walk since found it changed; `valid` is only set where every page of the piece was its page then.
+The lines: the page's hash before is the piece's kept one, so its bytes then were those the piece read; the runtime
+says every write's lines (a heap write its whole block's; a write that says nothing, all of it; a copy its source's
+and what it doesn't copy), so bytes in no line of `wrote` are those bytes; and the piece's lines are every one of its
+rows' blocks' (all of a page whole) and slots'. A slots' page is passed so only where no row's entity column changed
+(as the snaps check went). A page from a world taken back, read from bytes or copied carries its own hash before: it
+holds where that's the one kept, as the bytes then were the same. `TIDE_CLIENT_SPANS_CHECK` works every hash out
+again from the rows and stops on a difference: `bench_voxels_checked` for 30 s with 8 bots, 32 together, 32 apart, 8
+at `--near 12` and 64 together pass, ending on the hashes of the build before.
+
+**Pins**: none moved (the hashes are of values); `bench_voxels`' and every fixture's as they were.
+
+**Measured**: notes/voxels.md, Projection checks by the pages written (the table, both builds alternating).
+
+**Tests.** `tidec_e2e_visibility_walks` (and `_checked`, `_memo_off`; `e2e/visibility_walks.tide`, `_test.c`): 1,200
+plots, made a tick after another of their heap's, so a plot's grid's chunk shares its page with the next one made and
+plot 64k-1's with 64k's, in two pieces; sixteen rounds (noise every other one), each at the first row of a piece and
+the last of the one before: the target's and the neighbour's chunks in one tick; the neighbour's alone, then the
+target's the tick after; the target's small map and the tick after the neighbour's, checked once, the world hashed
+in between (its hash before isn't the kept one); the same after the neighbour's grid's chunk changed; the target's
+list in a world taken back two ticks; the target snapped as the neighbour in the slot beside it goes; a plot made in
+that slot; another of the piece before gone as a plot is made; the target snapped the tick after. Every check
+against a copy's with nothing kept and repairs from what's kept against the rows'; each step shows against a twin
+without it; pinned, the same in the three. The runtime's tests: notes/ecs.md, top section.
+
+Mutations (each alone, against the visibility fixtures `_blocks`, `_pieces`, `_trees`, `_runs_checked`,
+`_repairs_checked`, `_walks` and their `_checked`): a page held by its lines whatever they say (nine fail); held
+without its hash before being the kept one (`_walks`); a walk after the one kept as of passed over (nine). Not
+caught, and why: a block's lines taken as its first line alone, or its first 16 bytes' (a write says its whole
+block's lines, so the first is in them whenever any is); `valid` set where a page loop broke (such a piece is read and
+kept again, which sets it); places past a heap's end not found changed (a row whose block's page went changed its
+handle); slots' pages passed where a row's entity changed (those rows are hashed again for it); a row's blocks taken
+as of a piece's hash where the piece isn't kept; the slot after a row's taken for its lines (wrong only for the last
+slot of a line, which no run here met); the snaps check by lines without its hash before. The runtime's mutations:
+notes/ecs.md and the test names there.
+
+**Left.** The pieces' part is now the pages' ids a piece goes through (about 60, 0.3 µs a piece; a walk that knew
+which pieces read each page would go from the 800 that changed to theirs, but most pieces have about two changed a
+check in the spread case), and keeping a piece's lines costs about 0.6 µs a keep. What a check costs now is mostly
+the rows that did change: audiences worked out again, players' sums, rows read again and grids encoded. Big
+containers' chunks and the directory of groups still go by their pages' hashes, where the lines would say more; a
+memo entry's blocks by their own page hash.
+
+## A hundred players: repairs packed while the next are read, confirmed worlds by tick, kept ticks hashed once; no protocol change (2026-11-17)
+
+What a server's update is made of with 100 players (notes/voxels.md, A hundred players, has the game's side and every
+table), and three changes in `engine/src/session.c` (agent-maintained) and one in tidec (`codegen.c`). **Nothing on
+the wire changed** (`PROTOCOL` stays 27), and nothing of a world: the same datagrams in the same updates, the same
+hashes (`bench_voxels` at 100 players together and apart ends on the build before's hash, bytes and ticks).
+
+**Where the time was** (`bench_voxels --players 100`, 12 threads, timers put into `tide_server_update` and into
+`client_changes`' generated C for the run and taken out; seconds over an 80-second run, 4,789 updates): repairs read
+(`client_changes`) 8.8, packed (`tide_recipient_delta_pack`) 6.0, the players' projection hashes 6.0, the tick 5.5,
+taking in what players sent 3.4 (of which the copies below about 1.7), a kept tick's world let go of 0.7. The longest
+updates were an update's 20 to 32 repairs: read 15 to 20 ms and packed 15 to 17, one after the other on one thread.
+Of a repair's read: `put_record` of each chunk it sends 60% (124 chunks a repair on average: other players' edits),
+`tide_world_hash` of the world the player confirmed 18% (56 µs at 25,000 chunks, 311 at 79,000 apart), the rows of
+that world it looks at 16%.
+
+- **An update's repairs are three steps** (`repair_read`, `repair_post`/`repairs_packed`, `repair_send`; the
+  `repair_start` of each): read in the connections' order with the same allowance (`REPAIR_UPDATE_MOST`) as before,
+  each handed to the pool's threads for work in the background as soon as it's read (a helper, as `REPAIR_HEAVY`'s
+  packing is), so it's packed while the next player's is read; then each is sent, or its world started again, or the
+  hash offer made, in the connections' order, where the update's loop comes to its player. What a player is sent and
+  when is what it was: the reads and their order are, packing is a function of the bytes read, and nothing between a
+  player's read and its sending reads what another player's sending changes (each connection's own state). With no
+  pool (or one thread) each is packed where the update waits for them. A repair put off this update
+  (`connection.making`) is sent in a later one (`repair_making.update`): the loop that starts and sends is two loops
+  now. Packing went from 6.0 s of the run to 1.2 s waited for.
+- **A player's confirmed world is a kept tick's, by its tick** (`connection.verified_kept`, `verified_of`,
+  `keep_verified`): every acknowledgement of a newer tick copied the server's kept world of that tick into the
+  connection's `verified_world` (about 440 copies a second at 100 players, each a pass over every page, and the old
+  copy let go of), for a base hardly ever used. Now a tick before the server's is held by its tick: the kept world of
+  a tick doesn't change until the ring lets it go, and as it's let go (`tick_end`) the players still on it get their
+  copy then. A tick that is the server's own (its world changes with the next tick) is copied as before. A hot reload,
+  which lets go of the kept worlds, clears it with the copies. The copies went from 500 a second to 60 (the ticks'
+  own), taking in what players sent 2.9 s to 1.3.
+- **A kept tick's world is hashed once** (`tide_game.freeze_world`, tidec's `gen_world_frozen`): every repair hashes
+  the world its player confirmed to find it in the checks' journal (`tide_client_journal_between`), and most players'
+  repairs in an update confirmed the same few ticks. The session says a world won't change (each kept tick's, and
+  each `verified_world` copy) and `tide_world_hash` keeps what such a world hashes to the first time: a table by
+  address under a lock, a world leaving it as it's let go of (`tide_world_free`) or copied over (`tide_world_copy`).
+  Generated for a game whose servers repair by what changed (`world_freezes`: visibility and a heap the hashes keep);
+  NULL for the others, which keep nothing. `TIDE_CLIENT_SPANS_CHECK` (`bench_voxels_checked`) hashes a frozen world
+  again each time and stops where it differs. The base's hash went from 1.29 s of the run to 0.33 together and 7.2 to
+  1.9 apart; part of it came back as the rows of that world read colder (the hash had brought its pages in).
+
+**Tests.** `bench_voxels_views` (several players' megabyte repairs, put off, on 1, 4 and 12 threads), `_checked` and
+the 100-player runs above ending on the hashes of the build before; `tidec_e2e_visibility_*` (repairs by changes and
+the hash offer, `visibility_repairs` against every row), `tidec_e2e_net*`, `tide_tests session` and `visibility`
+(release and ASan); `sumo_tests`, `earth_tests`, `towers_tests`. Listed with results in notes/voxels.md, Tests.
+
+**Left.**
+- The reads are one thread's: `client_changes` takes the match's memo (`busy`), and a second at once would take
+  another, with nothing kept, and walk every row. 60% of a read is its records, each chunk's grid written again for
+  each player it goes to though the bytes are the same for all of them where nothing is denied: a record kept by its
+  entity and value hash for the update would make a repair to 100 players one record and 99 copies. Both are in
+  `client_changes_codegen.inc`, the projection checks' (another task's at the time).
+- ~~A kept tick's world let go of is a pass over all its pages (`free_world`, 0.53 s of the 100-player run together and
+  11.2 apart, 2.3 ms a tick): page counts aren't atomic, so it can't go on another thread while the tick copies pages.~~
+  Page counts are atomic since, and it's let go of on the pool's threads (the section above).
+
+## A whole view's repair: read in one update, packed on the pool, one big one an update; no protocol change (2026-11-16, wide views)
+
+What a whole view costs the server to send at wide view distances (notes/voxels.md, A wide view without a long
+update, has the measurements and the game's side). Where the time was, for one player's 3,125 chunks arriving (a
+repair whose `now` is 3.2 to 3.9 MB, 380 KB as sent; `bench_voxels --near 12`, timers put in for the run and taken
+out): `tide_game.client_changes` 4.4 to 8.6 ms, of which 3.4 was a grid's cells written a call each;
+`tide_recipient_delta_pack` 5.4 to 8.5 ms, of which 2.1 to 3.5 was the XOR regions packed only to lose to the
+spans; and two or three players' repairs in one update (bots that joined together, or hopped together). The
+longest update at that view was 20 to 23 ms, all of it this. Four changes, three in `engine/src/session.c` and
+`recipient_delta.c` (agent-maintained), one in tidec. **Nothing on the wire changed** (`PROTOCOL` stays 27): the
+same envelope, the same codecs, and a codec's choice is in its first byte as before.
+
+- **A grid's cells go a chunk at once in a projection's bytes** (`value_codec_codegen.inc`, the `TY_GRID` cases of
+  `tide_client_put<n>`, `_get<n>` and `_skip<n>`): where a cell's bytes are its codec's (`client_codec_raw`, as a
+  list's elements already went), one `tide_client_write` or read and `memcpy` of the chunk, where each cell was a
+  call. The same bytes; a cell's own reader refused one nested past 256 deep, so the chunk's does. The check's hash
+  had this since 2026-11-16 (Projection hashes: the rows that changed); the repairs' and projections' codec hadn't.
+  A whole view's records were 16 M cycles of the 19 its read took (3.4 ms of 4); the server's `client_changes` over
+  a run went from 8.9 to 9.9 ms a second to 6.9 to 7.5 at twice the view and from 18 to 19.5 to 13.3 at three
+  times, and a client's unpack from 1.76 ms a second to 1.53.
+- **Mostly new bytes are packed as spans first** (`tide_recipient_delta_pack`, `FRESH_LEAST`): where `now` is at
+  least 256 KiB and four times its base or more (a view arriving, a first world), `copy_spans` runs first, and
+  where it comes to an eighth of the bytes or less the XOR regions aren't packed to be compared with it. The spans
+  won every such repair measured (192 KB against 282, 382 against 447, 401 against 508), so the bytes are the
+  same; where the regions would have been smaller still, the transfer is that much bigger, never more than an
+  eighth of `now`. Smaller or less new, both are packed and the smaller goes, as before.
+- **A big repair is two updates' work** (`REPAIR_HEAVY`, 4 MiB of `now`; `client_changes_read`,
+  `client_changes_pack`, `connection.making`, `put_off_repair`, `finish_client_repair`). `pack_client_changes` is
+  two functions now: what changed, read from the two worlds (the plan, `now`, `was`, what died, the events: all
+  that needs the worlds), and those bytes packed, which reads no world. A repair whose `now` is `REPAIR_HEAVY` or
+  more, and that can't turn out to be one for the hash offer (`may_be_mostly_changed`: that fallback needs this
+  update's worlds), is read in the update that starts it and packed and sent in the next. Where the pool has
+  threads for work in the background (`tide_jobs.background` and `help`, two threads or more) the packing is
+  handed to it as a helper as soon as the bytes are read, and the next update takes what it made
+  (`packed_making`: it runs the job itself if no thread took it, and waits if one is at it); with no pool the next
+  update packs it. Which repairs are put off goes by the bytes read, and when they're sent by the update, so the
+  same datagrams go in the same updates on one thread and on twelve (`bench_voxels_views` pins it). The connection
+  isn't `sending` meanwhile: a repair asked for again in between is dropped as one asked for during a transfer is,
+  `stop_sending` drops what's being made (waiting for the pool first), and a hot reload starts such a player's
+  world again as it does a transfer's.
+- **A view arriving is read as the world is now first** (`start_client_repair`): `repair_as_it_is_now` used to be
+  packed after the tick asked for, and sent in its place if a quarter bigger. Now it's read first, and where it is
+  big it goes without the tick asked for being read at all (a join where the first player has made the view was
+  two whole views read and packed in one update). Where it isn't big, both are packed and compared as before.
+- **An update reads `REPAIR_UPDATE_MOST` of repairs** (4 MiB of `now`, `tide_server.repair_work`), then the
+  repairs still to start wait for the next update (`repair_pending` stays). Players who join or come through a
+  portal together were each a whole view read and packed in one update; now an update starts them until it has
+  read that much (two views of 3,125 chunks, one of 6,845), in the connections' order, and a small repair (a
+  border's row of chunks is 80 KB) waits only where megabytes were read before it in the same update. At 2 MiB
+  (one view of 3,125 an update) eight players hopping together had their boxes 3 ticks later at the median and 9
+  at most, for updates of 5.5 ms where two are 11: the line is the owner's to move.
+
+**What it costs a player**: a repair of 4 MiB or more lands one tick later (near 18's whole views; near 12's are
+3.2 to 3.9 MB and aren't put off). Nothing at the default view: `bench_voxels_arrives` is 21 ticks at the median
+and 29 at most, as before.
+
+**Tests**: `bench_voxels_views` (bench/CMakeLists.txt): four players joining at three times the view radius where
+the first has made it, three repairs of 6.3 to 7.0 MB put off, the world pinned and the same with `--threads 1`
+(packed by the next update), 4 (a pool with no background work: the same) and 12 (the pool's threads), and in
+`bench_voxels_checked`, which works every repair out both ways. The grid codec is under every visibility fixture
+with a grid (`tidec_e2e_visibility_blocks`, `_pieces`, `_runs`, `_trees`, `_repairs`: their pinned projection
+hashes and repaired worlds are where they were). `tests/test_recipient_delta.c` passes as it was (its buffers are
+under `FRESH_LEAST`, so both codecs are still compared there).
+
+**Left.**
+- The read itself is one update's and one thread's: about 2.3 ms for 3,125 chunks and 3.7 for 6,845 (`bench_voxels
+  --worst`'s pack column; one of 14 ms was seen at three times the view on one thread, not taken apart). Its
+  records could be written by ranges on the pool (each entity's record is its own bytes); `tide_client_see` and the
+  memo it reads are one thread's (`busy`).
+- A repair under `REPAIR_HEAVY` is still read and packed in one update (5.5 ms at 3.5 MB: 2.3 and 3). Putting those
+  off too cost a tick for each repair of a box that arrives in several (near 12 with 8 bots: 35 ticks to 40 for a
+  whole box at the median with the line at 2 MiB), which is why the line is where it is.
+- Nothing tests a put-off repair that's dropped (a player who leaves in the tick between) but the paths it shares
+  with a transfer's (`stop_sending`).
+
+## A grid read from bytes left 64 bytes on its thread for good (2026-11-16, after the sweep)
+
+**What grew.** A player's machine kept 64 bytes for every grid it was ever sent, outside every world: in voxels, for
+every chunk that came into view. `tide_client_get<n>` for a grid (`value_codec_codegen.inc`) makes the grid in the
+scratch area (`tide_grid_new`: its directory's block, 64 bytes) and takes it into the heap (`tide_grid_own`), and
+nothing gave the scratch block back: the readers are called from `load_client_state`, `reload_client_state` and
+`apply_client_changes`, which a session calls from `tide_client_update` with no mark around them, on a thread whose
+scratch area nothing else resets (a system, a handler and a view reset to their own marks; a session's update isn't
+inside one). So the thread's scratch area grew a 1 MiB piece at a time, each new piece asked for by whatever next
+needed room (in `bench_voxels`, whose server is updated on the bots' thread, a `Want` handler's map: which is why
+the pieces were counted as the server's). The same readers read a heard event's fields, a shard's messages and a
+shard's rows, so a server reading grids from those did the same.
+
+**Measured** (`bench_voxels --out 1 --hop 0 --watch 0 --threads 4`, 8 bots flying outward, in a build that counts
+what malloc's callers hold: `bench/alloc_count.h`, notes/benchmarks.md; notes/voxels.md, The process's growth, has
+every structure's bytes over 20 minutes). The bots' updates left 4,044,864 bytes in their thread's scratch area in
+the first two minutes, always a multiple of 64 an update (64 for a chunk, 4,160 for the row of 65 a bot crossing a
+chunk's border brings, 54,080 for a first world of 845). Scratch pieces held at minutes 2, 4, 6, 8 and 10: 7, 11,
+14, 18 and 21 (7.3 to 22.0 MB): 1.84 MB a minute, for 472 chunks a second coming to the eight machines at 64 bytes
+(1.81). After: 4 pieces, 4.2 MB, at every minute to the twentieth.
+
+**The fix** is where the block is made: the reader takes a mark before `tide_grid_new` and goes back to it once the
+grid is the heap's (`tide_handle_where(v->at) != TIDE_IN_SCRATCH`: a grid read where there is no heap stays the
+scratch area's, as before). Nothing else is made between the two. No world, hash, byte sent or layout changes: the
+10-minute run ends on the same hash (`0x1d2026427b0aaadd` at tick 36,229) before and after. The other readers make
+nothing in the scratch area (text is set from the bytes read, lists and maps grow in the heap they're read into).
+
+**Tests.** `tidec_e2e_visibility_runs` (and `_checked`, `_memo_off`), `visibility_runs_a_players_world_is_its_projection`:
+the thread's scratch mark is where it was after the first load and after each of the 26 rounds of ticks, hashes, a
+repair made and taken, and a whole load (chunks with grids come and go in each). Every session benchmark now fails
+a run whose updates leave anything in their thread's scratch area (`bench.c`, `results.scratch_left`: the bots'
+machines' and the server's apart), so `bench_voxels` and its variants, `bench_gallery`, `bench_sand` and
+`bench_earth` (and `_split`, `_diverge`) check it on every run. With the fix out: `tidec_e2e_visibility_runs` fails
+at the load and at each round, and `bench_voxels --quick` says "updates left 98432 bytes in their thread's scratch
+area for good (the bots' machines' 98432, the server's 0)". With it, release on Windows: those, `tide_tests`, every
+`tidec_e2e_visibility_*`, `tidec_e2e_index_follow`, `earth_tests` and `voxels_walk` pass, every pin where it was (42
+tests). Not run here: the web build (one extra tree was this task's, the counting one) and the sanitizers.
+
+**Left.** A session's update still has no mark of its own: anything else that ever makes scratch values under
+`tide_client_update` or `tide_server_update` outside a handler, a system or a view would stay the same way. The
+benchmarks' check is what would say so; nothing does today in voxels, gallery, sand or earth.
+
+## A view arriving: repairs as the world is now, spare chunks, 512 chunks said, 256 answers a tick; protocol 27 (2026-11-16, last)
+
+What a whole view costs to arrive (a join, a dimension hop: notes/voxels.md, A whole view arriving, has the
+measurements and the game's side). Four changes in `engine/src/session.c` (agent-maintained), one generated export.
+No world, hash, snapshot or layout changed; the wire did (`PROTOCOL` 27), and `bench_gallery`'s pinned world moved
+because its joins are shorter (below).
+
+- **A repair asked for of one tick goes as the world is now, where entities have come to the player since**
+  (`start_client_repair`, `repair_as_it_is_now`, `connection.came_at`). A client asks for the tick after its
+  verified one, and the first of a burst was answered with exactly that tick (a second within a second starts a
+  stream, which goes to the server's tick). A view arriving differs for many ticks in a row (chunks shown as they're
+  made), so the first repair held one tick's part of it and the rest waited a round trip for the next: with a hop,
+  the first tick is the old dimension leaving, and the new one's chunks all came with the second repair, 16 ticks
+  after they were asked for. Now, where the tick's check found entities come into the player's sight in a world
+  later than the one asked for (`tide_game.client_came`, below), the repair is packed again from the same base to
+  the server's world and sent in the first one's place if it's a quarter bigger, as a stream's first
+  (`repair_stream_until`, `repair_gap` as a stream that starts). A tick the client's own run got wrong, with nothing
+  arriving, is answered as before (one tick; nothing is packed twice), which is why it goes by what came and not by
+  the repair's size: a border crossing's row of chunks is one tick's, and its repair stays one tick's.
+- **`tide_game.client_came(world, recipients, count, out)`** (generated, `client_state_codegen.inc`; optional):
+  whether a visibility group's audience gained each recipient in the checks of `world` since it was last asked.
+  The check's comparison of the directory of groups with its copy (`tide_client_groups_diff`,
+  `client_spans_codegen.inc`) already finds each group whose audience is another; it now ORs into
+  `tide_client_kept.came` the players the new audience has that the old hadn't (a new group's whole audience; an
+  entry that moved as the map packed counts whole). Byte-wise over `Audience`, so any number of players. Said of more
+  players than it's true of at times, never of fewer; a build that keeps nothing (`TIDE_CLIENT_MEMO_OFF`) says it of
+  everyone a group has. The session asks once a tick, after `client_hashes`, and keeps the world's tick
+  (`came_at`). An entity spawned in sight by code the client runs too is no group's gain and isn't said; one spawned
+  into a group that has the player is (a false alarm costs one more pack, sent only if it's bigger).
+- **Spare chunks** (`MSG_SPARE`, `send_chunks`, `on_spare`, `take_spare`). A world or a repair goes in chunks of
+  1,000 bytes, and a lost one was asked for by the client's next CLIENT and sent again: a round trip and a half
+  (12 ticks here), with a box of 116 chunks losing at least one 7 times in 10 at 1% lost. Now a transfer of 32
+  chunks or more (`SPARE_LEAST`), to a player whose loss is counted and isn't none, is followed block by block (64
+  chunks, an update's worth: `SPARE_BLOCK`) by spares: each the XOR of every `stride`th chunk of the block, so
+  chunks sent one after another are in different spares, and a chunk that's the only one of its spare missing is
+  made from the spare and the rest. A spare for 16 chunks up to 2% lost, for 8 up to 5.6%, for 4 past that
+  (`spare_group`, by `frame_copies`, the count ticks' copies go by); none until `LOSS_SERVERS` are counted
+  (`loss_counted`: a connection's copies start at eight, which says nothing of its loss), so a player joining has
+  none. Spares go once, over the update's 64 chunks, and are never sent again; what they don't save is asked for as
+  before. Datagram: the header a CHUNK has, the transfer's number (u32), the block's first chunk (u32), the stride
+  and the group (a byte each), 1,000 bytes. **Whatever a spare says**: its number is the transfer being received,
+  its block starts on a multiple of 64 inside the transfer, its stride is 1 to 16 and no more than the block's
+  chunks and the one the block's first spare said, its group is under its stride, and its bytes are a chunk's
+  length, or it's left. A chunk shorter than 1,000 bytes (the last) made from a spare has to leave zeros after its
+  bytes. A spare of the right numbers and other bytes makes a chunk of them (nothing says they aren't the server's:
+  the header's cookie and nonce are what authenticates a CHUNK too), and the transfer then fails as any transfer of
+  wrong bytes does, at its unpack or its hash, and is asked for again.
+- **A CLIENT says 512 chunks past the first it lacks** (`CHUNK_WORDS` 8 words of 64, only as many as reach the last
+  it has, after a count byte; it was one word always). The server keeps what it's told a chunk at a time
+  (`chunk_had`, `chunk_top`), where it kept the one word and dropped it as the first lacking moved. A chunk past the
+  64th after a lost one was sent again a round trip and a half after it went, though the client had it: 2% more
+  bytes at voxels' default view, 28% at twice, 40% at three times, and a third of what `bench_gallery`'s joins sent.
+  A transfer with nothing past the first lacking says a byte where it said eight.
+- **256 of the store's answers a tick** in a game with projections (`TIDE_STORED_PER_TICK`, `dispatch_injected`),
+  where every game took 64 of shard messages and answers together. Such a game's frames carry no answer (what one
+  changes reaches players as state), so nothing but the tick's own work bounds them; a game that does a lot for
+  each paces that itself (voxels' `Pace`). Shard messages stay 64, counted apart, in the order they came; a
+  journal's record takes both (`replay_record`, `frame_names_each`). Any other game's answers are in its frames and
+  stay 64. Provisional (Claude's pick; spec, The server's store, Order).
+
+**Measured** (notes/voxels.md has the tables). One player standing, hopping every 3 s into a dimension whose chunks
+have gone, the box of 845 chunks whole on its machine, ticks from its input (median, most), before to after: no loss
+28 (28) to 20 (20); 1% lost 36 (44) to 21 (29); 5% lost 45 (71) to 29 (42). `bench_gallery`'s joins (a
+4.4 MB world to each of 8): 2.47 s to 1.73 at 1% lost, 2.85 to 2.02 at 3%, 3.07 to 2.22 at 5%, 1.50 to 1.40 at none;
+251.8 KB a second to each bot to 157.1 (328 to 218 at 3%).
+
+**Pins.** `bench_gallery --quick`: `0xc8e6ab383a684a0a` to `0x57ef0aa3786fe0c6`, the same on 1 and 12 threads: a
+bot whose world comes sooner samples its first input in another tick. Nothing else pinned moved for the session's
+part (voxels' moved for its game's changes).
+
+**Tests** (`tests/test_visibility_session.c`, the large game's client behind `visibility_wire`, which can lose one
+SERVER in n so the server counts a loss, lose a chosen chunk of a watched transfer and its spares, count what came
+of it, and give the client a datagram the test made; `visibility_differs_from`/`_to` move the ticks the large game's
+client differs in, so the loss is counted before the repairs start):
+- `visibility_spares_make_a_lost_chunk_again_before_its_asked_for`: 5% of SERVERs lost, then the server's build
+  swaps under a repair and the whole projection (545 chunks) goes: 69 spares (8 to a block), chunk 7 lost once and
+  never sent again; with its spares lost too, sent again once. No spare of any other transfer (the first world came
+  before the loss was counted).
+- `visibility_spares_go_only_where_datagrams_are_lost`: nothing lost, no spare, the lost chunk sent again.
+- `visibility_spares_that_arent_ones_are_refused`: once every other chunk has come and before the lost one is sent
+  again, its own spare with no stride, a stride of 17, a group past its stride, a block that starts at chunk 7, a
+  block past the transfer, 999 bytes, and another transfer's number: none makes a chunk (the client's bytes stand),
+  and the world isn't sent again.
+- `visibility_a_spare_of_other_bytes_costs_the_world_again_and_no_more`: the same spare with other bytes is taken,
+  the world fails its check, is sent again once, and the client has it.
+- `visibility_chunks_past_a_lost_one_arent_sent_again`: a chunk lost twice in a transfer of 545, no loss counted:
+  572 chunks came to the wire, the 25 past the 512 said and the lost one twice (the test allows 40 over).
+- `tidec_e2e_visibility_repairs` (and `_checked`, `_memo_off`, `_wide`): `visibility_came_says_whom_a_groups_audience_gained`:
+  a group given to another player came to that player alone, said once; a lane and a policy came to nobody; two
+  checks before it's asked are both said; a group that shrank came to nobody and one that grew to those it gained;
+  a group made with an audience; another world says nothing.
+- `bench_voxels_arrives` (bench/CMakeLists.txt): the hopping player for a minute at 1% lost, the box whole in 21
+  ticks at the median, failing past 23, its world pinned.
+
+Mutation (each alone, the test named failing): the store's answers 64 a tick, or unbounded (`bench_voxels_arrives`,
+by `--fill` and by its pin); no repair as the world is now (`_arrives`); `client_came` never saying, or saying a
+group's whole audience (`visibility_came...`, and `_arrives` for the first); a spare kept and never taken
+(`..._make_a_lost_chunk_again`); one word (`..._chunks_past_a_lost_one`); spares before the loss is counted
+(`..._go_only_where`); a spare of any stride, of any number, of any block (`..._that_arent_ones`). Not caught by any
+test: the zeros a short last chunk must leave after its bytes (a transfer whose last chunk is lost with its spare
+kept isn't made by the fixture; the transfer's own check stands behind it).
+
+**Validation** (release, Windows): `tide_tests` whole, every `tidec_e2e_visibility_*`, `_storage*`, `_net*`,
+`_managed_store*`, `_shards*`, `_task_visibility`, `_scene_preparation_visibility`, `tide_platform_store_headless`,
+`tide_platform_capture`, `tide_platform_reload`, `_reload_reads`, `earth_tests`, `bench_earth` (and `_split`,
+`_diverge`), `bench_sand`, `bench_gallery`, `bench_voxels` (and `_forgets`, `_wide`, `_checked`, `_counts`,
+`_arrives`), `voxels_walk`, `tide_platform_png`, `_png_decode`, `_gif`, `tide_cli_help`, `tide_cli_run_exit`: 67
+CTests, all pass; `npm run build` in `docs/`. Sanitizers, the web and the other platforms are CI's.
+
+**Left.**
+- Spares start once a connection's first 512 SERVERs are counted, which a player who hops in its first seconds, or
+  whose server is sending it repairs most of the time, waits longer for (a 30 s bench run's hops get them late or
+  not at all: its boxes took 23 and 28 ticks at the median where the minute-long run's took 21). A transfer's own
+  chunks say what's lost exactly (sent against had), and counting them would tell sooner. Not built.
+- A repair is still one transfer at a time, each waiting for the last one's acknowledgement: a view that's made
+  over more ticks than a round trip has (voxels at twice the view) arrives in as many round trips. A second
+  transfer started on the first one's world before it's acknowledged would halve that; the chunk state is one
+  transfer's throughout (`snapshot_number`, `chunk_*`), so it's a rewrite of it.
+- The server could start the first repair itself, the tick entities come to a player, where it waits to be asked
+  (a round trip before the nearest chunks land). The client takes a repair it didn't ask for, but only from the
+  world it has confirmed, which the server knows a round trip late: the repair would have to name its base and the
+  client hold it until its verified world reaches it. Not built; `came_at` is the signal it would go by.
+- A hop's first repair says each of the 845 chunks that left by 16 bytes of identity (13.6 KB). A group that went
+  whole could say so once.
+
+## A whole projection the server starts is taken; a reload under repairs stops no client (2026-11-16, later still)
+
+The bug left open below (protocol 26, Open): a hot reload during a stream of large repairs could stop a client for
+good, the server sending a whole projection for the rest of the match and the client acknowledging no chunk of it.
+Two causes, both in how a client reads a WELCOME (`on_welcome`, `engine/src/session.c`; agent-maintained), neither in
+protocol 26 nor in the reload's own code. No wire, world, hash or generated code changed.
+
+**Cause 1: a client refused a whole projection it hadn't asked for.** A server whose build changes while it is
+comparing a repair with a player's world (`connection.repair_base`: the hashes or the patch of a hash offer are on
+their way, or went and aren't acknowledged yet) lets go of the worlds it compares, which the old build made, and
+starts the whole projection in the repair's place (`stop_recipient_comparisons`, `start_snapshot`).
+`start_snapshot` is a commitment: the player's `frame_ack` becomes the server's tick, what was sent of the ticks is
+forgotten, and while it's `sending` no repair is packed (`start_client_repair` returns) and a repair asked for a
+tick that isn't `frame_ack + 1` is no request. The client took such a WELCOME only if it wanted a world
+(`need_snapshot`, which it sets itself, in `client_set_game`, when *its* build changes while *it* is comparing) or
+if the world's tick was past all it ran (`tick > ahead`). A client that had the repair whole already (its
+acknowledgement on its way or lost), or that hadn't had the hashes' WELCOME yet, or whose build didn't change in
+the same update (another machine's never does), wasn't comparing, runs ahead of the server, and refused it. It went
+on asking for a repair of the tick after its verified one, which says `CLIENT_WANTS_WORLD` too, so the server
+neither stopped sending (`newest && !wants`) nor answered: for good. The test's two sessions swap builds in the same
+update, so it took a lost or late acknowledgement to show (3 seeds of 64); a server's build alone changing stops
+45 of 64.
+*Fix:* a `SEND_CLIENT_WORLD` newer than all the client was sent, of a tick not before its verified one, is taken
+whether asked for or not (`restarted`). That's every unasked `start_snapshot` of a game with projections: this one,
+a repair the server can't make (`start_client_repair`: a tick or a world it no longer keeps), a player too far
+behind (`send_frames`). The last two got by on `tick > ahead`, which holds when the client's own ticks stopped too.
+
+**Cause 2: a late WELCOME of the transfer before took the place of the one being received.** WELCOMEs go
+unordered, one an update while something is sent. A client receiving transfer N+1 (the whole projection) that read
+a late WELCOME of N (the repair's hashes the reload ended; a repair is wanted whenever its tick is past the
+verified one) dropped what it had of N+1 and waited for N, which nobody sends; the next WELCOME of N+1 started it
+again with no chunk, and the server, which had heard the client has the first of them (`chunk_ack` only goes up),
+never sent those again. With cause 1 fixed, 1 seed of 64 still stopped this way with both builds swapped, 2 of 64
+with the server's alone.
+*Fix:* while a transfer is being received, a WELCOME of a lower number is old and is left alone (`number <=
+snapshot_number`). A server's numbers only go up on a connection, and a client is one connection's (its nonce is
+made once), so a lower number is never the newer thing. This is every game's `on_welcome`, with projections or not.
+
+**Seeds** (`visibility_large_repairs_release_old_callbacks_on_compatible_reload`'s scenario, which now runs 1,800
+steps and asks that the client is within 30 ticks of the server at the end with every hidden effect, where it
+asked for `verified > 650` and more than 10 repairs at step 1,500; clients that stopped did so at ticks 89 to 450
+of 900): seeds 1 to 104 and 61570 to 61590, 125 in all.
+
+| Builds swapped | When (steps of 120 a second) | Stopped before | With cause 1 fixed alone | With cause 2 alone | Now |
+|---|---|---|---|---|---|
+| Both, in one update | 400 to 440, every 4 | 9 | 1 | 8 | 0 |
+| The server's | 400 to 440, every 4 | 77 | 3 | 75 | 0 |
+| The client's | 400 to 440, every 4 | 0 | 0 | 0 | 0 |
+| Both | 400 and 401 | 20 | 2 | 19 | 0 |
+| Both | 4 to 60, every 4 (the first world coming) | 0 | 0 | 0 | 0 |
+| The server's | 4 to 60, every 4 | 0 | 0 | 0 | 0 |
+| The server's | 200 to 1,100, every 37 | 96 | 9 | 93 | 0 |
+| Both | 200 to 1,100, every 37 | 2 | 2 | 0 | 0 |
+
+Also 0 now, not run before: the client's at 4 to 60 and at 200 to 1,100, the server's at 400 and 401. The test's
+own seed is 61579 still; 61577, 25 and 61572 (the three that stopped after protocol 26) pass.
+
+**Tests** (`tests/test_visibility_session.c`; `visibility_match` is the large game's host and client, the client
+behind `visibility_wire`, which says what each WELCOME names, can lose a repair's hashes and can give the client a
+WELCOME again late):
+- `visibility_reloads_under_repairs_stop_no_client_whatever_is_lost`: seeds 1 to 64, both builds, 400 to 440. Seeds
+  25, 45 and 48 stop with the session before.
+- `visibility_reloads_of_the_server_alone_stop_no_client_whatever_is_lost`: seeds 1 to 64, odd ones 400 to 440 every
+  4, even ones 200 to 1,100 every 37. 45 stop before.
+- `visibility_reloads_of_either_side_at_any_time_stop_no_client`: 8 seeds each of the client's alone, two reloads in
+  a row (both, and the server's), the first whole projection coming (both, either), and all through the stream
+  (both, the client's). 6 of 64 stop before.
+- `visibility_reload_whole_projection_is_taken_after_a_repair_the_server_hasnt_heard_of` and
+  `..._in_place_of_a_repairs_hashes`: cause 1's two states made on a network that loses nothing (80 ms each way):
+  the server's build (and both) swapped in the update the client loads a patch, and in the one a repair's hashes
+  are first named. The whole projection is named next, of a tick the client ran past, and the client's verified
+  world is that tick's within two seconds.
+- `visibility_reload_late_welcome_of_the_repair_it_ended_costs_no_chunk`: cause 2: a repair's hashes are named and
+  none comes, the server's build swaps, three updates of the whole projection come, the hashes' WELCOME is read
+  again; the client has the projection within two seconds and less than 700 KB of it was sent.
+- `visibility_reloads_during_big_command_uploads_lose_no_command`: a 100 KB command from each machine with builds
+  swapped (the server's, the client's, both) as they go up, 10% lost: both run, once.
+
+Mutation: with `session.c` as it was, six of the seven fail (the uploads' passes, as it did). With cause 1's line
+out, the same six (cause 2's focused test can't be set up: no projection comes to interrupt); with cause 2's out,
+its focused test and the two 64-seed tests fail.
+
+**Validation** (release, Windows): `tide_tests` (778, the seven new ones 13 s of it), every `tidec_e2e_visibility_*`
+(26), `_scene_preparation_visibility`, `_shards_visibility`, `_task_visibility`, `tidec_e2e_net`, `_net_no_input`,
+`_net_ended`, `_net_alone_seen`, `_net_join_big`, `tide_platform_reload`, `tide_platform_reload_reads`,
+`earth_tests`, `bench_gallery`, `bench_voxels` (and `_forgets`, `_wide`, `_checked`, `_counts`): 44 CTests, all
+pass, no pinned hash or byte count moved.
+
+**Sibling cases.** During a whole projection (the first, or one a reload started): the server compares nothing, so
+its reload starts nothing; the client isn't comparing; tested (4 to 60, and every reload after the first of a
+run). During a hash offer and during its patch: cause 1's states, tested both. The client's build alone: it asks
+for the world (`need_snapshot`), and the server, whose transfer is a hash offer or a patch, starts it (`on_client`,
+"Its comparison was discarded"); a repair by changes or by baseline being received goes on, as nothing of it is the
+old build's but `drop_taken`, which makes its load fall back to a fresh one. Two reloads in a row: the second finds
+no comparison. A repair superseded mid-stream: only `start_snapshot` supersedes a transfer (a repair isn't started
+while one is sent), which is cause 2. A big command's upload: tested. A download (a big command to a player that
+runs it, a store's answer, a shard message): `tide_session_set_game` touches neither side's (`download_*`,
+`downloads`), read and not tested: a player with a projection gets none in this fixture, and games without
+projections have no comparison for a reload to end.
+
+**Left.**
+- The server's reload sends the whole projection where it could let go of its worlds and wait to be asked: a client
+  that had the repair already needs nothing, and one that was comparing asks. Half a megabyte here each time. Not
+  changed: a client mid-hashes with no repair asked for would then ask for a world the same way, and the rule above
+  is needed either way.
+- After a whole projection, a client whose ticks go on differing doesn't predict until the stream ends
+  (`catching_up` ends where the confirmed ticks reach the server's, and a repair lands behind them): its `ahead` is
+  its verified tick, a repair at a time, for as long as every tick differs (this fixture's ticks 90 to 570). It
+  goes on, a second or two behind, as far as before the reload, when it predicted. Seed 35 was this at step 1,500
+  (verified 597 of 750, a repair to 700 on its way), not a stop. Whether a client in a stream should predict from
+  a whole projection is the owner's.
+- `tide_platform_reload_web` and the sanitizer, web and other platforms' runs are CI's.
+
+## Repairs from the rows a check wrote down (2026-11-16, later)
+
+A repair by changes (`tide_game.client_changes`, `client_changes_codegen.inc`) listed, for one player, every entity
+that player may have in the world it confirmed and in the world now, to find the few that differ: every row of the
+first had its audience worked out and its hash made (`tide_client_see`), every row of the second read from what the
+tick's check kept. 70 to 95 ns for each entity the server has, for each player, about four times a second: a third of
+a server's update with 8 players in `bench_voxels`, half at 64 (notes/voxels.md, At scale). Now a repair looks at the
+rows that changed for its recipient between the two worlds, and at no others.
+
+- **Each check writes down the rows it found changed** (`tide_client_journal`, in `tide_client_kept`, so it's the
+  memo's and goes where the memo goes: `tide_client_memo_forget`, a memo given to another world). The check already
+  knows them: a row is written down where what a recipient's part of it goes by came out another than was kept.
+  In the rows' part of a check (`gen_client_hash_rows`): the row is new, another entity or other snaps
+  (`ids_again`), a term of its sum moved (`gen_client_term_moved`), it's a hole where a row was kept, or it's past
+  the table's end now. In the audiences' part: who may have the row, or one of its components, is another than was
+  kept. Rows, not entities: a check knows a row whose entity went only as a hole.
+- **Each with the players it could be another for** (`tide_client_change.who`, an `Audience`; where an `Audience` is
+  4 words or fewer, 128 players: `client_changes_masked`, past that every change is everyone's to look at). A row
+  that's another entity, has other snaps or a term everyone has: who had it and who has it now. A term of a
+  component that can be denied: who may have that component now. An audience that changed: the players it came to or
+  left, and the same of each component's. So a chunk whose `Seen` changed (denied everyone) is nobody's, and a chunk
+  that came to one player is that player's alone. The rows' part doesn't know who has a row yet, so it keeps what it
+  found (`tide_client_pending`: which terms, whether anything else, who had it) and the masks are made once the
+  audiences are (the end of `gen_client_hash_rows`).
+- **A check is a node**: the world's hash as the check left it (`tide_world_hash`) and the rows it wrote. Two worlds
+  that hash as two nodes differ, for any player, only in rows written by the nodes after the earlier, up to the
+  later, whichever way round. So worlds are known by what they hold, not by their address or their tick: a world
+  changed outside a tick, or a copy ticked on its own, hashes as no node and its repair walks every row as before.
+  The world the match ticks, at the tick its rows were kept at, is the last node without hashing it (it is the
+  world those rows are already trusted to be: `current`).
+- **A repair** (`tide_client_changes_work`): `tide_client_journal_between` finds the two nodes (the base is hashed:
+  one `tide_world_hash` a repair), `tide_client_journal_mark` sets a bit for each row between them whose `who` has
+  the recipient, and `tide_client_see` and `tide_client_see_kept` go through the rows with a bit
+  (`tide_client_bit_from`) in each world. The lists they make leave out rows that are the same for the recipient in
+  both worlds, which no plan names; everything after (the matching by entity, the plan, `now`, `was`) is the code it
+  was, so the bytes are the same. Kept rows are used as before, only for the world at `tide_client_kept.tick`.
+- **Bounds.** 256 checks (`TIDE_CLIENT_NODES`; the older half goes when it's full) and 2^19 rows
+  (`TIDE_CLIENT_CHANGES_MOST`, 6 MB with a 4-byte audience; the oldest checks go). A check writes two rows at most
+  for each row of the world. A repair whose nodes hold more than 8 rows for each row of the world and 4,096 walks.
+- **A world most of whose rows change every tick** (a battle) would write them all each check for repairs that then
+  walk. A check that writes more than half the world's rows and 64 (`TIDE_CLIENT_CHANGES_LEAST`) counts
+  (`heavy_run`); after four in a row, a check writes none and says only that everything may have changed
+  (`tide_client_node.all`: a repair across it walks), but each sixteenth of the run, which writes, and ends the run
+  if it wrote few. One to three such checks in a row are written like any other: a player joining or a whole view
+  asked for writes most of a small world's rows, nearly all of them one player's, and the other players' repairs
+  across it look at none of them. (The first build wrote nothing in any check past half the world's rows: with 32
+  bots 576 of 5,157 repairs walked, the ones across a join or a hop.) Not measured on Mount & Rifle, which isn't in
+  this repository: by this rule a battle's checks write one tick in sixteen. A world checked again as it is (the same
+  hash as the last node, nothing written) is no check of a run. A game with `TIDE_CLIENT_MEMO_OFF` finds every row
+  changed in every check, so most of its checks write none.
+- **`TIDE_CLIENT_SPANS_CHECK`** works every repair that went by the journal out again from every row and stops the
+  program where a byte of the plan, `now` or `was` differs, as it does a tick's hashes. `TIDE_CLIENT_COUNTS` counts
+  the repairs each way, the rows the first looked at, the rows written down, and why a repair walked (the world, or
+  the one it was, hashed as no node; too many rows between), and times the check's `tide_world_hash`.
+  `TIDE_CLIENT_CHANGES_STATS` (a test's) makes the first three a global, `tide_client_changes_stats`.
+- No session change, no runtime change, no protocol or simulation identity change (the bytes are the same):
+  notes/runtime-ownership.md, Repairs from the rows a check wrote down.
+
+**Measured** (`bench_voxels`, release, Windows, 12 threads, BelowNormal, one run at a time, three runs each
+alternating with the build before; medians, the repairs' ranges in brackets). The same bytes sent, ticks and world
+hash in every pair (186.8, 383.0, 850.3 and 583.5 KB a second; `0x77babb9991dd25da`, `0x7b460b72bce7184a`,
+`0x55da5c44144f9d4f`, `0xe756c4ee9cf79012`). Another agent's builds and tests ran on the machine through this set, so
+the runs spread more than usual and a column nothing here touches moves with them (16 bots' simulating: the three
+runs after fell in busier stretches than the three before).
+
+| | 8 bots | 16 | 32 | 8, `--near 12` |
+|---|---|---|---|---|
+| Chunks the server has | 6,490 | 7,717 | 12,669 | 17,599 |
+| Repairs, ms a second | 19.3 to 3.78 (18.4–20.5 to 3.27–3.82) | 39.3 to 8.63 (38.9–43.0 to 7.47–8.69) | 103.3 to 22.6 (86.8–109.0 to 18.6–25.3) | 66.7 to 9.35 (55.5–76.5 to 8.70–10.07) |
+| ...each (33, 63, 113 and 33 a second) | 0.58 to 0.11 ms | 0.62 to 0.14 | 0.91 to 0.20 | 2.05 to 0.29 |
+| Server update, median, ms | 0.86 to 0.63 | 1.61 to 1.26 | 3.57 to 2.56 | 2.37 to 1.62 |
+| ...p99 | 5.37 to 5.20 | 7.89 to 6.48 | 15.23 to 10.49 | 15.55 to 12.59 |
+| ...longest | 14.9 to 12.9 | 14.0 to 13.5 | 29.8 to 18.0 | 31.5 to 24.7 |
+| Server, hashing, ms a second | 6.80 to 8.27 | 10.4 to 14.0 | 23.7 to 24.4 | 19.6 to 19.8 |
+| Server, simulating | 31.9 to 33.3 | 46.6 to 51.2 | 76.2 to 77.5 | 87.6 to 85.5 |
+| Server, in all | 66.4 to 54.3 | 110.0 to 90.3 | 237.7 to 158.6 | 191.7 to 130.5 |
+| A client, simulating | 9.55 to 9.92 | 9.86 to 10.64 | 11.56 to 11.54 | 28.05 to 28.07 |
+
+Three pairs an hour earlier, on a quieter machine, of a build that differed only in which checks write (it wrote
+none past half the world's rows and 4,096): repairs 16.5 to 3.17, 47.3 to 8.69, 97.5 to 20.1 and 66.4 to 12.5 ms a
+second; hashing 5.99 to 6.70, 12.8 to 14.1, 22.2 to 22.0 and 19.0 to 21.8; in all 58.7 to 45.9, 128.1 to 90.4,
+227.4 to 145.0 and 191.3 to 139.6; simulating and a client's within 3% each way.
+
+A repair now costs the chunks it sends (`tide_client_put_record` of each) and one hash of the base world (12 µs at
+6,490 chunks; a world's hash goes through every page's kept hash). What the checks pay for it: a `tide_world_hash`
+a check and the writing, about 0.7 to 1.5 ms a second of the hashing row at 8 and 16 bots (the hash 0.7 of it at 8:
+24 ms of 2,017 checks). Counted (`bench_voxels_counts`): with 8 bots 1,114 repairs by the journal and none walked
+(the other 8 packs are the bots' first worlds); 81,584 rows looked at, 73 a repair, where each walked 6,490 rows
+twice; 153,864 rows written down by 2,017 checks, 76 a check. With 32 bots 5,157 by the journal and none walked,
+96 rows a repair of 12,669, 265 written a check.
+
+**Tests.** `tidec_e2e_visibility_repairs` (and `_checked`, `_memo_off`, `_wide`; `e2e/visibility_repairs.tide`, `_test.c`):
+1,400 cells of their own groups, each with a `Secret` its Visibility restricts and a `[Sparse]` `Badge` one player
+may have, 200 more in a scene that goes by its root's group, 48 pebbles all alike. 240 ticks, each with one change
+picked at random of thirty: a group's audience and back (an entity coming into and leaving a player's sight with
+nothing of its row changed), a lane everyone has, a lane some have, a grid's cell, a list grown, a policy set, reset
+and set to nobody, a cell given another group and its own again, a `Tag` (another table) and back, a `Badge` given,
+taken and changed, a cell destroyed, one made, one destroyed as another is made, forty made at once, a sixteenth of
+the first 700 destroyed (holes the tick's end fills from the table's end: rows moved between pieces, and the table
+shorter), the scene's group's audience, its root's group, the other group's audience, a group destroyed, a cell
+snapped, every pebble destroyed as 48 are made (other entities in the same rows with the same values), and every
+cell's value (most of the world's rows in one check). Each tick, every player's repair from the worlds 1, 2, 3, 5,
+9, 14, 20 and 36 ticks old is worked out by the journal and by a lineage with nothing kept (every row), the two
+byte for byte alike; and which way the first went is checked (`tide_client_changes_stats`): by the journal up to
+14 ticks, walked at 36 (a journal of 32 checks here), and walked from a world before its own check and from a
+world of a tick the match had but ticked on its own with another change (same tick, another world). Two worlds of
+the past are repaired from each other both ways round, by the journal, though neither is the world the match
+ticks. Then six ticks in a row that change every cell and twenty that change nothing, each checked twice (as a
+hash asked for one player checks the same world again): the first four checks write their rows, the twelve after
+write none (repairs across them walk), the sixteenth of the run writes and ends it.
+6,772 repairs by the journal, 1,444 walked; their bytes and the world pinned, the same in the three variants with 4
+players (`_memo_off`: which way each goes isn't checked). `_wide` is the same game with 160 players
+(`visibility_repairs_wide.tide` in place of `_few.tide`: an `Audience` of five words, so no row written down keeps
+one), every hash and every repair by the journal worked out twice; the same counts, its own pins. Every other visibility fixture's repairs from what's kept (one
+tick old) go by the journal now too, against the rows' as before.
+
+Each of these fails `tidec_e2e_visibility_repairs` (run one at a time against the final code and fixture): new
+rows and other entities not written down; other entities alone (the pebbles); other snaps alone; a denied
+component's term; any other term; a hole; rows past the table's end; an audience that changed; a component's
+audience; who had a row that changed left out; who had a row that went left out; who may have a component whose
+term moved left out; a check that wrote none taken as one with nothing to write; kept rows and the last node taken
+for the world at any tick; a check with nothing to write made no node; nodes kept after the older half went left
+where they were; the base taken as the node before without its hash; the world taken as the last node without its
+hash; a run of checks that wrote most rows never ended; never begun (every check writes); no check counted as one;
+the same world checked again ending a run, or counted as another check of it.
+Two lines of the first build failed nothing and were taken out: writing a row down for which components it has
+(their terms and audiences say it), and a never-seen row's audience in the audiences' part (the rows' part has it).
+
+`bench_voxels_checked` at full length (8 bots, 32 bots, and 8 at `--near 12`, 30 s each: every repair by the
+journal worked out again from every row) passes with the worlds and bytes above. Also passing, release on Windows:
+all of `tidec_e2e_visibility_*`, `tidec_e2e_task_visibility`, `_scene_preparation_visibility`, `_shards_visibility`,
+`_net_alone_seen`, `_storage_await_hidden`, `bench_voxels*`, `voxels_walk`, `bench_earth*`, `earth_tests`,
+`tide_tests visibility` and `session`. Sanitizers, the web and the other platforms are CI's.
+
+**Left.**
+- The current tick's journal key now comes from `tick_run` (2026-11-19, above).
+  The repair still looks up its base by its hash, which frozen worlds retain
+  after the first read.
+- A repair's own cost is its records: each chunk's grid encoded again for each player it comes to
+  (`tide_client_put_record`), though the bytes are the same for all of them where nothing is denied.
+- A game whose `Audience` is more than 128 players keeps no mask: every row written between two worlds is looked
+  at for every recipient (still not the world; `_wide` is that path's test, not a measurement).
+- The hash offer (`start_client_repair`'s fallback for repairs that are mostly entities the player has) still
+  serializes the player's whole projection; nothing here touches it.
+
+## Ticks in as many datagrams as the loss takes; inputs while they can be in time; protocol 26 (2026-11-16)
+
+The largest bandwidth item of a real game (notes/voxels.md, At scale, Bandwidth): while the ticks a player hadn't
+acknowledged fit one datagram together, the server sent all of them in every datagram (`again` was 0 while
+`lacking + 32 <= TIDE_NET_MTU`), so each tick, with every player's changed input in it, went about as many times as
+a round trip has updates: eight or nine at 133 ms. That was the session's way of losing no tick to a lost datagram:
+the next datagram had it too. Once they didn't fit (32 players turning), each went once, and a lost one came 1.5 round
+trips later. A player's own inputs went up the same way, every one until the server said it had a newer.
+
+What a lost tick costs is more than the wait: a client's confirmed presentation clock (`verified_view`) advances with
+real time and is held at the newest confirmed tick, so after the confirmed ticks stop for a round trip and come in a
+burst it stays that far behind for good (until a repair, a reload or a resync sets it). What's drawn from the
+confirmed world, and the view times a rewind goes by, are that much older from then on:
+`tide_box3d_rewind_network`'s 20 frames a second with 10% lost had every stamp expire (350 ms old) with a first cut
+of this that learned a network's loss by losing ticks. So ticks had to be lost in every copy almost never,
+which is what the rule below is sized by. See Confirmed presentation below for the 2026-11-19 playback fix.
+
+### What's built (`engine/src/session.c`; agent-maintained, no generated code or `tide_game` member involved)
+
+- **A tick goes in a few datagrams in a row** (`send_frames`, `frame_goes`): `connection.frame_copies` of them, 2 at
+  the least (`FRAME_COPIES`) and 8 at most (`FRAME_COPIES_MOST`). Each update's datagram has the tick just made and
+  the ones before it that went fewer times than that (`sent_mark.sends`). So a lost datagram still costs nothing: the
+  tick is in the next one.
+- **How many is what the loss measured takes** (`servers_read`, `copies_for`): the fewest datagrams for a tick to be
+  lost in all of them no more than once in 100,000 (`FRAME_LOST_ONE_IN`: once in 28 minutes at 60 ticks a second), by
+  the share of the server's datagrams the player didn't read. 2 up to 0.3% lost, 3 to 2.1%, 4 to 5.6%, 5 to 10%, 6 to
+  14.7%, 7 to 19.3%, 8 beyond. The loss is the client's own count, an authority, not a guess from timing: each CLIENT
+  says how many SERVERs it has read so far (a byte that wraps) and echoes the time of the last, and the server
+  remembers how many it had sent by each update's time (`said_marks`, the last 64 updates), so between two CLIENTs it
+  knows how many it sent and how many came. One that came out of order shows as lost in one CLIENT and as one too
+  many in the next, and is taken back (`loss_fresh`). The count is taken 512 SERVERs at a time (`LOSS_SERVERS`, 8.5 s),
+  and sets the copies either way; and of the last 256 or fewer counted apart (`LOSS_SOON`), what's lost so far raises
+  them at once, so a network that turns bad has four copies within a second and eight within a few. A connection
+  starts at eight, as it was, until its first 512 are counted.
+- **A tick lost in every copy goes again when a CLIENT shows it lost** (`FRAME_LOST`), not after a wait: the player
+  read a datagram of a later update than the tick's last (`heard_said` past `sent_mark.said`) and still says it
+  hasn't the tick. So it costs a round trip, where a tick sent once used to cost 1.5 (`resend_after`); and it adds a
+  copy for the ticks after until the loss is measured again (a burst the average doesn't show). That it hasn't the
+  tick is exact now: a CLIENT's bits are of the 64 ticks from the one it's at (`FRAMES_SAID`; they were of the 64
+  after it), by their pieces, so a client that has a tick and hasn't run it yet (its clock, a repair, `Delay`) says
+  so and isn't sent it again; before, that one tick went in every datagram. The mask is its newest CLIENT's (older
+  ones come late), in games with projections too, where it was left as it was while a repair was asked for.
+  With no word at all a tick still goes again after `resend_after`, as before.
+- **Further copies never make a datagram, and take a quarter of one at most** (`FRAME_COPIES_ROOM`, 300 bytes: 18 KB
+  a second at 60 updates), the newest ticks first: a tick's second datagram is worth more than an older one's fourth,
+  and where they don't all fit, oldest first held every newer tick's copy back by a round trip (measured: 5% lost,
+  verified worlds 4.69 ticks behind on average where 4.06 is what before had). Ticks too big for the quarter go once,
+  as they did when what a player lacked didn't fit a datagram: 32 players turning every tick are 385 bytes a tick, and
+  a second copy of that would be 15 KB a second more to each player than before. They gain the round trip in place of
+  1.5.
+- **A client's inputs go while they can be in time** (`send_client`, `INPUTS_SPARE`): the server says with every
+  SERVER how long this machine's inputs wait for their ticks (`waited`, the same word `keep_early` goes by); an input
+  sampled more ticks ago than that, one, and three to spare has had its tick run whichever datagram brings it, and
+  isn't sent. Before, a CLIENT had every input since the newest the server said it had: a round trip's worth (9 or 10
+  where 6 go now, at 100 ms and two ticks early), and all of them, to 255 or a datagram's room, while a world or a
+  repair was on its way and no SERVER came. Tried with a fixed number first (a build not kept): the newest 4 gave the
+  same share of late inputs as all of them at 1% and 5% lost and with 40 ms of jitter (0.00, 0.01 and 0.02%), 3 a
+  little more (0.00, 0.02, 0.04%), 2 clearly more (0.02, 0.28, 0.35%).
+- **The wire is `PROTOCOL` 26** (`session.c`, and the tests that write it by hand: `tests/test_commands.c`,
+  `test_session_packets.c`, `test_session_view_time.c`, `packages/voice/test/voice_test.c`): a CLIENT's bits start at
+  the tick it's at, and a byte follows them, the SERVERs it has read. Nothing else moved; a SERVER is as it was. No
+  world, hash, snapshot, layout or generated code changed: this is what's sent of the same ticks.
+- **Whatever a peer says** (hostile acknowledgements): the copies stay between 2 and 8; an echo of a time the server
+  didn't say (past its last) is not taken; a tick goes at most once an update, in at most `PACKETS_PER_UPDATE`
+  datagrams; a tick number past the server's is refused as before; bits for ticks that aren't made are the peer's own
+  loss. A peer that says it never has anything, though it reads every datagram, is sent each tick it lacks once an
+  update: what every player was sent before.
+
+### What was weighed
+
+The task's options, with 8 players standing and turning every tick (`bench_voxels --look 100 --still 100 --hop 0`,
+120 s, 50 ms each way, 10 ms of jitter; KB a second of ticks to each player, then its verified world's ticks behind
+the server's: on average / in 99 frames of 100 / in 999 of 1,000; measured with builds not kept, the room for
+copies a whole datagram's):
+
+| | none lost | 1% | 5% | 10% |
+|---|---|---|---|---|
+| Before: every unacknowledged tick in every datagram | 46.8, 4.00 / 4 / 4 | 46.9, 4.01 / 5 / 5 | 47.4, 4.05 / 5 / 6 | 48.0, 4.11 / 5 / 6 |
+| Each tick once, again when shown lost | 7.2, 4.00 / 4 / 4 | 7.3, 4.49 / 13 / 14 | 7.5, 6.37 / 19 / 27 | 7.9, 8.52 / 24 / 36 |
+| ...twice | 12.9, 4.00 / 4 / 4 | 12.9, 4.01 / 5 / 5 | 12.9, 4.23 / 12 / 19 | 13.0, 4.76 / 15 / 23 |
+| ...three times | 18.5, 4.00 / 4 / 4 | 18.5, 4.01 / 5 / 5 | 18.6, 4.06 / 5 / 7 | 18.6, 4.19 / 7 / 17 |
+| Twice, and once more for each tick lost in every copy, one fewer for each 4,096 acknowledged | 12.9, 4.00 / 4 / 4 | 14.2, 4.01 / 5 / 5 | 19.6, 4.07 / 5 / 11 | 23.6, 4.14 / 6 / 14 |
+| As built: by the loss counted | 13.7, 4.00 / 4 / 4 | 19.2, 4.01 / 5 / 5 | 24.2, 4.06 / 5 / 6 | 24.2, 4.13 / 6 / 11 |
+
+- **A set number of times** is right for one loss and wrong for the others: twice is as good as before at 1% and
+  stalls one tick in 400 at 5%; three times pays for 5% on every network.
+- **Sized by the ticks lost** (the fifth row; built first): it learns a network's loss by losing ticks, each a round
+  trip's stall that the presentation clock then keeps, and it has to lose one now and then to know it can go down.
+  With the loss counted, the copies are right before a tick is lost.
+- **Older ticks every other update** is a set number of times spread out: the same bytes as half as many copies in a
+  row, each a tick later.
+- **Deltas between consecutive ticks' inputs**: a tick's inputs are deltas already, each from the slot's input before
+  the tick; what repeated was the tick.
+- **Not sending inputs of players a machine hasn't**: a slot any of whose entities is hidden from a recipient is
+  withheld already (`client_input_masks`); voxels' avatars are public, so every machine runs every avatar and needs
+  its input, or its own tick differs and a repair is sent in its place.
+
+### Measured (`bench_voxels`; release, Windows, one run each: bytes, ticks and lags are the same every run of a build)
+
+To each player and from it, KB a second, and how far behind the server's its verified world is, in ticks (on average
+/ 99 frames of 100 / 999 of 1,000 / at most, from 5 s after it caught up: `bench.c` says so now, bench/README.md),
+the share of its inputs that came too late, and ticks run for each played. 50 ms each way, 10 ms of jitter; 120 s
+once everyone's in with 8 bots, 60 s with 32; before and after alternating.
+
+| 8 players | | Ticks to each | All to each | From each | Behind: average / 99 of 100 / 999 of 1,000 / most | Late inputs | Ticks run a tick |
+|---|---|---|---|---|---|---|---|
+| Turning every tick, standing, none lost | before | 46.8 | 47.5 | 8.0 | 4.00 / 4 / 4 / 25 | 0.00% | 10.9 |
+| | after | 13.7 | 14.4 | 6.8 | 4.00 / 4 / 4 / 25 | 0.00% | 10.9 |
+| Turning every tick, standing, 1% lost | before | 46.9 | 47.7 | 8.0 | 4.01 / 5 / 5 / 32 | 0.00% | 11.8 |
+| | after | 19.2 | 20.0 | 7.4 | 4.01 / 5 / 5 / 32 | 0.00% | 11.8 |
+| Turning every tick, standing, 5% lost | before | 47.4 | 48.2 | 8.1 | 4.05 / 5 / 6 / 34 | 0.01% | 12.1 |
+| | after | 24.2 | 25.0 | 7.8 | 4.06 / 5 / 6 / 37 | 0.00% | 12.1 |
+| Turning every tick, standing, 10% lost | before | 48.0 | 48.9 | 8.2 | 4.11 / 5 / 6 / 46 | 0.01% | 12.2 |
+| | after | 24.2 | 25.2 | 7.9 | 4.13 / 6 / 11 / 51 | 0.01% | 12.1 |
+| Turning every tick, flying, none lost | before | 19.0 | 38.0 | 11.4 | 9.08 / 17 / 18 / 25 | 0.00% | 2.8 |
+| | after | 9.6 | 28.6 | 8.5 | 9.08 / 17 / 18 / 25 | 0.00% | 2.8 |
+| Turning every tick, flying, 1% lost | before | 18.0 | 37.6 | 11.8 | 9.58 / 23 / 31 / 41 | 0.00% | 3.0 |
+| | after | 10.6 | 30.4 | 9.0 | 9.52 / 23 / 29 / 37 | 0.00% | 3.0 |
+| Turning every tick, flying, 5% lost | before | 15.5 | 36.8 | 12.9 | 11.54 / 33 / 43 / 60 | 0.00% | 3.0 |
+| | after | 9.7 | 31.4 | 9.3 | 11.11 / 32 / 47 / 59 | 0.00% | 3.0 |
+| As they are, standing, none lost | before | 6.7 | 7.5 | 4.9 | 4.00 / 4 / 4 / 25 | 0.00% | 2.0 |
+| | after | 3.1 | 3.9 | 4.6 | 4.00 / 4 / 4 / 25 | 0.00% | 2.0 |
+| As they are, standing, 1% lost | before | 6.7 | 7.5 | 4.9 | 4.01 / 5 / 5 / 32 | 0.00% | 2.9 |
+| | after | 3.8 | 4.5 | 4.7 | 4.01 / 5 / 5 / 32 | 0.00% | 2.9 |
+| As they are, standing, 5% lost | before | 6.8 | 7.7 | 4.9 | 4.05 / 5 / 6 / 34 | 0.00% | 3.6 |
+| | after | 4.7 | 5.5 | 4.8 | 4.05 / 5 / 6 / 34 | 0.00% | 3.6 |
+| As they are, flying, none lost | before | 3.7 | 21.7 | 7.1 | 9.08 / 17 / 18 / 25 | 0.00% | 2.0 |
+| | after | 2.0 | 20.1 | 6.3 | 9.08 / 17 / 18 / 25 | 0.00% | 2.0 |
+| As they are, flying, 1% lost | before | 3.5 | 22.4 | 7.2 | 9.48 / 23 / 31 / 42 | 0.00% | 2.1 |
+| | after | 2.4 | 21.2 | 6.4 | 9.52 / 23 / 29 / 37 | 0.00% | 2.1 |
+| As they are, flying, 5% lost | before | 3.2 | 23.6 | 7.6 | 11.34 / 33 / 43 / 64 | 0.00% | 2.2 |
+| | after | 2.6 | 23.4 | 6.6 | 11.30 / 31 / 41 / 64 | 0.00% | 2.2 |
+
+| 32 players | | Ticks to each | All to each | From each | Behind: average / 99 of 100 / 999 of 1,000 / most | Late inputs | Ticks run a tick |
+|---|---|---|---|---|---|---|---|
+| Turning every tick, standing, none lost | before | 20.2 | 21.4 | 8.0 | 4.00 / 4 / 4 / 25 | 0.00% | 10.9 |
+| | after | 20.7 | 21.9 | 6.8 | 4.00 / 4 / 4 / 25 | 0.00% | 10.9 |
+| Turning every tick, standing, 1% lost | before | 20.5 | 21.8 | 8.0 | 4.88 / 16 / 19 / 33 | 0.00% | 10.7 |
+| | after | 20.8 | 22.1 | 7.3 | 4.47 / 13 / 16 / 33 | 0.00% | 11.0 |
+| Turning every tick, standing, 5% lost | before | 21.6 | 23.0 | 8.1 | 8.11 / 26 / 34 / 48 | 0.01% | 8.2 |
+| | after | 21.6 | 23.0 | 7.7 | 6.25 / 19 / 25 / 41 | 0.00% | 9.1 |
+| Turning every tick, flying, none lost | before | 16.8 | 41.8 | 11.4 | 9.70 / 17 / 18 / 25 | 0.00% | 2.4 |
+| | after | 17.0 | 42.0 | 8.6 | 9.70 / 17 / 18 / 25 | 0.00% | 2.4 |
+| Turning every tick, flying, 1% lost | before | 15.1 | 41.2 | 11.8 | 10.52 / 24 / 30 / 42 | 0.00% | 2.4 |
+| | after | 16.1 | 42.2 | 9.0 | 10.46 / 24 / 30 / 42 | 0.00% | 2.4 |
+| Turning every tick, flying, 5% lost | before | 11.5 | 39.4 | 13.3 | 13.14 / 36 / 46 / 60 | 0.00% | 2.5 |
+| | after | 13.6 | 41.3 | 9.4 | 13.08 / 36 / 49 / 75 | 0.00% | 2.5 |
+| As they are, standing, 1% lost | before | 6.1 | 7.4 | 4.9 | 4.01 / 5 / 5 / 39 | 0.00% | 3.0 |
+| | after | 3.6 | 4.9 | 4.7 | 4.01 / 5 / 5 / 39 | 0.00% | 3.0 |
+| As they are, flying, 1% lost | before | 4.1 | 27.6 | 7.3 | 10.37 / 24 / 30 / 42 | 0.00% | 2.0 |
+| | after | 3.0 | 26.4 | 6.5 | 10.34 / 24 / 30 / 42 | 0.00% | 2.0 |
+
+- **Ticks cost three tenths to three fifths of what they did** wherever a second copy fits, at every loss: 8 players
+  turning, standing, 46.9 to 19.2 KB a second with 1% lost (13.7 with none, 24.2 with 5%); flying, 18.0 to 10.6.
+  With bots as they are (inputs that change every five seconds) 6.7 to 3.8 and 3.5 to 2.4. The runs' first 8.5 s for
+  each bot are at eight copies, as before, so a longer match's average is a little under these.
+- **Lossy play is as it was** to 5% lost: standing, the same ticks behind on average, in 99 frames of 100 and in 999
+  of 1,000, the same share of late inputs, the same ticks run again; flying, where repairs decide how far behind a
+  client is, within what they vary by. With 10% lost the quarter of a datagram holds 8 players' ticks to four copies
+  where the loss asks six: 4.13 ticks behind on average for 4.11, 6 for 5 in 99 of 100, 11 for 6 in 999 of 1,000.
+- **32 players turning** were sent each tick once before, and are now (385 bytes a tick is past the quarter), with a
+  lost tick back in a round trip where it took 1.5: standing, with 1% lost, 4.88 ticks behind on average to 4.47 and
+  16 in 99 frames of 100 to 13; with 5%, 8.11 to 6.25 and 26 to 19, for the same bytes within half a kilobyte a
+  second. Flying, where a repair often overtook a lost tick before the server's wait for it ran out, sending it at
+  once costs more and gains nothing: 15.1 to 16.1 KB a second of ticks with 1% lost, 11.5 to 13.6 with 5% (39.4 to
+  41.3 in all), as far behind as before. A second copy of each tick (a whole datagram's room, measured standing with the build
+  before the quarter) made 4.88 and 16 into 4.02 and 5 with 1% lost, for 33.7 KB a second where it was 18.9: the
+  owner's to weigh (`FRAME_COPIES_ROOM`).
+- **From a player**: 8.0 to 7.4 KB a second standing and turning, 11.8 to 9.0 flying (a CLIENT had every input
+  since the last SERVER while a repair came, which is much of the time there), with the same share late. The bots'
+  inputs wait three ticks, so they keep seven; a session's player, a frame early, keeps five.
+- **A match that's quiet** (`net_a_match_costs_little_to_keep_going`, two players, a tick's hash and little else): 7
+  KB a second to each player before, 3.0 now (60,100 bytes on the wire in 10 s for 141,092), and 2.5 from each
+  (25,462 for 25,955: a byte more a CLIENT, fewer inputs in it). The test measures from the tenth second now, past
+  the first 512 SERVERs, and its ceilings are 50,000 and 22,000 bytes of payload where they were 140,000 and 28,000.
+- `bench_gallery` (8 players, a world with no projections, 30 s): ticks 16.9 to 8.9 KB a second to each with 1%
+  lost, 17.0 to 11.3 with 5%; 4.01 and 4.06 ticks behind on average before, 4.01 and 4.05 after; late inputs 0.03%
+  both, and 0.19% to 0.06%.
+
+### Tests
+
+`tests/test_session_packets.c`, a raw peer that says what it likes of the ticks and datagrams it has and counts how
+often each tick comes, and a real client whose server's datagrams a transport loses:
+
+- `session_frames_go_in_two_datagrams_then_wait_for_word_of_them`: with the loss counted and none lost, every tick
+  twice, one datagram an update whatever the peer lacks; with no word of it for 1.5 round trips, once more.
+- `session_frames_go_in_eight_datagrams_until_the_loss_is_measured`.
+- `session_frames_shown_lost_go_again_at_once_and_once`: a tick the peer says it hasn't goes in the next update's
+  datagram, once; not for a CLIENT that echoes the update its last copy went in, nor for the same word again, nor for
+  an older CLIENT come late; the tick it's at, which it has and hasn't run, doesn't; two ticks lost at once add one
+  copy, and one shown lost twice counts once.
+- `session_frames_copies_follow_the_loss_measured`: 1 in 100 lost, three copies; 1 in 8, six; none, two again; 1 in
+  5 counted a CLIENT late (out of order), two; 1 in 4, four or more within 64 updates; all lost, eight and no more.
+- `session_frames_hostile_acknowledgements_cost_a_bounded_number_of_datagrams`: an echo from the future, tick
+  numbers past the server's, every bit set, any count of datagrams, a peer that never has the last twenty ticks.
+- `session_frames_further_copies_take_a_quarter_of_a_datagram_at_most`: ninety ticks owed a copy get it a quarter
+  of a datagram at a time in the one datagram an update sends, the newest first, and the ones older than 64 ticks
+  don't.
+- `session_frames_a_lost_datagram_stalls_nobody_and_two_cost_a_round_trip`: 50 ms each way; a datagram lost leaves
+  the client's verified world no further behind than a tick more; two in a row lose a tick in both its copies, which
+  comes within nine ticks, after which two in a row stall nobody (the raw peer's tests are what tell a tick shown
+  lost from one the server stopped waiting for).
+- `session_inputs_go_only_while_they_can_be_in_time`: a CLIENT has the newest six inputs (two ticks' wait, the next,
+  three to spare) where it had nine or ten; with every SERVER lost for half a second it has no more, and no input is
+  late for it.
+
+Each of these fails one of them (25, with the code changed back afterwards): no tick shown lost going before the
+wait; shown lost whatever the echo, or by the same update's; one copy at the least; every tick every update as
+before; any echo taken; a lost tick adding no copy, or one each time; the tick it's at never said; the client's bits
+from the tick after; copies whatever the loss, past eight, never sooner than a whole count, never lowered, two before
+anything is counted; copies in a whole datagram's room, in any room, to the oldest first; datagrams out of order
+counted as lost; an older CLIENT's bits taken; SERVERs not counted by either side; every unacknowledged input in a
+CLIENT, or none to spare; nothing again when no word comes.
+
+**Pins.** No world hash moved: `bench_gallery`, `bench_voxels` (and `_forgets`, `_wide`, `_checked`, `_counts`),
+`bench_earth` (`_split`, `_diverge`), `bench_sand`, `bench_flock` and every e2e hash as they were. Bytes on the wire
+did, on purpose: `tidec_e2e_local_events_same` and `_plain`'s clients' 15,332 to 15,254 (352 CLIENTs a byte more
+each, fewer inputs in them; the server's 33,428 the same, as three seconds are within the first 512 SERVERs), and
+`net_a_match_costs_little_to_keep_going` above. `visibility_large_repairs_release_old_callbacks_on_compatible_reload`
+(`tests/test_visibility_session.c`) goes by which datagrams its network loses, and its seed moved from 61577 to
+61579: over 61 seeds (1 to 40, 61570 to 61590) it passed 22 with the session before and passes 47 now; see Open,
+below, for the 4 and 3 where it stops.
+
+**Validation** (release, Windows; sanitizers, the web and the other platforms are CI's): `tide_tests` (766),
+`tidec_e2e_net`, `_net_no_input`, `_net_ended`, `_net_alone_seen`, `_net_join_big`, `_seen`, `_guess`, `_predict`
+(and `_near`, `_near_split`, `_kept`, `_owned`, `_owned_split`, `_range_control`, `_fields`, `_method`), `_view_time`,
+`_handover`, `_players`, `_players_ceiling`, `_commands`, `_commands_channels`, `_command_lists`, `_local_events`
+(`_same`, `_plain`), `_visibility_lifecycle`, `_host_lifecycle`, `_projection`, `_predicted`, `_lists`, `_groups`,
+`_runs`, `_pieces`, `_blocks`, `_trees`, `_hash_memo`, `_shards`, `_shards_players`, `_shards_visibility`,
+`_task_visibility`, `_storage_await` (`_shards`, `_hidden`), `_asset_sharing`, `_scene_preparation_visibility`,
+`_optional_fields`, the benches above, `earth_tests`, `tide_voice`, `tide_voice_host`, `tide_box2d_rewind_network`,
+`tide_box3d_rewind_network`, `tide_box3d_projected`, `tide_platform_travel`, `tide_server_smoke`, `_pack`, `_room`,
+`_shards`, `_shards_room`, `_shards_journal`, `_entry`, `tide_network_udp`, `tide_network_hosted`, `tide_rooms_lobby`,
+`tide_lobby_own`, `tide_lobby_relay`: 78 CTests, all pass.
+
+### Open
+
+- **A hosted match of the build before refuses this one** (`PROTOCOL` 26): the docs' Earth and anything on managed
+  hosting need deploying again with it.
+- **The quarter of a datagram** (`FRAME_COPIES_ROOM`) is a pick: with it nothing measured is sent more than 2 KB a
+  second over what it was. A whole datagram's room gives 32 players turning a second copy (33.7 KB a second for
+  18.9, no stall for a lost datagram) and 8 players at 10% lost their sixth. So are once in 100,000 ticks, 512 and 256 SERVERs, the
+  eight a connection starts with, and three inputs to spare.
+- **The confirmed presentation clock keeps a stall** (fixed 2026-11-19, Confirmed presentation below): a tick lost in
+  every copy can still stall the view until confirmation recovers. Retransmission settings still use the rules above.
+- (Fixed the same day: the top section, A whole projection the server starts is taken.)
+  **A reload during a stream of repairs can stop a client for good**, before this change and after
+  (`visibility_large_repairs_release_old_callbacks_on_compatible_reload` with seeds 14, 25, 61572 and 61584 on the
+  session before; 25, 61572 and 61577 now): the server starts the world again for the new build (`SEND_CLIENT_WORLD`)
+  and sends it for the rest of the run, the client acknowledges no chunk of it and its verified tick stays where the
+  reload found it (141 to 177 of 750). Not looked into further: it's the reload's and the repairs', not the ticks'.
+- A big command's download that a tick names and the client hasn't whole no longer makes the server send that tick
+  again (the client says it has the tick's pieces; the download is acknowledged on its own). No test has a download
+  later than its tick.
+- A client more than a second's round trip from its server echoes updates the server no longer remembers
+  (`SAID_KEPT` 64), so its loss isn't counted and its ticks go in eight datagrams, as before.
+
+## Projection hashes: the rows that changed, and big containers by their chunks (2026-11-16)
+
+Two costs the blocks (the section below) left in a tick's check of a world of thousands of chunks: a piece of 64 rows
+read for one of its columns had each of its rows looked at (533k for 119k that changed), and a container that
+changed was encoded and hashed whole (a dimension's `Streamer.chunks`, 6,490 entries, 105 µs each time). Now
+(`client_spans_codegen.inc`, `client_state_codegen.inc`):
+
+- **A piece keeps a copy of its columns' runs** (`tide_client_piece.lanes`: every column's 64 values, side by side)
+  beside each run's hash (`runs`). A written column's run that hashes otherwise is compared with the copy value by
+  value (`tide_client_rows_differ`): `tide_client_piece_same` says, for each component of the archetype, which rows
+  of the piece a lane of it changed in, a bit a row (`changed`), and the same for the entity's and the scene's columns
+  (`ids_rows`), and makes the copy and the hash the run's. So what says a row changed is its own bytes, exactly: the
+  per-row digests of each component's lanes (`tide_client_rows.digests`, `tide_client_lanes_digest`) are gone, and a
+  piece's memory is its rows' bytes once more (about 250 bytes a chunk in voxels) where it was 8 bytes a component a
+  row. The hash stays because comparing every written run with its copy read twice the memory: the pieces' checks
+  were about 12 ms a run dearer without it (counted: 165k runs compared over a run, for 10k pieces read). A piece that
+  isn't kept whole (its rows are more or fewer: the table's last; or a row of it reads outside the heaps) still has
+  its copy, so the rows it had are compared the same way and only the new ones are read whole (the first build read
+  every row of such a piece: 6.5k more rows from the heap over a run, which the counts showed).
+- **A piece read again keeps its arrays** (`inplace`): its rows' blocks (`row_pages`), its pages and their hashes
+  stand while no row of it reads the heap again or is another entity than it was, and while they stand only the rows
+  with a bit are looked at (`look`). A chunk whose `Seen` changed moves its term and its sum where they are; nothing
+  of the 63 rows beside it is touched. The first row that reads the heap again, or is another entity, has the piece's
+  arrays made again as before: the rows before it give the blocks and slots they had
+  (`tide_client_piece_rows_again`), the rows after go on as they did. A slot's page of the piece's that changed makes
+  every row's slot looked at (`tide_client_row_slot_same`: its entity there still, with the snaps it had), and a
+  piece whose arrays stood takes its slots' pages' hashes as they are (`tide_client_piece_keep_slots`).
+- **Who may have a row is worked out again only where what that goes by changed in the row** (`seen`): its scene
+  (the entity's and the scene's columns), its Visibility's lanes or policies, or which of its components it has (a
+  sparse one's presence byte). Before, any term of it that changed did (a chunk's `Seen`, its `Chunk`'s stage).
+  `tide_client_rows.fresh` and `tide_client_piece.fresh` mean that now.
+- **A container too big for one chunk of its list is a tree of its chunks** (`tide_client_sum`,
+  `tide_client_memo_sums`, `tide_client_sum_kept`; `gen_client_hv`). A map or a set whose live entries are more
+  bytes than `TIDE_LIST_CHUNK` is the sum of its entries' hashes, each `tide_client_mix(tide_hash(order, key,
+  value))`: an entry's order is part of it, so the sum says the map with its order, wherever its entries are stored
+  (the server's has dead entries among them, a player's machine's hasn't). A list whose elements are more bytes than
+  that is the hashes of its elements a chunk's worth at a time (`TIDE_LIST_CHUNK` over an element's size, by index,
+  not by how the list is stored), chained in order. What's hashed of the container is then a byte saying which (1, a
+  sum; 2, chunks' hashes) and those 8 bytes. Which way a container goes is its count's alone, so a server and a
+  player's machine agree, and so do a map that grows past a chunk and one that shrinks back.
+  Each chunk's part is kept with the memo's entry for the container (`tide_client_memo_entry.sums`) where the entries
+  or elements hold nothing in the heap (they are what their bytes are): a chunk whose page hashes as it did, with as
+  many elements read of it, isn't read. Entries that hold lists or texts are summed without keeping (their own
+  containers are the memo's as before). A list of elements whose bytes are their codec's is hashed where it is, a
+  chunk at a time, with no copy.
+- **A grid's cells whose bytes are their codec's go a chunk at once** (`tide_client_write` of the chunk) where each
+  cell was a call: the same bytes, 3.7 µs a 16-cubed chunk of bytes to 1.1 (counted).
+- The directory's copy reads its entries through a list cache (`tide_list_cached_at`) where each was a lookup.
+
+**Pins.** Hashes of rows and of containers that fit a chunk are what they were: `bench_voxels`' world hash and bytes
+sent, and every projection pin but one. A container too big for a chunk hashes to another number, by its nature
+(another function of the same value), so `visibility_hash_memo_test.c`'s pin moved, `0xa15bc20786198050` to
+`0xc8f1048a1b38d2a4` (its catalog's 40,000 bytes are a tree now; nothing else of it is more than a chunk), the same
+with the memo on and off; a player's machine's own world, loaded from what it's sent, hashes to the server's in both
+(that test, and the new one's every tick). Simulation identity: `singleton and entity tree hashes 3`
+(`asset_usage.c`), so a build from before joins no match of this one. `TIDE_CLIENT_SPANS_CHECK` (`bench_voxels_checked`
+with 8 bots for 30 s and quick, the fixtures' `_checked`) and `TIDE_CLIENT_MEMO_OFF` pass; kept rows are still exactly
+the world's at `tide_client_kept.tick` (every fixture's repairs from what's kept against the rows'). No runtime change
+(notes/runtime-ownership.md, Projection hashes: rows by their bytes, big containers by their chunks).
+
+**Measured** (`bench_voxels`, 8 bots, 30 s, 4 threads, release, Windows, BelowNormal, one at a time, three runs
+alternating with dev's build of the same tree; medians, ranges in brackets): server hashing (the world's hash and
+the projections') 9.40 to 6.95 ms a second (9.40–9.50 to 6.00–6.99), update median 0.91 to 0.82 ms (0.88–0.91 to
+0.72–0.83), p99 6.07 to 5.46 (6.04–6.24 to 5.33–5.73), simulate the same (32.0 and 31.3); a client's hashing 0.79
+to 0.59 ms a second (0.79–0.81 to 0.52–0.59), its update median 0.16 both, p99 2.26 to 2.18. The same bytes sent
+(186.8 KB a second) and world hash (0x77babb9991dd25da) in all six. An earlier three pairs, with another agent's
+builds running: 10.06 to 7.31 (9.03–11.78 to 7.02–8.29). Standing still (`--still 100 --hop 0`, three pairs): hashing
+0.66 to 0.64 ms a second (0.65–0.71 to 0.64–0.65), update median 0.08 both, p99 0.61 to 0.59; a client's 0.34 both.
+Counted over a run (`bench_voxels_counts`, 2,017 checks; the two runs an hour apart on a shared machine: `sums`,
+which nothing here touched, took 19.2 ms in the first and 15.8 in the second, so about a fifth of every drop is the
+machine's):
+
+| 8 bots moving | before | after |
+|---|---|---|
+| pieces read: a column's run / a heap page / nothing kept | 10,381 / 131 / 466 | the same |
+| ...of which their arrays stood | 0 | 6,667 |
+| rows looked at in pieces read | 533,328 | 280,038 |
+| rows read from the heap again | 50,873 | 50,873 |
+| rows something changed of (`rows fresh`) | 119,491 | 119,491 |
+| big containers' chunks read again / kept | (4,948 containers whole, 476 not grids) | 1,079 / 1,676 |
+| rows of pieces read | 125.5 ms | 43.7 |
+| ...rows read from the heap again | 69.5 | 26.7 |
+| ......maps and sets encoded | 33.8 | 4.7 |
+| ......grids encoded | 16.4 | 4.7 |
+| pieces checked | 80.3 | 73.9 |
+| pieces kept | 11.2 | 6.0 |
+| audiences / sums / groups | 27.9 / 19.2 / 12.2 | 22.3 / 15.8 / 8.3 |
+| all of a check's parts | 279 ms | 172 |
+
+The rows still looked at that nothing changed of (160k) are those of pieces whose arrays are made again (a row of
+them read the heap again: new chunks come a few dozen at a time at a table's end), which every row of gives its
+blocks to. `visibility_trees_measure` (a book of a map of 8,000 entries and a list of 40,000 ints, 4 players, 200
+ticks each, three runs alternating with dev's build, medians): one entry set where it is each tick 177.6 to 11.6 µs
+a check; an entry gone and another added 178.2 to 18.2; one number of the list 30.4 to 4.5; nothing changing 1.3 to
+1.4.
+
+**Tests.** `tidec_e2e_visibility_trees` (and `_checked`, `_memo_off`; `e2e/visibility_trees.tide`, `_test.c`): three
+vaults, each a map of 2,000 entries, a set of 2,500, a list of 9,000 ints, one of 5,000 structs with padding, a map of
+800 lists, a list of 2,200 texts and a map of 1,023 entries (a chunk's worth exactly); a singleton with a map of
+3,000 and a list of 5,000; a book (the measurement's); 300 tiles with a small list, a `Tag`, and a `[Sparse]` `Badge`
+one player of their audience may have. Thirty-eight changes: an entry where it is, in a map's first chunk and its
+last; two keys taken out and put again, against a twin that puts them the other way round (only the entries' orders
+tell them apart); one gone and another added with the count the same; a key put again with its value; a map growing
+across chunks, shrinking, under a chunk's worth and over again; the set's; an element where it is, two swapped
+between chunks, a list growing across chunks, its first element gone (every other moves along), down to one element
+and up again, its last element gone where that's a 0 (its chunk's bytes stay: only the count says); an element with
+padding; a list held by a big map's entry; a text of a big list; the map of a chunk's worth one over, changed there,
+and back; the singleton's; three rows' small values and a later row's list in one piece and the other way round;
+one of those values back as it was; that list's element where the list is now; a sparse component given and taken
+(its byte in the row, back as it was); a row of the last piece while it gets another; a row gone, made and snapped
+beside one that changes. Quiet, then with lists growing all over. Every tick, every player's hash is the one a copy
+of the world hashes to with nothing kept, and the one that player's own world hashes to, loaded from what it's sent
+(another layout, its maps' live entries alone, hashed with what the player's memo kept of the tick before's world);
+a repair from what's kept is the rows'; each change shows against its twin; pinned, the same in all three. Each of
+these fails it, or the pieces' or blocks' fixture: a chunk's page hash not compared, a chunk's count not compared
+(the 0 gone), chunk sums kept for entries that hold lists, an entry's order left out of its hash (the twin), only
+the first changed row of a run seen, a kept piece's copy not made the run's, nor its hash (the value back; the byte
+back), a piece's arrays left standing though a row read the heap again, a Visibility's lanes not working its
+audience out again (pieces), nor which components it has (the badge), a row's slot not looked at where a slot's page
+changed (the snap, here and in blocks), rows whose entity or scene changed not looked at (pieces' rover). The pin of
+`visibility_hash_memo` moved (above). All of `tidec_e2e_visibility_*`, `tidec_e2e_task_visibility`,
+`_scene_preparation_visibility`, `_shards_visibility`, `_net_alone_seen`, `_storage_await_hidden`, `bench_voxels*`,
+`bench_earth*`, `earth_tests` and `tide_tests visibility` pass in release on Windows; sanitizers, the web and the
+other platforms are CI's.
+
+**Left.** The pieces' checks are what a check mostly costs now (74 of 172 ms a run): 1,866 heap pages' hashes looked
+at a call (25 a piece), 20 ms of blocks hashed again for another's block in their page (209 MB a run), 8 ms of
+slots' snaps. Pages written since the last call, kept by the runtime (a heap's list of them, as the world's hash
+finds them stale), would let a check go from the pages that changed to the pieces that read them, and look at no
+other: a runtime change, the owner's to agree. What a piece's rows add to each player's sum is still added up whole
+for a piece any row of which changed (16 ms a run, 64 rows for the 11 that changed): taking the old rows' part away
+and adding the new would need each row's before its terms move. A big map whose entries hold lists or texts is
+summed whole when it changes (no chunk kept), and a grid is encoded whole (a chunk's grid here is one chunk; a grid
+of many chunks would want each chunk's hash kept as a list's are). A big list an element of which is inserted or
+removed early has every chunk after it hashed again, as its elements all moved.
+
+## Projection hashes kept by blocks (2026-11-15, later)
+
+The pieces below left most of the check's reading to heap pages that changed for other entities' blocks: with 8 bots
+moving in `bench_voxels`, 62% of the pieces read were read for a heap page, 233k rows were read from the heap again for
+their pages alone and 14k grids encoded again for their directory's page. Now what's kept says which blocks it read
+(`client_state_codegen.inc`, `client_spans_codegen.inc`):
+
+- **A block, not a page** (`tide_client_item`: key, the page's hash, the block's own): a block smaller than a page in
+  a page of one place is kept by its key (`tide_client_key`: the page's place above 15 bits, below them its size class
+  plus one and its offset in 16 bytes; 0 there for a page whole, a list's chunk or a block of a page or more), with its
+  page's hash and the hash of its `16 << class` bytes (`tide_hash_wide`). Its class is its header's, or for a grid's
+  chunk, whose header is cells (grid.c), the one its reader says (`tide_grid_chunk_bytes`): the first build took a
+  chunk's class from its cells, hashed 16 bytes of a 4 KiB chunk and missed a cell written beyond them
+  (`visibility_pieces`, "a cell of a grid, where it is", caught it). `tide_client_item_same`: the page hashes as it did,
+  or it doesn't and the block's bytes do, in which case the page's hash now is kept in the item's place, so a page that
+  changed is hashed by its blocks once. Memo entries, rows' own pages and pieces' rows all keep items; a memo hit hands
+  its items (hashes and all) to the row that read the container, and `tide_client_memo_put` works out the rest.
+- **A piece**: its union of heap pages is as it was (sorted by heap and place now, so each heap is found once); a page
+  of it that hashes otherwise has each item of its rows in that page checked (`tide_client_piece_blocks_same`) and,
+  every one as it was, the page's new hash is kept and the piece passed over. In a piece read, a row's items are checked
+  as the piece's were, so a row is read from the heap again only where a block of its own changed.
+- **A slot's page** that changed (an entity of it came or went) has the snaps of the piece's rows whose slots are in it
+  looked at (`tide_client_piece_snaps_same`; each row keeps its slot and snaps as its identity was last hashed, and a
+  slot whose entity isn't the row's says it moved), so what says which entity a row is isn't hashed again for another
+  entity's turnover. 14.5k pieces were read for a slot page alone once the heap's reads stopped hiding them.
+- **The directory of groups** is copied entry by entry, as its list has them, live and dead
+  (`tide_client_groups_diff`): a chunk of the list whose page hashes as it did isn't read. An entry that moved (the map
+  packs its live entries once most are dead) takes both its old and new ids as changed: more audiences worked out
+  again, never fewer. The ids are sorted afterwards; the old merge's "ids go up" fallback is gone with it.
+- **What a piece's rows add to each player's sum** is kept with the piece (`route_players`, `route_sums`) while none of
+  its rows was read again or had its audience worked out again (`routed`); a piece adds it for the players asked.
+- A page's kept hash is read where it's of the bytes in use (`tide_client_page_hash`, as cached functions' keys read
+  it), with no call into heap.c (notes/runtime-ownership.md, Projection hashes kept by blocks).
+
+The hashes are of values, as before: no pin moved (`bench_voxels`' world hash, its bytes sent, every projection pin);
+`TIDE_CLIENT_SPANS_CHECK` (`bench_voxels_checked`, 8 bots and quick, `tidec_e2e_visibility_*_checked`) and
+`TIDE_CLIENT_MEMO_OFF` pass; kept rows are still exactly the world's at `tide_client_kept.tick`.
+
+**Measuring**: `TIDE_CLIENT_COUNTS` (`bench_voxels_counts`, built beside the bench and run quick as a test) counts what a server's
+checks read again and why, and how long each part took, printed at the program's end.
+
+**Measured** (`bench_voxels`, 8 bots, 30 s, 4 threads, release, Windows, BelowNormal, the machine shared with another
+agent's builds; three runs alternating before and after, medians, ranges in brackets): server hashing 18.1 to 9.5 ms
+a second (17.8–18.2 to 8.5–9.9), update median 1.08 to 0.96 ms (1.07–1.08 to 0.83–0.97), p99 6.48 to 5.71
+(6.27–6.73 to 5.54–5.81), simulate the same, the same bytes sent and world hash. Standing still (`--still 100
+--hop 0`, two runs each): hashing 1.56 to 0.80 ms a second, update median 0.11 to 0.10, p99 0.65 to 0.62. A bot's
+machine runs the same code for its own projection check (review, same day: three more alternating pairs, the same
+settings, before built from the parent commit's two codegen files): a client's hashing 1.41 to 0.82 ms a second
+(1.33–1.43 to 0.80–0.82), update median 0.17 to 0.17 ms (0.16–0.17 both), p99 2.63 to 2.33 (2.48–2.70 to 2.29–2.39);
+the server's hashing in those runs 17.8 to 9.8 (16.5–18.2 to 9.4–10.0); world hash 0x77babb9991dd25da and bytes sent
+the same in all six. Counted over a run (2,017 checks):
+
+| 8 bots moving | before | after |
+|---|---|---|
+| pieces read: a column's run / a heap page / a slot's page / nothing kept | 10,381 / 15,874 / 5,319 / 466 | 10,381 / 131 / 0 / 466 |
+| rows in pieces read | 1,845,659 | 533,328 |
+| rows read from the heap again (for their pages alone) | 284,188 (233,474) | 50,873 (159) |
+| grids encoded again | 14,026 | 4,472 |
+| blocks hashed again (found as they were) | 0 | 397k (391k), 209 MB |
+
+Rows fresh (something of them changed) 119,491 both. Where a check's 0.13 ms go now (a counting build, totals over
+the run): pieces checked 76 ms (blocks of changed pages 20, slots' snaps 8; 3.8M heap pages looked at, 25 a piece: a
+chunk's grid chunk is two to a page), rows of pieces read 118, audiences 27, sums 18 (41 before the routing kept),
+groups 12 (64 before the directory went by chunks), pieces kept 11. Standing still: 1.0 µs a check of rows read, 2.5 of
+pieces checked. `visibility_pieces_measure`: nothing changing 18.5 to 5.8 µs a check, every cell's `Cell` 803 to 745,
+every `Secret` 272 to 268.
+
+**Tests.** `tidec_e2e_visibility_blocks` (and `_checked`, `_memo_off`; `e2e/visibility_blocks.tide`, `_test.c`):
+1,200 plots each with a group, a grid of two chunks of 16 cubed (one in use), a map of 40 entries (the memo's) and one
+of 3, a small list; sixteen changes, each to a plot or the one made before it, whose blocks share its pages: the
+neighbour's grid chunk, then the plot's the tick after; the same for the small map and the big one, in place; the
+plot's grid gaining a chunk (its directory, among others'); its list let go, the neighbour given a list of the plot's
+old bytes where it was, then one of other bytes where the neighbour's own was; five groups of every eight destroyed, a
+group made (the directory packed), a group's audience whose entry moved; a plot snapped (`this.Snap()` in a system
+reading `Plot`: its slot's page changes by its snaps alone); a plot destroyed and another made in its slot.
+Quiet and with lists growing all over; each tick every player's hash against a copy's with nothing kept and repairs from
+what's kept against the rows'; each change shows, against a twin of the world without it, both hashed by copies and the
+twin given the world's `Control` (a public singleton, so before, every step "showed" by its step number:
+`visibility_pieces_test.c` had the same, fixed too; its quiet round shows every step that way). Pinned, the same in all
+three. Each of these fails it: a block's bytes not compared, a grid chunk's size from its header, a directory chunk
+taken as unchanged by its list alone, a piece's routing kept across its audiences worked out again, a piece's changed
+page taken as same without its blocks, a slot's page taken as same without its rows' snaps (the snap step). The pieces, runs, projection, hash memo, lists, groups, predicted and lifecycle
+fixtures, `tidec_e2e_grid_bytes` and `bench_voxels*` pass; `bench_voxels_checked` with 8 bots for 30 s too.
+
+**Corrections** (review, same day): the first version of this section said the snaps compare had no failing test,
+as `this.Snap()` on a plot changed no player's projection hash. It does: a snap of a live plot (step 16, run before
+the step that destroys the same target) shows against its twin, and with `|| slot->snaps != r->snaps[row]` removed
+from `tide_client_piece_snaps_same` the fixture fails at that step (player 0's kept hash isn't the world's, and its
+repair isn't the rows'). Snapping in `Change` (`mut Plot`) shows as well. The earlier attempt's cause wasn't kept; the
+likeliest is a snap of a target already destroyed by step 14. A row whose entity has no slot (`tide_entity_slot_index`
+gives `UINT32_MAX`: not on a server, whose tables hold no AWAY entities) gathered slot page `UINT32_MAX >> 10`, which
+hashes 0 forever, so the slot the entity got later went unseen while its row and entity column stayed; such a row now
+makes its piece not kept (`poisoned`), as a row that read outside the heaps does. No test reaches that state through
+the language. `bench_voxels_counts` runs as a test now (notes/benchmarks.md).
+
+**Left**: a container that changes is still encoded whole (`Streamer.chunks`, 6,490 entries, 105 µs): a tree of its chunks would
+be another function of its value, and every projection pin would move, so it isn't done here; resuming its hash from a
+kept prefix would need `tide_hash` to be resumable at a chunk's edge. Heap pages looked at are a piece's whole union
+each call (25 a piece in voxels); a heap's pages written since the last call, kept by the runtime, would let a piece
+look at none. (2026-11-16, the section above: containers too big for one chunk of their list are trees now, and only
+those, so one pin moved; the heap pages are as they were.)
+
+## Projection hashes kept 64 rows at a time (2026-11-15)
+
+The tick's check (`tide_game_client_hashes`, `client_spans_codegen.inc`) kept what a table chunk's 1,024 rows came to,
+and where any page of the chunk changed it compared every row of it, one by one: their lanes, their heap pages, their
+groups. With 8 bots moving in `bench_voxels` (6,490 chunks in 7 table chunks) about two table chunks a tick were read
+whole for a few dozen rows that changed, and every few ticks every row's audience was worked out again. Now:
+
+- **A piece** (`tide_client_piece`, `TIDE_CLIENT_PIECE` 64 rows) is what's kept and passed over. A table chunk
+  (`tide_client_span`) keeps each column page's hash and its rows; where none was written since its pieces were read
+  (`tide_client_span_written`, by the hashes pages keep), each piece is checked by its heap and slot pages alone. Where
+  some were, a piece keeps each column's run of its rows hashed (`tide_client_run_hash`, `tide_hash_wide` over the
+  page's data), and only the written columns' runs are hashed again. A piece whose runs, rows' heap pages and slots'
+  pages are as they were is not read (`tide_client_piece_same`).
+- **In a piece read again** a row's lanes are digested only for the components a column of which changed in the piece
+  (`tide_client_part_of<a>`, generated: a column's component; -1 for the entity's and the scene's), its own heap pages
+  compared only where one of the piece's moved, and what says which entity it is hashed again only where the entity's
+  or the scene's column or a slot's page moved; otherwise its sum moves by what its terms worked out again moved by
+  (sums wrap, so that's exact).
+- **A row's policies** (its Visibility's overrides) are kept as what they say (`tide_client_policies_digest`, in
+  `tide_client_rows.policies`) beside the pages they're in. A row whose heap pages changed under it, with the same terms
+  and policies, isn't fresh: its audience isn't worked out again. Before, every such row was.
+- **Audiences**: a piece is looked at only where a row of it was worked out again, every row's must be, or groups
+  changed and the piece's groups (the least and most id its rows' audiences go by, their own and their scenes', above 0,
+  and a bit of 256 for each by `tide_client_mix`; and whether a row is restricted to a group by a policy) take in one
+  that changed (`tide_client_changed_in`, the changed ids being in order). Inside, rows go by the row's check as before.
+  A piece's groups are gathered again each time it's looked at.
+- **A scene's root** makes every row's audience go again only where a root came, went (a hole, or the table's end,
+  where a kept row was) or has another Visibility (its lanes or its term). Before, any change to a root's table chunk
+  did: a dimension's `Streamer` map changes as chunks come and go, and 369 of 2,017 calls worked out all 6,490 rows.
+- The pages a piece's rows reached are made once each by a table on the stack (`tide_client_gathered_once`, up to 512;
+  sorted past that) where a sort took 4 µs a piece. A row whose pages aren't all kept (`page_count` `UINT32_MAX`) leaves
+  its piece unkept, so a piece kept as it was has every row's pages in its union.
+
+What's kept is still only a shortcut: the hashes are of values (no pin moved, `bench_voxels`' world hash and every
+projection hash among them), kept rows' audience, sums, denials and terms are what the rows come to at
+`tide_client_kept.tick`, which `client_changes` trusts, `TIDE_CLIENT_SPANS_CHECK` works each hash out both ways, and
+`TIDE_CLIENT_MEMO_OFF` keeps nothing (every column written, every piece read). No runtime change: generated code calls
+`tide_hash_wide` and reads table pages' data (`tide_page_data`).
+
+**Tests.** `tidec_e2e_visibility_pieces` (and `_checked`, `_memo_off`; `e2e/visibility_pieces.tide`, `_test.c`): 2,600
+cells with their own groups, grids, lists and a component each hides, in three table chunks, and 300 in a zone, a
+scene whose root's group they go by; 256 cards, whose only blocks in the heap are their Visibility's policies (even
+ones deny their `Face` to everyone from the start); 256 bags, a small list each, hundreds to a page; two rovers with a
+`Transform`, and a parent for them in the zone. Twenty-two changes, each to a cell, card, bag or rover in a piece
+nothing else touches, or to the zone: a group's audience; a grid's cell and a list's element where they are; a policy
+where it is, and gone; a policy where there was none, then another where it is; a card's policy where it is, and
+where there was none, then another where it is; a bag's element where it is (its page the bags' before it); a lane;
+another group; a component gained (another table) and lost; a group destroyed; the zone's group's audience; a rover
+taken into the zone's scene by `SetParent` (its row's scene column written in place, nothing else of it); another
+group's audience, which a cell given it goes by; the root given another group, and its Visibility removed; a new cell;
+holes past a 32nd of the table, which the tick's end fills from its end (rows go into other pieces and chunks). Each
+with the world otherwise still, then again with lists growing in pages all over. Every tick, every player's hash is the
+one a copy of the world hashes to with nothing kept, a repair by what changed from what the check kept is the one read
+from the rows byte for byte, each change shows to some player (quiet round), and the hashes are pinned, the same in all
+three. `_checked` also sorts every piece's pages to make them once each (`TIDE_CLIENT_ONCE_MOST` 4: what a piece past
+512 of them does). Mutations each fail it: groups that changed ignored by the pieces, pieces kept by their columns
+alone, a root's change ignored, written columns taken as unwritten, a changed policy not making its row fresh, the
+entity's and scene's columns taken as never moving (at the rover: until it, nothing but a row's slot page moved with
+them, which the slots' check sees), and the review's below: a Visibility's lanes not reading its policies again, its
+policies read only beside a component that holds heap data, a row's first page dropped where it's the row before's
+last, and the sort losing a page (`_checked`). `bench_voxels_checked` (8 bots, 30 s, and `--quick`) works every hash
+out twice. The visibility, shard, storage, alone-seen fixtures and `bench_earth` pass.
+
+**Corrections (review, 2026-11-15).** Two misses, both older than the pieces (dev's per-chunk walk had them), and two
+smaller things:
+
+- *A policy set where it is went unseen.* `Visibility.overrides` is recipient-private, so `client_codec_heapy` says a
+  Visibility holds nothing in the heap, and its policies were reached only inside the block for components that do: in
+  an archetype with none of those (`{Card, Face, Visibility}`) never, and in one with them only when that component's
+  lanes or pages moved, not when the Visibility's did (its map made, grown or moved), so the row's pages lacked the
+  map's blocks. `visibility.Set<T>(...)` on a key it has writes the entry in place (`tide_map_insert` gives the one
+  there): the Visibility's lanes stay the same and only a page of its heap changes, which neither case looked at. The
+  row's audience and denials stayed the old ones, every player's hash went on subtracting the old term, and
+  `client_changes` (trusting what's kept at its tick) sent no repair: a reveal lost until something else of the row
+  changed. Now every archetype that stores a Visibility reaches its policies' pages and digests them, and a change of
+  the Visibility's lanes (`heap_again`) reads them again.
+- *A row's first page was dropped where it was the row before's last.* `tide_client_gather` drops a number alike the
+  one before it, and a row's own pages went into the piece's store after the rows before it, so a row whose first page
+  was the last of the row before kept a range without it; a row with one page (a bag's small list, a card's policies
+  in their heap's page) kept none, and `tide_client_row_pages_same` over an empty range says the same, so an element
+  changed where it is in such a row was taken as unchanged (its neighbour's range had the page, so the piece was read,
+  and the neighbour hashed again). The gather now takes a floor, the row's start, as the hasher's `floor` does for a
+  container's pages (the same bug, 2026-11-04).
+- *No pointer arithmetic on NULL*: `piece->pages + heap_pages`, a piece's `row_pages + page_from` and the store's were
+  formed with a count of 0 and arrays not made yet (UBSan's pointer-overflow says so). They're formed only with a count
+  above 0 now (`tide_client_row_keep_kept` checks a row's range against its piece's arrays first), and a row with no
+  pages is the same as it was without looking.
+- *A written column's run was hashed twice in a piece read again*, by its check and its keep: the check's hashes
+  (`run`, one a column) go to `tide_client_piece_keep`, which hashes only where the check didn't (nothing kept, or
+  `TIDE_CLIENT_MEMO_OFF`).
+
+**Every row changing** (`visibility_pieces_measure`: the fixture's 2,900 cells, 4 players, 60 ticks each, release,
+eight runs of each build alternating, medians): nothing changing 16.6 µs a check before the pieces, 18.4 with them; a
+lane of every cell's `Cell` changing every tick (a component with a grid and a list) 1,094 µs to 697; every cell's
+`Secret` 777 to 271. The review's fixes measure the same as the pieces without them (18.1, 696 and 272): a 256-byte run
+hashed once less is lost in the rest. So a world whose every row changes costs less with pieces than without, and one
+where nothing changes about 2 µs more (more checks, a piece's rather than a chunk's, for 2,900 rows).
+
+**Measured** (`bench_voxels`, 8 bots, release, Windows, 12 threads, BelowNormal, three runs alternating with a build
+of the same tree without the change, the machine shared; each figure the median of the three, their range in
+brackets): server hashing (the world's hash and the projections') 43.0 to 18.4 ms a second (42.7–44.5 to 18.1–21.5),
+update median 1.27 to 0.95 ms (1.23–1.27 to 0.94–0.96), p99 7.1 to 5.8 (7.0–7.2 to 5.4–6.8). Sent bytes and the
+world hash the same. Standing still (`--still 100 --hop 0`): hashing 1.5 ms a second both, update 0.10 median both,
+p99 0.53 to 0.46. The review's fixes, five runs of each alternating with the pieces without them (medians): hashing
+19.5 and 19.0 ms a second (17.3–23.9 and 17.6–22.0), update median 0.99 and 0.97, p99 5.6 and 5.5, the same world
+hash and bytes; standing still 1.44 and 1.40, one run each. Of the projections' 0.28 ms a call now (0.70 before; a
+counting build): the chunks' table 0.20 (rows of pieces read 0.16, of which grids encoded again 0.05; the pieces'
+checks 0.02, their keeps 0.02), the directory's copy 0.03, routing 0.02, the dimensions' `Streamer` maps 0.02,
+audiences 0.01; the world's hash 0.03.
+
+**Left** (taken on in the section above, Projection hashes kept by blocks): 62% of the pieces read (19k of 30k over
+the run) are read because a heap page of theirs changed under them:
+another entity's block in the same 16 KiB page (a grid's directory is a few hundred bytes, fifty to a page; a
+Visibility's policies are two small lists), so 248k rows were hashed again with nothing of theirs changed, and 17.6k
+grids encoded again for their directory's page. Next: keep, for blocks smaller than a page, their bytes' hash beside the
+page's, and where a page's hash changed, hash again the small blocks of it a row or a container read (memo entries,
+pieces, rows) before taking it as changed. Also: a container that changes is encoded whole (`Streamer.chunks`, 6,490
+entries, 105 µs each time); the directory of groups is copied whole each tick it changed (6,490 groups); a row's
+contributions to each player's sum are added up every tick.
+
+## Projections over heaps per owner (2026-11-14, later)
+
+A game with visibility has a heap for each owner and runs (schedule-and-threads.md, top section), so what's generated
+for players reads a value wherever its handle says (`client_state_codegen.inc`, `client_spans_codegen.inc`,
+`client_changes_codegen.inc`; no session or runtime change):
+
+- **A heap page is named by its heap and its place**: `tide_client_place(heap, first)`, a `where`'s id and run (as
+  `tide_heaps_of` takes them) above 32 bits and the page's first place below. `tide_client_hasher` holds the world's
+  `tide_heaps`; `tide_client_reach_block(hs, heap, block)` takes the heap a block is in (a list's chunks and a grid's
+  are in their block's, `tide_client_heap_of(handle)`); `tide_client_place_hash` gives a place's page size and hash,
+  or false where no page starts there or the heap or run was never made (none is made: `tide_client_heap` reads
+  `tide_heaps.all`, `tide_heap_slots` and `tide_heap.runs`, where `tide_heaps_of` would allocate). The memo's entries
+  (`tide_client_page`: place, size, hash), a table chunk's kept heap pages, a row's own pages and the groups'
+  directory's digest all use places, so a page of one heap never stands for another's page at the same place.
+- **Values go where their owner's code would make them**: a projection's load, a reload, a repair's records and
+  singletons, and the releases of what they replace say `decl_where(owner)` (`TIDE_WHERE_RUN(TIDE_IN_MATCH, id)` for
+  an owner in runs, run 0 outside them), not `TIDE_IN_MATCH`.
+- **What's sent and hashed is unchanged**: the projection hashes are of values (no pin moved), and the bytes sent and
+  repaired by `bench_voxels` are the same byte for byte. A player's machine runs the same systems in runs on its own
+  heaps; its projection hashes as the server's (`tidec_e2e_visibility_runs`).
+
+## A command handler's `with ownership`: the sender's own entity (2026-11-14)
+
+`command(Rename rename) RenamePlayer(mut Name name, with ownership)` runs only when the target's
+`Owner.player` is the command's sender; `without ownership` only when it isn't (no Owner included). Nothing
+in the session, the wire or the world changed: the dispatcher's per-entity case filters as a view's rows do,
+with `tide_me = *tide_sender` (the `&c->sender` it's handed) where a view has `Session.player`. A command the
+filter drops is handled as a guard's `return` is: its sequence is consumed, a resend is refused, replay
+drops it again. The sender may go unnamed in the trigger when the handler filters; otherwise naming it is
+still required. Checker, codegen, editors and tests: language.md, world.Edit, and `with ownership` on
+command handlers.
+
 ## The host's tick beside its frame (2026-11-12)
 
 A session whose host asks (`tide_session_desc.alongside`, the `ticksAlongsideViews` setting) runs the last tick
@@ -672,6 +2532,14 @@ permitted match state. Leaving/restart/rewind/reload drain and discard private j
 Progress endpoints are available to views while initial baseline preparation is still connecting, without promoting
 them to verified state. Tests and validation: language.md, Deterministic scene preparation.
 
+Correction (2026-11-15): a projected client at a pending load asked for the server's world at `heard_tick`, the
+latest tick it had heard of, but the server answers a repair only of the endpoint just past what the client confirmed
+(`repair_tick == frame_ack + 1`), and the client asks once. Where frames past the preparation's tick had come by then
+(a hosted match, whose server goes on at once after a quick preparation), it waited at that tick for good, its
+prediction stopped. It asks for `verified + 1` now. `tidec_e2e_visibility_host_lifecycle` has a preparation in play:
+the guest stopped at tick 151 before, and now takes the prepared world once (one resync). That guest hears `Shown`
+for what the preparation spawned and no `Spawned`, as the frame whose journal has it is the one it doesn't run: open.
+
 ## Bans (2026-11-04)
 
 The owner's ask, from mount-and-rifle, whose host re-kicked banned PlayerIDs
@@ -1119,6 +2987,8 @@ Tests: `net_a_host_with_another_player_ticks_once` also checks the host's player
 
 What changes for games: the host's views and local code see the whole match, hidden entities included (the spec's State visibility now says so; whether its views should be masked by its player's audience is Open there). Its local handlers hear every match event, including events from hidden state, which `hears_match_events` no longer decides. `tide_client_status.run_ticks`/`ahead_ticks` stay 0 for the host. The other machines are unchanged.
 
+Correction (2026-11-15): in a game that hides state, `all` had the match's own events but no genuine `Spawned` or `Destroyed`, no destruction cause and no `Changed<...>`: the generated lifecycle hearing wrote only the players' journals while `tick_client_events` ran. So the host heard neither lifecycle event and ran `Hidden` for every entity the match destroyed. Fixed in the generated C (`tide_client_all`; notes/verified-and-local-handlers.md, top section), tested by `tidec_e2e_visibility_host_lifecycle`. `tick_begin` now also clears what a scene's preparation sent where no player of the server's machine takes what's heard (`heard_here`: a dedicated server, a shard, a host that doesn't call `tide_session_events`), where it used to keep it for good; for a host whose player is there but not level yet it waits, as before (the review's correction: the first cut cleared it there too).
+
 Gaps:
 - A lone developer no longer gets the twin's desync check (the host's client hashing its own run of each tick against the server's). Nondeterminism shows only with another machine in (`--players 2`, the networking tests). An opt-in check (running the twin again) was offered to the owner and isn't built.
 - The host's presentation has no prediction correction to smooth, and draws the server's tick as it is.
@@ -1143,7 +3013,9 @@ A container's hash is a function of its value alone, so the server and a client
 build; it's only a different function of the same values, a 64-bit hash of
 hashes (`singleton tree hashes` is in the simulation identity). Text stays inline.
 Singletons holding nothing in the heap, entities, inputs and commands hash as
-they did; games with transform hierarchies still hash `client_state`'s bytes.
+they did. Games with transform hierarchies hashed `client_state`'s bytes until
+2026-11-15; they now hash as the others do, with each recipient's links and
+anchors as one section (notes/voxels.md, section 1).
 
 What makes it cheap: a container of 256 bytes or more keeps its hash in a memo,
 by its handle and codec, with every heap page its value was read from (its own
@@ -1201,11 +3073,13 @@ changes is encoded again, not its changed chunk); entities are still hashed
 every tick, each from its components; and the client's verification hash goes
 the same way but on a world loaded or predicted afresh it finds less unchanged.
 
-## Service the match while desktop presentation waits (2026-11-03)
+## Service the match while presentation waits (2026-11-03; Android 2026-11-14)
 
 The owner prioritized networking after the focus measurements below. Desktop
 Vulkan's end-present frame fence now waits to the next match deadline and calls
-the standard host's match-only update between waits. The GPU still owns its
+the standard host's match-only update between waits; Android's activity does
+the same since 2026-11-14 (`notes/rendering.md`, Match updates during Vulkan
+frame waits). The GPU still owns its
 unfinished resources, and the existing two-frame queue limit remains. Rendering
 details and remaining blocking points are in rendering.md; clock, local event,
 input and correction-aging contracts are in standard-host.md.
@@ -1633,6 +3507,32 @@ For Unity's time travel (notes/unity.md, Time travel), host-side session calls; 
   stops it (the server's journal is cleared).
 - `tide_replay_check(game, world, record, size, jobs, &expected, &got)`: `tide_replay`'s run of a record, saying
   `TIDE_REPLAY_SAME`, `_DIFFERENT` (both hashes) or `_UNREADABLE`; `tide_replay` is a wrapper of it, as it was.
+- `tide_replay_heard(game, world, record, size, jobs, heard, &expected, &got)` (2026-11-19; notes/unity.md, Time
+  travel's gaps): the same run with an event log, or NULL for `tide_replay_check`'s. The record's tick is run as
+  `tick_run` runs the server's own for its machine's local handlers: `tick_client_events` with per-player journals
+  it drops and `heard` as its `all` in a game with projections, else `tick_events`, else `tick`; a scene's
+  preparation records into it too. The world and its hash are the same with or without. A debugger's frames hear a
+  tick made again through it (`tide_timeline_heard`).
+- `tide_session_recorder.verified(user, tick, world, heard)` (2026-11-19, optional; notes/unity.md, Time travel's
+  gaps, 2): a match another machine runs, followed. `record_client`, after the client's update in
+  `tide_session_update`, tells each tick confirmed since the last told (`tide_session.followed`), reading
+  `world_at(c, tick)` for the ticks from `max(first_tick, ahead + 2 - ring)` to `verified`, which the client's ring
+  still holds as confirmed, and copying from the session's log (`s->heard`, where the host takes it) the records
+  of the tick before with `as == TIDE_HEARD_VERIFIED`, as 0. It starts over at the latest tick (one call) when the
+  client changed, a world came whole (`first_tick`), `verified` went back, or the next tick is out of the ring;
+  `tide_session_record` starts it over too. Nothing on a server's machine. No client state
+  changes and nothing is sent: it only reads. Since the same day, later (notes/unity.md, Time travel's gaps, 5):
+  a sharded match is followed too, through its home moving between shards (kept by the shard client, not a client),
+  with `tide_session_recorder.beside` after each `verified` (`record_beside`: the other followed shards' clients'
+  worlds at that tick or their latest before it); and a client of a game with no projections isn't followed but
+  **journaled**: `journal_client` (before each update) sets `tide_client.journal`, and the client, as it confirms a
+  tick from its frame (before `drop_frame`), hands over a record made as `journal_tick` makes one (tick, the frame's
+  size and bytes, the count of downloads it names and each one's number, size and bytes) with `world_at(c, tick)`
+  and `world_at(c, tick + 1)`; `client_journaled` tells the recorder `begin` and `tick` as a server's machine's is
+  told. It relies on a client's frame of such a game being the bytes the server journals (it is where no private
+  journal is kept: `journal_tick`'s `private` is a projection game's), which `travel_records_another_machines_match`
+  pins by replaying a client's recording against the server's hashes. `tide_session_remote_players` counts a
+  sharded match's root's connections but this machine's.
 - `tide_session_remote_players(s)`: connections on the server here that aren't this machine's (used, connected or
   joining).
 - `tide_session_rewind(s, world)`: the server's world becomes `world`, then the new optional
@@ -2142,8 +4042,8 @@ and grew with the square of the players):
   components gets another, computed once and kept for the next recipient with
   the same mask. The sum doesn't depend on row order, which a client's tables,
   missing hidden rows, needn't share with the server's. Games with transform
-  hierarchies keep hashing `client_state`'s bytes, as each recipient's cut links
-  and anchors differ. A transfer's check is now the hash of the bytes the
+  hierarchies kept hashing `client_state`'s bytes, as each recipient's cut links
+  and anchors differ, until 2026-11-15: those go as one section now (notes/voxels.md). A transfer's check is now the hash of the bytes the
   loaded world encodes to again (it compared `client_hash`, which was the same
   hash). `recipient logical state schema 2` is in the simulation identity
   (with `singleton tree hashes` after it since 2026-11-04, above).
@@ -2171,7 +4071,8 @@ the continuous case bounds confirmation lag under 160 ms RTT, 60 ms jitter and
 20% loss. Fresh targeted native validation passes all six cases. The continuous
 case simulates 700 server ticks in 11.67 seconds with hidden consequences on 480
 ticks: both clients finish at verified tick 693, maximum observed confirmation
-lag is 104 ticks (1.73 seconds), and neither resyncs. Numbered canonical transfers
+lag is 104 ticks (1.73 seconds), and neither resyncs (76 ticks by 2026-11-20 and 44 since: the top section,
+which says what that lag is made of). Numbered canonical transfers
 send 33,835 and 33,551 bytes per client including the initial approximately 33 KiB
 projection; this excludes normal frame/input traffic. Generated
 visibility/group/projection/lifecycle fixtures exercise the language side. Final
@@ -2265,7 +4166,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 
 - How late other players see you is the priority (the owner, 2026-10-05: "the entire point"; a player's own input was never the issue, and a change that made views draw the tick in progress was built by mistake and reverted the same day, as it also made each machine guess the others a tick further). What's between a key read on one machine and another's view showing it, beside the network: the wait for a tick to sample it, how early the client sends its inputs (the server holds each until its tick), the server's frame, and the watcher's.
   - A client sends its inputs as early as they have to be, and no earlier (`keep_early` in `engine/src/session.c`). The server says with everything it sends how long the player's inputs waited before their ticks ran (`note_wait`: from when each arrived, by its transport's clock, to the update that ran its tick, the least of the ticks an update ran; under 0 by a tick for each input missing when a tick ran, counted from the newest input the player sent, one that came too late among them: `connection.newest_sent`). It's said in 960ths of a second (`WAITS`), a signed varint after the newest input, which is a byte while the wait is under 65 ms; the tick before them went from 32 bits to a varint, so a SERVER is no bigger than it was for a match's first 9 hours at 60 ticks a second (a byte more after), and `PROTOCOL` went to 10. The least of those waits over a while is what counts, as being early is for the input that's nearly late.
-  - What the client keeps that least at (`early_wanted`): its lead in ticks (`tide_client_desc.lead`: 0 on the server's machine, whose inputs go straight in), or, with `lead_frame`, which a session's player over a network has, one of its own frames where that's less (the owner, 2026-10-06, of what it saves: "1 tick would be huge"). A frame because inputs are read and sent a frame at a time, and every unacknowledged input goes again in each: so a frame that came late, or a datagram that was lost, still leaves the input in time. A machine's frame is the time between its updates, on the whole, the last while it watched (`frame`), and counts as a 60th of a second where it's shorter (`EARLY_FRAME`): that's what a match of 60 ticks a second has with a tick, so a fast display gets no less. Hosts that say `lead` alone keep whole ticks, as tests and benchmarks do.
+  - What the client keeps that least at (`early_wanted`): its lead in ticks (`tide_client_desc.lead`: 0 on the server's machine, whose inputs go straight in), or, with `lead_frame`, which a session's player over a network has, one of its own frames where that's less (the owner, 2026-10-06, of what it saves: "1 tick would be huge"). A frame because inputs are read and sent a frame at a time, and every unacknowledged input goes again in each: so a frame that came late, or a datagram that was lost, still leaves the input in time. (Since 2026-11-16 the ones that can still be in time go again, not every unacknowledged one: the top section.) A machine's frame is the time between its updates, on the whole, the last while it watched (`frame`), and counts as a 60th of a second where it's shorter (`EARLY_FRAME`): that's what a match of 60 ticks a second has with a tick, so a fast display gets no less. Hosts that say `lead` alone keep whole ticks, as tests and benchmarks do.
   - It watches a while at a time. Under what's wanted, its clock goes ahead at once by what was missing (`clock_start`, to a 960th of a second, where it used to be whole ticks). Over it for the whole while by as much again (a tick at the most), its clock loses the difference, a tenth of the time that passes (`CLOCK_SLOW`, in `update_client`), so no tick stands still. The while is 2 seconds (`EARLY_LOOK`), and 10 after an input was nearly late (`EARLY_KEEP`): what made it so may come again, and has to stay away that long. One that was nearly late in the client's first second in the match (`EARLY_START`) doesn't count for that, as a machine starting up stutters, and that doesn't come again. After a change it watches again once what the server says is about the clock as it is now (below).
   - **What the server says only counts when it's about inputs the client sent by its clock as it is** (2026-10-06, found with Alley, the game Sumo took the place of: a player who joined a world of 160 KB mid-match ran the 60 ticks ahead a client may, its inputs waiting 0.9 seconds at the server, for ten seconds and more, and ran 2,736 predicted ticks again where the others ran 80). Two things made it so, and both are fixed:
     - The server ran ticks for the player while its world was on its way, 53 of them there, and said each was a tick the player's input was late for, counted from the tick it joined. They're ticks the player had no world to sample an input for. A server says nothing of a player's waits before the player's first input (`connection.sent_input`; `WAIT_UNKNOWN` on the wire, 3 bytes while it lasts, and `PROTOCOL` went to 11), and how late a player is goes by the newest input it sent, late ones too (`newest_sent`), where it went by the newest that came in time: a player whose inputs all come two ticks late is two ticks late, however long that has gone on.
@@ -2308,6 +4209,32 @@ A presented frame stamps the next sampled input with `tick - 1 + alpha`, through
 End-to-end frame/shot validation (2026-10-11): the two physics rewind-network fixtures independently schedule a server and two clients, draw actual verified view commands, mark their presented tick/fraction, sample and transmit shots, then compare server query results with the last drawn position. Profiles cover 20/30/60/144/240 FPS, 30/60/120 Hz simulation, varying frame intervals, 600 ms update/render stalls, independent 240 Hz updates/20 Hz rendering, 0/20/50/80/180 ms one-way latency, jitter up to 30 ms and loss up to 10%. Every received shot is checked against its actual server execution age; valid stamps preserve the sampled frame, stale stamps become invalid with no rewind fallback. The target's owner changes movement through normal input on that client's schedule.
 
 The fixtures exposed a prediction-reuse bug: a server-rejected old view stamp can leave the server's input unchanged, so its frame carries no input delta even though the client's sampled stamp differs. as_predicted now compares held inputs for this client's slots against the confirmed base before reusing a predicted world. Otherwise it replays the authoritative held input instead of requesting an unnecessary resync. This uses existing input/scratch callbacks, changes no wire or generated-C ABI, and preserves bounded validation. The fixtures require zero resyncs.
+
+### Packet starvation and immediate playback recovery (2026-11-19)
+
+`session_view_time_after_packet_starvation` runs a 60 Hz match with 20 ms
+one-way latency, 120 Hz updates and 24 Hz confirmed frame marks. For 333 ms it drops every server-to-client
+datagram while input and rendering continue. In the final second, verification is at most four ticks behind
+and prediction is ahead with no input delay or resync. At the last frame both the control and starved clients
+verify two ticks behind and predict three ticks ahead. Before the fix the confirmed display was 2.5 ticks behind
+in the control and 25.5 after starvation. With a quarter-second rewind window, the server accepted all 61
+control timestamps and rejected all 61 starved timestamps in that final second.
+
+`update_client` discards elapsed playback time when it clamps `verified_view` at the preceding confirmed
+frontier. Predictions and inputs keep advancing, so this loss need not enter `play`'s `catching_up` mode, which
+moves the display directly to the frontier when joining or falling behind on input or simulation work.
+The owner chose to skip the display backlog once confirmation recovers. At the end of `play`'s confirmation loop,
+when the client has reached the last reported server tick or the next complete tick is still ahead of its clock,
+`verified_view` moves straight to the latest confirmed tick if its backlog exceeds one tick plus 100 ms and
+two client update intervals. That margin leaves room for packet bursts and slow updates. An outstanding world
+transfer or visibility repair blocks this path. The next input still names the last frame actually shown until
+the host marks a new one. Confirming ticks, predicting, and the server's execution-age rule use their existing clocks.
+
+The fixture requires one forward jump on recovery, ordinary interpolation before and afterward, and matching
+confirmed world hashes. It checks the expiry of old stamps held through the outage and acceptance of the exact
+sampled frame after recovery. On Windows ASan and Node WASI both runs now show a final 2.5-tick display lag and
+61 accepted timestamps. On both platforms, the Box2D and Box3D rewind-network fixtures, view-correction cases,
+and `tidec_e2e_net` and `tidec_e2e_net_join_big` pass. The documentation build passes.
 
 ## T? fields on the wire (2026-10-11)
 

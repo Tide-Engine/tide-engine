@@ -46,6 +46,14 @@ if(CMAKE_C_COMPILER_TARGET MATCHES "android")
 else()
     set(TIDE_ANDROID OFF)
 endif()
+# iOS builds: through Xcode's clang (cmake/ios-toolchain.cmake). A game there runs inside another program's window,
+# Unity's (tide/embed.h), so this builds the engine, the platform layer with no window of its own and the tests
+# that need none, which run in the simulator.
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(TIDE_IOS ON)
+else()
+    set(TIDE_IOS OFF)
+endif()
 
 include(cmake/Sanitizers.cmake)
 include(cmake/TideFlags.cmake)
@@ -130,13 +138,18 @@ install(DIRECTORY packages/ DESTINATION src/packages COMPONENT tide OPTIONAL
     PATTERN ".tide" EXCLUDE PATTERN "build" EXCLUDE
     # This repo's own: how it builds the packages' tests, and the tests
     PATTERN "CMakeLists.txt" EXCLUDE PATTERN "test" EXCLUDE)
-if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID AND NOT TIDE_IOS)
     add_subdirectory(tools) # Editor support
 endif()
 
 add_subdirectory(engine)
 
 enable_testing()
+if(TIDE_IOS)
+    # A test starts in the simulator, from its own folder (cmake/run_ios.sh, tests/ios/ios_run.c)
+    add_executable(tide_ios_run tests/ios/ios_run.c)
+    set(CMAKE_CROSSCOMPILING_EMULATOR sh "${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_ios.sh" "${CMAKE_BINARY_DIR}/bin/tide_ios_run")
+endif()
 add_subdirectory(tests)
 add_subdirectory(compiler)
 
@@ -154,6 +167,16 @@ endif()
 
 if(TIDE_PLATFORM)
     add_subdirectory(platform)
+endif()
+if(TIDE_IOS)
+    # Games with a window of their own and the examples aren't iOS's: what's built is what a game inside another
+    # program is made of, with the packages whose C such a game compiles, and `tide_ios_tests` is the tests of it
+    # (cmake/ios_tests.cmake)
+    add_subdirectory(packages)
+    include(cmake/ios_tests.cmake)
+    return()
+endif()
+if(TIDE_PLATFORM)
     if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
         tide_add_game(tide_server_smoke SERVER NAME game SOURCES "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/server_build.tide")
         add_test(NAME tide_server_smoke COMMAND tide_server_smoke --anonymous --udp-only --frames 2)
@@ -169,9 +192,11 @@ if(TIDE_PLATFORM)
                 "$<TARGET_FILE:tide_server_smoke>" "$<TARGET_FILE:tide_server_pack_client>" room)
             set_tests_properties(tide_server_room PROPERTIES TIMEOUT 20)
             # A sharded world on a dedicated server, and a player walking across its border
-            tide_add_game(tide_server_shards SERVER NAME game SOURCES "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/shards_players.tide")
+            tide_add_game(tide_server_shards SERVER NAME game SOURCES "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/shards_players.tide"
+                "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/shards_players_walk.tide")
             tide_add_game(tide_server_shards_client NAME game
                 SOURCES "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/shards_players.tide"
+                "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/shards_players_walk.tide"
                 HOST "${PROJECT_SOURCE_DIR}/platform/tests/server_shards_client.c")
             target_link_libraries(tide_server_shards_client PRIVATE tide_platform)
             add_test(NAME tide_server_shards COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/platform/tests/server_pack.mjs"
@@ -179,13 +204,23 @@ if(TIDE_PLATFORM)
             add_test(NAME tide_server_shards_room COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/platform/tests/server_pack.mjs"
                 "$<TARGET_FILE:tide_server_shards>" "$<TARGET_FILE:tide_server_shards_client>" shards-room)
             # ...and the same server killed outright, going on from its journal
+            # Then verified, sealed as it stops, and taken up by the game's next build (the same layout, another rule)
+            tide_add_game(tide_server_shards_next SERVER NAME game SOURCES "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/shards_players.tide"
+                "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/shards_players_walk_next.tide")
             add_test(NAME tide_server_shards_journal COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/platform/tests/server_journal.mjs"
-                "$<TARGET_FILE:tide_server_shards>")
+                "$<TARGET_FILE:tide_server_shards>" "$<TARGET_FILE:tide_server_shards_next>")
+            # A sharded world whose match uses the store: kept in the journal's folder, there after a stop and a crash
+            tide_add_game(tide_server_shards_store SERVER NAME game
+                SOURCES "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/storage_await_shards.tide")
+            add_test(NAME tide_server_shards_store COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/platform/tests/server_store.mjs"
+                "$<TARGET_FILE:tide_server_shards_store>")
+            set_tests_properties(tide_server_shards_store PROPERTIES TIMEOUT 130 RUN_SERIAL TRUE)
             set_tests_properties(tide_server_shards tide_server_shards_room PROPERTIES TIMEOUT 30)
             # Do not overlap disk-synchronous recovery with installers and
             # other server/process tests on shared CI runners.
-            # The 2.5-second crash run, two 60-second recoveries, and cleanup.
-            set_tests_properties(tide_server_shards_journal PROPERTIES TIMEOUT 130 RUN_SERIAL TRUE)
+            # The 2.5-second crash run, two 60-second recoveries, the short refused and
+            # verifying starts, the next build's run, and cleanup.
+            set_tests_properties(tide_server_shards_journal PROPERTIES TIMEOUT 200 RUN_SERIAL TRUE)
         endif()
         tide_add_game(tide_server_entry SERVER NAME game SOURCES
             "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/server_menu.tide"
@@ -196,9 +231,6 @@ if(TIDE_PLATFORM)
         set_tests_properties(tide_server_smoke tide_server_entry tide_server_visual PROPERTIES TIMEOUT 30)
         target_sources(tidec_e2e_hosting PRIVATE "${PROJECT_SOURCE_DIR}/platform/tests/hosting.c")
         target_link_libraries(tidec_e2e_hosting PRIVATE tide_platform)
-    endif()
-    if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
-        add_subdirectory(tools/tide-editor)
     endif()
     add_subdirectory(demo)
     add_subdirectory(examples/duel)

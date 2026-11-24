@@ -14,7 +14,11 @@ typedef struct worker_item {
     void *context;
     uint32_t ticket;
     uint32_t forgotten;
-    bool submitted;
+    bool submitted;         // Given to a provider, or run where it was polled
+    bool queued;            // Given to a provider: the group hands it over in its turn
+    bool waiting;           // In its level's queue, not handed over yet: under the group's lock
+    uint8_t level;          // 0 urgent, 1 normal, 2 background
+    struct worker_item *wait_next, *wait_previous;
     bool measured, recorded;
     uint64_t queued_ns, began_ns, ended_ns;
     uint64_t capture_bytes;
@@ -22,13 +26,34 @@ typedef struct worker_item {
     const tide_jobs *jobs;
 } worker_item;
 
+// Work a provider hasn't been handed yet, a queue for each priority, oldest first. `passed` counts the starts of
+// more urgent work since this level's oldest began to wait, or since its last start.
+enum { LEVELS = 3 };
+typedef struct worker_queue {
+    worker_item *first, *last;
+    uint32_t passed;
+} worker_queue;
+
+// After this many starts of more urgent work, a level's oldest starts next: nothing waits for ever. Under a
+// steady stream of urgent work, every fifth start is a normal calculation and every seventeenth a background one.
+static const uint32_t level_turn[LEVELS] = {0u, 4u, 16u};
+
 struct tide_workers {
+    // The lock is for what follows it down to the queues, which the provider's threads share: one hands over
+    // the group's next calculation as its own ends. Everything else is the frame thread's.
+    uint32_t lock;
+    uint32_t flying, most; // Calculations the provider has and hasn't finished, and how many it's given at once
+    bool closing;
+    worker_queue waiting[LEVELS];
     worker_item *items;
     worker_item *retired;
     worker_item **buckets;
     uint32_t next, count, room;
     tide_worker_limits limits;
     uint64_t capture_bytes, transferred;
+    // Admission is each level's own: what's pending of it, and the captures kept for it
+    uint32_t level_count[LEVELS];
+    uint64_t level_bytes[LEVELS];
     tide_profile *profile;
 };
 
@@ -48,6 +73,53 @@ const tide_jobs *tide_worker_enter(const tide_jobs *jobs)
 }
 void tide_worker_leave(const tide_jobs *previous) { worker_jobs = previous; }
 
+static void acquire(tide_workers *w)
+{
+    while (__atomic_exchange_n(&w->lock, 1u, __ATOMIC_ACQUIRE)) {
+    }
+}
+static void let_go(tide_workers *w) { __atomic_store_n(&w->lock, 0u, __ATOMIC_RELEASE); }
+
+static uint8_t level_of(const uint32_t priority)
+{
+    return priority == TIDE_WORKER_URGENT ? 0u : priority == TIDE_WORKER_BACKGROUND ? 2u : 1u;
+}
+
+// Under the lock.
+static void unlink_waiting(tide_workers *w, worker_item *p)
+{
+    worker_queue *q = &w->waiting[p->level];
+    if (p->wait_previous) p->wait_previous->wait_next = p->wait_next;
+    else q->first = p->wait_next;
+    if (p->wait_next) p->wait_next->wait_previous = p->wait_previous;
+    else q->last = p->wait_previous;
+    p->wait_next = p->wait_previous = NULL;
+    p->waiting = false;
+    if (!q->first) q->passed = 0; // Nobody of this level has waited through anything
+}
+
+// Under the lock: the calculation the provider gets next, counted as its own, or NULL while it has as many as
+// it runs at once. The most urgent level's oldest, but a level whose oldest has waited through its turn of more
+// urgent starts goes first, the least urgent such level before the others. Priority is read here alone: work
+// the provider has is never interrupted or passed.
+static worker_item *hand_over(tide_workers *w)
+{
+    if (w->closing || w->flying >= w->most) return NULL;
+    int pick = -1;
+    for (int l = LEVELS - 1; l > 0 && pick < 0; l--)
+        if (w->waiting[l].first && w->waiting[l].passed >= level_turn[l]) pick = l;
+    for (int l = 0; l < LEVELS && pick < 0; l++)
+        if (w->waiting[l].first) pick = l;
+    if (pick < 0) return NULL;
+    for (int l = pick + 1; l < LEVELS; l++)
+        if (w->waiting[l].first) w->waiting[l].passed++;
+    worker_item *p = w->waiting[pick].first;
+    w->waiting[pick].passed = 0;
+    unlink_waiting(w, p);
+    w->flying++;
+    return p;
+}
+
 static void worker_run(void *context)
 {
     worker_item *item = context;
@@ -61,6 +133,15 @@ static void worker_run(void *context)
         current_worker = previous;
         if (item->measured) item->ended_ns = tide_time_now_ns();
     }
+    if (!item->queued) return;
+    // The provider's thread is free for the group's next. The item it gets stays alive until the provider says
+    // it's done, and the group until then too (tide_workers_free waits for everything handed over).
+    tide_workers *w = item->group;
+    acquire(w);
+    w->flying--;
+    worker_item *next = hand_over(w);
+    let_go(w);
+    if (next) next->jobs->background(next->jobs->self, &next->job);
 }
 
 static void record(worker_item *p)
@@ -117,13 +198,15 @@ static void dispose(tide_workers *w, worker_item *p)
     if (p->next) p->next->previous = p->previous;
     w->count--;
     w->capture_bytes -= p->capture_bytes;
+    w->level_count[p->level]--;
+    w->level_bytes[p->level] -= p->capture_bytes;
     tide_memory_sync();
     record(p);
     if (p->release) p->release(p->context);
     free(p);
 }
 
-static uint32_t reserve(tide_workers **workers, const tide_jobs *jobs)
+static uint32_t reserve(tide_workers **workers, const tide_jobs *jobs, const uint32_t priority)
 {
     if (!*workers) *workers = tide_alloc_zeroed(1, sizeof **workers);
     tide_workers *w = *workers;
@@ -136,6 +219,7 @@ static uint32_t reserve(tide_workers **workers, const tide_jobs *jobs)
     item->ticket = w->next;
     item->group = w;
     item->jobs = jobs;
+    item->level = level_of(priority);
     item->job.work = worker_run;
     item->job.context = item;
     item->next = w->items;
@@ -145,6 +229,7 @@ static uint32_t reserve(tide_workers **workers, const tide_jobs *jobs)
     item->hash_next = w->buckets[at];
     w->buckets[at] = item;
     w->count++;
+    w->level_count[item->level]++;
     return item->ticket;
 }
 
@@ -161,19 +246,32 @@ void tide_worker_submit(tide_workers *w, const uint32_t ticket, void (*work)(voi
     item->context = context;
     item->capture_bytes = capture_bytes;
     w->capture_bytes += capture_bytes;
+    w->level_bytes[item->level] += capture_bytes;
     const tide_jobs *jobs = item->jobs;
     item->measured = w->profile || (jobs && jobs->profile);
     if (item->measured) item->queued_ns = tide_time_now_ns();
     if (jobs && jobs->background) {
-        item->submitted = true;
-        jobs->background(jobs->self, &item->job);
+        item->submitted = item->queued = true;
+        acquire(w);
+        // A pool's threads but the caller's, which has its frame to make: nothing then waits in the provider's
+        // own queue, where it would be in the order it came
+        w->most = jobs->threads > 2u ? jobs->threads - 1u : 1u;
+        worker_queue *q = &w->waiting[item->level];
+        item->waiting = true;
+        item->wait_previous = q->last;
+        if (q->last) q->last->wait_next = item;
+        else q->first = item;
+        q->last = item;
+        worker_item *next = hand_over(w);
+        let_go(w);
+        if (next) next->jobs->background(next->jobs->self, &next->job);
     }
 }
 
 uint32_t tide_worker_start(tide_workers **workers, const tide_jobs *jobs,
                            void (*work)(void *), void (*release)(void *), void *context)
 {
-    const uint32_t ticket = reserve(workers, jobs);
+    const uint32_t ticket = reserve(workers, jobs, TIDE_WORKER_NORMAL);
     tide_worker_submit(*workers, ticket, work, release, context, 0);
     return ticket;
 }
@@ -211,17 +309,33 @@ void tide_worker_transferred(tide_workers *w, const uint64_t bytes, const uint64
     }
 }
 
-bool tide_worker_can_reserve(const tide_workers *w)
+// Each priority has room of its own, so none keeps another out: the limits are what normal work may have
+// pending and keep captured, urgent work has as much again, and background work half as much.
+static uint64_t limit_at(const uint64_t limit, const uint8_t level)
 {
-    if (w && ((!tide_worker_transfer_ready(w)) || (w->limits.pending && w->count >= w->limits.pending)
-              || (w->limits.capture_bytes && w->capture_bytes >= w->limits.capture_bytes))) return false;
+    return level == 2u && limit > 1u ? limit / 2u : limit;
+}
+
+bool tide_worker_can_reserve_at(const tide_workers *w, const uint32_t priority)
+{
+    const uint8_t level = level_of(priority);
+    if (w && ((!tide_worker_transfer_ready(w))
+              || (w->limits.pending && w->level_count[level] >= limit_at(w->limits.pending, level))
+              || (w->limits.capture_bytes && w->level_bytes[level] >= limit_at(w->limits.capture_bytes, level)))) return false;
     return true;
+}
+
+bool tide_worker_can_reserve(const tide_workers *w) { return tide_worker_can_reserve_at(w, TIDE_WORKER_NORMAL); }
+
+uint32_t tide_worker_reserve_at(tide_workers **workers, const tide_jobs *jobs, const uint32_t priority)
+{
+    if (!tide_worker_can_reserve_at(*workers, priority)) return 0;
+    return reserve(workers, jobs, priority);
 }
 
 uint32_t tide_worker_reserve(tide_workers **workers, const tide_jobs *jobs)
 {
-    if (!tide_worker_can_reserve(*workers)) return 0;
-    return reserve(workers, jobs);
+    return tide_worker_reserve_at(workers, jobs, TIDE_WORKER_NORMAL);
 }
 
 void *tide_worker_poll(tide_workers *w, const uint32_t ticket)
@@ -258,7 +372,15 @@ void tide_worker_forget(tide_workers *w, const uint32_t ticket)
     worker_item *p = find(w, ticket);
     if (!p || p->forgotten) return;
     __atomic_store_n(&p->forgotten, 1u, __ATOMIC_RELEASE);
-    if (!p->submitted || __atomic_load_n(&p->job.done, __ATOMIC_ACQUIRE)) dispose(w, p);
+    // Work the provider was never handed goes at once, its captures with it
+    bool waited = false;
+    if (p->queued) {
+        acquire(w);
+        waited = p->waiting;
+        if (waited) unlink_waiting(w, p);
+        let_go(w);
+    }
+    if (waited || !p->submitted || __atomic_load_n(&p->job.done, __ATOMIC_ACQUIRE)) dispose(w, p);
     else {
         p->retired_next = w->retired;
         w->retired = p;
@@ -269,10 +391,14 @@ void tide_workers_free(tide_workers *w)
 {
     if (!w) return;
     w->profile = NULL;
+    // Nothing more is handed over: what waits in the group never runs, and `waiting` stays as it is from here
+    acquire(w);
+    w->closing = true;
+    let_go(w);
     for (worker_item *p = w->items; p; p = p->next)
         __atomic_store_n(&p->forgotten, 1u, __ATOMIC_RELEASE);
     for (worker_item *p = w->items; p; p = p->next) {
-        while (p->submitted && !__atomic_load_n(&p->job.done, __ATOMIC_ACQUIRE)) {
+        while (p->submitted && !p->waiting && !__atomic_load_n(&p->job.done, __ATOMIC_ACQUIRE)) {
             if (p->jobs && p->jobs->help) p->jobs->help(p->jobs->self, false);
             tide_yield();
         }

@@ -1,0 +1,12 @@
+// expect: a function samples a DepthTexture that's a field of the component or singleton it takes, and 'shadow' is a field of a struct 'Stage' holds, which it doesn't yet
+// expect: make 'shadow' a field of 'Stage' itself, and sample it as 'stage.shadow'
+// A texture of a struct the singleton holds isn't read in a function yet
+scene Main { }
+struct Lamps { DepthTexture shadow; float bias; }
+local singleton Stage { Lamps lamps; List<Vertex3> mesh; }
+float Lit(Stage stage, float2 uv) { return stage.lamps.shadow.Compare(uv, stage.lamps.bias); }
+frag Shade(Vertex3 vertex, out Color color, Stage stage)
+{
+    color = Color(Lit(stage, vertex.uv), 0, 0, 1);
+}
+view Show(Stage stage) { Draw.Mesh(stage.mesh, [0, 1, 2], float4x4.identity, Shade); }

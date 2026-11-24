@@ -119,45 +119,39 @@ static bool queued_stmt(const stmt *s)
     return false;
 }
 
-// Whether a system's rows are independent of each other but for what they
-// queue: no row reads or writes what another row writes.
-static bool holds_a_grid(const decl *d, const int depth)
+// Whether all a system changes of the match's own heap is visibility groups' audiences its own code sets, which its
+// rows log in runs (visibility_match in visibility_check.inc)
+bool system_logs_groups(const decl *sys)
 {
-    for (int i = 0; d && depth < 8 && i < d->fields.count; i++) {
-        const type t = d->fields.items[i].type;
-        if (t.kind == TY_GRID || (t.kind == TY_STRUCT && holds_a_grid(t.decl, depth + 1))) return true;
-    }
-    return false;
+    return sys->sets_groups && !sys->match_heap_written;
 }
 
 // What keeps a system that changes text, lists or grids from doing it in runs
 // (tide/heap.h, A heap in runs), each run's blocks in a heap of its own: an
-// owner in the match's one heap (C can write it, or the game has shards or
-// hidden state), which has no runs, or one that holds a grid, whose chunks
-// name each other across what a run would add. NULL when nothing does;
-// `*grid` says which.
-static const decl *heap_keeps_order(const decl *sys, bool *grid)
+// owner in the match's one heap (C can write it, or the game has shards),
+// which has no runs. NULL when nothing does. (A grid moves whole into the
+// heap of the run that adds a chunk to it: tide/grid.h.) The match's own heap
+// doesn't, where all the system changes of it is the visibility groups'
+// audiences it sets: its rows log them (system_logs_groups).
+static const decl *heap_keeps_order(const decl *sys)
 {
     static const decl match_heap = {0}; // The match's own, when no owner is named
-    *grid = false;
     for (int i = 0; i < sys->heap_owners.count; i++) {
         const decl *owner = sys->heap_owners.items[i];
+        if (!owner && system_logs_groups(sys)) continue;
         if (!owner || !owner->heap_id) return owner ? owner : &match_heap;
-        if (holds_a_grid(owner, 0)) {
-            *grid = true;
-            return owner;
-        }
     }
     return sys->heap_owners.count ? NULL : &match_heap;
 }
 
+// Whether a system's rows are independent of each other but for what they
+// queue: no row reads or writes what another row writes.
 static bool rows_independent(const decl *sys)
 {
     if (sys->is_view || !sys->per_entity || sys->extern_system) return false;
     // (One that gathers changes its singletons, and their text and lists, from a log in its rows' order, on one
     // thread: nothing of its rows' own is in a heap)
-    bool grid;
-    if (sys->writes_text && !sys->gathers && (sys->starts_tasks || heap_keeps_order(sys, &grid))) return false;
+    if (sys->writes_text && !sys->gathers && (sys->starts_tasks || heap_keeps_order(sys))) return false;
     if ((sys->task_access[0] | sys->task_access[1]) & 2u) return false;
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
@@ -199,13 +193,22 @@ bool system_heap_runs(const decl *sys)
     return sys->writes_text && !sys->gathers && system_splits_in_order(sys);
 }
 
+// One in runs whose rows queue nothing: no order but each run's own can tell, so its runs aren't shares of the
+// order but each entity's own, by its identity (tide_entity_run in the generated C). An entity is then in the same
+// run in every such system and tick, so its blocks stay in one run's heap, and the entities spawned last, which
+// are the order's last and often the costly ones (chunks to make), are in every run, not in the last.
+bool system_heap_runs_scattered(const decl *sys)
+{
+    return system_heap_runs(sys) && !queues(sys);
+}
+
 // The components and singletons two systems both use, where at least one of
 // them writes. Components only count if the systems can meet the same entity.
 // What's the whole world's counts whatever entities they meet: changing its
 // heap (reading it alongside is fine), and the entity IDs spawns hand out,
 // which a system hands out as it runs unless it splits (its spawns get theirs
-// once it's done, in the tick's order, without waiting). C is trusted, so
-// calling it makes no system wait.
+// once it's done, in the tick's order, without waiting), except for a system
+// in C, which sees them. C is trusted, so calling it makes no system wait.
 // The component or singleton a parameter reads or writes, or NULL.
 static const decl *accessed(const param *p)
 {
@@ -377,6 +380,12 @@ static bool find_conflicts(const decl *earlier, const decl *later, const access_
                 }
             }
         }
+    }
+    // ...but C can tell: a system in C is handed the entity table (tide_rows.entities), where a spawner's entities
+    // are once it has registered them, which on threads is whenever its tasks are done. So the two keep their order,
+    // and C sees the entities the systems before it spawned and none of the ones after it, as on one thread.
+    if ((earlier->extern_system && later->spawns) || (earlier->spawns && later->extern_system)) {
+        any = add_conflict(w, CONFLICT_ENTITIES);
     }
     if (any && !w) return true;
     for (int i = 0; i < earlier_uses->count; i++) {
@@ -598,6 +607,13 @@ void describe_wait(const decl *sys, const system_wait *w, const char *quote, sb 
         sb_put(out, "tasks start in order, and spawn and change text as they start");
         first_part = false;
     }
+    for (int i = 0; i < w->conflicts.count; i++) {
+        if (w->conflicts.items[i].kind != CONFLICT_ENTITIES) continue;
+        sb_put(out, first_part ? "" : "; ");
+        sb_put(out, sys->extern_system ? "it spawns entities, which this, in C, can see"
+                                       : "it's in C, which can see the entities this spawns");
+        first_part = false;
+    }
     // Whose text, lists or grids both change: each owner's are in a heap of its own
     int heaps = 0, heaps_written = 0;
     for (int i = 0; i < w->conflicts.count; i++) heaps += w->conflicts.items[i].kind == CONFLICT_TEXT;
@@ -735,14 +751,9 @@ bool system_one_thread(const decl *sys, const char *quote, const decl *from, sb 
     } else if (sys->writes_text && sys->starts_tasks) {
         sb_put(out, "it changes text or lists and starts tasks, which run in the order they start");
         *at = sys->writes_text_at;
-    } else if (sys->writes_text && heap_keeps_order(sys, &(bool){false})) {
-        bool grid = false;
-        const decl *owner = heap_keeps_order(sys, &grid);
-        if (grid) {
-            sb_put(out, "it changes the text, lists or grids of ");
-            put_decl_name(out, owner, quote, from);
-            sb_put(out, ", which holds a grid: a grid's chunks go in the order its entities do");
-        } else if (owner && owner->qualified.len) {
+    } else if (sys->writes_text && heap_keeps_order(sys)) {
+        const decl *owner = heap_keeps_order(sys);
+        if (owner && owner->qualified.len) {
             sb_put(out, "it changes the text, lists or grids of ");
             put_decl_name(out, owner, quote, from);
             sb_put(out, ", which are in the match's one heap and go in the order its entities do");
@@ -753,7 +764,7 @@ bool system_one_thread(const decl *sys, const char *quote, const decl *from, sb 
     } else if ((sys->task_access[0] | sys->task_access[1]) & 2u) {
         sb_put(out, "it changes tasks, which the match keeps in the order they start");
     } else if (set) {
-        sb_put(out, "it sets ");
+        sb_put(out, set->write_edits ? "it edits " : "it sets ");
         put_decl_name(out, set->component, quote, from);
         sb_put(out, " through its World, on any entity");
         *at = set->write_at;
@@ -794,6 +805,14 @@ static void put_gathers(sb *out, const decl *sys)
         written++;
     }
     sb_put(out, " is changed after them, in their order\n");
+}
+
+// A system in runs whose rows set visibility groups' audiences (system_logs_groups): they're set after its rows, in
+// their order
+static void put_logged_groups(sb *out, const decl *sys)
+{
+    if (!system_logs_groups(sys) || !system_heap_runs(sys)) return;
+    sb_put(out, "         across threads: the visibility groups' audiences its entities set are set after them, in their order\n");
 }
 
 // What a system reads or writes beyond its outer entity, through World or queries.
@@ -873,6 +892,7 @@ void print_schedule(const program *prog, const char *game, sb *out)
         if (sys->preparation_reads) sb_put(out, "         reads scene readiness\n");
         put_one_thread(out, sys);
         put_gathers(out, sys);
+        put_logged_groups(out, sys);
         for (int k = 0; k < sys->waits.count; k++) {
             const system_wait *w = &sys->waits.items[k];
             sb_put(out, "         after ");
@@ -915,7 +935,6 @@ void print_schedule(const program *prog, const char *game, sb *out)
                 sb_put(out, "         ");
                 put_decl_name(out, owner, "", NULL);
                 sb_printf(out, ": %s\n", prog->shards ? "the match is split across servers"
-                                       : prog->visibility_state ? "the match hides state from players"
                                        : owner->c_written ? "C can write it"
                                        : owner->is_scene ? "it's a scene's"
                                        : "it's the engine's own");

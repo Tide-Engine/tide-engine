@@ -1,0 +1,6 @@
+// expect: 'Rename' runs for an entity, and this call names none
+// expect: call it on the entity: 'entity.Rename(...)'; code that runs for an entity of the match calls it for that one without naming it
+component Name { string value; }
+command(string text) Rename(mut Name name, with ownership) { name.value = text; }
+view Ask() { Rename("x"); }
+scene Main { }

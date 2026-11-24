@@ -1,0 +1,14 @@
+// expect: 'Cheat' is 'dev', which builds without dev leave out, so 'Pick' can't use it
+// build: dev
+component Gun { int ammo; }
+scene Main { }
+
+dev int Cheat(int ammo) { return ammo + 100; }
+
+// A generic without dev, whose instance a system makes
+T Pick<T>(T value) { return Cheat(1) > 0 ? value : value; }
+
+system Reload(mut Gun gun)
+{
+    gun.ammo = Pick(gun.ammo);
+}

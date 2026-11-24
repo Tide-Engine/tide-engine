@@ -1,0 +1,3 @@
+// expect: Read<float> gives a Grid2<float> of the image's own numbers, and this target's format for image 0 isn't fixed by its constructor assignments
+scene Main {}
+async void Read(RenderTarget target) { var pixels = await target.Read<float>(); }

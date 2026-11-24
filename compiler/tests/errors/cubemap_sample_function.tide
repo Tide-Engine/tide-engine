@@ -1,7 +1,8 @@
-// expect: a function samples a Cubemap it takes as a parameter of its own, or a Cubemap asset by its name
-// A function reads the cube it's passed, not one it finds in a singleton it takes
+// expect: a function samples a Cubemap it takes as a parameter of its own, or a field of a component or singleton it takes, or a Cubemap asset by its name
+// A function reads the cube it's passed, or one of a singleton or component it takes: not one a struct of its own holds
 scene Main { }
+struct Mirror { Cubemap reflection; }
 local singleton Room { Cubemap reflection; RenderTarget side; List<Vertex3> ball; }
-Color Read(Room room, float3 way) { return room.reflection.Sample(way); }
-frag Look(Vertex3 vertex, out Color color, Room room) { color = Read(room, vertex.position); }
+Color Read(Mirror mirror, float3 way) { return mirror.reflection.Sample(way); }
+frag Look(Vertex3 vertex, out Color color, Room room) { color = room.reflection.Sample(vertex.position); }
 view Show(Room room) { Draw.Mesh(room.ball, [0, 1, 2], float4x4.identity, Look); }

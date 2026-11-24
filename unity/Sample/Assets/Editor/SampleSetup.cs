@@ -32,7 +32,13 @@ public static class SampleSetup
         sphere.name = "Roller";
         Object.DestroyImmediate(sphere.GetComponent<Collider>());
         sphere.GetComponent<MeshRenderer>().sharedMaterial = material;
-        sphere.AddComponent<Tide.Game.Ball>();
+        // One of Unity's own textures in a local Texture field, which Tide's Marks view draws (Mark.png, as imported)
+        var ball = sphere.AddComponent<Tide.Game.Ball>();
+        ball.mark = AssetDatabase.LoadAssetAtPath<Texture2D>(Folder + "/Mark.png");
+        // ...and Unity's own mesh, material and sound, which Tide's code hands back to Unity (Draw.UnityMesh, Audio.Play)
+        ball.badge = Resources.GetBuiltinResource<Mesh>("Cube.fbx");
+        ball.badgeLook = AssetDatabase.LoadAssetAtPath<Material>(Folder + "/Badge.mat");
+        ball.chime = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Tide/bonk.wav");
         sphere.AddComponent<BallTint>();
         PrefabUtility.SaveAsPrefabAsset(sphere, Folder + "/Roller.prefab");
         Object.DestroyImmediate(sphere);
@@ -110,6 +116,34 @@ public static class SampleSetup
             target = BuildTarget.Android,
         });
         Debug.Log($"SampleSetup: Android build {report.summary.result} in {output}");
+        if (report.summary.result != UnityEditor.Build.Reporting.BuildResult.Succeeded) EditorApplication.Exit(1);
+    }
+
+    // An iOS player, as the Xcode project in the folder after -tideOut, with the game in it as sources (Tide's build
+    // processor), from any system; a Mac's Xcode builds it. -tideSmoke: the app checks itself as it starts and
+    // shows what it found (PlayerSmoke). -tideSimulator: for the iOS simulator, not a device.
+    // Unity.exe -batchmode -buildTarget iOS -projectPath . -executeMethod SampleSetup.BuildIos -tideOut <folder> -quit
+    public static void BuildIos()
+    {
+        var args = System.Environment.GetCommandLineArgs();
+        var at = System.Array.IndexOf(args, "-tideOut");
+        var output = at >= 0 && at + 1 < args.Length ? args[at + 1] : "Builds/iOS";
+        var ios = UnityEditor.Build.NamedBuildTarget.iOS;
+        PlayerSettings.SetApplicationIdentifier(ios, "dev.tide.unity.bounce");
+        PlayerSettings.iOS.sdkVersion = System.Array.IndexOf(args, "-tideSimulator") >= 0 ? iOSSdkVersion.SimulatorSDK : iOSSdkVersion.DeviceSDK;
+        // An Apple-silicon Mac's simulator, which is what GitHub's Macs are: Unity's default is Intel's
+        PlayerSettings.iOS.simulatorSdkArchitecture = AppleMobileArchitectureSimulator.ARM64;
+        var defines = PlayerSettings.GetScriptingDefineSymbols(ios);
+        var smoke = System.Array.IndexOf(args, "-tideSmoke") >= 0;
+        if (smoke) PlayerSettings.SetScriptingDefineSymbols(ios, defines.Length > 0 ? defines + ";TIDE_SMOKE" : "TIDE_SMOKE");
+        var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
+        {
+            scenes = new[] { Folder + "/Bounce.unity", Folder + "/Bonus.unity" },
+            locationPathName = output,
+            target = BuildTarget.iOS,
+        });
+        if (smoke) PlayerSettings.SetScriptingDefineSymbols(ios, defines);
+        Debug.Log($"SampleSetup: iOS build {report.summary.result} in {output}");
         if (report.summary.result != UnityEditor.Build.Reporting.BuildResult.Succeeded) EditorApplication.Exit(1);
     }
 

@@ -76,6 +76,7 @@ enum {
     H_NORMALS, // tide_normals(m): what a mesh's normals go through to the world, for instance.Normal
     H_STRAIGHT, // tide_straight(c): a texture's pixel, which has its alpha worked into its color, as the color it is
     H_TRANSFER,
+    H_TOWARDS, // Math.MoveTowards, DeltaAngle, WrapAngle, MoveTowardsAngle and Damp, as tide/math.h's
     H_EASE, // tide_ease(t, kind): Math.EaseIn and the rest, as tide/math.h's
     // Random's rolls on the type: tide_roll(), the next 32 bits of the stage's own generator, and what's made of them
     H_ROLL, H_MUL_HIGH, H_ROLL_INT, H_ROLL_INT_BETWEEN, H_ROLL_INT_BELOW, H_ROLL_FLOAT, H_ROLL_FLOAT_BETWEEN, H_ROLL_FLOAT_BELOW,
@@ -120,9 +121,16 @@ typedef struct element_alias {
     int first, count; // The parts of it the local holds
 } element_alias;
 
+// A function written, for what it's given (`suffix`) in a stage: what was written after its name, and the suffix
+// that name has, which is `suffix` and, where its code in this stage isn't what it was in the other, the stage's
+// (need_function). Its locals were numbered from `temps`.
 typedef struct shader_function {
     const decl *fn;
     const char *suffix;
+    int stage;
+    int temps;
+    const char *text;
+    const char *named;
 } shader_function;
 
 typedef struct emit {
@@ -145,7 +153,7 @@ typedef struct emit {
     int lifting; // Writing one of those: a local is written as what it was declared as
     // The structs the code names, each after the ones it holds
     VEC(const decl *) structs;
-    VEC(shader_function) done; // The functions written, callees first, each for the lists and grids it's called with
+    VEC(shader_function) done; // The functions written, callees first, each for the lists and grids it's called with, by stage
     sb functions;
     bool helpers[H_COUNT];
     // A draw's textures, up to SHADER_TEXTURES
@@ -175,7 +183,7 @@ static void ex_as(emit *em, const expr *e, type want);
 static bool is_whole_variable(const expr *e);
 static bool is_pointer(const param *p);
 static void st(emit *em, const stmt *s);
-static void need_function(emit *em, decl *fn, loc at, const given *spec, const char *suffix);
+static const char *need_function(emit *em, decl *fn, loc at, const given *spec, const char *suffix);
 static bool is_const(const expr *e);
 static bool is_sampled(type t);
 static const field *field_called(const decl *d, const char *name);
@@ -202,9 +210,22 @@ static bool one_image(const shader_read a, const shader_read b)
         || ((a == READ_DEPTH_ARRAY || a == READ_COMPARE_ARRAY) && (b == READ_DEPTH_ARRAY || b == READ_COMPARE_ARRAY));
 }
 
+// A read of a target's or an array's depth: another image than its colors.
+static bool depth_image_read(const shader_read read)
+{
+    return read == READ_DEPTH || read == READ_COMPARE || read == READ_DEPTH_ARRAY || read == READ_COMPARE_ARRAY;
+}
+
 static bool numeric_read(const shader_read read)
 {
-    return read == READ_NUMBER || read == READ_INT || read == READ_NUMBER_VOLUME || read == READ_INT_VOLUME;
+    return read == READ_NUMBER || read == READ_INT || read == READ_NUMBER_VOLUME || read == READ_INT_VOLUME
+        || read == READ_NUMBER_LAYERS || read == READ_INT_LAYERS;
+}
+
+// ...of an array's layers, or a cube's faces held as layers
+static bool layers_read(const shader_read read)
+{
+    return read == READ_NUMBER_LAYERS || read == READ_INT_LAYERS;
 }
 
 static bool volume_read(const shader_read read)
@@ -215,7 +236,7 @@ static bool volume_read(const shader_read read)
 // How a sampler reads for a way a texture is read: an array's as a texture's, as it's sampled the same way.
 static shader_read base_read(const shader_read read)
 {
-    return read == READ_ARRAY || read == READ_VOLUME ? READ_COLOR : read == READ_DEPTH_ARRAY ? READ_DEPTH : read == READ_COMPARE_ARRAY ? READ_COMPARE : read;
+    return read == READ_ARRAY || read == READ_VOLUME || read == READ_NUMBER_BLEND ? READ_COLOR : read == READ_DEPTH_ARRAY ? READ_DEPTH : read == READ_COMPARE_ARRAY ? READ_COMPARE : read;
 }
 
 int shader_size_words(const shader_texture *t)
@@ -322,11 +343,12 @@ static void put_textures(sb *o, const shader *sh)
             sb_printf(o, "@group(0) @binding(%d) var pixels%d: texture_storage_%sd<%s, write>;\n", 1 + 2 * i, i,
                       volume_read(t->read) ? "3" : "2", format);
         } else if (t && numeric_read(t->read)) {
-            sb_printf(o, "@group(0) @binding(%d) var pixels%d: texture_%sd<%s>;\n", 1 + 2 * i, i,
-                      volume_read(t->read) ? "3" : "2", t->read == READ_INT || t->read == READ_INT_VOLUME ? "i32" : "f32");
+            sb_printf(o, "@group(0) @binding(%d) var pixels%d: texture_%sd%s<%s>;\n", 1 + 2 * i, i,
+                      volume_read(t->read) ? "3" : "2", layers_read(t->read) ? "_array" : "",
+                      t->read == READ_INT || t->read == READ_INT_VOLUME || t->read == READ_INT_LAYERS ? "i32" : "f32");
         } else if (t) {
             sb_printf(o, "@group(0) @binding(%d) var pixels%d: %s;\n", 1 + 2 * i, i,
-                      t->read == READ_COLOR ? "texture_2d<f32>" : t->read == READ_CUBE ? "texture_cube<f32>"
+                      t->read == READ_COLOR || t->read == READ_NUMBER_BLEND ? "texture_2d<f32>" : t->read == READ_CUBE ? "texture_cube<f32>"
                       : t->read == READ_VOLUME ? "texture_3d<f32>" : t->read == READ_ARRAY ? "texture_2d_array<f32>" : t->read == READ_DEPTH_ARRAY ? "texture_depth_2d_array"
                       : "texture_depth_2d");
         }
@@ -341,7 +363,8 @@ static const char *read_name(const shader_read read)
 {
     return read == READ_COMPARE ? "COMPARE" : read == READ_DEPTH ? "DEPTH" : read == READ_CUBE ? "CUBE"
          : read == READ_NUMBER ? "NUMBER" : read == READ_INT ? "INT" : read == READ_NUMBER_VOLUME ? "NUMBER_VOLUME"
-         : read == READ_INT_VOLUME ? "INT_VOLUME"
+         : read == READ_INT_VOLUME ? "INT_VOLUME" : read == READ_NUMBER_BLEND ? "NUMBER_BLEND"
+         : read == READ_NUMBER_LAYERS ? "NUMBER_LAYERS" : read == READ_INT_LAYERS ? "INT_LAYERS"
          : read == READ_DATA ? "DATA" : read == READ_VOLUME ? "VOLUME" : read == READ_ARRAY ? "ARRAY" : read == READ_DEPTH_ARRAY ? "DEPTH_ARRAY" : "COLOR";
 }
 
@@ -360,7 +383,15 @@ void shader_put_texture_reads(sb *o, const shader *sh)
     for (int t = 0; t < sh->textures.count; t++) reads |= sh->textures.items[t].read != READ_COLOR;
     if (reads) {
         sb_put(o, "    .texture_reads = {");
-        for (int t = 0; t < sh->textures.count; t++) sb_printf(o, "%sTIDE_SHADER_READ_%s", t ? ", " : "", read_name(sh->textures.items[t].read));
+        for (int t = 0; t < sh->textures.count; t++) {
+            // A typed array's, cube's and volume's are read as any array's, cube's and volume's are: only what none
+            // reads as differs
+            const shader_texture *texture = &sh->textures.items[t];
+            const bool typed = texture->field && raw_sample_type(texture->field).kind != TY_COLOR;
+            sb_printf(o, "%sTIDE_SHADER_READ_%s", t ? ", " : "", typed && texture->read == READ_ARRAY ? "NUMBER_ARRAY"
+                      : typed && texture->read == READ_CUBE ? "NUMBER_CUBE"
+                      : typed && texture->read == READ_VOLUME ? "NUMBER_VOLUME_BLEND" : read_name(texture->read));
+        }
         sb_put(o, "},\n");
     }
     if (!samplers_own(sh)) {
@@ -578,6 +609,7 @@ static const field *optional_field_in(const decl *d, const decl **in)
 }
 
 static bool holds_data(type t);
+static const char *held_word(type t);
 
 // Whether the GPU has values of type `t`; says why not, at `at`.
 static bool type_fits(emit *em, const type t, const loc at)
@@ -607,9 +639,9 @@ static bool type_fits(emit *em, const type t, const loc at)
     }
     const char *why = "the GPU runs on bools, ints, floats, vectors, matrices, colors and structs of those";
     if (holds_data(t)) {
-        refuse(em, at, "%s holds a list, so code the GPU runs reads its fields, or passes it to a function or calls its method, "
+        refuse(em, at, "%s holds %s, so code the GPU runs reads its fields, or passes it to a function or calls its method, "
                        "by the name the frag or vert was given it: it can't be made, kept in a local, returned or picked there",
-               type_name(t));
+               type_name(t), held_word(t));
         diag_note("read its fields where it was given, or pass that name on to a function that takes one");
         return false;
     }
@@ -660,6 +692,9 @@ static bool type_fits(emit *em, const type t, const loc at)
     case TY_TEXTURE_ARRAY: why = "an array is read with 'array.Sample(uv, layer)', not kept as a GPU value"; break;
     case TY_DEPTH_TEXTURE_ARRAY:
         why = "an array's depth is read with 'depths.Sample(uv, layer)' or 'depths.Compare(uv, layer, value)', not kept as a GPU value";
+        break;
+    case TY_DEPTH_CUBEMAP:
+        why = "a cube's depth is read with 'depths.Sample(direction)' or 'depths.Compare(direction, value)', not kept as a GPU value";
         break;
     case TY_RENDER_TARGET: why = "a render target belongs to the CPU: sample its color as a Texture"; break;
     case TY_GPU_LIST:
@@ -837,6 +872,12 @@ static void put_zero(emit *em, const type t)
 // x) {`, a statement a line, a local declared with its type and a value, no
 // '?:', no parameter assigned to, GLSL's names for types, and atan2,
 // inversesqrt, floatBitsToInt and intBitsToFloat for WGSL's functions of them.
+//
+// A driver compiles a shader with every call written out where it's made, so
+// what a helper costs to compile is its size times its calls: a big game's
+// shaders were three quarters these functions. The ones called most (the
+// families, the noise) pick their values with select, and with & and | of
+// bools, rather than branch: the same values in a fraction of the code.
 
 static const char *const family_names[FAMILY_COUNT] = {"min", "max", "clamp", "saturate", "smoothstep", "pow", "atan2_"};
 static const int family_args[FAMILY_COUNT] = {2, 2, 3, 1, 3, 2, 2};
@@ -846,51 +887,33 @@ static const char *const family_scalars[FAMILY_COUNT] = {
     // With one NaN, the other. Each is asked, as a compiler that reckons without NaN may make the comparison its own
     // min or max, which says nothing of which it gives then
     "float tide_min1(float a, float b) {\n"
-    "    if (tide_nan(b)) { return a; }\n"
-    "    if (tide_nan(a)) { return b; }\n"
-    "    if (a < b) { return a; }\n"
-    "    return b;\n"
+    "    return select(select(select(b, a, a < b), b, (floatBitsToInt(a) & 0x7fffffff) > 0x7f800000), a, (floatBitsToInt(b) & 0x7fffffff) > 0x7f800000);\n"
     "}\n",
     "float tide_max1(float a, float b) {\n"
-    "    if (tide_nan(b)) { return a; }\n"
-    "    if (tide_nan(a)) { return b; }\n"
-    "    if (a > b) { return a; }\n"
-    "    return b;\n"
+    "    return select(select(select(b, a, a > b), b, (floatBitsToInt(a) & 0x7fffffff) > 0x7f800000), a, (floatBitsToInt(b) & 0x7fffffff) > 0x7f800000);\n"
     "}\n",
     // Always within its bounds: the lower one for NaN, and for bounds the wrong way around
     "float tide_clamp1(float a, float b, float c) {\n"
-    "    if (tide_nan(a)) { return b; }\n"
-    "    return tide_max1(b, tide_min1(c, a));\n"
+    "    return select(tide_max1(b, tide_min1(c, a)), b, (floatBitsToInt(a) & 0x7fffffff) > 0x7f800000);\n"
     "}\n",
     // 0 for NaN. Past that the languages' own clamp says what it does, between bounds the right way around
     "float tide_saturate1(float a) {\n"
-    "    if (tide_nan(a)) { return 0.0; }\n"
-    "    return clamp(a, 0.0, 1.0);\n"
+    "    return select(clamp(a, 0.0, 1.0), 0.0, (floatBitsToInt(a) & 0x7fffffff) > 0x7f800000);\n"
     "}\n",
     // The languages' own is undefined from an edge down to a lower one
     "float tide_smoothstep1(float a, float b, float c) {\n"
     "    float numerator = c - a;\n"
     "    float denominator = b - a;\n"
-    "    float divisor = denominator;\n"
-    "    if (divisor == 0.0) { divisor = 1.0; }\n"
-    "    float t = tide_saturate1(numerator / divisor);\n"
-    "    if (denominator == 0.0) {\n"
-    "        t = 0.0;\n"
-    "        if (floatBitsToInt(denominator) < 0) {\n"
-    "            if (numerator < 0.0) { t = 1.0; }\n"
-    "        } else if (numerator > 0.0) { t = 1.0; }\n"
-    "    }\n"
+    "    bool level = denominator == 0.0;\n"
+    "    float past = select(numerator, 0.0 - numerator, floatBitsToInt(denominator) < 0);\n"
+    "    float t = select(tide_saturate1(numerator / select(denominator, 1.0, level)), select(0.0, 1.0, past > 0.0), level);\n"
     "    return t * t * (3.0 - 2.0 * t);\n"
     "}\n",
     // The languages' own is undefined under 0: a whole power of a number under 0 is that of the number over 0, with its sign
     "float tide_pow1(float a, float b) {\n"
-    "    if (b == 0.0) { return 1.0; }\n"
-    "    bool w = a < 0.0 && floor(b) == b;\n"
-    "    float x = a;\n"
-    "    if (w) { x = -a; }\n"
-    "    float p = pow(x, b);\n"
-    "    if (w && floor(b * 0.5) * 2.0 != b) { return -p; }\n"
-    "    return p;\n"
+    "    bool w = (a < 0.0) & (floor(b) == b);\n"
+    "    float p = pow(select(a, -a, w), b);\n"
+    "    return select(select(p, -p, w & (floor(b * 0.5) * 2.0 != b)), 1.0, b == 0.0);\n"
     "}\n",
     // The languages' own is undefined at (0, 0)
     "float tide_atan2_1(float a, float b) {\n"
@@ -906,6 +929,7 @@ static const char *const helper_texts[H_COUNT] = {
     // return, as ANGLE's D3D11 warns of what an early one might leave unset
     [H_TRANSFER] = "float tide_tolinear1(float v) {\n"
                    "    float x = tide_saturate1(v);\n"
+                   "    if (x >= 1.0) { return 1.0; }\n"
                    "    if (x <= 0.04045) { return x / 12.92; }\n"
                    "    return pow((x + 0.055) / 1.055, 2.4);\n"
                    "}\n"
@@ -917,6 +941,7 @@ static const char *const helper_texts[H_COUNT] = {
                    "}\n"
                    "float tide_todisplay1(float v) {\n"
                    "    float x = tide_saturate1(v);\n"
+                   "    if (x >= 1.0) { return 1.0; }\n"
                    "    if (x <= 0.0031308) { return x * 12.92; }\n"
                    "    return 1.055 * pow(x, 1.0 / 2.4) - 0.055;\n"
                    "}\n"
@@ -926,6 +951,57 @@ static const char *const helper_texts[H_COUNT] = {
                    "vec4 tide_todisplay4(vec4 v) {\n"
                    "    return vec4(tide_todisplay3(v.rgb), v.a);\n"
                    "}\n",
+    [H_TOWARDS] = "float tide_movetowards1(float c, float t, float s) {\n"
+                  "    float d = t - c;\n"
+                  "    float r = c + s;\n"
+                  "    if (d < 0.0) { r = c - s; }\n"
+                  "    if (abs(d) <= s) { r = t; }\n"
+                  "    return r;\n"
+                  "}\n"
+                  "vec2 tide_movetowards2(vec2 c, vec2 t, float s) {\n"
+                  "    vec2 d = t - c;\n"
+                  "    float l = sqrt(dot(d, d));\n"
+                  "    vec2 r = t;\n"
+                  "    if (l > s) { if (l > 0.0) { r = c + d * (s / l); } }\n"
+                  "    return r;\n"
+                  "}\n"
+                  "vec3 tide_movetowards3(vec3 c, vec3 t, float s) {\n"
+                  "    vec3 d = t - c;\n"
+                  "    float l = sqrt(dot(d, d));\n"
+                  "    vec3 r = t;\n"
+                  "    if (l > s) { if (l > 0.0) { r = c + d * (s / l); } }\n"
+                  "    return r;\n"
+                  "}\n"
+                  "float tide_deltaangle(float a, float b) {\n"
+                  "    float d = b - a;\n"
+                  "    float turn = d - floor(d / 6.2831855) * 6.2831855;\n"
+                  "    float r = 0.0;\n"
+                  "    if (turn >= 0.0) {\n"
+                  "        if (turn <= 6.2831855) {\n"
+                  "            r = turn;\n"
+                  "            if (turn > 3.1415927) { r = turn - 6.2831855; }\n"
+                  "        }\n"
+                  "    }\n"
+                  "    return r;\n"
+                  "}\n"
+                  "float tide_wrapangle(float a) {\n"
+                  "    return tide_deltaangle(0.0, a);\n"
+                  "}\n"
+                  "float tide_movetowardsangle(float c, float t, float s) {\n"
+                  "    return tide_movetowards1(c, c + tide_deltaangle(c, t), s);\n"
+                  "}\n"
+                  "float tide_damp_share(float rate, float dt) {\n"
+                  "    return tide_saturate1(1.0 - exp(0.0 - rate * dt));\n"
+                  "}\n"
+                  "float tide_damp1(float c, float t, float rate, float dt) {\n"
+                  "    return c + (t - c) * tide_damp_share(rate, dt);\n"
+                  "}\n"
+                  "vec2 tide_damp2(vec2 c, vec2 t, float rate, float dt) {\n"
+                  "    return c + (t - c) * tide_damp_share(rate, dt);\n"
+                  "}\n"
+                  "vec3 tide_damp3(vec3 c, vec3 t, float rate, float dt) {\n"
+                  "    return c + (t - c) * tide_damp_share(rate, dt);\n"
+                  "}\n",
     [H_EASE] = "float tide_ease(float x, int kind) {\n"
                "    float t = tide_saturate1(x);\n"
                "    float u = 1.0 - t;\n"
@@ -998,33 +1074,19 @@ static const char *const helper_texts[H_COUNT] = {
                "}\n",
     // A unit gradient in 8 directions, the axes and the diagonals, dotted with (x, y)
     [H_GRAD2] = "float tide_grad2(int h, float x, float y) {\n"
-                "    float gx = 1.0;\n"
-                "    float gy = 0.0;\n"
-                "    if ((h & 4) != 0) {\n"
-                "        gx = 0.70710678;\n"
-                "        gy = 0.70710678;\n"
-                "        if ((h & 1) != 0) { gx = -0.70710678; }\n"
-                "        if ((h & 2) != 0) { gy = -0.70710678; }\n"
-                "    } else if ((h & 2) != 0) {\n"
-                "        gx = 0.0;\n"
-                "        gy = 1.0;\n"
-                "        if ((h & 1) != 0) { gy = -1.0; }\n"
-                "    } else if ((h & 1) != 0) {\n"
-                "        gx = -1.0;\n"
-                "    }\n"
+                "    bool one = (h & 1) != 0;\n"
+                "    bool two = (h & 2) != 0;\n"
+                "    bool four = (h & 4) != 0;\n"
+                "    float gx = select(select(select(1.0, -1.0, one), 0.0, two), select(0.70710678, -0.70710678, one), four);\n"
+                "    float gy = select(select(0.0, select(1.0, -1.0, one), two), select(0.70710678, -0.70710678, two), four);\n"
                 "    return gx * x + gy * y;\n"
                 "}\n",
     // A gradient along one of a cube's 12 edges (Perlin's 16, four of them twice), dotted with (x, y, z)
     [H_GRAD3] = "float tide_grad3(int h, float x, float y, float z) {\n"
                 "    int k = h & 15;\n"
-                "    float u = x;\n"
-                "    float v = y;\n"
-                "    if (k >= 8) { u = y; }\n"
-                "    if (k >= 4) { v = z; }\n"
-                "    if (k == 12 || k == 14) { v = x; }\n"
-                "    if ((k & 1) != 0) { u = -u; }\n"
-                "    if ((k & 2) != 0) { v = -v; }\n"
-                "    return u + v;\n"
+                "    float u = select(x, y, k >= 8);\n"
+                "    float v = select(select(y, z, k >= 4), x, (k == 12) | (k == 14));\n"
+                "    return select(u, -u, (k & 1) != 0) + select(v, -v, (k & 2) != 0);\n"
                 "}\n",
     [H_PERLIN2] = "float tide_perlin2(vec2 p, int seed) {\n"
                   "    vec2 f = floor(p);\n"
@@ -1071,9 +1133,8 @@ static const char *const helper_texts[H_COUNT] = {
     // A simplex's corner: its bump, times its gradient dotted with the offset from it
     [H_SIMPLEX2] = "float tide_corner2(int h, float x, float y) {\n"
                    "    float t = 0.5 - x * x - y * y;\n"
-                   "    if (t < 0.0) { return 0.0; }\n"
                    "    float tt = t * t;\n"
-                   "    return tt * tt * tide_grad2(h, x, y);\n"
+                   "    return select(tt * tt * tide_grad2(h, x, y), 0.0, t < 0.0);\n"
                    "}\n"
                    "float tide_simplex2(vec2 p, int seed) {\n"
                    "    float s = (p.x + p.y) * 0.36602540;\n"
@@ -1082,12 +1143,8 @@ static const char *const helper_texts[H_COUNT] = {
                    "    float t = (fi + fj) * 0.21132487;\n"
                    "    float x0 = p.x - (fi - t);\n"
                    "    float y0 = p.y - (fj - t);\n"
-                   "    int i1 = 0;\n"
-                   "    int j1 = 1;\n"
-                   "    if (x0 > y0) {\n"
-                   "        i1 = 1;\n"
-                   "        j1 = 0;\n"
-                   "    }\n"
+                   "    int i1 = select(0, 1, x0 > y0);\n"
+                   "    int j1 = 1 - i1;\n"
                    "    float x1 = x0 - float(i1) + 0.21132487;\n"
                    "    float y1 = y0 - float(j1) + 0.21132487;\n"
                    "    float x2 = x0 - 1.0 + 0.42264973;\n"
@@ -1108,15 +1165,12 @@ static const char *const helper_texts[H_COUNT] = {
                    "    return (v << r) | (v >> (32u - r));\n"
                    "}\n"
                    "uint tide_simplex_pick(uint a, uint b, int high) {\n"
-                   "    uint v = a;\n"
-                   "    if (high != 0) { v = b; }\n"
-                   "    return v;\n"
+                   "    return select(a, b, high != 0);\n"
                    "}\n"
                    "float tide_corner3(int h, float x, float y, float z) {\n"
                    "    float t = 0.6 - x * x - y * y - z * z;\n"
-                   "    if (t < 0.0) { return 0.0; }\n"
                    "    float tt = t * t;\n"
-                   "    return tt * tt * tide_grad3(h, x, y, z);\n"
+                   "    return select(tt * tt * tide_grad3(h, x, y, z), 0.0, t < 0.0);\n"
                    "}\n"
                    "float tide_simplex3(vec3 p, int seed) {\n"
                    "    float s = (p.x + p.y + p.z) * 0.33333334;\n"
@@ -1127,18 +1181,12 @@ static const char *const helper_texts[H_COUNT] = {
                    "    float x0 = p.x - (fi - t);\n"
                    "    float y0 = p.y - (fj - t);\n"
                    "    float z0 = p.z - (fk - t);\n"
-                   "    int i1 = 0;\n"
-                   "    int j1 = 0;\n"
-                   "    int k1 = 0;\n"
-                   "    int i2 = 0;\n"
-                   "    int j2 = 0;\n"
-                   "    int k2 = 0;\n"
-                   "    if (x0 >= y0 && x0 >= z0) { i1 = 1; }\n"
-                   "    if (y0 > x0 && y0 >= z0) { j1 = 1; }\n"
-                   "    if (z0 > x0 && z0 > y0) { k1 = 1; }\n"
-                   "    if (x0 >= y0 || x0 >= z0) { i2 = 1; }\n"
-                   "    if (y0 > x0 || y0 >= z0) { j2 = 1; }\n"
-                   "    if (z0 > x0 || z0 > y0) { k2 = 1; }\n"
+                   "    int i1 = select(0, 1, (x0 >= y0) & (x0 >= z0));\n"
+                   "    int j1 = select(0, 1, (y0 > x0) & (y0 >= z0));\n"
+                   "    int k1 = select(0, 1, (z0 > x0) & (z0 > y0));\n"
+                   "    int i2 = select(0, 1, (x0 >= y0) | (x0 >= z0));\n"
+                   "    int j2 = select(0, 1, (y0 > x0) | (y0 >= z0));\n"
+                   "    int k2 = select(0, 1, (z0 > x0) | (z0 > y0));\n"
                    "    float x1 = x0 - float(i1) + 0.16666667;\n"
                    "    float y1 = y0 - float(j1) + 0.16666667;\n"
                    "    float z1 = z0 - float(k1) + 0.16666667;\n"
@@ -1640,13 +1688,9 @@ static void need(emit *em, const int h)
         const int family = (h - H_FAMILIES) / 4;
         if ((h - H_FAMILIES) % 4 > 0) {
             need(em, family_helper(family, 1));
-        } else if (family == FAMILY_MIN || family == FAMILY_MAX) {
-            need(em, H_NAN);
         } else if (family == FAMILY_CLAMP) {
             need(em, family_helper(FAMILY_MIN, 1));
             need(em, family_helper(FAMILY_MAX, 1));
-        } else if (family == FAMILY_SATURATE) {
-            need(em, H_NAN);
         } else if (family == FAMILY_SMOOTHSTEP) {
             need(em, family_helper(FAMILY_SATURATE, 1));
         }
@@ -1654,6 +1698,7 @@ static void need(emit *em, const int h)
     }
     switch (h) {
     case H_TRANSFER:
+    case H_TOWARDS:
     case H_EASE:
         need(em, family_helper(FAMILY_SATURATE, 1));
         break;
@@ -1798,9 +1843,24 @@ static void put_spelled(sb *o, const char *text, const size_t len)
     }
 }
 
+// Whether the rest of a helper's function, from `from`, gives the local a value again: `name = `, or a part of it
+// (`name.x = `, `name[i] = `).
+static bool helper_assigns(const char *from, const char *name, const size_t name_len)
+{
+    for (const char *p = from; *p && !(p[0] == '\n' && p[1] == '}'); p++) {
+        if (word_char(p[0]) || !word_char(p[1]) || strncmp(p + 1, name, name_len) != 0 || word_char(p[1 + name_len])) continue;
+        const char *after = p + 1 + name_len;
+        while (*after == '.' || *after == '[' || *after == ']' || word_char(*after)) after++;
+        if (after[0] == ' ' && after[1] == '=' && after[2] == ' ') return true;
+    }
+    return false;
+}
+
 // A helper, from the notation helper_text writes it in, as WGSL has it. WGSL
 // declares the other way around: a function's head is `fn name(a: T) -> T`,
-// and a local `var name: T = value`.
+// and a local `let name: T = value`, or `var` for one the function gives a
+// value again: a driver compiles a shader with every call written out where
+// it's made, and a `var` is a place it has to prove is one value first.
 static void put_helper(sb *o, const char *text)
 {
     for (const char *line = text; *line;) {
@@ -1829,7 +1889,8 @@ static void put_helper(sb *o, const char *text)
             sb_printf(o, ") -> %s {\n", type);
         } else if (type && name_len && strncmp(name + name_len, " = ", 3) == 0) {
             const char *value = name + name_len + 3;
-            sb_printf(o, "%.*svar %.*s: %s = ", (int)indent, line, (int)name_len, name, type);
+            sb_printf(o, "%.*s%s %.*s: %s = ", (int)indent, line, helper_assigns(end, name, name_len) ? "var" : "let", (int)name_len,
+                      name, type);
             put_spelled(o, value, (size_t)(end - value));
             sb_put(o, "\n");
         } else {
@@ -2083,22 +2144,50 @@ static const char *data_word(const type t)
 static bool holds_data(const type t)
 {
     if (!is_struct_like(t) || !t.decl) return false;
+    // A component's or a singleton's texture is sampled where it's given too (Textures of what a function is given)
+    const bool sampled = t.kind == TY_COMPONENT || t.kind == TY_SINGLETON;
     for (int i = 0; i < t.decl->fields.count; i++) {
-        if (is_data(t.decl->fields.items[i].type) || t.decl->fields.items[i].type.kind == TY_GPU_LIST) return true;
+        const type held = t.decl->fields.items[i].type;
+        if (is_data(held) || held.kind == TY_GPU_LIST || (sampled && is_sampled(held))) return true;
     }
     const decl *part = t.kind == TY_STRUCT ? NULL : t.decl->local_part;
     for (int i = 0; part && i < part->fields.count; i++) {
-        if (is_data(part->fields.items[i].type) || part->fields.items[i].type.kind == TY_GPU_LIST) return true;
+        const type held = part->fields.items[i].type;
+        if (is_data(held) || held.kind == TY_GPU_LIST || (sampled && is_sampled(held))) return true;
     }
     return false;
+}
+
+bool shader_type_given(const type t)
+{
+    return holds_data(t);
+}
+
+// What such a type holds, for a message: "a list", or "a texture" for one with textures alone.
+static const char *held_word(const type t)
+{
+    if (!is_struct_like(t) || !t.decl) return "a list";
+    for (int i = 0; i < t.decl->fields.count; i++) {
+        if (is_data(t.decl->fields.items[i].type) || t.decl->fields.items[i].type.kind == TY_GPU_LIST) return "a list";
+    }
+    const decl *part = t.kind == TY_STRUCT ? NULL : t.decl->local_part;
+    for (int i = 0; part && i < part->fields.count; i++) {
+        if (is_data(part->fields.items[i].type) || part->fields.items[i].type.kind == TY_GPU_LIST) return "a list";
+    }
+    return "a texture";
+}
+
+static type owner_type(const decl *owner)
+{
+    return (type){owner->kind == DECL_COMPONENT ? TY_COMPONENT : owner->kind == DECL_SINGLETON ? TY_SINGLETON : TY_STRUCT,
+                  (decl *)(uintptr_t)owner};
 }
 
 // A method of a type that holds a list: its receiver is given, never passed.
 static bool given_self(const decl *fn)
 {
     return fn && fn->owner && !fn->is_operator && !fn->is_interpolate && fn->kind != DECL_SHADER
-        && holds_data((type){fn->owner->kind == DECL_COMPONENT ? TY_COMPONENT
-                             : fn->owner->kind == DECL_SINGLETON ? TY_SINGLETON : TY_STRUCT, fn->owner});
+        && holds_data(owner_type(fn->owner));
 }
 
 // Whether `e` names a struct that holds a list, one the code was given: the
@@ -2621,6 +2710,68 @@ static int need_pick(emit *em, const type t)
 }
 
 // array[i]: its element, or while an assignment's target is written, the place itself.
+// A list constant written out (`const List<int> QUAD = [0, 1, 2];`), when `e` names one: the GPU reads it as the
+// array of its values (decl.list_array), written where it's read as any constant is. NULL otherwise.
+static const decl *listed_constant(const expr *e)
+{
+    if ((e->kind != E_NAME && e->kind != E_MEMBER) || e->bind != BIND_CONST) return NULL;
+    const decl *k = e->constant;
+    return k && !k->build_fn && k->list_literal && e->type.kind == TY_LIST ? k : NULL;
+}
+
+// The longest list constant the GPU takes: as long as an array can be
+#define SHADER_LISTED_MOST 4096
+
+// A list constant's values as the array the GPU reads, or false (said) where it has none to read.
+static bool put_listed(emit *em, const decl *k, const loc at)
+{
+    if (k->list_array.kind != TY_ARRAY) {
+        refuse(em, at, "'" STR_FMT "' is an empty list: code the GPU runs reads its elements, and it has none",
+               STR_ARG(k->name));
+        return false;
+    }
+    if (k->list_literal->args.count > SHADER_LISTED_MOST) {
+        refuse(em, at, "'" STR_FMT "' has %d values, and code the GPU runs reads a list constant of %d at most",
+               STR_ARG(k->name), k->list_literal->args.count, SHADER_LISTED_MOST);
+        return false;
+    }
+    if (!type_fits(em, k->list_array, at)) return false;
+    const type element = k->list_array.decl->fields.items[0].type;
+    sb_printf(em->o, "%s(", ty(em, k->list_array));
+    for (int i = 0; i < k->list_literal->args.count; i++) {
+        if (i) sb_put(em->o, ", ");
+        ex_as(em, k->list_literal->args.items[i], element);
+    }
+    sb_put(em->o, ")");
+    return true;
+}
+
+// A list constant read whole, which code the GPU runs has no list to hold
+static void refuse_whole_list(emit *em, const expr *e)
+{
+    const decl *k = e->constant;
+    if (k->build_fn) {
+        refuse(em, e->at, "'" STR_FMT "' is made by build code, and code the GPU runs can't read it yet: pass its values to "
+                          "the draw in its values struct", STR_ARG(k->name));
+        return;
+    }
+    refuse(em, e->at, "code the GPU runs reads a list constant by its elements and count, '" STR_FMT "[i]' and '" STR_FMT
+                      ".count', or goes through it with foreach: it makes no list to pass on", STR_ARG(k->name), STR_ARG(k->name));
+}
+
+static void ex_listed_index(emit *em, const decl *k, const expr *e)
+{
+    if (k->list_array.kind != TY_ARRAY || k->list_literal->args.count > SHADER_LISTED_MOST) {
+        put_listed(em, k, e->at);
+        return;
+    }
+    sb_printf(em->o, "tide_el%d(", need_array(em, k->list_array.decl));
+    if (!put_listed(em, k, e->at)) return;
+    sb_put(em->o, ", ");
+    ex_as(em, e->lhs, (type){TY_INT, NULL});
+    sb_put(em->o, ")");
+}
+
 static void ex_array_index(emit *em, const expr *e)
 {
     const type array = e->object->type;
@@ -2744,6 +2895,19 @@ static bool negated_literal(const expr *e)
     return e->lhs->kind == E_INT && e->lhs->type.kind != TY_LONG && int_literal(e->lhs) <= 2147483647ll;
 }
 
+// Whether a SampleLevel's level is written as the base image itself: a number of 0 or less (a GPU reads a level
+// below 0 as 0), so the read between two levels there is the base image's blend alone, and no smaller images are
+// needed for it.
+static bool base_level(const expr *level)
+{
+    if (negated_literal(level)) return true; // -0, -1, -0.5: none above 0
+    if (level->kind == E_INT) return int_literal(level) <= 0;
+    if (level->kind != E_FLOAT || level->is_degrees) return false;
+    char text[64];
+    snprintf(text, sizeof text, STR_FMT, STR_ARG(level->text));
+    return strtod(text, NULL) <= 0.0;
+}
+
 // Whether a mut argument can be handed over as it is in WGSL, which takes a
 // pointer to a whole variable: a local, or a parameter that's one already.
 static bool is_whole_variable(const expr *e)
@@ -2818,9 +2982,27 @@ static void ex_name(emit *em, const expr *e)
             return;
         }
         if (em->checking && em->code == em->root) em->root->params.items[param_index(em->root, p)].whole = true;
+        int floats = 0, ints = 0;
+        if (holds_data(p->type) && type_words(p->type, &floats, &ints)) {
+            // A component or singleton whose textures are all local fields: a value of its other fields, as the
+            // frag's own is (Textures of what's given), which has no textures and goes nowhere it does
+            if (!type_fits(em, p->type, e->at)) return;
+            sb_printf(em->o, "%s(", ty(em, p->type));
+            bool first = true;
+            for (int i = 0; i < p->type.decl->fields.count; i++) {
+                const field *f = &p->type.decl->fields.items[i];
+                if (f->hidden) continue;
+                note_given_field(em, e, f, false);
+                if (!first) sb_put(em->o, ", ");
+                first = false;
+                put_bound(em, p->type.decl, f, f->type);
+            }
+            sb_put(em->o, ")");
+            return;
+        }
         if (holds_data(p->type)) { // A function's struct that holds a list: it's its caller's, read by its fields
-            refuse(em, e->at, "'" STR_FMT "' holds a list, so code the GPU runs reads it by its fields or passes it on by its "
-                              "name: it's not a value to keep or pick", STR_ARG(e->name));
+            refuse(em, e->at, "'" STR_FMT "' holds %s, so code the GPU runs reads it by its fields or passes it on by its "
+                              "name: it's not a value to keep or pick", STR_ARG(e->name), held_word(p->type));
             diag_note("read its fields, '" STR_FMT "." STR_FMT "', or pass '" STR_FMT "' to a function that takes a '%s'",
                       STR_ARG(e->name), STR_ARG(p->type.decl->fields.items[0].name), STR_ARG(e->name), type_name(p->type));
             return;
@@ -2841,7 +3023,12 @@ static void ex_name(emit *em, const expr *e)
         put_self(em);
         sb_printf(em->o, ".%s", field_name(e->field));
         return;
+    case BIND_TWEAK: // A function the GPU runs too reads a tweak as the build has it
     case BIND_CONST:
+        if (e->constant->return_type.kind == TY_LIST) {
+            refuse_whole_list(em, e);
+            return;
+        }
         ex_as(em, e->constant->value, e->constant->return_type);
         return;
     default:
@@ -2953,7 +3140,15 @@ static void ex_member(emit *em, const expr *e)
         put_int(em, e->object->type.decl->array_length);
         return;
     }
+    if (listed_constant(e->object) && str_eq_c(e->member, "count")) { // How many a list constant was written with
+        put_int(em, listed_constant(e->object)->list_literal->args.count);
+        return;
+    }
     if (e->constant) {
+        if (e->constant->return_type.kind == TY_LIST) {
+            refuse_whole_list(em, e);
+            return;
+        }
         ex_as(em, e->constant->value, e->constant->return_type);
         return;
     }
@@ -3029,15 +3224,10 @@ static void ex_member(emit *em, const expr *e)
         }
         return;
     }
-    // A field of the frag's or vert's own vertex: which ones it reads decides what the mesh's corners pass on
+    // A field of the frag's or vert's own vertex: which ones it reads decides what the mesh's corners pass on. A frag's
+    // int fields come from the triangle's first corner, unblended, as a vert's handed ints do (put_varyings)
     if (em->checking && em->code == em->root && obj->kind == E_NAME && obj->bind == BIND_PARAM && e->field && obj->param->reads) {
         em->root->params.items[param_index(em->root, obj->param)].reads[field_index(obj->param->type.decl, e->field)] = true;
-        if (em->root->is_frag && param_index(em->root, obj->param) == 0 && type_is_int_based(e->type)) {
-            refuse(em, e->at, "'" STR_FMT "' is made of ints, which don't blend across a triangle, so a frag can't read it",
-                   STR_ARG(e->member));
-            diag_note("a vert can read it; for the pixels, keep it as a float in the vertex");
-            return;
-        }
         sb_printf(em->o, is_pointer(obj->param) ? "(*%s).%s" : "%s.%s", local_name(obj->param->name), field_name(e->field));
         return;
     }
@@ -3151,6 +3341,15 @@ static void put_binary(emit *em, const tok_kind op, const expr *l, const expr *r
         ex(em, l);
         sb_printf(em->o, " %s ", op_text(op));
         ex(em, r);
+    } else if ((op == T_EQ || op == T_NE) && (type_dim(lt) >= 2 || lt.kind == TY_COLOR)) {
+        // Two vectors or colors: one bool of every component, where WGSL's == gives a bool for each. An int vector
+        // beside a float one is a float vector, as for + and -
+        const bool floats = type_is_float_based(lt) || type_is_float_based(rt);
+        sb_put(em->o, op == T_EQ ? "all(" : "any(");
+        ex_as(em, l, floats ? as_float(lt) : lt);
+        sb_printf(em->o, " %s ", op_text(op));
+        ex_as(em, r, floats ? as_float(rt) : rt);
+        sb_put(em->o, ")");
     } else if (op == T_EQ || op == T_NE || op == T_LT || op == T_LE || op == T_GT || op == T_GE) {
         // Numbers compare as floats when either is one
         const bool floats = lt.kind == TY_FLOAT || rt.kind == TY_FLOAT;
@@ -3276,8 +3475,12 @@ static void ex_math(emit *em, const expr *e)
                   "'low = int(x)' and 'high = int(x >> 32)'");
         return;
     }
-    // The compiler folds nothing here: a constant out of a function's range is an error to WGSL, not a value
-    em->defuse++;
+    // The compiler folds nothing here: a constant out of a function's range is an error to WGSL, not a value. WGSL
+    // only works out a call whose arguments are all constants, so a literal beside anything else goes as it is: each
+    // tide_f is a call the driver writes out, and a big game's shaders had twenty thousand
+    int folds = 1;
+    for (int i = 0; i < e->args.count; i++) folds = folds && is_const(e->args.items[i]);
+    em->defuse += folds;
     static const char *const eases[] = {"EaseIn", "EaseOut", "EaseInOut", "EaseInBack", "EaseOutBack"};
     for (int k = 0; k < 5; k++) {
         if (!str_eq_c(e->name, eases[k])) continue;
@@ -3285,13 +3488,20 @@ static void ex_math(emit *em, const expr *e)
         sb_put(em->o, "tide_ease(");
         put_arg(em, e, 0);
         sb_printf(em->o, ", %d)", k);
-        em->defuse--;
+        em->defuse -= folds;
         return;
     }
     if (str_eq_c(e->name, "ToLinear") || str_eq_c(e->name, "ToDisplay")) {
         char name[32];
         snprintf(name, sizeof name, "tide_%s%d", str_eq_c(e->name, "ToLinear") ? "tolinear" : "todisplay", dim);
         put_helper_call(em, e, H_TRANSFER, name);
+    } else if (str_eq_c(e->name, "MoveTowards") || str_eq_c(e->name, "Damp")) {
+        char name[32];
+        snprintf(name, sizeof name, "tide_%s%d", str_eq_c(e->name, "Damp") ? "damp" : "movetowards", dim);
+        put_helper_call(em, e, H_TOWARDS, name);
+    } else if (str_eq_c(e->name, "DeltaAngle") || str_eq_c(e->name, "WrapAngle") || str_eq_c(e->name, "MoveTowardsAngle")) {
+        put_helper_call(em, e, H_TOWARDS, str_eq_c(e->name, "DeltaAngle") ? "tide_deltaangle"
+                                          : str_eq_c(e->name, "WrapAngle") ? "tide_wrapangle" : "tide_movetowardsangle");
     } else if ((str_eq_c(e->name, "Min") || str_eq_c(e->name, "Max")) && floats) { // With one NaN, the other, as on the CPU
         put_family_call(em, e, str_eq_c(e->name, "Min") ? FAMILY_MIN : FAMILY_MAX, dim);
     } else if (str_eq_c(e->name, "Clamp") && floats) {
@@ -3427,7 +3637,7 @@ static void ex_math(emit *em, const expr *e)
             if (str_eq_c(e->name, same_math[i].name)) fn = same_math[i].wgsl;
         }
         if (!fn) { // A function Math gains goes here too, or says why it can't
-            em->defuse--;
+            em->defuse -= folds;
             refuse(em, e->at, "Math." STR_FMT " isn't on the GPU yet", STR_ARG(e->name));
             diag_note("work it out on the CPU, in the view, and keep the result in a component or a singleton the code reads");
             return;
@@ -3435,7 +3645,7 @@ static void ex_math(emit *em, const expr *e)
         if (helper >= 0) need(em, helper);
         put_call(em, e, fn);
     }
-    em->defuse--;
+    em->defuse -= folds;
 }
 
 // quaternion.AxisAngle, float4x4.TRS and the others: tide/math.h's, written out.
@@ -3590,15 +3800,65 @@ bool field_is_raw(const field *f)
     return false;
 }
 
+// Where an image's static role comes from, beyond its declaration's own name (a field, an asset, a parameter): an
+// element of a marked glob's list or map (`maps[i]`, `maps["a.png"]`) or of a marked borrowed collection, the
+// variable of a `foreach` over one, a local that isn't mut (its initializer's), and a `?:` or a switch whose every
+// arm has the role. `raw` picks [Raw] (and the typed [Raw(T)]), else [Linear]. A role is never added or dropped
+// along the way: what has none of these has the role of its declaration alone.
+static bool declared_role(const expr *e, const bool raw, const int depth);
+
+bool texture_collection(const type t)
+{
+    if ((t.kind != TY_LIST && t.kind != TY_MAP) || !t.decl) return false;
+    if (t.kind == TY_MAP && (t.decl->fields.count < 2 || t.decl->fields.items[0].type.kind != TY_STRING)) return false;
+    return t.decl->fields.items[t.kind == TY_MAP ? 1 : 0].type.kind == TY_TEXTURE;
+}
+
+static bool role_of_collection(const expr *e, const bool raw)
+{
+    if (!e) return false;
+    if (e->bind == BIND_ASSET && e->constant && e->constant->asset_many)
+        return raw ? e->constant->sample_raw : e->constant->sample_linear;
+    if (e->kind == E_NAME && e->bind == BIND_PARAM && e->param && texture_collection(e->param->type))
+        return raw ? e->param->raw_role : e->param->linear_role;
+    return false;
+}
+
+static bool declared_role(const expr *e, const bool raw, const int depth)
+{
+    if (!e || depth > 16) return false;
+    if (e->bind == BIND_PARAM && e->param && !e->image_place) {
+        if (texture_collection(e->param->type)) return false; // Its elements have the role, not the collection
+        return raw ? e->param->sample_role.len || e->param->raw_role : e->param->linear_role;
+    }
+    if (e->bind == BIND_ASSET && e->constant) return !e->constant->asset_many && (raw ? e->constant->sample_raw : e->constant->sample_linear);
+    if (e->kind == E_INDEX && role_of_collection(e->object, raw)) return true;
+    if (e->kind == E_NAME && e->bind == BIND_LOCAL && e->local) {
+        const stmt *local = e->local;
+        if (local->kind == S_FOREACH) return local->type.kind == TY_TEXTURE && role_of_collection(local->value, raw);
+        return local->kind == S_VAR && !local->is_mut && !local->assigned && !local->delayed && !local->out_decl
+            && declared_role(local->value, raw, depth + 1);
+    }
+    // `entry.value` of a foreach over a marked glob's map
+    if (e->kind == E_MEMBER && e->object && e->object->kind == E_NAME && e->object->bind == BIND_LOCAL && e->object->local
+        && e->object->local->kind == S_FOREACH && str_eq_c(e->member, "value") && e->type.kind == TY_TEXTURE)
+        return role_of_collection(e->object->local->value, raw);
+    if (e->kind == E_CONDITIONAL) return declared_role(e->lhs, raw, depth + 1) && declared_role(e->rhs, raw, depth + 1);
+    if (e->kind == E_SWITCH) {
+        for (int i = 0; i < e->args.count; i++) if (!declared_role(e->args.items[i], raw, depth + 1)) return false;
+        return e->args.count > 0;
+    }
+    if (!e->field) return false;
+    if (raw) {
+        return (e->type.kind == TY_GRID || e->type.kind == TY_TEXTURE || e->type.kind == TY_TEXTURE3D || e->type.kind == TY_TEXTURE_ARRAY
+                || e->type.kind == TY_CUBEMAP) && field_is_raw(e->field);
+    }
+    return field_is_linear(e->field);
+}
+
 bool declared_raw(const expr *texture)
 {
-    if (!texture) return false;
-    if (texture->bind == BIND_PARAM && texture->param && texture->param->sample_role.len) return true;
-    if (texture->bind == BIND_ASSET && texture->constant) return texture->constant->sample_raw;
-    return texture->field
-           && (texture->type.kind == TY_GRID || texture->type.kind == TY_TEXTURE || texture->type.kind == TY_TEXTURE3D || texture->type.kind == TY_TEXTURE_ARRAY
-               || texture->type.kind == TY_CUBEMAP)
-           && field_is_raw(texture->field);
+    return declared_role(texture, true, 0);
 }
 
 bool field_is_linear(const field *f)
@@ -3611,9 +3871,7 @@ bool field_is_linear(const field *f)
 
 bool declared_linear(const expr *texture)
 {
-    if (!texture) return false;
-    if (texture->bind == BIND_ASSET && texture->constant) return texture->constant->sample_linear;
-    return texture->field && field_is_linear(texture->field);
+    return declared_role(texture, false, 0);
 }
 
 type raw_sample_type(const field *image)
@@ -3631,14 +3889,45 @@ type raw_sample_type(const field *image)
     return (type){TY_COLOR, NULL};
 }
 
+// Whether image `given` fits where a texture is read as `want` (declared_image_type): the same role, or a
+// Grid2<float>'s, which a Color read takes as (r, 0, 0, 1) and a [Raw(float)] one as its number.
+bool image_role_fits(const expr *given, const type want)
+{
+    if (declared_image_type(given).kind == want.kind) return true;
+    return given && want.kind == TY_FLOAT && type_is_texture_grid(given->type)
+        && given->type.decl->fields.items[0].type.kind == TY_FLOAT;
+}
+
+type param_sample_type(const param *p)
+{
+    if (!p || !p->sample_role.len) return (type){TY_COLOR, NULL};
+    const str role = p->sample_role;
+    return (type){str_eq_c(role, "float") ? TY_FLOAT : str_eq_c(role, "float2") ? TY_FLOAT2 : str_eq_c(role, "int") ? TY_INT : TY_FLOAT4, NULL};
+}
+
+// ...following what an image's role follows (declared_role): a local that isn't mut keeps its initializer's, and a
+// choice its arms' (a choice of two roles is an error of its own, check.c's note_role_use, so its first arm says).
+static type image_type_of(const expr *image, const int depth)
+{
+    if (!image || depth > 16 || declared_linear(image)) return (type){TY_COLOR, NULL};
+    if (image->bind == BIND_PARAM && image->param && image->param->sample_role.len && !image->image_place)
+        return param_sample_type(image->param);
+    // A Grid2 of numbers is read as its cells are (Grid2<float2> as float2s...), wherever it's read as a texture
+    const type numbers = type_number_grid_role(image->type);
+    if (numbers.kind != TY_ERROR) return numbers;
+    if (image->kind == E_NAME && image->bind == BIND_LOCAL && image->local) {
+        const stmt *local = image->local;
+        const bool kept = local->kind == S_VAR && !local->is_mut && !local->assigned && !local->delayed && !local->out_decl;
+        return kept ? image_type_of(local->value, depth + 1) : (type){TY_COLOR, NULL};
+    }
+    if (image->kind == E_CONDITIONAL) return image_type_of(image->lhs, depth + 1);
+    if (image->kind == E_SWITCH) return image->args.count ? image_type_of(image->args.items[0], depth + 1) : (type){TY_COLOR, NULL};
+    return raw_sample_type(image->field);
+}
+
 type declared_image_type(const expr *image)
 {
-    if (declared_linear(image)) return (type){TY_COLOR, NULL};
-    if (image && image->bind == BIND_PARAM && image->param && image->param->sample_role.len) {
-        const str role = image->param->sample_role;
-        return (type){str_eq_c(role, "float") ? TY_FLOAT : str_eq_c(role, "float2") ? TY_FLOAT2 : str_eq_c(role, "int") ? TY_INT : TY_FLOAT4, NULL};
-    }
-    return raw_sample_type(image ? image->field : NULL);
+    return image_type_of(image, 0);
 }
 
 void declared_sampling(const expr *texture, int *filter, int *wrap)
@@ -3687,7 +3976,7 @@ static const char *filters_named(const program *prog)
 static int known_filter(const expr *e)
 {
     const expr *of = e->object;
-    if (of->type.kind == TY_DEPTH_TEXTURE || of->type.kind == TY_DEPTH_TEXTURE_ARRAY) return 0;
+    if (of->type.kind == TY_DEPTH_TEXTURE || of->type.kind == TY_DEPTH_TEXTURE_ARRAY || of->type.kind == TY_DEPTH_CUBEMAP) return 0;
     if (of->type.kind == TY_TEXTURE_ARRAY) { // After its uv and its layer
         const int at = str_eq_c(e->name, "SampleGrad") ? 4 : str_eq_c(e->name, "SampleLevel") ? 3 : 2;
         if (e->args.count > at && e->args.items[at]->enum_member) return (int)e->args.items[at]->enum_member->number;
@@ -3798,8 +4087,9 @@ static bool liftable(const emit *em, const expr *e, const int depth)
             }
             const int filter = known_filter(e);
             return (str_eq_c(e->name, "Sample") || str_eq_c(e->name, "Compare")) && (filter >= -1 && filter <= 3)
-                && liftable(em, e->args.items[0], depth + 1) && (e->args.count < 2 || e->object->type.kind != TY_DEPTH_TEXTURE
-                                                                 || liftable(em, e->args.items[1], depth + 1));
+                && liftable(em, e->args.items[0], depth + 1)
+                && (e->args.count < 2 || (e->object->type.kind != TY_DEPTH_TEXTURE && e->object->type.kind != TY_DEPTH_CUBEMAP)
+                    || liftable(em, e->args.items[1], depth + 1));
         }
         if (e->call == CALL_DERIVATIVE) return liftable(em, e->args.items[0], depth + 1); // Asked as it starts too
         if (e->call == CALL_FUNCTION || e->call == CALL_METHOD) {
@@ -3841,7 +4131,64 @@ static bool liftable(const emit *em, const expr *e, const int depth)
 static bool is_sampled(const type t)
 {
     return t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_TEXTURE_ARRAY
-        || t.kind == TY_DEPTH_TEXTURE_ARRAY || t.kind == TY_TEXTURE3D || type_is_texture_grid(t);
+        || t.kind == TY_DEPTH_TEXTURE_ARRAY || t.kind == TY_TEXTURE3D || t.kind == TY_DEPTH_CUBEMAP || type_is_texture_grid(t);
+}
+
+// Several textures a draw gives (docs/spec.md, Provisional). A frag and a vert
+// take the textures their draw gives as read-only Texture parameters, as many
+// as they like: the draw gives them after its mesh's arguments, in order, the
+// frag's first and then the vert's that the frag doesn't take by the same
+// name, which is the one texture. Each is one of the shader's textures
+// (shader_texture.direct, with `given` its place in that order), a binding
+// and its samplers of its own, and codegen's tide_shade_<n> takes each as a
+// Texture of its own (tide_texture, tide_texture1...), with the filter and
+// the wrap the draw says after it. A shader with no frag draws its pixels
+// with the first.
+
+// Whether `code` takes a Texture parameter called `name` before parameter `before` (all of them with -1).
+static bool takes_texture_named(const decl *code, const str name, const int before)
+{
+    for (int i = 1; code && i < code->params.count && (before < 0 || i < before); i++) {
+        if (code->params.items[i].type.kind == TY_TEXTURE && str_eq(code->params.items[i].name, name)) return true;
+    }
+    return false;
+}
+
+int shader_given_texture(const decl *vert, const decl *frag, const param *p)
+{
+    if (!p || p->type.kind != TY_TEXTURE) return -1;
+    int n = 0;
+    const decl *stages[2] = {frag, vert};
+    for (int s = 0; s < 2; s++) {
+        for (int i = 1; stages[s] && i < stages[s]->params.count; i++) {
+            const param *q = &stages[s]->params.items[i];
+            if (q->type.kind != TY_TEXTURE || takes_texture_named(stages[s], q->name, i)) continue;
+            if (s == 1 && takes_texture_named(frag, q->name, -1)) continue; // The frag's, counted already
+            if (q == p || str_eq(q->name, p->name)) return n;
+            n++;
+        }
+    }
+    return -1;
+}
+
+int shader_given_textures(const decl *vert, const decl *frag)
+{
+    int n = 0;
+    const decl *stages[2] = {frag, vert};
+    for (int s = 0; s < 2; s++) {
+        for (int i = 1; stages[s] && i < stages[s]->params.count; i++) {
+            const param *q = &stages[s]->params.items[i];
+            if (q->type.kind != TY_TEXTURE || takes_texture_named(stages[s], q->name, i)) continue;
+            if (s == 0 || !takes_texture_named(frag, q->name, -1)) n++;
+        }
+    }
+    return n;
+}
+
+// Which of the draw's textures the frag's or vert's own Texture parameter `p` is, in the shader being written.
+static int given_of(const emit *em, const param *p)
+{
+    return em->sh ? shader_given_texture(em->sh->vert, em->sh->frag, p) : 0;
 }
 
 // How a Sample reads its texture: which kind of read it is, and its filter
@@ -3854,14 +4201,84 @@ typedef struct sampling {
     int image_color;
 } sampling;
 
+// The shader being written, for what its draws hand its frag's and vert's own Textures (shader.source_formats):
+// NULL while code is checked, when no one draw says.
+static const shader *writing;
+
+// The Format shader `sh`'s draws hand its frag's or vert's own Texture `p` where it's 32-bit floats a typed read
+// loads exactly (shader.source_formats), or -1.
+static int source_format_of(const shader *sh, const param *p)
+{
+    const int k = sh ? shader_given_texture(sh->vert, sh->frag, p) : -1;
+    return k >= 0 && k < sh->source_formats.count ? sh->source_formats.items[k] : -1;
+}
+
+// The Format a typed image `of` names holds where tidec follows it: a field's, which its constructor assignments fix
+// (a typed field needs one, check_image_sources), or the frag's or vert's own Texture's, which the texture its draw
+// gives there says. -1 where nothing says, and for an image that isn't typed.
+static int typed_format(const expr *of)
+{
+    if (!of || declared_image_type(of).kind == TY_COLOR) return -1;
+    if (of->field) {
+        const expr source = {.field = (field *)(uintptr_t)of->field};
+        return image_target_format(&source, 0, 0);
+    }
+    return of->kind == E_NAME && of->bind == BIND_PARAM ? source_format_of(writing, of->param) : -1;
+}
+
+// A typed read of 32-bit numbers (Format 7 R32f, 8 Rgba32f, 9 R32i), which no GPU blends on every device, loaded
+// exactly instead (Portable filtering in docs/spec.md): a blended Texture's or Texture3D's four or eight nearest
+// texels blended in the shader (filter 1), an array's layer at the nearest texel or blended so, and a cube's face,
+// one of six layers, at the nearest. What's left through a sampler (a level, gradients, a cube blended) is refused
+// at the draw (check_image_sources).
+static sampling exact_sampling(sampling s, const int format, const bool typed)
+{
+    const shader_read layers = format == 9 ? READ_INT_LAYERS : READ_NUMBER_LAYERS;
+    // A typed array's nearest pixel is loaded where its format isn't one every device blends, or isn't known (a
+    // kernel's field the renderer binds): the same texel a nearest sampler gives, through a binding every float format
+    // fits, 32-bit ones too. One of a known blendable format keeps its sampler, so its Point and blended reads stay one
+    // of the draw's 16 textures.
+    const bool blendable = format == -6 || (format >= 2 && format <= 6);
+    if (typed && s.read == READ_ARRAY && s.filter == 0 && !blendable) {
+        s.read = layers;
+        s.filter_said = s.wrap_said = true;
+        return s;
+    }
+    if (format != 7 && format != 8 && format != 9) return s;
+    if (s.read == READ_NUMBER_BLEND && s.filter <= 1) s.read = READ_NUMBER;
+    else if (s.read == READ_VOLUME && s.filter <= 1) s.read = READ_NUMBER_VOLUME;
+    else if (s.read == READ_ARRAY && s.filter <= 1) s.read = layers;
+    else if (s.read == READ_CUBE && s.filter == 0) s.read = layers, s.wrap = 0;
+    else return s;
+    if (format == 9) s.filter = 0; // No GPU blends integers: a float role over one is refused at the draw
+    s.filter_said = s.wrap_said = true;
+    return s;
+}
+
+static sampling sampling_as(const expr *of, const shader_read read, const int filter, const int wrap);
+
 // How a Sample that says `filter` and `wrap`, -1 for one it leaves out, reads
 // the texture `of` names.
 static sampling sampling_of(const expr *of, const shader_read read, const int filter, const int wrap)
 {
-    if (numeric_read(read)) return (sampling){read, 0, wrap < 0 ? 0 : wrap, true, true, false, 0};
+    return exact_sampling(sampling_as(of, read, filter, wrap), typed_format(of), declared_image_type(of).kind != TY_COLOR);
+}
+
+static sampling sampling_as(const expr *of, const shader_read read, const int filter, const int wrap)
+{
+    int typed_filter, typed_wrap; // What its declaration says ([Wrap]), where the Sample says none
+    declared_sampling(of, &typed_filter, &typed_wrap);
+    if (typed_wrap < 0) typed_wrap = 0;
+    if (numeric_read(read)) return (sampling){read, 0, wrap < 0 ? typed_wrap : wrap, true, true, false, 0};
+    // A typed image's filter and wrap are the Sample's alone: nearest and clamped where it says neither, and
+    // between its smaller images for a level or gradients that name no filter
+    const bool typed = declared_image_type(of).kind != TY_COLOR;
+    if (read == READ_NUMBER_BLEND) return (sampling){read, filter < 0 ? 2 : filter, wrap < 0 ? typed_wrap : wrap, true, true, false, 0};
+    if (typed && arrayed_read(read)) return (sampling){read, filter < 0 ? 0 : filter, wrap < 0 ? typed_wrap : wrap, true, true, false, 0};
+    if (typed && read == READ_CUBE) return (sampling){read, filter < 0 ? 0 : filter, 0, true, true, false, 0};
     if (read == READ_VOLUME) return (sampling){read, filter == 0 ? 0 : 1, wrap < 0 ? 0 : wrap, true, true, false, 0};
     if (arrayed_read(read)) { // As a texture or a depth is, its way its own
-        sampling s = sampling_of(of, base_read(read), filter, wrap);
+        sampling s = sampling_as(of, base_read(read), filter, wrap);
         s.read = read;
         return s;
     }
@@ -3881,6 +4298,38 @@ static sampling sampling_of(const expr *of, const shader_read read, const int fi
                       !carried || filter >= 0, !carried || wrap >= 0, false, 0};
 }
 
+// What tells the shader's textures apart, of the one `of` names: an asset, one of the draw's (`given`), or a field
+// of a component's or a singleton's, by its type and its field, whoever names it: the frag's or vert's own
+// parameter, a function's that stands for it, or a method's receiver (given_field).
+typedef struct texture_key {
+    const decl *asset;
+    bool direct;
+    int given;
+    const decl *source;
+    const field *field;
+} texture_key;
+
+static texture_key key_of(const emit *em, const expr *of)
+{
+    texture_key k = {0};
+    if (of->bind == BIND_ASSET) {
+        k.asset = of->constant; // A Grid2<Color>, Texture or Cubemap asset, by name
+    } else if (of->kind == E_NAME) {
+        k.direct = true;
+        k.given = given_of(em, of->param);
+    } else {
+        k.source = of->object->param->type.decl;
+        k.field = of->field;
+    }
+    return k;
+}
+
+static bool texture_is(const shader_texture *t, const texture_key k)
+{
+    return t->asset == k.asset && t->direct == k.direct && (!k.direct || t->given == k.given) && t->source == k.source
+        && t->field == k.field;
+}
+
 // The texture `of` names in the frag or vert, read as `how` says: noted among
 // what the frag or vert samples, while checking, and otherwise which of the
 // shader's ways of reading its textures it is (way_texture, way_sampler), or
@@ -3893,6 +4342,9 @@ static int sample_slot(emit *em, const expr *of, const sampling how)
     const decl *asset = of->bind == BIND_ASSET ? of->constant : NULL; // A Grid2<Color>, Texture or Cubemap asset, by name
     const bool direct = of->kind == E_NAME && !asset;
     const param *p = asset ? NULL : direct ? of->param : of->object->param;
+    // A function's is noted on the function, for each frag and vert that reaches it (pass_samples): an asset's alone
+    // is the frag's or vert's own as it is
+    if (em->checking && em->code != em->root && !asset) return 0;
     if (em->checking) {
         const decl *holds = direct || asset ? NULL : of->local_field ? p->type.decl->local_part : p->type.decl;
         const shader_sample sample = {asset ? -1 : param_index(em->root, p), direct || asset ? -1 : field_index(holds, of->field),
@@ -3910,13 +4362,11 @@ static int sample_slot(emit *em, const expr *of, const sampling how)
     }
     const shader_texture *textures = how.read == READ_SIZE ? em->sh->sizes.items : em->sh->textures.items;
     const int count = how.read == READ_SIZE ? em->sh->sizes.count : em->sh->textures.count;
+    const texture_key key = key_of(em, of);
     int slot = 0;
     while (slot < count) {
         const shader_texture *t = &textures[slot];
-        if (t->asset == asset && t->direct == direct && t->source == (p ? p->type.decl : NULL) && t->field == (asset ? NULL : of->field)
-            && one_image(t->read, how.read) && t->image_color == how.image_color) {
-            break;
-        }
+        if (texture_is(t, key) && one_image(t->read, how.read) && t->image_color == how.image_color) break;
         slot++;
     }
     if (how.read == READ_SIZE || how.write) return slot;
@@ -3939,22 +4389,110 @@ static int sample_slot(emit *em, const expr *of, const sampling how)
 static int texture_number(const emit *em, const expr *of)
 {
     if (!of || !em->sh) return -1;
-    const decl *asset = of->bind == BIND_ASSET ? of->constant : NULL;
-    const bool direct = of->kind == E_NAME && !asset;
-    const param *p = asset ? NULL : direct ? of->param : of->object->param;
+    const texture_key key = key_of(em, of);
     for (int slot = 0; slot < em->sh->textures.count; slot++) {
         const shader_texture *t = &em->sh->textures.items[slot];
-        if (t->read != READ_DATA && t->asset == asset && t->direct == direct && t->source == (p ? p->type.decl : NULL)
-            && t->field == (asset ? NULL : of->field)) {
-            return slot;
-        }
+        if (t->read != READ_DATA && texture_is(t, key)) return slot;
     }
     for (int slot = 0; slot < em->sh->sizes.count; slot++) {
-        const shader_texture *t = &em->sh->sizes.items[slot];
-        if (t->asset == asset && t->direct == direct && t->source == (p ? p->type.decl : NULL)
-            && t->field == (asset ? NULL : of->field)) return em->sh->textures.count + slot;
+        if (texture_is(&em->sh->sizes.items[slot], key)) return em->sh->textures.count + slot;
     }
     return -1;
+}
+
+// A component or a singleton, whose textures a function it's given samples as the frag does (Textures of what's
+// given): a struct a draw supplies carries none.
+static bool gives_textures(const type t)
+{
+    return (t.kind == TY_COMPONENT || t.kind == TY_SINGLETON) && t.decl;
+}
+
+// Textures of what's given (docs/spec.md, Provisional). A function code the
+// GPU runs reaches can take a component or a singleton that holds textures,
+// `float3 Sunlit(Stage stage, float3 at)`, and sample them, `stage.shadow`,
+// as it can read its lists: what it's given is the frag's or vert's own
+// (Structs that hold lists), so a texture of it is one of the shader's by its
+// type and its field, whoever names it, and the function is written once for
+// every call. Its body is checked once, so what it samples is noted on it as
+// it names it (function_sample.asset: `stage.shadow`, or `shadow` of a
+// method's receiver, made `tide_self.shadow` here), and each call says whose
+// that is (named_by_call): the frag's or vert's own, or the calling
+// function's, noted on that one in turn.
+
+// `e`, where it's a field of a component or singleton the function being written is given: `stage.shadow` of its
+// parameter as it's written, and `shadow` of a method's receiver as a field of a parameter that stands for it.
+// NULL for anything else.
+static const expr *given_field(const emit *em, const expr *e)
+{
+    if (!e->field || !is_sampled(e->type)) return NULL;
+    if (e->kind == E_MEMBER && !e->swizzle_len && e->object->kind == E_NAME && e->object->bind == BIND_PARAM
+        && e->object->param->function_param && gives_textures(e->object->param->type)) {
+        return e;
+    }
+    if (e->kind != E_NAME || e->bind != BIND_FIELD || !given_self(em->code) || !gives_textures(owner_type(em->code->owner))) {
+        return NULL;
+    }
+    param *self = NEW(param); // The receiver, which no parameter of the method's is
+    self->type = owner_type(em->code->owner);
+    self->type_name = em->code->owner->name;
+    self->name = str_from("tide_self");
+    self->function_param = true;
+    expr *name = NEW(expr);
+    name->kind = E_NAME;
+    name->bind = BIND_PARAM;
+    name->param = self;
+    name->type = self->type;
+    name->name = self->name;
+    name->at = e->at;
+    expr *member = NEW(expr);
+    member->kind = E_MEMBER;
+    member->object = name;
+    member->field = e->field;
+    member->local_field = e->local_field;
+    member->member = e->name;
+    member->type = e->type;
+    member->at = e->at;
+    return member;
+}
+
+// Whether `p` is one of `fn`'s parameters, which a receiver's stand-in (given_field) isn't.
+static bool takes_param(const decl *fn, const param *p)
+{
+    for (int i = 0; i < fn->params.count; i++) {
+        if (&fn->params.items[i] == p) return true;
+    }
+    return false;
+}
+
+// A texture `fn` names itself (function_sample.asset), as the call of it names that: an asset as it is, and a field
+// of what it's given as that field of what the call passes, or of what it's called on. NULL where the call passes
+// nothing such a field can be read of, which is refused where it's passed.
+static const expr *named_by_call(const decl *fn, const expr *call, const expr *named)
+{
+    if (!named || named->kind != E_MEMBER) return named; // An asset, by its name
+    const expr *passed = NULL;
+    if (takes_param(fn, named->object->param)) {
+        const int i = param_index(fn, named->object->param);
+        passed = i < call->args.count ? call->args.items[i] : NULL;
+    } else if (call->kind == E_METHOD && call->object) { // Its receiver: what the call's on
+        passed = call->object;
+    } else { // ...or another of its type's methods', called on the same one
+        return named;
+    }
+    if (!passed || passed->kind != E_NAME || passed->bind != BIND_PARAM) return NULL;
+    expr *member = NEW(expr);
+    *member = *named;
+    member->object = (expr *)(uintptr_t)passed; // Read alone, as `named`'s is
+    return member;
+}
+
+// Whether two textures a function names itself are the one: an asset by its name, or the same field of what it's given.
+static bool same_named(const expr *a, const expr *b)
+{
+    if (a->kind == E_MEMBER || b->kind == E_MEMBER) {
+        return a->kind == b->kind && a->field == b->field && a->local_field == b->local_field;
+    }
+    return a->constant == b->constant;
 }
 
 // `e` as a texture the code samples: the expression that names it in the frag
@@ -3976,6 +4514,8 @@ static const expr *texture_of(emit *em, const expr *e, int *own)
         return NULL;
     }
     if (em->code != em->root) {
+        const expr *field = given_field(em, e); // A field of what it's given: its own to name, as the frag names its own
+        if (field) return field;
         if (e->kind != E_NAME || e->bind != BIND_PARAM || !e->param->function_param) return NULL;
         *own = param_index(em->code, e->param);
         return em->checking || !em->spec ? NULL : em->spec[*own].sampled;
@@ -4000,13 +4540,14 @@ static void refuse_texture(emit *em, const expr *e)
 }
 
 // Notes on a function being checked that it samples its parameter `param`,
-// or with -1 the asset `asset` names, as the Sample at `at` says.
+// or with -1 what `asset` names, an asset or a field of what it's given, as
+// the Sample at `at` says.
 static void note_function_sample(decl *fn, const int param, const expr *asset, const shader_read read, const int filter,
                                  const int wrap, const bool gradients, const loc at, const bool write, const bool explicit_level)
 {
     for (int i = 0; i < fn->gpu_samples.count; i++) {
         const function_sample *s = &fn->gpu_samples.items[i];
-        if (s->param == param && (param >= 0 || s->asset->constant == asset->constant) && s->read == read && s->filter == filter
+        if (s->param == param && (param >= 0 || same_named(s->asset, asset)) && s->read == read && s->filter == filter
             && s->wrap == wrap && s->gradients == gradients && s->write == write && s->explicit_level == explicit_level) {
             return;
         }
@@ -4068,10 +4609,12 @@ static void pass_samples(emit *em, decl *fn, const expr *call, const given *spec
     for (int i = 0; i < fn->gpu_samples.count; i++) {
         const function_sample s = fn->gpu_samples.items[i];
         const expr *arg = s.param >= 0 && s.param < call->args.count ? call->args.items[s.param] : NULL;
-        const expr *of = s.param < 0 ? s.asset : arg ? spec[s.param].sampled : NULL;
+        // What the call passes for it: an asset is itself, and a field of what's given that field of what's passed
+        const expr *of = s.param < 0 ? named_by_call(fn, call, s.asset) : arg ? spec[s.param].sampled : NULL;
+        if (s.param < 0 && !of) continue; // What's passed isn't what the function's given: refused there (refuse_given)
         const int mine = arg ? own[s.param] : -1;
         const expr parameter = {.bind = BIND_PARAM, .param = s.param >= 0 ? &fn->params.items[s.param] : NULL};
-        if (arg && declared_image_type(arg).kind != declared_image_type(&parameter).kind) {
+        if (arg && !image_role_fits(arg, declared_image_type(&parameter))) {
             refuse(em, arg->at, "an image passed to a numeric image parameter must keep the same [Raw(T)] role");
             continue;
         }
@@ -4092,7 +4635,8 @@ static void pass_samples(emit *em, decl *fn, const expr *call, const given *spec
                          STR_ARG(em->root->name), STR_ARG(fn->name));
             continue;
         }
-        if (s.explicit_level || s.gradients || !em->root->is_frag || (how.read != READ_COLOR && how.read != READ_CUBE && how.read != READ_ARRAY)) continue;
+        if (s.explicit_level || s.gradients || !em->root->is_frag
+            || (how.read != READ_COLOR && how.read != READ_CUBE && how.read != READ_ARRAY && how.read != READ_NUMBER_BLEND)) continue;
         const char *where = how.read == READ_CUBE ? "direction" : "uv";
         const char *what = how.read == READ_CUBE ? "cube" : "texture";
         if (how.filter >= 2) {
@@ -4200,37 +4744,218 @@ static void put_layer(emit *em, const expr *e, const int at, const int slot)
     sb_printf(em->o, ", 0, i32(textureNumLayers(pixels%d)) - 1)", way_texture(em, slot));
 }
 
-static void ex_numeric_sample(emit *em, const expr *e, const expr *of, const shader_read read, const int wrap)
+static bool typed_through_sampler(const expr *e);
+
+// Whether `name` is among the helper functions the shader being written has: noted the first time, when it's then
+// to be written (em->functions).
+static bool helper_written(emit *em, const char *name)
 {
-    const int way = sample_slot(em, of, sampling_of(of, read, 0, wrap));
+    for (int i = 0; i < em->atomic_fns.count; i++) {
+        if (strcmp(em->atomic_fns.items[i], name) == 0) return true;
+    }
+    if (!em->checking) vec_push(em->atomic_fns, str_to_cstr(str_from(name)));
+    return em->checking;
+}
+
+// The face of a cube a direction points at, and where on it: (u, v, face), the face 0 to 5 in the order +x, -x, +y,
+// -y, +z, -z and (u, v) from its top left, each as gpu.h's cubes are laid out (what a camera at the cube's middle sees
+// along the face's axis). The longest axis picks the face, x before y before z where two are as long. What tidec reads
+// a cube held as six layers by: a depth cube's faces and a cube of 32-bit numbers.
+static void need_cube_face(emit *em)
+{
+    if (helper_written(em, "tide_cube_face")) return;
+    sb_put(&em->functions,
+           "fn tide_cube_face(d: vec3f) -> vec3f {\n"
+           "    let a = abs(d);\n"
+           "    if (a.x >= a.y && a.x >= a.z) {\n"
+           "        let m = max(a.x, 1e-30);\n"
+           "        if (d.x >= 0.0) { return vec3f((1.0 - d.z / m) * 0.5, (1.0 - d.y / m) * 0.5, 0.0); }\n"
+           "        return vec3f((1.0 + d.z / m) * 0.5, (1.0 - d.y / m) * 0.5, 1.0);\n"
+           "    }\n"
+           "    if (a.y >= a.z) {\n"
+           "        let m = max(a.y, 1e-30);\n"
+           "        if (d.y >= 0.0) { return vec3f((1.0 + d.x / m) * 0.5, (1.0 + d.z / m) * 0.5, 2.0); }\n"
+           "        return vec3f((1.0 + d.x / m) * 0.5, (1.0 - d.z / m) * 0.5, 3.0);\n"
+           "    }\n"
+           "    let m = max(a.z, 1e-30);\n"
+           "    if (d.z >= 0.0) { return vec3f((1.0 + d.x / m) * 0.5, (1.0 - d.y / m) * 0.5, 4.0); }\n"
+           "    return vec3f((1.0 - d.x / m) * 0.5, (1.0 - d.y / m) * 0.5, 5.0);\n"
+           "}\n");
+}
+
+// A texel's place past an image's edge brought back into it as a Wrap says: the edge's (0, Clamp), the other side's
+// (1, Repeat) or mirrored (2, Mirror), as the GPU's samplers have them.
+static const char *need_index_wrap(emit *em, const int dims, const int wrap)
+{
+    static const char *const names[2][3] = {{"tide_index2_0", "tide_index2_1", "tide_index2_2"},
+                                            {"tide_index3_0", "tide_index3_1", "tide_index3_2"}};
+    const char *name = names[dims == 3][wrap == 1 || wrap == 2 ? wrap : 0];
+    if (helper_written(em, name)) return name;
+    sb *o = &em->functions;
+    sb_printf(o, "fn %s(k: vec%di, n: vec%di) -> vec%di {\n", name, dims, dims, dims);
+    if (wrap == 1) {
+        sb_put(o, "    return ((k % n) + n) % n;\n}\n");
+    } else if (wrap == 2) {
+        sb_printf(o, "    let m = ((k %% (2 * n)) + 2 * n) %% (2 * n);\n    return select(2 * n - vec%di(1) - m, m, m < n);\n}\n", dims);
+    } else {
+        sb_printf(o, "    return clamp(k, vec%di(0), n - vec%di(1));\n}\n", dims, dims);
+    }
+    return name;
+}
+
+// A typed image's numbers loaded exactly, through no sampler: the texel nearest the uv, or with how.filter 1 the four
+// around it (a volume's eight) blended in the shader by where the uv is between them, as the GPU's Bilinear is, the
+// same bits on every device. The wrap is the Sample's: the uv is brought into the image first, and the texels a blend
+// reaches past an edge are the edge's, the other side's or mirrored. An array's layer is held to the layers it has;
+// a cube's six faces are its layers, the face and the uv on it worked out from the direction (need_cube_face), the
+// face held to the layers too (no load past an image's last, which only a robust device defines). A
+// Sample written for a sampler (typed_through_sampler: a 32-bit image's, loaded exactly here) gives all four
+// channels, which ex_sample narrows to its role's.
+static void ex_numeric_sample(emit *em, const expr *e, const expr *of, const sampling how)
+{
+    const shader_read read = how.read;
+    const int wrap = how.wrap;
+    const bool blend = how.filter == 1;
+    const bool layered = layers_read(read);
+    const bool cube = e->object->type.kind == TY_CUBEMAP;
+    const int way = sample_slot(em, of, how);
     const int slot = way_texture(em, way);
     const int dims = volume_read(read) ? 3 : 2;
-    const char *swizzle = e->type.kind == TY_FLOAT2 ? ".xy" : e->type.kind == TY_FLOAT4 ? "" : ".x";
+    const type value = typed_through_sampler(e) ? (type){TY_FLOAT4, NULL} : e->type;
+    const char *swizzle = value.kind == TY_FLOAT2 ? ".xy" : value.kind == TY_FLOAT4 ? "" : ".x";
     char name[64];
-    snprintf(name, sizeof name, "tide_number%d_%d_%d", slot, wrap, (int)e->type.kind);
-    bool known = false;
-    for (int i = 0; i < em->atomic_fns.count; i++) known |= strcmp(em->atomic_fns.items[i], name) == 0;
-    if (!known && !em->checking) {
-        vec_push(em->atomic_fns, str_to_cstr(str_from(name)));
+    snprintf(name, sizeof name, "tide_number%d_%d_%d%s", slot, wrap, (int)value.kind, blend ? "_blend" : "");
+    if (!helper_written(em, name)) {
+        if (cube) need_cube_face(em);
+        const char *index = blend ? need_index_wrap(em, dims, wrap) : NULL;
         sb *o = &em->functions;
-        sb_printf(o, "fn %s(uv: vec%df) -> %s {\n", name, dims, ty(em, e->type));
-        if (wrap == 1) sb_put(o, "    let tide_uv = uv - floor(uv);\n");
-        else if (wrap == 2) sb_put(o, "    let tide_m = uv - 2.0 * floor(uv * 0.5);\n    let tide_uv = min(tide_m, 2.0 - tide_m);\n");
-        else sb_put(o, "    let tide_uv = clamp(uv, vec");
-        if (wrap == 0) sb_printf(o, "%df(0.0), vec%df(1.0));\n", dims, dims);
+        sb_printf(o, "fn %s(uv: vec%df%s) -> %s {\n", name, cube ? 3 : dims, layered && !cube ? ", layer: i32" : "", ty(em, value));
+        if (cube) {
+            // Held to the layers the image has: a cube of six, or what's bound for none, one layer of zeros
+            sb_printf(o, "    let tide_face = tide_cube_face(uv);\n    let tide_uv = tide_face.xy;\n"
+                         "    let tide_layer = min(i32(tide_face.z), i32(textureNumLayers(pixels%d)) - 1);\n", slot);
+        } else {
+            if (wrap == 1) sb_put(o, "    let tide_uv = uv - floor(uv);\n");
+            else if (wrap == 2) sb_put(o, "    let tide_m = uv - 2.0 * floor(uv * 0.5);\n    let tide_uv = min(tide_m, 2.0 - tide_m);\n");
+            else sb_printf(o, "    let tide_uv = clamp(uv, vec%df(0.0), vec%df(1.0));\n", dims, dims);
+            if (layered) sb_printf(o, "    let tide_layer = clamp(layer, 0, i32(textureNumLayers(pixels%d)) - 1);\n", slot);
+        }
+        const char *at_layer = layered ? ", tide_layer" : "";
         sb_printf(o, "    let tide_size = vec%di(textureDimensions(pixels%d));\n", dims, slot);
-        sb_printf(o, "    let tide_at = clamp(vec%di(floor(tide_uv * vec%df(tide_size))), vec%di(0), tide_size - vec%di(1));\n", dims, dims, dims, dims);
-        sb_printf(o, "    return textureLoad(pixels%d, tide_at, 0)%s;\n}\n", slot, swizzle);
+        if (!blend) {
+            sb_printf(o, "    let tide_at = clamp(vec%di(floor(tide_uv * vec%df(tide_size))), vec%di(0), tide_size - vec%di(1));\n", dims, dims, dims, dims);
+            sb_printf(o, "    return textureLoad(pixels%d, tide_at%s, 0)%s;\n}\n", slot, at_layer, swizzle);
+        } else {
+            sb_printf(o, "    let tide_p = tide_uv * vec%df(tide_size) - 0.5;\n    let tide_b = floor(tide_p);\n"
+                         "    let tide_t = tide_p - tide_b;\n    let tide_i = vec%di(tide_b);\n", dims, dims);
+            const int corners = dims == 3 ? 8 : 4;
+            for (int c = 0; c < corners; c++) {
+                sb_printf(o, "    let tide_c%d = textureLoad(pixels%d, %s(tide_i + vec%di(%d, %d", c, slot, index, dims, c & 1, c >> 1 & 1);
+                if (dims == 3) sb_printf(o, ", %d", c >> 2 & 1);
+                sb_printf(o, "), tide_size)%s, 0);\n", at_layer);
+            }
+            sb_put(o, "    let tide_y0 = mix(mix(tide_c0, tide_c1, tide_t.x), mix(tide_c2, tide_c3, tide_t.x), tide_t.y);\n");
+            if (dims == 3) {
+                sb_put(o, "    let tide_y1 = mix(mix(tide_c4, tide_c5, tide_t.x), mix(tide_c6, tide_c7, tide_t.x), tide_t.y);\n");
+                sb_printf(o, "    return mix(tide_y0, tide_y1, tide_t.z)%s;\n}\n", swizzle);
+            } else {
+                sb_printf(o, "    return tide_y0%s;\n}\n", swizzle);
+            }
+        }
     }
     sb_printf(em->o, "%s(", name);
-    ex_as(em, e->args.items[0], (type){dims == 3 ? TY_FLOAT3 : TY_FLOAT2, NULL});
+    ex_as(em, e->args.items[0], (type){dims == 3 || cube ? TY_FLOAT3 : TY_FLOAT2, NULL});
+    if (layered && !cube) {
+        sb_put(em->o, ", ");
+        ex_as(em, e->args.items[str_eq_c(e->name, "SampleGrad") ? 3 : 1], (type){TY_INT, NULL});
+    }
     sb_put(em->o, ")");
 }
 
 // A Sample, SampleGrad, or a depth's Compare: of a texture parameter, a grid or texture
 // field or an asset, where the frag or vert names it, and in a function, of
 // its own parameter, which is the texture its call named, or of an asset.
+static void ex_sample_read(emit *em, const expr *e);
+
+// Whether a Sample of a typed image goes through a sampler: a TextureArray's or a Cubemap's always, and a
+// Texture's of floats where it blends, reads a level or takes gradients, and a Texture3D's where it blends. The rest
+// are exact loads; and so are these, where the image holds 32-bit numbers (exact_sampling).
+static bool typed_through_sampler(const expr *e)
+{
+    const type held = e->object->type;
+    const type typed = declared_image_type(e->object);
+    if (typed.kind == TY_COLOR || typed.kind == TY_INT) return false;
+    if (held.kind == TY_TEXTURE_ARRAY || held.kind == TY_CUBEMAP) return true;
+    if (held.kind == TY_TEXTURE3D) return e->args.count > 1 && e->args.items[1]->enum_member && e->args.items[1]->enum_member->number != 0;
+    if (held.kind != TY_TEXTURE && type_number_grid_role(held).kind == TY_ERROR) return false; // A Grid2<float2>'s or <float4>'s too
+    return str_eq_c(e->name, "SampleGrad") || str_eq_c(e->name, "SampleLevel")
+        || (e->args.count > 1 && e->args.items[1]->enum_member && e->args.items[1]->enum_member->number != 0);
+}
+
 static void ex_sample(emit *em, const expr *e)
+{
+    // A typed image's numbers through a sampler: the channels its type has, of the four a GPU reads
+    const bool typed = !str_eq_c(e->name, "Compare") && typed_through_sampler(e);
+    if (typed && (e->type.kind == TY_FLOAT || e->type.kind == TY_FLOAT2)) sb_put(em->o, "(");
+    ex_sample_read(em, e);
+    if (typed && e->type.kind == TY_FLOAT) sb_put(em->o, ").x");
+    else if (typed && e->type.kind == TY_FLOAT2) sb_put(em->o, ").xy");
+}
+
+// A depth cube's Sample(direction) and Compare(direction, value): its six faces are a depth array's layers, read as
+// a DepthTextureArray is (the nearest pixel, or compared and blended), at the face the direction points at and the
+// place on it (need_cube_face), the same on every backend. The direction is worked out once, in a function of the
+// texture's own (tide_depth_cube<n>, tide_compare_cube<n>).
+static void ex_depth_cube_read(emit *em, const expr *e)
+{
+    const bool compares = str_eq_c(e->name, "Compare");
+    const shader_read read = compares ? READ_COMPARE_ARRAY : READ_DEPTH_ARRAY;
+    const expr *of = e->object;
+    if (em->code != em->root) { // A function's: its own parameter's, which each call names
+        int own;
+        of = texture_of(em, e->object, &own);
+        if (em->checking && (own >= 0 || of)) note_function_sample(em->code, own, of, read, -1, -1, false, e->at, false, false);
+        if (!of) {
+            if (own < 0) refuse_texture(em, e->object);
+            if (!em->checking) {
+                put_zero(em, e->type);
+                return;
+            }
+            ex_as(em, e->args.items[0], (type){TY_FLOAT3, NULL});
+            if (compares) ex_as(em, e->args.items[1], (type){TY_FLOAT, NULL});
+            return;
+        }
+    }
+    sampling how = sampling_of(of, compares ? READ_COMPARE : READ_DEPTH, -1, -1);
+    how.read = read;
+    const int slot = em->checking && em->code != em->root ? 0 : sample_slot(em, of, how);
+    const int texture = way_texture(em, slot), sampler = way_sampler(em, slot);
+    char name[64];
+    snprintf(name, sizeof name, "tide_%s_cube%d_%d", compares ? "compare" : "depth", texture, sampler);
+    if (!helper_written(em, name)) {
+        need_cube_face(em);
+        sb *o = &em->functions;
+        if (compares) {
+            // What it's compared with is between the near plane and the far limit, as what's stored is
+            sb_printf(o, "fn %s(d: vec3f, v: f32) -> f32 {\n    let tide_face = tide_cube_face(d);\n"
+                         "    return textureSampleCompareLevel(pixels%d, sampler%d, tide_face.xy, i32(tide_face.z), "
+                         "tide_depth(clamp(v, 0.0, 1.0)));\n}\n", name, texture, sampler);
+        } else {
+            sb_printf(o, "fn %s(d: vec3f) -> f32 {\n    let tide_face = tide_cube_face(d);\n"
+                         "    return tide_depth(textureSampleLevel(pixels%d, sampler%d, tide_face.xy, i32(tide_face.z), 0));\n}\n",
+                      name, texture, sampler);
+        }
+    }
+    sb_printf(em->o, "%s(", name);
+    ex_as(em, e->args.items[0], (type){TY_FLOAT3, NULL});
+    if (compares) {
+        sb_put(em->o, ", ");
+        ex_as(em, e->args.items[1], (type){TY_FLOAT, NULL});
+    }
+    sb_put(em->o, ")");
+}
+
+static void ex_sample_read(emit *em, const expr *e)
 {
     const bool gradients = str_eq_c(e->name, "SampleGrad");
     const bool level = str_eq_c(e->name, "SampleLevel");
@@ -4239,13 +4964,22 @@ static void ex_sample(emit *em, const expr *e)
         put_zero(em, e->type);
         return;
     }
+    if (e->object->type.kind == TY_DEPTH_CUBEMAP) {
+        ex_depth_cube_read(em, e);
+        return;
+    }
     const type held = e->object->type;
     const bool cube = held.kind == TY_CUBEMAP;
     const bool volume = held.kind == TY_TEXTURE3D;
     const bool compares = str_eq_c(e->name, "Compare");
-    const bool number = declared_image_type(e->object).kind != TY_COLOR;
+    const bool sampled = !compares && typed_through_sampler(e);
+    const bool number = !sampled && declared_image_type(e->object).kind != TY_COLOR;
     const bool integer = e->type.kind == TY_INT;
-    const shader_read read = number ? (volume ? (integer ? READ_INT_VOLUME : READ_NUMBER_VOLUME) : integer ? READ_INT : READ_NUMBER)
+    // An int array's layers and an int cube's faces (R32i, which no GPU blends) are loaded from a texture_2d_array
+    const bool int_layers = number && integer && (cube || held.kind == TY_TEXTURE_ARRAY);
+    const shader_read read = int_layers ? READ_INT_LAYERS
+                           : number ? (volume ? (integer ? READ_INT_VOLUME : READ_NUMBER_VOLUME) : integer ? READ_INT : READ_NUMBER)
+                           : sampled && (held.kind == TY_TEXTURE || held.kind == TY_GRID) ? READ_NUMBER_BLEND
                            : volume ? READ_VOLUME : cube ? READ_CUBE : held.kind == TY_TEXTURE_ARRAY ? READ_ARRAY
                            : held.kind == TY_DEPTH_TEXTURE_ARRAY ? (compares ? READ_COMPARE_ARRAY : READ_DEPTH_ARRAY)
                            : held.kind != TY_DEPTH_TEXTURE ? READ_COLOR : compares ? READ_COMPARE : READ_DEPTH;
@@ -4254,9 +4988,16 @@ static void ex_sample(emit *em, const expr *e)
     const shader_read base = base_read(read);
     const int layer_at = arrayed ? (gradients ? 3 : 1) : -1;
     // What the Sample says of how it reads: -1 for what it leaves to its texture
-    const int filter_at = (gradients ? 3 : level ? 2 : 1) + (arrayed ? 1 : 0);
-    const int said_filter = (cube || base == READ_COLOR) && e->args.count > filter_at ? (int)e->args.items[filter_at]->enum_member->number : -1;
-    const int said_wrap = base == READ_COLOR && e->args.count > filter_at + 1 ? (int)e->args.items[filter_at + 1]->enum_member->number : -1;
+    const int filter_at = (gradients ? 3 : level ? 2 : 1) + (arrayed || held.kind == TY_TEXTURE_ARRAY ? 1 : 0);
+    // A typed image's level or gradients that name no filter read between its smaller images, and so does any
+    // image's SampleLevel: a level read through a filter that reads none would be the base image's. A level written
+    // as 0 (or less) is the base image itself, where that's Bilinear's read: no smaller images are made for it, which
+    // for a target drawn every frame would be a chain made every frame (base_level)
+    const bool unnamed_level = (sampled && (level || gradients)) || (level && (cube || base == READ_COLOR));
+    const int level_at = held.kind == TY_TEXTURE_ARRAY ? 2 : 1;
+    const int said_filter = (cube || base == READ_COLOR) && e->args.count > filter_at ? (int)e->args.items[filter_at]->enum_member->number
+                          : unnamed_level ? (level && base_level(e->args.items[level_at]) ? 1 : 2) : -1;
+    const int said_wrap = (base == READ_COLOR || number) && e->args.count > filter_at + 1 ? (int)e->args.items[filter_at + 1]->enum_member->number : -1;
     const expr *of = e->object;
     if (em->code != em->root) { // A function's: its own parameter's, which each call names, or an asset's
         int own;
@@ -4274,17 +5015,17 @@ static void ex_sample(emit *em, const expr *e)
                 ex_as(em, e->args.items[1], (type){volume ? TY_FLOAT3 : TY_FLOAT2, NULL});
                 ex_as(em, e->args.items[2], (type){volume ? TY_FLOAT3 : TY_FLOAT2, NULL});
             }
-            if (level) ex_as(em, e->args.items[arrayed ? 2 : 1], (type){TY_FLOAT, NULL});
-            if (arrayed) ex_as(em, e->args.items[layer_at], (type){TY_INT, NULL});
+            if (level) ex_as(em, e->args.items[held.kind == TY_TEXTURE_ARRAY ? 2 : 1], (type){TY_FLOAT, NULL});
+            if (held.kind == TY_TEXTURE_ARRAY || arrayed) ex_as(em, e->args.items[gradients ? 3 : 1], (type){TY_INT, NULL});
             if (base == READ_COMPARE) ex_as(em, e->args.items[arrayed ? 2 : 1], (type){TY_FLOAT, NULL});
             return;
         }
     }
-    sampling how = sampling_of(of, base, said_filter, said_wrap);
-    how.read = read; // An array's way is its own, its sampler a texture's (base_read)
-    if (number) {
-        const int wrap = e->args.count > filter_at + 1 ? (int)e->args.items[filter_at + 1]->enum_member->number : 0;
-        ex_numeric_sample(em, e, of, read, wrap);
+    // A typed volume that blends is the volume's own read, through its sampler or loaded exactly (exact_sampling)
+    sampling how = sampling_of(of, read == READ_NUMBER_BLEND || (sampled && (arrayed || volume)) ? read : base, said_filter, said_wrap);
+    if (!numeric_read(how.read)) how.read = read; // An array's way is its own, its sampler a texture's (base_read)
+    if (numeric_read(how.read)) { // Loaded: an int's, a typed read that names no filter, or 32-bit numbers
+        ex_numeric_sample(em, e, of, how); // The Sample's wrap, or its declaration's
         return;
     }
     if (cube) {
@@ -4344,7 +5085,8 @@ static void ex_sample(emit *em, const expr *e)
         return;
     }
     // The color itself, where the texture has it times its alpha. One that's [Raw] is numbers, as they are
-    const bool straight = base == READ_COLOR && !declared_raw(of);
+    // A typed image's through a sampler (READ_NUMBER_BLEND) are too: a grid of numbers handed to a helper's [Raw(T)]
+    const bool straight = base == READ_COLOR && read != READ_NUMBER_BLEND && !declared_raw(of);
     if (straight) {
         need(em, H_STRAIGHT);
         sb_put(em->o, "tide_straight(");
@@ -4467,8 +5209,8 @@ static bool is_given(const param *p)
 // one the frag or vert was given, by its name (Structs that hold lists).
 static void refuse_given(emit *em, const expr *arg, const type t)
 {
-    refuse(em, arg->at, "a %s that holds a list goes to code the GPU runs by its name, as the frag or vert was given it",
-           type_name(t));
+    refuse(em, arg->at, "a %s that holds %s goes to code the GPU runs by its name, as the frag or vert was given it",
+           type_name(t), held_word(t));
     diag_note("pass the frag's or vert's own parameter, its singleton, its component or the draw's values, or a function's "
               "parameter that stands for one");
 }
@@ -4501,7 +5243,9 @@ static void ex_user_call(emit *em, const expr *e)
         if (takes_data(p)) {
             spec[i].data = data_unknown(p->type);
             if (arg && !data_of(em, arg, &spec[i].data)) {
-                type_fits(em, arg->type, arg->at);
+                if ((arg->kind == E_NAME || arg->kind == E_MEMBER) && arg->bind == BIND_CONST && arg->type.kind == TY_LIST)
+                    refuse_whole_list(em, arg); // A list constant: read by its elements, where it's named
+                else type_fits(em, arg->type, arg->at);
                 named = false;
             }
             number = spec[i].data.texture;
@@ -4514,7 +5258,7 @@ static void ex_user_call(emit *em, const expr *e)
         }
         sb_printf(&suffix, "%s%d", suffix.data ? "x" : "_4", number < 0 ? 0 : number);
     }
-    need_function(em, fn, e->at, spec, suffix.data ? suffix.data : "");
+    const char *named = need_function(em, fn, e->at, spec, suffix.data ? suffix.data : ""); // This stage's
     // What the function reads of the elements of a list it takes, the code that hands it the list reads
     for (int i = 0; em->checking && i < fn->params.count; i++) {
         const bool *read = fn->params.items[i].gpu_leaves;
@@ -4536,14 +5280,15 @@ static void ex_user_call(emit *em, const expr *e)
         if (receiver && !names_given(em, receiver)) {
             refuse_given(em, receiver, receiver->type);
         } else if (!receiver && !given_self(em->code)) {
-            refuse(em, e->at, "'" STR_FMT "' is a method of '" STR_FMT "', which holds a list: in code the GPU runs it's called on "
-                              "one the frag or vert was given, by its name", STR_ARG(fn->name), STR_ARG(fn->owner->name));
+            refuse(em, e->at, "'" STR_FMT "' is a method of '" STR_FMT "', which holds %s: in code the GPU runs it's called on "
+                              "one the frag or vert was given, by its name", STR_ARG(fn->name), STR_ARG(fn->owner->name),
+                   held_word(owner_type(fn->owner)));
         } else if (em->checking) {
             pass_given_reads(em, receiver, fn->owner, fn->self_reads, fn->self_local_reads);
         }
     }
     const bool statement = em->statement == e;
-    sb_printf(em->o, "%s%s(", function_name(fn), suffix.data ? suffix.data : "");
+    sb_printf(em->o, "%s%s(", function_name(fn), named);
     bool first = true;
     if (method && !given) {
         const expr *receiver = e->kind == E_METHOD ? e->object : NULL;
@@ -4624,6 +5369,15 @@ static void ex_call(emit *em, const expr *e)
     case CALL_ENUM_COUNT:
         sb_printf(em->o, "%lld", (long long)e->int_value);
         return;
+    case CALL_ENUM_VALUES: // Every member's number, in declaration order, as an array of ints
+        if (!type_fits(em, e->type, e->at)) return;
+        sb_printf(em->o, "%s(", ty(em, e->type));
+        for (int i = 0; i < e->type_decl->members.count; i++) {
+            if (i) sb_put(em->o, ", ");
+            put_int(em, (long long)e->type_decl->members.items[i].number);
+        }
+        sb_put(em->o, ")");
+        return;
     case CALL_SKINNED:
         refuse(em, e->at, "skeleton lookup and animation sampling run on the CPU, before Draw.SkinnedMesh");
         return;
@@ -4676,7 +5430,8 @@ static void ex_call(emit *em, const expr *e)
         return;
     case CALL_GRID:
         if (str_eq_c(e->name, "Sample") || str_eq_c(e->name, "SampleGrad") || str_eq_c(e->name, "SampleLevel")
-            || (str_eq_c(e->name, "Compare") && (e->object->type.kind == TY_DEPTH_TEXTURE || e->object->type.kind == TY_DEPTH_TEXTURE_ARRAY))) {
+            || (str_eq_c(e->name, "Compare") && (e->object->type.kind == TY_DEPTH_TEXTURE || e->object->type.kind == TY_DEPTH_TEXTURE_ARRAY
+                                                 || e->object->type.kind == TY_DEPTH_CUBEMAP))) {
             ex_sample(em, e);
             return;
         }
@@ -4845,6 +5600,10 @@ static void ex(emit *em, const expr *e)
         refuse(em, e->at, "text is the CPU's: code the GPU runs has none");
         return;
     case E_INDEX: {
+        if (listed_constant(e->object)) { // QUAD[i] of a list constant: an element of its values, as an array's
+            ex_listed_index(em, listed_constant(e->object), e);
+            return;
+        }
         data_ref data;
         const bool named = data_of(em, e->object, &data);
         if (named && data.map) { // map[key]: its value, or zeros, as an entry past the end reads
@@ -5368,7 +6127,7 @@ static void keep_switch_operand(emit *em, expr *e, step_list *made)
     if (!e || e->hoisted || e->type.kind == TY_VOID || e->type.kind == TY_ERROR || is_data(e->type)
         || e->bind == BIND_TYPE || e->bind == BIND_NAMESPACE || e->type.kind == TY_RECORD || e->type.kind == TY_TEXTURE
         || e->type.kind == TY_DEPTH_TEXTURE || e->type.kind == TY_CUBEMAP || e->type.kind == TY_TEXTURE_ARRAY
-        || e->type.kind == TY_DEPTH_TEXTURE_ARRAY) return;
+        || e->type.kind == TY_DEPTH_TEXTURE_ARRAY || e->type.kind == TY_DEPTH_CUBEMAP) return;
     const char *name = switch_temp(em, e->type);
     sb_put(em->o, " = ");
     ex(em, e);
@@ -5434,7 +6193,9 @@ static void st_steps(emit *em, const stmt *s, expr *e, const bool sometimes, ste
         for (int side = 0; side < 2; side++) {
             expr *arm = shorted ? ((side == 0) == (e->op == T_AND) ? e->rhs : cond) : side == 0 ? e->lhs : e->rhs;
             em->indent++;
-            st_steps(em, s, arm, false, made);
+            // The condition is in its variable already, made before the `if`: walking it again would write its
+            // own arms a second time, in a scope that has none of their variables
+            if (arm != cond) st_steps(em, s, arm, false, made);
             line(em);
             sb_printf(em->o, "%s = ", name);
             ex_as(em, arm, e->type);
@@ -5587,15 +6348,21 @@ static void st_loop(emit *em, const stmt *s)
 static void st_foreach(emit *em, const stmt *s, const data_ref *list)
 {
     const int k = em->temps++;
-    if (!list) { // An array: each of its elements, by its place
-        const type array = s->value->type, element = array.decl->fields.items[0].type;
+    if (!list) { // An array, or a list constant's values as one: each of its elements, by its place
+        const decl *listed = listed_constant(s->value);
+        if (listed && (listed->list_array.kind != TY_ARRAY || listed->list_literal->args.count > SHADER_LISTED_MOST)) {
+            put_listed(em, listed, s->value->at); // Says why
+            return;
+        }
+        const type array = listed ? listed->list_array : s->value->type, element = array.decl->fields.items[0].type;
         if (!type_fits(em, array, s->value->at)) return;
         const int reader = need_array(em, array.decl);
         sb_printf(em->o, "for (var tide_k%d: i32 = 0; tide_k%d < %d; tide_k%d++) {\n", k, k, array.decl->array_length, k);
         em->indent++;
         line(em);
         sb_printf(em->o, "var %s: %s = tide_el%d(", local_name(s->name), ty(em, element), reader);
-        ex(em, s->value);
+        if (listed) put_listed(em, listed, s->value->at);
+        else ex(em, s->value);
         sb_printf(em->o, ", tide_k%d);\n", k);
     } else {
         const int texture = list->texture;
@@ -5852,6 +6619,10 @@ static void st_one(emit *em, const stmt *s, bool outs_ready)
         break;
     case S_FOREACH: {
         data_ref data;
+        if (s->value && listed_constant(s->value)) { // A list constant: its values, as an array's
+            st_foreach(em, s, NULL);
+            break;
+        }
         if (s->value && (s->value->type.kind == TY_LIST || s->value->type.kind == TY_MAP || s->value->type.kind == TY_SET)) {
             if (data_of(em, s->value, &data)) st_foreach(em, s, &data);
             else type_fits(em, s->value->type, s->value->at);
@@ -5884,10 +6655,17 @@ static void st_one(emit *em, const stmt *s, bool outs_ready)
 // ---------------------------------------------------------------------------
 // Functions
 
-// A function or method the code calls: written before its caller, once.
+// A function or method the code calls: written before its caller, once for
+// what it's given, and for each stage whose code of it differs: a function
+// that reads a component it's given reads its fields from the instance's
+// attributes in the vertex stage and from what the vertex stage passes on in
+// the fragment stage (put_bound), and both stages are one module. So a stage
+// that needs a function another stage had written writes it again, and where
+// that's the same, it's the one; where it isn't, it's another, its name ending
+// in "_8" and its stage's letter. Says the suffix its calls are written with.
 // While checking, its body is checked once, whichever frag or vert reaches it
 // first, and a function that reaches itself is refused.
-static void need_function(emit *em, decl *fn, const loc at, const given *spec, const char *suffix)
+static const char *need_function(emit *em, decl *fn, const loc at, const given *spec, const char *suffix)
 {
     if (em->checking && fn->gpu_state >= 2) { // What it reads of assets by their names, its caller reads
         for (int i = 0; i < fn->gpu_data.count; i++) note_asset(em, fn->gpu_data.items[i]);
@@ -5896,15 +6674,23 @@ static void need_function(emit *em, decl *fn, const loc at, const given *spec, c
         if (fn->gpu_state == 1) {
             refuse(em, at, "'" STR_FMT "' calls itself, and the GPU has no recursion", STR_ARG(fn->name));
             diag_note("write it as a loop that counts: 'for (int i = 0; i < 8; i++) { ... }'");
-            return;
+            return suffix;
         }
         if (fn->gpu_state == 3) em->failed = true;
-        if (fn->gpu_state != 0) return;
+        if (fn->gpu_state != 0) return suffix;
     }
+    int other = -1; // Written for another stage: this one's is written, and compared with that
     for (int i = 0; i < em->done.count; i++) {
-        if (em->done.items[i].fn == fn && !strcmp(em->done.items[i].suffix, suffix)) return;
+        const shader_function *done = &em->done.items[i];
+        if (done->fn != fn || strcmp(done->suffix, suffix)) continue;
+        if (em->checking || done->stage == em->stage) return done->named ? done->named : suffix;
+        if (done->text) other = i;
     }
-    const shader_function written = {fn, suffix};
+    // Its locals are numbered as the other stage's were, so the same code is the same text
+    const int temps = em->temps;
+    if (other >= 0) em->temps = em->done.items[other].temps;
+    const int written_at = em->done.count;
+    const shader_function written = {fn, suffix, em->stage, em->temps, NULL, NULL};
     vec_push(em->done, written);
     const char *why = fn->is_extern        ? "it's C, which runs on the CPU"
                       : fn->is_async       ? "it's a task, which the CPU runs between ticks"
@@ -5914,7 +6700,8 @@ static void need_function(emit *em, decl *fn, const loc at, const given *spec, c
                                            : NULL;
     if (why) {
         refuse(em, at, "the GPU can't run '" STR_FMT "': %s", STR_ARG(fn->name), why);
-        return;
+        em->temps = temps > em->temps ? temps : em->temps;
+        return suffix;
     }
     // Its body, with what it calls before it
     sb body = {0};
@@ -5946,12 +6733,11 @@ static void need_function(emit *em, decl *fn, const loc at, const given *spec, c
     em->o = &head;
     const bool value = fn->return_type.kind != TY_VOID && fn->return_type.kind != TY_ERROR;
     if (value && !type_fits(em, fn->return_type, fn->at)) em->failed = true;
-    sb_printf(&head, "fn %s%s(", function_name(fn), suffix);
-    bool first = true;
+    bool first = true; // Its name and the '(' go before this, once it's known which it is
     if (method && given_self(fn)) { // Its receiver holds a list: it's handed nothing for it (Structs that hold lists)
         if (fn->is_mut_method) {
             refuse(em, fn->at, "'" STR_FMT "' changes the '" STR_FMT "' it's called on, and code the GPU runs only reads one that "
-                               "holds a list", STR_ARG(fn->name), STR_ARG(fn->owner->name));
+                               "holds %s", STR_ARG(fn->name), STR_ARG(fn->owner->name), held_word(owner_type(fn->owner)));
         }
     } else if (method) {
         const type self = {fn->owner->kind == DECL_COMPONENT ? TY_COMPONENT : TY_STRUCT, fn->owner};
@@ -6010,13 +6796,31 @@ static void need_function(emit *em, decl *fn, const loc at, const given *spec, c
     em->defuse = defuse;
     em->statement = statement;
     em->failed = failed || bad;
-    sb_put(&em->functions, head.data);
-    if (em->grads.data) sb_put(&em->functions, em->grads.data); // What its Samples ask as it starts
+    sb text = {0};
+    sb_put(&text, head.data);
+    if (em->grads.data) sb_put(&text, em->grads.data); // What its Samples ask as it starts
     em->grads = grads;
     em->grad_count = grad_count;
     em->hoisted.count = hoisted;
-    if (body.data) sb_put(&em->functions, body.data);
-    sb_put(&em->functions, "}\n\n");
+    if (body.data) sb_put(&text, body.data);
+    sb_put(&text, "}\n\n");
+    // Its locals are its own: they're numbered from where the caller's were, and its caller's go on past both
+    em->temps = temps > em->temps ? temps : em->temps;
+    const char *named = suffix;
+    if (other >= 0 && !strcmp(em->done.items[other].text, text.data)) {
+        named = em->done.items[other].named; // The same in this stage as in the other: the one
+    } else {
+        if (other >= 0) { // ...and another where it isn't
+            sb stage = {0};
+            sb_printf(&stage, "%s_8%c", suffix, em->stage == STAGE_FRAG ? 'f' : 'v');
+            named = stage.data;
+        }
+        sb_printf(&em->functions, "fn %s%s(", function_name(fn), named);
+        sb_put(&em->functions, text.data);
+    }
+    em->done.items[written_at].text = text.data;
+    em->done.items[written_at].named = named;
+    return named;
 }
 
 // ---------------------------------------------------------------------------
@@ -6117,15 +6921,17 @@ static void put_dice(emit *em, sb *o, const int stage, const char *nth)
 // What the vertex stage passes on to the pixels, as members of the stage's
 // struct: the vertex's fields the pixels read, the fields they read of what
 // the vert wrote for them, where they are in the world, and the instance's
-// float4s and int4s, which don't blend.
+// float4s and int4s, which don't blend. A vertex's ints and int vectors are the
+// triangle's first corner's, flat, as a vert's handed ones are.
 static void put_varyings(emit *em, sb *o)
 {
     const shader *sh = em->sh;
     int location = 0;
     for (int i = 0; i < sh->vertex->fields.count; i++) {
         if (!sh->frag_fields[i]) continue;
-        const char *t = ty(em, as_float(sh->vertex->fields.items[i].type));
-        sb_printf(o, "    @location(%d) tide_s%d: %s,\n", location++, i, t);
+        const type t = sh->vertex->fields.items[i].type;
+        const bool flat = type_is_int_based(t);
+        sb_printf(o, "    @location(%d) %stide_s%d: %s,\n", location++, flat ? "@interpolate(flat) " : "", i, ty(em, t));
     }
     for (int h = 0; h < sh->handed.count; h++) {
         const shader_handed *handed = &sh->handed.items[h];
@@ -6555,6 +7361,8 @@ static void put_dice_variable(const emit *em, sb *o, const bool rolls)
 
 static emit emitter(program *prog, const shader *sh)
 {
+    // What its draws hand its frag's and vert's own Textures, for the reads that load 32-bit numbers (typed_format)
+    writing = sh;
     return (emit){.prog = prog, .sh = sh};
 }
 
@@ -6878,7 +7686,7 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
                 continue;
             }
             if (f->type.kind == TY_GRID || f->type.kind == TY_TEXTURE || f->type.kind == TY_DEPTH_TEXTURE
-                || f->type.kind == TY_CUBEMAP || f->type.kind == TY_TEXTURE3D || f->type.kind == TY_TEXTURE_ARRAY || f->type.kind == TY_DEPTH_TEXTURE_ARRAY)
+                || f->type.kind == TY_CUBEMAP || f->type.kind == TY_TEXTURE3D || f->type.kind == TY_TEXTURE_ARRAY || f->type.kind == TY_DEPTH_TEXTURE_ARRAY || f->type.kind == TY_DEPTH_CUBEMAP)
                 continue; // Sampled, below
             shader_value *v = add_value(sh, p->type.decl, f, f->type, p->type.kind == TY_COMPONENT || explicit_instance);
             if (code->is_frag) v->frag_reads = true;
@@ -6899,36 +7707,56 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
                 continue;
             }
             if (!p->local_reads[k] || f->type.kind == TY_GRID || f->type.kind == TY_TEXTURE || f->type.kind == TY_DEPTH_TEXTURE
-                || f->type.kind == TY_CUBEMAP || f->type.kind == TY_TEXTURE3D || f->type.kind == TY_TEXTURE_ARRAY || f->type.kind == TY_DEPTH_TEXTURE_ARRAY) continue;
+                || f->type.kind == TY_CUBEMAP || f->type.kind == TY_TEXTURE3D || f->type.kind == TY_TEXTURE_ARRAY || f->type.kind == TY_DEPTH_TEXTURE_ARRAY || f->type.kind == TY_DEPTH_CUBEMAP) continue;
             shader_value *v = add_value(sh, p->type.decl, f, f->type, p->type.kind == TY_COMPONENT);
             if (code->is_frag) v->frag_reads = true;
             else v->vert_reads = true;
             add_bound(sh, p->type.decl);
         }
     }
+    bool conflict_said = false;
     for (int i = 0; i < code->samples.count; i++) {
-        const shader_sample *s = &code->samples.items[i];
+        shader_sample own = code->samples.items[i];
+        if (own.field < 0 && !own.asset && own.read != READ_SIZE) { // Its own Texture: as the draw's texture there is
+            const int format = source_format_of(sh, &code->params.items[own.param]);
+            const sampling exact = exact_sampling((sampling){own.read, own.filter, own.wrap, own.filter_said, own.wrap_said,
+                                                             own.write, own.image_color}, format, false);
+            own.read = exact.read, own.filter = exact.filter, own.wrap = exact.wrap;
+            own.filter_said = exact.filter_said, own.wrap_said = exact.wrap_said;
+        }
+        const shader_sample *s = &own;
         const decl *source = s->asset ? NULL : code->params.items[s->param].type.decl;
+        const bool direct = s->field < 0 && !s->asset;
         const shader_texture t = {.source = source,
                                   .field = s->field < 0 ? NULL : &(s->local ? source->local_part : source)->fields.items[s->field],
-                                  .direct = s->field < 0 && !s->asset, .asset = s->asset,
+                                  .direct = direct, .asset = s->asset,
+                                  .given = direct ? shader_given_texture(sh->vert, sh->frag, &code->params.items[s->param]) : 0,
                                   .read = s->read == READ_COMPARE_ARRAY ? READ_DEPTH_ARRAY : s->read, .write = s->write, .image_color = s->image_color}; // An array's depth's
         // The texture, once however it's read (a size is apart: metadata, never a binding)...
         const shader_texture *textures = s->read == READ_SIZE ? sh->sizes.items : sh->textures.items;
         const int count = s->read == READ_SIZE ? sh->sizes.count : sh->textures.count;
         int k = 0;
-        while (k < count && !(textures[k].direct == t.direct && textures[k].source == t.source && textures[k].field == t.field
-                              && textures[k].asset == t.asset && one_image(textures[k].read, t.read) && textures[k].image_color == t.image_color)) {
+        while (k < count && !(textures[k].direct == t.direct && textures[k].given == t.given && textures[k].source == t.source
+                              && textures[k].field == t.field && textures[k].asset == t.asset && one_image(textures[k].read, t.read)
+                              && textures[k].image_color == t.image_color)) {
             k++;
         }
         if (k == count) {
             if (s->read == READ_SIZE) vec_push(sh->sizes, t);
             else vec_push(sh->textures, t);
         }
-        if (k < sh->textures.count && s->read != READ_SIZE) {
-            shader_texture *image = &sh->textures.items[k];
-            if (image->write != s->write) {
+        // A kernel that writes an image can't read it in that run, whichever way it's read: a typed [Raw(T)] read
+        // (READ_NUMBER, READ_INT_VOLUME...) is another entry of the same image than the store's READ_COLOR or
+        // READ_VOLUME, so the image is compared, not the entry. A target's depth is another image than its colors.
+        if (k < sh->textures.count && s->read != READ_SIZE && !conflict_said) {
+            for (int j = 0; j < sh->textures.count; j++) {
+                const shader_texture *image = &sh->textures.items[j];
+                if (image->direct != t.direct || image->source != t.source || image->field != t.field || image->asset != t.asset
+                    || image->image_color != t.image_color || image->write == s->write || depth_image_read(image->read)
+                    || depth_image_read(t.read) || image->read == READ_DATA || t.read == READ_DATA) continue;
                 diag_error(code->at, "a kernel can't read and write the same image in one run: read a second image and write into this one, then swap them in local code");
+                conflict_said = true;
+                break;
             }
         }
         if (source) add_bound(sh, (decl *)source);
@@ -6978,58 +7806,182 @@ static void list_bound(const shader *sh, sb *out, const bool per_instance)
     }
 }
 
+// The image a draw gives as its `k`th texture (shader_given_texture), which its frag's or vert's own Texture
+// parameter reads: a blit's source and those after it, or a mesh draw's textures after its mesh's arguments, in
+// order. NULL where it gives none there.
+static const expr *draw_texture(const expr *call, const int k)
+{
+    for (int a = call->blit ? 0 : 2, n = 0; a < call->args.count; a++) {
+        const expr *arg = call->args.items[a];
+        if (arg->bind == BIND_SHADER) break;
+        if ((arg->type.kind == TY_TEXTURE || arg->type.kind == TY_GRID) && n++ == k) return arg;
+    }
+    return NULL;
+}
+
+// ...the parameter that reads it: the frag's, or the vert's where the frag takes none of that name. NULL for none,
+// as for the first texture of a draw with no frag, which its pixels are drawn with.
+static const param *given_texture_param(const decl *vert, const decl *frag, const int k)
+{
+    const decl *stages[2] = {frag, vert};
+    for (int s = 0; s < 2; s++) {
+        for (int p = 1; stages[s] && p < stages[s]->params.count; p++) {
+            if (shader_given_texture(vert, frag, &stages[s]->params.items[p]) == k) return &stages[s]->params.items[p];
+        }
+    }
+    return NULL;
+}
+
+// ...and the role that parameter reads it as: a Color, or its [Raw(T)] numbers.
+static type given_texture_type(const decl *vert, const decl *frag, const int k)
+{
+    const param *from = given_texture_param(vert, frag, k);
+    if (!from) return (type){TY_COLOR, NULL};
+    const expr parameter = {.bind = BIND_PARAM, .param = (param *)(uintptr_t)from};
+    return declared_image_type(&parameter);
+}
+
+// The Format of the `k`th texture a draw gives where a typed Texture parameter reads it and it's 32-bit floats (7
+// R32f, 8 Rgba32f), whose blended reads load them exactly (exact_sampling); -1 otherwise (shader.source_formats).
+static int given_source_format(const expr *call, const int k)
+{
+    const expr *source = draw_texture(call, k);
+    if (!source || given_texture_type(call->vert, call->frag, k).kind == TY_COLOR) return -1;
+    const int format = image_target_format(source, 0, 0);
+    return format == 7 || format == 8 ? format : -1;
+}
+
+// A typed read of 32-bit floats (Format 7 R32f, 8 Rgba32f) that's still through a sampler once exact_sampling has
+// loaded what it can: one between smaller images (Trilinear, Anisotropic, SampleLevel, SampleGrad), which these
+// formats have none of, or a cube's blended. Said at the draw, with the fix. `given` is the frag's or vert's own
+// Texture parameter a direct texture is, for its name.
+static bool refuse_blended_numbers(const program *prog, const expr *call, const shader_texture *t, const int format,
+                                   const param *given)
+{
+    if (format != 7 && format != 8) return true;
+    const bool cube = t->field && t->field->type.kind == TY_CUBEMAP;
+    if (t->read != READ_NUMBER_BLEND && t->read != READ_ARRAY && t->read != READ_CUBE && t->read != READ_VOLUME) return true;
+    const str name = t->field ? t->field->name : given ? given->name : str_from("source");
+    const str called = prog->format->members.items[format].name;
+    if (cube) {
+        diag_error(call->at, "cube '" STR_FMT "' is blended or read at a mip level, and Format." STR_FMT " faces are read at "
+                   "their nearest pixel: read it with Sample(direction) or Filter.Point, or make its faces Format.%s",
+                   STR_ARG(name), STR_ARG(called), format == 7 ? "R16f" : "Rgba16f");
+        diag_note("no GPU blends 32-bit floats on every device, so tidec loads a cube of them exactly: the face and the "
+                  "pixel nearest the direction, which can't be blended across a face's edge the same way everywhere");
+    } else {
+        // How it's read at its own pixels, as the image is: an array's at a layer
+        const type_kind held = t->field ? t->field->type.kind : TY_TEXTURE;
+        diag_error(call->at, "image '" STR_FMT "' is read between its smaller images, and Format." STR_FMT " has none: read it "
+                   "with %s or Filter.Bilinear, or draw the numbers into Format.%s", STR_ARG(name), STR_ARG(called),
+                   held == TY_TEXTURE_ARRAY ? "Sample(uv, layer)" : held == TY_TEXTURE3D ? "Sample(uvw)" : "Sample(uv)",
+                   format == 7 ? "R16f" : "Rgba16f");
+        diag_note("no GPU blends 32-bit floats on every device, so tidec loads them exactly, the nearest pixel or the four "
+                  "around blended in the shader, the same everywhere; Trilinear, Anisotropic, SampleLevel and SampleGrad "
+                  "read smaller images, which R8, Rg8, R16f, Rg16f and Rgba16f have on every GPU");
+    }
+    return false;
+}
+
 static bool check_image_sources(program *prog, const shader *sh, const expr *call)
 {
     for (int i = 0; i < sh->textures.count; i++) {
         const shader_texture *t = &sh->textures.items[i];
         if (t->direct) {
-            const expr *source = call->blit ? call->args.items[0] : NULL;
-            for (int a = 2; !source && a < call->args.count; a++) {
-                const expr *arg = call->args.items[a];
-                if (arg->type.kind == TY_TEXTURE || arg->type.kind == TY_GRID) source = arg;
-            }
-            type value = {TY_COLOR, NULL};
-            for (int p = 1; sh->frag && p < sh->frag->params.count; p++) {
-                const param *from = &sh->frag->params.items[p];
-                if (from->type.kind == TY_TEXTURE) {
-                    const expr parameter = {.bind = BIND_PARAM, .param = (param *)(uintptr_t)from};
-                    value = declared_image_type(&parameter);
-                }
-            }
-            if (source && value.kind != declared_image_type(source).kind) {
+            // The draw's texture it is, the one it gives in that place, and the parameter that reads it
+            const expr *source = draw_texture(call, t->given);
+            const param *given = given_texture_param(sh->vert, sh->frag, t->given);
+            const type value = given_texture_type(sh->vert, sh->frag, t->given);
+            if (source && !image_role_fits(source, value)) {
                 diag_error(call->at, "a frag's Texture source must keep its [Raw(T)] numeric role: pass an image with the same role as the source parameter");
                 return false;
             }
             const int format = source ? image_target_format(source, 0, 0) : -3;
+            if (format == 1) {
+                diag_error(call->at, "the frag's source is the color of a target of depth alone (Format.Depth), which has none: "
+                           "read the target's depth through a DepthTexture field holding 'target.depth', or make the target "
+                           "with a color Format");
+                return false;
+            }
             if (format >= 0 && !image_format_accepts(format, value)) {
                 diag_error(call->at, "the frag's source reads %s, but Format." STR_FMT " takes %s: pass a source image with the matching numeric role and format",
                            type_name(value), STR_ARG(prog->format->members.items[format].name), image_format_types(format));
                 return false;
             }
+            if (!refuse_blended_numbers(prog, call, t, format, given)) return false;
         }
-        if (!t->field || (t->field->type.kind != TY_TEXTURE && t->field->type.kind != TY_TEXTURE3D)) continue;
+        if (t->field && t->field->type.kind == TY_DEPTH_CUBEMAP) { // Only a depth cube has depth to read
+            expr source = {.field = (field *)(uintptr_t)t->field};
+            const int format = image_target_format(&source, 0, 0);
+            if (format >= 0 && format != 1) {
+                diag_error(call->at, "'" STR_FMT "' reads a cube's depth, and the cube's faces are Format." STR_FMT ": only a "
+                           "cube of depth alone has its depth read, made with 'Cubemap(size, Format.Depth)'",
+                           STR_ARG(t->field->name), STR_ARG(prog->format->members.items[format].name));
+                diag_note("a cube's color faces each draw with depth of their own, which isn't kept to be read: draw the depth "
+                          "into a depth cube of its own");
+                return false;
+            }
+            continue;
+        }
+        if (!t->field || (t->field->type.kind != TY_TEXTURE && t->field->type.kind != TY_TEXTURE3D
+                          && t->field->type.kind != TY_TEXTURE_ARRAY && t->field->type.kind != TY_CUBEMAP)) continue;
         expr source = {.field = (field *)(uintptr_t)t->field};
         const int format = image_target_format(&source, t->image_color, 0);
         const type value = raw_sample_type(t->field);
         if (format == -1 && value.kind != TY_COLOR) {
             diag_error(call->at, "this numeric image's format isn't fixed by its constructor assignments: assign one fixed Format to this field, or use separate fields for different formats");
+            note_unseen_image_maker(&source);
             return false;
         }
         if (format == -6 && value.kind != TY_COLOR && value.kind != TY_FLOAT) {
-            diag_error(call->at, "a Grid3<float> volume takes [Raw(float)]: declare its numeric image role as float");
+            diag_error(call->at, "image '" STR_FMT "' holds a %s, which is read as Color or with [Raw(float)]: declare its numeric "
+                       "image role as float", STR_ARG(t->field->name),
+                       t->field->type.kind == TY_TEXTURE3D ? "Grid3<float> volume" : "Grid2<float>'s image");
             return false;
         }
+        // Format.Depth's image has no colors: a target's or an array's of depth alone (its depth is read apart)
+        if (format == 1 && !t->write && t->field->type.kind == TY_TEXTURE_ARRAY && t->read != READ_DEPTH_ARRAY) {
+            diag_error(call->at, "image '" STR_FMT "' is a TextureArray of depth alone (Format.Depth), which has no colors to read: "
+                       "keep its depth in a DepthTextureArray field holding '" STR_FMT ".depth' and read that with Sample(uv, layer), "
+                       "or make the array with a color Format", STR_ARG(t->field->name), STR_ARG(t->field->name));
+            return false;
+        }
+        if (format == 1 && !t->write && t->field->type.kind == TY_CUBEMAP) {
+            diag_error(call->at, "cube '" STR_FMT "' is a cube of depth alone (Format.Depth), which has no colors to read: keep "
+                       "its depth in a DepthCubemap field holding '" STR_FMT ".depth' and read that with Sample(direction) or "
+                       "Compare(direction, value), or make the cube with a color Format", STR_ARG(t->field->name),
+                       STR_ARG(t->field->name));
+            return false;
+        }
+        if (format == 1 && !t->write && t->field->type.kind == TY_TEXTURE) {
+            diag_error(call->at, "image '" STR_FMT "' holds the color of a target of depth alone (Format.Depth), which has none: "
+                       "read the target's depth through a DepthTexture field holding 'target.depth', or make the target with a "
+                       "color Format", STR_ARG(t->field->name));
+            return false;
+        }
+        if (value.kind != TY_COLOR && !refuse_blended_numbers(prog, call, t, format, NULL)) return false;
         if (format < 0 || image_format_accepts(format, value)) continue;
         if (format == 0 || format == 2) {
-            diag_error(call->at, "image '" STR_FMT "' is read as %s, but Format." STR_FMT " takes %s: use a Texture without a typed Raw role%s",
+            diag_error(call->at, "image '" STR_FMT "' is read as %s, but Format." STR_FMT " takes %s: use a %s without a typed Raw role%s",
                        STR_ARG(t->field->name), type_name(value), STR_ARG(prog->format->members.items[format].name),
-                       image_format_types(format), format == 2 ? ", or [Raw(float4)] to read four numbers" : "");
+                       image_format_types(format), type_name(t->field->type), format == 2 ? ", or [Raw(float4)] to read four numbers" : "");
         } else {
             diag_error(call->at, "image '" STR_FMT "' is read as %s, but Format." STR_FMT " takes %s: declare its numeric role with [Raw(%s)]",
                        STR_ARG(t->field->name), type_name(value), STR_ARG(prog->format->members.items[format].name),
                        image_format_types(format), image_format_types(format));
         }
         return false;
+    }
+    return true;
+}
+
+// Whether shader `s`, planned for the same vert and frag, was planned for what `call` gives its typed Textures: a
+// typed Texture handed 32-bit floats has its blended reads load them exactly (exact_sampling), so it's a shader of
+// its own (shader.source_formats).
+static bool same_source_formats(const shader *s, const expr *call)
+{
+    for (int k = 0; k < s->source_formats.count; k++) {
+        if (s->source_formats.items[k] != given_source_format(call, k)) return false;
     }
     return true;
 }
@@ -7046,7 +7998,7 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
             && s->skinned == call->skinned
             && s->values_type == call->values_type && s->gpu_instances == call->gpu_instances
             && s->gpu_vertices == call->gpu_vertices && s->gpu_indices == call->gpu_indices
-            && s->blit == call->blit && s->direct_texture == direct_texture) return s;
+            && s->blit == call->blit && s->direct_texture == direct_texture && same_source_formats(s, call)) return s;
     }
     shader *sh = NEW(shader);
     sh->index = prog->shaders.count;
@@ -7056,6 +8008,10 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     sh->textured = textured;
     sh->blit = call->blit;
     sh->direct_texture = direct_texture;
+    // The textures its draws give, in order: its vert's and its frag's, and with no frag the one its pixels are drawn with
+    sh->given_textures = direct_texture || textured ? shader_given_textures(call->vert, call->frag) : 0;
+    if ((direct_texture || textured) && sh->given_textures < 1) sh->given_textures = 1;
+    for (int k = 0; direct_texture && k < sh->given_textures; k++) vec_push(sh->source_formats, given_source_format(call, k));
     sh->instanced = call->instanced;
     sh->skinned = call->skinned;
     sh->skin_base_at = -1;
@@ -7205,7 +8161,7 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
         const field *f = &vertex->fields.items[i];
         if (sh->frag) {
             const param *p = &sh->frag->params.items[0];
-            sh->frag_fields[i] = (p->whole || (p->reads && p->reads[i])) && !type_is_int_based(f->type);
+            sh->frag_fields[i] = p->whole || (p->reads && p->reads[i]); // Ints too, flat (put_varyings)
         } else {
             sh->frag_fields[i] = str_eq_c(f->name, "color") || (textured && str_eq_c(f->name, "uv"));
         }
@@ -7290,9 +8246,7 @@ void plan_shaders(program *prog)
         const mesh_draw *draw = &prog->mesh_draws.items[i];
         expr *call = draw->call;
         if (call->gpu == GPU_TARGET_READ) {
-            const int format = image_target_format(call->object, 0, 0);
-            if (format >= 3)
-                diag_error(call->at, "Read returns Grid2<Color> from a Color image: sample this numeric image on the GPU instead, or copy it into a Color target before Read");
+            check_target_read(prog, call);
             continue;
         }
         if (call->c_callee && (!strcmp(call->c_callee, "tide_draw_clear_images") || !strcmp(call->c_callee, "tide_draw_clear"))) {

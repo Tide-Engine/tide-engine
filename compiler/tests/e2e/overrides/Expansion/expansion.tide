@@ -87,9 +87,9 @@ override event(Hit hit) TakeHit(mut Unit unit, mut Log log)
     unit.stats.health -= hit.damage * 3;
 }
 
-override command(Buy buy, PlayerID sender) OnBuy(mut Log log)
+override command(int item) Buy(mut Log log, PlayerID sender)
 {
-    log.bought = buy.item + 100;
+    log.bought = item + 100;
 }
 
 override local event(Hit hit) ShowHit(mut Hud hud)

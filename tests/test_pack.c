@@ -470,6 +470,154 @@ TIDE_TEST(pack_small_regions_follow_their_entries_and_many_entries_fit)
     free(bytes);
 }
 
+// A pack of two images and some bytes, as tide_pack_texture_blocks makes it (`later` false) or with the images'
+// pixels given room alone and filled after the pack is laid out. `big` is a side of the first image, so its
+// region is one that stays where it was built or one moved next to its entries. `recipe`, where it isn't NULL,
+// gets the laid pack's, taken before a pixel is filled.
+static uint8_t *room_pack(const bool later, const int32_t big, const uint8_t fill, const uint8_t bytes_fill, size_t *size,
+                          uint8_t recipe[32])
+{
+    const size_t first = (size_t)big * (size_t)big * 4u;
+    uint8_t *rgba = malloc(first), small[16 * 16 * 4], blob[300];
+    if (!rgba) abort();
+    memset(rgba, fill, first);
+    for (size_t i = 0; i < sizeof small; i++) small[i] = (uint8_t)(i * 7u);
+    memset(blob, bytes_fill, sizeof blob);
+    uint8_t content[3][32];
+    tide_sha256_of(rgba, first, content[0]);
+    tide_sha256_of(small, sizeof small, content[1]);
+    tide_sha256_of(blob, sizeof blob, content[2]);
+    tide_pack_builder b = {0};
+    uint32_t chars, hole[3] = {0, 0, 0};
+    uint64_t at[3];
+    if (later) {
+        at[0] = tide_pack_texture_room(&b, content[0], big, big, 0u, 0u, 0u, &hole[0]);
+        at[1] = tide_pack_bytes(&b, content[2], blob, sizeof blob, &chars);
+        at[2] = tide_pack_texture_room(&b, content[1], 16, 16, 0u, 0u, 0u, &hole[1]);
+        // The same content again is the block there already, with nothing more to fill
+        TIDE_CHECK(tide_pack_texture_room(&b, content[1], 16, 16, 0u, 0u, 0u, &hole[2]) == at[2] && hole[2] == UINT32_MAX);
+        TIDE_CHECK(tide_pack_texture(&b, content[0], big, big, rgba) == at[0]);
+        TIDE_CHECK(hole[0] == 0u && hole[1] == 1u && b.hole_count == 2u);
+    } else {
+        at[0] = tide_pack_texture(&b, content[0], big, big, rgba);
+        at[1] = tide_pack_bytes(&b, content[2], blob, sizeof blob, &chars);
+        at[2] = tide_pack_texture(&b, content[1], 16, 16, small);
+    }
+    tide_pack_name(&b, "Game.big", TIDE_PACK_TEXTURE, at[0], first, 0);
+    tide_pack_name(&b, "Game.blob", TIDE_PACK_BYTES, at[1], sizeof blob, chars);
+    tide_pack_name(&b, "Game.small", TIDE_PACK_TEXTURE, at[2], sizeof small, 0);
+    uint8_t *out;
+    if (later) {
+        tide_pack_hole *holes;
+        uint32_t count;
+        out = tide_pack_lay(&b, size, &holes, &count);
+        if (count != 2u || holes[0].size != first || holes[1].size != sizeof small || holes[0].at >= holes[1].at) abort();
+        TIDE_CHECK(!memcmp(holes[0].content, content[0], 32) && !memcmp(holes[1].content, content[1], 32));
+        if (recipe) {
+            // Of nothing in the holes: the same whatever bytes they have before they're filled
+            uint8_t again[32];
+            tide_pack_recipe(out, *size, holes, count, NULL, recipe);
+            memset(out + holes[0].at, 0xA5, (size_t)holes[0].size);
+            memset(out + holes[1].at, 0x5A, (size_t)holes[1].size);
+            tide_pack_recipe(out, *size, holes, count, each_backwards, again);
+            TIDE_CHECK(!memcmp(recipe, again, 32));
+        }
+        memcpy(out + holes[0].at, rgba, first);
+        memcpy(out + holes[1].at, small, sizeof small);
+        free(holes);
+        tide_pack_seal(out, *size, NULL);
+    } else out = tide_pack_end(&b, size);
+    free(rgba);
+    return out;
+}
+
+TIDE_TEST(pack_room_filled_later_is_the_pack_made_at_once_and_its_recipe_tells_packs_apart)
+{
+    // 64 square stays under the size a region is moved at; 2100 square (17.6 MiB) is over it
+    for (int pass = 0; pass < 2; pass++) {
+        const int32_t big = pass ? 2100 : 64;
+        size_t size, later_size, other_size;
+        uint8_t recipe[32], other[32];
+        uint8_t *whole = room_pack(false, big, 9, 1, &size, NULL);
+        uint8_t *later = room_pack(true, big, 9, 1, &later_size, recipe);
+        TIDE_REQUIRE(size == later_size);
+        TIDE_CHECK(!memcmp(whole, later, size)); // Every byte, the digest too
+        uint8_t digest[32], zeroed[32] = {0};
+        tide_pack_header h;
+        memcpy(&h, later, sizeof h);
+        memcpy(later + offsetof(tide_pack_header, digest), zeroed, 32);
+        tide_pack_digest_of(later, later_size, NULL, digest);
+        TIDE_CHECK(!memcmp(digest, h.digest, 32));
+        memcpy(later + offsetof(tide_pack_header, digest), h.digest, 32);
+        TIDE_REQUIRE(tide_pack_load(later, later_size));
+        TIDE_CHECK(tide_pack_find("Game.big", TIDE_PACK_TEXTURE) != NULL && tide_pack_find("Game.small", TIDE_PACK_TEXTURE) != NULL);
+        tide_pack_unload();
+        free(whole);
+        free(later);
+        // The recipe is another's where an image's content is another's, and where a byte outside the images is
+        later = room_pack(true, big, 10, 1, &other_size, other);
+        TIDE_CHECK(other_size == size && memcmp(recipe, other, 32) != 0);
+        free(later);
+        later = room_pack(true, big, 9, 2, &other_size, other);
+        TIDE_CHECK(other_size == size && memcmp(recipe, other, 32) != 0);
+        free(later);
+        later = room_pack(true, big, 9, 1, &other_size, other);
+        TIDE_CHECK(!memcmp(recipe, other, 32)); // ...and the same pack's again
+        free(later);
+    }
+}
+
+TIDE_TEST(pack_given_is_loaded_where_it_was_read_and_copied_where_it_has_no_room)
+{
+    // A region that stays where it was built (17 MiB) and one that follows its entries
+    for (int big = 0; big < 2; big++) {
+        const uint32_t blob = big ? 17u << 20 : 300u;
+        size_t size;
+        uint8_t *file = blob_pack(blob, 7, 3, NULL, 0, &size);
+        // Read with room after it, as a host reads one: the loaded pack is those bytes
+        const size_t room = size + (2u << 20);
+        uint8_t *read = malloc(room);
+        TIDE_REQUIRE(read != NULL);
+        memcpy(read, file, size);
+        memset(read + size, 0xEE, room - size); // What a reader leaves after the file is anything
+        tide_pack_give(read, size, room);
+        TIDE_REQUIRE(tide_pack_load(read, size));
+        TIDE_CHECK(tide_pack_given(read) && !tide_pack_given(file));
+        const tide_pack_entry *e = tide_pack_find("Game.blob2", TIDE_PACK_BYTES);
+        TIDE_REQUIRE(e != NULL && e->size == blob);
+        const uint8_t *bytes = tide_pack_span(TIDE_PACK_BASE + e->offset + sizeof(tide_block), blob);
+        tide_pack_header h;
+        memcpy(&h, file, sizeof h);
+        TIDE_CHECK(bytes != NULL && bytes[0] == 7 && bytes[blob - 1u] == 7);
+        TIDE_CHECK(bytes >= read + h.region_at && bytes < read + size); // In the bytes given, not a copy
+        // The same pack loaded from bytes nobody gave is another copy, and the given ones go with the first
+        TIDE_REQUIRE(tide_pack_load(file, size));
+        TIDE_CHECK(!tide_pack_given(read) && !tide_pack_given(file));
+        e = tide_pack_find("Game.blob2", TIDE_PACK_BYTES);
+        TIDE_REQUIRE(e != NULL);
+        bytes = tide_pack_span(TIDE_PACK_BASE + e->offset + sizeof(tide_block), blob);
+        TIDE_CHECK(bytes != NULL && bytes[blob - 1u] == 7 && !(bytes >= file && bytes < file + size));
+        // With no room for what's laid out after the region, or offered as another size, they stay the caller's
+        uint8_t *tight = malloc(size);
+        TIDE_REQUIRE(tight != NULL);
+        memcpy(tight, file, size);
+        tide_pack_give(tight, size, size);
+        TIDE_REQUIRE(tide_pack_load(tight, size));
+        TIDE_CHECK(!tide_pack_given(tight));
+        tide_pack_give(tight, size - 1u, room);
+        TIDE_REQUIRE(tide_pack_load(tight, size));
+        TIDE_CHECK(!tide_pack_given(tight));
+        // An offer is for the next load alone
+        tide_pack_give(tight, size, room);
+        TIDE_REQUIRE(tide_pack_load(file, size));
+        TIDE_REQUIRE(tide_pack_load(tight, size));
+        TIDE_CHECK(!tide_pack_given(tight));
+        tide_pack_unload();
+        free(tight);
+        free(file);
+    }
+}
+
 TIDE_TEST(pack_refuses_the_previous_map_format_and_keeps_the_loaded_pack)
 {
     size_t size;
@@ -1895,4 +2043,196 @@ TIDE_TEST(pack_levels_of_detail_spoiled_are_none)
     TIDE_CHECK(tide_pack_list_levels(tree.indices, &found) && found.multiplier == 1.0f);
     tide_pack_unload();
     free(bytes);
+}
+
+// ---------------------------------------------------------------------------
+// A pack compressed
+
+// The loaded region's bytes, with what loading laid out after the file's: a copy to free().
+static uint8_t *loaded_region(uint64_t *size)
+{
+    *size = tide_pack_region_size;
+    const uint8_t *region = tide_pack_span(TIDE_PACK_BASE, *size);
+    uint8_t *copy = malloc(*size ? (size_t)*size : 1u);
+    if (!copy || (*size && !region)) abort();
+    if (*size) memcpy(copy, region, (size_t)*size);
+    return copy;
+}
+
+// `bytes` compressed is smaller where `smaller`, the same bytes however its pieces are made, the pack it holds
+// byte for byte, and loads as the same pack: its digest, its region and what's laid out after it. Frees `bytes`.
+static void compressed_is_the_pack(uint8_t *bytes, const size_t size, const bool smaller)
+{
+    size_t packed_size, again_size, back_size = 0;
+    uint8_t *packed = tide_pack_compress(bytes, size, NULL, &packed_size);
+    uint8_t *again = tide_pack_compress(bytes, size, each_backwards, &again_size);
+    TIDE_REQUIRE(packed && again && packed_size == again_size && memcmp(packed, again, packed_size) == 0);
+    tide_pack_compressed_header c;
+    memcpy(&c, packed, sizeof c);
+    TIDE_CHECK(memcmp(c.magic, TIDE_PACK_COMPRESSED_MAGIC, 8) == 0 && c.size == size
+               && c.pieces == (size + TIDE_PACK_PIECE - 1u) / TIDE_PACK_PIECE);
+    TIDE_CHECK(packed_size <= size + sizeof c + c.pieces * sizeof(uint32_t)); // A piece is never more than itself
+    if (smaller) TIDE_CHECK(packed_size < size);
+    uint8_t *back = tide_pack_expand(packed, packed_size, &back_size);
+    TIDE_REQUIRE(back && back_size == size && memcmp(back, bytes, size) == 0);
+    TIDE_CHECK(tide_pack_expand(bytes, size, &back_size) == NULL); // A pack that isn't compressed holds none
+    TIDE_REQUIRE(tide_pack_load(bytes, size));
+    uint8_t digest[32], packed_digest[32];
+    tide_pack_digest(digest);
+    uint64_t region_size, packed_region_size;
+    uint8_t *region = loaded_region(&region_size);
+    tide_pack_unload();
+    TIDE_REQUIRE(tide_pack_load(packed, packed_size));
+    tide_pack_digest(packed_digest);
+    uint8_t *packed_region = loaded_region(&packed_region_size);
+    TIDE_CHECK(memcmp(digest, packed_digest, sizeof digest) == 0);
+    TIDE_CHECK(region_size == packed_region_size && memcmp(region, packed_region, (size_t)region_size) == 0);
+    tide_pack_unload();
+    free(region), free(packed_region), free(back), free(again), free(packed), free(bytes);
+}
+
+// A pack of two blocks: `plain` bytes that repeat, and `noise` bytes no compressor makes fewer
+static uint8_t *mixed_pack(const uint32_t plain, const uint32_t noise, size_t *size)
+{
+    uint8_t *data = malloc((plain > noise ? plain : noise) + 1u);
+    if (!data) abort();
+    tide_pack_builder b = {0};
+    uint8_t hash[32];
+    uint32_t chars;
+    for (uint32_t i = 0; i < plain; i++) data[i] = (uint8_t)("the same words over and over, "[i % 30u] + (i >> 16));
+    tide_sha256_of(data, plain, hash);
+    tide_pack_name(&b, "Game.plain", TIDE_PACK_BYTES, tide_pack_bytes(&b, hash, data, plain, &chars), plain, 0);
+    uint64_t state = 0x9E3779B97F4A7C15ull;
+    for (uint32_t i = 0; i < noise; i++) {
+        state ^= state << 13, state ^= state >> 7, state ^= state << 17;
+        data[i] = (uint8_t)(state >> 32);
+    }
+    tide_sha256_of(data, noise, hash);
+    tide_pack_name(&b, "Game.noise", TIDE_PACK_BYTES, tide_pack_bytes(&b, hash, data, noise, &chars), noise, 0);
+    free(data);
+    return tide_pack_end(&b, size);
+}
+
+TIDE_TEST(pack_compressed_loads_as_the_pack_it_holds)
+{
+    size_t size;
+    uint8_t *bytes = build(&size);
+    compressed_is_the_pack(bytes, size, true);
+    // Lists and maps of images, which loading lays out after the file's region
+    bytes = build_textures(&size, true, 3);
+    compressed_is_the_pack(bytes, size, true);
+    bytes = build_meshes(&size, false, 2.0f);
+    compressed_is_the_pack(bytes, size, true);
+    // Many pieces of one byte: what the format makes fewest bytes of
+    bytes = blob_pack(20u << 20, 7, 0, NULL, 0, &size);
+    compressed_is_the_pack(bytes, size, true);
+    // Nothing in it, and bytes that don't get fewer: kept as they are
+    tide_pack_builder none = {0};
+    bytes = tide_pack_end(&none, &size);
+    compressed_is_the_pack(bytes, size, false);
+    bytes = mixed_pack(0, 3000, &size);
+    compressed_is_the_pack(bytes, size, false);
+    // Pieces of both kinds in one file, whose region stays where it was built (zeros before it)
+    bytes = mixed_pack(9u << 20, 9u << 20, &size);
+    size_t packed_size;
+    uint8_t *packed = tide_pack_compress(bytes, size, NULL, &packed_size);
+    tide_pack_compressed_header c;
+    memcpy(&c, packed, sizeof c);
+    uint32_t kept = 0, fewer = 0;
+    for (uint32_t i = 0; i < c.pieces; i++) {
+        uint32_t stored;
+        memcpy(&stored, packed + sizeof c + i * sizeof stored, sizeof stored);
+        const uint64_t left = size - (uint64_t)i * TIDE_PACK_PIECE, whole = left < TIDE_PACK_PIECE ? left : TIDE_PACK_PIECE;
+        kept += stored == whole;
+        fewer += stored < whole / 2u;
+    }
+    TIDE_CHECK(c.pieces == 5 && kept >= 2 && fewer >= 2);
+    TIDE_REQUIRE(tide_pack_load(packed, packed_size));
+    const tide_pack_entry *e = tide_pack_find("Game.noise", TIDE_PACK_BYTES);
+    TIDE_REQUIRE(e != NULL && e->size == 9u << 20);
+    tide_pack_header h;
+    memcpy(&h, bytes, sizeof h);
+    const uint8_t *read = tide_pack_span(TIDE_PACK_BASE + e->offset + sizeof(tide_block), 9u << 20);
+    TIDE_CHECK(read != NULL && memcmp(read, bytes + h.region_at + e->offset + sizeof(tide_block), 9u << 20) == 0);
+    free(packed);
+    compressed_is_the_pack(bytes, size, true);
+}
+
+TIDE_TEST(pack_compressed_entries_past_its_first_piece_are_read)
+{
+    // More entries than a piece holds, so the region starts in a later one: the file's last, and one before it
+    for (int big = 0; big < 2; big++) {
+        const uint32_t names = 80000u, blob = big ? 9u << 20 : 64u;
+        size_t size, packed_size;
+        uint8_t *bytes = blob_pack(blob, 5, names, NULL, 0, &size);
+        tide_pack_header h;
+        memcpy(&h, bytes, sizeof h);
+        TIDE_REQUIRE(h.region_at > TIDE_PACK_PIECE);
+        uint8_t *packed = tide_pack_compress(bytes, size, NULL, &packed_size);
+        TIDE_REQUIRE(tide_pack_load(packed, packed_size));
+        const tide_pack_entry *e = tide_pack_find("Game.blob79999", TIDE_PACK_BYTES);
+        TIDE_REQUIRE(e != NULL && e->size == blob);
+        const uint8_t *read = tide_pack_span(TIDE_PACK_BASE + e->offset + sizeof(tide_block), blob);
+        TIDE_CHECK(read != NULL && read[0] == 5 && read[blob - 1u] == 5);
+        free(packed);
+        compressed_is_the_pack(bytes, size, true);
+    }
+}
+
+TIDE_TEST(pack_compressed_bytes_that_are_not_one_are_refused_and_the_loaded_pack_stays)
+{
+    size_t size, kept_size, packed_size;
+    uint8_t *kept = blob_pack(100, 3, 0, NULL, 0, &kept_size);
+    uint8_t *bytes = build_meshes(&size, true, 1.0f);
+    uint8_t *packed = tide_pack_compress(bytes, size, NULL, &packed_size);
+    uint8_t *copy = malloc(packed_size);
+    TIDE_REQUIRE(kept && bytes && packed && copy && tide_pack_load(kept, kept_size));
+    // Cut short anywhere, or with bytes after it
+    for (size_t n = 0; n < packed_size; n++) TIDE_CHECK(!tide_pack_load(packed, n));
+    uint8_t *longer = malloc(packed_size + 1u);
+    TIDE_REQUIRE(longer != NULL);
+    memcpy(longer, packed, packed_size);
+    longer[packed_size] = 0;
+    TIDE_CHECK(!tide_pack_load(longer, packed_size + 1u));
+    free(longer);
+    // Another version, another count of pieces, a size its pieces aren't, a piece of no bytes or of more than it has
+    tide_pack_compressed_header c;
+    memcpy(&c, packed, sizeof c);
+    const uint32_t zero = 0, much = TIDE_PACK_PIECE + 1u;
+    for (int variant = 0; variant < 7; variant++) {
+        memcpy(copy, packed, packed_size);
+        tide_pack_compressed_header forged = c;
+        if (variant == 0) forged.version++;
+        if (variant == 1) forged.pieces++;
+        if (variant == 2) forged.size++;
+        if (variant == 3) forged.size = UINT64_MAX;
+        if (variant == 4) forged.size = (uint64_t)255u * 4096u * TIDE_PACK_PIECE; // More than its bytes could hold
+        memcpy(copy, &forged, sizeof forged);
+        if (variant == 5) memcpy(copy + sizeof c, &zero, sizeof zero);
+        if (variant == 6) memcpy(copy + sizeof c, &much, sizeof much);
+        size_t none;
+        TIDE_CHECK(!tide_pack_load(copy, packed_size) && tide_pack_expand(copy, packed_size, &none) == NULL);
+    }
+    TIDE_CHECK(tide_pack_find("Game.blob", TIDE_PACK_BYTES) != NULL && tide_pack_find("Game.tree", TIDE_PACK_MESH) == NULL);
+    // Any byte of it another: read without a byte outside it or the piece it's read into, as a pack or as none
+    uint32_t refused = 0;
+    for (size_t at = 0; at < packed_size; at++) {
+        for (int bit = 0; bit < 8; bit += 3) {
+            memcpy(copy, packed, packed_size);
+            copy[at] ^= (uint8_t)(1u << bit);
+            size_t back_size;
+            uint8_t *back = tide_pack_expand(copy, packed_size, &back_size);
+            refused += back == NULL;
+            TIDE_CHECK(!back || back_size == size);
+            free(back);
+            if (at % 5u || bit) continue;
+            if (tide_pack_load(copy, packed_size)) TIDE_REQUIRE(tide_pack_load(kept, kept_size)); // A pack all the same
+            else TIDE_CHECK(tide_pack_find("Game.blob", TIDE_PACK_BYTES) != NULL);
+        }
+    }
+    TIDE_CHECK(refused > 0);
+    TIDE_REQUIRE(tide_pack_load(packed, packed_size));
+    TIDE_CHECK(tide_pack_find("Game.tree", TIDE_PACK_MESH) != NULL);
+    tide_pack_unload();
+    free(copy), free(packed), free(bytes), free(kept);
 }

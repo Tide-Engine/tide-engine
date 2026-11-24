@@ -1,0 +1,4 @@
+// expect: DepthCubemap has no constructor
+// expect: a DepthCubemap is a depth cube's depth: 'Cubemap(size, Format.Depth).depth'
+scene Main { }
+view Show() { var shadows = DepthCubemap(); }

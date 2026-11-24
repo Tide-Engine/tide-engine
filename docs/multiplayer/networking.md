@@ -113,7 +113,7 @@ Visibility-enabled clients hold partial worlds and cannot currently become autho
 
 Everything is sent again until it's acknowledged. Nothing waits on a reliable stream, so one lost packet never holds up the ones after it.
 
-[Commands](../game/commands.md) have a pending queue separate from tick inputs. The server schedules each received command into its next ticks and records its order. A command stays pending until a verified world confirms its sequence; duplicates are ignored. Per-player sequence state is part of the world and follows snapshots and host migration: a sequence for each [channel](../game/commands.md#ordering-channels) a game's commands are in, and a window of the unordered ids applied. Command handlers use ordinary guard clauses to check the sender's permissions and the payload against match state.
+[Commands](../game/commands.md) have a pending queue separate from tick inputs. The server schedules each received command into its next ticks and records its order. A command stays pending until a verified world confirms its sequence; duplicates are ignored. Per-player sequence state is part of the world and follows snapshots and host migration: a sequence for each [channel](../game/commands.md#ordering-channels) a game's commands are in, and a window of the unordered ids applied. A command's code uses ordinary guard clauses to check the sender's permissions and the values it was called with against match state.
 
 A command too big for a datagram (one with a list, up to 4 MiB) uploads in 1000-byte chunks, 16 an update, acknowledged and resent under the inputs. In full-world games the server then distributes it before scheduling its tick, whose frame names the transfer. Visibility-enabled games keep command execution server-only and send permitted state consequences instead; a command transfer is not a public broadcast channel.
 
@@ -136,6 +136,8 @@ Each tick verifies the recipient's canonical permitted state. Corrections use a 
 ## Collider rewind
 
 Draw remote players with `verified Body body` to interpolate confirmed positions without extrapolating guessed input around corners. The player's own movement can still use the predicted view. Verified event handlers receive exact event state.
+
+When confirmed updates stall, the view holds the last confirmed state. Once confirmation catches up, the view can skip a large playback backlog in one frame and resume interpolation from the latest confirmation.
 
 The physics packages offer a read-only query context for hit validation. Enable bounded history with `settings { maxRewind = 0.25; }` and opt bodies in with `Body { rewind = true }`. `physics.Rewind(controls.viewTime, out var query)` prepares one scene for all the queries in that shot; `query.Raycast(...)`, `Cast`, `Overlap` and `Inside` have the current physics query forms. Non-opted bodies use current geometry, so walls still block a historical player. Opt moving doors in when they should also rewind.
 

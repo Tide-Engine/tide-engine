@@ -1,0 +1,16 @@
+// expect: frag output 1 is int, but Format.Rgba8 takes Color: change the output type or this image's format
+scene Main { }
+local singleton Images { RenderTarget target; }
+// Three calls back to itself: each place is followed once, where following every path was 3^32 of them, which never
+// ended (this test's timeout)
+void Touch(mut RenderTarget t, int n) { if (n > 0) { Touch(t, n - 1); Touch(t, n - 2); Touch(t, n - 3); } }
+frag Paint(Vertex vertex, out Color color) { color = Color.red; }
+frag Ids(Vertex vertex, out int id) { id = 3; }
+view V(mut Images images)
+{
+    images.target = RenderTarget(8, 8, 1);
+    Touch(images.target, 3);
+    List<Vertex> quad = [Vertex { position = float2(0) }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }];
+    images.target.Mesh(quad, [0, 1, 2], Paint);
+    images.target.Mesh(quad, [0, 1, 2], Ids);
+}

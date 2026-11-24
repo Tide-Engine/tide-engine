@@ -1,3 +1,9 @@
+// The game and the embed linked into the player itself, where a system loads no library of an app's by name: iOS
+// (tide unity --ios, whose sources Tide's build processor puts in the Xcode project), and a console's the same way
+#if (UNITY_IOS || UNITY_TVOS || TIDE_LINKED_GAME) && !UNITY_EDITOR
+#define TIDE_LINKED
+#endif
+
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -47,10 +53,15 @@ namespace Tide
         delegate* unmanaged[Cdecl]<IntPtr, byte*, uint, byte> replayFn;
         delegate* unmanaged[Cdecl]<IntPtr, void> replayEndFn;
         delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*> logFn;
+        delegate* unmanaged[Cdecl]<IntPtr, ulong*, uint, void> viewWantFn;
+        delegate* unmanaged[Cdecl]<IntPtr, byte> viewAgainFn;
+        delegate* unmanaged[Cdecl]<IntPtr, uint, uint, ulong, ulong, uint, uint, uint, uint, uint, byte> localTextureFn;
+        delegate* unmanaged[Cdecl]<IntPtr, uint, uint, ulong, ulong, uint, byte> localObjectFn;
+        delegate* unmanaged[Cdecl]<IntPtr, uint*, TideEmbedSound*> soundsFn;
         delegate* unmanaged[Cdecl]<uint> abiFn;
 
         // What tide/embed.h's TIDE_EMBED_ABI says: a library that says otherwise was built by another tide.
-        public const uint Abi = 24;
+        public const uint Abi = 30;
 
         public static string LibraryName =>
             Application.platform == RuntimePlatform.Android ? AndroidLibrary
@@ -85,6 +96,8 @@ namespace Tide
         {
 #if UNITY_WEBGL && !UNITY_EDITOR
             return OpenWeb();
+#elif TIDE_LINKED
+            return OpenLinked();
 #else
             if (Application.platform == RuntimePlatform.Android) return OpenWhole(AndroidLibrary);
             var built = Path.Combine(folder, LibraryName);
@@ -228,12 +241,18 @@ namespace Tide
             replayFn = (delegate* unmanaged[Cdecl]<IntPtr, byte*, uint, byte>)Find("tide_embed_replay");
             replayEndFn = (delegate* unmanaged[Cdecl]<IntPtr, void>)Find("tide_embed_replay_end");
             logFn = (delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*>)Find("tide_embed_log");
+            viewWantFn = (delegate* unmanaged[Cdecl]<IntPtr, ulong*, uint, void>)Find("tide_embed_view_want");
+            viewAgainFn = (delegate* unmanaged[Cdecl]<IntPtr, byte>)Find("tide_embed_view_again");
+            localTextureFn = (delegate* unmanaged[Cdecl]<IntPtr, uint, uint, ulong, ulong, uint, uint, uint, uint, uint, byte>)Find("tide_embed_local_texture");
+            localObjectFn = (delegate* unmanaged[Cdecl]<IntPtr, uint, uint, ulong, ulong, uint, byte>)Find("tide_embed_local_object");
+            soundsFn = (delegate* unmanaged[Cdecl]<IntPtr, uint*, TideEmbedSound*>)Find("tide_embed_sounds");
             if (createFn == null || destroyFn == null || frameFn == null || statusFn == null || requestFn == null || backgroundFn == null
                 || cameraFn == null || renderFn == null || renderResetFn == null || renderFormatsFn == null || renderReadFn == null
                 || renderViewFn == null
                 || viewFn == null || schemaFn == null || commandFn == null || drawFn == null || audioFn == null || microphoneFn == null
                 || travelFn == null || travelKeepFn == null || pauseFn == null || stepFn == null || showFn == null
-                || continueFn == null || recordingFn == null || replayFn == null || replayEndFn == null || logFn == null)
+                || continueFn == null || recordingFn == null || replayFn == null || replayEndFn == null || logFn == null || viewWantFn == null || viewAgainFn == null
+                || localTextureFn == null || localObjectFn == null || soundsFn == null)
             {
                 Debug.LogError($"Tide: {LibraryName} lacks some of tide/embed.h's functions: rebuild it with this tide.");
                 return false;
@@ -276,6 +295,8 @@ namespace Tide
             return null;
         }
         public byte* View(IntPtr embed, uint* size) => TideWebView(size);
+        public void ViewWant(IntPtr embed, ulong* bits, uint types) => TideWebViewWant(bits, types);
+        public byte ViewAgain(IntPtr embed) => (byte)TideWebViewAgain();
         public byte* Schema(IntPtr embed, uint* size) => TideWebSchema(size);
         public byte* Draw(IntPtr embed, uint* size) => TideWebDraw(size);
         public byte Command(IntPtr embed, uint type, ulong birth, ulong lineage, void* value, uint size) =>
@@ -302,6 +323,12 @@ namespace Tide
             *size = 0;
             return null;
         }
+        public byte LocalTexture(IntPtr embed, uint type, uint offset, ulong birth, ulong lineage, uint image, uint width, uint height, uint filter, uint wrap) =>
+            (byte)TideWebLocalTexture(type, offset, (uint)birth, (uint)(birth >> 32), (uint)lineage, (uint)(lineage >> 32), image, width, height,
+                                      (filter & 255) | (wrap & 255) << 8);
+        public byte LocalObject(IntPtr embed, uint type, uint offset, ulong birth, ulong lineage, uint item) =>
+            (byte)TideWebLocalObject(type, offset, (uint)birth, (uint)(birth >> 32), (uint)lineage, (uint)(lineage >> 32), item);
+        public TideEmbedSound* Sounds(IntPtr embed, uint* count) => TideWebSounds(count);
 
         [DllImport("__Internal")] static extern IntPtr TideWebCreate(TideEmbedDesc* desc);
         [DllImport("__Internal")] static extern void TideWebDestroy();
@@ -311,6 +338,8 @@ namespace Tide
         [DllImport("__Internal")] static extern void TideWebBackground(byte hidden);
         [DllImport("__Internal")] static extern void TideWebCamera(float* matrices, int given);
         [DllImport("__Internal")] static extern byte* TideWebView(uint* size);
+        [DllImport("__Internal")] static extern void TideWebViewWant(ulong* bits, uint types);
+        [DllImport("__Internal")] static extern int TideWebViewAgain();
         [DllImport("__Internal")] static extern byte* TideWebSchema(uint* size);
         [DllImport("__Internal")] static extern byte* TideWebDraw(uint* size);
         [DllImport("__Internal")] static extern byte* TideWebRender(uint* size);
@@ -327,10 +356,114 @@ namespace Tide
         [DllImport("__Internal")] static extern byte* TideWebRecording(uint* size);
         [DllImport("__Internal")] static extern int TideWebReplay(byte* data, uint size);
         [DllImport("__Internal")] static extern void TideWebReplayEnd();
+        [DllImport("__Internal")] static extern int TideWebLocalTexture(uint type, uint offset, uint birthLow, uint birthHigh, uint lineageLow, uint lineageHigh, uint image, uint width, uint height, uint sampling);
+        [DllImport("__Internal")] static extern int TideWebLocalObject(uint type, uint offset, uint birthLow, uint birthHigh, uint lineageLow, uint lineageHigh, uint item);
+        [DllImport("__Internal")] static extern TideEmbedSound* TideWebSounds(uint* count);
 
         // Tide's program on the page: it loads beside Unity's (TideWebBuild put it in the page), and starts when
         // TideRunner does.
         static TideLibrary OpenWeb() => new TideLibrary();
+#elif TIDE_LINKED
+        internal IntPtr Create(TideEmbedDesc* desc) => tide_embed_create(desc);
+        public void Destroy(IntPtr embed) => tide_embed_destroy(embed);
+        public double Frame(IntPtr embed, float seconds, TideEmbedInput* input, float width, float height, float scale) =>
+            tide_embed_frame(embed, seconds, input, width, height, scale);
+        public void Status(IntPtr embed, TideEmbedStatus* status) => tide_embed_status_of(embed, status);
+        public byte Request(IntPtr embed, uint kind, byte* text, uint port) => tide_embed_request(embed, kind, text, port);
+        public void Background(IntPtr embed, byte hidden) => tide_embed_background(embed, hidden);
+        public void Camera(IntPtr embed, Matrix4x4* transform, Matrix4x4* projection) =>
+            tide_embed_camera(embed, (float*)transform, (float*)projection);
+        public byte* Render(IntPtr embed, uint* size) => tide_embed_render(embed, size);
+        public void RenderReset(IntPtr embed) => tide_embed_render_reset(embed);
+        public void RenderFormats(IntPtr embed, uint formats) => tide_embed_render_formats(embed, formats);
+        public void RenderRead(IntPtr embed, uint token, void* data, uint size) => tide_embed_render_read(embed, token, data, size);
+        public byte* RenderView(IntPtr embed, Matrix4x4* transform, Matrix4x4* projection, int width, int height, uint* size) =>
+            tide_embed_render_view(embed, (float*)transform, (float*)projection, width, height, size);
+        public byte* View(IntPtr embed, uint* size) => tide_embed_view(embed, size);
+        public byte* Schema(IntPtr embed, uint* size) => tide_embed_schema(embed, size);
+        public byte* Draw(IntPtr embed, uint* size) => tide_embed_draw(embed, size);
+        public byte Command(IntPtr embed, uint type, ulong birth, ulong lineage, void* value, uint size) =>
+            tide_embed_command(embed, type, birth, lineage, value, size);
+        public void Audio(IntPtr embed, float* samples, uint frames, uint rate, uint channels) =>
+            tide_embed_audio(embed, samples, frames, rate, channels);
+        public void Microphone(IntPtr embed, float* samples, uint frames, uint rate, uint channels) =>
+            tide_embed_microphone(embed, samples, frames, rate, channels);
+        public void Travel(IntPtr embed, TideTravel* travel) => tide_embed_travel_of(embed, travel);
+        public void TravelKeep(IntPtr embed, float seconds) => tide_embed_travel_keep(embed, seconds);
+        public byte Pause(IntPtr embed, byte paused) => tide_embed_pause(embed, paused);
+        public byte Step(IntPtr embed) => tide_embed_step(embed);
+        public byte Show(IntPtr embed, uint tick) => tide_embed_show(embed, tick);
+        public byte Continue(IntPtr embed) => tide_embed_continue(embed);
+        public byte* Recording(IntPtr embed, uint* size) => tide_embed_recording(embed, size);
+        public byte Replay(IntPtr embed, byte* data, uint size) => tide_embed_replay(embed, data, size);
+        public void ReplayEnd(IntPtr embed) => tide_embed_replay_end(embed);
+        public byte* Log(IntPtr embed, uint* size) => tide_embed_log(embed, size);
+        public void ViewWant(IntPtr embed, ulong* bits, uint types) => tide_embed_view_want(embed, bits, types);
+        public byte ViewAgain(IntPtr embed) => tide_embed_view_again(embed);
+        public byte LocalTexture(IntPtr embed, uint type, uint offset, ulong birth, ulong lineage, uint image, uint width, uint height, uint filter, uint wrap) =>
+            tide_embed_local_texture(embed, type, offset, birth, lineage, image, width, height, filter, wrap);
+        public byte LocalObject(IntPtr embed, uint type, uint offset, ulong birth, ulong lineage, uint item) =>
+            tide_embed_local_object(embed, type, offset, birth, lineage, item);
+        public TideEmbedSound* Sounds(IntPtr embed, uint* count) => tide_embed_sounds(embed, count);
+
+        // tide/embed.h's functions and the game's table (the generated library.c), by their own names: the player's
+        // link finds them in the sources Tide's build processor added to it
+        [DllImport("__Internal")] static extern uint tide_embed_abi();
+        [DllImport("__Internal")] static extern IntPtr tide_host_library();
+        [DllImport("__Internal")] static extern IntPtr tide_embed_create(TideEmbedDesc* desc);
+        [DllImport("__Internal")] static extern void tide_embed_destroy(IntPtr embed);
+        [DllImport("__Internal")] static extern double tide_embed_frame(IntPtr embed, float seconds, TideEmbedInput* input, float width, float height, float scale);
+        [DllImport("__Internal")] static extern void tide_embed_status_of(IntPtr embed, TideEmbedStatus* status);
+        [DllImport("__Internal")] static extern byte tide_embed_request(IntPtr embed, uint kind, byte* text, uint port);
+        [DllImport("__Internal")] static extern void tide_embed_background(IntPtr embed, byte hidden);
+        [DllImport("__Internal")] static extern void tide_embed_camera(IntPtr embed, float* transform, float* projection);
+        [DllImport("__Internal")] static extern byte* tide_embed_render(IntPtr embed, uint* size);
+        [DllImport("__Internal")] static extern void tide_embed_render_reset(IntPtr embed);
+        [DllImport("__Internal")] static extern void tide_embed_render_formats(IntPtr embed, uint formats);
+        [DllImport("__Internal")] static extern void tide_embed_render_read(IntPtr embed, uint token, void* data, uint size);
+        [DllImport("__Internal")] static extern byte* tide_embed_render_view(IntPtr embed, float* transform, float* projection, int width, int height, uint* size);
+        [DllImport("__Internal")] static extern byte* tide_embed_view(IntPtr embed, uint* size);
+        [DllImport("__Internal")] static extern byte* tide_embed_schema(IntPtr embed, uint* size);
+        [DllImport("__Internal")] static extern byte* tide_embed_draw(IntPtr embed, uint* size);
+        [DllImport("__Internal")] static extern byte tide_embed_command(IntPtr embed, uint type, ulong birth, ulong lineage, void* value, uint size);
+        [DllImport("__Internal")] static extern void tide_embed_audio(IntPtr embed, float* samples, uint frames, uint rate, uint channels);
+        [DllImport("__Internal")] static extern void tide_embed_microphone(IntPtr embed, float* samples, uint frames, uint rate, uint channels);
+        [DllImport("__Internal")] static extern void tide_embed_travel_of(IntPtr embed, TideTravel* travel);
+        [DllImport("__Internal")] static extern void tide_embed_travel_keep(IntPtr embed, float seconds);
+        [DllImport("__Internal")] static extern byte tide_embed_pause(IntPtr embed, byte paused);
+        [DllImport("__Internal")] static extern byte tide_embed_step(IntPtr embed);
+        [DllImport("__Internal")] static extern byte tide_embed_show(IntPtr embed, uint tick);
+        [DllImport("__Internal")] static extern byte tide_embed_continue(IntPtr embed);
+        [DllImport("__Internal")] static extern byte* tide_embed_recording(IntPtr embed, uint* size);
+        [DllImport("__Internal")] static extern byte tide_embed_replay(IntPtr embed, byte* data, uint size);
+        [DllImport("__Internal")] static extern void tide_embed_replay_end(IntPtr embed);
+        [DllImport("__Internal")] static extern byte* tide_embed_log(IntPtr embed, uint* size);
+        [DllImport("__Internal")] static extern void tide_embed_view_want(IntPtr embed, ulong* bits, uint types);
+        [DllImport("__Internal")] static extern byte tide_embed_view_again(IntPtr embed);
+        [DllImport("__Internal")] static extern byte tide_embed_local_texture(IntPtr embed, uint type, uint offset, ulong birth, ulong lineage, uint image, uint width, uint height, uint filter, uint wrap);
+        [DllImport("__Internal")] static extern byte tide_embed_local_object(IntPtr embed, uint type, uint offset, ulong birth, ulong lineage, uint item);
+        [DllImport("__Internal")] static extern TideEmbedSound* tide_embed_sounds(IntPtr embed, uint* count);
+
+        // The game linked into the player: its table, and its pack from the player's files, where Tide's build
+        // processor put it (an iOS app's Data/Raw/Tide)
+        static TideLibrary OpenLinked()
+        {
+            if (tide_embed_abi() != Abi)
+            {
+                Debug.LogError($"Tide: the game in this player was written by a tide this package doesn't match (its ABI is {tide_embed_abi()}, the package's {Abi}): update the package or tide so they agree, and build the player again.");
+                return null;
+            }
+            var library = new TideLibrary { Game = tide_host_library() };
+            var pack = Path.Combine(BuildFolder, "pack");
+            if (File.Exists(pack))
+            {
+                var bytes = File.ReadAllBytes(pack);
+                library.Pack = Marshal.AllocHGlobal(Math.Max(1, bytes.Length));
+                Marshal.Copy(bytes, 0, library.Pack, bytes.Length);
+                library.PackSize = bytes.Length;
+            }
+            return library;
+        }
 #else
         internal IntPtr Create(TideEmbedDesc* desc) => createFn(desc);
         public void Destroy(IntPtr embed) => destroyFn(embed);
@@ -348,6 +481,10 @@ namespace Tide
         public byte* RenderView(IntPtr embed, Matrix4x4* transform, Matrix4x4* projection, int width, int height, uint* size) =>
             renderViewFn(embed, (float*)transform, (float*)projection, width, height, size);
         public byte* View(IntPtr embed, uint* size) => viewFn(embed, size);
+        // What of the match the packet carries from here on: a bit for each of the schema's first `types` types
+        public void ViewWant(IntPtr embed, ulong* bits, uint types) => viewWantFn(embed, bits, types);
+        // The last frame's packet written again with what's wanted now, for View to give: 0 where it can't be
+        public byte ViewAgain(IntPtr embed) => viewAgainFn(embed);
         public byte* Schema(IntPtr embed, uint* size) => schemaFn(embed, size);
         public byte* Draw(IntPtr embed, uint* size) => drawFn(embed, size);
         public byte Command(IntPtr embed, uint type, ulong birth, ulong lineage, void* value, uint size) =>
@@ -367,6 +504,14 @@ namespace Tide
         public void ReplayEnd(IntPtr embed) => replayEndFn(embed);
         // tide_embed_log: what the game and its host said since the last call, with an embed or with none
         public byte* Log(IntPtr embed, uint* size) => logFn(embed, size);
+        // tide_embed_local_texture: one of Unity's textures into a Texture field of the game's local state
+        public byte LocalTexture(IntPtr embed, uint type, uint offset, ulong birth, ulong lineage, uint image, uint width, uint height, uint filter, uint wrap) =>
+            localTextureFn(embed, type, offset, birth, lineage, image, width, height, filter, wrap);
+        // tide_embed_local_object: one of Unity's meshes, materials or sounds into a local field of its type
+        public byte LocalObject(IntPtr embed, uint type, uint offset, ulong birth, ulong lineage, uint item) =>
+            localObjectFn(embed, type, offset, birth, lineage, item);
+        // tide_embed_sounds: the frame's plays of Unity's own sounds, once
+        public TideEmbedSound* Sounds(IntPtr embed, uint* count) => soundsFn(embed, count);
 #endif
 
         // The library stays loaded for the editor's life: a game running in it may hold memory and threads of it.

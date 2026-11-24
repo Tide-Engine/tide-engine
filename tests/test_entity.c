@@ -245,6 +245,33 @@ TIDE_TEST(entity_table_packs_and_unpacks)
     tide_entities_free(&back);
 }
 
+// An erased entity leaves nothing of its key: the table still packs, unpacks and takes the key again
+TIDE_TEST(entity_erase_leaves_a_table_that_packs_and_takes_the_key_again)
+{
+    tide_entities t = {0};
+    tide_entity kept[40];
+    for (uint32_t i = 0; i < 40; i++) kept[i] = tide_entity_create(&t);
+    TIDE_REQUIRE(tide_entity_erase(&t, kept[3]));
+    TIDE_REQUIRE(tide_entity_erase(&t, kept[17]));
+    TIDE_CHECK(!tide_entity_erase(&t, kept[17]));
+    TIDE_CHECK(!tide_entity_alive(&t, kept[3]) && !tide_entity_died_here(&t, kept[3]));
+    const uint32_t size = tide_entities_packed_size(&t);
+    uint8_t *bytes = malloc(size);
+    tide_writer w = {bytes, size, 0, false, false};
+    tide_entities_pack(&t, &w);
+    tide_entities back = {0};
+    tide_reader r = {bytes, size, 0, false};
+    TIDE_REQUIRE(tide_entities_unpack(&back, &r));
+    TIDE_CHECK(tide_entities_hash(1, &back) == tide_entities_hash(1, &t));
+    // Its key can be installed again, in either table, and a slot freed this way is reused
+    TIDE_CHECK(tide_entity_install(&back, kept[17]) && tide_entity_alive(&back, kept[17]));
+    TIDE_CHECK(tide_entity_install(&t, kept[3]) && tide_entity_alive(&t, kept[3]));
+    TIDE_CHECK(tide_entity_slot_index(&t, kept[3]) == 17u);
+    free(bytes);
+    tide_entities_free(&t);
+    tide_entities_free(&back);
+}
+
 TIDE_TEST(entity_logical_keys_ignore_hidden_allocations_and_recycled_slots)
 {
     tide_entities server = {0}, client = {0};
@@ -366,7 +393,7 @@ TIDE_TEST(entity_ordered_cache_survives_changes_and_snapshots)
     const uint64_t hash = tide_entities_hash(3, &t);
     tide_entities_copy(&snapshot, &t);
     const tide_entity *saved = tide_entities_ordered(&snapshot, &count);
-    TIDE_CHECK(saved != first && count == 3);
+    TIDE_CHECK(saved == first && count == 3); // A copy has its source's order until either changes
     TIDE_CHECK(tide_entities_hash(3, &t) == hash);
     tide_entity_forget(&t, first[1], true);
     tide_entity_destroy(&t, first[0]);
@@ -405,7 +432,7 @@ TIDE_TEST(entity_ordered_archetypes_cache_membership_lifetime_and_snapshot)
     const uint64_t hash = tide_entities_hash(7, &t);
     tide_entities_copy(&copy, &t);
     const tide_entity *saved = tide_entities_ordered_archetypes(&copy, same, 2, &count);
-    TIDE_CHECK(saved != first && count == 2 && tide_entities_hash(7, &t) == hash);
+    TIDE_CHECK(saved == first && count == 2 && tide_entities_hash(7, &t) == hash);
     const tide_entity *all = tide_entities_ordered(&t, &count);
     tide_entity_set_location(&t, c, (tide_location){2, 30});
     TIDE_CHECK(all == tide_entities_ordered(&t, &count));
@@ -419,6 +446,71 @@ TIDE_TEST(entity_ordered_archetypes_cache_membership_lifetime_and_snapshot)
     tide_entities_settle(&t);
     tide_entities_free(&copy);
     tide_entities_free(&t);
+}
+
+// A copy of a table has the orders made of it, sorted once for both: a world copied each tick sorts its entities
+// only when some came or went. Each side's changes are its own, and an order outlives whichever table lets go first.
+TIDE_TEST(entity_orders_are_shared_with_copies_until_either_changes)
+{
+    tide_entities t = {0}, copy = {0}, other = {0};
+    tide_entity made[6];
+    for (uint32_t i = 0; i < 6; i++) {
+        made[i] = tide_entity_create_key(&t, (tide_entity){1, 60 - i * 10});
+        tide_entity_set_location(&t, made[i], (tide_location){2 + i % 2, i});
+    }
+    const uint32_t two[] = {2}, both[] = {2, 3};
+    uint32_t count, copied;
+    const uint32_t *slots, *copied_slots;
+    const tide_entity *all = tide_entities_ordered(&t, &count);
+    TIDE_REQUIRE(count == 6 && tide_entity_equal(all[0], made[5]));
+    const tide_entity *evens = tide_entities_ordered_archetypes_slots(&t, two, 1, &count, &slots);
+    TIDE_REQUIRE(count == 3 && tide_entity_equal(evens[0], made[4]) && slots[0] == 4);
+
+    // The copy has both, and makes the one its source never made
+    tide_entity_create_key(&copy, (tide_entity){9, 9}); // What it had goes
+    (void)tide_entities_ordered(&copy, &copied);
+    tide_entities_copy(&copy, &t);
+    TIDE_CHECK(tide_entities_ordered(&copy, &copied) == all && copied == 6);
+    TIDE_CHECK(tide_entities_ordered_archetypes_slots(&copy, two, 1, &copied, &copied_slots) == evens && copied == 3
+               && copied_slots == slots);
+    const tide_entity *every = tide_entities_ordered_archetypes(&copy, both, 2, &copied);
+    TIDE_CHECK(copied == 6 && every != all && tide_entity_equal(every[5], made[0]));
+    TIDE_CHECK(tide_entities_ordered_archetypes(&t, both, 2, &count) != every && count == 6);
+
+    // The copy changes: its orders are made again, its source's are as they were
+    TIDE_REQUIRE(tide_entity_destroy(&copy, made[4]));
+    const tide_entity *fewer = tide_entities_ordered_archetypes_slots(&copy, two, 1, &copied, &copied_slots);
+    TIDE_CHECK(fewer != evens && copied == 2 && tide_entity_equal(fewer[0], made[2]) && copied_slots[0] == 2);
+    TIDE_CHECK(tide_entities_ordered(&copy, &copied) != all && copied == 5);
+    TIDE_CHECK(tide_entities_ordered(&t, &count) == all && count == 6);
+    TIDE_CHECK(tide_entities_ordered_archetypes_slots(&t, two, 1, &count, &slots) == evens && count == 3);
+    tide_entities_settle(&copy);
+    TIDE_CHECK(tide_entity_equal(evens[0], made[4]) && tide_entity_equal(all[0], made[5])); // Still the source's
+
+    // The source changes: a copy made before keeps what it had, one made after has the new
+    tide_entities_copy(&other, &t);
+    const tide_entity added = tide_entity_create_key(&t, (tide_entity){1, 5});
+    tide_entity_set_location(&t, added, (tide_location){2, 6});
+    const tide_entity *more = tide_entities_ordered_archetypes_slots(&t, two, 1, &count, &slots);
+    TIDE_CHECK(more != evens && count == 4 && tide_entity_equal(more[0], added) && slots[0] == 6);
+    TIDE_CHECK(tide_entities_ordered_archetypes(&other, two, 1, &copied) == evens && copied == 3);
+    tide_entities_copy(&copy, &t);
+    TIDE_CHECK(tide_entities_ordered_archetypes(&copy, two, 1, &copied) == more && copied == 4);
+
+    // An entity that moves to another archetype changes the subsets alone
+    tide_entity_set_location(&other, made[0], (tide_location){3, 9});
+    TIDE_CHECK(tide_entities_ordered(&other, &copied) == all && copied == 6);
+    const tide_entity *moved = tide_entities_ordered_archetypes(&other, two, 1, &copied);
+    TIDE_CHECK(moved != evens && copied == 2 && tide_entity_equal(moved[0], made[4]));
+
+    // The source settles and goes: the copies' orders are theirs
+    tide_entities_settle(&t);
+    tide_entities_free(&t);
+    TIDE_CHECK(tide_entity_equal(more[0], added) && tide_entity_equal(more[3], made[0]));
+    TIDE_CHECK(tide_entities_ordered_archetypes(&copy, two, 1, &copied) == more && copied == 4);
+    TIDE_CHECK(tide_entities_ordered(&other, &copied) == all && tide_entity_equal(all[5], made[0]));
+    tide_entities_free(&copy);
+    tide_entities_free(&other);
 }
 
 // A walk in the keys' order reads each entity's place from its slot, and a slot that's no longer the key's own
@@ -471,6 +563,169 @@ TIDE_TEST(entity_ordered_archetypes_slots_give_each_keys_place)
         TIDE_CHECK(slots[i] == tide_entity_slot_index(&t, next[i]));
     TIDE_CHECK(tide_entities_ordered_archetypes_slots(&t, NULL, 0, &count, &slots) == NULL && count == 0 && !slots);
     tide_entities_settle(&t);
+    tide_entities_free(&t);
+}
+
+// The keys of `arches` (every alive one for none) by going through every slot and sorting them, with their slots:
+// what an order has to be, however it was come by
+typedef struct sorted_key
+{
+    tide_entity key;
+    uint32_t slot;
+} sorted_key;
+static int sorted_key_compare(const void *a, const void *b)
+{
+    return tide_entity_compare(((const sorted_key *)a)->key, ((const sorted_key *)b)->key);
+}
+static bool order_is_the_slots(const tide_entities *t, const uint32_t *arches, const uint32_t n)
+{
+    sorted_key *want = malloc(((size_t)t->next_unused + 1u) * sizeof *want);
+    uint32_t wanted = 0;
+    for (uint32_t at = 0; at < t->next_unused; at++)
+    {
+        const tide_entity_slot *slot = tide_entity_slot_of(t, at);
+        bool in = slot->state == TIDE_ENTITY_ALIVE && !arches;
+        for (uint32_t k = 0; k < n && slot->state == TIDE_ENTITY_ALIVE; k++)
+            in = in || slot->archetype == arches[k];
+        if (in)
+            want[wanted++] = (sorted_key){slot->entity, at};
+    }
+    qsort(want, wanted, sizeof *want, sorted_key_compare);
+    uint32_t count = 0;
+    const uint32_t *slots = NULL;
+    const tide_entity *keys = arches ? tide_entities_ordered_archetypes_slots(t, arches, n, &count, &slots)
+                                     : tide_entities_ordered(t, &count);
+    bool same = count == wanted;
+    for (uint32_t i = 0; i < wanted && same; i++)
+        same = tide_entity_equal(keys[i], want[i].key) && (!arches || slots[i] == want[i].slot);
+    free(want);
+    return same;
+}
+
+static uint32_t order_roll(uint32_t *state)
+{
+    *state ^= *state << 13;
+    *state ^= *state >> 17;
+    *state ^= *state << 5;
+    return *state;
+}
+
+// An order asked for after entities came, went or changed archetype is the one before with those taken in. Through
+// changes picked at random, each order is what sorting the slots gives: asked for every round or only now and then,
+// in the table and in copies of it made between a change and the next asking, across settles, with keys that go
+// and come back in another slot before anything asks, and past more changes than are kept.
+TIDE_TEST(entity_orders_take_in_what_came_and_went)
+{
+    tide_entities t = {0}, copy = {0};
+    enum { MOST = 600 };
+    static tide_entity alive[MOST], away[MOST];
+    uint32_t alive_count = 0, away_count = 0, made = 0, state = 0x9e3779b9u;
+    const uint32_t ones[] = {1}, evens[] = {0, 2}, rare[] = {3};
+    for (uint32_t round = 0; round < 400; round++)
+    {
+        const uint32_t changes = round % 37u == 36u ? 150u : order_roll(&state) % 12u;
+        for (uint32_t c = 0; c < changes; c++)
+        {
+            const uint32_t what = order_roll(&state) % 8u;
+            if ((what < 3u || alive_count < 20u) && alive_count < MOST)
+            {
+                // Born out of order: an older clock than ones there are, or a newer
+                const tide_entity key = {1u + order_roll(&state) % 9u, ((uint64_t)order_roll(&state) << 20) | ++made};
+                TIDE_REQUIRE(tide_entity_install(&t, key));
+                tide_entity_set_location(&t, key, (tide_location){order_roll(&state) % 4u, made});
+                alive[alive_count++] = key;
+            }
+            else if (what < 5u)
+            {
+                const uint32_t at = order_roll(&state) % alive_count;
+                TIDE_REQUIRE(tide_entity_destroy(&t, alive[at]));
+                alive[at] = alive[--alive_count];
+            }
+            else if (what == 5u)
+            {
+                const uint32_t at = order_roll(&state) % alive_count;
+                tide_entity_set_location(&t, alive[at], (tide_location){order_roll(&state) % 4u, c});
+            }
+            else if (what == 6u)
+            {
+                // Gone leaving nothing and installed again, in whichever slot is free then
+                const uint32_t at = order_roll(&state) % alive_count;
+                const tide_entity key = alive[at];
+                TIDE_REQUIRE(tide_entity_erase(&t, key));
+                if (order_roll(&state) % 2u && alive_count < MOST)
+                {
+                    const tide_entity other = {2u, ((uint64_t)order_roll(&state) << 20) | ++made};
+                    TIDE_REQUIRE(tide_entity_install(&t, other));
+                    tide_entity_set_location(&t, other, (tide_location){1u, made});
+                    alive[alive_count++] = other;
+                }
+                TIDE_REQUIRE(tide_entity_install(&t, key));
+                tide_entity_set_location(&t, key, (tide_location){order_roll(&state) % 4u, c});
+            }
+            else if (away_count && alive_count < MOST && order_roll(&state) % 2u)
+            {
+                const tide_entity key = away[--away_count];
+                TIDE_REQUIRE(tide_entity_install(&t, key));
+                tide_entity_set_location(&t, key, (tide_location){order_roll(&state) % 4u, c});
+                alive[alive_count++] = key;
+            }
+            else if (away_count < MOST)
+            {
+                const uint32_t at = order_roll(&state) % alive_count;
+                tide_entity_forget(&t, alive[at], true);
+                away[away_count++] = alive[at];
+                alive[at] = alive[--alive_count];
+            }
+        }
+        if (round % 5u == 2u)
+        {
+            // A copy made before its source's orders took the changes in takes them in itself
+            tide_entities_copy(&copy, &t);
+            TIDE_CHECK(order_is_the_slots(&copy, ones, 1));
+            TIDE_CHECK(order_is_the_slots(&copy, NULL, 0));
+            if (alive_count)
+            {
+                TIDE_REQUIRE(tide_entity_destroy(&copy, alive[0]));
+                TIDE_CHECK(order_is_the_slots(&copy, evens, 2));
+                TIDE_CHECK(order_is_the_slots(&copy, ones, 1));
+            }
+            tide_entities_settle(&copy);
+        }
+        TIDE_CHECK(order_is_the_slots(&t, ones, 1));
+        if (round % 3u == 0u)
+            TIDE_CHECK(order_is_the_slots(&t, evens, 2));
+        if (round % 4u == 1u)
+            TIDE_CHECK(order_is_the_slots(&t, NULL, 0));
+        if (round % 50u == 49u)
+            TIDE_CHECK(order_is_the_slots(&t, rare, 1)); // Let go while nobody asked, and made again
+        if (round % 2u)
+            tide_entities_settle(&t);
+    }
+    TIDE_CHECK(order_is_the_slots(&t, evens, 2) && order_is_the_slots(&t, NULL, 0));
+
+    // Changes that leave a subset as it was leave its arrays: nothing is made
+    tide_entities_settle(&t);
+    uint32_t count = 0, again = 0;
+    const tide_entity *before = tide_entities_ordered_archetypes(&t, ones, 1, &count);
+    const tide_entity *whole = tide_entities_ordered(&t, &again);
+    const tide_entity passing = {3u, 12345u};
+    TIDE_REQUIRE(tide_entity_install(&t, passing));
+    tide_entity_set_location(&t, passing, (tide_location){2u, 1u});
+    TIDE_CHECK(tide_entities_ordered_archetypes(&t, ones, 1, &again) == before && again == count);
+    TIDE_CHECK(tide_entities_ordered(&t, &again) != whole);
+    whole = tide_entities_ordered(&t, &again);
+    tide_entity_set_location(&t, passing, (tide_location){1u, 1u});
+    TIDE_CHECK(tide_entity_destroy(&t, passing)); // In and out again before anything asked
+    TIDE_CHECK(tide_entities_ordered_archetypes(&t, ones, 1, &again) == before && again == count);
+    TIDE_CHECK(tide_entities_ordered(&t, &again) != whole && order_is_the_slots(&t, NULL, 0));
+
+    // More changes than are kept: every order is made from the slots, and is right
+    for (uint32_t i = 0; i < 70000u; i++)
+        tide_entity_set_location(&t, alive[i % alive_count], (tide_location){i % 4u, i});
+    TIDE_CHECK(order_is_the_slots(&t, ones, 1) && order_is_the_slots(&t, evens, 2) && order_is_the_slots(&t, NULL, 0));
+    tide_entities_settle(&t);
+    TIDE_CHECK(order_is_the_slots(&t, ones, 1));
+    tide_entities_free(&copy);
     tide_entities_free(&t);
 }
 
@@ -571,3 +826,96 @@ TIDE_TEST(entity_ordered_cache_publishes_safely_to_concurrent_readers)
     tide_entities_free(&t);
 }
 #endif
+
+
+// Lines written (tide/page.h): a page of slots says which of its slots were written between the hash it had before and
+// the one it has, as each change writes its slot alone (a projection's check of its rows' snaps goes by it)
+#define SLOT_PAGE ((1u << TIDE_ENTITY_PAGE_SHIFT) * (uint32_t)sizeof(tide_entity_slot))
+#define SLOT_PAGES_KEPT 8u
+
+typedef struct kept_slots {
+    uint64_t hash;
+    uint32_t used;
+    uint8_t bytes[SLOT_PAGE];
+} kept_slots;
+
+static uint32_t slot_used_on(const tide_entities *t, const uint32_t p)
+{
+    const uint32_t left = t->next_unused - (p << TIDE_ENTITY_PAGE_SHIFT);
+    return (left < (1u << TIDE_ENTITY_PAGE_SHIFT) ? left : 1u << TIDE_ENTITY_PAGE_SHIFT) * (uint32_t)sizeof(tide_entity_slot);
+}
+
+TIDE_TEST(entity_pages_say_which_slots_were_written)
+{
+    kept_slots *kept = calloc(SLOT_PAGES_KEPT, sizeof *kept);
+    TIDE_REQUIRE(kept != NULL);
+    tide_entities t = {0}, snapshot = {0}, old = {0};
+    static tide_entity alive[6000], old_alive[6000];
+    uint32_t count = 0, old_count = 0, state = 99u, told = 0;
+    bool held = true;
+    for (uint32_t tick = 0; tick < 300u; tick++) {
+        for (uint32_t op = 0; op < 40u; op++) {
+            state = state * 1664525u + 1013904223u;
+            const uint32_t roll = state >> 8, what = roll % 9u;
+            if ((what < 4u || !count) && count < 6000u) {
+                alive[count++] = tide_entity_create(&t);
+            } else if (what == 4u) {
+                const uint32_t i = (roll >> 4) % count;
+                TIDE_CHECK(tide_entity_destroy(&t, alive[i]));
+                alive[i] = alive[--count];
+            } else if (what == 5u) {
+                tide_entity_snap(&t, alive[(roll >> 4) % count]);
+            } else if (what == 6u) {
+                const uint32_t i = (roll >> 4) % count;
+                TIDE_CHECK(tide_entity_erase(&t, alive[i]));
+                alive[i] = alive[--count];
+            } else {
+                tide_entity_set_location(&t, alive[(roll >> 4) % count], (tide_location){roll % 5u, roll >> 12});
+            }
+        }
+        if (tick % 3u == 0u) tide_entities_copy(&snapshot, &t); // (Before the hash: its pages are copied written)
+        (void)tide_entities_hash(0, &t);
+        if (tick % 3u != 0u) tide_entities_copy(&snapshot, &t);
+        // Every page that hashes to what was kept of it, now or before, is those bytes in the lines it doesn't say
+        for (uint32_t p = 0; p < t.pages && p < SLOT_PAGES_KEPT; p++) {
+            const tide_page *page = t.page[p];
+            if (!page || !kept[p].hash) continue;
+            uint64_t wrote;
+            if (page->hash == kept[p].hash) wrote = 0;
+            else if (page->before == kept[p].hash) wrote = page->wrote;
+            else continue;
+            if (wrote && wrote != TIDE_PAGE_ALL_LINES) told++;
+            for (uint32_t line = 0; line < 64u; line++) {
+                const uint32_t from = line * (SLOT_PAGE / 64u), to = from + SLOT_PAGE / 64u < kept[p].used ? from + SLOT_PAGE / 64u : kept[p].used;
+                if (wrote >> line & 1u || from >= to) continue;
+                if (memcmp((const uint8_t *)tide_page_data(page) + from, kept[p].bytes + from, to - from) != 0) held = false;
+            }
+        }
+        TIDE_REQUIRE(held);
+        // Now and then a world of ticks before (a rollback), whose pages are older ones
+        if (tick % 40u == 10u) {
+            tide_entities_free(&old);
+            tide_entities_copy(&old, &t);
+            memcpy(old_alive, alive, count * sizeof *alive);
+            old_count = count;
+        } else if (tick % 40u == 30u) {
+            tide_entities_free(&t);
+            tide_entities_copy(&t, &old);
+            memcpy(alive, old_alive, old_count * sizeof *alive);
+            count = old_count;
+            (void)tide_entities_hash(0, &t);
+        }
+        for (uint32_t p = 0; p < SLOT_PAGES_KEPT; p++) {
+            const tide_page *page = p < t.pages ? t.page[p] : NULL;
+            kept[p].hash = page ? page->hash : 0u;
+            if (!page) continue;
+            kept[p].used = slot_used_on(&t, p);
+            memcpy(kept[p].bytes, tide_page_data(page), SLOT_PAGE);
+        }
+    }
+    TIDE_CHECK(told > 300u);
+    tide_entities_free(&t);
+    tide_entities_free(&snapshot);
+    tide_entities_free(&old);
+    free(kept);
+}

@@ -15,11 +15,9 @@ singleton Art
 
 scene Main { }
 
-command Paint { List<byte> png; }
-
-command(Paint paint, PlayerID sender) Apply(mut Art art)
+command(List<byte> png) Paint(mut Art art, PlayerID sender)
 {
-    if (art.pixels.Decode(paint.png) is IOError error) {
+    if (art.pixels.Decode(png) is IOError error) {
         if (error == IOError.InvalidData) art.bad += 1;
         else art.other += 1;
     }
@@ -36,6 +34,6 @@ local singleton Ui
 view Sender(mut Ui ui)
 {
     if (!ui.send) return;
-    Send(Paint { png = ui.png });
+    Paint(ui.png);
     ui.send = false;
 }

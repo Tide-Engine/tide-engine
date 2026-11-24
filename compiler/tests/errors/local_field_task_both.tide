@@ -1,0 +1,14 @@
+// expect: 'Rebake' changes the match's fields of its 'box' and uses its local fields, but a task runs in one world
+component Box
+{
+    float3 pos;
+    local int bakes;
+}
+scene Main { }
+
+async void Rebake(mut Box box)
+{
+    await Wait.Frames(1);
+    box.bakes += 1;
+    box.pos.x = 2;
+}

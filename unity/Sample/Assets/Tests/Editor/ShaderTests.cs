@@ -14,7 +14,7 @@ public class ShaderTests
         if (SystemInfo.graphicsDeviceType == GraphicsDeviceType.Null) Assert.Ignore("no GPU in this run (-nographics)");
         var shaders = new List<Shader>(Resources.LoadAll<Shader>("TideShaders"))
         {
-            Resources.Load<Shader>("TideResolveDepth"), Resources.Load<Shader>("TideSrgbMip"),
+            Resources.Load<Shader>("TideResolveDepth"), Resources.Load<Shader>("TideSrgbMip"), Resources.Load<Shader>("TideSrgbDecode"),
         };
         Assert.Greater(shaders.Count, 10, "the renderer's shaders and the game's are there");
         var said = new List<string>();

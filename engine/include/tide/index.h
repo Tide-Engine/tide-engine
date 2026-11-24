@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 
 // Indexes for indexed loops: a loop whose guard bounds a few numbers of each
@@ -42,28 +43,99 @@ typedef struct tide_index_hits {
 } tide_index_hits;
 
 tide_index *tide_index_make(void);
-// NULL does nothing.
+// NULL does nothing. An index others hold too (tide_index_share) lives on for them.
 void tide_index_free(tide_index *ix);
 
 // Starts the index again, empty, with `dims` keys an entry (1 to 3; others are
 // taken as the nearest). Its memory is kept for the entries to come.
 void tide_index_begin(tide_index *ix, uint32_t dims);
-// An entry: `dims` keys and its ordinal, greater than the last one's.
+// An entry: `dims` keys and its ordinal, greater than the last one's. On an
+// index of exact keys, its doubles, with whole numbers of 0.
 void tide_index_add(tide_index *ix, const double *keys, uint64_t ordinal);
 // Builds the index from the entries added. Until then, a search gives every entry.
 void tide_index_end(tide_index *ix);
 
-// The entries added since tide_index_begin.
+// The entries added since tide_index_begin (a followed index's: the entries it has).
 uint32_t tide_index_count(const tide_index *ix);
-// Every entry's ordinal, ascending: `count` of them.
+// Every entry's ordinal, ascending: `count` of them. A followed index (below)
+// keeps no such list: NULL and 0, and a search gives them.
 const uint64_t *tide_index_ordinals(const tide_index *ix, uint32_t *count);
 
 void tide_index_hits_init(tide_index_hits *h);
 void tide_index_hits_free(tide_index_hits *h);
 
 // The entries whose keys may lie within lo[d] .. hi[d] (inclusive) on each
-// axis, as above, into `out`.
+// axis, as above, into `out`. An index of exact keys (below) gives every entry.
 void tide_index_find(const tide_index *ix, const double *lo, const double *hi, tide_index_hits *out);
+
+// Exact keys: an index of entries of 1 to TIDE_INDEX_EXACT whole numbers (a
+// chunk's place and its dimension, a team, a long packed from several), found
+// by being equal to every one of them, with 0 to 3 doubles beside them that a
+// search bounds as tide_index_find bounds its keys (a range the loop's guard
+// also puts on the row). The entries are kept by a hash of their whole
+// numbers, so a search goes through the few that share a slot with the ones it
+// looks for. Its hits are exactly the entries whose whole numbers equal those
+// searched for and whose doubles are each within the widened bounds or no
+// number, ascending; a NaN bound leaves its double open. Which slot an entry
+// is in changes the cost only. A search of an index of doubles gives every
+// entry.
+#define TIDE_INDEX_EXACT 8
+
+// Starts the index again, empty, with `exact` whole numbers an entry (1 to
+// TIDE_INDEX_EXACT; others are taken as the nearest) and `dims` doubles (0 to 3).
+void tide_index_begin_exact(tide_index *ix, uint32_t exact, uint32_t dims);
+// An entry: its whole numbers, its doubles and its ordinal, greater than the
+// last one's. On an index of doubles, its doubles alone.
+void tide_index_add_exact(tide_index *ix, const int64_t *whole, const double *keys, uint64_t ordinal);
+// The entries whose whole numbers are `whole` and whose doubles may lie within
+// lo[d] .. hi[d], as above, into `out`.
+void tide_index_find_exact(const tide_index *ix, const int64_t *whole, const double *lo, const double *hi,
+                           tide_index_hits *out);
+
+// Followed indexes: an index of exact keys that takes in what changed instead
+// of being made again, for entries that mostly stay from one use to the next
+// (a world's rows, of which a tick changes a few). Its ordinals are in groups,
+// each a run of them `span` long from `first` (a chunk of a table's rows),
+// which the caller keeps to: groups never overlap, and an entry is put or
+// dropped within the group last named. A search of one (tide_index_find_exact)
+// gives what one of an index built with tide_index_add_exact from the same
+// entries gives, ascending whatever order they were put in. It is changed by
+// one thread with no search running, and searched by many once
+// tide_index_end has been called; between a change and tide_index_end a search
+// gives every entry.
+
+// Starts the index again, empty, as a followed one, with room for about
+// `room` entries before it grows.
+void tide_index_begin_followed(tide_index *ix, uint32_t exact, uint32_t dims, uint32_t room);
+// Whether the index is a followed one with these numbers an entry, built: one
+// whose groups can be changed as they are. Otherwise it's begun again.
+bool tide_index_followed(const tide_index *ix, uint32_t exact, uint32_t dims);
+// The group the entries put and dropped next are in: ordinals `first` to
+// `first + span - 1`. One not seen before is made, empty. On an index that
+// isn't followed, nothing.
+void tide_index_group(tide_index *ix, uint64_t first, uint32_t span);
+// The entry of this ordinal is one of these numbers: made if there was none,
+// moved if its numbers were others, left if they're the same. An ordinal
+// outside the group last named isn't taken.
+void tide_index_put(tide_index *ix, const int64_t *whole, const double *keys, uint64_t ordinal);
+// There is no entry of this ordinal (in the group last named) any more.
+void tide_index_drop(tide_index *ix, uint64_t ordinal);
+// ...nor any of the group last named.
+void tide_index_clear(tide_index *ix);
+// Entries made, moved and dropped since the index was made: what following
+// it has cost, for tests and counts.
+uint64_t tide_index_changes(const tide_index *ix);
+// Another index with a followed index's groups and entries as they are, for
+// whoever has to change one others hold: only read, so it can be searched
+// meanwhile. Of an index that isn't followed, an empty one.
+tide_index *tide_index_copy(const tide_index *ix);
+
+// An index several hold (a world's and its copies'): tide_index_share counts
+// another holder, each of which calls tide_index_free once, and the last
+// frees it. One that tide_index_shared says others hold is only searched,
+// never begun again or changed: its holders make their own instead.
+void tide_index_share(tide_index *ix);
+bool tide_index_shared(const tide_index *ix);
 
 // A lock for building an index the first thread to need it builds: 0 is open.
 // A waiting thread yields its core, as a build can take a while.

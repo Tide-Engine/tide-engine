@@ -1,4 +1,5 @@
 // expect: this image is [Linear]; an unmarked value would lose its sRGB sampling role
+// expect: a local that isn't mut
 [Linear] asset Texture image = "../e2e/assets/hero.png";
 scene Main { }
-view V() { Texture copy = image; Debug.Log(copy.size); }
+view V() { mut Texture copy = image; Debug.Log(copy.size); }

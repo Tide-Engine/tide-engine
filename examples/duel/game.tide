@@ -194,11 +194,6 @@ event PhaseBegan { Phase phase; }
 event RoundWon { int side; }                          // -1 when both went down
 event MatchBegan { }
 
-command ChooseCard { int round; int slot; }
-command Rematch { int match; }
-command Practice { int match; }
-command ToMenu { int match; }
-
 // Three cards out of the deck, no two alike, as a draft starts.
 void Deal(mut Duel duel)
 {
@@ -323,29 +318,29 @@ event(PlayerLeft left) Leave(mut Duel duel, mut World world)
     Send(MatchBegan { });
 }
 
-command(ChooseCard choice, PlayerID sender) PickCard(Owner owner, mut Fighter fighter, mut Duel duel)
+command(int round, int slot) ChooseCard(Owner owner, mut Fighter fighter, mut Duel duel, PlayerID sender)
 {
     if (sender != owner.player || duel.phase != Phase.Draft || fighter.side != duel.draftSide) return;
     if (duel.attract) return;
-    if (choice.round != duel.round || choice.slot < 0 || choice.slot > 2) return;
-    ApplyCard(fighter.build, Offer(duel, choice.slot));
+    if (round != duel.round || slot < 0 || slot > 2) return;
+    ApplyCard(fighter.build, Offer(duel, slot));
     duel.round += 1;
     duel.phase = Phase.Countdown;
     duel.timer = 1.2;
     Send(PhaseBegan { phase = Phase.Countdown });
 }
 
-command(Rematch request, PlayerID sender) PlayAgain(mut Duel duel)
+command(int match) Rematch(mut Duel duel, PlayerID sender)
 {
-    if (duel.phase != Phase.Finished || request.match != duel.match || duel.attract) return;
+    if (duel.phase != Phase.Finished || match != duel.match || duel.attract) return;
     if (sender != duel.bluePlayer && sender != duel.orangePlayer) return;
     NewMatch(duel);
     Send(MatchBegan { });
 }
 
-command(Practice request, PlayerID sender) StartPractice(mut Duel duel)
+command(int match) Practice(mut Duel duel, PlayerID sender)
 {
-    if (!duel.attract || request.match != duel.match) return;
+    if (!duel.attract || match != duel.match) return;
     if (sender != duel.bluePlayer && sender != duel.orangePlayer) return;
     duel.attract = false;
     NewMatch(duel);
@@ -354,9 +349,9 @@ command(Practice request, PlayerID sender) StartPractice(mut Duel duel)
 
 // Practice ends when its player says so. Two players have no menu to go back
 // to together: one who has had enough leaves, and the other is at the menu.
-command(ToMenu request, PlayerID sender) BackToMenu(mut Duel duel)
+command(int match) ToMenu(mut Duel duel, PlayerID sender)
 {
-    if (duel.attract || request.match != duel.match) return;
+    if (duel.attract || match != duel.match) return;
     if (duel.bluePlayer != default && duel.orangePlayer != default) return;
     if (sender != duel.bluePlayer && sender != duel.orangePlayer) return;
     duel.attract = true;

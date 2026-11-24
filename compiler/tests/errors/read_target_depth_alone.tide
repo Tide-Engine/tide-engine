@@ -1,0 +1,5 @@
+// expect: this target holds depth alone, and Read reads a color image: read its depth with 'await target.ReadDepth()'
+scene Main {}
+local singleton State { RenderTarget target; }
+view Make(mut State state) { state.target = RenderTarget(8, 8, Format.Depth); }
+async void Read(State state) { var pixels = await state.target.Read(); }

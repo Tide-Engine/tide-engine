@@ -26,6 +26,10 @@
 
 typedef uint32_t tide_gpu_id; // A buffer, texture, pipeline or target; 0 is none, and the window as a target
 
+// How an image of the program Tide runs inside is read (`external`'s flags)
+#define TIDE_GPU_EXTERNAL_LINEAR 1u
+#define TIDE_GPU_EXTERNAL_RAW 2u
+
 // TIDE_GPU_STORAGE is a buffer shaders read and compute shaders write (WGSL's
 // var<storage>), which is also usable as a draw's vertices or indices, as
 // indirect arguments (draw_indirect, dispatch_indirect), and as either side of
@@ -40,15 +44,18 @@ typedef enum tide_gpu_buffer_kind { TIDE_GPU_VERTICES, TIDE_GPU_INDICES, TIDE_GP
 // TIDE_GPU_RGBA32I is four ints of 32 bits, which a pipeline reads as they
 // are, each pixel by its place (TIDE_GPU_READ_DATA) and never blended: numbers
 // of any kind, a float's as its bits. Every backend has it with nothing asked.
+// TIDE_GPU_RG16F is two halves (a Grid2<float2>'s cells), read as (r, g, 0, 1), blended on every device as R16F is.
 typedef enum tide_gpu_format { TIDE_GPU_RGBA8, TIDE_GPU_R8, TIDE_GPU_R16F, TIDE_GPU_RGBA32I,
     TIDE_GPU_RGBA16F, TIDE_GPU_R32F, TIDE_GPU_RGBA32F, TIDE_GPU_R32I,
-    TIDE_GPU_SRGBA8 // Encoded RGB, hardware decoded before filtering; alpha stays coverage.
+    TIDE_GPU_SRGBA8, // Encoded RGB, hardware decoded before filtering; alpha stays coverage.
+    TIDE_GPU_RG16F
 } tide_gpu_format;
 
 // The bytes a pixel of a texture takes, as texture and texture_write are given them.
 static inline int tide_gpu_format_bytes(const tide_gpu_format format)
 {
-    return format == TIDE_GPU_RGBA8 || format == TIDE_GPU_SRGBA8 || format == TIDE_GPU_R32F || format == TIDE_GPU_R32I ? 4
+    return format == TIDE_GPU_RGBA8 || format == TIDE_GPU_SRGBA8 || format == TIDE_GPU_R32F || format == TIDE_GPU_R32I
+               || format == TIDE_GPU_RG16F ? 4
          : format == TIDE_GPU_RGBA16F ? 8 : format == TIDE_GPU_R16F ? 2
          : format == TIDE_GPU_RGBA32I || format == TIDE_GPU_RGBA32F ? 16 : 1;
 }
@@ -147,6 +154,16 @@ static inline tide_gpu_target_format tide_gpu_target_with(const tide_gpu_target_
     return count < TIDE_GPU_MAX_COLORS ? format | (uint32_t)color << (4u * count) : format;
 }
 
+// A target whose first color image is TIDE_GPU_COLOR_SRGB is the renderer's own copy of an image for a [Linear]
+// read: drawn into whole, by a pipeline that neither tests nor writes depth (TIDE_GPU_DEPTH_NONE) and uses no
+// stencil. It has no depth and no stencil (target_depth is 0, and it holds its colors' bytes alone), and so do the
+// faces of a cube and the layers of an array made of that color with no pixels (array_depth is 0). Every other
+// target has both.
+static inline bool tide_gpu_target_depthless(const tide_gpu_target_format format)
+{
+    return tide_gpu_target_color(format, 0) == TIDE_GPU_COLOR_SRGB;
+}
+
 // How a pipeline reads one of its textures. A color is read as it is. A
 // target's depth is read as a number, 0 at the near plane to 1 at the far
 // limit, the nearest pixel's; or compared with a number of the shader's,
@@ -168,7 +185,11 @@ typedef enum tide_gpu_read {
     TIDE_GPU_READ_SAMPLES, TIDE_GPU_READ_ARRAY, TIDE_GPU_READ_DEPTH_ARRAY, TIDE_GPU_READ_VOLUME,
     // Numeric images are loaded at the nearest cell without a sampler. Float32 filtering is optional on
     // WebGPU, so NUMBER uses an unfilterable-float binding even for formats that can be filtered.
-    TIDE_GPU_READ_NUMBER, TIDE_GPU_READ_INT, TIDE_GPU_READ_NUMBER_VOLUME, TIDE_GPU_READ_INT_VOLUME
+    TIDE_GPU_READ_NUMBER, TIDE_GPU_READ_INT, TIDE_GPU_READ_NUMBER_VOLUME, TIDE_GPU_READ_INT_VOLUME,
+    // ...and an array's layers loaded so (tide_gpu.array, of any float format, or of TIDE_GPU_COLOR_R32I):
+    // `texture_2d_array<f32>` as unfilterable floats, and `texture_2d_array<i32>`, each with textureLoad and no
+    // sampler. What a typed array of 32-bit numbers is read with, and a cube of them, which is six layers.
+    TIDE_GPU_READ_NUMBER_ARRAY, TIDE_GPU_READ_INT_ARRAY
 } tide_gpu_read;
 
 // The most layers an array has (tide_gpu.array): WebGPU's default maxTextureArrayLayers, Vulkan's least.
@@ -485,6 +506,18 @@ typedef struct tide_gpu {
     // and is read as TIDE_GPU_FILTER_LINEAR.
     void (*mipmaps)(tide_gpu_id texture);
     void (*texture_free)(tide_gpu_id texture);
+    // Optional: a texture that's an image of the program Tide runs inside (tide_texture_external), `external` the
+    // number that program knows it by, `width` by `height` pixels as the game was told. Nothing is uploaded, written
+    // or made smaller images of: it's that program's as it is, and freeing the texture frees nothing of its. `flags`
+    // says how it's read: TIDE_GPU_EXTERNAL_LINEAR for a [Linear] read (its colors as linear light) and
+    // TIDE_GPU_EXTERNAL_RAW for a [Raw] one (its channels as numbers, no alpha worked in); with neither, its colors
+    // are read as every texture's here are, each times its alpha, which that program sees to as it's sampled. NULL
+    // on a backend that draws for itself, where such a reference is no texture.
+    tide_gpu_id (*external)(uint32_t external, int width, int height, uint32_t flags);
+    // Optional, with `external`: in a pass on the window, a mesh of that program's drawn by it with a material of its
+    // own, both by its numbers for them, placed by `matrix` (16 floats, column by column, from the mesh to the
+    // world), in the pass's order. Its camera and everything its material does are that program's.
+    void (*external_draw)(uint32_t mesh, uint32_t material, const float *matrix);
     // Optional, for an asynchronously validated volume allocation: 0 pending, 1 ready,
     // -1 failed. Other textures are ready. A pending/failed image must never be bound.
     int (*texture_status)(tide_gpu_id texture);
@@ -515,8 +548,10 @@ typedef struct tide_gpu {
     // them) or RGBA8 mip chains. Its smaller images are its own. 0 where the device can't, which the renderer then
     // gives an array of pixels.
     tide_gpu_id (*array_blocks)(int width, int height, uint32_t layers, tide_texture_blocks blocks);
-    // An array of `layers` images of `format` (TIDE_GPU_RGBA8 or TIDE_GPU_R16F), zeros until written, read as
-    // TIDE_GPU_READ_ARRAY, a texture to `mipmaps` (each layer's, made of what's written) and `texture_free`...
+    // An array of `layers` images of `format` (TIDE_GPU_RGBA8 or TIDE_GPU_R16F, and TIDE_GPU_RGBA32F or TIDE_GPU_R32I
+    // for the renderer's zeros of 32-bit layers, read as TIDE_GPU_READ_NUMBER_ARRAY or _INT_ARRAY), zeros until
+    // written on every backend, read as TIDE_GPU_READ_ARRAY, a texture to `mipmaps` (each layer's, made of what's
+    // written) and `texture_free`...
     // A volume of texels, sampled with float3 (READ_VOLUME) and written by kernels where the
     // format permits storage. One level, zeroed, no render attachments. Invalid/oversized or
     // failed allocations return 0. texture_free frees it. volume_write reads a box from the

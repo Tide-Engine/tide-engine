@@ -11,7 +11,15 @@
 #include "tide/platform.h"
 #include "tide/shard_client.h"
 #include "tide/shards.h"
+#include "tide/storage.h"
 #include "tide/time.h"
+
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define PSAPI_VERSION 2 // GetProcessMemoryInfo from kernel32: nothing more to link
+#include <windows.h>
+#include <psapi.h>
+#endif
 
 #define FRAME (1.0 / 60.0) // Made-up seconds between updates
 #define JOIN_TIMEOUT 30.0  // Seconds a bot gets to join before the run fails
@@ -19,12 +27,167 @@
 // behind the server's (in ticks: half a second at 60 a second), and falls
 // behind, failing the run, when they're further than twice that.
 #define CAUGHT_UP 30u
+#define LAG_MOST 255u // Ticks behind counted apart (lags)...
+#define LAG_SETTLED 5.0 // ...from this long after a bot caught up: its first view is still coming until then
+#define OUTAGE_AT 3.0   // Seconds after the last bot caught up that --outage's starts
+
+// What the process holds now and held at most, in bytes; 0 where the platform doesn't say
+static void process_memory(uint64_t *now, uint64_t *most)
+{
+    *now = *most = 0;
+#if defined(_WIN32)
+    PROCESS_MEMORY_COUNTERS counters = {.cb = sizeof counters};
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof counters)) {
+        *now = counters.WorkingSetSize;
+        *most = counters.PeakWorkingSetSize;
+    }
+#elif defined(__linux__)
+    FILE *f = fopen("/proc/self/status", "r");
+    char line[128];
+    while (f && fgets(line, sizeof line, f)) {
+        unsigned long long kb = 0;
+        if (sscanf(line, "VmRSS: %llu", &kb) == 1) *now = kb * 1024u;
+        if (sscanf(line, "VmHWM: %llu", &kb) == 1) *most = kb * 1024u;
+    }
+    if (f) fclose(f);
+#endif
+}
 
 static void out_of_memory(void)
 {
     fprintf(stderr, "bench: out of memory\n");
     exit(1);
 }
+
+// In a build of everything that says TIDE_PAGE_STATS (tide/page.h): the pages the server's updates took, and the
+// clients', a frame: what a tick's writes cost beside the snapshots that share its pages. With TIDE_INDEX_STATS
+// too (the game's own counts of its loops' indexes, index_codegen.inc), those for each side as well.
+#ifdef TIDE_PAGE_STATS
+#ifdef TIDE_INDEX_STATS
+extern uint64_t tide_index_stats[7];
+#define PAGE_STATS 11
+#else
+#define PAGE_STATS 4
+#endif
+static uint64_t page_stats_of[2][PAGE_STATS], page_stats_from[PAGE_STATS], page_stats_frames;
+
+static uint64_t page_stat(const int k)
+{
+#ifdef TIDE_INDEX_STATS
+    if (k >= 4) return __atomic_load_n(&tide_index_stats[k - 4], __ATOMIC_RELAXED);
+#endif
+    return __atomic_load_n(&tide_page_stats[k], __ATOMIC_RELAXED);
+}
+
+static void page_stats_mark(void)
+{
+    for (int k = 0; k < PAGE_STATS; k++) page_stats_from[k] = page_stat(k);
+}
+
+static void page_stats_add(const int who)
+{
+    for (int k = 0; k < PAGE_STATS; k++) {
+        const uint64_t now = page_stat(k);
+        page_stats_of[who][k] += now - page_stats_from[k];
+        page_stats_from[k] = now;
+    }
+    if (!who) page_stats_frames++;
+}
+#else
+#define page_stats_mark() ((void)0)
+#define page_stats_add(who) ((void)0)
+#endif
+
+// In a build with bench/alloc_count.h in front of every file: what malloc's callers hold, after an --every line.
+// The callers holding the most, then those that grew the most since the line before, each with whose work it was
+// (the bots' machines' or the server's) and the functions it was called through, innermost first.
+#ifdef TIDE_ALLOC_COUNT
+#include <dbghelp.h>
+#pragma comment(lib, "dbghelp")
+#define ALLOC_SAID 16u
+
+static int alloc_by_held(const void *a, const void *b)
+{
+    const int64_t x = tide_alloc_sites[*(const uint32_t *)a].bytes, y = tide_alloc_sites[*(const uint32_t *)b].bytes;
+    return x < y ? 1 : x > y ? -1 : 0;
+}
+
+static int alloc_by_growth(const void *a, const void *b)
+{
+    const tide_alloc_site *p = &tide_alloc_sites[*(const uint32_t *)a], *q = &tide_alloc_sites[*(const uint32_t *)b];
+    const int64_t x = p->bytes - p->bytes_before, y = q->bytes - q->bytes_before;
+    return x < y ? 1 : x > y ? -1 : 0;
+}
+
+static void alloc_say(const tide_alloc_site *s)
+{
+    static const char *const whose[] = {"other", "bots", "server"};
+    const char *file = s->file;
+    for (const char *c = s->file; *c; c++) if (*c == '/' || *c == '\\') file = c + 1;
+    printf("    %10.3f MB %+10.3f, %8lld blocks, %10lld ever, %-6s %s:%u", (double)s->bytes / 1e6,
+           (double)(s->bytes - s->bytes_before) / 1e6, (long long)s->blocks, (long long)s->allocs,
+           whose[s->tag < 3u ? s->tag : 0u], file, s->line);
+    const HANDLE process = GetCurrentProcess();
+    for (uint32_t i = 0; i < s->depth; i++) {
+        union {
+            SYMBOL_INFO info;
+            char room[sizeof(SYMBOL_INFO) + 128];
+        } symbol = {.info = {.SizeOfStruct = sizeof(SYMBOL_INFO), .MaxNameLen = 127}};
+        DWORD64 off = 0;
+        if (!SymFromAddr(process, (DWORD64)(uintptr_t)s->frames[i], &off, &symbol.info)) continue;
+        if (strcmp(symbol.info.Name, "main") == 0) break;
+        IMAGEHLP_LINE64 where = {.SizeOfStruct = sizeof where};
+        DWORD column = 0;
+        if (SymGetLineFromAddr64(process, (DWORD64)(uintptr_t)s->frames[i], &column, &where)) {
+            printf(" < %s:%lu", symbol.info.Name, (unsigned long)where.LineNumber);
+        } else {
+            printf(" < %s", symbol.info.Name);
+        }
+    }
+    printf("\n");
+}
+
+static void alloc_report(void)
+{
+    static bool started;
+    static uint32_t order[TIDE_ALLOC_COUNT_SITES];
+    if (!started) {
+        SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME);
+        SymInitialize(GetCurrentProcess(), NULL, TRUE);
+        started = true;
+    }
+    uint32_t count = 0;
+    int64_t by[3] = {0}, blocks_by[3] = {0};
+    for (uint32_t i = 0; i < TIDE_ALLOC_COUNT_SITES; i++) {
+        const tide_alloc_site *s = &tide_alloc_sites[i];
+        if (!s->key) continue;
+        order[count++] = i;
+        by[s->tag < 3u ? s->tag : 0u] += s->bytes;
+        blocks_by[s->tag < 3u ? s->tag : 0u] += s->blocks;
+    }
+    PROCESS_MEMORY_COUNTERS_EX counters = {.cb = sizeof counters};
+    GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS *)&counters, sizeof counters);
+    printf("   malloc holds %.3f MB in %lld blocks (the server's work %.3f MB in %lld, the bots' %.3f in %lld, other %.3f "
+           "in %lld), from %u callers; the process has %.1f MB of its own; %lld frees of blocks not counted\n",
+           (double)tide_alloc_held / 1e6, (long long)tide_alloc_held_blocks, (double)by[2] / 1e6, (long long)blocks_by[2],
+           (double)by[1] / 1e6, (long long)blocks_by[1], (double)by[0] / 1e6, (long long)blocks_by[0], count,
+           (double)counters.PrivateUsage / 1e6, (long long)tide_alloc_uncounted);
+    // TIDE_ALLOC_ALL in the environment: every caller, to take two lines' apart afterwards
+    const uint32_t said = getenv("TIDE_ALLOC_ALL") ? count : ALLOC_SAID;
+    printf("   holding the most:\n");
+    qsort(order, count, sizeof *order, alloc_by_held);
+    for (uint32_t i = 0; i < count && i < said; i++) alloc_say(&tide_alloc_sites[order[i]]);
+    printf("   grew the most since the last:\n");
+    qsort(order, count, sizeof *order, alloc_by_growth);
+    for (uint32_t i = 0; i < count && i < ALLOC_SAID; i++) alloc_say(&tide_alloc_sites[order[i]]);
+    for (uint32_t i = 0; i < TIDE_ALLOC_COUNT_SITES; i++) tide_alloc_sites[i].bytes_before = tide_alloc_sites[i].bytes;
+    fflush(stdout);
+}
+#define alloc_whose(tag) (tide_alloc_tag = (tag))
+#else
+#define alloc_report() ((void)0)
+#define alloc_whose(tag) ((void)0)
+#endif
 
 // Wall-clock times, in milliseconds, to take percentiles of.
 typedef struct samples {
@@ -54,6 +217,7 @@ typedef struct port {
     wire *net;
     uint32_t number; // Its address's host, from 1
     bool open;
+    bool cut; // --outage: nothing goes to or from it during the outage
     double arrived;
     packet *heap; // What's on its way to it, soonest first
     uint32_t count;
@@ -63,6 +227,7 @@ typedef struct port {
 struct wire {
     double now;
     tide_net_conditions conditions;
+    double cut_from, cut_until; // --outage: when the ports that are `cut` hear and say nothing
     uint64_t random;
     uint64_t sent;
     port **ports;
@@ -129,6 +294,7 @@ static void wire_send(void *self, const tide_address to, const void *data, const
     if (to.kind != TIDE_ADDRESS_LOOPBACK || to.host < 1 || to.host > net->count) return;
     port *dest = net->ports[to.host - 1u];
     if (!dest->open) return; // Nobody there
+    if ((from->cut || dest->cut) && net->now >= net->cut_from && net->now < net->cut_until) return;
     if (chance(net) < net->conditions.loss) return;
     uint8_t *copy = malloc(size ? size : 1u);
     if (!copy) out_of_memory();
@@ -222,6 +388,7 @@ struct machine {
     double connected; // ...when it had the world; 0 until then
     double caught_up; // ...and when it caught up with the match: it's in
     uint32_t max_lag; // Ticks it was behind the server at most, once in
+    uint64_t lags[LAG_MOST + 1u]; // ...and in how many frames it was each number of ticks behind (the last: that or more), once settled
     bool failed;
     uint32_t first_tick; // Its predicted tick once connected
     // A bot's machine's home's counts, which start again with each home (with
@@ -233,14 +400,27 @@ struct machine {
     uint32_t resyncs;
     double catching; // When it came back in at the root, having been in, to catch up again (0: it didn't)
     uint32_t rejoins;
+    // --outage: a bot cut off, from the outage's start until its verified world is near the server's again
+    // (`recovered`: seconds after the outage's end), and the worlds it was sent again meanwhile
+    bool out;
+    double recovered;
+    uint32_t recoveries;
     samples steady;      // Its updates once connected, while nobody joins...
     samples joining;     // ...and while somebody does
+    samples recovering;  // A server's: from an outage's start until every bot cut off is back
     // What its updates spent in the game's functions
     double tick_ms, copy_ms, hash_ms, pack_ms, unpack_ms;
+    double world_hash_ms; // ...of hash_ms, the world's own hash (the rest is players' projections')
+    double checks_ms;     // ...and every player's projection checked at once (client_hashes), as a server's tick ends
     uint64_t ticks, copies, hashes, packs, unpacks;
     uint64_t bytes;
+    // ...and of that, by what a datagram is (KINDS): bytes and datagrams
+    uint64_t kind_bytes[3], kind_count[3];
     counted **wires; // Its transports, counting
     uint32_t wire_count;
+    // What a bot's machine was sent and took, in the order it took them: every projection and repair by what changed
+    // (their bytes), each with the ticks it had played then. One run's is another's whatever the server's threads
+    uint64_t taken;
 };
 
 // The game, with its functions timed for the machine updating now. Machines
@@ -302,6 +482,46 @@ static bool timed_load_client_state(void *world, const uint8_t *data, const uint
 {
     const uint64_t start = tide_time_now_ns();
     const bool ok = real->load_client_state(world, data, size);
+    current->taken = tide_hash_more(tide_hash_more(current->taken, &current->advanced, sizeof current->advanced), data, size);
+    current->unpack_ms += since(start);
+    current->unpacks++;
+    return ok;
+}
+
+// A repair that says only what changed for a player (tide_game.client_changes): working it out is the server's
+// packing, and making its base again and applying it a client's unpacking
+static bool timed_client_changes(const void *world, const void *base, const void *lineage, const tide_player_id recipient,
+                                 tide_writer *plan, tide_writer *now, tide_writer *was, uint32_t *changed_size)
+{
+    const uint64_t start = tide_time_now_ns();
+    const bool made = real->client_changes(world, base, lineage, recipient, plan, now, was, changed_size);
+    const double ms = since(start);
+    // (A server reads several players' at once, on its pool's threads: their sum, so the column is the threads' time)
+    static uint32_t lock;
+    while (__atomic_exchange_n(&lock, 1u, __ATOMIC_ACQUIRE)) {
+    }
+    current->pack_ms += ms;
+    current->packs++;
+    __atomic_store_n(&lock, 0u, __ATOMIC_RELEASE);
+    return made;
+}
+
+static uint8_t *timed_client_changes_base(const void *world, const tide_player_id recipient, const uint8_t *plan,
+                                          const uint32_t plan_size, uint32_t *size)
+{
+    const uint64_t start = tide_time_now_ns();
+    uint8_t *was = real->client_changes_base(world, recipient, plan, plan_size, size);
+    current->unpack_ms += since(start);
+    return was;
+}
+
+static bool timed_apply_client_changes(void *world, const uint8_t *plan, const uint32_t plan_size, const uint8_t *now,
+                                       const uint32_t now_size, const uint8_t *was, const uint32_t was_size)
+{
+    const uint64_t start = tide_time_now_ns();
+    const bool ok = real->apply_client_changes(world, plan, plan_size, now, now_size, was, was_size);
+    current->taken = tide_hash_more(tide_hash_more(tide_hash_more(current->taken, &current->advanced, sizeof current->advanced), plan, plan_size),
+                                    now, now_size);
     current->unpack_ms += since(start);
     current->unpacks++;
     return ok;
@@ -357,11 +577,14 @@ static uint64_t timed_client_hash(const void *world, const tide_player_id recipi
 }
 
 // ...or every player's at once, as a server asks
-static void timed_client_hashes(const void *world, const tide_player_id *recipients, const uint32_t count, uint64_t *out)
+static void timed_client_hashes(const void *world, const tide_player_id *recipients, const uint32_t count, uint64_t *out,
+                                const uint64_t *world_hash)
 {
     const uint64_t start = tide_time_now_ns();
-    real->client_hashes(world, recipients, count, out);
-    current->hash_ms += since(start);
+    real->client_hashes(world, recipients, count, out, world_hash);
+    const double ms = since(start);
+    current->hash_ms += ms;
+    current->checks_ms += ms;
     current->hashes++;
     for (uint32_t i = 0; diverging && traced && i < count; i++) {
         if (tide_player_equal(recipients[i], traced_player)) compare(world, out[i]);
@@ -380,7 +603,9 @@ static uint64_t timed_hash(const void *world)
 {
     const uint64_t start = tide_time_now_ns();
     const uint64_t hash = real->hash_world(world);
-    current->hash_ms += since(start);
+    const double ms = since(start);
+    current->hash_ms += ms;
+    current->world_hash_ms += ms;
     current->hashes++;
     return hash;
 }
@@ -423,10 +648,19 @@ static bool timed_unpack_delta(void *world, const void *base, const uint8_t *dat
     return ok;
 }
 
+// What a session's datagram is, from its header's fourth byte (session.c's MSG_*): a part of a world or of a repair
+// (MSG_CHUNK, MSG_SPARE) or of a download (MSG_DOWNLOAD), a server's ticks or a client's inputs (MSG_SERVER, MSG_CLIENT), or
+// anything else. Only for the report: a protocol that numbers them otherwise counts them as other.
+enum { KIND_WORLD, KIND_TICKS, KIND_OTHER };
+
 static void counted_send(void *self, const tide_address to, const void *data, const uint32_t size)
 {
     counted *c = self;
     c->owner->bytes += size;
+    const uint8_t type = size >= 4u ? ((const uint8_t *)data)[3] : 0u;
+    const uint32_t kind = type == 4u || type == 11u || type == 14u ? KIND_WORLD : type == 5u || type == 6u ? KIND_TICKS : KIND_OTHER;
+    c->owner->kind_bytes[kind] += size;
+    c->owner->kind_count[kind]++;
     c->inner.send(c->inner.self, to, data, size);
 }
 
@@ -466,6 +700,7 @@ static void free_machine(machine *m)
     free(m->wires);
     free(m->steady.ms);
     free(m->joining.ms);
+    free(m->recovering.ms);
 }
 
 // The platform's pool, with only its first `threads` threads taking part.
@@ -523,6 +758,13 @@ static void add_sample(samples *s, const double ms)
 static void add_samples(samples *to, const samples *from)
 {
     for (uint32_t i = 0; i < from->count; i++) add_sample(to, from->ms[i]);
+}
+
+static double sum_of(const samples *s)
+{
+    double sum = 0.0;
+    for (uint32_t i = 0; i < s->count; i++) sum += s->ms[i];
+    return sum;
 }
 
 static int compare_floats(const void *a, const void *b)
@@ -628,9 +870,12 @@ static timing timing_of(samples *s)
 // The server, a shard, or a client on average: its work per second of play.
 typedef struct side {
     timing update, update_joining; // ms, while nobody joins and while one does
+    timing update_recovering;      // ...and a server's from an outage's start until every bot cut off is back
     double simulate_ms, hash_ms, snapshot_ms, pack_ms, unpack_ms;
     double ticks, hashes, snapshots, packs, unpacks; // Calls
     double sent;                                     // Bytes
+    double kind_sent[3], kind_datagrams[3];          // ...by what the datagrams are, and how many
+    double update_ms;                                // All of its updates
 } side;
 
 // A shard, as the run ends
@@ -651,15 +896,25 @@ typedef struct results {
     timing world;       // Seconds until a bot had the world...
     timing caught_up;   // ...and until it caught up with the match
     uint32_t max_lag;   // Ticks a client was behind the server at most, once in
+    double lag_mean;    // ...on average over every bot's frames once settled (LAG_SETTLED), and in the worst of each hundred and thousand of them
+    uint32_t lag_p99, lag_p999;
     double repairs;     // Bytes of worlds a second each bot's machine got, once in: its first, and repairs
+    uint64_t taken;     // What the bots' machines took, hashed (machine.taken, bench_options.expect_taken)
     double pack_ms;     // Packing the world, each time
     uint32_t sent_size; // The world at the end, as sent...
     uint32_t size;      // ...and in memory
     uint32_t tick;
     uint64_t hash;
     uint32_t resyncs;
+    // --outage: seconds from its end until a bot cut off had a verified world near the server's again, the worlds
+    // they were sent again, and how many never were back
+    timing recovered;
+    uint32_t recoveries, never_recovered;
     bool joined; // Every bot joined
     bool ok;
+    // Bytes the bots' machines' updates left in this thread's scratch area, and the server's: a thread a session is
+    // updated on keeps whatever an update doesn't give back, so any at all fails the run
+    uint64_t scratch_left[2];
     // What the bots' machines held at the end (bench_desc.held), on average and at most
     double held_mean;
     uint32_t held_most;
@@ -693,6 +948,8 @@ static side side_of(const machine *m, const double seconds)
         .packs = (double)m->packs / s,
         .unpacks = (double)m->unpacks / s,
         .sent = (double)m->bytes / s,
+        .kind_sent = {(double)m->kind_bytes[0] / s, (double)m->kind_bytes[1] / s, (double)m->kind_bytes[2] / s},
+        .kind_datagrams = {(double)m->kind_count[0] / s, (double)m->kind_count[1] / s, (double)m->kind_count[2] / s},
     };
 }
 
@@ -709,13 +966,17 @@ static void add_side(side *to, const side *from)
     to->packs += from->packs;
     to->unpacks += from->unpacks;
     to->sent += from->sent;
+    for (uint32_t k = 0; k < 3u; k++) {
+        to->kind_sent[k] += from->kind_sent[k];
+        to->kind_datagrams[k] += from->kind_datagrams[k];
+    }
 }
 
 static void collect(results *r, machine *bots_machines, const uint32_t bots, const bench_desc *d, const tide_shards *shards,
                     machine *orchestra)
 {
     // The servers: each shard's work over the time it ran, and together
-    samples all_steady = {0}, all_joining = {0};
+    samples all_steady = {0}, all_joining = {0}, all_recovering = {0};
     uint64_t packs = 0;
     double pack_ms = 0.0;
     r->sharded = shards != NULL;
@@ -727,6 +988,7 @@ static void collect(results *r, machine *bots_machines, const uint32_t bots, con
         add_side(&r->server, &s);
         add_samples(&all_steady, &h->steady);
         add_samples(&all_joining, &h->joining);
+        add_samples(&all_recovering, &h->recovering);
         packs += h->packs;
         pack_ms += h->pack_ms;
         if (!shards) continue;
@@ -748,11 +1010,15 @@ static void collect(results *r, machine *bots_machines, const uint32_t bots, con
         r->shards = rows;
         r->shards[r->shard_count++] = row;
     }
+    r->server.update_ms = (sum_of(&all_steady) + sum_of(&all_joining) + sum_of(&all_recovering))
+        / (r->played > 0.0 ? r->played : 1.0);
     r->server.update = timing_of(&all_steady);
     r->server.update_joining = timing_of(&all_joining);
+    r->server.update_recovering = timing_of(&all_recovering);
     r->pack_ms = packs ? pack_ms / (double)packs : 0.0;
     free(all_steady.ms);
     free(all_joining.ms);
+    free(all_recovering.ms);
     if (shards) {
         r->orchestra = timing_of(&orchestra->steady);
         r->ghost_bytes = (double)tide_shards_ghost_bytes(shards) / (r->played > 0.0 ? r->played : 1.0);
@@ -765,9 +1031,12 @@ static void collect(results *r, machine *bots_machines, const uint32_t bots, con
     uint64_t late = 0, held = 0, followed = 0, worlds_bytes = 0;
     double ping = 0.0;
     uint32_t pinged = 0, holders = 0;
-    samples steady = {0}, joining = {0}, worlds = {0}, joins = {0};
+    samples steady = {0}, joining = {0}, worlds = {0}, joins = {0}, recovered = {0};
+    uint64_t lags[LAG_MOST + 1u] = {0};
+    r->taken = TIDE_HASH_START;
     for (uint32_t i = 0; i < bots; i++) {
         const machine *m = &bots_machines[i];
+        r->taken = tide_hash_more(r->taken, &m->taken, sizeof m->taken);
         sum.tick_ms += m->tick_ms;
         sum.hash_ms += m->hash_ms;
         sum.copy_ms += m->copy_ms;
@@ -777,6 +1046,10 @@ static void collect(results *r, machine *bots_machines, const uint32_t bots, con
         sum.copies += m->copies;
         sum.unpacks += m->unpacks;
         sum.bytes += m->bytes;
+        for (uint32_t k = 0; k < 3u; k++) {
+            sum.kind_bytes[k] += m->kind_bytes[k];
+            sum.kind_count[k] += m->kind_count[k];
+        }
         seconds += r->played - m->created;
         const tide_client *home = home_of(m);
         const tide_client_status s = tide_client_status_of(home);
@@ -790,8 +1063,12 @@ static void collect(results *r, machine *bots_machines, const uint32_t bots, con
         }
         if (m->caught_up > 0.0 && m->catching == 0.0) add_sample(&joins, m->caught_up - m->created);
         if (m->max_lag > r->max_lag) r->max_lag = m->max_lag;
+        for (uint32_t k = 0; k <= LAG_MOST; k++) lags[k] += m->lags[k];
         r->resyncs += m->resyncs;
         r->rejoins += m->rejoins;
+        r->recoveries += m->recoveries;
+        if (m->recovered > 0.0) add_sample(&recovered, m->recovered);
+        r->never_recovered += m->out ? 1u : 0u;
         add_samples(&steady, &m->steady);
         add_samples(&joining, &m->joining);
         if (d->held && s.state == TIDE_SESSION_CONNECTED) {
@@ -810,16 +1087,27 @@ static void collect(results *r, machine *bots_machines, const uint32_t bots, con
         }
     }
     r->client = side_of(&sum, seconds);
+    r->client.update_ms = (sum_of(&steady) + sum_of(&joining)) / (seconds > 0.0 ? seconds : 1.0);
     r->client.update = timing_of(&steady);
     r->client.update_joining = timing_of(&joining);
     r->replays = advanced ? (double)sum.ticks / (double)advanced : 0.0;
     r->late = advanced ? (double)late / (double)advanced : 0.0;
     r->repairs = seconds > 0.0 ? (double)worlds_bytes / seconds : 0.0;
     r->ping_ms = pinged ? ping / pinged : 0.0;
+    uint64_t lag_frames = 0, lag_ticks = 0;
+    for (uint32_t k = 0; k <= LAG_MOST; k++) {
+        lag_frames += lags[k];
+        lag_ticks += lags[k] * k;
+    }
+    r->lag_mean = lag_frames ? (double)lag_ticks / (double)lag_frames : 0.0;
+    for (uint64_t under = 0; r->lag_p99 < LAG_MOST && (under += lags[r->lag_p99]) * 100u < lag_frames * 99u;) r->lag_p99++;
+    for (uint64_t under = 0; r->lag_p999 < LAG_MOST && (under += lags[r->lag_p999]) * 1000u < lag_frames * 999u;) r->lag_p999++;
     r->held_mean = holders ? (double)held / holders : 0.0;
     r->followed = bots ? (double)followed / bots : 0.0;
     r->world = timing_of(&worlds);
     r->caught_up = timing_of(&joins);
+    r->recovered = timing_of(&recovered);
+    free(recovered.ms);
     free(steady.ms);
     free(joining.ms);
     free(worlds.ms);
@@ -901,6 +1189,7 @@ static void print_results(const results *r, const uint32_t bots, const bool held
     printf("\n  %-26s %8s %8s %8s %8s\n", "update (ms)", "median", "p99", "max", "updates");
     print_timing(r->sharded ? "shards, each" : "server", &r->server.update);
     print_timing(r->sharded ? "shards, while one joins" : "server, while one joins", &r->server.update_joining);
+    if (r->server.update_recovering.count) print_timing("server, during an outage", &r->server.update_recovering);
     print_timing("clients", &r->client.update);
     print_timing("clients, while one joins", &r->client.update_joining);
 
@@ -911,6 +1200,14 @@ static void print_results(const results *r, const uint32_t bots, const bool held
         printf("  clients ran %.1f ticks for each one played: the rest ran again, after a guess went wrong\n", r->replays);
     }
     if (r->sharded) print_shards(r);
+    // What the parts above leave of an update: sending and receiving, the repairs a server works out for each
+    // player, its store, the session's own bookkeeping
+    if (!r->sharded) {
+        const side *s = &r->server, *c = &r->client;
+        printf("  updates in all, ms per second: server %.2f (%.2f outside those parts), a client %.2f (%.2f)\n", s->update_ms,
+               s->update_ms - s->simulate_ms - s->hash_ms - s->snapshot_ms - s->pack_ms - s->unpack_ms, c->update_ms,
+               c->update_ms - c->simulate_ms - c->hash_ms - c->snapshot_ms - c->pack_ms - c->unpack_ms);
+    }
 
     printf("\n");
     print_bytes(r->sharded ? "  sent per second: shards " : "  sent per second: server ", r->server.sent);
@@ -920,6 +1217,17 @@ static void print_results(const results *r, const uint32_t bots, const bool held
     }
     print_bytes(", a client ", r->client.sent);
     printf("\n");
+    if (bots && !r->sharded) {
+        // To each bot: the worlds and repairs it's sent in parts, and the ticks (their hashes, the players' inputs,
+        // events), each datagram with its header and whatever was sent again
+        const side *s = &r->server;
+        print_bytes("  to each bot: worlds and repairs ", s->kind_sent[KIND_WORLD] / bots);
+        printf(" (%.1f datagrams)", s->kind_datagrams[KIND_WORLD] / bots);
+        print_bytes(", ticks ", s->kind_sent[KIND_TICKS] / bots);
+        printf(" (%.1f)", s->kind_datagrams[KIND_TICKS] / bots);
+        print_bytes(", other ", s->kind_sent[KIND_OTHER] / bots);
+        printf(" a second\n");
+    }
     if (held) {
         printf("  a bot's machine held %.0f on average, %u at most", r->held_mean, r->held_most);
         if (r->sharded) printf(", following %.2f shards", r->followed);
@@ -933,27 +1241,60 @@ static void print_results(const results *r, const uint32_t bots, const bool held
            r->ping_ms);
     print_bytes("  worlds a bot's machine got (its first, and repairs): ", r->repairs);
     printf(" a second; its verified world was %u ticks behind the server's at most\n", r->max_lag);
+    printf("  ...%.2f ticks behind on average over its frames from %g s after it caught up, %u or fewer in 99 of 100, %u in 999 of 1000\n",
+           r->lag_mean, LAG_SETTLED, r->lag_p99, r->lag_p999);
     if (r->world.count) {
         printf("  joining: the world took %.2f s median, %.2f s at most", r->world.median, r->world.max);
         if (r->caught_up.count) printf("; catching up, %.2f s median, %.2f s at most", r->caught_up.median, r->caught_up.max);
         printf("\n");
     }
+    if (r->recovered.count || r->never_recovered) {
+        printf("  the outage: %u bots had a verified world near the server's again %.2f s after it at the median, %.2f s at "
+               "most; they were sent their world again %u times", r->recovered.count, r->recovered.median, r->recovered.max,
+               r->recoveries);
+        if (r->never_recovered) printf("; %u never were back", r->never_recovered);
+        printf("\n");
+    }
     if (r->pack_ms > 0.0) {
-        printf("  the server packed the world %.0f times, %.2f ms each", r->server.packs * r->played, r->pack_ms);
+        printf("  the server packed the world, or what changed of it for a player, %.0f times, %.2f ms each",
+               r->server.packs * r->played, r->pack_ms);
         if (r->caught_up.count) printf("; clients were %u ticks behind it at most, once in", r->max_lag);
         printf("\n");
     }
     print_bytes("  the world: ", (double)r->sent_size);
     print_bytes(" as sent, ", (double)r->size);
     printf(" in memory\n");
+#ifdef TIDE_PAGE_STATS
+    for (int who = 0; who < 2; who++) {
+        const uint64_t *n = page_stats_of[who];
+        const double frames = page_stats_frames ? (double)page_stats_frames : 1.0;
+        printf("  pages %s took in their updates: %.1f a frame (%.1f KB), of them copies of a shared page %.1f (%.1f KB)\n",
+               who ? "the clients" : "the server", (double)n[0] / frames, (double)n[1] / frames / 1e3, (double)n[2] / frames,
+               (double)n[3] / frames / 1e3);
+#ifdef TIDE_INDEX_STATS
+        printf("  ...loops' indexes: %llu starts found theirs as it was, %llu took in what changed (%llu table chunks compared, "
+               "%llu rows looked at), %llu made whole, %llu copied\n", (unsigned long long)n[4], (unsigned long long)n[5],
+               (unsigned long long)n[7], (unsigned long long)n[9], (unsigned long long)n[6], (unsigned long long)n[10]);
+#endif
+    }
+#endif
 }
 
-static void print_verdict(const results *r, const uint64_t expect)
+static void print_verdict(const results *r, const uint64_t expect, const uint64_t expect_taken)
 {
+    printf("\n  what the bots' machines took of what they were sent hashes to 0x%016llx", (unsigned long long)r->taken);
+    if (expect_taken) printf(r->taken == expect_taken ? " as expected" : ", but 0x%016llx was expected", (unsigned long long)expect_taken);
+    printf("\n");
     printf("\n  tick %u, hash 0x%016llx", r->tick, (unsigned long long)r->hash);
     if (expect) printf(r->hash == expect ? " as expected" : ", but 0x%016llx was expected", (unsigned long long)expect);
     printf("\n");
     if (r->resyncs) printf("  FAILED: clients' worlds went wrong %u times, and the server sent them again\n", r->resyncs);
+    if (r->never_recovered) printf("  FAILED: %u bots cut off by the outage never had the server's world again\n", r->never_recovered);
+    if (r->scratch_left[0] || r->scratch_left[1]) {
+        printf("  FAILED: updates left %llu bytes in their thread's scratch area for good (the bots' machines' %llu, the "
+               "server's %llu)\n", (unsigned long long)(r->scratch_left[0] + r->scratch_left[1]),
+               (unsigned long long)r->scratch_left[0], (unsigned long long)r->scratch_left[1]);
+    }
     if (!r->joined) printf("  FAILED: not every bot joined\n");
     else if (!r->ok) printf("  FAILED\n");
 }
@@ -1053,7 +1394,8 @@ static void write_record(FILE *f, const bench_desc *d, const bench_options *o, c
             r->played);
     json_side(f, "server", &r->server);
     json_side(f, "client", &r->client);
-    fprintf(f, ",\"replays\":%.6g,\"pack_ms_each\":%.6g,\"max_lag_ticks\":%u", r->replays, r->pack_ms, r->max_lag);
+    fprintf(f, ",\"replays\":%.6g,\"pack_ms_each\":%.6g,\"max_lag_ticks\":%u,\"lag_mean_ticks\":%.6g,\"lag_p99_ticks\":%u,\"lag_p999_ticks\":%u",
+            r->replays, r->pack_ms, r->max_lag, r->lag_mean, r->lag_p99, r->lag_p999);
     json_timing(f, "world_s", &r->world);
     json_timing(f, "caught_up_s", &r->caught_up);
     fprintf(f, ",\"late_share\":%.6g,\"ping_ms\":%.6g,\"client_world_bytes\":%.6g", r->late, r->ping_ms, r->repairs);
@@ -1119,8 +1461,20 @@ static void usage(const bench_desc *d)
     if (d->differ && d->game->client_state) {
         printf("  --diverge <bot>     says what differs, each tick, between that bot's world and what the server says it is\n");
     }
+    printf("  --outage <s>        once everyone's in, %g s later: nothing goes to or from the bots for this long (0: none)\n",
+           OUTAGE_AT);
+    printf("  --outage-bots <n>   ...the first n of them; 0 for all of them (%u)\n", d->full.outage_bots);
+    printf("  --worst <n>         says the server's n longest updates, each with what it spent where (0)\n");
+    printf("  --every <s>         a line every so many seconds: what the server's world, a bot's and the process hold,\n"
+           "                      and the server's updates since the last (0: none)\n");
     printf("  --expect <hash>     the server's world's hash at the end; fails on another\n");
+    printf("  --expect-taken <hash>  what the bots' machines took of what they were sent, hashed; fails on another\n");
     printf("  --save <label>      adds the results to bench/results/%s.jsonl (see bench/compare.mjs)\n", d->name);
+    if (d->game->stored) {
+        printf("  --files <folder>    keeps the server's store as files in the folder's Tide/store/ (emptied first), as\n"
+               "                      the standard hosts do: carried out on the files' own thread\n");
+        printf("  --files-here <folder> the same, carried out as each tick ends, on the server's thread\n");
+    }
     for (uint32_t i = 0; i < d->flag_count; i++) {
         printf("  --%-17s %s (%u)\n", d->flags[i].name, d->flags[i].help, d->flags[i].full);
     }
@@ -1137,6 +1491,82 @@ static bool read_number(const char *text, uint32_t *out)
     *out = (uint32_t)number;
     return true;
 }
+
+// --worst: the server's longest updates, longest first, each with what it spent in the game's functions
+#define WORST_MOST 64u
+#define WORST_SYSTEMS 3u
+typedef struct long_update {
+    double ms, at, tick_ms, hash_ms, checks_ms, copy_ms, pack_ms;
+    uint32_t tick, packs;
+    // Of its simulating: what follows a tick's systems (changes, handlers, tasks), and its longest systems
+    double changes_ms, system_ms[WORST_SYSTEMS];
+    char system[WORST_SYSTEMS][TIDE_PROFILE_NAME];
+} long_update;
+static long_update worst[WORST_MOST];
+static uint32_t worst_count;
+
+static void note_update(const uint32_t most, const long_update u)
+{
+    if (!most || (worst_count == most && u.ms <= worst[most - 1u].ms)) return;
+    uint32_t at = worst_count < most ? worst_count++ : most - 1u;
+    for (; at && worst[at - 1u].ms < u.ms; at--) worst[at] = worst[at - 1u];
+    worst[at] = u;
+}
+
+// ...and, over the whole run, each of its systems and what follows them, apart for the updates in which the count of
+// entities the server holds changed (bench_desc.held) and the ones in which it didn't
+typedef struct run_part {
+    uint32_t updates;
+    double ms, tick_ms, hash_ms, world_hash_ms, copy_ms, pack_ms, systems_ms, changes_ms;
+} run_part;
+static run_part run_parts[2];
+
+static void print_systems(const tide_profile *p, const double seconds)
+{
+    if (seconds <= 0.0) return;
+    printf("\n  the server's systems, ms a second over the run (each from its first task's start to its last one's end)\n");
+    double under = INFINITY;
+    for (uint32_t done = 0; done < p->systems.count; done++) {
+        // Longest first: the one with the most of those under the last one said
+        const tide_profile_time *next = NULL;
+        for (uint32_t k = 0; k < p->systems.count; k++) {
+            const tide_profile_time *t = &p->systems.items[k];
+            if (t->measured_ms < under && (!next || t->measured_ms > next->measured_ms)) next = t;
+        }
+        if (!next || next->measured_ms / seconds < 0.005) break;
+        under = next->measured_ms;
+        printf("  %33s %8.2f\n", next->name, next->measured_ms / seconds);
+    }
+    static const char *const names[2] = {"with as many entities after as before", "with entities come or gone"};
+    printf("  the server's updates                    count   ms each  simulate (systems, the rest)  hash (world, players')"
+           " snapshot     pack\n");
+    for (uint32_t k = 0; k < 2; k++) {
+        const run_part *r = &run_parts[k];
+        if (!r->updates) continue;
+        const double n = (double)r->updates;
+        printf("  %37s %7u %9.2f %9.2f (%.2f, %.2f) %9.2f (%.2f, %.2f) %8.2f %8.2f\n", names[k], r->updates, r->ms / n,
+               r->tick_ms / n, r->systems_ms / n, r->changes_ms / n, r->hash_ms / n, r->world_hash_ms / n,
+               (r->hash_ms - r->world_hash_ms) / n, r->copy_ms / n, r->pack_ms / n);
+    }
+}
+
+static void print_worst(void)
+{
+    if (!worst_count) return;
+    printf("\n  the server's longest updates (ms)   at (s)     tick   simulate     hash (checks) snapshot     pack (calls)    the rest\n");
+    for (uint32_t i = 0; i < worst_count; i++) {
+        const long_update *u = &worst[i];
+        printf("  %33.2f %8.2f %8u %10.2f %8.2f (%6.2f) %8.2f %8.2f (%u) %11.2f\n", u->ms, u->at, u->tick, u->tick_ms, u->hash_ms,
+               u->checks_ms, u->copy_ms, u->pack_ms, u->packs, u->ms - u->tick_ms - u->hash_ms - u->copy_ms - u->pack_ms);
+        printf("  %33s simulating: handlers and changes %.2f", "", u->changes_ms);
+        for (uint32_t k = 0; k < WORST_SYSTEMS && u->system[k][0]; k++) printf(", %s %.2f", u->system[k], u->system_ms[k]);
+        printf("\n");
+    }
+}
+
+// --files and --files-here: the platform's own files in a folder, for the server's store
+static const char *files_folder;
+static bool files_here;
 
 // The options from the command line, over a full run's or --quick's.
 static bool parse(const bench_desc *d, const int argc, char **argv, bench_options *o, const char **save)
@@ -1166,9 +1596,16 @@ static bool parse(const bench_desc *d, const int argc, char **argv, bench_option
         bool known = true;
         if (strcmp(arg, "--save") == 0) {
             *save = value;
+        } else if ((strcmp(arg, "--files") == 0 || strcmp(arg, "--files-here") == 0) && d->game->stored) {
+            files_folder = value;
+            files_here = strcmp(arg, "--files-here") == 0;
         } else if (strcmp(arg, "--expect") == 0) {
             errno = 0;
             o->expect = strtoull(value, &end, 0);
+            if (*value < '0' || *value > '9' || end == value || *end != '\0' || errno == ERANGE) known = false;
+        } else if (strcmp(arg, "--expect-taken") == 0) {
+            errno = 0;
+            o->expect_taken = strtoull(value, &end, 0);
             if (*value < '0' || *value > '9' || end == value || *end != '\0' || errno == ERANGE) known = false;
         } else if (!numeric) {
             known = false;
@@ -1196,6 +1633,16 @@ static bool parse(const bench_desc *d, const int argc, char **argv, bench_option
             if (known) o->most = integer;
         } else if (strcmp(arg, "--busiest") == 0 && d->game->shards) {
             o->busiest = number / 1e2;
+        } else if (strcmp(arg, "--worst") == 0) {
+            known = whole && integer <= WORST_MOST;
+            if (known) o->worst = integer;
+        } else if (strcmp(arg, "--every") == 0) {
+            o->every = number;
+        } else if (strcmp(arg, "--outage") == 0) {
+            o->outage = number;
+        } else if (strcmp(arg, "--outage-bots") == 0) {
+            known = whole;
+            if (known) o->outage_bots = integer;
         } else if (strcmp(arg, "--lag") == 0) {
             known = whole && integer > 0;
             if (known) o->lag = integer;
@@ -1276,8 +1723,21 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
     if (real->load_client_state) timed.load_client_state = timed_load_client_state;
     if (real->client_hash) timed.client_hash = timed_client_hash;
     if (real->client_hashes) timed.client_hashes = timed_client_hashes;
+    if (real->client_changes) timed.client_changes = timed_client_changes;
+    if (real->client_changes_base) timed.client_changes_base = timed_client_changes_base;
+    if (real->apply_client_changes) timed.apply_client_changes = timed_apply_client_changes;
 
     const tide_jobs *jobs = jobs_for(o.threads);
+    // --worst: the server ticks with a profile, which says what each of its systems took (it reads the clock around
+    // each, so its times are a little longer than without)
+    static tide_profile server_profile;
+    static tide_jobs profiled;
+    const tide_jobs *server_jobs = jobs;
+    if (o.worst && !o.split) {
+        profiled = jobs ? *jobs : (tide_jobs){.threads = 1}; // One thread's is never asked to run anything
+        profiled.profile = &server_profile;
+        server_jobs = &profiled;
+    }
     diverging = o.diverge ? d : NULL;
 
 #if defined(__OPTIMIZE__)
@@ -1338,15 +1798,44 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
         current = h;
         void *first = calloc(1, real->world_size);
         if (!first) out_of_memory();
+        // What its start asks of the store (Spawned handlers) goes to the server, as a start the server ran would
+        tide_storage asked = {0};
+        if (real->stored) tide_storage_bind(first, &asked);
         d->make_world(d->flags, first, (float)FRAME);
+        if (real->stored) tide_storage_unbind(first);
+        // The store: the game's own, or the platform's files in a folder, on their own thread or (--files-here) not
+        const tide_io *io = d->io;
+        if (files_folder) {
+#ifdef __wasm__
+            // The web's files are the page's (tide.js), which a bench run by the WASI runner has none of
+            fprintf(stderr, "%s: --files%s: a bench on the web has no platform files; run it natively\n", d->name,
+                    files_here ? "-here" : "");
+            return 1;
+#else
+            static tide_io files_io;
+            const tide_io *platform = tide_platform_io_init("dev.tide.bench", files_folder);
+            if (!platform || !platform->persistent_data_path || !platform->persistent_data_path[0]) {
+                fprintf(stderr, "%s: --files: the folder %s can't be used\n", d->name, files_folder);
+                return 1;
+            }
+            (void)platform->remove(platform->user, "Tide", true, true); // Every run starts with nothing kept
+            files_io = *platform;
+            if (files_here) files_io.post = NULL;
+            if (files_here) files_io.settle = NULL;
+            io = &files_io;
+#endif
+        }
         const tide_server_desc server_desc = {
             .game = &timed,
             .dt = (float)FRAME,
             .transports = {count(h, wire_endpoint(the_net, &h->port))},
-            .jobs = jobs,
+            .jobs = server_jobs,
             .world = first,
+            .io = io,
+            .asked = &asked,
         };
         h->server = tide_server_create(&server_desc, 0.0);
+        tide_storage_free(&asked);
         if (real->free_world) real->free_world(first); // The server has its own copy
         free(first);
     }
@@ -1356,6 +1845,9 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
     double all_in = -1.0; // When the last one caught up
     bool failed = false;
     const uint32_t most_lag = o.lag ? o.lag : 2u * CAUGHT_UP;
+    uint64_t scratch_left[2] = {0, 0}; // results.scratch_left
+    double stretch_next = o.every, stretch_ms = 0.0, stretch_most = 0.0; // --every
+    uint32_t stretch_updates = 0;
     while (true) {
         if (bots < o.players && now >= (double)bots * o.join_every) {
             machine *m = &bots_machines[bots];
@@ -1363,9 +1855,11 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
             m->created = now;
             current = m;
             uint32_t number;
+            const tide_transport endpoint = wire_endpoint(the_net, &number);
+            the_net->ports[number - 1u]->cut = o.outage > 0.0 && (!o.outage_bots || bots < o.outage_bots);
             const tide_client_desc client_desc = {
                 .game = &timed,
-                .transport = count(m, wire_endpoint(the_net, &number)),
+                .transport = count(m, endpoint),
                 .server = tide_loopback_address(hosts[0]->port),
                 .sample = real->input_size ? sample : NULL,
                 .user = m,
@@ -1386,7 +1880,22 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
         the_net->now = now;
         bool joining = false; // Somebody is, as this frame starts
         for (uint32_t i = 0; i < bots; i++) joining |= bots_machines[i].caught_up == 0.0 && !bots_machines[i].failed;
+        // --outage: it starts, and goes on for the server until every bot cut off is back
+        if (o.outage > 0.0 && all_in >= 0.0 && the_net->cut_until == 0.0 && now >= all_in + OUTAGE_AT) {
+            the_net->cut_from = now;
+            the_net->cut_until = now + o.outage;
+            for (uint32_t i = 0; i < bots; i++) {
+                machine *m = &bots_machines[i];
+                m->out = !m->failed && (!o.outage_bots || i < o.outage_bots);
+            }
+            printf("  the outage: from %.2f s to %.2f s\n", the_net->cut_from, the_net->cut_until);
+        }
+        bool recovering = false;
+        for (uint32_t i = 0; i < bots; i++) recovering |= bots_machines[i].out && !bots_machines[i].failed;
 
+        page_stats_mark();
+        alloc_whose(1);
+        uint64_t scratch = tide_scratch_mark();
         for (uint32_t i = 0; i < bots; i++) {
             machine *m = &bots_machines[i];
             if (m->failed) continue;
@@ -1396,15 +1905,85 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
             else tide_client_update(m->client, now);
             if (m->connected > 0.0) add_sample(joining ? &m->joining : &m->steady, since(t));
         }
+        scratch_left[0] += tide_scratch_mark() - scratch;
+        scratch = tide_scratch_mark();
+        page_stats_add(1);
+        alloc_whose(2);
         for (uint32_t i = 0; i < host_room; i++) {
             machine *h = hosts[i];
             if (!h || !h->server) continue;
             current = h;
+            const long_update before = {.tick_ms = h->tick_ms, .hash_ms = h->hash_ms, .checks_ms = h->checks_ms, .copy_ms = h->copy_ms,
+                                        .pack_ms = h->pack_ms, .packs = (uint32_t)h->packs};
+            if (o.worst) tide_profile_clear(&server_profile);
+            const double world_hash_before = h->world_hash_ms;
+            const uint32_t held_before = o.worst && d->held && !shards ? d->held(tide_server_world(h->server)) : 0u;
             const uint64_t t = tide_time_now_ns();
             tide_server_update(h->server, now);
             const double ms = since(t);
-            add_sample(joining ? &h->joining : &h->steady, ms);
+            if (o.worst && !shards && all_in >= 0.0) {
+                run_part *r = &run_parts[d->held && d->held(tide_server_world(h->server)) != held_before];
+                r->updates++;
+                r->ms += ms;
+                r->tick_ms += h->tick_ms - before.tick_ms;
+                r->hash_ms += h->hash_ms - before.hash_ms;
+                r->world_hash_ms += h->world_hash_ms - world_hash_before;
+                r->copy_ms += h->copy_ms - before.copy_ms;
+                r->pack_ms += h->pack_ms - before.pack_ms;
+                r->systems_ms += server_profile.systems_ms;
+                r->changes_ms += server_profile.changes_ms;
+            }
+            add_sample(recovering ? &h->recovering : joining ? &h->joining : &h->steady, ms);
             h->busy = ms / (FRAME * 1e3);
+            if (o.worst && (worst_count < o.worst || ms > worst[o.worst - 1u].ms)) {
+                long_update u = {.ms = ms, .at = now, .tick = tide_server_tick(h->server),
+                                 .tick_ms = h->tick_ms - before.tick_ms, .hash_ms = h->hash_ms - before.hash_ms,
+                                 .checks_ms = h->checks_ms - before.checks_ms,
+                                 .copy_ms = h->copy_ms - before.copy_ms, .pack_ms = h->pack_ms - before.pack_ms,
+                                 .packs = (uint32_t)h->packs - before.packs, .changes_ms = server_profile.changes_ms};
+                for (uint32_t k = 0; k < server_profile.systems.count; k++) {
+                    const tide_profile_time *system = &server_profile.systems.items[k];
+                    uint32_t at = WORST_SYSTEMS;
+                    while (at && system->total > u.system_ms[at - 1u]) at--;
+                    if (at == WORST_SYSTEMS || system->total <= 0.0) continue;
+                    for (uint32_t move = WORST_SYSTEMS - 1u; move > at; move--) {
+                        u.system_ms[move] = u.system_ms[move - 1u];
+                        memcpy(u.system[move], u.system[move - 1u], sizeof u.system[move]);
+                    }
+                    u.system_ms[at] = system->total;
+                    memcpy(u.system[at], system->name, sizeof u.system[at]);
+                }
+                note_update(o.worst, u);
+            }
+            if (ms > stretch_most) stretch_most = ms;
+            stretch_ms += ms;
+            stretch_updates++;
+        }
+        scratch_left[1] += tide_scratch_mark() - scratch;
+        page_stats_add(0);
+        alloc_whose(0);
+        if (d->watch_server && !shards && hosts[0]->server) d->watch_server(d->flags, tide_server_world(hosts[0]->server));
+        if (o.every > 0.0 && now >= stretch_next) {
+            // Outside every timing: the sizes are worked out here, not kept
+            const void *world = hosts[0] && hosts[0]->server ? tide_server_world(hosts[0]->server) : NULL;
+            const void *bot = bots && !bots_machines[0].failed && bots_machines[0].connected > 0.0
+                ? tide_client_view(home_of(&bots_machines[0])).current : NULL;
+            uint64_t held_now, held_most;
+            process_memory(&held_now, &held_most);
+            printf("  at %6.0f s, tick %7u: the server's world %7.2f MB", now, world ? tide_server_tick(hosts[0]->server) : 0u,
+                   world ? (double)real->pack_world(world, NULL, 0) / 1e6 : 0.0);
+            if (world && d->held) printf(" (%u held)", d->held(world));
+            if (bot) printf(", bot 0's %6.2f MB", (double)real->pack_world(bot, NULL, 0) / 1e6);
+            if (bot && d->held) printf(" (%u)", d->held(bot));
+            if (held_now) printf(", the process %7.1f MB", (double)held_now / 1e6);
+            printf("; server updates since the last %.2f ms on average, %.2f at most\n",
+                   stretch_updates ? stretch_ms / (double)stretch_updates : 0.0, stretch_most);
+            if (world && d->parts) d->parts(world);
+            fflush(stdout);
+            alloc_report();
+            stretch_next = now + o.every;
+            stretch_ms = stretch_most = 0.0;
+            stretch_updates = 0;
         }
         if (shards) {
             current = &orchestra;
@@ -1451,14 +2030,33 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
                 if (s.predicted_tick > m->seen_predicted) m->advanced += s.predicted_tick - m->seen_predicted;
                 if (s.late_ticks > m->seen_late) m->late += s.late_ticks - m->seen_late;
                 if (s.world_bytes > m->seen_world) m->world_bytes += s.world_bytes - m->seen_world;
-                if (s.resyncs > m->seen_resyncs) m->resyncs += s.resyncs - m->seen_resyncs;
+                // (A bot cut off is sent its world again: that's the outage's, not a world gone wrong)
+                if (s.resyncs > m->seen_resyncs) *(m->out ? &m->recoveries : &m->resyncs) += s.resyncs - m->seen_resyncs;
                 m->seen_predicted = s.predicted_tick;
                 m->seen_late = s.late_ticks;
                 m->seen_world = s.world_bytes;
                 m->seen_resyncs = s.resyncs;
             }
+            if (in && d->watch) {
+                const void *world = tide_client_view(home).current;
+                if (world) d->watch(d->flags, m->bot, world);
+            }
             if (in && m->caught_up == 0.0 && lag <= CAUGHT_UP) m->caught_up = now;
+            if (m->out) { // Cut off: back once the outage is over and its verified world is near the server's
+                if (in && now >= the_net->cut_until && lag <= CAUGHT_UP) {
+                    m->out = false;
+                    m->recovered = now - the_net->cut_until;
+                    m->caught_up = now; // Settled again from here (LAG_SETTLED)
+                }
+                everyone &= m->caught_up > 0.0;
+                if (s.state == TIDE_SESSION_OFFLINE) {
+                    printf("  bot %u went offline (reason %d) at %.2f s, cut off; stopping\n", m->bot, (int)s.reason, now);
+                    m->failed = failed = true;
+                }
+                continue;
+            }
             if (m->caught_up > 0.0 && lag > m->max_lag) m->max_lag = lag;
+            if (in && m->caught_up > 0.0 && now - m->caught_up >= LAG_SETTLED) m->lags[lag < LAG_MOST ? lag : LAG_MOST]++;
             if (s.state == TIDE_SESSION_OFFLINE) {
                 printf("  bot %u went offline (reason %d) at %.2f s; stopping\n", m->bot, (int)s.reason, now);
                 m->failed = failed = true;
@@ -1498,7 +2096,10 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
     }
     results r = {.played = now, .joined = !failed};
     collect(&r, bots_machines, bots, d, shards, &orchestra);
-    r.ok = r.joined && r.resyncs == 0 && (!o.expect || r.hash == o.expect);
+    r.scratch_left[0] = scratch_left[0];
+    r.scratch_left[1] = scratch_left[1];
+    r.ok = r.joined && r.resyncs == 0 && (!o.expect || r.hash == o.expect) && (!o.expect_taken || r.taken == o.expect_taken)
+        && !scratch_left[0] && !scratch_left[1] && !r.never_recovered;
     print_results(&r, bots, d->held != NULL);
     if (d->describe) {
         for (uint32_t i = 0; i < host_room; i++) {
@@ -1507,7 +2108,14 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
             d->describe(tide_server_world(hosts[i]->server));
         }
     }
-    print_verdict(&r, o.expect);
+    print_worst();
+    if (o.worst && !o.split) print_systems(&server_profile, now);
+    {
+        uint64_t held_now, held_most;
+        process_memory(&held_now, &held_most);
+        if (held_most) printf("  the process held %.0f MB at most (the server and every bot's machine)\n", (double)held_most / 1e6);
+    }
+    print_verdict(&r, o.expect, o.expect_taken);
     if (save) save_results(d, &o, thread_count(jobs), save, &r);
 
     for (uint32_t i = 0; i < bots; i++) {

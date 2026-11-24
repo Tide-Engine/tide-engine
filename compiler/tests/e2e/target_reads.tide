@@ -1,0 +1,169 @@
+// Every form of a render target's read back: which image and as what each asks the engine for, and the grid its
+// answer becomes (target_reads_test.c stands in for the renderer).
+scene Main { }
+const int Base = 1;
+const int Normals = Base + 1; // A constant of other constants and operators names an image too
+local singleton Reads
+{
+    RenderTarget plain;   // One Rgba8 image
+    RenderTarget several; // Rgba16f, R32f, Rg16f, R32i
+    RenderTarget masks;   // R8, Rg8, Rgba32f
+    RenderTarget shadow;  // Depth alone
+    Cubemap cube;
+    TextureArray array;
+    Cubemap heights;      // R16f faces
+    TextureArray flows;   // Rg8 layers
+    Grid2<float> height;
+    Grid2<float2> flow;
+    bool started;
+    int stage;
+    int failed;
+    int counts;
+    Grid2<Color> color;
+    Grid2<Color> hdr;
+    Grid2<float4> raw;
+    Grid2<float> scalar;
+    Grid2<float2> pair;
+    Grid2<int> ids;
+    Grid2<float> mask;
+    Grid2<float2> mask2;
+    Grid2<float4> full;
+    Grid2<float> depth;
+    Grid2<float> shadowDepth;
+    Grid2<Color> face;
+    Grid2<float> faceDepth;
+    Grid2<Color> layer;
+    Grid2<float> layerDepth;
+    Grid2<Color> given;
+    LocalTask capture;  // A read's task, cancelled while it waits
+    bool captureNow;
+    bool cancelNow;
+    int captured;
+    Grid3<float> box;   // A volume's read's grid (target_reads_of_parts_and_volumes)
+    // Reads let go of wherever a task goes (target_reads_let_go_of_wherever_their_task_goes)
+    LocalTask outer;    // A task awaiting one that reads, cancelled as the read waits
+    bool outerNow;
+    bool outerCancel;
+    int outerGot;
+    bool lensNow;       // A lens's task, which ends with the lens
+    bool lensGone;
+    int snapped;
+    Texture3D fog;      // A volume made from a Grid3, read through a parameter: its read fails as it runs
+    Grid3<Color> fogCells;
+    bool fogNow;
+    int fogFailed;
+    int fogRead;
+}
+
+component Lens { bool asked; }
+
+async int Width(mut Reads reads)
+{
+    if (await reads.plain.Read() is Grid2<Color> pixels) return pixels.size.x;
+    return -1;
+}
+async void Outer(mut Reads reads) { reads.outerGot = await Width(reads); }
+
+async void Snap(mut Reads reads)
+{
+    if (await reads.plain.Read() is Grid2<Color> pixels) reads.snapped += pixels.size.x;
+}
+view Lenses(mut local Lens lens, mut Reads reads)
+{
+    if (reads.lensGone) { this.Destroy(); return; }
+    if (lens.asked) return;
+    lens.asked = true;
+    Snap(reads);
+}
+
+async void ReadFog(Texture3D volume, mut Reads reads)
+{
+    if (await volume.Read() is Grid3<Color> cells) reads.fogRead += cells.size.x; else reads.fogFailed += 1;
+}
+
+// A target whose formats aren't known here is still read as Color, and checked as it runs
+async void ReadGiven(RenderTarget target, mut Reads reads)
+{
+    if (await target.Read() is Grid2<Color> pixels) reads.given = pixels.Copy();
+    else reads.failed += 1;
+    reads.stage += 1;
+}
+
+async void ReadAll(mut Reads reads)
+{
+    if (await reads.plain.Read() is Grid2<Color> color) reads.color = color.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    if (await reads.several.Read(0) is Grid2<Color> hdr) reads.hdr = hdr.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    if (await reads.several.Read<float4>() is Grid2<float4> raw) reads.raw = raw.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    if (await reads.several.Read<float>(1) is Grid2<float> scalar) reads.scalar = scalar.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    if (await reads.several.Read<float2>(Normals) is Grid2<float2> pair) reads.pair = pair.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    if (await reads.several.Read<int>(3) is Grid2<int> ids) reads.ids = ids.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    if (await reads.masks.Read<float>() is Grid2<float> mask) reads.mask = mask.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    if (await reads.masks.Read<float2>(1) is Grid2<float2> mask2) reads.mask2 = mask2.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    if (await reads.masks.Read<float4>(2) is Grid2<float4> full) reads.full = full.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    if (await reads.several.ReadDepth() is Grid2<float> depth) reads.depth = depth.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    if (await reads.shadow.ReadDepth() is Grid2<float> shadowDepth) reads.shadowDepth = shadowDepth.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    if (await reads.cube.faces[4].Read() is Grid2<Color> face) reads.face = face.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    if (await reads.cube.faces[1].ReadDepth() is Grid2<float> faceDepth) reads.faceDepth = faceDepth.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    if (await reads.array.layers[2].Read() is Grid2<Color> layer) reads.layer = layer.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    if (await reads.array.layers[0].ReadDepth() is Grid2<float> layerDepth) reads.layerDepth = layerDepth.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    // A face and a layer of numbers, as their own types
+    if (await reads.heights.faces[3].Read<float>() is Grid2<float> height) reads.height = height.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    if (await reads.flows.layers[1].Read<float2>() is Grid2<float2> flow) reads.flow = flow.Copy(); else reads.failed += 1;
+    reads.stage += 1;
+    ReadGiven(reads.plain, reads);
+}
+
+// A read let go of with its task: cancelled, or gone with the local world
+async void Capture(mut Reads reads)
+{
+    if (await reads.plain.Read() is Grid2<Color> pixels) reads.captured += pixels.size.x;
+}
+view Captures(mut Reads reads)
+{
+    if (reads.captureNow) { reads.captureNow = false; reads.capture = Capture(reads); }
+    if (reads.cancelNow) { reads.cancelNow = false; reads.capture.Cancel(); }
+    if (reads.outerNow) { reads.outerNow = false; reads.outer = Outer(reads); }
+    if (reads.outerCancel) { reads.outerCancel = false; reads.outer.Cancel(); }
+    if (reads.lensNow) { reads.lensNow = false; local Spawn(Lens { }); }
+    if (reads.fogNow)
+    {
+        reads.fogNow = false;
+        reads.fogCells = Grid3(2, 2, 2);
+        reads.fog = reads.fogCells;
+        ReadFog(reads.fog, reads);
+    }
+}
+
+view Start(mut Reads reads)
+{
+    if (reads.started) return;
+    reads.started = true;
+    reads.plain = RenderTarget(2, 2, 1);
+    reads.several = RenderTarget(3, 2, 1, Format.Rgba16f, Format.R32f, Format.Rg16f, Format.R32i);
+    reads.masks = RenderTarget(2, 1, 1, Format.R8, Format.Rg8, Format.Rgba32f);
+    reads.shadow = RenderTarget(2, 2, 1, Format.Depth);
+    reads.cube = Cubemap(2);
+    reads.array = TextureArray(2, 2, 3, 1);
+    reads.heights = Cubemap(2, Format.R16f);
+    reads.flows = TextureArray(2, 2, 2, 1, Format.Rg8);
+    RenderTarget none = default;
+    reads.counts = reads.plain.colors.count * 1000 + reads.several.colors.count * 100 + reads.masks.colors.count * 10
+                 + reads.shadow.colors.count + none.colors.count + reads.cube.faces[0].colors.count * 10000;
+    ReadAll(reads);
+}
