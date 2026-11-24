@@ -6426,6 +6426,36 @@ const int ARMY_SIDE = define(ARMY_SIDE, 500); // tide run --define ARMY_SIDE=100
 - A setting or a `tide.packages` line that lists a game's defines, so editors and plain `tide run` know them.
 - A text value outside ASCII on Windows: `tide` and tidec read a narrow command line, in the console's code page, so such a value is refused as not UTF-8 (the note says so on Windows). Reading the wide command line would fix it.
 
+## Visual scripting
+
+### Decided
+
+The owner, 2026-11-24:
+
+- Graphs are Tide: a game's code can be written as graphs, and what a graph does is what the Tide it stands for does. No C# or other language runs in the match.
+- A `.tidegraph` file is source. tidec reads it as it reads a `.tide` file, with nothing generated from it on disk, and it goes wherever `.tide` files go: a game's folder, a package, a Unity project's Assets.
+- Graphs are for everyone, and whole games can be made of graphs alone: every form of Tide has one in a graph.
+- Graphs and Tide source use each other: a graph calls what a `.tide` file declares, and the other way round.
+- Graphs are Blueprint-style: exec wires join statements, data wires carry values, and their nodes match Tide's syntax form for form. A node can hold Tide text, optionally.
+- Their editor is Tide's own, in Unity.
+
+### Provisional
+
+Implemented, awaiting approval (`notes/visual-scripting.md` has the file format):
+
+- A graph file is a Tide file's declarations: each type's fields, parameters and the like as values, each body of code a graph of its own (a function's, a method's, an accessor's, a field's default value...).
+- A statement node runs from where the previous one's `next` wire leaves, once, from one place only. Code a statement holds, an `if`'s branches, a loop's body, a call's block, starts at an exec output of its own. Nodes nothing reaches are left out, as are values nothing reads.
+- A data node's value is worked out wherever it's wired, as if written there: wired to two inputs, it's worked out twice, as Blueprint's pure nodes are. A statement whose value another node reads (a call in the flow, say) is worked out once, when it runs, and what reads it reads that value.
+- A local is read by a node that names what declares it (a `var`, a loop, an `out var`, an `is` with a name), so it can be renamed. It's an error to read one before what declares it has run.
+- A text node's text is Tide with its inputs wired in: each input's name, where it stands as a name, is the value wired to it. A text statement's locals are its own.
+- `tide graph` turns a `.tide` file into a graph, which holds the same Tide: the same declarations, statements and expressions, with its comments.
+- An error in a graph names the node it's in.
+
+### Open
+
+- Debugging a graph: tidec maps a graph's code to the lines of its file's JSON where its nodes are, which a debugger shows as text. Stepping through nodes in the editor isn't built.
+- A file whose `#if` is inside a declaration is kept as one text declaration: the whole file, as written. `#if` between declarations is kept as text lines, with the code around it as graphs.
+
 ## Open
 
 - Archetype derivation for additional authored forms beyond the current checked prefab composition.

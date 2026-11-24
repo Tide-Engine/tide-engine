@@ -199,10 +199,77 @@ A graph's errors name the element they're about: `Assets/Enemy.tidegraph:@17: er
 of the innermost node or element whose text the error is in. After it tidec shows the line of the Tide it wrote,
 which is the same Tide a `.tide` file would hold. The Unity package and the language server read the id.
 
-## Implementation
+## Implementation (2026-11-24)
 
-- `compiler/src/graph.h`, `graph.c`: reading a `.tidegraph` (its own JSON reader, arena memory) and writing its
-  Tide (`graph_lower`), with a map from each stretch of the text to the id it came from.
-- `compiler/src/graph_convert.c`: a `.tide` file to a graph, from its syntax tree as parsed (`graph_from_tide`),
-  with its layout.
-- `tide graph <file.tide>` writes `<file>.tidegraph` beside it; `tide graph --text <file.tidegraph>` prints its Tide.
+- **Reading** (`compiler/src/graph.h`, `graph.c`): its own JSON reader (arena memory, each value's place in the
+  file), then `graph_lower`, which writes the Tide a graph stands for and records each element's stretch of it
+  (`graph_map.spans`, inner after outer) and each element's place in the JSON (`places`). `compile.c` lowers a
+  source whose path ends in `.tidegraph` right after reading it; the source's `text` is then the Tide, with
+  `src->graph` the map and `src->graph_json` the file. Everything after (lexer, parser, checker, preludes'
+  `*_wanted` scans of the text) sees ordinary Tide.
+  - Expressions are written with the parentheses their places need (parser.c's precedence: lambda and `?:`,
+    `??`, the binary operators, `switch` expressions, prefix, postfix), `- -x` never as `--x`. A text node is
+    always in parentheses, and each of its inputs too. A `switch` expression's object binds as a prefix
+    operand, as the parser reads it.
+  - Structural errors (a wire to a node that isn't there, a value wired in a loop, a statement reached twice, a
+    local read before what declares it, a kind tidec doesn't know) are said at the element's place in the JSON.
+  - `graph_data_wires` lists a node's data inputs by kind; `use_graph` uses it to find the `eval`s whose value
+    is read, which are written `var _graph<id> = ...;`.
+- **Diagnostics** (`common.c`, `report`): a graph's error prints `path:@id:` (the innermost span's id, or the
+  element at that place in the JSON before lowering) and the line of the Tide it's in. Sinks get the place in the
+  written Tide as before; the language server works a graph's places out itself. `diag_file_loc` gives a place as
+  its file has it (a graph's element's JSON place, anything else as it is), for `#line` (debuggers then show the
+  JSON line of the node), the profiler's source table and `--outline`'s lines.
+- **Converting** (`graph_convert.c`, `graph_from_tide`): lex, parse (never check), then the syntax tree as a
+  graph. It undoes what the parser rewrites: a grid's `cells[x, y]` (the parser's `int2` call at its first
+  argument's place), a command's attributes (`[Channel]`, `[Unordered]` moved to its payload type) and sender
+  (moved second), a `shared` local's zero value, `i++` as a statement (an assignment with the `++` op), `_ =`.
+  Members are put back in the order written by their places. Types, attribute arguments and the like are the
+  source's own text (spaces collapsed). Locals resolve by scope (block, loop, lambda parameters hide them).
+  Comments go on the next element; one after code on its line goes on the element that line started (the
+  comment slot is a shared string the converter appends to). Comments left before a body's end become a note box.
+  `#if` between declarations: each directive line a text declaration, the code between converted, a branch's lines left out converted alone (the rest of the file blank, so places stay), as text where they don't parse; `#if` inside a declaration or a block, or a `#define`, keeps the whole file as text. Layout:
+  statements left to right along `next`, each one's value trees to its left and below, held code below, a row
+  wrapping past 3200 px; nodes nothing reaches (none, from a file) on a row at the bottom.
+- **The round trip** (`graph_roundtrip.c`, `tidec --graph-roundtrip [-v] <files> | @list`): the file made a
+  graph, the graph lowered, both parsed, and the syntax trees compared field by field with places ignored (a
+  block of one statement and the statement the same, `else if` and `else { if }` the same). Files that don't parse
+  are left out, quietly. 3,538 of the repository's 3,660 files on 2026-11-24 (the rest are error tests that
+  don't parse), and all the prototypes', in 9 s under ASan.
+- **CLI**: `tide graph <file.tide>... [--replace]`, `-o`, `--text`; tidec `--to-graph`, `--graph-text`,
+  `--graph-roundtrip`. `tide graph` isn't in the usage data's command list (it counts as `other`): adding it
+  changes docs/tools/telemetry.md and the site's validation, the owner's call. Graphs are found where `.tide`
+  files are: `tide_files` and `stamp_folder` (build.c), `publish.c`, the language server's folder scan and file
+  watchers, `tide_add_game` (`Tide.cmake`: a graph's assets are known from tidec's depfile, not the configure
+  scan), Unity's `TideChanges`.
+- **Language server** (`analysis.c`, `server.c`): a graph document is lowered as tidec does; its `lines` are
+  the Tide's, `json_lines` the file's. Its diagnostics go on the JSON line of the element (`data.node` the id).
+  Requests on a graph document by position answer nothing (its JSON is no Tide); its own, whose places are byte
+  offsets into the Tide (`offset`):
+  - `tide/graphText` → `{"text", "spans": [[start, end, id], ...]}`;
+  - `tide/graphTypes` → `{"<id>": "<type>"}`, each node's type, the outermost expression at its place first;
+  - `tide/graphCompletion`, `tide/graphHover`, `tide/graphSignatureHelp` with `offset`: completion, hover
+    and signature help there, as at that place of a `.tide` file.
+  A document opened with unsaved JSON is analysed as it stands.
+
+## Tests
+
+- `tidec_graph_roundtrip`: the round trip over every `.tide` file in the repository (`graph_roundtrip.cmake`).
+- `tidec_graph_errors`: an unknown call in `graph/graph_errors.tidegraph` is said at `@15`, its node.
+- `tidec_e2e_graph_nodes`: `graph/graph_nodes.tidegraph`, a game of hand-made nodes the converter doesn't make (a
+  kept statement value read twice and run once, text and code nodes with inputs, a value wired twice, else-if,
+  unreached nodes), run by `graph_nodes_test.c`.
+- `tidec_e2e_graph_<name>`: 26 e2e tests built from their `.tide` made a graph at build time and run with their
+  own `_test.c` (`crossplatform`'s pinned bits among them). chars, json and optional_fields aren't among them:
+  their tests take hashes from definitions of their own targets.
+- `tidels_tests` `lsp_graphs`: diagnostics with the node, and the four requests.
+- Every game the sanitize build knows (600 `.sources` lists), compiled from its `.tide` files and from them made
+  graphs, by a script (2026-11-24, not a test): 460 the same C, 136 different only in what comes from source
+  lines (lambda and `_dropped_<line>_<col>` names, a hash of places, line tables), 4 failing both ways.
+
+## Gaps
+
+- Debugging steps through the JSON's lines, not nodes in the editor.
+- A file whose `#if` is inside a declaration or a namespace block, or that `#define`s, converts as one text declaration. `#if` between declarations converts: its lines are text declarations, the code between them nodes, and the lines a branch leaves out converted on their own (as text where they don't parse alone).
+- The converter gives a block of one statement braces, so a braceless `if (x) return;` costs one more in the
+  work estimate that splits loops across threads (`stmt_cost`); results are the same.

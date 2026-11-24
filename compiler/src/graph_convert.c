@@ -1851,72 +1851,45 @@ static const unit *unit_at_depth(const unit *u, const int depth)
     return u;
 }
 
-bool graph_from_tide(const char *path, sb *out, const char **why)
+// The last line a declaration's text is on
+static int decl_end_line(const decl *d)
 {
-    source *src = NEW(source);
-    src->path = path;
-    src->text = graph_read_file(path, &src->len);
-    if (!src->text) {
-        fprintf(stderr, "tidec: can't read '%s'; check that it exists and is readable\n", path);
-        return false;
-    }
-    diag_add_source(src);
-    cv c = {.src = src};
-    const int zero = 0;
-    vec_push(c.line_starts, zero);
-    for (size_t i = 0; i < src->len; i++) {
-        if (src->text[i] == '\n') {
-            const int next = (int)i + 1;
-            vec_push(c.line_starts, next);
-        }
-    }
-    jv *root = jv_obj();
-    set(root, "tidegraph", jv_n(1));
-    set(root, "nextId", jv_n(0)); // Set at the end
-    jv *list = jv_arr();
-    // A file with #if, or that doesn't parse, is one text declaration: as written, which the editor shows as text
-    lex_spans spans = {0};
-    token *all = lex_all_spans(src, &spans);
-    token *toks = all && !spans.count ? lex(src) : NULL;
-    program *prog = toks ? program_new() : NULL;
-    const bool parsed = prog && parse_file(prog, src, toks, false);
-    if (!parsed) {
-        if (why) *why = spans.count ? "it has #if, which the converter keeps as text" : "it doesn't parse";
-        if (!spans.count) return false;
-        push(list, text_decl(&c, (str){src->text, (int)src->len}));
-        set(root, "decls", list);
-        root->items.items[1] = jv_n(c.next_id + 1);
-        print_jv(out, root, 0, false);
-        sb_put(out, "\n");
-        return true;
-    }
-    find_comments(&c);
+    int line = d->at.line;
+    if (d->end.line > line) line = d->end.line;
+    if (d->body && d->body->end.line > line) line = d->body->end.line;
+    return line;
+}
+
+static void quiet_sink(void *user, const diag_severity severity, const loc at, const char *message)
+{
+    (void)user;
+    (void)severity;
+    (void)at;
+    (void)message;
+}
+
+// The declarations of a parsed file, in the order written, each namespace block's in it, into `list`
+static void convert_decls(cv *c, const program *prog, jv *list, const int from_line, const int to_line)
+{
     const unit *file_unit = prog->units.count ? prog->units.items[0] : NULL;
-    if (file_unit && file_unit->ns.len) set_s(root, "namespace", file_unit->ns);
-    if (file_unit && file_unit->usings.count) {
-        jv *usings = jv_arr();
-        for (int i = 0; i < file_unit->usings.count; i++) push(usings, jv_s(file_unit->usings.items[i]));
-        set(root, "using", usings);
-    }
     VEC(top_item) items = {0};
     for (int i = 0; i < prog->decls.count; i++) {
         const decl *d = prog->decls.items[i];
         if (made_by_another(d)) continue;
         const top_item t = {d, decl_line(d), d->at.col};
-        vec_push(items, t);
+        if (t.line >= from_line && t.line <= to_line) vec_push(items, t);
     }
     for (int i = 0; i < prog->settings.count; i++) {
         const decl *d = prog->settings.items[i];
         const top_item t = {d, d->at.line, d->at.col};
-        vec_push(items, t);
+        if (t.line >= from_line && t.line <= to_line) vec_push(items, t);
     }
     if (items.count) qsort(items.items, (size_t)items.count, sizeof(top_item), top_order);
-    // Namespace blocks: the declarations of each, in it
     VEC(jv *) open_lists = {0};
     VEC(const unit *) open_units = {0};
     vec_push(open_lists, list);
     vec_push(open_units, file_unit);
-    for (int i = 0; i < items.count && !c.failed; i++) {
+    for (int i = 0; i < items.count && !c->failed; i++) {
         const decl *d = items.items[i].d;
         const unit *u = d->unit ? d->unit : file_unit;
         const int depth = unit_depth(u);
@@ -1929,8 +1902,8 @@ bool graph_from_tide(const char *path, sb *out, const char **why)
             const unit *block = unit_at_depth(u, open_units.count);
             jv *ns = jv_obj();
             set(ns, "kind", jv_c("namespace"));
-            set(ns, "id", jv_n(new_id(&c)));
-            comment_on(&c, ns, block->block_at.line);
+            set(ns, "id", jv_n(new_id(c)));
+            comment_on(c, ns, block->block_at.line);
             set_s(ns, "name", block->ns_written);
             jv *inner = jv_arr();
             set(ns, "decls", inner);
@@ -1938,8 +1911,183 @@ bool graph_from_tide(const char *path, sb *out, const char **why)
             vec_push(open_lists, inner);
             vec_push(open_units, block);
         }
-        jv *o = decl_json(&c, d);
+        jv *o = decl_json(c, d);
         if (o) push(open_lists.items[open_lists.count - 1], o);
+    }
+}
+
+static void line_starts_of(cv *c)
+{
+    const int zero = 0;
+    vec_push(c->line_starts, zero);
+    for (size_t i = 0; i < c->src->len; i++) {
+        if (c->src->text[i] == '\n') {
+            const int next = (int)i + 1;
+            vec_push(c->line_starts, next);
+        }
+    }
+}
+
+// Lines `first` to `last` of a file, as written
+static str lines_text(const cv *c, const int first, const int last)
+{
+    const int a = offset_of(c, (loc){first, 1, 0});
+    int b = last < c->line_starts.count ? c->line_starts.items[last] : (int)c->src->len;
+    while (b > a && (c->src->text[b - 1] == '\n' || c->src->text[b - 1] == '\r')) b--;
+    return (str){c->src->text + a, b - a};
+}
+
+// The lines an #if leaves out, `first` to `last`, as declarations of their own: as a graph where they parse
+// alone, as text where they don't (code for another tide, say)
+static void convert_left_out(cv *c, const int first, const int last, jv *list)
+{
+    const str text = lines_text(c, first, last);
+    bool directive = false; // An #if inside what's left out: read as text, as the lexer would read its lines
+    for (int i = 0; i < text.len; i++) {
+        if (i == 0 || text.ptr[i - 1] == '\n') {
+            int k = i;
+            while (k < text.len && (text.ptr[k] == ' ' || text.ptr[k] == '\t')) k++;
+            if (k < text.len && text.ptr[k] == '#') directive = true;
+        }
+    }
+    if (!directive) {
+        // The same lines in a file of their own, the others blank, so their places are the file's
+        source *alone = NEW(source);
+        alone->path = c->src->path;
+        char *copy = arena_alloc(c->src->len + 1);
+        for (size_t i = 0; i < c->src->len; i++) copy[i] = c->src->text[i] == '\n' ? '\n' : ' ';
+        const int a = offset_of(c, (loc){first, 1, 0});
+        memcpy(copy + a, text.ptr, (size_t)text.len);
+        alone->text = copy;
+        alone->len = c->src->len;
+        diag_add_source(alone);
+        const int errors = diag_error_count();
+        diag_set_sink(quiet_sink, NULL);
+        token *toks = lex(alone);
+        program *prog = toks ? program_new() : NULL;
+        const bool parsed = prog && parse_file(prog, alone, toks, false) && diag_error_count() == errors;
+        diag_set_sink(NULL, NULL);
+        bool blocks = false;
+        for (int i = 0; parsed && i < prog->units.count; i++) blocks |= prog->units.items[i]->outer != NULL;
+        if (parsed && !blocks && !(prog->units.count && (prog->units.items[0]->ns.len || prog->units.items[0]->usings.count))) {
+            cv sub = {.src = alone, .next_id = c->next_id};
+            line_starts_of(&sub);
+            find_comments(&sub);
+            convert_decls(&sub, prog, list, first, last);
+            const str rest = comments_before(&sub, 1 << 30);
+            c->next_id = sub.next_id;
+            if (!sub.failed) {
+                if (rest.len) {
+                    sb lines = {0};
+                    for (int i = 0; i < rest.len; i++) {
+                        if (i == 0 || rest.ptr[i - 1] == '\n') sb_put(&lines, "// ");
+                        sb_putn(&lines, rest.ptr + i, 1);
+                    }
+                    push(list, text_decl(c, (str){lines.data, (int)lines.len}));
+                }
+                return;
+            }
+            list->items.count = 0; // What it made goes: the lines are text, as written
+        }
+    }
+    push(list, text_decl(c, text));
+}
+
+bool graph_from_tide(const char *path, sb *out, const char **why)
+{
+    source *src = NEW(source);
+    src->path = path;
+    src->text = graph_read_file(path, &src->len);
+    if (!src->text) {
+        fprintf(stderr, "tidec: can't read '%s'; check that it exists and is readable\n", path);
+        return false;
+    }
+    diag_add_source(src);
+    cv c = {.src = src};
+    line_starts_of(&c);
+    jv *root = jv_obj();
+    set(root, "tidegraph", jv_n(1));
+    set(root, "nextId", jv_n(0)); // Set at the end
+    jv *list = jv_arr();
+    lex_spans spans = {0};
+    token *all = lex_all_spans(src, &spans);
+    token *toks = all ? lex(src) : NULL;
+    program *prog = toks ? program_new() : NULL;
+    const bool parsed = prog && parse_file(prog, src, toks, false);
+    if (!parsed) {
+        if (why) *why = "it doesn't parse";
+        return false;
+    }
+    // #if and the lines it leaves out between declarations are their own declarations: the directive's lines as
+    // text, the lines left out converted on their own. A file whose #if is inside a declaration or a namespace
+    // block, or that #defines, is one text declaration: as written, which the editor shows as text
+    bool whole_text = false;
+    for (int s = 0; s < spans.count && !whole_text; s++) {
+        const lex_span *span = &spans.items[s];
+        for (int i = 0; i < prog->decls.count && !whole_text; i++) {
+            const decl *d = prog->decls.items[i];
+            if (made_by_another(d)) continue;
+            whole_text = span->first <= decl_end_line(d) && span->last >= decl_line(d);
+        }
+        for (int i = 0; i < prog->settings.count && !whole_text; i++) {
+            const decl *d = prog->settings.items[i];
+            whole_text = span->first <= decl_end_line(d) && span->last >= d->at.line;
+        }
+        if (span->directive) {
+            const str text = lines_text(&c, span->first, span->last);
+            for (int i = 0; i + 6 < text.len && !whole_text; i++) {
+                whole_text = text.ptr[i] == '#' && (strncmp(text.ptr + i, "#define", 7) == 0 || strncmp(text.ptr + i, "#undef", 6) == 0);
+            }
+        }
+    }
+    for (int i = 0; spans.count && i < prog->units.count && !whole_text; i++) whole_text = prog->units.items[i]->outer != NULL;
+    // Before the namespace or using lines, which the graph writes first
+    const unit *file_unit = prog->units.count ? prog->units.items[0] : NULL;
+    if (spans.count && file_unit && (file_unit->ns.len || file_unit->usings.count)) {
+        const int header = file_unit->usings.count ? file_unit->using_at.items[file_unit->usings.count - 1].line
+                                                   : file_unit->ns_at.line;
+        whole_text |= spans.items[0].first <= header;
+    }
+    if (whole_text) {
+        push(list, text_decl(&c, (str){src->text, (int)src->len}));
+        set(root, "decls", list);
+        root->items.items[1] = jv_n(c.next_id + 1);
+        print_jv(out, root, 0, false);
+        sb_put(out, "\n");
+        return true;
+    }
+    find_comments(&c);
+    // Comments on lines an #if leaves out are theirs
+    int kept = 0;
+    for (int i = 0; i < c.comments.count; i++) {
+        bool out_of_code = false;
+        for (int s = 0; s < spans.count && !out_of_code; s++) {
+            out_of_code = c.comments.items[i].line >= spans.items[s].first && c.comments.items[i].line <= spans.items[s].last;
+        }
+        if (!out_of_code) c.comments.items[kept++] = c.comments.items[i];
+    }
+    c.comments.count = kept;
+    if (file_unit && file_unit->ns.len) set_s(root, "namespace", file_unit->ns);
+    if (file_unit && file_unit->usings.count) {
+        jv *usings = jv_arr();
+        for (int i = 0; i < file_unit->usings.count; i++) push(usings, jv_s(file_unit->usings.items[i]));
+        set(root, "using", usings);
+    }
+    // The code between the #if lines, and the lines themselves, in order
+    int from = 1;
+    for (int s = 0; s <= spans.count && !c.failed; s++) {
+        const int to = s < spans.count ? spans.items[s].first - 1 : 1 << 30;
+        convert_decls(&c, prog, list, from, to);
+        if (s == spans.count) break;
+        const lex_span *span = &spans.items[s];
+        if (span->directive) {
+            for (int line = span->first; line <= span->last; line++) push(list, text_decl(&c, lines_text(&c, line, line)));
+        } else {
+            jv *left_out = jv_arr();
+            convert_left_out(&c, span->first, span->last, left_out);
+            for (int i = 0; i < left_out->items.count; i++) push(list, left_out->items.items[i]);
+        }
+        from = span->last + 1;
     }
     if (c.failed) {
         if (why) *why = c.why;
