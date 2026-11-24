@@ -18,6 +18,13 @@ fs.mkdirSync(path.join(workspace, '.vscode'), { recursive: true });
 for (const file of ['package.json', 'icons', 'icon.png']) fs.cpSync(path.join(source, file), path.join(extension, file), { recursive: true });
 for (const file of ['syntaxes', 'language-configuration.json']) fs.cpSync(path.join(source, '../tide-syntax', file), path.join(extension, file), { recursive: true });
 fs.copyFileSync(path.join(source, 'test/host-suite.cjs'), path.join(extension, 'host-suite.cjs'));
+// The graph editor's page, as vsix.cmake packages it
+const graphFiles = JSON.parse(fs.readFileSync(path.join(source, '../tide-graph/files.json'), 'utf8'));
+for (const file of ['files.json', ...graphFiles.styles, ...graphFiles.scripts]) {
+    fs.mkdirSync(path.dirname(path.join(extension, 'graph', file)), { recursive: true });
+    fs.copyFileSync(path.join(source, '../tide-graph', file), path.join(extension, 'graph', file));
+}
+fs.copyFileSync(path.join(source, '../../compiler/src/graph_schema.json'), path.join(extension, 'graph/graph_schema.json'));
 await build({ entryPoints: [path.join(source, 'src/extension.js')], outfile: path.join(extension, 'out/extension.js'), bundle: true, minify: true, platform: 'node', format: 'cjs', external: ['vscode'] });
 fs.writeFileSync(path.join(workspace, '.vscode/settings.json'), JSON.stringify({ 'tide.server.path': server, 'tide.path': node, 'workbench.startupEditor': 'none', 'security.workspace.trust.enabled': false }));
 fs.writeFileSync(path.join(workspace, 'main.tide'), 'component Body { float radius; }\nscene Main { }\nsystem Move(mut Body body)\n{\n    body.radius = 1;\n}\n');
@@ -26,12 +33,14 @@ fs.writeFileSync(path.join(workspace, 'main.tide'), 'component Body { float radi
 fs.copyFileSync(path.join(source, 'test/host-process.cjs'), path.join(workspace, 'run'));
 const env = { ...process.env, TIDE_HIDDEN: '1', TIDE_HOST_WORKSPACE: workspace, TIDE_HOST_RUNNER_PID: String(process.pid),
     TIDE_HOST_SERVER: server, TIDE_HOST_NODE: node, TIDE_VERSIONS: path.join(scratch, 'versions'),
+    // tide beside tidels, for Convert to Tide Graph
+    TIDE_HOST_TIDE: path.join(path.dirname(server), 'tide' + (process.platform === 'win32' ? '.exe' : '')),
     TIDE_HOST_LOGS: path.join(scratch,'profile/logs') };
 delete env.ELECTRON_RUN_AS_NODE;
 const child = spawn(code, [workspace, '--new-window', '--mute-audio', '--disable-workspace-trust', '--disable-extensions', '--skip-welcome', '--skip-release-notes',
     `--user-data-dir=${path.join(scratch, 'profile')}`, `--extensions-dir=${path.join(scratch, 'installed')}`,
     `--extensionDevelopmentPath=${extension}`, `--extensionTestsPath=${path.join(extension, 'host-suite.cjs')}`], { env, windowsHide: true, stdio: 'inherit' });
-const timer = setTimeout(() => { child.kill(); }, 180_000);
+const timer = setTimeout(() => { child.kill(); }, 300_000); // The graph editor's checks take a minute of it
 try {
     const code = await new Promise((resolve, reject) => { child.on('error', reject); child.on('close', resolve); });
     if (fs.existsSync(path.join(workspace, 'host.log'))) console.log(fs.readFileSync(path.join(workspace, 'host.log'), 'utf8'));

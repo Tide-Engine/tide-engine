@@ -34,6 +34,17 @@ restart the server. Different open projects can use different versions, sharing
 the `TIDE_VERSIONS` cache. An explicitly selected server or run command still
 takes precedence.
 
+## Graphs
+
+`.tidegraph` files, Tide written as graphs of nodes, open in Tide's graph
+editor (the **Graph** tab, with the JSON in the **Text** tab), checked by
+`tidels` as they're edited. Edits are commands on the IDE's document, so undo,
+local history and saving work as on any file. **Convert to Tide Graph** on a
+`.tide` file makes a graph of it with `tide graph`; **Show as Tide** opens the
+Tide a graph stands for. The editor is a web page (`tools/tide-graph` in Tide's
+repository, the same as VS Code's) in the IDE's JCEF browser: on a runtime
+without JCEF, a graph shows as its JSON with a notice saying why.
+
 ## Running the game
 
 Tide run configurations run `tide run` on a game's folder, in the Run tool
@@ -91,7 +102,9 @@ After a server update, restart it (Language Servers tool window) to see changes.
 It needs a JDK 21 or later to build; Gradle downloads the JDK 21 it compiles
 with, and the IntelliJ Platform it compiles against, the first time.
 Clone this repository and run the commands from its root (`gradlew.bat` on
-Windows). No engine source checkout is required for the ordinary build/tests.
+Windows). No engine source checkout is required for the ordinary build/tests:
+in one, the graph editor's page and the graph schema come from `../tide-graph`
+and the compiler; a standalone clone has their snapshot in `graph/`.
 Install [Tide](https://tide-engine.dev/guide/install) separately for `tidels`
 and running games.
 
@@ -105,7 +118,10 @@ and running games.
 ```
 
 The ordinary tests check settings, console hyperlinks, run configurations,
-context-menu targets and game-folder selection in a headless test application.
+context-menu targets, game-folder selection, and the graph editor's file type,
+page and bridge (its messages, with tidels replaced) in a headless test
+application. With `-PtideTestJcef=true`, the graph editor also loads in real
+JCEF and an edit made in its page reaches the document.
 Plugin verification also rejects internal and override-only API calls, including
 tool-window registration, on the minimum IntelliJ platform and newest CLion.
 To exercise the real LSP4IJ client, a three-level child-process tree and JCEF,

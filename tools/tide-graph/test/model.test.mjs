@@ -1,0 +1,414 @@
+// The graph editor's model, without its UI: the file read and written as tidec writes it, ports from the schema,
+// the wiring rules, copy and paste, undo, and a graph built from nodes that tidec reads as the Tide it should be.
+//
+//   node --test tools/tide-graph/test/model.test.mjs
+//
+// tidec is TIDE_TIDEC, else the first of this checkout's build/<preset>/bin/tidec; tidels (for the language
+// server's case) TIDE_TIDELS, else beside it.
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { load, findProgram, repo } from './load.mjs';
+import { startServer, fileUri } from './lsp.mjs';
+
+const G = load();
+const { Doc, Schema, Editor } = G;
+const schemaJson = JSON.parse(fs.readFileSync(path.join(repo, 'compiler/src/graph_schema.json'), 'utf8'));
+const schema = new Schema(schemaJson);
+const tidec = findProgram('tidec', 'TIDE_TIDEC');
+const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'tide-graph-test-'));
+process.on('exit', () => fs.rmSync(scratch, { recursive: true, force: true }));
+
+// Graphs tidec makes from Tide files of the repository: the sumo example's and the e2e tests'
+function converted() {
+    const files = [
+        ...fs.readdirSync(path.join(repo, 'examples/sumo')).filter(f => f.endsWith('.tide')).map(f => path.join(repo, 'examples/sumo', f)),
+        ...fs.readdirSync(path.join(repo, 'compiler/tests/e2e')).filter(f => f.endsWith('.tide')).map(f => path.join(repo, 'compiler/tests/e2e', f)),
+    ];
+    const out = [];
+    for (const file of files) {
+        const to = path.join(scratch, path.basename(path.dirname(file)) + '_' + path.basename(file) + 'graph');
+        execFileSync(tidec, ['--to-graph', file, '-o', to], { stdio: 'pipe' });
+        out.push({ file, text: fs.readFileSync(to, 'utf8') });
+    }
+    return out;
+}
+let graphs;
+const all = () => graphs ??= converted();
+
+function nodesOf(doc) {
+    return [...doc.index.values()].filter(e => e.role === 'node');
+}
+
+test('graphs tidec makes are read and written byte for byte', () => {
+    const list = all();
+    assert.ok(list.length > 300, `${list.length} graphs`);
+    for (const { file, text } of list) {
+        assert.equal(G.json.writeFile(G.json.parse(text)), text, file);
+        const doc = Doc.parse(text, schema);
+        assert.equal(doc.text, text, file + ' through the document');
+    }
+});
+
+test('strings, comments and one-line elements are written as tidec writes them', () => {
+    const v = { tidegraph: 1, nextId: 3, decls: [{ kind: 'text', id: 1, comment: '', text: 'a "q" \\ \n\t\r\u0001 é' },
+        { kind: 'handler', id: 2, trigger: { verified: true, type: 'Hit', name: 'hit' }, params: [{ id: 5, mode: 'query', query: [{ id: 6, mode: 'read', type: 'A', name: 'a' }], name: 'q' }], body: { entry: null, nodes: [] } }] };
+    const text = G.json.writeFile(v);
+    assert.match(text, /"text": "a \\"q\\" \\\\ \\n\\t\\r\\u0001 é"/);
+    assert.doesNotMatch(text, /"comment"/, 'an empty comment is not written');
+    assert.match(text, /"trigger": \{"verified": true, "type": "Hit", "name": "hit"\}/);
+    assert.match(text, /\{"id": 5, "mode": "query", "query": \[\{"id": 6, "mode": "read", "type": "A", "name": "a"\}\], "name": "q"\}/);
+    assert.ok(!text.includes('\r'), 'LF only');
+});
+
+test('a key the editor adds goes where the schema puts it', () => {
+    const n = { id: 1, k: 'var', x: 0, y: 0, name: 'v', next: 4 };
+    G.json.set(n, 'type', 'int', schema.nodeOrder('var'));
+    G.json.set(n, 'mut', true, schema.nodeOrder('var'));
+    G.json.set(n, 'comment', 'c', schema.nodeOrder('var'));
+    assert.deepEqual(Object.keys(n), ['id', 'k', 'x', 'y', 'mut', 'type', 'name', 'comment', 'next']);
+});
+
+test("every wire tidec writes is one of the node's ports, and every node of a converted file is reached", () => {
+    let nodes = 0;
+    for (const { file, text } of all()) {
+        const doc = Doc.parse(text, schema);
+        for (const e of nodesOf(doc)) {
+            const n = e.value;
+            nodes++;
+            // Every number in the node but its id, place and a local's declaration is a wire
+            const written = [];
+            const walk = (v, key) => {
+                if (typeof v === 'number' && !['id', 'x', 'y', 'ref'].includes(key)) written.push(v);
+                else if (Array.isArray(v)) v.forEach(x => walk(x, key));
+                else if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) walk(x, k);
+            };
+            for (const [k, v] of Object.entries(n)) walk(v, k);
+            const wired = [...schema.dataWires(n), ...schema.execWires(n)];
+            assert.deepEqual([...wired].sort((a, b) => a - b), written.sort((a, b) => a - b), `${file}: node ${n.id} (${n.k})`);
+        }
+        for (const g of doc.graphs()) {
+            const graph = doc.graph(g.slot);
+            const reached = doc.reached(graph);
+            for (const n of graph.nodes) assert.ok(reached.has(n.id), `${file}: node ${n.id} (${n.k}) is reached`);
+        }
+    }
+    assert.ok(nodes > 10000, `${nodes} nodes`);
+});
+
+test('every node kind has the ports its schema gives it', () => {
+    const doc = Doc.empty(schema);
+    for (const spec of schemaJson.nodes) {
+        const n = doc.newNode(spec.k, 0, 0);
+        for (const list of spec.lists || []) n[list.key].push(null, null);
+        if (spec.map) n[spec.map] = { a: null, b: null };
+        for (const item of spec.items || []) {
+            if (!n[item.key].length) n[item.key].push(Object.fromEntries((item.wires || []).map(w => w.endsWith('[]') ? [w.slice(0, -2), [null]] : [w, null])));
+            if (spec.k === 'literal') n[item.key][0].name = 'position';
+        }
+        const ports = schema.ports(n);
+        const has = (input, exec, path) => ports.some(p => p.input === input && p.exec === exec && G.samePath(p.path, path));
+        assert.equal(ports.some(p => p.input && p.exec), !!spec.exec, `${spec.k}: exec in`);
+        assert.equal(ports.some(p => !p.input && !p.exec), !!spec.value, `${spec.k}: value out`);
+        for (const key of spec.inputs || []) assert.ok(has(true, false, [key]), `${spec.k}: input ${key}`);
+        for (const list of spec.lists || []) {
+            assert.ok(has(true, false, [list.key, 0]) && has(true, false, [list.key, 1]), `${spec.k}: list ${list.key}`);
+        }
+        if (spec.map) assert.ok(has(true, false, [spec.map, 'a']) && has(true, false, [spec.map, 'b']), `${spec.k}: map`);
+        for (const item of spec.items || []) {
+            for (const w of item.wires) {
+                const p = w.endsWith('[]') ? [item.key, 0, w.slice(0, -2), 0] : [item.key, 0, w];
+                assert.ok(has(true, false, p), `${spec.k}: ${item.key} ${w}`);
+            }
+            if (item.exec) assert.ok(has(false, true, [item.key, 0, item.exec]), `${spec.k}: ${item.key} exec`);
+        }
+        for (const key of spec.outputs || []) assert.ok(has(false, true, [key]), `${spec.k}: output ${key}`);
+        if (spec.exec) assert.equal(has(false, true, ['next']), !spec.ends, `${spec.k}: next`);
+        // Its keys come in the schema's order, after id, k, x, y
+        const keys = Object.keys(n);
+        const order = schema.nodeOrder(spec.k);
+        assert.deepEqual(keys, [...keys].sort((a, b) => order.indexOf(a) - order.indexOf(b)), `${spec.k}: key order`);
+        assert.deepEqual(keys.slice(0, 4), ['id', 'k', 'x', 'y']);
+    }
+    const shorthand = doc.newNode('member', 0, 0, { shorthand: true, member: 'Title' });
+    assert.ok(!schema.ports(shorthand).some(p => p.input && !p.exec), 'a shorthand member has no object');
+});
+
+// A body of nodes to wire: a function F(int a) with an empty body
+function fileWithFunction() {
+    const doc = Doc.empty(schema);
+    const f = doc.newElement('function', false, 'F');
+    f.params.push(doc.newParam('int', 'a'));
+    doc.decls.push(f);
+    doc.reindex();
+    return { doc, f, g: f.body };
+}
+
+test('the wiring rules', () => {
+    const { doc, g } = fileWithFunction();
+    const one = doc.addNode(g, 'int', 0, 0, { text: '1' });
+    const two = doc.addNode(g, 'int', 0, 0, { text: '2' });
+    const sum = doc.addNode(g, 'binary', 0, 0);
+    const neg = doc.addNode(g, 'unary', 0, 0, { op: '-' });
+    const s1 = doc.addNode(g, 'var', 0, 0, { name: 'x' });
+    const s2 = doc.addNode(g, 'assign', 0, 0);
+    const s3 = doc.addNode(g, 'return', 0, 0);
+    const iff = doc.addNode(g, 'if', 0, 0);
+    // An input takes one wire; another replaces it
+    assert.equal(doc.connect(g, sum.id, ['lhs'], one.id), null);
+    assert.equal(doc.connect(g, sum.id, ['lhs'], two.id), null);
+    assert.equal(sum.lhs, two.id);
+    // A value wired to two inputs is fine: worked out at each
+    assert.equal(doc.connect(g, sum.id, ['rhs'], two.id), null);
+    // No value is made of itself
+    assert.equal(doc.connect(g, neg.id, ['value'], sum.id), null);
+    assert.match(doc.connect(g, sum.id, ['lhs'], neg.id), /made of itself/);
+    assert.match(doc.connect(g, sum.id, ['lhs'], sum.id), /made of itself/);
+    // A statement has no value, and a value is no statement
+    assert.match(doc.connect(g, sum.id, ['lhs'], s1.id), /statement, which has no value/);
+    assert.match(doc.connect(g, s1.id, ['next'], one.id), /value, not a statement/);
+    // A statement runs from one place: wiring it from another exec output moves it there
+    assert.equal(doc.setEntry(g, s1.id), null);
+    assert.equal(doc.connect(g, s1.id, ['next'], s2.id), null);
+    assert.equal(doc.connect(g, iff.id, ['then'], s2.id), null);
+    assert.equal(s1.next, undefined, 'the old wire went');
+    assert.equal(iff.then, s2.id);
+    assert.match(doc.connect(g, s2.id, ['next'], s1.id), /first statement/);
+    // No statement runs in a loop
+    assert.equal(doc.connect(g, s2.id, ['next'], s3.id), null);
+    assert.equal(doc.connect(g, s1.id, ['next'], iff.id), null);
+    assert.match(doc.connect(g, s2.id, ['next'], iff.id), /loop/);
+    assert.equal(s2.next, s3.id, 'a refused wire changes nothing');
+    // Taking a wire away removes the key, as tidec writes nodes
+    doc.disconnect(g, sum.id, ['rhs']);
+    assert.ok(!('rhs' in sum));
+    // A deleted statement leaves the chain around it joined
+    doc.deleteNodes(g, [iff.id]);
+    assert.equal(s1.next, undefined, 'if had no next');
+    assert.ok(!g.nodes.includes(iff));
+});
+
+test('copy and paste give new ids and keep the wires between what was copied', () => {
+    const { doc, g } = fileWithFunction();
+    const v = doc.addNode(g, 'var', 100, 0, { name: 'x' });
+    const zero = doc.addNode(g, 'int', 0, 0, { text: '0' });
+    doc.connect(g, v.id, ['value'], zero.id);
+    doc.setEntry(g, v.id);
+    const read = doc.addNode(g, 'local', 0, 100, { ref: v.id });
+    const add = doc.addNode(g, 'binary', 100, 100);
+    const outside = doc.addNode(g, 'int', 0, 200, { text: '5' });
+    doc.connect(g, add.id, ['lhs'], read.id);
+    doc.connect(g, add.id, ['rhs'], outside.id);
+    const sw = doc.addNode(g, 'switch', 300, 0);
+    doc.connect(g, sw.id, ['value'], add.id);
+    doc.connect(g, sw.id, ['cases', 0, 'labels', 0], outside.id);
+    const brk = doc.addNode(g, 'break', 400, 0);
+    doc.connect(g, sw.id, ['cases', 0, 'body'], brk.id);
+    g.notes = [{ id: doc.newId(), x: 0, y: 0, w: 100, h: 50, text: 'n' }];
+    doc.reindex();
+    const before = doc.root.nextId;
+
+    const clip = Doc.copy(g, new Set([read.id, add.id, sw.id, brk.id]), new Set([g.notes[0].id]));
+    assert.ok(Doc.isClip(clip));
+    const made = doc.paste(g, clip, 30, 40);
+    assert.equal(made.length, 5);
+    const ids = new Set(g.nodes.map(n => n.id).concat(g.notes.map(n => n.id)));
+    assert.equal(ids.size, g.nodes.length + g.notes.length, 'ids stay unique');
+    for (const id of made) assert.ok(id >= before, 'pasted ids are new');
+    assert.ok(doc.root.nextId > Math.max(...made));
+    const [read2, add2, sw2, brk2] = made.map(id => Doc.nodeIn(g, id));
+    assert.equal(read2.ref, v.id, "a local's read keeps a declaration that wasn't copied");
+    assert.equal(add2.lhs, read2.id, 'a wire between copied nodes follows them');
+    assert.ok(!('rhs' in add2), 'a wire from a node not copied is dropped');
+    assert.equal(sw2.value, add2.id);
+    assert.deepEqual(sw2.cases[0].labels, [null], "a case's label from outside is dropped, as null");
+    assert.equal(sw2.cases[0].body, brk2.id, "a case's body follows");
+    assert.equal(add2.x, add.x + 30);
+    assert.equal(add2.y, add.y + 40);
+    assert.equal(g.notes.length, 2);
+
+    // A local's read whose declaration is copied with it reads the copy
+    const clip2 = Doc.copy(g, new Set([v.id, read.id]), new Set());
+    const [v3, read3] = doc.paste(g, clip2, 0, 0).map(id => Doc.nodeIn(g, id));
+    assert.equal(read3.ref, v3.id);
+    assert.ok(!('value' in v3), "the var's value wasn't copied");
+});
+
+test('undo and redo, and changes made by the host', () => {
+    const posted = [];
+    const { doc } = fileWithFunction();
+    const editor = new Editor(schema, m => posted.push(m));
+    editor.load(doc.text, true);
+    const start = editor.text;
+    editor.edit(d => d.addNode(editor.graph, 'int', 0, 0));
+    const one = editor.text;
+    editor.edit(d => d.addNode(editor.graph, 'float', 0, 0));
+    assert.equal(editor.graph.nodes.length, 2);
+    assert.equal(posted.length, 2);
+    editor.undo();
+    assert.equal(editor.text, one);
+    assert.equal(editor.graph.nodes.length, 1);
+    editor.undo();
+    assert.equal(editor.text, start);
+    assert.ok(!editor.canUndo);
+    editor.redo();
+    assert.equal(editor.text, one);
+    assert.equal(posted.at(-1).text, one, 'an undo writes the file');
+    // The host's undo of the editor's edit is a step back of its history
+    editor.external(start);
+    assert.equal(editor.at, 0);
+    editor.external(one);
+    assert.equal(editor.at, 1);
+    // A change from elsewhere is a step of its own
+    const other = one.replace('"F"', '"G"');
+    editor.external(other);
+    assert.equal(editor.doc.decls[0].name, 'G');
+    editor.undo();
+    assert.equal(editor.doc.decls[0].name, 'F');
+    // Text that isn't JSON is said, and nothing is edited until it's fixed
+    editor.external('{ not json');
+    assert.ok(editor.error);
+    assert.equal(editor.edit(() => 1), undefined);
+    editor.external(one);
+    assert.equal(editor.error, null);
+});
+
+// Runs a program; its errors are the test's
+function run(file, args) {
+    try {
+        return execFileSync(file, args, { encoding: 'utf8', stdio: 'pipe' });
+    } catch (e) {
+        assert.fail(`${path.basename(file)} ${args.join(' ')}:
+${e.stderr || e.message}`);
+    }
+}
+
+// tidec's Tide for a graph, and whether a game of it compiles
+function graphText(doc, name) {
+    const file = path.join(scratch, name + '.tidegraph');
+    fs.writeFileSync(file, doc.text);
+    return execFileSync(tidec, ['--graph-text', file], { encoding: 'utf8' }).replace(/\r\n/g, '\n');
+}
+
+test('if (a < 3) { x += 1; } built from nodes is the Tide tidec reads', () => {
+    const { doc, f, g } = fileWithFunction();
+    const x = doc.addNode(g, 'var', 200, 0, { mut: true, name: 'x' });
+    const zero = doc.addNode(g, 'int', 0, 0, { text: '0' });
+    assert.equal(doc.connect(g, x.id, ['value'], zero.id), null);
+    assert.equal(doc.setEntry(g, x.id), null);
+    const a = doc.addNode(g, 'name', 0, 100, { name: 'a' });
+    const three = doc.addNode(g, 'int', 0, 200, { text: '3' });
+    const less = doc.addNode(g, 'binary', 200, 100, { op: '<' });
+    assert.equal(doc.connect(g, less.id, ['lhs'], a.id), null);
+    assert.equal(doc.connect(g, less.id, ['rhs'], three.id), null);
+    const iff = doc.addNode(g, 'if', 400, 0);
+    assert.equal(doc.connect(g, iff.id, ['cond'], less.id), null);
+    assert.equal(doc.connect(g, x.id, ['next'], iff.id), null);
+    const read = doc.addNode(g, 'local', 400, 200, { ref: x.id });
+    const one = doc.addNode(g, 'int', 400, 300, { text: '1' });
+    const add = doc.addNode(g, 'assign', 600, 200, { op: '+=' });
+    assert.equal(doc.connect(g, add.id, ['target'], read.id), null);
+    assert.equal(doc.connect(g, add.id, ['value'], one.id), null);
+    assert.equal(doc.connect(g, iff.id, ['then'], add.id), null);
+    // ...and gives x back, so that it's read
+    f.returnType = 'int';
+    const ret = doc.addNode(g, 'return', 800, 0);
+    assert.equal(doc.connect(g, ret.id, ['value'], doc.addNode(g, 'local', 600, 100, { ref: x.id }).id), null);
+    assert.equal(doc.connect(g, iff.id, ['next'], ret.id), null);
+    assert.equal(doc.reached(g).size, g.nodes.length);
+    const text = graphText(doc, 'if');
+    assert.match(text, /int F\(int a\)\s*\{\s*mut var x = 0;\s*if \(a < 3\) \{\s*x \+= 1;\s*\}\s*return x;\s*\}/, text);
+    // And it compiles, as a game's file
+    fs.writeFileSync(path.join(scratch, 'main.tide'), 'scene Main { }\n');
+    fs.mkdirSync(path.join(scratch, 'out'), { recursive: true });
+    run(tidec, [path.join(scratch, 'main.tide'), path.join(scratch, 'if.tidegraph'), '-o', path.join(scratch, 'out')]);
+});
+
+test('new declarations and members of every kind are Tide tidec reads', () => {
+    const doc = Doc.empty(schema);
+    for (const spec of schemaJson.declarations) {
+        if (['namespace', 'text', 'prefab', 'settings', 'asset', 'handler', 'command'].includes(spec.kind)) continue;
+        const d = doc.newElement(spec.kind, false, doc.uniqueName(doc.decls, spec.title.replace(/\W/g, '')));
+        if (spec.kind === 'scene' || spec.kind === 'input') d.name = doc.uniqueName(doc.decls, spec.kind === 'scene' ? 'Main' : 'Controls');
+        doc.decls.push(d);
+        const keys = Object.keys(d);
+        assert.deepEqual(keys, [...keys].sort((a, b) => spec.keys.indexOf(a) - spec.keys.indexOf(b)), spec.kind + ': key order');
+    }
+    const struct = doc.decls.find(d => d.kind === 'struct');
+    for (const m of ['field', 'method', 'property']) struct.members.push(doc.newElement(m, true, doc.uniqueName(struct.members, m === 'field' ? 'value' : 'Thing')));
+    doc.reindex();
+    const text = graphText(doc, 'decls');
+    assert.match(text, /struct Struct\s*\{/);
+    assert.match(text, /void Function\(\)/);
+    assert.match(text, /system System\(\)/);
+});
+
+test('completion items become the nodes the search adds', () => {
+    const { entryOf, paramNames } = G.lang;
+    assert.deepEqual(paramNames({ detail: 'void Bounce(float by, List<int> xs = [])' }), ['by', 'xs']);
+    const method = entryOf({ label: 'Bounce', kind: 2, detail: 'void Bounce(float by)' }, { member: true });
+    assert.deepEqual(method.node, { k: 'method', fields: { name: 'Bounce', args: [null] } });
+    assert.deepEqual(entryOf({ label: 'speed', kind: 5, detail: 'float' }, { member: true }).node, { k: 'member', fields: { member: 'speed' } });
+    assert.equal(entryOf({ label: 'Twice', kind: 3, detail: 'int Twice(int a)' }).node.k, 'call');
+    assert.equal(entryOf({ label: 'Ball', kind: 22 }).node.k, 'literal');
+    assert.deepEqual(entryOf({ label: 'Run', kind: 20 }).node.fields, { shorthand: true, member: 'Run' });
+    assert.equal(entryOf({ label: 'Math', kind: 9 }).node.k, 'name');
+    assert.equal(entryOf({ label: 'if', kind: 14 }), null);
+});
+
+const tidels = findProgram('tidels', 'TIDE_TIDELS', path.dirname(tidec));
+
+test("tidels: a graph's text, types, members and diagnostics on its nodes", { skip: !tidels && 'no tidels built' }, async () => {
+    const game = path.join(scratch, 'game');
+    fs.mkdirSync(game, { recursive: true });
+    fs.writeFileSync(path.join(game, 'main.tide'), 'component Ball { float speed; void Bounce(float by) { speed *= by; } }\nscene Main { }\n');
+    const doc = Doc.empty(schema);
+    const s = doc.newElement('system', false, 'Move');
+    s.params.push({ id: doc.newId(), mode: 'mut', type: 'Ball', name: 'ball' });
+    doc.decls.push(s);
+    doc.reindex();
+    const g = s.body;
+    const ball = doc.addNode(g, 'name', 0, 0, { name: 'ball' });
+    const speed = doc.addNode(g, 'member', 200, 0, { member: 'speed' });
+    doc.connect(g, speed.id, ['object'], ball.id);
+    const one = doc.addNode(g, 'int', 200, 100, { text: '1' });
+    const set = doc.addNode(g, 'assign', 400, 0, { op: '=' });
+    doc.connect(g, set.id, ['target'], speed.id);
+    doc.connect(g, set.id, ['value'], one.id);
+    doc.setEntry(g, set.id);
+    const file = path.join(game, 'move.tidegraph');
+    fs.writeFileSync(file, doc.text);
+    const server = startServer(tidels, game);
+    try {
+        await server.ready;
+        const uri = fileUri(file);
+        const lang = new G.Lang((method, params) => server.request(method, params));
+        lang.uri = uri;
+        server.notify('textDocument/didOpen', { textDocument: { uri, languageId: 'json', version: 1, text: doc.text } });
+        await lang.check();
+        assert.equal(lang.status, 'checked');
+        assert.match(lang.text, /ball\.speed = 1;/);
+        assert.equal(lang.typeOf(speed.id), 'float');
+        assert.equal(lang.idAt(lang.text.indexOf('speed')), speed.id);
+        const members = await lang.members(ball.id);
+        assert.ok(members.items.some(i => i.label === 'speed'));
+        const bounce = members.items.find(i => i.label === 'Bounce');
+        assert.deepEqual(G.lang.entryOf(bounce, { member: true }).node.fields, { name: 'Bounce', args: [null] });
+        assert.match(await lang.hover(speed) ?? '', /speed/);
+        // An unknown member's error is on its node
+        speed.member = 'missing';
+        server.notify('textDocument/didChange', { textDocument: { uri, version: 2 }, contentChanges: [{ text: doc.text }] });
+        const published = await server.until(m => m.method === 'textDocument/publishDiagnostics' && m.params.uri.toLowerCase() === uri.toLowerCase()
+            && m.params.diagnostics.some(d => d.data?.node === speed.id));
+        lang.setDiagnostics(published.params.diagnostics);
+        assert.ok(lang.diagnosticsOf(speed.id).length);
+        const layout = await server.request('tide/graphLayout', { graph: g });
+        assert.deepEqual(Object.keys(layout).map(Number).sort(), g.nodes.map(n => n.id).sort());
+    } finally {
+        await server.stop();
+    }
+});

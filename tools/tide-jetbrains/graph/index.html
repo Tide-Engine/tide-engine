@@ -1,0 +1,58 @@
+<!doctype html>
+<!-- The editor on its own, to work on it in a browser: open a .tidegraph and edit it (nothing is saved, and
+     nothing is checked, as no tidels is behind it). Hosts make their own page from files.json. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tide graph</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <script src="src/json.js"></script>
+  <script src="src/schema.js"></script>
+  <script src="src/doc.js"></script>
+  <script src="src/editor.js"></script>
+  <script src="src/lang.js"></script>
+  <script src="src/ui.js"></script>
+  <script src="src/canvas.js"></script>
+  <script src="src/inspector.js"></script>
+  <script src="src/outline.js"></script>
+  <script src="src/search.js"></script>
+  <script src="src/app.js"></script>
+  <script>
+    // A host with no tidels: requests fail, edits are kept in memory. ?schema=<url>&graph=<url> loads them;
+    // without them, the page asks for the files.
+    const params = new URLSearchParams(location.search);
+    const host = {
+      post(m) {
+        if (m.type === 'request') setTimeout(() => TideGraph.receive({ type: 'response', id: m.id, error: 'no tidels here' }));
+        if (m.type === 'edit') localText = m.text;
+      },
+    };
+    let localText = '';
+    TideGraph.start(host);
+    async function open(schema, text, name) {
+      TideGraph.receive({ type: 'load', text, schema, name, uri: null });
+    }
+    if (params.get('schema')) {
+      Promise.all([fetch(params.get('schema')).then(r => r.json()), params.get('graph') ? fetch(params.get('graph')).then(r => r.text()) : '']).then(([s, t]) => open(s, t, 'graph'));
+    } else {
+      const pick = document.createElement('input');
+      pick.type = 'file';
+      pick.multiple = true;
+      pick.title = 'graph_schema.json and a .tidegraph';
+      pick.style.cssText = 'position:fixed;right:8px;bottom:8px;z-index:30';
+      pick.onchange = async () => {
+        let schema = null, text = '';
+        for (const f of pick.files) {
+          if (f.name.endsWith('.json')) schema = JSON.parse(await f.text());
+          else text = await f.text();
+        }
+        open(schema, text, 'graph');
+      };
+      document.body.append(pick);
+    }
+  </script>
+</body>
+</html>

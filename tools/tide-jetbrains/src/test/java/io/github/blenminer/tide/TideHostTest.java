@@ -174,4 +174,51 @@ public final class TideHostTest extends BasePlatformTestCase {
             server.stop(0);
         }
     }
+
+    // The graph editor in real JCEF: its page loads from the plugin, says it's ready through the JS query, is given
+    // the document, and an edit made in it (everything selected and deleted, as its keys do) comes back as a command
+    // on the IDE's document; its undo puts the text back.
+    public void testRealJcefGraphEditorLoadsAndEditsTheDocument() throws Exception {
+        assertTrue(Boolean.getBoolean("tide.test.jcef"));
+        assertTrue("The opted-in JBR must support JCEF", JBCefApp.isSupported());
+        new TidelsFactory().setEnabled(false, getProject()); // The page without tidels: the bridge says so
+        final String text = """
+            {
+              "tidegraph": 1,
+              "nextId": 5,
+              "decls": [
+                {
+                  "kind": "function",
+                  "id": 1,
+                  "name": "One",
+                  "returnType": "int",
+                  "params": [],
+                  "body": {
+                    "entry": 3,
+                    "nodes": [
+                      {"id": 3, "k": "return", "x": 200, "y": 0, "value": 4},
+                      {"id": 4, "k": "int", "x": 0, "y": 0, "text": "1"}
+                    ]
+                  }
+                }
+              ]
+            }
+            """;
+        final var file = myFixture.configureByText("one.tidegraph", text).getVirtualFile();
+        final var document = com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().getDocument(file);
+        assertTrue(new TideGraphEditor.Provider().accept(getProject(), file));
+        final TideGraphEditor editor = (TideGraphEditor) new TideGraphEditor.Provider().createEditor(getProject(), file);
+        try {
+            editor.browser().createImmediately();
+            PlatformTestUtil.waitWithEventsDispatching("the page ready, through the JS query, and given the document", () -> editor.bridge().loaded, 60);
+            editor.bridge().command("selectAll");
+            editor.bridge().command("delete");
+            PlatformTestUtil.waitWithEventsDispatching("the page's edit in the document", () -> document.getText().contains("\"nodes\": []"), 60);
+            assertTrue(document.getText().contains("\"entry\": null"));
+            editor.bridge().command("undo");
+            PlatformTestUtil.waitWithEventsDispatching("the page's undo in the document", () -> document.getText().equals(text), 30);
+        } finally {
+            Disposer.dispose(editor);
+        }
+    }
 }

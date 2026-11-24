@@ -208,7 +208,7 @@ which is the same Tide a `.tide` file would hold. The Unity package and the lang
 
 - **Reading** (`compiler/src/graph.h`, `graph.c`): its own JSON reader (arena memory, each value's place in the
   file), then `graph_lower`, which writes the Tide a graph stands for and records each element's stretch of it
-  (`graph_map.spans`, inner after outer) and each element's place in the JSON (`places`). `compile.c` lowers a
+  (`graph_map.spans`, in the order each is finished: an inner one before the one it's in) and each element's place in the JSON (`places`). `compile.c` lowers a
   source whose path ends in `.tidegraph` right after reading it; the source's `text` is then the Tide, with
   `src->graph` the map and `src->graph_json` the file. Everything after (lexer, parser, checker, preludes'
   `*_wanted` scans of the text) sees ordinary Tide.
@@ -372,3 +372,46 @@ use equals `tidec --graph-schema`, `tide graph --schema`, `graph_schema.json`, t
 layout through tidels (values left of their statement, undoable, the Tide unchanged); graphMembers for a read
 and an unread value. 28 of 28 Unity tests pass (GraphTests, GraphLanguageTests, GraphSchemaTests). The add menus
 still list kind names rather than the schema's titles and groups.
+
+## The IDE editor (2026-11-24, later)
+
+One page, `tools/tide-graph/` (its README says how it's laid out and run): classic scripts on
+`globalThis.TideGraph` in the order `files.json` lists, no build step and no dependencies. Outline, inspector,
+canvas, wiring rules, search (the schema's kinds, the graph's locals and parameters, tidels' completion, and
+`tide/graphMembers` for a wired value), Pick member…, undo, copy and paste (the same clipboard format as Unity's,
+so nodes paste between them), auto layout, the Tide panel, types and hovers, light and dark themes. Everything of
+the format is the schema's; a packaged copy is used until tidels answers. The host bridge is a few messages
+(top of `src/app.js`): the host sends the document and diagnostics, the page sends each edit as the whole text
+and its requests, handled in order so an edit is in the document before the next request.
+
+- VS Code (`tide-vscode/src/graph.js`): a CustomTextEditorProvider, so the document is VS Code's (undo, save,
+  dirty, hot exit, diffs); requests go through the extension's language client, whose document selector now has
+  `**/*.tidegraph`; diagnostics with their node through a `handleDiagnostics` middleware. Commands: Tide: Convert
+  to Tide Graph (Replace or Keep Both, `tide graph`), Tide: Show as Tide. `.tidegraph` is in the `json` language
+  for its text view. `vsix.cmake` packages the page and the schema in `extension/graph/`.
+- JetBrains (`TideGraphEditor`, `TideGraphBridge`, `TidelsServer`, `TideLanguageClient`): a Graph tab before Text,
+  in JCEF; the page's edits are write commands on the IDE's document; requests through LSP4IJ; the IDE's
+  undo/copy/paste/delete/duplicate/select-all reach the page while it has focus; without JCEF, the text editor
+  and a notice. Gradle puts the page and schema in the jar under `tide-graph/`. A standalone clone of the plugin
+  builds from the snapshot in `tools/tide-jetbrains/graph/` (the page's files and `graph_schema.json`), refreshed
+  before each public export as `textmate/` is (notes/editors.md).
+- Tests: `tide_graph_editor` (ctest; registered in `tools/CMakeLists.txt` with its own `enable_testing()`):
+  model tests (byte-for-byte round trip of 364 converted graphs; every wire tidec writes is a port the schema
+  gives; ports and key orders of every kind; wiring rules; paste remapping; undo with host changes; a graph built
+  from nodes checked with tidec and compiled; real tidels' text, types, members, hover, diagnostics, layout), a
+  headless muted browser test (sumo's biggest graph rendered: nodes, ports, wires in the DOM; an edit, undo, a
+  host change, a diagnostic mark), and the VS Code bridge with fakes. tide-vscode `npm test` 38 pass; JetBrains
+  `gradlew test buildPlugin` 18 pass, `-PtideTestJcef=true` both real-JCEF tests pass. The real VS Code host suite
+  ran its graph part (open, tidels, an error on its node's JSON line, delete and undo through the page, VS Code's
+  clipboard, save, Show as Tide, Convert) twice on a hidden desktop; the suite's old terminal step doesn't start
+  there, so the whole suite hasn't run to completion here (CI runs it). A sanitize tidels copied for the pinned-version step has
+  no ASan DLL beside it: that step needs a debug or release tidels.
+
+## Gaps of the shared schema
+
+- Key types (flag, string list, type, an expression's graph, a body's, an element list) aren't in the schema: the
+  IDE page infers them by key name (`schema.js`) and the Unity window has its own inspector by key.
+- What a new element starts with (a call's name, an operator, a constant's value) isn't in it: each editor has a
+  small table (`doc.js`, `GraphDocument.cs`).
+- `items[].label` is a key (a literal's `name`) in one place and a word (`case`, `arm`) in others.
+- The add menus of the Unity window list kinds by name, not the schema's titles and groups.

@@ -4,6 +4,10 @@
 install(DIRECTORY tide-syntax DESTINATION editors COMPONENT tide PATTERN test EXCLUDE)
 install(DIRECTORY tide-emacs tide-vim DESTINATION editors COMPONENT tide PATTERN test EXCLUDE)
 
+# The graph editor's page (tide-graph/files.json lists it), which the VS Code
+# extension and the JetBrains plugin carry
+file(GLOB graph_sources CONFIGURE_DEPENDS tide-graph/files.json tide-graph/style.css tide-graph/src/*.js)
+
 # The VS Code extension, for VS Code, Cursor, VSCodium and Windsurf. It needs
 # Node, so only package builds make it.
 option(TIDE_EDITOR_EXTENSIONS "Build the editor extensions (needs Node's npm)" OFF)
@@ -15,6 +19,8 @@ if(TIDE_EDITOR_EXTENSIONS)
         COMMAND "${CMAKE_COMMAND}"
             "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/tide-vscode"
             "-DSYNTAX=${CMAKE_CURRENT_SOURCE_DIR}/tide-syntax"
+            "-DGRAPH=${CMAKE_CURRENT_SOURCE_DIR}/tide-graph"
+            "-DSCHEMA=${PROJECT_SOURCE_DIR}/compiler/src/graph_schema.json"
             "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/tide-vscode"
             "-DVERSION=${extension_version}"
             "-DOUT=${vsix}"
@@ -28,12 +34,31 @@ if(TIDE_EDITOR_EXTENSIONS)
             tide-vscode/icons/tide.svg
             tide-vscode/src/extension.js
             tide-vscode/src/debug.js
+            tide-vscode/src/graph.js
             tide-syntax/language-configuration.json
             tide-syntax/syntaxes/tide.tmLanguage.json
+            ${graph_sources}
+            "${PROJECT_SOURCE_DIR}/compiler/src/graph_schema.json"
         COMMENT "Building the VS Code extension"
         VERBATIM)
     add_custom_target(tide_vscode ALL DEPENDS "${vsix}")
     install(FILES "${vsix}" DESTINATION editors COMPONENT tide)
     # The licenses of what its bundle has in it, which vsix.cmake collects
     install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tide-vscode/licenses/" DESTINATION licenses COMPONENT tide)
+endif()
+
+# The graph editor's tests, on Node's test runner: its model (tidec makes the
+# graphs it reads), the page in a headless muted browser (skipped without
+# Chrome or Edge), and VS Code's side of it with VS Code replaced. Needs tidec
+# and tidels, which the compiler's folder (after this one) adds.
+find_program(TIDE_GRAPH_NODE NAMES node)
+if(TIDE_GRAPH_NODE)
+    enable_testing() # The top folder's comes after this folder
+    add_test(NAME tide_graph_editor COMMAND "${TIDE_GRAPH_NODE}" --test
+        "${CMAKE_CURRENT_SOURCE_DIR}/tide-graph/test/model.test.mjs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tide-graph/test/browser.test.mjs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tide-vscode/test/graph.test.mjs")
+    set_tests_properties(tide_graph_editor PROPERTIES
+        ENVIRONMENT "TIDE_TIDEC=$<TARGET_FILE:tidec>;$<$<TARGET_EXISTS:tidels>:TIDE_TIDELS=$<TARGET_FILE:tidels>;>TIDE_HIDDEN=1"
+        TIMEOUT 600)
 endif()

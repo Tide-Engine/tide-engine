@@ -1,7 +1,7 @@
 {
   "name": "tide",
   "displayName": "Tide",
-  "description": "The Tide language: errors as you type, completion, go to definition, rename, formatting and more, from tidels",
+  "description": "The Tide language: errors as you type, completion, go to definition, rename, formatting and more, from tidels; and a graph editor for .tidegraph files",
   "version": "0.0.0",
   "publisher": "tide-engine",
   "icon": "icon.png",
@@ -11,11 +11,14 @@
   },
   "categories": [
     "Programming Languages",
-    "Formatters"
+    "Formatters",
+    "Visualization"
   ],
   "main": "./out/extension.js",
   "activationEvents": [
     "onLanguage:tide",
+    "onCustomEditor:tide.graph",
+    "workspaceContains:**/*.tidegraph",
     "onDebugResolve:tide",
     "onDebugInitialConfigurations",
     "onDebugDynamicConfigurations:tide"
@@ -48,6 +51,12 @@
           "dark": "./icons/tide.svg"
         },
         "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "json",
+        "extensions": [
+          ".tidegraph"
+        ]
       }
     ],
     "grammars": [
@@ -55,6 +64,18 @@
         "language": "tide",
         "scopeName": "source.tide",
         "path": "./syntaxes/tide.tmLanguage.json"
+      }
+    ],
+    "customEditors": [
+      {
+        "viewType": "tide.graph",
+        "displayName": "Tide Graph",
+        "selector": [
+          {
+            "filenamePattern": "*.tidegraph"
+          }
+        ],
+        "priority": "default"
       }
     ],
     "breakpoints": [
@@ -237,6 +258,17 @@
         "title": "Game Developer Tools",
         "category": "Tide",
         "icon": "$(tools)"
+      },
+      {
+        "command": "tide.convertToGraph",
+        "title": "Convert to Tide Graph",
+        "category": "Tide"
+      },
+      {
+        "command": "tide.showAsTide",
+        "title": "Show as Tide",
+        "category": "Tide",
+        "icon": "$(code)"
       }
     ],
     "menus": {
@@ -259,12 +291,44 @@
           "command": "tide.openDevTools",
           "when": "activeWebviewPanelId == 'simpleBrowser.view' && tide.gamePage",
           "group": "navigation"
+        },
+        {
+          "command": "tide.showAsTide",
+          "when": "activeCustomEditorId == 'tide.graph'",
+          "group": "navigation"
         }
       ],
       "commandPalette": [
         {
           "command": "tide.openDevTools",
           "when": "tide.gamePage"
+        },
+        {
+          "command": "tide.convertToGraph",
+          "when": "resourceExtname == .tide"
+        },
+        {
+          "command": "tide.showAsTide",
+          "when": "resourceExtname == .tidegraph || activeCustomEditorId == 'tide.graph'"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "tide.convertToGraph",
+          "when": "resourceExtname == .tide",
+          "group": "7_modification"
+        },
+        {
+          "command": "tide.showAsTide",
+          "when": "resourceExtname == .tidegraph",
+          "group": "navigation"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "tide.convertToGraph",
+          "when": "resourceExtname == .tide",
+          "group": "7_modification"
         }
       ]
     },

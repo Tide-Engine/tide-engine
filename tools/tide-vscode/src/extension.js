@@ -1,7 +1,8 @@
 // Tide for VS Code (and Cursor, VSCodium, Windsurf): the grammar colors
 // the text, and tidels, the language server that comes with tide, does the rest.
 // Tide: Run plays the game in a window, Run on the Web beside the code, and
-// Run on Android on the phone or emulator that's connected.
+// Run on Android on the phone or emulator that's connected. .tidegraph files
+// open in Tide's graph editor (src/graph.js).
 //
 // In Restricted Mode (an untrusted workspace), nothing from the workspace
 // runs: the server is the one that comes with tide, and games don't run.
@@ -26,6 +27,7 @@ class TideLanguageClient extends LanguageClient {
 
 const suffix = process.platform === 'win32' ? '.exe' : '';
 let clients = [];
+let graphs = null; // The graph editor (src/graph.js), once activated
 let output = null;
 let trace = null;
 
@@ -333,11 +335,18 @@ async function startFolder(folder) {
             // Client options use the protocol's RelativePattern (baseUri), not VS Code's RelativePattern.
             { scheme: 'file', language: 'tide', ...(folder ? { pattern: { baseUri: vscode.Uri.file(folder).toString(), pattern: '**/*' } } : {}) },
             ...(!folder || folder === openFolders()[0] ? [{ scheme: 'untitled', language: 'tide' }] : []),
+            // Graphs (src/graph.js): tidels reads their JSON as the Tide it stands for, whatever its language
+            { scheme: 'file', pattern: folder ? { baseUri: vscode.Uri.file(folder).toString(), pattern: '**/*.tidegraph' } : '**/*.tidegraph' },
         ],
         ...(folder ? { workspaceFolder: vscode.workspace.workspaceFolders.find(f => f.uri.fsPath === folder) } : {}),
         outputChannel: output,
         traceOutputChannel: trace,
         middleware: {
+            // A graph's diagnostics, with the node each is on, go to its editor too
+            handleDiagnostics: (uri, diagnostics, next) => {
+                graphs?.handleDiagnostics(uri, diagnostics);
+                next(uri, diagnostics);
+            },
             provideCodeLenses: async (document, token, next) => {
                 const lenses = await next(document, token);
                 for (const lens of lenses ?? []) lensCommand(lens.command);
@@ -350,6 +359,14 @@ async function startFolder(folder) {
         await next.start();
     } catch {
     }
+}
+
+// The running language client whose folder has `uri` in it (or the one for files outside the open folders), or null
+function clientFor(uri) {
+    const file = uri.fsPath;
+    const running = clients.filter(c => c.isRunning());
+    return running.find(c => c.clientOptions.workspaceFolder && inFolder(file, c.clientOptions.workspaceFolder.uri.fsPath))
+        ?? running.find(c => !c.clientOptions.workspaceFolder) ?? running[0] ?? null;
 }
 
 // Stops the language server, whatever state it's in: a server that failed to
@@ -817,6 +834,13 @@ function activate(context) {
     }
     watchVersions();
     context.subscriptions.push({ dispose: () => versionWatches.forEach(watch => watch.dispose()) });
+    graphs = require('./graph.js').register(vscode, {
+        output,
+        extensionPath: context.extensionPath,
+        clientFor,
+        findTide,
+    });
+    context.subscriptions.push(...graphs.disposables);
     let checkingSessions = false;
     const sessionTimer = setInterval(async () => {
         if (checkingSessions || deactivating || unitySessions.size === 0) return;
@@ -825,6 +849,7 @@ function activate(context) {
     }, 2000);
     context.subscriptions.push({ dispose: () => clearInterval(sessionTimer) });
     serially(start);
+    return { graphEditors };
 }
 
 async function deactivate() {
@@ -833,6 +858,11 @@ async function deactivate() {
     unitySessions.clear();
     await Promise.allSettled(Object.values(runs).map(r => r?.dispose()));
     await serially(stop);
+}
+
+// For the host tests (the extension's exports): the open graph editors
+function graphEditors() {
+    return graphs?.editors;
 }
 
 module.exports = { activate, deactivate };

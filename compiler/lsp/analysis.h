@@ -114,8 +114,8 @@ void analysis_rename_files(const asset_rename *renames, int count, asset_rename_
 
 // Whether the selected document is a graph whose JSON read.
 bool analysis_is_graph(void);
-// Its Tide and where each part came from: {"text": ..., "spans": [[start, end, id], ...]}, an inner span after
-// the one it's in.
+// Its Tide and where each part came from: {"text": ..., "spans": [[start, end, id], ...]}, an inner span before
+// the one it's in (each written as it's finished).
 void analysis_graph_text(jbuf *out);
 // A byte offset in that text as the LSP position the other requests take; false past its end.
 bool analysis_graph_position(int offset, int *line, int *character);

@@ -41,6 +41,18 @@ public final class TidelsFactory implements LanguageServerFactory, LanguageServe
         return new OSProcessStreamConnectionProvider(command);
     }
 
+    // tidels's own requests (TidelsServer), which the graph editor asks
+    @Override
+    public @NotNull Class<? extends org.eclipse.lsp4j.services.LanguageServer> getServerInterface() {
+        return TidelsServer.class;
+    }
+
+    // A client that also gives graphs' diagnostics to their editors (TideLanguageClient)
+    @Override
+    public @NotNull com.redhat.devtools.lsp4ij.client.LanguageClientImpl createLanguageClient(@NotNull Project project) {
+        return new TideLanguageClient(project);
+    }
+
     @Override
     public boolean isEnabled(@NotNull Project project) {
         return !Boolean.TRUE.equals(project.getUserData(DISABLED)) && find(project).server() != null;

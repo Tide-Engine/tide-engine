@@ -58,7 +58,7 @@ typedef struct graph_place {
 } graph_place;
 
 typedef struct graph_map {
-    VEC(graph_span) spans;   // In the order they were written: an inner one after the one it's in
+    VEC(graph_span) spans;   // In the order each was finished: an inner one before the one it's in
     VEC(graph_place) places; // Every element with an id, by id
     VEC(int) line_starts;    // Offsets of the written text's lines, from line 1
     bool lowered;            // The source's text is the Tide it stands for (else still the file's JSON)
@@ -66,6 +66,8 @@ typedef struct graph_map {
 
 // Whether a path is a graph's, by its name: ends with .tidegraph.
 bool graph_is_path(const char *path);
+// What's printed of graphs (a graph, its Tide, the schema) is the bytes as they are: LF on Windows too.
+void graph_binary_stdout(void);
 
 // Reads the graph `src`, whose text is the file's JSON and which diag_add_source has registered, and makes its
 // text the Tide the graph stands for, with src->graph saying where each part of it came from. False after saying

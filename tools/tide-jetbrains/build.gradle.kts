@@ -23,6 +23,15 @@ val sharedTextmate = layout.projectDirectory.dir("../tide-syntax")
 val textmate = if (sharedTextmate.file("package.json").asFile.isFile) sharedTextmate
     else layout.projectDirectory.dir("textmate")
 
+// The graph editor's page, shared with the VS Code extension, and the compiler's schema of graphs, which the page
+// starts with. Engine builds use them where they are; a standalone clone, the snapshot in graph/ refreshed before
+// exporting tools/tide-jetbrains (as textmate/ is).
+val sharedGraph = layout.projectDirectory.dir("../tide-graph")
+val engineBuild = sharedGraph.file("files.json").asFile.isFile
+val graphEditor = if (engineBuild) sharedGraph else layout.projectDirectory.dir("graph")
+val graphSchema = if (engineBuild) layout.projectDirectory.file("../../compiler/src/graph_schema.json")
+    else layout.projectDirectory.file("graph/graph_schema.json")
+
 repositories {
     mavenCentral()
     intellijPlatform {
@@ -103,6 +112,12 @@ tasks {
     }
     processResources {
         from("LICENSE") { into("META-INF") }
+        // The graph editor's page (tools/tide-graph) and the schema it starts with, which TideGraphEditor reads
+        from(graphEditor) {
+            into("tide-graph")
+            include("files.json", "style.css", "src/**")
+        }
+        from(graphSchema) { into("tide-graph") }
     }
     compileTestJava {
         options.compilerArgs.add("-Xlint:deprecation")
@@ -120,7 +135,10 @@ tasks {
         filter {
             if (!providers.gradleProperty("tideTestNode").isPresent) excludeTestsMatching("*.TideHostTest.testRealRunConfigurationKillsDescendants")
             if (!providers.gradleProperty("tideTestServer").isPresent) excludeTestsMatching("*.TideHostTest.testRealLsp4ijClientStartsRestartsAndNavigates")
-            if (providers.gradleProperty("tideTestJcef").orNull != "true") excludeTestsMatching("*.TideHostTest.testRealJcefLoadsAndReusesPage")
+            if (providers.gradleProperty("tideTestJcef").orNull != "true") {
+                excludeTestsMatching("*.TideHostTest.testRealJcefLoadsAndReusesPage")
+                excludeTestsMatching("*.TideHostTest.testRealJcefGraphEditorLoadsAndEditsTheDocument")
+            }
         }
         if (providers.gradleProperty("tideTestJcef").orNull == "true") {
             systemProperty("tide.test.jcef", "true")

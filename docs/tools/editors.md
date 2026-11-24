@@ -103,6 +103,10 @@ Starting a replacement waits for the preceding run's processes to stop. Closing 
 
 On the web, each reload says what it did in the page's console: **Tide: Game Developer Tools** shows it.
 
+### Graphs
+
+A `.tidegraph` file opens in Tide's graph editor, the same as JetBrains' and close to Unity's (see [Visual scripting](visual-scripting.md)). It's VS Code's document underneath: saving, undo from the **Edit** menu, hot exit and git's diffs are of its JSON, and **Reopen Editor With > Text Editor** shows that. `tidels` checks the graph as it's edited, unsaved, with the rest of the game. **Tide: Convert to Tide Graph**, on a `.tide` file in the Explorer or the editor, makes a graph of it with `tide graph`, and **Tide: Show as Tide** opens the Tide a graph stands for.
+
 ### Debugging
 
 Breakpoints go in `.tide` files, and the **Tide** debug configurations (**Run and Debug**, then add a configuration) stop at them, with your values shown as Tide's: **Attach to Unity (Tide)**, **Debug Tide game**, which builds the game to debug and starts it, and **Attach to Tide game (tide run)**, for the game **Tide: Run** plays. They use Microsoft's C/C++ extension on Windows, and LLVM's LLDB DAP or CodeLLDB on macOS and Linux. In Restricted Mode they don't start. See [Debugging](debugging.md).
@@ -152,6 +156,10 @@ Right-click a `.tide` file and pick **Run**, or press Ctrl+Shift+F10 in it (Ctrl
 - **mygame (Android)** plays it on the Android phone or emulator that's connected, as `tide run --android` does (see [Android](cli.md#android)).
 
 They're Tide run configurations, which you can also make and edit under **Run > Edit Configurations**, where **Play it** picks among the three. They use `tide run`. `tide`'s output is in the Run tool window, where an error's place links to the file: saving a file reloads the game (on Android, builds it again and starts it over), and typing `r` and Enter there starts it over. The first run on Android may ask to download Android's tools from Google: type `y` and Enter there to accept. A run configuration can run another `tide`.
+
+### Graphs
+
+A `.tidegraph` file opens in Tide's graph editor, the **Graph** tab, with its JSON in the **Text** tab beside it (see [Visual scripting](visual-scripting.md)). Its edits are the IDE's: undo, local history and saving work as on any file. `tidels` checks the graph as it's edited, unsaved, with the rest of the game. **Convert to Tide Graph**, on a `.tide` file in the Project view or the editor, makes a graph of it with `tide graph`; **Show as Tide** opens the Tide a graph stands for. The graph editor is a web page, so it needs the IDE's JCEF browser, which JetBrains' runtime has: an IDE running on a runtime without it shows the graph as text, and says so above it.
 
 ### Debugging
 

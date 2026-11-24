@@ -1,3 +1,8 @@
+## Graphs in the IDEs (2026-11-24)
+
+The `.tidegraph` editor for VS Code and JetBrains is `tools/tide-graph/`, one page both host: see
+notes/visual-scripting.md, "The IDE editor".
+
 ## Generics in editors (2026-11-24)
 
 The language's side is in notes/language.md (Generics closed, top section). tidels (`compiler/lsp/analysis.c`):
@@ -911,8 +916,9 @@ using the live sibling tools/tide-syntax. The real process-host test now loads
 its bundled resource instead of requiring a sibling VS Code checkout. Before
 each public export, refresh textmate/package.json, language-configuration.json
 and syntaxes/tide.tmLanguage.json from tools/tide-syntax, and
-src/test/resources/host-process.cjs from tools/tide-vscode/test; commit those
-snapshots with the source changes. The initial snapshots are byte-identical.
+src/test/resources/host-process.cjs from tools/tide-vscode/test, and graph/ from tools/tide-graph (index.html,
+style.css, files.json, src/*.js) and compiler/src/graph_schema.json (the graph editor, notes/visual-scripting.md);
+commit those snapshots with the source changes. The initial snapshots are byte-identical.
 Public issues/patches are ported to the canonical engine copy before exporting,
 as for Emacs/Vim. No second release workflow is added to the public repository.
 

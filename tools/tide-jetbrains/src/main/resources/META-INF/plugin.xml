@@ -10,6 +10,8 @@
         its own, and each system's schedule above it, for <code>.tide</code> files.</p>
         <p>Run a game from its <code>.tide</code> files: in a window of its own, on the web, in the IDE, or on an Android
         phone or emulator. Saving a file reloads it as it runs.</p>
+        <p>Edit <code>.tidegraph</code> files, Tide written as graphs of nodes, in Tide's graph editor, checked as you
+        edit by <code>tidels</code>; convert a <code>.tide</code> file to one with Convert to Tide Graph.</p>
         <p>Debug it as Tide in CLion: breakpoints in <code>.tide</code> files, stepping through Tide lines, and its lists,
         maps, text and entities as Tide's, with Run | Debug Tide Game or Run | Attach to Unity (Tide).</p>
         <p>It runs <code>tidels</code>, the language server that comes with tide: install tide first
@@ -32,6 +34,8 @@
         <fileNamePatternMapping patterns="*.tprefab" serverId="tidels" languageId="tide"/>
         <!-- .tweaks files: a tweak's name in one hovers and goes to the tweak's declaration -->
         <fileNamePatternMapping patterns="*.tweaks" serverId="tidels" languageId="tide"/>
+        <!-- .tidegraph files: tidels reads their JSON as the Tide it stands for (TideGraphEditor) -->
+        <fileNamePatternMapping patterns="*.tidegraph" serverId="tidels" languageId="json"/>
     </extensions>
 
     <extensions defaultExtensionNs="com.intellij">
@@ -41,6 +45,11 @@
         <applicationConfigurable parentId="language" instance="io.github.blenminer.tide.TideConfigurable"
                                  id="io.github.blenminer.tide" displayName="Tide"/>
         <editorNotificationProvider implementation="io.github.blenminer.tide.TidelsBanner"/>
+        <fileType name="Tide Graph" implementationClass="io.github.blenminer.tide.TideGraphFileType" fieldName="INSTANCE"
+                  extensions="tidegraph"/>
+        <fileEditorProvider implementation="io.github.blenminer.tide.TideGraphEditor$Provider"/>
+        <editorNotificationProvider implementation="io.github.blenminer.tide.TideGraphBanner"/>
+        <projectService serviceImplementation="io.github.blenminer.tide.TideGraphDiagnostics"/>
         <configurationType implementation="io.github.blenminer.tide.TideRunConfigurationType"/>
         <runConfigurationProducer implementation="io.github.blenminer.tide.TideRunProducer$Desktop"/>
         <runConfigurationProducer implementation="io.github.blenminer.tide.TideRunProducer$Web"/>
@@ -60,6 +69,16 @@
         <action id="Tide.DebugGame" class="io.github.blenminer.tide.TideAttach$Game" text="Debug Tide Game"
                 description="Run the game with tide run, as the Tide run configuration does, and attach the debugger to it">
             <add-to-group group-id="RunMenu" anchor="last"/>
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
+        <action id="Tide.ConvertToGraph" class="io.github.blenminer.tide.TideGraphActions$Convert" text="Convert to Tide Graph"
+                description="Make a .tidegraph of this .tide file with tide graph, and open it in the graph editor">
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
+        <action id="Tide.ShowAsTide" class="io.github.blenminer.tide.TideGraphActions$ShowAsTide" text="Show as Tide"
+                description="Open the Tide this graph stands for">
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
         </action>
     </actions>

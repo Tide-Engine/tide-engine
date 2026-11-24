@@ -1,14 +1,17 @@
 # Builds the VS Code extension as a .vsix, the file `code --install-extension`
 # takes: bundles src/ and the language client with esbuild, adds the grammar
-# from tools/tide-syntax, and zips it all the way `vsce package` does.
+# from tools/tide-syntax and the graph editor's page from tools/tide-graph
+# (with the compiler's graph schema, which the page starts with), and zips it
+# all the way `vsce package` does.
 #
-# cmake -DSOURCE=<this folder> -DSYNTAX=<tools/tide-syntax> -DWORK=<scratch dir>
+# cmake -DSOURCE=<this folder> -DSYNTAX=<tools/tide-syntax> -DGRAPH=<tools/tide-graph>
+#       -DSCHEMA=<compiler/src/graph_schema.json> -DWORK=<scratch dir>
 #       -DVERSION=<x.y.z> -DOUT=<file.vsix> -P vsix.cmake
 #
 # Needs Node's npm, and the network the first time (npm ci).
 
 cmake_minimum_required(VERSION 3.25)
-foreach(var SOURCE SYNTAX WORK VERSION OUT)
+foreach(var SOURCE SYNTAX GRAPH SCHEMA WORK VERSION OUT)
     if(NOT DEFINED ${var})
         message(FATAL_ERROR "Pass -D${var}=...")
     endif()
@@ -75,6 +78,22 @@ file(COPY "${WORK}/out/extension.js" DESTINATION "${stage}/extension/out")
 file(COPY "${SOURCE}/README.md" "${SOURCE}/icon.png" "${SYNTAX}/language-configuration.json" DESTINATION "${stage}/extension")
 file(COPY "${SOURCE}/icons/tide.svg" DESTINATION "${stage}/extension/icons")
 file(COPY "${SYNTAX}/syntaxes/tide.tmLanguage.json" DESTINATION "${stage}/extension/syntaxes")
+# The graph editor's page: the files its files.json lists, which src/graph.js reads
+file(READ "${GRAPH}/files.json" graph_files)
+set(graph_list "files.json")
+foreach(group styles scripts)
+    string(JSON count LENGTH "${graph_files}" ${group})
+    math(EXPR last "${count} - 1")
+    foreach(i RANGE ${last})
+        string(JSON file GET "${graph_files}" ${group} ${i})
+        list(APPEND graph_list "${file}")
+    endforeach()
+endforeach()
+foreach(file IN LISTS graph_list)
+    get_filename_component(dir "${file}" DIRECTORY)
+    file(COPY "${GRAPH}/${file}" DESTINATION "${stage}/extension/graph/${dir}")
+endforeach()
+file(COPY_FILE "${SCHEMA}" "${stage}/extension/graph/graph_schema.json")
 
 string(JSON engine GET "${manifest}" engines vscode)
 file(WRITE "${stage}/extension.vsixmanifest" "<?xml version=\"1.0\" encoding=\"utf-8\"?>
@@ -105,6 +124,7 @@ file(WRITE "${stage}/[Content_Types].xml" "<?xml version=\"1.0\" encoding=\"utf-
 <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">
   <Default Extension=\".json\" ContentType=\"application/json\" />
   <Default Extension=\".js\" ContentType=\"application/javascript\" />
+  <Default Extension=\".css\" ContentType=\"text/css\" />
   <Default Extension=\".md\" ContentType=\"text/markdown\" />
   <Default Extension=\".png\" ContentType=\"image/png\" />
   <Default Extension=\".svg\" ContentType=\"image/svg+xml\" />

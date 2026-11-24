@@ -15,6 +15,113 @@ async function until(label, check, timeout = 30_000) {
 }
 const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
+// A .tidegraph in the real custom editor: the page loads it, edits made through the page (commands the page runs, as
+// its keys do) reach VS Code's document, tidels answers the page and publishes the graph's diagnostics on its node,
+// and the document saves as the page wrote it.
+async function graphEditor(folder, extension, log) {
+    const file = path.join(folder, 'grow.tidegraph');
+    const text = [
+        '{',
+        '  "tidegraph": 1,',
+        '  "nextId": 7,',
+        '  "decls": [',
+        '    {',
+        '      "kind": "system",',
+        '      "id": 1,',
+        '      "name": "Grow",',
+        '      "params": [',
+        '        {"id": 2, "mode": "mut", "type": "Body", "name": "body"}',
+        '      ],',
+        '      "body": {',
+        '        "entry": 6,',
+        '        "nodes": [',
+        '          {"id": 3, "k": "name", "x": 0, "y": 0, "name": "body"},',
+        '          {"id": 4, "k": "member", "x": 200, "y": 0, "object": 3, "member": "missing"},',
+        '          {"id": 5, "k": "float", "x": 200, "y": 100, "text": "1.0"},',
+        '          {"id": 6, "k": "assign", "x": 400, "y": 0, "op": "+=", "target": 4, "value": 5}',
+        '        ]',
+        '      }',
+        '    }',
+        '  ]',
+        '}',
+        '',
+    ].join('\n');
+    fs.writeFileSync(file, text);
+    const uri = vscode.Uri.file(file);
+    await vscode.commands.executeCommand('vscode.openWith', uri, 'tide.graph');
+    const editors = extension.exports.graphEditors();
+    const same = (a, b) => path.relative(a, b) === ''; // VS Code writes the drive's letter small
+    const editor = await until('the graph editor opens', () => [...editors].find(e => same(e.document.uri.fsPath, file)));
+    const document = editor.document;
+    const sent = (match) => editor.log.some(match);
+    await until('the page loads the document', () => sent(m => m.from === 'page' && m.type === 'ready') && sent(m => m.to === 'page' && m.type === 'load'));
+    // The page asks tidels for the graph's Tide and types, and gets answers
+    await until('tidels answers the page', () => {
+        const asked = editor.log.filter(m => m.from === 'page' && m.method === 'tide/graphText').map(m => m.id);
+        return editor.log.some(m => m.to === 'page' && m.type === 'response' && m.ok && asked.includes(m.id));
+    });
+    // The unknown member's error is on its node, in VS Code and sent to the page
+    const onNode = () => vscode.languages.getDiagnostics(uri).find(d => d.severity === vscode.DiagnosticSeverity.Error && d.data?.node === 4);
+    await until('an error on the member node', onNode);
+    assert.equal(onNode().range.start.line, 15, "the error is on the node's JSON line");
+    assert.ok(sent(m => m.to === 'page' && m.type === 'diagnostics'));
+    // Edits through the page: everything selected and deleted is one edit of VS Code's document
+    editor.post({ type: 'command', name: 'selectAll' });
+    editor.post({ type: 'command', name: 'delete' });
+    await until('the page deletes the nodes in the document', () => document.getText().includes('"nodes": []'));
+    assert.ok(document.isDirty);
+    assert.ok(sent(m => m.from === 'page' && m.type === 'edit'));
+    // The page's undo writes the text it was, byte for byte
+    editor.post({ type: 'command', name: 'undo' });
+    await until('undo through the page', () => document.getText() === text);
+    // Copy and paste go through VS Code's clipboard: pasted nodes have new ids, and the wires between them follow
+    await vscode.env.clipboard.writeText('');
+    editor.post({ type: 'command', name: 'selectAll' });
+    editor.post({ type: 'command', name: 'copy' });
+    await until('copied nodes on the clipboard', async () => (await vscode.env.clipboard.readText()).includes('tidegraphClip'));
+    editor.post({ type: 'command', name: 'paste' });
+    await until('pasted nodes in the document', () => (document.getText().match(/"k": "assign"/g) || []).length === 2);
+    const graph = JSON.parse(document.getText());
+    const nodes = graph.decls[0].body.nodes;
+    assert.equal(nodes.length, 8);
+    assert.equal(new Set(nodes.map(n => n.id)).size, 8, 'pasted ids are new');
+    assert.ok(graph.nextId > Math.max(...nodes.map(n => n.id)));
+    const pasted = nodes.find(n => n.k === 'assign' && n.id !== 6);
+    assert.ok(nodes.some(n => n.id === pasted.target && n.k === 'member'), "the pasted assignment's target is the pasted member");
+    // VS Code saves the document as the page wrote it: LF, tidec's layout
+    assert.ok(await document.save());
+    assert.equal(fs.readFileSync(file, 'utf8'), document.getText());
+    assert.doesNotMatch(document.getText(), /\r/);
+    // The member made right, the error goes
+    const fixed = new vscode.WorkspaceEdit();
+    fixed.replace(uri, new vscode.Range(0, 0, document.lineCount, 0), document.getText().replace(/"member": "missing"/g, '"member": "size"'));
+    assert.ok(await vscode.workspace.applyEdit(fixed));
+    await until('the page reads the text VS Code changed', () => sent(m => m.to === 'page' && m.type === 'text'));
+    await until('no error once the member is there', () => !vscode.languages.getDiagnostics(uri).some(d => d.severity === vscode.DiagnosticSeverity.Error));
+    await document.save();
+    // Show as Tide: the graph's Tide, from tidels
+    await vscode.commands.executeCommand('tide.showAsTide', uri);
+    const tide = await until('the Tide of the graph', () => vscode.workspace.textDocuments.find(d => d.uri.scheme === 'tide-graph-text'));
+    assert.match(tide.getText(), /system Grow\(mut Body body\)/);
+    assert.match(tide.getText(), /body\.size \+= 1\.0;/);
+    // Convert to Tide Graph: `tide graph` beside a .tide file, opened in the graph editor
+    if (fs.existsSync(process.env.TIDE_HOST_TIDE)) {
+        await vscode.workspace.getConfiguration('tide').update('path', process.env.TIDE_HOST_TIDE, vscode.ConfigurationTarget.Workspace);
+        fs.writeFileSync(path.join(folder, 'shrink.tide'), 'system Shrink(mut Body body)\n{\n    body.size -= 1;\n}\n');
+        const made = await vscode.commands.executeCommand('tide.convertToGraph', vscode.Uri.file(path.join(folder, 'shrink.tide')), { replace: true });
+        assert.ok(made && fs.existsSync(made.fsPath), 'the graph is made');
+        assert.ok(!fs.existsSync(path.join(folder, 'shrink.tide')), '--replace takes the .tide file away');
+        await until('the made graph opens in the graph editor', () => [...editors].some(e => same(e.document.uri.fsPath, made.fsPath)));
+        await vscode.workspace.getConfiguration('tide').update('path', process.env.TIDE_HOST_NODE, vscode.ConfigurationTarget.Workspace);
+    } else {
+        log('HOST: no tide beside tidels: Convert to Tide Graph not tried');
+    }
+    // Closed, as an open custom editor keeps VS Code from restarting the extension host (the folders' test below)
+    const tabs = vscode.window.tabGroups.all.flatMap(g => g.tabs).filter(t => t.input instanceof vscode.TabInputCustom && t.input.viewType === 'tide.graph');
+    assert.ok(await vscode.window.tabGroups.close(tabs));
+    await until('the graph editors close', () => editors.size === 0);
+}
+
 exports.run = async function () {
     const folder = process.env.TIDE_HOST_WORKSPACE;
     const log = text => fs.appendFileSync(path.join(folder, 'host.log'), text + '\n');
@@ -52,6 +159,9 @@ exports.run = async function () {
     await Promise.all([vscode.commands.executeCommand('tide.restartServer'), vscode.commands.executeCommand('tide.restartServer')]);
     await until('hover after rapid real server restarts', async () => (await hover())?.length);
     log('HOST: diagnostics, edits, rename, navigation, clickable lens, restart passed');
+
+    await graphEditor(folder, extension, log);
+    log('HOST: graph editor, its edits through the page, tidels, saving, Show as Tide and Convert to Tide Graph passed');
 
     // Two real language clients, each using its project's installed version, and an actual pin-file change.
     const other = path.join(path.dirname(folder), 'other-game');

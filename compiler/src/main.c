@@ -1,8 +1,4 @@
 #include <stdio.h>
-#ifdef _WIN32
-#include <fcntl.h>
-#include <io.h>
-#endif
 #include <stdlib.h>
 #include <string.h>
 
@@ -240,6 +236,7 @@ int main(const int argc, char **argv)
             return 2;
         }
         diag_reset();
+        graph_binary_stdout();
         for (int i = 2; i < argc; i++) {
             sb text = {0};
             if (!graph_text_of(argv[i], &text)) return 1;
@@ -252,9 +249,7 @@ int main(const int argc, char **argv)
     if (argc == 2 && strcmp(argv[1], "--graph-schema") == 0) {
         size_t len;
         const char *schema = graph_schema_text(&len);
-#ifdef _WIN32
-        _setmode(_fileno(stdout), _O_BINARY); // Its bytes as they are, LF
-#endif
+        graph_binary_stdout();
         fwrite(schema, 1, len, stdout);
         return 0;
     }
@@ -311,6 +306,7 @@ int main(const int argc, char **argv)
             return 1;
         }
         if (argc == 3) {
+            graph_binary_stdout();
             if (json.data) fputs(json.data, stdout);
             return 0;
         }

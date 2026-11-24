@@ -1,0 +1,250 @@
+/* The graph editor's look. Its colours are variables: dark by default, light with .tg-light (JetBrains sets them
+   from its theme), and VS Code's own where the page is in a VS Code webview. */
+:root {
+  --tg-bg: #1e1f22;
+  --tg-panel: #2b2d30;
+  --tg-fg: #dfe1e5;
+  --tg-muted: #8c8f96;
+  --tg-border: #393b40;
+  --tg-accent: #3574f0;
+  --tg-select: #2e436e;
+  --tg-hover: #3a3d43;
+  --tg-input-bg: #1e1f22;
+  --tg-input-fg: var(--tg-fg);
+  --tg-input-border: #4e5157;
+  --tg-node-bg: #2b2d30;
+  --tg-node-border: #43454a;
+  --tg-exec: #e8e8e8;
+  --tg-error: #f75464;
+  --tg-warning: #e0a63b;
+  --tg-grid: rgba(255, 255, 255, 0.045);
+  --tg-shadow: rgba(0, 0, 0, 0.45);
+  --tg-note: rgba(214, 190, 96, 0.13);
+  --tg-note-border: rgba(214, 190, 96, 0.45);
+  --tg-mark: rgba(53, 116, 240, 0.35);
+  --tg-font: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --tg-mono: ui-monospace, "JetBrains Mono", Consolas, monospace;
+  --tg-font-size: 13px;
+  color-scheme: dark;
+}
+:root.tg-light {
+  --tg-bg: #f7f8fa;
+  --tg-panel: #ffffff;
+  --tg-fg: #1e1f22;
+  --tg-muted: #6c707e;
+  --tg-border: #ebecf0;
+  --tg-select: #d4e2ff;
+  --tg-hover: #eef0f4;
+  --tg-input-bg: #ffffff;
+  --tg-input-border: #c9ccd6;
+  --tg-node-bg: #ffffff;
+  --tg-node-border: #c9ccd6;
+  --tg-exec: #4a4d55;
+  --tg-grid: rgba(0, 0, 0, 0.05);
+  --tg-shadow: rgba(0, 0, 0, 0.15);
+  --tg-note: rgba(214, 170, 40, 0.12);
+  --tg-mark: rgba(53, 116, 240, 0.22);
+  color-scheme: light;
+}
+body.vscode-light, body.vscode-dark, body.vscode-high-contrast, body.vscode-high-contrast-light {
+  --tg-bg: var(--vscode-editor-background);
+  --tg-panel: var(--vscode-sideBar-background, var(--vscode-editor-background));
+  --tg-fg: var(--vscode-foreground);
+  --tg-muted: var(--vscode-descriptionForeground);
+  --tg-border: var(--vscode-panel-border, var(--vscode-widget-border, #80808040));
+  --tg-accent: var(--vscode-focusBorder);
+  --tg-select: var(--vscode-list-activeSelectionBackground);
+  --tg-hover: var(--vscode-list-hoverBackground);
+  --tg-input-bg: var(--vscode-input-background);
+  --tg-input-fg: var(--vscode-input-foreground);
+  --tg-input-border: var(--vscode-input-border, var(--vscode-panel-border, #80808060));
+  --tg-node-bg: var(--vscode-editorWidget-background);
+  --tg-node-border: var(--vscode-editorWidget-border, var(--vscode-widget-border, #80808060));
+  --tg-error: var(--vscode-errorForeground);
+  --tg-warning: var(--vscode-editorWarning-foreground);
+  --tg-exec: var(--vscode-editor-foreground);
+  --tg-mark: var(--vscode-editor-selectionBackground);
+  --tg-font: var(--vscode-font-family);
+  --tg-mono: var(--vscode-editor-font-family);
+  --tg-font-size: var(--vscode-font-size);
+}
+body.vscode-light, body.vscode-high-contrast-light {
+  --tg-grid: rgba(0, 0, 0, 0.05);
+  --tg-shadow: rgba(0, 0, 0, 0.15);
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; }
+body { background: var(--tg-bg); color: var(--tg-fg); font: var(--tg-font-size) var(--tg-font); padding: 0; }
+.tg-root {
+  display: grid;
+  grid-template-rows: auto auto 1fr auto var(--tg-bottom, 200px);
+  height: 100vh;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+
+/* The toolbar */
+.tg-toolbar { display: flex; align-items: center; gap: 4px; padding: 4px 6px; background: var(--tg-panel); border-bottom: 1px solid var(--tg-border); min-width: 0; overflow: hidden; white-space: nowrap; }
+.tg-button { background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 2px 8px; cursor: pointer; color: var(--tg-fg); }
+.tg-button:hover:not(:disabled) { background: var(--tg-hover); border-color: var(--tg-border); }
+.tg-button:disabled { opacity: 0.4; cursor: default; }
+.tg-button.tg-on { background: var(--tg-select); }
+.tg-button.tg-hidden { visibility: hidden; }
+.tg-icon { background: transparent; border: none; cursor: pointer; color: var(--tg-muted); padding: 0 5px; border-radius: 3px; line-height: 18px; }
+.tg-icon:hover { background: var(--tg-hover); color: var(--tg-fg); }
+.tg-sep { width: 1px; height: 18px; background: var(--tg-border); margin: 0 4px; }
+.tg-grow { flex: 1; }
+.tg-crumb { color: var(--tg-muted); overflow: hidden; text-overflow: ellipsis; }
+.tg-status { color: var(--tg-muted); overflow: hidden; text-overflow: ellipsis; }
+.tg-status-error { color: var(--tg-error); }
+.tg-status-off { color: var(--tg-warning); }
+.tg-status-said { color: var(--tg-warning); }
+.tg-banner { padding: 6px 10px; background: color-mix(in srgb, var(--tg-error) 18%, var(--tg-panel)); border-bottom: 1px solid var(--tg-border); }
+
+/* The three panes */
+.tg-main { display: grid; grid-template-columns: var(--tg-left) 4px 1fr 4px var(--tg-right); min-height: 0; }
+.tg-split { background: var(--tg-border); }
+.tg-split-v { cursor: col-resize; }
+.tg-split-h { cursor: row-resize; height: 4px; }
+.tg-split:hover { background: var(--tg-accent); }
+.tg-outline, .tg-inspector { background: var(--tg-panel); overflow: auto; min-width: 0; }
+.tg-center { position: relative; min-width: 0; min-height: 0; }
+.tg-pane-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 6px 4px 10px; font-weight: 600; color: var(--tg-muted); text-transform: uppercase; font-size: 0.85em; letter-spacing: 0.04em; }
+.tg-hint { color: var(--tg-muted); padding: 8px 10px; }
+.tg-muted { color: var(--tg-muted); }
+
+/* The outline */
+.tg-tree-row { display: flex; align-items: center; gap: 4px; padding: 2px 6px; cursor: pointer; white-space: nowrap; }
+.tg-tree-row:hover { background: var(--tg-hover); }
+.tg-tree-row.tg-current { background: color-mix(in srgb, var(--tg-select) 55%, transparent); }
+.tg-tree-row.tg-selected { background: var(--tg-select); }
+.tg-twisty { width: 12px; color: var(--tg-muted); text-align: center; flex: none; }
+.tg-tag { font-size: 0.78em; min-width: 22px; text-align: center; padding: 0 3px; border-radius: 3px; background: var(--tg-hover); color: var(--tg-muted); font-family: var(--tg-mono); flex: none; }
+.tg-tree-label { overflow: hidden; text-overflow: ellipsis; }
+.tg-tree-errors { margin-left: auto; color: var(--tg-error); font-size: 0.85em; }
+.tg-rename { width: 100%; }
+
+/* The canvas */
+.tg-canvas { position: absolute; inset: 0; overflow: hidden; outline: none; cursor: default;
+  background-color: var(--tg-bg);
+  background-image: linear-gradient(var(--tg-grid) 1px, transparent 1px), linear-gradient(90deg, var(--tg-grid) 1px, transparent 1px);
+  background-size: var(--tg-grid-size, 24px) var(--tg-grid-size, 24px); }
+.tg-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.tg-wires { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; pointer-events: none; }
+.tg-wires path { fill: none; stroke-width: 2; }
+.tg-wire-exec { stroke: var(--tg-exec); stroke-width: 2.5 !important; opacity: 0.85; }
+.tg-wire-data { stroke: var(--tg-muted); }
+.tg-wire-new { stroke-dasharray: 6 4; }
+.tg-band { position: absolute; display: none; border: 1px solid var(--tg-accent); background: color-mix(in srgb, var(--tg-accent) 15%, transparent); pointer-events: none; }
+.tg-empty { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; color: var(--tg-muted); pointer-events: none; padding: 20px; text-align: center; }
+
+.tg-node { position: absolute; min-width: 120px; background: var(--tg-node-bg); border: 1px solid var(--tg-node-border); border-radius: 6px; box-shadow: 0 2px 8px var(--tg-shadow); user-select: none; }
+.tg-node.tg-selected { outline: 2px solid var(--tg-accent); outline-offset: 1px; }
+.tg-node.tg-dim { opacity: 0.45; }
+.tg-node.tg-has-error { border-color: var(--tg-error); box-shadow: 0 0 0 1px var(--tg-error), 0 2px 8px var(--tg-shadow); }
+.tg-node.tg-has-warning { border-color: var(--tg-warning); }
+.tg-node.tg-pseudo { border-style: dashed; background: color-mix(in srgb, var(--tg-node-bg) 70%, transparent); }
+.tg-node-header { display: flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 5px 5px 0 0; background: color-mix(in srgb, var(--tg-cat, #5c6170) 70%, var(--tg-node-bg)); color: #fff; font-weight: 600; cursor: grab; white-space: nowrap; }
+.tg-light .tg-node-header, body.vscode-light .tg-node-header { background: color-mix(in srgb, var(--tg-cat, #5c6170) 85%, #fff); }
+.tg-node-title { overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+.tg-badge { margin-left: auto; background: var(--tg-error); color: #fff; border-radius: 8px; padding: 0 6px; font-size: 0.85em; }
+.tg-has-warning .tg-badge { background: var(--tg-warning); }
+.tg-node-comment { padding: 2px 8px; color: var(--tg-muted); font-style: italic; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-bottom: 1px solid var(--tg-node-border); }
+.tg-node-fields { display: flex; flex-direction: column; gap: 2px; padding: 3px 8px 2px; }
+.tg-field-row { display: flex; align-items: center; gap: 5px; min-height: 20px; }
+.tg-field-row.tg-port { padding: 0; margin-right: -14px; cursor: default; }
+.tg-field-row.tg-port > .tg-dot { cursor: crosshair; }
+.tg-node-fields .tg-input, .tg-node-fields .tg-select { padding: 0 4px; height: 20px; font-size: 0.95em; }
+.tg-node-fields .tg-check { font-size: 0.9em; color: var(--tg-muted); }
+.tg-node-input { width: 130px; }
+.tg-node-fields textarea.tg-node-input { width: 220px; }
+.tg-node-unknown { color: var(--tg-warning); max-width: 220px; }
+.tg-pseudo-name { color: var(--tg-muted); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tg-node-ports { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0 4px; }
+.tg-col { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tg-col-out { align-items: flex-end; }
+.tg-port { display: flex; align-items: center; gap: 5px; padding: 0 8px; min-height: 18px; cursor: crosshair; white-space: nowrap; color: var(--tg-muted); font-size: 0.92em; }
+.tg-port.tg-in { margin-left: -6px; }
+.tg-port.tg-out { margin-right: -6px; }
+.tg-port:hover, .tg-port.tg-target { color: var(--tg-fg); }
+.tg-port.tg-target .tg-dot { box-shadow: 0 0 0 3px var(--tg-accent); }
+.tg-dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--tg-node-bg); background: var(--tg-muted); box-shadow: 0 0 0 1px var(--tg-muted); flex: none; opacity: 0.7; }
+.tg-dot.tg-wired { opacity: 1; }
+.tg-dot-exec { border-radius: 2px; transform: rotate(45deg) scale(0.9); background: var(--tg-exec); box-shadow: 0 0 0 1px var(--tg-exec); opacity: 1; }
+
+.tg-notes { position: absolute; left: 0; top: 0; }
+.tg-note { position: absolute; background: var(--tg-note); border: 1px solid var(--tg-note-border); border-radius: 6px; overflow: hidden; }
+.tg-note.tg-selected { outline: 2px solid var(--tg-accent); }
+.tg-note-bar { height: 14px; cursor: grab; background: var(--tg-note-border); opacity: 0.5; }
+.tg-note-text { padding: 6px 8px; white-space: pre-wrap; color: var(--tg-fg); height: calc(100% - 14px); overflow: hidden; }
+.tg-note-edit { width: 100%; height: calc(100% - 14px); border: none; background: transparent; padding: 6px 8px; resize: none; }
+.tg-note-size { position: absolute; right: 0; bottom: 0; width: 12px; height: 12px; cursor: nwse-resize; background: linear-gradient(135deg, transparent 50%, var(--tg-note-border) 50%); }
+
+/* Fields */
+.tg-input, .tg-select { background: var(--tg-input-bg); color: var(--tg-input-fg); border: 1px solid var(--tg-input-border); border-radius: 3px; padding: 2px 5px; min-width: 0; }
+.tg-input:focus, .tg-select:focus { outline: 1px solid var(--tg-accent); border-color: var(--tg-accent); }
+textarea.tg-input { resize: vertical; width: 100%; }
+.tg-mono { font-family: var(--tg-mono); }
+.tg-check { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; cursor: pointer; }
+
+/* The inspector */
+.tg-inspector-head { padding: 8px 10px; border-bottom: 1px solid var(--tg-border); }
+.tg-inspector-title { font-weight: 600; margin-top: 2px; word-break: break-word; }
+.tg-inspector-id { color: var(--tg-muted); font-size: 0.85em; }
+.tg-kind { font-family: var(--tg-mono); color: var(--tg-muted); font-weight: normal; }
+.tg-link { color: var(--tg-accent); text-decoration: none; cursor: pointer; }
+.tg-link:hover { text-decoration: underline; }
+.tg-row { display: grid; grid-template-columns: 88px 1fr; gap: 6px; padding: 4px 10px; align-items: start; }
+.tg-label { color: var(--tg-muted); padding-top: 3px; overflow: hidden; text-overflow: ellipsis; }
+.tg-value { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.tg-value > .tg-input { width: 100%; }
+.tg-sub { display: flex; flex-direction: column; gap: 3px; }
+.tg-sub.tg-inline { flex-direction: row; flex-wrap: wrap; align-items: center; }
+.tg-sub.tg-inline .tg-input { flex: 1; min-width: 60px; }
+.tg-checks { display: flex; flex-wrap: wrap; gap: 2px 0; }
+.tg-list { display: flex; flex-direction: column; gap: 2px; align-items: stretch; }
+.tg-list > .tg-button { align-self: flex-start; color: var(--tg-accent); padding-left: 0; }
+.tg-list-row { display: flex; align-items: center; gap: 3px; min-width: 0; }
+.tg-list-row > .tg-link, .tg-list-row > .tg-list-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tg-list-row > .tg-input { flex: 1; }
+.tg-count { color: var(--tg-muted); font-size: 0.9em; }
+.tg-actions { display: flex; flex-wrap: wrap; gap: 4px; padding: 10px; border-top: 1px solid var(--tg-border); margin-top: 6px; }
+.tg-actions .tg-button { border-color: var(--tg-border); }
+.tg-diagnostic { margin: 4px 10px; padding: 4px 8px; border-left: 3px solid; }
+.tg-diagnostic.tg-error { border-color: var(--tg-error); }
+.tg-diagnostic.tg-warning { border-color: var(--tg-warning); }
+.tg-json { margin: 0; font-family: var(--tg-mono); font-size: 0.9em; white-space: pre-wrap; color: var(--tg-muted); }
+
+/* The Tide panel */
+.tg-panel { background: var(--tg-panel); display: grid; grid-template-rows: auto 1fr; min-height: 0; overflow: hidden; }
+.tg-problems { max-height: 40%; overflow: auto; }
+.tg-problem { display: flex; gap: 8px; padding: 2px 10px; cursor: pointer; align-items: baseline; }
+.tg-problem:hover { background: var(--tg-hover); }
+.tg-problem-mark { flex: none; }
+.tg-problem.tg-error .tg-problem-mark { color: var(--tg-error); }
+.tg-problem.tg-warning .tg-problem-mark { color: var(--tg-warning); }
+.tg-problem-where { margin-left: auto; color: var(--tg-muted); white-space: nowrap; }
+.tg-tide { margin: 0; padding: 6px 10px; overflow: auto; font-family: var(--tg-mono); font-size: 0.95em; line-height: 1.4; tab-size: 4; border-top: 1px solid var(--tg-border); }
+.tg-tide .tg-mark { background: var(--tg-mark); }
+.tg-tide .tg-wrong { text-decoration: wavy underline var(--tg-error); }
+
+/* Menus, the search, the tooltip */
+.tg-menu, .tg-search { position: fixed; z-index: 10; background: var(--tg-panel); border: 1px solid var(--tg-border); border-radius: 6px; box-shadow: 0 6px 20px var(--tg-shadow); padding: 4px 0; min-width: 180px; max-height: 70vh; overflow: auto; }
+.tg-menu-item { padding: 3px 14px; cursor: pointer; white-space: nowrap; }
+.tg-menu-item:hover { background: var(--tg-select); }
+.tg-menu-item.tg-disabled { opacity: 0.4; cursor: default; }
+.tg-menu-group { padding: 4px 10px 2px; color: var(--tg-muted); font-size: 0.82em; text-transform: uppercase; letter-spacing: 0.04em; }
+.tg-menu-separator { height: 1px; background: var(--tg-border); margin: 4px 0; }
+.tg-search { width: 340px; padding: 6px; display: flex; flex-direction: column; gap: 4px; overflow: hidden; }
+.tg-search-input { width: 100%; }
+.tg-search-status { color: var(--tg-muted); font-size: 0.9em; padding: 0 4px; }
+.tg-search-list { overflow: auto; max-height: 320px; }
+.tg-search-group { padding: 4px 6px 1px; color: var(--tg-muted); font-size: 0.82em; text-transform: uppercase; letter-spacing: 0.04em; }
+.tg-search-item { display: flex; align-items: center; gap: 6px; padding: 2px 6px; border-radius: 3px; cursor: pointer; white-space: nowrap; }
+.tg-search-item.tg-chosen { background: var(--tg-select); }
+.tg-swatch { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.tg-search-title { overflow: hidden; text-overflow: ellipsis; }
+.tg-search-detail { margin-left: auto; color: var(--tg-muted); overflow: hidden; text-overflow: ellipsis; max-width: 45%; font-family: var(--tg-mono); font-size: 0.9em; }
+.tg-search-none { color: var(--tg-muted); padding: 6px; }
+.tg-tooltip { position: fixed; z-index: 20; display: none; max-width: 480px; background: var(--tg-panel); border: 1px solid var(--tg-border); border-radius: 4px; padding: 5px 8px; white-space: pre-wrap; box-shadow: 0 4px 14px var(--tg-shadow); pointer-events: none; font-size: 0.95em; }
