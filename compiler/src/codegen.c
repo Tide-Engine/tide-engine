@@ -2388,7 +2388,7 @@ static void close_list_caches(gen *g)
 
 static void line_directive(gen *g, const loc at)
 {
-    if (g->opts->line_directives) sb_printf(&g->c, "#line %d \"%s\"\n", at.line, g->paths[at.file]);
+    if (g->opts->line_directives) sb_printf(&g->c, "#line %d \"%s\"\n", diag_file_loc(at).line, g->paths[at.file]);
 }
 
 // Points the following lines back at the generated file itself.
@@ -4037,7 +4037,8 @@ static void gen_profile_source(const gen *g, sb *o, const decl *d, const char *k
     } else {
         sb_put(o, ", ");
         gen_c_raw_literal(o, str_from(src->path));
-        sb_printf(o, ", %du, %du},\n", d->at.line, d->at.col);
+        const loc at = diag_file_loc(d->at); // A graph's, where its file has it
+        sb_printf(o, ", %du, %du},\n", at.line, at.col);
     }
 }
 

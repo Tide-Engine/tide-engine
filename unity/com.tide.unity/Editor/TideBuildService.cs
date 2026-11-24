@@ -710,8 +710,9 @@ namespace Tide.Editor
         }
 
         static readonly System.Text.RegularExpressions.Regex located =
-            new System.Text.RegularExpressions.Regex(@"^(?<path>.+?)(:(?<line>\d+):(?<column>\d+))?: (error|warning|note)");
+            new System.Text.RegularExpressions.Regex(@"^(?<path>.+?)(:(?<line>\d+):(?<column>\d+)|:@(?<node>\d+))?: (error|warning|note)");
 
+        // A graph's message names the element it's about, `Assets/Enemy.tidegraph:@17: error: ...` (notes/visual-scripting.md).
         // The asset a message is about, for the Console to select: a .tide file of the game, or a prefab or scene,
         // whose line numbers are of the Tide text tide made of it, which the message then names.
         // `file` (the project's path, null for none), `lineNumber` and `column`: where a double click opens it, the
@@ -758,7 +759,7 @@ namespace Tide.Editor
     // a package's C, headers and libraries. Everything else in Assets is nothing to tide.
     sealed class TideChanges : AssetPostprocessor
     {
-        static readonly string[] gameFiles = { ".tide", ".packages", ".prefab", ".unity" };
+        static readonly string[] gameFiles = { ".tide", ".tidegraph", ".packages", ".prefab", ".unity" };
         static readonly string[] packageFiles =
             { ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hh", ".hxx", ".inl", ".a", ".lib", ".so", ".dll", ".dylib" };
 

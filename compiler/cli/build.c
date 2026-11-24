@@ -299,6 +299,7 @@ static file_list tide_files(const char *folder)
     file_list list = {0};
     char *dir = path_join(folder, "");
     folder_find_own(dir, ".tide", add_file, &list);
+    folder_find_own(dir, ".tidegraph", add_file, &list); // Graphs are Tide source (notes/visual-scripting.md)
     folder_find_own(dir, ".tprefab", add_file, &list);
     if (packages_unity_assets(dir)) {
         int kept = 0;
@@ -4110,6 +4111,7 @@ static void stamp_folder(uint64_t *h, const char *folder)
 {
     char *dir = path_join(folder, "");
     folder_find_own(dir, ".tide", stamp_file, h);
+    folder_find_own(dir, ".tidegraph", stamp_file, h);
     folder_find_own(dir, ".tprefab", stamp_file, h);
     char *packages = path_join(dir, PACKAGES_FILE);
     stamp_file(h, packages);

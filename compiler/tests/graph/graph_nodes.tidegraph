@@ -1,0 +1,90 @@
+{
+  "tidegraph": 1,
+  "nextId": 200,
+  "decls": [
+    {
+      "kind": "singleton",
+      "id": 1,
+      "comment": "What each part of Run worked out",
+      "name": "Results",
+      "members": [
+        {"kind": "field", "id": 2, "type": "int", "name": "counted"},
+        {"kind": "field", "id": 3, "type": "int", "name": "kept"},
+        {"kind": "field", "id": 4, "type": "int", "name": "text"},
+        {"kind": "field", "id": 5, "type": "int", "name": "code"},
+        {"kind": "field", "id": 6, "type": "int", "name": "fanned"},
+        {"kind": "field", "id": 7, "type": "int", "name": "chain"},
+        {"kind": "field", "id": 8, "type": "int", "name": "summed", "default": {"root": 9, "nodes": [{"id": 9, "k": "int", "x": 0, "y": 0, "text": "0"}]}}
+      ]
+    },
+    {"kind": "scene", "id": 10, "name": "Main", "members": []},
+    {
+      "kind": "function",
+      "id": 11,
+      "name": "Twice",
+      "returnType": "int",
+      "params": [{"id": 12, "mode": "read", "type": "int", "name": "x"}],
+      "body": {"entry": 13, "nodes": [
+        {"id": 13, "k": "return", "x": 300, "y": 0, "value": 14},
+        {"id": 14, "k": "binary", "x": 100, "y": 80, "op": "*", "lhs": 15, "rhs": 16},
+        {"id": 15, "k": "name", "x": -100, "y": 80, "name": "x"},
+        {"id": 16, "k": "int", "x": -100, "y": 160, "text": "2"}
+      ]}
+    },
+    {
+      "kind": "function",
+      "id": 17,
+      "name": "Bump",
+      "returnType": "int",
+      "params": [{"id": 18, "mode": "mut", "type": "int", "name": "counter"}],
+      "body": {"entry": 19, "nodes": [
+        {"id": 19, "k": "assign", "x": 0, "y": 0, "op": "+=", "target": 20, "value": 21, "next": 22},
+        {"id": 20, "k": "name", "x": -200, "y": 80, "name": "counter"},
+        {"id": 21, "k": "int", "x": -200, "y": 160, "text": "1"},
+        {"id": 22, "k": "return", "x": 300, "y": 0, "value": 20}
+      ]}
+    },
+    {
+      "kind": "system",
+      "id": 30,
+      "comment": "One of each kind of node a converted file doesn't have",
+      "name": "Run",
+      "params": [{"id": 31, "mode": "mut", "type": "Results", "name": "r"}],
+      "body": {"entry": 40, "nodes": [
+        {"id": 40, "k": "eval", "x": 0, "y": 0, "comment": "A statement whose value is kept: Bump runs once, its value read twice", "value": 41, "next": 43},
+        {"id": 41, "k": "call", "x": -240, "y": 80, "name": "Bump", "args": [42]},
+        {"id": 42, "k": "member", "x": -480, "y": 80, "object": 50, "member": "counted"},
+        {"id": 50, "k": "name", "x": -700, "y": 80, "name": "r"},
+        {"id": 43, "k": "assign", "x": 300, "y": 0, "op": "=", "target": 44, "value": 45, "next": 60},
+        {"id": 44, "k": "member", "x": 100, "y": 80, "object": 50, "member": "kept"},
+        {"id": 45, "k": "binary", "x": 100, "y": 160, "op": "+", "lhs": 40, "rhs": 40},
+        {"id": 60, "k": "assign", "x": 600, "y": 0, "op": "=", "target": 61, "value": 62, "next": 70},
+        {"id": 61, "k": "member", "x": 400, "y": 80, "object": 50, "member": "text"},
+        {"id": 62, "k": "text", "x": 400, "y": 160, "text": "a * b + 1", "inputs": {"a": 63, "b": 64}},
+        {"id": 63, "k": "int", "x": 200, "y": 160, "text": "3"},
+        {"id": 64, "k": "int", "x": 200, "y": 240, "text": "4"},
+        {"id": 70, "k": "code", "x": 900, "y": 0, "text": "r.code = Twice(n);\nr.summed += n;", "inputs": {"n": 71}, "next": 80},
+        {"id": 71, "k": "int", "x": 700, "y": 80, "text": "5"},
+        {"id": 80, "k": "assign", "x": 1200, "y": 0, "comment": "One value wired to two inputs", "op": "=", "target": 81, "value": 82, "next": 90},
+        {"id": 81, "k": "member", "x": 1000, "y": 80, "object": 50, "member": "fanned"},
+        {"id": 82, "k": "binary", "x": 1000, "y": 160, "op": "+", "lhs": 83, "rhs": 83},
+        {"id": 83, "k": "int", "x": 800, "y": 160, "text": "7"},
+        {"id": 90, "k": "if", "x": 1500, "y": 0, "cond": 91, "then": 94, "else": 96},
+        {"id": 91, "k": "binary", "x": 1300, "y": 80, "op": "==", "lhs": 92, "rhs": 93},
+        {"id": 92, "k": "member", "x": 1100, "y": 80, "object": 50, "member": "chain"},
+        {"id": 93, "k": "int", "x": 1100, "y": 160, "text": "0"},
+        {"id": 94, "k": "assign", "x": 1600, "y": 120, "op": "=", "target": 92, "value": 95},
+        {"id": 95, "k": "int", "x": 1400, "y": 200, "text": "1"},
+        {"id": 96, "k": "if", "x": 1600, "y": 300, "cond": 97, "then": 99, "else": 101},
+        {"id": 97, "k": "binary", "x": 1400, "y": 380, "op": "==", "lhs": 92, "rhs": 98},
+        {"id": 98, "k": "int", "x": 1200, "y": 380, "text": "1"},
+        {"id": 99, "k": "assign", "x": 1700, "y": 420, "op": "=", "target": 92, "value": 100},
+        {"id": 100, "k": "int", "x": 1500, "y": 500, "text": "2"},
+        {"id": 101, "k": "assign", "x": 1700, "y": 600, "op": "=", "target": 92, "value": 102},
+        {"id": 102, "k": "int", "x": 1500, "y": 680, "text": "3"},
+        {"id": 110, "k": "int", "x": 0, "y": 900, "comment": "Nothing reads this: left out", "text": "99"},
+        {"id": 111, "k": "return", "x": 300, "y": 900}
+      ]}
+    }
+  ]
+}

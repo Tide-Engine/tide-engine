@@ -95,6 +95,10 @@ typedef struct source {
     size_t len;
     int file;         // Set by diag_add_source
     const char *package; // The package the file is in (its name, which is its namespace); NULL for the game's own
+    // A .tidegraph file's: where each part of `text`, the Tide it stands for, came from (graph.h); NULL for others
+    const struct graph_map *graph;
+    const char *graph_json; // ...and the file's own text, its JSON
+    size_t graph_json_len;
 } source;
 
 typedef enum diag_severity {
@@ -134,6 +138,9 @@ void compile_progress(const char *stage, const char *detail, int completed, int 
 void compile_progress_whole(int total);
 void compile_progress_reach(int done);
 int compile_progress_total(void);
+// Where a place in a source is in its file as the file is: a graph's (graph.h) is the place of the element its
+// Tide came from, in the file's JSON; any other's is the place itself. For what tools and debuggers show.
+loc diag_file_loc(loc at);
 // Registers a source file and sets src->file: locations in it carry that index.
 void diag_add_source(source *src);
 const source *diag_source(int file);

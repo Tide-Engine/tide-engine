@@ -293,7 +293,8 @@ static bool in_folder(const char *path, const char *folder)
 {
     const size_t len = strlen(path);
     return ((len >= 5 && same_path(path + len - 5, ".tide"))
-            || (len >= 8 && same_path(path + len - 8, ".tprefab"))) && under(path, folder);
+            || (len >= 8 && same_path(path + len - 8, ".tprefab"))
+            || (len >= 10 && same_path(path + len - 10, ".tidegraph"))) && under(path, folder);
 }
 
 static int compare_paths(const void *a, const void *b)
@@ -364,6 +365,8 @@ static void add_folder(const lsp_server *s, path_list *list, const char *folder,
     else folder_find(folder, ".tide", add_found, &f);
     if (own) folder_find_own(folder, ".tprefab", add_found, &f);
     else folder_find(folder, ".tprefab", add_found, &f);
+    if (own) folder_find_own(folder, ".tidegraph", add_found, &f);
+    else folder_find(folder, ".tidegraph", add_found, &f);
     for (int k = 0; k < s->doc_count; k++) {
         char *open = uri_to_path(s->docs[k].uri);
         if (own ? in_own_folder(open, folder) : in_folder(open, folder)) add_path_in(list, open, package);
@@ -1007,7 +1010,7 @@ static void register_watchers(lsp_server *s)
     jb_put(&b, "{\"jsonrpc\":\"2.0\",\"id\":\"" WATCH_REQUEST "\",\"method\":\"client/registerCapability\","
                "\"params\":{\"registrations\":[{\"id\":\"tide-files\",\"method\":\"workspace/didChangeWatchedFiles\","
                "\"registerOptions\":{\"watchers\":[{\"globPattern\":\"**/*.tide\"},"
-               "{\"globPattern\":\"**/*.tprefab\"},"
+               "{\"globPattern\":\"**/*.tprefab\"},{\"globPattern\":\"**/*.tidegraph\"},"
                "{\"globPattern\":\"**/build/tools/games.txt\"},{\"globPattern\":\"**/tide.packages\"},"
                "{\"globPattern\":\"**/*.gltf\"},{\"globPattern\":\"**/*.glb\"},{\"globPattern\":\"**/*.[fF][bB][xX]\"},"
                "{\"globPattern\":\"**/.tide/assets/urls/*\"}");
@@ -1677,6 +1680,33 @@ static void document_request(lsp_server *s, const char *method, const json *id, 
         analyze(s, d->uri);
     }
 
+    // A graph (notes/visual-scripting.md): its own requests, whose places are offsets into the Tide it stands for.
+    // Its JSON is no Tide to ask about by its places, so the others answer nothing
+    const bool graph_request = strncmp(method, "tide/graph", 10) == 0;
+    if (graph_request || analysis_is_graph()) {
+        jbuf g = {0};
+        reply_start(&g, id);
+        if (!graph_request || !analysis_is_graph()) {
+            jb_put(&g, strcmp(method, "textDocument/semanticTokens/full") == 0 ? "{\"data\":[]}" : "null");
+        } else if (strcmp(method, "tide/graphText") == 0) {
+            analysis_graph_text(&g);
+        } else if (strcmp(method, "tide/graphTypes") == 0) {
+            analysis_graph_types(&g);
+        } else {
+            int graph_line, graph_character;
+            const int offset = json_int(json_path(params, "offset", NULL), -1);
+            if (!analysis_graph_position(offset, &graph_line, &graph_character)) jb_put(&g, "null");
+            else if (strcmp(method, "tide/graphCompletion") == 0) analysis_completion(graph_line, graph_character, &g);
+            else if (strcmp(method, "tide/graphHover") == 0) analysis_hover(graph_line, graph_character, &g);
+            else if (strcmp(method, "tide/graphSignatureHelp") == 0) analysis_signature_help(graph_line, graph_character, &g);
+            else jb_put(&g, "null");
+        }
+        jb_put(&g, "}");
+        send_buf(s, &g);
+        jb_free(&g);
+        return;
+    }
+
     jbuf b = {0};
     reply_start(&b, id);
     const size_t result_start = b.len;
@@ -1840,6 +1870,7 @@ static bool is_document_request(const char *method)
         "textDocument/codeLens", "textDocument/codeAction", "textDocument/inlayHint", "textDocument/foldingRange",
         "textDocument/semanticTokens/full", "textDocument/typeDefinition", "textDocument/implementation",
         "textDocument/prepareCallHierarchy", "textDocument/rangeFormatting", "textDocument/selectionRange",
+        "tide/graphText", "tide/graphTypes", "tide/graphCompletion", "tide/graphHover", "tide/graphSignatureHelp",
     };
     for (size_t i = 0; i < sizeof methods / sizeof methods[0]; i++) {
         if (strcmp(method, methods[i]) == 0) return true;

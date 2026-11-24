@@ -178,7 +178,7 @@ int tide_publish(const char *folder_arg)
     if (!paths) return 1;
     char *folder = path_absolute(folder_arg);
     bool any = false;
-    for (int i = 0; i < count && !any; i++) any = ends_with(paths[i], ".tide");
+    for (int i = 0; i < count && !any; i++) any = ends_with(paths[i], ".tide") || ends_with(paths[i], ".tidegraph");
     if (!any) {
         fprintf(stderr, "tide: there are no .tide files in %s\n", folder);
         fprintf(stderr, "  = note: a game is every .tide file in its folder; add one, like game.tide\n");

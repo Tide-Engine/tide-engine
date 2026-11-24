@@ -14260,3 +14260,51 @@ TIDE_TEST(lsp_generics)
         "system Run(mut S s) { s.n = Max<int>(1, 2) + (s.n < 3 ? 1 : 0); }\n";
     TIDE_CHECK(has(format_reply(formatted), "\"result\":[]"));
 }
+
+// A graph (notes/visual-scripting.md): read as the Tide it stands for, with its diagnostics on the line of the node
+// they're about and that node's id, and the requests an editor of graphs makes, whose places are offsets into that Tide
+TIDE_TEST(lsp_graphs)
+{
+    static const char graph[] =
+        "{\"tidegraph\": 1, \"nextId\": 30, \"decls\": [\n"
+        "  {\"kind\": \"scene\", \"id\": 1, \"name\": \"Main\", \"members\": []},\n"
+        "  {\"kind\": \"singleton\", \"id\": 2, \"name\": \"Score\", \"members\": [{\"kind\": \"field\", \"id\": 3, \"type\": \"int\", \"name\": \"points\"}]},\n"
+        "  {\"kind\": \"system\", \"id\": 10, \"name\": \"Add\", \"params\": [{\"id\": 11, \"mode\": \"mut\", \"type\": \"Score\", \"name\": \"score\"}],\n"
+        "   \"body\": {\"entry\": 12, \"nodes\": [\n"
+        "    {\"id\": 12, \"k\": \"assign\", \"x\": 0, \"y\": 0, \"op\": \"+=\", \"target\": 13, \"value\": 15},\n"
+        "    {\"id\": 13, \"k\": \"member\", \"x\": 0, \"y\": 0, \"object\": 14, \"member\": \"points\"},\n"
+        "    {\"id\": 14, \"k\": \"name\", \"x\": 0, \"y\": 0, \"name\": \"score\"},\n"
+        "    {\"id\": 15, \"k\": \"call\", \"x\": 0, \"y\": 0, \"name\": \"Bonus\", \"args\": [16]},\n"
+        "    {\"id\": 16, \"k\": \"int\", \"x\": 0, \"y\": 0, \"text\": \"3\"}\n"
+        "  ]}}\n"
+        "]}\n";
+    static const char uri[] = "file:///lsp_graph.tidegraph";
+    start();
+    open_uri(uri, graph);
+    // The unknown call's error is on node 15's line of the file (line 8, 0-based), with its id
+    TIDE_CHECK(sent_count >= 1 && has(sent[0], "Bonus") && has(sent[0], "\"data\":{\"node\":15}"));
+    TIDE_CHECK(has(sent[0], "\"range\":{\"start\":{\"line\":8,"));
+
+    const char *text = request_at(uri, "tide/graphText", 0, 0, "");
+    TIDE_CHECK(has(text, "system Add(mut Score score)") && has(text, "score.points += Bonus(3);"));
+    TIDE_CHECK(has(text, "\"spans\":[") && has(text, ",15]"));
+    const json *reply = json_parse(text, strlen(text));
+    const char *written = json_str(json_path(reply, "result", "text", NULL));
+    TIDE_CHECK(written != NULL);
+    const char *points = written ? strstr(written, "score.points") : NULL;
+    TIDE_CHECK(points != NULL);
+
+    TIDE_CHECK(has(request_at(uri, "tide/graphTypes", 0, 0, ""), "\"13\":\"int\""));
+
+    if (points) {
+        char extra[64];
+        snprintf(extra, sizeof extra, "\"offset\":%d", (int)(points - written) + 6); // Just after `score.`
+        const char *completion = request_at(uri, "tide/graphCompletion", 0, 0, extra);
+        TIDE_CHECK(offers(completion, "points"));
+        TIDE_CHECK(has(request_at(uri, "tide/graphHover", 0, 0, extra), "points"));
+    }
+    // The file's JSON is no Tide to ask about by its places
+    TIDE_CHECK(has(request_at(uri, "textDocument/hover", 7, 40, ""), "\"result\":null"));
+    clear_sent();
+    lsp_free(&server);
+}

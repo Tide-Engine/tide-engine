@@ -1,0 +1,21 @@
+{
+  "tidegraph": 1,
+  "nextId": 30,
+  "decls": [
+    {"kind": "scene", "id": 1, "name": "Main", "members": []},
+    {"kind": "singleton", "id": 2, "name": "Score", "members": [{"kind": "field", "id": 3, "type": "int", "name": "points"}]},
+    {
+      "kind": "system",
+      "id": 10,
+      "name": "Add",
+      "params": [{"id": 11, "mode": "mut", "type": "Score", "name": "score"}],
+      "body": {"entry": 12, "nodes": [
+        {"id": 12, "k": "assign", "x": 0, "y": 0, "op": "+=", "target": 13, "value": 15},
+        {"id": 13, "k": "member", "x": -200, "y": 80, "object": 14, "member": "points"},
+        {"id": 14, "k": "name", "x": -400, "y": 80, "name": "score"},
+        {"id": 15, "k": "call", "x": -200, "y": 160, "name": "Bonus", "args": [16]},
+        {"id": 16, "k": "int", "x": -400, "y": 160, "text": "3"}
+      ]}
+    }
+  ]
+}

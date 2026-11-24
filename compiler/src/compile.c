@@ -12,6 +12,7 @@
 #include "build_code.h"
 #include "lexer.h"
 #include "indexing.h"
+#include "graph.h"
 
 static char *read_file(const char *path, size_t *len)
 {
@@ -150,9 +151,11 @@ static bool compile_inputs_impl(const compile_input *inputs, const int count, co
         }
         src->text = text;
         diag_add_source(src);
-        web |= web_prelude_wanted(text, src->len);
-        stored |= storage_prelude_wanted(text, src->len);
-        texts[i] = text;
+        // A graph is read as the Tide it stands for (notes/visual-scripting.md)
+        if (graph_is_path(src->path) && !graph_lower(src)) return false;
+        web |= web_prelude_wanted(src->text, src->len);
+        stored |= storage_prelude_wanted(src->text, src->len);
+        texts[i] = src->text;
         lens[i] = src->len;
 
         token *toks = lex(src);

@@ -17,6 +17,7 @@
 #include "sys.h"
 #include "telemetry.h"
 #include "toolchain.h"
+#include "graph.h"
 #include "upgrade.h"
 #include "versions.h"
 
@@ -35,6 +36,72 @@ static char *install_root(void)
     char *root = path_dir(bin);
     free(bin);
     return root;
+}
+
+// `tide graph <file.tide>... [--replace]`, `tide graph <file.tide> -o <file.tidegraph>` and
+// `tide graph --text <file.tidegraph>...`: .tide files made graphs, and graphs' Tide (notes/visual-scripting.md)
+static int graph_command(const int argc, char **argv)
+{
+    bool text = false, replace = false;
+    const char *out = NULL;
+    int files = 0;
+    for (int i = 2; i < argc; i++) {
+        if (strcmp(argv[i], "--text") == 0) text = true;
+        else if (strcmp(argv[i], "--replace") == 0) replace = true;
+        else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) out = argv[++i];
+        else if (argv[i][0] == '-') {
+            fprintf(stderr, "tide: graph doesn't take '%s'; see `tide help graph`\n", argv[i]);
+            return 2;
+        } else files++;
+    }
+    if (!files || (out && (files != 1 || text || replace))) {
+        fprintf(stderr, "tide: graph takes .tide files to make graphs of (or one, with -o and where to write it), or "
+                        "--text and .tidegraph files to print as Tide; see `tide help graph`\n");
+        return 2;
+    }
+    for (int i = 2; i < argc; i++) {
+        if (argv[i][0] == '-') {
+            if (strcmp(argv[i], "-o") == 0) i++;
+            continue;
+        }
+        const char *path = argv[i];
+        diag_reset();
+        sb result = {0};
+        if (text) {
+            if (!graph_is_path(path)) {
+                fprintf(stderr, "tide: '%s' isn't a graph: --text prints a .tidegraph file as Tide\n", path);
+                return 2;
+            }
+            if (!graph_text_of(path, &result)) return 1;
+            if (result.data) fputs(result.data, stdout);
+            continue;
+        }
+        const size_t n = strlen(path);
+        if (n < 5 || strcmp(path + n - 5, ".tide") != 0) {
+            fprintf(stderr, "tide: '%s' isn't a .tide file; graph makes a .tidegraph of one\n", path);
+            return 2;
+        }
+        const char *why = NULL;
+        if (!graph_from_tide(path, &result, &why)) {
+            fprintf(stderr, "tide: %s can't be made a graph: %s\n", path, why ? why : "see above");
+            return 1;
+        }
+        sb target = {0};
+        if (out) sb_put(&target, out);
+        else sb_printf(&target, "%.*s.tidegraph", (int)(n - 5), path);
+        FILE *f = fopen(target.data, "wb");
+        if (!f || fwrite(result.data, 1, result.len, f) != result.len || fclose(f) != 0) {
+            fprintf(stderr, "tide: can't write %s; check the folder exists and can be written\n", target.data);
+            return 1;
+        }
+        if (replace && remove(path) != 0) {
+            fprintf(stderr, "tide: wrote %s, and can't remove %s: remove it, or the game has both\n", target.data, path);
+            return 1;
+        }
+        if (replace) printf("tide: %s is now %s\n", path, target.data);
+        else printf("tide: wrote %s; the game now has both it and %s, so remove one\n", target.data, path);
+    }
+    return 0;
 }
 
 static int version(const char *root)
@@ -211,6 +278,8 @@ static int command_main(const int argc, char **argv)
         if (selected >= 0) return selected;
         return command[0] == 'f' ? tide_fetch(folder) : tide_publish(folder);
     }
+
+    if (strcmp(command, "graph") == 0) return graph_command(argc, argv);
 
     if (strcmp(command, "upgrade") == 0) {
         const char *channel = NULL;

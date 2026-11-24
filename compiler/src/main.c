@@ -5,6 +5,7 @@
 #include "asset_sizes.h"
 #include "compile.h"
 #include "lexer.h"
+#include "graph.h"
 
 static void usage(void)
 {
@@ -227,6 +228,84 @@ int main(const int argc, char **argv)
     bool schedule = false;
     bool pack_c = false;
     const char *depfile = NULL;
+
+    // `tidec --graph-text <file.tidegraph>...`: the Tide each graph stands for (notes/visual-scripting.md)
+    if (argc >= 2 && strcmp(argv[1], "--graph-text") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "tidec: --graph-text takes the .tidegraph files to print as Tide\n");
+            return 2;
+        }
+        diag_reset();
+        for (int i = 2; i < argc; i++) {
+            sb text = {0};
+            if (!graph_text_of(argv[i], &text)) return 1;
+            if (text.data) fputs(text.data, stdout);
+        }
+        return 0;
+    }
+
+    // `tidec --graph-roundtrip [-v] <file.tide>... | @<list>`: the test of graphs, each file made a graph and read back
+    if (argc >= 2 && strcmp(argv[1], "--graph-roundtrip") == 0) {
+        bool verbose = false;
+        int failed = 0, files = 0, skipped = 0;
+        for (int i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "-v") == 0) {
+                verbose = true;
+                continue;
+            }
+            if (argv[i][0] != '@') {
+                const int result = graph_roundtrip(argv[i], verbose);
+                failed += result == 1;
+                skipped += result == 2;
+                files++;
+                continue;
+            }
+            FILE *list = fopen(argv[i] + 1, "rb");
+            if (!list) {
+                fprintf(stderr, "tidec: can't read the list '%s'\n", argv[i] + 1);
+                return 2;
+            }
+            char line[4096];
+            while (fgets(line, sizeof line, list)) {
+                size_t n = strlen(line);
+                while (n && (line[n - 1] == '\n' || line[n - 1] == '\r' || line[n - 1] == ' ')) line[--n] = '\0';
+                if (!n) continue;
+                const int result = graph_roundtrip(line, verbose);
+                failed += result == 1;
+                skipped += result == 2;
+                files++;
+            }
+            fclose(list);
+        }
+        fprintf(stderr, "tidec: %d of %d files are the same as graphs (%d that don't parse left out)\n", files - failed - skipped,
+                files - skipped, skipped);
+        return failed ? 1 : 0;
+    }
+
+    // `tidec --to-graph <file.tide> [-o <file.tidegraph>]`: the file as a graph, printed or written
+    if (argc >= 2 && strcmp(argv[1], "--to-graph") == 0) {
+        if (argc != 3 && !(argc == 5 && strcmp(argv[3], "-o") == 0)) {
+            fprintf(stderr, "tidec: --to-graph takes one .tide file, and '-o <file.tidegraph>' to write it there\n");
+            return 2;
+        }
+        diag_reset();
+        sb json = {0};
+        const char *why = NULL;
+        if (!graph_from_tide(argv[2], &json, &why)) {
+            if (why) fprintf(stderr, "tidec: '%s' can't be made a graph: %s\n", argv[2], why);
+            return 1;
+        }
+        if (argc == 3) {
+            if (json.data) fputs(json.data, stdout);
+            return 0;
+        }
+        FILE *f = fopen(argv[4], "wb");
+        if (!f || fwrite(json.data, 1, json.len, f) != json.len || fclose(f) != 0) {
+            fprintf(stderr, "tidec: can't write '%s'; check the folder exists and can be written\n", argv[4]);
+            return 1;
+        }
+        return 0;
+    }
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {

@@ -14,6 +14,7 @@
 #include "csharp.h"
 #include "unity_names.h"
 #include "folders.h"
+#include "graph.h"
 #include "lexer.h"
 #include "model_metadata.h"
 #include "purity.h"
@@ -99,6 +100,10 @@ typedef struct afile {
     int lex_errors; // Characters the lexer skipped
     VEC(const char *) lines; // Where each line starts
     unsigned char *inactive; // Each line, from 1: LINE_DIRECTIVE, LINE_LEFT_OUT, or 0 for code
+    // A graph's (notes/visual-scripting.md): src.text is the Tide it stands for, and `lines` that text's; the file
+    // as the editor has it is its JSON, whose lines are these, for the places of its diagnostics
+    bool graph;
+    VEC(const char *) json_lines;
 } afile;
 
 // Lines no code is read from (see lex_all_spans).
@@ -1842,9 +1847,24 @@ void analysis_run(const analysis_file *given, const int given_count)
         afile *f = &A.files[i];
         char *copy = arena_alloc(files[i].len + 1);
         memcpy(copy, files[i].text, files[i].len);
-        f->src = (source){files[i].path, copy, files[i].len, 0, files[i].package};
+        f->src = (source){.path = files[i].path, .text = copy, .len = files[i].len, .package = files[i].package};
         f->uri = files[i].uri;
         diag_add_source(&f->src);
+        // A graph is read as the Tide it stands for; one whose JSON doesn't read, as no code
+        if (graph_is_path(files[i].path)) {
+            f->graph = true;
+            for (const char *q = copy, *start = copy; q <= copy + files[i].len; q++) {
+                if (q == copy + files[i].len || *q == '\n') {
+                    vec_push(f->json_lines, start);
+                    start = q + 1;
+                }
+            }
+            if (!graph_lower(&f->src)) {
+                f->src.text = "";
+                f->src.len = 0;
+            }
+            copy = (char *)f->src.text;
+        }
 
         const char *p = copy;
         if (files[i].len >= 3 && memcmp(p, "\xEF\xBB\xBF", 3) == 0) p += 3; // The lexer counts columns after it.
@@ -1869,6 +1889,7 @@ void analysis_run(const analysis_file *given, const int given_count)
         // A .tweaks file is the game's too, but not its code: tweaks_read reads it as the checker begins
         const size_t path_len = strlen(files[i].path);
         if (path_len >= 7 && strcmp(files[i].path + path_len - 7, ".tweaks") == 0) vec_push(A.prog->given_tweaks, &f->src);
+        else if (f->graph && !f->src.graph->lowered) continue; // Said what's wrong with its JSON
         else parse_file(A.prog, &f->src, f->toks, true);
     }
     A.syntax_errors = diag_error_count();
@@ -1971,11 +1992,28 @@ static bool unused_access(const diagnostic *d)
     return false;
 }
 
+// A graph's diagnostic: on the line of the element it's about, in the file's JSON, with that element's id
+static void write_graph_place(jbuf *out, const afile *f, const loc at, const bool with_id)
+{
+    const graph_map *map = f->src.graph;
+    const int id = !map ? 0 : map->lowered ? graph_id_at(map, at) : graph_id_at_json(map, at);
+    const loc json = map && map->lowered ? graph_json_at(map, id) : at;
+    const int line = json.line > 0 && json.line <= f->json_lines.count ? json.line - 1 : 0;
+    const char *start = f->json_lines.count ? f->json_lines.items[line] : "";
+    int len = 0;
+    while (start[len] && start[len] != '\n' && start[len] != '\r') len++;
+    const int col = json.col > 0 && json.col - 1 <= len ? json.col - 1 : 0;
+    jb_printf(out, "{\"start\":{\"line\":%d,\"character\":%d},\"end\":{\"line\":%d,\"character\":%d}}", line, col, line,
+              len > col ? len : col + 1);
+    if (id && with_id) jb_printf(out, ",\"data\":{\"node\":%d}", id);
+}
+
 static void write_diagnostic(jbuf *out, const diagnostic *d)
 {
     const loc at = d->at.line > 0 ? d->at : (loc){1, 1, d->at.file};
     jb_put(out, "{\"range\":");
-    write_token_range(out, at);
+    if (at.file >= 0 && at.file < A.file_count && A.files[at.file].graph) write_graph_place(out, &A.files[at.file], at, true);
+    else write_token_range(out, at);
     jb_printf(out, ",\"severity\":%d,\"source\":\"tidec\",\"message\":",
               d->severity == DIAG_ERROR ? 1 : d->severity == DIAG_INFO ? 3 : 2);
     jb_string(out, d->message.data ? d->message.data : "");
@@ -1987,7 +2025,8 @@ static void write_diagnostic(jbuf *out, const diagnostic *d)
             jb_put(out, i ? ",{\"location\":{\"uri\":" : "{\"location\":{\"uri\":");
             jb_string(out, A.files[note->at.file].uri);
             jb_put(out, ",\"range\":");
-            write_token_range(out, note->at);
+            if (A.files[note->at.file].graph) write_graph_place(out, &A.files[note->at.file], note->at, false);
+            else write_token_range(out, note->at);
             jb_put(out, "},\"message\":");
             jb_string(out, note->message);
             jb_put(out, "}");
@@ -12289,7 +12328,7 @@ static const char *check_new_name(const occurrence *target, const str name)
         if (!isalnum((unsigned char)name.ptr[i]) && name.ptr[i] != '_') return "Names use letters, digits and '_' only.";
     }
     // The lexer's own keywords: it reads them as something other than a name.
-    const source text = {"", name.ptr, (size_t)name.len, 0, NULL};
+    const source text = {.path = "", .text = name.ptr, .len = (size_t)name.len};
     const token *word = lex_all(&text);
     if (!word || word[0].kind != T_IDENT) return "That's a keyword.";
     const bool variable = target->kind == OCC_PARAM || target->kind == OCC_LOCAL;
@@ -15238,4 +15277,126 @@ static void complete_asset_path(completion *c, const int tok, const loc at)
         asset_item(c, name, KIND_FILE, start, at, name, NULL, '3');
     }
     free(base);
+}
+
+// ---------------------------------------------------------------------------
+// Graphs (notes/visual-scripting.md): what an editor of a .tidegraph asks about the Tide it stands for
+
+bool analysis_is_graph(void)
+{
+    return A.doc >= 0 && A.doc < A.file_count && DOC->graph && DOC->src.graph && DOC->src.graph->lowered;
+}
+
+void analysis_graph_text(jbuf *out)
+{
+    jb_put(out, "{\"text\":");
+    jb_string_n(out, DOC->src.text, DOC->src.len);
+    jb_put(out, ",\"spans\":[");
+    const graph_map *map = DOC->src.graph;
+    for (int i = 0; map && i < map->spans.count; i++) {
+        const graph_span *s = &map->spans.items[i];
+        jb_printf(out, "%s[%d,%d,%d]", i ? "," : "", s->start, s->end, s->id);
+    }
+    jb_put(out, "]}");
+}
+
+bool analysis_graph_position(const int offset, int *line, int *character)
+{
+    if (offset < 0 || (size_t)offset > DOC->src.len) return false;
+    const char *at = DOC->src.text + offset;
+    int l = 0;
+    while (l + 1 < DOC->lines.count && DOC->lines.items[l + 1] <= at) l++;
+    int units = 0;
+    for (const char *p = DOC->lines.items[l]; p < at; p++) {
+        const unsigned char c = (unsigned char)*p;
+        if ((c & 0xC0) == 0x80) continue;
+        units += c >= 0xF0 ? 2 : 1;
+    }
+    *line = l;
+    *character = units;
+    return true;
+}
+
+// Each node's type, the outermost expression of each first: what an editor colours its wires and ports by
+typedef struct graph_types {
+    const graph_map *map;
+    int file;
+    VEC(int) seen;
+    jbuf *out;
+    int written;
+} graph_types;
+
+static void types_stmt(graph_types *t, const stmt *s);
+
+static void types_expr(graph_types *t, const expr *e)
+{
+    if (!e) return;
+    if (e->at.file == t->file && e->at.line > 0 && e->type.kind != TY_ERROR) {
+        const int id = graph_id_at(t->map, e->at);
+        bool seen = false;
+        for (int i = 0; i < t->seen.count && !seen; i++) seen = t->seen.items[i] == id;
+        if (id && !seen) {
+            vec_push(t->seen, id);
+            jb_printf(t->out, "%s\"%d\":", t->written++ ? "," : "", id);
+            jb_string(t->out, type_name(e->type));
+        }
+    }
+    types_expr(t, e->object);
+    types_expr(t, e->lhs);
+    types_expr(t, e->rhs);
+    types_expr(t, e->cond);
+    types_expr(t, e->lambda_body);
+    for (int i = 0; i < e->args.count; i++) types_expr(t, e->args.items[i]);
+    for (int i = 0; i < e->inits.count; i++) types_expr(t, e->inits.items[i].value);
+    types_stmt(t, e->block);
+}
+
+static void types_stmt(graph_types *t, const stmt *s)
+{
+    if (!s) return;
+    types_expr(t, s->value);
+    types_expr(t, s->target);
+    types_expr(t, s->cond);
+    types_expr(t, s->by);
+    types_expr(t, s->offset);
+    for (int i = 0; i < s->stmts.count; i++) types_stmt(t, s->stmts.items[i]);
+    for (int i = 0; i < s->cases.count; i++) {
+        for (int k = 0; k < s->cases.items[i].labels.count; k++) types_expr(t, s->cases.items[i].labels.items[k]);
+        for (int k = 0; k < s->cases.items[i].body.count; k++) types_stmt(t, s->cases.items[i].body.items[k]);
+    }
+    types_stmt(t, s->init);
+    types_stmt(t, s->step);
+    types_stmt(t, s->then_stmt);
+    types_stmt(t, s->else_stmt);
+}
+
+static void types_decl(graph_types *t, const decl *d)
+{
+    if (!d || d->kind == DECL_GENERIC || d->kind == DECL_GENERIC_STRUCT) return; // Their types are their instances'
+    types_stmt(t, d->body);
+    types_stmt(t, d->sanitize);
+    types_stmt(t, d->predict);
+    types_expr(t, d->value);
+    for (int i = 0; i < d->fields.count; i++) types_expr(t, d->fields.items[i].default_value);
+    for (int i = 0; i < d->params.count; i++) types_expr(t, d->params.items[i].default_value);
+    for (int i = 0; i < d->members.count; i++) types_expr(t, d->members.items[i].value);
+    for (int i = 0; i < d->methods.count; i++) types_decl(t, d->methods.items[i]);
+    if (d->written_payload) {
+        for (int i = 0; i < d->written_payload->fields.count; i++) types_expr(t, d->written_payload->fields.items[i].default_value);
+    }
+}
+
+void analysis_graph_types(jbuf *out)
+{
+    graph_types t = {DOC->src.graph, A.doc, {0}, out, 0};
+    jb_put(out, "{");
+    for (int i = 0; A.prog && i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        if (d->at.file == A.doc) types_decl(&t, d);
+    }
+    for (int i = 0; A.prog && i < A.prog->settings.count; i++) {
+        const decl *d = A.prog->settings.items[i];
+        if (d->at.file == A.doc) types_decl(&t, d);
+    }
+    jb_put(out, "}");
 }

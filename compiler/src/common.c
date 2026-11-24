@@ -4,6 +4,7 @@
 
 #include "common.h"
 #include "build_report.h"
+#include "graph.h"
 
 #include <stdatomic.h>
 #include <ctype.h>
@@ -373,6 +374,14 @@ void diag_set_suggestion_sink(const diag_suggestion_sink new_sink, void *user)
     suggestion_user = user;
 }
 
+loc diag_file_loc(const loc at)
+{
+    const source *src = at.line > 0 ? diag_source(at.file) : NULL;
+    if (!src || !src->graph || !src->graph->lowered) return at;
+    const loc json = graph_json_at(src->graph, graph_id_at(src->graph, at));
+    return json.line ? (loc){json.line, json.col, at.file} : (loc){1, 1, at.file};
+}
+
 static void to_sink(const diag_severity severity, const loc at, const char *message)
 {
     sink(sink_user, severity, at, message);
@@ -472,7 +481,11 @@ static void report(const loc at, const char *kind, const char *message)
 {
     const source *src = diag_source(at.file);
     const char *color = kind_color(kind);
-    if (src) fprintf(stderr, "%s%s:%d:%d:%s ", paint(BOLD), shown_path(src->path), at.line, at.col, paint(PLAIN));
+    // A graph's: the element it's about, by its id (notes/visual-scripting.md, Diagnostics)
+    const int element = src && src->graph && at.line > 0
+                            ? (src->graph->lowered ? graph_id_at(src->graph, at) : graph_id_at_json(src->graph, at)) : 0;
+    if (src && element) fprintf(stderr, "%s%s:@%d:%s ", paint(BOLD), shown_path(src->path), element, paint(PLAIN));
+    else if (src) fprintf(stderr, "%s%s:%d:%d:%s ", paint(BOLD), shown_path(src->path), at.line, at.col, paint(PLAIN));
     else fputs("tidec: ", stderr);
     fprintf(stderr, "%s%s:%s %s%s%s\n", paint(color), kind, paint(PLAIN), paint(BOLD), message, paint(PLAIN));
     if (src && at.line > 0) print_excerpt(src, at, color);

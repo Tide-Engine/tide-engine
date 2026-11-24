@@ -9,7 +9,7 @@ enum {
     LOGOUT = 1u << 4, SCHEDULE = 1u << 5, SHADERS = 1u << 6, ADD = 1u << 7,
     UPDATE = 1u << 8, EJECT = 1u << 9, FETCH = 1u << 10, PUBLISH = 1u << 11,
     EDITORS = 1u << 12, UPGRADE = 1u << 14, VERSION = 1u << 15,
-    HELP = 1u << 16, CC = 1u << 17, IDE = 1u << 18, UNITY = 1u << 19, TELEMETRY = 1u << 20, PIN = 1u << 21,
+    HELP = 1u << 16, CC = 1u << 17, IDE = 1u << 18, UNITY = 1u << 19, TELEMETRY = 1u << 20, PIN = 1u << 21, GRAPH = 1u << 22,
     COMPILE = RUN | BUILD | SCHEDULE | SHADERS | UNITY,
     FOLDERS = COMPILE | DEPLOY | FETCH | PUBLISH
 };
@@ -31,7 +31,7 @@ static const command_help commands[] = {
      "          tide run --frames 300 --capture menu.png", RUN},
     {"build", "build [folder] [options]", "Build a game for distribution",
      "Builds into <folder>/build by default; -o selects the output path.\n"
-     "A game includes .tide and .tprefab files, its C/C++ and libraries, and\n"
+     "A game includes .tide, .tidegraph and .tprefab files, its C/C++ and libraries, and\n"
      "the packages listed in tide.packages. Work files are cached in .tide.\n\n"
      "Example: tide build --distribution --web", BUILD},
     {"unity", "unity [folder] -o <path> [options]", "Build a game for Unity's Tide package",
@@ -93,6 +93,15 @@ static const command_help commands[] = {
      "          tide pin nightly\n"
      "          tide pin stable\n"
      "          tide pin 0.5.0-nightly.12", PIN},
+    {"graph", "graph <file.tide>... [--replace] | --text <file.tidegraph>...", "Turn Tide files into graphs, and back",
+     "Writes each .tide file as a graph, <file>.tidegraph beside it, which\n"
+     "visual scripting edits (Unity's graph editor). A graph is Tide source:\n"
+     "a game builds its .tidegraph files with its .tide files, and each uses\n"
+     "what the other declares. --replace removes the .tide file once its graph\n"
+     "is written; without it the game has both, so remove one. -o <path>\n"
+     "writes one file's graph there. --text prints the Tide a graph stands for.\n\n"
+     "Examples: tide graph enemy.tide --replace\n"
+     "          tide graph --text enemy.tidegraph", GRAPH},
     {"fetch", "fetch [folder]", "Download missing git packages",
      "Downloads the game's missing git packages at their pinned commits.\n"
      "Builds nothing and does not move the pins; use tide update for that.", FETCH},

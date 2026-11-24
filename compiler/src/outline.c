@@ -196,7 +196,7 @@ static void put_fields(sb *out, lines_of *l, const decl *d)
             put_json_str(out, f->name);
             sb_put(out, ", \"type\": ");
             put_json_c(out, type_name(f->type));
-            sb_printf(out, ", \"line\": %d", f->at.line);
+            sb_printf(out, ", \"line\": %d", diag_file_loc(f->at).line);
             if (part || f->is_local) sb_put(out, ", \"local\": true");
             if (f->native) sb_put(out, ", \"native\": true"); // A C library's state: nothing a game writes
             // A text field's default, as written between its quotes, which the schema's default bytes don't hold
@@ -311,7 +311,7 @@ void print_outline(const program *prog, sb *out)
         put_name(out, d);
         sb_put(out, ", \"file\": ");
         put_json_c(out, d->unit->src->path);
-        sb_printf(out, ", \"line\": %d, \"column\": %d", d->at.line, d->at.col);
+        sb_printf(out, ", \"line\": %d, \"column\": %d", diag_file_loc(d->at).line, diag_file_loc(d->at).col);
         if (d->is_local) sb_put(out, ", \"local\": true");
         if (d->is_worker) sb_put(out, ", \"worker\": true");
         if (d->is_async) sb_put(out, ", \"async\": true");
@@ -328,7 +328,7 @@ void print_outline(const program *prog, sb *out)
         case DECL_INPUT:
             put_fields(out, &lines, d);
             if (d->preparation) {
-                sb_printf(out, ", \"preparation\": {\"line\": %d", d->preparation->at.line);
+                sb_printf(out, ", \"preparation\": {\"line\": %d", diag_file_loc(d->preparation->at).line);
                 put_access(out, d->preparation);
                 sb_put(out, "}");
             }

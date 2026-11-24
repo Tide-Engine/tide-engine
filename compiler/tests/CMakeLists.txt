@@ -1395,3 +1395,38 @@ tide_e2e_test(managed_store_shards) # ...and a sharded world's shard: its start,
 # The header alone: none of the platform layer it's beside, as a managed reactor has none
 target_include_directories(tidec_e2e_managed_store PRIVATE "${PROJECT_SOURCE_DIR}/platform/include")
 target_include_directories(tidec_e2e_managed_store_shards PRIVATE "${PROJECT_SOURCE_DIR}/platform/include")
+
+# Visual scripting (notes/visual-scripting.md). Every .tide file of the repository made a graph and read back: the
+# same syntax tree
+add_test(NAME tidec_graph_roundtrip
+    COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DROOT=${PROJECT_SOURCE_DIR}"
+        "-DLIST=${CMAKE_CURRENT_BINARY_DIR}/graph_roundtrip.txt" -P "${CMAKE_CURRENT_SOURCE_DIR}/graph_roundtrip.cmake")
+# A graph's errors name its nodes: a call of what nothing declares, at the call's node
+add_test(NAME tidec_graph_errors
+    COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DGRAPH=${CMAKE_CURRENT_SOURCE_DIR}/graph/graph_errors.tidegraph"
+        "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/graph-errors" "-DEXPECT=graph_errors[.]tidegraph:@15: error: [^:]*Bonus"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/graph/graph_errors.cmake")
+# A game written as a graph, with what converted files don't have
+tide_add_game(tidec_e2e_graph_nodes SOURCES graph/graph_nodes.tidegraph NAME game
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/graph/graph_nodes_test.c")
+target_include_directories(tidec_e2e_graph_nodes PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tidec_e2e_graph_nodes COMMAND tidec_e2e_graph_nodes)
+# End-to-end tests built from their .tide files made graphs, beside them in the build tree, and run with the same
+# tests: the game a graph is behaves as its Tide does (crossplatform's pinned bits too)
+function(tide_e2e_graph_test name)
+    set(graph "${CMAKE_CURRENT_BINARY_DIR}/graph/${name}.tidegraph")
+    add_custom_command(OUTPUT "${graph}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/graph"
+        COMMAND "${TIDEC_PATH}" --to-graph "${CMAKE_CURRENT_SOURCE_DIR}/e2e/${name}.tide" -o "${graph}"
+        DEPENDS ${TIDEC_DEPENDS} "${CMAKE_CURRENT_SOURCE_DIR}/e2e/${name}.tide" VERBATIM)
+    set(target tidec_e2e_graph_${name})
+    tide_add_game(${target} SOURCES "${graph}" NAME game
+        HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/${name}_test.c")
+    target_include_directories(${target} PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    add_test(NAME ${target} COMMAND ${target})
+endfunction()
+foreach(name IN ITEMS conditional structs methods overloads operators events commands enums switch_values loops strings
+        lists maps generics generic_structs tasks actions sort defaults properties queries
+        local_events increments crossplatform random world_functions)
+    tide_e2e_graph_test(${name})
+endforeach()

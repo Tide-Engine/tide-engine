@@ -107,3 +107,17 @@ typedef struct asset_rename {
 // games' edits, including shared files with different active #if branches.
 typedef void (*asset_rename_edit_fn)(void *user, const char *uri, const char *path, const jbuf *edit);
 void analysis_rename_files(const asset_rename *renames, int count, asset_rename_edit_fn edit, void *user);
+
+// ---------------------------------------------------------------------------
+// Graphs (notes/visual-scripting.md): the selected document is a .tidegraph, read as the Tide it stands for, and
+// these say what an editor of it asks. Places in that Tide are byte offsets into its text.
+
+// Whether the selected document is a graph whose JSON read.
+bool analysis_is_graph(void);
+// Its Tide and where each part came from: {"text": ..., "spans": [[start, end, id], ...]}, an inner span after
+// the one it's in.
+void analysis_graph_text(jbuf *out);
+// A byte offset in that text as the LSP position the other requests take; false past its end.
+bool analysis_graph_position(int offset, int *line, int *character);
+// Each node's type, by id: {"12": "float3", ...}.
+void analysis_graph_types(jbuf *out);
