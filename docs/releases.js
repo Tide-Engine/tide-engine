@@ -29,7 +29,7 @@ const movesFollowed = 3;
 const commitPattern = /^[0-9a-f]{7,40}$/;
 const commitAge = 600_000; // A commit's version, which a release made later at it or before it can change
 const commitsKept = 256;
-const commitsTried = 40; // Releases compared with a commit at most, highest first
+const releasesTried = 10; // Tags at or before a commit tried for a release, highest first, when the highest has none
 
 // Two tags as semantic versioning orders them: < 0, 0 or > 0 (a pre-release before its version, its parts by number
 // where both are numbers)
@@ -108,22 +108,61 @@ export function createReleases({ token, repo, fetch = globalThis.fetch, now = Da
         return found;
     };
 
+    // Every version's tag, oldest first, with the commit a lightweight one is: all of them in one answer of
+    // GitHub's, kept as the list is. Releases are cut from one history, so a higher version's tag is never before
+    // a lower one's. Null where GitHub won't say (then the releases' own tags stand in).
+    let tagList = null; // { at, tags: [{ tag, commit }] }
+    const versionTags = async () => {
+        if (tagList && now() - tagList.at < listAge) return tagList.tags;
+        let refs = null;
+        try {
+            refs = await ask('/git/matching-refs/tags/v');
+        } catch (error) {
+            if (tagList) return tagList.tags; // GitHub is away: what it last said
+        }
+        const tags = Array.isArray(refs)
+            ? refs.map((r) => ({ tag: (r.ref ?? '').slice('refs/tags/'.length), commit: r.object?.type === 'commit' ? r.object.sha : null }))
+            : (await releases()).map((r) => ({ tag: r.tag, commit: null }));
+        const sorted = tags.filter((t) => tagPattern.test(t.tag)).sort((a, b) => compareTags(a.tag, b.tag));
+        tagList = { at: now(), tags: sorted };
+        return sorted;
+    };
+
     // The version `commit` is: the highest release whose tag is the commit or one of those before it, as GitHub
     // compares them (`ahead`: the commit came after the tag), or null for a commit after none or not the
-    // repository's. Kept a while, as a release made later at it or before it can be a higher one.
+    // repository's. A tag at the commit is found by its commit; else a binary search of the tags, as those before
+    // a commit are the lower ones, asks GitHub to compare a few (11 of 2000 tags) rather than one after another. The
+    // highest tag before it with no release (one made without one) gives way to the next lower that has one, which
+    // is then no exact match. Kept a while, as a release made later at it or before it can be a higher one.
     const versions = new Map(); // commit -> { at, result: { release, exact } }
     const versionOf = async (commit) => {
         const had = versions.get(commit);
         if (had && now() - had.at < commitAge) return had.result;
-        const candidates = [...await releases()].sort((a, b) => compareTags(b.tag, a.tag)).slice(0, commitsTried);
-        let found = null;
-        for (const r of candidates) {
-            const compared = await ask(`/compare/${r.tag}...${commit}`);
+        const tags = await versionTags();
+        let best = -1, exact = false;
+        for (let i = tags.length - 1; i >= 0 && best < 0; i--) {
+            if (tags[i].commit && tags[i].commit.startsWith(commit)) {
+                best = i;
+                exact = true;
+            }
+        }
+        for (let lo = 0, hi = best < 0 ? tags.length - 1 : -1; lo <= hi;) {
+            const mid = (lo + hi) >> 1;
+            const compared = await ask(`/compare/${tags[mid].tag}...${commit}`);
             if (!compared) return null; // GitHub knows no such commit
             if (compared.status === 'ahead' || compared.status === 'identical') {
-                found = { release: r, exact: compared.status === 'identical' };
-                break;
+                best = mid;
+                exact = compared.status === 'identical';
+                if (exact) break;
+                lo = mid + 1;
+            } else {
+                hi = mid - 1;
             }
+        }
+        let found = null;
+        for (let i = best; i >= 0 && i > best - releasesTried && !found; i--) {
+            const r = await release(tags[i].tag);
+            if (r) found = { release: r, exact: exact && i === best };
         }
         if (versions.size >= commitsKept) versions.delete(versions.keys().next().value);
         versions.set(commit, { at: now(), result: found });

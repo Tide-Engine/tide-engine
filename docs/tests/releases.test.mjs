@@ -48,6 +48,15 @@ function github() {
         if (path === '/releases?per_page=100') return Response.json(state.list);
         if (path === '/releases/latest') return state.latest ? Response.json(state.latest) : new Response('', { status: 404 });
         if (path === '/releases/tags/v0.1.0') return Response.json(state.old);
+        // Every version's tag, a lightweight one with its commit
+        if (path === '/git/matching-refs/tags/v') {
+            const tags = ['v0.1.0', 'v0.2.0', 'v0.3.0-nightly.1', 'v0.3.0-nightly.2', 'v9.9.9'];
+            return Response.json(tags.map((tag) => {
+                const commit = Object.entries(state.commits ?? {}).find(([, c]) => c.at === tag)?.[0];
+                return { ref: `refs/tags/${tag}`,
+                    object: commit ? { type: 'commit', sha: commit.padEnd(40, '0') } : { type: 'tag', sha: 'f'.repeat(40) } };
+            }));
+        }
         // A history: each commit, the tag that's it and the tags before it
         const compared = /^\/compare\/(v[^.]+\.[^.]+\.[^.]+(?:-[^.]+(?:\.\d+)?)?)\.\.\.([0-9a-f]+)$/.exec(path);
         if (compared) {
@@ -213,13 +222,16 @@ test('a slow or failing analytics callback cannot delay or break a download redi
 
 test('a commit is the highest release at it or before it', async () => {
     const hub = github();
-    // c1 is v0.2.0's commit; c2 came after it; c3 is v0.3.0-nightly.1's, after v0.2.0; c4 after both nightlies
+    // c1 is v0.2.0's commit; c2 came after it; c3 is v0.3.0-nightly.1's, after v0.2.0; c4 after both nightlies;
+    // c6 is v0.1.0's, a release the list of the newest no longer has; c7 after it
     hub.commits = {
-        aaaaaaa1: { at: 'v0.2.0', after: [] },
-        aaaaaaa2: { at: null, after: ['v0.2.0'] },
-        aaaaaaa3: { at: 'v0.3.0-nightly.1', after: ['v0.2.0'] },
-        aaaaaaa4: { at: null, after: ['v0.2.0', 'v0.3.0-nightly.1', 'v0.3.0-nightly.2'] },
+        aaaaaaa1: { at: 'v0.2.0', after: ['v0.1.0'] },
+        aaaaaaa2: { at: null, after: ['v0.1.0', 'v0.2.0'] },
+        aaaaaaa3: { at: 'v0.3.0-nightly.1', after: ['v0.1.0', 'v0.2.0'] },
+        aaaaaaa4: { at: null, after: ['v0.1.0', 'v0.2.0', 'v0.3.0-nightly.1', 'v0.3.0-nightly.2'] },
         aaaaaaa5: { at: null, after: [] },
+        aaaaaaa6: { at: 'v0.1.0', after: [] },
+        aaaaaaa7: { at: null, after: ['v0.1.0'] },
     };
     let clock = 0;
     const handle = createReleases({ token: 'the-token', repo, fetch: hub.fetch, now: () => clock });
@@ -232,6 +244,17 @@ test('a commit is the highest release at it or before it', async () => {
     assert.equal(await tagOf('aaaaaaa3'), 'v0.3.0-nightly.1');
     assert.equal(await tagOf('AAAAAAA4'), 'v0.3.0-nightly.2', 'the highest of those before it');
     assert.equal(await tagOf('aaaaaaa5'), 404, 'a commit before every release');
+    // A release older than the list's: its commit is found by its tag, with no comparing
+    const compares = () => hub.asked.filter((url) => url.includes('/compare/')).length;
+    let before = compares();
+    assert.equal(await tagOf('aaaaaaa6'), 'v0.1.0', 'a release the list no longer has');
+    assert.equal(JSON.parse((await get(handle, '/releases/for/aaaaaaa6')).body).exact, true);
+    assert.equal(compares(), before, 'a tag at the commit is found by its commit');
+    // ...and a commit after one: a binary search compares a few tags, not every release
+    before = compares();
+    assert.equal(await tagOf('aaaaaaa7'), 'v0.1.0');
+    assert.equal(JSON.parse((await get(handle, '/releases/for/aaaaaaa7')).body).exact, false);
+    assert.ok(compares() - before <= 3, `${compares() - before} compares for 5 tags`);
     assert.equal(await tagOf('bbbbbbb1'), 404, 'a commit GitHub hasn\'t');
     assert.equal(await tagOf('nope'), 404, 'no commit at all');
     const body = (await get(handle, '/releases/for/aaaaaaa4')).body;
