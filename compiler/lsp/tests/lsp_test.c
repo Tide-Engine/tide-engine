@@ -14275,7 +14275,8 @@ TIDE_TEST(lsp_graphs)
         "    {\"id\": 13, \"k\": \"member\", \"x\": 0, \"y\": 0, \"object\": 14, \"member\": \"points\"},\n"
         "    {\"id\": 14, \"k\": \"name\", \"x\": 0, \"y\": 0, \"name\": \"score\"},\n"
         "    {\"id\": 15, \"k\": \"call\", \"x\": 0, \"y\": 0, \"name\": \"Bonus\", \"args\": [16]},\n"
-        "    {\"id\": 16, \"k\": \"int\", \"x\": 0, \"y\": 0, \"text\": \"3\"}\n"
+        "    {\"id\": 16, \"k\": \"int\", \"x\": 0, \"y\": 0, \"text\": \"3\"},\n"
+        "    {\"id\": 17, \"k\": \"name\", \"x\": 0, \"y\": 0, \"name\": \"score\"}\n"
         "  ]}}\n"
         "]}\n";
     static const char uri[] = "file:///lsp_graph.tidegraph";
@@ -14305,6 +14306,8 @@ TIDE_TEST(lsp_graphs)
     }
     // What node 14's value has (score, a Score): its fields, found with the graph read again with a '.' after it
     TIDE_CHECK(offers(request_at(uri, "tide/graphMembers", 0, 0, "\"node\":14"), "points"));
+    // ...and of node 17, which nothing reads yet, as a value just placed on the canvas
+    TIDE_CHECK(offers(request_at(uri, "tide/graphMembers", 0, 0, "\"node\":17"), "points"));
     // ...and the graph as it is again after
     TIDE_CHECK(has(request_at(uri, "tide/graphText", 0, 0, ""), "score.points += Bonus(3);"));
     // The file's JSON is no Tide to ask about by its places

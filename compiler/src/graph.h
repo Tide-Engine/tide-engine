@@ -71,6 +71,9 @@ bool graph_is_path(const char *path);
 // text the Tide the graph stands for, with src->graph saying where each part of it came from. False after saying
 // what's wrong, at the graph's places (src->text is the JSON still).
 bool graph_lower(source *src);
+// ...writing value node `value` even where nothing reads it (as `_ = value;` at its body's end), for an editor's
+// question about a value it has just placed (tidels' tide/graphMembers); 0 for none.
+bool graph_lower_with(source *src, int value);
 
 // The innermost element a place in the written text came from, or 0.
 int graph_id_at(const graph_map *map, loc at);

@@ -258,7 +258,8 @@ which is the same Tide a `.tide` file would hold. The Unity package and the lang
   A document opened with unsaved JSON is analysed as it stands.
   - `tide/graphMembers` {textDocument, node}: what the node's value has, as completion items (fields,
     methods, a namespace's or a type's members). The game is analysed again with the graph's Tide a `.` after the
-    node's first span (`analysis_set_graph_probe`), completion asked just past it, and the next request analyses
+    node's first span (`analysis_set_graph_probe`; a value nothing reads is written `_ = value;` at its body's end for
+    it, `graph_lower_with`), completion asked just past it, and the next request analyses
     the graph as it is (`s->analyzed = false` both times; nothing is published for the probe).
   - Without a document: `tide/graphSchema` → `compiler/src/graph_schema.json`; `tide/graphLayout` {graph: a
     body's or a value's graph JSON} → {"<id>": [x, y]}.

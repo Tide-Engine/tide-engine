@@ -1394,6 +1394,16 @@ static bool use_graph(lw *w, const graph_json *g, const graph_json *owner, const
     return true;
 }
 
+static int written_value; // graph_lower_with: a value node to write even where nothing reads it
+
+static bool has_span(const lw *w, const int id)
+{
+    for (int i = 0; i < w->map->spans.count; i++) {
+        if (w->map->spans.items[i].id == id) return true;
+    }
+    return false;
+}
+
 static void body(lw *w, const graph_json *owner, const char *key)
 {
     const graph_json *g = graph_json_get(owner, key);
@@ -1403,6 +1413,14 @@ static void body(lw *w, const graph_json *owner, const char *key)
         w->indent++;
         const int entry = jwire(g, "entry");
         if (entry) stmts(w, entry, g);
+        // The value asked about, which nothing reads: at the body's end, as a statement of its own
+        const graph_json *asked = written_value ? table_get(&w->nodes, written_value) : NULL;
+        if (asked && !exec_kind(jstr(asked, "k")) && !has_span(w, written_value)) {
+            line(w);
+            put(w, "_ = ");
+            expr(w, written_value, P_LAMBDA, g, "asked");
+            put(w, ";");
+        }
         w->indent--;
     }
     line(w);
@@ -1976,9 +1994,16 @@ static bool lower(source *src);
 
 bool graph_lower(source *src)
 {
+    return graph_lower_with(src, 0);
+}
+
+bool graph_lower_with(source *src, const int value)
+{
     schema_nodes = read_schema();
+    written_value = value;
     const bool ok = lower(src);
     schema_nodes = NULL;
+    written_value = 0;
     return ok;
 }
 

@@ -1896,10 +1896,11 @@ void analysis_run(const analysis_file *given, const int given_count)
                     start = q + 1;
                 }
             }
-            if (!graph_lower(&f->src)) {
+            const bool probed = probe_uri && strcmp(probe_uri, f->uri) == 0;
+            if (!graph_lower_with(&f->src, probed ? probe_node : 0)) {
                 f->src.text = "";
                 f->src.len = 0;
-            } else if (probe_uri && strcmp(probe_uri, f->uri) == 0) {
+            } else if (probed) {
                 probe_graph(f);
             }
             copy = (char *)f->src.text;

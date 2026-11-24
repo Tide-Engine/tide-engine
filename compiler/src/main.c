@@ -1,4 +1,8 @@
 #include <stdio.h>
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
 
@@ -248,6 +252,9 @@ int main(const int argc, char **argv)
     if (argc == 2 && strcmp(argv[1], "--graph-schema") == 0) {
         size_t len;
         const char *schema = graph_schema_text(&len);
+#ifdef _WIN32
+        _setmode(_fileno(stdout), _O_BINARY); // Its bytes as they are, LF
+#endif
         fwrite(schema, 1, len, stdout);
         return 0;
     }
