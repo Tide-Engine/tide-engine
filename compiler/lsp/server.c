@@ -2040,13 +2040,15 @@ void lsp_handle(lsp_server *s, const char *message, const size_t len)
             jb_putn(&b, schema, len);
         } else {
             jbuf graph = {0};
-            const json *given = json_get(params, "graph");
+            // `graph`: one body's or value's nodes; `file`: a whole file's cards and frames, as a board
+            const json *file = json_get(params, "file");
+            const json *given = file ? file : json_get(params, "graph");
             if (given) jb_json(&graph, given);
             source src = {.path = "<graph>", .text = graph.data ? graph.data : "", .len = graph.len};
             const arena_mark mark = arena_checkpoint();
             sb out = {0};
             const graph_json *parsed = given ? graph_json_parse(&src) : NULL;
-            if (parsed && graph_layout_json(parsed, &out)) jb_putn(&b, out.data, out.len);
+            if (parsed && (file ? graph_layout_board_json(parsed, &out) : graph_layout_json(parsed, &out))) jb_putn(&b, out.data, out.len);
             else jb_put(&b, "null");
             arena_rewind(mark);
             jb_free(&graph);

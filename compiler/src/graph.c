@@ -582,7 +582,8 @@ const char *graph_schema_text(size_t *len)
     return (const char *)tide_graph_schema;
 }
 
-static const graph_json *schema_nodes; // Its "nodes", while a graph is read (graph_lower), else NULL
+static const graph_json *schema_nodes; // Its "nodes", while a graph is read (graph_lower, graph_schema_hold), else NULL
+static int schema_held;
 
 static const graph_json *read_schema(void)
 {
@@ -590,6 +591,15 @@ static const graph_json *read_schema(void)
     src.text = graph_schema_text(&src.len);
     const graph_json *root = graph_json_parse(&src);
     return graph_json_get(root, "nodes");
+}
+
+void graph_schema_hold(const bool hold)
+{
+    if (hold) {
+        if (!schema_held++ && !schema_nodes) schema_nodes = read_schema();
+    } else if (!--schema_held) {
+        schema_nodes = NULL;
+    }
 }
 
 static const graph_json *node_spec(const str k)
@@ -2010,10 +2020,10 @@ bool graph_lower(source *src)
 
 bool graph_lower_with(source *src, const int value)
 {
-    schema_nodes = read_schema();
+    graph_schema_hold(true);
     written_value = value;
     const bool ok = lower(src);
-    schema_nodes = NULL;
+    graph_schema_hold(false);
     written_value = 0;
     return ok;
 }

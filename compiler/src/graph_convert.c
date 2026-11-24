@@ -1892,6 +1892,57 @@ static void convert_left_out(cv *c, const int first, const int last, jv *list)
     push(list, text_decl(c, text));
 }
 
+// The place of each card and frame, as the board lays the file out, into the JSON being built: x and y after id
+static void place_on_board(jv *v, const graph_board *places)
+{
+    if (v->kind == GJ_OBJECT) {
+        int id = 0, at = -1;
+        for (int i = 0; i < v->keys.count; i++) {
+            if (str_eq_c(v->keys.items[i], "id") && v->items.items[i]->kind == GJ_NUMBER) {
+                id = (int)v->items.items[i]->number;
+                at = i;
+            }
+        }
+        for (int p = 0; id && p < places->count; p++) {
+            if (places->items[p].id != id) continue;
+            vec_push(v->keys, ((str){NULL, 0}));
+            vec_push(v->keys, ((str){NULL, 0}));
+            vec_push(v->items, NULL);
+            vec_push(v->items, NULL);
+            for (int k = v->keys.count - 1; k > at + 2; k--) {
+                v->keys.items[k] = v->keys.items[k - 2];
+                v->items.items[k] = v->items.items[k - 2];
+            }
+            v->keys.items[at + 1] = str_from("x");
+            v->items.items[at + 1] = jv_n(places->items[p].x);
+            v->keys.items[at + 2] = str_from("y");
+            v->items.items[at + 2] = jv_n(places->items[p].y);
+            break;
+        }
+    }
+    if (v->kind == GJ_OBJECT || v->kind == GJ_ARRAY) {
+        for (int i = 0; i < v->items.count; i++) {
+            // A graph's nodes have places of their own
+            if (v->kind == GJ_OBJECT && str_eq_c(v->keys.items[i], "nodes")) continue;
+            place_on_board(v->items.items[i], places);
+        }
+    }
+}
+
+// The file written, each declaration where the board puts it
+static void print_file(jv *root, sb *out)
+{
+    sb first = {0};
+    print_jv(&first, root, 0, false);
+    source text = {.path = "<graph>", .text = first.data, .len = first.len};
+    const graph_json *parsed = graph_json_parse(&text);
+    graph_board places = {0};
+    if (parsed) graph_layout_board(parsed, &places);
+    place_on_board(root, &places);
+    print_jv(out, root, 0, false);
+    sb_put(out, "\n");
+}
+
 bool graph_from_tide(const char *path, sb *out, const char **why)
 {
     source *src = NEW(source);
@@ -1951,8 +2002,7 @@ bool graph_from_tide(const char *path, sb *out, const char **why)
         push(list, text_decl(&c, (str){src->text, (int)src->len}));
         set(root, "decls", list);
         root->items.items[1] = jv_n(c.next_id + 1);
-        print_jv(out, root, 0, false);
-        sb_put(out, "\n");
+        print_file(root, out);
         return true;
     }
     find_comments(&c);
@@ -2004,7 +2054,6 @@ bool graph_from_tide(const char *path, sb *out, const char **why)
     }
     set(root, "decls", list);
     root->items.items[1] = jv_n(c.next_id + 1);
-    print_jv(out, root, 0, false);
-    sb_put(out, "\n");
+    print_file(root, out);
     return true;
 }

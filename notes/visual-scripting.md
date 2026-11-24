@@ -421,3 +421,86 @@ and its requests, handled in order so an edit is in the document before the next
   small table (`doc.js`, `GraphDocument.cs`).
 - `items[].label` is a key (a literal's `name`) in one place and a word (`case`, `arm`) in others.
 - The add menus of the Unity window list kinds by name, not the schema's titles and groups.
+
+## The experience: one board (owner, 2026-11-24)
+
+The owner tried the first Unity window and called its UX horrid: it showed the file format (a list of 23 kinds, an
+inspector of every key with "comment" and "dev" first, "type params", a type field that takes any text, members
+a kind can't have, the Tide source always on screen, an error that stayed after its cause went, a canvas that
+did nothing while a component was selected). The owner's words for what it must be: "we need to think of this
+almost like a story, how do we guide the user"; "friendly, simple, approacheable yet powerful"; "only show me
+things when they are relevant, only allow me to do valid stuff"; the UI should guide "the same way i want errors
+to be descriptive and guiding"; a type is picked or auto-completed, never typed wrong; the source isn't shown
+unless asked for. Asked how a file is laid out, the owner picked **one board**; asked where to get it right,
+**both editors together**. What follows is the design both editors build (my picks within those, Provisional).
+Its wording and rules are the schema's (`graph_schema.json`), so the two say the same things.
+
+**Rules.** (1) Nothing is offered that isn't valid there: kinds of member per kind of declaration
+(`memberKinds`), a member that goes once (`once`), modifiers per kind, types valid at a place, wires that can be
+made. (2) The common thing first, the rare behind "More" (`group`, `common`, `advanced` in `keyInfo`), in plain
+words (`title`, `summary`, `keyInfo.label`, `modifierInfo.label`, `paramModeInfo.label`, a node's `help`): "Generic
+over" for type parameters, "Dev builds only" for `dev`, "changes" for `mut`. (3) No form of keys: a thing is
+edited where it's drawn. (4) Every empty place says what goes there. (5) Tide's own errors, on the thing they're
+about, gone as soon as their cause is.
+
+**The board.** A file is one canvas. Each declaration is on it, where its `x`, `y` say (tidec's converter
+writes them; `tide/graphLayout` with `{"file": <the file's JSON>}` gives them, data in a column on the left
+and code to its right; a declaration with none is placed by the editor beside what's there):
+
+- **A card** for data (component, singleton, struct, event, enum, input, scene, const, asset, alias, settings,
+  prefab, text): a kind chip in plain words, the name (edited in place: a new card starts with its name
+  selected), then a row per field: name, type, starting value, each edited in place; a last row "+ field" (Enter
+  in a new field's row makes the next). An enum's rows are its members, settings' its entries. A card's "..." menu
+  has what else its kind can have and nothing more: the member kinds of `memberKinds` (a method, a property, an
+  operator on a struct alone, Sample on an input alone), its options by their labels (`modifierInfo`), "Generic
+  over..." where its keys have `typeParams`, attributes, a note, duplicate, delete.
+- **A frame** for code (system, view, handler, command, function, audio, frag, vert, compute, and a type's
+  method, operator, accessor, Sample, Sanitize, Predict, prepare, each a frame of its own titled `Type.Name`): a
+  titled box that holds its nodes, which are placed from its corner (a node's `x`, `y` are in its frame). Its first
+  node is the **entry**: the kind's `sentence` ("Every tick, for each entity with", "When this happens", "Takes")
+  and a row per parameter with an output pin: its type (picked), its name, and how it's taken by its label
+  ("reads" / "changes"); filters ("only with", "without") are rows with no pin; "+ needs..." adds one by picking
+  what it takes (a component, a singleton, a filter, and what tidels offers at that place). A handler's entry
+  picks its event; a command's has its payload's rows; a function's has its result's type. The entry's exec
+  output is the body's `entry`. Dragging a frame's title moves all of it; it grows around its nodes.
+- **Wires for names.** A `name` node that reads the frame's parameter, and a `local` node, aren't drawn as
+  nodes: their wire comes straight from the parameter's pin on the entry, or from the pin of the node that
+  declares the local (`var`, a loop's variable, an `is`'s name, an `out var`). Dragging from such a pin makes the
+  node; renaming the parameter or the local renames them. A `name` of anything else (a constant, a type, a
+  namespace) is a small node.
+- A namespace block is a tinted region around its declarations, named. The file's own namespace and `using`
+  lines are in the board's "..." menu.
+
+**Starting.** An empty board says "What do you want to make?" with the `common` kinds as big choices, each
+with its `summary`, and "More...". "+ Add" (and a right click on empty board) opens the same as a menu: Data,
+Behaviour, More (`groups`), each kind with its summary, with a search box. A right click or Space inside a
+frame, or a wire dropped there, opens the node search for that frame; a wire can't leave its frame (said why).
+So no click does nothing.
+
+**Picking a type.** Wherever a type goes: a popup with a search box that completes as it's typed. First the
+`typePicker.common` types and the game's own (from tidels, by what's valid there), then its `builders` ("List
+of..." asks for what it holds, with the same picker), then the rest. Enter takes the first match. No free text: a
+type is always one that was picked, a generic's own parameter among them.
+
+**Values.** A field's starting value and the like are edited by the type's own control (a number, a tick box,
+text, a vector's numbers, a colour, an enum's choices), showing the type's default greyed when there's none. A
+value that's more than a literal opens as a small graph beside its card.
+
+**Nodes.** A node's own values are on it; what's rare is in its "..." menu. A call in a statement flow is one
+node. Unreached nodes are faded. An empty frame says "Drag from the arrow to add what happens".
+
+**Checking.** tidels checks as the board changes; a chip says "Checked" or how many problems. A problem is
+on its row, pin or node (red, the compiler's message and its note on hover and in the list), and goes when the
+next check doesn't have it: what's shown is always the last check's, never kept. The Tide the file stands for
+isn't on screen: "View as Tide" in the board's "..." menu opens it.
+
+**Finding.** A "Contents" list (closed until asked for) and a jump-to search list the file's declarations by
+group; picking one pans to it. Frames off screen aren't drawn.
+
+**In the schema for it** (2026-11-24): declarations' `group` (Data, Behaviour, More; `groups` has their titles),
+`summary`, `common`, `memberKinds`, `sentence`, and keys without what a kind can't have (no `typeParams` on a
+component, no `returnType` on a system); members' `summary`, `once`; `keyInfo`, `modifierInfo`, `paramModeInfo`
+(label, help, advanced); `typePicker` (common, builders); each node's `help`; `x`, `y` after `id` in the keys of
+every declaration but a namespace, of members with code, and of accessors. tidec: `graph_layout_board`
+(`graph_layout.c`), which the converter places every card and frame with, and `graph_schema_hold`, which reads the
+schema once for many nodes.

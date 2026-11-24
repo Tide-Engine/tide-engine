@@ -154,6 +154,7 @@ bool graph_layout_json(const graph_json *g, sb *out)
     const bool body = !root;
     const graph_json *start = body ? entry : root;
     graph_layout_node *placed = arena_alloc(sizeof(graph_layout_node) * (size_t)(nodes->count ? nodes->count : 1));
+    graph_schema_hold(true);
     for (int i = 0; i < nodes->count; i++) {
         const graph_json *n = nodes->items[i];
         graph_layout_node *p = &placed[i];
@@ -169,12 +170,135 @@ bool graph_layout_json(const graph_json *g, sb *out)
         }
         graph_layout_measure(p, widest);
     }
+    graph_schema_hold(false);
     graph_layout_place(placed, nodes->count, start && start->kind == GJ_NUMBER ? (int)start->number : 0, body);
     sb_put(out, "{");
     int written = 0;
     for (int i = 0; i < nodes->count; i++) {
         if (!placed[i].id) continue;
         sb_printf(out, "%s\"%d\":[%d,%d]", written++ ? "," : "", placed[i].id, placed[i].x, placed[i].y);
+    }
+    sb_put(out, "}");
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// The board: a file's declarations, each a card (data) or a frame (code)
+
+enum { CARD_W = 300, CARD_ROW = 26, CARD_HEAD = 48, ENTRY_W = 320, FRAME_HEAD = 48, FRAME_PAD = 40, LANE_GAP = 80, CARD_GAP = 40,
+       FRAME_GAP = 80 };
+
+typedef struct board {
+    graph_board *out;
+    int data_y, code_y;
+} board;
+
+static str key_str(const graph_json *v, const char *key)
+{
+    const graph_json *s = graph_json_get(v, key);
+    return s && s->kind == GJ_STRING ? s->text : (str){NULL, 0};
+}
+
+static int id_of(const graph_json *v)
+{
+    const graph_json *id = graph_json_get(v, "id");
+    return id && id->kind == GJ_NUMBER ? (int)id->number : 0;
+}
+
+static int count_of(const graph_json *v, const char *key)
+{
+    const graph_json *a = graph_json_get(v, key);
+    return a && a->kind == GJ_ARRAY ? a->count : 0;
+}
+
+static bool one_of(const str kind, const char *const *kinds)
+{
+    for (int i = 0; kinds[i]; i++) {
+        if (str_eq_c(kind, kinds[i])) return true;
+    }
+    return false;
+}
+
+// A frame: its entry (what the code takes) on the left, its nodes as they're placed to the right of it
+static void place_frame(board *b, const graph_json *owner)
+{
+    int right = 0, bottom = 0;
+    const graph_json *body = graph_json_get(owner, "body");
+    const graph_json *nodes = body ? graph_json_get(body, "nodes") : NULL;
+    for (int i = 0; nodes && nodes->kind == GJ_ARRAY && i < nodes->count; i++) {
+        const graph_json *n = nodes->items[i];
+        graph_layout_node size = {0};
+        graph_data_wires(n, &size.inputs);
+        graph_exec_wires(n, &size.bodies);
+        int widest = 0;
+        for (int k = 0; n->kind == GJ_OBJECT && k < n->count; k++) {
+            if (n->items[k]->kind == GJ_STRING && n->items[k]->text.len > widest) widest = n->items[k]->text.len;
+        }
+        graph_layout_measure(&size, widest);
+        const graph_json *x = graph_json_get(n, "x"), *y = graph_json_get(n, "y");
+        const int nx = x && x->kind == GJ_NUMBER ? (int)x->number : 0, ny = y && y->kind == GJ_NUMBER ? (int)y->number : 0;
+        if (nx + size.w > right) right = nx + size.w;
+        if (ny + size.h > bottom) bottom = ny + size.h;
+    }
+    const int entry_h = 60 + CARD_ROW * (count_of(owner, "params") + count_of(owner, "payload") + 1);
+    const int h = FRAME_HEAD + (bottom > entry_h ? bottom : entry_h) + FRAME_PAD;
+    const graph_board_place p = {id_of(owner), CARD_W + LANE_GAP, b->code_y};
+    if (p.id) vec_push(*b->out, p);
+    (void)right;
+    b->code_y += h + FRAME_GAP;
+}
+
+static void place_decls(board *b, const graph_json *decls)
+{
+    static const char *const code[] = {"function", "audio", "system", "view", "handler", "command", "frag", "vert", "compute", NULL};
+    static const char *const member_code[] = {"method", "operator", "sample", "sanitize", "predict", "prepare", NULL};
+    for (int i = 0; decls && decls->kind == GJ_ARRAY && i < decls->count; i++) {
+        const graph_json *d = decls->items[i];
+        const str kind = key_str(d, "kind");
+        if (str_eq_c(kind, "namespace")) {
+            place_decls(b, graph_json_get(d, "decls"));
+            continue;
+        }
+        if (one_of(kind, code)) {
+            place_frame(b, d);
+            continue;
+        }
+        // A card: a row for each field, member, entry or line of text
+        int rows = count_of(d, "members") + count_of(d, "entries");
+        const str text = key_str(d, "text");
+        for (int k = 0; k < text.len; k++) rows += text.ptr[k] == '\n';
+        if (rows > 24) rows = 24;
+        const graph_board_place p = {id_of(d), 0, b->data_y};
+        if (p.id) vec_push(*b->out, p);
+        b->data_y += CARD_HEAD + CARD_ROW * (rows + 2) + CARD_GAP;
+        // ...and a frame for each member with code of its own
+        const graph_json *members = graph_json_get(d, "members");
+        for (int m = 0; members && members->kind == GJ_ARRAY && m < members->count; m++) {
+            const graph_json *member = members->items[m];
+            const str mk = key_str(member, "kind");
+            if (one_of(mk, member_code)) place_frame(b, member);
+            const graph_json *accessors = graph_json_get(member, "accessors");
+            for (int a = 0; accessors && accessors->kind == GJ_ARRAY && a < accessors->count; a++) place_frame(b, accessors->items[a]);
+        }
+    }
+}
+
+void graph_layout_board(const graph_json *file, graph_board *out)
+{
+    board b = {out, 0, 0};
+    graph_schema_hold(true);
+    place_decls(&b, graph_json_get(file, "decls"));
+    graph_schema_hold(false);
+}
+
+bool graph_layout_board_json(const graph_json *file, sb *out)
+{
+    if (!file || file->kind != GJ_OBJECT || !graph_json_get(file, "decls")) return false;
+    graph_board places = {0};
+    graph_layout_board(file, &places);
+    sb_put(out, "{");
+    for (int i = 0; i < places.count; i++) {
+        sb_printf(out, "%s\"%d\":[%d,%d]", i ? "," : "", places.items[i].id, places.items[i].x, places.items[i].y);
     }
     sb_put(out, "}");
     return true;

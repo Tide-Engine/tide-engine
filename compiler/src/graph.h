@@ -24,6 +24,9 @@ graph_json *graph_json_parse(const source *src);
 const graph_json *graph_json_get(const graph_json *object, const char *key);
 
 typedef VEC(int) graph_ids;
+// While held, the schema is read once for every node asked about (graph_data_wires, graph_exec_wires); what's read
+// is the arena's, so a hold ends before the arena goes. Holds nest.
+void graph_schema_hold(bool hold);
 // The ids a node's data inputs are wired from, in the order its text reads them, by its kind.
 void graph_data_wires(const graph_json *node, graph_ids *out);
 // ...and the statements its exec outputs other than `next` go to (an if's then and else, a loop's body...).
@@ -45,6 +48,17 @@ void graph_layout_measure(graph_layout_node *n, int widest_text);
 void graph_layout_place(graph_layout_node *nodes, int count, int root, bool body);
 // A graph's JSON ({"entry"|"root", "nodes"}) laid out: {"<id>": [x, y], ...}; false for what isn't a graph
 bool graph_layout_json(const graph_json *graph, sb *out);
+
+// A whole file as a board: where each declaration's card or frame goes (and each member's that has code of its
+// own, and a property's accessors), data in a column on the left and code beside it. A frame's nodes are placed
+// from its own corner, so they stay as they are.
+typedef struct graph_board_place {
+    int id, x, y;
+} graph_board_place;
+typedef VEC(graph_board_place) graph_board;
+void graph_layout_board(const graph_json *file, graph_board *out);
+// ...as JSON: {"<id>": [x, y], ...}
+bool graph_layout_board_json(const graph_json *file, sb *out);
 
 // A stretch of the text graph_lower wrote, and the element (node, declaration, member, parameter...) it came from.
 typedef struct graph_span {
