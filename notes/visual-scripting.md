@@ -190,9 +190,9 @@ one whose block is empty, `{ }`. An `eval` with `stacked` is the next of the cal
 written after that call and a comma. An `eval` whose value another node reads is a statement whose value is
 kept: tidec writes `var _graph<id> = value;` and reads that.
 
-An empty file, as the editor makes one: `{"tidegraph": 1, "nextId": 1, "decls": []}`. Which modifiers the
-editor offers for each kind of declaration is its own (`GraphSchema.cs`); tidec takes any of them, and the parser
-says where one doesn't go.
+An empty file, as the editor makes one: `{"tidegraph": 1, "nextId": 1, "decls": []}`. Which modifiers an
+editor offers for each kind of declaration is the schema's (`graph_schema.json`); tidec takes any of them, and the
+parser says where one doesn't go.
 
 `text` and `code` read their inputs by name. tidec reads the text as Tide tokens and puts each input, in
 parentheses, where its name stands as a name (not after a `.`). `code`'s locals are its own: what comes after
@@ -275,7 +275,8 @@ JetBrains, one web editor). What they'd otherwise each implement is tidec's, ser
   parameters, a body), the elements' key orders, parameter modes, operators with titles, built-in type names,
   node categories with colours, and each node kind (title, category, exec, whether it has a value, its own keys in
   order, its single data `inputs`, `lists` of data wires, `items` with wires of their own (`labels[]` an array of
-  them) and an `exec` output each, a `map` of named inputs, its exec `outputs` besides next, `ends` for a statement
+  them), an `exec` output each and an `element` name for one of them (`case`, `arm`, `init`), a `map` of named
+  inputs, `absentWhen` (an input that isn't there while a flag key is set: a `member`'s `object` with `shorthand`), its exec `outputs` besides next, `ends` for a statement
   whose next is optional, and what local it `declares`). tidec's own lowering reads its nodes' wires from it
   (`graph_data_wires`, `graph_exec_wires`, `exec_kind`), so the schema and what tidec reads can't differ. It's in the
   compiler's identity sources.
@@ -294,10 +295,8 @@ JetBrains, one web editor). What they'd otherwise each implement is tidec's, ser
     stops is started again (its documents opened again, its requests failed), at most 4 times a minute, after which
     the client gives up and checks are tidec's. The last window closed sends shutdown and exit (killed after 2 s);
     a domain reload or quit does the same and waits.
-  - Operations: a check, a completion, a hover each run alone, queued (`Operate`), since a completion sends a
-    probe text. Diagnostics: tidels publishes a change's before it answers any request sent after it, so the
-    client holds publications until the next answer and drops them when that request was sent during a probe;
-    ones no request claims are taken when nothing waits and no probe is out.
+  - Operations: a check, a completion, a hover each run alone, queued (`Operate`). Diagnostics: tidels
+    publishes a change's before it answers any request sent after it.
   - The checker (`TideGraphChecker`, the default `TideGraphServices.Checker`): didOpen/didChange (full text, the
     window's unsaved JSON, after the window's 0.6 s debounce), then `tide/graphText` and `tide/graphTypes`; the
     diagnostics are the last published (`data.node` the id, the Tide line of its span as Detail). tidec's checker
@@ -308,11 +307,10 @@ JetBrains, one web editor). What they'd otherwise each implement is tidec's, ser
     when the pointer first enters it after a check.
   - Search (`TidelsGraphSearch`, an `ITideGraphLiveSearch`: its entries come in when tidels answers, the popup
     says "Asking tidels…" meanwhile): a wire from a value dropped on nothing, or a member/method node's
-    **Pick member…**, completes after `object.` in a probe, a copy of the file where a member node
-    `object.tideGraphProbe` replaces the value's first read (or is a statement after the body's last, or the
-    expression's value), at its end less the probe's name; then the real text is sent again. Fields, properties,
-    enum members and constants become member nodes, methods (and functions of a namespace) method nodes with an
-    input per parameter (named from the completion's detail; their names are only in the entry's title).
+    **Pick member…**, asks `tide/graphMembers` for the value's node (titled "Members of <type>" by its `type`).
+    Fields, properties, enum members and constants become member nodes, methods (and functions of a namespace)
+    method nodes with an input per parameter (named from the completion's detail; their names are only in the
+    entry's title).
     Elsewhere completion is asked at the place a node would go (after the statement a flow comes from, before the
     one it goes to, at the start of the statement a value is for, else after the body's last statement or inside
     its braces): functions as calls (in a statement flow, a call statement, `Statement`), the game's structs,
@@ -358,3 +356,19 @@ JetBrains, one web editor). What they'd otherwise each implement is tidec's, ser
 - A file whose `#if` is inside a declaration or a namespace block, or that `#define`s, converts as one text declaration. `#if` between declarations converts: its lines are text declarations, the code between them nodes, and the lines a branch leaves out converted on their own (as text where they don't parse alone).
 - The converter gives a block of one statement braces, so a braceless `if (x) return;` costs one more in the
   work estimate that splits loops across threads (`stmt_cost`); results are the same.
+
+## The Unity editor on the shared schema (2026-11-24, later)
+
+`GraphSchema.cs` keeps its names, and every value is the schema's: ports from each node's `inputs`, `lists`,
+`items`, `map`, `outputs`, `ends` (no per-kind switches), wires written in its key orders, locals from `declares`,
+node colours from its categories. Its schema is read at the first use after a domain reload from
+`Library/Tide/graph-schema.json` when that copy is the same program's (size and time), else from `tide graph
+--schema`, which refreshes the copy; when tidels starts, its `tide/graphSchema` replaces it if it differs. With no
+schema at all, the window says so with "Try again", and the file waits unchanged. Auto layout is
+`tide/graphLayout` (without tidels: a notification, nothing moves); members are `tide/graphMembers`; the C# layout
+and the completion probe are gone. `??=` isn't offered (tidec doesn't parse it). GraphSchemaTests: the schema in
+use equals `tidec --graph-schema`, `tide graph --schema`, `graph_schema.json`, the Library copy and
+`tide/graphSchema`; every kind's ports are the schema's and every wire sets, reads and clears in tidec's order;
+layout through tidels (values left of their statement, undoable, the Tide unchanged); graphMembers for a read
+and an unread value. 28 of 28 Unity tests pass (GraphTests, GraphLanguageTests, GraphSchemaTests). The add menus
+still list kind names rather than the schema's titles and groups.
