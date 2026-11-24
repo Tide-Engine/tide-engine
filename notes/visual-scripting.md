@@ -256,6 +256,48 @@ which is the same Tide a `.tide` file would hold. The Unity package and the lang
   - `tide/graphCompletion`, `tide/graphHover`, `tide/graphSignatureHelp` with `offset`: completion, hover
     and signature help there, as at that place of a `.tide` file.
   A document opened with unsaved JSON is analysed as it stands.
+- **Unity's graph editor with tidels** (`unity/com.tide.unity/Editor/Graph/TideLanguageClient.cs`,
+  `TideGraphLanguage.cs`; my picks, Provisional):
+  - The client: one tidels for the editor, beside the tide `TideToolchain.Find` gives (or `TidelsOverride`, or
+    beside `TidecOverride`, for tests), started when a graph's window first checks. Content-Length JSON-RPC
+    (GraphJson's reader, a compact writer), written on a thread of its own, read on another, stderr kept (the last
+    6-8 KB) on a third; every answer runs on the editor's update. initialize's workspace folder is the project's
+    Assets, which tidels takes as the Unity game (`packages_unity_assets`), so a graph there is checked with the
+    game's `.tide` files; a graph in a folder with a `tide.packages` is that folder's game; one elsewhere (Temp)
+    is alone. No capabilities are claimed, so tidels registers no watchers; Unity's `TideChanges` sends
+    didChangeWatchedFiles for Tide files it imports, moves and deletes. Requests time out after 30 s; a server that
+    stops is started again (its documents opened again, its requests failed), at most 4 times a minute, after which
+    the client gives up and checks are tidec's. The last window closed sends shutdown and exit (killed after 2 s);
+    a domain reload or quit does the same and waits.
+  - Operations: a check, a completion, a hover each run alone, queued (`Operate`), since a completion sends a
+    probe text. Diagnostics: tidels publishes a change's before it answers any request sent after it, so the
+    client holds publications until the next answer and drops them when that request was sent during a probe;
+    ones no request claims are taken when nothing waits and no probe is out.
+  - The checker (`TideGraphChecker`, the default `TideGraphServices.Checker`): didOpen/didChange (full text, the
+    window's unsaved JSON, after the window's 0.6 s debounce), then `tide/graphText` and `tide/graphTypes`; the
+    diagnostics are the last published (`data.node` the id, the Tide line of its span as Detail). tidec's checker
+    is the fallback when there's no tidels or it fails, and the panel says which (`CheckerSays`).
+  - Types: ports take their value's type's colour (`TideGraphTypes`, a few fixed, others a hue of the name), as do
+    the wires from them; a port's tooltip and the node's say the type, and the node's is replaced by tidels's
+    hover (asked at the node's name: a member's member, a method's name after the object's '.', a call's name)
+    when the pointer first enters it after a check.
+  - Search (`TidelsGraphSearch`, an `ITideGraphLiveSearch`: its entries come in when tidels answers, the popup
+    says "Asking tidels…" meanwhile): a wire from a value dropped on nothing, or a member/method node's
+    **Pick member…**, completes after `object.` in a probe, a copy of the file where a member node
+    `object.tideGraphProbe` replaces the value's first read (or is a statement after the body's last, or the
+    expression's value), at its end less the probe's name; then the real text is sent again. Fields, properties,
+    enum members and constants become member nodes, methods (and functions of a namespace) method nodes with an
+    input per parameter (named from the completion's detail; their names are only in the entry's title).
+    Elsewhere completion is asked at the place a node would go (after the statement a flow comes from, before the
+    one it goes to, at the start of the statement a value is for, else after the body's last statement or inside
+    its braces): functions as calls (in a statement flow, a call statement, `Statement`), the game's structs,
+    components and events as literals, enums, other types, namespaces, constants and names as name nodes, enum
+    members as shorthand members; keywords and snippets are left to the catalog, and names the catalog has (the
+    graph's locals, the routine's parameters) aren't offered twice. Typed, entries rank by title (whole, start,
+    a word's start, inside, else group or keywords), the language server's above the catalog's at a tie.
+  - Errors: a Console message of tide's for a graph (`path:@id:`) is logged at the id as its line
+    (`TideBuildService.ContextOf`), and `TideGraphImporter`'s OnOpenAsset opens the window on that element
+    (`Reveal`); the file inspector's list says "node" for a graph.
 
 ## Tests
 
@@ -268,12 +310,25 @@ which is the same Tide a `.tide` file would hold. The Unity package and the lang
   own `_test.c` (`crossplatform`'s pinned bits among them). chars, json and optional_fields aren't among them:
   their tests take hashes from definitions of their own targets.
 - `tidels_tests` `lsp_graphs`: diagnostics with the node, and the four requests.
+- The Sample's EditMode `GraphLanguageTests` (tidels and tidec of this checkout's build, or `TIDE_TIDELS`,
+  `TIDE_TIDEC`): an unknown call's error from tidels on its node with its Tide line, the click selecting it; a
+  member node's type (`int`) on it, its output and its object's input, its hover; completion after a wired
+  value's `.` offering its field and method (first), the method made from it wired to the value with an input
+  for its parameter and lowering to `ball.Bounce(2.5);`; Pick member… retargeting a member node to a method and
+  undone; completion at a statement offering the game's function, struct and `Math`, the parameter once, and in a
+  statement flow no values; tidels killed and started again with the graph; the last window closed and no tidels
+  left; a graph in Assets checked with the Sample's game (its event and command offered) and a Console message's
+  node opened through `AssetDatabase.OpenAsset`. `GraphTests` pin tidec's checker: their graphs are the format's,
+  not games.
 - Every game the sanitize build knows (600 `.sources` lists), compiled from its `.tide` files and from them made
   graphs, by a script (2026-11-24, not a test): 460 the same C, 136 different only in what comes from source
   lines (lambda and `_dropped_<line>_<col>` names, a hash of places, line tables), 4 failing both ways.
 
 ## Gaps
 
+- The graph editor's completion is asked at a node's place, not inside a call's arguments (signature help isn't
+  used), and a namespace (`Math`) is a name node whose members come from a wire dropped from it. A graph in a
+  Unity project's Packages folder is checked alone (the workspace is Assets).
 - Debugging steps through the JSON's lines, not nodes in the editor.
 - A file whose `#if` is inside a declaration or a namespace block, or that `#define`s, converts as one text declaration. `#if` between declarations converts: its lines are text declarations, the code between them nodes, and the lines a branch leaves out converted on their own (as text where they don't parse alone).
 - The converter gives a block of one statement braces, so a braceless `if (x) return;` costs one more in the

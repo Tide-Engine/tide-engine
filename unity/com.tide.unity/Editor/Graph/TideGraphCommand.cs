@@ -17,6 +17,8 @@ namespace Tide.Editor
     {
         // A tidec to use instead of tide: the Sample's tests set it to a checkout's build
         internal static string TidecOverride;
+        // A tidels to use instead of the one beside tide (or beside TidecOverride): the Sample's tests set it
+        internal static string TidelsOverride;
 
         // The program to run, and whether it's a tidec (whose spelling of the commands is its own), or null with why
         static string Program(out bool tidec, out string why)
@@ -139,27 +141,42 @@ namespace Tide.Editor
         public string Text = "";   // The Tide the graph stands for
         public string Failure;     // Why there's no result: tidec missing, or it failed to run
         public readonly List<GraphDiagnostic> Diagnostics = new List<GraphDiagnostic>();
+        public string Checker = "tidec"; // What checked it: "tidels" (the language server, which type-checks), or "tidec" (which lowers)
+        public string CheckerNote;       // Why it's tidec's, when tidels couldn't
+        public string Json;              // The file's text it's of (tidels's)
+        public GraphText Lowered;        // The Tide with each element's place in it (tidels's)
+        public readonly Dictionary<int, string> Types = new Dictionary<int, string>(); // Each node's value's type (tidels's)
     }
 
-    // What says what a graph's Tide is and what's wrong with it. tidec's lowering for now; the language server can
-    // take its place for checked results.
+    // What says what a graph's Tide is and what's wrong with it: the language server's check where there's one
+    // (TideGraphChecker), else tidec's lowering
     interface ITideGraphChecker
     {
         // Starts a check of the graph `json`, whose file is `path`; `done` is called on the editor's thread
         void Check(string path, string json, Action<GraphCheckResult> done);
+
+        // The window of a graph closed: what's held of it goes
+        void Closed(string path);
     }
 
-    // The node kinds and names a search offers in a graph: the catalog's for now; the language server can add what
-    // it knows of the game's types and functions.
+    // The node kinds and names a search offers in a graph: the catalog's, and the language server's completion
     interface ITideGraphSearch
     {
         IEnumerable<GraphSearchEntry> Entries(GraphSearchContext context);
     }
 
+    // A search whose entries come later: asked when the search opens, `found` called on the editor's thread with
+    // them (or none, and why)
+    interface ITideGraphLiveSearch
+    {
+        bool Asks(GraphSearchContext context);
+        void Ask(GraphSearchContext context, Action<List<GraphSearchEntry>, string> found);
+    }
+
     static class TideGraphServices
     {
-        public static ITideGraphChecker Checker = new TidecGraphChecker();
-        public static readonly List<ITideGraphSearch> Searches = new List<ITideGraphSearch> { new GraphCatalog() };
+        public static ITideGraphChecker Checker = new TideGraphChecker();
+        public static readonly List<ITideGraphSearch> Searches = new List<ITideGraphSearch> { new GraphCatalog(), new TidelsGraphSearch() };
     }
 
     // Writes the graph to a file of its own in Temp and runs `tidec --graph-text` on it
@@ -167,6 +184,10 @@ namespace Tide.Editor
     {
         static readonly Regex Line = new Regex(@"^(?<path>.*?):@(?<id>\d+): (?<severity>error|warning|note): (?<message>.*)$");
         static readonly Regex Plain = new Regex(@"^(?<path>.*?):(?:\d+:)*\s*(?<severity>error|warning|note): (?<message>.*)$");
+
+        public void Closed(string path)
+        {
+        }
 
         public void Check(string path, string json, Action<GraphCheckResult> done)
         {

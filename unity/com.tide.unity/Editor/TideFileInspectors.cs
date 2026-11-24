@@ -89,7 +89,7 @@ namespace Tide.Editor
                 var at = first.IndexOf(error ? ": error" : ": warning", StringComparison.Ordinal);
                 var text = at >= 0 ? first.Substring(at + 2) : first;
                 var icon = EditorGUIUtility.IconContent(error ? "console.erroricon.sml" : "console.warnicon.sml").image;
-                var content = new GUIContent($"line {line}: {text}", icon, message);
+                var content = new GUIContent($"{(TideGraphImporter.IsGraph(asset) ? "node" : "line")} {line}: {text}", icon, message);
                 var rect = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight);
                 EditorGUIUtility.AddCursorRect(rect, MouseCursor.Link);
                 if (GUI.Button(rect, content, EditorStyles.label)) Open(asset, line, column);

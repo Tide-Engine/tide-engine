@@ -42,6 +42,7 @@ namespace Tide.Editor
 
         Label titleLabel;
         Label tideText;
+        Label checkerLabel;
         VisualElement tidePanel;
         ScrollView diagnosticsList;
         Label status;
@@ -109,6 +110,7 @@ namespace Tide.Editor
 
         void OnDestroy()
         {
+            TideGraphServices.Checker.Closed(path);
             if (state != null)
             {
                 Undo.ClearUndo(state);
@@ -343,8 +345,12 @@ namespace Tide.Editor
             tideText.style.paddingLeft = 6;
             textScroll.Add(tideText);
             tidePanel.Add(textScroll);
-            diagnosticsList = new ScrollView { style = { flexGrow = 1, minWidth = 200, borderLeftWidth = 1, borderLeftColor = new Color(0, 0, 0, 0.4f) } };
-            tidePanel.Add(diagnosticsList);
+            var side = new VisualElement { style = { flexGrow = 1, minWidth = 200, borderLeftWidth = 1, borderLeftColor = new Color(0, 0, 0, 0.4f), flexDirection = FlexDirection.Column } };
+            checkerLabel = new Label { style = { fontSize = 10, color = new Color(0.65f, 0.65f, 0.65f), paddingLeft = 4, paddingTop = 2, whiteSpace = WhiteSpace.Normal } };
+            side.Add(checkerLabel);
+            diagnosticsList = new ScrollView { style = { flexGrow = 1 } };
+            side.Add(diagnosticsList);
+            tidePanel.Add(side);
             return tidePanel;
         }
 
@@ -406,6 +412,8 @@ namespace Tide.Editor
         {
             if (tideText == null || Checked == null) return;
             tideText.text = Checked.Failure != null && Checked.Text.Length == 0 ? "" : Checked.Text;
+            checkerLabel.text = CheckerSays;
+            checkerLabel.tooltip = Checked.CheckerNote ?? "";
             diagnosticsList.Clear();
             if (Checked.Failure != null) diagnosticsList.Add(new HelpBox(Checked.Failure, HelpBoxMessageType.Warning));
             foreach (var d in Checked.Diagnostics)
@@ -419,10 +427,25 @@ namespace Tide.Editor
             if (status != null)
             {
                 var errors = Checked.Diagnostics.Count(d => d.Severity == "error");
-                status.text = Checked.Failure != null ? "tidec: " + Checked.Failure.Split('\n')[0] : errors > 0 ? $"{errors} error(s)" : "tidec reads the graph";
+                var by = Checked.Checker;
+                status.text = Checked.Failure != null ? by + ": " + Checked.Failure.Split('\n')[0]
+                    : errors > 0 ? $"{by}: {errors} error(s)"
+                    : by == "tidels" ? "tidels checks the graph: no errors" : "tidec reads the graph";
             }
             Canvas?.MarkDiagnostics(Checked.Diagnostics);
+            Canvas?.MarkTypes(Checked.Types);
             Outline?.MarkDiagnostics(Checked.Diagnostics);
+        }
+
+        // Which checked the graph: the language server, with the game's code, or tidec, which only lowers it
+        internal string CheckerSays => Checked == null ? ""
+            : Checked.Checker == "tidels" ? "Checked by tidels, the language server, with the game's code"
+            : "Lowered by tidec, unchecked" + (Checked.CheckerNote != null ? " (no tidels: " + Checked.CheckerNote.Split('\n')[0] + ")" : "");
+
+        // Shows an element: a node in its graph, or another in the outline (a build's error on it, from the Console)
+        internal void Reveal(int id)
+        {
+            if (Doc?.Find(id) != null) JumpTo(new GraphDiagnostic { Id = id });
         }
 
         // Shows what a diagnostic is about: its node in its graph, or its element in the outline

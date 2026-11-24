@@ -712,19 +712,29 @@ namespace Tide.Editor
         static readonly System.Text.RegularExpressions.Regex located =
             new System.Text.RegularExpressions.Regex(@"^(?<path>.+?)(:(?<line>\d+):(?<column>\d+)|:@(?<node>\d+))?: (error|warning|note)");
 
-        // A graph's message names the element it's about, `Assets/Enemy.tidegraph:@17: error: ...` (notes/visual-scripting.md).
+        // A graph's message names the element it's about, `Assets/Enemy.tidegraph:@17: error: ...` (notes/visual-scripting.md),
+        // and is logged at that id as its line: a double click opens the graph's window on it (TideGraphImporter).
         // The asset a message is about, for the Console to select: a .tide file of the game, or a prefab or scene,
         // whose line numbers are of the Tide text tide made of it, which the message then names.
         // `file` (the project's path, null for none), `lineNumber` and `column`: where a double click opens it, the
         // Tide text tide read for a prefab or scene.
         static UnityEngine.Object ContextOf(ref string line, out string file, out int lineNumber, out int column)
         {
+            var found = ContextOfLine(ref line, out file, out lineNumber, out column, out var node);
+            if (node > 0 && file != null && TideGraphImporter.IsGraph(file)) lineNumber = node;
+            return found;
+        }
+
+        static UnityEngine.Object ContextOfLine(ref string line, out string file, out int lineNumber, out int column, out int node)
+        {
             file = null;
             lineNumber = column = 0;
             var match = located.Match(line.Split('\n')[0]);
+            node = 0;
             if (!match.Success) return null;
             int.TryParse(match.Groups["line"].Value, out lineNumber);
             int.TryParse(match.Groups["column"].Value, out column);
+            int.TryParse(match.Groups["node"].Value, out node);
             var path = match.Groups["path"].Value.Replace('\\', '/');
             var project = TideSettings.ProjectFolder.Replace('\\', '/').TrimEnd('/') + "/";
             string asset = null;
@@ -765,7 +775,12 @@ namespace Tide.Editor
 
         static void OnPostprocessAllAssets(string[] imported, string[] deleted, string[] moved, string[] movedFrom)
         {
-            if (Matters(imported) || Matters(deleted) || Matters(moved) || Matters(movedFrom)) TideBuildService.Changed();
+            if (Matters(imported) || Matters(deleted) || Matters(moved) || Matters(movedFrom))
+            {
+                TideBuildService.Changed();
+                // The graph editor's language server reads them again
+                TideLanguageClient.Shared?.FilesChanged(System.Linq.Enumerable.Concat(imported, moved), System.Linq.Enumerable.Concat(deleted, movedFrom));
+            }
         }
 
         internal static bool Matters(string[] paths)

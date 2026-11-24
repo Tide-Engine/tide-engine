@@ -4,20 +4,30 @@ using UnityEngine;
 
 namespace Tide.Editor
 {
-    // Where a search is made: the graph a new node goes in
+    // Where a search is made: the graph a new node goes in, the window it's in, the port a wire was dropped from,
+    // and the member or method node whose member it picks (Retarget), if it's for one
     sealed class GraphSearchContext
     {
         public GraphDocument Doc;
         public JValue Graph;
         public GraphSlot Slot;
+        public TideGraphWindow Window;
+        public GraphPort Pending;
+        public int Retarget;
         public bool Body => Slot.IsBody;
     }
 
-    // A thing a search offers: what it makes, put in a graph at a place, returning the node to wire
+    // A thing a search offers: what it makes, put in a graph at a place, returning the node to wire. The language
+    // server's say what they are (Detail), rank above the catalog's when Priority is higher, and can be a statement
+    // outside the catalog's Flow group (Statement). Apply makes a node the member or method picked, for a search
+    // that retargets one.
     sealed class GraphSearchEntry
     {
-        public string Group, Title, Keywords = "";
+        public string Group, Title, Keywords = "", Detail;
+        public int Priority;
+        public bool Statement;
         public Func<GraphDocument, JValue, Vector2, JValue> Make;
+        public Action<JValue> Apply;
     }
 
     // Every node kind of the format, and the locals and parameters a graph's nodes can read

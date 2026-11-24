@@ -21,17 +21,19 @@ namespace Tide.Editor
 
         public static bool IsGraph(string path) => path != null && path.EndsWith(".tidegraph", System.StringComparison.OrdinalIgnoreCase);
 
+        // A line is a node's id: the Console's graph errors (TideBuildService) are logged at their node's
         [OnOpenAsset(0)]
 #if UNITY_6000_2_OR_NEWER
-        static bool OnOpenAsset(EntityId id, int line) => Open(AssetDatabase.GetAssetPath(EditorUtility.EntityIdToObject(id)));
+        static bool OnOpenAsset(EntityId id, int line) => Open(AssetDatabase.GetAssetPath(EditorUtility.EntityIdToObject(id)), line);
 #else
-        static bool OnOpenAsset(int id, int line) => Open(AssetDatabase.GetAssetPath(EditorUtility.InstanceIDToObject(id)));
+        static bool OnOpenAsset(int id, int line) => Open(AssetDatabase.GetAssetPath(EditorUtility.InstanceIDToObject(id)), line);
 #endif
 
-        static bool Open(string path)
+        static bool Open(string path, int node)
         {
             if (!IsGraph(path)) return false;
-            TideGraphWindow.Open(path);
+            var window = TideGraphWindow.Open(path);
+            if (node > 0) window.Reveal(node);
             return true;
         }
 

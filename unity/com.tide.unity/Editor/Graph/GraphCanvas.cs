@@ -155,6 +155,7 @@ namespace Tide.Editor
             foreach (var pair in notes) pair.Value.Selected = Selection.Contains(pair.Key);
             RefreshDimming();
             ApplyErrors();
+            ApplyTypes();
             Redraw();
         }
 
@@ -246,6 +247,53 @@ namespace Tide.Editor
         void ApplyErrors()
         {
             foreach (var pair in views) pair.Value.SetError(errors.TryGetValue(pair.Key, out var m) ? m : null);
+        }
+
+        // The type of each node's value, as the language server checked it: on its output, on the inputs it's
+        // wired to and on the wires between them, in its type's colour, and in its node's tooltip
+        IReadOnlyDictionary<int, string> types = new Dictionary<int, string>();
+
+        public void MarkTypes(IReadOnlyDictionary<int, string> checkedTypes)
+        {
+            types = checkedTypes ?? new Dictionary<int, string>();
+            foreach (var view in views.Values) view.ForgetHover();
+            ApplyTypes();
+            Redraw();
+        }
+
+        public string TypeOf(int id)
+        {
+            if (types.TryGetValue(id, out var t)) return t;
+            // A statement whose value is kept: its value's
+            var n = GraphDocument.NodeIn(Graph, id);
+            return n != null && n.Str("k") == "eval" && types.TryGetValue(n.Wire("value"), out t) ? t : null;
+        }
+
+        void ApplyTypes()
+        {
+            var graph = Graph;
+            if (graph == null) return;
+            foreach (var view in views.Values)
+            {
+                if (view.Id <= 0) continue;
+                view.SetType(TypeOf(view.Call != null ? view.Call.Wire("id") : view.Id));
+                foreach (var port in view.Ports)
+                {
+                    var p = port.Port;
+                    if (p.Exec) continue;
+                    var n = GraphDocument.NodeIn(graph, p.Node);
+                    var from = p.Input ? (n != null && p.Path != null ? p.Path.Get(n) : 0) : p.Node == view.Id && view.Call != null ? view.Call.Wire("id") : p.Node;
+                    port.SetType(from != 0 ? TypeOf(from) : null);
+                }
+            }
+        }
+
+        // A wire from a value: its type's colour
+        internal Color WireColor(int from, bool dim)
+        {
+            var c = TideGraphTypes.ColorOf(TypeOf(from));
+            c.a = dim ? 0.35f : 0.9f;
+            return c;
         }
 
         // ---------------------------------------------------------------------------------------------------------
@@ -836,9 +884,31 @@ namespace Tide.Editor
             CloseSearch();
             var graph = Graph;
             if (graph == null) return;
-            search = new GraphSearchPopup(this, new GraphSearchContext { Doc = Doc, Graph = graph, Slot = Slot }, at, pending);
+            search = new GraphSearchPopup(this, new GraphSearchContext { Doc = Doc, Graph = graph, Slot = Slot, Window = Window, Pending = pending }, at, pending);
             Add(search);
             search.Begin();
+        }
+
+        // The search for the member a member or method node is: its object's members, as the language server knows them
+        public void OpenMemberSearch(int node, Vector2 at)
+        {
+            CloseSearch();
+            var graph = Graph;
+            if (graph == null || GraphDocument.NodeIn(graph, node) == null) return;
+            search = new GraphSearchPopup(this, new GraphSearchContext { Doc = Doc, Graph = graph, Slot = Slot, Window = Window, Retarget = node }, at, null);
+            Add(search);
+            search.Begin();
+        }
+
+        // Makes a member or method node the member a search picked for it
+        public void Retarget(GraphSearchEntry entry, int node)
+        {
+            CloseSearch();
+            var graph = Graph;
+            var n = GraphDocument.NodeIn(graph, node);
+            if (n == null || entry.Apply == null) return;
+            Window.Edit("Pick " + entry.Title, () => entry.Apply(n));
+            SelectOnly(node);
         }
 
         public void CloseSearch()
@@ -1063,7 +1133,7 @@ namespace Tide.Editor
                     {
                         var from = other.DataOut;
                         if (from == null) continue;
-                        Curve(p, from.Anchor(this), port.Anchor(this), new Color(0.55f, 0.75f, 1f, view.resolvedStyle.opacity < 1 ? 0.35f : 0.9f), 2);
+                        Curve(p, from.Anchor(this), port.Anchor(this), canvas.WireColor(wired, view.resolvedStyle.opacity < 1), 2);
                     }
                     else if (!g.Input && g.Exec)
                     {

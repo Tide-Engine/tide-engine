@@ -16,6 +16,7 @@ using UnityEngine.UIElements;
 public class GraphTests
 {
     static string tidec;
+    static ITideGraphChecker checker;
 
     // This checkout: the package's folder is unity/com.tide.unity in it
     static string Repository
@@ -46,12 +47,16 @@ public class GraphTests
     {
         tidec = FindTidec();
         TideGraphCommand.TidecOverride = tidec;
+        // What tidec lowers a graph to: these graphs are the format's, not games tidels would check (GraphLanguageTests)
+        checker = TideGraphServices.Checker;
+        TideGraphServices.Checker = new TidecGraphChecker();
     }
 
     [OneTimeTearDown]
     public void Forget()
     {
         TideGraphCommand.TidecOverride = null;
+        TideGraphServices.Checker = checker;
     }
 
     static void NeedTidec()

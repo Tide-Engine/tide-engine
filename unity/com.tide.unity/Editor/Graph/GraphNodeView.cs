@@ -12,6 +12,7 @@ namespace Tide.Editor
         public readonly GraphNodeView View;
         public bool Connected;
         public Color Tint = new Color(0.75f, 0.85f, 1f);
+        public string Type; // The type of the value on it, as the language server checked it
 
         public PortView(GraphNodeView view, GraphPort port)
         {
@@ -53,6 +54,59 @@ namespace Tide.Editor
 
         // Where wires join it, in another element's space
         public Vector2 Anchor(VisualElement space) => this.ChangeCoordinatesTo(space, new Vector2(layout.width / 2, layout.height / 2));
+
+        // The type of its value: its colour, and its tooltip says it
+        public void SetType(string type)
+        {
+            if (Port.Exec || type == Type) return;
+            Type = type;
+            Tint = TideGraphTypes.ColorOf(type);
+            tooltip = string.IsNullOrEmpty(type) ? Port.Label : string.IsNullOrEmpty(Port.Label) ? type : $"{Port.Label}: {type}";
+            MarkDirtyRepaint();
+        }
+    }
+
+    // The colours of values' types, Blueprint-like: a few kinds of their own, any other a hue of its name's
+    static class TideGraphTypes
+    {
+        public static readonly Color Untyped = new Color(0.75f, 0.85f, 1f);
+
+        public static Color ColorOf(string type)
+        {
+            if (string.IsNullOrEmpty(type)) return Untyped;
+            var t = type.TrimEnd('?');
+            var generic = t.IndexOf('<');
+            var name = generic > 0 ? t.Substring(0, generic) : t;
+            switch (name)
+            {
+                case "bool": return new Color(0.9f, 0.3f, 0.3f);
+                case "byte":
+                case "int":
+                case "long": return new Color(0.3f, 0.88f, 0.75f);
+                case "float":
+                case "double": return new Color(0.6f, 0.92f, 0.35f);
+                case "string":
+                case "char": return new Color(0.95f, 0.45f, 0.85f);
+                case "int2":
+                case "int3":
+                case "int4":
+                case "float2":
+                case "float3":
+                case "float4":
+                case "double2":
+                case "double3":
+                case "double4": return new Color(0.98f, 0.8f, 0.3f);
+                case "quaternion": return new Color(0.65f, 0.65f, 1f);
+                case "Entity": return new Color(0.35f, 0.6f, 1f);
+                case "Color": return new Color(1f, 0.6f, 0.3f);
+                case "void": return new Color(0.6f, 0.6f, 0.6f);
+            }
+            // Any other: its own hue, from its name
+            var hash = 17;
+            foreach (var c in name) hash = unchecked(hash * 31 + c);
+            var hue = (hash & 0xffff) / 65536f;
+            return Color.HSVToRGB(hue, 0.45f, 0.95f);
+        }
     }
 
     // A node on the canvas: its title in its category's colour, its ports and its own fields. An eval whose value
@@ -71,6 +125,8 @@ namespace Tide.Editor
         readonly VisualElement header;
         Label titleLabel;
         bool selected, error, dim;
+        string errorText, typeText, hoverText; // What its tooltip says: what's wrong with it, its value's type, tidels's hover
+        bool hoverAsked;
         Color baseBorder = new Color(0.1f, 0.1f, 0.1f);
 
         public GraphNodeView(GraphCanvas canvas, JValue node, JValue call)
@@ -152,6 +208,17 @@ namespace Tide.Editor
             var graph = Canvas.Graph;
             if (Call != null) foreach (var f in GraphNodeFields.Build(w, graph, Call, true)) body.Add(Compact(f));
             foreach (var f in GraphNodeFields.Build(w, graph, Node, true)) body.Add(Compact(f));
+            // A member or method: what its object has, from the language server
+            var named = Call ?? Node;
+            var tk = named.Str("k");
+            if (tk == "method" || (tk == "member" && !named.Flag("shorthand")))
+            {
+                var id = named.Wire("id");
+                var pick = GraphFields.SmallButton("Pick member…", () => Canvas.OpenMemberSearch(id, Canvas.ToCanvas(At + new Vector2(0, 30))));
+                pick.tooltip = "Its object's fields and methods, as tidels knows them";
+                body.Add(pick);
+            }
+            RegisterCallback<PointerEnterEvent>(_ => AskHover());
 
             // Its inputs: the call's when merged, but not the statement's value, which is the call
             var inputs = new List<GraphPort>();
@@ -291,8 +358,56 @@ namespace Tide.Editor
         public void SetError(string message)
         {
             error = message != null;
-            tooltip = message ?? "";
+            errorText = message;
+            Retooltip();
             Restyle();
+        }
+
+        // Its value's type, as the language server checked it: a new check's, so what tidels said of it is asked again
+        public void SetType(string type)
+        {
+            if (type == typeText) return;
+            typeText = type;
+            hoverText = null;
+            hoverAsked = false;
+            Retooltip();
+        }
+
+        public string TypeText => typeText;
+        public string HoverText => hoverText;
+
+        public void SetHover(string text)
+        {
+            hoverText = text;
+            Retooltip();
+        }
+
+        void Retooltip()
+        {
+            var parts = new List<string>();
+            if (!string.IsNullOrEmpty(errorText)) parts.Add(errorText);
+            if (!string.IsNullOrEmpty(hoverText)) parts.Add(hoverText);
+            else if (!string.IsNullOrEmpty(typeText)) parts.Add(typeText);
+            tooltip = string.Join("\n\n", parts);
+        }
+
+        // What tidels says of it, asked the first time the pointer's on it after a check
+        internal void AskHover()
+        {
+            if (Id <= 0 || hoverAsked) return;
+            hoverAsked = true;
+            TideGraphLanguage.Hover(Canvas.Window, (Call ?? Node).Wire("id"), text =>
+            {
+                if (panel != null) SetHover(text);
+            });
+        }
+
+        // A new check: what tidels says of it is asked again
+        public void ForgetHover()
+        {
+            hoverAsked = false;
+            hoverText = null;
+            Retooltip();
         }
 
         public PortView PortAt(int node, WirePath path, bool input, bool exec)
