@@ -1694,19 +1694,32 @@ static void document_request(lsp_server *s, const char *method, const json *id, 
         } else if (strcmp(method, "tide/graphTypes") == 0) {
             analysis_graph_types(&g);
         } else if (strcmp(method, "tide/graphMembers") == 0) {
-            // What a node's value has: the game read again with a '.' after the node, and completion there. The
-            // next request reads it as it is
-            analysis_set_graph_probe(d->uri, json_int(json_path(params, "node", NULL), 0));
+            // What a node's value has: the game read again with a '.' after the node, and completion there; and the
+            // node's type, read first with the node written and no '.'. The next request reads the graph as it is
+            const int node = json_int(json_path(params, "node", NULL), 0);
+            jbuf type = {0};
+            analysis_set_graph_probe(d->uri, node, false);
+            s->analyzed = false;
+            analyze(s, d->uri);
+            analysis_graph_node_type(node, &type);
+            analysis_set_graph_probe(d->uri, node, true);
             s->analyzed = false;
             analyze(s, d->uri);
             const int offset = analysis_graph_probe_offset();
             int graph_line, graph_character;
             if (offset >= 0 && analysis_graph_position(offset, &graph_line, &graph_character)) {
                 analysis_completion(graph_line, graph_character, &g);
+                if (g.len && g.data[g.len - 1] == '}') { // ...and whose they are
+                    g.len--;
+                    jb_put(&g, ",\"type\":");
+                    jb_putn(&g, type.data, type.len);
+                    jb_put(&g, "}");
+                }
             } else {
                 jb_put(&g, "{\"isIncomplete\":false,\"items\":[]}");
             }
-            analysis_set_graph_probe(NULL, 0);
+            jb_free(&type);
+            analysis_set_graph_probe(NULL, 0, false);
             s->analyzed = false;
         } else {
             int graph_line, graph_character;

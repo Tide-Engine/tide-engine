@@ -124,5 +124,8 @@ void analysis_graph_types(jbuf *out);
 // The next analysis of the graph `uri` reads it with a '.' after node `node`'s text, where completion offers what
 // the node's value has (its fields and methods, a namespace's or a type's members); NULL ends it. Then the '.''s
 // place, past it, or -1 where the node has no text.
-void analysis_set_graph_probe(const char *uri, int node);
+// Without `dot`, only the node is written even where nothing reads it, so its type can be asked.
+void analysis_set_graph_probe(const char *uri, int node, bool dot);
 int analysis_graph_probe_offset(void);
+// The type of node `node`'s value, as a JSON string, or null.
+void analysis_graph_node_type(int node, jbuf *out);

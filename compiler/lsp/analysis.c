@@ -1783,6 +1783,7 @@ static void index_program(void)
 static const char *probe_uri;
 static int probe_node;
 static int probe_offset = -1;
+static bool probe_dot; // The '.' after it: without, the node is only written where nothing reads it, for its type
 
 // Its Tide with a '.' just after the node's text, which completion goes on from as after `value.` in a .tide file
 static void probe_graph(afile *f)
@@ -1804,10 +1805,11 @@ static void probe_graph(afile *f)
     }
 }
 
-void analysis_set_graph_probe(const char *uri, const int node)
+void analysis_set_graph_probe(const char *uri, const int node, const bool dot)
 {
     probe_uri = uri;
     probe_node = node;
+    probe_dot = dot;
     probe_offset = -1;
 }
 
@@ -1900,7 +1902,7 @@ void analysis_run(const analysis_file *given, const int given_count)
             if (!graph_lower_with(&f->src, probed ? probe_node : 0)) {
                 f->src.text = "";
                 f->src.len = 0;
-            } else if (probed) {
+            } else if (probed && probe_dot) {
                 probe_graph(f);
             }
             copy = (char *)f->src.text;
@@ -15439,4 +15441,17 @@ void analysis_graph_types(jbuf *out)
         if (d->at.file == A.doc) types_decl(&t, d);
     }
     jb_put(out, "}");
+}
+
+void analysis_graph_node_type(const int node, jbuf *out)
+{
+    jbuf types = {0};
+    analysis_graph_types(&types);
+    const json *all = json_parse(types.data ? types.data : "{}", types.len);
+    char key[16];
+    snprintf(key, sizeof key, "%d", node);
+    const char *type = json_str(json_get(all, key));
+    if (type) jb_string(out, type);
+    else jb_put(out, "null");
+    jb_free(&types);
 }
