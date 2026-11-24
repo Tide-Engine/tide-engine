@@ -15,7 +15,7 @@ onmessage = async ({ data }) => {
     try {
         if (!compiler) await initialize();
         const started = performance.now();
-        const result = await compiler.compile(data.source, text => postMessage({ type: 'progress', id: data.id, text }));
+        const result = await compiler.compile(data.source, text => postMessage({ type: 'progress', id: data.id, text }), data.name);
         postMessage({ type: 'built', id: data.id, ...result, seconds: (performance.now() - started) / 1000 }, [result.wasm.buffer, result.pack.buffer]);
     } catch (error) {
         postMessage({ type: 'error', id: data.id, text: error.message ?? String(error) });

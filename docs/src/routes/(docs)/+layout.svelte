@@ -9,6 +9,8 @@
     let outline = $state(false);
 
     const headings = $derived(page.data.headings ?? []);
+    // The playgrounds' editors and games take the page's whole width
+    const playground = $derived(page.url.pathname === '/guide/playground' || page.url.pathname === '/guide/graph-playground');
 
     $effect(() => {
         page.url.pathname;
@@ -63,11 +65,11 @@
 </aside>
 
 <div class="main">
-    <div class="content" class:samples={page.url.pathname === '/guide/samples'} class:playground={page.url.pathname === '/guide/playground'}>
+    <div class="content" class:samples={page.url.pathname === '/guide/samples'} class:playground={playground}>
         <main id="content">
             {@render children()}
         </main>
-        {#if headings.length && page.url.pathname !== '/guide/playground'}
+        {#if headings.length && !playground}
             <aside class="outline" aria-label="On this page">
                 <p>On this page</p>
                 <Outline {headings} spy />

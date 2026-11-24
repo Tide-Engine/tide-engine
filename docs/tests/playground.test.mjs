@@ -86,6 +86,23 @@ test('texture imports build identical packs in isolated browser filesystems', as
     assert.deepEqual(second.pack, first.pack);
 });
 
+// The graph playground compiles its .tidegraph the same way, as game.tidegraph:
+// tidec reads it as the Tide it stands for, and says a node's errors at its id.
+const stars = await readFile(new URL('../playground/stars.tidegraph', import.meta.url), 'utf8');
+
+test('a graph compiles through the same browser pipeline', async () => {
+    const result = await compiler.compile(stars, () => {}, 'game.tidegraph');
+    const module = await WebAssembly.compile(result.wasm);
+    assert.ok(WebAssembly.Module.exports(module).some(item => item.name === 'tide_reload_save'));
+    assert.equal(result.diagnostics, '');
+});
+
+test('a graph error names its node', async () => {
+    const clamp = JSON.parse(stars).decls.find(d => d.name === 'Steer').body.nodes.find(n => n.k === 'method' && n.name === 'Clamp');
+    await assert.rejects(compiler.compile(stars.replace('"name": "Clamp"', '"name": "Clampp"'), () => {}, 'game.tidegraph'),
+        new RegExp(`game\\.tidegraph:@${clamp.id}: error:.*Clampp`, 's'));
+});
+
 // The editor's language server is the real tidels, staged as its own small
 // payload with only the engine headers.
 const language = async text => {

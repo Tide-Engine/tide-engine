@@ -3,6 +3,9 @@
 # not. Native tidec still generates the initial example during this build.
 tide_add_game(tide_playground_demo SOURCES demo.tide HOST main.c NAME game LAYOUT)
 target_link_libraries(tide_playground_demo PRIVATE tide_platform)
+# The graph playground's starter: a game made with graphs only, its first build.
+tide_add_game(tide_playground_stars SOURCES stars.tidegraph HOST main.c NAME game LAYOUT)
+target_link_libraries(tide_playground_stars PRIVATE tide_platform)
 if(NOT TIDE_WEB)
     return()
 endif()
@@ -75,6 +78,7 @@ add_custom_target(docs_playground
     COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/stage.mjs"
         --sysroot "${TIDE_WASI_SYSROOT}" --builtins "${TIDE_WASI_BUILTINS}"
         --compiler "$<TARGET_FILE:tidec_browser>" --server "$<TARGET_FILE:tidels_browser>" --demo "$<TARGET_FILE:tide_playground_demo>"
+        --stars "$<TARGET_FILE:tide_playground_stars>"
         --engine "$<TARGET_FILE:tide>" --platform "$<TARGET_FILE:tide_platform>"
-    DEPENDS tidec_browser tidels_browser tide_playground_demo tide tide_platform
+    DEPENDS tidec_browser tidels_browser tide_playground_demo tide_playground_stars tide tide_platform
     VERBATIM)

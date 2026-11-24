@@ -6,6 +6,8 @@ description: "Write a Tide game's code as graphs: nodes for statements and value
 
 A game's code can be graphs instead of text. A graph is a `.tidegraph` file: its declarations (components, systems, events, functions, everything a `.tide` file has) with their code as nodes joined by wires. It is Tide, compiled as Tide is: the same networking, prediction and determinism, the same speed, on every platform. A game can be all graphs, all text, or both, and each uses what the other declares.
 
+To try it without installing anything, open the [graph playground](../guide/graph-playground.md): a small game made with graphs only, which you edit and play in your browser.
+
 ## Making a graph
 
 In Unity, with Tide's package:

@@ -1,0 +1,557 @@
+{
+  "tidegraph": 1,
+  "nextId": 343,
+  "decls": [
+    {
+      "kind": "settings",
+      "id": 1,
+      "comment": "Catch the falling stars with the basket: move the pointer, drag a finger, or press A and D.",
+      "entries": [
+        {
+          "id": 2,
+          "name": "title",
+          "value": {
+            "root": 3,
+            "nodes": [
+              {"id": 3, "k": "string", "x": -220, "y": 0, "text": "Star catch"}
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "kind": "const",
+      "id": 4,
+      "comment": "How fast the first stars fall; each catch adds a little",
+      "name": "FALL",
+      "type": "float",
+      "value": {
+        "root": 5,
+        "nodes": [
+          {"id": 5, "k": "int", "x": -164, "y": 0, "text": "90"}
+        ]
+      }
+    },
+    {
+      "kind": "const",
+      "id": 6,
+      "comment": "Half the basket's width",
+      "name": "WIDTH",
+      "type": "float",
+      "value": {
+        "root": 7,
+        "nodes": [
+          {"id": 7, "k": "int", "x": -164, "y": 0, "text": "40"}
+        ]
+      }
+    },
+    {
+      "kind": "const",
+      "id": 8,
+      "name": "GOLD",
+      "type": "Color",
+      "value": {
+        "root": 9,
+        "nodes": [
+          {"id": 9, "k": "call", "x": -180, "y": 0, "name": "Color", "args": [10, 11, 12]},
+          {"id": 10, "k": "float", "x": -400, "y": 0, "text": "0.98"},
+          {"id": 11, "k": "float", "x": -400, "y": 88, "text": "0.75"},
+          {"id": 12, "k": "float", "x": -400, "y": 176, "text": "0.14"}
+        ]
+      }
+    },
+    {
+      "kind": "const",
+      "id": 13,
+      "name": "TEAL",
+      "type": "Color",
+      "value": {
+        "root": 14,
+        "nodes": [
+          {"id": 14, "k": "call", "x": -180, "y": 0, "name": "Color", "args": [15, 16, 17]},
+          {"id": 15, "k": "float", "x": -400, "y": 0, "text": "0.18"},
+          {"id": 16, "k": "float", "x": -400, "y": 88, "text": "0.83"},
+          {"id": 17, "k": "float", "x": -400, "y": 176, "text": "0.75"}
+        ]
+      }
+    },
+    {"kind": "scene", "id": 18, "name": "Main", "members": []},
+    {
+      "kind": "component",
+      "id": 19,
+      "name": "Basket",
+      "members": [
+        {
+          "kind": "field",
+          "id": 20,
+          "type": "float2",
+          "name": "position",
+          "attributes": [
+            {"id": 21, "name": "Position"}
+          ],
+          "default": {
+            "root": 22,
+            "nodes": [
+              {"id": 22, "k": "call", "x": -188, "y": 0, "name": "float2", "args": [23, 25]},
+              {"id": 23, "k": "int", "x": -392, "y": 0, "text": "0"},
+              {"id": 24, "k": "int", "x": -612, "y": 88, "text": "110"},
+              {"id": 25, "k": "unary", "x": -408, "y": 88, "op": "-", "value": 24}
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "kind": "component",
+      "id": 26,
+      "name": "Star",
+      "members": [
+        {
+          "kind": "field",
+          "id": 27,
+          "type": "float2",
+          "name": "position",
+          "attributes": [
+            {"id": 28, "name": "Position"}
+          ]
+        },
+        {"kind": "field", "id": 29, "type": "float", "name": "speed"}
+      ]
+    },
+    {
+      "kind": "singleton",
+      "id": 30,
+      "name": "Score",
+      "members": [
+        {"kind": "field", "id": 31, "type": "int", "name": "caught"},
+        {"kind": "field", "id": 32, "type": "int", "name": "missed"},
+        {"kind": "field", "id": 33, "type": "float", "name": "wait"}
+      ]
+    },
+    {
+      "kind": "singleton",
+      "id": 34,
+      "comment": "Where this machine's pointer is in the field, which its input sends",
+      "name": "Aim",
+      "modifiers": ["local"],
+      "members": [
+        {"kind": "field", "id": 35, "type": "float", "name": "x"},
+        {"kind": "field", "id": 36, "type": "bool", "name": "moved"}
+      ]
+    },
+    {
+      "kind": "input",
+      "id": 37,
+      "name": "Controls",
+      "members": [
+        {
+          "kind": "field",
+          "id": 38,
+          "type": "float",
+          "name": "target",
+          "attributes": [
+            {"id": 39, "name": "Absolute"}
+          ]
+        },
+        {
+          "kind": "field",
+          "id": 40,
+          "type": "bool",
+          "name": "pointing",
+          "attributes": [
+            {"id": 41, "name": "Absolute"}
+          ]
+        },
+        {"kind": "field", "id": 42, "type": "float", "name": "move"},
+        {
+          "kind": "sample",
+          "id": 43,
+          "name": "Sample",
+          "params": [
+            {"id": 44, "type": "Devices", "name": "devices"},
+            {"id": 45, "type": "Aim", "name": "aim"}
+          ],
+          "body": {
+            "entry": 49,
+            "nodes": [
+              {"id": 46, "k": "name", "x": 212, "y": 136, "name": "target"},
+              {"id": 47, "k": "name", "x": 0, "y": 224, "name": "aim"},
+              {"id": 48, "k": "member", "x": 212, "y": 224, "object": 47, "member": "x"},
+              {"id": 49, "k": "assign", "x": 440, "y": 0, "op": "=", "target": 46, "value": 48, "next": 53},
+              {"id": 50, "k": "name", "x": 904, "y": 136, "name": "pointing"},
+              {"id": 51, "k": "name", "x": 708, "y": 224, "name": "aim"},
+              {"id": 52, "k": "member", "x": 920, "y": 224, "object": 51, "member": "moved"},
+              {"id": 53, "k": "assign", "x": 1148, "y": 0, "op": "=", "target": 50, "value": 52, "next": 56},
+              {"id": 54, "k": "name", "x": 1416, "y": 112, "name": "devices"},
+              {"id": 55, "k": "member", "x": 1652, "y": 112, "object": 54, "member": "keyboard"},
+              {"id": 56, "k": "var", "x": 1896, "y": 0, "name": "keys", "value": 55, "next": 67},
+              {"id": 57, "k": "local", "x": 32, "y": 532, "ref": 56},
+              {"id": 58, "k": "member", "x": 252, "y": 532, "object": 57, "member": "d"},
+              {"id": 59, "k": "member", "x": 480, "y": 532, "object": 58, "member": "pressed"},
+              {"id": 60, "k": "local", "x": 0, "y": 644, "ref": 56},
+              {"id": 61, "k": "member", "x": 220, "y": 644, "object": 60, "member": "rightArrow"},
+              {"id": 62, "k": "member", "x": 480, "y": 644, "object": 61, "member": "pressed"},
+              {"id": 63, "k": "binary", "x": 716, "y": 532, "op": "||", "lhs": 59, "rhs": 62},
+              {"id": 64, "k": "name", "x": 1004, "y": 922, "name": "move"},
+              {"id": 65, "k": "int", "x": 1012, "y": 1010, "text": "1"},
+              {"id": 66, "k": "assign", "x": 1216, "y": 786, "op": "+=", "target": 64, "value": 65},
+              {"id": 67, "k": "if", "x": 944, "y": 396, "cond": 63, "then": 66, "next": 78},
+              {"id": 68, "k": "local", "x": 1204, "y": 532, "ref": 56},
+              {"id": 69, "k": "member", "x": 1424, "y": 532, "object": 68, "member": "a"},
+              {"id": 70, "k": "member", "x": 1652, "y": 532, "object": 69, "member": "pressed"},
+              {"id": 71, "k": "local", "x": 1180, "y": 644, "ref": 56},
+              {"id": 72, "k": "member", "x": 1400, "y": 644, "object": 71, "member": "leftArrow"},
+              {"id": 73, "k": "member", "x": 1652, "y": 644, "object": 72, "member": "pressed"},
+              {"id": 74, "k": "binary", "x": 1888, "y": 532, "op": "||", "lhs": 70, "rhs": 73},
+              {"id": 75, "k": "name", "x": 2176, "y": 922, "name": "move"},
+              {"id": 76, "k": "int", "x": 2184, "y": 1010, "text": "1"},
+              {"id": 77, "k": "assign", "x": 2388, "y": 786, "op": "-=", "target": 75, "value": 76},
+              {"id": 78, "k": "if", "x": 2116, "y": 396, "cond": 74, "then": 77}
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "kind": "handler",
+      "id": 79,
+      "name": "Arrive",
+      "trigger": {"type": "PlayerJoined", "name": "joined"},
+      "params": [],
+      "body": {
+        "entry": 85,
+        "nodes": [
+          {"id": 80, "k": "call", "x": 692, "y": 112, "name": "Spawn", "args": [81, 84]},
+          {"id": 81, "k": "name", "x": 464, "y": 112, "name": "Basket"},
+          {"id": 82, "k": "name", "x": 0, "y": 200, "name": "joined"},
+          {"id": 83, "k": "member", "x": 228, "y": 200, "object": 82, "member": "player"},
+          {"id": 84, "k": "literal", "x": 456, "y": 200, "type": "Owner", "inits": [{"name": "player", "value": 83}]},
+          {"id": 85, "k": "eval", "x": 912, "y": 0, "value": 80}
+        ]
+      }
+    },
+    {
+      "kind": "system",
+      "id": 86,
+      "name": "Steer",
+      "params": [
+        {"id": 87, "mode": "read", "type": "Controls", "name": "controls"},
+        {"id": 88, "mode": "mut", "type": "Basket", "name": "basket"},
+        {"id": 89, "mode": "read", "type": "Time", "name": "time"}
+      ],
+      "body": {
+        "entry": 106,
+        "nodes": [
+          {"id": 90, "k": "name", "x": 668, "y": 112, "name": "controls"},
+          {"id": 91, "k": "member", "x": 912, "y": 112, "object": 90, "member": "pointing"},
+          {"id": 92, "k": "name", "x": 684, "y": 224, "name": "controls"},
+          {"id": 93, "k": "member", "x": 928, "y": 224, "object": 92, "member": "target"},
+          {"id": 94, "k": "name", "x": 228, "y": 336, "name": "basket"},
+          {"id": 95, "k": "member", "x": 456, "y": 336, "object": 94, "member": "position"},
+          {"id": 96, "k": "member", "x": 700, "y": 336, "object": 95, "member": "x"},
+          {"id": 97, "k": "name", "x": 0, "y": 448, "name": "controls"},
+          {"id": 98, "k": "member", "x": 244, "y": 448, "object": 97, "member": "move"},
+          {"id": 99, "k": "int", "x": 268, "y": 560, "text": "260"},
+          {"id": 100, "k": "binary", "x": 472, "y": 448, "op": "*", "lhs": 98, "rhs": 99},
+          {"id": 101, "k": "name", "x": 260, "y": 648, "name": "time"},
+          {"id": 102, "k": "member", "x": 472, "y": 648, "object": 101, "member": "dt"},
+          {"id": 103, "k": "binary", "x": 700, "y": 448, "op": "*", "lhs": 100, "rhs": 102},
+          {"id": 104, "k": "binary", "x": 928, "y": 336, "op": "+", "lhs": 96, "rhs": 103},
+          {"id": 105, "k": "conditional", "x": 1156, "y": 112, "cond": 91, "then": 93, "else": 104},
+          {"id": 106, "k": "var", "x": 1424, "y": 0, "name": "x", "value": 105, "next": 116},
+          {"id": 107, "k": "name", "x": 1668, "y": 136, "name": "basket"},
+          {"id": 108, "k": "member", "x": 1896, "y": 136, "object": 107, "member": "position"},
+          {"id": 109, "k": "member", "x": 2140, "y": 136, "object": 108, "member": "x"},
+          {"id": 110, "k": "name", "x": 1928, "y": 248, "name": "Math"},
+          {"id": 111, "k": "method", "x": 2140, "y": 248, "object": 110, "name": "Clamp", "args": [112, 114, 115]},
+          {"id": 112, "k": "local", "x": 1920, "y": 336, "ref": 106},
+          {"id": 113, "k": "int", "x": 1716, "y": 424, "text": "150"},
+          {"id": 114, "k": "unary", "x": 1920, "y": 424, "op": "-", "value": 113},
+          {"id": 115, "k": "int", "x": 1936, "y": 536, "text": "150"},
+          {"id": 116, "k": "assign", "x": 2368, "y": 0, "op": "=", "target": 109, "value": 111}
+        ]
+      }
+    },
+    {
+      "kind": "system",
+      "id": 117,
+      "comment": "A new star at the top every so often",
+      "name": "Drop",
+      "params": [
+        {"id": 118, "mode": "mut", "type": "Score", "name": "score"},
+        {"id": 119, "mode": "read", "type": "Time", "name": "time"}
+      ],
+      "body": {
+        "entry": 124,
+        "nodes": [
+          {"id": 120, "k": "name", "x": 0, "y": 136, "name": "score"},
+          {"id": 121, "k": "member", "x": 220, "y": 136, "object": 120, "member": "wait"},
+          {"id": 122, "k": "name", "x": 8, "y": 248, "name": "time"},
+          {"id": 123, "k": "member", "x": 220, "y": 248, "object": 122, "member": "dt"},
+          {"id": 124, "k": "assign", "x": 448, "y": 0, "op": "-=", "target": 121, "value": 123, "next": 130},
+          {"id": 125, "k": "name", "x": 716, "y": 136, "name": "score"},
+          {"id": 126, "k": "member", "x": 936, "y": 136, "object": 125, "member": "wait"},
+          {"id": 127, "k": "int", "x": 960, "y": 248, "text": "0"},
+          {"id": 128, "k": "binary", "x": 1164, "y": 136, "op": ">", "lhs": 126, "rhs": 127},
+          {"id": 129, "k": "return", "x": 1452, "y": 366},
+          {"id": 130, "k": "if", "x": 1392, "y": 0, "cond": 128, "then": 129, "next": 134},
+          {"id": 131, "k": "name", "x": 1628, "y": 136, "name": "score"},
+          {"id": 132, "k": "member", "x": 1848, "y": 136, "object": 131, "member": "wait"},
+          {"id": 133, "k": "float", "x": 1856, "y": 248, "text": "0.8"},
+          {"id": 134, "k": "assign", "x": 2076, "y": 0, "op": "=", "target": 132, "value": 133, "next": 150},
+          {"id": 135, "k": "call", "x": 1140, "y": 626, "name": "Spawn", "args": [149]},
+          {"id": 136, "k": "call", "x": 676, "y": 626, "name": "float2", "args": [138, 142]},
+          {"id": 137, "k": "name", "x": 196, "y": 626, "name": "Random"},
+          {"id": 138, "k": "method", "x": 424, "y": 626, "object": 137, "name": "NextFloat", "args": [140, 141]},
+          {"id": 139, "k": "int", "x": 0, "y": 714, "text": "140"},
+          {"id": 140, "k": "unary", "x": 204, "y": 714, "op": "-", "value": 139},
+          {"id": 141, "k": "int", "x": 220, "y": 826, "text": "140"},
+          {"id": 142, "k": "int", "x": 472, "y": 914, "text": "130"},
+          {"id": 143, "k": "name", "x": 464, "y": 1002, "name": "FALL"},
+          {"id": 144, "k": "name", "x": 0, "y": 1090, "name": "score"},
+          {"id": 145, "k": "member", "x": 220, "y": 1090, "object": 144, "member": "caught"},
+          {"id": 146, "k": "int", "x": 244, "y": 1202, "text": "4"},
+          {"id": 147, "k": "binary", "x": 448, "y": 1090, "op": "*", "lhs": 145, "rhs": 146},
+          {"id": 148, "k": "binary", "x": 676, "y": 1002, "op": "+", "lhs": 143, "rhs": 147},
+          {"id": 149, "k": "literal", "x": 904, "y": 626, "type": "Star", "inits": [{"name": "position", "value": 136}, {"name": "speed", "value": 148}]},
+          {"id": 150, "k": "eval", "x": 1360, "y": 514, "value": 135}
+        ]
+      }
+    },
+    {
+      "kind": "system",
+      "id": 151,
+      "name": "Fall",
+      "params": [
+        {"id": 152, "mode": "mut", "type": "Star", "name": "star"},
+        {"id": 153, "mode": "mut", "type": "Score", "name": "score"},
+        {"id": 154, "mode": "read", "type": "Time", "name": "time"},
+        {"id": 155, "mode": "query", "query": [{"id": 156, "mode": "read", "type": "Basket", "name": "basket"}], "name": "baskets"}
+      ],
+      "body": {
+        "entry": 165,
+        "nodes": [
+          {"id": 157, "k": "name", "x": 0, "y": 136, "name": "star"},
+          {"id": 158, "k": "member", "x": 212, "y": 136, "object": 157, "member": "position"},
+          {"id": 159, "k": "member", "x": 456, "y": 136, "object": 158, "member": "y"},
+          {"id": 160, "k": "name", "x": 16, "y": 248, "name": "star"},
+          {"id": 161, "k": "member", "x": 228, "y": 248, "object": 160, "member": "speed"},
+          {"id": 162, "k": "name", "x": 16, "y": 360, "name": "time"},
+          {"id": 163, "k": "member", "x": 228, "y": 360, "object": 162, "member": "dt"},
+          {"id": 164, "k": "binary", "x": 456, "y": 248, "op": "*", "lhs": 161, "rhs": 163},
+          {"id": 165, "k": "assign", "x": 684, "y": 0, "op": "-=", "target": 159, "value": 164, "next": 167},
+          {"id": 166, "k": "name", "x": 952, "y": 136, "name": "baskets"},
+          {"id": 167, "k": "foreach", "x": 1188, "y": 0, "name": "b", "collection": 166, "body": 174, "next": 214},
+          {"id": 168, "k": "name", "x": 1484, "y": 366, "name": "star"},
+          {"id": 169, "k": "member", "x": 1696, "y": 366, "object": 168, "member": "position"},
+          {"id": 170, "k": "local", "x": 1248, "y": 478, "ref": 167},
+          {"id": 171, "k": "member", "x": 1468, "y": 478, "object": 170, "member": "basket"},
+          {"id": 172, "k": "member", "x": 1696, "y": 478, "object": 171, "member": "position"},
+          {"id": 173, "k": "binary", "x": 1940, "y": 366, "op": "-", "lhs": 169, "rhs": 172},
+          {"id": 174, "k": "var", "x": 2168, "y": 254, "name": "near", "value": 173, "next": 200},
+          {"id": 175, "k": "name", "x": 2656, "y": 390, "name": "Math"},
+          {"id": 176, "k": "method", "x": 2868, "y": 390, "object": 175, "name": "Abs", "args": [178]},
+          {"id": 177, "k": "local", "x": 2420, "y": 478, "ref": 174},
+          {"id": 178, "k": "member", "x": 2640, "y": 478, "object": 177, "member": "x"},
+          {"id": 179, "k": "name", "x": 2876, "y": 590, "name": "WIDTH"},
+          {"id": 180, "k": "binary", "x": 3096, "y": 390, "op": "<", "lhs": 176, "rhs": 179},
+          {"id": 181, "k": "local", "x": 2648, "y": 678, "ref": 174},
+          {"id": 182, "k": "member", "x": 2868, "y": 678, "object": 181, "member": "y"},
+          {"id": 183, "k": "int", "x": 2672, "y": 790, "text": "6"},
+          {"id": 184, "k": "unary", "x": 2876, "y": 790, "op": "-", "value": 183},
+          {"id": 185, "k": "binary", "x": 3096, "y": 678, "op": ">", "lhs": 182, "rhs": 184},
+          {"id": 186, "k": "binary", "x": 3324, "y": 390, "op": "&&", "lhs": 180, "rhs": 185},
+          {"id": 187, "k": "local", "x": 2876, "y": 902, "ref": 174},
+          {"id": 188, "k": "member", "x": 3096, "y": 902, "object": 187, "member": "y"},
+          {"id": 189, "k": "int", "x": 3120, "y": 1014, "text": "10"},
+          {"id": 190, "k": "binary", "x": 3324, "y": 902, "op": "<", "lhs": 188, "rhs": 189},
+          {"id": 191, "k": "binary", "x": 3552, "y": 390, "op": "&&", "lhs": 186, "rhs": 190},
+          {"id": 192, "k": "name", "x": 3840, "y": 1268, "name": "score"},
+          {"id": 193, "k": "member", "x": 4060, "y": 1268, "object": 192, "member": "caught"},
+          {"id": 194, "k": "int", "x": 4084, "y": 1380, "text": "1"},
+          {"id": 195, "k": "assign", "x": 4288, "y": 1132, "op": "+=", "target": 193, "value": 194, "next": 198},
+          {"id": 196, "k": "this", "x": 4556, "y": 1244},
+          {"id": 197, "k": "method", "x": 4768, "y": 1244, "object": 196, "name": "Destroy", "args": []},
+          {"id": 198, "k": "eval", "x": 5004, "y": 1132, "value": 197, "next": 199},
+          {"id": 199, "k": "return", "x": 5256, "y": 1132},
+          {"id": 200, "k": "if", "x": 3780, "y": 254, "cond": 191, "then": 195},
+          {"id": 201, "k": "name", "x": 1464, "y": 136, "name": "star"},
+          {"id": 202, "k": "member", "x": 1676, "y": 136, "object": 201, "member": "position"},
+          {"id": 203, "k": "member", "x": 1920, "y": 136, "object": 202, "member": "y"},
+          {"id": 204, "k": "int", "x": 1724, "y": 248, "text": "135"},
+          {"id": 205, "k": "unary", "x": 1928, "y": 248, "op": "-", "value": 204},
+          {"id": 206, "k": "binary", "x": 2148, "y": 136, "op": "<", "lhs": 203, "rhs": 205},
+          {"id": 207, "k": "name", "x": 2436, "y": 526, "name": "score"},
+          {"id": 208, "k": "member", "x": 2656, "y": 526, "object": 207, "member": "missed"},
+          {"id": 209, "k": "int", "x": 2680, "y": 638, "text": "1"},
+          {"id": 210, "k": "assign", "x": 2884, "y": 390, "op": "+=", "target": 208, "value": 209, "next": 213},
+          {"id": 211, "k": "this", "x": 3152, "y": 502},
+          {"id": 212, "k": "method", "x": 3364, "y": 502, "object": 211, "name": "Destroy", "args": []},
+          {"id": 213, "k": "eval", "x": 3600, "y": 390, "value": 212},
+          {"id": 214, "k": "if", "x": 2376, "y": 0, "cond": 206, "then": 210}
+        ]
+      }
+    },
+    {
+      "kind": "view",
+      "id": 215,
+      "name": "Field",
+      "params": [
+        {"id": 216, "mode": "read", "type": "Devices", "name": "devices"},
+        {"id": 217, "mode": "mut", "type": "Aim", "name": "aim"},
+        {"id": 218, "mode": "read", "type": "Score", "name": "score"}
+      ],
+      "body": {
+        "entry": 225,
+        "nodes": [
+          {"id": 219, "k": "name", "x": 228, "y": 112, "name": "Draw"},
+          {"id": 220, "k": "method", "x": 440, "y": 112, "object": 219, "name": "Clear", "args": [221]},
+          {"id": 221, "k": "call", "x": 220, "y": 200, "name": "Color", "args": [222, 223, 224]},
+          {"id": 222, "k": "float", "x": 0, "y": 200, "text": "0.086"},
+          {"id": 223, "k": "float", "x": 0, "y": 288, "text": "0.086"},
+          {"id": 224, "k": "float", "x": 0, "y": 376, "text": "0.094"},
+          {"id": 225, "k": "eval", "x": 668, "y": 0, "value": 220, "next": 240},
+          {"id": 226, "k": "name", "x": 1848, "y": 112, "name": "Draw"},
+          {"id": 227, "k": "method", "x": 2060, "y": 112, "object": 226, "name": "SetCamera", "args": [228, 231]},
+          {"id": 228, "k": "call", "x": 1832, "y": 200, "name": "float2", "args": [229]},
+          {"id": 229, "k": "int", "x": 1628, "y": 200, "text": "0"},
+          {"id": 230, "k": "name", "x": 1620, "y": 312, "name": "Math"},
+          {"id": 231, "k": "method", "x": 1832, "y": 312, "object": 230, "name": "Max", "args": [232, 239]},
+          {"id": 232, "k": "int", "x": 1628, "y": 400, "text": "170"},
+          {"id": 233, "k": "int", "x": 1172, "y": 488, "text": "170"},
+          {"id": 234, "k": "name", "x": 920, "y": 576, "name": "Screen"},
+          {"id": 235, "k": "member", "x": 1148, "y": 576, "object": 234, "member": "height"},
+          {"id": 236, "k": "binary", "x": 1376, "y": 488, "op": "*", "lhs": 233, "rhs": 235},
+          {"id": 237, "k": "name", "x": 1148, "y": 688, "name": "Screen"},
+          {"id": 238, "k": "member", "x": 1376, "y": 688, "object": 237, "member": "width"},
+          {"id": 239, "k": "binary", "x": 1604, "y": 488, "op": "/", "lhs": 236, "rhs": 238},
+          {"id": 240, "k": "eval", "x": 2312, "y": 0, "value": 227, "next": 252},
+          {"id": 241, "k": "name", "x": 228, "y": 972, "name": "Draw"},
+          {"id": 242, "k": "method", "x": 440, "y": 972, "object": 241, "name": "Rect", "args": [243, 245, 248]},
+          {"id": 243, "k": "call", "x": 212, "y": 1060, "name": "float2", "args": [244]},
+          {"id": 244, "k": "int", "x": 8, "y": 1060, "text": "0"},
+          {"id": 245, "k": "call", "x": 212, "y": 1172, "name": "float2", "args": [246, 247]},
+          {"id": 246, "k": "int", "x": 8, "y": 1172, "text": "320"},
+          {"id": 247, "k": "int", "x": 8, "y": 1260, "text": "270"},
+          {"id": 248, "k": "call", "x": 220, "y": 1348, "name": "Color", "args": [249, 250, 251]},
+          {"id": 249, "k": "float", "x": 0, "y": 1348, "text": "0.13"},
+          {"id": 250, "k": "float", "x": 0, "y": 1436, "text": "0.13"},
+          {"id": 251, "k": "float", "x": 0, "y": 1524, "text": "0.16"},
+          {"id": 252, "k": "eval", "x": 668, "y": 860, "value": 242, "next": 263},
+          {"id": 253, "k": "name", "x": 1936, "y": 996, "name": "aim"},
+          {"id": 254, "k": "member", "x": 2148, "y": 996, "object": 253, "member": "x"},
+          {"id": 255, "k": "name", "x": 1652, "y": 1108, "name": "Draw"},
+          {"id": 256, "k": "method", "x": 1864, "y": 1108, "object": 255, "name": "ScreenToWorld", "args": [258]},
+          {"id": 257, "k": "name", "x": 1408, "y": 1196, "name": "Screen"},
+          {"id": 258, "k": "method", "x": 1636, "y": 1196, "object": 257, "name": "Flip", "args": [261]},
+          {"id": 259, "k": "name", "x": 920, "y": 1284, "name": "devices"},
+          {"id": 260, "k": "member", "x": 1156, "y": 1284, "object": 259, "member": "pointer"},
+          {"id": 261, "k": "member", "x": 1392, "y": 1284, "object": 260, "member": "position"},
+          {"id": 262, "k": "member", "x": 2148, "y": 1108, "object": 256, "member": "x"},
+          {"id": 263, "k": "assign", "x": 2376, "y": 860, "op": "=", "target": 254, "value": 262, "next": 275},
+          {"id": 264, "k": "name", "x": 488, "y": 1808, "name": "Math"},
+          {"id": 265, "k": "method", "x": 700, "y": 1808, "object": 264, "name": "LengthSq", "args": [268]},
+          {"id": 266, "k": "name", "x": 0, "y": 1896, "name": "devices"},
+          {"id": 267, "k": "member", "x": 236, "y": 1896, "object": 266, "member": "pointer"},
+          {"id": 268, "k": "member", "x": 472, "y": 1896, "object": 267, "member": "delta"},
+          {"id": 269, "k": "int", "x": 740, "y": 2008, "text": "0"},
+          {"id": 270, "k": "binary", "x": 944, "y": 1808, "op": ">", "lhs": 265, "rhs": 269},
+          {"id": 271, "k": "name", "x": 1232, "y": 2262, "name": "aim"},
+          {"id": 272, "k": "member", "x": 1444, "y": 2262, "object": 271, "member": "moved"},
+          {"id": 273, "k": "bool", "x": 1460, "y": 2374, "value": true},
+          {"id": 274, "k": "assign", "x": 1672, "y": 2126, "op": "=", "target": 272, "value": 273},
+          {"id": 275, "k": "if", "x": 1172, "y": 1672, "cond": 270, "then": 274, "next": 289},
+          {"id": 276, "k": "name", "x": 1408, "y": 1808, "name": "devices"},
+          {"id": 277, "k": "member", "x": 1644, "y": 1808, "object": 276, "member": "keyboard"},
+          {"id": 278, "k": "member", "x": 1888, "y": 1808, "object": 277, "member": "a"},
+          {"id": 279, "k": "member", "x": 2116, "y": 1808, "object": 278, "member": "pressed"},
+          {"id": 280, "k": "name", "x": 1408, "y": 1920, "name": "devices"},
+          {"id": 281, "k": "member", "x": 1644, "y": 1920, "object": 280, "member": "keyboard"},
+          {"id": 282, "k": "member", "x": 1888, "y": 1920, "object": 281, "member": "d"},
+          {"id": 283, "k": "member", "x": 2116, "y": 1920, "object": 282, "member": "pressed"},
+          {"id": 284, "k": "binary", "x": 2352, "y": 1808, "op": "||", "lhs": 279, "rhs": 283},
+          {"id": 285, "k": "name", "x": 2640, "y": 2198, "name": "aim"},
+          {"id": 286, "k": "member", "x": 2852, "y": 2198, "object": 285, "member": "moved"},
+          {"id": 287, "k": "bool", "x": 2868, "y": 2310, "value": false},
+          {"id": 288, "k": "assign", "x": 3080, "y": 2062, "op": "=", "target": 286, "value": 287},
+          {"id": 289, "k": "if", "x": 2580, "y": 1672, "cond": 284, "then": 288, "next": 306},
+          {"id": 290, "k": "name", "x": 464, "y": 2634, "name": "Draw"},
+          {"id": 291, "k": "method", "x": 676, "y": 2634, "object": 290, "name": "Text", "args": [296, 297, 301, 302]},
+          {"id": 292, "k": "name", "x": 0, "y": 2722, "name": "score"},
+          {"id": 293, "k": "member", "x": 220, "y": 2722, "object": 292, "member": "caught"},
+          {"id": 294, "k": "name", "x": 0, "y": 2834, "name": "score"},
+          {"id": 295, "k": "member", "x": 220, "y": 2834, "object": 294, "member": "missed"},
+          {"id": 296, "k": "interp", "x": 448, "y": 2722, "parts": ["", " caught · ", " missed"], "values": [293, 295]},
+          {"id": 297, "k": "call", "x": 448, "y": 2946, "name": "float2", "args": [299, 300]},
+          {"id": 298, "k": "int", "x": 24, "y": 2946, "text": "150"},
+          {"id": 299, "k": "unary", "x": 228, "y": 2946, "op": "-", "value": 298},
+          {"id": 300, "k": "int", "x": 244, "y": 3058, "text": "122"},
+          {"id": 301, "k": "int", "x": 472, "y": 3146, "text": "13"},
+          {"id": 302, "k": "call", "x": 456, "y": 3234, "name": "Color", "args": [303, 304, 305]},
+          {"id": 303, "k": "float", "x": 236, "y": 3234, "text": "0.64"},
+          {"id": 304, "k": "float", "x": 236, "y": 3322, "text": "0.64"},
+          {"id": 305, "k": "float", "x": 236, "y": 3410, "text": "0.68"},
+          {"id": 306, "k": "eval", "x": 904, "y": 2522, "value": 291}
+        ]
+      }
+    },
+    {
+      "kind": "view",
+      "id": 307,
+      "name": "Stars",
+      "params": [
+        {"id": 308, "mode": "read", "type": "Star", "name": "star"}
+      ],
+      "body": {
+        "entry": 315,
+        "nodes": [
+          {"id": 309, "k": "name", "x": 244, "y": 112, "name": "Draw"},
+          {"id": 310, "k": "method", "x": 456, "y": 112, "object": 309, "name": "Circle", "args": [312, 313, 314]},
+          {"id": 311, "k": "name", "x": 0, "y": 200, "name": "star"},
+          {"id": 312, "k": "member", "x": 212, "y": 200, "object": 311, "member": "position"},
+          {"id": 313, "k": "int", "x": 252, "y": 312, "text": "6"},
+          {"id": 314, "k": "name", "x": 244, "y": 400, "name": "GOLD"},
+          {"id": 315, "k": "eval", "x": 684, "y": 0, "value": 310, "next": 329},
+          {"id": 316, "k": "name", "x": 1384, "y": 112, "name": "Draw"},
+          {"id": 317, "k": "method", "x": 1596, "y": 112, "object": 316, "name": "Circle", "args": [319, 320, 321]},
+          {"id": 318, "k": "name", "x": 1140, "y": 200, "name": "star"},
+          {"id": 319, "k": "member", "x": 1352, "y": 200, "object": 318, "member": "position"},
+          {"id": 320, "k": "int", "x": 1392, "y": 312, "text": "11"},
+          {"id": 321, "k": "call", "x": 1376, "y": 400, "name": "Color", "args": [323, 325, 327, 328]},
+          {"id": 322, "k": "name", "x": 936, "y": 400, "name": "GOLD"},
+          {"id": 323, "k": "member", "x": 1148, "y": 400, "object": 322, "member": "r"},
+          {"id": 324, "k": "name", "x": 936, "y": 512, "name": "GOLD"},
+          {"id": 325, "k": "member", "x": 1148, "y": 512, "object": 324, "member": "g"},
+          {"id": 326, "k": "name", "x": 936, "y": 624, "name": "GOLD"},
+          {"id": 327, "k": "member", "x": 1148, "y": 624, "object": 326, "member": "b"},
+          {"id": 328, "k": "float", "x": 1156, "y": 736, "text": "0.25"},
+          {"id": 329, "k": "eval", "x": 1824, "y": 0, "value": 317}
+        ]
+      }
+    },
+    {
+      "kind": "view",
+      "id": 330,
+      "name": "Baskets",
+      "params": [
+        {"id": 331, "mode": "read", "type": "Basket", "name": "basket"}
+      ],
+      "body": {
+        "entry": 342,
+        "nodes": [
+          {"id": 332, "k": "name", "x": 464, "y": 112, "name": "Draw"},
+          {"id": 333, "k": "method", "x": 676, "y": 112, "object": 332, "name": "Rect", "args": [335, 336, 341]},
+          {"id": 334, "k": "name", "x": 204, "y": 200, "name": "basket"},
+          {"id": 335, "k": "member", "x": 432, "y": 200, "object": 334, "member": "position"},
+          {"id": 336, "k": "call", "x": 448, "y": 312, "name": "float2", "args": [339, 340]},
+          {"id": 337, "k": "name", "x": 0, "y": 312, "name": "WIDTH"},
+          {"id": 338, "k": "int", "x": 16, "y": 400, "text": "2"},
+          {"id": 339, "k": "binary", "x": 220, "y": 312, "op": "*", "lhs": 337, "rhs": 338},
+          {"id": 340, "k": "int", "x": 244, "y": 488, "text": "10"},
+          {"id": 341, "k": "name", "x": 464, "y": 576, "name": "TEAL"},
+          {"id": 342, "k": "eval", "x": 904, "y": 0, "value": 333}
+        ]
+      }
+    }
+  ]
+}

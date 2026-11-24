@@ -107,7 +107,7 @@ async function exportsOverHttp(base, compareSource) {
             assert.deepEqual(fences(parsed.tokens), fences(original), `${route}: exact authored/included code, including outside docs/`);
             assert.deepEqual(inlineCode(parsed.tokens), inlineCode(original), `${route}: inline code is unchanged`);
         }
-        assert.ok(!parsed.tokens.some((token) => token.type === 'html_block' && /<iframe\b|data-tide-(?:ai-setup|playground|earth|benchmarks)|class="sample-grid"/.test(token.content)), `${route}: website UI was removed`);
+        assert.ok(!parsed.tokens.some((token) => token.type === 'html_block' && /<iframe\b|data-tide-(?:ai-setup|playground|graph-playground|earth|benchmarks)|class="sample-grid"/.test(token.content)), `${route}: website UI was removed`);
         all.set(route, parsed);
     }
     assert.equal(new Set([...all.values()].map(({ metadata }) => metadata.documentation_sha256)).size, 1, 'one source fingerprint across downloads');

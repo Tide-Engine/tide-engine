@@ -8,8 +8,10 @@ export const DOCUMENT = 'file:///game.tide';
 
 export class LanguageServer {
     // `files` are the compiler bundle's: the engine headers hovers and
-    // completions describe built-ins from.
-    constructor(module, files) {
+    // completions describe built-ins from. `uri` is the one document's: a
+    // .tidegraph's (graph-host.mjs) tidels lowers as tidec does.
+    constructor(module, files, uri = DOCUMENT) {
+        this.uri = uri;
         const root = new Directory(new Map());
         for (const [name, bytes] of Object.entries(files)) {
             if (!name.startsWith('include/tide/')) continue;
@@ -42,7 +44,7 @@ export class LanguageServer {
         this.request('initialize', { processId: null, rootUri: 'file:///', capabilities: {} });
         this.notify('initialized', {});
         return this.notify('textDocument/didOpen', {
-            textDocument: { uri: DOCUMENT, languageId: 'tide', version: ++this.version, text },
+            textDocument: { uri: this.uri, languageId: this.uri.endsWith('.tidegraph') ? 'tidegraph' : 'tide', version: ++this.version, text },
         });
     }
 
@@ -79,22 +81,22 @@ export class LanguageServer {
     // The whole new text; returns its diagnostics (LSP Diagnostic[]).
     change(text) {
         const replies = this.notify('textDocument/didChange', {
-            textDocument: { uri: DOCUMENT, version: ++this.version }, contentChanges: [{ text }],
+            textDocument: { uri: this.uri, version: ++this.version }, contentChanges: [{ text }],
         });
-        return diagnosticsOf(replies);
+        return diagnosticsOf(replies, this.uri);
     }
 
     at(method, line, character, extra = {}) {
-        return this.request(method, { textDocument: { uri: DOCUMENT }, position: { line, character }, ...extra });
+        return this.request(method, { textDocument: { uri: this.uri }, position: { line, character }, ...extra });
     }
 }
 
 // The diagnostics for the playground's document among `replies`, or
 // undefined when none were published.
-export function diagnosticsOf(replies) {
+export function diagnosticsOf(replies, uri = DOCUMENT) {
     let found;
     for (const reply of replies) {
-        if (reply.method === 'textDocument/publishDiagnostics' && reply.params.uri === DOCUMENT) found = reply.params.diagnostics;
+        if (reply.method === 'textDocument/publishDiagnostics' && reply.params.uri === uri) found = reply.params.diagnostics;
     }
     return found;
 }

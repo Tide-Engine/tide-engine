@@ -3,6 +3,7 @@
     import original from '../../../playground/demo.tide?raw';
     import { theme } from '#lib/theme.svelte.ts';
     import type { Editor, Problem } from './playground/editor';
+    import PlaygroundModes from './PlaygroundModes.svelte';
 
     let automatic = $state(true);
     let status = $state('Edit the code, then compile to see your changes.');
@@ -30,6 +31,9 @@
     let previewUrl = $state<string | undefined>();
 
     const SPLIT_KEY = 'tide-playground-split';
+    // A graph's Tide, from the graph playground's Show as Tide (GraphPlayground.svelte)
+    const HANDOFF_KEY = 'tide-playground-from-graph';
+    let initial = $state(original);
     const source = () => editor?.value ?? original;
 
     function apply() {
@@ -155,6 +159,11 @@
             const saved = Number(localStorage.getItem(SPLIT_KEY));
             if (saved >= 30 && saved <= 78) split = saved;
         } catch {}
+        try {
+            const handed = sessionStorage.getItem(HANDOFF_KEY);
+            sessionStorage.removeItem(HANDOFF_KEY);
+            if (handed) initial = handed;
+        } catch {}
         previewUrl = '/playground/runtime.html?stats';
         const message = ({ origin, source: sender, data }: MessageEvent) => {
             if (origin !== location.origin || sender !== frame?.contentWindow) return;
@@ -175,7 +184,7 @@
         };
         addEventListener('message', message);
         import('./playground/editor').then(({ createEditor }) => createEditor(host, {
-            value: original, dark: theme.dark, changed, compile,
+            value: initial, dark: theme.dark, changed, compile,
             problems: list => { problems = list; },
         })).then(created => {
             if (disposed) { created.dispose(); return; }
@@ -183,6 +192,12 @@
             editorReady = true;
             // For the docs' browser tests: the code, as the editor has it.
             Object.assign(section, { tideEditor: created });
+            // A graph's Tide runs in place of the demo
+            if (initial !== original) {
+                fresh = true;
+                revision++;
+                compile();
+            }
         });
         return () => {
             disposed = true;
@@ -205,6 +220,7 @@
         </div>
         <div class="actions">
             <label class="automatic"><input type="checkbox" bind:checked={automatic} onchange={() => { if (!automatic) { clearTimeout(timer); queued = false; } }} /> Auto reload</label>
+            <PlaygroundModes mode="text" />
             <button class="expand" onclick={toggleExpanded} aria-pressed={expanded} title={expanded ? 'Back to the page (Esc)' : 'Fill the window'}>
                 <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
                     {#if expanded}
@@ -221,7 +237,7 @@
         <div class="source">
             <div class="panel-title"><span class="file">game.tide</span><span>Ctrl / ⌘ Enter to compile · Ctrl Space for suggestions</span></div>
             <div class="editor" bind:this={host}>
-                {#if !editorReady}<pre class="loading" aria-hidden="true">{original}</pre>{/if}
+                {#if !editorReady}<pre class="loading" aria-hidden="true">{initial}</pre>{/if}
             </div>
         </div>
         <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->

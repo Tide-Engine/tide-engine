@@ -114,6 +114,7 @@ for (const [name, bytes] of Object.entries(assets)) {
 // .bin keeps static hosts from applying Content-Encoding to these explicitly
 // compressed payloads: the worker verifies/decompresses the exact bytes itself.
 await copyFile(args.demo, path.join(output, 'demo.wasm'));
+await copyFile(args.stars, path.join(output, 'stars.wasm'));
 await copyFile(path.join(root, 'platform/web/tide.js'), path.join(output, 'tide.js'));
 await writeFile(path.join(output, 'manifest.json'), JSON.stringify(manifest));
 for (const name of ['LICENSE', 'LICENSE.llvm', 'NOTICE']) {

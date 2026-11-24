@@ -3,6 +3,7 @@
     import { liveExamples } from '#lib/examples.ts';
     import Seo from '#lib/components/Seo.svelte';
     import Playground from '#lib/components/Playground.svelte';
+    import GraphPlayground from '#lib/components/GraphPlayground.svelte';
     import AISetup from '#lib/components/AISetup.svelte';
     import EarthDemo from '#lib/components/EarthDemo.svelte';
     import Benchmarks from '#lib/components/Benchmarks.svelte';
@@ -49,6 +50,10 @@
             {@html data.html.split('<div data-tide-playground></div>')[0]}
             <Playground />
             {@html data.html.split('<div data-tide-playground></div>')[1]}
+        {:else if data.path === '/guide/graph-playground'}
+            {@html data.html.split('<div data-tide-graph-playground></div>')[0]}
+            <GraphPlayground />
+            {@html data.html.split('<div data-tide-graph-playground></div>')[1]}
         {:else if data.path === '/benchmarks'}
             {@html data.html.split('<div data-tide-benchmarks></div>')[0]}
             <Benchmarks />

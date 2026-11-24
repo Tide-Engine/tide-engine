@@ -10,7 +10,9 @@ export class BrowserCompiler {
         this.files = files;
     }
 
-    async compile(source, progress = () => {}) {
+    // `name` is the source's file name: game.tide, or game.tidegraph for a graph,
+    // which tidec reads as the Tide it stands for.
+    async compile(source, progress = () => {}, name = 'game.tide') {
         const root = new Directory(new Map());
         const put = (name, bytes, readonly = false) => {
             const parts = name.replace(/^\//, '').split('/');
@@ -30,7 +32,7 @@ export class BrowserCompiler {
             return node.data;
         };
         for (const [name, bytes] of Object.entries(this.files)) put(name, bytes, true);
-        put('game.tide', encoder.encode(source));
+        put(name, encoder.encode(source));
         root.contents.set('out', new Directory(new Map()));
         let diagnostics = '';
         const run = async (name, args) => {
@@ -49,7 +51,7 @@ export class BrowserCompiler {
             if (status !== 0) throw new Error(diagnostics.trim() || `${name} exited with code ${status}`);
         };
         progress('Checking Tide');
-        await run('tidec', ['game.tide', '-o', 'out', '--name', 'game', '--layout']);
+        await run('tidec', [name, '-o', 'out', '--name', 'game', '--layout']);
         progress('Compiling');
         const common = ['-cc1', '-triple', 'wasm32-unknown-wasi', '-emit-obj', '-x', 'c', '-std=c17', '-O1',
             '-ffp-contract=off', '-fvisibility=hidden', '-fno-common',

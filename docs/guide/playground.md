@@ -10,6 +10,9 @@ build server.
 
 <div data-tide-playground></div>
 
+To edit a game made of nodes and wires instead, switch to the [graph playground](./graph-playground.md) with
+**Graph** above the editor.
+
 ## Try a live change
 
 - Change `INK` to `Color(0.18, 0.83, 0.75)` to turn the ball teal.

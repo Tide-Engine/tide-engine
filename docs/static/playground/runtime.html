@@ -11,6 +11,8 @@ canvas{display:block;width:100%;height:100%;outline:none}
 <canvas id="canvas" tabindex="0" aria-label="Running Tide game"></canvas>
 <script>
 const send = data => parent.postMessage(data, location.origin);
+// The first game: the text playground's, or the graph playground's (?demo=stars)
+const first = new URLSearchParams(location.search).get('demo') === 'stars' ? 'stars' : 'demo';
 window.Tide = {
     canvas: document.querySelector('canvas'),
     reload: 'manual', embedded: true,
@@ -18,7 +20,7 @@ window.Tide = {
     printErr: text => send({type:'tide-log',text,error:true}),
     async ready() {
         try {
-            const response = await fetch('generated/demo.wasm');
+            const response = await fetch(`generated/${first}.wasm`);
             if (!response.ok) throw new Error('The playground demo is unavailable in this docs build.');
             await Tide.replace(new Uint8Array(await response.arrayBuffer()), new Uint8Array(), true);
             await Tide.start();

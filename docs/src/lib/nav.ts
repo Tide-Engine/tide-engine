@@ -31,6 +31,7 @@ export const sidebar: Group[] = [
             { text: 'Using Tide with AI', link: '/guide/ai' },
             { text: 'Quick reference', link: '/guide/ai-context' },
             { text: 'Playground', link: '/guide/playground' },
+            { text: 'Graph playground', link: '/guide/graph-playground' },
             { text: 'Samples', link: '/guide/samples' },
             { text: 'Earth demo', link: '/guide/earth' },
             { text: 'Benchmarks', link: '/benchmarks' },
