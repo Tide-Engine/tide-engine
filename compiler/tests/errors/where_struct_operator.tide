@@ -1,0 +1,5 @@
+// expect: declare its 'operator ==' in 'Point', like 'bool operator ==(Point a, Point b) { ... }'
+scene Main { }
+struct Point { int x; }
+struct Unique<T> where T : equatable { List<T> items; }
+singleton S { Unique<Point> points; }

@@ -142,6 +142,9 @@ void diag_set_sink(diag_sink sink, void *user); // NULL prints to stderr again.
 void diag_error(loc at, const char *fmt, ...);
 void diag_warning(loc at, const char *fmt, ...);
 void diag_info(loc at, const char *fmt, ...);
+// While true, warnings and infos aren't said (nor their notes): code checked for its errors alone, as a generic nothing
+// instantiates is. The quiet there was before, to put back.
+bool diag_quiet_warnings(bool quiet);
 void diag_note(const char *fmt, ...); // Attaches to the previous error or warning.
 // A note about another place in the code, which its text names too: a sink
 // gets `at`, where diag_note gives it none.

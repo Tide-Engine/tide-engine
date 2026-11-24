@@ -137,6 +137,19 @@ TIDE_TEST(geometry_2d_shapes_keep_the_structs_other_fields)
     TIDE_CHECK(INDEX(b->flatFaces, 6) == 4); // The triangle's corners come after the quad's
 }
 
+TIDE_TEST(geometry_append_takes_a_mesh)
+{
+    start();
+    const Built *b = &world.Built;
+    TIDE_CHECK(b->liftedFirst == 0);
+    TIDE_CHECK(tide_list_count(b->lifted) == 24);
+    TIDE_CHECK(tide_list_count(b->liftedFaces) == 36);
+    for (int32_t k = 0; k < 24; k++) {
+        const Corner *v = AT(Corner, b->lifted, k);
+        TIDE_CHECK(v->position.y >= 4.5f && v->position.y <= 5.5f); // The unit box, moved up 5
+    }
+}
+
 TIDE_TEST(geometry_append_moves_and_mirrors)
 {
     start();

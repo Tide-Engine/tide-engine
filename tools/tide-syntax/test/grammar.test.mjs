@@ -129,6 +129,38 @@ test('type aliases distinguish their declaration and target from namespace impor
     check(inline, ['List', 'support.class']);
 });
 
+test('generics scope their type parameters, where rules and instantiations as types', () => {
+    const lines = tokenize('struct Pair<T, U> where T : comparable, hashable\n{\n    T first;\n'
+        + '    Pair<V, U> With<V>(V a) { return Pair<V, U> { first = a }; }\n}\n'
+        + 'T Max<T>(T a, T b) where T : comparable { return a; }\n'
+        + 'Pair<int, List<string>> kept;\n'
+        + 'var biggest = Max<int>(1, 2);\n'
+        + 'bool between = low < high && high > low;');
+    check(lines[0], ['struct', 'storage.type']);
+    check(lines[0], ['Pair', 'entity.name.type']);
+    check(lines[0], ['<', 'punctuation.definition.typeparameters.begin']);
+    check(lines[0], ['T', 'entity.name.type.parameter']);
+    check(lines[0], ['U', 'entity.name.type.parameter']);
+    check(lines[0], ['where', 'keyword.other.where']);
+    check(lines[0], ['T', 'entity.name.type.parameter', 2]);
+    check(lines[0], ['comparable', 'support.type.constraint']);
+    check(lines[0], ['hashable', 'support.type.constraint']);
+    check(lines[3], ['Pair', 'entity.name.type']);
+    check(lines[3], ['With', 'entity.name.function']);
+    check(lines[3], ['V', 'entity.name.type.parameter', 2]);
+    check(lines[3], ['<', '!keyword.operator']);
+    check(lines[5], ['Max', 'entity.name.function']);
+    check(lines[5], ['T', 'entity.name.type.parameter', 2]);
+    check(lines[5], ['where', 'keyword.other.where']);
+    check(lines[6], ['Pair', 'entity.name.type']);
+    check(lines[6], ['List', 'support.class']);
+    check(lines[6], ['string', 'storage.type.primitive']);
+    check(lines[6], ['<', '!keyword.operator']);
+    check(lines[7], ['Max', '!entity.name.type']); // A generic function's call is a call
+    check(lines[8], ['<', 'keyword.operator']);   // ...and a comparison, a comparison
+    check(lines[8], ['>', 'keyword.operator']);
+});
+
 test('typed callable signatures keep generic type highlighting', () => {
     const lines = tokenize('Func<float2, float> distance;');
     check(lines[0], ['Func', 'support.class']);

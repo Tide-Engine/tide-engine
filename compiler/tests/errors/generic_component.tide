@@ -1,0 +1,3 @@
+// expect: only a struct can have type parameters: a component's type is the same in every match
+scene Main { }
+component Slot<T> { T value; }

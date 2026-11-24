@@ -1,0 +1,3 @@
+// expect: a generic method can't be virtual
+scene Main { }
+struct Bag { int n; virtual U Same<U>(U a) { return a; } }

@@ -267,6 +267,29 @@ typedef struct qname {
 } qname;
 
 // [Before(Physics.Integrate)]
+// `where T : comparable` after a generic's type parameters: one rule of one parameter, as written. What each
+// rule is, the checker says (check_type_rules), into decl.param_rules.
+typedef struct type_rule {
+    str param;
+    loc param_at;
+    str rule;
+    loc rule_at;
+} type_rule;
+
+// A type argument whose `where` rule needs its struct's operators, which are known once every signature is.
+typedef struct pending_rule {
+    const struct decl *generic;
+    type arg;
+    int param;
+    loc at;
+} pending_rule;
+
+enum {
+    RULE_EQUATABLE = 1,  // `equatable`: == and != take it
+    RULE_COMPARABLE = 2, // `comparable`: <, <=, > and >= take it (and == and !=)
+    RULE_HASHABLE = 4,   // `hashable`: a map's key or a set's element can be it
+};
+
 typedef struct attribute {
     str name;
     loc at;
@@ -521,7 +544,10 @@ typedef enum decl_kind {
     DECL_ASSET,    // asset Grid2<Color> hero = "art/hero.png";: a file's contents under a name, read-only, packed with the game
     DECL_ALIAS,    // using Name = Type;: a namespace-scoped name for an existing closed type.
     DECL_GENERIC,  // T Max<T>(T a, T b) { ... }: a generic function, never checked or generated as written; each
-                   // instantiation is a DECL_FUNCTION of its own (generic_instances)
+                   // instantiation is a DECL_FUNCTION of its own (generic_instances). With an owner, a struct's
+                   // method with type parameters of its own (owner.generic_methods), each instantiation a DECL_METHOD
+    DECL_GENERIC_STRUCT, // struct Pair<T> { ... }: a generic struct, never checked or generated as written; each
+                         // instantiation is a DECL_STRUCT of its own, Pair<int> (generic_instances)
     DECL_GPU_LIST, // GPUList<T>, one per element type: its one field is the element; in program.gpu_lists
 } decl_kind;
 
@@ -686,7 +712,13 @@ typedef struct decl {
     // (parse_generic_instance): each instantiation is parsed anew from its tokens, a syntax tree of its own
     VEC(str) type_params;
     VEC(loc) type_param_at;
+    VEC(type_rule) type_rules; // ...what its `where` says of them, as written
+    VEC(int) param_rules;      // ...and as checked: each parameter's RULE_ bits
     void *generic_parser;
+    VEC(struct decl *) generic_methods; // A struct's methods with type parameters of their own: DECL_GENERICs
+    VEC(struct decl *) param_decls;     // ...each type parameter as one name, for tools: a DECL_ALIAS (type_param)
+                                        // that no code finds, which every instantiation's own stands for
+    struct decl *probe;                 // ...and, when nothing instantiates it, what checked its code (probe_generic)
     VEC(struct decl *) generic_instances; // ...each one made, found by its type arguments
     // An instantiation: the DECL_GENERIC it's of, its type arguments in the parameters' order, and for each of
     // them a DECL_ALIAS (type_param) that its code finds the parameter's name as, which no other code does
@@ -697,7 +729,11 @@ typedef struct decl {
     loc generic_at;           // The first call that made it, for messages
     int generic_depth;        // How many instantiations made it, one inside another (an endless chain stops)
     bool generic_placed;      // In program.decls: a call picked it, so it's checked and generated
-    bool type_param;          // A type parameter's DECL_ALIAS, bound to alias_type
+    bool type_param;          // A type parameter's DECL_ALIAS, bound to alias_type; generic_of is the generic it's of
+    int type_param_index;     // ...and which of its parameters it is
+    bool generic_probe;       // An instantiation with every type parameter unknown (bound to the error type), which
+                              // checks what of a generic nothing calls doesn't depend on them; never in the program
+    int instance_step;        // A generic struct's instantiation: how far the checker has taken it (check.c, INSTANCE_)
     bool device_group;  // Devices, Keyboard, Mouse, Gamepad, Dpad, Touch, ...: records made of device values
     int leaves_count;   // ...how many
     VEC(int) instances; // ...where each place it has in the devices starts in program.device_leaves
@@ -1983,6 +2019,9 @@ typedef struct program {
     bool match_devices;  // Systems or handlers take Devices: the input sends the devices too
     uint64_t device_uses[DEVICE_WORDS]; // The leaves match code reads: all the input sends of them
     VEC(decl *) structs; // In an order where each comes after the structs it contains.
+    VEC(pending_rule) pending_rules; // `where` rules a struct's operators meet or not, said once every signature is known
+    int instance_step; // How far the checker has taken every struct: a generic struct's instantiation made later is taken as far (check.c, INSTANCE_)
+    int ready_step;    // ...and the step an instantiation is being taken now (check.c, take_step), 0 for none
 
     mask_list archetypes;      // Component masks (the components that aren't sparse), in derivation order.
     mask_list possible;        // Per archetype: the sparse components its entities can have (stored with a presence byte each)
@@ -2188,6 +2227,7 @@ void print_outline(const program *prog, sb *out);
 // editors, which need structure while code is half typed.
 bool parse_file(program *prog, const source *src, token *toks, bool recover);
 decl *parse_generic_instance(const decl *generic);
+decl *parse_generic_struct_instance(const decl *generic);
 // --scene's text as one expression (Battle { side = 50 }), or NULL with the error said
 expr *parse_expression_text(program *prog, token *toks);
 // A .tweaks file's entries: `Name = value;`, each its qualified name, where it is, its value and that value's text

@@ -516,8 +516,21 @@ void diag_error(const loc at, const char *fmt, ...)
     va_end(args);
 }
 
+static bool quiet_warnings; // diag_quiet_warnings
+
+bool diag_quiet_warnings(const bool quiet)
+{
+    const bool was = quiet_warnings;
+    quiet_warnings = quiet;
+    return was;
+}
+
 void diag_warning(const loc at, const char *fmt, ...)
 {
+    if (quiet_warnings) {
+        muted = true; // Its notes too
+        return;
+    }
     va_list args;
     va_start(args, fmt);
     if (diagnose(DIAG_WARNING, "warning", at, fmt, args)) warnings_said++;
@@ -526,6 +539,10 @@ void diag_warning(const loc at, const char *fmt, ...)
 
 void diag_info(const loc at, const char *fmt, ...)
 {
+    if (quiet_warnings) {
+        muted = true;
+        return;
+    }
     va_list args;
     va_start(args, fmt);
     if (diagnose(DIAG_INFO, "info", at, fmt, args)) warnings_said++;

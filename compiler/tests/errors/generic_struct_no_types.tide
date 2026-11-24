@@ -1,0 +1,4 @@
+// expect: 'Pair' is generic: it takes 1 type in '<>', like 'Pair<int>'
+scene Main { }
+struct Pair<T> { T a; T b; }
+singleton S { Pair p; }

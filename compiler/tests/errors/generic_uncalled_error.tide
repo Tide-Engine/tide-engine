@@ -1,0 +1,3 @@
+// expect: unknown function 'Missing'
+scene Main { }
+T Pick<T>(T a, int n) { Missing(n); return a; }

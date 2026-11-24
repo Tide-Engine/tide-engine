@@ -78,6 +78,31 @@ static void callable_find_captures(checker *c, expr *e, decl *fn, callable_captu
     for (int i = 0; i < e->inits.count; i++) callable_find_captures(c, e->inits.items[i].value, fn, captures, signature);
 }
 
+// Generic `g` as a value of Func `signature`: the instantiation its arguments' types (and then its result's, for
+// what they leave) make, or NULL for none. Its rules are kept quietly: one that isn't met makes none.
+static decl *callable_instance(checker *c, decl *g, const decl *signature, const loc at)
+{
+    const int n = g->type_params.count;
+    const int arguments = signature->call_types.count - 1;
+    if (arguments != g->params.count) return NULL;
+    type *bound = arena_alloc(sizeof(type) * (size_t)n);
+    bool *set = arena_alloc(sizeof(bool) * (size_t)n);
+    for (int k = 0; k < n; k++) set[k] = false;
+    int clash = -1;
+    for (int i = 0; i < arguments; i++) {
+        if (!infer_type(g, g->params.items[i].type_ref, signature->call_types.items[i], bound, set, &clash)) return NULL;
+    }
+    if (!infer_type(g, g->return_type_ref, signature->call_types.items[arguments], bound, set, &clash)) return NULL;
+    for (int k = 0; k < n; k++) {
+        if (!set[k] || bound[k].kind == TY_ERROR) return NULL;
+        const bool quiet_ok = bound[k].kind != TY_VOID && bound[k].kind != TY_OPTIONAL && bound[k].kind != TY_FAILABLE
+                           && bound[k].kind != TY_GRID && bound[k].kind != TY_COMPONENT && bound[k].kind != TY_SINGLETON;
+        if (!quiet_ok) return NULL;
+    }
+    if (!type_rules_met(c, g, bound, at, false)) return NULL;
+    return generic_instance(c, g, bound, at);
+}
+
 static type check_callable_value(checker *c, expr *e, const type want)
 {
     decl *signature = want.decl;
@@ -148,9 +173,10 @@ static type check_callable_value(checker *c, expr *e, const type want)
         bool generic = false;
         for (int i = 0; i < choices.count; i++) {
             decl *candidate = choices.items[i];
-            if (candidate->kind == DECL_GENERIC) { // Called in a lambda, it's an instantiation
+            if (candidate->kind == DECL_GENERIC) { // The instantiation the Func's types make, Max<int> for a Func<int, int, int>
                 generic = true;
-                continue;
+                candidate = callable_instance(c, candidate, signature, e->at);
+                if (!candidate) continue;
             }
             if (candidate->return_type.kind == TY_ERROR) {
                 checker declaration = *c;
@@ -165,11 +191,12 @@ static type check_callable_value(checker *c, expr *e, const type want)
             fn = candidate;
         }
         if (!fn && generic) {
-            diag_error(e->at, "'" STR_FMT "' is generic: as a value, it's one of its instantiations, which a name alone doesn't say",
-                       STR_ARG(name));
-            diag_note("call it in a lambda, like '(int a, int b) => " STR_FMT "(a, b)'", STR_ARG(name));
+            diag_error(e->at, "'" STR_FMT "' is generic, and this Func's types make none of its instantiations", STR_ARG(name));
+            diag_note("each of its type parameters is what the Func's argument in its place is; or call it in a lambda, like "
+                      "'(int a, int b) => " STR_FMT "<int>(a, b)'", STR_ARG(name));
             return e->type = T_ERR;
         }
+        if (fn && fn->generic_of) place_generic_instance(c, fn); // A value of it is called, so it's generated
         if (!fn) {
             diag_error(e->at, "function '" STR_FMT "' does not match this Func's argument and result types (including mut parameter modes)", STR_ARG(name));
             return e->type = T_ERR;

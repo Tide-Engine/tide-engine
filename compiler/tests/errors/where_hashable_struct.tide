@@ -1,0 +1,4 @@
+// expect: 'K' of 'Index' is hashable, and float isn't
+scene Main { }
+struct Index<K> where K : hashable { Map<K, int> places; }
+singleton S { Index<float> index; }

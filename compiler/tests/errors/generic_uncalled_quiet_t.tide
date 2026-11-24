@@ -1,0 +1,4 @@
+// expect: can't initialize int with string
+scene Main { }
+// What depends on T is said at a call; what doesn't, here, though nothing calls it
+T Pick<T>(T a, T b) { var sum = a + b; a.anything = 1; int wrong = "text"; return a; }

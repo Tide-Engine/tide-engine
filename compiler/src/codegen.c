@@ -374,7 +374,7 @@ static bool task_handle_local(const gen *g, const decl *handle);
 // would collide.
 static const char *make_cname(const decl *d)
 {
-    if ((d->skin_kind || d->placement_of || d->watches) && d->c_name) return d->c_name;
+    if ((d->skin_kind || d->placement_of || d->watches || (d->generic_of && d->kind == DECL_STRUCT)) && d->c_name) return d->c_name;
     const str ns = decl_home(d) ? decl_home(d)->ns : (str){"", 0}; // An override's is that of what it replaced
     if (d->c_suffix) { // One of several that share the name: its parameters' types go on, Damage_float_Weapon
         sb b = {0};
@@ -531,7 +531,7 @@ static const char *grid_shape_name(const decl *grid)
     sb b = {0};
     sb_printf(&b, "tide_shape_Grid%d_%s", grid->dims, type_name(grid->fields.items[0].type));
     for (char *c = b.data; *c; c++) {
-        if (*c == '.') *c = '_';
+        if (!((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') || (*c >= '0' && *c <= '9'))) *c = '_'; // Combat.Tile, Pair<int>
     }
     return b.data;
 }

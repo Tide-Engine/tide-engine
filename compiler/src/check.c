@@ -110,7 +110,24 @@ typedef struct checker {
     bool assets_constant;    // ...a field's default, where an asset's name is read as a constant is
     decl *generic;           // The instantiation of a generic function being checked: its type parameters' names are types
     type define_want;        // Where a define(NAME, default) about to be checked goes: the type its value reads as
+    // Checking a generic nothing instantiates, with its type parameters unknown (bound to the error type): what of it
+    // doesn't depend on them is checked, and the rest is quiet. What it finds is the generic's own code, never the
+    // program's: instantiations it makes of other generics, with types it knows, are the program's (`root`'s)
+    bool probing;
+    bool met_unknown;        // ...and a call's types went unknown there, so no generic took it, which isn't an error
+    struct checker *root;    // ...the checker of the whole program, which what it makes goes back to
 } checker;
+
+// How far a generic struct's instantiation has been taken, as every struct is (program.instance_step): one made
+// later is taken as far at once (raise_instances)
+enum {
+    INSTANCE_NONE,
+    INSTANCE_FIELDS,  // Its fields' types resolved
+    INSTANCE_ORDERED, // Among the program's structs, after what it holds
+    INSTANCE_CHECKED, // Its fields' defaults and attributes checked
+    INSTANCE_SIGNED,  // Its methods' signatures
+    INSTANCE_BODIES,  // Its methods' code
+};
 
 // A call of an async function: awaited, its frame part of the caller's, or
 // starting a task of its own.
@@ -638,13 +655,27 @@ static bool dev_left_out(const checker *c, const decl *owner, const str name, co
     return false;
 }
 
+// A type parameter's name, in the code of an instantiation: its DECL_ALIAS, bound to the type argument, or NULL.
+// A generic method's own, then its struct's, Stack<T>'s T in its U Map<U>(...).
+static decl *type_param_named(const checker *c, const str name)
+{
+    const decl *scopes[] = {c->generic, c->method, c->declaring};
+    for (size_t s = 0; s < sizeof scopes / sizeof scopes[0]; s++) {
+        for (const decl *g = scopes[s]; g; g = g->owner) {
+            for (int i = 0; i < g->type_arg_decls.count; i++) {
+                decl *t = g->type_arg_decls.items[i];
+                if (str_eq(t->name, name)) return t;
+            }
+        }
+    }
+    return NULL;
+}
+
 static decl *find_named(const checker *c, const str name, const loc at, const name_kind kind)
 {
-    if (c->generic && (kind == NAME_TYPE || kind == NAME_PREFAB)) { // An instantiation's T: the type it's bound to
-        for (int i = 0; i < c->generic->type_arg_decls.count; i++) {
-            decl *t = c->generic->type_arg_decls.items[i];
-            if (str_eq(t->name, name)) return t;
-        }
+    if (kind == NAME_TYPE || kind == NAME_PREFAB) { // An instantiation's T: the type it's bound to
+        decl *t = type_param_named(c, name);
+        if (t) return t;
     }
     decl *other;
     decl *d = lookup(c->prog, c->unit, name, kind, &other);
@@ -881,7 +912,12 @@ static field *field_in_scope(const checker *c, const str name)
 static decl *find_method(const decl *d, const str name)
 {
     for (int i = 0; d && i < d->methods.count; i++) {
-        if (!d->methods.items[i]->accessor && str_eq(d->methods.items[i]->name, name)) return d->methods.items[i];
+        if (!d->methods.items[i]->accessor && !d->methods.items[i]->generic_of && str_eq(d->methods.items[i]->name, name)) {
+            return d->methods.items[i];
+        }
+    }
+    for (int i = 0; d && i < d->generic_methods.count; i++) { // U Map<U>(...): picked among by its call (check_overloaded_args)
+        if (str_eq(d->generic_methods.items[i]->name, name)) return d->generic_methods.items[i];
     }
     return NULL;
 }
@@ -952,7 +988,11 @@ static void sharing_name(const program *prog, const decl *d, decl_list *out)
     if (d->owner) {
         for (int i = 0; i < d->owner->methods.count; i++) {
             decl *m = d->owner->methods.items[i];
-            if (!m->is_operator && str_eq(m->name, d->name)) vec_push(*out, m);
+            if (!m->is_operator && !m->generic_of && str_eq(m->name, d->name)) vec_push(*out, m);
+        }
+        for (int i = 0; i < d->owner->generic_methods.count; i++) {
+            decl *m = d->owner->generic_methods.items[i];
+            if (str_eq(m->name, d->name)) vec_push(*out, m);
         }
         return;
     }
@@ -2429,6 +2469,7 @@ static type resolve_mesh(const checker *c, const type_ref *r, const type_place p
 // means: a place that can't hold it (a field no Action, a local no grid)
 // says so itself.
 static type resolve_named(const checker *c, const type_ref *r, type_place place, loc at);
+static type resolve_instance(const checker *c, const type_ref *r, type_place place, loc at);
 static type resolve_mesh(const checker *c, const type_ref *r, type_place place, loc at);
 static type array_type(checker *c, type element, expr *size, loc at);
 static void number_named_enums(checker *c, const decl *d, int i, const expr *e, int depth);
@@ -2579,6 +2620,7 @@ static type resolve_named(const checker *c, const type_ref *r, const type_place 
     }
     if (r->args.count > 0 && str_eq_c(name, "SkinnedMesh")) return resolve_skinned_mesh(c, r, at);
     if (r->args.count > 0 && str_eq_c(name, "Mesh")) return resolve_mesh(c, r, place, at);
+    if (r->args.count > 0 && !generic_form_named(name)) return resolve_instance(c, r, place, at); // Pair<int>
     if (r->args.count > 0) return resolve_generic(c, r, at, place == PLACE_ASSET || place == PLACE_ALIAS,
                                                 place == PLACE_FUNCTION || place == PLACE_RETURN);
     if (resolve_builtin_type(c, name, &t)) {
@@ -2610,6 +2652,11 @@ static type resolve_named(const checker *c, const type_ref *r, const type_place 
         for (int i = 0; i < c->prog->records.count; i++) { // Devices, Keyboard, ..., Button
             if (str_eq(c->prog->records.items[i]->name, name)) return (type){TY_RECORD, c->prog->records.items[i]};
         }
+    }
+    if (d && d->kind == DECL_GENERIC_STRUCT) {
+        diag_error(at, "'" STR_FMT "' is generic: it takes %d type%s in '<>', like '" STR_FMT "<int>'", STR_ARG(name),
+                   d->type_params.count, d->type_params.count == 1 ? "" : "s", STR_ARG(name));
+        return T_ERR;
     }
     if (d) return decl_type(d);
     // The engine's World where a value's type goes: the place says where it belongs (world_misplaced)
@@ -3574,8 +3621,29 @@ static type check_literal(checker *c, expr *e)
         diag_error(e->at, "a lambda needs a Func signature from its field, parameter or declared local type");
         return T_ERR;
     }
-    e->type_alias = e->command_value ? NULL : authored_alias(c, e->name, e->at);
-    decl *d = e->command_value ? e->command_value : find_type(c, e->name, e->at); // A command's call made it: its payload
+    e->type_alias = e->command_value || e->type_arg_ref ? NULL : authored_alias(c, e->name, e->at);
+    if (e->type_alias && e->type_alias->type_param && e->type_alias->alias_type.kind == TY_ERROR) {
+        // V { } where V isn't known: a probe's (probe_generic), whose errors here would be the type argument's
+        for (int i = 0; i < e->inits.count; i++) check_expr_want(c, e->inits.items[i].value, T_ERR);
+        return T_ERR;
+    }
+    decl *d;
+    if (e->type_arg_ref && !e->command_value) { // Pair<int> { ... }
+        const type t = resolve_type(c, e->type_arg_ref, PLACE_LOCAL, e->at);
+        if (t.kind != TY_STRUCT) {
+            if (t.kind != TY_ERROR) diag_error(e->at, "only a struct has values like this, not %s", type_name(t));
+            for (int i = 0; i < e->inits.count; i++) check_expr_want(c, e->inits.items[i].value, T_ERR);
+            return T_ERR;
+        }
+        d = t.decl;
+    } else {
+        d = e->command_value ? e->command_value : find_type(c, e->name, e->at); // A command's call made it: its payload
+    }
+    if (d && d->kind == DECL_GENERIC_STRUCT) {
+        diag_error(e->at, "'" STR_FMT "' is generic: write its types, like '" STR_FMT "<int> { ... }'", STR_ARG(e->name), STR_ARG(e->name));
+        for (int i = 0; i < e->inits.count; i++) check_expr_want(c, e->inits.items[i].value, T_ERR);
+        return T_ERR;
+    }
     if (!d) {
         decl *stage = find_named(c, e->name, e->at, NAME_SHADER);
         if (stage) {
@@ -6094,6 +6162,8 @@ static void mark_io_callers(const checker *c);
 static void mark_roll_callers(const checker *c);
 static void mark_act_callers(const checker *c);
 
+static bool type_rules_met(const checker *c, const decl *g, const type *args, loc at, bool loud);
+
 #define GENERIC_DEPTH 8 // Instantiations made by instantiations, one inside another: more is an endless chain
 
 // What a type argument can be: what a list's element can (the proposal's rule), as a value.
@@ -6149,7 +6219,56 @@ static bool infer_type(const decl *g, const type_ref *pattern, const type actual
         return infer_type(g, pattern->args.items[0], actual.decl->fields.items[0].type, bound, set, clash)
             && infer_type(g, pattern->args.items[1], actual.decl->fields.items[1].type, bound, set, clash);
     }
+    if (str_eq_c(name, "Mesh") && pattern->args.count == 1) { // Mesh<V>, or an Asset<Mesh<V>> that is one: its vertices
+        const decl *mesh = actual.kind == TY_MESH ? actual.decl : actual.kind == TY_STRUCT ? actual.decl->asset_ref_of : NULL;
+        if (mesh && mesh->kind == DECL_MESH) return infer_type(g, pattern->args.items[0], mesh->fields.items[0].type, bound, set, clash);
+    }
+    const decl *of = actual.kind == TY_STRUCT ? actual.decl->generic_of : NULL;
+    if (of && (str_eq(name, of->name) || str_eq(name, of->qualified)) && pattern->args.count == of->type_params.count) {
+        for (int k = 0; k < pattern->args.count; k++) { // Pair<T> against a Pair<int>: T is int
+            if (!infer_type(g, pattern->args.items[k], actual.decl->type_args.items[k], bound, set, clash)) return false;
+        }
+    }
     return true; // Its shape isn't the argument's: whether the instantiation takes it is the call's to say
+}
+
+// Each type argument's letters, after an underscore, as an instantiation's name in generated C goes on: _int,
+// _List_Item, _int_opt for an int?
+static void put_type_args_suffix(sb *out, const decl *d)
+{
+    for (int k = 0; k < d->type_args.count; k++) {
+        sb_put(out, "_");
+        for (const char *text = type_name(d->type_args.items[k]); *text; text++) {
+            if (isalnum((unsigned char)*text)) sb_putn(out, text, 1);
+            else if (*text == '?') sb_put(out, "_opt");
+            else if (*text == '[') sb_put(out, "_of");
+            else if (*text != ' ' && *text != '>' && *text != ']') sb_put(out, "_");
+        }
+    }
+}
+
+// Binds generic `g`'s type parameters to `args` in its instantiation `d`: a DECL_ALIAS for each, which its code
+// finds the parameter's name as (type_param_named), and no other code does.
+static void bind_type_params(decl *d, const decl *g, const type *args)
+{
+    for (int k = 0; k < g->type_params.count; k++) {
+        vec_push(d->type_args, args[k]);
+        decl *t = NEW(decl);
+        t->kind = DECL_ALIAS;
+        t->type_param = true;
+        t->generic_of = (decl *)g;
+        t->type_param_index = k;
+        t->name = t->qualified = g->type_params.items[k];
+        t->at = g->type_param_at.items[k];
+        t->unit = g->unit;
+        t->alias_state = 2;
+        t->alias_type = args[k];
+        type_ref *ref = NEW(type_ref);
+        ref->name = ref->text = str_from(type_name(args[k]));
+        ref->at = ref->name_at = t->at;
+        t->alias_ref = ref;
+        vec_push(d->type_arg_decls, t);
+    }
 }
 
 static void put_generic_name(sb *out, const decl *g, const type *args)
@@ -6191,37 +6310,21 @@ static decl *generic_instance(checker *c, decl *g, const type *args, const loc a
     d->qualified = g->qualified;
     d->is_local = g->is_local;
     d->local_at = g->local_at;
-    for (int k = 0; k < g->type_params.count; k++) {
-        vec_push(d->type_args, args[k]);
-        decl *t = NEW(decl);
-        t->kind = DECL_ALIAS;
-        t->type_param = true;
-        t->name = t->qualified = g->type_params.items[k];
-        t->at = g->type_param_at.items[k];
-        t->unit = g->unit;
-        t->alias_state = 2;
-        t->alias_type = args[k];
-        type_ref *ref = NEW(type_ref);
-        ref->name = ref->text = str_from(type_name(args[k]));
-        ref->at = ref->name_at = t->at;
-        t->alias_ref = ref;
-        vec_push(d->type_arg_decls, t);
+    bind_type_params(d, g, args);
+    if (!c->probing) vec_push(g->generic_instances, d);
+    d->generic_probe = c->probing;
+    checker nested = {.prog = c->prog, .fields_ordered = c->fields_ordered, .unit = g->unit, .generic = d, .declaring = d,
+                      .probing = c->probing, .root = c->root};
+    if (g->owner) {
+        d->owner = g->owner;
+        check_signature(&nested, d);
+    } else {
+        check_function_decl(&nested, d);
     }
-    vec_push(g->generic_instances, d);
-    checker nested = {.prog = c->prog, .fields_ordered = c->fields_ordered, .unit = g->unit, .generic = d, .declaring = d};
-    check_function_decl(&nested, d);
     // Its name in generated C: the generic's, then its type arguments', Max_float (and its parameters', where
     // generics share the name)
     sb suffix = {0};
-    for (int k = 0; k < d->type_args.count; k++) {
-        sb_put(&suffix, "_");
-        for (const char *text = type_name(d->type_args.items[k]); *text; text++) {
-            if (isalnum((unsigned char)*text)) sb_putn(&suffix, text, 1);
-            else if (*text == '?') sb_put(&suffix, "_opt");
-            else if (*text == '[') sb_put(&suffix, "_of");
-            else if (*text != ' ' && *text != '>' && *text != ']') sb_put(&suffix, "_");
-        }
-    }
+    put_type_args_suffix(&suffix, d);
     if (g->shares_name) put_c_suffix(&suffix, d->params.items, d->params.count);
     d->c_suffix = suffix.data;
     d->signature = d->generic_name;
@@ -6230,18 +6333,15 @@ static decl *generic_instance(checker *c, decl *g, const type *args, const loc a
 
 // The instantiation a call picked: in the program from here on, its body
 // checked as the generic's own code with the type arguments bound.
-static void place_generic_instance(checker *c, decl *d)
+// An instantiation `d`'s name in generated C, against every other declaration's: Max_float of the game's own.
+static void refuse_c_clash(const checker *c, const decl *d)
 {
-    if (d->generic_placed) return;
-    d->generic_placed = true;
-    vec_push(c->prog->decls, d);
-    // Another declaration generated C would spell the same: Max_float of the game's own
     sb mine = {0};
     c_name_of(d, &mine);
-    sb_put(&mine, d->c_suffix);
+    if (d->c_suffix) sb_put(&mine, d->c_suffix);
     for (int i = 0; i < c->prog->decls.count; i++) {
         const decl *other = c->prog->decls.items[i];
-        if (other == d || other->builtin || other->kind == DECL_ALIAS || other->kind == DECL_GENERIC) continue;
+        if (other == d || other->builtin || other->kind == DECL_ALIAS || other->kind == DECL_GENERIC || other->kind == DECL_GENERIC_STRUCT) continue;
         if (other->kind != DECL_FUNCTION && !is_kind(other, NAME_TYPE) && other->kind != DECL_SYSTEM && other->kind != DECL_CONST) continue;
         sb theirs = {0};
         c_name_of(other, &theirs);
@@ -6252,20 +6352,56 @@ static void place_generic_instance(checker *c, decl *d)
         diag_note("rename one of them");
         break;
     }
-    checker nested = {.prog = c->prog, .fields_ordered = c->fields_ordered, .unit = d->unit, .generic = d, .declaring = d};
-    const int errors = diag_error_count();
-    check_method_body(&nested, d);
-    if (diag_error_count() > errors) diag_note_at(d->generic_at, "in '%s', which this call instantiates", d->generic_name);
-#define MERGE_CHECKS(member) for (int i = 0; i < nested.member.count; i++) vec_push(c->member, nested.member.items[i])
+}
+
+// Where what an instantiation's nested checker found goes: the checker that made it, but while a generic nothing
+// instantiates is probed, the program's, as what it makes is the program's.
+static checker *merge_target(checker *c)
+{
+    return c->probing && c->root ? c->root : c;
+}
+
+static void merge_nested(checker *c, checker *nested)
+{
+    c = merge_target(c);
+#define MERGE_CHECKS(member) for (int i = 0; i < nested->member.count; i++) vec_push(c->member, nested->member.items[i])
     MERGE_CHECKS(linear_sources); MERGE_CHECKS(linear_uses); MERGE_CHECKS(raw_uses); MERGE_CHECKS(unused); MERGE_CHECKS(dropped); MERGE_CHECKS(spawns);
     MERGE_CHECKS(sends); MERGE_CHECKS(send_code); MERGE_CHECKS(calls); MERGE_CHECKS(heap_passes); MERGE_CHECKS(c_lends); MERGE_CHECKS(bare); MERGE_CHECKS(task_calls);
     MERGE_CHECKS(access_warnings);
 #undef MERGE_CHECKS
-    c->outs += nested.outs;
+    c->outs += nested->outs;
     // What its code does, through the functions it calls, is known before the code that called it goes on
     mark_io_callers(c);
     mark_roll_callers(c);
     mark_act_callers(c);
+}
+
+static void place_generic_instance(checker *c, decl *d)
+{
+    if (d->generic_placed) return;
+    if (d->generic_probe) return; // A probe's own: never in the program
+    d->generic_placed = true;
+    if (d->owner) vec_push(d->owner->methods, d); // A method's: generated with its type's
+    else vec_push(c->prog->decls, d);
+    if (!d->owner) refuse_c_clash(c, d);
+    for (int i = 0; d->owner && i < d->owner->methods.count; i++) { // A method's against its type's others: Map_int and Map(int)
+        const decl *other = d->owner->methods.items[i];
+        if (other == d || other->is_operator) continue;
+        sb mine = {0}, theirs = {0};
+        sb_printf(&mine, STR_FMT "%s", STR_ARG(d->name), d->c_suffix ? d->c_suffix : "");
+        sb_printf(&theirs, STR_FMT "%s", STR_ARG(other->name), other->c_suffix ? other->c_suffix : "");
+        if (strcmp(mine.data, theirs.data) != 0) continue;
+        diag_error(d->generic_at, "'%s' and '%s' would have the same name in generated C", d->generic_name, signature_of(other));
+        diag_note("rename one of them");
+        break;
+    }
+    checker nested = {.prog = c->prog, .fields_ordered = c->fields_ordered, .unit = d->unit, .generic = d, .declaring = d, .root = c->root};
+    const bool quiet = diag_quiet_warnings(false); // A real instantiation's warnings are said, though a probe made it
+    const int errors = diag_error_count();
+    check_method_body(&nested, d);
+    if (diag_error_count() > errors) diag_note_at(d->generic_at, "in '%s', which this call instantiates", d->generic_name);
+    diag_quiet_warnings(quiet);
+    merge_nested(c, &nested);
 }
 
 // The instantiation of generic `g` that call `e` means: its type arguments as
@@ -6286,8 +6422,10 @@ static decl *instantiate_for_call(checker *c, const expr *e, decl *g, const bool
         for (int k = 0; k < n; k++) {
             const type_ref *r = e->type_args.items[k];
             bound[k] = resolve_type(c, r, PLACE_LOCAL, r->at);
+            if (bound[k].kind == TY_ERROR) c->met_unknown = true;
             if (bound[k].kind == TY_ERROR || !type_arg_ok(bound[k], r->at, g->type_params.items[k])) return NULL;
         }
+        if (!type_rules_met(c, g, bound, e->at, loud)) return NULL;
         return generic_instance(c, g, bound, e->at);
     }
     int *param_of = arena_alloc(sizeof(int) * (size_t)(e->args.count ? e->args.count : 1));
@@ -6295,7 +6433,10 @@ static decl *instantiate_for_call(checker *c, const expr *e, decl *g, const bool
     for (int i = 0; i < e->args.count; i++) {
         const expr *arg = e->args.items[i];
         if (param_of[i] < 0 || arg->is_out || untyped_arg(arg)) continue;
-        if (arg->type.kind == TY_ERROR) return NULL;
+        if (arg->type.kind == TY_ERROR) {
+            c->met_unknown = true;
+            return NULL;
+        }
         int clash = -1;
         if (infer_type(g, g->params.items[param_of[i]].type_ref, arg->type, bound, set, &clash)) continue;
         if (loud) {
@@ -6319,7 +6460,363 @@ static decl *instantiate_for_call(checker *c, const expr *e, decl *g, const bool
         }
         return NULL;
     }
+    if (!type_rules_met(c, g, bound, e->at, loud)) return NULL;
     return generic_instance(c, g, bound, e->at);
+}
+
+// ---------------------------------------------------------------------------
+// `where` rules
+
+static const char *const rule_words[] = {"equatable", "comparable", "hashable"};
+
+// What a generic's `where` says, checked: each rule names one of its type parameters, and is one there is.
+static void check_type_rules(decl *g)
+{
+    g->param_rules.count = 0;
+    for (int k = 0; k < g->type_params.count; k++) vec_push(g->param_rules, 0);
+    for (int i = 0; i < g->type_rules.count; i++) {
+        const type_rule *r = &g->type_rules.items[i];
+        int param = -1;
+        for (int k = 0; k < g->type_params.count && param < 0; k++) {
+            if (str_eq(g->type_params.items[k], r->param)) param = k;
+        }
+        if (param < 0) {
+            if (g->type_params.count == 0) {
+                diag_error(r->param_at, "'where' says what a generic's type parameters can be, and '" STR_FMT "' has none",
+                           STR_ARG(g->name));
+                diag_note("give it some after its name, like '" STR_FMT "<T>', or leave out the 'where'", STR_ARG(g->name));
+            } else {
+                diag_error(r->param_at, "'" STR_FMT "' isn't a type parameter of '" STR_FMT "'", STR_ARG(r->param), STR_ARG(g->name));
+                suggestion sg = suggest_start(r->param);
+                for (int k = 0; k < g->type_params.count; k++) suggest_consider(&sg, g->type_params.items[k]);
+                suggest_note(&sg);
+            }
+            continue;
+        }
+        int bit = 0;
+        for (int w = 0; w < 3 && !bit; w++) {
+            if (str_eq_c(r->rule, rule_words[w])) bit = 1 << w;
+        }
+        if (!bit) {
+            diag_error(r->rule_at, "'" STR_FMT "' isn't something a type parameter can be: 'equatable' (== and !=), "
+                                   "'comparable' (<, <=, > and >=) or 'hashable' (a map's key)", STR_ARG(r->rule));
+            suggestion sg = suggest_start(r->rule);
+            for (int w = 0; w < 3; w++) suggest_consider_c(&sg, rule_words[w]);
+            suggest_note(&sg);
+            continue;
+        }
+        g->param_rules.items[param] |= bit;
+    }
+}
+
+// Whether a struct's own operator `op` takes two of it.
+static bool struct_has_operator(const type t, const tok_kind op)
+{
+    if (t.kind != TY_STRUCT) return false;
+    for (int i = 0; i < t.decl->methods.count; i++) {
+        const decl *m = t.decl->methods.items[i];
+        if (m->is_operator && m->op == op && m->params.count == 2 && same_type(m->params.items[0].type, t)
+            && same_type(m->params.items[1].type, t)) return true;
+    }
+    return false;
+}
+
+// Whether type `t` is what rule `bit` says.
+static bool rule_met(const type t, const int bit)
+{
+    switch (bit) {
+    case RULE_EQUATABLE: return equatable(t) || struct_has_operator(t, T_EQ);
+    case RULE_COMPARABLE: return is_scalar_number(t) || t.kind == TY_ENUM || struct_has_operator(t, T_LT);
+    default:
+        return t.kind == TY_BYTE || t.kind == TY_CHAR || t.kind == TY_INT || t.kind == TY_LONG || t.kind == TY_ENUM
+            || t.kind == TY_ENTITY || t.kind == TY_LOCAL_ENTITY || t.kind == TY_PLAYER || t.kind == TY_STRING;
+    }
+}
+
+static void rule_unmet(const decl *g, const type t, const int param, const int bit, const loc at)
+{
+    const int w = bit == RULE_EQUATABLE ? 0 : bit == RULE_COMPARABLE ? 1 : 2;
+    diag_error(at, "'" STR_FMT "' of '" STR_FMT "' is %s, and %s isn't", STR_ARG(g->type_params.items[param]), STR_ARG(g->name),
+               rule_words[w], type_name(t));
+    if (bit == RULE_HASHABLE) {
+        diag_note("a hashable type is a map's key: an int, a long, a byte, a char, an enum, an Entity, a PlayerID or text");
+    } else if (t.kind == TY_STRUCT && !t.decl->builtin) {
+        const char *op = bit == RULE_EQUATABLE ? "==" : "<";
+        diag_note("declare its 'operator %s' in '%s', like 'bool operator %s(%s a, %s b) { ... }'", op, type_name(t), op, type_name(t),
+                  type_name(t));
+    } else if (bit == RULE_EQUATABLE) {
+        diag_note("an equatable type takes '==': numbers, bools, enums, vectors, colors, text, Entity, PlayerID, and structs with "
+                  "their own 'operator =='");
+    } else {
+        diag_note("a comparable type takes '<': numbers, enums, and structs with their own 'operator <'");
+    }
+}
+
+// Whether type arguments `args` are what generic `g`'s `where` says, which is said where they're written. A struct's
+// operators aren't known before every signature is, so its rules wait until then (check_pending_rules).
+static bool type_rules_met(const checker *c, const decl *g, const type *args, const loc at, const bool loud)
+{
+    bool met = true;
+    for (int k = 0; k < g->param_rules.count && k < g->type_params.count; k++) {
+        for (int bit = 1; bit <= RULE_HASHABLE; bit <<= 1) {
+            if (!(g->param_rules.items[k] & bit)) continue;
+            if (args[k].kind == TY_STRUCT && bit != RULE_HASHABLE && c->prog->instance_step < INSTANCE_SIGNED) {
+                const pending_rule later = {g, args[k], k, at};
+                if (loud) vec_push(c->prog->pending_rules, later);
+                continue;
+            }
+            if (rule_met(args[k], bit)) continue;
+            if (loud) rule_unmet(g, args[k], k, bit, at);
+            met = false;
+        }
+    }
+    return met;
+}
+
+static void check_pending_rules(program *prog)
+{
+    for (int i = 0; i < prog->pending_rules.count; i++) {
+        const pending_rule *r = &prog->pending_rules.items[i];
+        for (int bit = 1; bit <= RULE_HASHABLE; bit <<= 1) {
+            if ((r->generic->param_rules.items[r->param] & bit) && !rule_met(r->arg, bit)) {
+                rule_unmet(r->generic, r->arg, r->param, bit, r->at);
+            }
+        }
+    }
+    prog->pending_rules.count = 0;
+}
+
+// ---------------------------------------------------------------------------
+// Generic structs
+
+static void check_fields(checker *c, const decl *d);
+static void check_method_decls(checker *c, decl *d);
+static void check_generic_decl(const checker *c, decl *g);
+
+// Takes a generic struct's instantiation as far as every struct is (program.instance_step): one made later is
+// taken as far at once, so it's checked as the structs declared are.
+static bool struct_instance_of(const decl *d);
+
+// Takes instantiation `d` its next step, `step`. What that makes (an instantiation its fields name, its code uses)
+// is taken, meanwhile, to the step before (raise_instances): a field's type needs no more than that the struct is
+// one, a value's default needs its fields, a signature its fields' checks, code its signatures.
+static void take_step(checker *c, decl *d, const int step)
+{
+    d->instance_step = step;
+    const int was = c->prog->ready_step;
+    c->prog->ready_step = step;
+    checker nested = {.prog = c->prog, .fields_ordered = c->prog->instance_step >= INSTANCE_ORDERED, .unit = d->unit, .generic = d,
+                      .declaring = d, .probing = d->generic_probe, .root = c->root};
+    switch (step) {
+    case INSTANCE_FIELDS:
+        resolve_field_types(&nested, d);
+        for (int k = 0; k < d->generic_methods.count; k++) check_generic_decl(&nested, d->generic_methods.items[k]);
+        break;
+    case INSTANCE_ORDERED:
+        if (!d->generic_probe) order_struct(c->prog, d);
+        break;
+    case INSTANCE_CHECKED: check_fields(&nested, d); break;
+    case INSTANCE_SIGNED: check_method_decls(&nested, d); break;
+    default: {
+        nested.declaring = NULL;
+        // A real instantiation's warnings are said, though a probe made it; a probe's are its own (probe_generic)
+        const bool quiet = d->generic_probe ? diag_quiet_warnings(true) : diag_quiet_warnings(false);
+        const int errors = diag_error_count();
+        for (int k = 0; k < d->methods.count; k++) check_method_body(&nested, d->methods.items[k]);
+        if (diag_error_count() > errors && !d->generic_probe) diag_note_at(d->generic_at, "in '%s', which this instantiates", d->generic_name);
+        diag_quiet_warnings(quiet);
+        // What its code does is the program's, whichever checker made it (one of a signature's is gone after it)
+        if (!d->generic_probe) merge_nested(c->root ? c->root : c, &nested);
+        break;
+    }
+    }
+    c->prog->ready_step = was;
+}
+
+// Every instantiation of the program's taken to `level`, step by step together: each has a step only once every
+// other has the one before, so no instantiation's code is checked before what it uses has its fields and its
+// signatures, wherever in the checking it was made. Again while taking them makes more.
+static void raise_instances(checker *c, const int level)
+{
+    for (bool moved = true; moved;) {
+        moved = false;
+        for (int step = INSTANCE_FIELDS; step <= level; step++) {
+            for (int i = 0; i < c->prog->decls.count; i++) {
+                decl *d = c->prog->decls.items[i];
+                if (!struct_instance_of(d) || d->instance_step != step - 1) continue;
+                take_step(c, d, step);
+                moved = true;
+            }
+        }
+    }
+}
+
+// A probe's own instantiation (struct_instance(..., true)), in no program list: taken every step itself.
+static void ready_probe_instance(checker *c, decl *d)
+{
+    while (d->instance_step < c->prog->instance_step) take_step(c, d, d->instance_step + 1);
+}
+
+// A generic struct's instantiation, which the checker takes step by step (raise_instances) and not with
+// the structs declared.
+static bool struct_instance_of(const decl *d)
+{
+    return d->kind == DECL_STRUCT && d->generic_of;
+}
+
+// Every struct has been taken to `step`: so has each instantiation made, and each made from here on.
+static void ready_struct_instances(checker *c, const int step)
+{
+    c->prog->instance_step = step;
+    raise_instances(c, step);
+}
+
+// Generic struct `g` with type arguments `args`: the instantiation that has them, a struct of the program's made
+// the first time and taken as far as every struct is. A probe's is its own, never the program's.
+static decl *struct_instance(checker *c, decl *g, const type *args, const loc at, const bool probe)
+{
+    for (int i = 0; !probe && i < g->generic_instances.count; i++) {
+        decl *d = g->generic_instances.items[i];
+        bool same = true;
+        for (int k = 0; k < g->type_params.count && same; k++) same = same_type(d->type_args.items[k], args[k]);
+        if (same) return d;
+    }
+    sb name = {0};
+    put_generic_name(&name, g, args);
+    const int depth = c->generic ? c->generic->generic_depth + 1 : 1;
+    if (depth > GENERIC_DEPTH) {
+        diag_error(at, "'%s' would instantiate generics without end", name.data);
+        diag_note_at(c->generic->generic_at, "'%s' is instantiated here", c->generic->generic_name);
+        diag_note("a generic that instantiates itself with a bigger type each time never stops: at most %d go one inside another", GENERIC_DEPTH);
+        return NULL;
+    }
+    decl *d = parse_generic_struct_instance(g);
+    if (!d) return NULL;
+    d->generic_of = g;
+    d->generic_probe = probe;
+    d->is_dev = g->is_dev;
+    d->dev_at = g->dev_at;
+    d->generic_depth = depth;
+    d->generic_at = at;
+    d->generic_name = name.data;
+    d->attributes = g->attributes;
+    // Its name is as code writes it, Pair<int>, which messages and text say; in generated C it's Pair_int
+    d->name = (str){name.data, (int)name.len};
+    const str ns = decl_ns(g);
+    sb qualified = {0};
+    if (ns.len > 0) sb_printf(&qualified, STR_FMT ".", STR_ARG(ns));
+    sb_put(&qualified, name.data);
+    d->qualified = (str){qualified.data, (int)qualified.len};
+    bind_type_params(d, g, args);
+    sb cname = {0};
+    c_name_of(g, &cname);
+    put_type_args_suffix(&cname, d);
+    d->c_name = cname.data;
+    if (!probe) {
+        vec_push(g->generic_instances, d);
+        vec_push(c->prog->decls, d);
+        refuse_c_clash(c, d);
+        // Inside another's step, as far as that step needs; the step's own loop takes it on (raise_instances)
+        raise_instances(c, c->prog->ready_step ? c->prog->ready_step - 1 : c->prog->instance_step);
+    } else {
+        ready_probe_instance(c, d);
+        raise_instances(c, c->prog->instance_step); // What the probe made, the rest of the way
+    }
+    return d;
+}
+
+// A generic nothing instantiates, checked once with its type parameters unknown, bound to the error type: what
+// of its code doesn't depend on them is checked as any code is, and what does is quiet, as an error's type keeps
+// what follows from it quiet. Only its errors are said: a warning could come of not knowing a type. Nothing of
+// the probe goes in the program; what it instantiates with types it knows does, as any code's would.
+static void probe_generic(checker *c, decl *g)
+{
+    const int n = g->type_params.count;
+    type *unknown = arena_alloc(sizeof(type) * (size_t)(n ? n : 1));
+    for (int k = 0; k < n; k++) unknown[k] = T_ERR;
+    const bool quiet = diag_quiet_warnings(true);
+    checker probe = {.prog = c->prog, .fields_ordered = true, .unit = g->unit, .probing = true, .root = c->root};
+    if (g->kind == DECL_GENERIC_STRUCT) {
+        decl *d = struct_instance(&probe, g, unknown, g->at, true);
+        g->probe = d;
+        for (int k = 0; d && k < d->generic_methods.count; k++) probe_generic(&probe, d->generic_methods.items[k]);
+    } else {
+        decl *d = generic_instance(&probe, g, unknown, g->at);
+        g->probe = d;
+        if (d) {
+            probe.generic = d;
+            probe.declaring = d;
+            check_method_body(&probe, d);
+        }
+    }
+    diag_quiet_warnings(quiet);
+}
+
+// Every generic nothing instantiates, probed (probe_generic): a generic function or struct, and a struct's generic
+// method no call has made, of a struct declared or of the first instantiation of a generic one.
+// Whether something of the program instantiates generic `g`: a struct's instantiations all are the program's, a
+// function's or a method's only once a call picked it (an overload that lost was made, and isn't).
+static bool instantiated(const decl *g)
+{
+    for (int i = 0; i < g->generic_instances.count; i++) {
+        const decl *d = g->generic_instances.items[i];
+        if (d->kind == DECL_STRUCT || d->generic_placed) return true;
+    }
+    return false;
+}
+
+static void probe_uncalled_generics(checker *c)
+{
+    for (int i = 0; i < c->prog->decls.count; i++) {
+        decl *d = c->prog->decls.items[i];
+        if ((d->kind == DECL_GENERIC || d->kind == DECL_GENERIC_STRUCT) && !instantiated(d)) probe_generic(c, d);
+        if (d->kind == DECL_GENERIC_STRUCT && d->generic_instances.count > 0) {
+            const decl *first = d->generic_instances.items[0];
+            for (int k = 0; k < first->generic_methods.count; k++) {
+                bool made = false;
+                for (int j = 0; j < d->generic_instances.count && !made; j++) {
+                    const decl *other = d->generic_instances.items[j];
+                    made = k < other->generic_methods.count && instantiated(other->generic_methods.items[k]);
+                }
+                if (!made) probe_generic(c, first->generic_methods.items[k]);
+            }
+        }
+        if (d->kind == DECL_STRUCT && !d->generic_of) {
+            for (int k = 0; k < d->generic_methods.count; k++) {
+                if (!instantiated(d->generic_methods.items[k])) probe_generic(c, d->generic_methods.items[k]);
+            }
+        }
+    }
+}
+
+// Pair<int>, Stack<Item>: a generic struct's instantiation where a type is written, its type arguments resolved.
+static type resolve_instance(const checker *c, const type_ref *r, const type_place place, const loc at)
+{
+    decl *g = find_named(c, r->name, at, NAME_TYPE);
+    if (!g) return unknown_type(c, r, at, place);
+    if (g->kind != DECL_GENERIC_STRUCT) {
+        diag_error(at, "'" STR_FMT "' takes no types in '<>': it isn't generic", STR_ARG(r->name));
+        diag_note("leave out the '<...>'");
+        return T_ERR;
+    }
+    const int n = g->type_params.count;
+    if (r->args.count != n) {
+        diag_error(at, "'" STR_FMT "' takes %d type%s in '<>', not %d", STR_ARG(g->name), n, n == 1 ? "" : "s", r->args.count);
+        return T_ERR;
+    }
+    type *args = arena_alloc(sizeof(type) * (size_t)n);
+    for (int k = 0; k < n; k++) {
+        const type_ref *arg = r->args.items[k];
+        args[k] = resolve_type(c, arg, ARG_ELEMENT, arg->at);
+        if (args[k].kind == TY_ERROR) {
+            ((checker *)c)->met_unknown = true;
+            return T_ERR;
+        }
+        if (!type_arg_ok(args[k], arg->at, g->type_params.items[k])) return T_ERR;
+    }
+    if (!type_rules_met(c, g, args, at, true)) return T_ERR;
+    decl *d = struct_instance((checker *)c, g, args, at, false);
+    return d ? (type){TY_STRUCT, d} : T_ERR;
 }
 
 static decl *check_overloaded_args(checker *c, expr *e, decl *first)
@@ -6369,7 +6866,9 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
         }
         const bool loud = same.count == 1;
         const int errors = diag_error_count();
+        c->met_unknown = false;
         decl *made = instantiate_for_call(c, e, same.items[k], loud);
+        said |= c->met_unknown; // An argument with an error said already, or a probe's unknown type: nothing more to say
         if (made) same.items[k] = made;
         failed[k] = !made;
         said |= loud && !made && diag_error_count() > errors;
@@ -6484,13 +6983,23 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
 // The function or method a call means, with its arguments checked: `m`, or
 // when others share its name, the one that takes them (NULL when none does,
 // which is said).
+// Types in '<>' on a call of `m`, which isn't generic: said, and left out.
+static void refuse_type_args(const expr *e, const decl *m)
+{
+    if (e->type_args.count == 0) return;
+    if (m->owner) { // A method, as a value's built-in methods say it
+        diag_error(e->type_args.items[0]->at, "'" STR_FMT "' takes no type in '<>'", STR_ARG(m->name));
+        diag_note("leave out the '<...>': it isn't generic");
+        return;
+    }
+    diag_error(e->type_args.items[0]->at, "'" STR_FMT "' takes no types in '<>': it isn't generic", STR_ARG(m->name));
+    diag_note("leave out the '<...>'");
+}
+
 static decl *check_routine_args(checker *c, expr *e, decl *m)
 {
     if (m->shares_name || m->kind == DECL_GENERIC) return check_overloaded_args(c, e, m);
-    if (e->type_args.count > 0) {
-        diag_error(e->type_args.items[0]->at, "'" STR_FMT "' takes no types in '<>': it isn't generic", STR_ARG(m->name));
-        diag_note("leave out the '<...>'");
-    }
+    refuse_type_args(e, m);
     check_method_args(c, e, m);
     return m;
 }
@@ -6777,7 +7286,8 @@ static const char *routines(const checker *c)
 
 static type check_self_call(checker *c, expr *e, decl *m)
 {
-    const bool shared = m->shares_name; // Which of them it is comes first
+    const bool shared = m->shares_name || m->kind == DECL_GENERIC; // Which of them it is comes first
+    if (!shared) refuse_type_args(e, m);
     if (shared) m = check_overloaded_args(c, e, m);
     if (!m) return T_ERR;
     if (c->method->owner && c->method->owner->placement_of) {
@@ -10558,9 +11068,15 @@ static type check_method(checker *c, expr *e)
     // known for a render target's once its receiver is checked
     const bool read_typed = e->type_arg.len > 0 && (str_eq_c(e->name, "Read") || str_eq_c(e->name, "ReadDepth"))
                          && !names_builtin_owner(c, e->object) && !names_wait(c, e->object);
-    if (e->type_arg.len > 0 && !read_typed && !(names_builtin_owner(c, e->object) && str_eq_c(e->object->name, "Json"))
+    const bool stray_type_arg = e->type_arg.len > 0 && !read_typed && !(names_builtin_owner(c, e->object) && str_eq_c(e->object->name, "Json"))
         && !((str_eq_c(e->name, "Set") || str_eq_c(e->name, "Reset"))
-             && visibility_typed_receiver(c, e->object))) {
+             && visibility_typed_receiver(c, e->object));
+    // A value's method can be generic, pair.Map<int>(f): whether it is waits for the value's type, below
+    const bool named_receiver = names_builtin_owner(c, e->object) || names_wait(c, e->object) || names_random(c, e->object)
+        || (e->object->kind == E_NAME && !find_local(c, e->object->name) && !find_param(c, e->object->name)
+            && (str_eq_c(e->object->name, "Scene") || str_eq_c(e->object->name, "Session") || str_eq_c(e->object->name, "Clipboard")
+                || str_eq_c(e->object->name, "string")));
+    if (stray_type_arg && named_receiver) {
         diag_error(e->type_arg_at, "'" STR_FMT "' takes no type in '<>'", STR_ARG(e->name));
         diag_note("the World's methods do: 'world.Get<Health>(entity)', in code that takes 'World world'");
     }
@@ -10715,6 +11231,7 @@ static type check_method(checker *c, expr *e)
         // Combat.Stance(2): an enum in a namespace, converting an int.
         decl *const named = find_type(c, qualified, e->at);
         if (named && named->kind == DECL_EVENT && named->is_command) { // Shop.Buy(1): a command there, for no entity named
+            refuse_type_args(e, named);
             mark_namespaces(e->object);
             e->command_namespace = e->object;
             e->kind = E_CALL;
@@ -10722,6 +11239,7 @@ static type check_method(checker *c, expr *e)
             return check_command_call(c, e, named);
         }
         if (named && named->kind == DECL_ENUM) {
+            refuse_type_args(e, named);
             mark_namespaces(e->object);
             return check_enum_conversion(c, e, named);
         }
@@ -10744,6 +11262,12 @@ static type check_method(checker *c, expr *e)
     const expr *previous_asset = c->asset_value;
     c->asset_value = e->object;
     const type obj = check_expr(c, e->object);
+    // A value of the game's type: its method's call says it (refuse_type_args), or picks the generic one
+    if (stray_type_arg && !named_receiver && obj.kind != TY_ERROR && obj.kind != TY_STRUCT && obj.kind != TY_COMPONENT
+        && obj.kind != TY_SINGLETON) {
+        diag_error(e->type_arg_at, "'" STR_FMT "' takes no type in '<>'", STR_ARG(e->name));
+        diag_note("the World's methods do: 'world.Get<Health>(entity)', in code that takes 'World world'");
+    }
     if (read_typed && obj.kind != TY_RENDER_TARGET && !(obj.kind == TY_TEXTURE3D && str_eq_c(e->name, "Read"))
         && obj.kind != TY_ERROR) { // Left for its receiver's type, above
         diag_error(e->type_arg_at, "'" STR_FMT "' takes no type in '<>'", STR_ARG(e->name));
@@ -11232,7 +11756,8 @@ static type check_method(checker *c, expr *e)
             diag_error(e->at, "Interpolate is how views blend %s between ticks; code doesn't call it", type_name(obj));
             return T_ERR;
         }
-        const bool shared = m->shares_name; // Which of them it is comes first
+        const bool shared = m->shares_name || m->kind == DECL_GENERIC; // Which of them it is comes first
+        if (!shared) refuse_type_args(e, m);
         if (shared) m = check_overloaded_args(c, e, m);
         if (!m) return T_ERR;
         if (obj.kind == TY_COMPONENT && obj.decl->placement_of) {
@@ -17397,6 +17922,7 @@ static type check_has(checker *c, expr *e)
     of.at = of.name_at = e->lhs->at;
     const type t = resolve_type(c, &of, PLACE_LOCAL, e->lhs->at);
     const type want = resolve_type(c, e->pattern_ref, PLACE_LOCAL, e->pattern_ref->at);
+    if (t.kind == TY_ERROR) c->met_unknown = true; // A probe's T, say: which side runs isn't known
     if (t.kind == TY_ERROR || want.kind == TY_ERROR) return T_ERR;
     bool has = false;
     if (t.decl && (t.kind == TY_STRUCT || t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_EVENT)) {
@@ -17444,7 +17970,21 @@ static void check_stmt(checker *c, stmt *s)
         break;
     case S_IF: {
         bool known;
-        if (has_condition(c, s->cond, &known)) {
+        c->met_unknown = false;
+        const bool has_test = has_condition(c, s->cond, &known);
+        if (has_test && c->probing && c->met_unknown) {
+            // A probe's `if (V has ...)`: which side runs depends on V, so each is checked, with V unknown
+            push_scope(c);
+            check_stmt(c, s->then_stmt);
+            pop_scope(c);
+            if (s->else_stmt) {
+                push_scope(c);
+                check_stmt(c, s->else_stmt);
+                pop_scope(c);
+            }
+            break;
+        }
+        if (has_test) {
             // `if (V has float3 normal)`: only the side that runs is checked, and it's all that's left of the if
             stmt *taken = known ? s->then_stmt : s->else_stmt;
             if (taken) {
@@ -20677,9 +21217,24 @@ static void check_method_decls(checker *c, decl *d)
         if (m->accessor && !m->is_mut_method && m->return_type.kind == TY_VOID)
             diag_error(m->return_type_at, "a property's type can't be void");
     }
+    for (int i = 0; i < d->generic_methods.count; i++) { // A generic method shares its name as a function does
+        decl *g = d->generic_methods.items[i];
+        check_reserved(g->name, g->at);
+        if (field_named(d, g->name)) diag_error(g->at, "'" STR_FMT "' already has a field '" STR_FMT "'", STR_ARG(d->name), STR_ARG(g->name));
+        for (int j = 0; j < d->methods.count; j++) {
+            decl *m = d->methods.items[j];
+            if (!m->is_operator && !m->accessor && !m->generic_of && str_eq(m->name, g->name)) m->shares_name = g->shares_name = true;
+            else if (m->accessor && str_eq(m->name, g->name)) {
+                diag_error(g->at, "'" STR_FMT "' is already a member of '" STR_FMT "'", STR_ARG(g->name), STR_ARG(d->name));
+            }
+        }
+        for (int j = 0; j < i; j++) {
+            if (str_eq(d->generic_methods.items[j]->name, g->name)) g->shares_name = d->generic_methods.items[j]->shares_name = true;
+        }
+    }
     for (int i = 0; i < d->methods.count; i++) {
         decl *m = d->methods.items[i];
-        if (!m->shares_name) continue;
+        if (!m->shares_name || m->generic_of) continue;
         settle_shared_name(c->prog, m);
         // Against the other methods' names in generated C: Hurt(float) is Hurt_float there
         for (int j = 0; j < d->methods.count; j++) {
@@ -21132,6 +21687,10 @@ static void check_shader_decl(const checker *c, decl *d)
             continue;
         }
         decl *t = find_type(c, p->type_name, p->type_at);
+        if (p->type_ref && p->type_ref->args.count > 0 && !generic_form_named(p->type_ref->name) && !str_eq_c(p->type_ref->name, "Func")) {
+            const type instance = resolve_type(c, p->type_ref, PLACE_FUNCTION, p->type_at); // Corner<float>
+            t = instance.kind == TY_STRUCT ? instance.decl : NULL;
+        }
         if (t && t->kind == DECL_COMPONENT) t = component_placement(c->prog, t, p->placement_local, p->type_at);
         else if (p->placement_local) diag_error(p->placement_at, "local access qualifies a component");
         type value = T_ERR;
@@ -23774,6 +24333,10 @@ static bool is_builtin_name(const str name)
 
 static void c_name_of(const decl *d, sb *out)
 {
+    if (d->kind == DECL_STRUCT && d->generic_of && d->c_name) { // Pair<int>: Pair_int
+        sb_put(out, d->c_name);
+        return;
+    }
     const str ns = decl_ns(d);
     for (int i = 0; i < ns.len; i++) sb_putn(out, ns.ptr[i] == '.' ? "_" : &ns.ptr[i], 1);
     if (ns.len > 0) sb_put(out, "_");
@@ -24000,6 +24563,7 @@ static void collect_decls(program *prog)
         case DECL_MESH:
         case DECL_RESULT:
         case DECL_GENERIC:
+        case DECL_GENERIC_STRUCT:
         case DECL_FUNCTION:
         case DECL_CONST:
         case DECL_ASSET:
@@ -27292,12 +27856,28 @@ static void check_generic_decl(const checker *c, decl *g)
     }
     if (g->is_async) diag_error(g->async_at, "a generic function can't be async yet: write the task's function for its types");
     if (g->is_worker) diag_error(g->worker_at, "a worker can't be generic yet");
+    check_type_rules(g);
+    g->param_decls.count = 0;
+    for (int k = 0; k < g->type_params.count; k++) { // Each parameter as tools name it (decl.param_decls)
+        decl *t = NEW(decl);
+        t->kind = DECL_ALIAS;
+        t->type_param = true;
+        t->generic_of = g;
+        t->type_param_index = k;
+        t->name = t->qualified = g->type_params.items[k];
+        t->at = g->type_param_at.items[k];
+        t->unit = g->unit;
+        t->alias_state = 2;
+        t->alias_type = T_ERR;
+        vec_push(g->param_decls, t);
+    }
 }
 
 bool check(program *prog)
 {
     checker c = {0};
     c.prog = prog;
+    c.root = &c;
 
     add_builtins(prog);
     builtins_use(prog->anchor, prog->shape, prog->blend, prog->depth, prog->cull);
@@ -27325,7 +27905,13 @@ bool check(program *prog)
     check_units(prog);
     check_packages(prog);
     for (int i = 0; i < prog->decls.count; i++) {
-        if (prog->decls.items[i]->kind == DECL_GENERIC) check_generic_decl(&c, prog->decls.items[i]);
+        decl *d = prog->decls.items[i];
+        if (d->kind == DECL_GENERIC || d->kind == DECL_GENERIC_STRUCT) check_generic_decl(&c, d);
+        else if (d->type_rules.count) check_type_rules(d); // A 'where' of something with no type parameters
+        for (int k = 0; k < d->generic_methods.count; k++) check_generic_decl(&c, d->generic_methods.items[k]);
+        for (int k = 0; k < d->methods.count; k++) {
+            if (d->methods.items[k]->type_rules.count) check_type_rules(d->methods.items[k]);
+        }
     }
     // Resolve unused aliases too. Each use still checks its ordinary placement.
     for (int i = 0; i < prog->decls.count; i++) {
@@ -27349,8 +27935,10 @@ bool check(program *prog)
     }
     if (prog->bus_enum) prog->sound->fields.items[prog->sound->fields.count - 1].type_name = prog->bus_enum->qualified;
 
+    ready_struct_instances(&c, INSTANCE_FIELDS); // Those an alias made, and from here on each as it's made
     for (int i = 0; i < prog->decls.count; i++) {
         const decl *d = prog->decls.items[i];
+        if (struct_instance_of(d) || d->kind == DECL_GENERIC_STRUCT) continue; // Taken step by step (raise_instances), or never
         c.unit = d->unit;
         c.declaring = d;
         prog->quiet_names = d->builtin; // Sound's Effect, Samples' float[512]: in generated C once the game names them
@@ -27470,7 +28058,9 @@ bool check(program *prog)
     diag_phase("declarations");
     for (int i = 0; i < prog->decls.count; i++) {
         // Random is among the program's structs once something names it (below), or a struct holds one
-        if (prog->decls.items[i]->kind == DECL_STRUCT && prog->decls.items[i] != prog->random) order_struct(prog, prog->decls.items[i]);
+        if (prog->decls.items[i]->kind == DECL_STRUCT && prog->decls.items[i] != prog->random && !struct_instance_of(prog->decls.items[i])) {
+            order_struct(prog, prog->decls.items[i]);
+        }
         if (prog->decls.items[i]->kind == DECL_ENUM) {
             c.unit = prog->decls.items[i]->unit;
             check_enum(&c, prog->decls.items[i]);
@@ -27479,6 +28069,7 @@ bool check(program *prog)
     // What T? fields are kept as: structs no declaration names, each after what its value holds
     for (int i = 0; i < prog->optional_fields.count; i++) order_struct(prog, prog->optional_fields.items[i]);
     for (int i = 0; i < prog->asset_refs.count; i++) order_struct(prog, prog->asset_refs.items[i]);
+    ready_struct_instances(&c, INSTANCE_ORDERED);
     c.fields_ordered = true;
     // Arrays made while resolving fields, including those in a container's
     // arguments, now see every forward struct's fields and no containment cycle.
@@ -27488,11 +28079,13 @@ bool check(program *prog)
     }
     for (int i = 0; i < prog->decls.count; i++) {
         const decl *d = prog->decls.items[i];
+        if (struct_instance_of(d) || d->kind == DECL_GENERIC_STRUCT) continue;
         c.unit = d->unit;
         c.declaring = d;
         if (d->kind != DECL_SYSTEM) check_fields(&c, d);
     }
     c.declaring = NULL;
+    ready_struct_instances(&c, INSTANCE_CHECKED);
     for (int i = 0; i < prog->local_parts.count; i++) {
         c.unit = prog->local_parts.items[i]->unit;
         check_fields(&c, prog->local_parts.items[i]);
@@ -27510,6 +28103,7 @@ bool check(program *prog)
         decl *d = prog->decls.items[i];
         c.unit = d->unit;
         c.declaring = d;
+        if (struct_instance_of(d) || d->kind == DECL_GENERIC_STRUCT) continue;
         if (d->is_override && d->kind == DECL_FUNCTION) override_owner(&c, d); // `override bool Stats.IsDead()`: a method's
         if (d->kind == DECL_FUNCTION) check_function_decl(&c, d);
         else if (d->kind == DECL_SHADER) check_shader_decl(&c, d);
@@ -27517,14 +28111,18 @@ bool check(program *prog)
         else if (d->kind != DECL_SYSTEM) check_method_decls(&c, d);
     }
     c.declaring = NULL;
+    ready_struct_instances(&c, INSTANCE_SIGNED);
+    check_pending_rules(prog);
     // Overrides of functions, methods, frags and verts take their places before any body names one
     place_overrides(&c, false);
     check_long_arrays(&c);
     check_shared_names(&c, DECL_FUNCTION);
     check_shared_names(&c, DECL_SHADER);
     check_correction_interpolates(prog);
+    ready_struct_instances(&c, INSTANCE_BODIES);
     for (int i = 0; i < prog->decls.count; i++) {
         decl *d = prog->decls.items[i];
+        if (struct_instance_of(d) || d->kind == DECL_GENERIC_STRUCT) continue;
         if (d->kind == DECL_FUNCTION && !d->is_extern) check_method_body(&c, d);
         if (d->kind == DECL_METHOD) check_method_body(&c, d); // An override of a method that found none to replace
         if (d->kind == DECL_SHADER) {
@@ -27538,6 +28136,7 @@ bool check(program *prog)
         }
     }
     for (int i = 0; i < prog->replaced.count; i++) check_replaced(&c, prog->replaced.items[i]);
+    probe_uncalled_generics(&c);
     if (prog->input) {
         c.unit = prog->input->unit;
         check_sample(&c, prog->input);

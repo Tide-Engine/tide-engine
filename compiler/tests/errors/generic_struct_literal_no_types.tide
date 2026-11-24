@@ -1,0 +1,5 @@
+// expect: 'Pair' is generic: write its types, like 'Pair<int> { ... }'
+scene Main { }
+struct Pair<T> { T a; T b; }
+singleton S { int x; }
+system Run(mut S s) { var p = Pair { a = 1 }; s.x = 1; }

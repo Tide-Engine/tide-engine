@@ -72,6 +72,7 @@ Each shape appends its vertices and triangles, and returns the index of its firs
 | `RecalculateNormals(vertices, indices)` | Each vertex's normal from the triangles it's in, weighed by their areas: smooth where triangles share vertices, sharp where they don't |
 | `RecalculateTangents(vertices, indices)` | Each vertex's tangent from its triangles' uvs, as a mesh asset makes the ones its file hasn't got. Needs `normal`, `uv` and a `float4 tangent` |
 | `Append(vertices, indices, fromVertices, fromIndices, transform)` | Another mesh added through a transform: pieces, or copies of one, made one mesh that draws in one call |
+| `Append(vertices, indices, mesh, transform)` | The same for a `Mesh<V>`: an asset's, or one the game made with `Mesh(vertices, indices)` |
 | `TransformMesh(vertices, indices, transform)` | A mesh moved where it is |
 | `Weld(vertices, indices)` | Vertices that are equal made one. The vertex struct declares `==` |
 | `WeldPositions(vertices, indices, tolerance)` | Vertices whose positions are within `tolerance` made one, whatever else they hold |

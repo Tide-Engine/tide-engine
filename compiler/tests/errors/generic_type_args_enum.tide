@@ -1,0 +1,5 @@
+// expect: 'Stance' takes no types in '<>': it isn't generic
+scene Main { }
+namespace Combat { enum Stance { A, B } }
+singleton S { Combat.Stance x; }
+system Run(mut S s) { s.x = Combat.Stance<int>(1); }

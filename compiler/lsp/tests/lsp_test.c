@@ -14175,3 +14175,88 @@ TIDE_TEST(lsp_tweaks_file)
     clear_sent();
     lsp_free(&server);
 }
+
+// Generics in the editor (docs/spec.md, Generics): hover on a generic says its type parameters and what `where`
+// says of them, and on an instantiation what they're bound to; definition goes to the generic; rename renames it
+// where code writes an instantiation; the inside of a generic nothing calls is read too.
+#define GENERICS_GAME \
+    "scene Main { }\n" \
+    "struct Pair<T> where T : comparable\n{\n    T first;\n    T second;\n    T Larger() { return first > second ? first : second; }\n" \
+    "    Pair<U> With<U>(U a) { return Pair<U> { first = a, second = a }; }\n}\n" \
+    "T Max<T>(T a, T b) { return a > b ? a : b; }\n" \
+    "T Unused<T>(T a, int n) { int doubled = n * 2; return a; }\n" \
+    "singleton S { Pair<int> p; int m; }\n" \
+    "system Run(mut S s) { s.m = Max(s.p.Larger(), 3); var q = s.p.With(2.5); }\n"
+
+TIDE_TEST(lsp_generics)
+{
+    start();
+    open_document(GENERICS_GAME);
+    TIDE_CHECK(!has(last_sent(), "\"severity\":1")); // No errors
+    // A generic struct as declared, with its type parameter and its rule; at an instantiation, its types bound
+    TIDE_CHECK(has(hover_at(1, 8), "struct Pair<T> where T : comparable\\n{\\n    T first;"));
+    TIDE_CHECK(has(hover_at(1, 8), "Pair<U> With<U>(U a);"));
+    TIDE_CHECK(has(hover_at(10, 15), "struct Pair<int>\\n{\\n    int first;"));
+    TIDE_CHECK(has(hover_at(10, 15), "int Larger();"));
+    // A generic function as declared, and at a call the instantiation it makes
+    TIDE_CHECK(has(hover_at(8, 3), "T Max<T>(T a, T b)"));
+    TIDE_CHECK(has(hover_at(11, 29), "int Max<int>(int a, int b)"));
+    // A type parameter, where it's declared and where it's used: its generic, its rule and what it's bound to
+    TIDE_CHECK(has(hover_at(1, 12), "A type parameter of `Pair<T>`"));
+    TIDE_CHECK(has(hover_at(3, 5), "It's comparable (< takes it)"));
+    TIDE_CHECK(has(hover_at(3, 5), "Instantiated with `int`, `float`.")); // Pair<float> is what With(2.5) makes
+    // Inside a generic nothing calls, what doesn't depend on T: checked, so the editor knows it
+    TIDE_CHECK(has(hover_at(9, 32), "int doubled"));
+    TIDE_CHECK(has(hover_at(9, 9), "A type parameter of `Unused<T>`"));
+    // Definition from an instantiation goes to the generic
+    open_document(GENERICS_GAME);
+    request_at("file:///test.tide", "textDocument/definition", 10, 15, "");
+    TIDE_CHECK(has(last_sent(), "\"range\":{\"start\":{\"line\":1,\"character\":7}"));
+    // Renaming the struct renames it where instantiations are written, in its own code too
+    const char *pair = rename_at(1, 8, "Duo");
+    TIDE_CHECK(has(pair, "{\"range\":{\"start\":{\"line\":1,\"character\":7},\"end\":{\"line\":1,\"character\":11}},\"newText\":\"Duo\"}"));
+    TIDE_CHECK(has(pair, "{\"range\":{\"start\":{\"line\":6,\"character\":4},\"end\":{\"line\":6,\"character\":8}},\"newText\":\"Duo\"}"));
+    TIDE_CHECK(has(pair, "{\"range\":{\"start\":{\"line\":6,\"character\":34},\"end\":{\"line\":6,\"character\":38}},\"newText\":\"Duo\"}"));
+    TIDE_CHECK(has(pair, "{\"range\":{\"start\":{\"line\":10,\"character\":14},\"end\":{\"line\":10,\"character\":18}},\"newText\":\"Duo\"}"));
+    TIDE_CHECK(count(pair, "\"newText\"") == 4); // Once each, whatever the instantiations: no edit overlaps another
+    // ...a generic function where it's called; a type parameter where it's declared, in `where` and in the code
+    const char *max = rename_at(8, 3, "Most");
+    TIDE_CHECK(has(max, "{\"range\":{\"start\":{\"line\":8,\"character\":2},\"end\":{\"line\":8,\"character\":5}},\"newText\":\"Most\"}"));
+    TIDE_CHECK(has(max, "{\"range\":{\"start\":{\"line\":11,\"character\":28},\"end\":{\"line\":11,\"character\":31}},\"newText\":\"Most\"}"));
+    const char *t = rename_at(1, 12, "Item");
+    TIDE_CHECK(has(t, "{\"range\":{\"start\":{\"line\":1,\"character\":12},\"end\":{\"line\":1,\"character\":13}},\"newText\":\"Item\"}"));
+    TIDE_CHECK(has(t, "{\"range\":{\"start\":{\"line\":1,\"character\":21},\"end\":{\"line\":1,\"character\":22}},\"newText\":\"Item\"}"));
+    TIDE_CHECK(has(t, "{\"range\":{\"start\":{\"line\":3,\"character\":4},\"end\":{\"line\":3,\"character\":5}},\"newText\":\"Item\"}"));
+    TIDE_CHECK(has(t, "{\"range\":{\"start\":{\"line\":5,\"character\":4},\"end\":{\"line\":5,\"character\":5}},\"newText\":\"Item\"}"));
+    TIDE_CHECK(!has(t, "\"line\":8")); // Max's T is its own
+    TIDE_CHECK(count(t, "\"newText\"") == 5); // <T>, where, first, second, Larger's result
+    // A field of the generic struct, through an instantiation's value
+    const char *first = rename_at(3, 7, "low");
+    TIDE_CHECK(has(first, "{\"range\":{\"start\":{\"line\":3,\"character\":6},\"end\":{\"line\":3,\"character\":11}},\"newText\":\"low\"}"));
+    TIDE_CHECK(has(first, "{\"range\":{\"start\":{\"line\":5,\"character\":24},\"end\":{\"line\":5,\"character\":29}},\"newText\":\"low\"}"));
+    // The outline has the generic struct once, as a struct, with its generic method, and none of its instantiations
+    open_document(GENERICS_GAME);
+    const char *outline = request("textDocument/documentSymbol");
+    TIDE_CHECK(has(outline, "\"name\":\"Pair\",\"detail\":\"struct\",\"kind\":23"));
+    TIDE_CHECK(has(outline, "\"name\":\"With\",\"detail\":\"Pair<U> With<U>(U a)\""));
+    TIDE_CHECK(!has(outline, "\"name\":\"Pair<int>\"") && !has(outline, "\"name\":\"Pair<float>\""));
+    TIDE_CHECK(count(outline, "\"name\":\"Pair\"") == 1);
+    // Completion offers a generic struct with its type parameters to fill in, and no instantiation by itself
+    open_document("scene Main { }\nstruct Pair<K, V> { K key; V value; }\nsingleton S { Pair<int, float> kept; P$ }\n");
+    const char *types = request("textDocument/completion");
+    TIDE_CHECK(has(types, "\"label\":\"Pair\""));
+    TIDE_CHECK(has(types, "\"insertText\":\"Pair<${1:K}, ${2:V}>\""));
+    TIDE_CHECK(!has(types, "\"label\":\"Pair<int, float>\""));
+    // ...and a generic function as a call, its types left to its arguments
+    open_document("scene Main { }\nT Max<T>(T a, T b) { return a > b ? a : b; }\nsingleton S { int m; }\n"
+                  "system Run(mut S s) { s.m = Ma$ }\n");
+    const char *calls = request("textDocument/completion");
+    TIDE_CHECK(has(calls, "\"label\":\"Max\""));
+    TIDE_CHECK(has(calls, "T Max<T>(T a, T b)"));
+    // The formatter keeps a generic's <> tight, where it's declared and where an instantiation is written
+    static const char formatted[] =
+        "scene Main { }\nstruct Pair<T> where T : comparable\n{\n    T first;\n    Pair<U> With<U>(U a) { return Pair<U> { }; }\n}\n"
+        "T Max<T>(T a, T b) where T : comparable { return a > b ? a : b; }\nsingleton S { Pair<int> p; Map<int, Pair<float>> m; int n; }\n"
+        "system Run(mut S s) { s.n = Max<int>(1, 2) + (s.n < 3 ? 1 : 0); }\n";
+    TIDE_CHECK(has(format_reply(formatted), "\"result\":[]"));
+}

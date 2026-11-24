@@ -1,0 +1,27 @@
+// Generic code the GPU runs: a generic function a frag calls, inferred and with its type in <>, and a generic
+// struct as the mesh's vertex. Each instantiation is written once, by its name in generated C.
+
+scene Main { }
+
+struct Corner<T>
+{
+    float3 position;
+    T shade;
+}
+
+T Larger<T>(T a, T b) where T : comparable
+{
+    return a > b ? a : b;
+}
+
+frag Tint(Corner<float> corner, out Color color)
+{
+    color = Color(Larger(corner.shade, 0.5), Larger<float>(corner.position.y, 0.25), corner.position.z, 1);
+}
+
+view Show()
+{
+    List<Corner<float>> corners = [Corner<float> { position = float3(0, 0, 0), shade = 1 }, Corner<float> { position = float3(1, 0, 0) },
+                                   Corner<float> { position = float3(0, 1, 0) }];
+    Draw.Mesh(corners, [0, 1, 2], float4x4.identity, Tint);
+}

@@ -587,6 +587,12 @@ int Append<V>(mut List<V> vertices, mut List<int> indices, List<V> fromVertices,
     return first;
 }
 
+// Another mesh appended as its vertices and indices are (above): an asset's, or one the game made. V is its vertex.
+int Append<V>(mut List<V> vertices, mut List<int> indices, Mesh<V> from, float4x4 transform = float4x4.identity)
+{
+    return Append(vertices, indices, from.vertices, from.indices, transform);
+}
+
 // A mesh's vertices moved through `transform` where they are: positions,
 // normals and tangents, and its triangles turned over where it mirrors.
 void TransformMesh<V>(mut List<V> vertices, mut List<int> indices, float4x4 transform)

@@ -12,6 +12,7 @@
     { "include": "#keywords" },
     { "include": "#interpolated" },
     { "include": "#literals" },
+    { "include": "#where" },
     { "include": "#generics" },
     { "include": "#builtins" },
     { "include": "#calls" },
@@ -207,15 +208,18 @@
           ]
         },
         {
-          "comment": "component Transform, singleton Time, struct Stats, input PlayerInput, event Hit, scene Arena, enum Voxel : byte",
-          "match": "(?:^|(?<=\\]))\\s*(?:(dev|local|async|worker|cached|virtual|override)\\s+)?(?:((?:dev|local|async|worker|cached|virtual|override)(?:\\s+(?:dev|local|async|worker|cached|virtual|override))?)\\s+)?(component|singleton|struct|input|event|enum|scene|prefab|entity)\\s+([A-Za-z_][A-Za-z0-9_]*)(?:\\s*(:)\\s*([A-Za-z_][A-Za-z0-9_]*))?",
+          "comment": "component Transform, singleton Time, struct Stats, input PlayerInput, event Hit, scene Arena, enum Voxel : byte, and a generic struct's type parameters, struct Pair<T>",
+          "match": "(?:^|(?<=\\]))\\s*(?:(dev|local|async|worker|cached|virtual|override)\\s+)?(?:((?:dev|local|async|worker|cached|virtual|override)(?:\\s+(?:dev|local|async|worker|cached|virtual|override))?)\\s+)?(component|singleton|struct|input|event|enum|scene|prefab|entity)\\s+([A-Za-z_][A-Za-z0-9_]*)(?:\\s*(:)\\s*([A-Za-z_][A-Za-z0-9_]*))?(?:\\s*(<)\\s*([A-Za-z_][A-Za-z0-9_]*(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*)*)\\s*(>))?",
           "captures": {
             "1": { "name": "storage.modifier.tide" },
             "2": { "name": "storage.modifier.tide" },
             "3": { "name": "storage.type.tide" },
             "4": { "name": "entity.name.type.tide" },
             "5": { "name": "punctuation.separator.colon.tide" },
-            "6": { "patterns": [{ "include": "#type-name" }] }
+            "6": { "patterns": [{ "include": "#type-name" }] },
+            "7": { "name": "punctuation.definition.typeparameters.begin.tide" },
+            "8": { "patterns": [{ "include": "#type-parameter-names" }] },
+            "9": { "name": "punctuation.definition.typeparameters.end.tide" }
           }
         },
         {
@@ -404,8 +408,8 @@
           }
         },
         {
-          "comment": "Methods and functions: [virtual] [async] [mut] Type Name(, where Type can be List<T> or T?, at the start of a line. An override's name is written with what it's in: override float Combat.Damage(, override bool Stats.IsDead(",
-          "match": "(?:^|(?<=\\]))\\s*(?:(dev|local|async|worker|cached|virtual|override)\\s+)?(?:((?:dev|local|async|worker|cached|virtual|override)(?:\\s+(?:dev|local|async|worker|cached|virtual|override))?)\\s+)?(?:(mut)\\s+)?(?!(?:return|if|else|var|mut|with|without|system|view|frag|vert|compute|audio|component|singleton|struct|input|event|command|enum|scene|prefab|entity|local|async|switch|case|default|break|while|for|foreach|parallel|indexed|continue|namespace|using|extern|const|asset|settings|fail|try|is|null|true|false|this|await|operator|virtual|override)\\b)([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*\\s*>)?\\s*>)?\\??)\\s+((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)(?=\\s*\\()",
+          "comment": "Methods and functions: [virtual] [async] [mut] Type Name(, where Type can be List<T>, Map<K, V>, Pair<T> or T?, and a generic's Name<T>(, at the start of a line. An override's name is written with what it's in: override float Combat.Damage(, override bool Stats.IsDead(",
+          "match": "(?:^|(?<=\\]))\\s*(?:(dev|local|async|worker|cached|virtual|override)\\s+)?(?:((?:dev|local|async|worker|cached|virtual|override)(?:\\s+(?:dev|local|async|worker|cached|virtual|override))?)\\s+)?(?:(mut)\\s+)?(?!(?:return|if|else|var|mut|with|without|system|view|frag|vert|compute|audio|component|singleton|struct|input|event|command|enum|scene|prefab|entity|local|async|switch|case|default|break|while|for|foreach|parallel|indexed|continue|namespace|using|extern|const|asset|settings|fail|try|is|null|true|false|this|await|operator|virtual|override)\\b)([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)*\\s*>)?\\??(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)*\\s*>)?\\??)*\\s*>)?\\??)\\s+((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)(?:\\s*(<)\\s*([A-Za-z_][A-Za-z0-9_]*(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*)*)\\s*(>))?(?=\\s*\\()",
           "captures": {
             "1": { "name": "storage.modifier.tide" },
             "2": { "name": "storage.modifier.tide" },
@@ -417,7 +421,10 @@
                 { "match": "\\.", "name": "punctuation.accessor.tide" },
                 { "match": "[A-Za-z_][A-Za-z0-9_]*", "name": "entity.name.function.tide" }
               ]
-            }
+            },
+            "6": { "name": "punctuation.definition.typeparameters.begin.tide" },
+            "7": { "patterns": [{ "include": "#type-parameter-names" }] },
+            "8": { "name": "punctuation.definition.typeparameters.end.tide" }
           }
         }
       ]
@@ -738,6 +745,28 @@
         "4": { "name": "punctuation.definition.typeparameters.end.tide" }
       }
     },
+    "type-parameter-names": {
+      "comment": "T, U in <T, U> after a generic's name: types, each the generic's own",
+      "patterns": [
+        { "name": "entity.name.type.parameter.tide", "match": "[A-Za-z_][A-Za-z0-9_]*" },
+        { "name": "punctuation.separator.comma.tide", "match": "," }
+      ]
+    },
+    "where": {
+      "comment": "where T : comparable, hashable: what a generic's type parameter can be",
+      "match": "\\b(where)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(:)\\s*((?:equatable|comparable|hashable|[A-Za-z_][A-Za-z0-9_]*)(?:\\s*,\\s*(?:equatable|comparable|hashable|[A-Za-z_][A-Za-z0-9_]*))*)",
+      "captures": {
+        "1": { "name": "keyword.other.where.tide" },
+        "2": { "name": "entity.name.type.parameter.tide" },
+        "3": { "name": "punctuation.separator.colon.tide" },
+        "4": {
+          "patterns": [
+            { "name": "support.type.constraint.tide", "match": "[A-Za-z_][A-Za-z0-9_]*" },
+            { "name": "punctuation.separator.comma.tide", "match": "," }
+          ]
+        }
+      }
+    },
     "generics": {
       "patterns": [
         {
@@ -781,6 +810,26 @@
             "3": { "name": "punctuation.definition.typeparameters.begin.tide" },
             "4": { "patterns": [{ "include": "#type-name" }] },
             "5": { "name": "punctuation.definition.typeparameters.end.tide" }
+          }
+        },
+        {
+          "comment": "Max<float>(a, b): a generic function's call with its types, which the call's '(' follows, as the compiler reads it",
+          "match": "(?<!\\.)\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(<)\\s*([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)*\\s*>)?\\??(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)*\\s*>)?\\??)*)\\s*(>)(?=\\s*\\()",
+          "captures": {
+            "1": { "name": "entity.name.function.call.tide" },
+            "2": { "name": "punctuation.definition.typeparameters.begin.tide" },
+            "3": { "patterns": [{ "include": "#type-name" }] },
+            "4": { "name": "punctuation.definition.typeparameters.end.tide" }
+          }
+        },
+        {
+          "comment": "Pair<int>, Stack<Item>, Map2<string, List<int>>: a generic struct of the game's, where a type goes: never before a call's '(', which a generic function's is",
+          "match": "(?<!\\.)\\b((?!(?:List|GPUList|Map|Set|Grid2|Grid3|Mesh|SkinnedMesh|Asset|Task|LocalTask|Func)\\b)[A-Z][A-Za-z0-9_]*)\\s*(<)\\s*((?:[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*)*\\s*>)?\\??)(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*)*\\s*>)?\\??)*)\\s*(>)(?!\\s*\\()",
+          "captures": {
+            "1": { "name": "entity.name.type.tide" },
+            "2": { "name": "punctuation.definition.typeparameters.begin.tide" },
+            "3": { "patterns": [{ "include": "#type-name" }] },
+            "4": { "name": "punctuation.definition.typeparameters.end.tide" }
           }
         },
         {

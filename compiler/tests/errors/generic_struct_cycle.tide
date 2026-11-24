@@ -1,0 +1,6 @@
+// expect: struct 'B<int>' can't contain 'A<int>': 'A<int>' already contains 'B<int>'
+scene Main { }
+struct A<T> { B<T> b; }
+struct B<T> { A<T> a; }
+// First named in code, once the declared structs are in order
+int F() { A<int> x = A<int> { }; return 1; }

@@ -1,0 +1,7 @@
+// expect: 'Pick' returns int, not string
+scene Main { }
+// The plain Pick wins the call, so no instantiation of the generic is used: it's checked as nothing calls it
+int Pick<T>(T a) { return "x"; }
+int Pick(int a) { return a; }
+singleton S { int x; }
+system Run(mut S s) { s.x = Pick(3); }

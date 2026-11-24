@@ -17,4 +17,9 @@ What's built, and what code relies on:
 - **Determinism:** only Tide math in a fixed order. `geometry_shapes_are_the_same_bits_everywhere` pins an FNV hash of the sphere, cone, recalculated ground and welded box (2466882126) on native; CI's other platforms and the web build check it agrees.
 - **Tests:** `tide_geometry` (`packages/geometry/test/game.tide`, `game_test.c`): counts, outward fronts against normals, unit and orthogonal frames, tangents along the texture's u with `w` its v side, struct defaults kept, 2D vertices, mirrored `Append` with bounds, `Weld` keeping a box's 24 and `WeldPositions` making 8 with smooth normals, recalculated ground frames, `RemoveUnused`, empty bounds, and the hash.
 
-Remaining gaps: an `Append` overload taking a `Mesh<V>` (inference through `Mesh<V>` isn't built; `rock.vertices, rock.indices` works), tangent seam splitting as an option, a capsule/torus, uv2, and anything using the GPU.
+## Append takes a Mesh; uncalled functions checked (2026-11-24)
+
+- `Append<V>(vertices, indices, Mesh<V> from, transform)` appends a `Mesh<V>`, an asset's or one made with `Mesh(vertices, indices)`, through the list overload; `V` is inferred through `Mesh<V>`, which generics' closing made possible (`notes/language.md`, Generics closed). `geometry_append_takes_a_mesh` appends a made box moved up 5.
+- Every generic of the package a game doesn't call is now checked once with its types unknown, so a mistake that doesn't depend on `V` shows with no call. A program with the package has `List<float2>`'s helpers in its C even if it never uses one, as the 2D `Polygon`'s signature names the type; nothing else of its generated C changed.
+
+Remaining gaps: tangent seam splitting as an option, a capsule/torus, uv2, and anything using the GPU.

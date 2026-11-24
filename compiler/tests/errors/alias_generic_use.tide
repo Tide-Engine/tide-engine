@@ -1,4 +1,4 @@
-// expect: ';' after the type alias
+// expect: 'Values' takes no types in '<>': it isn't generic
 using Values = List<int>;
 using Invalid = Values<float>;
 scene Main;

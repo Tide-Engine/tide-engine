@@ -1,0 +1,3 @@
+// expect: 'where' says what a generic's type parameters can be, and 'Twice' has none
+scene Main { }
+int Twice(int a) where T : comparable { return a * 2; }

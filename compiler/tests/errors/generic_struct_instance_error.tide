@@ -1,0 +1,4 @@
+// expect: in 'Box<string>', which this instantiates
+scene Main { }
+struct Box<T> { T value; int Twice() { return value * 2; } }
+singleton S { Box<string> b; }

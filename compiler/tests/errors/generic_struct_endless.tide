@@ -1,0 +1,4 @@
+// expect: would instantiate generics without end
+scene Main { }
+struct Nest<T> { T value; List<Nest<List<T>>> more; }
+singleton S { Nest<int> w; }

@@ -1,0 +1,5 @@
+// expect: 'T' can't be Health: a type argument is a value, what a list can hold
+scene Main { }
+component Health { int value; }
+struct Box<T> { T value; }
+system Run(Health h) { var b = Box<Health> { }; }

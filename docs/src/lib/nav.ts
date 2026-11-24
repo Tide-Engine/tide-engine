@@ -106,7 +106,7 @@ export const sidebar: Group[] = [
         items: [
             { text: 'Basics', link: '/language/basics' },
             { text: 'Structs and functions', link: '/language/functions' },
-            { text: 'Generic functions', link: '/language/generics' },
+            { text: 'Generics', link: '/language/generics' },
             { text: 'Errors', link: '/language/errors' },
             { text: 'Math', link: '/language/math' },
             { text: 'Text and lists', link: '/language/text-and-lists' },

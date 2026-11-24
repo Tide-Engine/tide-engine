@@ -144,6 +144,7 @@ static struct {
     // where what it replaced was, and nothing of what was replaced. This one has both, each where its file
     // has it, and an override of a method, which the program keeps in the method's type.
     VEC(const decl *) written;
+    VEC(const decl *) probes;      // What checked each generic nothing instantiates (decl.probe): its code, walked as written's
     VEC(const unit *) blocks;      // Every `namespace Name { ... }` block, file by file, a block before those inside it
     loc from;                      // Where the request reads names from, for which namespace is its own; no line: the file's
     VEC(asset_site) assets;        // The files `asset` declarations name
@@ -386,6 +387,38 @@ static const decl *command_code_at(const loc at)
     return NULL;
 }
 
+// What an instantiation of a generic, or something of one, is as code writes it: the generic's own declaration (a
+// type parameter, a method of a generic struct), so a name is one thing however many instantiations have it, and
+// is renamed, found and highlighted as one. Anything else is itself.
+static const decl *written_generic(const decl *d)
+{
+    if (!d) return d;
+    if (d->kind == DECL_ALIAS && d->type_param && d->generic_of) { // T, in each instantiation
+        const decl *g = written_generic(d->generic_of);
+        return d->type_param_index < g->param_decls.count ? g->param_decls.items[d->type_param_index] : d;
+    }
+    if (d->kind == DECL_STRUCT && d->generic_of) return d->generic_of; // Pair<int>: Pair
+    if (d->generic_of) return written_generic(d->generic_of);          // Max<int>: Max, and a method's
+    const decl *owner = d->owner;
+    if (owner && owner->kind == DECL_STRUCT && owner->generic_of) { // A method of Pair<int>: Pair's, in the same place
+        const decl *g = owner->generic_of;
+        for (int i = 0; d->kind == DECL_GENERIC && i < owner->generic_methods.count && i < g->generic_methods.count; i++) {
+            if (owner->generic_methods.items[i] == d) return g->generic_methods.items[i];
+        }
+        for (int i = 0; d->kind != DECL_GENERIC && i < owner->methods.count && i < g->methods.count; i++) {
+            if (owner->methods.items[i] == d) return g->methods.items[i];
+        }
+    }
+    return d;
+}
+
+// Two declared things one name is, seen in two instantiations of a generic: each of those reads the generic's
+// code again, with names of its own, so what's declared in the same place is the same thing.
+static bool declared_together(const loc a, const loc b)
+{
+    return a.line > 0 && loc_cmp(a, b) == 0;
+}
+
 static void add_occ(occurrence o)
 {
     // A command is one name: its code's, where an order or an override names it, is the command's
@@ -416,7 +449,18 @@ static const decl *method_written(const decl *m)
 // none, and nothing can name it.
 static bool has_name(const decl *d)
 {
+    if (d->generic_of && !d->type_param) return false; // An instantiation: its generic's name, with types, names it
     return !d->is_override || d->placed;
+}
+
+// A generic struct as completion writes it, its type parameters to fill in: Pair<${1:T}>, Map2<${1:K}, ${2:V}>.
+static const char *generic_snippet(const decl *g, const char *name)
+{
+    sb b = {0};
+    sb_printf(&b, "%s<", name);
+    for (int k = 0; k < g->type_params.count; k++) sb_printf(&b, "%s${%d:" STR_FMT "}", k ? ", " : "", k + 1, STR_ARG(g->type_params.items[k]));
+    sb_put(&b, ">");
+    return b.data;
 }
 
 // What an override and the declaration it replaced are, as one thing a name
@@ -426,6 +470,19 @@ static const decl *replaced_or_self(const decl *d)
     return d && d->replaces ? d->replaces : d;
 }
 
+// The probes of generic `d`, and of its generic methods: the code of generics nothing instantiates.
+static void list_probes(const decl *d)
+{
+    if (d->probe) vec_push(A.probes, d->probe);
+    for (int k = 0; k < d->generic_methods.count; k++) {
+        if (d->generic_methods.items[k]->probe) vec_push(A.probes, d->generic_methods.items[k]->probe);
+    }
+    for (int k = 0; d->probe && d->kind == DECL_GENERIC_STRUCT && k < d->probe->generic_methods.count; k++) {
+        const decl *m = d->probe->generic_methods.items[k];
+        if (m->probe) vec_push(A.probes, m->probe);
+    }
+}
+
 static void list_written(void)
 {
     for (int i = 0; i < A.prog->decls.count; i++) if (!A.prog->decls.items[i]->placement_of && A.prog->decls.items[i] != A.prog->startup_create) vec_push(A.written, A.prog->decls.items[i]);
@@ -433,6 +490,7 @@ static void list_written(void)
         const decl *v = A.prog->replaced.items[i];
         vec_push(A.written, v->owner ? v->replaced_by : v); // A method that was replaced is in its type's body
     }
+    for (int i = 0; i < A.prog->decls.count; i++) list_probes(A.prog->decls.items[i]);
 }
 
 // A type written by name: of a field, parameter or local.
@@ -548,6 +606,15 @@ static void type_tree(const type_ref *r, const type t)
         type_tree(&plain, r->sizes.count > 0 && inner.kind != TY_ARRAY ? inner : (type){TY_ERROR, NULL});
         return;
     }
+    if (r->args.count > 0 && t.kind == TY_STRUCT && t.decl && t.decl->generic_of) { // Pair<int>: the game's generic struct
+        qualifier_ref(r->at, r->name_at, r->name);
+        const str name = last_part(r->name);
+        add_occ((occurrence){.at = r->name_at, .len = name.len, .kind = OCC_TYPE, .decl = t.decl, .name = name, .type = t});
+        for (int i = 0; i < r->args.count; i++) {
+            type_tree(r->args.items[i], i < t.decl->type_args.count ? t.decl->type_args.items[i] : (type){TY_ERROR, NULL});
+        }
+        return;
+    }
     if (r->args.count > 0) { // List<T>, Map<K, V>, Set<K>, Grid2<T>, Grid3<T>: the generic type, then what it holds
         add_occ((occurrence){.at = r->at, .len = r->name.len, .kind = OCC_TYPE, .name = r->name, .type = t});
         const bool holds = (t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID || t.kind == TY_MESH) && t.decl;
@@ -615,7 +682,7 @@ static const expr *written_place(const expr *target)
 // A game's method, function or operator, which calls and declarations point at.
 static bool is_routine(const decl *d)
 {
-    return d && (d->kind == DECL_METHOD || d->kind == DECL_FUNCTION);
+    return d && (d->kind == DECL_METHOD || d->kind == DECL_FUNCTION || d->kind == DECL_GENERIC);
 }
 
 static bool is_operator_decl(const decl *d)
@@ -1150,7 +1217,9 @@ static void walk_value(const expr *e)
 
     case E_LITERAL:
         if (e->command_value) break; // What a command's call makes of its arguments, which the call walks as written
-        if (e->type_decl) {
+        if (e->type_decl && e->type_arg_ref) { // Pair<int> { ... }: the type as written, with what's in its <>
+            type_tree(e->type_arg_ref, (type){TY_STRUCT, e->type_decl});
+        } else if (e->type_decl) {
             qualifier_ref(e->qual_at, e->at, e->name);
             const str name = last_part(e->name);
             const decl *d = e->type_alias ? e->type_alias : e->type_decl->binding_of ? e->type_decl->binding_of : e->type_decl;
@@ -1390,6 +1459,27 @@ static void walk_override_payload(const decl *code)
     }
 }
 
+// A generic as written: its name, its type parameters and what `where` says of them. Its code is its
+// instantiations', and its probe's when nothing instantiates it (A.probes), which are walked as declarations are.
+static void walk_generic(const decl *g)
+{
+    const occ_kind kind = g->kind == DECL_GENERIC_STRUCT ? OCC_TYPE : g->owner ? OCC_METHOD : OCC_FUNCTION;
+    add_occ((occurrence){.at = g->at, .len = g->name.len, .kind = kind, .declaration = true, .decl = g, .name = g->name});
+    for (int k = 0; k < g->type_params.count && k < g->param_decls.count; k++) {
+        add_occ((occurrence){.at = g->type_param_at.items[k], .len = g->type_params.items[k].len, .kind = OCC_TYPE,
+                             .declaration = true, .decl = g->param_decls.items[k], .name = g->type_params.items[k]});
+    }
+    for (int i = 0; i < g->type_rules.count; i++) {
+        const type_rule *r = &g->type_rules.items[i];
+        for (int k = 0; k < g->type_params.count && k < g->param_decls.count; k++) {
+            if (!str_eq(g->type_params.items[k], r->param)) continue;
+            add_occ((occurrence){.at = r->param_at, .len = r->param.len, .kind = OCC_TYPE, .decl = g->param_decls.items[k],
+                                 .name = r->param});
+            break;
+        }
+    }
+}
+
 static void walk_routine(const decl *m)
 {
     // An operator's `at` is its `operator` keyword.
@@ -1516,8 +1606,12 @@ static void index_program(void)
         for (int k = 0; k < u->usings.count; k++) namespace_parts(u->using_at.items[k], u->usings.items[k], false);
     }
 
-    for (int i = 0; i < A.written.count; i++) {
-        const decl *d = A.written.items[i];
+    for (int i = 0; i < A.written.count + A.probes.count; i++) {
+        const decl *d = i < A.written.count ? A.written.items[i] : A.probes.items[i - A.written.count];
+        if (d->kind == DECL_GENERIC || d->kind == DECL_GENERIC_STRUCT) { // Its code is its instantiations'
+            walk_generic(d);
+            continue;
+        }
         if (d->generated_callable && d->named_in) {
             walk_params(d);
             walk_code = d;
@@ -1586,7 +1680,7 @@ static void index_program(void)
             if (d->code_value) walk_expr(d->code_value); // A tweak's own, where a .tweaks file gives another
             continue;
         }
-        add_occ((occurrence){.at = d->at, .len = d->name.len, .kind = OCC_TYPE, .declaration = true, .decl = d,
+        add_occ((occurrence){.at = d->at, .len = d->generic_of ? d->generic_of->name.len : d->name.len, .kind = OCC_TYPE, .declaration = true, .decl = d,
                              .name = d->name, .type = type_of_decl(d)});
         if (d->kind == DECL_ALIAS) {
             if (d->alias_ref) type_tree(d->alias_ref, d->alias_type);
@@ -1646,6 +1740,7 @@ static void index_program(void)
             replace_refs(method_written(d->methods.items[k]));
             walk_routine(method_written(d->methods.items[k]));
         }
+        for (int k = 0; k < d->generic_methods.count; k++) walk_generic(d->generic_methods.items[k]);
         walk_fields_of = NULL;
     }
 
@@ -1997,6 +2092,7 @@ static const char *decl_keyword(const decl *d)
     case DECL_METHOD: return "method";
     case DECL_FUNCTION: return "function";
     case DECL_GENERIC: return "function";
+    case DECL_GENERIC_STRUCT: return "struct";
     case DECL_EVENT: return d->is_command ? "command" : "event";
     case DECL_ENUM: return "enum";
     case DECL_LIST: return "list";
@@ -2075,6 +2171,9 @@ static const char *enum_member_doc(const decl *d, const str name)
     return NULL;
 }
 
+// Writing an instantiation of a generic: each type as it's bound (int), rather than as the generic writes it (T).
+static bool format_bound;
+
 static void format_param(const param *p, sb *out)
 {
     if (p->sample_role.len) sb_printf(out, "[Raw(" STR_FMT ")] ", STR_ARG(p->sample_role));
@@ -2098,6 +2197,7 @@ static void format_param(const param *p, sb *out)
     if (p->previous_at.line > 0) sb_put(out, "previous ");
     if (p->placement_local) sb_put(out, "local ");
     if (p->changed) sb_printf(out, "Changed<" STR_FMT ">", STR_ARG(p->type_name));
+    else if (format_bound && p->type.kind != TY_ERROR) sb_put(out, type_name(p->type));
     else sb_printf(out, STR_FMT, STR_ARG(p->type_name));
     if (p->name.len > 0) sb_printf(out, " " STR_FMT, STR_ARG(p->name));
     if (p->default_value) sb_printf(out, " = " STR_FMT, STR_ARG(p->default_text)); // One a call can leave out
@@ -2234,6 +2334,26 @@ static const char *builtin_event_doc(const program *prog, const decl *d)
 }
 
 // `mut void Damage(float amount)`: a method's or function's signature.
+// A generic's type parameters as its declaration writes them: <T, U>.
+static void format_type_params(const decl *g, sb *out)
+{
+    if (g->type_params.count == 0) return;
+    sb_put(out, "<");
+    for (int k = 0; k < g->type_params.count; k++) sb_printf(out, "%s" STR_FMT, k ? ", " : "", STR_ARG(g->type_params.items[k]));
+    sb_put(out, ">");
+}
+
+// ...and what its `where` says of them: where T : comparable, hashable where U : equatable.
+static void format_where(const decl *g, sb *out)
+{
+    for (int i = 0; i < g->type_rules.count; i++) {
+        const type_rule *r = &g->type_rules.items[i];
+        const bool same = i > 0 && str_eq(g->type_rules.items[i - 1].param, r->param);
+        if (same) sb_printf(out, ", " STR_FMT, STR_ARG(r->rule));
+        else sb_printf(out, " where " STR_FMT " : " STR_FMT, STR_ARG(r->param), STR_ARG(r->rule));
+    }
+}
+
 static void format_routine(const decl *m, sb *out)
 {
     if (m->accessor) {
@@ -2242,15 +2362,29 @@ static void format_routine(const decl *m, sb *out)
                   p->get ? "get; " : "", p->set ? "set; " : "");
         return;
     }
-    sb_printf(out, "%s%s%s%s%s" STR_FMT " " STR_FMT "(", m->is_virtual ? "virtual " : m->is_override ? "override " : "",
+    // An instantiation of a generic, or a method of one, with its types bound: int Max<int>(int a, int b)
+    const bool bound = m->generic_of || (m->owner && m->owner->generic_of);
+    const bool was_bound = format_bound;
+    format_bound = bound;
+    sb_printf(out, "%s%s%s%s%s", m->is_virtual ? "virtual " : m->is_override ? "override " : "",
               m->is_extern ? "extern " : "", m->is_worker ? "local worker " : m->is_async ? "async " : "", m->is_cached ? "cached " : "",
-              m->is_mut_method ? "mut " : "", STR_ARG(m->return_type_name), STR_ARG(m->name));
+              m->is_mut_method ? "mut " : "");
+    if (bound && m->return_type.kind != TY_ERROR) sb_put(out, m->return_type.kind == TY_VOID ? "void" : type_name(m->return_type));
+    else sb_printf(out, STR_FMT, STR_ARG(m->return_type_name));
+    if (m->generic_of && m->generic_name) sb_printf(out, " %s(", m->generic_name);
+    else {
+        sb_printf(out, " " STR_FMT, STR_ARG(m->name));
+        format_type_params(m, out);
+        sb_put(out, "(");
+    }
     for (int i = 0; i < m->params.count; i++) {
         if (i) sb_put(out, ", ");
         format_param(&m->params.items[i], out);
     }
     sb_put(out, ")");
     if (m->fails_name.len > 0) sb_printf(out, " fails " STR_FMT, STR_ARG(m->fails_name));
+    format_where(m, out);
+    format_bound = was_bound;
 }
 
 // The source text of a value after a name, from the tokens between '=' and
@@ -2353,6 +2487,10 @@ static void format_data_decl(const decl *d, sb *out)
         return;
     }
     sb_printf(out, "%s%s " STR_FMT, d->is_local ? "local " : "", decl_keyword(d), STR_ARG(d->name));
+    if (d->kind == DECL_GENERIC_STRUCT) { // struct Pair<T> where T : comparable
+        format_type_params(d, out);
+        format_where(d, out);
+    }
     if (d->kind == DECL_ENUM && d->backing.len > 0) sb_printf(out, " : " STR_FMT, STR_ARG(d->backing));
     sb_put(out, "\n{\n");
     for (int i = 0; i < d->members.count; i++) {
@@ -2361,7 +2499,8 @@ static void format_data_decl(const decl *d, sb *out)
     for (int i = 0; i < d->fields.count + local_field_count(d); i++) {
         const field *f = field_of(d, i);
         if (f->hidden) continue;
-        const char *type = f->type_name.len > 0 ? NULL : type_name(f->type);
+        // An instantiation's fields have their types bound: Pair<int>'s first is an int
+        const char *type = f->type_name.len > 0 && !(d->generic_of && f->type.kind != TY_ERROR) ? NULL : type_name(f->type);
         sb_printf(out, "    %s", f->is_local ? "local " : "");
         if (type) sb_printf(out, "%s " STR_FMT, type, STR_ARG(f->name));
         else sb_printf(out, STR_FMT " " STR_FMT, STR_ARG(f->type_name), STR_ARG(f->name));
@@ -2370,8 +2509,14 @@ static void format_data_decl(const decl *d, sb *out)
     }
     for (int i = 0; i < d->methods.count; i++) {
         if (d->methods.items[i]->accessor && d->methods.items[i]->is_mut_method && d->methods.items[i]->accessor->get) continue;
+        if (d->methods.items[i]->generic_of) continue; // An instantiation of a generic method: the generic is below
         sb_put(out, i == 0 && d->fields.count > 0 ? "\n    " : "    ");
         format_routine(d->methods.items[i], out);
+        sb_put(out, ";\n");
+    }
+    for (int i = 0; i < d->generic_methods.count; i++) {
+        sb_put(out, i == 0 && d->methods.count == 0 && d->fields.count > 0 ? "\n    " : "    ");
+        format_routine(d->generic_methods.items[i], out);
         sb_put(out, ";\n");
     }
     if (d == A.prog->pixel) { // Its methods (pixel_calls)
@@ -3896,6 +4041,40 @@ static void describe_command(const occurrence *o, sb *out)
     describe_replacing(&(occurrence){.kind = OCC_SYSTEM, .decl = code}, out);
 }
 
+// A type parameter in its generic: what it is, what `where` says of it, and in an instantiation, what it's bound to.
+static void describe_type_param(const decl *t, sb *out)
+{
+    const decl *g = written_generic(t->generic_of);
+    sb code = {0};
+    sb_printf(&code, STR_FMT, STR_ARG(t->name));
+    code_block(out, code.data);
+    sb_printf(out, "\n\nA type parameter of `" STR_FMT, STR_ARG(g->name));
+    format_type_params(g, out);
+    sb_printf(out, "`: each of its instantiations has a type in its place.");
+    const int rules = t->type_param_index < g->param_rules.count ? g->param_rules.items[t->type_param_index] : 0;
+    if (rules) {
+        sb_printf(out, " It's%s%s%s, as its `where` says.", rules & RULE_EQUATABLE ? " equatable (== takes it)" : "",
+                  rules & RULE_COMPARABLE ? (rules & RULE_EQUATABLE ? ", comparable (< takes it)" : " comparable (< takes it)") : "",
+                  rules & RULE_HASHABLE ? (rules & (RULE_EQUATABLE | RULE_COMPARABLE) ? ", hashable (a map's key)" : " hashable (a map's key)") : "");
+    }
+    // What the program's instantiations bind it to, as far as a few go
+    int said = 0;
+    for (int i = 0; i < g->generic_instances.count && said < 4; i++) {
+        const decl *made = g->generic_instances.items[i];
+        if (t->type_param_index >= made->type_args.count) continue;
+        const type bound = made->type_args.items[t->type_param_index];
+        bool before = false;
+        for (int j = 0; j < i && !before; j++) {
+            const decl *other = g->generic_instances.items[j];
+            before = t->type_param_index < other->type_args.count && other->type_args.items[t->type_param_index].kind == bound.kind
+                  && other->type_args.items[t->type_param_index].decl == bound.decl;
+        }
+        if (before) continue;
+        sb_printf(out, "%s`%s`", said++ ? ", " : " Instantiated with ", type_name(bound));
+    }
+    if (said) sb_put(out, ".");
+}
+
 static void describe(const occurrence *o, sb *out)
 {
     sb code = {0};
@@ -3915,6 +4094,8 @@ static void describe(const occurrence *o, sb *out)
                                                     : "four bytes, as it is without one.");
         } else if (o->decl && o->decl->kind == DECL_EVENT && o->decl->is_command) {
             describe_command(o, out);
+        } else if (o->decl && o->decl->kind == DECL_ALIAS && o->decl->type_param && o->decl->generic_of) {
+            describe_type_param(o->decl, out);
         } else if (o->decl) {
             format_data_decl(o->decl, &code);
             code_block(out, code.data);
@@ -6199,7 +6380,7 @@ enum { SYMBOL_CLASS = 5, SYMBOL_METHOD = 6, SYMBOL_PROPERTY = 7, SYMBOL_FIELD = 
 
 static int symbol_kind(const decl *d)
 {
-    return d->kind == DECL_COMPONENT || d->kind == DECL_STRUCT ? SYMBOL_STRUCT
+    return d->kind == DECL_COMPONENT || d->kind == DECL_STRUCT || d->kind == DECL_GENERIC_STRUCT ? SYMBOL_STRUCT
          : d->kind == DECL_SINGLETON || d->kind == DECL_ALIAS    ? SYMBOL_CLASS
          : d->kind == DECL_INPUT                                ? SYMBOL_INTERFACE
          : d->kind == DECL_EVENT                                ? SYMBOL_EVENT
@@ -6216,6 +6397,7 @@ void analysis_symbols(jbuf *out)
     for (int i = 0; i < A.written.count; i++) {
         const decl *d = A.written.items[i];
         if (d->builtin || d->at.file != A.doc || d->preparation_owner) continue; // This document's declarations
+        if (d->generic_of) continue; // An instantiation: its generic is the declaration
         if (command_code(d) && !d->is_override) continue; // A command is one declaration: its type's, with what it's called with
         const int kind = symbol_kind(d);
         const loc start = {d->at.line, 1, d->at.file};
@@ -6259,8 +6441,8 @@ void analysis_symbols(jbuf *out)
             write_range(out, fl->at, fl->name.len);
             jb_put(out, "}");
         }
-        for (int k = 0; k < d->methods.count; k++) {
-            const decl *m = method_written(d->methods.items[k]);
+        for (int k = 0; k < d->methods.count + d->generic_methods.count; k++) { // Its methods, then its generic ones
+            const decl *m = k < d->methods.count ? method_written(d->methods.items[k]) : d->generic_methods.items[k - d->methods.count];
             if (m->accessor && m->is_mut_method && m->accessor->get) continue;
             sb detail = {0};
             format_routine(m, &detail);
@@ -7255,6 +7437,7 @@ void analysis_workspace_symbols(const char *query, const workspace_symbol_fn sym
     for (int i = 0; A.prog && i < A.written.count; i++) {
         const decl *d = A.written.items[i];
         if (d->builtin || d->preparation_owner) continue;
+        if (d->generic_of) continue; // An instantiation: found as its generic
         if (command_code(d) && !d->is_override) continue; // A command is found once, by its type
         const int kind = symbol_kind(d);
         const str ns = decl_home(d) ? decl_home(d)->ns : (str){"", 0};
@@ -9041,9 +9224,14 @@ static void complete_structs(completion *c)
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
         if (d->kind == DECL_ALIAS && (d->alias_type.kind == TY_STRUCT || d->alias_type.kind == TY_ENUM)) complete_alias(c, d);
-        if (d->kind == DECL_STRUCT) item(c, name_for(d), CK_STRUCT, "struct", d == A.prog->random ? RANDOM_DOC
+        if (d->kind == DECL_STRUCT && has_name(d)) item(c, name_for(d), CK_STRUCT, "struct", d == A.prog->random ? RANDOM_DOC
                                        : d == A.prog->audience ? AUDIENCE_DOC
                                        : d == A.prog->visibility_group ? VISIBILITY_GROUP_DOC : NULL, NULL);
+        if (d->kind == DECL_GENERIC_STRUCT) {
+            sb detail = {0};
+            format_data_decl(d, &detail);
+            item(c, name_for(d), CK_STRUCT, detail.data, "A generic struct: its types go in `<>`.", generic_snippet(d, name_for(d)));
+        }
         if (d->kind == DECL_ENUM) { // With how a value of it is written: a member, or from its number
             sb doc = {0};
             if (d->members.count > 0) {
@@ -9166,9 +9354,10 @@ static bool complete_in_namespace(completion *c, const str ns, const order_compl
         if (order == ORDER_REFS && d->kind != DECL_SYSTEM && d->kind != DECL_ENUM) continue;
         if (order == ORDER_PHASE && d->kind != DECL_ENUM) continue;
         if (order == ORDER_OFFSET && (d->kind != DECL_CONST || d->return_type.kind != TY_INT)) continue;
-        const int kind = d->kind == DECL_COMPONENT || d->kind == DECL_STRUCT ? CK_STRUCT : d->kind == DECL_INPUT ? CK_INTERFACE
+        const int kind = d->kind == DECL_COMPONENT || d->kind == DECL_STRUCT || d->kind == DECL_GENERIC_STRUCT ? CK_STRUCT
+                       : d->kind == DECL_INPUT ? CK_INTERFACE
                        : d->kind == DECL_EVENT ? CK_EVENT : d->kind == DECL_ENUM ? CK_ENUM
-                       : d->kind == DECL_SYSTEM || is_shader(d) ? CK_FUNCTION : d->kind == DECL_CONST ? CK_CONSTANT
+                       : d->kind == DECL_SYSTEM || is_shader(d) || d->kind == DECL_GENERIC ? CK_FUNCTION : d->kind == DECL_CONST ? CK_CONSTANT
                        : d->kind == DECL_ASSET ? CK_VARIABLE : CK_CLASS;
         sb detail = {0};
         if (d->kind == DECL_ALIAS) format_data_decl(d, &detail);
@@ -9359,7 +9548,8 @@ static bool complete_asset_type(completion *c, const int last)
         if ((str_eq_c(name, "Mesh") || skinned) && (first + 1 == last || (skinned && DOC->toks[last].kind == T_COMMA))) {
             for (int i = 0; i < A.prog->decls.count; i++) {
                 const decl *d = A.prog->decls.items[i];
-                if (d->kind == DECL_STRUCT) item(c, name_for(d), CK_STRUCT, "struct", NULL, NULL);
+                if (d->kind == DECL_STRUCT && has_name(d)) item(c, name_for(d), CK_STRUCT, "struct", NULL, NULL);
+                if (d->kind == DECL_GENERIC_STRUCT) item(c, name_for(d), CK_STRUCT, "generic struct", NULL, generic_snippet(d, name_for(d)));
             }
             complete_namespaces(c, false);
             return true;
@@ -9612,7 +9802,7 @@ static void complete_expression(completion *c, const loc at, const bool statemen
     }
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
-        if (d->kind == DECL_FUNCTION && has_name(d)) complete_routine(c, d, name_for(d));
+        if ((d->kind == DECL_FUNCTION || d->kind == DECL_GENERIC) && has_name(d)) complete_routine(c, d, name_for(d));
     }
     complete_constants(c, TY_ERROR);
     complete_assets(c, false);
@@ -11838,18 +12028,23 @@ static bool same_symbol(const occurrence *a, const occurrence *b)
     switch (a->kind) {
     case OCC_TYPE:
         if (a->backing || b->backing) return a->backing == b->backing && str_eq(a->name, b->name);
-        return a->decl ? a->decl == b->decl : !b->decl && a->type.kind == b->type.kind;
+        return a->decl ? written_generic(a->decl) == written_generic(b->decl) : !b->decl && a->type.kind == b->type.kind;
     case OCC_SYSTEM: return replaced_or_self(a->decl) == replaced_or_self(b->decl); // An override is what it replaced, by name
-    case OCC_FIELD: return a->field == b->field;
-    case OCC_PARAM: return a->param == b->param;
-    case OCC_LOCAL: return a->local == b->local;
+    case OCC_FIELD: // A generic struct's field is each instantiation's, declared where the generic declares it
+        return a->field == b->field || (a->field && b->field && declared_together(a->field->at, b->field->at));
+    case OCC_PARAM: return a->param == b->param || (a->param && b->param && declared_together(a->param->name_at, b->param->name_at));
+    case OCC_LOCAL: return a->local == b->local || (a->local && b->local && declared_together(a->local->name_at, b->local->name_at));
     case OCC_OWNER: return str_eq(a->owner, b->owner);
     case OCC_FUNCTION:
     case OCC_CONSTANT:
-        if (is_routine(a->decl) || is_routine(b->decl)) return replaced_or_self(a->decl) == replaced_or_self(b->decl);
+        if (is_routine(a->decl) || is_routine(b->decl)) {
+            return replaced_or_self(written_generic(a->decl)) == replaced_or_self(written_generic(b->decl));
+        }
         return str_eq(a->owner, b->owner) && str_eq(a->name, b->name);
     case OCC_METHOD: // A built-in one is what it's called on's: a list's Add isn't an entity's
-        if (is_routine(a->decl) || is_routine(b->decl)) return replaced_or_self(a->decl) == replaced_or_self(b->decl);
+        if (is_routine(a->decl) || is_routine(b->decl)) {
+            return replaced_or_self(written_generic(a->decl)) == replaced_or_self(written_generic(b->decl));
+        }
         return str_eq(a->name, b->name) && a->call == b->call && a->object_type.kind == b->object_type.kind;
     case OCC_MEMBER:
     case OCC_NAMESPACE:
@@ -14074,12 +14269,27 @@ static bool is_argument_colon(const int i)
         && (DOC->toks[i - 2].kind == T_LPAREN || DOC->toks[i - 2].kind == T_COMMA);
 }
 
-// A type written with others in <>, which the formatter keeps tight: List<int>, Map<int, float>, and a handler's
-// Changed<Health.value>.
+// Whether `name` is a generic of the game's: a struct, function or method with type parameters, whose <> the
+// formatter keeps tight where it's declared and where it's written, Pair<int>.
+static bool game_generic(const str name)
+{
+    if (!A.prog) return false;
+    for (int i = 0; i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        if ((d->kind == DECL_GENERIC || d->kind == DECL_GENERIC_STRUCT) && str_eq(d->name, name)) return true;
+        for (int k = 0; k < d->generic_methods.count; k++) {
+            if (str_eq(d->generic_methods.items[k]->name, name)) return true;
+        }
+    }
+    return false;
+}
+
+// A type written with others in <>, which the formatter keeps tight: List<int>, Map<int, float>, a handler's
+// Changed<Health.value>, and the game's own generics.
 static bool generic_type(const str name)
 {
     return str_eq_c(name, "Changed") || str_eq_c(name, "Task") || str_eq_c(name, "LocalTask") || str_eq_c(name, "Func") || str_eq_c(name, "List") || str_eq_c(name, "Map") || str_eq_c(name, "Set") || str_eq_c(name, "Grid2")
-        || str_eq_c(name, "Grid3") || str_eq_c(name, "Mesh") || str_eq_c(name, "SkinnedMesh") || str_eq_c(name, "Asset");
+        || str_eq_c(name, "Grid3") || str_eq_c(name, "Mesh") || str_eq_c(name, "SkinnedMesh") || str_eq_c(name, "Asset") || game_generic(name);
 }
 
 // A nested type can end in one lexer token, `>>`, as in an alias of Map<int, List<float>>.
@@ -14122,6 +14332,7 @@ static bool space_between(const fmt_item *a, const fmt_item *b)
     if (x == T_IDENT && y == T_LT && generic_type(DOC->toks[a->tok].text)) return false;
     if (x == T_LT && a->tok > 0 && generic_type(DOC->toks[a->tok - 1].text)) return false;
     if ((y == T_GT || y == T_SHR) && closes_generic_type(b->tok)) return false;
+    if ((x == T_GT || x == T_SHR) && y == T_LPAREN && closes_generic_type(a->tok)) return false; // Max<T>(, Max<int>(
     // i++ and ++i: against what they change
     if ((y == T_PLUS_PLUS || y == T_MINUS_MINUS) && ends_operand(x)) return false;
     if ((x == T_PLUS_PLUS || x == T_MINUS_MINUS) && !(a->tok > 0 && ends_operand(DOC->toks[a->tok - 1].kind))) return false;

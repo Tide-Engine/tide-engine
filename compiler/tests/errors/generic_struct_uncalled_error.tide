@@ -1,0 +1,3 @@
+// expect: unknown name 'undefinedName'
+scene Main { }
+struct Box<T> { List<T> items; int Count() { return items.count + undefinedName; } }

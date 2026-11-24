@@ -36,6 +36,8 @@ typedef struct parser {
 
 static bool at_type_argument(const parser *p);
 static bool type_then_dot(const parser *p);
+static bool type_then(const parser *p, tok_kind then);
+static bool generic_literal_ahead(const parser *p);
 static void parse_type_args(parser *p, struct expr *e);
 
 static token *peek_at(const parser *p, int offset)
@@ -259,6 +261,8 @@ static int last_name_len(const str name)
 // as a tree (type_ref): List<T>, Map<K, V>, List<Grid2<Color>>. What may go
 // in the <> is the checker's to say (resolve_type), so the tree holds whatever
 // is written there.
+static type_ref *parse_decl_type(parser *p, const char *what);
+
 static type_ref *parse_type(parser *p, const char *what)
 {
     const qname q = parse_qname(p, what);
@@ -303,6 +307,13 @@ static type_ref *parse_type(parser *p, const char *what)
             }
         }
         const loc close = close_angle(p, form->close);
+        r->end = (loc){close.line, close.col + 1, close.file};
+    } else if (at(p, T_LT)) { // Pair<int>, Stack<Item>: a generic struct, which the checker finds by its name
+        advance(p);
+        do {
+            vec_push(r->args, parse_decl_type(p, "a type argument, like 'int' or 'Item'"));
+        } while (accept(p, T_COMMA));
+        const loc close = close_angle(p, "'>' after the type arguments");
         r->end = (loc){close.line, close.col + 1, close.file};
     }
     while (at(p, T_LBRACKET)) { // int[32]: an array of that many, N a constant expression
@@ -651,6 +662,15 @@ static expr *parse_primary(parser *p)
             e->type_arg_ref = model;
             return e;
         }
+        if (!grid_type && generic_literal_ahead(p)) { // Pair<int> { a = 1, b = 2 }, Geo.Pair<int> { }: a generic struct's value
+            const type_ref *written = parse_type(p, "a struct type");
+            expr *e = new_expr(E_LITERAL, t->at);
+            e->name = written->name;
+            e->type_arg_ref = written;
+            e->qual_at = t->at;
+            parse_literal_inits(p, e);
+            return e;
+        }
         advance(p);
         if (at(p, T_LPAREN) || (at(p, T_LT) && at_type_argument(p))) {
             expr *e = new_expr(E_CALL, t->at);
@@ -681,8 +701,9 @@ static expr *parse_primary(parser *p)
 // no comparison reads that way (it would compare a bool). The type can take
 // types of its own, as in Json.Read<List<Score>>(text): names, dots and
 // commas up to the '>' that closes the first '<', which a '>>' can be part of.
-// Whether the name the parser is at is a type with <>, then '.': Mesh<Vertex3>.Decode, never a comparison.
-static bool type_then_dot(const parser *p)
+// Whether the name the parser is at is a type with <>, then a token of kind `then`: Mesh<Vertex3>.Decode with
+// '.', Pair<int> { ... } with '{', never a comparison.
+static bool type_then(const parser *p, const tok_kind then)
 {
     if (peek_at(p, 1)->kind != T_LT || peek_at(p, 2)->kind != T_IDENT) return false;
     int i = 2, depth = 1;
@@ -695,7 +716,23 @@ static bool type_then_dot(const parser *p)
                  && k != T_QUESTION) return false;
         i++;
     }
-    return depth == 0 && peek_at(p, i)->kind == T_DOT;
+    return depth == 0 && peek_at(p, i)->kind == then;
+}
+
+static bool type_then_dot(const parser *p)
+{
+    return type_then(p, T_DOT);
+}
+
+// Whether a name, maybe qualified, with types in <> and then '{' is ahead: a generic struct's value, Pair<int> { }
+// or Geo.Pair<int> { }. No expression reads `a.b < c > {`.
+static bool generic_literal_ahead(const parser *p)
+{
+    int i = 1;
+    while (peek_at(p, i)->kind == T_DOT && peek_at(p, i + 1)->kind == T_IDENT) i += 2;
+    if (peek_at(p, i)->kind != T_LT) return false;
+    const int end = skip_type(p, 0);
+    return end > i && peek_at(p, end)->kind == T_LBRACE;
 }
 
 static bool at_type_argument(const parser *p)
@@ -1053,7 +1090,7 @@ static stmt *parse_stmt(parser *p);
 // than a variable the code has. What follows the name ends the argument.
 static bool at_out_decl(const parser *p)
 {
-    if (!at(p, T_IDENT) || (peek_at(p, 1)->kind == T_LT && !generic_name(peek(p)->text))) return false;
+    if (!at(p, T_IDENT)) return false;
     int i = skip_type(p, 0);
     if (i < 0 || peek_at(p, i)->kind != T_IDENT) return false;
     const tok_kind after = peek_at(p, i + 1)->kind;
@@ -1385,6 +1422,10 @@ static bool at_local_decl(const parser *p)
     int next = 1;
     while (peek_at(p, next)->kind == T_DOT && peek_at(p, next + 1)->kind == T_IDENT) next += 2;
     if (peek_at(p, next)->kind == T_IDENT) return true;
+    if (peek_at(p, next)->kind == T_LT) { // Pair<int> best, Geo.Stack<Item> items: no expression reads `a < b > c`
+        const int end = skip_type(p, 0);
+        return end > 0 && peek_at(p, end)->kind == T_IDENT;
+    }
     if (peek_at(p, next)->kind == T_LBRACKET) { // int[32] cells = ..., rather than cells[i] = ...
         const int end = skip_type(p, 0);
         return end > 0 && peek_at(p, end)->kind == T_IDENT && peek_at(p, end - 1)->kind != T_QUESTION;
@@ -2188,6 +2229,34 @@ static decl *parse_settings(parser *p, const token *keyword)
     return d;
 }
 
+// <T, U> after a generic's name: its type parameters, as written.
+static void parse_type_params(parser *p, decl *d)
+{
+    expect(p, T_LT, "'<'");
+    do {
+        const token *name = expect_ident(p, "a type parameter's name, like 'T'");
+        vec_push(d->type_params, name->text);
+        vec_push(d->type_param_at, name->at);
+    } while (accept(p, T_COMMA));
+    close_angle(p, "'>' after the type parameters");
+}
+
+// `where T : comparable, hashable where U : equatable`, as C#'s: what a generic's type parameters can be, before
+// its body. Which rules there are, and that each names a parameter, the checker says (check_type_rules).
+static void parse_where(parser *p, decl *d)
+{
+    while (at(p, T_IDENT) && str_eq_c(peek(p)->text, "where") && peek_at(p, 1)->kind == T_IDENT && peek_at(p, 2)->kind == T_COLON) {
+        advance(p);
+        const token *param = advance(p);
+        advance(p);
+        do {
+            const token *rule = expect_ident(p, "what the type parameter can be: 'equatable', 'comparable' or 'hashable'");
+            const type_rule r = {param->text, param->at, rule->text, rule->at};
+            vec_push(d->type_rules, r);
+        } while (accept(p, T_COMMA));
+    }
+}
+
 // [mut] ReturnType Name(Type name, ...) { ... }: a method of `owner`, or with
 // no owner, a function. The checker says where methods are allowed.
 static decl *parse_method(parser *p, decl *owner)
@@ -2197,16 +2266,12 @@ static decl *parse_method(parser *p, decl *owner)
     const type_ref *ret = parse_decl_type(p, "return type");
     decl *m = new_named_decl(p, owner ? DECL_METHOD : DECL_FUNCTION, owner ? "method name" : "function name");
     if (at(p, T_LT)) { // T Max<T>(T a, T b): a generic function, read again for each instantiation (parse_generic_instance)
-        const token *open = advance(p);
-        do {
-            const token *name = expect_ident(p, "a type parameter's name, like 'T'");
-            vec_push(m->type_params, name->text);
-            vec_push(m->type_param_at, name->at);
-        } while (accept(p, T_COMMA));
-        close_angle(p, "'>' after the type parameters");
-        if (owner) {
-            diag_error(open->at, "a method can't have type parameters of its own yet");
-            diag_note("write it as a function that takes the value, like 'void Fill<V>(mut List<V> vertices)'");
+        const token *open = peek(p);
+        parse_type_params(p, m);
+        if (owner && owner->kind != DECL_STRUCT && owner->kind != DECL_GENERIC_STRUCT) {
+            diag_error(open->at, "only a struct's methods can have type parameters of their own");
+            diag_note("write it as a function that takes the value, like 'void Fill<V>(mut " STR_FMT " value, List<V> items)'",
+                      STR_ARG(owner->name));
             m->type_params.count = 0;
         } else if (p->overriding) {
             diag_error(open->at, "a generic function can't be virtual or replace one");
@@ -2227,6 +2292,7 @@ static decl *parse_method(parser *p, decl *owner)
     m->return_type_ref = ret;
     const int params_start = p->pos;
     parse_routine_params(p, m);
+    parse_where(p, m);
     m->body_at = m->at;
     m->body = parse_block(p);
     m->end = m->body->end;
@@ -2240,6 +2306,8 @@ static decl *parse_method(parser *p, decl *owner)
         local_method->params.items = NULL;
         local_method->params.count = local_method->params.cap = 0;
         parse_routine_params(&local_parser, local_method);
+        local_method->type_rules.count = 0;
+        parse_where(&local_parser, local_method);
         local_method->body = parse_block(&local_parser);
         m->placement_method = local_method;
     }
@@ -2379,9 +2447,27 @@ static decl *parse_data_decl(parser *p, const decl_kind kind, const bool is_scen
                        : kind == DECL_STRUCT    ? "struct name"
                        : kind == DECL_EVENT     ? "event name"
                                                 : "input name";
+    const parser start = *p;
     const token *name = expect_ident(p, what);
     decl *d = new_decl(kind, name);
     d->is_scene = is_scene;
+    if (at(p, T_LT) && peek_at(p, 1)->kind == T_IDENT) { // struct Pair<T> { ... }: read again for each instantiation
+        const token *open = peek(p);
+        parse_type_params(p, d);
+        if (kind != DECL_STRUCT) {
+            diag_error(open->at, "only a struct can have type parameters: %s's type is the same in every match",
+                       kind == DECL_COMPONENT ? (is_scene ? "a scene" : "a component") : kind == DECL_SINGLETON ? "a singleton"
+                                                : kind == DECL_EVENT ? "an event" : "the input");
+            diag_note("a generic struct can be one of its fields, like 'Stack<Item> items;'");
+            d->type_params.count = 0;
+        } else {
+            d->kind = DECL_GENERIC_STRUCT;
+            parser *saved = NEW(parser);
+            *saved = start;
+            d->generic_parser = saved;
+        }
+    }
+    parse_where(p, d);
     if (is_scene && at(p, T_SEMI)) {
         d->end = advance(p)->at;
         return d;
@@ -2514,6 +2600,18 @@ static decl *parse_data_decl(parser *p, const decl_kind kind, const bool is_scen
             const int before = d->methods.count;
             if (p->recover) RECOVERING(p, vec_push(d->methods, parse_method(p, d)));
             else vec_push(d->methods, parse_method(p, d));
+            if (d->methods.count > before && d->methods.items[before]->kind == DECL_GENERIC) {
+                // U Map<U>(...): a method with type parameters of its own, instantiated as its calls need
+                vec_push(d->generic_methods, d->methods.items[before]);
+                d->methods.count = before;
+                decl *generic = d->generic_methods.items[d->generic_methods.count - 1];
+                if (virtual) diag_error(virtual->at, "a generic method can't be virtual: an override would replace each of its instantiations");
+                if (dev) {
+                    generic->is_dev = true;
+                    generic->dev_at = dev->at;
+                }
+                continue;
+            }
             if (virtual && d->methods.count > before) {
                 d->methods.items[before]->is_virtual = true;
                 d->methods.items[before]->virtual_at = virtual->at;
@@ -3476,8 +3574,25 @@ decl *parse_generic_instance(const decl *generic)
     p.pending.items = NULL;
     p.pending.count = p.pending.cap = 0;
     if (setjmp(p.fail)) return NULL;
-    decl *d = parse_method(&p, NULL);
-    d->kind = DECL_FUNCTION;
+    decl *d = parse_method(&p, generic->owner);
+    d->kind = generic->owner ? DECL_METHOD : DECL_FUNCTION;
+    d->generic_parser = NULL;
+    d->unit = generic->unit;
+    return d;
+}
+
+// One instantiation of generic struct `generic`, read again from its name on: a DECL_STRUCT of its own, with its
+// own fields and methods, that the checker checks with the type arguments bound.
+decl *parse_generic_struct_instance(const decl *generic)
+{
+    parser p = *(const parser *)generic->generic_parser;
+    p.recover = false;
+    p.has_rest = false;
+    p.pending.items = NULL;
+    p.pending.count = p.pending.cap = 0;
+    if (setjmp(p.fail)) return NULL;
+    decl *d = parse_data_decl(&p, DECL_STRUCT, false);
+    d->kind = DECL_STRUCT;
     d->generic_parser = NULL;
     d->unit = generic->unit;
     return d;

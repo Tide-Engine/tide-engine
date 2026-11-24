@@ -1,0 +1,5 @@
+// expect: 'Plain' takes no type in '<>'
+scene Main { }
+struct Bag { int n; int Plain() { return n; } }
+singleton S { int x; }
+system Run(mut S s) { var b = Bag { }; s.x = b.Plain<int>(); }

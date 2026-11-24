@@ -1,0 +1,3 @@
+// expect: 'U' isn't a type parameter of 'Max'
+scene Main { }
+T Max<T>(T a, T b) where U : comparable { return a; }

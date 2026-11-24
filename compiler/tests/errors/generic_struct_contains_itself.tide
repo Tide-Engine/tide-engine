@@ -1,0 +1,4 @@
+// expect: struct 'Node<int>' can't contain itself
+scene Main { }
+struct Node<T> { T value; Node<T> next; }
+singleton S { Node<int> n; }

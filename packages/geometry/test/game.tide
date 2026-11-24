@@ -60,6 +60,9 @@ singleton Built
     bool emptyHasNoBounds;
     Bounds mirroredBounds;
     int mirroredFirst;
+    List<Corner> lifted;
+    List<int> liftedFaces;
+    int liftedFirst;
 }
 
 event(Spawned) Build(with Main, mut Built b)
@@ -79,6 +82,8 @@ event(Spawned) Build(with Main, mut Built b)
     b.mirroredFirst = Geometry.Append(b.merged, b.mergedFaces, piece, pieceFaces,
                                       float4x4.TRS(float3(10, 0, 0), quaternion.identity, float3(-1, 1, 1)));
     b.mirroredBounds = Geometry.BoundsOf(b.merged) ?? default;
+    // ...and a mesh made of the piece, appended whole, its vertex type inferred through Mesh<V>
+    b.liftedFirst = Geometry.Append(b.lifted, b.liftedFaces, Mesh(piece, pieceFaces), float4x4.Translate(float3(0, 5, 0)));
 
     // A box's 24 vertices welded: no two are equal (their normals differ), so all stay
     Geometry.Box(b.welded, b.weldedFaces, float3(1));

@@ -1,0 +1,6 @@
+// expect: 'T' of 'Max' is comparable, and Point isn't
+scene Main { }
+struct Point { int x; }
+T Max<T>(T a, T b) where T : comparable { return a > b ? a : b; }
+singleton S { Point p; }
+system Run(mut S s) { s.p = Max(Point { x = 1 }, Point { x = 2 }); }

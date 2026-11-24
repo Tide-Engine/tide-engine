@@ -1,0 +1,218 @@
+// Generic structs and generic methods: a struct with type parameters, one struct of the program's for each set of
+// type arguments (Pair<int> and Pair<float> are two), its methods using them, methods with type parameters of their
+// own, inference through a generic struct's type, `where` rules, structs holding their own instantiations in
+// lists, and a generic struct as a component's field. generic_structs_test.c reads the results.
+
+scene Main { }
+
+struct Pair<T>
+{
+    T first;
+    T second;
+
+    Pair<T> Swapped() { return Pair<T> { first = second, second = first }; }
+    mut void Set(T a, T b)
+    {
+        first = a;
+        second = b;
+    }
+    // A method with a type parameter of its own, beside its struct's
+    Tagged<T, U> Tag<U>(U tag) { return Tagged<T, U> { value = first, tag = tag }; }
+}
+
+struct Tagged<T, U>
+{
+    T value;
+    U tag;
+}
+
+// A stack of anything: a list kept in a struct, with what it takes and gives
+struct Stack<T>
+{
+    List<T> items;
+
+    int Count() { return items.count; }
+    mut void Push(T item) { items.Add(item); }
+    mut T? Pop()
+    {
+        if (items.count == 0) return null;
+        var top = items[items.count - 1];
+        items.RemoveAt(items.count - 1);
+        return top;
+    }
+}
+
+// Two type parameters, one of them a map's key, which `where` says
+struct Counter<K, V> where K : hashable
+{
+    Map<K, V> values;
+    mut void Put(K key, V value) { values[key] = value; }
+    int Size() { return values.count; }
+}
+
+// A tree of anything: a struct holds lists of itself
+struct Node<T>
+{
+    T value;
+    List<Node<T>> kids;
+}
+
+int CountNodes<T>(Node<T> node)
+{
+    mut int n = 1;
+    foreach (var kid in node.kids) n += CountNodes(kid);
+    return n;
+}
+
+// T from a Pair<T> argument
+T Larger<T>(Pair<T> pair) where T : comparable
+{
+    return pair.first > pair.second ? pair.first : pair.second;
+}
+
+// A generic as a Func's value: the instantiation the Func's types make
+T Biggest<T>(T a, T b) where T : comparable
+{
+    return a > b ? a : b;
+}
+
+struct Money
+{
+    int cents;
+    bool operator <(Money a, Money b) { return a.cents < b.cents; }
+    bool operator >(Money a, Money b) { return a.cents > b.cents; }
+}
+
+// A plain struct's generic method
+struct Scale
+{
+    float by;
+    T Times<T>(T value) { return value * by; }
+}
+
+// Instantiations one makes of another while its fields are read: Graph<int>'s fields name Edge<int>, whose code
+// reads Graph<int>'s fields, first named inside a function
+struct Graph<T>
+{
+    List<Edge<T>> edges;
+}
+
+struct Edge<T>
+{
+    T weight;
+    int Count(Graph<T> graph) { return graph.edges.count; }
+}
+
+int EdgesOf()
+{
+    mut var graph = Graph<int> { };
+    graph.edges.Add(Edge<int> { weight = 2 });
+    graph.edges.Add(Edge<int> { weight = 3 });
+    return graph.edges[0].Count(graph);
+}
+
+// A generic struct in a namespace, written with it
+namespace Geo
+{
+    struct Spot<T>
+    {
+        T at;
+    }
+}
+
+component Inventory
+{
+    Stack<int> slots;
+    Pair<float> weights;
+}
+
+singleton Results
+{
+    int swappedFirst;
+    float setSecond;
+    int taggedValue;
+    string taggedTag;
+    int stackCount;
+    int popped;
+    int poppedAgain;
+    bool emptyPop;
+    int counterSize;
+    int nodes;
+    int largerInt;
+    int largerMoney;
+    float scaledFloat;
+    float3 scaledVector;
+    string shown;
+    int edges;
+    int spot;
+    int inventorySlots;
+    float inventoryWeight;
+}
+
+event(Spawned) Run(with Main, mut Results r)
+{
+    var pair = Pair<int> { first = 1, second = 2 };
+    r.swappedFirst = pair.Swapped().first;
+    mut var floats = Pair<float> { };
+    floats.Set(0.5, 1.5);
+    r.setSecond = floats.second;
+    var tagged = pair.Tag("one");
+    r.taggedValue = tagged.value;
+    r.taggedTag = tagged.tag;
+
+    mut var stack = Stack<int> { };
+    stack.Push(4);
+    stack.Push(5);
+    stack.Push(6);
+    r.stackCount = stack.Count();
+    r.popped = stack.Pop() ?? -1;
+    r.poppedAgain = stack.Pop() ?? -1;
+    mut var empty = Stack<string> { };
+    r.emptyPop = empty.Pop() == null;
+
+    mut var counter = Counter<string, float> { };
+    counter.Put("a", 1);
+    counter.Put("b", 2);
+    counter.Put("a", 3);
+    r.counterSize = counter.Size();
+
+    mut var root = Node<int> { value = 1 };
+    mut var child = Node<int> { value = 2 };
+    child.kids.Add(Node<int> { value = 3 });
+    root.kids.Add(child);
+    root.kids.Add(Node<int> { value = 4 });
+    r.nodes = CountNodes(root);
+
+    r.largerInt = Larger(Pair<int> { first = 8, second = 3 });
+    r.largerMoney = Larger(Pair<Money> { first = Money { cents = 5 }, second = Money { cents = 9 } }).cents;
+
+    var scale = Scale { by = 2 };
+    r.scaledFloat = scale.Times(1.25);
+    r.scaledVector = scale.Times(float3(1, 2, 3));
+
+    r.shown = $"{pair}";
+    r.edges = EdgesOf();
+    r.spot = Geo.Spot<int> { at = 7 }.at;
+
+    Spawn(Inventory { weights = Pair<float> { first = 2.5, second = 1 } });
+    mut var inventory = Inventory { };
+    inventory.slots.Push(1);
+    inventory.slots.Push(2);
+    r.inventorySlots = inventory.slots.Count();
+    r.inventoryWeight = inventory.weights.first + 2.5;
+}
+
+// Func values are this machine's: a view's
+local singleton Picks
+{
+    int picked;
+    float pickedFloat;
+}
+
+view Pick(mut Picks p)
+{
+    Func<int, int, int> pick = Biggest;
+    p.picked = pick(3, 9);
+    Func<float, float, float> pickFloat = Biggest;
+    p.pickedFloat = pickFloat(0.25, -1);
+}

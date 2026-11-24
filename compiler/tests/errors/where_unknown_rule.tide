@@ -1,0 +1,3 @@
+// expect: 'sortable' isn't something a type parameter can be
+scene Main { }
+T Max<T>(T a, T b) where T : sortable { return a; }
