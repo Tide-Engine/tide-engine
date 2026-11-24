@@ -678,7 +678,10 @@
             audioPump(); // What the program's mixer has for the worklet, as the queue runs low
             nextFrame = seconds > 0 ? Math.ceil(seconds * 1000) : 0;
             // A GUI draw can land before the scene's shaders compile. Reveal only a fresh
-            // drawn frame after required pipelines settle; optional acceleration can follow.
+            // drawn frame that left no draw out for a pipeline still being made (the program
+            // counts them: tide_web_frame_left_out), so pipelines nothing drew with yet, as the
+            // renderer's guesses for shaders never drawn, go on compiling after it. A program
+            // without the count waits for every required pipeline; optional acceleration can follow.
             if (shown) {
                 let total = 0, pending = 0;
                 for (const p of gpuTables.pipeline) {
@@ -686,7 +689,8 @@
                     total++;
                     if (!p.pipeline && !p.failed) pending++;
                 }
-                if (pending) progress('shaders', total - pending, total);
+                const waiting = exports.tide_web_frame_left_out ? exports.tide_web_frame_left_out() > 0 : pending > 0;
+                if (waiting) progress('shaders', total - pending, total);
                 else {
                     if (stage === 'shaders') progress('start');
                     if (drew && (!exports.tide_web_startup_ready || exports.tide_web_startup_ready())) {

@@ -717,6 +717,23 @@ static int step(void)
     return code;
 }
 
+// Draws and dispatches left out for a pipeline still being made in the background (pipeline_made, compute.inc), since
+// the web's frame began: the page reveals the game once a frame that drew left none out, so it doesn't wait for
+// pipelines nothing has drawn with yet, as the guesses tide_platform_prewarm makes for shaders never drawn. Only the
+// web's page asks
+#ifdef __wasm__
+static uint32_t frame_left_out;
+#endif
+
+static void leave_out(const uint32_t count)
+{
+#ifdef __wasm__
+    frame_left_out += count;
+#else
+    (void)count;
+#endif
+}
+
 #ifdef __wasm__
 static bool startup_ready = true; // Custom hosts need no match; the standard host reports its initial view readiness
 
@@ -732,8 +749,15 @@ __attribute__((export_name("tide_web_startup_ready"))) bool tide_web_startup_rea
 
 // The page calls it for every frame, once tide_platform_run starts the loop:
 // seconds until the next one, which the page waits while it's hidden.
+// How many draws and dispatches the frame tide_web_frame just stepped left out for pipelines still being made
+__attribute__((export_name("tide_web_frame_left_out"))) uint32_t tide_web_frame_left_out(void)
+{
+    return frame_left_out;
+}
+
 __attribute__((export_name("tide_web_frame"))) double tide_web_frame(void)
 {
+    frame_left_out = 0;
     const int code = step();
     if (code != TIDE_KEEP_RUNNING) finish(code);
     return frame_due - now();
@@ -2234,7 +2258,16 @@ static void begin_pass(const tide_gpu_id target, const bool clear)
 static bool pipeline_made(const draw_step *s)
 {
     if (s->pipeline && gpu->pipeline_failed && gpu->pipeline_failed(s->pipeline)) return false;
-    return !gpu->pipeline_ready || !s->pipeline || gpu->pipeline_ready(s->pipeline);
+    if (!gpu->pipeline_ready || !s->pipeline || gpu->pipeline_ready(s->pipeline)) return true;
+    leave_out(1); // Its draw waits for it (frame_left_out)
+    return false;
+}
+
+// Whether a pipeline is still being made in the background: one that's made, or that couldn't be, isn't
+static bool pipeline_pending(const tide_gpu_id pipeline)
+{
+    return pipeline && gpu->pipeline_ready && !gpu->pipeline_ready(pipeline)
+        && !(gpu->pipeline_failed && gpu->pipeline_failed(pipeline));
 }
 
 // A step's pipeline, for the draws after it, with the step's stencil number where the pass has another.

@@ -791,6 +791,9 @@ static void run_compute(const tide_draw_list *list, const draw_step *s)
     }
     if (!pipeline_usable(pipeline) || !kernels_ready) {
         if (!(gpu->pipeline_failed && gpu->pipeline_failed(pipeline))) retry_images(list, r);
+        // Left out for a pipeline still being made, its own or the engine's (frame_left_out)
+        leave_out(pipeline_pending(pipeline) || pipeline_pending(run_size_pipeline)
+                  || pipeline_pending(add_offsets_pipeline) || pipeline_pending(add_scatter_pipeline));
         return;
     }
     const uint32_t group = shader->group[0] * shader->group[1] * shader->group[2];

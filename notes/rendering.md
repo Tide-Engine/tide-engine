@@ -270,7 +270,9 @@ a sixth of the step.
 
 What would take the rest, for the owner: the loader waiting only for the pipelines the game's first frames draw
 with (the others go on in the background as it plays, which the renderer already allows), or fewer pipelines a
-shader (every listed twin and guess is made whether or not it's ever drawn).
+shader (every listed twin and guess is made whether or not it's ever drawn). 2026-11-24, owner: the first, on the
+web (web.md, The reveal waits only for what a frame drew with); the native loader is unchanged. Seen there: a guess
+lands in its kind's most common configuration, and with Render3D that's depth only, where no lit shader ever draws.
 
 ## A pipeline cache file that outgrew its game starts over (2026-11-10)
 

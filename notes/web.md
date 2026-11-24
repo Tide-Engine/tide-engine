@@ -1,3 +1,48 @@
+## The reveal waits only for what a frame drew with (2026-11-24)
+
+Owner, on Firefox loading the docs' Render3D examples very slowly: "go with A", the loader waiting only for the
+pipelines the first frames draw with (rendering.md left it open, 2026-11-10). Before, `tide.js` revealed a page
+once every live required pipeline had settled, and that included `tide_platform_prewarm`'s guesses for shaders never
+drawn (`kind_keys`). On a page there are no remembered keys, so every shader the game's table has gets a guess as
+soon as one of its kind draws, in that kind's most common configuration. In the Render3D example that's depth only
+(the shadow passes outnumber the HDR pass), so four big lit shaders (the other Lit, the impostor program and their
+skinned twins, 34-46 KB of WGSL, about 1.4 s each cold on Chrome D3D12) were compiled into a setup no lit draw ever
+uses, and the reveal waited for them.
+
+- **The frame says what it left out.** `frame_left_out` (platform.c) counts, from the start of each
+  `tide_web_frame`, draws left out because their pipeline is still being made (`pipeline_made`; its planning calls
+  in cull.inc count the same steps again, which only matters as zero or not) and game compute dispatches left out for
+  their own or the engine's list kernels (`pipeline_pending`, compute.inc). A pipeline that failed is never waited
+  for, as before. The new export `tide_web_frame_left_out` reads it. Natively nothing reads it, so `leave_out` is a
+  no-op there and the count is web-only (clang 23's `-Wunused-but-set-global` refuses a global only written).
+- **The page reveals** a fresh drawn frame that left none out, with the standard host's
+  `tide_web_startup_ready` as before. Guesses and anything else not drawn with go on compiling after it. A program
+  without the export keeps the old rule (every required pipeline). The `shaders` progress still counts every
+  required pipeline, so `done` can come before `loaded` reaches `total` (docs/tools/cli.md says so).
+- Not covered by the count, as before: draws left out for a mesh not uploaded yet, and dispatches waiting for their
+  images. Native is unchanged: the standard host's loader still waits for `tide_platform_prewarm_waiting`, guesses
+  included.
+
+Measured on this machine (RTX 4080 SUPER, headless Chrome 158 on D3D12, fresh profile each run, ms from `start` to
+the reveal). Firefox 160 gives headless runs no WebGPU adapter, so its one-pipeline-at-a-time compiling was imitated
+by chaining Chrome's `createRenderPipelineAsync` calls:
+
+| Render3D example | Before | After |
+|---|---|---|
+| Pipelines in parallel | 2027, 2090 | 1926, 1801 |
+| One at a time | 7189, 7440 | 2271, 2186 |
+
+`notes/repro/shader_startup.mjs` against the rebuilt `render3d` and `render3d-materials` pages (three runs each)
+passes its check that the reveal comes after the scene's material pipeline first draws: it reveals on that frame,
+with two to four guesses still compiling. Tests: `tide_web_runtime`'s new case (a frame that left a draw out isn't
+revealed; pending guesses don't hold one that left none out), and the existing reveal case, which keeps the old rule
+without the export. `tide.release.js` regenerated.
+
+Validation: web-release `tide_web_runtime`, `tide_platform_host_wait`, `_draw`, `_compute`, `_prewarm`,
+`_web_first_tick`, `tide_render3d_pixels` and `_material_pixels` pass (software WebGPU); native sanitize
+`tide_platform_draw`, `_compute` and `_prewarm` pass (configured with `TIDE_EXTERNAL_DIRS` empty: the prototypes'
+`fresh-coat` names a `test/test.c` that isn't there); the docs build passes. Firefox itself is unmeasured.
+
 ## Checkpoints on a page (2026-11-17)
 
 `tide.js` gives every program `checkpoint_save`, `checkpoint_saved`, `checkpoint_fetch`, `checkpoint_copy` and

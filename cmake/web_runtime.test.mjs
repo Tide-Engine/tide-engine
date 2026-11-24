@@ -92,6 +92,54 @@ test('startup waits for background scene pipelines and a fresh drawn frame', asy
     }
 });
 
+test('startup waits only for the pipelines a frame left draws out for, where the program counts them', async () => {
+    const source = await readFile(resolve(root, 'platform/web/tide.js'), 'utf8');
+    const pipelineBegin = source.indexOf('    function addPipeline(');
+    const pipelineEnd = source.indexOf('\n    // A compute pipeline', pipelineBegin);
+    const frameBegin = source.indexOf('    let waitReadFrames =');
+    const frameEnd = source.indexOf('\n    // The audio device:', frameBegin);
+    const pending = [];
+    const progressEvents = [];
+    let reveals = 0;
+    const make = () => new Promise(resolve => pending.push(resolve));
+    const sandbox = vm.createContext({
+        device: { createRenderPipelineAsync: make, createComputePipelineAsync: make },
+        backgroundPipelines: true, config: {}, printErr() {},
+        stopped: false, heartbeat: null, looping: true, nextFrame: 0,
+        fit() {}, audioPump() {}, scheduleFrame() {}, beat() {},
+        fail(error) { throw error; }, Exit: class Exit {},
+        shown() { reveals++; },
+        stage: 'start',
+        progress(stage, loaded, total) { sandbox.stage = stage; progressEvents.push({ stage, loaded, total }); },
+        leftOut: 0,
+    });
+    vm.runInContext(`
+        let drew = false;
+        const gpuTables = { pipeline: [null] };
+        const gpuAdd = (kind, entry) => gpuTables[kind].push(entry) - 1;
+        const exports = { tide_web_frame() { drew = true; return 0; }, tide_web_startup_ready() { return true; },
+            tide_web_frame_left_out() { return leftOut; } };
+        ${source.slice(pipelineBegin, pipelineEnd)}
+        ${source.slice(frameBegin, frameEnd)}
+    `, sandbox);
+    const step = code => vm.runInContext(code, sandbox);
+    // The scene's pipeline and two guesses for shaders nothing has drawn with: the scene's draw is left out
+    step(`addPipeline({ name: 'scene', storage: [] }, {}, {}, false);
+        addPipeline({ name: 'guess', storage: [] }, {}, {}, false);
+        addPipeline({ name: 'guessed kernel', storage: [] }, {}, {}, true);`);
+    sandbox.leftOut = 1;
+    step('frame();');
+    assert.equal(reveals, 0, 'a frame that left a draw out for its pipeline is not revealed');
+    assert.deepEqual(progressEvents.at(-1), { stage: 'shaders', loaded: 0, total: 3 });
+    pending[0]({});
+    await Promise.resolve();
+    sandbox.leftOut = 0;
+    step('frame();');
+    assert.equal(reveals, 1, 'once the frame drew all it drew with, the guesses still compiling do not hold it');
+    assert.equal(sandbox.stage, 'start');
+    assert.equal(step('gpuTables.pipeline.filter(p => p && !p.pipeline).length'), 2, 'the guesses go on compiling');
+});
+
 test('WebGPU shares exact shader sources across live pipelines and releases them on free or device loss', async () => {
     const source = await readFile(resolve(root, 'platform/web/tide.js'), 'utf8');
     const begin = source.indexOf('    function shaderModule(');
