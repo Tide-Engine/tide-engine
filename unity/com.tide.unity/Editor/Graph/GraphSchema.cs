@@ -38,6 +38,8 @@ namespace Tide.Editor
             public string[] Outputs = Array.Empty<string>(); // Its exec outputs besides next
             public NodeList[] Lists = Array.Empty<NodeList>();
             public NodeItems[] Items = Array.Empty<NodeItems>();
+            // Inputs that aren't there while a flag key of the node is set: a shorthand member's object
+            public Dictionary<string, string> AbsentWhen = new Dictionary<string, string>();
         }
 
         sealed class KindSpec
@@ -202,6 +204,13 @@ namespace Tide.Editor
             return true;
         }
 
+        static Dictionary<string, string> AbsentOf(JValue o)
+        {
+            var d = new Dictionary<string, string>();
+            for (var i = 0; o != null && o.IsObject && i < o.Keys.Count; i++) d[o.Keys[i]] = o.Get(o.Keys[i]).String;
+            return d;
+        }
+
         static string[] Strings(JValue a) => a != null && a.IsArray ? a.Items.Where(i => i.Kind == JKind.String).Select(i => i.String).ToArray() : Array.Empty<string>();
 
         static Schema Read(JValue j)
@@ -235,6 +244,7 @@ namespace Tide.Editor
             {
                 K = n.Str("k"), Title = n.Str("title"), Category = n.Str("category"), Exec = n.Flag("exec"), Value = n.Flag("value"), Ends = n.Flag("ends"),
                 Map = n.Str("map"), Declares = n.Str("declares"), Keys = Strings(n.Arr("keys")), Inputs = Strings(n.Arr("inputs")), Outputs = Strings(n.Arr("outputs")),
+                AbsentWhen = AbsentOf(n.Get("absentWhen")),
                 Lists = (n.Arr("lists")?.Items ?? new List<JValue>()).Select(l => new NodeList { Key = l.Str("key"), Label = l.Str("label"), Names = l.Str("names") }).ToArray(),
                 Items = (n.Arr("items")?.Items ?? new List<JValue>()).Select(it => new NodeItems
                 {
@@ -469,8 +479,8 @@ namespace Tide.Editor
             if (spec == null) return ports;
             foreach (var key in spec.Inputs)
             {
-                // A shorthand member (`.Name`) has no object
-                if (key == "object" && n.Flag("shorthand")) continue;
+                // An input the schema says a flag leaves out: a shorthand member (`.Name`) has no object
+                if (spec.AbsentWhen.TryGetValue(key, out var flag) && n.Flag(flag)) continue;
                 ports.Add(new GraphPort { Node = id, Input = true, Path = new WirePath(key), Label = key });
             }
             foreach (var list in spec.Lists)
