@@ -138,7 +138,7 @@ declared. Everything else named (a parameter, a constant, a type, a namespace, a
 | `string` | `text` | `"text"`, without the quotes, escapes as written |
 | `bool` | `value` | `true` |
 | `this`, `default`, `null` | | the word |
-| `name` | `name` | `speed`, `MAX_HEALTH`, `Combat`, `Math` |
+| `name` | `name`, `local` | `speed`, `MAX_HEALTH`, `Combat`, `Math`; `local Scene` with `local` |
 | `local` | `ref` | the local's name |
 | `member` | `object`, `member`; or `shorthand: true` with no object | `object.member`; `.Title` |
 | `call` | `name`, `typeArgs`, `args`, `argNames`, `local` | `local Name<T>(a, crit: b)` |
@@ -171,7 +171,7 @@ declared. Everything else named (a parameter, a constant, a type, a namespace, a
 | `var` | `mut`, `type` (absent for `var`), `name`, `value` (absent: declared with no value), `shared` | `mut var name = value;` |
 | `discard` | `value` | `_ = value;` |
 | `assign` | `op` (`=`, `+=` ...), `target`, `value` | `target op value;` |
-| `eval` | `value`, `block` (exec), `stacked` | `value;`, or a call's block, `value { block }` |
+| `eval` | `value`, `block` (exec), `withBlock`, `stacked` | `value;`, or a call's block, `value { block }` |
 | `if` | `cond`, `then`, `else` (exec) | `if (cond) { then } else { else }` |
 | `while` | `cond`, `body` | `while (cond) { body }` |
 | `for` | `init` (one exec node, or null), `cond`, `step` (one exec node, or null), `body` | `for (init; cond; step) { body }` |
@@ -184,10 +184,15 @@ declared. Everything else named (a parameter, a constant, a type, a namespace, a
 | `block` | `body` | `{ body }`: a scope of its own |
 | `code` | `text`, `inputs` | statements as Tide text, inputs as `text`'s |
 
-`eval` with a `block` is a call that takes a block, `GUILayout.Vertical() { ... }`. `stacked` writes it as one of
-the calls listed before one block, `Draw.Blend(Blend.Add), Draw.Clip(r) { ... }`, the next of which is its block's
-first statement. An `eval` whose value another node reads is a statement whose value is kept: tidec writes
-`var <name> = value;`, the name its own (`tide_graph_<id>`), and reads that.
+`eval` with a `block` is a call that takes a block, `GUILayout.Vertical() { ... }`; `withBlock` with no `block` is
+one whose block is empty, `{ }`. An `eval` with `stacked` is the next of the calls listed before one block,
+`Draw.Blend(Blend.Add), Draw.Clip(r) { ... }`: it's the only statement of the block of the call before it, and
+written after that call and a comma. An `eval` whose value another node reads is a statement whose value is
+kept: tidec writes `var _graph<id> = value;` and reads that.
+
+An empty file, as the editor makes one: `{"tidegraph": 1, "nextId": 1, "decls": []}`. Which modifiers the
+editor offers for each kind of declaration is its own (`GraphSchema.cs`); tidec takes any of them, and the parser
+says where one doesn't go.
 
 `text` and `code` read their inputs by name. tidec reads the text as Tide tokens and puts each input, in
 parentheses, where its name stands as a name (not after a `.`). `code`'s locals are its own: what comes after

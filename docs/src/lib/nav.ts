@@ -120,6 +120,7 @@ export const sidebar: Group[] = [
         text: 'Tools',
         items: [
             { text: 'The tide command', link: '/tools/cli' },
+            { text: 'Visual scripting', link: '/tools/visual-scripting' },
             { text: 'Tide Motion', link: '/tools/motion' },
             { text: 'Debugging', link: '/tools/debugging' },
             { text: 'Debug views', link: '/tools/debug-views' },

@@ -17,6 +17,7 @@ tide <command> [folder] [options]
 | `tide unity [folder] -o <path>` | Builds the game for the [Tide package in a Unity project](#unity), as its files change |
 | `tide schedule [folder]` | Shows which systems can run at the same time, and why the others wait |
 | `tide shaders [folder]` | Shows the shaders the game's [frags and verts](../game/shaders.md) compile to, as WGSL |
+| `tide graph <file.tide>` | Turns a `.tide` file into a [graph](visual-scripting.md), `<file>.tidegraph` beside it (`--replace` removes the `.tide`); `--text` prints a graph as Tide |
 | `tide add <source>` | Adds a package to the game in the current folder: from git, a folder, or one that comes with `tide` |
 | `tide update [package]` | Moves the game's packages from git to the newest commit of what they follow |
 | `tide eject <package>` | Copies one of the game's packages into the game's folder, to change as the game's own |
